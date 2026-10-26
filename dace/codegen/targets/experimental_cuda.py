@@ -1087,7 +1087,7 @@ class KernelSpec:
             m.schedule == dtypes.ScheduleType.GPU_ThreadBlock
             for m, _ in gpu_scope_maps_recursive(kernel_parent_state.scope_subgraph(kernel_map_entry))
         )
-        self.chiplets: int = chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, False, [])
+        self.chiplets: int = chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, [])
         self.grid_dims, self.chiplet_chunk = distribute_over_chiplets(
             kernel_map_entry, list(self.grid_dims), self.chiplets
         )

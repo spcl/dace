@@ -1,0 +1,225 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Tests that the same library node type gets a different context on the GPU, on the host over GPU data, and on the CPU.
+"""
+
+import pytest
+
+import dace
+import dace.libraries.ai as ai
+from dace import dtypes, nodes
+from dace.libraries.ai.backend import TaskletSpec  # noqa: E402
+from dace.libraries.ai.context import collect_context
+from dace.libraries.ai.nodes import AINode
+from dace.libraries.ai.prompts import build_user_prompt
+from dace.libraries.blas.nodes.gemm import Gemm
+from tests.library.ai.ai_test_utils import offline, stub_provider
+
+M = 8
+
+
+def _add_gemm(state: dace.SDFGState, name: str, arrays, entry=None, exit_node=None) -> Gemm:
+    """
+    Adds a ``Gemm`` node reading ``arrays[0]``, ``arrays[1]`` and writing ``arrays[2]``.
+
+    :param state: The state to add the node to.
+    :param name: Name of the node.
+    :param arrays: The three container names to connect.
+    :param entry: Enclosing map entry, if the node goes inside a map.
+    :param exit_node: Enclosing map exit, if the node goes inside a map.
+    :return: The added node.
+    """
+    a, b, c = arrays
+    gemm = Gemm(name)
+    state.add_node(gemm)
+    subset = f"0:{M}, 0:{M}"
+    if entry is None:
+        state.add_edge(state.add_read(a), None, gemm, "_a", dace.Memlet(f"{a}[{subset}]"))
+        state.add_edge(state.add_read(b), None, gemm, "_b", dace.Memlet(f"{b}[{subset}]"))
+        state.add_edge(gemm, "_c", state.add_write(c), None, dace.Memlet(f"{c}[{subset}]"))
+    else:
+        state.add_memlet_path(state.add_read(a), entry, gemm, dst_conn="_a", memlet=dace.Memlet(f"{a}[{subset}]"))
+        state.add_memlet_path(state.add_read(b), entry, gemm, dst_conn="_b", memlet=dace.Memlet(f"{b}[{subset}]"))
+        state.add_memlet_path(gemm, exit_node, state.add_write(c), src_conn="_c", memlet=dace.Memlet(f"{c}[{subset}]"))
+    return gemm
+
+
+def _build_three_contexts():
+    """
+    Builds one SDFG holding the same node type in three different contexts.
+
+    :return: A tuple of (SDFG, {context name: (node, state)}).
+    """
+    sdfg = dace.SDFG("three_contexts")
+    for name in ("Ag", "Bg", "Cg"):
+        sdfg.add_array(name, [M, M], dace.float32, storage=dtypes.StorageType.GPU_Global)
+    for name in ("Ac", "Bc", "Cc"):
+        sdfg.add_array(name, [M, M], dace.float32, storage=dtypes.StorageType.CPU_Heap)
+
+    kernel_state = sdfg.add_state("in_kernel", is_start_block=True)
+    entry, exit_node = kernel_state.add_map("grid", {"bi": "0:1"}, schedule=dtypes.ScheduleType.GPU_Device)
+    device = _add_gemm(kernel_state, "gemm_device", ("Ag", "Bg", "Cg"), entry, exit_node)
+
+    host_gpu_state = sdfg.add_state_after(kernel_state, "host_gpu")
+    host_gpu = _add_gemm(host_gpu_state, "gemm_host_gpu", ("Ag", "Bg", "Cg"))
+
+    host_cpu_state = sdfg.add_state_after(host_gpu_state, "host_cpu")
+    host_cpu = _add_gemm(host_cpu_state, "gemm_host_cpu", ("Ac", "Bc", "Cc"))
+
+    return sdfg, {
+        "device": (device, kernel_state),
+        "host_gpu": (host_gpu, host_gpu_state),
+        "host_cpu": (host_cpu, host_cpu_state),
+    }
+
+
+def test_capabilities_differ_by_context():
+    sdfg, slots = _build_three_contexts()
+    caps = {name: collect_context(node, state, sdfg).capabilities for name, (node, state) in slots.items()}
+
+    assert [caps[k].device_level for k in ("device", "host_gpu", "host_cpu")] == [True, False, False]
+    assert [caps[k].state_available for k in ("device", "host_gpu", "host_cpu")] == [False, True, True]
+    assert [caps[k].current_stream_available for k in ("device", "host_gpu", "host_cpu")] == [False, True, False]
+    assert [caps[k].environments_allowed for k in ("device", "host_gpu", "host_cpu")] == [
+        "device-headers-only",
+        "full",
+        "full",
+    ]
+
+    # GPU memory can be dereferenced in a kernel and not on the host
+    assert all(caps["device"].dereferenceable.values())
+    assert not any(caps["host_gpu"].dereferenceable.values())
+    assert all(caps["host_cpu"].dereferenceable.values())
+
+    device_node, device_state = slots["device"]
+    device_prompt = build_user_prompt(collect_context(device_node, device_state, sdfg))
+    assert "Pointers you must NOT dereference" not in device_prompt
+    # A node in a kernel resolves to a thread-block schedule, but its tasklet runs on one thread, so
+    # the prompt shows only the schedules of the enclosing scopes
+    assert "GPU_ThreadBlock" not in device_prompt
+    assert "grid" in device_prompt and "GPU_Device" in device_prompt
+
+
+def test_storage_reaches_the_connectors():
+    sdfg, slots = _build_three_contexts()
+
+    for name, expected in (("host_gpu", "GPU_Global"), ("host_cpu", "CPU_Heap")):
+        node, state = slots[name]
+        ctx = collect_context(node, state, sdfg)
+        assert {c.storage for c in ctx.connectors} == {expected}
+        assert all(c.shape == (str(M), str(M)) for c in ctx.connectors)
+
+
+def test_class_docstring_is_used_as_the_specification():
+    from dace.libraries.ai.context import collect_class_docstring
+    from dace.libraries.ai.nodes import AINode
+
+    sdfg, slots = _build_three_contexts()
+    node, state = slots["host_cpu"]
+    ctx = collect_context(node, state, sdfg)
+
+    # For a library node shipped with DaCe, the class docstring is the only statement of what the
+    # node computes, so it must reach the model
+    assert "alpha * (A @ B) + beta * C" in ctx.class_docstring
+    assert "alpha * (A @ B) + beta * C" in build_user_prompt(ctx)
+
+    # The base class documents the IR, not a computation, and must not be picked up
+    assert collect_class_docstring(nodes.LibraryNode("bare")) == ""
+
+    # An explicit description supersedes the class documentation
+    described = AINode("described", "Compute the thing.", inputs={"_a"}, outputs={"_b"})
+    described_state = sdfg.add_state("described")
+    described_state.add_node(described)
+    described_ctx = collect_context(described, described_state, sdfg)
+    assert described_ctx.description == "Compute the thing."
+    assert described_ctx.class_docstring == ""
+
+
+def test_prompts_are_pairwise_distinct():
+    sdfg, slots = _build_three_contexts()
+    prompts = {name: build_user_prompt(collect_context(node, state, sdfg)) for name, (node, state) in slots.items()}
+
+    assert len(set(prompts.values())) == 3, "the same node type produced identical prompts in different contexts"
+
+    assert "__state available in the body: no" in prompts["device"]
+    assert "__state available in the body: yes" in prompts["host_gpu"]
+    assert "__dace_current_stream in scope: yes" in prompts["host_gpu"]
+    assert "__dace_current_stream in scope: no" in prompts["host_cpu"]
+    assert "Pointers you must NOT dereference here" in prompts["host_gpu"]
+    assert "Pointers you must NOT dereference here" not in prompts["host_cpu"]
+
+
+def test_each_context_is_generated_independently():
+    sdfg, slots = _build_three_contexts()
+    seen_prompts = []
+
+    with dace.config.set_temporary("ai", "compile_check", value=False):
+        for index, (name, (node, state)) in enumerate(slots.items()):
+            spec = TaskletSpec(code=f"// generated for {name}\n_c[0] = _a[0] * _b[0];")
+            with stub_provider(spec) as provider:
+                node.expand(state, "ai")
+            seen_prompts.append(provider.calls[0][0]["content"])
+
+    # One tasklet per slot, each carrying its own generated code
+    tasklets = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.Tasklet)]
+    assert len(tasklets) == 3
+    assert len({t.code.as_string for t in tasklets}) == 3
+    assert not [n for s in sdfg.states() for n in s.nodes() if isinstance(n, Gemm)]
+
+    # The synthesized expansion class is shared, but nothing about the result is
+    assert len(set(seen_prompts)) == 3
+    assert ai.ExpandAI.for_node_class(Gemm) is ai.ExpandAI.for_node_class(Gemm)
+
+
+def nested_gpu_scalar_sdfg(declared: dtypes.StorageType) -> tuple[dace.SDFG, dace.SDFGState, AINode]:
+    """
+    Builds a host-level nested SDFG whose single-element containers are bound to GPU arrays outside.
+
+    :param declared: The storage the nested SDFG declares for its containers.
+    :return: The outer SDFG, the nested state, and the node in it.
+    """
+    inner = dace.SDFG("inner")
+    inner.add_array("x", [1], dace.float64, storage=declared)
+    inner.add_array("y", [1], dace.float64, storage=declared)
+    inner_state = inner.add_state()
+    node = AINode("twice", "Write twice _in into _out.", inputs={"_in"}, outputs={"_out"})
+    inner_state.add_node(node)
+    inner_state.add_edge(inner_state.add_read("x"), None, node, "_in", dace.Memlet("x[0]"))
+    inner_state.add_edge(node, "_out", inner_state.add_write("y"), None, dace.Memlet("y[0]"))
+
+    sdfg = dace.SDFG(f"ai_nested_gpu_scalar_{declared.name}")
+    sdfg.add_array("G", [1], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("H", [1], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    nsdfg = state.add_nested_sdfg(inner, {"x"}, {"y"})
+    state.add_edge(state.add_read("G"), None, nsdfg, "x", dace.Memlet("G[0]"))
+    state.add_edge(nsdfg, "y", state.add_write("H"), None, dace.Memlet("H[0]"))
+    return sdfg, inner_state, node
+
+
+@pytest.mark.parametrize("declared", [dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap])
+def test_a_nested_container_takes_the_outer_storage(declared):
+    """
+    Storage inference gives a nested SDFG's non-transient the storage of the outer container, whatever
+    it declares. Expanded before compilation, a single element of GPU memory must still be a pointer.
+    """
+    sdfg, state, node = nested_gpu_scalar_sdfg(declared)
+    prompt = build_user_prompt(collect_context(node, state, state.sdfg))
+    assert "GPU_Global" in prompt
+
+    with dace.config.set_temporary("ai", "compile_check", value=False):
+        with stub_provider(TaskletSpec(code="_out[0] = 2 * _in[0];")):
+            node.expand(state, "ai")
+    tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))
+    assert isinstance(tasklet.in_connectors["_in"], dtypes.pointer)
+    assert isinstance(tasklet.out_connectors["_out"], dtypes.pointer)
+
+
+if __name__ == "__main__":
+    with offline():
+        test_a_nested_container_takes_the_outer_storage(dtypes.StorageType.Default)
+        test_a_nested_container_takes_the_outer_storage(dtypes.StorageType.CPU_Heap)
+        test_capabilities_differ_by_context()
+        test_storage_reaches_the_connectors()
+        test_prompts_are_pairwise_distinct()
+        test_each_context_is_generated_independently()

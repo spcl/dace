@@ -46,10 +46,14 @@ def mapfission_sdfg():
     state.add_memlet_path(rnode, ome, ime3, t3, memlet=dace.Memlet.simple("A", "2*i:2*i+2"), dst_conn="a")
     state.add_memlet_path(t3, imx3, s34node, memlet=dace.Memlet.simple("s3out", "0"), src_conn="b")
 
-    state.add_edge(t1, "b", t4, "ione", dace.Memlet.simple("s1", "0"))
+    s1node = state.add_access("s1")
+    state.add_edge(t1, "b", s1node, None, dace.Memlet.simple("s1", "0"))
+    state.add_edge(s1node, None, t4, "ione", dace.Memlet.simple("s1", "0"))
     state.add_edge(s24node, None, t4, "itwo", dace.Memlet.simple("s2", "0:2"))
     state.add_edge(s34node, None, t4, "ithree", dace.Memlet.simple("s3out", "0"))
-    state.add_edge(scalar, "out", t4, "sc", dace.Memlet.simple("scal", "0"))
+    scalnode = state.add_access("scal")
+    state.add_edge(scalar, "out", scalnode, None, dace.Memlet.simple("scal", "0"))
+    state.add_edge(scalnode, None, t4, "sc", dace.Memlet.simple("scal", "0"))
     state.add_memlet_path(t4, omx, wnode, memlet=dace.Memlet.simple("B", "i"), src_conn="out")
 
     sdfg.validate()
@@ -1098,6 +1102,53 @@ def test_mapfission_keeps_connector_offset():
     assert np.allclose(B, A)
 
 
+def test_fission_keeps_copy_into_a_wider_array_valid():
+    """
+    Fissions a map around a nested SDFG that computes a row into a transient and copies it into the row of a wider
+    array. The copy names the row of ``dqdt`` in ``subset`` and the transient in ``other_subset``; both sides must
+    survive the fission (``dqdt[0:6, 0:N]`` <- ``tmp[0:6, 0:N]``).
+    """
+    N = dace.symbol("N")
+    inner = dace.SDFG("inner")
+    inner.add_symbol("i", dace.int64)
+    inner.add_array("dqdt", [6, N], dace.float64)
+    inner.add_array("sx", [6, N], dace.float64)
+    inner.add_array("tmp", [N], dace.float64, transient=True)
+    istate = inner.add_state()
+    tmp = istate.add_access("tmp")
+    istate.add_mapped_tasklet(
+        "add",
+        {"j": "0:N"},
+        {"a": dace.Memlet("dqdt[i, j]"), "b": dace.Memlet("sx[i, j]")},
+        "c = a + b",
+        {"c": dace.Memlet("tmp[j]")},
+        input_nodes={"dqdt": istate.add_read("dqdt"), "sx": istate.add_read("sx")},
+        output_nodes={"tmp": tmp},
+        external_edges=True,
+    )
+    istate.add_nedge(tmp, istate.add_write("dqdt"), dace.Memlet(data="dqdt", subset="i, 0:N", other_subset="0:N"))
+
+    sdfg = dace.SDFG("mapfission_copy_into_wider_array")
+    sdfg.add_array("dqdt", [6, N], dace.float64)
+    sdfg.add_array("sx", [6, N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", {"i": "0:6"})
+    node = state.add_nested_sdfg(inner, ["dqdt", "sx"], ["dqdt"], {"i": "i", "N": "N"})
+    state.add_memlet_path(state.add_read("dqdt"), me, node, dst_conn="dqdt", memlet=dace.Memlet("dqdt[0:6, 0:N]"))
+    state.add_memlet_path(state.add_read("sx"), me, node, dst_conn="sx", memlet=dace.Memlet("sx[0:6, 0:N]"))
+    state.add_memlet_path(node, mx, state.add_write("dqdt"), src_conn="dqdt", memlet=dace.Memlet("dqdt[0:6, 0:N]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(MapFission) == 1
+    sdfg.validate()
+
+    dqdt = np.random.rand(6, 7)
+    sx = np.random.rand(6, 7)
+    expected = dqdt + sx
+    sdfg(dqdt=dqdt, sx=sx, N=7)
+    assert np.allclose(dqdt, expected)
+
+
 if __name__ == "__main__":
     test_subgraph()
     test_nested_sdfg()
@@ -1127,3 +1178,26 @@ if __name__ == "__main__":
     test_mapfission_refuses_conditional_component_stays_valid()
     test_fission_promoted_transient_of_nested_sdfg()
     test_mapfission_keeps_connector_offset()
+    test_fission_keeps_copy_into_a_wider_array_valid()
+
+
+def test_an_ordering_edge_out_of_the_map_is_kept_on_the_fissioned_maps():
+    """A later writer is ordered after the map by an empty memlet off its exit. MapFission read that memlet's
+    descriptor (``KeyError: None``); the order must survive the split."""
+    A, expected = config()
+    B = np.random.rand(2)
+    sdfg = mapfission_sdfg()
+    sdfg.add_array("D", [1], dace.float64)
+    state = sdfg.nodes()[0]
+    topmap = next(node for node in state.nodes() if isinstance(node, nodes.MapEntry) and node.label == "outer")
+    body = nest_state_subgraph(sdfg, state, state.scope_subgraph(topmap, include_entry=False, include_exit=False))
+    later = state.add_tasklet("later", {}, {"out"}, "out = 7.0")
+    state.add_edge(later, "out", state.add_write("D"), None, dace.Memlet("D[0]"))
+    state.add_nedge(state.exit_node(topmap), later, dace.Memlet())
+
+    assert sdfg.apply_transformations(MapFission) > 0
+
+    assert later in state.successors(body), "the later writer must stay ordered after the split maps"
+    D = np.zeros(1)
+    sdfg(A=A, B=B, D=D)
+    assert np.allclose(B, expected) and D[0] == 7.0
