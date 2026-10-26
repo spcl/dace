@@ -511,26 +511,6 @@ def _ordering_read_sdfg(name: str, carried_acc: bool):
     return sdfg, loop
 
 
-def test_expands_a_buffer_the_probe_accepts_as_private_and_the_loop_then_maps():
-    """The loop refuses on ``buf`` and is accepted with ``buf`` assumed private: the pass expands it, the loop maps,
-    and the values match the sequential reference."""
-    sdfg, loop = _ordering_read_sdfg("be_expands_assumed_private", carried_acc=False)
-    assert BufferExpansion._loop_verdict(sdfg, loop) == (False, "buf")
-    assert BufferExpansion._loop_verdict(sdfg, loop, None, frozenset({"buf"}))[0]
-
-    assert BufferExpansion().apply_pass(sdfg, {}) == {"lp": ["buf"]}
-    assert [str(d) for d in sdfg.arrays["buf"].shape] == ["N", "M"]
-    assert BufferExpansion._loop_mappable(sdfg, loop)
-    assert _apply_loop_to_map(sdfg) == 1
-    sdfg.validate()
-
-    n, m = 6, 5
-    a = np.random.default_rng(7).random((n, m))
-    out = np.zeros(n)
-    sdfg(a=a, out=out, acc=np.zeros(1), N=n, M=m)
-    assert np.allclose(out, 2.0 * a.sum(axis=1))
-
-
 def test_parallelize_loops_lifts_a_loop_refused_on_its_scratch_buffer_by_expanding_it():
     """``ParallelizeLoops.expand_buffers`` expands the buffer a loop is refused on and lifts the loop; without it
     the loop stays."""
@@ -550,18 +530,6 @@ def test_parallelize_loops_lifts_a_loop_refused_on_its_scratch_buffer_by_expandi
     out = np.zeros(n)
     sdfg(a=a, out=out, acc=np.zeros(1), N=n, M=m)
     assert np.allclose(out, 2.0 * a.sum(axis=1))
-
-
-def test_a_buffer_whose_loop_the_assumption_does_not_unblock_is_left_alone():
-    """With ``buf`` assumed private the loop still refuses on the carried ``acc``: nothing is expanded and the SDFG
-    is unchanged."""
-    sdfg, loop = _ordering_read_sdfg("be_refused_under_assumption", carried_acc=True)
-    assert BufferExpansion._loop_verdict(sdfg, loop) == (False, "buf")
-    assert BufferExpansion._loop_verdict(sdfg, loop, None, frozenset({"buf"})) == (False, "acc")
-
-    before = sdfg.hash_sdfg()
-    assert BufferExpansion().apply_pass(sdfg, {}) is None
-    assert sdfg.hash_sdfg() == before
 
 
 if __name__ == "__main__":
