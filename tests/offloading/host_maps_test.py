@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Maps the offloading keeps on the HOST, and the things it must never offload at all.
 
-Structural tests: they assert which schedule each map came out with, so they do not need a GPU.
-The numerical companion lives in ``offload_to_accelerator_graphs_test.py``.
+Structural tests: they assert which schedule each map came out with, so they do not need a GPU. The ``gpu`` tests run
+the offloaded graph against the host one.
 """
 
 import numpy as np
