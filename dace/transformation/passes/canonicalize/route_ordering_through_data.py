@@ -117,6 +117,28 @@ def guards_nothing(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> bool:
     return True
 
 
+def own_access(state: SDFGState, node: nodes.NestedSDFG, access: nodes.AccessNode, outgoing: bool) -> bool:
+    """Move ``node``'s data edges into (``outgoing``) or out of ``access`` onto a new access node of the same data,
+    when ``access`` has other neighbours on that side and is no view.
+
+    :returns: Whether the edges moved.
+    """
+    mine = [e for e in (state.out_edges(node) if outgoing else state.in_edges(node)) if not e.data.is_empty()]
+    mine = [e for e in mine if (e.dst if outgoing else e.src) is access]
+    if isinstance(access.desc(state.sdfg), data.View):
+        return False
+    if (state.in_degree(access) if outgoing else state.out_degree(access)) == len(mine):
+        return False
+    copy = state.add_access(access.data)
+    for edge in mine:
+        if outgoing:
+            state.add_edge(node, edge.src_conn, copy, edge.dst_conn, edge.data)
+        else:
+            state.add_edge(copy, edge.src_conn, node, edge.dst_conn, edge.data)
+        state.remove_edge(edge)
+    return True
+
+
 def route_through_data(state: SDFGState, node: nodes.NestedSDFG) -> bool:
     """Drop ``node``'s blocking ordering edges that guard nothing, and replace the others by edges through
     its data access nodes if that keeps the state acyclic.
@@ -137,10 +159,21 @@ def route_through_data(state: SDFGState, node: nodes.NestedSDFG) -> bool:
     if (outs and not writes) or (ins and not reads):
         return bool(dropped)
     graph = state._nx
+    split = False
+    # A shared sink (source) closes the cycle through its other writers (readers); its in-edges (out-edges) are
+    # unordered among themselves, so the nest gets an access node of its own.
+    for written in dict.fromkeys(writes):
+        if state.out_degree(written) == 0 and any(nx.has_path(graph, e.dst, written) for e in outs):
+            split |= own_access(state, node, written, outgoing=True)
+    for read in dict.fromkeys(reads):
+        if state.in_degree(read) == 0 and any(nx.has_path(graph, read, e.src) for e in ins):
+            split |= own_access(state, node, read, outgoing=False)
+    reads = [e.src for e in state.in_edges(node) if not e.data.is_empty()]
+    writes = [e.dst for e in state.out_edges(node) if not e.data.is_empty()]
     if any(nx.has_path(graph, e.dst, w) for e in outs for w in writes):
-        return bool(dropped)
+        return bool(dropped) or split
     if any(nx.has_path(graph, r, e.src) for e in ins for r in reads):
-        return bool(dropped)
+        return bool(dropped) or split
     for edge in outs:
         state.remove_edge(edge)
         for written in writes:
