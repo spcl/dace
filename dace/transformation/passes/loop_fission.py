@@ -25,9 +25,12 @@ from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis, smt_dependence
 
 
-def _is_per_iter_subset(subset, loop_var: str | None) -> bool:
+def _is_per_iter_subset(subset, loop_var: str | None, extra_index=None) -> bool:
     """``True`` iff every dimension of ``subset`` is a single-point access at
     the loop variable with offset zero (or loop-invariant).
+
+    ``extra_index`` is one more single-point dimension the access is judged with: the slot index a buffer
+    expansion would add (:func:`~dace.transformation.passes.buffer_expansion.iteration_private_buffers`).
 
     A ``write-then-read`` chain through a non-transient AccessNode that obeys
     this is *per-iteration* -- the produced and consumed values coincide on
@@ -46,7 +49,8 @@ def _is_per_iter_subset(subset, loop_var: str | None) -> bool:
     except Exception:
         return False
     saw_loop_var = False
-    for rb, re_, _ in subset.ndrange():
+    extra = [] if extra_index is None else [(extra_index, extra_index, 1)]
+    for rb, re_, _ in [*subset.ndrange(), *extra]:
         if rb != re_:
             return False
         try:

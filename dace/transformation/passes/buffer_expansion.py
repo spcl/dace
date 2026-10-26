@@ -77,59 +77,30 @@ def _insert_index(subset: subsets.Range, index, axis: int) -> subsets.Range:
     return out
 
 
-class _Expansion:
-    """An applied buffer expansion, with the information needed to undo it.
-
-    :param name: The expanded container.
-    :param desc: The expanded array descriptor.
-    :param shape: The descriptor's pre-expansion shape/strides/total_size/offset.
-    :param edits: The memlet subset edits as ``(memlet, attribute_name, old_subset)`` triples.
-    """
-
-    def __init__(
-        self, name: str, desc: data.Array, shape, strides, total_size, offset, edits: list[tuple[Any, str, Any]]
-    ):
-        self.name = name
-        self.desc = desc
-        self._shape = shape
-        self._strides = strides
-        self._total_size = total_size
-        self._offset = offset
-        self._edits = edits
-
-    def undo(self):
-        """Restore the descriptor shape and every reindexed memlet to its pre-expansion form."""
-        self.desc.set_shape(self._shape, strides=self._strides, total_size=self._total_size, offset=self._offset)
-        for memlet, attr, old in self._edits:
-            setattr(memlet, attr, old)
-
-
-def expand_iteration_private(sdfg: SDFG, loop: LoopRegion, only: set[str]) -> list[Any] | None:
-    """Give every transient one iteration of ``loop`` defines before reading it its own slot, ``x`` -> ``x[i]``.
+def iteration_private_buffers(sdfg: SDFG, loop: LoopRegion, only: set[str]) -> tuple[list[str], Any] | None:
+    """The transients of ``only`` one iteration of ``loop`` defines before reading it, which
+    :func:`expand_iteration_private` would give one slot each, and the index of that slot; ``None`` when none
+    qualifies. A transient scalar is judged as a length-1 array. Reads the graph only.
 
     The privatization :class:`BufferExpansion` applies for ``LoopToMap``, offered to loop distribution: a
     per-iteration accumulator ``s`` shared by a producer and a consumer keeps them in one loop, and ``s[i]``
-    lets the producer run to completion first. A transient scalar is treated as a length-1 array, so the
-    accumulator case is covered. The safety guard is the pass's own (loop-local, defined before read, no
-    view, no library-node operand).
+    lets the producer run to completion first. The safety guard is the pass's own (loop-local, defined before
+    read, no view, no library-node operand).
 
     :param only: The containers that may be expanded, those that couple two body blocks; a temporary used by one
                  block stays private where it is, so the loops inside that block keep privatizing it.
-    :returns: The undo records (each with ``undo()``), or ``None`` when nothing qualified.
     """
     expander = BufferExpansion()
     ix = expander._loop_index(loop)
     if ix is None:
         return None
-    replaced: dict[str, data.Data] = {}
-    for name, desc in list(sdfg.arrays.items()):
-        if name not in only:
-            continue
-        if isinstance(desc, data.Scalar) and desc.transient and desc.lifetime in _REINDEXABLE_LIFETIMES:
-            replaced[name] = desc
-            sdfg.arrays[name] = data.Array(
-                desc.dtype, [1], transient=True, storage=desc.storage, lifetime=desc.lifetime
-            )
+    scalars = {
+        name
+        for name in only
+        if isinstance(sdfg.arrays.get(name), data.Scalar)
+        and sdfg.arrays[name].transient
+        and sdfg.arrays[name].lifetime in _REINDEXABLE_LIFETIMES
+    }
     # A nested SDFG's connector must see a descriptor equal to its own: ``x[i]`` of an expanded ``x`` would need a view
     nested_operands = {
         e.data.data
@@ -139,34 +110,27 @@ def expand_iteration_private(sdfg: SDFG, loop: LoopRegion, only: set[str]) -> li
         for e in state.all_edges(node)
         if e.data is not None and e.data.data is not None
     }
-    buffers = [name for name in expander._privatizable_buffers(sdfg, loop) if name in only - nested_operands]
-    for name, desc in replaced.items():
-        if name not in buffers:
-            sdfg.arrays[name] = desc
-    if not buffers:
-        return None
-    index, size = ix
+    buffers = [
+        name for name in expander._privatizable_buffers(sdfg, loop, scalars=scalars) if name in only - nested_operands
+    ]
+    return (buffers, ix[0]) if buffers else None
+
+
+def expand_iteration_private(sdfg: SDFG, loop: LoopRegion, names: list[str]) -> None:
+    """Give each of ``names``, which :func:`iteration_private_buffers` admitted, one slot per iteration of ``loop``:
+    ``x`` -> ``x[i]``."""
+    expander = BufferExpansion()
+    index, size = expander._loop_index(loop)
+    for name in names:
+        desc = sdfg.arrays[name]
+        if isinstance(desc, data.Scalar):
+            sdfg.arrays[name] = data.Array(
+                desc.dtype, [1], transient=True, storage=desc.storage, lifetime=desc.lifetime
+            )
     order = expander._ambient_order(sdfg)
     touching = expander._edges_by_name(loop)
-    applied: list[Any] = [
-        expander._expand(sdfg, loop, name, index, size, order, touching.get(name, ())) for name in buffers
-    ]
-    applied += [ScalarRestore(sdfg, name, desc) for name, desc in replaced.items() if name in buffers]
-    return applied
-
-
-class ScalarRestore:
-    """Undo record that puts a scalar descriptor back after its length-1 array stand-in was expanded."""
-
-    __slots__ = ("sdfg", "name", "desc")
-
-    def __init__(self, sdfg: SDFG, name: str, desc: data.Data):
-        self.sdfg = sdfg
-        self.name = name
-        self.desc = desc
-
-    def undo(self):
-        self.sdfg.arrays[self.name] = self.desc
+    for name in names:
+        expander._expand(sdfg, loop, name, index, size, order, touching.get(name, ()))
 
 
 @properties.make_properties
@@ -379,8 +343,10 @@ class BufferExpansion(ppl.Pass):
         loop: LoopRegion,
         index: AccessIndex | None = None,
         loop_states: set[SDFGState] | None = None,
+        scalars: set[str] = frozenset(),
     ) -> list[str]:
-        """Transient arrays in ``loop`` that are safe to privatize by expansion.
+        """Transient arrays in ``loop`` that are safe to privatize by expansion; ``scalars`` are transient scalars
+        judged as length-1 arrays.
 
         A buffer qualifies when it is a transient array used only inside ``loop``, has no
         write-conflict (reduction) edge, and is *defined before read* on every iteration --
@@ -394,7 +360,7 @@ class BufferExpansion(ppl.Pass):
         # Nothing changes while the buffers are judged, so every cover test shares the facts of the SDFG.
         with memoize_facts():
             for name, desc in sdfg.arrays.items():
-                if not isinstance(desc, data.Array) or not desc.transient:
+                if not (isinstance(desc, data.Array) or name in scalars) or not desc.transient:
                     continue
                 # A View is a reshape/alias of another array (a ``data.View`` IS a
                 # ``data.Array`` subclass, so the check above does not exclude it), often a
@@ -488,9 +454,7 @@ class BufferExpansion(ppl.Pass):
                     touching.setdefault(name, []).append(edge)
         return touching
 
-    def _expand(
-        self, sdfg: SDFG, loop: LoopRegion, name: str, index, size, ambient: str, touching: Any = None
-    ) -> _Expansion:
+    def _expand(self, sdfg: SDFG, loop: LoopRegion, name: str, index, size, ambient: str, touching: Any = None) -> None:
         """Add the loop-indexed dimension to ``name``'s descriptor and every access in ``loop``.
 
         :param touching: ``name``'s entry of :meth:`_edges_by_name`, built before the first of a batch of
@@ -498,8 +462,6 @@ class BufferExpansion(ppl.Pass):
                          walks every edge of ``loop``.
         """
         desc = sdfg.arrays[name]
-        old = (list(desc.shape), list(desc.strides), desc.total_size, list(desc.offset))
-
         order = self._array_order(desc, ambient)
         axis = 0 if order == _C_ORDER else len(desc.shape)
         new_shape = list(desc.shape)
@@ -513,7 +475,6 @@ class BufferExpansion(ppl.Pass):
             offset=new_offset,
         )
 
-        edits: list[tuple[Any, str, Any]] = []
         seen: set[int] = set()
         if touching is None:
             touching = [edge for state in loop.states() for edge in state.edges()]
@@ -532,16 +493,13 @@ class BufferExpansion(ppl.Pass):
             )
             rewrote = False
             if memlet.data == name and memlet.subset is not None:
-                edits.append((memlet, "subset", memlet.subset))
                 memlet.subset = _insert_index(memlet.subset, index, axis)
                 rewrote = True
             if memlet.other_subset is not None and self._touches(edge, name) and (self_copy or not rewrote):
-                edits.append((memlet, "other_subset", memlet.other_subset))
                 memlet.other_subset = _insert_index(memlet.other_subset, index, axis)
                 rewrote = True
             if rewrote:
                 seen.add(id(edge))
-        return _Expansion(name, desc, old[0], old[1], old[2], old[3], edits)
 
     @staticmethod
     def _touches(edge, name: str) -> bool:

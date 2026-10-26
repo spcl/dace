@@ -73,9 +73,13 @@ def _interstate_reads(block: ControlFlowBlock) -> list[str]:
     return list(found)
 
 
-def _rw_subsets(block: ControlFlowBlock, loop_var: str | None) -> tuple[dict[str, bool], dict[str, bool]]:
+def _rw_subsets(
+    block: ControlFlowBlock, loop_var: str | None, expanded: dict[str, Any] | None = None
+) -> tuple[dict[str, bool], dict[str, bool]]:
     """For every container ``block`` writes / reads, whether ALL of its accesses
     are per-iteration (single-point at ``loop_var`` with zero offset).
+
+    :param expanded: Containers judged as if expanded by one slot dimension, with that dimension's index.
 
     :returns: ``(writes, reads)`` dicts mapping container name -> ``True`` iff
         every write / read memlet of that container is per-iteration w.r.t.
@@ -92,14 +96,16 @@ def _rw_subsets(block: ControlFlowBlock, loop_var: str | None) -> tuple[dict[str
             for e in st.in_edges(n):
                 if e.data is None:
                     continue
-                sub = e.data.get_dst_subset(e, st) if e.data.subset is None else e.data.subset
-                writes[n.data] = writes.get(n.data, True) and _is_per_iter_subset(sub, loop_var)
+                sub = e.data.get_dst_subset(e, st)
+                slot = None if expanded is None else expanded.get(n.data)
+                writes[n.data] = writes.get(n.data, True) and _is_per_iter_subset(sub, loop_var, slot)
             if st.out_degree(n) > 0 or st.in_degree(n) == 0:
                 for e in st.out_edges(n):
                     if e.data is None:
                         continue
-                    sub = e.data.get_src_subset(e, st) if e.data.subset is None else e.data.subset
-                    reads[n.data] = reads.get(n.data, True) and _is_per_iter_subset(sub, loop_var)
+                    sub = e.data.get_src_subset(e, st)
+                    slot = None if expanded is None else expanded.get(n.data)
+                    reads[n.data] = reads.get(n.data, True) and _is_per_iter_subset(sub, loop_var, slot)
                 if st.out_degree(n) == 0 and st.in_degree(n) == 0:
                     reads.setdefault(n.data, False)
     # False, not True: the subset an interstate read uses is not analyzable here, and the forward
@@ -168,7 +174,9 @@ def assigned_in(block: ControlFlowBlock) -> set[str]:
     return {name for edge in block.all_interstate_edges(recursive=True) for name in edge.data.assignments}
 
 
-def _forward_flow_groups(loop: LoopRegion, allow_assignments: bool = False) -> list[list[ControlFlowBlock]] | None:
+def _forward_flow_groups(
+    loop: LoopRegion, allow_assignments: bool = False, expanded: dict[str, Any] | None = None
+) -> list[list[ControlFlowBlock]] | None:
     """Partition ``loop``'s linear body into ordered groups split only across aligned forward flow.
 
     ``Bi`` and ``Bj`` (``i < j``) sharing ``X`` merge if ``Bj`` writes ``X`` (backward WAR / WAW /
@@ -180,12 +188,13 @@ def _forward_flow_groups(loop: LoopRegion, allow_assignments: bool = False) -> l
     :param allow_assignments: Also split a body whose edges assign symbols, each such edge kept with the blocks
                               that read them. Only the expansion fallback asks for it: a plain sequential body split
                               there loses the fusion its pieces get as one loop (CloudSC's ``iphase`` nest).
+    :param expanded: Containers judged as if expanded by one slot dimension (see :func:`_rw_subsets`).
     """
     order = _linear_blocks(loop, allow_assignments=allow_assignments)
     if order is None or len(order) < 2:
         return None
     lv = loop.loop_variable
-    rw = {b: _rw_subsets(b, lv) for b in order}
+    rw = {b: _rw_subsets(b, lv, expanded) for b in order}
     charge_body_edges(loop, rw)
     parent = assignment_coupled(loop, order)
     flows: list[tuple[ControlFlowBlock, ControlFlowBlock]] = []
