@@ -36,6 +36,7 @@ from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
+from dace.transformation.passes.parallelization.facts import SolverFacts
 
 IndexExpr = str | int | symbolic.SymbolicType
 
@@ -297,7 +298,7 @@ def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
 
 
 #: ``(lo, hi, is_point, itervar, start, end, step)`` as text: everything the injective-write oracle parses.
-SmtWriteKey = tuple[str, str, bool, str, str, str, str]
+SmtWriteKey = tuple[str, str, bool, str, str, str, str, Any]
 
 
 def smt_proves_injective_write(
@@ -306,10 +307,12 @@ def smt_proves_injective_write(
     start: Any,
     end: Any,
     step: Any,
-    verdicts: dict[SmtWriteKey, bool] | None = None,
+    verdicts: dict[SmtWriteKey, tuple[bool, tuple]] | None = None,
+    facts: Any = None,
 ) -> bool:
     """Ask the SMT oracle whether a non-affine write touches a distinct location on
-    every iteration.
+    every iteration, under the loop's ``facts`` (a
+    :class:`~dace.transformation.passes.parallelization.facts.SolverFacts`) when given.
 
     A point subset must be injective in the iteration variable; a range subset must have
     intervals that never intersect across iterations. Conservative: returns ``False`` whenever z3
@@ -335,25 +338,31 @@ def smt_proves_injective_write(
     rb, re_, _ = nd[0]
     point = rb == re_
     # Everything the oracle reads, as text: every input below is parsed from exactly these strings.
-    key = (str(rb), str(re_), point, itervar, str(start), str(end), str(step))
+    key = (str(rb), str(re_), point, itervar, str(start), str(end), str(step), None if facts is None else facts.key)
     if verdicts is not None:
         cached = verdicts.get(key)
         if cached is not None:
-            return cached
-    verdict = smt_injective_verdict(key)
+            if facts is not None:
+                facts.replay(cached[1])
+            return cached[0]
+    before = 0 if facts is None else len(facts.used)
+    verdict = smt_injective_verdict(key, facts)
     if verdicts is not None:
-        verdicts[key] = verdict
+        verdicts[key] = (verdict, () if facts is None else tuple(facts.used[before:]))
     return verdict
 
 
-def smt_injective_verdict(key: SmtWriteKey) -> bool:
+def smt_injective_verdict(key: SmtWriteKey, facts: Any = None) -> bool:
     """The uncached body of :func:`smt_proves_injective_write`, over its text key."""
-    rb, re_, point, itervar, start, end, step = key
+    rb, re_, point, itervar, start, end, step, _ = key
     try:
         args = (itervar, symbolic.pystr_to_symbolic(start), symbolic.pystr_to_symbolic(end))
-        kwargs = dict(step=symbolic.pystr_to_symbolic(step))
+        kwargs = dict(step=symbolic.pystr_to_symbolic(step), facts=facts)
+        lo, hi = symbolic.pystr_to_symbolic(rb), symbolic.pystr_to_symbolic(re_)
+        if facts is not None:
+            lo, hi = facts.expand(lo), facts.expand(hi)
         if point:
-            r = smt_dependence.prove_injective_write(symbolic.pystr_to_symbolic(rb), *args, **kwargs)
+            r = smt_dependence.prove_injective_write(lo, *args, **kwargs)
         else:
             # A RANGE write: the iteration owns the whole interval, so the property that makes the
             # loop parallel is that two iterations' intervals never intersect. Chunked rewrites land
@@ -361,9 +370,7 @@ def smt_injective_verdict(key: SmtWriteKey) -> bool:
             # disjoint by construction but not of the ``a*i+b`` form the affine matcher accepts. An
             # inner stride only thins the interval, so proving the intervals disjoint proves the
             # written sets disjoint whatever that stride is.
-            r = smt_dependence.prove_disjoint_write_ranges(
-                symbolic.pystr_to_symbolic(rb), symbolic.pystr_to_symbolic(re_), *args, **kwargs
-            )
+            r = smt_dependence.prove_disjoint_write_ranges(lo, hi, *args, **kwargs)
     except Exception:
         return False
     return r is True
@@ -377,9 +384,11 @@ def _smt_proves_disjoint_boxes(
     end,
     step,
     varying: set[str],
-    verdicts: dict[tuple[str, ...], bool] | None = None,
+    verdicts: dict[tuple[Any, ...], tuple[bool, tuple]] | None = None,
+    facts: Any = None,
 ) -> bool:
-    """Ask the SMT oracle whether two multi-dimensional RANGE accesses can collide across iterations.
+    """Ask the SMT oracle whether two multi-dimensional RANGE accesses can collide across iterations, under the
+    loop's ``facts`` when given (see :func:`smt_proves_injective_write`).
 
     The range counterpart of :func:`_collision_forces_same_iteration`, which only accepts point
     subsets: a mirrored triangular access such as covariance's ``cov[i, i:M]`` against
@@ -398,8 +407,13 @@ def _smt_proves_disjoint_boxes(
     if len(nd1) != len(nd2) or not nd1:
         return False
     try:
-        box1 = [(symbolic.pystr_to_symbolic(str(rb)), symbolic.pystr_to_symbolic(str(re_))) for rb, re_, _ in nd1]
-        box2 = [(symbolic.pystr_to_symbolic(str(rb)), symbolic.pystr_to_symbolic(str(re_))) for rb, re_, _ in nd2]
+
+        def parsed(bound):
+            expr = symbolic.pystr_to_symbolic(str(bound))
+            return expr if facts is None else facts.expand(expr)
+
+        box1 = [(parsed(rb), parsed(re_)) for rb, re_, _ in nd1]
+        box2 = [(parsed(rb), parsed(re_)) for rb, re_, _ in nd2]
         for lo, hi in box1 + box2:
             if any(str(s) in varying for s in set(lo.free_symbols) | set(hi.free_symbols)):
                 return False
@@ -411,10 +425,14 @@ def _smt_proves_disjoint_boxes(
             str(end),
             str(step),
             str(len(nd1)),
+            None if facts is None else facts.key,
         )
         cached = None if verdicts is None else verdicts.get(key)
         if cached is not None:
-            return cached
+            if facts is not None:
+                facts.replay(cached[1])
+            return cached[0]
+        before = 0 if facts is None else len(facts.used)
         r = smt_dependence.prove_disjoint_access_boxes(
             box1,
             box2,
@@ -422,11 +440,12 @@ def _smt_proves_disjoint_boxes(
             symbolic.pystr_to_symbolic(str(start)),
             symbolic.pystr_to_symbolic(str(end)),
             step=symbolic.pystr_to_symbolic(str(step)),
+            facts=facts,
         )
     except Exception:
         return False
     if verdicts is not None:
-        verdicts[key] = r is True
+        verdicts[key] = (r is True, () if facts is None else tuple(facts.used[before:]))
     return r is True
 
 
@@ -438,8 +457,9 @@ def _smt_classify_read_write_pair(
     end,
     step,
     read_state: SDFGState | None = None,
+    facts: Any = None,
 ) -> str | None:
-    """SMT fallback classification for a single read/write pair.
+    """SMT fallback classification for a single read/write pair, under the loop's ``facts`` when given.
 
     Returns ``'none'``, ``'RAW'``, ``'WAR'``, or ``None`` (inconclusive).  Only
     handles one-dimensional point subsets; multi-dimensional or non-point
@@ -456,6 +476,8 @@ def _smt_classify_read_write_pair(
     try:
         read_expr = symbolic.pystr_to_symbolic(str(read_nd[0][0]))
         write_expr = symbolic.pystr_to_symbolic(str(write_nd[0][0]))
+        if facts is not None:
+            read_expr, write_expr = facts.expand(read_expr), facts.expand(write_expr)
     except Exception:
         return None
     read_guard = None
@@ -472,6 +494,7 @@ def _smt_classify_read_write_pair(
             symbolic.pystr_to_symbolic(str(end)),
             step=symbolic.pystr_to_symbolic(str(step)),
             read_guard=read_guard,
+            facts=facts,
         )
     except Exception:
         return None
@@ -490,6 +513,7 @@ def write_refusal(
     step,
     permissive: bool,
     ctx: Optional["LiftContext"],
+    facts: Any = None,
 ) -> str | None:
     """Why :meth:`LoopToMap.can_be_applied` refuses the loop on the write ``e`` into ``dn``, or ``None``."""
     if e.data.dynamic and e.data.wcr is None:
@@ -520,7 +544,7 @@ def write_refusal(
                 ok = False
         if not ok and not permissive:
             verdicts = None if ctx is None else ctx.invariants.smt_injective
-            if not smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts):
+            if not smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts, facts):
                 return (
                     f"write to {dn.data} is not uniquely indexed by the iteration variable "
                     f"(needs an a*i+b subset) - dst_subset={dst_subset}"
@@ -1009,7 +1033,9 @@ def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset,
     return len(sp.linsolve(lin_eqs, lambdas)) > 0
 
 
-def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, start, end, varying: set[str]) -> bool:
+def _writes_may_overlap(
+    m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, start, end, varying: set[str], facts: Any = None
+) -> bool:
     """Conservatively decide whether two write memlets to the same container
     can address the same element on different loop iterations. Returns
     ``False`` only if some subset dimension is provably disjoint (the
@@ -1046,7 +1072,7 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, sta
     # Still undecided, and the certificate above needs POINT subsets. A mirrored triangular write
     # (``cov[i, i:M]`` against ``cov[i:M, i]``) has none, yet the two boxes provably meet only on
     # the diagonal of a single iteration -- which the SMT oracle can show directly.
-    if _smt_proves_disjoint_boxes(m1.subset, m2.subset, itersym, start, end, step, varying):
+    if _smt_proves_disjoint_boxes(m1.subset, m2.subset, itersym, start, end, step, varying, facts=facts):
         canon_stats.solver_proof()
         return False
     return True
@@ -1077,12 +1103,13 @@ class LiftInvariants:
     block_free_symbols: dict[Any, set[str]]
     #: SMT injective-write verdicts, keyed by every text the oracle parses. A pure function of the
     #: key: the parse is cached on (text, dtype authority) and the authority is fixed for the pass,
-    #: and no graph state enters the query. Every sweep restart re-probes each refused loop, and
-    #: re-asking z3 the same question per lift was 21% of the pass on CloudSC.
-    smt_injective: dict[SmtWriteKey, bool] = field(default_factory=dict)
+    #: and the only graph state entering the query is the loop's facts, which a lift preserves. Every
+    #: sweep restart re-probes each refused loop, and re-asking z3 the same question per lift was 21%
+    #: of the pass on CloudSC. The value carries the array facts the proof relied on.
+    smt_injective: dict[SmtWriteKey, tuple[bool, tuple]] = field(default_factory=dict)
     #: disjoint-box verdicts of :func:`_smt_proves_disjoint_boxes`, keyed by the texts z3 parses, on the
     #: same grounds; a read witness re-asks every read-write pair of its container per re-probe.
-    smt_disjoint_boxes: dict[tuple[str, ...], bool] = field(default_factory=dict)
+    smt_disjoint_boxes: dict[tuple[Any, ...], tuple[bool, tuple]] = field(default_factory=dict)
     #: :func:`_check_range` verdicts, keyed by the subset's bounds and the loop's iterator, step and span: a pure
     #: function of the key, re-asked of the same accesses by every re-probe of a sweep.
     check_range: dict[Any, bool] = field(default_factory=dict)
@@ -1570,6 +1597,8 @@ class LoopToMap(xf.MultiStateTransformation):
     symbol_resolver: "SymbolResolver | None" = None
     #: Arrays the caller vouches for (a contract), whose conflicts are waived.
     contract_arrays: frozenset = frozenset()
+    #: What z3 may assume in this probe's dependence queries, set by ``can_be_applied``.
+    solver_facts: SolverFacts | None = None
     #: Why the last probe refused, or ``None`` after an accept.
     last_refusal_reason: str | None = None
     #: The container whose dependence the last probe refused on, or ``None`` when it refused for any other reason
@@ -1641,6 +1670,9 @@ class LoopToMap(xf.MultiStateTransformation):
             return refuse(f"loop bounds are not integer types - result_type={t}")
 
         facts = self.probe_resolver().facts_at(self.loop)
+        # Fixed for the whole loop, so computed once and shared with every dependence test below.
+        varying = loop_varying_symbols(self.loop)
+        self.solver_facts = SolverFacts(self.loop, facts, varying)
         # A loop known parallel since it was marked is mapped whatever its scale: the CPU specialization sequentializes
         # a small map, a loop it never sees.
         known_parallel = loop_analysis.is_known_parallel(self.loop)
@@ -1831,7 +1863,19 @@ class LoopToMap(xf.MultiStateTransformation):
                         if not counted_write(sdfg, state, dn, e):
                             continue
                         reason = write_refusal(
-                            sdfg, state, dn, e, itersym, a, b, start, end, step, self.waives(dn.data, permissive), ctx
+                            sdfg,
+                            state,
+                            dn,
+                            e,
+                            itersym,
+                            a,
+                            b,
+                            start,
+                            end,
+                            step,
+                            self.waives(dn.data, permissive),
+                            ctx,
+                            self.solver_facts,
                         )
                         if reason is not None:
                             if facts is not None:
@@ -1876,9 +1920,6 @@ class LoopToMap(xf.MultiStateTransformation):
                             data,
                         )
 
-        # Fixed for the whole loop, so compute once and share with every dependence test below.
-        varying = loop_varying_symbols(self.loop)
-
         # Two distinct-affine writes to the same container can hit the same element on different
         # iterations even when each is individually injective (``A[5*i]`` and ``A[3*i]`` collide
         # at ``A[15]``); parallelizing reorders them. Allow only if some dim is provably disjoint
@@ -1891,9 +1932,9 @@ class LoopToMap(xf.MultiStateTransformation):
             reps = list(distinct.values())
             for x in range(len(reps)):
                 for y in range(x + 1, len(reps)):
-                    if _writes_may_overlap(reps[x], reps[y], itersym, step, start, end, varying) and not self.waives(
-                        data, permissive
-                    ):
+                    if _writes_may_overlap(
+                        reps[x], reps[y], itersym, step, start, end, varying, self.solver_facts
+                    ) and not self.waives(data, permissive):
                         return refuse(
                             f"writes {reps[x].subset} and {reps[y].subset} to {data} may overlap across iterations",
                             data,
@@ -1903,9 +1944,9 @@ class LoopToMap(xf.MultiStateTransformation):
             accumulated = {str(m.subset): m for m in mmlts if m.wcr is not None}
             for acc in accumulated.values():
                 for plain in reps:
-                    if _writes_may_overlap(acc, plain, itersym, step, start, end, varying) and not self.waives(
-                        data, permissive
-                    ):
+                    if _writes_may_overlap(
+                        acc, plain, itersym, step, start, end, varying, self.solver_facts
+                    ) and not self.waives(data, permissive):
                         return refuse(
                             f"accumulated write {acc.subset} and plain write {plain.subset} to {data} "
                             "may overlap across iterations",
@@ -2089,7 +2130,19 @@ class LoopToMap(xf.MultiStateTransformation):
                 if not counted_write(sdfg, st, dn, w):
                     continue
                 reason = write_refusal(
-                    sdfg, st, dn, w, itersym, a, b, start, end, step, self.waives(name, permissive), ctx
+                    sdfg,
+                    st,
+                    dn,
+                    w,
+                    itersym,
+                    a,
+                    b,
+                    start,
+                    end,
+                    step,
+                    self.waives(name, permissive),
+                    ctx,
+                    self.solver_facts,
                 )
                 if reason is not None:
                     return reason
@@ -2217,7 +2270,7 @@ class LoopToMap(xf.MultiStateTransformation):
             # propagate+intersect fallback, which widens both to the whole array and always aliases.
             ctx = self.lift_context
             boxes = None if ctx is None else ctx.invariants.smt_disjoint_boxes
-            if _smt_proves_disjoint_boxes(read, write, itersym, start, end, step, varying, boxes):
+            if _smt_proves_disjoint_boxes(read, write, itersym, start, end, step, varying, boxes, self.solver_facts):
                 canon_stats.solver_proof()
                 continue
             # SMT fallback for non-affine read/write pairs. Only a proven 'none' (the accesses
@@ -2226,7 +2279,9 @@ class LoopToMap(xf.MultiStateTransformation):
             # anti-dependence still standing here was never snapshot-renamed and lifting it
             # would race. 'WAR' and inconclusive both fall through to the affine checks below.
             if smt_dependence.has_z3():
-                classification = _smt_classify_read_write_pair(read, write, itervar, start, end, step, state)
+                classification = _smt_classify_read_write_pair(
+                    read, write, itervar, start, end, step, state, self.solver_facts
+                )
                 if classification == "none":
                     canon_stats.solver_proof()
                     continue

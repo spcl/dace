@@ -377,6 +377,8 @@ class ParallelizeLoops(ppl.Pass):
         for. The facts used are appended to ``facts``."""
         sd, graph = loop.sdfg, loop.parent_graph
         if xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
+            if xform.solver_facts is not None:
+                facts.extend(xform.solver_facts.used)
             return True
         vouched = xform.contract_arrays
         used: list[array_facts.ArrayFact] = []
@@ -392,6 +394,8 @@ class ParallelizeLoops(ppl.Pass):
                 xform.contract_arrays = xform.contract_arrays | {name}
                 if xform.can_be_applied(graph, 0, sd, permissive=self.permissive):
                     facts.extend(used)
+                    if xform.solver_facts is not None:
+                        facts.extend(f for f in xform.solver_facts.used if f not in facts)
                     return True
             return False
         finally:
