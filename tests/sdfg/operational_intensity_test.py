@@ -142,10 +142,7 @@ def test_operational_intensity(test_name: str):
     op_in_map: dict[str, sp.Expr] = {}
     sdfg = test.to_sdfg()
     if test_name == "nested_reuse":
-        # The expected intensity below is derived from the pure expansion's access pattern (a map
-        # reducing into z with WCR).  Reduce's default dispatches on schedule and would lower this
-        # to the OpenMP tasklet instead, whose traffic the analysis counts differently, so pin the
-        # lowering the number was computed for.
+        # The expected intensity is that of the pure expansion's WCR map, not of the default OpenMP tasklet
         from dace.libraries.standard.nodes.reduce import Reduce
 
         for n, _ in sdfg.all_nodes_recursive():

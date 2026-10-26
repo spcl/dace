@@ -964,14 +964,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
             ]
 
             anames = sdfg.arrays.keys()
-            # ``AccessSets`` returns ONE flat dict spanning every nested SDFG, whereas
-            # ``idom_dict`` and ``access_nodes`` here belong to THIS SDFG alone.  A name
-            # that exists in both this SDFG and a nested one would otherwise push a nested
-            # block through this SDFG's dominator tree, where it has no entry (KeyError).
-            # Each nested SDFG gets its own turn in the enclosing loop, so scoping the scan
-            # to this SDFG's own blocks loses nothing.  With no nested SDFG this is exactly
-            # the old iteration, in the same order: ``AccessSets`` fills its dict by walking
-            # ``all_control_flow_blocks()`` per SDFG.
+            # AccessSets spans every nested SDFG, the dominator tree only this one; each nested SDFG gets its own turn
             own_blocks = [b for b in sdfg.all_control_flow_blocks() if b in access_sets]
             for desc in sdfg.arrays:
                 desc_states_with_nodes = OrderedSet(access_nodes[desc].keys())

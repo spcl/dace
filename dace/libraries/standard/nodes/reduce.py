@@ -262,8 +262,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
             schedule=dtypes.ScheduleType.Sequential,
         )
 
-        # Add identity tasklet for reduction. Reserved (__-prefixed) connector names so an
-        # array literally named a/b/o cannot collide after the reduce nSDFG is inlined.
+        # Reserved connector names: an array named a, b or o must not collide once the expansion is inlined
         t = nstate.add_tasklet("identity", {"__a", "__b"}, {"__o"}, "__o = __b")
 
         # Connect everything
@@ -275,9 +274,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         if nsdfg.arrays["acc"].dtype == nsdfg.arrays["_out"].dtype:
             nstate.add_memlet_path(accwrite, omx, w, memlet=outm)
         else:
-            # The accumulator keeps the input type so partial results are not truncated; a
-            # mixed-type reduction (Fortran ``SUM`` of an integer array into a real) then needs a
-            # tasklet to carry the cast, since an access-to-access edge copies raw bytes.
+            # The accumulator keeps the input type; a tasklet casts, since an access-to-access copy moves raw bytes
             cast = nstate.add_tasklet("store", {"__a"}, {"__o"}, "__o = __a")
             nstate.add_edge(accwrite, None, cast, "__a", dace.Memlet("acc[0]"))
             nstate.add_memlet_path(cast, omx, w, src_conn="__o", memlet=outm)
@@ -296,12 +293,8 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
 
 
 def stage_gpu_reduction_output(node: "Reduce", state: SDFGState, sdfg: SDFG):
-    """Route a GPU reduction whose destination is not device-resident through a device transient.
-
-    The device expansions write through a device pointer, so a host destination -- typically a
-    scalar reduced over every axis -- reaches codegen as an illegal copy. Reduce into a one-element
-    GPU_Global transient instead and let the edge out of it lower to the device-to-host copy.
-    """
+    """Route a GPU reduction into a host destination through a one-element device transient: the device expansions
+    write through a device pointer, and the edge out of the transient lowers to the device-to-host copy."""
     outedge = state.out_edges(node)[0]
     desc = sdfg.arrays[outedge.data.data]
     if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
@@ -323,19 +316,9 @@ def stage_gpu_reduction_output(node: "Reduce", state: SDFGState, sdfg: SDFG):
 
 @dace.library.expansion
 class ExpandReduceAuto(pm.ExpandTransformation):
-    """
-    Dispatches to one of the existing expansions based on the node's schedule, which
-    ``set_default_schedule_and_storage_types`` assigns before expansion:
-
-    * ``Sequential`` (the node is nested in a parallel map) -> the sequential accumulator,
-      whose combination order is fixed and therefore independent of the thread count. It needs
-      an identity to seed the accumulator, so a node without one goes the parallel way.
-    * a GPU schedule -> ``ExpandReduceGPUAuto``, which plans the device schedule itself and
-      falls back to the pure expansion when it cannot.
-    * anything else, including a schedule nobody inferred -> OpenMP, which emits a real
-      ``reduction()`` clause instead of a per-element atomic. It reassociates, so it is not
-      reproducible across thread counts; that is the accepted cost of a parallel reduction.
-    """
+    """Expands by the node's schedule: ``Sequential`` (inside a parallel map, with an identity) to the sequential
+    accumulator, whose order does not depend on the thread count; a GPU schedule to ``GPUAuto``; anything else to
+    OpenMP, a ``reduction()`` clause instead of per-element atomics."""
 
     environments = []
 
@@ -353,12 +336,8 @@ class ExpandReduceAuto(pm.ExpandTransformation):
         return ExpandReduceOpenMP.expansion(node, state, sdfg)
 
 
-#: Connector names for the OpenMP reduce tasklet.  Deliberately NOT the ``_in`` / ``_out`` that the
-#: other expansions use: those return a nested SDFG or a library node, both of which validation
-#: exempts from the connector-vs-array-name check, whereas this expansion drops a bare Tasklet into
-#: the parent state.  A tasklet connector that collides with an array in the same SDFG is rejected --
-#: and ``AllNode`` / ``AnyNode`` declare exactly such an ``_out`` array, since that is their own
-#: output connector name.
+#: Connector names of the OpenMP reduce tasklet. Not ``_in``/``_out``: this tasklet lands in the parent state, where
+#: a connector named like an array (``AllNode``/``AnyNode`` declare ``_out``) fails validation.
 _IN = "_reduce_in"
 _OUT = "_reduce_out"
 
@@ -372,10 +351,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
     environments = []
 
     _REDUCTION_TYPE_TO_OPENMP = {
-        # The clause identifier stays lower-case (``reduction(min: ...)`` is the OpenMP spelling);
-        # the BODY calls the runtime's variadic ``Min`` / ``Max`` from ``pyinterop.h``, which is what
-        # codegen emits for min/max elsewhere.  Bare ``min`` / ``max`` do not resolve to a function
-        # in the generated scope, so this only compiled while OpenMP was not the default expansion.
+        # OpenMP spells the clause lower-case; the body calls the runtime's Min/Max, bare min/max do not resolve
         dtypes.ReductionType.Max: ("max", "{o} = Max({o}, {i});"),
         dtypes.ReductionType.Min: ("min", "{o} = Min({o}, {i});"),
         dtypes.ReductionType.Sum: ("+", "{o} += {i};"),

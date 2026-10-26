@@ -43,17 +43,8 @@ class RemoveUnusedSymbols(ppl.Pass):
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
                                  pipeline, an empty dictionary is expected.
         :param initial_symbols: If not None, sets values of initial symbols.
-        :return: The set of symbols removed from the symbol repository; an EMPTY set when no
-                 symbol left the repository but dead interstate-edge assignments were still
-                 deleted; ``None`` only when the SDFG was left untouched.
-
-        ``apply_pass`` returning ``None`` means "did not modify the SDFG", and callers act on
-        it: the pipeline skips its per-stage ``validate()`` and leaves ``self._modified``
-        alone, so cached analyses are reused and a ``FixedPointPipeline`` stops iterating. The
-        edge-assignment sweep below is NOT restricted by ``self.symbols`` and deletes
-        assignments for symbols that never enter ``result`` (they may not be in
-        ``sdfg.symbols`` at all), so deriving the return from ``result`` alone would report
-        ``None`` for a run that stripped assignments off every interstate edge.
+        :return: The symbols removed; an empty set when only dead interstate assignments were deleted; ``None``
+                 only when the SDFG is untouched, since pipelines read ``None`` as "not modified".
         """
         result: set[str] = set()
 
@@ -88,8 +79,7 @@ class RemoveUnusedSymbols(ppl.Pass):
                         self.symbols = set()
                         nres = self.apply_pass(node.sdfg, _)
                         self.symbols = old_symbols
-                        # An EMPTY set means the nested run only pruned edge assignments --
-                        # still a modification, so test against ``None`` rather than truth.
+                        # An empty set still means the nested run modified something
                         if nres is not None:
                             modified = True
                             result.update(nres)
