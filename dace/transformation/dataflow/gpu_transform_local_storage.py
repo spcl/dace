@@ -12,6 +12,7 @@ from dace import subsets as sbs
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.propagation import align_memlet
 from dace.transformation import transformation
 
 
@@ -155,7 +156,6 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
         else:
             return str(self.map_entry)
 
-    @sdutil.normalizes_copy_memlets
     def apply(self, graph: SDFGState, sdfg):
         # Avoid import loops
         from dace.transformation.passes.array_elimination import ArrayElimination
@@ -451,8 +451,11 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                     if self.fullcopy:
                         edge.data.subset = sbs.Range.from_array(node.desc(sdfg))
                     edge.data.other_subset = copy.deepcopy(newmemlet.subset)
-                    graph.add_edge(edge.src, edge.src_conn, node, None, edge.data)
+                    clone_edge = graph.add_edge(edge.src, edge.src_conn, node, None, edge.data)
                     graph.remove_edge(edge)
+                    if isinstance(edge.src, nodes.AccessNode):
+                        # The copy into the clone names the clone
+                        clone_edge.data = align_memlet(graph, clone_edge, dst=True)
 
         for array_name, node in out_cloned_arraynodes.items():
             graph.add_node(node)

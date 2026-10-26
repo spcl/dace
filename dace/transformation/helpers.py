@@ -15,6 +15,7 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, graph, nodes, utils
 from dace.sdfg.graph import Edge, MultiConnectorEdge, SubgraphView
+from dace.sdfg.propagation import align_memlet
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
@@ -482,12 +483,14 @@ def nest_state_subgraph(
         new_edge.data = name
         edges_to_rename.append(nstate.add_edge(edge.src, edge.src_conn, node, None, new_edge))
 
-    # Rename memlet paths inside nested SDFG to the nested data names; a copy then names its own end again
+    # Rename memlet paths inside nested SDFG to the nested data names
     for new_edge in edges_to_rename:
         for edge in nstate.memlet_tree(new_edge):
             edge.data.data = new_edge.data.data
-        for edge in nstate.memlet_tree(new_edge):
-            utils.normalize_copy_memlet(nstate, edge)
+    # A copy staged in from outside the subgraph is now direct, which names its destination
+    for new_edge in edges_to_rename:
+        if isinstance(new_edge.dst, nodes.AccessNode) and new_edge.dst.data != new_edge.data.data:
+            new_edge.data = align_memlet(nstate, new_edge, dst=True)
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(

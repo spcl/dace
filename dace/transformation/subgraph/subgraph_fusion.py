@@ -14,7 +14,7 @@ from dace.memlet import Memlet
 from dace.properties import EnumProperty, ListProperty, Property, make_properties
 from dace.sdfg import SDFG, dealias, nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.propagation import _propagate_node, propagate_subset
+from dace.sdfg.propagation import _propagate_node, align_memlet, propagate_subset
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.utils import consolidate_edges_scope
 from dace.transformation import transformation
@@ -961,7 +961,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # connect directly
                     for out_edge in out_edges:
                         mm = dcpy(out_edge.data)
-                        self.copy_edge(graph, out_edge, new_src=src, new_src_conn=None, new_data=mm)
+                        new_edge = self.copy_edge(graph, out_edge, new_src=src, new_src_conn=None, new_data=mm)
+                        if (
+                            isinstance(src, nodes.AccessNode)
+                            and isinstance(new_edge.dst, nodes.AccessNode)
+                            and src.data != new_edge.dst.data
+                        ):
+                            # The copy that staged the intermediate in is now direct, which names its destination
+                            new_edge.data = align_memlet(graph, new_edge, dst=True)
 
             for edge in graph.out_edges(map_entry):
                 # special case: for nodes that have no data connections
@@ -1315,11 +1322,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # Reconnect outgoing edges through the transient data.
                     for oe in graph.out_edges(acc):
                         if in_subset.covers(oe.data.src_subset):
-                            mem = Memlet(
-                                data=new_name,
-                                subset=oe.data.src_subset.offset_new(in_subset, True),
-                                other_subset=oe.data.dst_subset,
-                            )
+                            src_subset = oe.data.src_subset.offset_new(in_subset, True)
+                            if isinstance(oe.dst, nodes.AccessNode):
+                                # A copy names its destination
+                                mem = Memlet(data=oe.dst.data, subset=oe.data.dst_subset, other_subset=src_subset)
+                            else:
+                                mem = Memlet(data=new_name, subset=src_subset, other_subset=oe.data.dst_subset)
                             # new_edge = graph.add_edge(new_node, None, oe.dst, oe.dst_conn, mem)
                             oe.data = mem
                             # Update memlet paths.

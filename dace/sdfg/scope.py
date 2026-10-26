@@ -277,6 +277,26 @@ def is_devicelevel_gpu_kernel(sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGStat
         return is_devicelevel_gpu(state.parent, state, node)
 
 
+def device_map_block_size(state: "dace.sdfg.SDFGState", entry: nd.MapEntry) -> tuple[symbolic.SymExpr]:
+    """Returns the thread-block size a GPU_Device map launches with, as the code generator sizes it: the map's
+    ``gpu_block_size``, else the largest static ``GPU_ThreadBlock`` child map, else the configured default.
+
+    :param state: The SDFG state in which the map resides.
+    :param entry: The entry node of the GPU_Device map.
+    :return: A tuple of three sizes.
+    """
+    if entry.map.gpu_block_size is not None:
+        return tuple(list(entry.map.gpu_block_size) + [1] * (3 - len(entry.map.gpu_block_size)))
+    sizes = [
+        list(child.map.range.size()) + [1] * (3 - len(child.map.range))
+        for child in state.scope_children()[entry]
+        if isinstance(child, nd.MapEntry) and child.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+    ]
+    if sizes and not any(symbolic.issymbolic(d) for size in sizes for d in size):
+        return tuple(max(int(size[i]) for size in sizes) for i in range(3))
+    return tuple(int(s) for s in Config.get("compiler", "cuda", "default_block_size").split(","))
+
+
 def devicelevel_block_size(
     sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState", node: nd.Node
 ) -> tuple[symbolic.SymExpr]:
@@ -299,8 +319,7 @@ def devicelevel_block_size(
             if scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 return tuple(scope.map.range.size())
             elif scope.schedule == dtypes.ScheduleType.GPU_Device:
-                # No thread-block map, use config default
-                return tuple(int(s) for s in Config.get("compiler", "cuda", "default_block_size").split(","))
+                return device_map_block_size(state, scope)
             elif scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
                 # Dynamic thread-block map, use configured value
                 from dace.transformation import gpu_helpers  # Avoid import cycle (transformations import the SDFG)

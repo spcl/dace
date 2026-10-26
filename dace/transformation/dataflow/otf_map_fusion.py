@@ -127,7 +127,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
         return True
 
-    @sdutil.normalizes_copy_memlets
     def apply(self, graph: SDFGState, sdfg: SDFG):
         intermediate_access_node = self.array
         first_map_exit = self.first_map_exit
@@ -283,6 +282,12 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                     if isinstance(edge.dst, nds.NestedSDFG) and edge.dst_conn in edge.dst.sdfg.arrays:
                         if not edge.dst.sdfg.arrays[edge.dst_conn].is_equivalent(tmp_desc):
                             dealias.reduce_connector(edge.dst.sdfg, edge.dst_conn, tmp_desc, offset=edge.data.subset)
+                    if isinstance(edge.dst, nds.AccessNode):
+                        # Read by an access node, the buffer is copied, which names the destination
+                        dst_subset = edge.data.get_dst_subset(edge, graph) or sdutil.derive_missing_copy_subset(
+                            otf_memlet.subset, sdfg.arrays[edge.dst.data]
+                        )
+                        otf_memlet = Memlet(data=edge.dst.data, subset=dst_subset, other_subset=otf_memlet.subset)
                     graph.add_edge(tmp_access, None, edge.dst, edge.dst_conn, otf_memlet)
 
                 # Step 3: Copy content of first map into second map

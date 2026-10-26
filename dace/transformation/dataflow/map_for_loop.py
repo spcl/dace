@@ -5,6 +5,7 @@ import dace
 from dace import symbolic
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.propagation import align_memlet
 from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation
 
@@ -94,8 +95,15 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # Skip map in input edges
         for edge in nstate.out_edges(map_entry):
             src_node = nstate.memlet_path(edge)[0].src
-            nstate.add_edge(src_node, None, edge.dst, edge.dst_conn, edge.data)
+            new_edge = nstate.add_edge(src_node, None, edge.dst, edge.dst_conn, edge.data)
             nstate.remove_edge(edge)
+            if (
+                isinstance(src_node, nodes.AccessNode)
+                and isinstance(edge.dst, nodes.AccessNode)
+                and src_node.data != edge.dst.data
+            ):
+                # Without the map, a copy that staged data in is direct, which names its destination
+                new_edge.data = align_memlet(nstate, new_edge, dst=True)
 
         # Skip map in output edges
         for edge in nstate.in_edges(map_exit):
@@ -107,8 +115,6 @@ class MapToForLoop(transformation.SingleStateTransformation):
         nstate.remove_nodes_from([e.src for e in dace.sdfg.dynamic_map_inputs(nstate, map_entry)])
         # Remove scope nodes
         nstate.remove_nodes_from([map_entry, map_exit])
-        # Without the map, a copy that staged data in is a direct copy, which names its destination
-        sdutil.normalize_copy_memlets_in_state(nstate)
 
         # create object field for external nsdfg access
         self.nsdfg = nsdfg

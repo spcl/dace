@@ -12,6 +12,7 @@ from dace import data, dtypes, subsets, symbolic
 from dace import memlet as mm
 from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.propagation import align_memlet
 from dace.transformation import helpers
 from dace.transformation import transformation as pm
 
@@ -633,7 +634,6 @@ class RedundantArray(pm.SingleStateTransformation):
 
         return True
 
-    @sdutil.normalizes_copy_memlets
     def apply(self, graph, sdfg):
         in_array = self.in_array
         out_array = self.out_array
@@ -759,8 +759,6 @@ class RedundantArray(pm.SingleStateTransformation):
                 # 2-a. Extract subsets for array B and others
                 other_subset, a3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                 # 2-b. Modify memlet to match array B.
-                dname = out_array.data
-                src_is_data = False
                 a3_subset.offset(a1_subset, negative=True)
 
                 if a3_subset and a_dims_to_pop:
@@ -772,21 +770,13 @@ class RedundantArray(pm.SingleStateTransformation):
                 # NOTE: This fixes the following case:
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.
-                if isinstance(e3.src, nodes.AccessNode):
-                    if e3.src.data == out_array.data:
-                        dname = e3.src.data
-                        src_is_data = True
-                    src_subset = other_subset
-                else:
-                    src_subset = None
+                src_subset = other_subset if isinstance(e3.src, nodes.AccessNode) else None
 
-                subset = src_subset if src_is_data else dst_subset
-                other_subset = dst_subset if src_is_data else src_subset
-                e3.data.data = dname
-                e3.data.subset = subset
-                e3.data.other_subset = other_subset
-                # Set explicitly: in a self-copy (``B -> A -> B``) the data name alone cannot tell the sides apart
-                e3.data._is_data_src = src_is_data
+                # A copy names its destination B, also in a self-copy (``B -> A -> B``)
+                e3.data.data = out_array.data
+                e3.data.subset = dst_subset
+                e3.data.other_subset = src_subset
+                e3.data._is_data_src = False
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
                 e3.data.wcr = wcr
@@ -1082,7 +1072,6 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
         return True
 
-    @sdutil.normalizes_copy_memlets
     def apply(self, graph: SDFGState, sdfg: SDFG):
         in_array = self.in_array
         out_array = self.out_array
@@ -1598,7 +1587,6 @@ class RedundantReadSlice(pm.SingleStateTransformation):
 
         return True
 
-    @sdutil.normalizes_copy_memlets
     def apply(self, graph, sdfg):
         in_array = self.in_array
         out_array = self.out_array
@@ -1753,7 +1741,6 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
 
         return True
 
-    @sdutil.normalizes_copy_memlets
     def apply(self, graph, sdfg):
         in_array = self.in_array
         out_array = self.out_array
@@ -1973,11 +1960,11 @@ class RemoveSliceView(pm.SingleStateTransformation):
             state.remove_edge(edge)
             if is_src:
                 new_edge = state.add_edge(view_edge.src, view_edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+                if isinstance(view_edge.src, nodes.EntryNode) and edge.data.data != viewed.data:
+                    # A copy out of a view read in a scope now stages the viewed data in, which names its source
+                    new_edge.data = align_memlet(state, new_edge, dst=False)
             else:
-                new_edge = state.add_edge(edge.src, edge.src_conn, view_edge.dst, view_edge.dst_conn, edge.data)
-            # Without the view in between, the path may now be a copy, which names the container outside the scope
-            for e in state.memlet_tree(new_edge):
-                sdutil.normalize_copy_memlet(state, e)
+                state.add_edge(edge.src, edge.src_conn, view_edge.dst, view_edge.dst_conn, edge.data)
 
         # Remove view node
         state.remove_node(self.view)

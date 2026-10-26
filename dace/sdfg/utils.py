@@ -3,7 +3,6 @@
 
 import collections
 import copy
-import functools
 import time
 import warnings
 from collections.abc import Callable, Generator, Sequence
@@ -804,14 +803,6 @@ def normalize_copy_memlets(sdfg: SDFG) -> int:
     )
 
 
-def normalize_copy_memlets_in_state(state: SDFGState) -> int:
-    """Normalizes every copy memlet of ``state``; for transformations that reroute memlet paths.
-
-    :return: The number of memlets rewritten.
-    """
-    return sum(normalize_copy_memlet(state, edge) for edge in state.edges())
-
-
 def normalize_copy_memlet(state: SDFGState, edge) -> int:
     """Makes the copy memlets on the path of ``edge`` name the container ``copy_memlet_owner`` asks for.
 
@@ -837,19 +828,12 @@ def normalize_copy_memlet(state: SDFGState, edge) -> int:
         return 0
     count = 0
     if not inner_ok:
-        src, dst = path[0].src, path[-1].dst
-        src_subset = memlet.get_src_subset(inner, state)
-        dst_subset = memlet.get_dst_subset(inner, state)
-        if stage_in:
-            own = src_subset or derive_missing_copy_subset(dst_subset, state.sdfg.arrays[src.data])
-            other = dst_subset
-        else:
-            own = dst_subset or derive_missing_copy_subset(src_subset, state.sdfg.arrays[dst.data])
-            other = src_subset
-        memlet.data = owner
-        memlet.subset = copy.deepcopy(own)
-        memlet.other_subset = copy.deepcopy(other)
-        memlet._is_data_src = stage_in
+        aligned = propagation.align_memlet(state, inner, dst=not stage_in)
+        if memlet.other_subset is None and memlet.data != owner:
+            # The owner side was left out: it spans the copied elements
+            end = path[0].src if stage_in else path[-1].dst
+            aligned.subset = derive_missing_copy_subset(memlet.subset, state.sdfg.arrays[end.data])
+        inner.data = aligned
         count += 1
     previous = inner
     for outer in path[-2::-1] if stage_in else path[1:]:
@@ -865,19 +849,6 @@ def normalize_copy_memlet(state: SDFGState, edge) -> int:
             count += 1
         previous = outer
     return count
-
-
-def normalizes_copy_memlets(apply: Callable) -> Callable:
-    """Decorates a single-state transformation's ``apply`` that reroutes memlet paths, so that every copy memlet of
-    the state names the container ``copy_memlet_owner`` asks for afterwards."""
-
-    @functools.wraps(apply)
-    def wrapped(self, graph: SDFGState, sdfg: SDFG):
-        result = apply(self, graph, sdfg)
-        normalize_copy_memlets_in_state(graph)
-        return result
-
-    return wrapped
 
 
 def consolidate_edges_scope(state: SDFGState, scope_node: nd.EntryNode | nd.ExitNode) -> int:

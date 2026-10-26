@@ -815,9 +815,14 @@ class ScalarToSymbolPromotion(passes.Pass):
                     # Add interstate edge assignment
                     new_isedge.data.assignments[node.data] = newcode
                 elif isinstance(input, nodes.AccessNode):
+                    in_edge = new_state.in_edges(node)[0]
                     memlet: mm.Memlet = in_edge.data
-                    if memlet.src_subset and not isinstance(sdfg.arrays[input.data], dt.Scalar):
-                        new_isedge.data.assignments[node.data] = f"{input.data}[{memlet.src_subset}]"
+                    # A copy names its destination; a source side it leaves out spans the copied elements
+                    src_subset = memlet.get_src_subset(in_edge, new_state) or sdutils.derive_missing_copy_subset(
+                        memlet.get_dst_subset(in_edge, new_state), sdfg.arrays[input.data]
+                    )
+                    if not isinstance(sdfg.arrays[input.data], dt.Scalar):
+                        new_isedge.data.assignments[node.data] = f"{input.data}[{src_subset}]"
                     else:
                         new_isedge.data.assignments[node.data] = input.data
 

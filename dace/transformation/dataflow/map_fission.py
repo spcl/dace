@@ -13,7 +13,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import graph as gr
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
+from dace.sdfg.propagation import align_memlet, propagate_memlets_state, propagate_subset
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import helpers, transformation
@@ -237,7 +237,6 @@ class MapFission(transformation.SingleStateTransformation):
 
         return True
 
-    @sdutil.normalizes_copy_memlets
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
@@ -674,6 +673,14 @@ class MapFission(transformation.SingleStateTransformation):
                                     e.data.other_subset = subsets.Range(map_ranges)
                                 else:
                                     e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
+            # A staging copy rewired outside the maps is a direct copy, which names its destination
+            for e in outside_border_edges:
+                if (
+                    isinstance(e.src, nodes.AccessNode)
+                    and isinstance(e.dst, nodes.AccessNode)
+                    and e.src.data != e.dst.data
+                ):
+                    e.data = align_memlet(state, e, dst=True)
 
         # A connector selecting one element of an augmented container becomes a view of it
         for state in parent.states():

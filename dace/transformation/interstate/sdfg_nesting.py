@@ -787,10 +787,6 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
 
-        # Inlined into a scope, a direct copy may now stage data in, which names its source
-        if nsdfg_scope_entry is not None:
-            sdutil.normalize_copy_memlets_in_state(state)
-
         sdfg._cfg_list = sdfg.reset_cfg_list()
 
     def _modify_access_to_access(
@@ -883,6 +879,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         dst = inner_edge.dst
 
                     new_edge = state.add_edge(top_edge.src, top_edge.src_conn, dst, inner_edge.dst_conn, new_memlet)
+                    if isinstance(top_edge.src, nodes.EntryNode):
+                        # A direct copy inlined into a scope stages data in, which names its source
+                        new_edge.data = propagation.align_memlet(state, new_edge, dst=False)
                     mtree = state.memlet_tree(new_edge)
                 else:
                     if inner_edge.src in inner_to_outer:

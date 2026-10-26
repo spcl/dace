@@ -9,7 +9,7 @@ from ordered_set import OrderedSet
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes, propagation
-from dace.sdfg import utils as sdutil
+from dace.sdfg.propagation import align_memlet
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 
@@ -302,7 +302,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         return True
 
-    @sdutil.normalizes_copy_memlets
     def apply(
         self,
         graph: dace.SDFGState | dace.SDFG,
@@ -966,6 +965,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         # TODO(phimuell): Figuring out if `src_subset` is None is an error.
                         new_inner_memlet.src_subset.offset(consumer_offset, negative=True)
                         new_inner_memlet.src_subset.pop(squeezed_dims)
+                    if isinstance(new_inner_edge.dst, nodes.AccessNode):
+                        # The copy that staged the intermediate in is now direct, which names its destination
+                        new_inner_edge.data = align_memlet(state, new_inner_edge, dst=True)
 
                     # Modify the strides of the mapped data of the nested SDFG.
                     if isinstance(new_inner_edge.dst, nodes.NestedSDFG):

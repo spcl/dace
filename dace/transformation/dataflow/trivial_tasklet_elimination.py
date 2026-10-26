@@ -73,8 +73,8 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
         out_edge = graph.edges_between(tasklet, write)[0]
         graph.remove_edge(in_edge)
         graph.remove_edge(out_edge)
-        out_edge.data.other_subset = in_edge.data.subset
-        new_edge = graph.add_edge(read, in_edge.src_conn, write, out_edge.dst_conn, out_edge.data)
+        # A copy out of a scope entry stages data in, which names its source; any other copy names its destination
+        memlet, other = (in_edge.data, out_edge.data) if self.expr_index == 1 else (out_edge.data, in_edge.data)
+        memlet.other_subset = other.subset
+        graph.add_edge(read, in_edge.src_conn, write, out_edge.dst_conn, memlet)
         graph.remove_node(tasklet)
-        # A copy out of a scope entry stages data in, which names its source
-        sdutil.normalize_copy_memlet(graph, new_edge)
