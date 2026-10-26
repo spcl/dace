@@ -25,7 +25,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation import transformation
+from dace.transformation import helpers, transformation
 
 
 def blocking_ordering_edges(
@@ -117,31 +117,26 @@ def guards_nothing(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> bool:
     return True
 
 
-def own_access(state: SDFGState, node: nodes.NestedSDFG, access: nodes.AccessNode, outgoing: bool) -> bool:
-    """Move ``node``'s data edges into (``outgoing``) or out of ``access`` onto a new access node of the same data,
-    when ``access`` has other neighbours on that side and is no view.
-
-    :returns: Whether the edges moved.
-    """
-    mine = [e for e in (state.out_edges(node) if outgoing else state.in_edges(node)) if not e.data.is_empty()]
-    mine = [e for e in mine if (e.dst if outgoing else e.src) is access]
+def own_access(state: SDFGState, node: nodes.NestedSDFG, access: nodes.AccessNode, outgoing: bool) -> list:
+    """``node``'s data edges into (``outgoing``) or out of ``access``, when ``access`` can hand them to an access node
+    of its own: a non-view sink (source) with other writers (readers), whose in-edges (out-edges) are unordered among
+    themselves. ``[]`` otherwise."""
     if isinstance(access.desc(state.sdfg), data.View):
-        return False
-    if (state.in_degree(access) if outgoing else state.out_degree(access)) == len(mine):
-        return False
-    copy = state.add_access(access.data)
-    for edge in mine:
-        if outgoing:
-            state.add_edge(node, edge.src_conn, copy, edge.dst_conn, edge.data)
-        else:
-            state.add_edge(copy, edge.src_conn, node, edge.dst_conn, edge.data)
-        state.remove_edge(edge)
-    return True
+        return []
+    if (state.out_degree(access) if outgoing else state.in_degree(access)) > 0:
+        return []
+    edges = state.out_edges(node) if outgoing else state.in_edges(node)
+    mine = [e for e in edges if not e.data.is_empty() and (e.dst if outgoing else e.src) is access]
+    others = state.in_degree(access) if outgoing else state.out_degree(access)
+    return mine if others > len(mine) else []
 
 
 def route_through_data(state: SDFGState, node: nodes.NestedSDFG) -> bool:
     """Drop ``node``'s blocking ordering edges that guard nothing, and replace the others by edges through
     its data access nodes if that keeps the state acyclic.
+
+    An access node that closes the cycle only through its other writers (a shared sink) or readers (a shared source)
+    is first split, so that ``node`` gets an access node of its own.
 
     :returns: Whether anything was dropped or rerouted.
     """
@@ -152,28 +147,29 @@ def route_through_data(state: SDFGState, node: nodes.NestedSDFG) -> bool:
     ins, outs = blocking_ordering_edges(state, node)
     if not ins and not outs:
         return bool(dropped)
-    reads = [e.src for e in state.in_edges(node) if not e.data.is_empty()]
-    writes = [e.dst for e in state.out_edges(node) if not e.data.is_empty()]
+    reads = list(dict.fromkeys(e.src for e in state.in_edges(node) if not e.data.is_empty()))
+    writes = list(dict.fromkeys(e.dst for e in state.out_edges(node) if not e.data.is_empty()))
     if not all(isinstance(n, nodes.AccessNode) for n in reads + writes):
         return bool(dropped)
     if (outs and not writes) or (ins and not reads):
         return bool(dropped)
-    graph = state._nx
-    split = False
-    # A shared sink (source) closes the cycle through its other writers (readers); its in-edges (out-edges) are
-    # unordered among themselves, so the nest gets an access node of its own.
-    for written in dict.fromkeys(writes):
-        if state.out_degree(written) == 0 and any(nx.has_path(graph, e.dst, written) for e in outs):
-            split |= own_access(state, node, written, outgoing=True)
-    for read in dict.fromkeys(reads):
-        if state.in_degree(read) == 0 and any(nx.has_path(graph, read, e.src) for e in ins):
-            split |= own_access(state, node, read, outgoing=False)
-    reads = [e.src for e in state.in_edges(node) if not e.data.is_empty()]
-    writes = [e.dst for e in state.out_edges(node) if not e.data.is_empty()]
-    if any(nx.has_path(graph, e.dst, w) for e in outs for w in writes):
-        return bool(dropped) or split
-    if any(nx.has_path(graph, r, e.src) for e in ins for r in reads):
-        return bool(dropped) or split
+    graph = state.nx
+    # An access node the nest owns alone cannot close a cycle; one it shares can, and is split if it may be.
+    to_split: list[tuple[nodes.AccessNode, list, bool]] = []
+    for written in writes:
+        if any(nx.has_path(graph, e.dst, written) for e in outs):
+            to_split.append((written, own_access(state, node, written, outgoing=True), True))
+    for read in reads:
+        if any(nx.has_path(graph, read, e.src) for e in ins):
+            to_split.append((read, own_access(state, node, read, outgoing=False), False))
+    if any(not edges for _, edges, _ in to_split):
+        return bool(dropped)
+    for access, edges, outgoing in to_split:
+        own = state.add_access(access.data)
+        for edge in edges:
+            helpers.redirect_edge(state, edge, **({"new_dst": own} if outgoing else {"new_src": own}))
+    reads = list(dict.fromkeys(e.src for e in state.in_edges(node) if not e.data.is_empty()))
+    writes = list(dict.fromkeys(e.dst for e in state.out_edges(node) if not e.data.is_empty()))
     for edge in outs:
         state.remove_edge(edge)
         for written in writes:
@@ -192,7 +188,7 @@ class RouteOrderingThroughData(ppl.Pass):
     CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Edges
+        return ppl.Modifies.Edges | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges))
