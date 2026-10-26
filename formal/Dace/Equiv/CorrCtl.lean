@@ -297,6 +297,12 @@ def NOut (X : Res (Ctl × CSt) → Prop) (res : Res NodeOut) : Prop :=
   (∃ e, e.isUB = true ∧ X (.err e)) ∨ (∃ e e', res = .err e ∧ X (.err e')) ∨
     ∃ sc ctl c, sc.pending = {} ∧ res = .ok (sc, ctl.toT, c) ∧ X (.ok (ctl, c))
 
+theorem Out.chainOut {X : Res (Ctl × CSt) → Prop} {r : Res (TCtl × CSt)} (h : Out X r) : NOut X (chainOut r) := by
+  rcases h with ⟨e, hu, h⟩ | ⟨e, e', rfl, h⟩ | ⟨ctl, c, rfl, h⟩
+  · exact .inl ⟨e, hu, h⟩
+  · exact .inr (.inl ⟨e, e', rfl, h⟩)
+  · exact .inr (.inr ⟨{ chain := some true }, ctl, c, rfl, rfl, h⟩)
+
 theorem Out.scopeOut {X : Res (Ctl × CSt) → Prop} {r : Res (TCtl × CSt)} (h : Out X r) : NOut X (scopeOut r) := by
   rcases h with ⟨e, hu, h⟩ | ⟨e, e', rfl, h⟩ | ⟨ctl, c, rfl, h⟩
   · exact .inl ⟨e, hu, h⟩
@@ -652,6 +658,14 @@ theorem trueEdges_isUncond {ctx : Ctx} {rg : Region} {cst : CSt} {bid : BlockId}
   · exact trueEdges_uncond he hc
   · simp [trueEdges, he, List.filterMapM, List.filterMapM.loop, hc, evalBoolR_int_one]
 
+/-- The true out-edges of a block with a single out-edge. -/
+theorem trueEdges_single {ctx : Ctx} {rg : Region} {cst : CSt} {bid : BlockId} {e : IEdge}
+    (he : rg.outEdges bid = [e]) :
+    trueEdges ctx rg cst bid = (ctx.evalBoolR cst.ρ cst.mem e.cond).map fun b => if b then [e] else [] := by
+  cases h : ctx.evalBoolR cst.ρ cst.mem e.cond with
+  | err e' => simp [trueEdges, he, List.filterMapM, List.filterMapM.loop, h]
+  | ok b => cases b <;> simp [trueEdges, he, List.filterMapM, List.filterMapM.loop, h]
+
 /-- The tree's `AssignNode`s of an edge's assignments, in order. -/
 def AssignsCorr (as : List (Sym × Expr)) (ns : List SNode) : Prop :=
   List.Forall₂ (fun a n => ∃ pe : PyExpr, n = .assign a.1 pe ∧ pe.expr = a.2) as ns
@@ -723,6 +737,15 @@ inductive RegCorr (ctx : Ctx) (tc : TCtx) : Region → BlockId → List SNode �
       (hu : e.isUnconditional = true) (hp : as.Perm e.assigns) (ha : AssignsCorr as ns) (hs : SeqAssigns ctx as)
       (hh : HeadOk (ns ++ rest)) (h : RegCorr ctx tc rg e.dst rest) :
       RegCorr ctx tc rg bid (cs ++ (ns ++ rest))
+  /-- A single conditional out-edge: `sdfg_to_tree` nests the edge's
+  assignments and the rest of the chain in an `IfScope`
+  (`_isedge_schedule_tree`); when the condition is false the region ends. -/
+  | condStep {rg : Region} {bid : BlockId} {b : Block} {cs ns rest : List SNode} {e : IEdge}
+      {as : List (Sym × Expr)} {pc : PyExpr}
+      (hb : rg.block? bid = some b) (hc : BlockCorr ctx tc b cs) (he : rg.outEdges bid = [e])
+      (hpc : pc.expr = e.cond) (hp : as.Perm e.assigns) (ha : AssignsCorr as ns) (hs : SeqAssigns ctx as)
+      (h : RegCorr ctx tc rg e.dst rest) :
+      RegCorr ctx tc rg bid (cs ++ [.ifScope pc (ns ++ rest)])
 
 /-- The tree segment of one block. -/
 inductive BlockCorr (ctx : Ctx) (tc : TCtx) : Block → List SNode → Prop where
@@ -911,6 +934,33 @@ theorem RegCorr.matched {rg : Region} {bid : BlockId} {cs : List SNode} :
       · rw [assigns_seq ctx _ _ hs] at ha'
         have ha'' := (applyAssigns_perm hp hn).1 _ ha'
         exact (RegCorr.matched h hhr hl').mono fun _ h' => .step hb h₁ (trueEdges_isUncond hout hu) ha'' h'
+  | .condStep (pc := pc) (ns := ns) (rest := restB) (e := ie) hb hc hout hpc hp ha hs h, full, gb, rest, cst, r, hhr, hx => by
+    have hn : (_ : List (Sym × Expr)).map Prod.fst |>.Nodup := ((hp.map Prod.fst).nodup_iff).1 hs.nodup
+    rw [List.append_assoc, List.singleton_append] at hx
+    have hif : HeadOk (.ifScope pc (ns ++ restB) :: rest) := fun n hn => by
+      simp only [List.head?_cons, Option.mem_def, Option.some.injEq] at hn
+      subst hn; rfl
+    rcases BlockCorr.matched hc hif hx with
+      ⟨e, hu', h₁⟩ | ⟨e, e', hr, h₁⟩ | ⟨ctl, c, hn', hr, h₁⟩ | ⟨c₁, hl, h₁⟩
+    · exact .inl ⟨e, hu', .blockErr hb h₁⟩
+    · exact .inr (.inl ⟨e, _, hr, .blockErr hb h₁⟩)
+    · exact .inr (.inr (.inl ⟨ctl, c, hn', hr, .exit hb h₁ hn'⟩))
+    · refine node_list hhr (fun res hres => ?_) hl
+      rcases if_inv hres with ⟨e, hc', rfl⟩ | ⟨hc', rfl⟩ | ⟨r', hc', hb', rfl⟩
+      · rw [evalBoolR_tc he, hpc] at hc'
+        exact .inr (.inl ⟨e, e, rfl, .edgesErr hb h₁ (by rw [trueEdges_single hout, hc']; rfl)⟩)
+      · rw [evalBoolR_tc he, hpc] at hc'
+        exact .inr (.inr ⟨_, .normal, c₁, rfl, rfl, .stop hb h₁ (by rw [trueEdges_single hout, hc']; rfl)⟩)
+      · rw [evalBoolR_tc he, hpc] at hc'
+        have hte : trueEdges ctx rg c₁ bid = .ok [ie] := by rw [trueEdges_single hout, hc']; rfl
+        rcases assigns_run he ha hb' with ⟨e, rfl, ha'⟩ | ⟨c₂, ha', hl'⟩
+        · rw [assigns_seq ctx _ _ hs] at ha'
+          obtain ⟨e', hu', ha''⟩ := (applyAssigns_perm hp hn).2 _ ha'
+          exact .inl ⟨e', hu', .assignErr hb h₁ hte ha''⟩
+        · rw [assigns_seq ctx _ _ hs] at ha'
+          have ha'' := (applyAssigns_perm hp hn).1 _ ha'
+          exact ((RegCorr.matched h HeadOk.nil (ListExec.append_nil hl')).toOut.mono
+            fun _ h' => .step hb h₁ hte ha'' h').chainOut
 
 theorem BlockCorr.matched {b : Block} {cs : List SNode} :
     BlockCorr ctx tc b cs → ∀ {full : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt}

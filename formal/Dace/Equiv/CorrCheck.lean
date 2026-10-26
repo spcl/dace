@@ -653,7 +653,22 @@ def regCheck : Nat → Region → BlockId → List SNode → Except String (List
               if as.isPerm e.assigns = true ∧ seqAssigns? ctx as = true then regCheck f rg e.dst rest'
               else .error s!"interstate edge from block {bid}: assignments differ or cannot run one by one"
             | none => .error s!"interstate edge from block {bid}: assignments do not match"
-          else .error s!"interstate edge from block {bid}: conditional"
+          else
+            -- a conditional edge: an `IfScope` holding the assignments and the rest of the chain
+            match rest with
+            | .ifScope pc body :: rest' =>
+              if pc.expr = e.cond then
+                match takeAssignNodes e.assigns.length body with
+                | some (as, body') =>
+                  if as.isPerm e.assigns = true ∧ seqAssigns? ctx as = true then
+                    match regCheck f rg e.dst body' with
+                    | .ok [] => .ok rest'
+                    | .ok _ => .error s!"conditional edge from block {bid}: tree nodes after the chain"
+                    | .error m => .error m
+                  else .error s!"conditional edge from block {bid}: assignments differ or cannot run one by one"
+                | none => .error s!"conditional edge from block {bid}: assignments do not match"
+              else .error s!"conditional edge from block {bid}: the if condition differs"
+            | _ => .error s!"interstate edge from block {bid}: conditional, no if scope in the tree"
         | _ => .error s!"block {bid}: several out-edges (GBlocks are M5b step 5)"
 
 /-- Check one block against the head of the tree list; the rest of the list. -/
@@ -788,7 +803,30 @@ theorem regCheck_sound : ∀ (f : Nat) (rg : Region) (bid : BlockId) (cs rest : 
                     have := headOk?_sound hh; simpa only [List.append_assoc] using this)) hpre₂
               · cases h
             · cases h
-          · cases h
+          · split at h
+            · rename_i pc body rest' _
+              split at h
+              · rename_i hpc
+                split at h
+                · rename_i as body' ht
+                  split at h
+                  · rename_i hc'
+                    obtain ⟨hp, hs⟩ := hc'
+                    obtain ⟨ns, rfl, hns⟩ := takeAssignNodes_sound ht
+                    split at h
+                    · rename_i hr
+                      cases h
+                      obtain ⟨pre₂, hpre₂, hc₂⟩ := regCheck_sound f rg e.dst _ _ hr
+                      rw [List.append_nil] at hpre₂
+                      subst hpre₂
+                      refine ⟨pre ++ [.ifScope pc (ns ++ body')], by simp only [List.append_assoc, List.singleton_append], ?_⟩
+                      exact .condStep hb hpre hout hpc (List.isPerm_iff.1 hp) hns (seqAssigns?_sound hs) hc₂
+                    · cases h
+                    · cases h
+                  · cases h
+                · cases h
+              · cases h
+            · cases h
         · cases h
 
 theorem blockCheck_sound : ∀ (f : Nat) (b : Block) (cs rest : List SNode),
@@ -948,6 +986,9 @@ theorem RegCorr.withI {rg : Region} {bid : BlockId} {cs : List SNode} :
   | .last hb hc he => .last hb (BlockCorr.withI hc) he
   | .step hb hc he hu hp ha hs hh h =>
     .step hb (BlockCorr.withI hc) he hu hp ha (SeqAssigns.of_g (c₁ := ctx) (c₂ := { ctx with I := I₂ }) rfl hs) hh
+      (RegCorr.withI h)
+  | .condStep hb hc he hpc hp ha hs h =>
+    .condStep hb (BlockCorr.withI hc) he hpc hp ha (SeqAssigns.of_g (c₁ := ctx) (c₂ := { ctx with I := I₂ }) rfl hs)
       (RegCorr.withI h)
 
 theorem BlockCorr.withI {b : Block} {cs : List SNode} :

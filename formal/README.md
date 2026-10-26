@@ -35,8 +35,10 @@ representations:
   observationally equal final memory, or the SDFG may be undefined;
   `Corr.corr?_refines`: `Refines t g` for a supported SDFG).
   Structured control flow (`Equiv/CorrCtl`): chains of blocks joined by
-  unconditional edges whose assignments become `AssignNode`s, loop regions,
-  conditional blocks (`if`/`elif`/`else`), break, continue and return.
+  unconditional edges whose assignments become `AssignNode`s, a single
+  conditional out-edge (an `IfScope` holding the edge's assignments and the
+  rest of the chain, `RegCorr.condStep`), loop regions, conditional blocks
+  (`if`/`elif`/`else`), break, continue and return.
   Nested SDFGs (`SegCorr.nestedMap`): a map scope whose body is one nested
   SDFG matches the tree's inlined inner region; the per-call transients are
   related to the tree's names by renaming (`SDFG/Sim.lean`, the simulation
