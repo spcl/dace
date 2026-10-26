@@ -754,6 +754,125 @@ def is_parallel(
     return True
 
 
+def read_overtaken_by_write(
+    state: dace.SDFGState,
+    reader_entry: nodes.MapEntry,
+    reader_exit: nodes.MapExit,
+    later_entry: nodes.MapEntry,
+) -> bool:
+    """Whether a container the Map ``reader_entry`` reads is written before ``later_entry`` by a node that does not
+    precede ``reader_entry``. Fused, the reader runs where ``later_entry`` does and would see that write.
+
+    ``x -> first -> t -> second`` beside ``x -> update -> x' -> ... -> second``: ``first`` reads ``x`` before
+    ``update`` writes it, the fused Map after.
+
+    :param state: The state of both Maps.
+    :param reader_entry: The entry of the Map whose reads move.
+    :param reader_exit: Its exit; what it writes itself is not another writer.
+    :param later_entry: The entry of the Map the reader is fused into.
+    """
+    read: set[str] = set()
+    for edge in state.in_edges(reader_entry):
+        if edge.data.is_empty():
+            continue
+        source = state.memlet_path(edge)[0].src
+        name = _dealias(state, source) if isinstance(source, nodes.AccessNode) else edge.data.data
+        if name is None:
+            return True
+        read.add(name)
+    own = set(state.successors(reader_exit))
+    # A View binding writes nothing: a write through a View is the write into the node it views
+    writers = [
+        node
+        for node in state.data_nodes()
+        if node.data in read
+        and node not in own
+        and not isinstance(node.desc(state.sdfg), dace.data.View)
+        and any(not e.data.is_empty() for e in state.in_edges(node))
+    ]
+    if not writers:
+        return False
+    before_later = sdutils.find_upstream_nodes(later_entry, state)
+    before_reader = sdutils.find_upstream_nodes(reader_entry, state)
+
+    def written_within(writer: nodes.AccessNode, upstream: set) -> bool:
+        # The node itself or what writes it, so a written sink counts at its producer
+        return writer in upstream or any(e.src in upstream for e in state.in_edges(writer) if not e.data.is_empty())
+
+    return any(written_within(w, before_later) and not written_within(w, before_reader) for w in writers)
+
+
+def writes_follow(
+    state: dace.SDFGState,
+    map_entry: nodes.MapEntry,
+    map_exit: nodes.MapExit,
+    sources: set[nodes.AccessNode],
+    names: set[str],
+) -> bool:
+    """Whether every write of the Map ``map_entry`` to one of ``names`` depends, in its body, on the data it reads from
+    one of the access nodes ``sources``."""
+    connectors = {e.dst_conn[3:] for e in state.in_edges(map_entry) if e.src in sources and e.dst_conn}
+    reached = {e.dst for e in state.out_edges(map_entry) if e.src_conn and e.src_conn[4:] in connectors}
+    frontier = list(reached)
+    while frontier:
+        for edge in state.out_edges(frontier.pop()):
+            if edge.dst is not map_exit and edge.dst not in reached:
+                reached.add(edge.dst)
+                frontier.append(edge.dst)
+    for edge in state.in_edges(map_exit):
+        if edge.data.is_empty() or not edge.dst_conn or edge.src in reached:
+            continue
+        for outer in state.out_edges_by_connector(map_exit, "OUT_" + edge.dst_conn[3:]):
+            if isinstance(outer.dst, nodes.AccessNode) and outer.dst.data in names:
+                return False
+    return True
+
+
+def scope_accesses(
+    state: dace.SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit
+) -> tuple[list[tuple[str | None, Any]], list[tuple[str | None, Any]]]:
+    """The ``(container, outer memlet)`` reads and writes of the Map ``map_entry``, Views resolved (``None``: one
+    that does not resolve)."""
+
+    def accesses(edges, endpoint):
+        found = []
+        for edge in edges:
+            if edge.data.is_empty():
+                continue
+            node = endpoint(edge)
+            name = _dealias(state, node) if isinstance(node, nodes.AccessNode) else edge.data.data
+            found.append((name, edge.data))
+        return found
+
+    reads = accesses(state.in_edges(map_entry), lambda e: state.memlet_path(e)[0].src)
+    writes = accesses(state.out_edges(map_exit), lambda e: state.memlet_path(e)[-1].dst)
+    return reads, writes
+
+
+def conflicting_accesses(
+    state: dace.SDFGState,
+    first: tuple[nodes.MapEntry, nodes.MapExit],
+    second: tuple[nodes.MapEntry, nodes.MapExit],
+) -> bool:
+    """Whether a write of one of two unordered Maps may meet an access of the other: fused into one scope, the two
+    bodies run in no fixed order, so ``x -> first -> y`` beside an in-place ``x -> second -> x'`` may read the new
+    value. Two reductions of one container commute and do not conflict."""
+    first_reads, first_writes = scope_accesses(state, *first)
+    second_reads, second_writes = scope_accesses(state, *second)
+    facts = None
+    for writes, others in ((first_writes, second_reads + second_writes), (second_writes, first_reads)):
+        for name, written in writes:
+            for other_name, other in others:
+                if name is None or other_name is None:
+                    return True
+                if name != other_name or (written.wcr is not None and other.wcr is not None):
+                    continue
+                facts = state.sdfg.facts() if facts is None else facts
+                if subsets.intersects(written.subset, other.subset, facts) is not symbolic.Truth.FALSE:
+                    return True
+    return False
+
+
 def find_happens_before_connection(
     state: dace.SDFGState,
     first_map_entry: nodes.MapEntry,

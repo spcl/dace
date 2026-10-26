@@ -468,6 +468,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         ):
             return False
 
+        # The fused Map runs where the second one does: a read of the first one must not move past a write.
+        if mfhelper.read_overtaken_by_write(graph, first_map_entry, first_map_exit, second_map_entry):
+            return False
+
         # Two maps can be serially fused if the node decomposition exists and
         #  at least one of the intermediate output sets is not empty. The state
         #  of the pure outputs is irrelevant for serial Map fusion.
@@ -1898,6 +1902,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  node that is created because the intermediate is shared.
         # TODO(phimuell): Handle this case.
         if not fused_inout_data_names.isdisjoint(exchange_names):
+            return True
+
+        # The intermediate orders the first Map's reads before the second Map's writes only for a write that depends
+        #  on it: an independent one runs in no fixed order with the reads in the fused body.
+        if fused_inout_data_names and not mfhelper.writes_follow(
+            state, second_map_entry, second_map_exit, exchange_nodes, fused_inout_data_names
+        ):
             return True
 
         # While it is forbidden that a data container, used as intermediate, is also
