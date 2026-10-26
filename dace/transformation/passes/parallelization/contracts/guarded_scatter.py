@@ -60,6 +60,7 @@ from dace.sdfg.sdfg import memoize_facts
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.interstate.loop_to_map import Refusal
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.loop_specialization import label_arms
 from dace.transformation.passes.scatter_conflict_guard import (
@@ -131,18 +132,22 @@ class ScatterToGuardedMaps(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> int | None:
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> int | None:
         """Run the full pipeline. Returns the number of distinct ``idx`` arrays guarded,
         or ``None`` if no scatter loop was found.
         """
         from dace.sdfg.propagation import propagate_memlets_sdfg
-        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.parallelization.parallelize_loops import REFUSALS, ParallelizeLoops
+
+        refusals = pipeline_results.get(REFUSALS)
 
         scatter_loops, idx_arrays, sliced_guards, joint_writes = detect_scatter_loops_and_idx_arrays(sdfg)
         # The probes only read the graph, so they share its facts and one lift context per SDFG and contract kind
         with memoize_facts():
             probes = ContractProbes()
-            scatter_loops = [loop for loop in scatter_loops if needs_contract(sdfg, loop, joint_writes, probes)]
+            scatter_loops = [
+                loop for loop in scatter_loops if needs_contract(sdfg, loop, joint_writes, probes, refusals)
+            ]
         kept = set(map(id, scatter_loops))
         sliced_guards = [g for g in sliced_guards if id(g[0]) in kept]
         joint_writes = [w for w in joint_writes if id(w[0]) in kept]
@@ -325,17 +330,28 @@ def lifts(
     return ParallelizeLoops().accepts(loop, probe)
 
 
-def needs_contract(root: SDFG, loop: LoopRegion, joint_writes: list, probes: ContractProbes | None = None) -> bool:
+def needs_contract(
+    root: SDFG, loop: LoopRegion, joint_writes: list, probes: ContractProbes | None = None, refusals: dict | None = None
+) -> bool:
     """Whether ``loop`` is parallel exactly under the scatter contract: refused as it stands (a loop already
     parallel needs no runtime check), and lifted once only its scatter targets' conflicts are waived (any other
-    carried dependence, such as a compaction counter, keeps it sequential)."""
+    carried dependence, such as a compaction counter, keeps it sequential). ``refusals``, the record a
+    :class:`ParallelizeLoops` before it in a pipeline left, answers the first question."""
     owner = _owning_sdfg(root, loop)
-    if lifts(loop, owner, probes=probes):
+    if refusals is not None:
+        refusal = refusals.get(loop)
+        if refusal is None or refusal.kind not in SCATTER_REFUSALS:
+            return False
+    elif lifts(loop, owner, probes=probes):
         return False
     targets = {w.target for joint_loop, w in joint_writes if joint_loop is loop}
     for scattered, _window in _scatter_idx_targets_for_loop(loop, owner).values():
         targets |= scattered
     return lifts(loop, owner, frozenset(targets), probes)
+
+
+#: The refusals of a loop whose only conflicts may be its scatter's: colliding stores and the reads among them.
+SCATTER_REFUSALS = frozenset({Refusal.NON_UNIQUE_WRITE, Refusal.OVERLAPPING_WRITES, Refusal.CARRIED_DEPENDENCE})
 
 
 def detect_scatter_idx_arrays(sdfg: SDFG) -> set[str]:

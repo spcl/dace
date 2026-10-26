@@ -92,14 +92,17 @@ class ParallelizeUnderConstraint(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, _pipeline_results) -> int | None:
-        """Specialize every constraint-parallel loop into ``if cond: par else: seq``.
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> int | None:
+        """Specialize every constraint-parallel loop into ``if cond: par else: seq``. After :class:`ParallelizeLoops`
+        in a pipeline, only the loops it refused on a non-unique write are candidates, and its verdict is reused.
 
         :param sdfg: SDFG to mutate in place.
         :returns: The number of loops specialized, or ``None`` if none.
         """
-        from dace.transformation.interstate.loop_to_map import LoopToMap
-        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+        from dace.transformation.interstate.loop_to_map import LoopToMap, Refusal
+        from dace.transformation.passes.parallelization.parallelize_loops import REFUSALS, ParallelizeLoops
+
+        refusals = pipeline_results.get(REFUSALS)
 
         specialized = 0
         for sd in sdfg.all_sdfgs_recursive():
@@ -114,6 +117,9 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 parent = loop.parent_graph
                 if parent is None or loop not in parent.nodes():
                     continue
+                refusal = None if refusals is None else refusals.get(loop)
+                if refusals is not None and (refusal is None or refusal.kind is not Refusal.NON_UNIQUE_WRITE):
+                    continue
                 # Cheap, read-only structural filter FIRST: only the symbolic-
                 # stride injective-write shape is a candidate. Probing every loop
                 # with LoopToMap (below) is both wasteful and unsafe on shapes it
@@ -124,7 +130,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 # Confirm the only blocker is the constrained condition: LoopToMap
                 # refuses it outright but accepts permissively.
                 probe = LoopToMap()
-                if ParallelizeLoops().accepts(loop, probe):
+                if refusal is None and ParallelizeLoops().accepts(loop, probe):
                     continue
                 if not probe.can_be_applied(parent, 0, owner, permissive=True):
                     continue

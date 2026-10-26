@@ -251,17 +251,24 @@ class WavefrontSkew(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
-        """Skew every eligible nest; the count, or ``None``."""
-        with symbolic.serialization_symbol_dtypes({}, inherit=True):
-            return self.skew_all(sdfg)
+        """Skew every eligible nest; the count, or ``None``. After :class:`ParallelizeLoops` in a pipeline, only the
+        loops it refused on a carried dependence, or held back for a sibling chain, are candidates."""
+        from dace.transformation.passes.parallelization.parallelize_loops import REFUSALS
 
-    def skew_all(self, sdfg: SDFG) -> int | None:
+        with symbolic.serialization_symbol_dtypes({}, inherit=True):
+            return self.skew_all(sdfg, pipeline_results.get(REFUSALS))
+
+    def skew_all(self, sdfg: SDFG, refusals: dict | None = None) -> int | None:
+        """:param refusals: ``{loop: LoopRefusal}`` of the loops :class:`ParallelizeLoops` kept, or ``None`` to try
+        every loop."""
         skewed = 0
         for sd in sdfg.all_sdfgs_recursive():
             occurrences = None
             # Innermost first: an inner front is the wider one, and an outer nest holding a skewed diagonal stays.
             for region in reversed(list(sd.all_control_flow_regions())):
                 if not (isinstance(region, LoopRegion) and region.loop_variable) or emitted_here(region):
+                    continue
+                if refusals is not None and not skewable_refusal(refusals, region):
                     continue
                 parent = region.parent_graph
                 if parent is None or region not in parent.nodes():
@@ -598,6 +605,17 @@ class WavefrontSkew(ppl.Pass):
         tag = zlib.crc32(parts.encode()) & 0xFFFFFFF
         pre = outer.parent_graph.add_state_before(outer, label=f"_skew_guard_{tag:x}")
         tutil.add_abort_guard(pre, f"_skew_guard_{tag:x}", parts)
+
+
+def skewable_refusal(refusals: dict, loop: LoopRegion) -> bool:
+    """Whether :class:`ParallelizeLoops` kept ``loop`` for a reason a skew can lift: a dependence between iterations,
+    a pin (``PinCarriedTopLevelLoops`` pins carried loops), or none (held back for a sibling chain)."""
+    from dace.transformation.interstate.loop_to_map import Refusal
+
+    if loop not in refusals:
+        return False
+    refusal = refusals[loop]
+    return refusal is None or refusal.kind.carried or refusal.kind is Refusal.PINNED
 
 
 def emitted_here(loop: LoopRegion) -> bool:

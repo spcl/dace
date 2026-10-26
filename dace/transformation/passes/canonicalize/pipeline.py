@@ -139,9 +139,9 @@ from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.parallelization.contracts.guarded_scatter import ScatterToGuardedMaps
 from dace.transformation.passes.parallelization.contracts.under_constraint import ParallelizeUnderConstraint
+from dace.transformation.passes.parallelization.parallelize import Parallelize
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.parallelization.sibling_chains import ParallelizeLoopsHoldingSiblingChains
-from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
 from dace.transformation.passes.parallelization_prep import (
     DEFAULT_PEEL_LIMIT,
     DEFAULT_UNROLL_LIMIT,
@@ -982,12 +982,13 @@ def derive_parallelism(
                 ScatterToGuardedMaps(emit_unparallelized_else_branch=True, assume_no_conflicts=assume_parallel_guards),
             )
         ]
-    # Wavefront: skew the nests every level left sequential, then map the exposed axis.
+    # Wavefront: map what now maps, then skew the nests left sequential on a carried dependence.
     s += [(label, RevertNonReductionWCR()), *_inline_single_state(label)]
     if target == "gpu":
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
-    s += [(label, FuseLoops()), (label, WavefrontSkew(target=target))]
-    s += [(label, unit) for unit in loop_to_map_units()]
+    s += [(label, FuseLoops()), (label, PropagateMemlets()), (label, SetSymbolNonnegativeAssumptions())]
+    s += [(label, Parallelize(target=target, hold_sibling_chains=False))]
+    s += [(label, PatternApplyOnceEverywhere([PruneConnectors()]))]
     return s
 
 

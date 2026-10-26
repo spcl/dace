@@ -1660,16 +1660,12 @@ def step_direction(step: Any, facts: symbolic.Facts) -> int | None:
     return None
 
 
-@properties.make_properties
-@xf.explicit_cf_compatible
-class LoopToMap(xf.MultiStateTransformation):
-    """
-    Convert a control flow loop into a dataflow map. Currently only supports the simple case where there is no overlap
-    between inputs and outputs in the body of the loop, and where the loop body only consists of a single state.
-    """
+class LoopLift:
+    """The probe and the rewrite that turn one loop into a map, without the transformation machinery: set
+    :attr:`loop`, ask :meth:`probe`, then :meth:`rewrite`. :class:`LoopToMap` is the transformation over them."""
 
-    loop = xf.PatternNode(LoopRegion)
-
+    #: The loop probed and rewritten.
+    loop: LoopRegion | None = None
     #: Shared analysis a pass probing many loops hands its probes (see :class:`LiftContext`); unset on a plain match.
     lift_context: "LiftContext | None" = None
     #: The resolver probes of one pass share; unset on a plain match.
@@ -1686,16 +1682,16 @@ class LoopToMap(xf.MultiStateTransformation):
     solver_facts: SolverFacts | None = None
     #: Why the last probe refused, or ``None`` after an accept.
     last_refusal: LoopRefusal | None = None
+    #: Leave a loop whose iteration range spans only SMALL symbols (e.g. ``range(n1 + n2)``) sequential.
+    keep_small_loops_sequential: bool = True
 
-    keep_small_loops_sequential = properties.Property(
-        dtype=bool,
-        default=True,
-        desc="Leave a loop whose iteration range spans only SMALL symbols (e.g. ``range(n1 + n2)``) sequential",
-    )
+    def probe(self, permissive: bool = False) -> bool:
+        """Whether :attr:`loop` lifts as the graph stands; on a refusal, :attr:`last_refusal` says why."""
+        return self.can_lift(self.loop.parent_graph, self.loop.sdfg, permissive)
 
-    @classmethod
-    def expressions(cls):
-        return [sdutil.node_path_graph(cls.loop)]
+    def rewrite(self) -> None:
+        """Lift :attr:`loop`, which :meth:`probe` accepted on the current graph."""
+        self.lift_in(self.loop.parent_graph, self.loop.sdfg)
 
     def waives(self, name: str, permissive: bool) -> bool:
         """Whether the dependence test waives conflicts on container ``name``: all of them under ``permissive``,
@@ -1709,8 +1705,8 @@ class LoopToMap(xf.MultiStateTransformation):
         resolver = self.symbol_resolver
         return SymbolResolver() if resolver is None else resolver
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-
+    def can_lift(self, graph: ControlFlowRegion, sdfg: SDFG, permissive: bool = False) -> bool:
+        """:meth:`probe` of :attr:`loop` in ``graph`` of ``sdfg``."""
         # Exposed so companion passes can distinguish a genuine loop-carried
         # dependence from structural/typing inapplicability without re-running
         # the dependence analysis.
@@ -2482,7 +2478,8 @@ class LoopToMap(xf.MultiStateTransformation):
                         return False
         return True
 
-    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
+    def lift_in(self, graph: ControlFlowRegion, sdfg: sd.SDFG) -> None:
+        """:meth:`rewrite` of :attr:`loop` in ``graph`` of ``sdfg``."""
         # Precomputed per-SDFG analysis, when a pass supplies it (see :class:`LiftContext`).
         # Everything read from it here is a value ``apply`` would otherwise recompute per lift.
         lift_ctx: LiftContext | None = self.lift_context
@@ -2952,3 +2949,31 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Integrate the nested SDFG into the parent SDFG
         dealias.integrate_nested_sdfg(nsdfg.sdfg)
+
+
+@properties.make_properties
+@xf.explicit_cf_compatible
+class LoopToMap(LoopLift, xf.MultiStateTransformation):
+    """
+    Convert a control flow loop into a dataflow map. Currently only supports the simple case where there is no overlap
+    between inputs and outputs in the body of the loop, and where the loop body only consists of a single state.
+    The transformation over :class:`LoopLift`.
+    """
+
+    loop = xf.PatternNode(LoopRegion)
+
+    keep_small_loops_sequential = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Leave a loop whose iteration range spans only SMALL symbols (e.g. ``range(n1 + n2)``) sequential",
+    )
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.loop)]
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        return self.can_lift(graph, sdfg, permissive)
+
+    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
+        self.lift_in(graph, sdfg)
