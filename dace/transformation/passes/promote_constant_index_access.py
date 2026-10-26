@@ -83,32 +83,20 @@ import io
 from typing import Any
 
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
-from dace import graphlib as nx
 from dace.memlet import Memlet
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.state import (
-    AbstractControlFlowRegion,
-    ConditionalBlock,
-    ControlFlowBlock,
     ControlFlowRegion,
     LoopRegion,
     SDFGState,
 )
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis.analysis import must_write_state
+from dace.transformation.passes.scalar_fission import AccessIndex, MustDefinition, SlotAccesses, point_subsets_equal
 
 #: Array lifetimes we are allowed to attach a privatized scalar to (the scalar follows
 #: the same scoping rules; persistent / global lifetimes are out of scope for v1).
 _PRIVATIZABLE_LIFETIMES = (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.SDFG)
-
-#: Per-block ``(read, written)`` data names, the shape
-#: :func:`~dace.transformation.passes.analysis.analysis.must_write_state` consumes.
-AccessSetMap = dict[ControlFlowBlock, tuple[set[str], set[str]]]
-#: Per-region immediate-dominator maps.
-IdomMap = dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]]
-#: ``must_write_state`` memo, keyed by ``(data name, id(block))``.
-MustWriteCache = dict[tuple[str, int], SDFGState | None]
 
 
 class _Promotion:
@@ -389,7 +377,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             # access to the same array exists); each slot's live-out check is per-point.
             unique_points: list[subsets.Range] = []
             for s in subs:
-                if not any(self._point_subsets_equal(s, p) for p in unique_points):
+                if not any(point_subsets_equal(s, p) for p in unique_points):
                     unique_points.append(s)
             for point in unique_points:
                 # Refuse the read-modify-write shape (read of slot feeds back
@@ -445,13 +433,10 @@ class PromoteConstantIndexAccess(ppl.Pass):
         * every read is must-defined: preceded, on *every* path through one iteration, by a
           write of the same slot.
 
-        Must-def is decided with the same machinery
-        (:func:`~dace.transformation.passes.analysis.analysis.must_write_state`) that
-        :class:`~dace.transformation.passes.analysis.analysis.ScalarWriteShadowScopes` uses,
-        fed a slot-precise access-set map so the whole-container reasoning answers a
-        per-element question. The dominator walk deliberately stops at ``loop``: a write
-        outside it happened in a different iteration (or before the loop), and cannot cover
-        this iteration's read.
+        Must-def is the shared :class:`~dace.transformation.passes.scalar_fission.MustDefinition`
+        over one element (:class:`~dace.transformation.passes.scalar_fission.SlotAccesses`), entered
+        at the top of an iteration with nothing defined: a write outside ``loop`` happened in a
+        different iteration (or before the loop), and cannot cover this iteration's read.
 
         Anything the analysis cannot place -- an interstate edge that merely mentions the
         array, a loop condition that reads it -- is a refusal, not a permission.
@@ -461,130 +446,20 @@ class PromoteConstantIndexAccess(ppl.Pass):
         :param slot: The constant point being considered for promotion.
         :returns: ``True`` only when the premise is established.
         """
-        body_states = list(loop.states())
-        if not body_states:
+        accesses = SlotAccesses(name, slot)
+        index = AccessIndex(loop.sdfg)
+        written = read = False
+        for state in loop.states():
+            for node in index.nodes(state, name):
+                written = written or bool(accesses.writes(state, node))
+                read = read or bool(accesses.reads(state, node))
+        if not (written and read):
             return True
-
-        # Slot-precise (read, write) sets keyed by ARRAY name but recording only accesses that
-        # hit ``slot``: the shape ``must_write_state`` expects, narrowed to one element.
-        # Only a write at the state's TOP scope counts as a must-def -- one inside a map scope
-        # does not run at all when the map range is empty, so it establishes nothing. Reads
-        # are collected at every scope: a read inside a map still has to be covered.
-        access_sets: AccessSetMap = {}
-        reads: dict[SDFGState, list[nodes.AccessNode]] = {}
-        writes: dict[SDFGState, list[nodes.AccessNode]] = {}
-        for state in body_states:
-            read_nodes: list[nodes.AccessNode] = []
-            write_nodes: list[nodes.AccessNode] = []
-            for node in state.nodes():
-                if not isinstance(node, nodes.AccessNode) or node.data != name:
-                    continue
-                if self._edges_touch_slot(state.out_edges(node), name, slot):
-                    read_nodes.append(node)
-                if state.entry_node(node) is None and self._edges_touch_slot(state.in_edges(node), name, slot):
-                    write_nodes.append(node)
-            reads[state] = read_nodes
-            writes[state] = write_nodes
-            access_sets[state] = ({name} if read_nodes else set(), {name} if write_nodes else set())
-
-        if not any(writes.values()):
-            return True
-        if not any(reads.values()):
-            return True
-
-        # Symbolic reads of the array: an iedge assignment/condition, or the loop's own
-        # header expressions. Their position in the iteration is not modeled here, so with
-        # writes present in the body the honest answer is "cannot tell" -> refuse.
-        for edge in loop.all_interstate_edges():
-            ied = edge.data
-            if ied is None:
-                continue
-            if any(rhs and self._expr_references_name(rhs, name) for rhs in ied.assignments.values()):
-                return False
-            if ied.condition is not None and self._expr_references_name(ied.condition.as_string, name):
-                return False
+        # The loop's own header runs between iterations, outside the body the walk below covers.
         for code in (loop.loop_condition, loop.init_statement, loop.update_statement):
             if code is not None and self._expr_references_name(code.as_string, name):
                 return False
-
-        # Region-level access sets + immediate dominators, for every region inside the loop.
-        idom: IdomMap = {}
-        for cfg in loop.all_control_flow_regions():
-            region_reads: set[str] = set()
-            region_writes: set[str] = set()
-            for state in cfg.states():
-                region_reads |= access_sets[state][0]
-                region_writes |= access_sets[state][1]
-            access_sets[cfg] = (region_reads, region_writes)
-            if isinstance(cfg, ConditionalBlock):
-                # A ConditionalBlock has no edges; each branch dominates only itself.
-                idom[cfg] = {branch: branch for _, branch in cfg.branches}
-            else:
-                idom[cfg] = nx.immediate_dominators(cfg.nx, cfg.start_block)
-
-        cache: MustWriteCache = {}
-        for state, read_nodes in reads.items():
-            for read in read_nodes:
-                if not self._read_is_must_defined(
-                    loop, name, slot, state, read, writes[state], access_sets, idom, cache
-                ):
-                    return False
-        return True
-
-    def _read_is_must_defined(
-        self,
-        loop: LoopRegion,
-        name: str,
-        slot: subsets.Range,
-        state: SDFGState,
-        read: nodes.AccessNode,
-        state_writes: list[nodes.AccessNode],
-        access_sets: AccessSetMap,
-        idom: IdomMap,
-        cache: MustWriteCache,
-    ) -> bool:
-        """Whether one read AccessNode of ``name[slot]`` is preceded by a write in the same iteration."""
-        # The read node is itself written at the slot -- the write is ordered before the read.
-        # Only at the top scope: inside a map, an empty range leaves the node unwritten.
-        if state.entry_node(read) is None and self._edges_touch_slot(state.in_edges(read), name, slot):
-            return True
-        # Another write of the slot in the same state, with a dataflow path to the read.
-        for cand in state_writes:
-            if cand is not read and nx.has_path(state.nx, cand, read):
-                return True
-        # A block that dominates the read and writes the slot on every path through itself.
-        pivot: ControlFlowBlock = state
-        region: AbstractControlFlowRegion | None = state.parent_graph
-        # ``idom`` covers exactly the regions inside ``loop``; leaving that set means the walk
-        # left the loop without finding a cover, which is a refusal.
-        while region is not None and region in idom:
-            region_idom = idom[region]
-            block = region_idom.get(pivot)
-            if block is pivot:
-                block = None
-            while block is not None:
-                if must_write_state(name, block, access_sets, idom, cache) is not None:
-                    return True
-                nxt = region_idom.get(block)
-                block = None if nxt is block else nxt
-            if region is loop:
-                # Above the promoted loop lies a different iteration; nothing there covers
-                # this read.
-                return False
-            pivot = region
-            region = region.parent_graph
-        return False
-
-    @classmethod
-    def _edges_touch_slot(cls, edges, name: str, slot: subsets.Range) -> bool:
-        """Whether any of ``edges`` carries a memlet on exactly ``name[slot]``."""
-        for edge in edges:
-            memlet = edge.data
-            if memlet is None or memlet.data != name or not isinstance(memlet.subset, subsets.Range):
-                continue
-            if cls._point_subsets_equal(memlet.subset, slot):
-                return True
-        return False
+        return not MustDefinition(accesses, index).exposed(loop)
 
     def _slot_has_in_body_rmw(self, loop: LoopRegion, name: str, slot: subsets.Range) -> bool:
         """``True`` iff some write of ``name[slot]`` inside the loop body has a
@@ -630,7 +505,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                     e.data is not None
                     and e.data.data == name
                     and e.data.subset is not None
-                    and self._point_subsets_equal(e.data.subset, slot)
+                    and point_subsets_equal(e.data.subset, slot)
                     for e in state.out_edges(n)
                 ):
                     reads.append((state, n))
@@ -638,7 +513,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                     e.data is not None
                     and e.data.data == name
                     and e.data.subset is not None
-                    and self._point_subsets_equal(e.data.subset, slot)
+                    and point_subsets_equal(e.data.subset, slot)
                     for e in state.in_edges(n)
                 ):
                     writes.append((state, n))
@@ -780,15 +655,6 @@ class PromoteConstantIndexAccess(ppl.Pass):
         # No free symbols across any axis -> truly constant.
         return len(sub.free_symbols) == 0
 
-    @staticmethod
-    def _point_subsets_equal(a: subsets.Range, b: subsets.Range) -> bool:
-        """Equality on two single-point Ranges -- compare the lower bound on each axis."""
-        if len(a.ranges) != len(b.ranges):
-            return False
-        return all(
-            symbolic.pystr_to_symbolic(ar[0]) == symbolic.pystr_to_symbolic(br[0]) for ar, br in zip(a.ranges, b.ranges)
-        )
-
     def _not_live_out(self, loop: LoopRegion, name: str, slot: subsets.Range | None = None) -> bool:
         """Live-out check for ``name`` (whole array) or ``name[slot]`` (one element).
 
@@ -898,7 +764,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                     continue
                 if not self._is_constant_point_subset(memlet.subset):
                     continue
-                if not self._point_subsets_equal(memlet.subset, c_subset):
+                if not point_subsets_equal(memlet.subset, c_subset):
                     return False
         return True
 
@@ -957,7 +823,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 memlet = edge.data
                 if memlet is None or memlet.data != arr_name:
                     continue
-                if not single_slot and not self._point_subsets_equal(memlet.subset, c_subset):
+                if not single_slot and not point_subsets_equal(memlet.subset, c_subset):
                     # Sibling slot; left for its own _promote call.
                     continue
                 edits.append((memlet, memlet.data, memlet.subset))

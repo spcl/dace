@@ -25,9 +25,9 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.passes.buffer_expansion import BufferExpansion
 from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
+from dace.transformation.passes.scalar_fission import edge_subset
 
 READ = (1, 4)
 WRITE = (1, 3)
@@ -98,8 +98,8 @@ def test_insert_assign_tasklets_at_map_boundary_keeps_self_copy_direction(build_
 
 
 @pytest.mark.parametrize("build_sdfg", ORIENTATIONS)
-def test_buffer_expansion_arr_subset_separates_the_two_ends(build_sdfg):
-    """``BufferExpansion._arr_subset`` reports the region an AccessNode touches on an incident edge.
+def test_edge_subset_separates_the_two_ends(build_sdfg):
+    """``edge_subset`` reports the region an AccessNode touches on an incident edge.
 
     On a self-copy the source node's out-edge and the destination node's in-edge are the SAME edge, so
     a name-based lookup returns one region for both -- the read region then counts as a write, and a
@@ -109,8 +109,8 @@ def test_buffer_expansion_arr_subset_separates_the_two_ends(build_sdfg):
     state = next(iter(sdfg.states()))
     edge = state.edges()[0]
 
-    read = BufferExpansion._arr_subset(state, edge, edge.src)
-    write = BufferExpansion._arr_subset(state, edge, edge.dst)
+    read = edge_subset(state, edge, edge.src)
+    write = edge_subset(state, edge, edge.dst)
     assert str(read) == f"{READ[0]}, {READ[1]}", f"source node reads {read}"
     assert str(write) == f"{WRITE[0]}, {WRITE[1]}", f"destination node writes {write}"
     assert str(read) != str(write)
