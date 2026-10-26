@@ -2781,9 +2781,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if node not in self.nodes():
             raise ValueError(f"Node {node} is not in this state")
 
-        # Check that implementation exists
-        if implementation not in node.implementations:
-            raise KeyError(f"Unknown implementation for node {type(node).__name__}: {implementation}")
+        # Check that implementation exists ('ai' is reserved, and resolved by expand itself)
+        if implementation not in node.available_implementations():
+            raise KeyError(
+                f"Unknown implementation for node {type(node).__name__}: {implementation}. "
+                f"Available implementations: {', '.join(sorted(node.available_implementations()))}"
+            )
 
         # Use the new expand interface
         return node.expand(self, implementation, **expansion_kwargs)
@@ -4492,7 +4495,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 if full_cond_expression is None:
                     full_cond_expression = condition.code[0]
                 else:
-                    full_cond_expression = astutils.and_expr(full_cond_expression, condition.code[0])
+                    full_cond_expression = astutils.or_expr(full_cond_expression, condition.code[0])
                 parent.add_node(region)
                 parent.add_edge(guard_state, region, InterstateEdge(condition=condition))
                 parent.add_edge(region, end_state, InterstateEdge())
