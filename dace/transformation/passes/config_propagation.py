@@ -64,6 +64,13 @@ def specialize_config(sdfg: SDFG, values: dict[str, Value]) -> None:
     specialize_scalars(sdfg, scalars)
 
 
+def specialize_variant(sdfg: SDFG, values: dict[str, Value]) -> None:
+    """Bake ``values`` into ``sdfg`` in place and drop the branches they decide."""
+    specialize_config(sdfg, values)
+    DeadStateElimination().apply_pass(sdfg, {})
+    sdfg.simplify()
+
+
 def config_condition(sdfg: SDFG, values: dict[str, Value]) -> str:
     """The condition selecting ``values``, read from the arguments of ``sdfg``."""
 
@@ -109,9 +116,7 @@ class ConfigPropagation(ppl.Pass):
     def build_variant(self, sdfg: SDFG, values: dict[str, Value], selecting: list[str]) -> SDFG:
         variant = copy.deepcopy(sdfg)
         variant.name = "_".join([sdfg.name] + [f"{name}_{values[name]}" for name in selecting])
-        specialize_config(variant, values)
-        DeadStateElimination().apply_pass(variant, {})
-        variant.simplify()
+        specialize_variant(variant, values)
         return variant
 
     def add_call(self, root: SDFG, state: SDFGState, variant: SDFG, path: str) -> None:
@@ -122,7 +127,9 @@ class ConfigPropagation(ppl.Pass):
         # An argument the variant no longer touches stays connected: every non-transient needs a connector
         inputs = dict.fromkeys(sorted((args & reads) | (args - reads - writes)))
         outputs = dict.fromkeys(sorted(args & writes))
-        symbols = sorted(str(s) for s in variant.free_symbols)
+        # Only what the variant uses: a symbol baked away may still be declared there
+        used = {str(s) for s in variant.used_symbols(all_symbols=True)}
+        symbols = sorted(str(s) for s in variant.free_symbols if str(s) in used)
         node = state.add_nested_sdfg(
             None,
             inputs,
