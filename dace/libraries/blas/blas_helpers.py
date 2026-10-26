@@ -69,16 +69,6 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> tuple[str, str, str]:
         raise TypeError(f"Type {str(dtype)} not supported in BLAS operations")
 
 
-def rocblas_type(ctype: str) -> str:
-    """Map a CUDA vendor C type from :func:`cublas_type_metadata` to its rocBLAS spelling.
-
-    Only the complex types differ; ``float`` and ``double`` are the same C type in both. A
-    rocSOLVER call that took the CUDA spelling emitted ``(cuDoubleComplex*)`` into a ROCm build,
-    where that type does not exist, so quatrex_rgf's complex128 ``Inv`` failed to compile there.
-    """
-    return {"cuComplex": "rocblas_float_complex", "cuDoubleComplex": "rocblas_double_complex"}.get(ctype, ctype)
-
-
 def dtype_to_cudadatatype(dtype: dtypes.typeclass) -> str:
     types = {
         dtypes.float16: "CUDA_R_16F",
@@ -271,7 +261,7 @@ def promote_operands(node, state, connectors, dtype: dtypes.typeclass) -> None:
     A vendor BLAS routine takes ONE element type for all its matrices, and the expansions name it
     after one operand while casting every pointer to it. A real matrix times a complex one (npbench
     cegterg's ``deeq @ ps``) then reads the real buffer as complex numbers: the OpenBLAS build rejects
-    the pointer, the rocBLAS/cuBLAS C-style casts compile and return wrong numbers. NumPy promotes
+    the pointer, the cuBLAS C-style casts compile and return wrong numbers. NumPy promotes
     the operands to the result type, so the copy is exactly that promotion. The copy covers the
     memlet's subset only, with the same size, so every shape and matrix-view rule reading the
     connector sees what it saw before; it is contiguous, so the leading dimension is its own.
@@ -345,6 +335,13 @@ def operand(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG",
     subset = copy.deepcopy(edge.data.subset)
     dims = subset.squeeze()
     return Operand(desc, subset.size(), [desc.strides[d] * edge.data.subset[d][2] for d in dims])
+
+
+def require_one_dtype(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", *connectors: str) -> None:
+    """Raise unless the data on every one of ``connectors`` has one element type: one BLAS routine reads them all."""
+    types = {connector: operand(node, state, sdfg, connector).desc.dtype for connector in connectors}
+    if len(set(types.values())) > 1:
+        raise ValueError(f"{node.label}: every operand needs one element type, got {types}")
 
 
 class MatrixLayout(NamedTuple):

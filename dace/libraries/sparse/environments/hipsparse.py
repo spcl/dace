@@ -39,7 +39,7 @@ class hipSPARSE:
     def cmake_includes():
         """The ROCm include directory, so the HOST compiler can find the HIP headers too.
 
-        Same reason as the rocBLAS environment: a tasklet reaching this through the ``frame`` entry
+        A tasklet reaching this through the ``frame`` entry
         is compiled by g++, which gets no HIP include path of its own.
         """
         root = os.environ.get("ROCM_PATH") or os.environ.get("HIP_PATH")

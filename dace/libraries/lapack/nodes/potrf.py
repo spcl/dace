@@ -5,6 +5,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
@@ -60,10 +61,8 @@ class ExpandPotrfMKL(ExpandTransformation):
 class ExpandPotrfGPUSolver(ExpandTransformation):
     """Cholesky factorization on a vendor GPU solver.
 
-    The two differ in more than spelling here, which is why the emitted body is a per-dialect
-    method rather than a format string: cuSolverDn sizes and allocates a workspace through
-    ``*_bufferSize`` before the call, and rocSOLVER takes none at all. Everything up to that point
-    -- validation, the veclen division, the fill mode -- is shared.
+    cuSolverDn sizes and allocates a workspace through ``*_bufferSize`` before the call; hipSOLVER
+    is the same call renamed. Validation, the veclen division and the fill mode are shared.
     """
 
     environments = []
@@ -120,22 +119,9 @@ class ExpandPotrfCuSolverDn(ExpandPotrfGPUSolver):
                 """
 
 
-@dace.library.expansion
-class ExpandPotrfRocSolver(ExpandPotrfGPUSolver):
-    environments = [environments.rocsolver.rocSOLVER]
-
-    @classmethod
-    def fill_enum(cls, lower: bool) -> str:
-        return "rocblas_fill_lower" if lower else "rocblas_fill_upper"
-
-    @classmethod
-    def call(cls, func, ctype, uplo, rows, stride) -> str:
-        # No workspace: rocSOLVER manages its own, so there is nothing to size, allocate or free.
-        ctype = blas_helpers.rocblas_type(ctype)
-        return f"""
-                dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
-                    __dace_rocblas_handle, {uplo}, {rows}, ({ctype}*)_xin, {stride}, _res));
-                """
+ExpandPotrfHipSolverDn = hip_dialect.hip_expansion(
+    ExpandPotrfCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
 
 
 @dace.library.node
@@ -145,7 +131,7 @@ class Potrf(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandPotrfOpenBLAS,
         "MKL": ExpandPotrfMKL,
         "cuSolverDn": ExpandPotrfCuSolverDn,
-        "rocSOLVER": ExpandPotrfRocSolver,
+        "hipSolverDn": ExpandPotrfHipSolverDn,
     }
     default_implementation = None
 

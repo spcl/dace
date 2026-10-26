@@ -31,7 +31,7 @@ def device_inverse(implementation: str) -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.parametrize("implementation", ["rocSOLVER", "cuSolverDn"])
+@pytest.mark.parametrize("implementation", ["hipSolverDn", "cuSolverDn"])
 def test_the_device_identity_fill_is_a_kernel(implementation):
     sdfg = device_inverse(implementation)
     sdfg.expand_library_nodes(recursive=False)

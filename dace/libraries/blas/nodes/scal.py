@@ -1,223 +1,81 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BLAS Level-1 ``SCAL`` library node — ``x := a * x`` (in-place vector scale).
-
-Mirrors the structure of :mod:`dace.libraries.blas.nodes.dot`: a pure
-mapped-tasklet expansion, plus cBLAS-backed OpenBLAS / MKL expansions
-and a cuBLAS expansion. The ``_x`` connector is both input and output
-(in-place), matching the cBLAS / cuBLAS in-place signature.
-"""
-
-import copy
-import warnings
-from typing import TYPE_CHECKING
-
-import dace.library
-import dace.properties
-import dace.sdfg.nodes
-from dace import SDFG, SDFGState, symbolic
+import dace
+from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect
+from dace.libraries.blas.blas_helpers import operand
+from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-if TYPE_CHECKING:
-    from dace.frontend.python.newast import ProgramVisitor
 
-
-@dace.library.expansion
+@library.expansion
 class ExpandScalPure(ExpandTransformation):
-    """Backend-agnostic expansion: a single mapped tasklet writes ``a*x_i`` into ``_res[i]``.
-
-    Modeled with separate ``_x`` input and ``_res`` output buffers (mirroring
-    :class:`Axpy`) so the codegen doesn't generate two declarations for the
-    same connector when the node is in-place. The caller can pass the same
-    array for ``_x`` and ``_res`` to achieve true in-place scaling.
-    """
-
     environments: list[type] = []
 
     @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_x, stride_x), (desc_res, stride_res), sz = node.validate(parent_sdfg, parent_state)
-        n = n or node.n or sz
-        a = node.a
-
-        sdfg = dace.SDFG(node.label + "_sdfg")
-        sdfg.add_array("_x", [n], desc_x.dtype, strides=[stride_x], storage=desc_x.storage)
-        sdfg.add_array("_res", [n], desc_res.dtype, strides=[stride_res], storage=desc_res.storage)
-
-        state = sdfg.add_state(node.label + "_state")
-        state.add_mapped_tasklet(
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
+        sdfg.add_state().add_mapped_tasklet(
             "scal",
-            {"__i": f"0:{n}"},
-            {"__xin": dace.Memlet("_x[__i]")},
-            f"__xout = ({a}) * __xin",
-            {"__xout": dace.Memlet("_res[__i]")},
+            {"__i": f"0:{sdfg.arrays['_x'].shape[0]}"},
+            {"__x": dace.Memlet("_x[__i]")},
+            f"__res = ({node.a}) * __x",
+            {"__res": dace.Memlet("_res[__i]")},
             external_edges=True,
         )
         return sdfg
 
 
-@dace.library.expansion
-class ExpandScalOpenBLAS(ExpandTransformation):
-    environments = [environments.openblas.OpenBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_x, stride_x), (desc_res, stride_res), sz = node.validate(parent_sdfg, parent_state)
-        dtype = desc_x.dtype.base_type
-
-        try:
-            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
-        except TypeError as ex:
-            warnings.warn(f"{ex}. Falling back to pure expansion")
-            return ExpandScalPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
-
-        prefix = func.lower()
-        n = n or node.n or sz
-        a = node.a
-
-        # cBLAS scal updates in place; we first ``cblas_?copy`` ``_x`` into
-        # ``_res`` and then call ``cblas_?scal`` on ``_res`` to honour the
-        # node's two-buffer convention.
-        if dtype in (dace.complex64, dace.complex128):
-            code = f"""
-            {dtype.ctype} __alpha = {dtype.ctype}({a});
-            cblas_{prefix}copy({n}, _x, {stride_x}, _res, {stride_res});
-            cblas_{prefix}scal({n}, &__alpha, _res, {stride_res});
-            """
-        else:
-            code = f"""
-            cblas_{prefix}copy({n}, _x, {stride_x}, _res, {stride_res});
-            cblas_{prefix}scal({n}, ({dtype.ctype})({a}), _res, {stride_res});
-            """
-
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
-        )
-        return tasklet
+def scal_call(node, state, sdfg, environment=None) -> SDFG:
+    """``_res = _x``, then ``?scal`` scales ``_res`` in place, through CBLAS or the GPU library of ``environment``."""
+    x, res = operand(node, state, sdfg, "_x"), operand(node, state, sdfg, "_res")
+    dtype = x.desc.dtype
+    if environment is not None:
+        gpu = gpu_dialect.gpu_call(dtype)
+        if gpu is None:
+            return ExpandScalPure.expansion(node, state, sdfg)
+        scalars, arg = gpu_dialect.scalar_pointers(gpu, dtype, a=node.a)
+        call = f"{gpu.routine('scal')}({gpu_dialect.HANDLE}, {x.shape[0]}, {arg['a']}, {gpu.pointer('__res')}, {res.strides[0]})"
+        code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
+        return blas_helpers.in_place_call(node, state, sdfg, "_x", "_res", code)
+    prefix = blas_helpers.blas_prefix(dtype)
+    if prefix is None:
+        return ExpandScalPure.expansion(node, state, sdfg)
+    scalars, arg = blas_helpers.scalar_arguments(dtype, a=node.a)
+    call = f"cblas_{prefix.lower()}scal({x.shape[0]}, {arg['a']}, __res, {res.strides[0]});"
+    return blas_helpers.in_place_call(node, state, sdfg, "_x", "_res", scalars + call)
 
 
-@dace.library.expansion
-class ExpandScalMKL(ExpandTransformation):
-    environments = [environments.intel_mkl.IntelMKL]
-
-    @staticmethod
-    def expansion(*args, **kwargs):
-        return ExpandScalOpenBLAS.expansion(*args, **kwargs)
-
-
-@dace.library.expansion
-class ExpandScalGPUBLAS(ExpandTransformation):
-    environments: list[type] = []
-    dialect: gpu_dialect.GpuBlasDialect
-
-    @classmethod
-    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_x, stride_x), (desc_res, stride_res), sz = node.validate(parent_sdfg, parent_state)
-        dtype = desc_x.dtype.base_type
-
-        try:
-            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
-        except TypeError as ex:
-            warnings.warn(f"{ex}. Falling back to pure expansion")
-            return ExpandScalPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
-
-        n = n or node.n or sz
-        a = node.a
-
-        code = cls.environments[0].handle_setup_code(node)
-        code += gpu_dialect.host_scalar_mode(
-            cls.dialect,
-            f"""
-        {dtype.ctype} __alpha = {dtype.ctype}({a});
-        {cls.dialect.func(func, "copy")}({cls.dialect.handle}, {n}, _x, {stride_x}, _res, {stride_res});
-        {cls.dialect.func(func, "scal")}({cls.dialect.handle}, {n}, &__alpha, _res, {stride_res});
-        """,
-        )
-
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
-        )
-        return tasklet
-
-
-@dace.library.expansion
-class ExpandScalCuBLAS(ExpandScalGPUBLAS):
-    environments = [environments.cublas.cuBLAS]
-    dialect = gpu_dialect.CUBLAS
-
-
-@dace.library.expansion
-class ExpandScalRocBLAS(ExpandScalGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    dialect = gpu_dialect.ROCBLAS
-
-
-@dace.library.node
-class Scal(dace.sdfg.nodes.LibraryNode):
-    """BLAS ``?SCAL``: in-place vector scale ``x := a * x``.
-
-    The connector ``_x`` is both input and output. ``a`` is a scalar
-    Python / numpy / sympy value passed as a node property.
-    """
+@library.node
+class Scal(nodes.LibraryNode):
+    """BLAS ``?scal``: ``_res = a * _x`` for vectors."""
 
     implementations = {
         "pure": ExpandScalPure,
-        "OpenBLAS": ExpandScalOpenBLAS,
-        "MKL": ExpandScalMKL,
-        "cuBLAS": ExpandScalCuBLAS,
-        "rocBLAS": ExpandScalRocBLAS,
+        **gpu_dialect.vendor_expansions("Scal", scal_call),
     }
     default_implementation = None
 
-    a = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("a"))
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    a = properties.SymbolicProperty(allow_none=False, default=1, desc="The scaling factor.")
 
-    def __init__(self, name, a=None, n=None, **kwargs):
-        super().__init__(name, inputs={"_x"}, outputs={"_res"}, **kwargs)
-        self.a = a if a is not None else dace.symbolic.symbol("a")
-        self.n = n
+    def __init__(self, name, a=1, **kwargs):
+        super().__init__(name, inputs=["_x"], outputs=["_res"], **kwargs)
+        self.a = a
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_x, stride_x), (desc_res, stride_res), n)``."""
-        in_edges = state.in_edges(self)
-        out_edges = state.out_edges(self)
-        if len(in_edges) != 1 or len(out_edges) != 1:
-            raise ValueError("SCAL expects one input and one output")
-
-        in_memlet, out_memlet = in_edges[0].data, out_edges[0].data
-        desc_x = sdfg.arrays[in_memlet.data]
-        desc_res = sdfg.arrays[out_memlet.data]
-
-        sq_in = copy.deepcopy(in_memlet.subset)
-        sq_out = copy.deepcopy(out_memlet.subset)
-        dims_in = sq_in.squeeze()
-        dims_out = sq_out.squeeze()
-        if len(sq_in.size()) != 1 or len(sq_out.size()) != 1:
-            raise ValueError("SCAL only supported on 1-D arrays")
-        if symbolic.inequal_symbols(sq_in.num_elements(), sq_out.num_elements()):
-            raise ValueError("SCAL: input and output must be the same length")
-        stride_x = desc_x.strides[dims_in[0]]
-        stride_res = desc_res.strides[dims_out[0]]
-        return (desc_x, stride_x), (desc_res, stride_res), sq_in.num_elements()
+        blas_helpers.require_one_dtype(self, state, sdfg, "_x", "_res")
+        x, res = operand(self, state, sdfg, "_x").shape, operand(self, state, sdfg, "_res").shape
+        if len(x) != 1 or x != res:
+            raise ValueError(f"{self.label}: _x and _res must be vectors of one length")
 
 
-# Numpy replacement
 @oprepo.replaces("dace.libraries.blas.scal")
 @oprepo.replaces("dace.libraries.blas.Scal")
-def scal_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, a, x, result=None):
-    """Build a :class:`Scal` library node and wire it into ``state``.
-
-    :param a: Scalar multiplier.
-    :param x: Name of the input array.
-    :param result: Name of the output array. Defaults to ``x`` (in-place).
-    """
+def scal_libnode(pv, sdfg: SDFG, state: SDFGState, a, x, result=None):
     result = result if result is not None else x
-    x_in = state.add_read(x)
-    res_out = state.add_write(result)
-    libnode = Scal("scal", a=a, n=sdfg.arrays[x].shape[0])
-    state.add_node(libnode)
-    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
-    state.add_edge(libnode, "_res", res_out, None, mm.Memlet(result))
+    node = Scal("scal", a=a)
+    state.add_edge(state.add_read(x), None, node, "_x", mm.Memlet(x))
+    state.add_edge(node, "_res", state.add_write(result), None, mm.Memlet(result))
     return []

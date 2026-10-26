@@ -3,7 +3,7 @@
 
 A BLAS routine takes one element type for all its matrices, and the expansions named it after A and
 cast every pointer to it. A real A times a complex B called ``dgemm`` on the complex buffers: the
-OpenBLAS build rejects the pointer, and the rocBLAS/cuBLAS C-style casts compile and return wrong
+OpenBLAS build rejects the pointer, and the cuBLAS C-style casts compile and return wrong
 numbers. npbench cegterg's non-local projector ``deeq @ ps`` is that product; it failed to compile on
 the CPU canonicalize column and returned an eigenvalue error of 100% on the GPU one.
 """
@@ -119,7 +119,7 @@ def test_a_bfloat16_gemm_expands_to_loops_in_bfloat16():
 def test_a_mixed_device_gemm_matches_numpy(a_dtype, b_dtype):
     import cupy
 
-    implementation = "rocBLAS" if common.get_gpu_backend() == "hip" else "cuBLAS"
+    implementation = "hipBLAS" if common.get_gpu_backend() == "hip" else "cuBLAS"
     sdfg = mixed_gemm(implementation, a_dtype, b_dtype, dtypes.StorageType.GPU_Global)
     a, b, ref = operands(a_dtype, b_dtype)
     c = cupy.zeros((M, N), np.complex128)

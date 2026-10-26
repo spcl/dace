@@ -104,12 +104,12 @@ def test_no_frame_header_names_the_cuda_runtime_on_a_rocm_host(env_name: str) ->
 @pytest.mark.parametrize(
     "backend, vendors, foreign",
     [
-        ("cuda", ("cuBLAS", "cuSolverDn", "cuTENSOR"), ("rocBLAS", "rocSOLVER", "hipTENSOR")),
-        ("hip", ("rocBLAS", "rocSOLVER", "hipTENSOR"), ("cuBLAS", "cuSolverDn", "cuTENSOR")),
+        ("cuda", ("cuBLAS", "cuSolverDn", "cuTENSOR"), ("hipBLAS", "hipSolverDn", "hipTENSOR")),
+        ("hip", ("hipBLAS", "hipSolverDn", "hipTENSOR"), ("cuBLAS", "cuSolverDn", "cuTENSOR")),
     ],
 )
 def test_canonicalize_picks_the_backend_s_own_vendor_libraries(backend, vendors, foreign, monkeypatch) -> None:
-    """The canonicalize perf tail forced a pick from a CUDA-only list, so every rocBLAS-lowered
+    """The canonicalize perf tail forced a pick from a CUDA-only list, so every vendor-lowered
     node fell back to the serial ``pure`` loop on a ROCm host -- the lowering existed and was
     never selected. Both tensor libraries are pinned installed: whether THIS host can build them is
     :func:`test_a_tensor_library_the_host_cannot_build_is_not_picked`'s question."""
@@ -196,7 +196,7 @@ def test_a_tensor_contraction_does_not_lower_to_a_library_the_host_cannot_build(
     "backend, blas, env",
     [
         ("cuda", "cuBLAS", cutensor.cuTensor),
-        ("hip", "rocBLAS", hiptensor.hipTensor),
+        ("hip", "hipBLAS", hiptensor.hipTensor),
     ],
 )
 @pytest.mark.parametrize(

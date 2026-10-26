@@ -128,7 +128,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         bout = state.add_access("_aout")
 
     # The identity is written into the operand's own storage. When that storage is on the device, the map must
-    # run as a kernel because a host map over ``GPU_Global`` memory is invalid (quatrex_rgf's rocSOLVER inverse).
+    # run as a kernel because a host map over ``GPU_Global`` memory is invalid (quatrex_rgf's GPU inverse).
     eye_schedule = (
         dace.dtypes.ScheduleType.GPU_Device
         if operand_storage in GPU_RESIDENT_STORAGES
@@ -236,12 +236,12 @@ class ExpandInvCuSolverDn(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandInvRocSolver(ExpandTransformation):
-    environments = [environments.rocsolver.rocSOLVER]
+class ExpandInvHipSolverDn(ExpandTransformation):
+    environments = [environments.hipsolverdn.hipSolverDn]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        return _make_sdfg_getrs(node, parent_state, parent_sdfg, "rocSOLVER")
+        return _make_sdfg_getrs(node, parent_state, parent_sdfg, "hipSolverDn")
 
 
 @dace.library.node
@@ -252,7 +252,7 @@ class Inv(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandInvOpenBLAS,
         "MKL": ExpandInvMKL,
         "cuSolverDn": ExpandInvCuSolverDn,
-        "rocSOLVER": ExpandInvRocSolver,
+        "hipSolverDn": ExpandInvHipSolverDn,
     }
     default_implementation = None
 

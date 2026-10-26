@@ -208,7 +208,7 @@ def test_a_top_level_batched_gemm_is_one_vendor_batched_call():
     no kernel of per-block products around it."""
     sdfg = canonical_gpu(batched_gemm)
     assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)
-    assert library_nodes(sdfg)["BatchedMatMul"].implementation in ("cuBLAS", "rocBLAS")
+    assert library_nodes(sdfg)["BatchedMatMul"].implementation in ("cuBLAS", "hipBLAS")
 
 
 def test_a_dot_over_a_gathered_row_fuses_into_one_block_reduction():

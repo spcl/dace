@@ -82,8 +82,8 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
         pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
         pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
         pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-        pytest.param("rocSOLVER", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-        pytest.param("rocSOLVER", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("hipSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("hipSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
     ],
 )
 def test_potrf(implementation, dtype, storage):

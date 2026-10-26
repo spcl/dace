@@ -168,7 +168,7 @@ def test_canonicalize_cpu_lowers_eigh_to_lapack(dtype: dace.typeclass) -> None:
 
 
 def device_solver() -> str:
-    return "rocSOLVER" if common.get_gpu_backend() == "hip" else "cuSolverDn"
+    return "hipSolverDn" if common.get_gpu_backend() == "hip" else "cuSolverDn"
 
 
 def run_gpu(sdfg: dace.SDFG, a: np.ndarray, real: type) -> tuple[np.ndarray, np.ndarray]:

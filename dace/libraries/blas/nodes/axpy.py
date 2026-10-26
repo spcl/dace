@@ -9,6 +9,7 @@ from dace import SDFG, SDFGState, symbolic
 from dace import data as dt
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
@@ -185,10 +186,7 @@ class ExpandAxpyCuBLAS(ExpandAxpyGPUBLAS):
     dialect = gpu_dialect.CUBLAS
 
 
-@dace.library.expansion
-class ExpandAxpyRocBLAS(ExpandAxpyGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    dialect = gpu_dialect.ROCBLAS
+ExpandAxpyHipBLAS = hip_dialect.hip_expansion(ExpandAxpyCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
 
 
 @dace.library.node
@@ -205,7 +203,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandAxpyOpenBLAS,
         "MKL": ExpandAxpyMKL,
         "cuBLAS": ExpandAxpyCuBLAS,
-        "rocBLAS": ExpandAxpyRocBLAS,
+        "hipBLAS": ExpandAxpyHipBLAS,
     }
     default_implementation = None
 

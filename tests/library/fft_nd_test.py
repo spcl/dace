@@ -16,31 +16,6 @@ IMPLEMENTATIONS = ["pure", pytest.param("FFTW3", marks=pytest.mark.fftw)]
 
 
 # Full N-D (axis=None) via the numpy frontend (fftn / ifftn)
-@pytest.mark.parametrize("shape", [(8, 12), (4, 6, 5)])
-def test_pure_fftn(shape):
-
-    @dace.program
-    def tester_pure_fftn(x: dace.complex128[tuple(shape)]):
-        return np.fft.fftn(x)
-
-    rng = np.random.default_rng(0)
-    x = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
-    y = tester_pure_fftn(x.copy())
-    np.testing.assert_allclose(y, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
-
-
-@pytest.mark.parametrize("norm", ["backward", "forward", "ortho"])
-def test_pure_ifftn_2d(norm):
-    shape = (8, 12)
-
-    @dace.program
-    def tester_pure_ifftn_2d(x: dace.complex128[8, 12]):
-        return np.fft.ifftn(x, norm=norm)
-
-    rng = np.random.default_rng(1)
-    x = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
-    y = tester_pure_ifftn_2d(x.copy())
-    np.testing.assert_allclose(y, np.fft.ifftn(x, norm=norm), rtol=1e-10, atol=1e-10)
 
 
 # Batched 1-D (axis=k) via the numpy frontend (fft(x, axis=k))
@@ -102,34 +77,38 @@ def test_pure_fftn_inplace():
     np.testing.assert_allclose(buf, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
 
 
+@pytest.mark.parametrize("in_loop", [False, True])
+def test_pure_factor_symbol_only_in_the_factor(in_loop):
+    """A symbol that only the normalization factor names -- an SDFG symbol, or the iterator of the loop around the
+    node -- still reaches the expansion: the scaling tasklet is C++, whose symbols nothing infers from its code."""
+    from dace.sdfg.state import LoopRegion
+
+    shape = (6, 5)
+    sdfg = dace.SDFG(f"factor_symbol_fftn_{int(in_loop)}")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("x", shape, dace.complex128)
+    sdfg.add_array("y", shape, dace.complex128)
+    if in_loop:
+        loop = LoopRegion("passes", "it < 3", "it", "it = 2", "it = it + 1")
+        sdfg.add_node(loop, is_start_block=True)
+        state = loop.add_state("fft", is_start_block=True)
+    else:
+        state = sdfg.add_state()
+    node = FFT("fft")
+    node.factor = "1/(K*it)" if in_loop else "1/K"
+    state.add_node(node)
+    state.add_edge(state.add_read("x"), None, node, "_inp", dace.Memlet.from_array("x", sdfg.arrays["x"]))
+    state.add_edge(node, "_out", state.add_write("y"), None, dace.Memlet.from_array("y", sdfg.arrays["y"]))
+    sdfg.expand_library_nodes()
+
+    rng = np.random.default_rng(11)
+    x = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
+    y = np.zeros_like(x)
+    sdfg(x=x, y=y, K=4)
+    np.testing.assert_allclose(y, np.fft.fftn(x) / (4 * (2 if in_loop else 1)), rtol=1e-10, atol=1e-10)
+
+
 # Symbolic dimensions -- the shape is only known at call time.
-def test_pure_fftn_symbolic():
-    M, N = dace.symbol("M"), dace.symbol("N")
-
-    @dace.program
-    def tester_pure_fftn_symbolic(x: dace.complex128[M, N]):
-        return np.fft.fftn(x)
-
-    rng = np.random.default_rng(5)
-    x = (rng.standard_normal((7, 9)) + 1j * rng.standard_normal((7, 9))).astype(np.complex128)
-    y = tester_pure_fftn_symbolic(x.copy())
-    np.testing.assert_allclose(y, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
-
-
-@pytest.mark.parametrize("norm", ["backward", "forward", "ortho"])
-def test_pure_ifftn_symbolic(norm):
-    """The normalization factor is ``1 / (M*N)`` over integer symbols: emitted verbatim into C it is integer
-    division and the whole transform returns zeros."""
-    M, N = dace.symbol("M"), dace.symbol("N")
-
-    @dace.program
-    def tester_pure_ifftn_symbolic(x: dace.complex128[M, N]):
-        return np.fft.ifftn(x, norm=norm)
-
-    rng = np.random.default_rng(7)
-    x = (rng.standard_normal((7, 9)) + 1j * rng.standard_normal((7, 9))).astype(np.complex128)
-    y = tester_pure_ifftn_symbolic(x.copy())
-    np.testing.assert_allclose(y, np.fft.ifftn(x, norm=norm), rtol=1e-10, atol=1e-10)
 
 
 @pytest.mark.parametrize("norm", ["backward", "ortho"])
@@ -150,18 +129,6 @@ def test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(norm):
     assert not any("1/(M*N)" in code.replace(" ", "") for code in scaled), scaled
 
 
-def test_pure_rank1():
-
-    @dace.program
-    def tester_pure_rank1(x: dace.complex128[21]):
-        return np.fft.fft(x)
-
-    rng = np.random.default_rng(6)
-    x = (rng.standard_normal(21) + 1j * rng.standard_normal(21)).astype(np.complex128)
-    y = tester_pure_rank1(x.copy())
-    np.testing.assert_allclose(y, np.fft.fft(x), rtol=1e-10, atol=1e-10)
-
-
 # A subset of the axes (np.fft.fftn(x, axes=...)): unlisted axes are batch dimensions.
 PARTIAL_AXES = [
     ((3, 4, 5, 2), (1, 2, 3)),
@@ -177,62 +144,6 @@ def random_array(shape, dtype, seed):
     if np.issubdtype(dtype, np.complexfloating):
         x = x + 1j * rng.standard_normal(shape)
     return x.astype(dtype)
-
-
-def tolerance(dtype):
-    return 1e-4 if dtype == np.float32 else 1e-10
-
-
-@pytest.mark.parametrize("shape,axes", PARTIAL_AXES)
-@pytest.mark.parametrize(
-    "dtype,dace_type",
-    [
-        (np.float64, dace.float64),
-        (np.complex128, dace.complex128),
-        (np.float32, dace.float32),
-    ],
-)
-def test_fftn_over_a_subset_of_axes_batches_the_other_axes(shape, axes, dtype, dace_type):
-    """cegterg transforms the three grid axes of a (n1, n2, n3, nvec) block, one 3-D FFT per band."""
-
-    @dace.program
-    def tester_fftn_over_a_subset_of_axes_batches_the_other_axes(x: dace_type[tuple(shape)]):
-        return np.fft.fftn(x, axes=axes)
-
-    x = random_array(shape, dtype, 8)
-    got = tester_fftn_over_a_subset_of_axes_batches_the_other_axes(x.copy())
-    want = np.fft.fftn(x, axes=axes)
-    assert got.dtype == want.dtype, got.dtype
-    np.testing.assert_allclose(got, want, rtol=tolerance(dtype), atol=tolerance(dtype))
-
-
-@pytest.mark.parametrize("shape,axes", PARTIAL_AXES)
-def test_ifftn_over_a_subset_of_axes_normalizes_by_the_transformed_extents_only(shape, axes):
-
-    @dace.program
-    def tester_ifftn_over_a_subset_of_axes_normalizes_by_the_transformed_extents_only(x: dace.complex128[tuple(shape)]):
-        return np.fft.ifftn(x, axes=axes)
-
-    x = random_array(shape, np.complex128, 9)
-    np.testing.assert_allclose(
-        tester_ifftn_over_a_subset_of_axes_normalizes_by_the_transformed_extents_only(x.copy()),
-        np.fft.ifftn(x, axes=axes),
-        rtol=1e-10,
-        atol=1e-10,
-    )
-
-
-def test_literal_negative_axes_with_ortho_norm_match_numpy():
-    """A literal ``axes=(-1, -3)`` reaches the replacement through the AST, not as a closure constant."""
-
-    @dace.program
-    def tester_literal_negative_axes_with_ortho_norm_match_numpy(x: dace.complex128[4, 5, 6]):
-        return np.fft.fftn(x, axes=(-1, -3), norm="ortho"), np.fft.ifftn(x, axes=(-1, -3), norm="ortho")
-
-    x = random_array((4, 5, 6), np.complex128, 10)
-    forward, inverse = tester_literal_negative_axes_with_ortho_norm_match_numpy(x.copy())
-    np.testing.assert_allclose(forward, np.fft.fftn(x, axes=(-1, -3), norm="ortho"), rtol=1e-10, atol=1e-10)
-    np.testing.assert_allclose(inverse, np.fft.ifftn(x, axes=(-1, -3), norm="ortho"), rtol=1e-10, atol=1e-10)
 
 
 def test_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input():
@@ -347,3 +258,36 @@ def test_fft_of_a_fortran_ordered_array(implementation):
     x, y = complex_array((6, 4), "F"), np.zeros((6, 4), np.complex128, order="F")
     sdfg(x=x, y=y)
     np.testing.assert_allclose(y, np.fft.fft(x, axis=0))
+
+
+if __name__ == "__main__":
+    test_pure_fft_axis((8, 12), 0)
+    test_pure_fft_axis((8, 12), -1)
+    test_pure_fft_axis((4, 6, 5), 1)
+    test_pure_fft_axis((4, 6, 5), -1)
+    test_pure_ifft_axis_inverse()
+    test_pure_fftn_inplace()
+    test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point("backward")
+    test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point("ortho")
+    test_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input()
+    test_fft2_and_ifft2_transform_the_last_two_axes_by_default()
+    test_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes(None, None)
+    test_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes((1, 0), None)
+    test_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes((-2, -1), None)
+    test_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes((0,), [0])
+    test_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes((-1, 0, -1), [1, 0, 1])
+    test_empty_or_out_of_range_axes_are_refused(())
+    test_empty_or_out_of_range_axes_are_refused((2,))
+    test_empty_or_out_of_range_axes_are_refused((-3,))
+    test_fftn_and_back("pure", (8, 12))
+    test_fftn_and_back("pure", (4, 6, 5))
+    test_fftn_and_back("FFTW3", (8, 12))
+    test_fftn_and_back("FFTW3", (4, 6, 5))
+    test_fft_along_an_axis("pure", (8, 12), 0)
+    test_fft_along_an_axis("pure", (4, 6, 5), 1)
+    test_fft_along_an_axis("pure", (4, 6, 5), -1)
+    test_fft_along_an_axis("FFTW3", (8, 12), 0)
+    test_fft_along_an_axis("FFTW3", (4, 6, 5), 1)
+    test_fft_along_an_axis("FFTW3", (4, 6, 5), -1)
+    test_fft_of_a_fortran_ordered_array("pure")
+    test_fft_of_a_fortran_ordered_array("FFTW3")

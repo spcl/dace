@@ -7,6 +7,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import symbolic
 from dace.codegen.common import global_code_id, sym2cpp
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas.environments import openblas
@@ -291,9 +292,6 @@ class ExpandTransposeGPUBLAS(ExpandTransformation):
             return ExpandTransposePure.expansion(node, state, sdfg, **kwargs)
 
         func = func + "geam"
-        # Only the complex spellings differ between the two vendors (see GpuBlasDialect.ctype):
-        # rocblas_zgeam rejects a hipDoubleComplex* operand and the CUDA name does not exist there,
-        # which is what quatrex_rgf's complex128 transpose failed on.
         cdtype = cls.cast_ctype(cdtype)
 
         alpha = f"__state->{cls.handle_field}.Constants().{factort}Pone()"
@@ -331,25 +329,9 @@ class ExpandTransposeCuBLAS(ExpandTransposeGPUBLAS):
         return f"cublas{func}"
 
 
-@dace.library.expansion
-class ExpandTransposeRocBLAS(ExpandTransposeGPUBLAS):
-    environments = [blas_environments.rocblas.rocBLAS]
-    handle = "__dace_rocblas_handle"
-    handle_field = "rocblas_handle"
-
-    @classmethod
-    def cast_ctype(cls, cuda_type: str) -> str:
-        return blas_helpers.rocblas_type(cuda_type)
-
-    check_error = "dace::blas::CheckRocblasError"
-
-    @classmethod
-    def op(cls, mode: str) -> str:
-        return "rocblas_operation_transpose" if mode == "T" else "rocblas_operation_none"
-
-    @classmethod
-    def funcname(cls, func: str) -> str:
-        return f"rocblas_{func.lower()}"
+ExpandTransposeHipBLAS = hip_dialect.hip_expansion(
+    ExpandTransposeCuBLAS, blas_environments.hipblas.hipBLAS, hip_dialect.BLAS
+)
 
 
 @dace.library.expansion
@@ -422,7 +404,7 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandTransposeMKL,
         "OpenBLAS": ExpandTransposeOpenBLAS,
         "cuBLAS": ExpandTransposeCuBLAS,
-        "rocBLAS": ExpandTransposeRocBLAS,
+        "hipBLAS": ExpandTransposeHipBLAS,
         "CUDA": ExpandTransposeCUDA,
     }
     default_implementation = "pure"

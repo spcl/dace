@@ -59,7 +59,7 @@ def transpose_graph(storage: dtypes.StorageType) -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.parametrize("implementation", ["rocSOLVER", "cuSolverDn"])
+@pytest.mark.parametrize("implementation", ["hipSolverDn", "cuSolverDn"])
 def test_the_cholesky_triangle_is_zeroed_on_the_device(implementation):
     sdfg = cholesky_graph(dtypes.StorageType.GPU_Global, implementation)
     sdfg.validate()

@@ -18,7 +18,7 @@ GPU_CHECK = r"DACE_GPU_CHECK\w*\("
 SYNC_CALL = r"(?:cuda|hip)StreamSynchronize\("
 #: The vendor BLAS expansion of the configured GPU backend, and the call spellings it emits
 GPU_BLAS = ExpandGemmCuBLAS if common.get_gpu_backend() == "cuda" else ExpandGemmRocBLAS
-GPU_BLAS_IMPLEMENTATION = "cuBLAS" if GPU_BLAS is ExpandGemmCuBLAS else "rocBLAS"
+GPU_BLAS_IMPLEMENTATION = "cuBLAS" if GPU_BLAS is ExpandGemmCuBLAS else "hipBLAS"
 GPU_BLAS_CALL = rf"{GPU_BLAS.backend}blas[A-Z_]\w*\("
 
 

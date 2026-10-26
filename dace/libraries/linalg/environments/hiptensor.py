@@ -64,8 +64,7 @@ class hipTensor:
     def cmake_includes():
         """The ROCm include directory, so the HOST compiler can find the HIP headers too.
 
-        Same reason as :meth:`~dace.libraries.blas.environments.rocblas.rocBLAS.cmake_includes`: a
-        tasklet reaching this environment through the ``frame`` entry is compiled by g++, which gets
+        A tasklet reaching this environment through the ``frame`` entry is compiled by g++, which gets
         no HIP include path of its own. Resolved here rather than as a CMake variable, so no ROCm
         path is written down.
         """

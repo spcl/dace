@@ -339,7 +339,7 @@ VENDOR_IMPLEMENTATIONS_HOST: tuple[str, ...] = ("OpenBLAS", "FFTW3")
 VENDOR_EXCLUDED_NODES: frozenset[str] = frozenset({"Transpose"})
 VENDOR_IMPLEMENTATIONS_DEVICE: dict[cpf_lowering.Dialect, tuple[str, ...]] = {
     cpf_lowering.Dialect.STANDALONE_CUDA: ("cuBLAS", "cuSolverDn", "cuFFT"),
-    cpf_lowering.Dialect.STANDALONE_HIP: ("rocBLAS", "rocSOLVER", "hipFFT"),
+    cpf_lowering.Dialect.STANDALONE_HIP: ("hipBLAS", "hipSolverDn", "hipFFT"),
 }
 
 
@@ -447,7 +447,7 @@ def on_device_at_host_level(node: nodes.LibraryNode, state: SDFGState) -> bool:
 
 
 #: Floating types no vendor library CPF calls takes: BLAS, LAPACK and the FFTs come in single and double
-#: precision, real and complex, and their bfloat16 / half entry points (``rocblas_gemm_ex``) are not what the
+#: precision, real and complex, and their bfloat16 / half entry points (``cublasGemmEx``) are not what the
 #: expansions call. A node over one of these takes the loops (HB's bf16 ML kernels).
 VENDOR_UNTYPED_FLOATS: frozenset = frozenset(dtypes.FLOAT_TYPES) - {dtypes.float32, dtypes.float64}
 
@@ -1570,7 +1570,7 @@ class Rendering(NamedTuple):
     #: (:data:`~dace.cpf_lowering.VENDOR_LIBRARIES`). Empty when the units need nothing beyond the system's.
     link: tuple[str, ...] = ()
     #: The vendor libraries the units call, by family name (``blas``, ``lapack``, ``fftw``, ``cublas``,
-    #: ``cusolver``, ``cufft``, ``rocblas``, ``rocsolver``, ``hipfft``): what a caller that loads libraries by
+    #: ``cusolver``, ``cufft``, ``hipblas``, ``hipsolver``, ``hipfft``): what a caller that loads libraries by
     #: name has to load for :attr:`link` to resolve (:func:`~dace.cpf_lowering.vendor_families`).
     libraries: tuple[str, ...] = ()
     #: The bytes the unit needs in its workspace, as an arithmetic expression over the entry's scalar

@@ -19,6 +19,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import SDFG, SDFGState, dtypes, symbolic
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
@@ -76,10 +77,9 @@ class ExpandSyevdMKL(ExpandTransformation):
 class ExpandSyevdGPUSolver(ExpandTransformation):
     """Eigendecomposition on a vendor GPU solver, column-major.
 
-    The dialects differ in the call only: cuSolverDn sizes a workspace through ``*_bufferSize``,
-    rocSOLVER takes a length-``n`` buffer for the off-diagonal of its tridiagonal form. Either way
-    the info code lands in ``_res``, which the caller keeps in host-accessible memory, and is read
-    once the stream has drained.
+    cuSolverDn sizes a workspace through ``*_bufferSize``; hipSOLVER is the same call renamed. The info
+    code lands in ``_res``, which the caller keeps in host-accessible memory, and is read once the
+    stream has drained.
     """
 
     environments: list[type] = []
@@ -142,28 +142,9 @@ class ExpandSyevdCuSolverDn(ExpandSyevdGPUSolver):
             """
 
 
-@dace.library.expansion
-class ExpandSyevdRocSolver(ExpandSyevdGPUSolver):
-    environments = [environments.rocsolver.rocSOLVER]
-
-    @classmethod
-    def fill_enum(cls, lower: bool) -> str:
-        return "rocblas_fill_lower" if lower else "rocblas_fill_upper"
-
-    @classmethod
-    def cast_ctype(cls, ctype: str) -> str:
-        return blas_helpers.rocblas_type(ctype)
-
-    @classmethod
-    def call(cls, func: str, ctype: str, matrix: str, n: symbolic.SymbolicType) -> str:
-        wtype = REAL_CTYPE.get(ctype, ctype)
-        return f"""
-            {wtype}* __dace_offdiagonal;
-            gpuMalloc<{wtype}>(&__dace_offdiagonal, sizeof({wtype}) * ({n}));
-            dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
-                __dace_rocblas_handle, rocblas_evect_original, {matrix}, ({wtype}*)_evals, __dace_offdiagonal, _res));
-            gpuFree(__dace_offdiagonal);
-            """
+ExpandSyevdHipSolverDn = hip_dialect.hip_expansion(
+    ExpandSyevdCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
 
 
 @dace.library.node
@@ -178,7 +159,7 @@ class Syevd(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandSyevdOpenBLAS,
         "MKL": ExpandSyevdMKL,
         "cuSolverDn": ExpandSyevdCuSolverDn,
-        "rocSOLVER": ExpandSyevdRocSolver,
+        "hipSolverDn": ExpandSyevdHipSolverDn,
     }
     default_implementation = None
 

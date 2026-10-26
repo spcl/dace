@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A device GEMM of a matrix that starts at an offset inside a bigger array stays inside it.
 
-The cuBLAS/rocBLAS expansion wraps its call in a nested SDFG whose arrays were copies of the WHOLE
+The cuBLAS expansion wraps its call in a nested SDFG whose arrays were copies of the WHOLE
 caller arrays, while the connector points at the first element of the box the memlet names. Once
 the wrapper was inlined, the whole-array read shifted by the box's offset ran past the end of the
 array: ``Memlet subset out-of-bounds`` for ``A[2:11, 0:3]`` of a ``(9, 3)`` array.
@@ -39,7 +39,7 @@ def offset_gemm(implementation: str, beta: float = 0.0) -> dace.SDFG:
 
 
 @pytest.mark.parametrize("beta", [0.0, 1.0], ids=["write", "accumulate"])
-@pytest.mark.parametrize("implementation", ["cuBLAS", "rocBLAS"])
+@pytest.mark.parametrize("implementation", ["cuBLAS", "hipBLAS"])
 def test_the_expanded_gemm_reads_only_its_boxes(implementation, beta):
     """The wrapper is inlined on the way to codegen, which is where the whole-array memlet broke."""
     sdfg = offset_gemm(implementation, beta)
@@ -53,7 +53,7 @@ def test_the_expanded_gemm_reads_only_its_boxes(implementation, beta):
 def test_an_offset_device_gemm_matches_numpy(beta):
     import cupy
 
-    sdfg = offset_gemm("rocBLAS" if common.get_gpu_backend() == "hip" else "cuBLAS", beta)
+    sdfg = offset_gemm("hipBLAS" if common.get_gpu_backend() == "hip" else "cuBLAS", beta)
     rng = np.random.default_rng(7)
     a = rng.standard_normal((M + PAD, K + PAD))
     b = rng.standard_normal((K + PAD, N))

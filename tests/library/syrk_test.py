@@ -10,7 +10,7 @@ the reference seeds that triangle with a sentinel and asserts it survives.
 The two nodes are siblings sharing one expansion helper module, so they are exercised
 together here. ``alpha`` / ``beta`` are covered both as compile-time properties and as
 runtime scalar connectors (``_alpha`` / ``_beta``); the vendor path is exercised on the
-CPU (OpenBLAS / MKL) and, with device-resident operands, on the GPU (cuBLAS or rocBLAS).
+CPU (OpenBLAS / MKL) and, with device-resident operands, on the GPU (cuBLAS or hipBLAS).
 """
 
 import os
@@ -119,7 +119,7 @@ def make_sdfg(kind, dtype, n, k, alpha, beta, uplo, trans, impl, alpha_rt=False,
     operands are device-resident (host mirrors copied in/out)."""
     gpu = impl == "gpu"
     if gpu:
-        impl = "rocBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
+        impl = "hipBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
     ashape = [n, k] if trans == "N" else [k, n]
     sdfg = dace.SDFG(sdfg_name(kind, dtype, alpha, beta, uplo, trans, impl, alpha_rt, beta_rt, variant))
     sdfg.add_array("A", ashape, dtype)

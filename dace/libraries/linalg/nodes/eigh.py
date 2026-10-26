@@ -260,12 +260,12 @@ class ExpandEighCuSolverDn(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandEighRocSolver(ExpandTransformation):
-    environments = [environments.rocsolver.rocSOLVER]
+class ExpandEighHipSolverDn(ExpandTransformation):
+    environments = [environments.hipsolverdn.hipSolverDn]
 
     @staticmethod
     def expansion(node: "Eigh", parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:
-        return make_vendor_sdfg(node, parent_state, parent_sdfg, "rocSOLVER")
+        return make_vendor_sdfg(node, parent_state, parent_sdfg, "hipSolverDn")
 
 
 @dace.library.node
@@ -277,7 +277,7 @@ class Eigh(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandEighOpenBLAS,
         "MKL": ExpandEighMKL,
         "cuSolverDn": ExpandEighCuSolverDn,
-        "rocSOLVER": ExpandEighRocSolver,
+        "hipSolverDn": ExpandEighHipSolverDn,
     }
     default_implementation = None
 
