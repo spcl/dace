@@ -775,6 +775,22 @@ theorem viewGens_congr (f : Nat) (pending : List NodeId)
   viewGensWith_congr f pending fun id hid =>
     ⟨by rw [hF.node? (h id hid).1 (h id hid).2.1], hF.viewedData (h id hid).1 (h id hid).2.1 (h id hid).2.2⟩
 
+theorem viewSig {id : NodeId} (h : id ∉ s.scopeNodes M) (h' : id ∉ s'.scopeNodes M) :
+    s'.viewSig id = s.viewSig id := by
+  unfold State.viewSig
+  rw [hF.node? h h']
+  cases hn : s.node? id with
+  | none => rfl
+  | some n =>
+    simp only [Option.bind_some]
+    cases hk : n.kind with
+    | access d =>
+      have hmem : n ∈ s.outerNodes (s.scopeNodes M) := hF.mem_outer (by rw [hF.node? h h']; exact hn) h'
+      have := hF.view n hmem d hk
+      have hb : s'.viewBinding? n = s.viewBinding? n := this
+      rw [hb]
+    | _ => simp [DNode.accessData?, hk]
+
 theorem viewOrder {ids : List NodeId} (hids : ∀ id ∈ ids, id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M) :
     s'.viewOrder ctx ids = s.viewOrder ctx ids := by
   unfold State.viewOrder
@@ -782,9 +798,11 @@ theorem viewOrder {ids : List NodeId} (hids : ∀ id ∈ ids, id ∉ s.scopeNode
     unfold State.isViewNode
     rw [hF.node? (hids id hid).1 (hids id hid).2]
   simp only
-  rw [hf]
-  exact hF.viewGens_congr _ _ fun id hid => by
+  rw [hf, keepFirstSig_congr fun id hid => by
     have hm := List.mem_filter.1 hid
+    exact hF.viewSig (hids id hm.1).1 (hids id hm.1).2]
+  exact hF.viewGens_congr _ _ fun id hid => by
+    have hm := List.mem_filter.1 (keepFirstSig_sub hid)
     exact ⟨(hids id hm.1).1, (hids id hm.1).2, hm.2⟩
 
 end OuterFacts

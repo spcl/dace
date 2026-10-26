@@ -518,17 +518,69 @@ theorem viewGensWith_sub {d b : NodeId → Option Name} : ∀ (f : Nat) (pending
 def State.viewGens (s : State) (f : Nat) (pending : List NodeId) : List NodeId :=
   viewGensWith (fun id => (s.node? id).bind DNode.accessData?) (fun id => (s.node? id).bind s.viewedData?) f pending
 
+/-- What a view access node binds (`bindView`): the container it views and
+the viewed subset. -/
+def State.viewBinding? (s : State) (v : DNode) : Option (Option Name × Option Subset) :=
+  (s.viewEdge? v).map fun (e, isIn) =>
+    (if isIn then (s.node? (s.pathStart e).src).bind DNode.accessData?
+     else (s.node? (s.pathEnd e).dst).bind DNode.accessData?,
+     if isIn then State.leafSrcSubset e else State.leafDstSubset e)
+
+/-- The signature of an access node: its container and what it binds. -/
+def State.viewSig (s : State) (id : NodeId) : Option (Name × Option (Option Name × Option Subset)) :=
+  (s.node? id).bind fun n => n.accessData?.map fun d => (d, s.viewBinding? n)
+
+/-- The nodes of `l` without those whose signature is that of an earlier
+kept node (`seen`); nodes without a signature are kept. -/
+def keepFirstSig {α : Type} [DecidableEq α] (sig : NodeId → Option α) : List α → List NodeId → List NodeId
+  | _, [] => []
+  | seen, x :: xs =>
+    match sig x with
+    | some a => if seen.contains a then keepFirstSig sig seen xs else x :: keepFirstSig sig (a :: seen) xs
+    | none => x :: keepFirstSig sig seen xs
+
+theorem keepFirstSig_sub {α : Type} [DecidableEq α] {sig : NodeId → Option α} {x : NodeId} :
+    ∀ {seen : List α} {l : List NodeId}, x ∈ keepFirstSig sig seen l → x ∈ l
+  | _, [], h => by simp [keepFirstSig] at h
+  | seen, y :: ys, h => by
+    unfold keepFirstSig at h
+    split at h
+    · split at h
+      · exact List.mem_cons_of_mem _ (keepFirstSig_sub h)
+      · rcases List.mem_cons.1 h with rfl | h
+        · exact List.mem_cons_self
+        · exact List.mem_cons_of_mem _ (keepFirstSig_sub h)
+    · rcases List.mem_cons.1 h with rfl | h
+      · exact List.mem_cons_self
+      · exact List.mem_cons_of_mem _ (keepFirstSig_sub h)
+
+theorem keepFirstSig_congr {α : Type} [DecidableEq α] {sig₁ sig₂ : NodeId → Option α} :
+    ∀ {seen : List α} {l : List NodeId}, (∀ x ∈ l, sig₁ x = sig₂ x) →
+      keepFirstSig sig₁ seen l = keepFirstSig sig₂ seen l
+  | _, [], _ => rfl
+  | seen, y :: ys, h => by
+    have hy := h y List.mem_cons_self
+    have hys : ∀ x ∈ ys, sig₁ x = sig₂ x := fun x hx => h x (List.mem_cons_of_mem _ hx)
+    simp only [keepFirstSig, hy]
+    split
+    · split
+      · exact keepFirstSig_congr hys
+      · rw [keepFirstSig_congr hys]
+    · rw [keepFirstSig_congr hys]
+
 /-- The order in which the views among `ids` are bound (`Decisions.md#D31`):
 every view after the view it views, like code generation allocating the
-viewed data first (`cpu.py`, `allocate_view`); otherwise in node order. -/
+viewed data first (`cpu.py`, `allocate_view`); otherwise in node order.  A
+binding of several view nodes (the read and the write side of one view) is
+made once, by the first of them. -/
 def State.viewOrder (ctx : Ctx) (s : State) (ids : List NodeId) : List NodeId :=
-  let views := ids.filter (s.isViewNode ctx)
+  let views := keepFirstSig s.viewSig [] (ids.filter (s.isViewNode ctx))
   s.viewGens views.length views
 
 /-- The views bound are among the given nodes. -/
 theorem State.viewOrder_sub {ctx : Ctx} {s : State} {ids : List NodeId} {id : NodeId}
     (h : id ∈ s.viewOrder ctx ids) : id ∈ ids :=
-  List.mem_of_mem_filter (viewGensWith_sub _ _ h)
+  List.mem_of_mem_filter (keepFirstSig_sub (viewGensWith_sub _ _ h))
 
 /-- Bind every view among the given nodes, in list order (the prologue of a
 sequential execution binds `State.viewOrder` of its direct nodes). -/
