@@ -339,8 +339,13 @@ class ParallelizeLoops(ppl.Pass):
         end, last = loop_analysis.get_loop_end(loop), last_iteration(loop)
         itervar = loop.loop_variable
         existing = {n for st in graph.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)} if facts else set()
-        with memoize_facts(active=False):
-            xform.rewrite()
+        # The lifted states are propagated below, whole: the rewrite need not propagate each memlet it routes.
+        propagate_edges, xform.propagate_edges = xform.propagate_edges, False
+        try:
+            with memoize_facts(active=False):
+                xform.rewrite()
+        finally:
+            xform.propagate_edges = propagate_edges
         # The lift edits ``sd``'s descriptors, symbols and interstate edges, and builds a new nested SDFG. The one
         # edit outside ``sd``, the symbol mapping of the node nesting it, is not a fact of its parent.
         forget_facts(sd)
@@ -350,11 +355,10 @@ class ParallelizeLoops(ppl.Pass):
         if resolver is not None:
             resolver.forget_within(sd)
         for state in graph.states():
-            lifted = [
-                node
-                for node in state.nodes()
-                if isinstance(node, nodes.MapEntry) and node.map.params == [itervar] and node.map.range[0][1] == end
+            over_itervar = [
+                node for node in state.nodes() if isinstance(node, nodes.MapEntry) and node.map.params == [itervar]
             ]
+            lifted = [node for node in over_itervar if node.map.range[0][1] == end]
             for node in lifted:
                 if last is not None and last != end:
                     # LoopToMap ends the map at the loop bound; a strided map ends at its last iterate, or the memlets
@@ -365,7 +369,7 @@ class ParallelizeLoops(ppl.Pass):
                 if facts and node not in existing:
                     note = FACTS_NOTE.format(facts="; ".join(f.describe() for f in facts))
                     node.specialization_hint = "\n".join(h for h in (node.specialization_hint, note) if h)
-            if lifted:
+            if over_itervar:
                 # LoopToMap connects the body's nested SDFG through whole arrays; its per-iteration accesses
                 # (``T[k]``) are what lets a later fusion see one element per iteration. Only this state, so the
                 # cost stays independent of ``propagate``.
@@ -375,21 +379,26 @@ class ParallelizeLoops(ppl.Pass):
     def rescuing_buffers(
         self, xform: LoopLift, loop: LoopRegion, facts: list[array_facts.ArrayFact]
     ) -> list[str] | None:
-        """After :meth:`probe` refused ``loop``: the buffers whose expansion (:func:`rescuing_buffers`) makes the probe
-        accept it, when :attr:`expand_buffers` is set; ``None`` otherwise. Changes nothing."""
+        """After :meth:`probe` refused ``loop``: the buffers whose expansion makes the probe accept it, each one a
+        refusal named and :func:`~dace.transformation.passes.buffer_expansion.rescues` admits, when
+        :attr:`expand_buffers` is set; ``None`` otherwise. Changes nothing."""
         if not self.expand_buffers:
             return None
         # avoid an import cycle
         from dace.transformation.passes import buffer_expansion
 
-        refusal = xform.last_refusal
-        buffers = buffer_expansion.rescuing_buffers(loop.sdfg, loop, None if refusal is None else refusal.container)
-        if buffers is None:
-            return None
         assumed = xform.assume_private
-        xform.assume_private = assumed | frozenset(buffers)
+        buffers: list[str] = []
         try:
-            return buffers if self.probe(xform, loop, facts) else None
+            while True:
+                refusal = xform.last_refusal
+                name = None if refusal is None else refusal.container
+                if name is None or name in buffers or not buffer_expansion.rescues(loop.sdfg, loop, name):
+                    return None
+                buffers.append(name)
+                xform.assume_private = assumed | frozenset(buffers)
+                if self.probe(xform, loop, facts):
+                    return buffers
         finally:
             xform.assume_private = assumed
 

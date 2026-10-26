@@ -11,6 +11,7 @@ it rescues itself:
 """
 
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.analysis import canon_stats
 
 
 class Parallelize(ppl.Pipeline):
@@ -53,3 +54,17 @@ class Parallelize(ppl.Pipeline):
     def apply_pass(self, sdfg, pipeline_results):
         """Run the passes on results of their own: the refusals are of this run's sweep."""
         return super().apply_pass(sdfg, {})
+
+    def apply_subpass(self, sdfg, p, state):
+        """Run ``p`` as the stage the canonicalization statistics attribute its loops to."""
+        stats = canon_stats.active()
+        if stats is None:
+            return super().apply_subpass(sdfg, p, state)
+        stage = stats.stage
+        stats.stage_start(stage[0], p)
+        try:
+            result = super().apply_subpass(sdfg, p, state)
+            stats.stage_done(sdfg)
+            return result
+        finally:
+            stats.stage = stage

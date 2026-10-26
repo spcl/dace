@@ -110,15 +110,13 @@ def iteration_private_buffers(sdfg: SDFG, loop: LoopRegion, only: set[str]) -> t
         for e in state.all_edges(node)
         if e.data is not None and e.data.data is not None
     }
-    buffers = [
-        name for name in expander._privatizable_buffers(sdfg, loop, scalars=scalars) if name in only - nested_operands
-    ]
+    buffers = expander._privatizable_buffers(sdfg, loop, scalars=scalars, names=only - nested_operands)
     return (buffers, ix[0]) if buffers else None
 
 
-def rescuing_buffers(sdfg: SDFG, loop: LoopRegion, refused_on: str | None) -> list[str] | None:
-    """The buffers :class:`BufferExpansion` expands to lift ``LoopToMap``'s refusal of ``loop`` on ``refused_on``:
-    every privatizable buffer of ``loop`` when ``refused_on`` is one of them, else ``None``. Reads the graph only."""
+def rescues(sdfg: SDFG, loop: LoopRegion, refused_on: str | None) -> bool:
+    """Whether :class:`BufferExpansion` may expand ``refused_on``, the container ``LoopToMap`` refused ``loop`` on: a
+    privatizable buffer of ``loop``. Reads the graph only."""
     desc = sdfg.arrays.get(refused_on) if refused_on is not None else None
     if (
         not isinstance(desc, data.Array)
@@ -126,12 +124,11 @@ def rescuing_buffers(sdfg: SDFG, loop: LoopRegion, refused_on: str | None) -> li
         or not desc.transient
         or desc.lifetime not in _REINDEXABLE_LIFETIMES
     ):
-        return None
+        return False
     expander = BufferExpansion()
     if expander._loop_index(loop) is None:
-        return None
-    buffers = expander._privatizable_buffers(sdfg, loop)
-    return buffers if refused_on in buffers else None
+        return False
+    return bool(expander._privatizable_buffers(sdfg, loop, names={refused_on}))
 
 
 def expand_iteration_private(sdfg: SDFG, loop: LoopRegion, names: list[str]) -> None:
@@ -359,9 +356,10 @@ class BufferExpansion(ppl.Pass):
         index: AccessIndex | None = None,
         loop_states: set[SDFGState] | None = None,
         scalars: set[str] = frozenset(),
+        names: set[str] | None = None,
     ) -> list[str]:
         """Transient arrays in ``loop`` that are safe to privatize by expansion; ``scalars`` are transient scalars
-        judged as length-1 arrays.
+        judged as length-1 arrays, ``names``, when given, the only containers judged.
 
         A buffer qualifies when it is a transient array used only inside ``loop``, has no
         write-conflict (reduction) edge, and is *defined before read* on every iteration --
@@ -375,6 +373,8 @@ class BufferExpansion(ppl.Pass):
         # Nothing changes while the buffers are judged, so every cover test shares the facts of the SDFG.
         with memoize_facts():
             for name, desc in sdfg.arrays.items():
+                if names is not None and name not in names:
+                    continue
                 if not (isinstance(desc, data.Array) or name in scalars) or not desc.transient:
                     continue
                 # A View is a reshape/alias of another array (a ``data.View`` IS a

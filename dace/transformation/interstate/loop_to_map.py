@@ -1660,6 +1660,14 @@ def step_direction(step: Any, facts: symbolic.Facts) -> int | None:
     return None
 
 
+def whole_container(sdfg: sd.SDFG, inner: memlet.Memlet) -> memlet.Memlet:
+    """A dynamic memlet over the whole container of ``inner``, with its WCR: an external memlet until propagation."""
+    outer = memlet.Memlet.from_array(inner.data, sdfg.arrays[inner.data], wcr=inner.wcr)
+    outer.wcr_nonatomic = inner.wcr_nonatomic
+    outer.dynamic = True
+    return outer
+
+
 class LoopLift:
     """The probe and the rewrite that turn one loop into a map, without the transformation machinery: set
     :attr:`loop`, ask :meth:`probe`, then :meth:`rewrite`. :class:`LoopToMap` is the transformation over them."""
@@ -1684,6 +1692,8 @@ class LoopLift:
     last_refusal: LoopRefusal | None = None
     #: Leave a loop whose iteration range spans only SMALL symbols (e.g. ``range(n1 + n2)``) sequential.
     keep_small_loops_sequential: bool = True
+    #: Propagate each memlet routed through the new map; unset by a caller that propagates the lifted state after.
+    propagate_edges: bool = True
 
     def probe(self, permissive: bool = False) -> bool:
         """Whether :attr:`loop` lifts as the graph stands; on a refusal, :attr:`last_refusal` says why."""
@@ -2819,7 +2829,15 @@ class LoopLift:
                     new_memlet = align_memlet(body, e, dst=False)
 
                     body.remove_edge(e)
-                    body.add_edge_pair(entry, e.dst, n, new_memlet, internal_connector=e.dst_conn, symbols=resolver)
+                    body.add_edge_pair(
+                        entry,
+                        e.dst,
+                        n,
+                        new_memlet,
+                        external_memlet=None if self.propagate_edges else whole_container(sdfg, new_memlet),
+                        internal_connector=e.dst_conn,
+                        symbols=resolver,
+                    )
             else:
                 body.add_nedge(entry, n, memlet.Memlet())
         for n in sink_nodes:
@@ -2829,7 +2847,15 @@ class LoopLift:
                     new_memlet = align_memlet(body, e, dst=True)
 
                     body.remove_edge(e)
-                    body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn, symbols=resolver)
+                    body.add_edge_pair(
+                        exit,
+                        e.src,
+                        n,
+                        new_memlet,
+                        external_memlet=None if self.propagate_edges else whole_container(sdfg, new_memlet),
+                        internal_connector=e.src_conn,
+                        symbols=resolver,
+                    )
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
         intermediate_sinks: dict[str, nodes.AccessNode] = {}
