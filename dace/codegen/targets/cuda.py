@@ -1959,16 +1959,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             )
 
         if split_blocks:
-            # As many blocks per row of the grid as fit below 2**31 threads, and as many rows as needed
-            self._localcode.write(
-                f"""
-                const int64_t __dace_blocks = {_topy(grid_dims[0])};
-                const int64_t __dace_row = std::min<int64_t>(__dace_blocks, 2147483647 / ({_topy(prod(block_dims))}));""",
-                cfg,
-                state_id,
-                scope_entry,
-            )
-            gdims = "__dace_row, int_ceil(__dace_blocks, __dace_row), 1"
+            code, gdims = split_grid(grid_dims, block_dims)
+            self._localcode.write(code, cfg, state_id, scope_entry)
 
         self._localcode.write(dynamic_shared_memory_request(kernel_name, dynsmem_size), cfg, state_id, scope_entry)
 
@@ -2242,19 +2234,12 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
             kernelmap_entry, grid_size, self._kernel_chiplet_count
         )
 
-        # An AMD dispatch covers fewer than 2**32 threads and 2**31 blocks per grid dimension, so a one-dimensional grid
-        # that may need more spreads its blocks over ``gridDim.y`` (see ``generate_kernel_scope`` and the kernel launch)
+        # A large one-dimensional grid spreads its blocks over ``gridDim.y`` on HIP (see ``splits_blocks``)
         index_type = common.gpu_map_index_types(dfg_scope.graph.sdfg, dfg_scope.graph, kernelmap_entry)[
             kernelmap_entry.map.params[-1]
         ]
         self._kernel_split_blocks = (
-            self.backend == "hip"
-            and not is_persistent
-            and not extra_grid_dims
-            and index_type.bytes > 4
-            and grid_size[1] == 1
-            and grid_size[2] == 1
-            and (grid_size[0] * prod(block_size) >= 2**31) != False
+            not is_persistent and not extra_grid_dims and splits_blocks(self.backend, index_type, grid_size, block_size)
         )
 
         return grid_size, block_size, len(tb_maps_sym_map) > 0, extra_dim_offsets
@@ -3608,6 +3593,27 @@ def default_block_size(kernelmap_entry: nodes.MapEntry, grid_size: list) -> list
             f"size to {block_size}. Consider setting the ``gpu_block_size`` property."
         )
     return block_size
+
+
+def splits_blocks(backend: str, index_type: dtypes.typeclass, grid_size: list, block_size: list) -> bool:
+    """Whether a kernel spreads its blocks over ``gridDim.y``: an AMD dispatch covers fewer than 2**32 threads and
+    2**31 blocks per grid dimension, so a one-dimensional grid of 64-bit indices that may need more takes rows."""
+    return (
+        backend == "hip"
+        and index_type.bytes > 4
+        and grid_size[1] == 1
+        and grid_size[2] == 1
+        and (grid_size[0] * prod(block_size) >= 2**31) != False
+    )
+
+
+def split_grid(grid_dims: list, block_dims: list) -> tuple[str, str]:
+    """The host code of a split grid (see :func:`splits_blocks`) and its launch dimensions: as many blocks per row as
+    fit below 2**31 threads, and as many rows as needed."""
+    code = f"""
+        const int64_t __dace_blocks = {_topy(grid_dims[0])};
+        const int64_t __dace_row = std::min<int64_t>(__dace_blocks, 2147483647 / ({_topy(prod(block_dims))}));"""
+    return code, "__dace_row, int_ceil(__dace_blocks, __dace_row), 1"
 
 
 def kernel_block_index(

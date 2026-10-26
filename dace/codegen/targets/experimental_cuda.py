@@ -31,6 +31,8 @@ from dace.codegen.targets.cuda import (
     location_index_exprs,
     plan_shared_memory,
     reset_shared_code,
+    split_grid,
+    splits_blocks,
 )
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (
     assigned_stream_expr,
@@ -406,6 +408,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         # The bytes of dynamic shared memory the kernel uses (see ``gpu_shared_memory.PlanSharedMemory``)
         dynsmem_size = scope_entry._cuda_dynamic_shared_memory
+        if kernel_spec.split_blocks:
+            code, gdims = split_grid(grid_dims, block_dims)
+            self._localcode.write(code, cfg, state_id, scope_entry)
         self._localcode.write(dynamic_shared_memory_request(kernel_name, dynsmem_size), cfg, state_id, scope_entry)
         stream_var_name = Config.get("compiler", "cuda", "gpu_stream_name").split(",")[1]
         kargs = ", ".join(["(void *)&" + arg for arg in kernel_args_as_input])
@@ -1094,6 +1099,9 @@ class KernelSpec:
         )
         self.index_types: dict[str, dtypes.typeclass] = common.gpu_map_index_types(
             sdfg, kernel_parent_state, kernel_map_entry
+        )
+        self.split_blocks: bool = splits_blocks(
+            cudaCodeGen.backend, self.index_types[self.kernel_map.params[-1]], self.grid_dims, self.block_dims
         )
 
         if cudaCodeGen.backend not in ["cuda", "hip"]:
