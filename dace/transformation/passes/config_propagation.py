@@ -48,21 +48,20 @@ def staged_copies(sdfg: SDFG, names: dict[str, Value]) -> dict[str, Value]:
 def specialize_config(sdfg: SDFG, values: dict[str, Value]) -> None:
     """Bake ``values`` into ``sdfg`` in place: symbols are substituted, data containers become constants.
 
-    A configuration container stops being an argument: it turns transient, a length-1 array becomes a scalar under
-    its own name, and every read folds to the constant, so nothing is left to initialize it. A transient staged
-    from it by a copy takes the same value.
+    A scalar argument stops being an argument: it turns transient and every read folds to the constant. A length-1
+    array argument stays on the signature, since callers pass its buffer; its reads go through a staged scalar, and
+    that scalar -- like any transient a frontend already staged from a configuration container -- takes the value.
     """
     containers = {name: val for name, val in values.items() if name in sdfg.arrays}
-    containers.update(staged_copies(sdfg, containers))
     specialize_symbols(sdfg, {name: val for name, val in values.items() if name not in containers})
-    if not containers:
-        return
-    for name in containers:
-        sdfg.arrays[name].transient = True
     arrays = {name for name in containers if isinstance(sdfg.arrays[name], data.Array)}
     if arrays:
-        ConvertLengthOneArraysToScalars(filter=arrays, single_element=True).apply_pass(sdfg, {})
-    specialize_scalars(sdfg, containers)
+        ConvertLengthOneArraysToScalars(filter=arrays, preserve_abi=True, single_element=True).apply_pass(sdfg, {})
+    scalars = {name: val for name, val in containers.items() if name not in arrays}
+    for name in scalars:
+        sdfg.arrays[name].transient = True
+    scalars.update(staged_copies(sdfg, containers))
+    specialize_scalars(sdfg, scalars)
 
 
 def config_condition(sdfg: SDFG, values: dict[str, Value]) -> str:
@@ -120,7 +119,8 @@ class ConfigPropagation(ppl.Pass):
         args = {name for name, desc in variant.arrays.items() if not desc.transient}
         reads, writes = variant.read_and_write_sets()
         # Ordered, untyped: the connector types are taken from the variant once it is loaded
-        inputs = dict.fromkeys(sorted(args & reads))
+        # An argument the variant no longer touches stays connected: every non-transient needs a connector
+        inputs = dict.fromkeys(sorted((args & reads) | (args - reads - writes)))
         outputs = dict.fromkeys(sorted(args & writes))
         symbols = sorted(str(s) for s in variant.free_symbols)
         node = state.add_nested_sdfg(
