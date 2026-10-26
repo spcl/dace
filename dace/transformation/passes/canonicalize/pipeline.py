@@ -120,7 +120,6 @@ from dace.transformation.passes.empty_loop_elimination import EmptyLoopEliminati
 from dace.transformation.passes.equalize_symbol_dtypes import EqualizeSymbolDtypes, equalize
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions, InlineSDFGs
-from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
@@ -992,9 +991,6 @@ def derive_parallelism(
                 ScatterToGuardedMaps(emit_unparallelized_else_branch=True, assume_no_conflicts=assume_parallel_guards),
             )
         ]
-    # Copies at map boundaries as assignment tasklets before the wavefront step, which reads every access by its
-    # container: a direct copy ``A -> w`` carries ``A``'s subset only as the other subset (ludcmp's ``w = A[i, j]``).
-    s += [(label, InsertAssignTaskletsAtMapBoundary())]
     # Wavefront: skew the nests every level left sequential, then map the exposed axis.
     if reconstruct_wavefront_nest:
         s += [(label, RevertNonReductionWCR()), *_inline_single_state(label), (label, ReconstructWavefrontNest())]

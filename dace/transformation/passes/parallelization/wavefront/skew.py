@@ -429,9 +429,10 @@ def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> Sn
                 return None
             if state in inner_states:
                 for e in state.out_edges(node):
-                    if e.data is None or e.data.subset is None:
+                    if e.data is None or e.data.is_empty():
                         return None
-                    ridx = point_index(e.data.subset, iters)
+                    read = side_subset(state, e, True)
+                    ridx = None if read is None else point_index(read, iters)
                     if ridx is None:
                         return None
                     snap_reads.append((state, node, e, ridx, snap_src[node.data], snap_win[node.data]))
@@ -831,14 +832,24 @@ def descend_into_map_scopes(state: SDFGState, data_name: str) -> bool:
         if node.data != data_name:
             continue
         for e in state.in_edges(node):
-            if e.data is not None and e.data.subset is not None and widened_beyond_reading(e.data.subset):
+            if e.data is None or e.data.is_empty():
+                continue
+            written = side_subset(state, e, False)
+            if written is not None and widened_beyond_reading(written):
                 return False
         for e in state.out_edges(node):
-            if e.data is None or e.data.subset is None:
+            if e.data is None or e.data.is_empty():
                 continue
-            if widened_beyond_reading(e.data.subset) and isinstance(e.dst, nodes.MapEntry):
+            read = side_subset(state, e, True)
+            if read is not None and widened_beyond_reading(read) and isinstance(e.dst, nodes.MapEntry):
                 descend = True
     return descend
+
+
+def side_subset(state: SDFGState, edge: MultiConnectorEdge[Memlet], is_read: bool) -> subsets.Subset | None:
+    """The subset ``edge`` reads from its source (``is_read``) or writes into its destination: a copy names its two
+    containers in ``subset`` and ``other_subset``, so the container's own side is asked of the edge."""
+    return edge.data.get_src_subset(edge, state) if is_read else edge.data.get_dst_subset(edge, state)
 
 
 def in_scope_accesses(
@@ -858,8 +869,9 @@ def in_scope_accesses(
     :func:`map_scope_context` supplying the ``_k`` range that bounds them.
     """
     other = edge.dst if is_read else edge.src
-    subset = edge.data.subset
-    assert subset is not None  # callers skip memlets without a subset
+    subset = side_subset(state, edge, is_read)
+    if subset is None:
+        return None
     if not isinstance(other, (nodes.MapEntry, nodes.MapExit)) or not widened_beyond_reading(subset):
         return [(subset, [])]
 
@@ -869,9 +881,12 @@ def in_scope_accesses(
         if isinstance(endpoint, (nodes.MapEntry, nodes.MapExit)):
             return None  # a scope that is not a plain map nest -> refuse
         ctx = map_scope_context(state, endpoint)
-        if ctx is None or leaf.data is None or leaf.data.subset is None:
+        if ctx is None or leaf.data is None or leaf.data.is_empty():
             return None
-        out.append((leaf.data.subset, ctx))
+        leaf_subset = side_subset(state, leaf, is_read)
+        if leaf_subset is None:
+            return None
+        out.append((leaf_subset, ctx))
     return out or None
 
 
@@ -915,10 +930,10 @@ def scan_state_accesses(
             iters = (u, v, *(nm for (nm, _, _) in ctx))
         descend = descend_into_map_scopes(state, data_name)
         for e in state.in_edges(node):
-            if e.data is None or e.data.subset is None:
+            if e.data is None or e.data.is_empty():
                 continue
-            accesses = in_scope_accesses(state, e, is_read=False) if descend else [(e.data.subset, [])]
-            if accesses is None:
+            accesses = in_scope_accesses(state, e, is_read=False) if descend else [(side_subset(state, e, False), [])]
+            if accesses is None or any(subset is None for subset, _ in accesses):
                 return False
             for subset, map_ctx in accesses:
                 if map_ctx:
@@ -928,10 +943,10 @@ def scan_state_accesses(
                     return False  # strided write -> refuse
                 writes.setdefault(data_name, []).append([(lo.xreplace(rename), hi.xreplace(rename)) for lo, hi in idx])
         for e in state.out_edges(node):
-            if e.data is None or e.data.subset is None:
+            if e.data is None or e.data.is_empty():
                 continue
-            accesses = in_scope_accesses(state, e, is_read=True) if descend else [(e.data.subset, [])]
-            if accesses is None:
+            accesses = in_scope_accesses(state, e, is_read=True) if descend else [(side_subset(state, e, True), [])]
+            if accesses is None or any(subset is None for subset, _ in accesses):
                 return False
             for subset, map_ctx in accesses:
                 # A map index reaching the read is one more parametric dimension of the distance,
