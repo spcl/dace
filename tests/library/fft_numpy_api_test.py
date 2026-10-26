@@ -48,6 +48,15 @@ def complex_array(shape) -> np.ndarray:
     return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
 
 
+def axis_symmetric(mask: np.ndarray) -> np.ndarray:
+    """``mask`` made equal at ``j`` and ``-j`` along axis 0, so that it keeps a half spectrum Hermitian.
+
+    A multi-axis complex-to-real transform of a spectrum that is not Hermitian along its full axes is
+    implementation-defined: FFTW and MKL's FFTW3 interface return different arrays for it.
+    """
+    return np.maximum(mask, mask[(-np.arange(mask.shape[0])) % mask.shape[0]])
+
+
 @dace.program
 def rfft_of_rows(x: dace.float64[M, N]):
     return np.fft.rfft(x)
@@ -101,7 +110,8 @@ def check_real_family(implementation: str, gpu: bool = False):
         rtol=1e-12,
         atol=1e-10,
     )
-    spectrum = complex_array((6, 5, 3))
+    # The half spectrum of a real array: a random one is not Hermitian along axis 0 (see ``axis_symmetric``).
+    spectrum = np.fft.rfft2(real_array((6, 8, 3)), axes=(0, 1))
     np.testing.assert_allclose(
         run(irfft2_over_leading_axes, implementation, gpu, x=spectrum.copy()),
         np.fft.irfft2(spectrum, axes=(0, 1)),
@@ -208,7 +218,7 @@ def test_a_filter_between_a_transform_and_its_inverse(implementation):
         rtol=1e-12,
         atol=1e-12,
     )
-    r, half_mask = real_array((16, 12)), (real_array((16, 7)) > 0).astype(np.float64)
+    r, half_mask = real_array((16, 12)), axis_symmetric((real_array((16, 7)) > 0).astype(np.float64))
     np.testing.assert_allclose(
         run(real_low_pass, implementation, x=r.copy(), mask=half_mask),
         np.fft.irfftn(np.fft.rfftn(r) * half_mask, s=(16, 12), axes=(0, 1)),
