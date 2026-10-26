@@ -3261,10 +3261,12 @@ class AbstractControlFlowRegion(
         # `_start_block` is an index into the node list, so any removal invalidates it:
         # the indices of later nodes shift down, leaving it pointing at a different block
         # or past the end. Re-resolve it by identity around the removal.
-        if self._start_block is not None:
+        # Deserialization can leave it out of range on entry
+        if self._start_block is not None and 0 <= self._start_block < self.number_of_nodes():
             start_block = self.node(self._start_block)
         else:
             start_block = None
+            self._start_block = None
         super().remove_node(node)
         self._cached_start_block = None
         if start_block is node:
