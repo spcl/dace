@@ -575,10 +575,10 @@ def make_outermost_map_persistent(sdfg) -> None:
                 scope.map.schedule = dtypes.ScheduleType.GPU_Persistent
 
 
-def test_the_grid_barrier_is_named_in_dace_s_own_namespace() -> None:
-    """A persistent kernel takes a grid barrier as an argument. The barrier is DaCe's own class --
-    it only borrows CUB's ``ThreadLoad`` -- but it was declared by reopening CUB's namespace, which
-    an alias cannot do, so it could never follow the backend. It lives in ``dace::`` now."""
+def test_the_grid_barrier_of_a_persistent_kernel_follows_the_backend() -> None:
+    """A persistent kernel synchronizes its grid through cooperative groups under a cooperative launch of the
+    selected backend, and names nothing in CUB's namespace."""
     code = generated_gpu_code(persistent_kernel, "hip", make_outermost_map_persistent, implementation="legacy")
-    assert "dace::GridBarrier" in code, "no grid barrier was emitted; the test lowers nothing"
+    assert "cooperative_groups::this_grid().sync();" in code, "no grid barrier was emitted; the test lowers nothing"
+    assert "hipLaunchCooperativeKernel(" in code
     assert not BARE_CUB_NAMESPACE.findall(code), BARE_CUB_NAMESPACE.findall(code)

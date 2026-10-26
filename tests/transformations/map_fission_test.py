@@ -6,9 +6,11 @@ import pytest
 import dace
 from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutils
+from dace.sdfg.graph import SubgraphView
 from dace.transformation.dataflow import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.interstate import InlineSDFG
+from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 
@@ -1338,6 +1340,41 @@ def test_an_ordering_edge_out_of_a_nested_sdfg_map_is_kept():
         assert np.allclose(got[name], want[name], rtol=1e-14, atol=0), name
 
 
+@dace.program
+def scale_and_sum(A: dace.float64[16], B: dace.float64[16], S: dace.float64[1]):
+    for i in dace.map[0:16]:
+        B[i] = 2 * A[i]
+        S[0] += A[i] + 1
+
+
+def nested_body_reducing_through_an_access_node(program) -> dace.SDFG:
+    """``map { nested SDFG } -> access node -wcr-> map exit``: the body nested, the reduction left outside it."""
+    sdfg = program.to_sdfg(simplify=True)
+    NormalizeWCRSource().apply_pass(sdfg, {})
+    state = sdfg.start_block
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    leaves = {e.src for e in state.in_edges(state.exit_node(entry)) if e.data.wcr}
+    body = [n for n in state.scope_children()[entry] if n is not state.exit_node(entry) and n not in leaves]
+    nest_state_subgraph(sdfg, state, SubgraphView(state, body))
+    return sdfg
+
+
+def test_fission_of_a_nested_body_keeps_the_reduction_it_leaves_through_an_access_node():
+    sdfg = nested_body_reducing_through_an_access_node(scale_and_sum)
+    A = np.arange(16.0)
+    B, S = np.zeros(16), np.zeros(1)
+
+    assert sdfg.apply_transformations(MapFission) == 1
+
+    sdfg(A=A, B=B, S=S)
+    (nest,) = [n for n in sdfg.start_block.nodes() if isinstance(n, nodes.NestedSDFG)]
+    inner = [n for s in nest.sdfg.states() for n in s.nodes() if isinstance(n, nodes.MapEntry)]
+    assert not any(isinstance(n, nodes.MapEntry) for n in sdfg.start_block.nodes())
+    assert len(inner) > 1
+    assert np.allclose(B, 2 * A)
+    assert S[0] == (A + 1).sum()
+
+
 if __name__ == "__main__":
     test_subgraph()
     test_nested_sdfg()
@@ -1380,3 +1417,4 @@ if __name__ == "__main__":
     )
     test_an_ordering_edge_out_of_the_map_is_kept_on_the_fissioned_maps()
     test_an_ordering_edge_out_of_a_nested_sdfg_map_is_kept()
+    test_fission_of_a_nested_body_keeps_the_reduction_it_leaves_through_an_access_node()

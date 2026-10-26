@@ -6,9 +6,12 @@ import pytest
 from scipy.signal import convolve2d
 
 import dace
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.state import StateSubgraphView
 from dace.transformation.dataflow import MapCollapse, MapExpansion, OTFMapFusion
 from dace.transformation.dataflow.otf_map_fusion import advanced_replace
+from dace.transformation.helpers import nest_state_subgraph
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -1144,6 +1147,35 @@ def test_a_read_of_a_whole_row_leaves_a_producer_parameter_unsolved():
     assert sdfg.apply_transformations(OTFMapFusion) == 0
 
 
+@dace.program
+def scale_then_neighbors(A: dace.float64[N], B: dace.float64[N]):
+    t = np.empty(N, dace.float64)
+    for i in dace.map[0:N]:
+        t[i] = A[i] * 2
+    for i in dace.map[1 : N - 1]:
+        B[i] = t[i - 1] + t[i + 1]
+
+
+def test_a_consumer_reading_a_window_through_a_nested_body_recomputes_each_element():
+    """A nested consumer reads ``t[i - 1], t[i + 1]`` as one window ``t[i - 1:i + 2]``."""
+    sdfg = scale_then_neighbors.to_sdfg(simplify=True)
+    state = sdfg.start_block
+    for entry in [n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)]:
+        body = [n for n in state.scope_children()[entry] if n is not state.exit_node(entry)]
+        nest_state_subgraph(sdfg, state, SubgraphView(state, body))
+    propagate_memlets_sdfg(sdfg)
+    A = np.random.rand(12)
+    expected = np.zeros(12)
+    expected[1:-1] = 2 * A[:-2] + 2 * A[2:]
+
+    assert sdfg.apply_transformations(OTFMapFusion, options={"recompute_windows": True}) == 1
+
+    B = np.zeros(12)
+    sdfg(A=A, B=B, N=12)
+    assert count_maps(sdfg) == 1
+    assert np.allclose(B, expected)
+
+
 if __name__ == "__main__":
     # Solver
     test_solve()
@@ -1191,3 +1223,4 @@ if __name__ == "__main__":
     # Symbol replacement
     test_advanced_replace_nested_sdfg_symbol_mapping()
     test_a_producer_reading_the_intermediate_is_not_fused()
+    test_a_consumer_reading_a_window_through_a_nested_body_recomputes_each_element()

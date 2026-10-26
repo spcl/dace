@@ -22,8 +22,12 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.transformation.dataflow import OTFMapFusion
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
+from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
@@ -531,3 +535,34 @@ def test_merging_conditional_block_siblings_keeps_the_cfg_list_of_a_fresh_reset(
     a, b = np.zeros(8), np.zeros(8)
     sdfg(X=x, O0_0=a, O0_1=b, N=8)
     assert np.allclose(a, x + 1.0) and np.allclose(b, x - 1.0)
+
+
+@dace.program
+def scale_then_neighbors(A: dace.float64[N], B: dace.float64[N]):
+    t = np.empty(N, dace.float64)
+    for i in dace.map[0:N]:
+        t[i] = A[i] * 2
+    for i in dace.map[1 : N - 1]:
+        B[i] = t[i - 1] + t[i + 1]
+
+
+def test_producers_of_one_window_merge_with_their_own_element_and_index():
+    """``OTFMapFusion`` leaves one producer per window element, each writing its element of one buffer and binding
+    its own ``_i0``: merged, all three write the one buffer, and each keeps its index."""
+    sdfg = scale_then_neighbors.to_sdfg(simplify=True)
+    state = sdfg.start_block
+    for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
+        body = [n for n in state.scope_children()[entry] if n is not state.exit_node(entry)]
+        nest_state_subgraph(sdfg, state, SubgraphView(state, body))
+    propagate_memlets_sdfg(sdfg)
+    assert sdfg.apply_transformations(OTFMapFusion, options={"recompute_windows": True}) == 1
+    A, B = np.random.rand(12), np.zeros(12)
+    expected = np.zeros(12)
+    expected[1:-1] = 2 * A[:-2] + 2 * A[2:]
+
+    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1
+
+    sdfg.validate()
+    assert len([n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]) == 1
+    sdfg(A=A, B=B, N=12)
+    assert np.allclose(B, expected)
