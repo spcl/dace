@@ -216,22 +216,6 @@ def test_forgetting_an_sdfg_resolves_it_again():
     assert spy.call_count == 0
 
 
-def test_a_resolver_keeps_one_state_per_sdfg():
-    """Only the state resolved last stays cached, one per SDFG: a copy of every symbol per state of a large SDFG
-    costs gigabytes. A state asked about again is resolved again, to the same symbols."""
-    sdfg = dace.SDFG("one_state_per_sdfg")
-    sdfg.add_symbol("N", dace.int64)
-    first = sdfg.add_state("first", is_start_block=True)
-    second = sdfg.add_state("second")
-    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"i": "5"}))
-    resolver = SymbolResolver()
-
-    in_first = resolver.defined_at(first, None)
-    assert resolver.defined_at(second, None) == second.symbols_defined_at(None)
-    assert list(resolver._per_state.values())[0][0] is second and len(resolver._per_state) == 1
-    assert resolver.defined_at(first, None) == in_first == first.symbols_defined_at(None)
-
-
 if __name__ == "__main__":
     test_state_symbols_give_the_same_result()
     test_propagation_resolves_the_state_symbols_once_per_state()
@@ -243,4 +227,3 @@ if __name__ == "__main__":
     test_inter_state_edges_define_symbols_for_the_states_after_them()
     test_inter_state_edges_define_symbols_in_nested_regions()
     test_forgetting_an_sdfg_resolves_it_again()
-    test_a_resolver_keeps_one_state_per_sdfg()

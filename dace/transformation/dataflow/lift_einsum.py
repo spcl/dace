@@ -37,7 +37,6 @@ class LiftEinsum(xf.SingleStateTransformation):
         unique_chars = set()
         input_chars = set()
         output_chars = set()
-        num_tensor_inputs = 0
         for e in state.all_edges(self.tasklet):
             memlet = e.data
             if memlet.is_empty():
@@ -54,17 +53,10 @@ class LiftEinsum(xf.SingleStateTransformation):
             # Keep track of input/output indices for WCR check
             if e.dst is self.tasklet:
                 input_chars |= ind
-                if ind - {"0"}:
-                    num_tensor_inputs += 1
             else:
                 output_chars |= ind
 
         if len(input_chars) == 0:
-            return False
-
-        # A single tensor operand is a copy, transpose or reduction (``i->i``, ``ij->ji``, ``ij->i``), not a
-        # contraction. Those have their own nodes (CopyLibraryNode, Transpose, Reduce), so they are left to them.
-        if num_tensor_inputs < 2:
             return False
 
         # If there are too many characters for an einsum expression, fail
