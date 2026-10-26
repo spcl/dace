@@ -155,7 +155,7 @@ class MapFission(transformation.SingleStateTransformation):
         return found
 
     @staticmethod
-    def _copy_indices(state, edge) -> tuple[list, list, list] | None:
+    def copy_indices(state, edge) -> tuple[list, list, list] | None:
         """The ranges of an elementwise copy map for ``edge`` and the element each side reads or writes, or ``None``
         if the two subsets do not pair their non-unit dimensions in order."""
         src, dst = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
@@ -183,7 +183,7 @@ class MapFission(transformation.SingleStateTransformation):
     @staticmethod
     def copy_as_map(state, edge) -> None:
         """Replaces the copy ``edge`` by an elementwise copy map, a component fission can replicate per iteration."""
-        ranges, src_element, dst_element = MapFission._copy_indices(state, edge)
+        ranges, src_element, dst_element = MapFission.copy_indices(state, edge)
         path = state.memlet_path(edge)
         src_data, dst_data = path[0].src.data, path[-1].dst.data
         me, mx = state.add_map("fission_copy", {p: str(r) for p, r in ranges})
@@ -206,7 +206,7 @@ class MapFission(transformation.SingleStateTransformation):
         )
         state.remove_edge(edge)
 
-    def _misordered_lifted_copies(self, graph, sdfg, nsdfg: sd.SDFG | None, states, border_arrays) -> list:
+    def misordered_lifted_copies(self, graph, sdfg, nsdfg: sd.SDFG | None, states, border_arrays) -> list:
         """``(state, edge)`` for each copy fission would lift with its dimensions paired out of order."""
         map_node = self.map_entry
         params = list(map_node.map.params)
@@ -434,8 +434,8 @@ class MapFission(transformation.SingleStateTransformation):
         # by the map dimensions in front must not pair them with other dimensions of that container. ``apply`` turns
         # such a copy into an elementwise copy map, which needs the two subsets to pair their dimensions in order
         nsdfg = nsdfg_node.sdfg if expr_index == 1 else None
-        for state, e in self._misordered_lifted_copies(graph, sdfg, nsdfg, subgraphs, border_arrays):
-            if self._copy_indices(state, e) is None:
+        for state, e in self.misordered_lifted_copies(graph, sdfg, nsdfg, subgraphs, border_arrays):
+            if self.copy_indices(state, e) is None:
                 return False
 
         return True
@@ -464,7 +464,7 @@ class MapFission(transformation.SingleStateTransformation):
                 parent if self.expr_index == 1 else sdfg, state if self.expr_index == 1 else graph, subgraph
             )
         nsdfg = parent if self.expr_index == 1 else None
-        misordered = self._misordered_lifted_copies(graph, sdfg, nsdfg, states, border_arrays)
+        misordered = self.misordered_lifted_copies(graph, sdfg, nsdfg, states, border_arrays)
         for state, e in misordered:
             MapFission.copy_as_map(state, e)
         if misordered and self.expr_index == 0:
