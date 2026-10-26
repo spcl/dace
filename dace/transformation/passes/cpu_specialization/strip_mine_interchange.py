@@ -395,10 +395,17 @@ def descend_into_nested(
                 continue  # private to the nested graph, so it cannot carry across trips
             binding_edge = sdutil.get_view_edge(inner_state, inner_node) if inner_node.data in bindings else None
 
-            def element(edge: Any, inner_node: nodes.AccessNode = inner_node) -> list[Any]:
-                if edge.data.data != inner_node.data:
-                    return []  # the subset names the other end; read as index-less
-                _, indices = resolved(inner_node.data, index_expressions(edge.data.subset), bindings, node.sdfg)
+            def element(edge: Any, written: bool, inner_node: nodes.AccessNode = inner_node) -> list[Any]:
+                # ``inner_node``'s own side of the edge: a copy names one container in ``subset``, the other in
+                # ``other_subset``.
+                subset = (
+                    edge.data.get_dst_subset(edge, inner_state)
+                    if written
+                    else edge.data.get_src_subset(edge, inner_state)
+                )
+                if subset is None:
+                    return []  # index-less
+                _, indices = resolved(inner_node.data, index_expressions(subset), bindings, node.sdfg)
                 return rewritten(indices, mapping, INNER_SYMBOL)
 
             # An edge into or out of a nested SDFG carries its union; the descent above records its accesses
@@ -407,14 +414,14 @@ def descend_into_nested(
                 if edge is not binding_edge and edge.data.subset is not None:
                     if isinstance(edge.src, nodes.NestedSDFG):
                         continue
-                    writes.setdefault(name, []).append(element(edge))
+                    writes.setdefault(name, []).append(element(edge, True))
                     if edge.data.wcr is not None:  # an accumulation reads what it updates
-                        reads.setdefault(name, []).append(element(edge))
+                        reads.setdefault(name, []).append(element(edge, True))
             for edge in inner_state.out_edges(inner_node):
                 if edge is not binding_edge and edge.data.subset is not None:
                     if isinstance(edge.dst, nodes.NestedSDFG):
                         continue
-                    reads.setdefault(name, []).append(element(edge))
+                    reads.setdefault(name, []).append(element(edge, False))
     return True
 
 
@@ -499,7 +506,13 @@ def boundary_accesses(
     directions = ((state.out_edges(map_entry), reads, False), (state.in_edges(map_exit), writes, True))
     for edges, target, written in directions:
         for edge in edges:
-            if edge.data is None or edge.data.data not in allowed or edge.data.subset is None:
+            if edge.data is None or edge.data.is_empty():
+                continue
+            # The container outside the scope, at its own side of the edge: a copy into the exit names its source.
+            path = state.memlet_path(edge)
+            outer = path[-1].dst if written else path[0].src
+            subset = edge.data.get_dst_subset(edge, state) if written else edge.data.get_src_subset(edge, state)
+            if not isinstance(outer, nodes.AccessNode) or outer.data not in allowed or subset is None:
                 continue
             # An edge into or out of a NESTED map carries that map's union; its iterations' own accesses are
             # what the interior walk recorded, element by element.
@@ -508,7 +521,7 @@ def boundary_accesses(
                 skip_nested and isinstance(inside, nodes.NestedSDFG)
             ):
                 continue
-            name, indices = resolved(edge.data.data, index_expressions(edge.data.subset), bindings, state.sdfg)
+            name, indices = resolved(outer.data, index_expressions(subset), bindings, state.sdfg)
             if any(names_a_param(index, params) for index in indices):
                 target.setdefault(name, []).append(indices)
                 if written and edge.data.wcr is not None:  # an accumulation reads what it updates

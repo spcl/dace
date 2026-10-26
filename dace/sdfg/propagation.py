@@ -1116,6 +1116,20 @@ def _collect_state_border_memlet_candidates(state: "SDFGState", border_memlets) 
                 border_memlets[direction][node.label].extend(_candidates_through_view(state, edge, direction))
 
 
+def _at_container(state: "SDFGState", edge, container: nodes.AccessNode) -> Memlet:
+    """``edge``'s memlet as an access to ``container``, one of its ends: a copy that names its other end is restated at
+    ``container``'s own subset, so the border memlet addresses the connector's data."""
+    if edge.data.data == container.data:
+        return edge.data
+    side = edge.data.get_src_subset(edge, state) if edge.src is container else edge.data.get_dst_subset(edge, state)
+    candidate = copy.deepcopy(edge.data)
+    candidate.data = container.data
+    candidate.subset = side if side is not None else subsets.Range.from_array(container.desc(state.sdfg))
+    candidate.other_subset = None
+    candidate._is_data_src = edge.src is container
+    return candidate
+
+
 def _candidates_through_view(state: "SDFGState", edge, direction: str) -> list[Memlet]:
     """
     Resolves a border candidate that reaches its container through a view.
@@ -1136,10 +1150,10 @@ def _candidates_through_view(state: "SDFGState", edge, direction: str) -> list[M
     else:
         container, view_node, is_binding = edge.dst, edge.src, edge.src_conn == "views"
     if not is_binding or not isinstance(view_node, nodes.AccessNode):
-        return [edge.data]
+        return [_at_container(state, edge, container)]
     view_desc = view_node.desc(state.sdfg)
     if not isinstance(view_desc, data.View):
-        return [edge.data]
+        return [_at_container(state, edge, container)]
 
     container_desc = state.sdfg.arrays[container.data]
     subset = edge.data.subset if edge.data.data == container.data else edge.data.other_subset
@@ -1148,18 +1162,18 @@ def _candidates_through_view(state: "SDFGState", edge, direction: str) -> list[M
     # A view that reshapes or permutes has no dimension mapping to the container
     mapping = sdutil.map_view_to_array(view_desc, container_desc, subset)
     if mapping is None:
-        return [edge.data]
+        return [_at_container(state, edge, container)]
 
     inner_edges = state.out_edges(view_node) if direction == "in" else state.in_edges(view_node)
     result: list[Memlet] = []
     for inner in inner_edges:
         if inner.data.is_empty() or inner.data.data != view_node.data:
-            return [edge.data]
+            return [_at_container(state, edge, container)]
         candidate = copy.deepcopy(inner.data)
         candidate.data = container.data
         candidate.subset = sdutil.compose_view_subset(mapping[0], subset, inner.data.subset)
         result.append(candidate)
-    return result or [edge.data]
+    return result or [_at_container(state, edge, container)]
 
 
 def _collect_region_meta_read_candidates(region, candidates) -> None:

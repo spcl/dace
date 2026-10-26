@@ -84,6 +84,19 @@ class WorklistWrite(NamedTuple):
     edge: Any
     array: str
     counter: str
+    index: Any
+
+
+def edge_accesses(state: SDFGState, edge: Any) -> list[tuple[str, Any]]:
+    """``(container, subset)`` of each access ``edge`` makes: both sides of a copy, each at its own subset."""
+    if edge.data.is_empty():
+        return []
+    if isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode):
+        return [
+            (edge.src.data, edge.data.get_src_subset(edge, state)),
+            (edge.dst.data, edge.data.get_dst_subset(edge, state)),
+        ]
+    return [(edge.data.data, edge.data.subset)]
 
 
 class Range(NamedTuple):
@@ -200,20 +213,21 @@ class SegmentLoop:
         found = []
         for state in self.states():
             for edge in state.edges():
-                if not isinstance(edge.dst, nodes.AccessNode) or edge.data.data is None or edge.data.subset is None:
+                if not isinstance(edge.dst, nodes.AccessNode) or edge.data.is_empty():
                     continue
-                if len(edge.data.subset) != 1 or edge.data.subset.num_elements() != 1:
+                written = edge.data.get_dst_subset(edge, state)
+                if written is None or len(written) != 1 or written.num_elements() != 1:
                     continue
-                index = self.resolve(edge.data.subset[0][0], state.parent_graph)
+                index = self.resolve(written[0][0], state.parent_graph)
                 for symbol in map(str, index.free_symbols):
                     binding = self.pointer_binding(symbol)
                     if not binding or binding[1] != 0:
                         continue
                     rest = without(index, symbol)
                     if rest in counters:
-                        found.append(WorklistWrite(state, edge, edge.data.data, rest))
+                        found.append(WorklistWrite(state, edge, edge.dst.data, rest, index))
                     elif rest in ranges and ranges[rest].kind == "worklist":
-                        found.append(WorklistWrite(state, edge, edge.data.data, ranges[rest].source))
+                        found.append(WorklistWrite(state, edge, edge.dst.data, ranges[rest].source, index))
         return found
 
     # --- the proof ------------------------------------------------------------------------------------------
@@ -227,7 +241,7 @@ class SegmentLoop:
         worklist_writes = self.worklist_writes(counters, self.ranges(set(), counters))
         bases = set()
         for write in worklist_writes:
-            for symbol in map(str, self.resolve(write.edge.data.subset[0][0], write.state.parent_graph).free_symbols):
+            for symbol in map(str, write.index.free_symbols):
                 binding = self.pointer_binding(symbol)
                 if binding and binding[1] == 0:
                     bases.add(binding[0])
@@ -285,8 +299,7 @@ class SegmentLoop:
         """Whether every access to a container the loop writes is confined to the iteration's segment."""
         written = self.written()
         for state in self.states():
-            for edge in state.edges():
-                name = edge.data.data
+            for name, subset in (access for edge in state.edges() for access in edge_accesses(state, edge)):
                 if name is None or name not in written:
                     continue
                 desc = self.sdfg.arrays[name]
@@ -296,7 +309,6 @@ class SegmentLoop:
                     ):
                         return False
                     continue
-                subset = edge.data.subset
                 if subset is None or len(subset) != 1 or subset.num_elements() != 1:
                     return False
                 index = self.resolve(subset[0][0], state.parent_graph)
@@ -389,6 +401,10 @@ class SegmentLoop:
                     continue
                 for in_edge in state.in_edges(node):
                     writer = in_edge.src
+                    if isinstance(writer, nodes.AccessNode):  # a copy ``F[x] -> f``
+                        loaded = in_edge.data.get_src_subset(in_edge, state)
+                        if loaded is not None and str(loaded[0][0]) in members:
+                            return writer.data
                     for read in state.in_edges(writer) if isinstance(writer, nodes.Tasklet) else []:
                         if read.data.data and str(read.data.subset[0][0]) in members:
                             return read.data.data
