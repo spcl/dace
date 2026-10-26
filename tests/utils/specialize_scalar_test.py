@@ -333,6 +333,28 @@ def test_tasklet_with_type_cast():
     assert C.tobytes() == np.full(4, 1.5, dtype=np.float64).tobytes()
 
 
+def test_copy_out_of_the_scalar_keeps_the_value():
+    """A copy from the baked scalar into another container still writes the value into that container."""
+    sdfg = dace.SDFG("copy_out_of_specialized_scalar")
+    sdfg.add_scalar("flag", dace.int32)
+    sdfg.add_scalar("staged", dace.int32, transient=True)
+    sdfg.add_array("out", [1], dace.int32)
+    state = sdfg.add_state()
+    staged = state.add_access("staged")
+    state.add_nedge(state.add_read("flag"), staged, dace.Memlet("flag[0]"))
+    read = state.add_tasklet("read", {"__in"}, {"__out"}, "__out = __in + 1")
+    state.add_edge(staged, None, read, "__in", dace.Memlet("staged[0]"))
+    state.add_edge(read, "__out", state.add_write("out"), None, dace.Memlet("out[0]"))
+
+    sdutil.specialize_scalars(sdfg, {"flag": 7})
+    sdfg.validate()
+    assert "staged" in {n.data for n in state.data_nodes()}
+
+    out = np.zeros(1, dtype=np.int32)
+    sdfg(out=out, flag=np.int32(0))
+    assert out[0] == 8
+
+
 if __name__ == "__main__":
     test_specialize_with_dynamic_input()
     test_use_in_if_block()
@@ -344,3 +366,4 @@ if __name__ == "__main__":
     test_baked_integer_does_not_become_integer_division()
     test_non_python_tasklet_accepts_numeric_value()
     test_tasklet_with_type_cast()
+    test_copy_out_of_the_scalar_keeps_the_value()

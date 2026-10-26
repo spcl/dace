@@ -3046,6 +3046,14 @@ def specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[s
                     src.remove_out_connector(e.src_conn)
                 if e.dst_conn is not None:
                     dst.remove_in_connector(e.dst_conn)
+            elif isinstance(src, nd.AccessNode) and isinstance(dst, nd.AccessNode) and dst.data not in scalars:
+                # A copy out of the scalar: its target still needs the value
+                value = state.add_tasklet(
+                    f"{scalar_name}_value", {}, {"__out"}, f"__out = {scalar_literal(scalar_val, scalar_dtype)}"
+                )
+                dst_memlet = dace.Memlet(data=dst.data, subset=e.data.get_dst_subset(e, state))
+                state.add_edge(value, "__out", dst, e.dst_conn, dst_memlet)
+                state.remove_edge(e)
             else:
                 state.remove_edge(e)
                 if e.src_conn is not None:
