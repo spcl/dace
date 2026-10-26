@@ -162,7 +162,7 @@ from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
-from dace.transformation.passes.scalar_fission import ArrayFission, PrivatizeArrays, PrivatizeScalars, ScalarFission
+from dace.transformation.passes.scalar_fission import PrivatizeArrays, PrivatizeScalars
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
@@ -321,8 +321,13 @@ class StructuralCleanup(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         changed = 0
+        settled = Settled()
         for unit in self.units():
-            changed += changed_the_graph(unit, unit.apply_pass(sdfg, {}))
+            if settled.skip(unit):
+                continue
+            unit_changed = changed_the_graph(unit, unit.apply_pass(sdfg, {}))
+            settled.record(unit, unit_changed)
+            changed += unit_changed
         return changed or None
 
 
@@ -549,66 +554,6 @@ class _ThenIfChanged(ppl.Pass):
         return True
 
 
-@properties.make_properties
-class _PrivatizeScalarsStage(ppl.Pass):
-    """Self-contained adapter for ``PrivatizeScalars`` in the recipe.
-
-    ``PrivatizeScalars`` resolves its analysis dependencies itself when applied
-    with empty results, but it is unhashable so it cannot be wrapped in a
-    ``Pipeline`` (whose dependency graph keys on the pass). Adapting it here keeps
-    the self-contained-stage invariant (:func:`_assert_self_contained`) honest.
-    """
-
-    CATEGORY: str = "Canonicalization"
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Everything
-
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return False
-
-    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
-        return []
-
-    def privatizer(self) -> ppl.Pipeline:
-        """The privatization pipeline this stage adapts.
-
-        :returns: The self-resolving ``Pipeline`` to apply.
-        """
-        return PrivatizeScalars()
-
-    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> Any | None:
-        # ``PrivatizeScalars`` resolves a ``FindAccessNodes`` analysis (keyed by
-        # ``cfg_id``) and a reachability analysis that calls ``reset_cfg_list`` mid-
-        # pipeline; a stale control-flow-region list (left by a prior stage's inliner)
-        # then lets that reset reassign ``cfg_id`` under the cached ``FindAccessNodes``
-        # result -> ``KeyError``. Refresh the list up front so both analyses agree.
-        sdfg.reset_cfg_list()
-        privatizer = self.privatizer()
-        result = privatizer.apply_pass(sdfg, {})
-        if not result:
-            return None
-        # Report only the privatizer's own rewrites: its resolved analyses would read as a change.
-        return {k: v for k, v in result.items() if k in privatizer._pass_names} or None
-
-
-@properties.make_properties
-class _PrivatizeArraysStage(_PrivatizeScalarsStage):
-    """Array sibling of :class:`_PrivatizeScalarsStage`, paired with it everywhere it runs.
-
-    A transient ARRAY reused as a per-iteration scratch buffer carries the same false
-    write/write dependence as a reused scalar, so it needs privatizing at the same points of
-    the recipe. The difference is the premise: versioning per dominating write is only
-    value-preserving when that write is a must-def of the WHOLE container, which is free for a
-    scalar and a proof obligation for an array. ``ArrayWriteShadowScopes`` discharges it and
-    reports nothing it cannot prove, so the scalar path never becomes a fallback for an
-    unproven array.
-    """
-
-    def privatizer(self) -> ppl.Pipeline:
-        return PrivatizeArrays()
-
-
 # Per-target knob presets; explicit knob args to ``canonicalize(..., target=...)`` override them.
 #
 # ``interchange_carry_with_map``: ``Loop[jk]{Map[jl]}`` -> ``Map[jl]{Loop[jk]}``, carry per thread.
@@ -732,10 +677,14 @@ class PhaseFixpoint(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """:returns: the number of rounds that changed the graph, or ``None``."""
         rounds = 0
+        settled = Settled()
         for round_index in range(self.max_rounds):
             changed = again = False
             for unit in prepared(self.factory()):
+                if settled.skip(unit):
+                    continue
                 unit_changed = changed_the_graph(unit, unit.apply_pass(sdfg, {}))
+                settled.record(unit, unit_changed)
                 changed = changed or unit_changed
                 again = again or (unit_changed and (not self.drivers or type(unit).__name__ in self.drivers))
             rounds += changed
@@ -757,10 +706,8 @@ def unique_iterators() -> ppl.Pass:
 def privatization_units() -> list[ppl.Pass]:
     """False-dependence renaming: per-scope versions of a container wherever a dominating write allows it."""
     return [
-        _PrivatizeScalarsStage(),
-        _PrivatizeArraysStage(),
-        ppl.Pipeline([ScalarFission()]),
-        ppl.Pipeline([ArrayFission()]),
+        PrivatizeScalars(),
+        PrivatizeArrays(),
         PromoteConstantIndexAccess(),
         BufferExpansion(),
     ]
@@ -967,7 +914,7 @@ def derive_parallelism(
     # Before demotion: the anti-dependence proof reads a guard's symbols (``A[P]`` under ``P > i`` reads ahead), which
     # a demoted guard turns into opaque scalar reads.
     s += [(label, BreakAntiDependence(forward_reads=True)), (label, BreakAntiDependence())]
-    s += [(label, DemoteNonStructuralSymbols()), (label, ppl.Pipeline([ScalarFission()]))]
+    s += [(label, DemoteNonStructuralSymbols()), (label, PrivatizeScalars())]
     s += [(label, DeadCarriedStoreElimination())]
     # Before the lift: a workspace whose pre-loop fill no iteration observes is then the loop's own, privatized per
     # iteration
@@ -981,7 +928,7 @@ def derive_parallelism(
             (label, BestEffortLoopPeeling(peel_limit, segments=segments, validate=validate)),
         ]
     s += [(label, unit) for unit in dead_dataflow_units()]
-    s += [(label, _PrivatizeScalarsStage()), (label, _PrivatizeArraysStage())]
+    s += [(label, PrivatizeScalars()), (label, PrivatizeArrays())]
     s += [(label, SymbolPropagation()), (label, ConstantPropagation())]
     # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted copy's
     # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
@@ -1008,8 +955,8 @@ def derive_parallelism(
         (label, PropagateMemlets()),
         (label, SetSymbolNonnegativeAssumptions()),
         (label, ParallelizeLoopsHoldingSiblingChains(propagate=False)),
-        (label, _PrivatizeScalarsStage()),
-        (label, _PrivatizeArraysStage()),
+        (label, PrivatizeScalars()),
+        (label, PrivatizeArrays()),
     ]
     # Inlined bodies show their in-place accumulations; as WCR they let a loop refused on them map, ahead of the
     # guarded-scatter versioning below. Either rewrite, the inlining or the WCR, can leave a loop that now maps.
@@ -1026,8 +973,8 @@ def derive_parallelism(
                 [
                     PropagateMemlets(),
                     ParallelizeLoopsHoldingSiblingChains(propagate=False),
-                    _PrivatizeScalarsStage(),
-                    _PrivatizeArraysStage(),
+                    PrivatizeScalars(),
+                    PrivatizeArrays(),
                 ],
             ),
         )
@@ -1311,6 +1258,37 @@ def changed_the_graph(unit: ppl.Pass, result: Any) -> bool:
     return True
 
 
+#: Units a rerun leaves unchanged on a graph no unit changed since their last run; a run then skips them.
+SETTLED_UNITS: tuple[type[ppl.Pass], ...] = (
+    StructuralCleanup,
+    RouteOrderingThroughData,
+    PruneAndInlineNestedSDFGs,
+    PropagateAndPrune,
+    SymbolDedup,
+)
+
+
+class Settled:
+    """The change clock of one run of units: a unit of :data:`SETTLED_UNITS` is skipped when no unit has
+    changed the graph since it last ran. Keyed by class: these units take no options."""
+
+    __slots__ = ("clock", "ran_at")
+
+    def __init__(self) -> None:
+        self.clock = 0
+        self.ran_at: dict[type, int] = {}
+
+    def skip(self, unit: ppl.Pass) -> bool:
+        return type(unit) in SETTLED_UNITS and self.ran_at.get(type(unit)) == self.clock
+
+    def record(self, unit: ppl.Pass, changed: bool, dirties: bool = True) -> None:
+        """Note that ``unit`` ran; ``dirties`` is whether its change earns the settled units another run."""
+        if changed and dirties:
+            self.clock += 1
+        if type(unit) in SETTLED_UNITS:
+            self.ran_at[type(unit)] = self.clock
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class CanonicalizationPipeline(ppl.Pass):
@@ -1590,15 +1568,14 @@ class CanonicalizationPipeline(ppl.Pass):
         if self.dump_dir:
             os.makedirs(self.dump_dir, exist_ok=True)
             sdfg.save(os.path.join(self.dump_dir, "000_input.sdfgz"), compress=True)
-        # The cleanup block is spliced in at every stage boundary, and on a settled graph every
-        # member of it reports no change. Skip it unless a transformation has touched the graph
-        # since the last one; the graph starts dirty, and only NON-cleanup units re-dirty it, so a
-        # cleanup that tidies something does not thereby earn the next one.
-        dirty = True
+        # The cleanup block and the inline step are spliced in at every stage boundary, and on a settled
+        # graph they report no change: skip one unless a unit touched the graph since it last ran. Only
+        # non-cleanup units re-dirty it, so a cleanup that tidies something does not earn the next one.
+        settled = Settled()
         recorder = canon_stats.active()
         for index, (label, unit) in enumerate(stages, start=1):
             is_cleanup = isinstance(unit, StructuralCleanup)
-            if is_cleanup and not dirty:
+            if settled.skip(unit):
                 continue
             _assert_self_contained(unit)
             # A Pipeline validates its own members when asked, so scope validation to the
@@ -1611,10 +1588,7 @@ class CanonicalizationPipeline(ppl.Pass):
             result = unit.apply_pass(sdfg, {})
             if recorder is not None:
                 recorder.stage_done(sdfg)
-            if is_cleanup:
-                dirty = False
-            elif changed_the_graph(unit, result):
-                dirty = True
+            settled.record(unit, changed_the_graph(unit, result), dirties=not is_cleanup)
             # apply_pass returns non-None iff it modified the SDFG, so an unchanged SDFG needs no
             # re-validation -- that is what makes validate_all affordable by default.
             if self.validate_all and result is not None and not is_pipeline:

@@ -743,25 +743,37 @@ class ScalarFission(ppl.Pass):
 
 
 @transformation.explicit_cf_compatible
-class PrivatizeScalars(ppl.Pipeline):
-    """Give every write-before-read transient scalar its own name (scalar privatization).
+class PrivatizeScalars(ppl.Pass):
+    """:class:`ScalarFission` with the analyses it depends on, as one self-contained pass.
 
-    A self-contained pipeline that runs :class:`ScalarFission` together with the
-    analysis it depends on (``ScalarWriteShadowScopes`` and that pass's own
-    dependencies), so it can be applied on its own --
-    ``PrivatizeScalars().apply_pass(sdfg, {})`` -- or dropped in as a single
-    element of a larger pipeline such as simplify. ``ScalarFission`` declares
-    those dependencies but cannot resolve them outside a pipeline.
-
-    A size-1 transient reused as a per-iteration temporary is written before it
-    is read on every iteration, so the iterations share only its *name*, not a
-    real value. Splitting each dominating write into its own container removes
-    that false write-after-write, which is what otherwise makes a shared
-    loop-local scalar block ``LoopToMap``.
+    Applicable on its own (``PrivatizeScalars().apply_pass(sdfg, {})``) or as a unit of a larger
+    pipeline: ``ScalarFission`` declares its analyses but cannot resolve them outside a pipeline.
+    Returns ``{"ScalarFission": renames}``, without the analyses' results.
     """
 
-    def __init__(self):
-        super().__init__([ScalarFission()])
+    CATEGORY: str = "Optimization Preparation"
+
+    def fission(self) -> ScalarFission:
+        return ScalarFission()
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # One application per placement: a recipe that wants another round places it again.
+        return False
+
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
+        return []
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
+        # The analyses key their results by ``cfg_id``; a list left stale by an earlier inliner would let
+        # the reachability analysis renumber it under the access-node analysis' cached result.
+        sdfg.reset_cfg_list()
+        fission = self.fission()
+        result = ppl.Pipeline([fission]).apply_pass(sdfg, {})
+        name = type(fission).__name__
+        return {name: result[name]} if result and name in result else None
 
 
 @transformation.explicit_cf_compatible
@@ -793,20 +805,9 @@ class ArrayFission(ScalarFission):
 
 
 @transformation.explicit_cf_compatible
-class PrivatizeArrays(ppl.Pipeline):
-    """Give every provably fully-overwritten transient array its own name (array privatization).
+class PrivatizeArrays(PrivatizeScalars):
+    """:class:`ArrayFission` with the analyses it depends on, as one self-contained pass (see
+    :class:`PrivatizeScalars`). Only arrays every write provably overwrites in full are renamed."""
 
-    The array sibling of :class:`PrivatizeScalars`: a self-contained pipeline running
-    :class:`ArrayFission` together with the analysis it depends on, so it can be applied on its own
-    -- ``PrivatizeArrays().apply_pass(sdfg, {})`` -- or dropped into a larger recipe.
-
-    A transient array reused as a per-iteration temporary (``Tz = np.zeros(...)`` at the top of a
-    loop body) is fully written before it is read on every iteration, so the iterations share only
-    its *name*. Splitting each dominating write into its own container removes that false
-    write-after-write, which is what otherwise makes a shared temporary look loop-carried. Unlike
-    the scalar case the sharing is only false when the write covers the entire array, so the
-    underlying analysis refuses every array it cannot prove that for.
-    """
-
-    def __init__(self):
-        super().__init__([ArrayFission()])
+    def fission(self) -> ScalarFission:
+        return ArrayFission()
