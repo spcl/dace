@@ -752,7 +752,7 @@ def statement_round() -> list[ppl.Pass]:
     units += [ForwardStoreToLoad(), SplitStatements()]
     units += [PhaseFixpoint("clean_anti_dependency", clean_anti_dependency_units, 1)]
     units += [LoopInvariantCodeMotion()]
-    units += [RevertNonReductionWCR(), NormalizeWCR()]
+    units += [RevertNonReductionWCR()]
     units += dead_dataflow_units()
     return units
 
@@ -802,11 +802,8 @@ def normalize_statements(
     # Out of phase: this matcher reads the frontend identity-construction map that lowering consumes.
     if lift:
         s += [(LIFT_SEMANTICS, LiftInv())]
-    # Before lowering: NormalizeWCR after MapToForLoop computes azimint_naive wrong (an in-nsdfg WCR lowered into a
-    # write-only connector), and the scatter privatizer must precede NormalizeWCR.
     if privatize_scatter_reductions:
         s += [(label, PrivatizeScatterReduction())]
-    s += [(label, NormalizeWCR())]
     s += [
         (label, PatternApplyOnceEverywhere([MoveIfIntoMap()])),
         (label, ConvertLengthOneArraysToScalars()),
