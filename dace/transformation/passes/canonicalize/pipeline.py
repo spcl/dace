@@ -760,7 +760,7 @@ def unique_iterators() -> ppl.Pass:
 
 
 def privatization_units() -> list[ppl.Pass]:
-    """Per-scope versions of a container wherever a dominating write allows it."""
+    """False-dependence renaming: per-scope versions of a container wherever a dominating write allows it."""
     return [
         _PrivatizeScalarsStage(),
         _PrivatizeArraysStage(),
@@ -807,7 +807,7 @@ def statement_round() -> list[ppl.Pass]:
     units += [HoistInductionVariableUpdates(), InductionVariableSubstitution()]
     units += [PropagateIndexSubsets(), RemoveUnusedSymbols(), PropagateAndPrune()]
     units += [ForwardStoreToLoad(), SplitStatements()]
-    units += privatization_units()
+    units += [PhaseFixpoint("rename_false_dependences", privatization_units, 1)]
     units += [LoopInvariantCodeMotion()]
     units += [RevertNonReductionWCR(), NormalizeWCR()]
     units += dead_dataflow_units()
