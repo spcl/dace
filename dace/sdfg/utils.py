@@ -2766,9 +2766,7 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
     from dace.frontend.python import astutils
 
     def _token_replace(code: str, src: str, dst: str) -> str:
-        # Whole identifiers only. Splitting on whitespace and brackets alone missed every unspaced
-        # operator -- `o = _in*3` kept the token '_in*3', so the connector was removed while the
-        # code still referenced it. The lookbehind also excludes '.', leaving `x._in` alone.
+        # Whole identifiers only (`o = _in*3`), not attributes (`x._in`)
         return re.sub(r"(?<![A-Za-z0-9_.])" + re.escape(src) + r"(?![A-Za-z0-9_])", dst, code).strip()
 
     def _token_replace_all(code: str, repl: dict[str, str]) -> str:
@@ -2777,16 +2775,7 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
         return code
 
     def _scalar_literal(value: float | int | str, dtype) -> str:
-        """Source-level literal for ``value``, substituted verbatim into tasklet code.
-
-        An integer replacing a read of a floating-point scalar is written as a float literal: the
-        surrounding code was compiled with float semantics, and turning ``_in / 2`` into ``5 / 2``
-        silently switches it to integer division in the generated C++.
-
-        :param value: the constant replacing the scalar.
-        :param dtype: declared dtype of the scalar being specialized, or None if unknown.
-        :return: the literal to substitute.
-        """
+        # An integer replacing a floating-point scalar stays a float literal: `_in / 2` must not become `5 / 2`
         if isinstance(value, str):
             return value
         if isinstance(value, float):
@@ -2802,8 +2791,6 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
             input = input.replace(src, dst)
         return input
 
-    # ``subs`` keeps the raw values (a float stays a float); ``strvals`` is the textual form used for
-    # code/condition rewriting and interstate edges.
     subs = dict(scalars)
     strvals = {name: str(val) for name, val in scalars.items()}
 
@@ -2836,8 +2823,6 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
             if e.data is None or e.data.data not in scalars:
                 continue
 
-            # Now we know we have an edge where memlet.data is one of the scalars. Each edge carries
-            # exactly one data name, so the scalars partition the edges -- no edge is claimed twice.
             scalar_name = e.data.data
             scalar_val = scalars[scalar_name]
             scalar_dtype = scalar_dtypes[scalar_name]
@@ -2848,11 +2833,7 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
             if isinstance(e.dst, nd.Tasklet):
                 in_tasklet_name = e.dst_conn
                 if e.dst.code.language == dace.dtypes.Language.Python:
-                    # Substitute directly on the tasklet AST. A sympy round-trip
-                    # (``pystr_to_symbolic`` -> ``subs`` -> ``pycode``) is lossy here: it prints
-                    # floats at 15 significant digits, so a float64 no longer round-trips
-                    # bit-exactly, and it folds integer quotients into ``Rational`` literals such
-                    # as ``(1 / 3)``, which the C++ backend then emits as integer division.
+                    # On the AST: a sympy round-trip loses float64 digits and turns 1/3 into integer division
                     replacer = astutils.ASTFindReplace({in_tasklet_name: _scalar_literal(scalar_val, scalar_dtype)})
                     body = CodeBlock(e.dst.code.as_string, dace.dtypes.Language.Python).code
                     new_body = [ast.fix_missing_locations(replacer.visit(stmt)) for stmt in body]
@@ -2927,8 +2908,7 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
             sdfg.parent_nsdfg_node.symbol_mapping.pop(scalar_name, None)
 
     for nsdfg_node, state, in_edges, out_edges in nsdfgs:
-        # The captures are pre-mutation, so an edge carrying one of the scalars is still listed here
-        # even though the loop above removed it. Skip a nest that lost its last edge and was deleted.
+        # Captured before the loop above, which may have deleted the nest
         if nsdfg_node not in state.nodes():
             continue
         in_data_mapping = {ie.data.data: ie.dst_conn for ie in in_edges if ie.data.data is not None}
@@ -2940,13 +2920,8 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
 
 
 def _interacting(values: dict[str, float | int | str]) -> bool:
-    """Whether any value mentions another entry's name.
-
-    Batching substitutes SIMULTANEOUSLY; the one-at-a-time loop substitutes SEQUENTIALLY, and the two
-    differ exactly when a value names ANOTHER entry's key -- ``{a: 'b+1', b: '2'}`` folds to ``a=3``
-    sequentially but to ``a=b+1`` simultaneously. Naming its own key is degenerate, not an
-    interaction. Only a string value can name anything, so numbers are always safe.
-    """
+    """Whether a value names another entry (``{a: 'b+1', b: '2'}``), where one batched substitution differs from
+    substituting one at a time."""
     import re
 
     names = values.keys()
@@ -2963,28 +2938,13 @@ def specialize_scalar(sdfg: "dace.SDFG", scalar_name: str, scalar_val: float | i
 
 
 def specialize_scalars(sdfg: "dace.SDFG", values: dict[str, float | int | str]):
-    """Bake scalar data containers to constant values, recursively through nested SDFGs.
-
-    Folds each scalar's reads into the reading tasklets, drops its edges/connectors and rewrites loop
-    and branch conditions and interstate edges. Doing the whole set in one call is what makes it cheap:
-    the traversal (every state, every nested SDFG, every interstate edge) costs the same for one name
-    as for twenty, so N names cost one walk instead of N.
+    """Bake scalar data containers to constant values, recursively through nested SDFGs, in one walk: reads fold
+    into the tasklets, edges and connectors go, and loop/branch conditions and interstate edges are rewritten.
 
     :param sdfg: The SDFG to specialize.
     :param values: Map of scalar name to the constant value to substitute in.
     """
     import sympy
-
-    def _sympy_to_python_number(val):
-        """Convert any SymPy numeric type to a native Python int or float."""
-        if isinstance(val, sympy.Integer):
-            return int(val)
-        elif isinstance(val, (sympy.Float, sympy.Rational)):
-            return float(val)
-        elif isinstance(val, sympy.Number):
-            # Fallback for any other sympy numeric type
-            return float(val.evalf())
-        return val  # unchanged if not a number
 
     if not values:
         return
@@ -2992,9 +2952,11 @@ def specialize_scalars(sdfg: "dace.SDFG", values: dict[str, float | int | str]):
     scalars = {}
     for name, val in values.items():
         assert isinstance(val, (float, int, str, sympy.Number)), (
-            f"Expected scalar value to be float, int, str, or sympy.Number, got {type(val)}"
+            f"Expected float, int, str or sympy.Number, got {val!r}"
         )
-        scalars[name] = _sympy_to_python_number(val) if not isinstance(val, (float, int, str)) else val
+        if isinstance(val, sympy.Number):
+            val = int(val) if isinstance(val, sympy.Integer) else float(val)
+        scalars[name] = val
 
     if _interacting(scalars):
         # Cannot fold into one pass without changing the result -- keep the sequential meaning.
@@ -3005,32 +2967,9 @@ def specialize_scalars(sdfg: "dace.SDFG", values: dict[str, float | int | str]):
     _specialize_scalar_impl(sdfg, sdfg, scalars)
 
 
-def specialize_symbol(sdfg: "dace.SDFG", symbol_name: str, value: float | int | str):
-    """Bake a free symbol to a constant value, recursively through nested SDFGs.
-
-    Substitutes ``symbol_name`` with ``value`` everywhere (subsets, memlets,
-    tasklets, interstate edges) and drops the now-unused symbol. ``replace_dict``
-    on a single SDFG does not descend into nested SDFG bodies, so this walks every
-    SDFG via :meth:`all_sdfgs_recursive` and also strips the symbol from each
-    nested SDFG node's ``symbol_mapping``. For a *scalar data container* holding
-    the value, use :func:`specialize_scalar`.
-
-    :param sdfg: The SDFG to specialize.
-    :param symbol_name: The symbol to replace.
-    :param value: The constant value to substitute in.
-    """
-    specialize_symbols(sdfg, {symbol_name: value})
-
-
 def specialize_symbols(sdfg: "dace.SDFG", values: dict[str, float | int | str]) -> None:
-    """Bake free symbols to constant values, recursively through nested SDFGs.
-
-    Plural form of :func:`specialize_symbol`, and the one to call when baking several symbols: the
-    recursive walk over every nested SDFG costs the same for one symbol as for twenty, so folding N
-    symbols into a single call turns N walks into one.
-
-    Substituting the symbols together is identical to substituting them one at a time as long as no
-    value names another key; :func:`_interacting` detects the exception and falls back to sequential.
+    """Bake free symbols to constant values in one walk over every nested SDFG, dropping them from each
+    ``symbol_mapping``. For a scalar data container holding the value, use :func:`specialize_scalars`.
 
     :param sdfg: The SDFG to specialize.
     :param values: Map of symbol name to the constant value to substitute in.
@@ -3044,10 +2983,7 @@ def specialize_symbols(sdfg: "dace.SDFG", values: dict[str, float | int | str]) 
         return
     vals = {name: str(value) for name, value in values.items()}
     for sd in list(sdfg.all_sdfgs_recursive()):
-        # Drop the symbols' interstate-edge definitions first: baking them to constants makes them
-        # dead, and ``replace_dict`` would otherwise rewrite the assignment *key* into a literal -- an
-        # invalid ``<value> = ...`` edge (hit on the frontend's ``dim = dim`` buffer-dimension
-        # materializers).
+        # Drop their interstate definitions first: replace_dict would turn the key into a literal (`5 = ...`)
         for e in sd.all_interstate_edges(recursive=False):
             for name in vals:
                 e.data.assignments.pop(name, None)
