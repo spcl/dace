@@ -15,8 +15,9 @@ false dependence so the loop parallelizes::
 This is the classic *array (scalar) expansion* / *array privatization* transformation.
 
 The pass only expands a buffer when doing so turns a loop that ``LoopToMap`` currently
-*refuses* into one it *accepts* (verified by re-running the match): a safe expansion that
-would not help is left alone so the SDFG does not grow needlessly. A static safety guard
+*refuses* into one it *accepts* (asked before the rewrite, with the buffers assumed
+iteration-private): a safe expansion that would not help is left alone so the SDFG does not
+grow needlessly. A static safety guard
 refuses any buffer that is genuinely carried (read before it is written in an iteration,
 e.g. an accumulator) -- those stay sequential.
 
@@ -174,8 +175,8 @@ class BufferExpansion(ppl.Pass):
 
     See the module docstring. The pass scans every loop the SDFG (and its nested SDFGs)
     contains; for a loop that ``LoopToMap`` currently refuses, it expands the safe
-    privatizable buffers accessed in that loop and keeps the expansion only if the loop
-    then becomes parallelizable.
+    privatizable buffers accessed in that loop when ``LoopToMap`` accepts the loop with
+    those buffers assumed iteration-private.
     """
 
     CATEGORY: str = "Optimization Preparation"
@@ -211,7 +212,7 @@ class BufferExpansion(ppl.Pass):
     # core
 
     def _expand_sdfg(self, sdfg: SDFG) -> dict[str, list[str]]:
-        """Expand beneficial buffers for the loops of a single SDFG (speculate, then verify).
+        """Expand beneficial buffers for the loops of a single SDFG (analyze, decide, then expand).
 
         A loop ``LoopToMap`` already accepts needs no privatization; a loop it *refuses* is the
         only place a buffer expansion can help. So the (expensive, ``arrays x states``) buffer
@@ -240,9 +241,8 @@ class BufferExpansion(ppl.Pass):
         order: str | None = None  # ambient storage order: built lazily, only when actually expanding
 
         kept: dict[str, list[str]] = {}
-        # The first probe of every loop asks the graph as it stands, so those probes share one ``LiftContext`` (block
-        # order, access index, per-block free symbols) the way ``ParallelizeLoops`` shares it; a kept expansion drops
-        # it, an undone one restores it. The probe after an expansion builds its own, as before.
+        # Every probe asks the graph as it stands, so they share one ``LiftContext`` (block order, access index,
+        # per-block free symbols) the way ``ParallelizeLoops`` shares it, until an expansion drops it.
         lift_context: list[Any] = []
         for loop in loops:
             ix = self._loop_index(loop)
@@ -251,26 +251,23 @@ class BufferExpansion(ppl.Pass):
             loop_states = set(loop.states())
             if not self._has_candidate_buffer(loop_states, write_index, accesses):
                 continue  # no privatizable-buffer candidate -> never expanded, so skip the probe
-            if self._loop_mappable(sdfg, loop, lift_context):
+            accepted, refused_on = self._loop_verdict(sdfg, loop, lift_context)
+            if accepted:
                 continue  # already parallelizable -> expanding would only grow the SDFG
             buffers = self._privatizable_buffers(sdfg, loop, accesses, loop_states)
-            if not buffers:
+            # Only a refusal on a buffer can be lifted by expanding it; any other survives the expansion unchanged.
+            if refused_on not in buffers:
+                continue
+            if not self._loop_verdict(sdfg, loop, lift_context, frozenset(buffers))[0]:
                 continue
             if order is None:
                 order = self._ambient_order(sdfg)
             index, size = ix
             touching = self._edges_by_name(loop)
-            applied = [self._expand(sdfg, loop, arr, index, size, order, touching.get(arr, ())) for arr in buffers]
-            before = lift_context[:]
+            for arr in buffers:
+                self._expand(sdfg, loop, arr, index, size, order, touching.get(arr, ()))
             lift_context.clear()
-            if self._loop_mappable(sdfg, loop):
-                kept[loop.label] = list(buffers)
-            else:
-                for exp in applied:
-                    exp.undo()
-                # The undo puts back every descriptor shape and memlet subset the expansion changed, so the graph is
-                # the one the context from before the expansion describes again; the next probe reuses it.
-                lift_context[:] = before
+            kept[loop.label] = list(buffers)
         return kept
 
     @staticmethod
@@ -322,7 +319,18 @@ class BufferExpansion(ppl.Pass):
 
     @staticmethod
     def _loop_mappable(sdfg: SDFG, loop: LoopRegion, lift_context: list[Any] | None = None) -> bool:
-        """Whether ``LoopToMap`` would parallelize ``loop`` right now (refusals silenced).
+        """Whether ``LoopToMap`` would parallelize ``loop`` right now (refusals silenced)."""
+        return BufferExpansion._loop_verdict(sdfg, loop, lift_context)[0]
+
+    @staticmethod
+    def _loop_verdict(
+        sdfg: SDFG,
+        loop: LoopRegion,
+        lift_context: list[Any] | None = None,
+        assume_private: frozenset[str] = frozenset(),
+    ) -> tuple[bool, str | None]:
+        """Whether ``LoopToMap`` would parallelize ``loop`` with ``assume_private`` made iteration-private, and on a
+        refusal the container it refused on (``None`` for any other refusal).
 
         :param lift_context: Holder of the ``LiftContext`` of ``sdfg`` as it stands: empty to build it here, which
                              the caller clears after any change to ``sdfg``. ``None`` probes without one.
@@ -337,7 +345,8 @@ class BufferExpansion(ppl.Pass):
                 if not lift_context:
                     lift_context.append(build_lift_context(sdfg))
                 xform.lift_context = lift_context[0]
-            return ParallelizeLoops().accepts(loop, xform)
+            accepted = ParallelizeLoops().accepts(loop, xform, assume_private)
+        return accepted, None if accepted else xform.last_refusal_container
 
     @staticmethod
     def _loop_index(loop: LoopRegion):

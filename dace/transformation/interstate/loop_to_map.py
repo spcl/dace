@@ -1597,6 +1597,9 @@ class LoopToMap(xf.MultiStateTransformation):
     symbol_resolver: "SymbolResolver | None" = None
     #: Arrays the caller vouches for (a contract), whose conflicts are waived.
     contract_arrays: frozenset = frozenset()
+    #: Containers the caller makes iteration-private before lifting (a per-iteration slot or scalar each); the
+    #: dependence analysis leaves them out, as it does a loop-local transient.
+    assume_private: frozenset = frozenset()
     #: What z3 may assume in this probe's dependence queries, set by ``can_be_applied``.
     solver_facts: SolverFacts | None = None
     #: Why the last probe refused, or ``None`` after an accept.
@@ -1746,7 +1749,11 @@ class LoopToMap(xf.MultiStateTransformation):
         # A sweep re-probes the loops enclosing each lift; they stay refused on the same write or read,
         # and this re-checks that one site instead of re-running the whole analysis (CloudSC: 8 loops,
         # 3051 probes each).
-        if facts is not None and facts.refusal_witness is not None:
+        if (
+            facts is not None
+            and facts.refusal_witness is not None
+            and facts.refusal_witness[1] not in self.assume_private
+        ):
             reason = self.witnessed_refusal(sdfg, facts, loop_states, ctx, itervar, start, end, step, permissive)
             if reason is not None:
                 return refuse(reason, facts.refusal_witness[1])
@@ -1818,6 +1825,7 @@ class LoopToMap(xf.MultiStateTransformation):
             else:
                 carried = cached_carried[1]
             other_access_nodes |= carried
+        other_access_nodes -= self.assume_private
 
         # read_and_write_sets() walks every state/edge of the loop and is only needed from here
         # on (the per-array write analysis below). Computing it lazily -- after the cheaper

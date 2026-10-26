@@ -30,6 +30,7 @@ from dace.transformation.interstate.loop_to_map import (
     build_lift_context,
     build_lift_invariants,
     control_flow_reads,
+    loop_facts_of,
 )
 from dace.transformation.passes.analysis import smt_dependence
 from dace.transformation.passes.parallelization.parallelize_loops import (
@@ -1153,6 +1154,31 @@ def test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop():
     assert np.allclose(q, ref)
 
 
+@dace.program
+def shared_slot_per_row(arr: dace.float64[4], scale: dace.float64[N], out: dace.float64[N]):
+    for i in range(N):
+        arr[1] = 0.5 * scale[i]
+        out[i] = 2.0 * arr[1]
+
+
+def test_a_container_assumed_private_is_left_out_of_the_dependence_test():
+    """The loop refuses on the shared slot ``arr[1]``; with ``arr`` assumed private it is accepted, also after the
+    refusal is cached as the loop's witness. The probe changes nothing and restores the instance's assumption."""
+    sdfg = shared_slot_per_row.to_sdfg(simplify=True)
+    before = sdfg.hash_sdfg()
+    (loop,) = candidate_loops(sdfg)
+    xform = LoopToMap()
+    xform.lift_context = build_lift_context(sdfg)
+
+    assert not ParallelizeLoops().accepts(loop, xform)
+    assert xform.last_refusal_container == "arr"
+    assert loop_facts_of(xform.lift_context.loop_facts, loop).refusal_witness == ("write", "arr")
+    assert ParallelizeLoops().accepts(loop, xform, frozenset({"arr"}))
+    assert xform.assume_private == frozenset()
+    assert not ParallelizeLoops().accepts(loop, xform)
+    assert sdfg.hash_sdfg() == before
+
+
 if __name__ == "__main__":
     test_lift_never_changes_a_surviving_blocks_free_symbols()
     test_reused_analysis_costs_no_maps_against_the_matcher()
@@ -1211,3 +1237,4 @@ if __name__ == "__main__":
     test_a_strided_lift_ends_at_its_last_iterate()
     test_a_gather_lifted_through_a_loop_fuses_into_its_consumer()
     test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop()
+    test_a_container_assumed_private_is_left_out_of_the_dependence_test()

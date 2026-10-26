@@ -48,9 +48,9 @@ last-iteration value via a writeback buffer -- that would require a ``lastprivat
 mechanism DaCe doesn't have yet, and the heavy buffer-plus-writeback form changes the
 SDFG more than the value it adds back justifies in the cases we've seen.
 
-The pass only mutates a loop that ``LoopToMap`` currently refuses *and* would accept after
-the privatization (verified by re-running the match); a promotion that doesn't help is
-reverted so the SDFG does not grow needlessly.
+The pass only mutates a loop that ``LoopToMap`` currently refuses *and* accepts with the
+promoted arrays assumed iteration-private (asked before the rewrite); a promotion that
+would not help is never applied, so the SDFG does not grow needlessly.
 
 :note: Scope today:
 
@@ -99,105 +99,6 @@ from dace.transformation.passes.scalar_fission import AccessIndex, MustDefinitio
 _PRIVATIZABLE_LIFETIMES = (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.SDFG)
 
 
-class _Promotion:
-    """An applied constant-index promotion, with the information needed to undo it.
-
-    :param sdfg: The owning SDFG (its descriptor store gets the temporary scalar added).
-    :param arr_name: The shared array name we privatized at one constant index.
-    :param scalar_name: The new transient scalar's name.
-    :param prologue: The state inserted in front of the loop body to load ``arr[c]``.
-    :param edits: The memlet edits as ``(memlet, data_before, subset_before)`` triples.
-    :param node_edits: The access-node ``(node, data_before)`` pairs for the wholesale
-                       rename path (single-slot). Empty for the slot-precise path.
-    :param introduced_scalar_nodes: AccessNodes for the new scalar inserted during the
-                                    slot-precise path (multi-slot). Tuples of ``(node, state)``.
-    :param removed_arr_nodes: Original ``arr`` AccessNodes removed during slot-precise
-                              orphan cleanup. Tuples of ``(node, state)``.
-    """
-
-    def __init__(
-        self,
-        sdfg: SDFG,
-        arr_name: str,
-        scalar_name: str,
-        prologue: SDFGState,
-        edits: list[tuple[Memlet, str | None, Any]],
-        node_edits: list[tuple[nodes.AccessNode, str]],
-        introduced_scalar_nodes: list[tuple[nodes.AccessNode, Any]] | None = None,
-        removed_arr_nodes: list[tuple[nodes.AccessNode, Any]] | None = None,
-        endpoint_edits: list[tuple[Any, Memlet, str, nodes.AccessNode]] | None = None,
-    ):
-        self.sdfg = sdfg
-        self.arr_name = arr_name
-        self.scalar_name = scalar_name
-        self.prologue = prologue
-        self._edits = edits
-        self._node_edits = node_edits
-        self._introduced_scalar_nodes = introduced_scalar_nodes or []
-        self._removed_arr_nodes = removed_arr_nodes or []
-        # Slot-precise endpoint swaps as ``(state, memlet, side, orig_arr_node)``: each rerouted
-        # edge, the side ('src'/'dst') that was moved onto the per-state scalar, and the exact
-        # ``arr`` AccessNode it came from -- so ``undo`` restores each edge to ITS original node
-        # rather than heuristically to "an" arr node (which orphaned sibling nodes in a state
-        # that held more than one ``arr[c]`` access).
-        self._endpoint_edits = endpoint_edits or []
-
-    def undo(self):
-        """Restore every rewritten access node and memlet, drop the prologue, drop the scalar."""
-        for memlet, data_before, subset_before in self._edits:
-            memlet.data = data_before
-            memlet.subset = subset_before
-        for node, data_before in self._node_edits:
-            node.data = data_before
-        # Re-add ``arr`` AccessNodes we removed (slot-precise orphan cleanup) so the
-        # endpoint-swap reversal below has somewhere to reattach.
-        for arr_node, state in self._removed_arr_nodes:
-            if arr_node not in state.nodes():
-                state.add_node(arr_node)
-        # Precise endpoint restore: for each edge whose ``arr`` endpoint was moved onto a
-        # per-state scalar, repoint that endpoint back to the SPECIFIC original ``arr``
-        # AccessNode it came from. Identity on the memlet (its data/subset already reverted
-        # above) locates the current edge unambiguously -- and pinning the exact origin node
-        # (not "an" arr node) is what keeps sibling ``arr[c]`` nodes in the same state from
-        # being left isolated.
-        for state, memlet, side, orig_node in self._endpoint_edits:
-            if orig_node not in state.nodes():
-                state.add_node(orig_node)
-            for e in list(state.edges()):
-                if e.data is not memlet:
-                    continue
-                new_src = orig_node if side == "src" else e.src
-                new_dst = orig_node if side == "dst" else e.dst
-                state.remove_edge(e)
-                state.add_edge(new_src, e.src_conn, new_dst, e.dst_conn, e.data)
-                break
-        # The per-state scalar AccessNodes are now edge-free; drop them (they reference the
-        # descriptor we are about to remove).
-        for scalar_node, state in self._introduced_scalar_nodes:
-            if scalar_node in state.nodes():
-                for e in list(state.in_edges(scalar_node)) + list(state.out_edges(scalar_node)):
-                    state.remove_edge(e)
-                state.remove_node(scalar_node)
-        # Detach the prologue from the loop body. Its single out-edge re-enters the body's
-        # original start block (or a stand-in), which becomes the start block again.
-        region = self.prologue.parent_graph
-        if region is not None:
-            successors = [e.dst for e in region.out_edges(self.prologue)]
-            new_start = successors[0] if successors else None
-            for e in list(region.in_edges(self.prologue)):
-                region.remove_edge(e)
-                if new_start is not None:
-                    region.add_edge(e.src, new_start, e.data)
-            for e in list(region.out_edges(self.prologue)):
-                region.remove_edge(e)
-            region.remove_node(self.prologue)
-            # Drop the stale start-block cache; the next ``start_block`` access recomputes.
-            region._cached_start_block = None
-            region._start_block = None
-        # The scalar is no longer referenced anywhere; drop the descriptor.
-        self.sdfg.remove_data(self.scalar_name, validate=False)
-
-
 @properties.make_properties
 class PromoteConstantIndexAccess(ppl.Pass):
     """Privatize a constant-index slot of a shared array inside a loop to unblock LoopToMap.
@@ -206,8 +107,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
     ``LoopToMap`` currently refuses, the pass picks the candidate ``(arr, c)`` pairs that
     pass the safety check, replaces every ``arr[c]`` access in the body with a fresh
     per-iteration scalar (prologue-loaded from ``arr[c]`` so a read the body reaches before
-    its own write still observes the pre-loop value), and keeps the rewrite only if the loop
-    then becomes parallelizable.
+    its own write still observes the pre-loop value), when ``LoopToMap`` accepts the loop with
+    those slots assumed iteration-private.
     """
 
     CATEGORY: str = "Optimization Preparation"
@@ -246,7 +147,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
     # core
 
     def _promote_sdfg(self, sdfg: SDFG) -> dict[str, list[str]]:
-        """Promote beneficial slots for the loops of a single SDFG (speculate, then verify)."""
+        """Promote beneficial slots for the loops of a single SDFG (analyze, decide, then promote)."""
         loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
         # Cheap structural pre-filter first: collect the loops that actually have a
@@ -260,15 +161,13 @@ class PromoteConstantIndexAccess(ppl.Pass):
         if not candidates:
             return {}
 
-        # Per-loop check-promote-verify-commit. Batched verification (all promotions
-        # first, all checks after) doesn't work when an outer loop's promotion would
-        # invalidate an inner loop's: cloudsc's outer klev loop ``for_430`` shares the
-        # ``zvqx`` array with the inner species loops ``for_767_X``, and promoting
-        # zvqx[0..4] in ``for_430`` rewrites the same memlets the inner loops would
-        # have promoted, leaving each inner loop's subsequent promotion a no-op (no
-        # ``zvqx`` accesses left in its body). Doing each loop independently --
-        # commit or undo before moving on -- lets the inner loop's check run against
-        # the post-outer-decision state.
+        # Per-loop check-decide-promote. Batched decisions (all checks first, all promotions
+        # after) don't work when an outer loop's promotion invalidates an inner loop's:
+        # cloudsc's outer klev loop ``for_430`` shares the ``zvqx`` array with the inner
+        # species loops ``for_767_X``, and promoting zvqx[0..4] in ``for_430`` rewrites the
+        # same memlets the inner loops would have promoted, leaving each inner loop's
+        # promotion a no-op (no ``zvqx`` accesses left in its body). Deciding each loop
+        # against the graph the previous loops' promotions left behind keeps that order.
         kept: dict[str, list[str]] = {}
         for loop, pairs in candidates.items():
             # Only a refusal on one of the candidate arrays can be lifted by privatizing their slots: a refusal on
@@ -276,23 +175,39 @@ class PromoteConstantIndexAccess(ppl.Pass):
             accepted, refused_on = self._l2m_verdict(loop, sdfg)
             if accepted or refused_on not in {arr_name for arr_name, _ in pairs}:
                 continue
-            applied: list[_Promotion] = []
-            labels: list[str] = []
+            if not self._l2m_verdict(loop, sdfg, self._privatized_arrays(loop, pairs))[0]:
+                continue
             for arr_name, c_subset in pairs:
-                promo = self._promote(sdfg, loop, arr_name, c_subset)
-                applied.append(promo)
-                labels.append(f"{arr_name}@{c_subset}")
-            if applied and self._l2m_verdict(loop, sdfg)[0]:
-                kept[loop.label] = labels
-            else:
-                # Undo in reverse: prologues + edits + descriptors come off cleanly.
-                for promo in reversed(applied):
-                    promo.undo()
+                self._promote(sdfg, loop, arr_name, c_subset)
+            kept[loop.label] = [f"{arr_name}@{c_subset}" for arr_name, c_subset in pairs]
         return kept
 
+    def _privatized_arrays(self, loop: LoopRegion, pairs: list[tuple[str, subsets.Range]]) -> frozenset[str]:
+        """The arrays of ``pairs`` that promoting every pair leaves unwritten in ``loop``: each write of them targets
+        a promoted slot, so the loop then only reads them (the prologue loads)."""
+        slots: dict[str, list[subsets.Range]] = {}
+        for arr_name, c_subset in pairs:
+            slots.setdefault(arr_name, []).append(c_subset)
+        written_elsewhere: set[str] = set()
+        for state in loop.states():
+            for node in state.data_nodes():
+                if node.data not in slots or node.data in written_elsewhere:
+                    continue
+                for edge in state.in_edges(node):
+                    sub = edge.data.subset
+                    if edge.data.is_empty() or edge.data.data != node.data or sub is None:
+                        continue
+                    if not any(point_subsets_equal(sub, slot) for slot in slots[node.data]):
+                        written_elsewhere.add(node.data)
+                        break
+        return frozenset(name for name in slots if name not in written_elsewhere)
+
     @staticmethod
-    def _l2m_verdict(loop: LoopRegion, sdfg: SDFG) -> tuple[bool, str | None]:
-        """Whether ``LoopToMap`` would accept ``loop`` right now, and the container it refused on.
+    def _l2m_verdict(
+        loop: LoopRegion, sdfg: SDFG, assume_private: frozenset[str] = frozenset()
+    ) -> tuple[bool, str | None]:
+        """Whether ``LoopToMap`` would accept ``loop`` with ``assume_private`` made iteration-private, and the
+        container it refused on.
 
         Asks ``LoopToMap.can_be_applied`` directly on the single loop. Avoids the
         whole-SDFG ``match_patterns(sdfg, LoopToMap)`` walk -- which, on
@@ -313,7 +228,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         xform = LoopToMap()
         with contextlib.redirect_stdout(io.StringIO()):
             try:
-                accepted = ParallelizeLoops().accepts(loop, xform)
+                accepted = ParallelizeLoops().accepts(loop, xform, assume_private)
             except Exception:
                 return False, None
         return accepted, None if accepted else xform.last_refusal_container
@@ -768,7 +683,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                     return False
         return True
 
-    def _promote(self, sdfg: SDFG, loop: LoopRegion, arr_name: str, c_subset: subsets.Range) -> _Promotion:
+    def _promote(self, sdfg: SDFG, loop: LoopRegion, arr_name: str, c_subset: subsets.Range) -> None:
         """Privatize ``arr[c]`` to a per-iteration scalar.
 
         The slot-precise live-out gate in :meth:`_privatizable_slots` has already
@@ -805,11 +720,6 @@ class PromoteConstantIndexAccess(ppl.Pass):
             src, dst, Memlet(data=arr_name, subset=copy.deepcopy(c_subset), other_subset=subsets.Range([(0, 0, 1)]))
         )
 
-        edits: list[tuple[Memlet, str | None, Any]] = []
-        node_edits: list[tuple[nodes.AccessNode, str]] = []
-        introduced_scalar_nodes: list[tuple[nodes.AccessNode, Any]] = []
-        removed_arr_nodes: list[tuple[nodes.AccessNode, Any]] = []
-        endpoint_edits: list[tuple[Any, Memlet, str, nodes.AccessNode]] = []
         scalar_subset = subsets.Range([(0, 0, 1)])
 
         single_slot = self._arr_accesses_only_at_slot(loop, arr_name, c_subset)
@@ -826,7 +736,6 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 if not single_slot and not point_subsets_equal(memlet.subset, c_subset):
                     # Sibling slot; left for its own _promote call.
                     continue
-                edits.append((memlet, memlet.data, memlet.subset))
                 memlet.data = scalar_name
                 memlet.subset = copy.deepcopy(scalar_subset)
                 if not single_slot:
@@ -837,10 +746,6 @@ class PromoteConstantIndexAccess(ppl.Pass):
                         if isinstance(end_node, nodes.AccessNode) and end_node.data == arr_name:
                             if per_state_scalar is None:
                                 per_state_scalar = state.add_access(scalar_name)
-                                introduced_scalar_nodes.append((per_state_scalar, state))
-                            # Record which arr node this edge's endpoint came from, so undo
-                            # restores THIS edge to THIS node (not a shared best-guess node).
-                            endpoint_edits.append((state, memlet, endpoint, end_node))
                             new_src = per_state_scalar if endpoint == "src" else edge.src
                             new_dst = per_state_scalar if endpoint == "dst" else edge.dst
                             state.remove_edge(edge)
@@ -850,26 +755,12 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 # memlet was rewritten.
                 for node in list(state.nodes()):
                     if isinstance(node, nodes.AccessNode) and node.data == arr_name:
-                        node_edits.append((node, node.data))
                         node.data = scalar_name
             else:
                 # Slot-precise path: the original ``arr`` AccessNode may now be
                 # orphaned (all its incident edges were rerouted to a per-slot
                 # scalar AccessNode in this state). Remove orphaned arr nodes here
-                # so the SDFG validates; tracked separately from node_edits so undo
-                # can distinguish rename-restore from re-add.
+                # so the SDFG validates.
                 for node in list(state.nodes()):
                     if isinstance(node, nodes.AccessNode) and node.data == arr_name and state.degree(node) == 0:
-                        removed_arr_nodes.append((node, state))
                         state.remove_node(node)
-        return _Promotion(
-            sdfg,
-            arr_name,
-            scalar_name,
-            prologue,
-            edits,
-            node_edits,
-            introduced_scalar_nodes,
-            removed_arr_nodes,
-            endpoint_edits,
-        )

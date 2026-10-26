@@ -980,5 +980,38 @@ def test_promotes_when_write_dominates_read_across_states():
     assert np.allclose(out, expected_out)
 
 
+def test_refused_under_the_promotion_assumption_leaves_the_sdfg_untouched():
+    """The loop refuses on ``arr`` and, with ``arr`` assumed promoted, still refuses on the carried ``acc``: nothing
+    is promoted and the SDFG is unchanged."""
+    sdfg = dace.SDFG("pcia_refused_under_assumption")
+    sdfg.add_array("arr", [4], dace.float64)
+    sdfg.add_array("scale", [8], dace.float64)
+    sdfg.add_array("out", [8], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    loop = LoopRegion("lp", "jl < 8", "jl", "jl = 0", "jl = jl + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    write = loop.add_state("write", is_start_block=True)
+    read = loop.add_state_after(write, "read")
+    carry = loop.add_state_after(read, "carry")
+
+    tw = write.add_tasklet("w", {"s": None}, {"a": None}, "a = 0.5 * s")
+    write.add_edge(write.add_read("scale"), None, tw, "s", dace.Memlet("scale[jl]"))
+    write.add_edge(tw, "a", write.add_write("arr"), None, dace.Memlet("arr[1]"))
+    tr = read.add_tasklet("r", {"a": None}, {"o": None}, "o = 2.0 * a")
+    read.add_edge(read.add_read("arr"), None, tr, "a", dace.Memlet("arr[1]"))
+    read.add_edge(tr, "o", read.add_write("out"), None, dace.Memlet("out[jl]"))
+    tc = carry.add_tasklet("c", {"p": None, "x": None}, {"n": None}, "n = p + x")
+    carry.add_edge(carry.add_read("acc"), None, tc, "p", dace.Memlet("acc[0]"))
+    carry.add_edge(carry.add_read("out"), None, tc, "x", dace.Memlet("out[jl]"))
+    carry.add_edge(tc, "n", carry.add_write("acc"), None, dace.Memlet("acc[0]"))
+    sdfg.validate()
+
+    assert PromoteConstantIndexAccess._l2m_verdict(loop, sdfg) == (False, "arr")
+    assert PromoteConstantIndexAccess._l2m_verdict(loop, sdfg, frozenset({"arr"})) == (False, "acc")
+    before = _snapshot(sdfg)
+    assert PromoteConstantIndexAccess().apply_pass(sdfg, {}) is None
+    assert _snapshot(sdfg) == before
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__]))

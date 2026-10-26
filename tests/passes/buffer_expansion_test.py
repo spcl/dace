@@ -468,5 +468,80 @@ def test_view_operand_is_not_expanded():
             assert not (set(arrs) & set(views))
 
 
+def _ordering_read_sdfg(name: str, carried_acc: bool):
+    """``for i: (buf -> zero) ordering; out[i] = 0; buf[0:M] = 2 * a[i, :]; out[i] += sum(buf)`` -- the ordering edge
+    makes ``LoopToMap`` count ``buf`` as read before written (carried), while the define-before-read guard proves it
+    private. ``carried_acc`` adds a genuinely carried ``acc[0] += out[i]`` after it."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N, M], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    sdfg.add_transient("buf", [M], dace.float64)
+    loop = LoopRegion("lp", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    head = loop.add_state("head", is_start_block=True)
+    ws = loop.add_state_after(head, "write")
+    rs = loop.add_state_after(ws, "read")
+    zero = head.add_tasklet("zero", {}, {"o": None}, "o = 0.0")
+    head.add_nedge(head.add_read("buf"), zero, dace.Memlet())
+    head.add_edge(zero, "o", head.add_write("out"), None, dace.Memlet("out[i]"))
+    ws.add_mapped_tasklet(
+        "w",
+        {"j": "0:M"},
+        {"x": dace.Memlet("a[i, j]")},
+        "y = 2.0 * x",
+        {"y": dace.Memlet("buf[j]")},
+        external_edges=True,
+    )
+    rs.add_mapped_tasklet(
+        "r",
+        {"j": "0:M"},
+        {"x": dace.Memlet("buf[j]")},
+        "y = x",
+        {"y": dace.Memlet("out[i]", wcr="lambda p, q: p + q")},
+        external_edges=True,
+    )
+    if carried_acc:
+        cs = loop.add_state_after(rs, "carry")
+        add = cs.add_tasklet("acc", {"p": None, "x": None}, {"n": None}, "n = p + x")
+        cs.add_edge(cs.add_read("acc"), None, add, "p", dace.Memlet("acc[0]"))
+        cs.add_edge(cs.add_read("out"), None, add, "x", dace.Memlet("out[i]"))
+        cs.add_edge(add, "n", cs.add_write("acc"), None, dace.Memlet("acc[0]"))
+    sdfg.validate()
+    return sdfg, loop
+
+
+def test_expands_a_buffer_the_probe_accepts_as_private_and_the_loop_then_maps():
+    """The loop refuses on ``buf`` and is accepted with ``buf`` assumed private: the pass expands it, the loop maps,
+    and the values match the sequential reference."""
+    sdfg, loop = _ordering_read_sdfg("be_expands_assumed_private", carried_acc=False)
+    assert BufferExpansion._loop_verdict(sdfg, loop) == (False, "buf")
+    assert BufferExpansion._loop_verdict(sdfg, loop, None, frozenset({"buf"}))[0]
+
+    assert BufferExpansion().apply_pass(sdfg, {}) == {"lp": ["buf"]}
+    assert [str(d) for d in sdfg.arrays["buf"].shape] == ["N", "M"]
+    assert BufferExpansion._loop_mappable(sdfg, loop)
+    assert _apply_loop_to_map(sdfg) == 1
+    sdfg.validate()
+
+    n, m = 6, 5
+    a = np.random.default_rng(7).random((n, m))
+    out = np.zeros(n)
+    sdfg(a=a, out=out, acc=np.zeros(1), N=n, M=m)
+    assert np.allclose(out, 2.0 * a.sum(axis=1))
+
+
+def test_a_buffer_whose_loop_the_assumption_does_not_unblock_is_left_alone():
+    """With ``buf`` assumed private the loop still refuses on the carried ``acc``: nothing is expanded and the SDFG
+    is unchanged."""
+    sdfg, loop = _ordering_read_sdfg("be_refused_under_assumption", carried_acc=True)
+    assert BufferExpansion._loop_verdict(sdfg, loop) == (False, "buf")
+    assert BufferExpansion._loop_verdict(sdfg, loop, None, frozenset({"buf"})) == (False, "acc")
+
+    before = sdfg.hash_sdfg()
+    assert BufferExpansion().apply_pass(sdfg, {}) is None
+    assert sdfg.hash_sdfg() == before
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
