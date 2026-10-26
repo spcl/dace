@@ -7,6 +7,7 @@ in order.
 """
 
 import functools
+import re
 
 from dace import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -76,11 +77,8 @@ def hip_expansion(cuda_expansion: type[ExpandTransformation], environment: type,
         rename_code(result, names)
         return result
 
-    name = (
-        cuda_expansion.__name__.replace("CuBLAS", "HipBLAS")
-        .replace("CuSolverDn", "HipSolverDn")
-        .replace("CuTensor", "HipTensor")
-    )
+    # ExpandGemmCuBLAS -> ExpandGemmHipBLAS, cuFFTFFTExpansion -> hipFFTFFTExpansion
+    name = re.sub(r"([Cc])u(?=[A-Z])", lambda m: "Hip" if m[1] == "C" else "hip", cuda_expansion.__name__)
     attributes = {
         "environments": [environment],
         "expansion": staticmethod(expansion),

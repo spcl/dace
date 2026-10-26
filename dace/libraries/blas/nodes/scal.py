@@ -28,16 +28,16 @@ class ExpandScalPure(ExpandTransformation):
         return sdfg
 
 
-def scal_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
-    """``_res = _x``, then ``?scal`` scales ``_res`` in place, through CBLAS or the GPU library of ``dialect``."""
+def scal_call(node, state, sdfg, environment=None) -> SDFG:
+    """``_res = _x``, then ``?scal`` scales ``_res`` in place, through CBLAS or the GPU library of ``environment``."""
     x, res = operand(node, state, sdfg, "_x"), operand(node, state, sdfg, "_res")
     dtype = x.desc.dtype
-    if dialect is not None:
-        gpu = gpu_dialect.gpu_call(dialect, dtype)
+    if environment is not None:
+        gpu = gpu_dialect.gpu_call(dtype)
         if gpu is None:
             return ExpandScalPure.expansion(node, state, sdfg)
         scalars, arg = gpu_dialect.scalar_pointers(gpu, dtype, a=node.a)
-        call = f"{gpu.routine('scal')}({dialect.handle}, {x.shape[0]}, {arg['a']}, {gpu.pointer('__res')}, {res.strides[0]})"
+        call = f"{gpu.routine('scal')}({gpu_dialect.HANDLE}, {x.shape[0]}, {arg['a']}, {gpu.pointer('__res')}, {res.strides[0]})"
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
         return blas_helpers.in_place_call(node, state, sdfg, "_x", "_res", code)
     prefix = blas_helpers.blas_prefix(dtype)
