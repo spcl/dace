@@ -678,7 +678,7 @@ abbrev pendingSc (syms : List (Sym × Val)) : SibCtx := { pending := { syms } }
 
 /-- **A run of `DynScopeCopyNode`s**: reads the inputs under the scope's
 valuation into the pending symbols. -/
-theorem dscopies_run {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) (hcons : tc.consumed = none)
+theorem dscopies_run {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL)
     {full : List SNode} {gb : Bool} {rest : List SNode} {r : Res (TCtl × CSt)} :
     ∀ {keys : List InKey} {ds : List SNode}, DynNodes tc keys ds → (∀ k ∈ keys, k.conn ≠ "IN_stream") →
       ∀ {acc : List (Sym × Val)} {cst : CSt}, STree.ListExec tc full gb (pendingSc acc) (ds ++ rest) cst r →
@@ -741,7 +741,7 @@ theorem dscopies_run {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) (
         | some v =>
           simp only [Res.ok_bind, Res.ok.injEq, Prod.mk.injEq] at this
           obtain ⟨rfl, -, rfl⟩ := this
-          rcases dscopies_run he hcons hns (fun k' hk'' => hnot k' (List.mem_cons_of_mem _ hk'')) hr with
+          rcases dscopies_run he hns (fun k' hk'' => hnot k' (List.mem_cons_of_mem _ hk'')) hr with
             ⟨e, rfl, hd⟩ | ⟨syms, y', hd, hyv', hx'⟩
           · rw [hρ, hst] at hd
             exact .inl ⟨e, rfl, by simp only [dynReadAcc, hrd, Res.ok_bind]; exact hd⟩
@@ -752,7 +752,7 @@ theorem dscopies_run {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) (
         | none =>
           simp only [Res.ok_bind, Res.ok.injEq, Prod.mk.injEq] at this
           obtain ⟨rfl, -, rfl⟩ := this
-          rcases dscopies_run he hcons hns (fun k' hk'' => hnot k' (List.mem_cons_of_mem _ hk'')) hr with
+          rcases dscopies_run he hns (fun k' hk'' => hnot k' (List.mem_cons_of_mem _ hk'')) hr with
             ⟨e, rfl, hd⟩ | ⟨syms, y', hd, hyv', hx'⟩
           · rw [hρ, hst] at hd
             have hd' : dynReadAcc ctx cst.ρ acc (k :: ks) cst.st = .err e := by
@@ -1016,15 +1016,13 @@ variable {ctx : Ctx} {tc : TCtx} {s : State}
   (h : ∀ (entry : NodeId) (ρ : Valuation) (st : St),
     bindViews ctx ρ s (s.viewOrder ctx (s.directChildren (some entry))) st = .ok st)
   (he : tc.ctx.eraseL = ctx.eraseL)
-  (hcons : tc.consumed = none)
 
-omit hcons in
 include he in
 theorem I_eq : tc.ctx.I = ctx.I := by
   have := congrArg Ctx.I he
   simpa [Ctx.eraseL] using this
 
-include he hcons in
+include he in
 /-- The tree runs copy nodes one after the other: the fold of `copyData`
 over their keys. -/
 theorem copies_run {full : List SNode} {gb : Bool} :
@@ -1067,7 +1065,7 @@ theorem copies_run {full : List SNode} {gb : Bool} :
           rw [hc, Res.ok_bind, ← CSt.st_withSt cst hy, ← hρ]
           exact hf
 
-omit he hcons in
+omit he in
 /-- The tree runs view nodes one after the other: the fold of `aliasTo` over
 their keys. -/
 theorem views_run (he' : tc.ctx.eraseL = ctx.eraseL) {full : List SNode} {gb : Bool} :
@@ -1142,7 +1140,7 @@ theorem leaf_node {full : List SNode} {gb : Bool} {id : NodeId} {n : DNode} {o :
       subst hR
       exact .inr (.inr ⟨y, hy ▸ NodeExec.simple hsimp, ih hx₁ (hrel.afterNode hyv ⟨rfl, rfl⟩) rfl⟩)
 
-omit he hcons in
+omit he in
 /-- **The iterations of a map**, given one iteration: the tree's iterations,
 each matched by an SDFG iteration whose log without the SDFG's private
 transients is the tree's without the tree's. -/
@@ -1233,7 +1231,7 @@ theorem iter_matched {n : DNode} {mp : MapNode} {oM full : List NodeId} {body : 
     | false => exact .inl ⟨_, rfl, .hbRace hto (hp _) hs hf⟩
     | true => exact .inr (.inr ⟨st', .run hto (hp _) hs hf, cst', hres, by rw [hst.2.1, hpriv]⟩)
 
-omit h hcons in
+omit h in
 include he in
 theorem scopeFinishT_eq (cst : CSt) (logs : List Log) :
     scopeFinishT tc cst logs = (scopeFinish ctx cst.st logs).map cst.withSt := by
@@ -1458,7 +1456,7 @@ theorem nested_call (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {nd : DNode}
       rw [hg₂, Log.ren_one, Log.dropNames_nil'] at hnode
       exact .inr (.inr ⟨c, rfl, hnode⟩)
 
-include he hcons in
+include he in
 /-- **A map scope node**, given its iterations (`hiter`) and the rest of the
 segment (`ih`). -/
 theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {body : List SNode}
@@ -1480,7 +1478,7 @@ theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {
     have hx₁ : STree.ListExec tc full' gb (pendingSc []) (ds ++ (.mapScope mp body :: (cs ++ rest))) cst r := by
       simpa only [List.append_assoc, List.cons_append] using hx
     have hshift : cst.st = st.forNode.shift cst.log := hrel.forNode_shift
-    rcases dscopies_run he hcons hds (fun k hk' => (hok.2 k hk').1) hx₁ with
+    rcases dscopies_run he hds (fun k hk' => (hok.2 k hk').1) hx₁ with
       ⟨e, rfl, hd⟩ | ⟨syms, y', hd, hyv', hx₂⟩
     · rw [hshift, dynReadAcc_shift] at hd
       cases hd₀ : dynReadAcc ctx cst.ρ [] keys st.forNode with
@@ -1563,7 +1561,7 @@ theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {
                     ih (cst := cst.withSt (y₂.shift cst.log)) hx' (hrel.afterNode hyv₂ ⟨rfl, rfl⟩)⟩)
 
 
-include h he hcons in
+include h he in
 /-- **Matching of a dataflow segment** (see the module documentation). -/
 theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : List NodeId} {cs : List SNode}
     (hc : SegCorr ctx tc s o cs) :
@@ -1588,7 +1586,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
       exact List.foldlM_res_comm _ _ (fun b k => copyData_shift ctx cst.ρ cst.log b _ _ _ _ _ _) _ _
     have hsimp := DNode.isSimple_of_copyTarget hk
     apply SeqOut.cons hn
-    rcases copies_run he hcons cps hx with ⟨e, rfl, hf⟩ | ⟨cst', hx', hf, hρ⟩
+    rcases copies_run he cps hx with ⟨e, rfl, hf⟩ | ⟨cst', hx', hf, hρ⟩
     · rw [hshift] at hf
       cases hy : (cps.map fun p => tc.copyKey p.1 p.2).foldlM (copyStep ctx cst.ρ) st.forNode with
       | ok y => rw [hy] at hf; cases hf
@@ -1643,7 +1641,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
     simp only [stepLeaf, this]
   | @map id n o cs mp oM full body keys ds hn hk hkeys hok hds hto hdir hpriv _ _ ihb ih =>
     intro full' gb rest cst r st hx hrel
-    exact map_node he hcons hn hk hkeys hok hds
+    exact map_node he hn hk hkeys hok hds
       (fun hm hv _ _ hi => iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr) hm hv hi) ih hx hrel
   | @nestedMap id n o cs mp full body keys ds nid nd inner mapping ni conns σ hn hk hkeys hok hds xs hto hdir hxs hnd
       hkn hb hmap hcode hout hpriv hnames hinner _ ih =>
@@ -1660,7 +1658,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
       have := hinner ctx.I hw
       rw [htc] at this
       exact this
-    exact map_node he hcons hn hk hkeys hok hds
+    exact map_node he hn hk hkeys hok hds
       (fun hm _ _ _ hi => iter_matched_of (n := n) (fun i {res} hbd => nested_body h he hw hto hdir hxs hnd hkn hb hmap
         hcode hout hpriv (cT := (tc.renT σ).innerCtx inner) rfl rfl hnames' hinner' hm i hbd) hi) ih hx hrel
   | @nested id nd o cs body inner mapping ni conns σ hn hkn hb hmap hcode hout hctr hshape hnames hinner _ ih =>

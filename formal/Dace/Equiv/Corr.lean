@@ -132,7 +132,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
     have hp : bindViews ctx cst.ρ s (s.viewOrder ctx (s.topLevelOf c)) base = .ok base₁ := hpv.trans hb
     have hrel : StRel cst₁.st cst₁ := ⟨rfl, rfl, rfl⟩
     have hst₁ : cst₁.st = base₁.shift cst.log := hf.symm
-    rcases SegCorr.matched h he hcons hw hseg hx₁ hrel with ⟨e, hu, hs⟩ | ⟨e, e₀, hr, hs⟩ | ⟨cst', st', tr, hl, hs, hρ, hrel'⟩
+    rcases SegCorr.matched h he hw hseg hx₁ hrel with ⟨e, hu, hs⟩ | ⟨e, e₀, hr, hs⟩ | ⟨cst', st', tr, hl, hs, hρ, hrel'⟩
     · rw [hst₁, hρ₁] at hs
       obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.shift_iff cst.log).1 hs
       cases r₀ with
