@@ -11,6 +11,7 @@ from dace import SDFG, SDFGState, dtypes, properties
 from dace import data as dt
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import environments
 from dace.libraries.blas.blas_helpers import (
     check_access,
@@ -480,28 +481,7 @@ class ExpandGemmCuBLAS(ExpandGemmGPUBLAS):
         return f"{dtype}gemm"
 
 
-@dace.library.expansion
-class ExpandGemmRocBLAS(ExpandGemmGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    backend = "roc"
-    dtype_backend = "hip"
-    set_pointer_mode = "rocblas_set_pointer_mode"
-    pointer_host = "rocblas_pointer_mode_host"
-    pointer_device = "rocblas_pointer_mode_device"
-    ex_suffix = "_gemm_ex"
-    check_error = "dace::blas::CheckRocblasError"
-
-    @classmethod
-    def backend_op(cls, mode: str) -> str:
-        if mode == "N":
-            return "rocblas_operation_none"
-        elif mode == "T":
-            return "rocblas_operation_transpose"
-        raise ValueError(f"Invalid gemm matrix operation {mode}")
-
-    @classmethod
-    def funcname(cls, dtype: str) -> str:
-        return f"_{dtype.lower()}gemm"
+ExpandGemmHipBLAS = hip_dialect.hip_expansion(ExpandGemmCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
 
 
 @dace.library.expansion
@@ -556,7 +536,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandGemmMKL,
         "OpenBLAS": ExpandGemmOpenBLAS,
         "cuBLAS": ExpandGemmCuBLAS,
-        "rocBLAS": ExpandGemmRocBLAS,
+        "hipBLAS": ExpandGemmHipBLAS,
         "PBLAS": ExpandGemmPBLAS,
     }
     default_implementation = None

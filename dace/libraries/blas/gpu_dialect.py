@@ -1,15 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""How cuBLAS and rocBLAS spell a handle, an error check, a routine and an enum, one object per backend.
-
-The two are not a prefix substitution of each other: cuBLAS is camel-case with upper-case enum constants
-(``cublasDsymm``, ``CUBLAS_SIDE_LEFT``), rocBLAS is snake_case with lower-case enum values (``rocblas_dsymm``,
-``rocblas_side_left``). A node's GPU expansion builds one call and asks the dialect for each spelling.
-"""
+"""How cuBLAS spells a handle, an error check, a routine and an enum. A node's GPU expansion builds its call from
+these; the hipBLAS expansion is the same call renamed (:mod:`dace.libraries.hip_dialect`)."""
 
 from collections.abc import Callable
 from typing import NamedTuple
 
 from dace import dtypes, library
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
 from dace.transformation.transformation import ExpandTransformation
 
@@ -25,7 +22,7 @@ class GpuBlasDialect(NamedTuple):
     set_pointer_mode: str
     pointer_host: str
     pointer_device: str
-    #: ``('D', 'symm') -> 'cublasDsymm'`` / ``'rocblas_dsymm'``.
+    #: ``('D', 'symm') -> 'cublasDsymm'``.
     func: Callable[[str, str], str]
     #: The C type a complex pointer operand is cast to, from the CUDA spelling of
     #: :func:`~dace.libraries.blas.blas_helpers.cublas_type_metadata`.
@@ -49,21 +46,6 @@ CUBLAS = GpuBlasDialect(
     side=lambda right: "CUBLAS_SIDE_RIGHT" if right else "CUBLAS_SIDE_LEFT",
 )
 
-ROCBLAS = GpuBlasDialect(
-    handle="__dace_rocblas_handle",
-    check_error="dace::blas::CheckRocblasError",
-    set_pointer_mode="rocblas_set_pointer_mode",
-    pointer_host="rocblas_pointer_mode_host",
-    pointer_device="rocblas_pointer_mode_device",
-    func=lambda letter, routine: f"rocblas_{letter.lower()}{routine.lower()}",
-    ctype=lambda cuda_type: {"cuComplex": "rocblas_float_complex", "cuDoubleComplex": "rocblas_double_complex"}.get(
-        cuda_type, cuda_type
-    ),
-    op=lambda trans: "rocblas_operation_transpose" if trans else "rocblas_operation_none",
-    fill=lambda upper: "rocblas_fill_upper" if upper else "rocblas_fill_lower",
-    side=lambda right: "rocblas_side_right" if right else "rocblas_side_left",
-)
-
 
 class GpuCall(NamedTuple):
     """The pieces a node's GPU call is written from, for one dialect and data type."""
@@ -71,7 +53,7 @@ class GpuCall(NamedTuple):
     dialect: GpuBlasDialect
     #: The BLAS letter of the data type (``D`` for ``double``).
     letter: str
-    #: Cast for a pointer operand, empty for a real type: rocBLAS declares complex parameters as its own type.
+    #: Cast for a pointer operand, empty for a real type.
     cast: str
 
     def routine(self, name: str) -> str:
@@ -105,7 +87,7 @@ def required_layout(node, *matrices: blas_helpers.Operand) -> blas_helpers.Matri
     if layout is None:
         strides = [list(m.strides) for m in matrices]
         raise ValueError(
-            f"{node.label}: cuBLAS/rocBLAS need every matrix in one row- or column-major layout, got strides {strides}"
+            f"{node.label}: cuBLAS/hipBLAS need every matrix in one row- or column-major layout, got strides {strides}"
         )
     return layout
 
@@ -113,8 +95,8 @@ def required_layout(node, *matrices: blas_helpers.Operand) -> blas_helpers.Matri
 def call_code(call: GpuCall, environment: type, node, scalars: str, routine_call: str) -> str:
     """The tasklet body running ``routine_call``: handle setup, then the call with its scalars read from the host.
 
-    Both handles are created in device pointer mode (``dace_cublas.h`` / ``dace_rocblas.h``), so a call passing a
-    host address would have the GPU dereference it.
+    The handle is created in device pointer mode (``dace_cublas.h``), so a call passing a host address would have the
+    GPU dereference it.
     """
     d = call.dialect
     return (
@@ -127,13 +109,13 @@ def call_code(call: GpuCall, environment: type, node, scalars: str, routine_call
 
 
 def vendor_expansions(node_name: str, call: Callable) -> dict[str, type[ExpandTransformation]]:
-    """The OpenBLAS, MKL, cuBLAS and rocBLAS expansions of a node, each validating the node and returning
-    ``call(node, state, sdfg, dialect, environment)``; the CPU libraries get no dialect, as both are CBLAS."""
+    """The OpenBLAS, MKL, cuBLAS and hipBLAS expansions of a node, each validating the node and returning
+    ``call(node, state, sdfg, dialect, environment)``; the CPU libraries get no dialect, as both are CBLAS. hipBLAS is
+    the cuBLAS expansion renamed."""
     backends = {
         "OpenBLAS": (environments.openblas.OpenBLAS, None),
         "MKL": (environments.intel_mkl.IntelMKL, None),
         "cuBLAS": (environments.cublas.cuBLAS, CUBLAS),
-        "rocBLAS": (environments.rocblas.rocBLAS, ROCBLAS),
     }
     expansions = {}
     for implementation, (environment, dialect) in backends.items():
@@ -149,4 +131,7 @@ def vendor_expansions(node_name: str, call: Callable) -> dict[str, type[ExpandTr
             "__module__": call.__module__,
         }
         expansions[implementation] = library.expansion(type(name, (ExpandTransformation,), attributes))
+    expansions["hipBLAS"] = hip_dialect.hip_expansion(
+        expansions["cuBLAS"], environments.hipblas.hipBLAS, hip_dialect.BLAS
+    )
     return expansions

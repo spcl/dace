@@ -187,10 +187,24 @@ class ExpandInvCuSolverDn(ExpandTransformation):
         return _make_sdfg_getrs(node, parent_state, parent_sdfg, "cuSolverDn")
 
 
+@dace.library.expansion
+class ExpandInvHipSolverDn(ExpandTransformation):
+    environments = [environments.hipsolverdn.hipSolverDn]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return _make_sdfg_getrs(node, parent_state, parent_sdfg, "hipSolverDn")
+
+
 @dace.library.node
 class Inv(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {"OpenBLAS": ExpandInvOpenBLAS, "MKL": ExpandInvMKL, "cuSolverDn": ExpandInvCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandInvOpenBLAS,
+        "MKL": ExpandInvMKL,
+        "cuSolverDn": ExpandInvCuSolverDn,
+        "hipSolverDn": ExpandInvHipSolverDn,
+    }
     default_implementation = None
 
     overwrite = dace.properties.Property(dtype=bool, default=False, category="Semantics")

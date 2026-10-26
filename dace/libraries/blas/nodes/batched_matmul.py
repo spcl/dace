@@ -8,6 +8,7 @@ from dace import data as dt
 from dace import dtypes, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import environments
 from dace.libraries.blas.blas_helpers import (
     check_access,
@@ -427,6 +428,11 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         return tasklet
 
 
+ExpandBatchedMatMulHipBLAS = hip_dialect.hip_expansion(
+    ExpandBatchedMatMulCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS
+)
+
+
 @dace.library.node
 class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -435,6 +441,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandBatchedMatMulMKL,
         "OpenBLAS": ExpandBatchedMatMulOpenBLAS,
         "cuBLAS": ExpandBatchedMatMulCuBLAS,
+        "hipBLAS": ExpandBatchedMatMulHipBLAS,
     }
     transA = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose A before multiplying")
     transB = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose B before multiplying")

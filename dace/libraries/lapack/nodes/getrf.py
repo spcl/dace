@@ -5,6 +5,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
@@ -123,10 +124,20 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+ExpandGetrfHipSolverDn = hip_dialect.hip_expansion(
+    ExpandGetrfCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
+
+
 @dace.library.node
 class Getrf(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {"OpenBLAS": ExpandGetrfOpenBLAS, "MKL": ExpandGetrfMKL, "cuSolverDn": ExpandGetrfCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandGetrfOpenBLAS,
+        "MKL": ExpandGetrfMKL,
+        "cuSolverDn": ExpandGetrfCuSolverDn,
+        "hipSolverDn": ExpandGetrfHipSolverDn,
+    }
     default_implementation = None
 
     # Object fields

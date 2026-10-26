@@ -7,6 +7,7 @@ from dace.libraries.blas import blas_helpers, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
 from dace.sdfg import nodes
+from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -20,11 +21,13 @@ class ExpandSymmPure(ExpandTransformation):
         sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
         m, n = sdfg.arrays["_Cin"].shape
         init = sdfg.add_state(f"{node.label}_init")
+        # As in BLAS, beta == 0 does not read C, so NaN there does not reach the result
+        zero = equal_valued(0, node.beta)
         init.add_mapped_tasklet(
             "scale_c",
             {"__i": f"0:{m}", "__j": f"0:{n}"},
-            {"__c": dace.Memlet("_Cin[__i, __j]")},
-            f"__out = ({node.beta}) * __c",
+            {} if zero else {"__c": dace.Memlet("_Cin[__i, __j]")},
+            "__out = 0" if zero else f"__out = ({node.beta}) * __c",
             {"__out": dace.Memlet("_Cout[__i, __j]")},
             external_edges=True,
         )

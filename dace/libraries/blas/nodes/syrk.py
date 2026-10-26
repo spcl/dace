@@ -7,6 +7,7 @@ from dace.libraries.blas import blas_helpers, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
 from dace.sdfg import nodes
+from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -41,14 +42,14 @@ class ExpandSyrkPure(ExpandTransformation):
             {"__out": dace.Memlet("_product[__i, __j]", wcr="lambda a, b: a + b")},
             external_edges=True,
         )
-        # As in BLAS, only the referenced triangle of C is updated
+        # As in BLAS, only the referenced triangle of C is updated, and beta == 0 does not read it
+        scaled_c = "" if equal_valued(0, node.beta) else f" + ({node.beta}) * __c"
         update = sdfg.add_state_after(product, f"{node.label}_update")
         update.add_mapped_tasklet(
             "update",
             {"__i": f"0:{n}", "__j": f"0:{n}"},
             {"__c": dace.Memlet("_Cin[__i, __j]"), "__p": dace.Memlet("_product[__i, __j]")},
-            f"__out = ({node.alpha}) * __p + ({node.beta}) * __c if {symmetric_element(node.uplo, '__i', '__j')} "
-            "else __c",
+            f"__out = ({node.alpha}) * __p{scaled_c} if {symmetric_element(node.uplo, '__i', '__j')} else __c",
             {"__out": dace.Memlet("_Cout[__i, __j]")},
             external_edges=True,
         )
