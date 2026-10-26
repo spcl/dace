@@ -38,7 +38,7 @@ from tests.corpus.tsvc import tsvc
 out = {}
 for name in sys.argv[1].split(','):
     sd = tsvc.to_sdfg(tsvc.collect(name=name)[0], tag='det', simplify=True)
-    canonicalize(sd, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sd, validate=True, peel_limit=4)
     maps = sorted(f'{len(n.map.params)}:{n.map.range}' for n, _ in sd.all_nodes_recursive()
                   if isinstance(n, nd.MapEntry))
     libs = sorted(type(n).__name__ for n, _ in sd.all_nodes_recursive() if isinstance(n, nd.LibraryNode))

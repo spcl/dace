@@ -89,7 +89,7 @@ def _inputs(n=64):
 def _canonicalize_twice(program):
     """First canonicalize (manufactures the aliased ``NestedSDFG``), then a second one."""
     sdfg = program.to_sdfg(simplify=True)
-    canonicalize(sdfg, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, peel_limit=4)
     sdfg.validate()
     canonicalize(sdfg, semantic_lifting=False, target="cpu")
     sdfg.validate()
@@ -149,7 +149,7 @@ def aliases(state, node) -> bool:
 def test_split_statements_refuses_the_in_place_body():
     """The refusal is at the decision, not the rewrite: no groups, hence no mutation."""
     sdfg = guard_flip.to_sdfg(simplify=True)
-    canonicalize(sdfg, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, peel_limit=4)
     aliased = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG) and aliases(p, n)]
     assert aliased, "canonicalization no longer manufactures an input/output-aliased NestedSDFG"
     for node, state in aliased:
@@ -167,7 +167,7 @@ def test_tsvc_double_canonicalize_is_valid_and_correct(name):
 
     kernel = tsvc.collect(name=name)[0]
     sdfg = tsvc.to_sdfg(kernel, tag="ss_rmw", simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
     canonicalize(sdfg, validate=True, semantic_lifting=False, target="cpu")
     sdfg.validate()
 

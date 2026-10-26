@@ -43,11 +43,11 @@ def map_params(sdfg):
 @pytest.mark.parametrize("program", [guarded_elementwise, nested_rows], ids=["guarded", "nested"])
 def test_second_canonicalize_keeps_every_map(program):
     sdfg = program.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
     first = map_params(sdfg)
     assert first, "fixture stopped producing a map -- the round trip is no longer under test"
 
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
     assert map_params(sdfg) == first, "a second canonicalize dropped a map the first one had proven parallel"
 
 
@@ -60,8 +60,8 @@ def test_second_canonicalize_leaves_no_growing_subset():
     shape, not as a specific subset string, so it catches the pathology wherever it appears.
     """
     sdfg = guarded_elementwise.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
+    canonicalize(sdfg, validate=True, peel_limit=4)
 
     checked = 0
     for entry, state in sdfg.all_nodes_recursive():

@@ -39,7 +39,6 @@ LEN_1D = dace.symbol("LEN_1D")
 _CPU = dict(
     target="cpu",
     peel_limit=4,
-    break_anti_dependence=True,
     interchange_carry_with_map=True,
     scatter_to_guarded_maps=True,
 )

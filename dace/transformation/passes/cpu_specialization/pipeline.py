@@ -78,7 +78,7 @@ from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers impo
 from dace.transformation.passes.specialize_small_gemms import SpecializeSmallGemms
 
 
-def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: bool = False) -> SDFG:
+def cpu_specialize(sdfg: SDFG, validate: bool = False) -> SDFG:
     """Specialize a canonicalized ``sdfg`` for the CPU, in place.
 
     Run this AFTER :func:`~dace.transformation.passes.canonicalize.pipeline.canonicalize`, which
@@ -86,9 +86,6 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     the same verdicts.
 
     :param sdfg: A canonicalized SDFG.
-    :param break_anti_dependence: Chunk the anti-dependence snapshots into per-chunk seam buffers.
-                                  Pass ``False`` when canonicalization did not break anti
-                                  dependences, so there are no snapshots to chunk.
     :param validate: Validate the SDFG once at the end.
     :returns: The same ``sdfg`` instance, specialized.
     """
@@ -100,8 +97,7 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     hoist_invariant_guards(sdfg, require_full_hoist=False)
-    if break_anti_dependence:
-        ChunkAntiDependence().apply_pass(sdfg, {})
+    ChunkAntiDependence().apply_pass(sdfg, {})
     RecomputeIntermediates().apply_pass(sdfg, {})
     SequentializeSmallAxes().apply_pass(sdfg, {})
     SequentializeReductionAxes().apply_pass(sdfg, {})

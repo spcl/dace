@@ -613,9 +613,6 @@ class _PrivatizeArraysStage(_PrivatizeScalarsStage):
 #
 # ``interchange_carry_with_map``: ``Loop[jk]{Map[jl]}`` -> ``Map[jl]{Loop[jk]}``, carry per thread.
 #   CPU 4.6-5.2x, GPU 0.73-0.80x (BW-bound; short coalesced kernels win).
-# ``break_anti_dependence``: snapshot-rename read-ahead anti-deps. On ``A[i] = A[i+1] + B[i]``
-#   CPU off wins 1.16x, GPU on wins 82.6x. ON for both: the CPU loss is
-#   the trivial-kernel worst case.
 # ``scatter_to_guarded_maps``: sort + duplicate guard, ~1.04x CPU / ~1.03x GPU.
 # ``privatize_scatter_reductions``: whole-buffer map WCR so CPU emits an OpenMP array-section
 #   reduction instead of atomics (azimint_hist ~200x -> ~1x vs numpy). CPU only.
@@ -625,7 +622,6 @@ class _PrivatizeArraysStage(_PrivatizeScalarsStage):
 #   folded it and lost TSVC s172's map); see the AB note at its wiring below.
 CPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": True,
-    "break_anti_dependence": True,
     "scatter_to_guarded_maps": True,
     "privatize_scatter_reductions": True,
     "reconstruct_wavefront_nest": True,
@@ -633,7 +629,6 @@ CPU_DEFAULTS: dict[str, Any] = {
 }
 GPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": False,
-    "break_anti_dependence": True,
     "scatter_to_guarded_maps": True,
     "privatize_scatter_reductions": False,
     "reconstruct_wavefront_nest": True,
@@ -952,7 +947,6 @@ def recurrence_lifts(interchange_carry_with_map: bool, target: str, only: list |
 
 def derive_parallelism(
     peel_limit: int,
-    break_anti_dependence: bool,
     scatter_to_guarded_maps: bool,
     assume_parallel_guards: bool,
     reconstruct_wavefront_nest: bool,
@@ -972,8 +966,7 @@ def derive_parallelism(
     s += [(label, SymbolPropagation()), (label, ConstantPropagation())]
     # Before demotion: the anti-dependence proof reads a guard's symbols (``A[P]`` under ``P > i`` reads ahead), which
     # a demoted guard turns into opaque scalar reads.
-    if break_anti_dependence:
-        s += [(label, BreakAntiDependence(forward_reads=True)), (label, BreakAntiDependence())]
+    s += [(label, BreakAntiDependence(forward_reads=True)), (label, BreakAntiDependence())]
     s += [(label, DemoteNonStructuralSymbols()), (label, ppl.Pipeline([ScalarFission()]))]
     s += [(label, DeadCarriedStoreElimination())]
     # Before the lift: a workspace whose pre-loop fill no iteration observes is then the loop's own, privatized per
@@ -1182,7 +1175,6 @@ def finish() -> Stages:
 def build_stages(
     unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     peel_limit: int = DEFAULT_PEEL_LIMIT,
-    break_anti_dependence: bool = True,
     interchange_carry_with_map: bool = True,
     scatter_to_guarded_maps: bool = True,
     privatize_scatter_reductions: bool = True,
@@ -1212,7 +1204,6 @@ def build_stages(
     s += rail()
     s += derive_parallelism(
         peel_limit,
-        break_anti_dependence,
         scatter_to_guarded_maps,
         assume_parallel_guards,
         reconstruct_wavefront_nest,
@@ -1341,8 +1332,6 @@ class CanonicalizationPipeline(ppl.Pass):
                          iterations (0 disables).
     :param peel_limit: Best-effort loop peeling before parallelize (0 disables); defaults to
                        ``optimizer.canonicalization.peel_limit``.
-    :param break_anti_dependence: Snapshot-rename pure read-ahead anti-dependence
-                                  loops before parallelize (off by default).
     :param perfect_loop_nesting: Run ``PerfectLoopNesting`` at the fission stage. ON by
                                  default -- see the ruling at the fission stage below.
     :param target: ``'cpu'`` (default) or ``'gpu'``. Picks the per-target knob
@@ -1407,9 +1396,6 @@ class CanonicalizationPipeline(ppl.Pass):
     )
     peel_limit = properties.Property(
         dtype=int, default=DEFAULT_PEEL_LIMIT, desc="Best-effort loop peeling before parallelize (0 disables)."
-    )
-    break_anti_dependence = properties.Property(
-        dtype=bool, default=True, desc="Snapshot-rename read-ahead anti-dependence loops before parallelize."
     )
     target = properties.Property(
         dtype=str, default="cpu", choices=["cpu", "gpu"], desc="Per-target knob preset selector ('cpu' or 'gpu')."
@@ -1490,7 +1476,6 @@ class CanonicalizationPipeline(ppl.Pass):
         validate_all: bool = False,
         unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         peel_limit: int | None = None,
-        break_anti_dependence: bool | None = None,
         target: str = "cpu",
         interchange_carry_with_map: bool | None = None,
         scatter_to_guarded_maps: bool | None = None,
@@ -1515,9 +1500,6 @@ class CanonicalizationPipeline(ppl.Pass):
         self.target = target
         # Per-target knobs: ``None`` -> preset; explicit value overrides preset.
         self.peel_limit = DEFAULT_PEEL_LIMIT if peel_limit is None else peel_limit
-        self.break_anti_dependence = _resolve_target_default(
-            target, "break_anti_dependence", break_anti_dependence, fallback=True
-        )
         self.interchange_carry_with_map = _resolve_target_default(
             target, "interchange_carry_with_map", interchange_carry_with_map, fallback=True
         )
@@ -1558,7 +1540,6 @@ class CanonicalizationPipeline(ppl.Pass):
         return build_stages(
             unroll_limit=self.unroll_limit,
             peel_limit=self.peel_limit,
-            break_anti_dependence=self.break_anti_dependence,
             interchange_carry_with_map=self.interchange_carry_with_map,
             scatter_to_guarded_maps=self.scatter_to_guarded_maps,
             privatize_scatter_reductions=self.privatize_scatter_reductions,
@@ -1668,7 +1649,6 @@ def canonicalize(
     validate_all: bool = False,
     unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     peel_limit: int | None = None,
-    break_anti_dependence: bool | None = None,
     target: str = "cpu",
     interchange_carry_with_map: bool | None = None,
     scatter_to_guarded_maps: bool | None = None,
@@ -1707,11 +1687,6 @@ def canonicalize(
     :param unroll_limit: Unroll constant-trip loops <= this many iterations (0 disables).
     :param peel_limit: Best-effort loop peeling before parallelize; ``None``
                        (default) -> ``optimizer.canonicalization.peel_limit``.
-    :param break_anti_dependence: Snapshot-rename read-ahead anti-dependence
-                                  loops (TSVC s121 shape:
-                                  ``a[i] = a[i+1] + b[i]``); ``None``
-                                  (default) -> per-target preset
-                                  (CPU=True, GPU=True).
     :param target: ``'cpu'`` (default) or ``'gpu'``. Picks the per-target knob
                    preset (see ``CPU_DEFAULTS`` / ``GPU_DEFAULTS``). Explicit
                    knob args override the preset.
@@ -1778,7 +1753,6 @@ def canonicalize(
         validate_all,
         unroll_limit,
         peel_limit,
-        break_anti_dependence,
         target,
         interchange_carry_with_map,
         scatter_to_guarded_maps,
@@ -1829,7 +1803,6 @@ def canonicalize_under_authority(
     validate_all: bool,
     unroll_limit: int,
     peel_limit: int | None,
-    break_anti_dependence: bool | None,
     target: str,
     interchange_carry_with_map: bool | None,
     scatter_to_guarded_maps: bool | None,
@@ -1851,7 +1824,6 @@ def canonicalize_under_authority(
         validate_all=validate_all,
         unroll_limit=unroll_limit,
         peel_limit=peel_limit,
-        break_anti_dependence=break_anti_dependence,
         target=target,
         interchange_carry_with_map=interchange_carry_with_map,
         scatter_to_guarded_maps=scatter_to_guarded_maps,

@@ -90,7 +90,6 @@ def cpu_params(peel_limit: int = DEFAULT_PEEL_LIMIT, reconstruct_wavefront_nest:
     return dict(
         target="cpu",
         peel_limit=peel_limit,
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
         reconstruct_wavefront_nest=reconstruct_wavefront_nest,
@@ -381,10 +380,10 @@ def apply_config(sdfg, config: str, params: dict):
     # they actually emit.
     if config == "canon":
         canonicalize(sdfg, validate=True, validate_all=False, **params)
-        cpu_specialize(sdfg, break_anti_dependence=params.get("break_anti_dependence", True))
+        cpu_specialize(sdfg)
     elif config == "canon+vec":
         canonicalize(sdfg, validate=True, validate_all=False, **params)
-        cpu_specialize(sdfg, break_anti_dependence=params.get("break_anti_dependence", True))
+        cpu_specialize(sdfg)
         _vectorize(sdfg)
     elif config == "parallelize+vec":
         parallelize(sdfg, validate=True, validate_all=False)

@@ -249,8 +249,8 @@ def point_index(subset):
 class BreakAntiDependence(ppl.Pass):
     """Snapshot-rename loops with a pure WAR anti-dependence so they can map.
 
-    Off by default in pipelines (it adds a transient + a copy); enable it as a
-    tuning knob when the extra buffer is worth the parallelism.
+    Canonicalization always runs it; the CPU specialization chunks each snapshot into per-chunk seam
+    buffers (:class:`~dace.transformation.passes.cpu_specialization.ChunkAntiDependence`).
     """
 
     CATEGORY: str = "Optimization Preparation"

@@ -977,9 +977,7 @@ def pin_span_copies(sdfg: SDFG) -> int:
     return pinned
 
 
-def finalize_for_target(
-    sdfg: SDFG, target: str = "cpu", validate: bool = False, break_anti_dependence: bool = True
-) -> SDFG:
+def finalize_for_target(sdfg: SDFG, target: str = "cpu", validate: bool = False) -> SDFG:
     """Apply the performance finalization tail to a canonicalized ``sdfg``.
 
     Selects fast library implementations (leaving the nodes un-expanded for
@@ -995,9 +993,6 @@ def finalize_for_target(
     :param sdfg: A canonicalized SDFG; for ``target='gpu'``, an offloaded one.
     :param target: ``'cpu'`` or ``'gpu'`` (selects the fast-library priority).
     :param validate: Validate the SDFG once at the end.
-    :param break_anti_dependence: Forwarded to the CPU specialization stage: chunk the
-                                  anti-dependence snapshots canonicalization left behind. Pass
-                                  ``False`` when canonicalization did not break anti dependences.
     :returns: The same ``sdfg`` instance, finalized.
     :raises ValueError: If ``target='gpu'`` and ``sdfg`` was never offloaded.
     """
@@ -1005,14 +1000,14 @@ def finalize_for_target(
         raise ValueError(f"target must be one of {sorted(TARGET_DEVICE)}; got {target!r}")
     device = TARGET_DEVICE[target]
     with equalized(sdfg):
-        finalize_stages(sdfg, device, break_anti_dependence)
+        finalize_stages(sdfg, device)
     if validate:
         assert_no_nested_parallel_maps(sdfg, device)
         sdfg.validate()
     return sdfg
 
 
-def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence: bool) -> None:
+def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     """The stages of :func:`finalize_for_target`, for the ``device`` it resolved."""
     # Offload is NOT part of this tail: the caller runs it, so passes can be inserted between
     # canonicalization and the device move (see :func:`offload_to_gpu`). Everything below still
@@ -1046,7 +1041,7 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
     if device == dtypes.DeviceType.GPU:
         gpu_specialize_offloaded(sdfg)
     else:
-        cpu_specialize(sdfg, break_anti_dependence=break_anti_dependence, validate=False)
+        cpu_specialize(sdfg, validate=False)
 
     # ``X = X + T`` onto the contraction writing ``T``: once on the lifted nodes, once on the BLAS nodes the
     # selection specializes them to, before either expands to a call.

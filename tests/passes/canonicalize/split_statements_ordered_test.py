@@ -166,7 +166,7 @@ def test_contradictory_directions_are_refused():
 def test_canonicalize_parallelizes_the_split_pair(program, maps, scans):
     """End to end: the fused loop has no Map at all, and after the split neither half is a loop."""
     sdfg = program.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
     sdfg.validate()
 
     assert not _loops(sdfg), "no sequential loop may survive"
@@ -188,7 +188,7 @@ def test_carried_scalar_keeps_the_running_sum():
     n = 64
     a = np.random.default_rng(7).random(n)
     sdfg = carried_scalar.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
     sdfg.validate()
     got = np.zeros(n)
     sdfg(a=a.copy(), b=got, N=n)

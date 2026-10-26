@@ -105,7 +105,7 @@ def test_fission_splits_recurrence_from_parallel_body(kernel):
     # Canonicalized: fission -> one parallel map (independent body) + one sequential loop (recurrence).
     canon = program.to_sdfg(simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
-        canonicalize(canon, validate=True, peel_limit=4, break_anti_dependence=True, unroll_limit=4)
+        canonicalize(canon, validate=True, peel_limit=4, unroll_limit=4)
     assert _top_maps(canon) >= 1, "fission must lift the independent statement to a parallel map"
     assert _carried_sequentially(canon) >= 1, "the recurrence must survive as a sequential loop or a Scan"
 
@@ -164,7 +164,7 @@ def test_fission_dep_then_indep_yields_one_loop_per_statement():
 
     canon = program.to_sdfg(simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
-        canonicalize(canon, validate=True, peel_limit=4, break_anti_dependence=True, unroll_limit=4)
+        canonicalize(canon, validate=True, peel_limit=4, unroll_limit=4)
     assert _loop_regions(canon) == 0, "nothing may stay a sequential loop: b maps, a becomes a Scan"
     assert _top_maps(canon) == 1, "the independent statement is the one map"
     assert sum(1 for n, _ in canon.all_nodes_recursive() if isinstance(n, Scan)) == 1, (

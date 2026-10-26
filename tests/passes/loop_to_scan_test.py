@@ -2488,7 +2488,7 @@ def test_scan_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays():
     # Same nesting through the full pipeline, twice: the vectorizer runs a canonicalize at its own
     # entry, so any caller that already canonicalized canonicalizes twice. This used to raise.
     sdfg = _nest_carry_loop_in_a_wrapper(carry.to_sdfg(simplify=True), "canonicalize_nested_carry")
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
     assert not _misowned_memlet_data(sdfg), f"memlets name data their own SDFG lacks: {_misowned_memlet_data(sdfg)}"
     out = np.zeros(n + 1)
     sdfg(out=out, delta=delta, N=n)

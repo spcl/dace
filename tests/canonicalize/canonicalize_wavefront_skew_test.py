@@ -993,7 +993,6 @@ def test_move_loop_into_map_refuses_lane_crossing_carry(prog, interchangeable):
 CPU_PARAMS = dict(
     target="cpu",
     peel_limit=4,
-    break_anti_dependence=True,
     interchange_carry_with_map=True,
     scatter_to_guarded_maps=True,
 )
