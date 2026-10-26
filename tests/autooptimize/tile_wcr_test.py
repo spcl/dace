@@ -62,6 +62,10 @@ def test_libnode():
         dace.reduce(lambda a, b: a + b, A, output, identity=0)
 
     sdfg = sum.to_sdfg()
+    # TileWCR needs the WCR edge of the pure expansion; the default lands on OpenMP's reduction() clause
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.libraries.standard.nodes.Reduce):
+            n.implementation = "pure"
     sdfg.expand_library_nodes()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code

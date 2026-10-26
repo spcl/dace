@@ -11,6 +11,7 @@ from test_single_state import SDFGBackwardRunner, run_correctness
 import dace
 import dace.libraries.onnx as donnx
 from dace.transformation.interstate import StateFusion
+from tests.utils import expand_library_nodes_for_autodiff
 
 
 @dace.program
@@ -144,7 +145,7 @@ def test_view_forwarding():
 
     sdfg = add_reshape_grad_test_nested.to_sdfg(simplify=True)
 
-    sdfg.expand_library_nodes()
+    expand_library_nodes_for_autodiff(sdfg)
     del sdfg.arrays["target_shape"]
 
     donnx.default_implementation = old_default

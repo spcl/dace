@@ -174,6 +174,11 @@ class OneRankOfAJob:
         # The other ranks take their turn later, so only this rank's own outcome is known; they count as succeeded.
         return [value if r == self.rank else None for r in range(self.rank + 1)]
 
+    @property
+    def folder(self):
+        """The build folder out of the payload, which carries rank 0's error beside it."""
+        return None if self.broadcast is None else self.broadcast[1]
+
 
 def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_path):
     """Only rank 0 builds, so the others must look where it built and not where they would have."""
@@ -201,6 +206,29 @@ def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_pa
         # A rank that only loads is free to hold no SDFG at all, as tests/library/mpi does.
         csdfg = sdfg_utils.distributed_compile(None, loader)
         del csdfg
+
+
+def test_distributed_compile_reraises_rank_0_failure_on_every_rank(unlaunched, tmp_path):
+    """Rank 0 never reaches the broadcast when its build raises, so a payload carrying only the folder
+    would leave every other rank waiting at that collective forever."""
+
+    class FailsToCompile:
+        build_folder = str(tmp_path)
+
+        def hash_sdfg(self) -> str:
+            return "fails_to_compile"
+
+        def compile(self, validate: bool = True):
+            raise ValueError("deliberate build failure")
+
+    builder = OneRankOfAJob(0)
+    with pytest.raises(ValueError, match="deliberate build failure"):  # rank 0 raises its own error
+        sdfg_utils.distributed_compile(FailsToCompile(), builder)
+
+    loader = OneRankOfAJob(1)
+    loader.broadcast = builder.broadcast
+    with pytest.raises(RuntimeError, match="deliberate build failure"):
+        sdfg_utils.distributed_compile(None, loader)
 
 
 def test_distributed_compile_broadcasts_a_hashing_failure(monkeypatch):

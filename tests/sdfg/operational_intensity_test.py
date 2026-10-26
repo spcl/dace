@@ -142,6 +142,12 @@ def test_operational_intensity(test_name: str):
     op_in_map: dict[str, sp.Expr] = {}
     sdfg = test.to_sdfg()
     if test_name == "nested_reuse":
+        # The expected intensity is that of the pure expansion's WCR map, not of the default OpenMP tasklet
+        from dace.libraries.standard.nodes.reduce import Reduce
+
+        for n, _ in sdfg.all_nodes_recursive():
+            if isinstance(n, Reduce):
+                n.implementation = "pure"
         sdfg.expand_library_nodes()
     if test_name in ["sequential_maps", "sequential_maps_small", "nested_reuse", "mmm", "tiled_mmm", "tiled_mmm_32"]:
         sdfg.simplify()
