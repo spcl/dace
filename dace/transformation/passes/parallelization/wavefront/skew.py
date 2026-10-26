@@ -581,12 +581,13 @@ class WavefrontSkew(ppl.Pass):
                 node.map.is_warp_tile = True
 
     def lift(self, scope: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, hint: str) -> None:
-        """Lift ``loop`` to a map on the legality proof; ``hint`` names the fresh map."""
+        """Lift ``loop`` to a map on the legality proof; ``hint`` names the fresh map. The lift propagates the state
+        that holds the map, nested body included, which is all the rewrite of the nest changed."""
         from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         itervar = loop.loop_variable
         privatize_body_reductions(loop)
-        ParallelizeLoops().parallelize_loop(sdfg, loop, proven=True)
+        ParallelizeLoops(propagate=False).parallelize_loop(sdfg, loop, proven=True)
         for node, _ in scope.all_nodes_recursive():
             if isinstance(node, nodes.MapEntry) and itervar in node.map.params and not node.specialization_hint:
                 node.specialization_hint = hint

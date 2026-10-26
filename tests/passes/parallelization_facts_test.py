@@ -104,7 +104,7 @@ def test_a_declared_permutation_makes_loop_to_map_prove_a_store_through_a_bound_
     sdfg = store_through_bound_index.to_sdfg(simplify=True)
     sdfg.add_data_assumption("perm", symbolic.permutation(0, M - 1))
     probe = loop_to_map_probe(sdfg)
-    assert probe.accepted, probe.last_refusal_reason
+    assert probe.accepted, probe.last_refusal
     assert [f.describe() for f in probe.solver_facts.used] == ["perm injective with values in [0, M - 1] (declared)"]
 
     ParallelizeLoops().apply_pass(sdfg, {})

@@ -1171,7 +1171,7 @@ def test_a_container_assumed_private_is_left_out_of_the_dependence_test():
     xform.lift_context = build_lift_context(sdfg)
 
     assert not ParallelizeLoops().accepts(loop, xform)
-    assert xform.last_refusal_container == "arr"
+    assert xform.last_refusal.container == "arr"
     assert loop_facts_of(xform.lift_context.loop_facts, loop).refusal_witness == ("write", "arr")
     assert ParallelizeLoops().accepts(loop, xform, frozenset({"arr"}))
     assert xform.assume_private == frozenset()

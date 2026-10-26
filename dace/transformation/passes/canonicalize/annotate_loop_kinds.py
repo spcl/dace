@@ -44,6 +44,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDF
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.interstate.loop_to_map import LoopRefusal, Refusal
 from dace.transformation.passes.analysis import loop_analysis, smt_dependence
 
 # Three classes, named by the first word of every loop hint: ``parallel`` and ``sequential`` are
@@ -145,9 +146,9 @@ def tile_label(bi: int, bj: int) -> str:
     return f"[{bi}x{bj}]"
 
 
-def refusal_reason(loop: LoopRegion, session: Any = None) -> str | None:
-    """Why ``LoopToMap`` would refuse ``loop``, ``None`` if it would accept, ``''`` if it refused without a reason;
-    ``session`` the :class:`ProbeSession` the caller's probes share.
+def refusal_reason(loop: LoopRegion, session: Any = None) -> LoopRefusal | str | None:
+    """Why ``LoopToMap`` would refuse ``loop`` (its :class:`LoopRefusal`), ``None`` if it would accept, or the text
+    of why it was never examined; ``session`` the :class:`ProbeSession` the caller's probes share.
 
     Asked with ``pinned_sequential`` set aside. The pin is a schedule decision an earlier pass made,
     and "loop is pinned sequential" is not an answer to the dependence question a reader is asking --
@@ -170,14 +171,10 @@ def refusal_reason(loop: LoopRegion, session: Any = None) -> str | None:
         return f"{NEVER_EXAMINED}: the dependence test failed ({type(error).__name__})"
     finally:
         loop.pinned_sequential = pinned
-    return None if applicable else (probe.last_refusal_reason or "")
+    if applicable:
+        return None
+    return NEVER_EXAMINED if probe.last_refusal is None else probe.last_refusal
 
-
-#: ``LoopToMap``'s refusal, as ``<kind> conflict on <array> within the loop body - src_subset=<subset>``.
-REFUSAL_SHAPE = re.compile(r"(\w+)-after-(\w+) conflict on (\w+).*?src_subset=(.*)$", re.DOTALL)
-
-#: The three conflict kinds, as the two-letter names a reader of dependence analysis already has.
-CONFLICT_ABBREV = {("read", "write"): "RAW", ("write", "read"): "WAR", ("write", "write"): "WAW"}
 
 #: What each proven conflict means for the order, in the words a reader of the loop needs.
 CONFLICT_MEANING = {
@@ -192,21 +189,14 @@ def proven_why(access: str) -> str:
     return CONFLICT_MEANING.get(access.split(" ", 1)[0], "one iteration depends on another one")
 
 
-def carrying_access(reason: str) -> str:
-    """``reason`` as the ACCESS that carries it: ``RAW on aa[_loop_it_1 - 1, 8:LEN_2D]``.
-
-    The refusal reads as a sentence because it is also shown to a human debugging a refusal. In a
-    rendered form it is one comment on one loop, repeated for every carried loop in the unit, and
-    the sentence around the access says the same thing every time. Anything that does not match the
-    known shape is passed through whole rather than truncated -- a reason nobody anticipated is
-    still worth reading.
-    """
-    hit = REFUSAL_SHAPE.search(reason)
-    if hit is None:
-        return reason
-    first, second, array, subset = hit.groups()
-    kind = CONFLICT_ABBREV.get((first, second), f"{first}-after-{second}")
-    return f"{kind} on {array}[{subset.strip()}]"
+def carrying_access(refusal: LoopRefusal | str) -> str:
+    """``refusal`` as the ACCESS that carries it: ``RAW on aa[_loop_it_1 - 1, 8:LEN_2D]``; any other refusal as its
+    message, whole."""
+    if isinstance(refusal, str):
+        return refusal
+    if refusal.kind is Refusal.CARRIED_DEPENDENCE and refusal.container is not None and refusal.reads:
+        return f"RAW on {refusal.container}[{refusal.reads[0]}]"
+    return refusal.message
 
 
 #: Array name -> (outer array, element offset in the loop's names) for every array the body can see.
@@ -637,8 +627,8 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
     reason = refusal_reason(loop, session)
     if reason is None:
         return SEQUENTIAL_PINNED if loop.pinned_sequential else PARALLEL
-    if not reason:
-        return UNSURE.format(reason=NEVER_EXAMINED)
+    if isinstance(reason, str):
+        return UNSURE.format(reason=reason)
     access = proof_of_carry(loop, reason)
     if access is not None:
         text = SEQUENTIAL_PROVEN_OVER_DOALL if over_doall_nest(loop) else SEQUENTIAL_PROVEN
@@ -658,7 +648,7 @@ def over_doall_nest(loop: LoopRegion) -> bool:
     )
 
 
-def proof_of_carry(loop: LoopRegion, reason: str) -> str | None:
+def proof_of_carry(loop: LoopRegion, reason: LoopRefusal) -> str | None:
     """The access that proves ``loop`` carries a dependence, or ``None``: a solver witness, else a constant distance
     or a carried symbol ``LoopToMap`` named.
 
@@ -671,21 +661,10 @@ def proof_of_carry(loop: LoopRegion, reason: str) -> str | None:
     # The element-level proof also names the direction: LoopToMap's "read-after-write conflict" is
     # any read meeting a write, so its access alone reads as RAW for a read-ahead WAR too.
     access = proven_carrying_access(loop)
-    if access is None and refusal_matches_a_carried_symbol(reason):
+    if access is None and reason.kind is Refusal.CARRIED_SYMBOL:
         # A symbol one iteration hands to the next: the witness is two consecutive iterations
         access = carrying_access(reason) + pattern_witness(loop, 1)
     return access
-
-
-#: Refusals whose pattern IS a carried dependence: a symbol the body updates from itself, or reads before it assigns.
-#: "writes ... may overlap", "read-after-write conflict" and an access off the ``a*i+b`` write pattern only say the
-#: test could not separate the iterations, so they stay unsure.
-CARRIED_SYMBOL_PATTERNS = ("self-recurrent carried symbol", "carried symbol dependency")
-
-
-def refusal_matches_a_carried_symbol(reason: str) -> bool:
-    """Whether a ``LoopToMap`` refusal is a carried-symbol pattern, a proof rather than an unseparated pair."""
-    return any(pattern in reason.lower() for pattern in CARRIED_SYMBOL_PATTERNS)
 
 
 #: Appended to a parallel map's class line when its independence rests on entry traps.

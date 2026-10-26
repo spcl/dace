@@ -2,6 +2,7 @@
 """Loop to map transformation"""
 
 import copy
+import enum
 import warnings
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
@@ -534,9 +535,9 @@ def write_refusal(
     ctx: Optional["LiftContext"],
     facts: Any = None,
     closed_forms: dict[str, Any] | None = None,
-) -> str | None:
-    """Why :meth:`LoopToMap.can_be_applied` refuses the loop on the write ``e`` into ``dn``, or ``None``; ``closed_forms``
-    as :attr:`LoopToMap.closed_forms`."""
+) -> "tuple[Refusal, str] | None":
+    """Why (kind and message) :meth:`LoopToMap.can_be_applied` refuses the loop on the write ``e`` into ``dn``, or
+    ``None``; ``closed_forms`` as :attr:`LoopToMap.closed_forms`."""
     if e.data.dynamic and e.data.wcr is None:
         # Dynamic write (no WCR) is safe across iterations if its dst subset
         # pins an axis to the iter var (same ``a*i+b`` as non-dynamic below):
@@ -545,7 +546,10 @@ def write_refusal(
         dst_subset = in_closed_form(e.data.get_dst_subset(e, state), closed_forms)
         ranges = None if ctx is None else ctx.invariants.check_range
         if not (dst_subset and _check_range(dst_subset, a, itersym, b, step, end - start, ranges)):
-            return f"dynamic write to {dn.data} is not indexed by the iteration variable - dst_subset={dst_subset}"
+            return (
+                Refusal.DYNAMIC_WRITE,
+                f"dynamic write to {dn.data} is not indexed by the iteration variable - dst_subset={dst_subset}",
+            )
 
     # Unique write index per iteration: match ``a*i+b``, ``|a| >= 1``, i the
     # iteration variable (which must be used).
@@ -567,8 +571,9 @@ def write_refusal(
             verdicts = None if ctx is None else ctx.invariants.smt_injective
             if not smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts, facts):
                 return (
+                    Refusal.NON_UNIQUE_WRITE,
                     f"write to {dn.data} is not uniquely indexed by the iteration variable "
-                    f"(needs an a*i+b subset) - dst_subset={dst_subset}"
+                    f"(needs an a*i+b subset) - dst_subset={dst_subset}",
                 )
             canon_stats.solver_proof()
     return None
@@ -1099,6 +1104,52 @@ def _writes_may_overlap(
     return True
 
 
+class Refusal(enum.Enum):
+    """Why :class:`LoopToMap` keeps a loop a loop."""
+
+    #: The loop is pinned sequential.
+    PINNED = enum.auto()
+    #: The range cannot be analyzed: incomplete or non-integer bounds, a bound reading a container, a range symbol
+    #: the body assigns, a step of unknown direction.
+    UNANALYZABLE_RANGE = enum.auto()
+    #: The range spans SMALL symbols only.
+    SMALL = enum.auto()
+    #: The body holds a block a map cannot (a return, a break or continue of the loop, a StructureView).
+    UNSUPPORTED_BODY = enum.auto()
+    #: A symbol is carried from one iteration to the next.
+    CARRIED_SYMBOL = enum.auto()
+    #: A write is not uniquely indexed by the iteration variable.
+    NON_UNIQUE_WRITE = enum.auto()
+    #: A dynamic write (one that may not happen) is not indexed by the iteration variable.
+    DYNAMIC_WRITE = enum.auto()
+    #: Two writes may hit the same element in different iterations.
+    OVERLAPPING_WRITES = enum.auto()
+    #: A read may see an element another iteration writes.
+    CARRIED_DEPENDENCE = enum.auto()
+    #: A symbol the loop defines is read after it.
+    LIVE_OUT_SYMBOL = enum.auto()
+
+    @property
+    def carried(self) -> bool:
+        """Whether the refusal is a dependence between iterations, of a symbol or of a container."""
+        return self in (Refusal.CARRIED_SYMBOL, Refusal.OVERLAPPING_WRITES, Refusal.CARRIED_DEPENDENCE)
+
+
+@dataclass(frozen=True, slots=True)
+class LoopRefusal:
+    """A refusal of :meth:`LoopToMap.can_be_applied`: its kind, its message and what it names."""
+
+    kind: Refusal
+    message: str
+    #: The container whose dependence it refuses on.
+    container: str | None = None
+    #: The symbols it names: carried, live out, or the range symbols the body assigns.
+    symbols: frozenset[str] = frozenset()
+    #: The conflicting writes and reads of ``container``.
+    writes: tuple[subsets.Subset, ...] = ()
+    reads: tuple[subsets.Subset, ...] = ()
+
+
 @dataclass(slots=True)
 class LiftInvariants:
     """Per-SDFG facts a lift CANNOT change, so a pass computes them once and never rebuilds them.
@@ -1520,7 +1571,7 @@ def symbols_assigned_before_use(
     itervar: str,
     ctx: Optional["LiftContext"] = None,
     blocks: list[ControlFlowBlock] | None = None,
-    refusal: list[str] | None = None,
+    refusal: list[tuple[str, set[str]]] | None = None,
     closed: frozenset[str] = frozenset(),
 ) -> set[str] | None:
     """The symbols ``loop``'s body assigns, plus ``itervar``; ``None`` if an iteration reads one before assigning it.
@@ -1560,15 +1611,18 @@ def symbols_assigned_before_use(
                 if k in fsyms and k not in symbols_that_may_be_used:
                     # ``k = f(k)`` before any reset this iteration reads the previous iteration's ``k``.
                     if refusal is not None:
-                        refusal.append(f"self-recurrent carried symbol '{k}' (assignment {k} = {v})")
+                        refusal.append((f"self-recurrent carried symbol '{k}' (assignment {k} = {v})", {k}))
                     return None
                 if k not in fsyms:
                     assigned_symbols.add(k)
             if assigned_symbols & used_before_assignment:
                 if refusal is not None:
                     refusal.append(
-                        "carried symbol dependency - "
-                        f"{assigned_symbols & used_before_assignment} read before being assigned"
+                        (
+                            "carried symbol dependency - "
+                            f"{assigned_symbols & used_before_assignment} read before being assigned",
+                            assigned_symbols & used_before_assignment,
+                        )
                     )
                 return None
             symbols_that_may_be_used |= e.data.assignments.keys() - closed
@@ -1631,10 +1685,7 @@ class LoopToMap(xf.MultiStateTransformation):
     #: What z3 may assume in this probe's dependence queries, set by ``can_be_applied``.
     solver_facts: SolverFacts | None = None
     #: Why the last probe refused, or ``None`` after an accept.
-    last_refusal_reason: str | None = None
-    #: The container whose dependence the last probe refused on, or ``None`` when it refused for any other reason
-    #: (structure, bounds, symbols) or accepted. A rewrite of other containers cannot lift that refusal.
-    last_refusal_container: str | None = None
+    last_refusal: LoopRefusal | None = None
 
     keep_small_loops_sequential = properties.Property(
         dtype=bool,
@@ -1663,23 +1714,28 @@ class LoopToMap(xf.MultiStateTransformation):
         # Exposed so companion passes can distinguish a genuine loop-carried
         # dependence from structural/typing inapplicability without re-running
         # the dependence analysis.
-        self.last_refusal_reason = None
-        self.last_refusal_container = None
+        self.last_refusal = None
         canon_stats.begin_probe()
 
         # Optional, set by a pass that probes many loops of this SDFG (see :class:`LiftContext`).
         ctx: LiftContext | None = self.lift_context
 
-        def refuse(reason: str, container: str | None = None) -> bool:
-            """Refuse the match and record why, and on which container's dependence."""
-            self.last_refusal_reason = reason
-            self.last_refusal_container = container
+        def refuse(
+            kind: Refusal,
+            message: str,
+            container: str | None = None,
+            symbols: Iterable[str] = (),
+            writes: Iterable[subsets.Subset] = (),
+            reads: Iterable[subsets.Subset] = (),
+        ) -> bool:
+            """Refuse the match and record why (:class:`LoopRefusal`)."""
+            self.last_refusal = LoopRefusal(kind, message, container, frozenset(symbols), tuple(writes), tuple(reads))
             return False
 
         # A loop pinned sequential is a deliberate fallback (the else branch of an
         # ``if cond: parallel else: sequential`` specialization); never parallelize it.
         if self.loop.pinned_sequential:
-            return refuse("loop is pinned sequential")
+            return refuse(Refusal.PINNED, "loop is pinned sequential")
 
         # If loop information cannot be determined, fail.
         start = loop_analysis.get_init_assignment(self.loop)
@@ -1687,7 +1743,10 @@ class LoopToMap(xf.MultiStateTransformation):
         step = loop_analysis.get_loop_stride(self.loop)
         itervar = self.loop.loop_variable
         if start is None or end is None or step is None or itervar is None:
-            return refuse(f"loop information incomplete - start={start}, end={end}, step={step}, itervar={itervar}")
+            return refuse(
+                Refusal.UNANALYZABLE_RANGE,
+                f"loop information incomplete - start={start}, end={end}, step={step}, itervar={itervar}",
+            )
 
         if ctx is None:
             sset = {}
@@ -1698,7 +1757,7 @@ class LoopToMap(xf.MultiStateTransformation):
         t = dtypes.result_type_of(infer_expr_type(start, sset), infer_expr_type(step, sset), infer_expr_type(end, sset))
         # Bounds must be integer-derived: non-sequential map schedules are otherwise invalid.
         if not t in dtypes.INTEGER_TYPES:
-            return refuse(f"loop bounds are not integer types - result_type={t}")
+            return refuse(Refusal.UNANALYZABLE_RANGE, f"loop bounds are not integer types - result_type={t}")
 
         facts = self.probe_resolver().facts_at(self.loop)
         closed_forms = self.closed_forms
@@ -1710,11 +1769,11 @@ class LoopToMap(xf.MultiStateTransformation):
         # a small map, a loop it never sees.
         known_parallel = loop_analysis.is_known_parallel(self.loop)
         if self.keep_small_loops_sequential and not known_parallel and spans_small_symbols(self.loop, facts):
-            return refuse(f"loop range {start}..{end} spans SMALL symbols only")
+            return refuse(Refusal.SMALL, f"loop range {start}..{end} spans SMALL symbols only")
 
         # A map runs its range upwards: a loop is mapped only when the direction of its step is known
         if step_direction(step, facts) is None:
-            return False
+            return refuse(Refusal.UNANALYZABLE_RANGE, f"the direction of step {step} is unknown")
 
         # Loops containing a return, or a break / continue of their own, may not be turned into a map. A break
         # or continue of a nested loop leaves only that loop.
@@ -1723,12 +1782,14 @@ class LoopToMap(xf.MultiStateTransformation):
                 isinstance(blk, (BreakBlock, ContinueBlock)) and innermost_loop(blk) is self.loop
             ):
                 if not permissive:
-                    return refuse(f"loop body contains a {type(blk).__name__}")
+                    return refuse(Refusal.UNSUPPORTED_BODY, f"loop body contains a {type(blk).__name__}")
 
         # We cannot handle symbols read from data containers unless they are scalar.
         for expr in (start, end, step):
             if symbolic.contains_sympy_functions(expr):
-                return refuse(f"bound expression reads a non-scalar data container - expr={expr}")
+                return refuse(
+                    Refusal.UNANALYZABLE_RANGE, f"bound expression reads a non-scalar data container - expr={expr}"
+                )
 
         # Refuse when the range (start/end/step) references a symbol the body defines via an
         # interstate assignment. After conversion the body → a ``loop_body`` NSDFG (assignment
@@ -1744,7 +1805,11 @@ class LoopToMap(xf.MultiStateTransformation):
         for e in self.loop.all_interstate_edges():
             body_assigned_syms.update(e.data.assignments.keys() - closed)
         if range_syms & body_assigned_syms:
-            return refuse(f"loop range references symbol(s) {range_syms & body_assigned_syms} assigned inside the body")
+            return refuse(
+                Refusal.UNANALYZABLE_RANGE,
+                f"loop range references symbol(s) {range_syms & body_assigned_syms} assigned inside the body",
+                symbols=range_syms & body_assigned_syms,
+            )
 
         # Block order, not address order: companion passes act on the FIRST refusal reason.
         loop_states = OrderedSet(self.loop.states())
@@ -1754,7 +1819,7 @@ class LoopToMap(xf.MultiStateTransformation):
         if ctx is None or ctx.invariants.has_structure_views:
             for loop_state in loop_states:
                 if any(isinstance(n.desc(sdfg), dt.StructureView) for n in loop_state.data_nodes()):
-                    return refuse(f"loop body contains a StructureView in state {loop_state}")
+                    return refuse(Refusal.UNSUPPORTED_BODY, f"loop body contains a StructureView in state {loop_state}")
 
         # A loop that provably runs at most once carries no cross-iteration dependence, so it is
         # trivially DOALL -- accept here, skipping the dependence analysis below (which a clamped
@@ -1785,9 +1850,9 @@ class LoopToMap(xf.MultiStateTransformation):
             and facts.refusal_witness is not None
             and facts.refusal_witness[1] not in self.assume_private
         ):
-            reason = self.witnessed_refusal(sdfg, facts, loop_states, ctx, itervar, start, end, step, permissive)
-            if reason is not None:
-                return refuse(reason, facts.refusal_witness[1])
+            witnessed = self.witnessed_refusal(sdfg, facts, loop_states, ctx, itervar, start, end, step, permissive)
+            if witnessed is not None:
+                return refuse(*witnessed, facts.refusal_witness[1])
         in_order_loop_blocks = None if facts is None else facts.block_order
         if in_order_loop_blocks is UNCOMPUTED or facts is None:
             in_order_loop_blocks = None
@@ -1803,12 +1868,13 @@ class LoopToMap(xf.MultiStateTransformation):
                 facts.block_order = in_order_loop_blocks
         symbols_that_may_be_used: set[str] = {itervar}
         if in_order_loop_blocks is not None:
-            refusal: list[str] = []
+            refusal: list[tuple[str, set[str]]] = []
             symbols_that_may_be_used = symbols_assigned_before_use(
                 self.loop, itervar, ctx, in_order_loop_blocks, refusal, closed
             )
             if symbols_that_may_be_used is None:
-                return refuse(refusal[0])
+                message, carried = refusal[0]
+                return refuse(Refusal.CARRIED_SYMBOL, message, symbols=carried)
 
         # Which containers the analysis below must consider: a loop data node is only interesting
         # when it is ALSO live outside the loop.
@@ -1920,7 +1986,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         if reason is not None:
                             if facts is not None:
                                 facts.refusal_witness = ("write", dn.data)
-                            return refuse(reason, dn.data)
+                            return refuse(*reason, dn.data, writes=[e.data.get_dst_subset(e, state)])
 
                         write_memlets[dn.data].append(memlet_in_closed_form(e.data, closed_forms))
 
@@ -1955,9 +2021,12 @@ class LoopToMap(xf.MultiStateTransformation):
                         data, permissive
                     ):
                         return refuse(
+                            Refusal.CARRIED_DEPENDENCE,
                             f"read of {data} at {src_subset} is iter-indexed but does not match the "
                             f"write pattern a*i+b -- loop-carried forward/backward dependency",
                             data,
+                            writes=[m.subset for m in write_memlets.get(data, ())],
+                            reads=[src_subset],
                         )
 
         # Two distinct-affine writes to the same container can hit the same element on different
@@ -1976,8 +2045,10 @@ class LoopToMap(xf.MultiStateTransformation):
                         reps[x], reps[y], itersym, step, start, end, varying, self.solver_facts
                     ) and not self.waives(data, permissive):
                         return refuse(
+                            Refusal.OVERLAPPING_WRITES,
                             f"writes {reps[x].subset} and {reps[y].subset} to {data} may overlap across iterations",
                             data,
+                            writes=[reps[x].subset, reps[y].subset],
                         )
             # WCR writes combine with each other in any order, but not with a plain write: ``A[N-1] += 1`` on
             # one iteration and ``A[i] = ...`` on iteration N-1 race once the loop is a map.
@@ -1988,9 +2059,11 @@ class LoopToMap(xf.MultiStateTransformation):
                         acc, plain, itersym, step, start, end, varying, self.solver_facts
                     ) and not self.waives(data, permissive):
                         return refuse(
+                            Refusal.OVERLAPPING_WRITES,
                             f"accumulated write {acc.subset} and plain write {plain.subset} to {data} "
                             "may overlap across iterations",
                             data,
+                            writes=[acc.subset, plain.subset],
                         )
 
         # After looping over relevant writes, consider reads that may overlap
@@ -2026,8 +2099,11 @@ class LoopToMap(xf.MultiStateTransformation):
                             if facts is not None:
                                 facts.refusal_witness = ("read", data)
                             return refuse(
+                                Refusal.CARRIED_DEPENDENCE,
                                 f"read-after-write conflict on {data} within the loop body - src_subset={src_subset}",
                                 data,
+                                writes=[m.subset for m in write_memlets.get(data, ())],
+                                reads=[src_subset],
                             )
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
@@ -2040,18 +2116,23 @@ class LoopToMap(xf.MultiStateTransformation):
                     sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt, mmlt.subset, varying
                 ):
                     return refuse(
+                        Refusal.CARRIED_DEPENDENCE,
                         f"read-after-write conflict on {mmlt.data} via an inter-state edge - subset={mmlt.subset}",
                         mmlt.data,
+                        writes=[m.subset for m in write_memlets.get(mmlt.data, ())],
+                        reads=[mmlt.subset],
                     )
 
         # Iteration variable + other symbols must not be used on later edges/blocks before
         # reassignment. First check the outgoing edges of the loop itself.
         reassigned_symbols: set[str] = None
         for oe in graph.out_edges(self.loop):
-            if symbols_that_may_be_used & edge_read_symbols(oe.data, ctx):
+            live = symbols_that_may_be_used & edge_read_symbols(oe.data, ctx)
+            if live:
                 return refuse(
-                    "loop-defined symbol(s) used after the loop on its outgoing edge - "
-                    f"{symbols_that_may_be_used & edge_read_symbols(oe.data, ctx)}"
+                    Refusal.LIVE_OUT_SYMBOL,
+                    f"loop-defined symbol(s) used after the loop on its outgoing edge - {live}",
+                    symbols=live,
                 )
             # Check for symbols that are set by all outgoing edges
             # TODO: Handle case of subset of out_edges
@@ -2098,15 +2179,21 @@ class LoopToMap(xf.MultiStateTransformation):
             # Check state contents
             used_after = symbols_that_may_be_used & block_free_symbols(block, ctx)
             if used_after:
-                return refuse(f"loop-defined symbol(s) used after the loop in block {block} - {used_after}")
+                return refuse(
+                    Refusal.LIVE_OUT_SYMBOL,
+                    f"loop-defined symbol(s) used after the loop in block {block} - {used_after}",
+                    symbols=used_after,
+                )
 
             # Check inter-state edges
             reassigned_symbols = None
             for e in block.parent_graph.out_edges(block):
-                if symbols_that_may_be_used & edge_read_symbols(e.data, ctx):
+                live = symbols_that_may_be_used & edge_read_symbols(e.data, ctx)
+                if live:
                     return refuse(
-                        "loop-defined symbol(s) used after the loop on an inter-state edge - "
-                        f"{symbols_that_may_be_used & edge_read_symbols(e.data, ctx)}"
+                        Refusal.LIVE_OUT_SYMBOL,
+                        f"loop-defined symbol(s) used after the loop on an inter-state edge - {live}",
+                        symbols=live,
                     )
 
                 # Check for symbols that are set by all outgoing edges
@@ -2198,7 +2285,10 @@ class LoopToMap(xf.MultiStateTransformation):
                 if not self.test_read_memlet(
                     sdfg, st, e, itersym, itervar, start, end, step, {name: writes}, e.data, src_subset, varying
                 ):
-                    return f"read-after-write conflict on {name} within the loop body - src_subset={src_subset}"
+                    return (
+                        Refusal.CARRIED_DEPENDENCE,
+                        f"read-after-write conflict on {name} within the loop body - src_subset={src_subset}",
+                    )
         return None
 
     def carried_witness(self, sdfg: SDFG, name: str, loop_states: OrderedSet, ctx: "LiftContext") -> bool:

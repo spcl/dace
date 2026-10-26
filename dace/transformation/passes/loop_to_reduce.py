@@ -280,17 +280,6 @@ class RetargetWCRAccumulator(ppl.Pass):
         return count or None
 
 
-def loop_to_map_refusal_is_carried(reason: str | None) -> bool:
-    """True iff a ``LoopToMap.can_be_applied`` refusal was caused by a loop-carried dependence."""
-    if reason is None:
-        return False
-    lo = reason.lower()
-    # Covers "self-recurrent carried symbol", "carried symbol dependency",
-    # "loop-carried forward/backward dependency", "writes ... may overlap across
-    # iterations", and "read-after-write conflict ...".
-    return any(k in lo for k in ("carried", "may overlap", "read-after-write conflict"))
-
-
 @xf.explicit_cf_compatible
 class PinCarriedTopLevelLoops(ppl.Pass):
     """Mark top-level loops ``pinned_sequential`` when ``LoopToMap`` refuses them for a
@@ -331,7 +320,7 @@ class PinCarriedTopLevelLoops(ppl.Pass):
             owner = _owner_sdfg(node)
             probe = LoopToMap()
             applicable = ParallelizeLoops().accepts(node, probe, session=session)
-            if not applicable and loop_to_map_refusal_is_carried(probe.last_refusal_reason):
+            if not applicable and probe.last_refusal is not None and probe.last_refusal.kind.carried:
                 node.pinned_sequential = True
                 pinned += 1
         return pinned or None

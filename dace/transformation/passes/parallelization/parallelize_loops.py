@@ -22,6 +22,7 @@ from dace.transformation.interstate.loop_to_map import (
     LiftInvariants,
     LoopFacts,
     LoopToMap,
+    Refusal,
     build_lift_context,
     build_lift_invariants,
     index_block_symbols,
@@ -63,9 +64,6 @@ class ProbeSession:
             del self.loop_facts[loop]
         self.resolver.forget_within(sdfg)
 
-
-#: The refusal :meth:`ParallelizeLoops.probe` can lift with array facts.
-NOT_UNIQUE = "is not uniquely indexed by the iteration variable"
 
 #: Added to the hint of a map whose stores were proven disjoint through array facts.
 FACTS_NOTE = "stores proven disjoint by array facts: {facts}"
@@ -435,7 +433,8 @@ class ParallelizeLoops(ppl.Pass):
         # avoid an import cycle
         from dace.transformation.passes import buffer_expansion
 
-        buffers = buffer_expansion.rescuing_buffers(loop.sdfg, loop, xform.last_refusal_container)
+        refusal = xform.last_refusal
+        buffers = buffer_expansion.rescuing_buffers(loop.sdfg, loop, None if refusal is None else refusal.container)
         if buffers is None:
             return None
         assumed = xform.assume_private
@@ -457,8 +456,8 @@ class ParallelizeLoops(ppl.Pass):
         vouched = xform.contract_arrays
         used: list[array_facts.ArrayFact] = []
         try:
-            while NOT_UNIQUE in (xform.last_refusal_reason or ""):
-                name = xform.last_refusal_container
+            while xform.last_refusal is not None and xform.last_refusal.kind is Refusal.NON_UNIQUE_WRITE:
+                name = xform.last_refusal.container
                 if name is None or name in xform.contract_arrays:
                     return False
                 proof = array_facts.conflict_free_under_facts(sd, loop, name)
@@ -487,7 +486,7 @@ class ParallelizeLoops(ppl.Pass):
         :meth:`holds_back`. Changes nothing; the one entry for a pass asking whether a loop parallelizes.
 
         :param xform: the instance to probe with, when the caller supplies the shared analysis (``lift_context``) or
-                      reads the refusal (``last_refusal_reason``, ``last_refusal_container``) afterwards.
+                      reads the refusal (``last_refusal``) afterwards.
         :param assume_private: containers the caller would make iteration-private before the lift
                                (:attr:`LoopToMap.assume_private`); the verdict is the one for the rewritten loop.
         :param closed_forms: symbols the caller would rewrite into closed forms of the iteration

@@ -219,7 +219,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         :param loop: The loop region to test.
         :param sdfg: The owning SDFG.
         :returns: ``(accepted, container)``: L2M's strict-mode verdict and, on a refusal, the
-                  :attr:`~LoopToMap.last_refusal_container` it names (``None`` for any other refusal).
+                  container its :attr:`~LoopToMap.last_refusal` names (``None`` for any other refusal).
         """
         # avoid an import cycle
         from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -231,7 +231,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 accepted = ParallelizeLoops().accepts(loop, xform, assume_private)
             except Exception:
                 return False, None
-        return accepted, None if accepted else xform.last_refusal_container
+        return accepted, None if accepted or xform.last_refusal is None else xform.last_refusal.container
 
     # slot detection
 

@@ -6,7 +6,7 @@ import numpy as np
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.interstate.loop_to_map import LoopToMap, Refusal
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -40,7 +40,7 @@ def test_an_inner_break_leaves_the_outer_loop_mappable():
     xform = LoopToMap()
     loop = outer_loop(sdfg)
     xform.setup_match(sdfg, sdfg.cfg_id, -1, {LoopToMap.loop: sdfg.node_id(loop)}, 0, override=True)
-    assert xform.can_be_applied(sdfg, 0, sdfg), xform.last_refusal_reason
+    assert xform.can_be_applied(sdfg, 0, sdfg), xform.last_refusal
     xform.apply(sdfg, sdfg)
     rng = np.random.default_rng(0)
     a = rng.random((7, 9)) - 0.2
@@ -56,7 +56,7 @@ def test_a_break_of_the_loop_itself_is_refused():
     loop = outer_loop(sdfg)
     xform.setup_match(sdfg, sdfg.cfg_id, -1, {LoopToMap.loop: sdfg.node_id(loop)}, 0, override=True)
     assert not xform.can_be_applied(sdfg, 0, sdfg)
-    assert "BreakBlock" in xform.last_refusal_reason
+    assert xform.last_refusal.kind is Refusal.UNSUPPORTED_BODY and "BreakBlock" in xform.last_refusal.message
 
 
 if __name__ == "__main__":

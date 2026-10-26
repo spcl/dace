@@ -325,7 +325,7 @@ class BufferExpansion(ppl.Pass):
         with contextlib.redirect_stdout(io.StringIO()):
             xform = LoopToMap()
             accepted = ParallelizeLoops().accepts(loop, xform, assume_private, session=session)
-        return accepted, None if accepted else xform.last_refusal_container
+        return accepted, None if accepted or xform.last_refusal is None else xform.last_refusal.container
 
     @staticmethod
     def _loop_index(loop: LoopRegion):

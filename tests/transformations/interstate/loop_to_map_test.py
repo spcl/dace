@@ -1404,7 +1404,7 @@ def test_refusal_reason_follows_block_order_not_memory_addresses():
         sut = LoopToMap()
         sut.loop = loop
         assert not sut.can_be_applied(loop.parent_graph, 0, loop.sdfg)
-        reasons.append(sut.last_refusal_reason)
+        reasons.append(sut.last_refusal.message)
     assert all(reason.startswith("write to A0 ") for reason in reasons), reasons
 
 
