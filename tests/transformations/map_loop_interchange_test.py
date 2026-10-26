@@ -5,6 +5,7 @@ import numpy as np
 
 import dace
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import MapLoopInterchange, MoveLoopIntoMap
 
@@ -41,9 +42,18 @@ def loop_map(A: dace.float64[T, N]):
             A[t, i] = A[t - 1, i] + 1.0
 
 
-def run(sdfg: dace.SDFG, **symbols) -> np.ndarray:
-    A = np.random.default_rng(0).random((symbols["T"], symbols["N"]))
-    sdfg(A=A, **symbols)
+@dace.program
+def scale_then_map_loop(A: dace.float64[T, N], B: dace.float64[N]):
+    for i in dace.map[0:N]:
+        B[i] = B[i] * 2.0
+    for i in dace.map[0:N]:
+        for t in range(1, T):
+            A[t, i] = A[t - 1, i] + B[i]
+
+
+def run(sdfg: dace.SDFG, **arguments) -> np.ndarray:
+    A = np.random.default_rng(0).random((arguments["T"], arguments["N"]))
+    sdfg(A=A, **arguments)
     return A
 
 
@@ -83,3 +93,24 @@ def test_a_loop_that_breaks_from_inside_a_branch_stays_inside():
     sdfg = map_loop_break.to_sdfg(simplify=True)
 
     assert sdfg.apply_transformations(MapLoopInterchange) == 0
+
+
+def test_a_map_sharing_its_state_is_split_off_and_only_it_runs_inside_the_loop():
+    """The loop repeats the map's state, so the map that writes ``B`` moves to a state before it first."""
+    sdfg = scale_then_map_loop.to_sdfg(simplify=True)
+    (state,) = sdfg.nodes()
+    assert sum(isinstance(n, nodes.MapEntry) for n in state.nodes()) == 2
+    reference = copy.deepcopy(sdfg)
+    B = np.random.default_rng(1).random(5)
+    expected_B = B.copy()
+    expected = run(reference, N=5, T=4, B=expected_B)
+
+    assert sdfg.apply_transformations(MapLoopInterchange) == 1
+
+    before, loop = sdutil.dfs_topological_sort(sdfg)
+    (inside,) = loop.nodes()
+    assert isinstance(loop, LoopRegion) and loop.loop_variable == "t"
+    assert [type(n) for n in before.nodes() if isinstance(n, nodes.MapEntry)] == [nodes.MapEntry]
+    assert sum(isinstance(n, nodes.MapEntry) for n in inside.nodes()) == 1
+    assert np.array_equal(run(sdfg, N=5, T=4, B=B), expected)
+    assert np.array_equal(B, expected_B)
