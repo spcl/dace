@@ -9,6 +9,7 @@ import dace.sdfg.nodes
 from dace import memlet as mm
 from dace import properties, symbolic
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.sdfg import SDFG, SDFGState
@@ -357,6 +358,9 @@ class ExpandGemvPBLAS(ExpandTransformation):
         return sdfg
 
 
+ExpandGemvHipBLAS = hip_dialect.hip_expansion(ExpandGemvCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
+
+
 @dace.library.node
 class Gemv(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -365,6 +369,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGemvOpenBLAS,
         "MKL": ExpandGemvMKL,
         "cuBLAS": ExpandGemvCuBLAS,
+        "hipBLAS": ExpandGemvHipBLAS,
         "PBLAS": ExpandGemvPBLAS,
     }
     default_implementation = None

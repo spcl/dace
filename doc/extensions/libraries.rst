@@ -368,7 +368,7 @@ SciPy call is encountered.
 
 * :mod:`dace.libraries.blas` - Basic Linear Algebra Subprograms (GEMM, GEMV,
   AXPY, DOT, GER, ...) with reference, OpenBLAS, Intel MKL, cuBLAS, and
-  rocBLAS expansions. See :ref:`blas`.
+  hipBLAS expansions. See :ref:`blas`.
 * :mod:`dace.libraries.lapack` - Dense linear algebra solvers (Cholesky, LU,
   triangular solves) backed by LAPACK and cuSOLVER.
 * :mod:`dace.libraries.linalg` - Higher-level linear algebra routines
@@ -378,22 +378,8 @@ SciPy call is encountered.
   expansions.
 * :mod:`dace.libraries.sparse` - Sparse linear algebra primitives (e.g.,
   SpMM, SpMV) with pure, Intel MKL, and cuSPARSE expansions.
-* :mod:`dace.libraries.comm` - Point-to-point and collective communication
-  (Send, Recv, Isend, Irecv, Wait, Bcast, Reduce, Allreduce, Allgather,
-  ReduceScatter, Alltoall, Alltoallv, Scatter, Gather, ...) for distributed
-  SDFGs, with MPI and NCCL expansions (NCCL becomes RCCL on the HIP backend).
-  The ``library.comm.default_implementation`` configuration entry selects the
-  backend; the NCCL expansions communicate GPU global memory, one GPU per rank.
-  A node communicates over the communicator given to its ``_comm`` connector
-  (an integer handle, see :mod:`dace.libraries.comm.communicators`), else over
-  its process grid or the world, which NCCL bootstraps with MPI. Allreduce,
-  Allgather, ReduceScatter, Bcast, Alltoall and Alltoallv can be ``nonblocking``:
-  they start the operation and write a request to ``_request``, which a Wait
-  completes. :func:`dace.libraries.comm.schedule.overlap_communication` moves
-  the starts of a schedule tree up and their waits down, so that independent
-  work runs while the communication is in flight. Nodes built on MPI
-  datatypes (Redistribute, BlockScatter, BlockGather) are MPI-only. Formerly
-  ``dace.libraries.mpi``, which remains as a deprecated alias.
+* :mod:`dace.libraries.mpi` - Point-to-point and collective MPI operations
+  (Send, Recv, Bcast, Reduce, Allreduce, ...) for distributed SDFGs.
 * :mod:`dace.libraries.pblas` - Distributed dense linear algebra via
   ScaLAPACK/PBLAS, with Intel MKL and reference variants over OpenMPI/MPICH.
 * :mod:`dace.libraries.standard` - Common building blocks (reductions,
