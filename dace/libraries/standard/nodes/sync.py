@@ -48,14 +48,17 @@ def sync_code(scope: SyncScope, backend: str, mask: str | None = None, stream: s
         return "__syncthreads();"
     if scope == SyncScope.GRID:
         return "cooperative_groups::this_grid().sync();"
-    if backend == "hip":
-        # A wavefront runs in lockstep, so a barrier of any lanes orders the memory accesses of the wavefront
-        return (
-            '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "wavefront");\n'
-            "__builtin_amdgcn_wave_barrier();\n"
-            '__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "wavefront");'
-        )
-    return f"__syncwarp({mask});" if mask is not None else "__syncwarp();"
+    if scope == SyncScope.WARP:
+        if backend == "hip":
+            # A wavefront runs in lockstep, so a barrier of any lanes orders the memory accesses of the wavefront
+            return (
+                '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "wavefront");\n'
+                "__builtin_amdgcn_wave_barrier();\n"
+                '__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "wavefront");'
+            )
+        else:
+            return f"__syncwarp({mask});" if mask is not None else "__syncwarp();"
+    raise ValueError(f"Sync {scope.value}: unknown scope for backend {backend}")
 
 
 @library.node
