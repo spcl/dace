@@ -15,7 +15,10 @@ SDFG nodes `o` of state `s`, in that order: an access or exit node becomes
 its copies (one `CopyNode` per copy edge into it, in edge order, possibly
 none), a tasklet or library node the tree node with the same keys
 (`Dace.Equiv.CorrLeaf`), a map entry a `MapScope` whose body is the image
-of the scope's direct children in a topological order of the scope.
+of the scope's direct children in a topological order of the scope, a
+consume entry without dynamic inputs its `IN_stream` copy followed by a
+`ConsumeScope` whose body is matched in the consuming context
+(`TCtx.consuming`), nested SDFGs their inlined regions.
 
 **Matching** (`SegCorr.matched`; a simulation relation in the sense of
 refinement proofs, see the terminology note in `Dace.Equiv.Frag`): every run of the tree list (followed by any
@@ -25,12 +28,11 @@ tree fails (with an error of its own: error messages name containers, which a
 nested SDFG may rename), or ends normally in a state with the same memory and log while
 the tree continues with `rest`.  The proof is by induction on `SegCorr`;
 leaves are equal leaf functions (`execCode_eq`, …) up to the log prefix
-(`*_shift`), a map's iterations are matched one by one, and an iteration
-whose SDFG trace has a happens-before race is undefined behavior
-(`OrderedExec.hbRace`).
-
-The fragment is `SeqPlain` (`Dace.SDFG.Frame`): its leaf lemmas give that
-SDFG nodes keep the (empty) code-edge values.
+(`*_shift`), a map's iterations and a consume scope's tasks are matched one
+by one (`iter_matched`, `tasks_matched`), and an iteration or task whose
+SDFG trace has a happens-before race is undefined behavior
+(`OrderedExec.hbRace`).  Leaf steps keep the (empty) code-edge values
+(`*_steps`, `Dace.SDFG.Coherence`).
 -/
 
 set_option autoImplicit false
@@ -185,7 +187,7 @@ def StRel (st : St) (cst : CSt) : Prop := st.mem = cst.mem ∧ st.log = cst.log 
 /-- Nodes whose execution is the copies into them. -/
 def DNode.isCopyTarget (n : DNode) : Bool :=
   match n.kind with
-  | .access _ | .mapExit => true
+  | .access _ | .mapExit | .consumeExit => true
   | _ => false
 
 /-! ## Nested SDFGs inside map scopes -/
@@ -462,19 +464,19 @@ theorem STree.ListExec.split_nested {tc : TCtx} {full : List SNode} {gb : Bool} 
       exact .inr (.inr ⟨c, h, STree.ListExec.keeps_ρ (h _) hk' hk' _ _ rfl, hr⟩)
 
 /-- The tree list `cs` is the image of the SDFG nodes `o` of state `s`. -/
-inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNode → Prop where
-  | nil : SegCorr ctx tc s [] []
-  | copies {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {cps : List (Name × Memlet)}
+inductive SegCorr (ctx : Ctx) : TCtx → State → List NodeId → List SNode → Prop where
+  | nil {tc : TCtx} {s : State} : SegCorr ctx tc s [] []
+  | copies {tc : TCtx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {cps : List (Name × Memlet)}
       (hn : s.node? id = some n) (hk : DNode.isCopyTarget n = true) (hsh : s.CopyShape ctx n)
       (hks : s.copiesInto ctx n = cps.map fun p => tc.copyKey p.1 p.2) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (cps.map (fun p => SNode.copyNode p.1 p.2) ++ cs)
-  | tasklet {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {t : Tasklet} {ins outs : MemletMap}
+  | tasklet {tc : TCtx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {t : Tasklet} {ins outs : MemletMap}
       (hn : s.node? id = some n) (hk : n.kind = .tasklet t) (hsh : s.CodeShape n)
       (hki : s.codeIns n = ins.pairs.map fun p => tc.inKey p.1 p.2)
       (hko : s.codeOuts n = outs.pairs.map fun p => Memlet.outKey p.1 p.2)
       (hd : s.hasDynamicWcrOut n = false) (hdT : outs.hasDynamicWcr = false) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (.taskletNode t ins outs :: cs)
-  | library {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {l l' : LibNode}
+  | library {tc : TCtx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {l l' : LibNode}
       {props : List (String × String)} {ins outs : MemletMap}
       (hn : s.node? id = some n) (hk : n.kind = .library l) (hl : l'.classpath = l.classpath ∧ l'.reduce = l.reduce)
       (hsh : s.CodeShape n)
@@ -482,7 +484,7 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (hko : s.codeOuts n = outs.pairs.map fun p => Memlet.outKey p.1 p.2)
       (hd : s.hasDynamicWcrOut n = false) (hdT : outs.hasDynamicWcr = false) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (.libraryCall l' props ins outs :: cs)
-  | map {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {oM full : List NodeId}
+  | map {tc : TCtx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {oM full : List NodeId}
       {body : List SNode} {keys : List InKey} {ds : List SNode}
       (hn : s.node? id = some n) (hk : n.kind = .mapEntry mp)
       (hkeys : s.dynKeys? n = some keys) (hok : DynOk ctx keys) (hds : DynNodes tc keys ds)
@@ -491,11 +493,25 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (hpriv : tc.privateTransients body = ctx.privateTransients s n.id)
       (hb : SegCorr ctx tc s oM body) (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs)
+  /-- A consume scope without dynamic inputs (`Decisions.md#D38`): the
+  `IN_stream` copy designates the source of the entry's `IN_stream` edge, the
+  stream the entry consumes; the body runs in the consuming context, where
+  the stream's memlets read the chunk. -/
+  | consume {tc : TCtx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode}
+      {c : ConsumeNode} {oM full : List NodeId} {body : List SNode} {e : DEdge} {mIn : Memlet}
+      (hn : s.node? id = some n) (hk : n.kind = .consumeEntry c) (hkeys : s.dynKeys? n = some [])
+      (hin : (s.inEdges n.id).find? (·.dstConn = some "IN_stream") = some e)
+      (hsrc : s.srcEndpoint e = .data mIn.data mIn.dataSubset) (hd : s.consumedStream? n.id = some mIn.data)
+      (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
+      (hdir : full.filter (s.directChildren (some n.id)).contains = oM)
+      (hpriv : tc.privateTransients body = ctx.privateTransients s n.id)
+      (hb : SegCorr ctx (tc.consuming mIn.data) s oM body) (h : SegCorr ctx tc s o cs) :
+      SegCorr ctx tc s (id :: o) (.dynScopeCopy "IN_stream" mIn :: .consumeScope c body :: cs)
   /-- A map scope whose body is one nested SDFG: the tree inlines the inner
   top region under the outer names (`InnerCorr`, renamed by `σ`); the
   per-call transients of the inner SDFG are private to the tree's iteration
   (`Decisions.md#D68`). -/
-  | nestedMap {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {full : List NodeId}
+  | nestedMap {tc : TCtx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {mp : MapNode} {full : List NodeId}
       {body : List SNode} {keys : List InKey} {ds : List SNode} {nid : NodeId} {nd : DNode} {inner : SDFG}
       {mapping : List (Sym × Expr)} {ni : Bool} {conns : List (Name × Name)} {σ : Equiv.Perm Name}
       (hn : s.node? id = some n) (hk : n.kind = .mapEntry mp)
@@ -514,7 +530,7 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs)
   /-- A nested SDFG node outside map scopes: the tree inlines the inner top
   region in the sibling list (`NestedShape`). -/
-  | nested {id : NodeId} {nd : DNode} {o : List NodeId} {cs body : List SNode} {inner : SDFG}
+  | nested {tc : TCtx} {s : State} {id : NodeId} {nd : DNode} {o : List NodeId} {cs body : List SNode} {inner : SDFG}
       {mapping : List (Sym × Expr)} {ni : Bool} {conns : List (Name × Name)} {σ : Equiv.Perm Name}
       (hnd : s.node? id = some nd) (hkn : nd.kind = .nested inner mapping ni)
       (hb : nestedBindings ctx s nd = .ok conns) (hmap : NestedMapOk ctx inner mapping)
@@ -525,9 +541,10 @@ inductive SegCorr (ctx : Ctx) (tc : TCtx) (s : State) : List NodeId → List SNo
       (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (body ++ cs)
 
-/-- The nodes of a segment run by themselves: simple nodes and map scopes. -/
+/-- The nodes of a segment run by themselves: simple nodes, map and consume
+scopes, nested SDFGs without per-call transients. -/
 theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs : List SNode}
-    (hc : SegCorr ctx tc s o cs) : ∀ id ∈ o, ∀ n, s.node? id = some n → n.FlatIn s := by
+    (hc : SegCorr ctx tc s o cs) : ∀ id ∈ o, ∀ n, s.node? id = some n → n.CohIn s := by
   induction hc with
   | nil => intro id hid; cases hid
   | copies hn hk _ _ _ ih | tasklet hn hk _ _ _ _ _ _ ih | library hn hk _ _ _ _ _ _ _ ih
@@ -536,18 +553,25 @@ theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs :
     rcases List.mem_cons.1 hid with rfl | hid
     · rw [hn] at hn'
       cases hn'
-      refine .inl ?_
+      refine .inl (.inl ?_)
       first
         | exact .inr ⟨_, hk⟩
         | exact .inl (DNode.isSimple_of_copyTarget' hk)
         | (left; simp [DNode.isSimple, hk])
+    · exact ih id hid n' hn'
+  | consume hn hk _ _ _ _ _ _ _ _ _ _ ih =>
+    intro id hid n' hn'
+    rcases List.mem_cons.1 hid with rfl | hid
+    · rw [hn] at hn'
+      cases hn'
+      exact .inr ⟨_, hk⟩
     · exact ih id hid n' hn'
   | nested hn hkn _ _ hcode hout hctr _ _ _ _ ih =>
     intro id hid n' hn'
     rcases List.mem_cons.1 hid with rfl | hid
     · rw [hn] at hn'
       cases hn'
-      exact .inr ⟨_, _, _, hkn, hctr, hcode, hout⟩
+      exact .inl (.inr ⟨_, _, _, hkn, hctr, hcode, hout⟩)
     · exact ih id hid n' hn'
 
 /-- The outcomes of the sequential SDFG run of `o` from `st` that match a
@@ -818,6 +842,191 @@ theorem mapSetupT_dyn {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL) 
   simp only [mapSetupT, Option.isSome_none, Bool.false_eq_true, ↓reduceIte]
   rw [Ctx.leaf_eq he Ctx.rangePoints (fun _ => rfl)]
   cases ctx.rangePoints (Valuation.setAll cst.ρ syms) cst.mem mp.range <;> rfl
+
+/-! ## Consume scopes -/
+
+/-- The stream element an `IN_stream` copy designates (`execDynScopeCopy`). -/
+def inStreamPt (ctx : Ctx) (ρ : Valuation) (mem : Mem) (m : Memlet) : Res Idx :=
+  if ctx.isStream m.data then streamPoint ctx ρ mem m.data m.dataSubset
+  else .err (.malformed s!"IN_stream of non-stream '{m.data}'")
+
+/-- The consumed queue and the number of processing elements of a consume
+scope on the element `p` of stream `d`. -/
+def consumeTail (ctx : Ctx) (ρ : Valuation) (mem : Mem) (d : Name) (c : ConsumeNode) (p : Idx) : Res (Loc × Int) := do
+  let l ← ctx.loc ρ mem d p
+  let np ← ctx.evalIntR ρ mem c.numPes
+  pure (mem.resolve l, np)
+
+/-- A pending `IN_stream`, no symbols. -/
+abbrev streamSc (d : Name) (p : Idx) : SibCtx := { pending := { stream := some (d, p) } }
+
+/-- A tree list starting with an `IN_stream` copy. -/
+theorem instream_inv {tc : TCtx} {full : List SNode} {gb : Bool} {m : Memlet} {rest : List SNode} {cst : CSt}
+    {r : Res (TCtl × CSt)} (hx : STree.ListExec tc full gb {} (.dynScopeCopy "IN_stream" m :: rest) cst r) :
+    (∃ e, inStreamPt tc.ctx cst.ρ cst.mem m = .err e ∧ r = .err e) ∨
+    ∃ p, inStreamPt tc.ctx cst.ρ cst.mem m = .ok p ∧ STree.ListExec tc full gb (streamSc m.data p) rest cst r := by
+  have hstep : ∀ res, STree.NodeExec tc {} (.dynScopeCopy "IN_stream" m) cst res →
+      res = (inStreamPt tc.ctx cst.ρ cst.mem m).map fun p => (streamSc m.data p, TCtl.normal, cst) := by
+    intro res h
+    cases h with
+    | pendingErr hc _ => simp [SNode.consumesPending, SNode.isDynScopeCopy] at hc
+    | leaf _ h' =>
+      simp only [stepLeaf, Option.some.injEq] at h'
+      rw [← h']
+      simp only [execDynScopeCopy, ↓reduceIte, inStreamPt]
+      split
+      · have hm : cst.st.mem = cst.mem := rfl
+        rw [hm]
+        cases streamPoint tc.ctx cst.ρ cst.mem m.data m.dataSubset with
+        | err _ => rfl
+        | ok p => show Res.ok (_, _, cst.withSt cst.st) = _; rw [CSt.withSt_st]; rfl
+      · rfl
+    | loop _ hl _ => simp [SNode.loop?] at hl
+  cases hx with
+  | headErr h =>
+    have := hstep _ h
+    cases hp : inStreamPt tc.ctx cst.ρ cst.mem m with
+    | err e => rw [hp] at this; cases this; exact .inl ⟨_, rfl, rfl⟩
+    | ok p => rw [hp] at this; cases this
+  | step h hr =>
+    have := hstep _ h
+    cases hp : inStreamPt tc.ctx cst.ρ cst.mem m with
+    | err e => rw [hp] at this; cases this
+    | ok p =>
+      rw [hp] at this
+      simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at this
+      obtain ⟨rfl, -, rfl⟩ := this
+      exact .inr ⟨p, rfl, hr⟩
+  | jump h hc =>
+    have := hstep _ h
+    cases hp : inStreamPt tc.ctx cst.ρ cst.mem m with
+    | err e => rw [hp] at this; cases this
+    | ok p =>
+      rw [hp] at this
+      simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at this
+      rw [this.2.1] at hc; cases hc
+  | gotoResume h _ _ =>
+    have := hstep _ h
+    cases hp : inStreamPt tc.ctx cst.ρ cst.mem m with
+    | err e => rw [hp] at this; cases this
+    | ok p => rw [hp] at this; simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at this; cases this.2.1
+  | gotoEscape h _ =>
+    have := hstep _ h
+    cases hp : inStreamPt tc.ctx cst.ρ cst.mem m with
+    | err e => rw [hp] at this; cases this
+    | ok p => rw [hp] at this; simp only [Res.map, Res.ok.injEq, Prod.mk.injEq] at this; cases this.2.1
+
+/-- A run of a consume scope node. -/
+theorem consumeScope_node_inv {tc : TCtx} {sc : SibCtx} {c : ConsumeNode} {body : List SNode} {cst : CSt}
+    {res : Res NodeOut} (h : STree.NodeExec tc sc (.consumeScope c body) cst res) :
+    (∃ e, consumeSetupT tc sc c cst = .err e ∧ res = .err e) ∨
+    (∃ ρ' d l np e, consumeSetupT tc sc c cst = .ok (ρ', d, l, np) ∧
+      STree.ConsumeTasks tc ρ' c d body l np (tc.privateTransients body) cst (cst.mem.queues l) (.err e) ∧
+      res = .err e) ∨
+    ∃ ρ' d l np logs rest pushed, consumeSetupT tc sc c cst = .ok (ρ', d, l, np) ∧
+      STree.ConsumeTasks tc ρ' c d body l np (tc.privateTransients body) cst (cst.mem.queues l)
+        (.ok (logs, rest, pushed)) ∧
+      res = dataflowOut (consumeFinishT tc cst l logs rest pushed) := by
+  generalize hn : SNode.consumeScope c body = n at h
+  cases h with
+  | pendingErr hc _ => subst hn; simp [SNode.consumesPending, SNode.isDataflowScope] at hc
+  | leaf _ h' => subst hn; simp [stepLeaf] at h'
+  | loop _ hl _ => subst hn; simp [SNode.loop?] at hl
+  | consumeSetupErr hs => cases hn; exact .inl ⟨_, hs, rfl⟩
+  | consumeTasksErr hs ht => cases hn; exact .inr (.inl ⟨_, _, _, _, _, hs, ht, rfl⟩)
+  | consumeScope hs ht => cases hn; exact .inr (.inr ⟨_, _, _, _, _, _, _, hs, ht, rfl⟩)
+  | _ => cases hn
+
+/-- A tree list starting with a consume scope. -/
+theorem consume_inv {tc : TCtx} {full : List SNode} {gb : Bool} {sc : SibCtx} {c : ConsumeNode}
+    {body rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)}
+    (hx : STree.ListExec tc full gb sc (.consumeScope c body :: rest) cst r) :
+    (∃ e, consumeSetupT tc sc c cst = .err e ∧ r = .err e) ∨
+    (∃ ρ' d l np e, consumeSetupT tc sc c cst = .ok (ρ', d, l, np) ∧
+      STree.ConsumeTasks tc ρ' c d body l np (tc.privateTransients body) cst (cst.mem.queues l) (.err e) ∧
+      r = .err e) ∨
+    ∃ ρ' d l np logs rs pushed, consumeSetupT tc sc c cst = .ok (ρ', d, l, np) ∧
+      STree.ConsumeTasks tc ρ' c d body l np (tc.privateTransients body) cst (cst.mem.queues l)
+        (.ok (logs, rs, pushed)) ∧
+      ((∃ e, consumeFinishT tc cst l logs rs pushed = .err e ∧ r = .err e) ∨
+        ∃ cst', consumeFinishT tc cst l logs rs pushed = .ok cst' ∧ STree.ListExec tc full gb {} rest cst' r) := by
+  have fin : ∀ {R : Res CSt} {res : Res NodeOut}, res = dataflowOut R →
+      (∀ e, res = .err e → R = .err e) ∧
+      (∀ sc ctl c, res = .ok (sc, ctl, c) → sc = {} ∧ ctl = .normal ∧ R = .ok c) := by
+    intro R res hres
+    subst hres
+    refine ⟨fun e he => ?_, fun sc ctl c hc => ?_⟩
+    · cases R <;> simp_all [dataflowOut, Res.map]
+    · cases R <;> simp_all [dataflowOut, Res.map]
+  cases hx with
+  | headErr h =>
+    rcases consumeScope_node_inv h with ⟨e, hs, he⟩ | ⟨ρ', d, l, np, e, hs, ht, he⟩ |
+      ⟨ρ', d, l, np, logs, rs, pushed, hs, ht, hres⟩
+    · cases he; exact .inl ⟨_, hs, rfl⟩
+    · cases he; exact .inr (.inl ⟨_, _, _, _, _, hs, ht, rfl⟩)
+    · exact .inr (.inr ⟨_, _, _, _, _, _, _, hs, ht, .inl ⟨_, (fin hres).1 _ rfl, rfl⟩⟩)
+  | step h hr =>
+    rcases consumeScope_node_inv h with ⟨e, hs, he⟩ | ⟨ρ', d, l, np, e, hs, ht, he⟩ |
+      ⟨ρ', d, l, np, logs, rs, pushed, hs, ht, hres⟩
+    · cases he
+    · cases he
+    · obtain ⟨rfl, -, hf⟩ := (fin hres).2 _ _ _ rfl
+      exact .inr (.inr ⟨_, _, _, _, _, _, _, hs, ht, .inr ⟨_, hf, hr⟩⟩)
+  | jump h hc =>
+    rcases consumeScope_node_inv h with ⟨e, hs, he⟩ | ⟨ρ', d, l, np, e, hs, ht, he⟩ |
+      ⟨ρ', d, l, np, logs, rs, pushed, hs, ht, hres⟩
+    · cases he
+    · cases he
+    · obtain ⟨-, rfl, -⟩ := (fin hres).2 _ _ _ rfl
+      cases hc
+  | gotoResume h _ _ =>
+    rcases consumeScope_node_inv h with ⟨e, hs, he⟩ | ⟨ρ', d, l, np, e, hs, ht, he⟩ |
+      ⟨ρ', d, l, np, logs, rs, pushed, hs, ht, hres⟩
+    · cases he
+    · cases he
+    · obtain ⟨-, h₂, -⟩ := (fin hres).2 _ _ _ rfl
+      cases h₂
+  | gotoEscape h _ =>
+    rcases consumeScope_node_inv h with ⟨e, hs, he⟩ | ⟨ρ', d, l, np, e, hs, ht, he⟩ |
+      ⟨ρ', d, l, np, logs, rs, pushed, hs, ht, hres⟩
+    · cases he
+    · cases he
+    · obtain ⟨-, h₂, -⟩ := (fin hres).2 _ _ _ rfl
+      cases h₂
+
+/-- **Consume set-up without dynamic inputs** in the SDFG: the stream of
+the `IN_stream` edge (failing when the tree's `IN_stream` copy fails). -/
+theorem consumeSetup_in {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {c : ConsumeNode} {e : DEdge}
+    {mIn : Memlet} (hkeys : s.dynKeys? n = some [])
+    (hin : (s.inEdges n.id).find? (·.dstConn = some "IN_stream") = some e)
+    (hsrc : s.srcEndpoint e = .data mIn.data mIn.dataSubset) (st : St) :
+    (∀ e, inStreamPt ctx ρ st.mem mIn = .err e → ∃ e', consumeSetup ctx ρ s n c st = .err e') ∧
+    ∀ p, inStreamPt ctx ρ st.mem mIn = .ok p →
+      consumeSetup ctx ρ s n c st = (consumeTail ctx ρ st.mem mIn.data c p).map fun q => (ρ, st, q.1, q.2) := by
+  unfold consumeSetup consumeStream
+  rw [bindDynamicInputs_eq hkeys ⟨List.nodup_nil, fun k hk => by cases hk⟩]
+  simp only [dynReadAcc, Res.map, Res.ok_bind, hin, hsrc, inStreamPt]
+  rw [show Valuation.setAll ρ [] = ρ from rfl]
+  split
+  · refine ⟨fun e' hp => ⟨e', by rw [hp]; rfl⟩, fun p hp => ?_⟩
+    rw [hp]
+    simp only [consumeTail, Res.ok_bind]
+    cases ctx.loc ρ st.mem mIn.data p with
+    | err _ => rfl
+    | ok l => cases ctx.evalIntR ρ st.mem c.numPes <;> rfl
+  · exact ⟨fun _ _ => ⟨_, rfl⟩, fun p hp => by cases hp⟩
+
+/-- **Consume set-up with a pending `IN_stream`** in the tree. -/
+theorem consumeSetupT_stream (tc : TCtx) (c : ConsumeNode) (d : Name) (p : Idx) (cst : CSt) :
+    consumeSetupT tc (streamSc d p) c cst = (consumeTail tc.ctx cst.ρ cst.mem d c p).map fun q => (cst.ρ, d, q.1, q.2) := by
+  simp only [consumeSetupT, consumeTail]
+  have hρ : Valuation.setAll cst.ρ [] = cst.ρ := rfl
+  rw [hρ]
+  cases tc.ctx.loc cst.ρ cst.mem d p with
+  | err _ => rfl
+  | ok l =>
+    simp only [Res.ok_bind]
+    cases tc.ctx.evalIntR cst.ρ cst.mem c.numPes <;> rfl
 
 /-! ## Matching -/
 
@@ -1108,7 +1317,6 @@ theorem views_run (he' : tc.ctx.eraseL = ctx.eraseL) {full : List SNode} {gb : B
           rw [hc, Res.ok_bind, ← CSt.st_withSt cst hy, ← hρ]
           exact hf
 
-include h in
 /-- One SDFG leaf node that is one tree leaf. -/
 theorem leaf_node {full : List SNode} {gb : Bool} {id : NodeId} {n : DNode} {o : List NodeId} {nT : SNode}
     {more rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} {st : St}
@@ -1456,6 +1664,209 @@ theorem nested_call (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {nd : DNode}
       rw [hg₂, Log.ren_one, Log.dropNames_nil'] at hnode
       exact .inr (.inr ⟨c, rfl, hnode⟩)
 
+omit h in
+include he in
+theorem consumeCond_eq {ρ : Valuation} {c : ConsumeNode} {m₁ m₂ : Mem} (hm : m₁ = m₂) (l : Loc) (q : List Val) :
+    consumeCond tc.ctx ρ c m₂ l q = consumeCond ctx ρ c m₁ l q := by
+  subst hm
+  exact Ctx.leaf_eq he (fun x => consumeCond x ρ c m₁ l q) (fun _ => rfl)
+
+omit h in
+include he in
+/-- **The tasks of a consume scope**, given one task: the tree's tasks, each
+matched by an SDFG task with the same log and deferred pushes. -/
+theorem tasks_matched_of {n : DNode} {c : ConsumeNode} {d : Name} {body : List SNode} {privS privT : List Name}
+    {ρ : Valuation} {l : Loc} {np : Int} {pre : CSt} {st₁ : St} (hm : st₁.mem = pre.mem)
+    (hbody : ∀ (q : List Val) (p : Int) {res : Res (TCtl × CSt)},
+      STree.ListExec (tc.consuming d) body false {} body
+        (taskStartT tc d c l privT pre (Valuation.set ρ c.peIndex (.int p)) q) res →
+      (∃ e, e.isUB = true ∧ OrderedExec ctx (Valuation.set ρ c.peIndex (.int p)) s (s.scopeNodes n.id)
+        (s.directChildren (some n.id)) (taskStart ctx s n.id c l privS st₁ q) (.err e)) ∨
+      (∃ e e', res = .err e ∧ OrderedExec ctx (Valuation.set ρ c.peIndex (.int p)) s (s.scopeNodes n.id)
+        (s.directChildren (some n.id)) (taskStart ctx s n.id c l privS st₁ q) (.err e')) ∨
+      ∃ st', OrderedExec ctx (Valuation.set ρ c.peIndex (.int p)) s (s.scopeNodes n.id)
+        (s.directChildren (some n.id)) (taskStart ctx s n.id c l privS st₁ q) (.ok st') ∧
+        ∃ cst', res = .ok (.normal, cst') ∧ taskLog st' privS l = taskLog cst'.st privT l ∧
+          taskPushed st' privS l = taskPushed cst'.st privT l) :
+    ∀ {q : List Val} {rT : Res (List Log × List Val × List Val)},
+      STree.ConsumeTasks tc ρ c d body l np privT pre q rT →
+      (∃ e, e.isUB = true ∧ ConsumeTasks ctx ρ s n.id c l np privS st₁ q (.err e)) ∨
+      (∃ e e', rT = .err e ∧ ConsumeTasks ctx ρ s n.id c l np privS st₁ q (.err e')) ∨
+      ∃ res, rT = .ok res ∧ ConsumeTasks ctx ρ s n.id c l np privS st₁ q (.ok res)
+  | _, _, .condErr hc => .inr (.inl ⟨_, _, rfl, .condErr ((consumeCond_eq he hm _ _).symm.trans hc)⟩)
+  | _, _, .stop hc => .inr (.inr ⟨_, rfl, .stop ((consumeCond_eq he hm _ _).symm.trans hc)⟩)
+  | _, _, .bodyErr hc hq hp hb ho => by
+    have hc' := (consumeCond_eq he hm _ _).symm.trans hc
+    rcases hbody _ _ hb with ⟨e', hu, hx⟩ | ⟨e', e'', rfl, hx⟩ | ⟨st', hx, cst', rfl, -, -⟩
+    · exact .inl ⟨e', hu, .bodyErr hc' hq hp hx⟩
+    · cases ho; exact .inr (.inl ⟨_, _, rfl, .bodyErr hc' hq hp hx⟩)
+    · cases ho
+  | _, _, .restErr hc hq hp hb ho hr => by
+    have hc' := (consumeCond_eq he hm _ _).symm.trans hc
+    rcases hbody _ _ hb with ⟨e', hu, hx⟩ | ⟨e', e'', rfl, hx⟩ | ⟨st', hx, cst', rfl, -, -⟩
+    · exact .inl ⟨e', hu, .bodyErr hc' hq hp hx⟩
+    · cases ho
+    · rcases tasks_matched_of hm hbody hr with ⟨e', hu, hy⟩ | ⟨e', e'', he', hy⟩ | ⟨res, hres, -⟩
+      · exact .inl ⟨e', hu, .restErr hc' hq hp hx hy⟩
+      · exact .inr (.inl ⟨e', e'', he', .restErr hc' hq hp hx hy⟩)
+      · cases hres
+  | _, _, .step hc hq hp hb ho hr => by
+    have hc' := (consumeCond_eq he hm _ _).symm.trans hc
+    rcases hbody _ _ hb with ⟨e', hu, hx⟩ | ⟨e', e'', rfl, hx⟩ | ⟨st', hx, cst', rfl, hlg, hpu⟩
+    · exact .inl ⟨e', hu, .bodyErr hc' hq hp hx⟩
+    · cases ho
+    · rcases tasks_matched_of hm hbody hr with ⟨e', hu, hy⟩ | ⟨e', e'', he', hy⟩ | ⟨res, hres, hy⟩
+      · exact .inl ⟨e', hu, .restErr hc' hq hp hx hy⟩
+      · cases he'
+      · cases hres
+        simp only [taskOutcome, Res.ok.injEq, Prod.mk.injEq] at ho
+        obtain ⟨rfl, rfl⟩ := ho
+        refine .inr (.inr ⟨_, rfl, ?_⟩)
+        rw [← hlg, ← hpu]
+        exact .step hc' hq hp hx hy
+
+include h he in
+/-- **The tasks of a consume scope**: the tree's tasks, each matched by the
+SDFG's run of the scope body along the tree's order. -/
+theorem tasks_matched {n : DNode} {c : ConsumeNode} {d : Name} {oM full : List NodeId} {body : List SNode}
+    (hto : s.isTopologicalOrder (s.scopeNodes n.id) full = true)
+    (hdir : full.filter (s.directChildren (some n.id)).contains = oM)
+    (hpriv : tc.privateTransients body = ctx.privateTransients s n.id) (hd : s.consumedStream? n.id = some d)
+    (ihb : ∀ {cst : CSt} {r : Res (TCtl × CSt)} {st : St},
+      STree.ListExec (tc.consuming d) body false {} (body ++ []) cst r →
+      StRel st cst → SeqOut ctx s oM cst.ρ st (tc.consuming d) body false [] r)
+    {ρ : Valuation} {l : Loc} {np : Int} {pre : CSt} {st₁ : St} (hm : st₁.mem = pre.mem) (hv : st₁.vals = []) :
+    ∀ {q : List Val} {rT : Res (List Log × List Val × List Val)},
+      STree.ConsumeTasks tc ρ c d body l np (tc.privateTransients body) pre q rT →
+      (∃ e, e.isUB = true ∧ ConsumeTasks ctx ρ s n.id c l np (ctx.privateTransients s n.id) st₁ q (.err e)) ∨
+      (∃ e e', rT = .err e ∧ ConsumeTasks ctx ρ s n.id c l np (ctx.privateTransients s n.id) st₁ q (.err e')) ∨
+      ∃ res, rT = .ok res ∧ ConsumeTasks ctx ρ s n.id c l np (ctx.privateTransients s n.id) st₁ q (.ok res) := by
+  have hcn : tc.ctx.cname = ctx.cname := by
+    have := congrArg Ctx.cname he
+    simpa [Ctx.eraseL] using this
+  have hrel : ∀ ρ' q, StRel (taskStart ctx s n.id c l (ctx.privateTransients s n.id) st₁ q)
+      (taskStartT tc d c l (tc.privateTransients body) pre ρ' q) := by
+    intro ρ' q
+    refine ⟨?_, rfl, hv⟩
+    simp only [taskStart, taskStartT, chunkMemName, TCtx.chunkMemName, hd, Option.map_some, hm, hpriv, hcn]
+  have hp : ∀ ρ' q, bindViews ctx ρ' s (s.viewOrder ctx (s.directChildren (some n.id)))
+      (taskStart ctx s n.id c l (ctx.privateTransients s n.id) st₁ q) =
+        .ok (taskStart ctx s n.id c l (ctx.privateTransients s n.id) st₁ q) :=
+    fun ρ' q => h n.id ρ' _
+  intro q rT ht
+  refine tasks_matched_of he (n := n) hm (fun q p {res} hb => ?_) ht
+  have hb' : STree.ListExec (tc.consuming d) body false {} (body ++ [])
+      (taskStartT tc d c l (tc.privateTransients body) pre (Valuation.set ρ c.peIndex (.int p)) q) res := by
+    rw [List.append_nil]; exact hb
+  rcases ihb hb' (hrel _ q) with ⟨e, hu, hs⟩ | ⟨e, e', hr, hs⟩ | ⟨cst', st', tr, hl, hs, -, hst⟩
+  · rw [← hdir] at hs
+    exact .inl ⟨e, hu, .seqErr hto (hp _ _) hs⟩
+  · rw [← hdir] at hs
+    exact .inr (.inl ⟨e, e', hr, .seqErr hto (hp _ _) hs⟩)
+  · rw [← hdir] at hs
+    have hres := STree.ListExec_nil (by rfl) hl
+    cases hf : s.hbFree tr with
+    | false => exact .inl ⟨_, rfl, .hbRace hto (hp _ _) hs hf⟩
+    | true =>
+      refine .inr (.inr ⟨st', .run hto (hp _ _) hs hf, cst', hres, ?_, ?_⟩) <;>
+        simp only [taskLog, taskPushed, CSt.st, hst.2.1, hpriv]
+
+omit h in
+include he in
+/-- **A consume scope node** without dynamic inputs, given its tasks
+(`htasks`) and the rest of the segment (`ih`). -/
+theorem consume_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {c : ConsumeNode}
+    {body : List SNode} {e : DEdge} {mIn : Memlet} (hn : s.node? id = some n) (hk : n.kind = .consumeEntry c)
+    (hkeys : s.dynKeys? n = some [])
+    (hin : (s.inEdges n.id).find? (·.dstConn = some "IN_stream") = some e)
+    (hsrc : s.srcEndpoint e = .data mIn.data mIn.dataSubset)
+    (htasks : ∀ {pre : CSt} {st₁ : St}, st₁.mem = pre.mem → st₁.vals = [] →
+      ∀ {l : Loc} {np : Int} {q : List Val} {rT : Res (List Log × List Val × List Val)},
+        STree.ConsumeTasks tc pre.ρ c mIn.data body l np (tc.privateTransients body) pre q rT →
+        (∃ e, e.isUB = true ∧ ConsumeTasks ctx pre.ρ s n.id c l np (ctx.privateTransients s n.id) st₁ q (.err e)) ∨
+        (∃ e e', rT = .err e ∧ ConsumeTasks ctx pre.ρ s n.id c l np (ctx.privateTransients s n.id) st₁ q (.err e')) ∨
+        ∃ res, rT = .ok res ∧ ConsumeTasks ctx pre.ρ s n.id c l np (ctx.privateTransients s n.id) st₁ q (.ok res))
+    (ih : ∀ {full : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} {st : St},
+      STree.ListExec tc full gb {} (cs ++ rest) cst r → StRel st cst → SeqOut ctx s o cst.ρ st tc full gb rest r)
+    {full' : List SNode} {gb : Bool} {rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} {st : St}
+    (hx : STree.ListExec tc full' gb {} ((.dynScopeCopy "IN_stream" mIn :: .consumeScope c body :: cs) ++ rest) cst r)
+    (hrel : StRel st cst) :
+    SeqOut ctx s (id :: o) cst.ρ st tc full' gb rest r := by
+  apply SeqOut.cons hn
+  simp only [List.cons_append] at hx
+  have hshift : cst.st = st.forNode.shift cst.log := hrel.forNode_shift
+  have hmem : st.forNode.mem = cst.mem := hrel.1
+  have hv : st.forNode.vals = [] := hrel.2.2
+  have hsetup := consumeSetup_in (ctx := ctx) (ρ := cst.ρ) (c := c) hkeys hin hsrc st.forNode
+  rw [hmem] at hsetup
+  have hpt : inStreamPt tc.ctx cst.ρ cst.mem mIn = inStreamPt ctx cst.ρ cst.mem mIn :=
+    Ctx.leaf_eq he (fun x => inStreamPt x cst.ρ cst.mem mIn) (fun _ => rfl)
+  rcases instream_inv hx with ⟨e', hp, rfl⟩ | ⟨p, hp, hx₂⟩
+  · rw [hpt] at hp
+    obtain ⟨e'', hs⟩ := hsetup.1 _ hp
+    exact .inr (.inl ⟨_, _, rfl, .consumeSetupErr hk hs⟩)
+  rw [hpt] at hp
+  have hs := hsetup.2 _ hp
+  have hsT := consumeSetupT_stream tc c mIn.data p cst
+  have htail : consumeTail tc.ctx cst.ρ cst.mem mIn.data c p = consumeTail ctx cst.ρ cst.mem mIn.data c p :=
+    Ctx.leaf_eq he (fun x => consumeTail x cst.ρ cst.mem mIn.data c p) (fun _ => rfl)
+  rw [htail] at hsT
+  cases hq : consumeTail ctx cst.ρ cst.mem mIn.data c p with
+  | err e' =>
+    rw [hq] at hs hsT
+    rcases consume_inv hx₂ with ⟨e'', hs', rfl⟩ | ⟨_, _, _, _, _, hs', -, -⟩ | ⟨_, _, _, _, _, _, _, hs', -, -⟩ <;>
+      rw [hsT] at hs' <;> cases hs'
+    exact .inr (.inl ⟨_, _, rfl, .consumeSetupErr hk hs⟩)
+  | ok lq =>
+    obtain ⟨l, np⟩ := lq
+    rw [hq] at hs hsT
+    simp only [Res.map] at hs hsT
+    have hfinT : ∀ logs rs pushed, consumeFinishT tc cst l logs rs pushed =
+        (consumeFinish ctx st.forNode l logs rs pushed).map (fun y => cst.withSt (y.shift cst.log)) := by
+      intro logs rs pushed
+      unfold consumeFinishT
+      rw [Ctx.leaf_eq he (fun x => consumeFinish x cst.st l logs rs pushed) (fun _ => rfl), hshift,
+        consumeFinish_shift ctx cst.log st.forNode l logs rs pushed]
+      cases consumeFinish ctx st.forNode l logs rs pushed <;> rfl
+    rcases consume_inv hx₂ with ⟨e', hs', -⟩ | ⟨ρ', d, l', np', e', hs', ht, rfl⟩ |
+      ⟨ρ', d, l', np', logs, rs, pushed, hs', ht, hfin⟩
+    · rw [hsT] at hs'; cases hs'
+    · rw [hsT] at hs'
+      simp only [Res.ok.injEq, Prod.mk.injEq] at hs'
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := hs'
+      rw [← hmem] at ht
+      rcases htasks hmem hv ht with ⟨e'', hu, hy⟩ | ⟨e'', e''', he', hy⟩ | ⟨res, hres, -⟩
+      · exact .inl ⟨e'', hu, .consumeTasksErr hk hs hy⟩
+      · cases he'; exact .inr (.inl ⟨_, _, rfl, .consumeTasksErr hk hs hy⟩)
+      · cases hres
+    · rw [hsT] at hs'
+      simp only [Res.ok.injEq, Prod.mk.injEq] at hs'
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := hs'
+      rw [← hmem] at ht
+      rcases htasks hmem hv ht with ⟨e'', hu, hy⟩ | ⟨e'', e''', he', -⟩ | ⟨res, hres, hy⟩
+      · exact .inl ⟨e'', hu, .consumeTasksErr hk hs hy⟩
+      · cases he'
+      · cases hres
+        rw [hfinT] at hfin
+        cases hy₂ : consumeFinish ctx st.forNode l logs rs pushed with
+        | err e'' =>
+          rw [hy₂] at hfin
+          rcases hfin with ⟨e₃, hf, rfl⟩ | ⟨cst', hf, -⟩
+          · cases hf; exact .inr (.inl ⟨_, _, rfl, hy₂ ▸ NodeExec.consumeScope hk hs hy⟩)
+          · cases hf
+        | ok y₂ =>
+          rw [hy₂] at hfin
+          rcases hfin with ⟨e₃, hf, -⟩ | ⟨cst', hf, hx'⟩
+          · cases hf
+          · simp only [Res.map, Res.ok.injEq] at hf
+            subst hf
+            have hyv₂ : y₂.vals = [] := by
+              unfold consumeFinish at hy₂
+              split at hy₂ <;> cases hy₂
+              exact hv
+            exact .inr (.inr ⟨y₂, hy₂ ▸ NodeExec.consumeScope hk hs hy,
+              ih (cst := cst.withSt (y₂.shift cst.log)) hx' (hrel.afterNode hyv₂ ⟨rfl, rfl⟩)⟩)
+
 include he in
 /-- **A map scope node**, given its iterations (`hiter`) and the rest of the
 segment (`ih`). -/
@@ -1571,7 +1982,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
   | nil =>
     intro full gb rest cst r st hx hrel
     exact .inr (.inr ⟨cst, st, [], hx, .nil, rfl, hrel⟩)
-  | @copies id n o cs cps hn hk hsh hks _ ih =>
+  | @copies tc s id n o cs cps hn hk hsh hks _ ih =>
     intro full gb rest cst r st hx hrel
     have hn' := List.mem_of_find?_eq_some hn
     rw [List.append_assoc] at hx
@@ -1607,24 +2018,24 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
             (fun _ hc => by rw [hnc] at hc; cases hc) st.forNode y ((hfold _).trans hy)
           rw [hv rfl]; simpa [St.forNode] using hrel.2.2
         refine .inr (.inr ⟨y, (hfold st.forNode).trans hy ▸ NodeExec.simple hsimp, ?_⟩)
-        have := ih hx' (hrel.afterNode hyv ⟨?_, ?_⟩)
+        have := ih h he hx' (hrel.afterNode hyv ⟨?_, ?_⟩)
         · rw [hρ] at this; exact this
         · have := congrArg St.mem hf; simpa [CSt.st] using this.symm
         · have := congrArg St.log hf; simpa [CSt.st, hrel.2.1] using this.symm
-  | @tasklet id n o cs t ins outs hn hk hsh hki hko hd hdT _ ih =>
+  | @tasklet tc s id n o cs t ins outs hn hk hsh hki hko hd hdT _ ih =>
     intro full gb rest cst r st hx hrel
-    refine leaf_node h hn (by simp [DNode.isSimple, hk]) (fun _ => hsh.outs) ?_ hx hrel
-      (fun hx' hrel' hρ => hρ ▸ ih hx' hrel')
+    refine leaf_node hn (by simp [DNode.isSimple, hk]) (fun _ => hsh.outs) ?_ hx hrel
+      (fun hx' hrel' hρ => hρ ▸ ih h he hx' hrel')
     have : ∀ X, execCodeT tc cst.ρ t.label ins outs X (tc.ctx.I.tasklet t cst.ρ) (.taskletUndefined t.label) =
         execSimple ctx cst.ρ s n X := by
       intro X
       rw [← execCode_eq he cst.ρ hsh hki hko hd hdT, I_eq he]
       simp [execSimple, hk]
     simp only [stepLeaf, this]
-  | @library id n o cs l l' props ins outs hn hk hl hsh hki hko hd hdT _ ih =>
+  | @library tc s id n o cs l l' props ins outs hn hk hl hsh hki hko hd hdT _ ih =>
     intro full gb rest cst r st hx hrel
-    refine leaf_node h hn (by simp [DNode.isSimple, hk]) (fun _ => hsh.outs) ?_ hx hrel
-      (fun hx' hrel' hρ => hρ ▸ ih hx' hrel')
+    refine leaf_node hn (by simp [DNode.isSimple, hk]) (fun _ => hsh.outs) ?_ hx hrel
+      (fun hx' hrel' hρ => hρ ▸ ih h he hx' hrel')
     have : ∀ X, execLibraryT tc cst.ρ l' ins outs X = execSimple ctx cst.ρ s n X := by
       intro X
       unfold execLibraryT
@@ -1639,11 +2050,17 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
         rw [← execCode_eq he cst.ρ hsh hki hko hd hdT, I_eq he]
         simp [execSimple, hk, hr]
     simp only [stepLeaf, this]
-  | @map id n o cs mp oM full body keys ds hn hk hkeys hok hds hto hdir hpriv _ _ ihb ih =>
+  | @map tc s id n o cs mp oM full body keys ds hn hk hkeys hok hds hto hdir hpriv _ _ ihb ih =>
     intro full' gb rest cst r st hx hrel
     exact map_node he hn hk hkeys hok hds
-      (fun hm hv _ _ hi => iter_matched h hto hdir hpriv (fun hb hr => ihb hb hr) hm hv hi) ih hx hrel
-  | @nestedMap id n o cs mp full body keys ds nid nd inner mapping ni conns σ hn hk hkeys hok hds xs hto hdir hxs hnd
+      (fun hm hv _ _ hi => iter_matched h hto hdir hpriv (fun hb hr => ihb h he hb hr) hm hv hi)
+      (fun hx hr => ih h he hx hr) hx hrel
+  | @consume tc s id n o cs c oM full body e mIn hn hk hkeys hin hsrc hd hto hdir hpriv _ _ ihb ih =>
+    intro full' gb rest cst r st hx hrel
+    exact consume_node he hn hk hkeys hin hsrc
+      (fun hm hv _ _ _ _ ht => tasks_matched h he hto hdir hpriv hd (fun hb hr => ihb h he hb hr) hm hv ht)
+      (fun hx hr => ih h he hx hr) hx hrel
+  | @nestedMap tc s id n o cs mp full body keys ds nid nd inner mapping ni conns σ hn hk hkeys hok hds xs hto hdir hxs hnd
       hkn hb hmap hcode hout hpriv hnames hinner _ ih =>
     intro full' gb rest cst r st hx hrel
     have htc : tc.withI ctx.I = tc := by rw [← I_eq he]; rfl
@@ -1660,8 +2077,9 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
       exact this
     exact map_node he hn hk hkeys hok hds
       (fun hm _ _ _ hi => iter_matched_of (n := n) (fun i {res} hbd => nested_body h he hw hto hdir hxs hnd hkn hb hmap
-        hcode hout hpriv (cT := (tc.renT σ).innerCtx inner) rfl rfl hnames' hinner' hm i hbd) hi) ih hx hrel
-  | @nested id nd o cs body inner mapping ni conns σ hn hkn hb hmap hcode hout hctr hshape hnames hinner _ ih =>
+        hcode hout hpriv (cT := (tc.renT σ).innerCtx inner) rfl rfl hnames' hinner' hm i hbd) hi)
+      (fun hx hr => ih h he hx hr) hx hrel
+  | @nested tc s id nd o cs body inner mapping ni conns σ hn hkn hb hmap hcode hout hctr hshape hnames hinner _ ih =>
     intro full gb rest cst r st hx hrel
     rw [List.append_assoc] at hx
     have htc : tc.withI ctx.I = tc := by rw [← I_eq he]; rfl
@@ -1718,7 +2136,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
           refine ⟨rfl, ?_, ?_⟩
           · simp only [St.afterNode, St.forNode, Log.empty_seq, CSt.shift, hrel.2.1]
           · simpa [St.afterNode, St.forNode] using hrel.2.2
-        have := ih hrest hrel'
+        have := ih h he hrest hrel'
         rwa [hρ'] at this
 
 end Matched

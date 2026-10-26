@@ -172,14 +172,14 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
           · exact .inl ⟨_, rfl, hx'⟩
         | true =>
           have hrun : OrderedExec ctx cst.ρ s c (s.topLevelOf c) base (.ok st'') := .run hto hp hs₀ hf
-          have hflat : ∀ id ∈ s.topLevelOf c, ∀ n, s.node? id = some n → n.FlatIn s := by
+          have hflat : ∀ id ∈ s.topLevelOf c, ∀ n, s.node? id = some n → n.CohIn s := by
             intro id hid n hn
             have hc' : id ∈ c := (List.mem_filter.1 hid).1
             have hfull : id ∈ ofull := by
               simp only [State.isTopologicalOrder, Bool.and_eq_true, List.all_eq_true] at hto
               simpa using hto.1.1.2 id hc'
             exact hseg.flat id (hdir ▸ List.mem_filter.2 ⟨hfull, by simpa using hid⟩) n hn
-          have hcoh := OrderedExec.coherent' (fun id hid n hn => .inl (hflat id hid n hn)) (st := base) hrun
+          have hcoh := OrderedExec.coherent' hflat (st := base) hrun
           rcases (hstate hrun).2 _ rfl with ⟨e, hu, hx'⟩ | this
           · exact .inl ⟨e, hu, hx'⟩
           refine .inr (.inr ⟨cst', hl, ?_⟩)

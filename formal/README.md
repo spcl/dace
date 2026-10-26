@@ -67,6 +67,11 @@ representations:
   assignments or loops before it (`NestedShape`, `ListExec.split_label`);
   such a call steps the state by its inner log (`NodeExec.steps`,
   `DNode.FlatIn`).
+  Consume scopes without dynamic inputs (`SegCorr.consume`): the tree's
+  `IN_stream` copy names the stream of the entry's `IN_stream` edge, and the
+  body is matched in the consuming context (`TCtx.consuming`: memlets on the
+  stream read the chunk), task by task (`Corr.tasks_matched`); nested SDFGs
+  inside consume bodies are not matched yet.
   `tests/EquivCorpus.lean` prints the corpus verdicts.
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).

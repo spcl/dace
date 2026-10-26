@@ -360,10 +360,11 @@ variable (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode
 
 /-- Match the image of node `n` at the head of `cs` (`rec` matches a scope
 body): the full order nested in `n` and the rest of the list. -/
-def matchOne (rec : List NodeId → List SNode → Option MatchRes) (n : DNode) (cs : List SNode) :
+def matchOne (rec : TCtx → (Equiv.Perm Name → SDFG → List SNode → Bool) → List NodeId → List SNode → Option MatchRes)
+    (n : DNode) (cs : List SNode) :
     Option (List NodeId × List SNode) :=
   match n.kind with
-  | .access _ | .mapExit =>
+  | .access _ | .mapExit | .consumeExit =>
     if s.copyShape? ctx n = true then
       match takeCopies (s.copiesInto ctx n).length cs with
       | some (ps, rest) => if ps.map (fun p => tc.copyKey p.1 p.2) = s.copiesInto ctx n then some ([], rest) else none
@@ -398,7 +399,7 @@ def matchOne (rec : List NodeId → List SNode → Option MatchRes) (n : DNode) 
                 | some fullN => some (fullN, rest)
                 | none =>
                   if tc.privateTransients body = ctx.privateTransients s n.id then
-                    match rec (s.directChildren (some n.id)) body with
+                    match rec tc nest (s.directChildren (some n.id)) body with
                     | some (oM, fullM, []) =>
                       if s.isTopologicalOrder (s.scopeNodes n.id) fullM = true ∧
                           fullM.filter (s.directChildren (some n.id)).contains = oM then some (fullM, rest) else none
@@ -409,11 +410,28 @@ def matchOne (rec : List NodeId → List SNode → Option MatchRes) (n : DNode) 
           else none
         | none => none
       else none
+  | .consumeEntry c =>
+    match s.dynKeys? n with
+    | some [] =>
+      match (s.inEdges n.id).find? (·.dstConn = some "IN_stream") with
+      | some e =>
+        match cs with
+        | .dynScopeCopy t mIn :: .consumeScope c' body :: rest =>
+          if t = "IN_stream" ∧ c' = c ∧ s.srcEndpoint e = .data mIn.data mIn.dataSubset ∧
+              s.consumedStream? n.id = some mIn.data ∧ tc.privateTransients body = ctx.privateTransients s n.id then
+            match rec (tc.consuming mIn.data) (fun _ _ _ => false) (s.directChildren (some n.id)) body with
+            | some (oM, fullM, []) =>
+              if s.isTopologicalOrder (s.scopeNodes n.id) fullM = true ∧
+                  fullM.filter (s.directChildren (some n.id)).contains = oM then some (fullM, rest) else none
+            | _ => none
+          else none
+        | _ => none
+      | none => none
+    | _ => none
   | .nested _ _ _ =>
     match nestedCall ctx tc nest s n cs with
     | some (_, rest) => some ([], rest)
     | none => none
-  | _ => none
 
 /-- The unplaced nodes and the nodes nested in them. -/
 def pendingAll (U : List NodeId) : List NodeId := U ++ U.flatMap s.scopeNodes
@@ -421,20 +439,24 @@ def pendingAll (U : List NodeId) : List NodeId := U ++ U.flatMap s.scopeNodes
 /-- All predecessors of `u` are placed. -/
 def ready (U : List NodeId) (u : NodeId) : Bool := (s.inEdges u).all fun e => !(pendingAll s U).contains e.src
 
+end Check
+
 /-- Place the nodes `U` of a scope along the tree list `cs` (see the module
-documentation). -/
-def matchSeg : Nat → List NodeId → List SNode → Option MatchRes
+documentation); consume bodies are matched in the consuming context, without
+nested SDFGs. -/
+def matchSeg (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool) (s : State) :
+    Nat → List NodeId → List SNode → Option MatchRes
   | 0, _, _ => none
   | fuel + 1, U, cs =>
     if U.isEmpty then some ([], [], cs)
     else
       match U.findSome? (fun u => if ready s U u then
-          (s.node? u).bind fun n => (matchOne ctx tc nest s (matchSeg fuel) n cs).map fun p => (u, p) else none) with
+          (s.node? u).bind fun n =>
+            (matchOne ctx tc nest s (fun tc' nest' => matchSeg ctx tc' nest' s fuel) n cs).map fun p => (u, p)
+          else none) with
       | some (u, fullN, rest₁) =>
-        (matchSeg fuel (U.erase u) rest₁).map fun r => (u :: r.1, u :: fullN ++ r.2.1, r.2.2)
+        (matchSeg ctx tc nest s fuel (U.erase u) rest₁).map fun r => (u :: r.1, u :: fullN ++ r.2.1, r.2.2)
       | none => none
-
-end Check
 
 /-! ## Soundness of the matching -/
 
@@ -444,8 +466,10 @@ variable {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDFG → List SNode
   (hnest : ∀ σ inner body, nest σ inner body = true → InnerCorr tc σ inner body)
 include hnest
 
-theorem matchOne_sound {rec : List NodeId → List SNode → Option MatchRes}
-    (hrec : ∀ U cs o full rest, rec U cs = some (o, full, rest) → ∃ pre, cs = pre ++ rest ∧ SegCorr ctx tc s o pre)
+theorem matchOne_sound
+    {rec : TCtx → (Equiv.Perm Name → SDFG → List SNode → Bool) → List NodeId → List SNode → Option MatchRes}
+    (hrec : ∀ tc' nest', (∀ σ inner body, nest' σ inner body = true → InnerCorr tc' σ inner body) →
+      ∀ U cs o full rest, rec tc' nest' U cs = some (o, full, rest) → ∃ pre, cs = pre ++ rest ∧ SegCorr ctx tc' s o pre)
     {n : DNode} {cs : List SNode} {fullN : List NodeId} {rest : List SNode}
     (hm : matchOne ctx tc nest s rec n cs = some (fullN, rest)) :
     ∃ img, cs = img ++ rest ∧
@@ -453,6 +477,20 @@ theorem matchOne_sound {rec : List NodeId → List SNode → Option MatchRes}
   unfold matchOne at hm
   split at hm
   · rename_i d hk
+    split at hm
+    · rename_i hsh
+      split at hm
+      · rename_i ps rest' htk
+        split at hm
+        · rename_i hks
+          simp only [Option.some.injEq, Prod.mk.injEq] at hm
+          obtain ⟨-, rfl⟩ := hm
+          refine ⟨ps.map (fun p => SNode.copyNode p.1 p.2), takeCopies_sound htk, fun id o tail hn ht => ?_⟩
+          exact .copies hn (by simp [DNode.isCopyTarget, hk]) (State.copyShape?_sound hsh) hks.symm ht
+        · cases hm
+      · cases hm
+    · cases hm
+  · rename_i hk
     split at hm
     · rename_i hsh
       split at hm
@@ -534,7 +572,7 @@ theorem matchOne_sound {rec : List NodeId → List SNode → Option MatchRes}
                       · rename_i hto
                         simp only [Option.some.injEq, Prod.mk.injEq] at hm
                         obtain ⟨-, rfl⟩ := hm
-                        obtain ⟨pre, hpre, hseg⟩ := hrec _ _ _ _ _ hb
+                        obtain ⟨pre, hpre, hseg⟩ := hrec tc nest hnest _ _ _ _ _ hb
                         rw [List.append_nil] at hpre
                         subst hpre
                         obtain ⟨ds, rfl, hds⟩ := takeDyn_sound htk
@@ -549,6 +587,33 @@ theorem matchOne_sound {rec : List NodeId → List SNode → Option MatchRes}
           · cases hm
         · cases hm
       · cases hm
+  · rename_i c hk
+    split at hm
+    · rename_i hkeys
+      split at hm
+      · rename_i e hin
+        split at hm
+        · rename_i t mIn c' body rest'
+          split at hm
+          · rename_i hc
+            obtain ⟨rfl, rfl, hsrc, hd, hpriv⟩ := hc
+            split at hm
+            · rename_i oM fullM hb
+              split at hm
+              · rename_i hto
+                simp only [Option.some.injEq, Prod.mk.injEq] at hm
+                obtain ⟨-, rfl⟩ := hm
+                obtain ⟨pre, hpre, hseg⟩ := hrec _ _ (fun _ _ _ h => by cases h) _ _ _ _ _ hb
+                rw [List.append_nil] at hpre
+                subst hpre
+                exact ⟨[.dynScopeCopy "IN_stream" mIn, .consumeScope c' body], rfl,
+                  fun id o tail hn ht => .consume hn hk hkeys hin hsrc hd hto.1 hto.2 hpriv hseg ht⟩
+              · cases hm
+            · cases hm
+          · cases hm
+        · cases hm
+      · cases hm
+    · cases hm
   · split at hm
     · rename_i body rest' hnc
       simp only [Option.some.injEq, Prod.mk.injEq] at hm
@@ -556,12 +621,16 @@ theorem matchOne_sound {rec : List NodeId → List SNode → Option MatchRes}
       obtain ⟨hcs, hseg⟩ := nestedCall_sound hnest hnc
       exact ⟨body, hcs, hseg⟩
     · cases hm
-  · cases hm
 
-theorem matchSeg_sound : ∀ (fuel : Nat) (U : List NodeId) (cs : List SNode) (o full : List NodeId) (rest : List SNode),
+end Sound
+
+theorem matchSeg_sound {ctx : Ctx} {s : State} : ∀ (fuel : Nat) {tc : TCtx}
+    {nest : Equiv.Perm Name → SDFG → List SNode → Bool},
+    (∀ σ inner body, nest σ inner body = true → InnerCorr tc σ inner body) →
+    ∀ (U : List NodeId) (cs : List SNode) (o full : List NodeId) (rest : List SNode),
     matchSeg ctx tc nest s fuel U cs = some (o, full, rest) → ∃ pre, cs = pre ++ rest ∧ SegCorr ctx tc s o pre
-  | 0, _, _, _, _, _, h => by simp [matchSeg] at h
-  | fuel + 1, U, cs, o, full, rest, h => by
+  | 0, _, _, _, _, _, _, _, _, h => by simp [matchSeg] at h
+  | fuel + 1, tc, nest, hnest, U, cs, o, full, rest, h => by
     unfold matchSeg at h
     split at h
     · simp only [Option.some.injEq, Prod.mk.injEq] at h
@@ -575,16 +644,14 @@ theorem matchSeg_sound : ∀ (fuel : Nat) (U : List NodeId) (cs : List SNode) (o
           obtain ⟨⟨fN, r₁⟩, hm', he⟩ := Option.map_eq_some_iff.1 hm
           simp only [Prod.mk.injEq] at he
           obtain ⟨rfl, rfl, rfl⟩ := he
-          obtain ⟨img, hcs, hcons⟩ := matchOne_sound hnest (matchSeg_sound fuel) hm'
+          obtain ⟨img, hcs, hcons⟩ := matchOne_sound hnest (fun _ _ hn' => matchSeg_sound fuel hn') hm'
           obtain ⟨⟨o', full', rest'⟩, hr, he⟩ := Option.map_eq_some_iff.1 h
           simp only [Prod.mk.injEq] at he
           obtain ⟨rfl, -, rfl⟩ := he
-          obtain ⟨pre, hpre, hseg⟩ := matchSeg_sound fuel _ _ _ _ _ hr
+          obtain ⟨pre, hpre, hseg⟩ := matchSeg_sound fuel hnest _ _ _ _ _ hr
           refine ⟨img ++ pre, by rw [hcs, hpre, List.append_assoc], hcons _ _ _ hn hseg⟩
         · cases hu'
       · cases h
-
-end Sound
 
 /-! ## States, the chain and the program -/
 
@@ -664,7 +731,7 @@ theorem stateCheck_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDF
             split at h
             · rename_i hto
               cases h
-              obtain ⟨pre, hpre, hseg⟩ := matchSeg_sound hnest _ _ _ _ _ _ hm
+              obtain ⟨pre, hpre, hseg⟩ := matchSeg_sound _ hnest _ _ _ _ _ hm
               subst hpre
               exact ⟨vs ++ pre, by simp, hpure, hns', .inr ⟨c, o, full, ks, vs, pre, hc, hks, hvs, rfl, hseg, hto.1, hto.2⟩⟩
             · cases h
@@ -1205,6 +1272,8 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr ctx tc s 
   | tasklet hn hk hsh hki hko hd hdT _ ih => exact .tasklet hn hk hsh hki hko hd hdT ih
   | library hn hk hl hsh hki hko hd hdT _ ih => exact .library hn hk hl hsh hki hko hd hdT ih
   | map hn hk hkeys hok hds hto hdir hpriv _ _ ihb ih => exact .map hn hk hkeys hok hds hto hdir hpriv ihb ih
+  | consume hn hk hkeys hin hsrc hd hto hdir hpriv _ _ ihb ih =>
+    exact .consume hn hk hkeys hin hsrc hd hto hdir hpriv ihb ih
   | nestedMap hn hk hkeys hok hds hto hdir hxs hnd hkn hb hmap hcode hout hpriv hnames hinner _ ih =>
     exact .nestedMap hn hk hkeys hok hds hto hdir
       (fun x hx => let ⟨xn, h₁, h₂, h₃, h₄⟩ := hxs x hx; ⟨xn, h₁, h₂, CopyShape.withI I₂ h₃, h₄⟩)
