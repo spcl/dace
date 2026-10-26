@@ -102,6 +102,7 @@ def test_a_relation_on_a_symbol_the_body_reassigns_is_not_assumed():
 
 def test_a_declared_permutation_makes_loop_to_map_prove_a_store_through_a_bound_index():
     sdfg = store_through_bound_index.to_sdfg(simplify=True)
+    assert not loop_to_map_probe(sdfg).accepted, "without the fact the store may repeat"
     sdfg.add_data_assumption("perm", symbolic.permutation(0, M - 1))
     probe = loop_to_map_probe(sdfg)
     assert probe.accepted, probe.last_refusal
@@ -112,11 +113,6 @@ def test_a_declared_permutation_makes_loop_to_map_prove_a_store_through_a_bound_
     out = np.zeros(20)
     sdfg(perm=perm, out=out, M=20)
     assert np.array_equal(out, np.ones(20))
-
-
-def test_a_store_through_an_undeclared_index_stays_sequential():
-    probe = loop_to_map_probe(store_through_bound_index.to_sdfg(simplify=True))
-    assert not probe.accepted
 
 
 def test_a_fact_about_an_index_array_the_loop_rewrites_is_not_assumed():
@@ -152,7 +148,6 @@ if __name__ == "__main__":
         test_a_store_injective_only_for_a_positive_coefficient_lifts_under_that_fact(program)
     test_a_relation_on_a_symbol_the_body_reassigns_is_not_assumed()
     test_a_declared_permutation_makes_loop_to_map_prove_a_store_through_a_bound_index()
-    test_a_store_through_an_undeclared_index_stays_sequential()
     test_a_fact_about_an_index_array_the_loop_rewrites_is_not_assumed()
     for declared in (False, True):
         test_break_anti_dependence_snapshots_a_read_ahead_only_under_a_nonnegative_index(declared)
