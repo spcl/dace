@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from .arg_reduce import ArgReduce
 from .argminmax import ArgMax, ArgMin
-from .barrier import Barrier, SyncScope
 from .broadcast import Broadcast
 from .code import CodeLibraryNode
 from .copy import CopyLibraryNode
@@ -17,3 +16,4 @@ from .reduce import Reduce
 from .scan import Scan, ScanOp
 from .state_scan import StateScan
 from .symmetrize import Symmetrize
+from .sync import Sync, SyncScope

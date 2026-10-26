@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A kernel whose body is a nested SDFG with consecutive device maps has to declare its grid barrier.
+"""A kernel whose body is a nested SDFG with consecutive device maps has to synchronize its grid.
 
 These assert on emitted code, so they need a GPU for neither compilation nor a run.
 """
@@ -68,9 +68,11 @@ def kernel_with_consecutive_maps(nested: bool) -> dace.SDFG:
 
 def check_barrier(nested: bool):
     sdfg = kernel_with_consecutive_maps(nested)
-    code = next(obj.clean_code for obj in sdfg.generate_code() if obj.title == "CUDA")
-    assert "__gbar.Sync();" in code
-    assert re.search(r"dace::GridBarrier\s+__gbar|GridBarrier\s*&\s*__gbar", code)
+    with dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"):
+        code = next(obj.clean_code for obj in sdfg.generate_code() if obj.title == "CUDA")
+    assert "cooperative_groups::this_grid().sync();" in code
+    # Only a cooperative launch keeps every block resident for the grid barrier
+    assert re.search(r"(cuda|hip)LaunchCooperativeKernel\(", code)
 
 
 def test_grid_barrier_in_kernel():
