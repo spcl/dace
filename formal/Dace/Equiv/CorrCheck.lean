@@ -394,6 +394,38 @@ theorem keysCorr?_sound {ctx : Ctx} : ∀ {ksT ksS : List CopyKey}, keysCorr? ct
   | [], _ :: _, h => by simp [keysCorr?] at h
   | _ :: _, [], h => by simp [keysCorr?] at h
 
+/-- Match a reference set from a container (`SegCorr.refSet`). -/
+def matchRefSet (ctx : Ctx) (s : State) (n : DNode) (cs : List SNode) : Option (List NodeId × List SNode) :=
+  match s.refSetIn? ctx n, cs with
+  | some (d, base, sub), .refSetNode d' m (.data _) _ :: rest =>
+    if d' = d ∧ m.data = base ∧ subCorr? ctx base m.dataSubset sub = true then some ([], rest) else none
+  | _, .refSetNode d' _ (.codeNode _ _) _ :: rest =>
+    if s.refSetCode? ctx n = some d' then some ([], rest) else none
+  | _, _ => none
+
+theorem matchRefSet_sound {ctx : Ctx} {tc : TCtx} {s : State} {n : DNode} {cs : List SNode}
+    {fullN : List NodeId} {rest : List SNode} (hk : DNode.isCopyTarget n = true)
+    (h : matchRefSet ctx s n cs = some (fullN, rest)) :
+    ∃ img, cs = img ++ rest ∧
+      ∀ id o tail, s.node? id = some n → SegCorr ctx tc s o tail → SegCorr ctx tc s (id :: o) (img ++ tail) := by
+  unfold matchRefSet at h
+  split at h
+  · rename_i d base sub d' m sd x rest' hr
+    split at h
+    · rename_i hc
+      obtain ⟨rfl, hmd, hsc⟩ := hc
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨-, rfl⟩ := h
+      exact ⟨[_], rfl, fun id o tail hn ht => .refSet hn hk hr hmd (subCorr?_sound hsc) ht⟩
+    · cases h
+  · split at h
+    · rename_i hr
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨-, rfl⟩ := h
+      exact ⟨[_], rfl, fun id o tail hn ht => .refSetCode hn hk hr ht⟩
+    · cases h
+  · cases h
+
 section Check
 
 variable (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool) (s : State)
@@ -411,7 +443,7 @@ def matchOne (rec : TCtx → (Equiv.Perm Name → SDFG → List SNode → Bool) 
         if keysCorr? ctx (ps.map (fun p => tc.copyKey p.1 p.2)) (s.copiesInto ctx n) = true then some ([], rest)
         else none
       | none => none
-    else none
+    else matchRefSet ctx s n cs
   | .tasklet t =>
     match cs with
     | .taskletNode t' ins outs :: rest =>
@@ -531,7 +563,7 @@ theorem matchOne_sound
           exact .copies hn (by simp [DNode.isCopyTarget, hk]) (State.copyShape?_sound hsh) (keysCorr?_sound hks) ht
         · cases hm
       · cases hm
-    · cases hm
+    · exact matchRefSet_sound (by simp [DNode.isCopyTarget, hk]) hm
   · rename_i hk
     split at hm
     · rename_i hsh
@@ -545,7 +577,7 @@ theorem matchOne_sound
           exact .copies hn (by simp [DNode.isCopyTarget, hk]) (State.copyShape?_sound hsh) (keysCorr?_sound hks) ht
         · cases hm
       · cases hm
-    · cases hm
+    · exact matchRefSet_sound (by simp [DNode.isCopyTarget, hk]) hm
   · rename_i hk
     split at hm
     · rename_i hsh
@@ -559,7 +591,7 @@ theorem matchOne_sound
           exact .copies hn (by simp [DNode.isCopyTarget, hk]) (State.copyShape?_sound hsh) (keysCorr?_sound hks) ht
         · cases hm
       · cases hm
-    · cases hm
+    · exact matchRefSet_sound (by simp [DNode.isCopyTarget, hk]) hm
   · rename_i t hk
     split at hm
     · rename_i t' ins outs rest'
@@ -1313,6 +1345,8 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr ctx tc s 
   induction h with
   | nil => exact .nil
   | copies hn hk hsh hks _ ih => exact .copies hn hk (CopyShape.withI I₂ hsh) hks ih
+  | refSet hn hk hr hm hsub _ ih => exact .refSet hn hk hr hm hsub ih
+  | refSetCode hn hk hr _ ih => exact .refSetCode hn hk hr ih
   | tasklet hn hk hsh hki hko hd hdT _ ih => exact .tasklet hn hk hsh hki hko hd hdT ih
   | library hn hk hl hsh hki hko hd hdT _ ih => exact .library hn hk hl hsh hki hko hd hdT ih
   | map hn hk hkeys hok hds hto hdir hpriv _ _ ihb ih => exact .map hn hk hkeys hok hds hto hdir hpriv ihb ih

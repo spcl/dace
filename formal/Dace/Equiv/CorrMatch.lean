@@ -246,6 +246,92 @@ def KeyCorr (ctx : Ctx) (kT kS : CopyKey) : Prop :=
   kT.dst = kS.dst ∧ kT.src = kS.src ∧ kT.wcr = kS.wcr ∧ kT.oob = kS.oob ∧
     SubCorr ctx kS.src kT.ssub kS.ssub ∧ SubCorr ctx kS.dst kT.dsub kS.dsub
 
+/-- The in-edges of a node that execute something (`execCopiesInto`): no
+dependency edges, view definitions or routing edges. -/
+def _root_.Dace.State.effIn (ctx : Ctx) (s : State) (e : DEdge) : Bool :=
+  match e.data with
+  | .dep => false
+  | .memlet _ => !(ctx.isViewDef s e || s.isRouting e)
+
+/-- A node whose one effective in-edge sets a reference from a container
+(`refSet`): the reference, the container and its subset. -/
+def _root_.Dace.State.refSetIn? (ctx : Ctx) (s : State) (n : DNode) : Option (Name × Name × Option Subset) :=
+  match (s.inEdges n.id).filter (s.effIn ctx) with
+  | [e] =>
+    match refSetTarget? ctx s e, s.srcEndpoint e with
+    | some d, .data base sub => some (d, base, sub)
+    | _, _ => none
+  | _ => none
+
+theorem execCopiesInto_refSet {ctx : Ctx} {s : State} {n : DNode} {d base : Name} {sub : Option Subset}
+    (h : s.refSetIn? ctx n = some (d, base, sub)) (ρ : Valuation) (st : St) :
+    execCopiesInto ctx ρ s n st = aliasTo ctx ρ st d base sub := by
+  unfold execCopiesInto
+  rw [foldlM_filter _ (s.effIn ctx) (fun b x hx => by
+    unfold State.effIn at hx
+    split at hx
+    · rename_i hd; simp [hd]
+    · rename_i m hm
+      simp only [Bool.not_eq_false'] at hx
+      simp [hm, hx])]
+  unfold State.refSetIn? at h
+  split at h
+  · rename_i e he
+    rw [he]
+    split at h
+    · rename_i d' base' sub' hr hs
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl, rfl⟩ := h
+      have hmem : e ∈ (s.inEdges n.id).filter (s.effIn ctx) := by rw [he]; exact List.mem_singleton_self e
+      have hef := (List.mem_filter.1 hmem).2
+      unfold State.effIn at hef
+      split at hef
+      · cases hef
+      · rename_i m hm
+        simp only [Bool.not_eq_true'] at hef
+        simp only [List.foldlM_cons, List.foldlM_nil, hm, hef, Bool.false_eq_true, ↓reduceIte, hr, refSet, hs]
+        cases aliasTo ctx ρ st d' base' sub' <;> rfl
+    · cases h
+  · cases h
+
+/-- A node whose one effective in-edge sets a reference from a code node
+(unsupported in both IRs, `Decisions.md#D55`): the reference. -/
+def _root_.Dace.State.refSetCode? (ctx : Ctx) (s : State) (n : DNode) : Option Name :=
+  match (s.inEdges n.id).filter (s.effIn ctx) with
+  | [e] =>
+    match refSetTarget? ctx s e, s.srcEndpoint e with
+    | some d, .code _ => some d
+    | _, _ => none
+  | _ => none
+
+theorem execCopiesInto_refSetCode {ctx : Ctx} {s : State} {n : DNode} {d : Name}
+    (h : s.refSetCode? ctx n = some d) (ρ : Valuation) (st : St) : ∃ e, execCopiesInto ctx ρ s n st = .err e := by
+  unfold execCopiesInto
+  rw [foldlM_filter _ (s.effIn ctx) (fun b x hx => by
+    unfold State.effIn at hx
+    split at hx
+    · rename_i hd; simp [hd]
+    · rename_i m hm
+      simp only [Bool.not_eq_false'] at hx
+      simp [hm, hx])]
+  unfold State.refSetCode? at h
+  split at h
+  · rename_i e he
+    rw [he]
+    split at h
+    · rename_i d' k hr hs
+      have hmem : e ∈ (s.inEdges n.id).filter (s.effIn ctx) := by rw [he]; exact List.mem_singleton_self e
+      have hef := (List.mem_filter.1 hmem).2
+      unfold State.effIn at hef
+      split at hef
+      · cases hef
+      · rename_i m hm
+        simp only [Bool.not_eq_true'] at hef
+        simp only [List.foldlM_cons, List.foldlM_nil, hm, hef, Bool.false_eq_true, ↓reduceIte, hr, refSet, hs]
+        exact ⟨_, rfl⟩
+    · cases h
+  · cases h
+
 /-! ## Nested SDFGs inside map scopes -/
 
 /-- The SDFG context in which the tree's flattened copy of the top region of
@@ -527,6 +613,20 @@ inductive SegCorr (ctx : Ctx) : TCtx → State → List NodeId → List SNode �
       (hks : List.Forall₂ (KeyCorr ctx) (cps.map fun p => tc.copyKey p.1 p.2) (s.copiesInto ctx n))
       (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (cps.map (fun p => SNode.copyNode p.1 p.2) ++ cs)
+  /-- A node whose one effective in-edge sets a reference from a container
+  (`Decisions.md#D32`): the tree's `RefSetNode` from data. -/
+  | refSet {tc : TCtx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {d base : Name}
+      {sub : Option Subset} {m : Memlet} {sd x : DataDesc}
+      (hn : s.node? id = some n) (hk : DNode.isCopyTarget n = true) (hr : s.refSetIn? ctx n = some (d, base, sub))
+      (hm : m.data = base) (hsub : SubCorr ctx base m.dataSubset sub) (h : SegCorr ctx tc s o cs) :
+      SegCorr ctx tc s (id :: o) (.refSetNode d m (.data sd) x :: cs)
+  /-- A node whose one effective in-edge sets a reference from a code node:
+  both IRs fail there (`Decisions.md#D55`). -/
+  | refSetCode {tc : TCtx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {d : Name}
+      {m : Memlet} {g cls : String} {x : DataDesc}
+      (hn : s.node? id = some n) (hk : DNode.isCopyTarget n = true) (hr : s.refSetCode? ctx n = some d)
+      (h : SegCorr ctx tc s o cs) :
+      SegCorr ctx tc s (id :: o) (.refSetNode d m (.codeNode g cls) x :: cs)
   | tasklet {tc : TCtx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {t : Tasklet} {ins outs : MemletMap}
       (hn : s.node? id = some n) (hk : n.kind = .tasklet t) (hsh : s.CodeShape n)
       (hki : s.codeIns n = ins.pairs.map fun p => tc.inKey p.1 p.2)
@@ -604,7 +704,7 @@ theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs :
     (hc : SegCorr ctx tc s o cs) : ∀ id ∈ o, ∀ n, s.node? id = some n → n.CohIn s := by
   induction hc with
   | nil => intro id hid; cases hid
-  | copies hn hk _ _ _ ih | tasklet hn hk _ _ _ _ _ _ ih | library hn hk _ _ _ _ _ _ _ ih
+  | copies hn hk _ _ _ ih | refSet hn hk _ _ _ _ ih | refSetCode hn hk _ _ ih | tasklet hn hk _ _ _ _ _ _ ih | library hn hk _ _ _ _ _ _ _ ih
   | map hn hk _ _ _ _ _ _ _ _ _ ih | nestedMap hn hk _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ ih =>
     intro id hid n' hn'
     rcases List.mem_cons.1 hid with rfl | hid
@@ -2097,6 +2197,28 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
         · rw [hρ] at this; exact this
         · have := congrArg St.mem hf; simpa [CSt.st] using this.symm
         · have := congrArg St.log hf; simpa [CSt.st, hrel.2.1] using this.symm
+  | @refSet tc s id n o cs d base sub m sd x hn hk hr hm hsub _ ih =>
+    intro full gb rest cst r st hx hrel
+    refine leaf_node hn (DNode.isSimple_of_copyTarget hk) (fun hc => ?_) ?_ hx hrel
+      (fun hx' hrel' hρ => hρ ▸ ih h he hx' hrel')
+    · unfold DNode.isCopyTarget at hk; unfold DNode.isCode at hc; split at hk <;> simp_all
+    · have : ∀ X, execRefSetT tc cst.ρ d m (.data sd) X = execSimple ctx cst.ρ s n X := by
+        intro X
+        rw [execSimple_copyTarget hk, execCopiesInto_refSet hr]
+        simp only [execRefSetT]
+        rw [Ctx.leaf_eq he (fun c => aliasTo c cst.ρ X d m.data m.dataSubset) (fun _ => rfl), hm, aliasTo_subCorr hsub]
+      simp only [stepLeaf, this]
+  | @refSetCode tc s id n o cs d m g cls x hn hk hr _ ih =>
+    intro full gb rest cst r st hx hrel
+    apply SeqOut.cons hn
+    obtain ⟨e, hy⟩ := execCopiesInto_refSetCode hr cst.ρ st.forNode
+    have hstep : stepLeaf tc {} (.refSetNode d m (.codeNode g cls) x) cst =
+        some (leafOut (cst.lift (.err (.unsupported s!"reference set of '{d}' from a {cls} (Decisions.md#D55)")))) := rfl
+    rcases leaf_inv hstep hx with ⟨e', -, rfl⟩ | ⟨cst₁, hR, -⟩
+    · refine .inr (.inl ⟨_, e, rfl, ?_⟩)
+      have := NodeExec.simple (ctx := ctx) (ρ := cst.ρ) (s := s) (st := st.forNode) (DNode.isSimple_of_copyTarget hk)
+      rwa [execSimple_copyTarget hk, hy] at this
+    · cases hR
   | @tasklet tc s id n o cs t ins outs hn hk hsh hki hko hd hdT _ ih =>
     intro full gb rest cst r st hx hrel
     refine leaf_node hn (by simp [DNode.isSimple, hk]) (fun _ => hsh.outs) ?_ hx hrel

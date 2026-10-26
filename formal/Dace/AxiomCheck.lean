@@ -251,6 +251,9 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Corr.tasks_matched_of
 #print axioms Dace.Corr.tasks_matched
 #print axioms Dace.Corr.consume_node
+#print axioms Dace.Corr.execCopiesInto_refSet
+#print axioms Dace.Corr.execCopiesInto_refSetCode
+#print axioms Dace.Corr.matchRefSet_sound
 #print axioms Dace.Corr.matchSeg_sound
 #print axioms Dace.Corr.ProgCorr.refines
 #print axioms Dace.Corr.corrCheck_sound

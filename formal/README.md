@@ -72,6 +72,10 @@ representations:
   body is matched in the consuming context (`TCtx.consuming`: memlets on the
   stream read the chunk), task by task (`Corr.tasks_matched`); nested SDFGs
   inside consume bodies are not matched yet.
+  Reference sets (`SegCorr.refSet`, `SegCorr.refSetCode`): a reference access
+  node set from a container is the tree's `RefSetNode` (the same `aliasTo`);
+  one set from a code node fails in both IRs (`unsupported`, D55).  Tree
+  memlets may omit a subset that the SDFG gives as the full range (`SubCorr`).
   `tests/EquivCorpus.lean` prints the corpus verdicts.
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).
