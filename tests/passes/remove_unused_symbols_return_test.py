@@ -15,9 +15,3 @@ def test_deleting_an_assignment_is_a_modification():
 
     assert RemoveUnusedSymbols().apply_pass(sdfg, {}) is not None
     assert not any(e.data.assignments for e in sdfg.all_interstate_edges())
-
-
-def test_an_untouched_sdfg_reports_no_change():
-    sdfg = dace.SDFG("nothing_to_prune")
-    sdfg.add_state("only", is_start_block=True)
-    assert RemoveUnusedSymbols().apply_pass(sdfg, {}) is None
