@@ -769,23 +769,21 @@ def nest_state_subgraph(
             node.sdfg.parent_sdfg = nsdfg
             node.sdfg.parent_nsdfg_node = node
 
-    def reads_whole_connector(edge: MultiConnectorEdge, name: str) -> bool:
-        """Whether the input boundary ``edge`` already ends on an AccessNode of ``name``'s whole container.
+    def reads_the_connector(edge: MultiConnectorEdge, name: str) -> bool:
+        """Whether the input boundary ``edge`` already ends on an AccessNode of ``name``.
 
         Then it needs no access node of its own inside: the ``name -> name`` copy that would be
         added is a no-op, and its write turns the input connector into a written descriptor, which
-        validation rejects. The connector IS that array inside the nested SDFG, so an access node of
-        it already reads the boundary data. Restricted to a whole-container access -- a partial one
-        still needs the copy that rebases it into the connector's coordinates.
+        validation rejects. The connector IS that array inside the nested SDFG, in the outer
+        descriptor's coordinates (:func:`boundary_descriptor`), so an access node of it already reads
+        the boundary data at its own subsets.
         """
-        if not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data != name:
-            return False
-        return edge.data.subset is not None and edge.data.subset.num_elements() == nsdfg.arrays[name].total_size
+        return isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name
 
     # Add access nodes and edges as necessary, each with the outer name its memlet tree spoke
     edges_to_rename = []
     for edge, name in input_names.items():
-        if reads_whole_connector(edge, name):
+        if reads_the_connector(edge, name):
             continue
         node = nstate.add_read(name)
         new_edge = copy.deepcopy(edge.data)

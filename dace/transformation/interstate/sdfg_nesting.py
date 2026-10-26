@@ -250,8 +250,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         and (node.data not in in_connectors or nstate.in_degree(node) > 0)
                     ):
                         return False
+                    # An input copied straight into an output is staged in the scope (``_stage_connector_copies``); one
+                    # copied into another input has no such place.
                     if node.data in in_connectors and any(
-                        e.dst.data in all_connectors
+                        e.dst.data in in_connectors
                         for e in nstate.out_edges(node)
                         if isinstance(e.dst, nodes.AccessNode)
                     ):
@@ -743,6 +745,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Reconnect inlined SDFG
 
+        if nsdfg_scope_entry is not None:
+            self._stage_connector_copies(new_incoming_edges, new_outgoing_edges, nstate, state)
+
         # If both source and sink nodes are inputs/outputs, reconnect once
         edges_to_ignore = self._modify_access_to_access(new_incoming_edges, nsdfg, nstate, state, orig_data)
         edges_to_ignore |= self._modify_access_to_access(
@@ -897,6 +902,26 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for dnode in state.data_nodes():
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
+
+    @staticmethod
+    def _stage_connector_copies(
+        incoming: dict[nodes.Node, MultiConnectorEdge],
+        outgoing: dict[nodes.Node, MultiConnectorEdge],
+        nstate: SDFGState,
+        state: SDFGState,
+    ) -> None:
+        """In a scope, give each copy from an input connector straight into an output one an access node of the input's
+        outer container between the scope's entry and exit; dissolving both ends would leave the copy between them.
+        The copy leaves ``nstate``, so the reconnection below does not see it."""
+        for source, top_in in incoming.items():
+            for inner in list(nstate.out_edges(source)):
+                top_out = outgoing.get(inner.dst)
+                if top_out is None:
+                    continue
+                staged = state.add_access(top_in.data.data)
+                state.add_edge(top_in.src, top_in.src_conn, staged, None, dc(top_in.data))
+                state.add_edge(staged, None, top_out.dst, top_out.dst_conn, dc(inner.data))
+                nstate.remove_edge(inner)
 
     def _modify_access_to_access(
         self,
