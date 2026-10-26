@@ -88,7 +88,9 @@ class AccessIndex:
             for code in block.get_meta_codeblocks():
                 if code is not None:
                     names |= code.get_free_symbols()
-            children = [branch for _, branch in block.branches] if isinstance(block, ConditionalBlock) else block.nodes()
+            children = (
+                [branch for _, branch in block.branches] if isinstance(block, ConditionalBlock) else block.nodes()
+            )
             if not isinstance(block, ConditionalBlock):
                 for edge in block.edges():
                     names |= {str(sym) for sym in edge.data.free_symbols}

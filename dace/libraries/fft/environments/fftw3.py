@@ -81,7 +81,9 @@ def threaded(double: bool) -> bool:
         return False
     base = "fftw3" if double else "fftw3f"
     return any(
-        os.path.basename(lib).startswith(f"lib{base}{suffix}.") for suffix in THREADED_SUFFIXES for lib in fftw_install()[1]
+        os.path.basename(lib).startswith(f"lib{base}{suffix}.")
+        for suffix in THREADED_SUFFIXES
+        for lib in fftw_install()[1]
     )
 
 

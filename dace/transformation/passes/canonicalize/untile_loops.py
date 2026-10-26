@@ -212,9 +212,7 @@ def _tile_size(expr: symbolic.SymbolicType) -> tuple[symbolic.SymbolicType, int 
     return None
 
 
-def tiles_a_parent_window(
-    enclosing: frozenset[str], start: symbolic.SymbolicType, span: symbolic.SymbolicType
-) -> bool:
+def tiles_a_parent_window(enclosing: frozenset[str], start: symbolic.SymbolicType, span: symbolic.SymbolicType) -> bool:
     """``True`` iff a tile scope walks a fixed-width window opened by an enclosing scope with iterators ``enclosing``.
 
     The witness is the pair (start depends on an enclosing iterator, width does not): that is the cascade rung
@@ -257,7 +255,11 @@ def union_stop(
         return stop_excl
     span = symbolic.simplify(stop_excl - start)
     tiles_end = symbolic.simplify(symbolic.int_ceil(span, K_expr) * K_expr)
-    if _diff_is_zero(tiles_end, span) or as_basic(tiles_end).is_number or not tiles_a_parent_window(enclosing, start, span):
+    if (
+        _diff_is_zero(tiles_end, span)
+        or as_basic(tiles_end).is_number
+        or not tiles_a_parent_window(enclosing, start, span)
+    ):
         return symbolic.simplify(start + tiles_end)
     record_assumption(sdfg, sympy.Eq(sympy.Mod(span, K_expr), 0))
     return stop_excl
@@ -635,42 +637,42 @@ def eliminate_pinned_maps(sdfg: SDFG, state: SDFGState, entries: set[nodes.MapEn
 @xf.explicit_cf_compatible
 class UntileLoops(ppl.Pass):
     """Collapse a manually-tiled multi-level / multi-dim perfect nest of loops to a single
-    loop, and one of Maps to a single Map.
+        loop, and one of Maps to a single Map.
 
-    Recognises:
+        Recognises:
 
-    * Case A -- ``for i in range(0, N, K): for ii in range(0, K, S): ...``,
-      body addresses arrays via ``i + ii``.
-    * Case B -- ``for i in range(0, N, K): for ii in range(i, i + K, S): ...``,
-      body addresses arrays via ``ii``.
+        * Case A -- ``for i in range(0, N, K): for ii in range(0, K, S): ...``,
+          body addresses arrays via ``i + ii``.
+        * Case B -- ``for i in range(0, N, K): for ii in range(i, i + K, S): ...``,
+          body addresses arrays via ``ii``.
 
-    ``K`` is a concrete positive integer literal (``> 1``) or a positive
-    **symbol**. ``S == 1`` is the classic single-level untile; ``S > 1`` is an
-    intermediate cascade rung that fixpoint then collapses with the next inner,
-    and needs ``S | K`` -- decided exactly when both are concrete, recorded as
-    a tracked assumption when either is symbolic.
+        ``K`` is a concrete positive integer literal (``> 1``) or a positive
+        **symbol**. ``S == 1`` is the classic single-level untile; ``S > 1`` is an
+        intermediate cascade rung that fixpoint then collapses with the next inner,
+        and needs ``S | K`` -- decided exactly when both are concrete, recorded as
+        a tracked assumption when either is symbolic.
 
-    **Multi-dim ascent**: the inner doesn't have to be the immediate child
-    of the outer. The matcher walks down through perfect 1-child
-    intermediate chains, skipping foreign-axis loops whose iteration
-    variables don't appear in the outer's bounds. For an N-D tile shape
-    the same-axis partner sits N levels deep with the other-axis tile
-    loops between.
+        **Multi-dim ascent**: the inner doesn't have to be the immediate child
+        of the outer. The matcher walks down through perfect 1-child
+        intermediate chains, skipping foreign-axis loops whose iteration
+        variables don't appear in the outer's bounds. For an N-D tile shape
+        the same-axis partner sits N levels deep with the other-axis tile
+        loops between.
 
-    **Fixpoint iteration**: each pass collapses one (outer, inner) tile
-    pair; multi-level cascades and multi-axis tiles unwind progressively.
-    Bounded by the total LoopRegion count.
+        **Fixpoint iteration**: each pass collapses one (outer, inner) tile
+        pair; multi-level cascades and multi-axis tiles unwind progressively.
+        Bounded by the total LoopRegion count.
 
-    **Map round    **Maps**: a Map dimension with a tile stride and a Map dimension nested in it that covers
-    one tile (the same cases A and B) collapse in place: the inner dimension widens to the union
-    of the tiles and the outer one is dropped, removing the outer Map once it has none left.
-    Nothing is lowered, so no parallelism is at stake.
+        **Map round    **Maps**: a Map dimension with a tile stride and a Map dimension nested in it that covers
+        one tile (the same cases A and B) collapse in place: the inner dimension widens to the union
+        of the tiles and the outer one is dropped, removing the outer Map once it has none left.
+        Nothing is lowered, so no parallelism is at stake.
 
-**: a subclass widens what a candidate nest may read (:meth:`audit_candidate`) and rewrites the SDFG
-    before the substitution (:meth:`prepare_untile`); relayout's ``UntileBlockedLoops`` unblocks arrays that way.
+    **: a subclass widens what a candidate nest may read (:meth:`audit_candidate`) and rewrites the SDFG
+        before the substitution (:meth:`prepare_untile`); relayout's ``UntileBlockedLoops`` unblocks arrays that way.
 
-    Runs BEFORE :class:`~dace.transformation.passes.parallelization_prep.ShortLoopUnroll`
-    so the small fixed-trip inner loop doesn't get straight-line-unrolled.
+        Runs BEFORE :class:`~dace.transformation.passes.parallelization_prep.ShortLoopUnroll`
+        so the small fixed-trip inner loop doesn't get straight-line-unrolled.
     """
 
     CATEGORY: str = "Canonicalization"

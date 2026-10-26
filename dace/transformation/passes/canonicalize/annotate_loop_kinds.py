@@ -767,7 +767,11 @@ class AnnotateLoopKinds(ppl.Pass):
                 continue
             # A note another pass left (an anti-dependence it broke) says what it did, not what the loop is: the
             # verdict goes first, so every loop still opens with its class.
-            kind = parallel_hint(parent_graph, node, traps) if isinstance(node, nodes.MapEntry) else loop_hint(node, session)
+            kind = (
+                parallel_hint(parent_graph, node, traps)
+                if isinstance(node, nodes.MapEntry)
+                else loop_hint(node, session)
+            )
             node.specialization_hint = f"{kind}\n{hint}" if hint else kind
             labelled += 1
         return labelled or None

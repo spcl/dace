@@ -175,13 +175,16 @@ def route_through_data(state: SDFGState, node: nodes.NestedSDFG, facts: StateFac
         return bool(dropped)
     graph = state.nx
     # An access node the nest owns alone cannot close a cycle; one it shares can, and is split if it may be.
-    to_split: list[tuple[nodes.AccessNode, list, bool]] = []
-    for written in writes:
-        if any(nx.has_path(graph, e.dst, written) for e in outs):
-            to_split.append((written, own_access(state, node, written, outgoing=True), True))
-    for read in reads:
-        if any(nx.has_path(graph, read, e.src) for e in ins):
-            to_split.append((read, own_access(state, node, read, outgoing=False), False))
+    to_split: list[tuple[nodes.AccessNode, list, bool]] = [
+        (written, own_access(state, node, written, outgoing=True), True)
+        for written in writes
+        if any(nx.has_path(graph, e.dst, written) for e in outs)
+    ]
+    to_split.extend(
+        (read, own_access(state, node, read, outgoing=False), False)
+        for read in reads
+        if any(nx.has_path(graph, read, e.src) for e in ins)
+    )
     if any(not edges for _, edges, _ in to_split):
         return bool(dropped)
     for access, edges, outgoing in to_split:
