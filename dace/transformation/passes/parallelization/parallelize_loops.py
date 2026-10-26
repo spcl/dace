@@ -261,11 +261,15 @@ class ParallelizeLoops(ppl.Pass):
                 # One instance, reused: setting ``loop`` and probing overwrites every field a probe reads.
                 xform = LoopLift()
                 xform.symbol_resolver = SymbolResolver()
+                # The states of the maps lifted, propagated once the sweeps end
+                unpropagated: list[SDFGState] = []
                 level = [sdfg]
                 while level:
                     deeper: list[SDFG] = []
                     for sd in level:
-                        applied += self.sweep(sd, xform, pipeline_results, contexts, invariants, loop_facts)
+                        applied += self.sweep(
+                            sd, xform, pipeline_results, contexts, invariants, loop_facts, unpropagated
+                        )
                         deeper += [
                             node.sdfg
                             for state in sd.states()
@@ -273,6 +277,8 @@ class ParallelizeLoops(ppl.Pass):
                             if isinstance(node, nodes.NestedSDFG) and node.sdfg
                         ]
                     level = deeper
+                if not self.propagate:
+                    propagate_lifted(unpropagated, xform.symbol_resolver)
             if applied:
                 self.finish(sdfg)
         return applied or None
@@ -299,12 +305,15 @@ class ParallelizeLoops(ppl.Pass):
         pipeline_results: dict[str, Any],
         proven: bool = False,
         before_apply: Callable[[], None] | None = None,
+        unpropagated: list[SDFGState] | None = None,
     ) -> bool:
         """Probe ``loop`` against the CURRENT graph and lift it if ``LoopToMap`` accepts it.
 
         :param xform: the instance to match; its ``lift_context``, when set, supplies the shared analysis.
         :param proven: skip the probe, see :meth:`parallelize_loop`.
         :param before_apply: called once the probe accepted, just before the graph changes.
+        :param unpropagated: where to leave the states of the lifted map for the caller to propagate; ``None``
+                             propagates them here.
         :returns: whether ``loop`` was lifted.
         """
         sd = loop.sdfg
@@ -372,8 +381,11 @@ class ParallelizeLoops(ppl.Pass):
             if over_itervar:
                 # LoopToMap connects the body's nested SDFG through whole arrays; its per-iteration accesses
                 # (``T[k]``) are what lets a later fusion see one element per iteration. Only this state, so the
-                # cost stays independent of ``propagate``.
-                propagate_memlets_state(sd, state, resolver)
+                # cost stays independent of ``propagate``; in a sweep, once it ends.
+                if unpropagated is None:
+                    propagate_memlets_state(sd, state, resolver)
+                else:
+                    unpropagated.append(state)
         return True
 
     def rescuing_buffers(
@@ -486,6 +498,7 @@ class ParallelizeLoops(ppl.Pass):
         contexts: dict[SDFG, LiftContext],
         invariants: dict[SDFG, LiftInvariants],
         loop_facts: dict[Any, LoopFacts],
+        unpropagated: list[SDFGState] | None = None,
     ) -> int:
         """Probe each loop of ``sd`` once, outermost first, and lift the accepted ones; a lifted loop's inner loops
         move with its body into a nested SDFG, which the next level sweeps. A loop refused on an access of an inner
@@ -494,6 +507,7 @@ class ParallelizeLoops(ppl.Pass):
         :param contexts: per-SDFG :class:`LiftContext` cache; a lift patches or drops the lifted SDFG's entry.
         :param invariants: per-SDFG facts a lift cannot change; built on first use, never rebuilt.
         :param loop_facts: per-loop body facts; dropped for the ancestors of each lift.
+        :param unpropagated: collects the states of the lifted maps for the caller to propagate (see :meth:`lift`).
         :returns: the number of loops lifted.
         """
         refusals: dict[LoopRegion, LoopRefusal | None] = pipeline_results.setdefault(REFUSALS, {})
@@ -521,7 +535,13 @@ class ParallelizeLoops(ppl.Pass):
             pnode = sd.parent_nsdfg_node
             mapping_keys = None if pnode is None else tuple(pnode.symbol_mapping.keys())
             sites: list[LiftSite] = []
-            if not self.lift(xform, loop, pipeline_results, before_apply=lambda: sites.append(LiftSite.capture(loop))):
+            if not self.lift(
+                xform,
+                loop,
+                pipeline_results,
+                before_apply=lambda: sites.append(LiftSite.capture(loop)),
+                unpropagated=unpropagated,
+            ):
                 # ``None``: accepted, then held back (a SMALL range under a proof, a sibling chain)
                 refusals[loop] = xform.last_refusal
                 return False
@@ -578,8 +598,29 @@ class ParallelizeLoops(ppl.Pass):
         for loop in reversed(order):
             refusal = refusals.get(loop) if loop.sdfg is sd else None
             if refusal is not None and names_any(refusal, lifted_inside.get(loop, set())):
+                if unpropagated:
+                    propagate_lifted(unpropagated, xform.symbol_resolver, within=sd)
                 applied += lift_and_note(loop)
         return applied
+
+
+def propagate_lifted(states: list[SDFGState], resolver: SymbolResolver, within: SDFG | None = None) -> None:
+    """Propagate ``states``, those of maps lifted and not yet propagated (those in ``within`` only, if given), and
+    drop them from the list; deepest SDFG first: a state's nested body then holds maps whose memlets are propagated,
+    not loops to propagate over."""
+
+    def depth(state: SDFGState) -> int:
+        found, sd = 0, state.sdfg
+        while sd.parent_sdfg is not None:
+            found, sd = found + 1, sd.parent_sdfg
+        return found
+
+    pending = [st for st in dict.fromkeys(states) if within is None or st.sdfg is within]
+    states[:] = [st for st in states if st not in pending]
+    for state in sorted(pending, key=depth, reverse=True):
+        # A loop lifted since moved the state into its body: it is there, in the lifted SDFG
+        if state in state.parent_graph.nodes():
+            propagate_memlets_state(state.sdfg, state, resolver)
 
 
 def enclosing_loops(loop: LoopRegion) -> list[LoopRegion]:
