@@ -1586,6 +1586,14 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         if sdfg is not None:
             sdfg._bound_names = None
 
+    def extend_bound_names(self, scoped: Iterable[str] = (), assigned: Iterable[str] = ()) -> None:
+        """Adds names an addition to this graph binds to a cached ``SDFG.bound_names``: an addition only extends them,
+        so the cache stays exact without walking the SDFG again."""
+        sdfg = self if isinstance(self, dace.SDFG) else self.sdfg
+        if sdfg is not None and sdfg._bound_names is not None:
+            cached_scoped, cached_assigned = sdfg._bound_names
+            sdfg._bound_names = (cached_scoped.union(scoped), cached_assigned.union(assigned))
+
     @property
     def parent_graph(self) -> "ControlFlowRegion":
         return self._parent_graph
@@ -1731,7 +1739,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             elif isinstance(node, nd.ConsumeEntry):
                 self.sdfg.release_scope_bound_symbols([node.consume.pe_index])
         self._clear_scopedict_cache()
-        self.forget_bound_names()
+        if isinstance(node, nd.EntryNode):
+            self.extend_bound_names(scoped=entry_bound_names(node))
         result = super().add_node(node)
         if nested is not None:
             register_regions(self, node, subtree_regions(node))
@@ -1771,7 +1780,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         self._clear_scopedict_cache()
         # A dynamic connector of a scope entry binds a name once connected
-        self.forget_bound_names()
+        if isinstance(v, nd.EntryNode):
+            self.extend_bound_names(scoped=entry_bound_names(v))
         result = super().add_edge(u, u_connector, v, v_connector, memlet)
         memlet.try_initialize(self.sdfg, self, result)
         return result
@@ -3304,6 +3314,20 @@ class SymbolResolver:
             self._per_scope.pop(nested, None)
 
 
+def entry_bound_names(entry: nd.EntryNode) -> set[str]:
+    """The names a scope entry binds (``symbol_repo.bound_names``)."""
+    from dace.sdfg.symbol_repo import bound_names  # symbol_repo imports this module
+
+    return bound_names(entry)
+
+
+def binds_names(block: ControlFlowBlock) -> bool:
+    """Whether adding ``block`` can add to ``SDFG.bound_names``: a state only through a scope entry it holds."""
+    if isinstance(block, SDFGState):
+        return any(isinstance(node, nd.EntryNode) for node in block.nodes())
+    return True
+
+
 def block_writes(block: ControlFlowBlock, name: str) -> bool:
     """Whether a state in ``block`` writes container ``name``."""
     states = (
@@ -3891,7 +3915,8 @@ class AbstractControlFlowRegion(
         # evidence the pin is wrong would discard the only thing that disambiguates such a region.
         if dst is self._cached_start_block:
             self._cached_start_block = None
-        self.forget_bound_names()
+        if data.assignments:
+            self.extend_bound_names(assigned=data.assignments.keys())
         return super().add_edge(src, dst, data)
 
     def remove_edge(self, edge):
@@ -3915,7 +3940,8 @@ class AbstractControlFlowRegion(
         self._labels.add(node.label)
         super().add_node(node)
         self._cached_start_block = None
-        self.forget_bound_names()
+        if binds_names(node):
+            self.forget_bound_names()
         node.parent_graph = self
         if isinstance(self, dace.SDFG):
             sdfg = self
