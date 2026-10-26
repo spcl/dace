@@ -96,7 +96,7 @@ def test_blocked_gemm_with_mma_on_a_gpu():
     np.testing.assert_allclose(operands["C"], operands["A"] @ operands["B"], rtol=1e-12)
     # The tiles every thread of a block reads live in shared memory
     for tile in ("acc[256]", "A_tile[128]", "B_tile[128]"):
-        assert f"__shared__ double {tile}" in kernel
+        assert f"__shared__ __align__(128) double {tile}" in kernel
 
 
 L = dace.symbol("L")
