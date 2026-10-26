@@ -1238,7 +1238,8 @@ class BreakAntiDependence(ppl.Pass):
         """
         self._unproven_offsets = []
         plans = self.forward_read_plans(loop, sdfg)
-        if plans is None:
+        # Deriving the facts at a loop is the pass's whole cost; a loop with nothing to break needs none.
+        if not plans and not self._unproven_offsets:
             return 0
         facts = self.offset_facts(loop, sdfg)
         one = symbolic.pystr_to_symbolic("1")
