@@ -39,10 +39,7 @@ def _sync_tasklets(state):
 
 
 def _all_sync_states(sdfg):
-    out = []
-    for nsdfg in sdfg.all_sdfgs_recursive():
-        out.extend((nsdfg, state) for state in nsdfg.states() if _sync_tasklets(state))
-    return out
+    return [(nsdfg, state) for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.states() if _sync_tasklets(state)]
 
 
 def _build_gpu_sdfg(program, *, strategy=None):

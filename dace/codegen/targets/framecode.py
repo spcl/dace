@@ -57,7 +57,7 @@ class DaCeCodeGenerator:
         # declares it in the for-init clause instead. Keyed by cfg_id: two SDFGs may each own a counter
         # of the same name, and only one of them may qualify. Empty under the default ``eager``.
         self.loop_local_counters: dict[tuple[int, str], str] = {}
-        self.fsyms: dict[int, set[str]] = {}
+        self.fsyms: dict[tuple[int, bool], set[str]] = {}
         # cfg_id -> whether that SDFG's control flow is fully structured (line-graph regions only).
         # Consulted by state_needs_brace to gate the experimental readable state-scope elision.
         self._structured_cfg: dict[int, bool] = {}
@@ -111,11 +111,14 @@ class DaCeCodeGenerator:
     def symbols_and_constants(self, sdfg: SDFG):
         return self._symbols_and_constants[sdfg.cfg_id]
 
-    def free_symbols(self, obj: Any):
-        k = id(obj)
+    def free_symbols(self, obj: Any, keep_defined_in_mapping: bool = False):
+        k = (id(obj), keep_defined_in_mapping)
         if k in self.fsyms:
             return self.fsyms[k]
-        if hasattr(obj, "used_symbols"):
+        if keep_defined_in_mapping:
+            # The symbols a nested SDFG's header and call pass; interstate edges do not take the flag
+            result = obj.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        elif hasattr(obj, "used_symbols"):
             result = obj.used_symbols(all_symbols=False)
         else:
             result = obj.free_symbols
@@ -780,10 +783,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             array_names = (
                 sdfg.arrays.keys()
             )  # set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
-            # A use with no access node of its own is represented below by a stand-in access node,
-            # which is NOT in any state's graph. That is harmless for an array (allocation only reads
-            # the descriptor) but not for a view, whose pointer is taken from its viewed edge -- so
-            # views are never stood in for. Their declaration follows the data they view regardless.
+            # A use with no access node of its own is stood in for by an access node that is in no state; a view's
+            # pointer comes from its viewed edge, so a view is never stood in for
             standin_names = {n for n in array_names if not isinstance(sdfg.arrays[n], data.View)}
             # Iterate topologically to get state-order
             for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
@@ -792,10 +793,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         continue
                     instances[node.data].append((state, node))
 
-                # A code node may reference a container directly in its code (a free
-                # symbol without connector/memlet/AccessNode). The allocation analysis
-                # must count those states as uses too, otherwise the declaration can
-                # land in a scope that does not enclose the reading code.
+                # A code node may name a container in its code alone (no connector, memlet or access node)
                 for node in state.nodes():
                     if not isinstance(node, nodes.CodeNode):
                         continue
@@ -941,22 +939,18 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 # Does the array appear in inter-state edges or loop / conditional block conditions etc.?
                 multistate = name in control_flow_symbols[sdfg.cfg_id]
 
-                # Code nodes reading the container directly from their code (no
-                # AccessNode) count as uses for the scope decision as well.
-                state_users: dict[SDFGState, list[nodes.Node]] = {
-                    st: list(accs) for st, accs in root_data_accesses[sdfg.cfg_id].get(name, {}).items()
+                # Code nodes naming the container in their code are uses as well
+                state_uses = {
+                    state: list(state_accesses)
+                    for state, state_accesses in root_data_accesses[sdfg.cfg_id].get(name, {}).items()
                 }
-                for code_state, code_node in code_instances[sdfg.cfg_id].get(name, []):
-                    users = state_users.setdefault(code_state, [])
-                    if code_node not in users:
-                        users.append(code_node)
-                for state in sdfg.states():
+                for state, node in code_instances[sdfg.cfg_id].get(name, []):
+                    state_uses.setdefault(state, []).append(node)
+                for state, state_accesses in state_uses.items():
                     if multistate:
                         break
-                    if state not in state_users:
-                        continue
                     sdict = state.scope_dict()
-                    for node in state_users[state]:
+                    for node in state_accesses:
                         # If already found in another state, set scope to SDFG
                         if curstate is not None and curstate != state:
                             multistate = True

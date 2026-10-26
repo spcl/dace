@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pass that inserts ``__syncthreads()`` barriers around GPU shared-memory accesses."""
+"""Pass that inserts thread-block barriers (:class:`~dace.libraries.standard.nodes.sync.Sync`) around GPU shared-memory
+accesses."""
 
 import warnings
 
-from ordered_set import OrderedSet
-
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
+from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.libraries.tileops.expansions import TILE_THREADS_MAP
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node
 from dace.sdfg.scope import is_in_scope
@@ -27,7 +27,7 @@ def is_shared_memory_write(node: Node, state: SDFGState) -> bool:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DefaultSharedMemorySync(ppl.Pass):
-    """Insert ``__syncthreads()`` tasklets after ``GPU_ThreadBlock`` map exits and collaborative writes of shared memory.
+    """Insert a block :class:`Sync` after ``GPU_ThreadBlock`` map exits and collaborative writes of shared memory.
 
     Barriers stay outside thread-block maps, where thread divergence would deadlock them. So a shared-memory write in
     a sequential map or loop nested in a thread-block map only warns, a write-then-read inside one thread-block map
@@ -134,18 +134,13 @@ class DefaultSharedMemorySync(ppl.Pass):
         )
 
     def insert_synchronization_after_nodes(self, nodes: dict[Node, SDFGState]):
-        """Insert a ``__syncthreads()`` tasklet after each given node."""
+        """Insert a block :class:`Sync` after each given node, ordered before the node's successors."""
         for node, state in nodes.items():
-            sync_tasklet = state.add_tasklet(
-                name="sync_threads",
-                inputs=OrderedSet(),
-                outputs=OrderedSet(),
-                code="__syncthreads();\n",
-                language=dtypes.Language.CPP,
-            )
+            sync = Sync("sync_threads", scope=SyncScope.BLOCK)
+            state.add_node(sync)
             for succ in state.successors(node):
-                state.add_edge(sync_tasklet, None, succ, None, dace.Memlet())
-            state.add_edge(node, None, sync_tasklet, None, dace.Memlet())
+                state.add_edge(sync, None, succ, None, dace.Memlet())
+            state.add_edge(node, None, sync, None, dace.Memlet())
 
 
 def nested_in_threadblock_map(state: SDFGState, map_entry: MapEntry) -> bool:

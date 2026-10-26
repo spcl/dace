@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, StateSubgraphView
 from dace.transformation import helpers
 from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
@@ -484,6 +485,140 @@ def test_sibling_bounds_carrying_an_overapproximation_are_unioned():
     assert widest == dace.symbolic.pystr_to_symbolic("J + 1"), end
 
 
+# Persistent kernels ###################################################################################################
+
+GPU_PERSISTENT = dace.dtypes.ScheduleType.GPU_Persistent
+N = dace.symbol("N", dtype=dace.int64)
+
+
+def persistent_kernel(tiled: bool) -> dace.SDFG:
+    """A persistent kernel whose device map doubles ``A``, tiled into thread-block maps or not."""
+    sdfg = dace.SDFG(f"persistent_{'tiled' if tiled else 'flat'}")
+    sdfg.add_array("A", [N], dace.float64, storage=GPU_GLOBAL)
+    state = sdfg.add_state()
+    kernel_entry, kernel_exit = state.add_map("kernel", {"ignore": "0:1"}, schedule=GPU_PERSISTENT)
+    if tiled:
+        device = state.add_map("device", {"t": "0:N:32"}, schedule=GPU_DEVICE)
+        block = state.add_map("block", {"i": "t:t + 32"}, schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock)
+        scopes = [kernel_entry, device[0], block[0]], [block[1], device[1], kernel_exit]
+    else:
+        device = state.add_map("device", {"i": "0:N"}, schedule=GPU_DEVICE)
+        scopes = [kernel_entry, device[0]], [device[1], kernel_exit]
+    tasklet = state.add_tasklet("double", {"a"}, {"b"}, "b = 2 * a")
+    state.add_memlet_path(state.add_read("A"), *scopes[0], tasklet, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(tasklet, *scopes[1], state.add_write("A"), src_conn="b", memlet=dace.Memlet("A[i]"))
+    return sdfg
+
+
+def kernel_of(sdfg: dace.SDFG) -> dace.nodes.MapEntry:
+    return next(
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == GPU_PERSISTENT
+    )
+
+
+def strided_map(sdfg: dace.SDFG) -> dace.nodes.MapEntry:
+    return next(
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and n.map.label == "device"
+    )
+
+
+@pytest.mark.parametrize("tiled", [False, True])
+def test_a_device_map_of_a_persistent_kernel_becomes_a_grid_stride_loop(tiled: bool):
+    sdfg = persistent_kernel(tiled)
+    assert lower(sdfg) == 1
+    assert kernel_of(sdfg).map.gpu_grid_syncs_lowered
+    loop = strided_map(sdfg)
+    assert loop.map.schedule == dace.dtypes.ScheduleType.Sequential
+    first, _, step = loop.map.range[0]
+    blk, nblk, tid, nthr = (dace.symbolic.pystr_to_symbolic(f"__dace_{k}") for k in ("blk", "nblk", "tid", "nthr"))
+    if tiled:
+        # Each iteration is one tile, which the thread-block map spreads over the threads of a block
+        assert (first, step) == (32 * blk, 32 * nblk)
+    else:
+        assert (first, step) == (blk * nthr + tid, nblk * nthr)
+    # A grid barrier ends every state of the kernel body
+    syncs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Sync)]
+    assert syncs and all(s.scope == SyncScope.GRID for s in syncs)
+
+
+@dace.program
+def row_sums(R: dace.int64[N + 1], A: dace.float64[K], b: dace.float64[N]):
+    for ignore in dace.map[0:1]:
+        for i in dace.map[0:N]:
+
+            @dace.map(_[R[i] : R[i + 1]])
+            def accumulate(j):
+                a << A[j]
+                out >> b(1, lambda x, y: x + y)[i]
+                out = a
+
+
+def test_a_thread_block_map_with_a_dynamic_range_runs_in_each_thread_of_a_thread_strided_loop():
+    """Codegen runs such a thread-block map sequentially, so every thread takes its own device-map iterations."""
+    sdfg = row_sums.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.MapEntry):
+                outermost = state.entry_node(node) is None
+                node.map.schedule = GPU_PERSISTENT if outermost else dace.dtypes.ScheduleType.Default
+    dace.sdfg.infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    lower(sdfg)
+    loop = next(
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry)
+        and n.map.schedule == dace.dtypes.ScheduleType.Sequential
+        and "i" in n.map.params
+    )
+    first, _, step = loop.map.range[0]
+    blk, nblk, tid, nthr = (dace.symbolic.pystr_to_symbolic(f"__dace_{k}") for k in ("blk", "nblk", "tid", "nthr"))
+    assert (first, step) == (blk * nthr + tid, nblk * nthr)
+    tblock_maps = [
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock
+    ]
+    assert not tblock_maps
+
+
+def test_a_persistent_kernel_writes_global_memory_outside_its_maps_from_one_thread():
+    """The map-free parts run where codegen would run them: global writes on one thread, register updates on all."""
+    sdfg = persistent_kernel(tiled=False)
+    sdfg.add_array("flag", [1], dace.int32, storage=GPU_GLOBAL)
+    state = sdfg.start_state
+    kernel = kernel_of(sdfg)
+    exit_ = state.exit_node(kernel)
+    tasklet = state.add_tasklet("raise_flag", {}, {"f"}, "f = 1")
+    state.add_nedge(kernel, tasklet, dace.Memlet())
+    state.add_memlet_path(tasklet, exit_, state.add_write("flag"), src_conn="f", memlet=dace.Memlet("flag[0]"))
+    sdfg.validate()
+    lower(sdfg)
+    guards = [
+        condition.as_string
+        for region in sdfg.all_control_flow_regions(recursive=True)
+        if isinstance(region, ConditionalBlock)
+        for condition, _ in region.branches
+    ]
+    expected = dace.symbolic.pystr_to_symbolic("(__dace_blk == 0) and (__dace_tid == 0)")
+    assert [dace.symbolic.pystr_to_symbolic(g) for g in guards] == [expected], guards
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("tiled", [False, True])
+def test_the_lowered_persistent_kernel_computes_each_element_once(tiled: bool):
+    import cupy  # Only present on GPU runners.
+
+    sdfg = persistent_kernel(tiled)
+    sdfg.name = f"persistent_numeric_{'tiled' if tiled else 'flat'}"
+    a = cupy.arange(1000, dtype=cupy.float64)
+    expected = 2 * cupy.asnumpy(a)
+    sdfg(A=a, N=a.size)
+    assert np.array_equal(cupy.asnumpy(a), expected)
+
+
 if __name__ == "__main__":
     test_pass_flattens_nested_gpu_kernels_validates_clean()
     test_inner_kernel_with_internal_inout_node_lowers_clean()
@@ -508,3 +643,7 @@ if __name__ == "__main__":
         test_a_gpu_map_behind_a_sequential_map_is_absorbed(sequential_scope)
     test_sibling_bounds_carrying_an_overapproximation_are_unioned()
     test_the_flattened_kernel_computes_both_indices()
+    for tiled in [False, True]:
+        test_a_device_map_of_a_persistent_kernel_becomes_a_grid_stride_loop(tiled)
+    test_a_persistent_kernel_writes_global_memory_outside_its_maps_from_one_thread()
+    test_a_thread_block_map_with_a_dynamic_range_runs_in_each_thread_of_a_thread_strided_loop()

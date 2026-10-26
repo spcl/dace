@@ -27,7 +27,7 @@ from collections.abc import Iterator
 from typing import NamedTuple
 
 from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
-from dace.libraries.standard.nodes.barrier import Barrier, SyncScope
+from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.libraries.tileops.dispatch import TileGroup
 from dace.libraries.tileops.expansions import TILE_THREADS_MAP, BlockLayout, block_layout
 from dace.libraries.tileops.nodes.tile_op import TileOp
@@ -123,7 +123,7 @@ def differ(first: Layout, second: Layout) -> bool:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertTileSync(ppl.Pass):
-    """Insert a :class:`~dace.libraries.standard.nodes.barrier.Barrier` before the first node that needs a tile another thread wrote, or overwrites a
+    """Insert a :class:`~dace.libraries.standard.nodes.sync.Sync` before the first node that needs a tile another thread wrote, or overwrites a
     tile another thread still reads, in every GPU kernel holding ``WARP`` or ``BLOCK`` tile nodes."""
 
     CATEGORY: str = "GPU"
@@ -149,7 +149,7 @@ class InsertTileSync(ppl.Pass):
                         walk.scope_of_kernel = SyncScope.WARP if groups == {TileGroup.WARP} else SyncScope.BLOCK
                         walk.scope(state, node, Tokens())
         #: The barriers this run inserted, with their states
-        self.inserted: list[tuple[SDFGState, Barrier]] = []
+        self.inserted: list[tuple[SDFGState, Sync]] = []
         for (state, node), scope in walk.barriers.items():
             order = list(walk.order[state])
             position = order.index(node)
@@ -276,7 +276,7 @@ class Walk:
         return tokens
 
     def node(self, state: SDFGState, node: nodes.Node, tokens: Tokens) -> Tokens:
-        if isinstance(node, Barrier):
+        if isinstance(node, Sync):
             # A barrier already placed settles every token, so walking again places none twice
             self.order.setdefault(state, {})[kernel_level(state, node)] = None
             return Tokens()
@@ -339,10 +339,10 @@ def kernel_level(state: SDFGState, node: nodes.Node) -> nodes.Node:
     return node
 
 
-def insert_barrier(state: SDFGState, before: list[nodes.Node], after: list[nodes.Node], scope: SyncScope) -> Barrier:
+def insert_barrier(state: SDFGState, before: list[nodes.Node], after: list[nodes.Node], scope: SyncScope) -> Sync:
     """A barrier of ``scope`` ordered after the nodes ``before`` and before the nodes ``after`` (kernel-level nodes of
     ``state`` in program order): a node merely independent of the one that waits must not slip past the barrier."""
-    barrier = Barrier("tile_sync", scope)
+    barrier = Sync("tile_sync", scope=scope)
     state.add_node(barrier)
     for node in dict.fromkeys(kernel_exit(state, node) for node in before):
         state.add_edge(node, None, barrier, None, Memlet())

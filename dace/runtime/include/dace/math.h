@@ -12,10 +12,6 @@
 #include "nan.h"
 #include "types.h"
 
-#ifdef __CUDACC__
-    #include <thrust/complex.h>
-#endif
-
 // dace::math: A namespace that contains typeless math functions
 
 // Math functions that are Python/sympy built-ins and must reside outside
@@ -54,36 +50,6 @@ template <typename T, typename... Ts>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(const T& a, const Ts&... ts)
 {
     return (a > max(ts...)) ? a : max(ts...);
-}
-
-template <typename T, typename T2>
-static DACE_CONSTEXPR DACE_HDFI T Mod(const T& value, const T2& modulus) {
-    return value % modulus;
-}
-
-// Fortran implements MOD for floating-point values as well
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T Mod_float(const T& value, const T& modulus) {
-    return value - static_cast<int>(value / modulus) * modulus;
-}
-
-// Fortran implementation of MODULO
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T Modulo(const T& value, const T& modulus) {
-    // Fortran implementation for integers - find R such that value = Q * modulus + R
-    // However, R must be in [0, modulus)
-    // To achieve that, we need to cast the division to floats.
-    // Example: -17, 3 must produce 1 and not -2.
-    // If we don't use cast, the floor is called on -5, producing wrong value.
-    // Instead, we need to have floor(-5.6... ) to ensure it produces -6.
-    // Similarly, 17, -3 must produce -1 and not 2.
-    // This means that the default solution works if value and modulus have the same sign.
-    return value - floor(static_cast<float>(value) / modulus) * modulus;
-}
-
-template <typename T>
-static DACE_CONSTEXPR DACE_HDFI T Modulo_float(const T& value, const T& modulus) {
-    return value - floor(value / modulus) * modulus;
 }
 
 // Implement to support a match with Fortran's intrinsic EXPONENT
@@ -385,9 +351,11 @@ static_assert(std::is_same_v<std::common_type_t<dace::float16, dace::float16>, d
 // https://stackoverflow.com/a/39304947
 template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
-    auto divresult = std::div(numerator, denominator);
-    T corr = (divresult.rem != 0 && ((divresult.rem < 0) != (denominator < 0)));
-    return (T)divresult.quot - corr;
+    // Not std::div: it is host-only, and nvcc silently drops it from device code.
+    const T quotient = numerator / denominator;
+    const T remainder = numerator % denominator;
+    const T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
+    return quotient - corr;
 }
 template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_unsigned<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
@@ -405,6 +373,11 @@ static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denomina
 template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
     return (T)std::floor(numerator / denominator);
+}
+template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto py_floor(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
+    using T = decltype(numerator + denominator);
+    return py_floor<T>((T)numerator, (T)denominator);
 }
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI std::complex<T> py_floor(const std::complex<T>& numerator, const std::complex<T>& denominator) {
@@ -434,14 +407,10 @@ static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominato
     return (T)(numerator - quotient * denominator);
 }
 
-// Computes C/C++ modulus (operator % and fmod)
-template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominator) {
-    return numerator % denominator;
-}
-template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominator) {
-    return (T)std::fmod(numerator, denominator);
+template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI auto py_mod(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
+    using T = decltype(numerator + denominator);
+    return py_mod<T>((T)numerator, (T)denominator);
 }
 
 // C modulus (CMod): truncating.
@@ -457,6 +426,18 @@ template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value
 static DACE_CONSTEXPR DACE_HDFI auto c_mod(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
     using T = decltype(numerator + denominator);
     return c_mod<T>((T)numerator, (T)denominator);
+}
+
+// Fortran MOD (FtnMod).
+template<typename T1, typename T2>
+static DACE_CONSTEXPR DACE_HDFI auto ftn_mod(const T1& numerator, const T2& denominator) -> decltype(c_mod(numerator, denominator)) {
+    return c_mod(numerator, denominator);
+}
+
+// Fortran MODULO (FtnModulo): floored.
+template<typename T1, typename T2>
+static DACE_CONSTEXPR DACE_HDFI auto ftn_modulo(const T1& numerator, const T2& denominator) -> decltype(py_mod(numerator, denominator)) {
+    return py_mod(numerator, denominator);
 }
 
 // Computes C/C++ divmod (std::div)
@@ -713,7 +694,7 @@ namespace dace
             return (T)std::expm1(a);
         }
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI thrust::complex<T> pow(const thrust::complex<T>& a, const thrust::complex<T>& b)
         {
@@ -1007,7 +988,7 @@ namespace dace
             return std::exp(a);
         }
 
-        #ifdef __CUDACC__
+        #if defined(__CUDACC__) || defined(__HIPCC__)
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI thrust::complex<T> exp(const thrust::complex<T>& a)
         {
@@ -1021,7 +1002,7 @@ namespace dace
             return std::conj(a);
         }
 
-        #ifdef __CUDACC__
+        #if defined(__CUDACC__) || defined(__HIPCC__)
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI thrust::complex<T> conj(const thrust::complex<T>& a)
         {

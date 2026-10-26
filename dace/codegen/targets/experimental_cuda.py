@@ -31,6 +31,8 @@ from dace.codegen.targets.cuda import (
     location_index_exprs,
     plan_shared_memory,
     reset_shared_code,
+    split_grid,
+    splits_blocks,
 )
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (
     assigned_stream_expr,
@@ -40,6 +42,7 @@ from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (
 )
 from dace.config import Config
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.libraries.standard.nodes.sync import SyncScope, sync_code
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
@@ -405,6 +408,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         # The bytes of dynamic shared memory the kernel uses (see ``gpu_shared_memory.PlanSharedMemory``)
         dynsmem_size = scope_entry._cuda_dynamic_shared_memory
+        if kernel_spec.split_blocks:
+            code, gdims = split_grid(grid_dims, block_dims)
+            self._localcode.write(code, cfg, state_id, scope_entry)
         self._localcode.write(dynamic_shared_memory_request(kernel_name, dynsmem_size), cfg, state_id, scope_entry)
         stream_var_name = Config.get("compiler", "cuda", "gpu_stream_name").split(",")[1]
         kargs = ", ".join(["(void *)&" + arg for arg in kernel_args_as_input])
@@ -493,7 +499,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             self._synchronized_d2h.add(key)
             gpu_stream = assigned_stream_expr(producer)
             callsite_stream.write(
-                f"DACE_GPU_CHECK({self.backend}StreamSynchronize({gpu_stream}));\n", cfg, state_id, consumer
+                sync_code(SyncScope.STREAM, self.backend, stream=gpu_stream) + "\n", cfg, state_id, consumer
             )
 
     def reads_unsynchronized_device_copy(self, state: SDFGState, node: nodes.Node) -> bool:
@@ -1024,13 +1030,9 @@ class KernelSpec:
 
         kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
-        # A pointer (Array/View) arg may be ``const`` ONLY when it is read-only in this kernel, i.e. in
-        # ``kernel_const_data`` (read-set minus write-set). ``get_constant_symbols`` can surface a WRITTEN
-        # data container's name as a "constant symbol" -- its MapEntry branch returns
-        # ``used_symbols_within_scope`` (which includes data names used in subset/offset expressions) and,
-        # unlike the CFG branches, never subtracts writes. Letting such a name into ``kernel_constants``
-        # const-qualifies a written output pointer -> ``expression must be a modifiable lvalue``. Drop any
-        # pointer arg that is not genuinely read-only; scalar-symbol args are unaffected.
+        # get_constant_symbols on a MapEntry also returns data names used in subset expressions, written
+        # ones included. A pointer argument is const only when it is read-only (in kernel_const_data);
+        # otherwise a written output pointer is declared const and the kernel does not compile.
         written_pointers = {
             name
             for name, data in self.arglist.items()
@@ -1099,12 +1101,15 @@ class KernelSpec:
             m.schedule == dtypes.ScheduleType.GPU_ThreadBlock
             for m, _ in gpu_scope_maps_recursive(kernel_parent_state.scope_subgraph(kernel_map_entry))
         )
-        self.chiplets: int = chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, False, [])
+        self.chiplets: int = chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, [])
         self.grid_dims, self.chiplet_chunk = distribute_over_chiplets(
             kernel_map_entry, list(self.grid_dims), self.chiplets
         )
         self.index_types: dict[str, dtypes.typeclass] = common.gpu_map_index_types(
             sdfg, kernel_parent_state, kernel_map_entry
+        )
+        self.split_blocks: bool = splits_blocks(
+            cudaCodeGen.backend, self.index_types[self.kernel_map.params[-1]], self.grid_dims, self.block_dims
         )
 
         if cudaCodeGen.backend not in ["cuda", "hip"]:

@@ -258,7 +258,9 @@ class ExpandCSRMMPure(ExpandTransformation):
             "spmm", {"__a": None, "__b": None}, {"__o": None}, code=f"__o = {node.alpha} * (__a * __b)"
         )
         nstate.add_edge(k_map_entry, "OUT_tmp_a_vals_1", tasklet_mult, "__a", mm.Memlet.simple("_a_vals", "j"))
-        nstate.add_edge(tasklet_ind, "lookup", tasklet_mult, "__b", mm.Memlet.simple("_b_value", "0"))
+        b_value = nstate.add_access("_b_value")
+        nstate.add_edge(tasklet_ind, "lookup", b_value, None, mm.Memlet.simple("_b_value", "0"))
+        nstate.add_edge(b_value, None, tasklet_mult, "__b", mm.Memlet.simple("_b_value", "0"))
 
         k_map_exit.add_in_connector("IN__c_1")
         nstate.add_edge(

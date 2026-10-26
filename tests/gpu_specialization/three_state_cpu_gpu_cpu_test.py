@@ -155,11 +155,13 @@ def test_sync_at_root_with_nsdfg_inside_gpu_device_map():
     assert successors_of_sync == set(), successors_of_sync
 
     # No sync tasklets inside the NestedSDFG (or any other inner SDFG).
-    inner_syncs = []
-    for inner in sdfg.all_sdfgs_recursive():
-        if inner is sdfg:
-            continue
-        inner_syncs.extend(f"{inner.name}::{s.label}" for s in inner.states() if _sync_tasklets(s))
+    inner_syncs = [
+        f"{inner.name}::{s.label}"
+        for inner in sdfg.all_sdfgs_recursive()
+        if inner is not sdfg
+        for s in inner.states()
+        if _sync_tasklets(s)
+    ]
     assert not inner_syncs, f"Expected no sync tasklets inside any nested SDFG; found syncs in: {inner_syncs}"
 
     sdfg.validate()

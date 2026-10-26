@@ -36,7 +36,7 @@ class InferGPUGridAndBlockSize(ppl.Pass):
             else:
                 block_size = self.infer_gpu_block_size(state, map_entry)
             if block_size is None:
-                block_size = map_entry.map.gpu_block_size or default_block_size(map_entry, grid_size, False)
+                block_size = map_entry.map.gpu_block_size or default_block_size(map_entry, grid_size)
                 block_size = to_3d_dims(list(block_size))
                 grid_size = [symbolic.int_ceil(g, b) for g, b in zip(grid_size, block_size)]
 

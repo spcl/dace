@@ -28,6 +28,7 @@ class CopyLibraryNode(nodes.LibraryNode):
 
     implementations = {}
     default_implementation = "Auto"
+    bridges_storage = True
 
     INPUT_CONNECTOR_NAME = "_cpy_in"
     OUTPUT_CONNECTOR_NAME = "_cpy_out"

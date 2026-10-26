@@ -1017,9 +1017,6 @@ class CPUCodeGen(TargetCodeGenerator):
             write = True
         elif isinstance(dst_node, nodes.AccessNode) and validate_memlet_data(memlet.data, dst_node.data):
             write = False
-        elif isinstance(src_node, nodes.CodeNode) and isinstance(dst_node, nodes.CodeNode):
-            # Code->Code copy (not read nor write)
-            raise RuntimeError("Copying between code nodes is only supported as part of the participating nodes")
         elif uconn is None and vconn is None and memlet.data is None and dst_schedule == dtypes.ScheduleType.Sequential:
             # Sequential dependency edge
             return
@@ -1374,27 +1371,6 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(node, nodes.AccessNode) and isinstance(v, nodes.CodeNode):
                 continue
 
-            # code->code (e.g., tasklet to tasklet)
-            if isinstance(dst_node, nodes.CodeNode) and edge.src_conn:
-                shared_data_name = edge.data.data
-                if not shared_data_name:
-                    # Very unique name. TODO: Make more intuitive
-                    shared_data_name = "__dace_%d_%d_%d_%d_%s" % (
-                        cfg.cfg_id,
-                        state_id,
-                        dfg.node_id(node),
-                        dfg.node_id(dst_node),
-                        edge.src_conn,
-                    )
-
-                result.write(
-                    f"{shared_data_name} = {edge.src_conn};",
-                    cfg,
-                    state_id,
-                    [edge.src, edge.dst],
-                )
-                continue
-
             # If the memlet is not pointing to a data node (e.g. tasklet), then
             # the tasklet will take care of the copy
             if not isinstance(dst_node, nodes.AccessNode):
@@ -1570,6 +1546,18 @@ class CPUCodeGen(TargetCodeGenerator):
             ", ".join(memlet_params),
         )
 
+    def defined_type(self, sdfg: SDFG, ptr: str, desc: data.Data, is_global: bool) -> tuple[DefinedType, str]:
+        """Defined type and C type of ``ptr``. A View, or an array sized by a non-free symbol, is allocated in a scope
+        that may have ended, so its declaration is asked first."""
+        dependent_shape = (
+            isinstance(desc, data.Array)
+            and not isinstance(desc, data.View)
+            and any(str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc))
+        )
+        if (dependent_shape or isinstance(desc, data.View)) and self._dispatcher.declared_arrays.has(ptr):
+            return self._dispatcher.declared_arrays.get(ptr)
+        return self._dispatcher.defined_vars.get(ptr, is_global=is_global)
+
     def memlet_definition(
         self,
         sdfg: SDFG,
@@ -1600,29 +1588,9 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         ptr = codegen.ptr(memlet.data, desc, sdfg)
-        types = None
-        # Non-free symbol dependent Arrays due to their shape
-        dependent_shape = (
-            isinstance(desc, data.Array)
-            and not isinstance(desc, data.View)
-            and any(str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc))
-        )
-        try:
-            # NOTE: It is hard to get access to the view-edge here, so always
-            # check the declared-arrays dictionary for Views.
-            if dependent_shape or isinstance(desc, data.View):
-                types = self._dispatcher.declared_arrays.get(ptr)
-        except KeyError:
-            pass
-        if not types:
-            types = self._dispatcher.defined_vars.get(ptr, is_global=True)
-        var_type, ctypedef = types
-        # declared_arrays holds the HOST declaration, which carries no ``const``, while a kernel
-        # argument the launch declares ``const`` is registered that way in defined_vars. Taking the
-        # host spelling for a symbol-shaped array then aliased a ``const int*`` parameter as
-        # ``int*``, which does not compile: xsbench's indirection into index_grid on the canon GPU
-        # column. Keep the qualifier the parameter actually has.
-        if types and not ctypedef.startswith("const "):
+        var_type, ctypedef = self.defined_type(sdfg, ptr, desc, is_global=True)
+        # The host declaration carries no ``const``; keep the qualifier of a ``const`` kernel parameter.
+        if not ctypedef.startswith("const "):
             try:
                 _, defined_ctype = self._dispatcher.defined_vars.get(ptr, is_global=True)
             except KeyError:
@@ -1814,55 +1782,27 @@ class CPUCodeGen(TargetCodeGenerator):
                 if edge.dst_conn in arrays:  # Disallow duplicates
                     raise SyntaxError("Duplicates found in memlets")
                 ctype = node.in_connectors[edge.dst_conn].ctype
-                # Special case: code->code
-                if isinstance(src_node, nodes.CodeNode):
-                    shared_data_name = edge.data.data
-                    if not shared_data_name:
-                        # Very unique name. TODO: Make more intuitive
-                        shared_data_name = "__dace_%d_%d_%d_%d_%s" % (
-                            cfg.cfg_id,
-                            state_id,
-                            dfg.node_id(src_node),
-                            dfg.node_id(node),
-                            edge.src_conn,
-                        )
-
-                    # Read variable from shared storage
-                    defined_type, _ = self._dispatcher.defined_vars.get(shared_data_name)
-                    if defined_type in (DefinedType.Scalar, DefinedType.Pointer):
-                        assign_str = f"const {ctype} {edge.dst_conn} = {shared_data_name};"
-                    else:
-                        assign_str = f"const {ctype} &{edge.dst_conn} = {shared_data_name};"
-                    inner_stream.write(assign_str, cfg, state_id, [edge.src, edge.dst])
-                    self._dispatcher.defined_vars.add(edge.dst_conn, defined_type, f"const {ctype}")
-
-                else:
-                    self._dispatcher.dispatch_copy(
-                        src_node,
-                        node,
-                        edge,
-                        sdfg,
-                        cfg,
-                        dfg,
-                        state_id,
-                        function_stream,
-                        inner_stream,
-                    )
+                self._dispatcher.dispatch_copy(
+                    src_node,
+                    node,
+                    edge,
+                    sdfg,
+                    cfg,
+                    dfg,
+                    state_id,
+                    function_stream,
+                    inner_stream,
+                )
 
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.dst_conn, -1, self._ldepth + 1, ctype)
                 arrays.add(edge.dst_conn)
 
         # Use outgoing edges to preallocate output local vars
-        # in two stages: first we preallocate for data<->code cases,
-        # followed by code<->code
         tasklet_out_connectors = set()
         locals_defined = False
         for edge in state_dfg.out_edges(node):
             dst_node = state_dfg.memlet_path(edge)[-1].dst
-            if isinstance(dst_node, nodes.CodeNode):
-                # Handling this in a separate pass just below
-                continue
 
             if edge.src_conn:
                 if not self._connector_needs_copy(node, edge.src_conn):
@@ -1879,57 +1819,6 @@ class CPUCodeGen(TargetCodeGenerator):
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1, node.out_connectors[edge.src_conn].ctype)
                 tasklet_out_connectors.add(edge.src_conn)
-
-        for edge in state_dfg.out_edges(node):
-            # Special case: code->code
-            dst_node = state_dfg.memlet_path(edge)[-1].dst
-            if edge.src_conn is None:
-                continue
-            if not self._connector_needs_copy(node, edge.src_conn):
-                continue
-            cdtype = node.out_connectors[edge.src_conn]
-            ctype = cdtype.ctype
-            # Convert dtype to data descriptor
-            if isinstance(cdtype, dtypes.pointer):
-                arg_type = data.Array(cdtype._typeclass, [1])
-            else:
-                arg_type = data.Scalar(cdtype)
-
-            if isinstance(dst_node, nodes.CodeNode) and edge.src_conn not in tasklet_out_connectors:
-                memlet = edge.data
-
-                # Generate register definitions for inter-tasklet memlets
-                local_name = edge.data.data
-                if not local_name:
-                    # Very unique name. TODO: Make more intuitive
-                    local_name = "__dace_%d_%d_%d_%d_%s" % (
-                        cfg.cfg_id,
-                        state_id,
-                        dfg.node_id(node),
-                        dfg.node_id(dst_node),
-                        edge.src_conn,
-                    )
-
-                # Allocate variable type
-                code = f"{ctype} {local_name};"
-                outer_stream_begin.write(code, cfg, state_id, [edge.src, dst_node])
-                if isinstance(arg_type, data.Scalar) or isinstance(arg_type, dtypes.typeclass):
-                    self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar, ctype, ancestor=1)
-                elif isinstance(arg_type, data.Array):
-                    self._dispatcher.defined_vars.add(local_name, DefinedType.Pointer, ctype, ancestor=1)
-                elif isinstance(arg_type, data.Stream):
-                    if arg_type.is_stream_array():
-                        self._dispatcher.defined_vars.add(local_name, DefinedType.StreamArray, ctype, ancestor=1)
-                    else:
-                        self._dispatcher.defined_vars.add(local_name, DefinedType.Stream, ctype, ancestor=1)
-                else:
-                    raise TypeError(f"Unrecognized argument type: {type(arg_type).__name__}")
-
-                inner_stream.write(f"{ctype} {edge.src_conn};", cfg, state_id, [edge.src, edge.dst])
-                tasklet_out_connectors.add(edge.src_conn)
-                self._dispatcher.defined_vars.add(edge.src_conn, DefinedType.Scalar, ctype)
-                self._locals.define(edge.src_conn, -1, self._ldepth + 1, ctype)
-                locals_defined = True
 
         # Emit post-memlet tasklet preamble code
         callsite_stream.write(after_memlets_stream.getvalue())
@@ -1996,6 +1885,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
+
+    #: ``generate_node`` dispatches on the exact class name; an AI-generated tasklet is generated as a tasklet
+    _generate_AITasklet = _generate_Tasklet
 
     def unparse_tasklet(
         self, sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth, toplevel_schedule
@@ -2097,7 +1989,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     dtypes.AllocationLifetime.Persistent,
                     dtypes.AllocationLifetime.External,
                 )
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                defined_type, _ = self.defined_type(sdfg, ptrname, desc, is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
                 callsite_stream.write(f"{cdtype.ctype} {edge.src_conn} = {base_ptr};", cfg, state_id, src_node)
             else:
@@ -2131,7 +2023,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments += [
             f"{atype} {restrict} {aname}" for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
-        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms = self._frame.free_symbols(node.sdfg, keep_defined_in_mapping=True)
         arguments += [
             f"{node.sdfg.symbols[aname].as_arg(aname)}"
             for aname in sorted(node.symbol_mapping.keys())
@@ -2144,7 +2036,7 @@ class CPUCodeGen(TargetCodeGenerator):
         prepend = []
         if state_struct:
             prepend = ["__state"]
-        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms = self._frame.free_symbols(node.sdfg, keep_defined_in_mapping=True)
         args = ", ".join(
             prepend
             + [argval for _, _, argval in memlet_references]
@@ -2746,35 +2638,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Emit internal transient array allocation
         self._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, result)
-
-        # Generate register definitions for inter-tasklet memlets
-        scope_dict = dfg.scope_dict()
-        for child in dfg.scope_children()[node]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-
-            for edge in dfg.edges():
-                # Only interested in edges within current scope
-                if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
-                    continue
-                # code->code edges
-                if isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode):
-                    local_name = edge.data.data
-                    ctype = node.out_connectors[edge.src_conn].ctype
-                    if not local_name:
-                        # Very unique name. TODO: Make more intuitive
-                        local_name = "__dace_%d_%d_%d_%d_%s" % (
-                            cfg.cfg_id,
-                            state_id,
-                            dfg.node_id(edge.src),
-                            dfg.node_id(edge.dst),
-                            edge.src_conn,
-                        )
-
-                    # Allocate variable type
-                    code = f"{ctype} {local_name};"
-                    result.write(code, cfg, state_id, [edge.src, edge.dst])
-                    self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar, ctype)
 
     def _generate_ConsumeExit(
         self,

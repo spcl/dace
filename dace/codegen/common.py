@@ -2,9 +2,11 @@
 import ast
 import ctypes.util
 import os
+import shutil
 import subprocess
 import warnings
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import lru_cache
 from io import StringIO
 
@@ -199,6 +201,98 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
         )
 
     return gpu_runtime.GPURuntime(backend, libpath)
+
+
+@dataclass(frozen=True)
+class GPUDevice:
+    """A GPU of this machine."""
+
+    name: str
+    #: The compiler target, e.g. ``sm_86`` or ``gfx942``.
+    architecture: str
+
+
+def _run_tool(args: list[str]) -> str:
+    """
+    :param args: A command line.
+    :return: The command's standard output, or an empty string if it is not installed or fails.
+    """
+    if shutil.which(args[0]) is None:
+        return ""
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _nvidia_gpus() -> list[GPUDevice]:
+    """
+    :return: The NVIDIA GPUs, through ``pynvml`` (from ``nvidia-ml-py``) when it is installed, and
+             through ``nvidia-smi`` otherwise.
+    """
+    try:
+        import pynvml  # Optional package (nvidia-ml-py)
+
+        pynvml.nvmlInit()
+        try:
+            devices = []
+            for i in range(pynvml.nvmlDeviceGetCount()):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                name = pynvml.nvmlDeviceGetName(handle)
+                major, minor = pynvml.nvmlDeviceGetCudaComputeCapability(handle)
+                devices.append(GPUDevice(name.decode() if isinstance(name, bytes) else name, f"sm_{major}{minor}"))
+            return devices
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception:  # Not installed, or no driver
+        pass
+    output = _run_tool(["nvidia-smi", "--query-gpu=name,compute_cap", "--format=csv,noheader"])
+    devices = []
+    for line in output.splitlines():
+        name, _, capability = line.rpartition(",")
+        if name:
+            devices.append(GPUDevice(name.strip(), "sm_" + capability.strip().replace(".", "")))
+    return devices
+
+
+def _amd_gpus() -> list[GPUDevice]:
+    """
+    :return: The AMD GPUs, through ``amdsmi`` (shipped with ROCm) when it can be imported, and
+             through ``rocm_agent_enumerator`` otherwise, which reports no names.
+    """
+    try:
+        import amdsmi  # Optional package (ROCm)
+
+        amdsmi.amdsmi_init()
+        try:
+            devices = []
+            for handle in amdsmi.amdsmi_get_processor_handles():
+                info = amdsmi.amdsmi_get_gpu_asic_info(handle)
+                devices.append(GPUDevice(info.get("market_name", ""), info.get("target_graphics_version", "")))
+            if all(device.architecture for device in devices):
+                return devices
+        finally:
+            amdsmi.amdsmi_shut_down()
+    except Exception:  # Not installed, or no driver
+        pass
+    output = _run_tool(["rocm_agent_enumerator"])
+    return [GPUDevice("", arch) for arch in output.split() if arch.startswith("gfx") and arch != "gfx000"]
+
+
+@lru_cache
+def local_gpus() -> tuple[GPUDevice, ...]:
+    """
+    Returns the GPUs of the selected backend on this machine. Only the selected vendor's tools are
+    queried, and their Python bindings are optional.
+
+    :return: The devices, or an empty tuple if there are none or they cannot be queried.
+    """
+    try:
+        backend = get_gpu_backend()
+    except RuntimeError:
+        return ()
+    return tuple(_nvidia_gpus() if backend == "cuda" else _amd_gpus())
 
 
 @lru_cache

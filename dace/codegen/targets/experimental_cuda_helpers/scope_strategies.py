@@ -157,6 +157,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                 kernel_spec.per_thread,
                 kernel_spec.chiplets,
                 kernel_spec.chiplet_chunk,
+                kernel_spec.split_blocks,
                 kernel_spec.index_types,
             ):
                 ctype = kernel_spec.index_types[var_name].ctype
@@ -165,10 +166,11 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
             # Without a thread-block map every thread handles one iteration and masks the trailing blocks
             if kernel_spec.per_thread:
                 conditions = kernel_grid_conditions(
-                    kernel_spec.kernel_map, kernel_spec.block_dims, kernel_spec.chiplets
+                    kernel_spec.kernel_map, kernel_spec.block_dims, kernel_spec.chiplets, kernel_spec.split_blocks
                 )
             else:
-                conditions = [chiplet_padding_condition(kernel_spec.kernel_map)] if kernel_spec.chiplets > 1 else []
+                padded = kernel_spec.chiplets > 1 or kernel_spec.split_blocks
+                conditions = [chiplet_padding_condition(kernel_spec.kernel_map)] if padded else []
             for condition in filter(None, conditions):
                 scope_manager.open(condition=condition)
 
