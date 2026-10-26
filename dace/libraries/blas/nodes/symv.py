@@ -6,6 +6,7 @@ from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
 from dace.sdfg import nodes
+from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -25,11 +26,13 @@ class ExpandSymvPure(ExpandTransformation):
         sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
         n = sdfg.arrays["_x"].shape[0]
         init = sdfg.add_state(f"{node.label}_init")
+        # As in BLAS, beta == 0 does not read y, so NaN there does not reach the result
+        zero = equal_valued(0, node.beta)
         init.add_mapped_tasklet(
             "scale_y",
             {"__i": f"0:{n}"},
-            {"__y": dace.Memlet("_yin[__i]")},
-            f"__out = ({node.beta}) * __y",
+            {} if zero else {"__y": dace.Memlet("_yin[__i]")},
+            "__out = 0" if zero else f"__out = ({node.beta}) * __y",
             {"__out": dace.Memlet("_yout[__i]")},
             external_edges=True,
         )

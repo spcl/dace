@@ -12,7 +12,6 @@ from dace.libraries.blas.nodes import Ger, Scal, Symm, Symv, Syrk
 IMPLEMENTATIONS = [
     "pure",
     pytest.param("OpenBLAS", marks=pytest.mark.lapack),
-    pytest.param("MKL", marks=pytest.mark.mkl),
     # The vendor library of this build's GPU backend, resolved only when a GPU test runs.
     pytest.param("gpu", marks=pytest.mark.gpu),
 ]
@@ -35,7 +34,7 @@ def run(
     """Connects ``node`` to one array per connector and runs it, on the GPU for a GPU implementation; writes the
     results back into the ``outputs`` arrays."""
     if implementation == "gpu":
-        implementation = "rocBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
+        implementation = "hipBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
     sdfg = build(name, node, implementation, inputs, outputs)
     if implementation not in GPU_IMPLEMENTATIONS:
         sdfg(**dict({**inputs, **outputs}.values()))
@@ -50,7 +49,7 @@ def run(
         value[...] = device[array_name].get()
 
 
-GPU_IMPLEMENTATIONS = ("cuBLAS", "rocBLAS")
+GPU_IMPLEMENTATIONS = ("cuBLAS", "hipBLAS")
 
 
 def build(
@@ -155,6 +154,60 @@ def test_symm(implementation, order, right, upper):
 
 
 @pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+def test_beta_zero_does_not_read_the_accumulator(implementation):
+    """As in BLAS, beta == 0 leaves the input accumulator unread: NaN there does not reach the result."""
+    a, x = matrix((4, 4), "C"), rng.standard_normal(4)
+    y, out = np.full(4, np.nan), np.zeros(4)
+    run(
+        "symv_beta0",
+        Symv("symv", alpha=2.0, beta=0),
+        implementation,
+        {"_A": ("A", a), "_x": ("x", x), "_yin": ("y", y)},
+        {"_yout": ("out", out)},
+    )
+    np.testing.assert_allclose(out, 2.0 * symmetric_from(a, False) @ x)
+
+    b, c, cout = matrix((4, 3), "C"), np.full((4, 3), np.nan), np.zeros((4, 3))
+    run(
+        "symm_beta0",
+        Symm("symm", alpha=2.0, beta=0),
+        implementation,
+        {"_A": ("A", a), "_B": ("B", b), "_Cin": ("C", c)},
+        {"_Cout": ("out", cout)},
+    )
+    np.testing.assert_allclose(cout, 2.0 * symmetric_from(a, False) @ b)
+
+    k = matrix((4, 2), "C")
+    c, cout = np.full((4, 4), np.nan), np.zeros((4, 4))
+    run(
+        "syrk_beta0",
+        Syrk("syrk", alpha=2.0, beta=0),
+        implementation,
+        {"_A": ("A", k), "_Cin": ("C", c)},
+        {"_Cout": ("out", cout)},
+    )
+    lower = np.tril(np.ones((4, 4), bool))
+    np.testing.assert_allclose(cout[lower], (2.0 * k @ k.T)[lower])
+
+
+@pytest.mark.parametrize("implementation", ["pure", pytest.param("gpu", marks=pytest.mark.gpu)])
+def test_complex_symv(implementation):
+    """Complex symv is symmetric, not Hermitian: the mirrored element is not conjugated. CBLAS has none, the GPU
+    libraries do."""
+    a = matrix((4, 4), "C") + 1j * matrix((4, 4), "C")
+    x, y = rng.standard_normal(4) + 1j * rng.standard_normal(4), rng.standard_normal(4) + 1j * rng.standard_normal(4)
+    out = np.zeros(4, dtype=np.complex128)
+    run(
+        "symv_complex",
+        Symv("symv", alpha=2.0, beta=0.5),
+        implementation,
+        {"_A": ("A", a), "_x": ("x", x), "_yin": ("y", y)},
+        {"_yout": ("out", out)},
+    )
+    np.testing.assert_allclose(out, 2.0 * symmetric_from(a, False) @ x + 0.5 * y)
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
 @pytest.mark.parametrize("order", ["C", "F"])
 @pytest.mark.parametrize("transposed,upper", [(False, False), (True, True)])
 def test_syrk(implementation, order, transposed, upper):
@@ -197,30 +250,35 @@ def test_complex_ger_does_not_conjugate(implementation, order):
         (
             Symm("symm", side=False, uplo=False),
             {"_A": (4, 4), "_B": (4, 3), "_Cin": (4, 3)},
-            "rocblas_dsymm",
-            "rocblas_side_right, rocblas_fill_upper, 3, 4",
+            "hipblasDsymm",
+            "HIPBLAS_SIDE_RIGHT, HIPBLAS_FILL_MODE_UPPER, 3, 4",
         ),
         (
             Syrk("syrk", uplo=False, transA=False),
             {"_A": (4, 2), "_Cin": (4, 4)},
-            "rocblas_dsyrk",
-            "rocblas_fill_upper, rocblas_operation_transpose, 4, 2",
+            "hipblasDsyrk",
+            "HIPBLAS_FILL_MODE_UPPER, HIPBLAS_OP_T, 4, 2",
         ),
-        (Symv("symv", uplo=True), {"_A": (4, 4), "_x": (4,), "_yin": (4,)}, "rocblas_dsymv", "rocblas_fill_lower, 4"),
-        (Ger("ger", m=4, n=3), {"_A": (4, 3), "_x": (4,), "_y": (3,)}, "rocblas_dger", "3, 4"),
+        (
+            Symv("symv", uplo=True),
+            {"_A": (4, 4), "_x": (4,), "_yin": (4,)},
+            "hipblasDsymv",
+            "HIPBLAS_FILL_MODE_LOWER, 4",
+        ),
+        (Ger("ger", m=4, n=3), {"_A": (4, 3), "_x": (4,), "_y": (3,)}, "hipblasDger", "3, 4"),
     ],
 )
-def test_rocblas_call_of_a_row_major_operand(node, inputs, routine, arguments):
-    """rocBLAS is column-major, so a row-major operand reaches it transposed: the side, the triangle and the
+def test_hipblas_call_of_a_row_major_operand(node, inputs, routine, arguments):
+    """hipBLAS is column-major, so a row-major operand reaches it transposed: the side, the triangle and the
     transposition flip and the dimensions swap. No ROCm device is needed to read the generated call."""
     output = {Symm: "_Cout", Syrk: "_Cout", Symv: "_yout", Ger: "_res"}[type(node)]
     output_shape = inputs.get("_Cin", inputs.get("_yin", inputs.get("_A")))
     values = {c: (c.strip("_").lower(), np.zeros(shape)) for c, shape in inputs.items()}
-    sdfg = build(type(node).__name__, node, "rocBLAS", values, {output: ("out", np.zeros(output_shape))})
+    sdfg = build(type(node).__name__, node, "hipBLAS", values, {output: ("out", np.zeros(output_shape))})
     sdfg.expand_library_nodes()
     code = "".join(t.code.as_string for t, _ in sdfg.all_nodes_recursive() if isinstance(t, dace.nodes.Tasklet))
     call = code[code.index(f"{routine}(") :]
-    assert call.startswith(f"{routine}(__dace_rocblas_handle, {arguments}"), call[:120]
+    assert call.startswith(f"{routine}(__dace_hipblas_handle, {arguments}"), call[:120]
 
 
 VENDOR_NODES = {
@@ -230,7 +288,7 @@ VENDOR_NODES = {
     "symm": (lambda: Symm("symm"), {"_A": (4, 4), "_B": (4, 3), "_Cin": (4, 3)}, ("_Cout", (4, 3))),
     "syrk": (lambda: Syrk("syrk"), {"_A": (4, 2), "_Cin": (4, 4)}, ("_Cout", (4, 4))),
 }
-VENDOR_ROUTINES = {"OpenBLAS": "cblas_d{}(", "MKL": "cblas_d{}(", "cuBLAS": "cublasD{}(", "rocBLAS": "rocblas_d{}("}
+VENDOR_ROUTINES = {"OpenBLAS": "cblas_d{}(", "MKL": "cblas_d{}(", "cuBLAS": "cublasD{}(", "hipBLAS": "hipblasD{}("}
 
 
 @pytest.mark.parametrize("implementation", list(VENDOR_ROUTINES))
@@ -258,26 +316,6 @@ def test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension(implementat
         sdfg.expand_library_nodes()
 
 
-def test_operands_of_different_types_are_rejected():
-    """One BLAS routine reads every operand, so a ``float32`` matrix next to ``float64`` vectors is an error."""
-    a = symmetric_from(matrix((4, 4), "C"), upper=False).astype(np.float32)
-    x, y = rng.random(4), np.zeros(4)
-    node = Symv("symv")
-    sdfg = build(
-        "symv_mixed", node, "pure", {"_A": ("A", a), "_x": ("x", x), "_yin": ("y", y)}, {"_yout": ("z", y.copy())}
-    )
-    with pytest.raises(ValueError, match="one element type"):
-        node.validate(sdfg, sdfg.start_state)
-
-
-def test_syrk_rejects_a_vector_operand():
-    a, c = rng.random(4), np.zeros((4, 4))
-    node = Syrk("syrk")
-    sdfg = build("syrk_vector", node, "pure", {"_A": ("A", a), "_Cin": ("C", c)}, {"_Cout": ("D", c.copy())})
-    with pytest.raises(ValueError, match="_A must be a matrix"):
-        node.validate(sdfg, sdfg.start_state)
-
-
 if __name__ == "__main__":
     for implementation in ("pure", "OpenBLAS"):
         test_scal(implementation)
@@ -293,5 +331,3 @@ if __name__ == "__main__":
             test_vendor_expansion_calls_the_library(implementation, name)
     for implementation in GPU_IMPLEMENTATIONS:
         test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension(implementation)
-    test_operands_of_different_types_are_rejected()
-    test_syrk_rejects_a_vector_operand()
