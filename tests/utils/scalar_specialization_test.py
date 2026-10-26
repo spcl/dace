@@ -158,6 +158,28 @@ def test_specialize_symbols_batched():
     np.testing.assert_allclose(B, A * 5.0)
 
 
+def test_copy_out_of_the_scalar_keeps_the_value():
+    """A copy from the baked scalar into another container still writes the value into that container."""
+    sdfg = dace.SDFG("copy_out_of_specialized_scalar")
+    sdfg.add_scalar("flag", dace.int32)
+    sdfg.add_scalar("staged", dace.int32, transient=True)
+    sdfg.add_array("out", [1], dace.int32)
+    state = sdfg.add_state()
+    staged = state.add_access("staged")
+    state.add_nedge(state.add_read("flag"), staged, dace.Memlet("flag[0]"))
+    read = state.add_tasklet("read", {"__in"}, {"__out"}, "__out = __in + 1")
+    state.add_edge(staged, None, read, "__in", dace.Memlet("staged[0]"))
+    state.add_edge(read, "__out", state.add_write("out"), None, dace.Memlet("out[0]"))
+
+    specialize_scalars(sdfg, {"flag": 7})
+    sdfg.validate()
+    assert "staged" in {n.data for n in state.data_nodes()}
+
+    out = np.zeros(1, dtype=np.int32)
+    sdfg(out=out, flag=np.int32(0))
+    assert out[0] == 8
+
+
 if __name__ == "__main__":
     test_nested_sdfg()
     test_integer_value_keeps_floating_point_division()

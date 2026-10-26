@@ -213,8 +213,5 @@ _all_tests/
 /Makefile
 /lib*.a
 
-# Local secrets / tokens
-.mtoken
-
 # Local Claude Code settings
 .claude/
