@@ -3329,6 +3329,14 @@ class SDFG(ControlFlowRegion):
         stats = {} if stats is None else stats
         stats.update(codegen_seconds=0.0, compile_seconds=0.0, load_seconds=0.0, cached=False)
 
+        if Config.get("compiler", "alloy", "mode") != "off":
+            # Alloy builds each scope's variants and compiles the program linking every scope's pick
+            from alloy import dace_backend
+
+            return dace_backend.compile(
+                self, output_file=output_file, validate=validate, return_program_handle=return_program_handle
+            )
+
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
 
