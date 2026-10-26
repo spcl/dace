@@ -846,6 +846,7 @@ class ScalarToSymbolPromotion(passes.Pass):
             state.remove_nodes_from([n for n in scalar_nodes if len(state.all_edges(n)) == 0])
 
         # Step 5: Data descriptor management
+        new_local_symbols: set[str] = set()
         for scalar in to_promote:
             desc = sdfg.arrays[scalar]
             sdfg.remove_data(scalar, validate=False)
@@ -853,6 +854,8 @@ class ScalarToSymbolPromotion(passes.Pass):
             # do not re-add the symbol
             if scalar not in sdfg.symbols:
                 sdfg.add_symbol(scalar, desc.dtype)
+                if desc.transient:
+                    new_local_symbols.add(scalar)
 
         # Step 6: Inter-state edge cleanup
         cleanup_re = {s: re.compile(rf"\b{re.escape(s)}\[.*?\]") for s in to_promote}
@@ -885,6 +888,19 @@ class ScalarToSymbolPromotion(passes.Pass):
 
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)
+
+        # Step 8: A promoted transient that some read may reach unassigned (e.g., written and read under the same
+        # condition) would be a free symbol, i.e., a new argument of the SDFG. Such a read sees an undefined value
+        # anyway, so give the symbol an initial value on entry instead.
+        if new_local_symbols:
+            unassigned = new_local_symbols & {str(s) for s in sdfg.free_symbols}
+            if unassigned:
+                sdfg.add_state_before(
+                    sdfg.start_block,
+                    "init_promoted_scalars",
+                    is_start_block=True,
+                    assignments=dict.fromkeys(sorted(unassigned), "0"),
+                )
 
         return to_promote or None
 
