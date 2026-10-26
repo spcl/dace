@@ -5,7 +5,6 @@ import warnings
 from typing import Any
 
 from dace import SDFG, Memlet, dtypes, nodes, properties
-from dace.codegen import common
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -157,13 +156,13 @@ class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         from dace.codegen.targets.cuda import stream_unaware_gpu_callbacks  # Avoid import loop
+        from dace.libraries.standard.nodes.sync import Sync, SyncScope
 
         targets = [
             (state, node)
             for state, node, _ in stream_unaware_gpu_callbacks(sdfg)
             if not any(succ.label == DEVICE_SYNC_TASKLET_LABEL for succ in state.successors(node))
         ]
-        backend = common.get_gpu_backend()
         for state, node in targets:
             warnings.warn(
                 f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so a full device '
@@ -171,15 +170,11 @@ class SynchronizeStreamUnawareGPUCallbacks(ppl.Pass):
                 "and use it (e.g. cupy ExternalStream) to keep the work asynchronous.",
                 UserWarning,
             )
-            fence = state.add_tasklet(
-                DEVICE_SYNC_TASKLET_LABEL,
-                {},
-                {},
-                f"DACE_GPU_CHECK({backend}DeviceSynchronize());",
-                language=dtypes.Language.CPP,
-                side_effects=True,
-            )
+            # Library nodes are already expanded here, so the fence is expanded where it is placed
+            fence = Sync(DEVICE_SYNC_TASKLET_LABEL, scope=SyncScope.DEVICE)
+            state.add_node(fence)
             for succ in list(state.successors(node)):
                 state.add_nedge(fence, succ, Memlet())
             state.add_nedge(node, fence, Memlet())
+            fence.expand(state)
         return len(targets) or None

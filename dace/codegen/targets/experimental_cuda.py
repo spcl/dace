@@ -40,6 +40,7 @@ from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (
 )
 from dace.config import Config
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.libraries.standard.nodes.sync import SyncScope, sync_code
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
@@ -493,7 +494,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             self._synchronized_d2h.add(key)
             gpu_stream = assigned_stream_expr(producer)
             callsite_stream.write(
-                f"DACE_GPU_CHECK({self.backend}StreamSynchronize({gpu_stream}));\n", cfg, state_id, consumer
+                sync_code(SyncScope.STREAM, self.backend, stream=gpu_stream) + "\n", cfg, state_id, consumer
             )
 
     def reads_unsynchronized_device_copy(self, state: SDFGState, node: nodes.Node) -> bool:
