@@ -5,6 +5,8 @@
 staging copy, the cached plan and the ``norm`` scale.
 """
 
+import shutil
+import subprocess
 import warnings
 
 import numpy as np
@@ -383,6 +385,28 @@ def test_a_batch_of_two_dense_axes_goes_to_fftw3_as_one_dimension():
 
 
 @pytest.mark.fftw
+def test_each_program_keeps_its_own_fftw_plan_cache():
+    """Two programs in one process may bind FFTW's symbols to different libraries (FFTW3, or MKL's FFTW3 interface
+    once an MKL program loaded it). A plan cache reached through a process-wide symbol hands the plans of one to the
+    other, so each program's cache has internal linkage."""
+    readelf = shutil.which("readelf")
+    if readelf is None:
+        pytest.skip("needs readelf")
+
+    @dace.program
+    def transform_one_axis(x: dace.complex128[16]):
+        return np.fft.fft(x)
+
+    compiled = compile_with(transform_one_axis, "FFTW3").compile()
+    symbols = subprocess.run(
+        [readelf, "-sW", "--dyn-syms", compiled.filename], capture_output=True, text=True, check=True
+    ).stdout
+    assert not [line for line in symbols.splitlines() if "UNIQUE" in line and "5Plans" in line]
+    x = rng_complex((16,))
+    np.testing.assert_allclose(compiled(x=x.copy()), np.fft.fft(x), rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.fftw
 @pytest.mark.parametrize(
     "shape,axes", [((3, 4, 5, 2), (1, 2, 3)), ((4, 5, 6), (0, 2)), ((4, 5, 6), (-1, -3)), ((3, 4, 5, 2), (0, 1, 2, 3))]
 )
@@ -403,14 +427,40 @@ def test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan(shape, axes, dtype, da
     np.testing.assert_allclose(inverse, np.fft.ifftn(x, axes=axes, norm="forward"), rtol=tolerance, atol=tolerance)
 
 
-def test_a_threaded_companion_library_is_linked_ahead_of_its_base(monkeypatch):
-    """Each precision's OpenMP planner (``libfftw3_omp``, ``libfftw3f_omp``) links ahead of its base library and
-    threads that precision only."""
+def test_a_threaded_companion_library_is_linked_ahead_of_its_base(monkeypatch, tmp_path):
+    """Each precision's threaded planner (``libfftw3_omp``, ``libfftw3f_omp``) links ahead of its base library and
+    threads that precision only; a prefix install also passes its include directory."""
+    (tmp_path / "include").mkdir()
+    (tmp_path / "include" / "fftw3.h").touch()
+    (tmp_path / "lib").mkdir()
+    for lib in ("libfftw3.so", "libfftw3_omp.so", "libfftw3f.so"):
+        (tmp_path / "lib" / lib).touch()
+    monkeypatch.setenv("FFTW_ROOT", str(tmp_path))
+    fftw3.fftw_install.cache_clear()
+    try:
+        libraries = [p.rsplit("/", 1)[1] for p in fftw3.FFTW3.cmake_libraries()]
+        assert libraries == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
+        assert fftw3.FFTW3.cmake_includes() == [str(tmp_path / "include")]
+        assert fftw3.threaded(double=True)
+        assert not fftw3.threaded(double=False)
+    finally:
+        fftw3.fftw_install.cache_clear()
+
+
+def test_a_distro_fftw3_comes_from_the_loader(monkeypatch, tmp_path):
+    """Without a prefix install, a header on the default include path and the loader's libraries are the install."""
+    (tmp_path / "fftw3.h").touch()
     installed = {"fftw3", "fftw3_omp", "fftw3f"}
+    monkeypatch.setattr(fftw3, "search_path_prefixes", lambda: [])
+    monkeypatch.setattr(fftw3, "SYSTEM_INCLUDE_DIRS", (str(tmp_path),))
     monkeypatch.setattr(fftw3.ctypes.util, "find_library", lambda lib: f"lib{lib}.so" if lib in installed else None)
-    assert fftw3.FFTW3.cmake_libraries() == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
-    assert fftw3.threaded(double=True)
-    assert not fftw3.threaded(double=False)
+    fftw3.fftw_install.cache_clear()
+    try:
+        assert fftw3.FFTW3.cmake_libraries() == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
+        assert fftw3.FFTW3.cmake_includes() == []
+        assert fftw3.threaded(double=True) and not fftw3.threaded(double=False)
+    finally:
+        fftw3.fftw_install.cache_clear()
 
 
 @pytest.mark.parametrize("threaded", [True, False])
@@ -559,6 +609,7 @@ if __name__ == "__main__":
     test_gpu_fftn_over_every_axis((32, 48))
     test_gpu_fftn_over_every_axis((8, 12, 16))
     test_a_batch_of_two_dense_axes_goes_to_fftw3_as_one_dimension()
+    test_each_program_keeps_its_own_fftw_plan_cache()
     test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan((3, 4, 5, 2), (1, 2, 3), np.complex128, dace.complex128)
     test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan((3, 4, 5, 2), (1, 2, 3), np.complex64, dace.complex64)
     test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan((4, 5, 6), (0, 2), np.complex128, dace.complex128)

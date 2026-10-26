@@ -86,9 +86,12 @@ def is_unit(factor: dace.symbolic.SymbolicType) -> bool:
     return bool(value.is_Number) and float(value) == 1.0
 
 
-def complex_of(real: dace.typeclass) -> dace.typeclass:
-    """The complex type with ``real``'s precision; a complex type is its own."""
-    return {dace.float32: dace.complex64, dace.float64: dace.complex128}.get(real, real)
+def complex_of(element: dace.typeclass) -> dace.typeclass:
+    """The complex type numpy's FFTs compute ``element`` in: ``complex64`` for half and single precision, its own
+    type for a complex one, ``complex128`` otherwise (double precision, integers and booleans)."""
+    if element in (dace.complex64, dace.complex128):
+        return element
+    return dace.complex64 if element in (dace.float16, dace.float32) else dace.complex128
 
 
 def real_of(complex_type: dace.typeclass) -> dace.typeclass:

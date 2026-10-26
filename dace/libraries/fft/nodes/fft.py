@@ -285,14 +285,15 @@ def dense_block_order(
     return None
 
 
-def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
+def fftw3_call(transform: Transform, threaded: bool | None = None) -> nodes.Tasklet | None:
     """One ``fftw_plan_guru64_dft`` (``_r2c``, ``_c2r``) over the transformed axes, every other axis a ``howmany``
     batch dimension, planned once and kept in the library's plan cache.
 
     Both dimension lists step by the descriptors' own strides, so any rank, any axis set and any strided view is
     one plan, and one buffer on both connectors is FFTW's in-place transform. A plan is keyed by the transform
     kind, the extents and strides, whether the transform is in place, the planner's thread count and the arrays'
-    alignment, the conditions under which FFTW's new-array execute may reuse a plan.
+    alignment, the conditions under which FFTW's new-array execute may reuse a plan. ``threaded`` says whether the
+    planner threads; ``None`` asks the FFTW3 install whether it links the threaded planner of this precision.
     """
     from dace.codegen.targets import cpp  # avoid import loop
     from dace.libraries.fft.environments import fftw3
@@ -340,7 +341,7 @@ def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
         else "(long long)(reinterpret_cast<uintptr_t>(__in) % 64), (long long)(reinterpret_cast<uintptr_t>(__out) % 64)"
     )
     sign = f"{'FFTW_BACKWARD' if transform.inverse else 'FFTW_FORWARD'}, " if kind == "dft" else ""
-    threaded = fftw3.threaded(transform.double)
+    threaded = fftw3.threaded(transform.double) if threaded is None else threaded
     # A threaded FFTW plans for the program's OpenMP team, or for one thread inside a parallel region
     team = (
         f"static const int __threads_ready = {prefix}_init_threads(); (void)__threads_ready;\n"
@@ -570,10 +571,14 @@ class hipFFTIFFTExpansion(ExpandGPUFFT):
     dialect = HIPFFT
 
 
-class ExpandMKL(ExpandFFTW3):
-    """MKL backend: MKL exposes the FFTW3 C ABI, so the code is the FFTW3 expansion's, linked against MKL."""
+class ExpandMKL(xf.ExpandTransformation):
+    """MKL backend: the FFTW3 expansion's code against MKL's FFTW3 interface, whose planner always threads."""
 
-    environments = [IntelMKL, env.FFTPlans]
+    environments = [IntelMKL, env.MKLFFTW3, env.FFTPlans]
+
+    @staticmethod
+    def expansion(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return vendor_fft_sdfg(node, parent_state, parent_sdfg, functools.partial(fftw3_call, threaded=True), "MKL")
 
 
 @library.register_expansion(FFT, "MKL")

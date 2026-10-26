@@ -18,7 +18,11 @@ from dace.libraries.fft.nodes import FFT, IFFT
 
 M, N = dace.symbol("M"), dace.symbol("N")
 
-CPU_IMPLEMENTATIONS = ["pure", pytest.param("FFTW3", marks=pytest.mark.fftw)]
+CPU_IMPLEMENTATIONS = [
+    "pure",
+    pytest.param("FFTW3", marks=pytest.mark.fftw),
+    pytest.param("MKL", marks=pytest.mark.mkl),
+]
 
 
 def gpu_implementation() -> str:
@@ -46,6 +50,15 @@ def real_array(shape) -> np.ndarray:
 def complex_array(shape) -> np.ndarray:
     rng = np.random.default_rng(sum(shape) + 1)
     return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+
+
+def axis_symmetric(mask: np.ndarray) -> np.ndarray:
+    """``mask`` made equal at ``j`` and ``-j`` along axis 0, so that it keeps a half spectrum Hermitian.
+
+    A multi-axis complex-to-real transform of a spectrum that is not Hermitian along its full axes is
+    implementation-defined: FFTW and MKL's FFTW3 interface return different arrays for it.
+    """
+    return np.maximum(mask, mask[(-np.arange(mask.shape[0])) % mask.shape[0]])
 
 
 @dace.program
@@ -101,7 +114,8 @@ def check_real_family(implementation: str, gpu: bool = False):
         rtol=1e-12,
         atol=1e-10,
     )
-    spectrum = complex_array((6, 5, 3))
+    # The half spectrum of a real array: a random one is not Hermitian along axis 0 (see ``axis_symmetric``).
+    spectrum = np.fft.rfft2(real_array((6, 8, 3)), axes=(0, 1))
     np.testing.assert_allclose(
         run(irfft2_over_leading_axes, implementation, gpu, x=spectrum.copy()),
         np.fft.irfft2(spectrum, axes=(0, 1)),
@@ -208,7 +222,7 @@ def test_a_filter_between_a_transform_and_its_inverse(implementation):
         rtol=1e-12,
         atol=1e-12,
     )
-    r, half_mask = real_array((16, 12)), (real_array((16, 7)) > 0).astype(np.float64)
+    r, half_mask = real_array((16, 12)), axis_symmetric((real_array((16, 7)) > 0).astype(np.float64))
     np.testing.assert_allclose(
         run(real_low_pass, implementation, x=r.copy(), mask=half_mask),
         np.fft.irfftn(np.fft.rfftn(r) * half_mask, s=(16, 12), axes=(0, 1)),
@@ -242,6 +256,39 @@ def test_fftfreq_and_rfftfreq_match_numpy():
     want = (np.fft.fftfreq(7, 0.5), np.fft.fftfreq(8), np.fft.rfftfreq(7, 0.25), np.fft.rfftfreq(8))
     for g, w in zip(got, want):
         np.testing.assert_allclose(g, w, rtol=1e-15, atol=0)
+
+
+@dace.program
+def fft_and_rfft_of_integers(x: dace.int64[8]):
+    return np.fft.fft(x), np.fft.rfft(x)
+
+
+@dace.program
+def fft_of_booleans(x: dace.bool_[8]):
+    return np.fft.fft(x)
+
+
+@dace.program
+def rfft_of_halves(x: dace.float16[8]):
+    return np.fft.rfft(x)
+
+
+@pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
+def test_non_floating_inputs_promote_as_numpy_does(implementation):
+    """numpy computes an integer or boolean input in ``complex128`` and a half-precision one in ``complex64``."""
+    x = np.arange(8, dtype=np.int64) * 3 - 5
+    full, half = run(fft_and_rfft_of_integers, implementation, x=x)
+    assert full.dtype == np.complex128 and half.dtype == np.complex128
+    np.testing.assert_allclose(full, np.fft.fft(x), rtol=1e-12, atol=1e-10)
+    np.testing.assert_allclose(half, np.fft.rfft(x), rtol=1e-12, atol=1e-10)
+    flags = np.arange(8) % 3 == 0
+    got = run(fft_of_booleans, implementation, x=flags)
+    assert got.dtype == np.complex128
+    np.testing.assert_allclose(got, np.fft.fft(flags), rtol=1e-12, atol=1e-12)
+    halves = (np.arange(8) / 4 - 1).astype(np.float16)
+    got = run(rfft_of_halves, implementation, x=halves)
+    assert got.dtype == np.complex64
+    np.testing.assert_allclose(got, np.fft.rfft(halves), rtol=1e-5, atol=1e-5)
 
 
 if __name__ == "__main__":
