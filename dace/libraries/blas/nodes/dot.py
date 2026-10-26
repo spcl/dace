@@ -105,7 +105,7 @@ class ExpandDotPureAccumulate(ExpandTransformation):
         zero = state.add_tasklet("_dot_init", {}, {"_out"}, "_out = 0")
         state.add_edge(zero, "_out", seeded, None, dace.Memlet("_acc[0]"))
         entry, exit_node = state.add_map("dot", {"__i": f"0:{n}"})
-        mul = state.add_tasklet("dot", {"__x", "__y"}, {"__out"}, mul_program)
+        mul = state.add_tasklet("dot", {"__x": None, "__y": None}, {"__out"}, mul_program)
         state.add_memlet_path(state.add_read("_x"), entry, mul, dst_conn="__x", memlet=dace.Memlet("_x[__i]"))
         state.add_memlet_path(state.add_read("_y"), entry, mul, dst_conn="__y", memlet=dace.Memlet("_y[__i]"))
         summed = state.add_access("_acc")

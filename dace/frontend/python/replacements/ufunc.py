@@ -1565,8 +1565,8 @@ def _create_subgraph(
 
                 codenode = state.add_nested_sdfg(
                     nested_sdfg,
-                    {n for n, _ in nested_sdfg_inputs.values()},
-                    {n for n, _ in nested_sdfg_outputs.values()},
+                    dict.fromkeys(n for n, _ in nested_sdfg_inputs.values()),
+                    dict.fromkeys(n for n, _ in nested_sdfg_outputs.values()),
                 )
                 me, mx = state.add_map(state.label + "_map", map_indices)
                 for arg in inputs + [where]:

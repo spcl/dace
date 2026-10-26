@@ -408,7 +408,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         )
 
         # Add identity tasklet for reduction
-        t = nstate.add_tasklet("identity", {_ACC, _IN}, {_OUT}, f"{_OUT} = {_IN}")
+        t = nstate.add_tasklet("identity", {_ACC: None, _IN: None}, {_OUT}, f"{_OUT} = {_IN}")
 
         # Connect everything
         r = nstate.add_read("_in")
@@ -1700,7 +1700,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     "__o_out = __b_in",
                 )
             else:
-                id = nstate.add_tasklet("identity", {"__a_in", "__b_in"}, {"__o_out"}, "__o_out = __b_in")
+                id = nstate.add_tasklet("identity", {"__a_in": None, "__b_in": None}, {"__o_out"}, "__o_out = __b_in")
 
             if vectorize:
                 # add a vec_reduce tasklet
@@ -1915,15 +1915,17 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     schedule=dtypes.ScheduleType.Sequential,
                 )
 
-            id = real_state.add_tasklet("identity", {"__a_in", "__b_in"}, {"__o_out"}, "__o_out = __b_in")
+            id = real_state.add_tasklet("identity", {"__a_in": None, "__b_in": None}, {"__o_out"}, "__o_out = __b_in")
             # tasklet for reducing partial results to shared memory
-            id_smem = real_state.add_tasklet("identity_smem", {"__a_in", "__b_in"}, {"__o_out"}, "__o_out = __b_in")
+            id_smem = real_state.add_tasklet(
+                "identity_smem", {"__a_in": None, "__b_in": None}, {"__o_out"}, "__o_out = __b_in"
+            )
 
             # Connect everything
             r = nstate.add_read("_in")
             w = nstate.add_write("_out")
 
-            actual_nested_sdfg = nstate.add_nested_sdfg(nested_sdfg, {"s_mem", "_in"}, {"s_mem"})
+            actual_nested_sdfg = nstate.add_nested_sdfg(nested_sdfg, {"s_mem": None, "_in": None}, {"s_mem"})
 
             inner_in = real_state.add_access("_in")
             inner_smem = real_state.add_access("s_mem")
