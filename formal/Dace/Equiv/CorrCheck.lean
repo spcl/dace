@@ -591,7 +591,7 @@ end Sound
 /-- Check one state against the head of the tree list; the rest of the list. -/
 def stateCheck (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool) (s : State) (cs : List SNode) :
     Except String (List SNode) :=
-  if seqPlain? ctx s = false then .error s!"state '{s.label}': outside the fragment (seqPlain?)"
+  if ctx.noViews? = false then .error s!"state '{s.label}': views are not matched yet"
   else if !(ctx.stateTransients s).all (fun t => !ctx.isStream t) then
     .error s!"state '{s.label}': allocates a transient stream"
   else
@@ -612,7 +612,7 @@ theorem stateCheck_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDF
   split at h
   · cases h
   · rename_i hp
-    have hpure : SeqPlain ctx s := seqPlain?_sound (by simpa using hp)
+    have hpure : ∀ n, ctx.isView n = false := Ctx.noViews?_sound (by simpa using hp)
     split at h
     · cases h
     rename_i hns
@@ -1177,7 +1177,7 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr ctx tc s 
 
 theorem StateCorr.withI {cs : List SNode} (h : StateCorr ctx tc s cs) :
     StateCorr { ctx with I := I₂ } (tc.withI I₂) s cs := by
-  refine ⟨SeqPlain.withI I₂ h.pure, h.noStreams, ?_⟩
+  refine ⟨h.noViews, h.noStreams, ?_⟩
   rcases h.comps with h₁ | ⟨c, o, full, hc, hseg, hto, hdir⟩
   · exact .inl h₁
   · exact .inr ⟨c, o, full, hc, SegCorr.withI I₂ hseg, hto, hdir⟩

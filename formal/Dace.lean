@@ -46,6 +46,7 @@ import Dace.Equiv.Footprint
 import Dace.Equiv.Congr
 import Dace.SDFG.Footprinted
 import Dace.SDFG.Frame
+import Dace.SDFG.Coherence
 import Dace.Equiv.Order
 import Dace.SDFG.Clean
 import Dace.SDFG.Names

@@ -29,7 +29,9 @@ namespace Corr
 
 /-- The tree segment `cs` corresponds to state `s`. -/
 structure StateCorr (ctx : Ctx) (tc : TCtx) (s : State) (cs : List SNode) : Prop where
-  pure : SeqPlain ctx s
+  /-- No views: the prologue of the component binds nothing (`ViewNode`s are
+  not matched yet). -/
+  noViews : ∀ n, ctx.isView n = false
   /-- The transients the state allocates are no streams (a fresh stream is
   empty, which the tree, allocating less, does not reproduce). -/
   noStreams : ∀ t ∈ ctx.stateTransients s, ctx.isStream t = false
@@ -61,7 +63,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
     (∃ e, e.isUB = true ∧ StateExec ctx cst s (.err e)) ∨
     (∃ e e', r = .err e ∧ StateExec ctx cst s (.err e')) ∨
     ∃ cst', STree.ListExec tc full gb {} rest cst' r ∧ StateExec ctx cst s (.ok (.normal, cst')) := by
-  have h := hsc.pure
+  have h := hsc.noViews
   rcases hsc.comps with ⟨hc, rfl⟩ | ⟨c, o, ofull, hc, hseg, hto, hdir⟩
   · -- no component: the state does nothing
     refine .inr (.inr ⟨cst, hx, ?_⟩)
@@ -77,7 +79,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
     let base : St := { mem := cst.mem }
     let abase : St := { mem := ctx.allocate (ctx.stateTransients s) cst.mem }
     have hst₀ : st₀ = { base with log := cst.log } := rfl
-    have hp : bindViews ctx cst.ρ s (s.topLevelOf c) base = .ok base := bindViews_eq cst.ρ h _ _
+    have hp : bindViews ctx cst.ρ s (s.topLevelOf c) base = .ok base := bindViews_eq_of h _ _
     -- the component run from the allocated memory simulates the one from the state's memory
     have hab : St.Sim 1 (fun _ => True) (fun _ => True) abase base :=
       ⟨Corr.allocate_left_one ctx (ctx.stateTransients s) hsc.noStreams, (Log.ren_one _).symm, rfl, Log.NamesP.true _⟩
@@ -150,7 +152,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
               simp only [State.isTopologicalOrder, Bool.and_eq_true, List.all_eq_true] at hto
               simpa using hto.1.1.2 id hc'
             exact hseg.flat id (hdir ▸ List.mem_filter.2 ⟨hfull, by simpa using hid⟩) n hn
-          have hcoh := (OrderedExec.coh' h hflat (st := base) hrun).1
+          have hcoh := OrderedExec.coherent' (fun id hid n hn => .inl (hflat id hid n hn)) (st := base) hrun
           rcases (hstate hrun).2 _ rfl with ⟨e, hu, hx'⟩ | this
           · exact .inl ⟨e, hu, hx'⟩
           refine .inr (.inr ⟨cst', hl, ?_⟩)

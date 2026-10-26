@@ -5,6 +5,7 @@ import Dace.SDFG.Sim
 import Dace.STree.Rename
 import Dace.STree.LogShift
 import Dace.STree.Retarget
+import Dace.SDFG.Coherence
 
 /-!
 # SDFG and schedule tree: matching of a dataflow segment (M5a)
@@ -855,7 +856,7 @@ theorem CSt.st_withSt (cst : CSt) {y : St} (hy : y.vals = []) : (cst.withSt y).s
 
 section Matched
 
-variable {ctx : Ctx} {tc : TCtx} {s : State} (h : SeqPlain ctx s) (he : tc.ctx.eraseL = ctx.eraseL)
+variable {ctx : Ctx} {tc : TCtx} {s : State} (h : ∀ n, ctx.isView n = false) (he : tc.ctx.eraseL = ctx.eraseL)
   (hcons : tc.consumed = none)
 
 omit hcons in
@@ -911,7 +912,7 @@ include h in
 /-- One SDFG leaf node that is one tree leaf. -/
 theorem leaf_node {full : List SNode} {gb : Bool} {id : NodeId} {n : DNode} {o : List NodeId} {nT : SNode}
     {more rest : List SNode} {cst : CSt} {r : Res (TCtl × CSt)} {st : St}
-    (hn : s.node? id = some n) (hsimp : n.isSimple = true)
+    (hn : s.node? id = some n) (hsimp : n.isSimple = true) (hout : n.isCode = true → s.OutsData n)
     (hstep : stepLeaf tc {} nT cst = some (leafOut (cst.lift (execSimple ctx cst.ρ s n cst.st))))
     (hx : STree.ListExec tc full gb {} (nT :: more) cst r) (hrel : StRel st cst)
     (ih : ∀ {cst' : CSt} {st' : St}, STree.ListExec tc full gb {} more cst' r → StRel st' cst' →
@@ -931,8 +932,8 @@ theorem leaf_node {full : List SNode} {gb : Bool} {id : NodeId} {n : DNode} {o :
   | ok y =>
     rw [hy] at hstep
     have hyv : y.vals = [] := by
-      obtain ⟨δ, -, hyd, -⟩ := execSimple_foot cst.ρ h hn' st.forNode y hy
-      rw [hyd]; simpa [St.forNode] using hrel.2.2
+      obtain ⟨-, -, -, hv⟩ := execSimple_steps (kv := true) ctx cst.ρ s n (fun _ hc => hout hc) st.forNode y hy
+      rw [hv rfl]; simpa [St.forNode] using hrel.2.2
     rcases leaf_inv hstep hx with ⟨e', hR, -⟩ | ⟨cst₁, hR, hx₁⟩
     · cases hR
     · simp only [Res.map, CSt.lift, Res.ok.injEq] at hR
@@ -1013,7 +1014,7 @@ theorem iter_matched {n : DNode} {mp : MapNode} {oM full : List NodeId} {body : 
   have hrel : ∀ i, StRel (iterStart (ctx.privateTransients s n.id) st₁) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) :=
     fun i => ⟨by simp only [iterStart, iterStartT, hm, hpriv], rfl, hv⟩
   have hp : ∀ ρ', bindViews ctx ρ' s (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) = .ok (iterStart (ctx.privateTransients s n.id) st₁) :=
-    fun ρ' => bindViews_eq ρ' h _ _
+    fun ρ' => bindViews_eq_of (ρ := ρ') h _ _
   intro pts rT hi
   refine iter_matched_of (n := n) (fun i {res} hb => ?_) hi
   have hb' : STree.ListExec tc body false {} (body ++ []) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) res := by
@@ -1097,7 +1098,7 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
           st'.log.dropNames (ctx.privateTransients s n.id) = cst'.log.dropNames (tc.privateTransients body) := by
   have hp : bindViews ctx (pre.ρ.bindIdx mp.params i) s (s.directChildren (some n.id))
       (iterStart (ctx.privateTransients s n.id) st₁) = .ok (iterStart (ctx.privateTransients s n.id) st₁) :=
-    bindViews_eq _ h _ _
+    bindViews_eq_of h _ _
   have herr : ∀ e, NodeExec ctx (pre.ρ.bindIdx mp.params i) s nd (iterStart (ctx.privateTransients s n.id) st₁).forNode
       (.err e) → OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id) (s.directChildren (some n.id))
         (iterStart (ctx.privateTransients s n.id) st₁) (.err e) := by
@@ -1399,8 +1400,11 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
         rw [hy] at hf
         simp only [Res.map, Res.ok.injEq] at hf
         have hyv : y.vals = [] := by
-          obtain ⟨δ, -, hyd, -⟩ := execSimple_foot cst.ρ h hn' st.forNode y ((hfold _).trans hy)
-          rw [hyd]; simpa [St.forNode] using hrel.2.2
+          have hnc : n.isCode = false := by
+            unfold DNode.isCopyTarget at hk; unfold DNode.isCode; split at hk <;> simp_all
+          obtain ⟨-, -, -, hv⟩ := execSimple_steps (kv := true) ctx cst.ρ s n
+            (fun _ hc => by rw [hnc] at hc; cases hc) st.forNode y ((hfold _).trans hy)
+          rw [hv rfl]; simpa [St.forNode] using hrel.2.2
         refine .inr (.inr ⟨y, (hfold st.forNode).trans hy ▸ NodeExec.simple hsimp, ?_⟩)
         have := ih hx' (hrel.afterNode hyv ⟨?_, ?_⟩)
         · rw [hρ] at this; exact this
@@ -1408,7 +1412,8 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
         · have := congrArg St.log hf; simpa [CSt.st, hrel.2.1] using this.symm
   | @tasklet id n o cs t ins outs hn hk hsh hki hko hd hdT _ ih =>
     intro full gb rest cst r st hx hrel
-    refine leaf_node h hn (by simp [DNode.isSimple, hk]) ?_ hx hrel (fun hx' hrel' hρ => hρ ▸ ih hx' hrel')
+    refine leaf_node h hn (by simp [DNode.isSimple, hk]) (fun _ => hsh.outs) ?_ hx hrel
+      (fun hx' hrel' hρ => hρ ▸ ih hx' hrel')
     have : ∀ X, execCodeT tc cst.ρ t.label ins outs X (tc.ctx.I.tasklet t cst.ρ) (.taskletUndefined t.label) =
         execSimple ctx cst.ρ s n X := by
       intro X
@@ -1417,7 +1422,8 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
     simp only [stepLeaf, this]
   | @library id n o cs l l' props ins outs hn hk hl hsh hki hko hd hdT _ ih =>
     intro full gb rest cst r st hx hrel
-    refine leaf_node h hn (by simp [DNode.isSimple, hk]) ?_ hx hrel (fun hx' hrel' hρ => hρ ▸ ih hx' hrel')
+    refine leaf_node h hn (by simp [DNode.isSimple, hk]) (fun _ => hsh.outs) ?_ hx hrel
+      (fun hx' hrel' hρ => hρ ▸ ih hx' hrel')
     have : ∀ X, execLibraryT tc cst.ρ l' ins outs X = execSimple ctx cst.ρ s n X := by
       intro X
       unfold execLibraryT
