@@ -545,12 +545,13 @@ include hinj
 /-- The happens-before check of a sequential execution passes. -/
 theorem hbFree_of_ok {ρ : Valuation} {all direct order : List NodeId} {st st₁ st₂ : St}
     {tr : List (NodeId × Log)} {A : List Access} (hna : NoAlias st.mem)
-    (ho : s.isTopologicalOrder all order = true) (hp : bindViews ctx ρ s direct st = .ok st₁)
+    (ho : s.isTopologicalOrder all order = true) (hp : bindViews ctx ρ s (s.viewOrder ctx direct) st = .ok st₁)
     (hs : SeqExec ctx ρ s (order.filter direct.contains) st₁ (.ok (st₂, tr)))
     (hfp : scopeFp ctx s F direct = some A) (hhb : hbOk ctx s F direct = true) : s.hbFree tr = true := by
   have hinc := scopeFp_incl hfp
   have hal₁ : st₁.mem.aliases = st.mem.aliases :=
-    (bindViews_step (m₀ := st.mem) (P := LocPred.ofAccesses ctx st.mem ρ A) hp hinc rfl).1
+    (bindViews_step (m₀ := st.mem) (P := LocPred.ofAccesses ctx st.mem ρ A) hp
+      (hinc.of_sub fun x hx => State.viewOrder_sub hx) rfl).1
   have htr := SeqExec.fp_trace (m₀ := st.mem) hs (hinc.of_sub fun x hx => by simpa using (List.mem_filter.1 hx).2)
     hal₁
   have hids := SeqExec.trace_ids hs
@@ -651,7 +652,8 @@ theorem OrderedExec.clean {ρ : Valuation} {all direct : List NodeId} {st : St} 
   | .seqErr _ hp hs, hC, hna, hok => by
     obtain ⟨⟨A, hfp⟩, -, hmaps⟩ := bodyOk_spec hok
     have hinc := scopeFp_incl hfp
-    have hal₁ := (bindViews_step (m₀ := st.mem) (P := LocPred.ofAccesses ctx st.mem ρ A) hp hinc rfl).1
+    have hal₁ := (bindViews_step (m₀ := st.mem) (P := LocPred.ofAccesses ctx st.mem ρ A) hp
+      (hinc.of_sub fun x hx => State.viewOrder_sub hx) rfl).1
     exact Res.Clean.err_of rfl (SeqExec.clean hs hC (fun x => by rw [hal₁]; exact hna x)
       (hinc.of_sub fun x hx => by simpa using (List.mem_filter.1 hx).2)
       (fun id hid => hmaps id (by simpa using (List.mem_filter.1 hid).2)))

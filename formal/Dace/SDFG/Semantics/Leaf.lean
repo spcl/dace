@@ -450,8 +450,88 @@ def bindView (ctx : Ctx) (ρ : Valuation) (s : State) (v : DNode) (d : Name) (st
     | none => .err (.malformed s!"view edge of '{d}' does not reach an access node")
     | some base => aliasTo ctx ρ st d base sub
 
-/-- Prologue of a sequential execution: bind every view among the given
-(direct) nodes, in node order. -/
+/-- The container a view access node views (the access node at the other end
+of its view edge, `bindView`). -/
+def State.viewedData? (s : State) (v : DNode) : Option Name :=
+  match s.viewEdge? v with
+  | none => none
+  | some (e, isIn) =>
+    if isIn then (s.node? (s.pathStart e).src).bind DNode.accessData?
+    else (s.node? (s.pathEnd e).dst).bind DNode.accessData?
+
+/-- Is node `id` an access node of a view? -/
+def State.isViewNode (ctx : Ctx) (s : State) (id : NodeId) : Bool :=
+  match s.node? id with
+  | some n =>
+    match n.kind with
+    | .access d => ctx.isView d
+    | _ => false
+  | none => false
+
+/-- Generations of the pending views (`dataOf`: the container of a node,
+`baseOf`: the container it views): those whose viewed container is no
+pending view first, in list order, then the next generation. -/
+def viewGensWith (dataOf baseOf : NodeId → Option Name) : Nat → List NodeId → List NodeId
+  | 0, pending => pending
+  | _ + 1, [] => []
+  | f + 1, pending =>
+    let pendingData := pending.filterMap dataOf
+    let ready := pending.filter fun id =>
+      match baseOf id with
+      | some b => !pendingData.contains b
+      | none => true
+    if ready.isEmpty then pending
+    else ready ++ viewGensWith dataOf baseOf f (pending.filter fun id => !ready.contains id)
+
+theorem viewGensWith_congr {d₁ d₂ b₁ b₂ : NodeId → Option Name} : ∀ (f : Nat) (pending : List NodeId),
+    (∀ id ∈ pending, d₁ id = d₂ id ∧ b₁ id = b₂ id) → viewGensWith d₁ b₁ f pending = viewGensWith d₂ b₂ f pending
+  | 0, _, _ => rfl
+  | _ + 1, [], _ => rfl
+  | f + 1, p :: ps, h => by
+    have hpd : (p :: ps).filterMap d₁ = (p :: ps).filterMap d₂ := List.filterMap_congr fun id hid => (h id hid).1
+    have hready : ((p :: ps).filter fun id => match b₁ id with
+        | some b => !((p :: ps).filterMap d₁).contains b
+        | none => true) = ((p :: ps).filter fun id => match b₂ id with
+        | some b => !((p :: ps).filterMap d₂).contains b
+        | none => true) := List.filter_congr fun id hid => by rw [(h id hid).2, hpd]
+    unfold viewGensWith
+    simp only
+    rw [hready]
+    split
+    · rfl
+    · rw [viewGensWith_congr f _ fun id hid => h id (List.mem_of_mem_filter hid)]
+
+theorem viewGensWith_sub {d b : NodeId → Option Name} : ∀ (f : Nat) (pending : List NodeId) {id : NodeId},
+    id ∈ viewGensWith d b f pending → id ∈ pending
+  | 0, _, _, h => h
+  | _ + 1, [], _, h => by simp [viewGensWith] at h
+  | f + 1, p :: ps, id, h => by
+    unfold viewGensWith at h
+    simp only at h
+    split at h
+    · exact h
+    · rcases List.mem_append.1 h with h | h
+      · exact List.mem_of_mem_filter h
+      · exact List.mem_of_mem_filter (viewGensWith_sub f _ h)
+
+/-- `viewGensWith` for the views of a state. -/
+def State.viewGens (s : State) (f : Nat) (pending : List NodeId) : List NodeId :=
+  viewGensWith (fun id => (s.node? id).bind DNode.accessData?) (fun id => (s.node? id).bind s.viewedData?) f pending
+
+/-- The order in which the views among `ids` are bound (`Decisions.md#D31`):
+every view after the view it views, like code generation allocating the
+viewed data first (`cpu.py`, `allocate_view`); otherwise in node order. -/
+def State.viewOrder (ctx : Ctx) (s : State) (ids : List NodeId) : List NodeId :=
+  let views := ids.filter (s.isViewNode ctx)
+  s.viewGens views.length views
+
+/-- The views bound are among the given nodes. -/
+theorem State.viewOrder_sub {ctx : Ctx} {s : State} {ids : List NodeId} {id : NodeId}
+    (h : id ∈ s.viewOrder ctx ids) : id ∈ ids :=
+  List.mem_of_mem_filter (viewGensWith_sub _ _ h)
+
+/-- Bind every view among the given nodes, in list order (the prologue of a
+sequential execution binds `State.viewOrder` of its direct nodes). -/
 def bindViews (ctx : Ctx) (ρ : Valuation) (s : State) (ids : List NodeId) (st : St) : Res St :=
   ids.foldlM (fun st id =>
     match s.node? id with

@@ -46,6 +46,10 @@ representations:
   so the tree's first-true order is matched.  Every goto must jump forward
   (`GPos`, well-founded by construction); loops built from backward gotos are
   not certified yet.
+  States need no fragment beyond the absence of views inside scope bodies:
+  every sequential run is coherent (its memory is its log applied,
+  `SDFG/Coherence.lean`), streams and references included; a state's views
+  are the tree's `ViewNode`s at the head of its segment (`ViewsCorr`).
   Nested SDFGs (`SegCorr.nestedMap`): a map scope whose body is one nested
   SDFG matches the tree's inlined inner region; the per-call transients are
   related to the tree's names by renaming (`SDFG/Sim.lean`, the simulation

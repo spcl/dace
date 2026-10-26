@@ -854,9 +854,167 @@ theorem CSt.st_withSt (cst : CSt) {y : St} (hy : y.vals = []) : (cst.withSt y).s
   simp only at hy
   simp [CSt.withSt, CSt.st, hy]
 
+/-! ## Views -/
+
+/-- What a view access node binds (`bindView`): the view, the container it
+views and the subset of it. -/
+structure ViewKey where
+  d : Name
+  base : Name
+  sub : Option Subset
+  deriving DecidableEq
+
+/-- The key of the view access node `v` of container `d`. -/
+def _root_.Dace.State.viewKey? (s : State) (v : DNode) (d : Name) : Option ViewKey :=
+  match s.viewEdge? v with
+  | none => none
+  | some (e, isIn) =>
+    let base? := if isIn then (s.node? (s.pathStart e).src).bind DNode.accessData?
+                 else (s.node? (s.pathEnd e).dst).bind DNode.accessData?
+    let sub := if isIn then State.leafSrcSubset e else State.leafDstSubset e
+    base?.map fun base => ⟨d, base, sub⟩
+
+/-- The keys of the view access nodes among `ids`, in order (`bindViews`). -/
+def _root_.Dace.State.viewKeys (ctx : Ctx) (s : State) : List NodeId → Option (List ViewKey)
+  | [] => some []
+  | id :: ids =>
+    match s.node? id with
+    | some n =>
+      match n.kind with
+      | .access d =>
+        if ctx.isView d then (s.viewKey? n d).bind fun k => (State.viewKeys ctx s ids).map (k :: ·)
+        else State.viewKeys ctx s ids
+      | _ => State.viewKeys ctx s ids
+    | none => State.viewKeys ctx s ids
+
+theorem _root_.Dace.State.viewKeys_withI (ctx : Ctx) (I₂ : Interp) (s : State) :
+    ∀ ids : List NodeId, State.viewKeys { ctx with I := I₂ } s ids = State.viewKeys ctx s ids
+  | [] => rfl
+  | id :: ids => by
+    have ih := State.viewKeys_withI ctx I₂ s ids
+    simp only [State.viewKeys, ih]
+    rfl
+
+/-- Bind one view. -/
+def viewStep (ctx : Ctx) (ρ : Valuation) (st : St) (k : ViewKey) : Res St := aliasTo ctx ρ st k.d k.base k.sub
+
+theorem viewStep_vals {ctx : Ctx} {ρ : Valuation} {st st' : St} {k : ViewKey} (h : viewStep ctx ρ st k = .ok st') :
+    st'.vals = st.vals := by
+  obtain ⟨-, -, -, hv⟩ := aliasTo_steps (kv := true) ctx ρ k.d k.base k.sub st st' h
+  exact hv rfl
+
+theorem bindView_key {ctx : Ctx} {ρ : Valuation} {s : State} {v : DNode} {d : Name} {k : ViewKey}
+    (hk : s.viewKey? v d = some k) (st : St) : bindView ctx ρ s v d st = viewStep ctx ρ st k := by
+  unfold State.viewKey? at hk
+  unfold bindView viewStep
+  cases hv : s.viewEdge? v with
+  | none => rw [hv] at hk; cases hk
+  | some p =>
+    obtain ⟨e, isIn⟩ := p
+    rw [hv] at hk
+    simp only at hk ⊢
+    cases isIn <;> simp only [Bool.false_eq_true, ↓reduceIte] at hk ⊢
+    · cases hb : (s.node? (s.pathEnd e).dst).bind DNode.accessData? with
+      | none => rw [hb] at hk; cases hk
+      | some base => rw [hb] at hk; simp only [Option.map_some, Option.some.injEq] at hk; subst hk; rfl
+    · cases hb : (s.node? (s.pathStart e).src).bind DNode.accessData? with
+      | none => rw [hb] at hk; cases hk
+      | some base => rw [hb] at hk; simp only [Option.map_some, Option.some.injEq] at hk; subst hk; rfl
+
+/-- The tree's view nodes of a scope, one per key and in order: `ViewNode`s
+binding the same view to the same subset of the same container. -/
+def ViewsCorr (ks : List ViewKey) (vs : List SNode) : Prop :=
+  List.Forall₂ (fun k n => ∃ m sd vd, n = .viewNode k.d k.base m sd vd ∧ m.data = k.base ∧ m.dataSubset = k.sub) ks vs
+
+theorem bindViews_keys {ctx : Ctx} {ρ : Valuation} {s : State} :
+    ∀ {ids : List NodeId} {ks : List ViewKey}, s.viewKeys ctx ids = some ks →
+      ∀ st, bindViews ctx ρ s ids st = ks.foldlM (viewStep ctx ρ) st
+  | [], ks, h, st => by simp only [State.viewKeys, Option.some.injEq] at h; subst h; rfl
+  | id :: ids, ks, h, st => by
+    unfold bindViews
+    simp only [List.foldlM_cons]
+    unfold State.viewKeys at h
+    cases hn : s.node? id with
+    | none =>
+      rw [hn] at h
+      simp only
+      exact bindViews_keys h st
+    | some n =>
+      rw [hn] at h
+      simp only at h ⊢
+      cases hk : n.kind with
+      | access d =>
+        rw [hk] at h
+        simp only at h ⊢
+        cases hv : ctx.isView d with
+        | false => rw [hv] at h; simp only [Bool.false_eq_true, ↓reduceIte]; exact bindViews_keys h st
+        | true =>
+          rw [hv] at h
+          simp only [↓reduceIte] at h ⊢
+          cases hvk : s.viewKey? n d with
+          | none => rw [hvk] at h; cases h
+          | some k =>
+            rw [hvk] at h
+            simp only [Option.bind_some, Option.map_eq_some_iff] at h
+            obtain ⟨ks', hks', rfl⟩ := h
+            rw [bindView_key hvk, List.foldlM_cons]
+            cases viewStep ctx ρ st k with
+            | err e => rfl
+            | ok st₁ => exact bindViews_keys hks' st₁
+      | _ =>
+        rw [hk] at h
+        simp only at h ⊢
+        exact bindViews_keys h st
+
+/-- No view access node is a direct child of a scope (views are bound only
+at the top level of a state, `ScopeViewsFree`). -/
+def _root_.Dace.State.scopeViewsFree? (ctx : Ctx) (s : State) : Bool :=
+  s.nodes.all fun c => match c.scopeEntry with
+    | some _ => match s.node? c.id with
+      | some n => match n.kind with
+        | .access d => !ctx.isView d
+        | _ => true
+      | none => true
+    | none => true
+
+theorem bindViews_skip {ctx : Ctx} {ρ : Valuation} {s : State} :
+    ∀ {ids : List NodeId}, (∀ id ∈ ids, ∀ n, s.node? id = some n → ∀ d, n.kind = .access d → ctx.isView d = false) →
+      ∀ st, bindViews ctx ρ s ids st = .ok st
+  | [], _, st => rfl
+  | id :: ids, h, st => by
+    unfold bindViews
+    simp only [List.foldlM_cons]
+    have ih := bindViews_skip (ρ := ρ) (fun i hi => h i (List.mem_cons_of_mem _ hi)) st
+    unfold bindViews at ih
+    cases hn : s.node? id with
+    | none => simpa using ih
+    | some n =>
+      simp only
+      cases hk : n.kind with
+      | access d =>
+        simp only [h id List.mem_cons_self n hn d hk, Bool.false_eq_true, ↓reduceIte]
+        simpa using ih
+      | _ => simpa using ih
+
+theorem _root_.Dace.State.scopeViewsFree?_sound {ctx : Ctx} {s : State} (h : s.scopeViewsFree? ctx = true) :
+    ∀ (entry : NodeId) (ρ : Valuation) (st : St),
+      bindViews ctx ρ s (s.viewOrder ctx (s.directChildren (some entry))) st = .ok st := by
+  intro entry ρ st
+  refine bindViews_skip (fun id hid' n hn d hk => ?_) st
+  have hid := State.viewOrder_sub hid'
+  simp only [State.directChildren, State.children, List.mem_map, List.mem_filter] at hid
+  obtain ⟨c, ⟨hc, hce⟩, rfl⟩ := hid
+  have := List.all_eq_true.1 h c hc
+  simp only [decide_eq_true_eq] at hce
+  simp only [hce, hn, hk, Bool.not_eq_true'] at this
+  exact this
+
 section Matched
 
-variable {ctx : Ctx} {tc : TCtx} {s : State} (h : ∀ n, ctx.isView n = false) (he : tc.ctx.eraseL = ctx.eraseL)
+variable {ctx : Ctx} {tc : TCtx} {s : State}
+  (h : ∀ (entry : NodeId) (ρ : Valuation) (st : St),
+    bindViews ctx ρ s (s.viewOrder ctx (s.directChildren (some entry))) st = .ok st)
+  (he : tc.ctx.eraseL = ctx.eraseL)
   (hcons : tc.consumed = none)
 
 omit hcons in
@@ -905,6 +1063,49 @@ theorem copies_run {full : List SNode} {gb : Bool} :
           exact hf
         · refine .inr ⟨cst', hx', ?_, hρ'.trans hρ⟩
           simp only [List.map_cons, List.foldlM_cons, copyStep]
+          rw [hc, Res.ok_bind, ← CSt.st_withSt cst hy, ← hρ]
+          exact hf
+
+omit he hcons in
+/-- The tree runs view nodes one after the other: the fold of `aliasTo` over
+their keys. -/
+theorem views_run (he' : tc.ctx.eraseL = ctx.eraseL) {full : List SNode} {gb : Bool} :
+    ∀ {ks : List ViewKey} {vs : List SNode} {more : List SNode} {cst : CSt} {r : Res (TCtl × CSt)},
+      ViewsCorr ks vs → STree.ListExec tc full gb {} (vs ++ more) cst r →
+      (∃ e, r = .err e ∧ ks.foldlM (viewStep ctx cst.ρ) cst.st = .err e) ∨
+      ∃ cst', STree.ListExec tc full gb {} more cst' r ∧ ks.foldlM (viewStep ctx cst.ρ) cst.st = .ok cst'.st ∧
+        cst'.ρ = cst.ρ
+  | [], [], _, cst, _, .nil, hx => .inr ⟨cst, hx, rfl, rfl⟩
+  | k :: ks, v :: vs, more, cst, r, .cons ⟨m, sd, vd, hv, hmd, hms⟩ hvs, hx => by
+    subst hv
+    simp only [List.cons_append] at hx
+    have hstep : stepLeaf tc {} (.viewNode k.d k.base m sd vd) cst =
+        some (leafOut (cst.lift (viewStep ctx cst.ρ cst.st k))) := by
+      simp only [stepLeaf, execViewT, hmd, ↓reduceIte, viewStep, ← hms]
+      rw [Ctx.leaf_eq he' (fun c => aliasTo c cst.ρ cst.st k.d k.base m.dataSubset) (fun _ => rfl)]
+    rcases leaf_inv hstep hx with ⟨e, hR, rfl⟩ | ⟨cst₁, hR, hx₁⟩
+    · refine .inl ⟨e, rfl, ?_⟩
+      simp only [CSt.lift] at hR
+      simp only [List.foldlM_cons]
+      cases hc : viewStep ctx cst.ρ cst.st k with
+      | ok y => rw [hc] at hR; cases hR
+      | err e' => rw [hc] at hR; cases hR; rfl
+    · simp only [CSt.lift] at hR
+      cases hc : viewStep ctx cst.ρ cst.st k with
+      | err e' => rw [hc] at hR; cases hR
+      | ok y =>
+        rw [hc] at hR
+        simp only [Res.map, Res.ok.injEq] at hR
+        subst hR
+        have hy : y.vals = [] := (viewStep_vals hc).trans rfl
+        have hρ : (cst.withSt y).ρ = cst.ρ := rfl
+        rcases views_run he' hvs hx₁ with ⟨e, hr, hf⟩ | ⟨cst', hx', hf, hρ'⟩
+        · refine .inl ⟨e, hr, ?_⟩
+          simp only [List.foldlM_cons]
+          rw [hc, Res.ok_bind, ← CSt.st_withSt cst hy, ← hρ]
+          exact hf
+        · refine .inr ⟨cst', hx', ?_, hρ'.trans hρ⟩
+          simp only [List.foldlM_cons]
           rw [hc, Res.ok_bind, ← CSt.st_withSt cst hy, ← hρ]
           exact hf
 
@@ -1013,8 +1214,9 @@ theorem iter_matched {n : DNode} {mp : MapNode} {oM full : List NodeId} {body : 
       ∃ logs, rT = .ok logs ∧ IterExec ctx pre.ρ s n.id mp.params (ctx.privateTransients s n.id) st₁ pts (.ok logs) := by
   have hrel : ∀ i, StRel (iterStart (ctx.privateTransients s n.id) st₁) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) :=
     fun i => ⟨by simp only [iterStart, iterStartT, hm, hpriv], rfl, hv⟩
-  have hp : ∀ ρ', bindViews ctx ρ' s (s.directChildren (some n.id)) (iterStart (ctx.privateTransients s n.id) st₁) = .ok (iterStart (ctx.privateTransients s n.id) st₁) :=
-    fun ρ' => bindViews_eq_of (ρ := ρ') h _ _
+  have hp : ∀ ρ', bindViews ctx ρ' s (s.viewOrder ctx (s.directChildren (some n.id)))
+      (iterStart (ctx.privateTransients s n.id) st₁) = .ok (iterStart (ctx.privateTransients s n.id) st₁) :=
+    fun ρ' => h n.id ρ' _
   intro pts rT hi
   refine iter_matched_of (n := n) (fun i {res} hb => ?_) hi
   have hb' : STree.ListExec tc body false {} (body ++ []) (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)) res := by
@@ -1096,9 +1298,9 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
       ∃ st', OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id) (s.directChildren (some n.id))
         (iterStart (ctx.privateTransients s n.id) st₁) (.ok st') ∧ ∃ cst', res = .ok (.normal, cst') ∧
           st'.log.dropNames (ctx.privateTransients s n.id) = cst'.log.dropNames (tc.privateTransients body) := by
-  have hp : bindViews ctx (pre.ρ.bindIdx mp.params i) s (s.directChildren (some n.id))
+  have hp : bindViews ctx (pre.ρ.bindIdx mp.params i) s (s.viewOrder ctx (s.directChildren (some n.id)))
       (iterStart (ctx.privateTransients s n.id) st₁) = .ok (iterStart (ctx.privateTransients s n.id) st₁) :=
-    bindViews_eq_of h _ _
+    h n.id _ _
   have herr : ∀ e, NodeExec ctx (pre.ρ.bindIdx mp.params i) s nd (iterStart (ctx.privateTransients s n.id) st₁).forNode
       (.err e) → OrderedExec ctx (pre.ρ.bindIdx mp.params i) s (s.scopeNodes n.id) (s.directChildren (some n.id))
         (iterStart (ctx.privateTransients s n.id) st₁) (.err e) := by

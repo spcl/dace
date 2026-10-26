@@ -29,14 +29,17 @@ namespace Corr
 
 /-- The tree segment `cs` corresponds to state `s`. -/
 structure StateCorr (ctx : Ctx) (tc : TCtx) (s : State) (cs : List SNode) : Prop where
-  /-- No views: the prologue of the component binds nothing (`ViewNode`s are
-  not matched yet). -/
-  noViews : ∀ n, ctx.isView n = false
+  /-- Scope bodies bind no views (views inside map scopes are not matched
+  yet). -/
+  scopeViews : s.scopeViewsFree? ctx = true
   /-- The transients the state allocates are no streams (a fresh stream is
   empty, which the tree, allocating less, does not reproduce). -/
   noStreams : ∀ t ∈ ctx.stateTransients s, ctx.isStream t = false
+  /-- The single component's tree segment: its views (`ViewNode`s, the
+  prologue `bindViews`), then the image of its top-level nodes. -/
   comps : (s.components = [] ∧ cs = []) ∨
-    ∃ c o full, s.components = [c] ∧ SegCorr ctx tc s o cs ∧ s.isTopologicalOrder c full = true ∧
+    ∃ c o full ks vs seg, s.components = [c] ∧ s.viewKeys ctx (s.viewOrder ctx (s.topLevelOf c)) = some ks ∧ ViewsCorr ks vs ∧
+      cs = vs ++ seg ∧ SegCorr ctx tc s o seg ∧ s.isTopologicalOrder c full = true ∧
       full.filter (s.topLevelOf c).contains = o
 
 theorem unionAll_single (g : Log) : Log.unionAll [g] = g := by
@@ -63,8 +66,8 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
     (∃ e, e.isUB = true ∧ StateExec ctx cst s (.err e)) ∨
     (∃ e e', r = .err e ∧ StateExec ctx cst s (.err e')) ∨
     ∃ cst', STree.ListExec tc full gb {} rest cst' r ∧ StateExec ctx cst s (.ok (.normal, cst')) := by
-  have h := hsc.noViews
-  rcases hsc.comps with ⟨hc, rfl⟩ | ⟨c, o, ofull, hc, hseg, hto, hdir⟩
+  have h := State.scopeViewsFree?_sound hsc.scopeViews
+  rcases hsc.comps with ⟨hc, rfl⟩ | ⟨c, o, ofull, ks, vs, seg, hc, hks, hvs, rfl, hseg, hto, hdir⟩
   · -- no component: the state does nothing
     refine .inr (.inr ⟨cst, hx, ?_⟩)
     have := StateExec.run (ctx := ctx) (cst := cst) (s := s) (logs := []) (hc ▸ .nil)
@@ -74,12 +77,14 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
       have hu : Log.unionAll [] = Log.empty := rfl
       rw [hu, Log.apply_empty, Log.seq_empty]
     rwa [hf] at this
-  · let st₀ : St := { mem := cst.mem, log := cst.log }
-    have hrel : StRel st₀ cst := ⟨rfl, rfl, rfl⟩
-    let base : St := { mem := cst.mem }
+  · let base : St := { mem := cst.mem }
     let abase : St := { mem := ctx.allocate (ctx.stateTransients s) cst.mem }
-    have hst₀ : st₀ = { base with log := cst.log } := rfl
-    have hp : bindViews ctx cst.ρ s (s.topLevelOf c) base = .ok base := bindViews_eq_of h _ _
+    have hcst : cst.st = base.shift cst.log := St.withLog_eq_shift base cst.log
+    have hfold : ks.foldlM (viewStep ctx cst.ρ) cst.st = (ks.foldlM (viewStep ctx cst.ρ) base).map (St.shift cst.log) := by
+      rw [hcst]
+      exact List.foldlM_res_comm _ _ (fun b k => aliasTo_shift ctx cst.ρ cst.log b k.d k.base k.sub) _ _
+    have hpv : bindViews ctx cst.ρ s (s.viewOrder ctx (s.topLevelOf c)) base = ks.foldlM (viewStep ctx cst.ρ) base :=
+      bindViews_keys hks base
     -- the component run from the allocated memory simulates the one from the state's memory
     have hab : St.Sim 1 (fun _ => True) (fun _ => True) abase base :=
       ⟨Corr.allocate_left_one ctx (ctx.stateTransients s) hsc.noStreams, (Log.ren_one _).symm, rfl, Log.NamesP.true _⟩
@@ -105,9 +110,31 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
             simp only [stateFinish, hlog]
             rw [merge_eq_apply ctx.I.wcr cst.mem (by simp [Log.pairwiseFree]), unionAll_single]
           rwa [hf] at this
-    rcases SegCorr.matched h he hcons hw hseg hx hrel with ⟨e, hu, hs⟩ | ⟨e, e₀, hr, hs⟩ | ⟨cst', st', tr, hl, hs, hρ, hrel'⟩
-    · rw [hst₀] at hs
-      obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.log_iff cst.log).1 hs
+    rw [List.append_assoc] at hx
+    rcases views_run he hvs hx with ⟨e, rfl, hf⟩ | ⟨cst₁, hx₁, hf, hρ₁⟩
+    · -- a view binding fails
+      rw [hfold] at hf
+      cases hb : ks.foldlM (viewStep ctx cst.ρ) base with
+      | ok _ => rw [hb] at hf; cases hf
+      | err e' =>
+        rw [hb] at hf
+        cases hf
+        obtain ⟨e'', hx', hu'⟩ := (hstate (.prologueErr (hpv.trans hb))).1 _ rfl
+        rcases hu' with hu' | rfl
+        · exact .inl ⟨_, hu', hx'⟩
+        · exact .inr (.inl ⟨_, _, rfl, hx'⟩)
+    rw [hfold] at hf
+    cases hb : ks.foldlM (viewStep ctx cst.ρ) base with
+    | err _ => rw [hb] at hf; cases hf
+    | ok base₁ =>
+    rw [hb] at hf
+    simp only [Res.map, Res.ok.injEq] at hf
+    have hp : bindViews ctx cst.ρ s (s.viewOrder ctx (s.topLevelOf c)) base = .ok base₁ := hpv.trans hb
+    have hrel : StRel cst₁.st cst₁ := ⟨rfl, rfl, rfl⟩
+    have hst₁ : cst₁.st = base₁.shift cst.log := hf.symm
+    rcases SegCorr.matched h he hcons hw hseg hx₁ hrel with ⟨e, hu, hs⟩ | ⟨e, e₀, hr, hs⟩ | ⟨cst', st', tr, hl, hs, hρ, hrel'⟩
+    · rw [hst₁, hρ₁] at hs
+      obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.shift_iff cst.log).1 hs
       cases r₀ with
       | ok _ => cases he₀
       | err e' =>
@@ -117,8 +144,8 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
         rcases hu' with hu' | rfl
         · exact .inl ⟨_, hu', hx'⟩
         · exact .inl ⟨_, hu, hx'⟩
-    · rw [hst₀] at hs
-      obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.log_iff cst.log).1 hs
+    · rw [hst₁, hρ₁] at hs
+      obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.shift_iff cst.log).1 hs
       cases r₀ with
       | ok _ => cases he₀
       | err e' =>
@@ -128,8 +155,8 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
         rcases hu' with hu' | rfl
         · exact .inl ⟨_, hu', hx'⟩
         · exact .inr (.inl ⟨_, _, hr, hx'⟩)
-    · rw [hst₀] at hs
-      obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.log_iff cst.log).1 hs
+    · rw [hst₁, hρ₁] at hs
+      obtain ⟨r₀, hs₀, he₀⟩ := (SeqExec.shift_iff cst.log).1 hs
       cases r₀ with
       | err _ => cases he₀
       | ok p =>
@@ -163,7 +190,7 @@ theorem StateCorr.matched {s : State} {cs : List SNode} (hsc : StateCorr ctx tc 
             simp only [St.shift_mem, St.shift_log] at hm hlg
             simp only at hρ
             simp only [CSt.mk.injEq]
-            exact ⟨hρ.symm, by rw [← hm, hcoh], hlg⟩
+            exact ⟨(hρ.trans hρ₁).symm, by rw [← hm, hcoh], hlg⟩
           rwa [hcst] at this
 
 end State

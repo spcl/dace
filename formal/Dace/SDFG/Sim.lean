@@ -1704,6 +1704,21 @@ omit hS in
 theorem isViewDef_eq (ctx : Ctx) (e : DEdge) :
     ctx.isViewDef s e = State.isViewDefWith ctx.isView s e := rfl
 
+theorem viewOrder (ids : List NodeId) : s.viewOrder ctx₂ ids = s.viewOrder ctx₁ ids := by
+  unfold State.viewOrder
+  have : ids.filter (s.isViewNode ctx₂) = ids.filter (s.isViewNode ctx₁) := List.filter_congr fun id _ => by
+    unfold State.isViewNode
+    cases hn : s.node? id with
+    | none => rfl
+    | some n =>
+      simp only
+      cases hk : n.kind with
+      | access d =>
+        simp only [Ctx.isView,
+          (hS.data d (State.mem_dataNames_node (State.node?_mem hn) (by simp [DNode.dataNames, hk]))).desc]
+      | _ => rfl
+  rw [this]
+
 theorem isViewDef {e : DEdge} : ctx₂.isViewDef s e = ctx₁.isViewDef s e := by
   rw [isViewDef_eq, isViewDef_eq]
   refine State.isViewDefWith_congr fun d hd => ?_
@@ -3100,32 +3115,32 @@ theorem OrderedExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (
     OrderedExec ctx₁ ρ s all direct st₁ r₁ → ∀ st₂, St.Sim π P L st₂ st₁ →
       ∃ r₂, OrderedExec ctx₂ ρ s all direct st₂ r₂ ∧ ResSim (St.Sim π P L) r₂ r₁
   | .prologueErr hp, st₂, h => by
-    obtain ⟨e', h₂, hu⟩ := ResSim.err_inv (hp ▸ bindViews_sim hc ρ hS direct h)
-    exact ⟨_, .prologueErr h₂, ResSim.of_err hu⟩
+    obtain ⟨e', h₂, hu⟩ := ResSim.err_inv (hp ▸ bindViews_sim hc ρ hS (s.viewOrder ctx₁ direct) h)
+    exact ⟨_, .prologueErr (by rw [hS.viewOrder]; exact h₂), ResSim.of_err hu⟩
   | .seqErr ho hp hs, st₂, h => by
-    rcases ResSim.ok_cases (hp ▸ bindViews_sim hc ρ hS direct h) with ⟨e, h₂, hu⟩ | ⟨a₂, h₂, ha⟩
-    · exact ⟨_, .prologueErr h₂, ResSim.ub hu _⟩
+    rcases ResSim.ok_cases (hp ▸ bindViews_sim hc ρ hS (s.viewOrder ctx₁ direct) h) with ⟨e, h₂, hu⟩ | ⟨a₂, h₂, ha⟩
+    · exact ⟨_, .prologueErr (by rw [hS.viewOrder]; exact h₂), ResSim.ub hu _⟩
     · obtain ⟨r₂, hs₂, hr⟩ := SeqExec.sim hc hw hS hs _ ha
       obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
-      exact ⟨_, .seqErr ho h₂ hs₂, ResSim.of_err hu⟩
+      exact ⟨_, .seqErr ho (by rw [hS.viewOrder]; exact h₂) hs₂, ResSim.of_err hu⟩
   | .hbRace ho hp hs hf, st₂, h => by
-    rcases ResSim.ok_cases (hp ▸ bindViews_sim hc ρ hS direct h) with ⟨e, h₂, hu⟩ | ⟨a₂, h₂, ha⟩
-    · exact ⟨_, .prologueErr h₂, ResSim.ub hu _⟩
+    rcases ResSim.ok_cases (hp ▸ bindViews_sim hc ρ hS (s.viewOrder ctx₁ direct) h) with ⟨e, h₂, hu⟩ | ⟨a₂, h₂, ha⟩
+    · exact ⟨_, .prologueErr (by rw [hS.viewOrder]; exact h₂), ResSim.ub hu _⟩
     · obtain ⟨r₂, hs₂, hr⟩ := SeqExec.sim hc hw hS hs _ ha
       rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨⟨b₂, tr₂⟩, rfl, hb, htr⟩
-      · exact ⟨_, .seqErr ho h₂ hs₂, ResSim.ub hu _⟩
+      · exact ⟨_, .seqErr ho (by rw [hS.viewOrder]; exact h₂) hs₂, ResSim.ub hu _⟩
       · simp only at htr
         subst htr
-        exact ⟨_, .hbRace ho h₂ hs₂ (by rw [State.hbFree_ren]; exact hf), ResSim.ub rfl _⟩
+        exact ⟨_, .hbRace ho (by rw [hS.viewOrder]; exact h₂) hs₂ (by rw [State.hbFree_ren]; exact hf), ResSim.ub rfl _⟩
   | .run ho hp hs hf, st₂, h => by
-    rcases ResSim.ok_cases (hp ▸ bindViews_sim hc ρ hS direct h) with ⟨e, h₂, hu⟩ | ⟨a₂, h₂, ha⟩
-    · exact ⟨_, .prologueErr h₂, ResSim.ub hu _⟩
+    rcases ResSim.ok_cases (hp ▸ bindViews_sim hc ρ hS (s.viewOrder ctx₁ direct) h) with ⟨e, h₂, hu⟩ | ⟨a₂, h₂, ha⟩
+    · exact ⟨_, .prologueErr (by rw [hS.viewOrder]; exact h₂), ResSim.ub hu _⟩
     · obtain ⟨r₂, hs₂, hr⟩ := SeqExec.sim hc hw hS hs _ ha
       rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨⟨b₂, tr₂⟩, rfl, hb, htr⟩
-      · exact ⟨_, .seqErr ho h₂ hs₂, ResSim.ub hu _⟩
+      · exact ⟨_, .seqErr ho (by rw [hS.viewOrder]; exact h₂) hs₂, ResSim.ub hu _⟩
       · simp only at htr
         subst htr
-        exact ⟨_, .run ho h₂ hs₂ (by rw [State.hbFree_ren]; exact hf), ResSim.ok hb⟩
+        exact ⟨_, .run ho (by rw [hS.viewOrder]; exact h₂) hs₂ (by rw [State.hbFree_ren]; exact hf), ResSim.ok hb⟩
 
 theorem IterExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw : ∀ op v, ctx₁.I.wcr op .undef v = .undef)
     {ρ : Valuation} {s : State} (hS : SNames π P ctx₂ ctx₁ s) {entry : NodeId} {params : List Sym}

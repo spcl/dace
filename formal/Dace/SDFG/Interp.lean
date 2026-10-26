@@ -100,7 +100,7 @@ def execOrdered (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (all direc
   match fuel with
   | 0 => none
   | fuel + 1 =>
-    match bindViews ctx ρ s direct st with
+    match bindViews ctx ρ s (s.viewOrder ctx direct) st with
     | .err e => some (.err e)
     | .ok st₁ =>
       match s.topoOrder all with

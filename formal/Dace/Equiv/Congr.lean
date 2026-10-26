@@ -151,6 +151,9 @@ theorem Agree.nestedSetup (h : Agree ctx' ctx) : Dace.nestedSetup ctx' = Dace.ne
   h.leaf _ fun _ => rfl
 theorem Agree.bindViews (h : Agree ctx' ctx) : Dace.bindViews ctx' = Dace.bindViews ctx :=
   h.leaf _ fun _ => rfl
+theorem Agree.viewOrder (h : Agree ctx' ctx) (s : State) (ids : List NodeId) :
+    s.viewOrder ctx' ids = s.viewOrder ctx ids :=
+  h.leaf (fun c => s.viewOrder c ids) fun _ => rfl
 theorem Agree.stateFinish (h : Agree ctx' ctx) : Dace.stateFinish ctx' = Dace.stateFinish ctx :=
   h.leaf _ fun _ => rfl
 theorem Agree.trueEdges (h : Agree ctx' ctx) : Dace.trueEdges ctx' = Dace.trueEdges ctx :=
@@ -200,10 +203,10 @@ theorem SeqExec.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {ρ : Valuation} {s 
 theorem OrderedExec.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {ρ : Valuation} {s : State}
     {all direct : List NodeId} {st : St} {r : Res St} :
     OrderedExec ctx' ρ s all direct st r → OrderedExec ctx ρ s all direct st r
-  | .prologueErr hp => .prologueErr (by rw [← h.bindViews]; exact hp)
-  | .seqErr ho hp hs => .seqErr ho (by rw [← h.bindViews]; exact hp) (SeqExec.congr h hs)
-  | .hbRace ho hp hs hf => .hbRace ho (by rw [← h.bindViews]; exact hp) (SeqExec.congr h hs) hf
-  | .run ho hp hs hf => .run ho (by rw [← h.bindViews]; exact hp) (SeqExec.congr h hs) hf
+  | .prologueErr hp => .prologueErr (by rw [← h.bindViews, ← h.viewOrder]; exact hp)
+  | .seqErr ho hp hs => .seqErr ho (by rw [← h.bindViews, ← h.viewOrder]; exact hp) (SeqExec.congr h hs)
+  | .hbRace ho hp hs hf => .hbRace ho (by rw [← h.bindViews, ← h.viewOrder]; exact hp) (SeqExec.congr h hs) hf
+  | .run ho hp hs hf => .run ho (by rw [← h.bindViews, ← h.viewOrder]; exact hp) (SeqExec.congr h hs) hf
 
 theorem IterExec.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {ρ : Valuation} {s : State} {entry : NodeId}
     {params : List Sym} {priv : List Name} {pre : St} {pts : List Idx} {r : Res (List Log)} :

@@ -94,7 +94,7 @@ tree (`SNode.mentions`) lie inside the scope with children `cs`
 to one iteration/task. -/
 def privateTransients (tc : TCtx) (cs : List SNode) : List Name :=
   tc.tree.containers.filterMap fun (t, d) =>
-    if d.transient && d.lifetime = .scope && SNodes.countData t cs = tc.tree.countData t then
+    if d.transient && d.lifetime = .scope && 0 < SNodes.countData t cs && SNodes.countData t cs = tc.tree.countData t then
       some (tc.ctx.cname t)
     else none
 

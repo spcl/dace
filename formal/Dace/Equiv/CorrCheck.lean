@@ -588,21 +588,50 @@ end Sound
 
 /-! ## States, the chain and the program -/
 
+/-- Take the view nodes of the keys `ks` from the head of `cs` (`ViewsCorr`). -/
+def takeViews : List ViewKey → List SNode → Option (List SNode)
+  | [], cs => some cs
+  | k :: ks, .viewNode d base m sd vd :: cs =>
+    if d = k.d ∧ base = k.base ∧ m.data = k.base ∧ m.dataSubset = k.sub then takeViews ks cs else none
+  | _ :: _, _ => none
+
+theorem takeViews_sound : ∀ {ks : List ViewKey} {cs rest : List SNode}, takeViews ks cs = some rest →
+    ∃ vs, cs = vs ++ rest ∧ ViewsCorr ks vs
+  | [], cs, rest, h => by simp only [takeViews, Option.some.injEq] at h; subst h; exact ⟨[], rfl, .nil⟩
+  | k :: ks, c :: cs, rest, h => by
+    cases c with
+    | viewNode d base m sd vd =>
+      simp only [takeViews] at h
+      split at h
+      · rename_i hc
+        obtain ⟨rfl, rfl, hmd, hms⟩ := hc
+        obtain ⟨vs, rfl, hvs⟩ := takeViews_sound h
+        exact ⟨_ :: vs, rfl, .cons ⟨m, sd, vd, rfl, hmd, hms⟩ hvs⟩
+      · cases h
+    | _ => simp [takeViews] at h
+  | _ :: _, [], rest, h => by simp [takeViews] at h
+
 /-- Check one state against the head of the tree list; the rest of the list. -/
 def stateCheck (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool) (s : State) (cs : List SNode) :
     Except String (List SNode) :=
-  if ctx.noViews? = false then .error s!"state '{s.label}': views are not matched yet"
+  if s.scopeViewsFree? ctx = false then .error s!"state '{s.label}': views inside scopes are not matched yet"
   else if !(ctx.stateTransients s).all (fun t => !ctx.isStream t) then
     .error s!"state '{s.label}': allocates a transient stream"
   else
     match s.components with
     | [] => .ok cs
     | [c] =>
-      match matchSeg ctx tc nest s (2 * s.nodes.length + 2) (s.topLevelOf c) cs with
-      | some (o, full, rest) =>
-        if s.isTopologicalOrder c full = true ∧ full.filter (s.topLevelOf c).contains = o then .ok rest
-        else .error s!"state '{s.label}': the matched order is not topological"
-      | none => .error s!"state '{s.label}': no tree segment matches"
+      match s.viewKeys ctx (s.viewOrder ctx (s.topLevelOf c)) with
+      | none => .error s!"state '{s.label}': a view edge cannot be resolved"
+      | some ks =>
+        match takeViews ks cs with
+        | none => .error s!"state '{s.label}': the view nodes differ"
+        | some cs' =>
+          match matchSeg ctx tc nest s (2 * s.nodes.length + 2) (s.topLevelOf c) cs' with
+          | some (o, full, rest) =>
+            if s.isTopologicalOrder c full = true ∧ full.filter (s.topLevelOf c).contains = o then .ok rest
+            else .error s!"state '{s.label}': the matched order is not topological"
+          | none => .error s!"state '{s.label}': no tree segment matches"
     | _ => .error s!"state '{s.label}': several components"
 
 theorem stateCheck_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDFG → List SNode → Bool} {s : State} {cs rest : List SNode}
@@ -612,7 +641,7 @@ theorem stateCheck_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDF
   split at h
   · cases h
   · rename_i hp
-    have hpure : ∀ n, ctx.isView n = false := Ctx.noViews?_sound (by simpa using hp)
+    have hpure : s.scopeViewsFree? ctx = true := by simpa using hp
     split at h
     · cases h
     rename_i hns
@@ -624,14 +653,22 @@ theorem stateCheck_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDF
       exact ⟨[], rfl, hpure, hns', .inl ⟨hc, rfl⟩⟩
     · rename_i c hc
       split at h
-      · rename_i o full rest' hm
-        split at h
-        · rename_i hto
-          cases h
-          obtain ⟨pre, hpre, hseg⟩ := matchSeg_sound hnest _ _ _ _ _ _ hm
-          exact ⟨pre, hpre, hpure, hns', .inr ⟨c, o, full, hc, hseg, hto.1, hto.2⟩⟩
-        · cases h
       · cases h
+      · rename_i ks hks
+        split at h
+        · cases h
+        · rename_i cs' hv
+          obtain ⟨vs, rfl, hvs⟩ := takeViews_sound hv
+          split at h
+          · rename_i o full rest' hm
+            split at h
+            · rename_i hto
+              cases h
+              obtain ⟨pre, hpre, hseg⟩ := matchSeg_sound hnest _ _ _ _ _ _ hm
+              subst hpre
+              exact ⟨vs ++ pre, by simp, hpure, hns', .inr ⟨c, o, full, ks, vs, pre, hc, hks, hvs, rfl, hseg, hto.1, hto.2⟩⟩
+            · cases h
+          · cases h
     · cases h
 
 mutual
@@ -1177,10 +1214,11 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr ctx tc s 
 
 theorem StateCorr.withI {cs : List SNode} (h : StateCorr ctx tc s cs) :
     StateCorr { ctx with I := I₂ } (tc.withI I₂) s cs := by
-  refine ⟨h.noViews, h.noStreams, ?_⟩
-  rcases h.comps with h₁ | ⟨c, o, full, hc, hseg, hto, hdir⟩
+  refine ⟨h.scopeViews, h.noStreams, ?_⟩
+  rcases h.comps with h₁ | ⟨c, o, full, ks, vs, seg, hc, hks, hvs, hcs, hseg, hto, hdir⟩
   · exact .inl h₁
-  · exact .inr ⟨c, o, full, hc, SegCorr.withI I₂ hseg, hto, hdir⟩
+  · exact .inr ⟨c, o, full, ks, vs, seg, hc, by rw [State.viewKeys_withI]; exact hks, hvs, hcs,
+      SegCorr.withI I₂ hseg, hto, hdir⟩
 
 mutual
 

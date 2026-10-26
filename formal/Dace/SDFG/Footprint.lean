@@ -1156,7 +1156,7 @@ theorem OrderedExec.fp_step {ρ : Valuation} {s : State} {all direct : List Node
     have h₂ := (SeqExec.fp_step hs rfl
       (hinc.of_sub fun x hx => by simpa using (List.mem_filter.1 hx).2)).1
     cases hr
-    exact (bindViews_step hp hinc).trans h₂
+    exact (bindViews_step hp (hinc.of_sub fun x hx => State.viewOrder_sub hx)).trans h₂
 
 /-- **Footprint of the iterations of a map** (`IterDen.footprint`): the log
 of every iteration (private transients dropped) is within the footprint of

@@ -147,24 +147,24 @@ its nodes that the state leaves unordered have conflicting deltas
 (`State.hbFree`); otherwise it is a race (`Decisions.md#D61`). -/
 inductive OrderedExec : Ctx → Valuation → State → List NodeId → List NodeId → St → Res St → Prop where
   | prologueErr {ctx : Ctx} {ρ : Valuation} {s : State} {all direct : List NodeId} {st : St} {e : ErrReason}
-      (hp : bindViews ctx ρ s direct st = .err e) :
+      (hp : bindViews ctx ρ s (s.viewOrder ctx direct) st = .err e) :
       OrderedExec ctx ρ s all direct st (.err e)
   | seqErr {ctx : Ctx} {ρ : Valuation} {s : State} {all direct order : List NodeId} {st st₁ : St} {e : ErrReason}
       (ho : s.isTopologicalOrder all order = true)
-      (hp : bindViews ctx ρ s direct st = .ok st₁)
+      (hp : bindViews ctx ρ s (s.viewOrder ctx direct) st = .ok st₁)
       (hs : SeqExec ctx ρ s (order.filter direct.contains) st₁ (.err e)) :
       OrderedExec ctx ρ s all direct st (.err e)
   | hbRace {ctx : Ctx} {ρ : Valuation} {s : State} {all direct order : List NodeId} {st st₁ st₂ : St}
       {tr : List (NodeId × Log)}
       (ho : s.isTopologicalOrder all order = true)
-      (hp : bindViews ctx ρ s direct st = .ok st₁)
+      (hp : bindViews ctx ρ s (s.viewOrder ctx direct) st = .ok st₁)
       (hs : SeqExec ctx ρ s (order.filter direct.contains) st₁ (.ok (st₂, tr)))
       (hf : s.hbFree tr = false) :
       OrderedExec ctx ρ s all direct st (.err (.race (s.hbWitness tr)))
   | run {ctx : Ctx} {ρ : Valuation} {s : State} {all direct order : List NodeId} {st st₁ st₂ : St}
       {tr : List (NodeId × Log)}
       (ho : s.isTopologicalOrder all order = true)
-      (hp : bindViews ctx ρ s direct st = .ok st₁)
+      (hp : bindViews ctx ρ s (s.viewOrder ctx direct) st = .ok st₁)
       (hs : SeqExec ctx ρ s (order.filter direct.contains) st₁ (.ok (st₂, tr)))
       (hf : s.hbFree tr = true) :
       OrderedExec ctx ρ s all direct st (.ok st₂)

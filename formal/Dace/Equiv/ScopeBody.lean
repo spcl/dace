@@ -745,7 +745,64 @@ theorem bindViews {ρ : Valuation} {ids : List NodeId}
       rw [bindView_eq, bindView_eq, hF.view n hmem d hk]
     · rfl
 
+theorem viewedData {id : NodeId} (h : id ∉ s.scopeNodes M) (h' : id ∉ s'.scopeNodes M)
+    (hv : s.isViewNode ctx id = true) :
+    (s'.node? id).bind s'.viewedData? = (s.node? id).bind s.viewedData? := by
+  rw [hF.node? h h']
+  unfold State.isViewNode at hv
+  cases hn : s.node? id with
+  | none => rfl
+  | some n =>
+    rw [hn] at hv
+    simp only [Option.bind_some]
+    cases hk : n.kind with
+    | access d =>
+      have hmem : n ∈ s.outerNodes (s.scopeNodes M) := hF.mem_outer (by rw [hF.node? h h']; exact hn) h'
+      have := hF.view n hmem d hk
+      unfold State.viewBase? at this
+      unfold State.viewedData?
+      cases he' : s'.viewEdge? n <;> cases he : s.viewEdge? n <;> rw [he', he] at this <;> simp at this ⊢
+      · rename_i p' p
+        obtain ⟨e', i'⟩ := p'
+        obtain ⟨e, i⟩ := p
+        simp only at this ⊢
+        exact this.1
+    | _ => simp [hk] at hv
+
+theorem viewGens_congr (f : Nat) (pending : List NodeId)
+    (h : ∀ id ∈ pending, id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M ∧ s.isViewNode ctx id = true) :
+    s'.viewGens f pending = s.viewGens f pending :=
+  viewGensWith_congr f pending fun id hid =>
+    ⟨by rw [hF.node? (h id hid).1 (h id hid).2.1], hF.viewedData (h id hid).1 (h id hid).2.1 (h id hid).2.2⟩
+
+theorem viewOrder {ids : List NodeId} (hids : ∀ id ∈ ids, id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M) :
+    s'.viewOrder ctx ids = s.viewOrder ctx ids := by
+  unfold State.viewOrder
+  have hf : ids.filter (s'.isViewNode ctx) = ids.filter (s.isViewNode ctx) := List.filter_congr fun id hid => by
+    unfold State.isViewNode
+    rw [hF.node? (hids id hid).1 (hids id hid).2]
+  simp only
+  rw [hf]
+  exact hF.viewGens_congr _ _ fun id hid => by
+    have hm := List.mem_filter.1 hid
+    exact ⟨(hids id hm.1).1, (hids id hm.1).2, hm.2⟩
+
 end OuterFacts
+
+theorem State.viewOrder_viewFree {ctx : Ctx} {s : State} {ids : List NodeId} (h : ViewFree ctx s ids) :
+    s.viewOrder ctx ids = [] := by
+  unfold State.viewOrder
+  have : ids.filter (s.isViewNode ctx) = [] := List.filter_eq_nil_iff.2 fun id hid => by
+    unfold State.isViewNode
+    cases hn : s.node? id with
+    | none => simp
+    | some n =>
+      cases hk : n.kind with
+      | access d => simp [hk, h id hid n hn d hk]
+      | _ => simp [hk]
+  simp only
+  rw [this]
+  rfl
 
 /-! ## Relations and helpers -/
 
@@ -948,14 +1005,17 @@ theorem topPerm {l' l : List NodeId} (h : l' = l ∨ l'.Perm l ∧ ViewFree ctx 
 
 theorem topViews {l' l : List NodeId} (h : l' = l ∨ l'.Perm l ∧ ViewFree ctx s l)
     (hout : ∀ id ∈ l, id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M) (ρ : Valuation) (st : St) :
-    Dace.bindViews ctx ρ s' l' st = Dace.bindViews ctx ρ s l st := by
+    Dace.bindViews ctx ρ s' (s'.viewOrder ctx l') st = Dace.bindViews ctx ρ s (s.viewOrder ctx l) st := by
   rcases h with rfl | ⟨hp, hv⟩
-  · exact hF.bindViews hout st
-  · rw [bindViews_viewFree hv, bindViews_viewFree]
-    intro id hid n hn d hk
-    have hid' := hp.mem_iff.1 hid
-    obtain ⟨h₁, h₂⟩ := hout id hid'
-    exact hv id hid' n ((hF.node? h₁ h₂).symm.trans hn) d hk
+  · rw [hF.viewOrder hout]
+    exact hF.bindViews (fun id hid => hout id (State.viewOrder_sub hid)) st
+  · have hv' : ViewFree ctx s' l' := by
+      intro id hid n hn d hk
+      have hid' := hp.mem_iff.1 hid
+      obtain ⟨h₁, h₂⟩ := hout id hid'
+      exact hv id hid' n ((hF.node? h₁ h₂).symm.trans hn) d hk
+    rw [State.viewOrder_viewFree hv, State.viewOrder_viewFree hv']
+    rfl
 
 end OuterFacts
 
@@ -1079,7 +1139,7 @@ theorem SeqExec.matchedB {ρ : Valuation} {ids : List NodeId} {st : St} {r' : Re
 theorem OrderedExec.matchedB {ρ : Valuation} {all' direct' : List NodeId} {st : St} {r' : Res St} :
     OrderedExec ctx ρ s' all' direct' st r' → ∀ all direct,
       ScopeCorr (s'.scopeNodes M) (s.scopeNodes M) M all' all → direct'.Perm direct →
-      bindViews ctx ρ s' direct' st = bindViews ctx ρ s direct st →
+      bindViews ctx ρ s' (s'.viewOrder ctx direct') st = bindViews ctx ρ s (s.viewOrder ctx direct) st →
       (∀ id ∈ direct, id ∉ s.scopeNodes M ∧ id ∉ s'.scopeNodes M) →
       MatchedE St.RelV (OrderedExec ctx ρ s all direct st) r'
   | .prologueErr hp, _, _, _, _, hbv, _ => MatchedE.of_rel (.prologueErr (hbv ▸ hp)) rfl
@@ -1129,17 +1189,20 @@ theorem IterExec.matchedB {ρ : Valuation} {P : NodeId} {params : List Sym} {pri
       MatchedE (List.Forall₂ Log.Le) (IterExec ctx ρ s P params priv pre pts) r'
   | .nil, _, _, _ => MatchedE.of_rel .nil List.Forall₂.nil
   | .headErr hb, hc, hdir, ho => by
-    have h₁ := OrderedExec.matchedB hb _ _ hc (by rw [hdir]) (by rw [hdir]; exact hF.bindViews ho _) ho
+    have h₁ := OrderedExec.matchedB hb _ _ hc (by rw [hdir])
+      (by rw [hdir, hF.viewOrder ho]; exact hF.bindViews (fun id hid => ho id (State.viewOrder_sub hid)) _) ho
     obtain ⟨e₀, hr, hbl⟩ := h₁.err_cases
     exact ⟨_, .headErr hr, hbl _⟩
   | .tailErr hb hr, hc, hdir, ho => by
-    have h₁ := OrderedExec.matchedB hb _ _ hc (by rw [hdir]) (by rw [hdir]; exact hF.bindViews ho _) ho
+    have h₁ := OrderedExec.matchedB hb _ _ hc (by rw [hdir])
+      (by rw [hdir, hF.viewOrder ho]; exact hF.bindViews (fun id hid => ho id (State.viewOrder_sub hid)) _) ho
     rcases h₁.ok_cases with ⟨e, he, hx⟩ | ⟨a, hx, -⟩
     · exact MatchedE.of_ub (.headErr hx) he
     · obtain ⟨e₀, hr₀, hb₀⟩ := MatchedE.err_cases (IterExec.matchedB hr hc hdir ho)
       exact ⟨_, .tailErr hx hr₀, hb₀ _⟩
   | .cons hb hr, hc, hdir, ho => by
-    have h₁ := OrderedExec.matchedB hb _ _ hc (by rw [hdir]) (by rw [hdir]; exact hF.bindViews ho _) ho
+    have h₁ := OrderedExec.matchedB hb _ _ hc (by rw [hdir])
+      (by rw [hdir, hF.viewOrder ho]; exact hF.bindViews (fun id hid => ho id (State.viewOrder_sub hid)) _) ho
     rcases h₁.ok_cases with ⟨e, he, hx⟩ | ⟨a, hx, ha⟩
     · exact MatchedE.of_ub (.headErr hx) he
     · rcases MatchedE.ok_cases (IterExec.matchedB hr hc hdir ho) with ⟨e, he, hx'⟩ | ⟨logs, hx', hl⟩
