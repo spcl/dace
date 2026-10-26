@@ -48,6 +48,11 @@ class MapExpansion(pm.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
 
+    @staticmethod
+    def annotates_memlets():
+        # ``apply`` propagates the expanded scope itself; the union an outer memlet holds is unchanged
+        return True
+
     def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
         # A candidate subgraph matches the map-expansion pattern when it
         # includes an N-dimensional map, with N greater than one.

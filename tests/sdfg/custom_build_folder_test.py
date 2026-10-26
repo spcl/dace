@@ -170,8 +170,9 @@ class OneRankOfAJob:
             self.broadcast = value
         return self.broadcast
 
-    def Barrier(self):
-        pass
+    def allgather(self, value) -> list:
+        # The other ranks take their turn later, so only this rank's own outcome is known; they count as succeeded.
+        return [value if r == self.rank else None for r in range(self.rank + 1)]
 
     @property
     def folder(self):
@@ -188,17 +189,18 @@ def test_distributed_compile_puts_every_rank_in_rank_0_folder(unlaunched, tmp_pa
         unlaunched.setenv("OMPI_COMM_WORLD_RANK", "0")
         builder = OneRankOfAJob(0)
         csdfg = sdfg_utils.distributed_compile(customprog.to_sdfg(), builder)
+        rank0_folder, _, _ = builder.broadcast
         del csdfg  # Close the library, so the loading rank below opens it fresh
 
         unlaunched.setenv("OMPI_COMM_WORLD_RANK", "1")
         loader = OneRankOfAJob(1)
         loader.broadcast = builder.broadcast
         sdfg = customprog.to_sdfg()
-        assert sdfg.build_folder != builder.folder, "rank 1 was looking in rank 0's folder regardless"
+        assert sdfg.build_folder != rank0_folder, "rank 1 was looking in rank 0's folder regardless"
 
         csdfg = sdfg_utils.distributed_compile(sdfg, loader)
 
-        assert sdfg.build_folder == builder.folder
+        assert sdfg.build_folder == rank0_folder
         del csdfg
 
         # A rank that only loads is free to hold no SDFG at all, as tests/library/mpi does.
@@ -213,17 +215,34 @@ def test_distributed_compile_reraises_rank_0_failure_on_every_rank(unlaunched, t
     class FailsToCompile:
         build_folder = str(tmp_path)
 
+        def hash_sdfg(self) -> str:
+            return "fails_to_compile"
+
         def compile(self, validate: bool = True):
             raise ValueError("deliberate build failure")
 
     builder = OneRankOfAJob(0)
-    with pytest.raises(RuntimeError, match="deliberate build failure"):
+    with pytest.raises(ValueError, match="deliberate build failure"):  # rank 0 raises its own error
         sdfg_utils.distributed_compile(FailsToCompile(), builder)
 
     loader = OneRankOfAJob(1)
     loader.broadcast = builder.broadcast
     with pytest.raises(RuntimeError, match="deliberate build failure"):
         sdfg_utils.distributed_compile(None, loader)
+
+
+def test_distributed_compile_broadcasts_a_hashing_failure(monkeypatch):
+    """Rank 0 failing to hash its SDFG still broadcasts the failure, so the other ranks do not wait forever."""
+
+    def fail():
+        raise RuntimeError("cannot hash")
+
+    sdfg = dace.SDFG("unhashable")
+    monkeypatch.setattr(sdfg, "hash_sdfg", fail)
+    builder = OneRankOfAJob(0)
+    with pytest.raises(RuntimeError, match="cannot hash"):
+        sdfg_utils.distributed_compile(sdfg, builder)
+    assert builder.broadcast == (None, None, "RuntimeError: cannot hash")
 
 
 if __name__ == "__main__":

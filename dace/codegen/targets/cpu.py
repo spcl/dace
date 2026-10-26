@@ -134,8 +134,6 @@ class CPUCodeGen(TargetCodeGenerator):
         self.calling_codegen = self
         # Containers the calling code generator passes to nested SDFGs in addition to their connectors
         self.extra_nsdfg_args = []
-        # Nested SDFG -> the symbols its header and call pass; see nsdfg_argument_symbols
-        self.nsdfg_argument_symbol_cache: dict[SDFG, frozenset[str]] = {}
         dispatcher = self._dispatcher
 
         self._locals = cppunparse.CPPLocals()
@@ -1638,6 +1636,9 @@ class CPUCodeGen(TargetCodeGenerator):
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
 
+    #: ``generate_node`` dispatches on the exact class name; an AI-generated tasklet is generated as a tasklet
+    _generate_AITasklet = _generate_Tasklet
+
     def unparse_tasklet(
         self, sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth, toplevel_schedule
     ):
@@ -1708,7 +1709,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments += [
             f"{atype} {restrict} {aname}" for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
-        fsyms = self.nsdfg_argument_symbols(node.sdfg)
+        fsyms = self._frame.free_symbols(node.sdfg, keep_defined_in_mapping=True)
         arguments += [
             f"{node.sdfg.symbols[aname].as_arg(aname)}"
             for aname in sorted(node.symbol_mapping.keys())
@@ -1717,20 +1718,11 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments = ", ".join(arguments)
         return f"void {sdfg_label}({arguments}) {{"
 
-    def nsdfg_argument_symbols(self, nsdfg: SDFG) -> frozenset[str]:
-        """The symbols a nested SDFG's function takes, walked once per nest: its header and its call both ask, and
-        emission does not change the SDFG."""
-        cached = self.nsdfg_argument_symbol_cache.get(nsdfg)
-        if cached is None:
-            cached = frozenset(nsdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True))
-            self.nsdfg_argument_symbol_cache[nsdfg] = cached
-        return cached
-
     def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label, state_struct=True):
         prepend = []
         if state_struct:
             prepend = ["__state"]
-        fsyms = self.nsdfg_argument_symbols(node.sdfg)
+        fsyms = self._frame.free_symbols(node.sdfg, keep_defined_in_mapping=True)
         args = ", ".join(
             prepend
             + [argval for _, _, argval in memlet_references]

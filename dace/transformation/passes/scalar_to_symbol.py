@@ -288,8 +288,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # Filter out non-integral symbols that do not appear in inter-state edges
     interstate_symbols = set()
+    interstate_assigned = set()
     for edge in sdfg.all_interstate_edges():
         interstate_symbols |= edge.data.free_symbols
+        interstate_assigned |= edge.data.assignments.keys()
     for reg in sdfg.all_control_flow_regions():
         interstate_symbols |= reg.used_symbols(all_symbols=True, with_contents=False)
     for candidate in candidates - interstate_symbols:
@@ -298,6 +300,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # Only keep candidates that were found in SDFG
     candidates &= candidates_seen | interstate_symbols
+    # A transient that nothing writes has no value to promote: promoting it would add an undefined free symbol
+    candidates -= {
+        c for c in candidates if sdfg.arrays[c].transient and c not in candidates_seen and c not in interstate_assigned
+    }
 
     # A promotable TRANSIENT must have a definition: a data write in some state (``candidates_seen``)
     # or an existing inter-state assignment. A never-written transient that only appears in

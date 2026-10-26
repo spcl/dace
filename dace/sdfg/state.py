@@ -751,6 +751,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         sdfg = state.sdfg
         new_symbols = set()
         freesyms = set()
+        # Containers whose descriptor symbols were added: access nodes of one container share its descriptor
+        described = set()
 
         # Free symbols from nodes
         for n in self.nodes():
@@ -758,7 +760,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 new_symbols |= n.new_symbol_names(sdfg, self)
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
-                freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
+                if n.data not in described:
+                    described.add(n.data)
+                    freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
             elif isinstance(n, nd.Tasklet):
                 if n.language == dtypes.Language.Python:
                     # Consider callbacks defined as symbols as free
@@ -1626,7 +1630,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     else:
                         authority_by_node[child] = authority
 
-            _open_scope(None, dict(self.sdfg.symbols))
+            _open_scope(None, self.sdfg.symbols)  # read-only: a copy per state is quadratic in large SDFGs
         except (RuntimeError, ValueError, KeyError):
             authority_by_node = {}
 
@@ -1855,8 +1859,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         symbols = collections.OrderedDict(self.symbols_defined_at_state() if state_symbols is None else state_symbols)
 
-        # Find scopes this node is situated in
-        sdict = self.scope_dict()
+        # Find scopes this node is situated in. The cached scope dict is read in place: ``scope_dict()`` copies it
+        sdict = self._scope_dict_toparent_cached
+        if sdict is None:
+            sdict = self.scope_dict()
         scope_list = []
         curnode = node
         while sdict[curnode] is not None:
@@ -2022,6 +2028,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             symbol_mapping = dict(symbol_mapping or {})
             for fs in sdfg.free_symbols:
                 symbol_mapping.setdefault(fs, fs)
+            # A declared symbol a constant pins (``specialize``) is not free, but still the parent's symbol
+            for cst in sdfg.symbols.keys() & sdfg.constants_prop.keys():
+                symbol_mapping.setdefault(cst, cst)
             s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
@@ -2536,7 +2545,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     break
             else:
                 other_outgoing = False
-                edge.src.remove_out_connector(edge.src_conn)
+                if edge.src_conn is not None:
+                    edge.src.remove_out_connector(edge.src_conn)
 
             # Check if there are any other edges entering the destination node
             # that use the same connector
@@ -2546,7 +2556,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     break
             else:
                 other_incoming = False
-                edge.dst.remove_in_connector(edge.dst_conn)
+                if edge.dst_conn is not None:
+                    edge.dst.remove_in_connector(edge.dst_conn)
 
             if isinstance(edge.src, nd.EntryNode):
                 # If removing this edge orphans the entry node, replace the
@@ -2790,9 +2801,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if node not in self.nodes():
             raise ValueError(f"Node {node} is not in this state")
 
-        # Check that implementation exists
-        if implementation not in node.implementations:
-            raise KeyError(f"Unknown implementation for node {type(node).__name__}: {implementation}")
+        # Check that implementation exists ('ai' is reserved, and resolved by expand itself)
+        if implementation not in node.available_implementations():
+            raise KeyError(
+                f"Unknown implementation for node {type(node).__name__}: {implementation}. "
+                f"Available implementations: {', '.join(sorted(node.available_implementations()))}"
+            )
 
         # Use the new expand interface
         return node.expand(self, implementation, **expansion_kwargs)
@@ -2807,17 +2821,22 @@ class SymbolResolver:
 
     The reuse is per state on purpose: what a state sees depends on the control flow regions
     around it and on the inter-state edges that lead to it. Its expensive part, the walk over the
-    data descriptors, is genuinely per SDFG and is reused as such. Only the state asked about last is
-    kept per SDFG: one entry per state costs gigabytes on large SDFGs. A resolver is only valid while
-    the symbols, data descriptors, control flow regions and inter-state edges stay unchanged.
+    data descriptors, is genuinely per SDFG and is reused as such. Only the state and the scope
+    asked about last are kept, one per SDFG: callers resolve the nodes of one state and one scope
+    together, and a copy of every symbol for every state of a large SDFG costs gigabytes. A resolver
+    is only valid while the symbols, data descriptors, control flow regions, inter-state edges and
+    scopes stay unchanged.
     """
 
     def __init__(self) -> None:
         self._per_sdfg: dict[SDFG, dict[str, dtypes.typeclass]] = {}
+        #: Per SDFG, the state resolved last and the symbols every node of it sees.
         self._per_state: dict[SDFG, tuple[SDFGState, dict[str, dtypes.typeclass]]] = {}
         self._region_updates: dict[
             tuple[ControlFlowBlock, ControlFlowBlock | None], list[dict[str, dtypes.typeclass]]
         ] = {}
+        #: Per SDFG, the scope resolved last and the symbols every node directly inside it sees.
+        self._per_scope: dict[SDFG, tuple[SDFGState, nd.EntryNode, dict[str, dtypes.typeclass]]] = {}
 
     def defined_at(self, state: "SDFGState", node: nd.Node) -> dict[str, dtypes.typeclass]:
         last = self._per_state.get(state.sdfg)
@@ -2831,7 +2850,20 @@ class SymbolResolver:
                 sdfg_symbols=sdfg_symbols, region_updates=self._region_updates
             )
             self._per_state[state.sdfg] = (state, state_symbols)
-        return state.symbols_defined_at(node, state_symbols=state_symbols)
+        # What a node sees depends only on its innermost scope. The cached scope dict is read in place:
+        # ``scope_dict()`` copies it per call.
+        sdict = state._scope_dict_toparent_cached
+        scope = (state.scope_dict() if sdict is None else sdict).get(node)
+        if scope is None:
+            return state.symbols_defined_at(node, state_symbols=state_symbols)
+        last = self._per_scope.get(state.sdfg)
+        if last is None or last[0] is not state or last[1] is not scope:
+            last = self._per_scope[state.sdfg] = (
+                state,
+                scope,
+                state.symbols_defined_at(node, state_symbols=state_symbols),
+            )
+        return collections.OrderedDict(last[2])
 
     def forget(self, sdfg: "SDFG") -> None:
         """Drops what was resolved for the states of an SDFG, after its symbols or data descriptors changed.
@@ -2841,6 +2873,7 @@ class SymbolResolver:
         if self._per_sdfg.pop(sdfg, None) is None:
             return
         self._per_state.pop(sdfg, None)
+        self._per_scope.pop(sdfg, None)
 
 
 @make_properties
@@ -4509,7 +4542,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 if full_cond_expression is None:
                     full_cond_expression = condition.code[0]
                 else:
-                    full_cond_expression = astutils.and_expr(full_cond_expression, condition.code[0])
+                    full_cond_expression = astutils.or_expr(full_cond_expression, condition.code[0])
                 parent.add_node(region)
                 parent.add_edge(guard_state, region, InterstateEdge(condition=condition))
                 parent.add_edge(region, end_state, InterstateEdge())
