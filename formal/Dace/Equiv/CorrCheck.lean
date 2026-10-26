@@ -354,6 +354,46 @@ theorem nestedCall_sound {ctx : Ctx} {tc : TCtx} {nest : Equiv.Perm Name → SDF
 and the rest of the tree list. -/
 abbrev MatchRes := List NodeId × List NodeId × List SNode
 
+/-- `SubCorr`, decided. -/
+def subCorr? (ctx : Ctx) (base : Name) (tsub ssub : Option Subset) : Bool :=
+  if tsub = ssub then true
+  else
+    match tsub, ctx.desc? base with
+    | none, some dd => decide (ssub = some (.range dd.fullRange))
+    | _, _ => false
+
+theorem subCorr?_sound {ctx : Ctx} {base : Name} {tsub ssub : Option Subset} (h : subCorr? ctx base tsub ssub = true) :
+    SubCorr ctx base tsub ssub := by
+  unfold subCorr? at h
+  by_cases heq : tsub = ssub
+  · exact .inl heq
+  · rw [if_neg heq] at h
+    cases tsub with
+    | some _ => simp at h
+    | none =>
+      cases hd : ctx.desc? base with
+      | none => rw [hd] at h; cases h
+      | some dd => rw [hd] at h; exact .inr ⟨rfl, dd, hd, of_decide_eq_true h⟩
+
+/-- `KeyCorr` pointwise, decided. -/
+def keysCorr? (ctx : Ctx) : List CopyKey → List CopyKey → Bool
+  | [], [] => true
+  | kT :: ksT, kS :: ksS =>
+    (kT.dst = kS.dst ∧ kT.src = kS.src ∧ kT.wcr = kS.wcr ∧ kT.oob = kS.oob ∧
+      subCorr? ctx kS.src kT.ssub kS.ssub = true ∧ subCorr? ctx kS.dst kT.dsub kS.dsub = true) &&
+      keysCorr? ctx ksT ksS
+  | _, _ => false
+
+theorem keysCorr?_sound {ctx : Ctx} : ∀ {ksT ksS : List CopyKey}, keysCorr? ctx ksT ksS = true →
+    List.Forall₂ (KeyCorr ctx) ksT ksS
+  | [], [], _ => .nil
+  | _ :: _, _ :: _, h => by
+    simp only [keysCorr?, Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨⟨h1, h2, h3, h4, h5, h6⟩, hr⟩ := h
+    exact .cons ⟨h1, h2, h3, h4, subCorr?_sound h5, subCorr?_sound h6⟩ (keysCorr?_sound hr)
+  | [], _ :: _, h => by simp [keysCorr?] at h
+  | _ :: _, [], h => by simp [keysCorr?] at h
+
 section Check
 
 variable (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List SNode → Bool) (s : State)
@@ -367,7 +407,9 @@ def matchOne (rec : TCtx → (Equiv.Perm Name → SDFG → List SNode → Bool) 
   | .access _ | .mapExit | .consumeExit =>
     if s.copyShape? ctx n = true then
       match takeCopies (s.copiesInto ctx n).length cs with
-      | some (ps, rest) => if ps.map (fun p => tc.copyKey p.1 p.2) = s.copiesInto ctx n then some ([], rest) else none
+      | some (ps, rest) =>
+        if keysCorr? ctx (ps.map (fun p => tc.copyKey p.1 p.2)) (s.copiesInto ctx n) = true then some ([], rest)
+        else none
       | none => none
     else none
   | .tasklet t =>
@@ -486,7 +528,7 @@ theorem matchOne_sound
           simp only [Option.some.injEq, Prod.mk.injEq] at hm
           obtain ⟨-, rfl⟩ := hm
           refine ⟨ps.map (fun p => SNode.copyNode p.1 p.2), takeCopies_sound htk, fun id o tail hn ht => ?_⟩
-          exact .copies hn (by simp [DNode.isCopyTarget, hk]) (State.copyShape?_sound hsh) hks.symm ht
+          exact .copies hn (by simp [DNode.isCopyTarget, hk]) (State.copyShape?_sound hsh) (keysCorr?_sound hks) ht
         · cases hm
       · cases hm
     · cases hm
@@ -500,7 +542,7 @@ theorem matchOne_sound
           simp only [Option.some.injEq, Prod.mk.injEq] at hm
           obtain ⟨-, rfl⟩ := hm
           refine ⟨ps.map (fun p => SNode.copyNode p.1 p.2), takeCopies_sound htk, fun id o tail hn ht => ?_⟩
-          exact .copies hn (by simp [DNode.isCopyTarget, hk]) (State.copyShape?_sound hsh) hks.symm ht
+          exact .copies hn (by simp [DNode.isCopyTarget, hk]) (State.copyShape?_sound hsh) (keysCorr?_sound hks) ht
         · cases hm
       · cases hm
     · cases hm
@@ -514,7 +556,7 @@ theorem matchOne_sound
           simp only [Option.some.injEq, Prod.mk.injEq] at hm
           obtain ⟨-, rfl⟩ := hm
           refine ⟨ps.map (fun p => SNode.copyNode p.1 p.2), takeCopies_sound htk, fun id o tail hn ht => ?_⟩
-          exact .copies hn (by simp [DNode.isCopyTarget, hk]) (State.copyShape?_sound hsh) hks.symm ht
+          exact .copies hn (by simp [DNode.isCopyTarget, hk]) (State.copyShape?_sound hsh) (keysCorr?_sound hks) ht
         · cases hm
       · cases hm
     · cases hm
@@ -656,14 +698,16 @@ theorem matchSeg_sound {ctx : Ctx} {s : State} : ∀ (fuel : Nat) {tc : TCtx}
 /-! ## States, the chain and the program -/
 
 /-- Take the view nodes of the keys `ks` from the head of `cs` (`ViewsCorr`). -/
-def takeViews : List ViewKey → List SNode → Option (List SNode)
+def takeViews (ctx : Ctx) : List ViewKey → List SNode → Option (List SNode)
   | [], cs => some cs
   | k :: ks, .viewNode d base m sd vd :: cs =>
-    if d = k.d ∧ base = k.base ∧ m.data = k.base ∧ m.dataSubset = k.sub then takeViews ks cs else none
+    if d = k.d ∧ base = k.base ∧ m.data = k.base ∧ subCorr? ctx k.base m.dataSubset k.sub = true then
+      takeViews ctx ks cs
+    else none
   | _ :: _, _ => none
 
-theorem takeViews_sound : ∀ {ks : List ViewKey} {cs rest : List SNode}, takeViews ks cs = some rest →
-    ∃ vs, cs = vs ++ rest ∧ ViewsCorr ks vs
+theorem takeViews_sound {ctx : Ctx} : ∀ {ks : List ViewKey} {cs rest : List SNode}, takeViews ctx ks cs = some rest →
+    ∃ vs, cs = vs ++ rest ∧ ViewsCorr ctx ks vs
   | [], cs, rest, h => by simp only [takeViews, Option.some.injEq] at h; subst h; exact ⟨[], rfl, .nil⟩
   | k :: ks, c :: cs, rest, h => by
     cases c with
@@ -673,7 +717,7 @@ theorem takeViews_sound : ∀ {ks : List ViewKey} {cs rest : List SNode}, takeVi
       · rename_i hc
         obtain ⟨rfl, rfl, hmd, hms⟩ := hc
         obtain ⟨vs, rfl, hvs⟩ := takeViews_sound h
-        exact ⟨_ :: vs, rfl, .cons ⟨m, sd, vd, rfl, hmd, hms⟩ hvs⟩
+        exact ⟨_ :: vs, rfl, .cons ⟨m, sd, vd, rfl, hmd, subCorr?_sound hms⟩ hvs⟩
       · cases h
     | _ => simp [takeViews] at h
   | _ :: _, [], rest, h => by simp [takeViews] at h
@@ -691,7 +735,7 @@ def stateCheck (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → List
       match s.viewKeys ctx (s.viewOrder ctx (s.topLevelOf c)) with
       | none => .error s!"state '{s.label}': a view edge cannot be resolved"
       | some ks =>
-        match takeViews ks cs with
+        match takeViews ctx ks cs with
         | none => .error s!"state '{s.label}': the view nodes differ"
         | some cs' =>
           match matchSeg ctx tc nest s (2 * s.nodes.length + 2) (s.topLevelOf c) cs' with

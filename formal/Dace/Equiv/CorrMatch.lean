@@ -190,6 +190,62 @@ def DNode.isCopyTarget (n : DNode) : Bool :=
   | .access _ | .mapExit | .consumeExit => true
   | _ => false
 
+/-! ## Subsets up to the full range -/
+
+/-- A tree memlet's subset of container `base` for the SDFG's subset: the
+same, or omitted where the SDFG names the full range (`pointsOf` reads an
+omitted subset as the full range). -/
+def SubCorr (ctx : Ctx) (base : Name) (tsub ssub : Option Subset) : Prop :=
+  tsub = ssub ∨ tsub = none ∧ ∃ dd, ctx.desc? base = some dd ∧ ssub = some (.range dd.fullRange)
+
+theorem mapM_zero_lo (ctx : Ctx) (ρ : Valuation) (m : Mem) (er : ErrReason) :
+    ∀ sh : List Expr, (Range.ofShape sh).dims.mapM (fun dim => Res.ofOption (ctx.evalInt ρ m dim.lo) er) =
+      pure (sh.map fun _ => 0)
+  | [] => rfl
+  | x :: xs => by
+    have ih := mapM_zero_lo ctx ρ m er xs
+    simp only [Range.ofShape, List.map_cons, List.mapM_cons] at ih ⊢
+    have h0 : ctx.evalInt ρ m (0 : Expr) = some 0 := rfl
+    rw [h0, ih]
+    rfl
+
+/-- The lower corner of the full range is the origin. -/
+theorem lowerCorner_full {ctx : Ctx} {ρ : Valuation} {m : Mem} {base : Name} {dd : DataDesc}
+    (hd : ctx.desc? base = some dd) :
+    ctx.lowerCorner ρ m base (some (.range dd.fullRange)) = ctx.lowerCorner ρ m base none := by
+  unfold Ctx.lowerCorner
+  have hp : ctx.pointsOf ρ m base (some (.range dd.fullRange)) = ctx.pointsOf ρ m base none := by
+    simp [Ctx.pointsOf, hd]
+  rw [hp]
+  cases ctx.pointsOf ρ m base none with
+  | err _ => rfl
+  | ok _ =>
+    simp only [Res.ok_bind, hd, DataDesc.fullRange]
+    exact mapM_zero_lo _ _ _ _ _
+
+theorem aliasTo_subCorr {ctx : Ctx} {ρ : Valuation} {st : St} {d base : Name} {tsub ssub : Option Subset}
+    (h : SubCorr ctx base tsub ssub) : aliasTo ctx ρ st d base tsub = aliasTo ctx ρ st d base ssub := by
+  rcases h with rfl | ⟨rfl, dd, hd, rfl⟩
+  · rfl
+  · unfold aliasTo
+    rw [lowerCorner_full hd]
+
+theorem pointsOf_subCorr {ctx : Ctx} {ρ : Valuation} {m : Mem} {n : Name} {tsub ssub : Option Subset}
+    (h : SubCorr ctx n tsub ssub) : ctx.pointsOf ρ m n tsub = ctx.pointsOf ρ m n ssub := by
+  rcases h with rfl | ⟨rfl, dd, hd, rfl⟩
+  · rfl
+  · simp [Ctx.pointsOf, hd]
+
+theorem copyData_subCorr {ctx : Ctx} {ρ : Valuation} {st : St} {sd dd : Name} {ts ss td sdd : Option Subset}
+    (hs : SubCorr ctx sd ts ss) (hd : SubCorr ctx dd td sdd) (wcr : Option WcrOp) (oob : Bool) :
+    copyData ctx ρ st sd ts dd td wcr oob = copyData ctx ρ st sd ss dd sdd wcr oob := by
+  simp only [copyData, streamPoint, pointsOf_subCorr hs, pointsOf_subCorr hd]
+
+/-- A tree copy key for an SDFG copy key: the same up to `SubCorr`. -/
+def KeyCorr (ctx : Ctx) (kT kS : CopyKey) : Prop :=
+  kT.dst = kS.dst ∧ kT.src = kS.src ∧ kT.wcr = kS.wcr ∧ kT.oob = kS.oob ∧
+    SubCorr ctx kS.src kT.ssub kS.ssub ∧ SubCorr ctx kS.dst kT.dsub kS.dsub
+
 /-! ## Nested SDFGs inside map scopes -/
 
 /-- The SDFG context in which the tree's flattened copy of the top region of
@@ -468,7 +524,8 @@ inductive SegCorr (ctx : Ctx) : TCtx → State → List NodeId → List SNode �
   | nil {tc : TCtx} {s : State} : SegCorr ctx tc s [] []
   | copies {tc : TCtx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {cps : List (Name × Memlet)}
       (hn : s.node? id = some n) (hk : DNode.isCopyTarget n = true) (hsh : s.CopyShape ctx n)
-      (hks : s.copiesInto ctx n = cps.map fun p => tc.copyKey p.1 p.2) (h : SegCorr ctx tc s o cs) :
+      (hks : List.Forall₂ (KeyCorr ctx) (cps.map fun p => tc.copyKey p.1 p.2) (s.copiesInto ctx n))
+      (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (cps.map (fun p => SNode.copyNode p.1 p.2) ++ cs)
   | tasklet {tc : TCtx} {s : State} {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {t : Tasklet} {ins outs : MemletMap}
       (hn : s.node? id = some n) (hk : n.kind = .tasklet t) (hsh : s.CodeShape n)
@@ -1059,6 +1116,22 @@ theorem StRel.afterNode {st y : St} {cst cst' : CSt} (h : StRel st cst) (hy : y.
 def copyStep (ctx : Ctx) (ρ : Valuation) (x : St) (k : CopyKey) : Res St :=
   copyData ctx ρ x k.src k.ssub k.dst k.dsub k.wcr k.oob
 
+theorem copyStep_keyCorr {ctx : Ctx} {ρ : Valuation} {x : St} {kT kS : CopyKey} (h : KeyCorr ctx kT kS) :
+    copyStep ctx ρ x kT = copyStep ctx ρ x kS := by
+  obtain ⟨h1, h2, h3, h4, h5, h6⟩ := h
+  unfold copyStep
+  rw [h1, h2, h3, h4]
+  exact copyData_subCorr h5 h6 _ _
+
+theorem foldlM_keyCorr {ctx : Ctx} {ρ : Valuation} : ∀ {ksT ksS : List CopyKey},
+    List.Forall₂ (KeyCorr ctx) ksT ksS → ∀ X, ksT.foldlM (copyStep ctx ρ) X = ksS.foldlM (copyStep ctx ρ) X
+  | [], [], .nil, _ => rfl
+  | _ :: _, kS :: _, .cons h hs, X => by
+    simp only [List.foldlM_cons, copyStep_keyCorr h]
+    cases copyStep ctx ρ X kS with
+    | err _ => rfl
+    | ok y => exact foldlM_keyCorr hs y
+
 theorem CSt.st_withSt (cst : CSt) {y : St} (hy : y.vals = []) : (cst.withSt y).st = y := by
   obtain ⟨m, l, v⟩ := y
   simp only at hy
@@ -1132,9 +1205,10 @@ theorem bindView_key {ctx : Ctx} {ρ : Valuation} {s : State} {v : DNode} {d : N
       | some base => rw [hb] at hk; simp only [Option.map_some, Option.some.injEq] at hk; subst hk; rfl
 
 /-- The tree's view nodes of a scope, one per key and in order: `ViewNode`s
-binding the same view to the same subset of the same container. -/
-def ViewsCorr (ks : List ViewKey) (vs : List SNode) : Prop :=
-  List.Forall₂ (fun k n => ∃ m sd vd, n = .viewNode k.d k.base m sd vd ∧ m.data = k.base ∧ m.dataSubset = k.sub) ks vs
+binding the same view to the same subset (`SubCorr`) of the same container. -/
+def ViewsCorr (ctx : Ctx) (ks : List ViewKey) (vs : List SNode) : Prop :=
+  List.Forall₂ (fun k n => ∃ m sd vd, n = .viewNode k.d k.base m sd vd ∧ m.data = k.base ∧
+    SubCorr ctx k.base m.dataSubset k.sub) ks vs
 
 theorem bindViews_keys {ctx : Ctx} {ρ : Valuation} {s : State} :
     ∀ {ids : List NodeId} {ks : List ViewKey}, s.viewKeys ctx ids = some ks →
@@ -1279,7 +1353,7 @@ omit he in
 their keys. -/
 theorem views_run (he' : tc.ctx.eraseL = ctx.eraseL) {full : List SNode} {gb : Bool} :
     ∀ {ks : List ViewKey} {vs : List SNode} {more : List SNode} {cst : CSt} {r : Res (TCtl × CSt)},
-      ViewsCorr ks vs → STree.ListExec tc full gb {} (vs ++ more) cst r →
+      ViewsCorr ctx ks vs → STree.ListExec tc full gb {} (vs ++ more) cst r →
       (∃ e, r = .err e ∧ ks.foldlM (viewStep ctx cst.ρ) cst.st = .err e) ∨
       ∃ cst', STree.ListExec tc full gb {} more cst' r ∧ ks.foldlM (viewStep ctx cst.ρ) cst.st = .ok cst'.st ∧
         cst'.ρ = cst.ρ
@@ -1289,8 +1363,9 @@ theorem views_run (he' : tc.ctx.eraseL = ctx.eraseL) {full : List SNode} {gb : B
     simp only [List.cons_append] at hx
     have hstep : stepLeaf tc {} (.viewNode k.d k.base m sd vd) cst =
         some (leafOut (cst.lift (viewStep ctx cst.ρ cst.st k))) := by
-      simp only [stepLeaf, execViewT, hmd, ↓reduceIte, viewStep, ← hms]
-      rw [Ctx.leaf_eq he' (fun c => aliasTo c cst.ρ cst.st k.d k.base m.dataSubset) (fun _ => rfl)]
+      simp only [stepLeaf, execViewT, hmd, ↓reduceIte, viewStep]
+      rw [Ctx.leaf_eq he' (fun c => aliasTo c cst.ρ cst.st k.d k.base m.dataSubset) (fun _ => rfl),
+        aliasTo_subCorr hms]
     rcases leaf_inv hstep hx with ⟨e, hR, rfl⟩ | ⟨cst₁, hR, hx₁⟩
     · refine .inl ⟨e, rfl, ?_⟩
       simp only [CSt.lift] at hR
@@ -1989,7 +2064,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
     -- the SDFG node runs the same copies
     have hfold : ∀ X, execSimple ctx cst.ρ s n X = (cps.map fun p => tc.copyKey p.1 p.2).foldlM (copyStep ctx cst.ρ) X := by
       intro X
-      rw [execSimple_copyTarget hk, execCopiesInto_eq cst.ρ hsh, hks]
+      rw [execSimple_copyTarget hk, execCopiesInto_eq cst.ρ hsh, foldlM_keyCorr hks]
       rfl
     have hshift : (cps.map fun p => tc.copyKey p.1 p.2).foldlM (copyStep ctx cst.ρ) cst.st =
         ((cps.map fun p => tc.copyKey p.1 p.2).foldlM (copyStep ctx cst.ρ) st.forNode).map (St.shift cst.log) := by

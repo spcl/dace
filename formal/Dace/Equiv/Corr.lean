@@ -38,7 +38,7 @@ structure StateCorr (ctx : Ctx) (tc : TCtx) (s : State) (cs : List SNode) : Prop
   /-- The single component's tree segment: its views (`ViewNode`s, the
   prologue `bindViews`), then the image of its top-level nodes. -/
   comps : (s.components = [] ∧ cs = []) ∨
-    ∃ c o full ks vs seg, s.components = [c] ∧ s.viewKeys ctx (s.viewOrder ctx (s.topLevelOf c)) = some ks ∧ ViewsCorr ks vs ∧
+    ∃ c o full ks vs seg, s.components = [c] ∧ s.viewKeys ctx (s.viewOrder ctx (s.topLevelOf c)) = some ks ∧ ViewsCorr ctx ks vs ∧
       cs = vs ++ seg ∧ SegCorr ctx tc s o seg ∧ s.isTopologicalOrder c full = true ∧
       full.filter (s.topLevelOf c).contains = o
 
