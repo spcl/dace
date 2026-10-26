@@ -27,7 +27,7 @@ from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 
 def updated_in_state(state: SDFGState) -> set[str]:

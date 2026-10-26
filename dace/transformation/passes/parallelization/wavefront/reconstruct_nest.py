@@ -58,8 +58,8 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import _symbolically_equal
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
-from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
 from dace.transformation.passes.fusion_inline import FuseStates
+from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
 
 #: ``(map_state, inner_loop)``: the two stateful siblings of a reconstruction candidate.
 Candidate = tuple[SDFGState, LoopRegion]

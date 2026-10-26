@@ -16,7 +16,7 @@ import pytest
 import dace
 from dace.libraries.tileops import TileScatter
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import is_assign_tasklet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy

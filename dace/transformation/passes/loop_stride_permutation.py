@@ -321,7 +321,9 @@ class LoopStridePermutation(ppl.Pass):
         matches exactly what the downstream ``parallelize`` stage accepts.
         """
         try:
-            from dace.transformation.passes.parallelize_loops import ParallelizeLoops  # avoid an import cycle
+            from dace.transformation.passes.parallelization.parallelize_loops import (
+                ParallelizeLoops,  # avoid an import cycle
+            )
 
             return ParallelizeLoops().accepts(loop)
         except Exception:  # noqa: BLE001 -- oracle refuses exotic shapes -> not provably DOALL

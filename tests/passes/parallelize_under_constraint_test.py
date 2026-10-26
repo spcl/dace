@@ -25,7 +25,7 @@ from dace import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.parallelize_under_constraint import ParallelizeUnderConstraint
+from dace.transformation.passes.parallelization.contracts.under_constraint import ParallelizeUnderConstraint
 
 N = dace.symbol("N")
 S = dace.symbol("S")

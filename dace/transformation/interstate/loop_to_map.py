@@ -1589,7 +1589,7 @@ class LoopToMap(xf.MultiStateTransformation):
     def waives(self, name: str, permissive: bool) -> bool:
         """Whether the dependence test waives conflicts on container ``name``: all of them under ``permissive``,
         else only the ``contract_arrays`` a caller set, whose writes a runtime contract check guards (the scatter
-        targets of :class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`)."""
+        targets of :class:`~dace.transformation.passes.parallelization.contracts.guarded_scatter.ScatterToGuardedMaps`)."""
         return permissive or name in self.contract_arrays or name in loop_analysis.conflict_free_writes(self.loop)
 
     def probe_resolver(self) -> SymbolResolver:

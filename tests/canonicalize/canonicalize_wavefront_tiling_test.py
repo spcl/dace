@@ -19,7 +19,7 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.canonicalize.wavefront_skew import (
+from dace.transformation.passes.parallelization.wavefront.skew import (
     SKEW_P_PREFIX,
     SKEW_T_PREFIX,
     Dependence,
@@ -267,7 +267,7 @@ def test_tiled_wavefront_is_deterministic_under_a_randomised_hash_seed():
         import dace
         from dace.sdfg import nodes
         from dace.sdfg.state import LoopRegion
-        from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
+        from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
         N = dace.symbol('N')
 
         @dace.program

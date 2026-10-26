@@ -13,7 +13,7 @@ violates it still computes correctly on the sequential fallback -- ``if cond:
 par else: seq``, never a silent miscompile and never an abort.
 
 This is the same conditional-parallelization shape as
-:class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`,
+:class:`~dace.transformation.passes.parallelization.contracts.guarded_scatter.ScatterToGuardedMaps`,
 but the predicate here is an algebraic condition over loop symbols.
 
 Constraint types:
@@ -99,7 +99,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
         :returns: The number of loops specialized, or ``None`` if none.
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap
-        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         specialized = 0
         for sd in sdfg.all_sdfgs_recursive():

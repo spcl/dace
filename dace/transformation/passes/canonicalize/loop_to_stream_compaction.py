@@ -653,7 +653,7 @@ class LoopToStreamCompaction(ppl.Pass):
         model affine in one iterator with an integer coefficient is what keeps it CLASSIFIABLE; a
         linearized inner index would carry a symbolic coefficient and refuse every symbolic extent.
         """
-        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         probe_sdfg = copy.deepcopy(sdfg)
         probe_loop = self.locate_corresponding(probe_sdfg, loop)
@@ -916,7 +916,7 @@ class LoopToStreamCompaction(ppl.Pass):
         reconstruct: phase 3 writes through ``rank``, which is strictly increasing on the taken
         iterations. Phase 1 needs no waiver, so it is lifted strictly.
         """
-        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         ParallelizeLoops(permissive=permissive).parallelize_loop(sdfg, loop)
 

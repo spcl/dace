@@ -8,7 +8,7 @@ import pytest
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.symbolic import DataFact, DataFactKind, permutation
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 M = dace.symbol("M")
 N = dace.symbol("N")

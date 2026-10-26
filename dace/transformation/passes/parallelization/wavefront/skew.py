@@ -34,8 +34,8 @@ This pass generalises the textbook single-tasklet rectangular case (TSVC
 
 Legality is the classical Lamport / Feautrier test: a skew ``tau`` is legal iff
 ``tau . delta < 0`` for every dependence ``delta`` over the whole domain. It is
-decided exactly (integer emptiness) by :mod:`~dace.transformation.passes.
-canonicalize.wavefront_polyhedron`. Crucially the pass **only** skews a genuine
+decided exactly (integer emptiness) by :mod:`~dace.transformation.passes.parallelization.wavefront.polyhedron`.
+Crucially the pass **only** skews a genuine
 wavefront -- a nest where *neither* axis is already a parallel map in the current
 loop order (inner-parallel = ``tau=(1,0)`` legal, outer-parallel =
 :func:`outer_axis_parallel`). A stencil that is already a parallel-map-over-
@@ -81,7 +81,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import carried_local_transients, control_flow_reads
 from dace.transformation.passes.analysis import canon_stats, loop_analysis
-from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     WAVEFRONT_DIAGONAL,
     WAVEFRONT_FRONT,
@@ -94,6 +93,7 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import commit_guarded_fusion, plan_guarded_fusion
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import privatize_reduction_accumulator
+from dace.transformation.passes.parallelization.wavefront import polyhedron as poly
 
 #: Prefix for the synthesised skewed iterators.
 SKEW_T_PREFIX = "_skew_t_"
@@ -1941,7 +1941,7 @@ class WavefrontSkew(ppl.Pass):
         ``hint`` names what the fresh Map is -- a wavefront front, a tile column -- on the Map
         itself, since the lift keeps no record of the loop it consumed. Matched by iteration
         variable: ``LoopToMap`` names the map after the body, not after the axis."""
-        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         itervar = inner.loop_variable
         privatize_body_reductions(inner)

@@ -12,7 +12,7 @@ A chain whose siblings are all DOALL is no wavefront and is mapped as usual.
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.canonicalize.fuse_consecutive_loops import plan_guarded_fusion
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 
 def liftable(loop: LoopRegion, permissive: bool, like: LoopToMap | None = None) -> bool:

@@ -14,7 +14,7 @@ So it is written down, as a ``specialization_hint`` comment, in four kinds:
   was proven either way, and the difference from the line above is the whole point of this pass:
   a proof closes the question, a decline does not.
 * **wavefront** -- the diagonal, front, tile and tile-interior axes a skew produces.
-  :mod:`~dace.transformation.passes.canonicalize.wavefront_skew` labels those itself, because it is
+  :mod:`~dace.transformation.passes.parallelization.wavefront.skew` labels those itself, because it is
   the only thing that knows a loop is one; the wording lives here so all four kinds read alike.
 
 One pass, run last, rather than a label at each site that could have set one: a loop that a pass
@@ -156,7 +156,7 @@ def refusal_reason(loop: LoopRegion) -> str | None:
     if not loop.loop_variable:
         return NO_COUNTER
     from dace.transformation.interstate.loop_to_map import LoopToMap
-    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+    from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
     probe = LoopToMap()
     pinned = loop.pinned_sequential

@@ -15,7 +15,7 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.wavefront_skew import SKEW_P_PREFIX, SKEW_T_PREFIX, WavefrontSkew
+from dace.transformation.passes.parallelization.wavefront.skew import SKEW_P_PREFIX, SKEW_T_PREFIX, WavefrontSkew
 
 # The corpus program itself, imported as a package: its ``@dace.tasklet`` bodies lower to the
 # exact 2-D wavefront ``WavefrontSkew`` exposes -- the one real corpus beneficiary of the skew.
@@ -233,7 +233,7 @@ def test_wavefront_skew_runtime_guard_traps_on_violation(tmp_path):
     src = textwrap.dedent("""
         import numpy as np
         import dace
-        from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
+        from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
         N = dace.symbol('N')
         sym = dace.symbol('sym_unannot')
 
@@ -333,7 +333,7 @@ def test_dependence_kind_classifies_backward_flow_forward_anti():
     backward (writer earlier -> read sees the new value) and anti when forward
     (writer later -> read sees the soon-overwritten old value). Symbolic
     components stay conservatively flow."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
+    from dace.transformation.passes.parallelization.wavefront.skew import dependence_kind
 
     p = symbolic.pystr_to_symbolic
     assert dependence_kind(p("0"), p("-1"), symbolic.Facts.none()) == "flow"  # aa[i, j-1]
@@ -419,7 +419,7 @@ def test_wavefront_skew_fires_on_nussinov_through_full_pipeline():
     one real wavefront beneficiary against a pass-ordering regression (the class of change
     that silently serialised nussinov before)."""
     from dace.transformation.passes.canonicalize import canonicalize
-    from dace.transformation.passes.canonicalize import wavefront_skew as ws
+    from dace.transformation.passes.parallelization.wavefront import skew as ws
 
     fired = [0]
     original = ws.WavefrontSkew.apply_pass
@@ -521,7 +521,7 @@ def test_snapshot_reads_forward_classifies_in_iteration_space_not_array_offset()
     ``a[N-1-i, j]`` the two spaces disagree in sign, so an array-offset check would
     accept a backward (flow) read and reject a forward (anti) one -- exactly
     inverted, a silent miscompile. This pins the iteration-space classification."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import WriteMap, snapshot_reads_forward
+    from dace.transformation.passes.parallelization.wavefront.skew import WriteMap, snapshot_reads_forward
 
     # Reflected row map: row = -i + (N-1), col = j.
     reflected = ("a", WriteMap("i", "j", m=(-1, 0, 0, 1), c=(_p("N - 1"), _p("0"))), [])
@@ -563,7 +563,7 @@ def test_split_snapshot_window_accepts_a_narrowed_copy_but_demands_identity_inde
     discharged against that window by ``snapshot_reads_in_window``. What must still be refused
     is a copy that is not an identity index map: a shifted destination or a strided copy makes
     ``snap[idx]`` and ``a[idx]`` different cells, so redirecting a read would MOVE it."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import split_snapshot_window
+    from dace.transformation.passes.parallelization.wavefront.skew import split_snapshot_window
 
     whole = split_snapshot_window(_snap_copy_state("a[0:N, 0:N]"))
     assert whole == _win("0:N, 0:N")
@@ -580,7 +580,7 @@ def test_snapshot_reads_outside_the_copied_window_refuse_the_absorb():
     """The protection the window relaxation moved: a read that can leave the copied window
     reads a cell the snapshot never held, so the absorb must refuse. Proved over the iteration
     domain, not by shape -- an in-window read at a symbolic index is still accepted."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import domain_constraints, snapshot_reads_in_window
+    from dace.transformation.passes.parallelization.wavefront.skew import domain_constraints, snapshot_reads_in_window
 
     # i, j both in [1, N-2] -- the 5-point Gauss-Seidel domain.
     domain = domain_constraints("i", "j", (_p("1"), _p("N - 2")), (_p("1"), _p("N - 2")))
@@ -631,7 +631,7 @@ def _snapshot_nest(external_reader: bool):
 def test_plan_split_snapshots_refuses_external_snapshot_reader():
     """A snapshot array read OUTSIDE the inner loop must abort the absorb: dropping
     the copy would leave that external read consuming a dead transient."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import plan_split_snapshots
+    from dace.transformation.passes.parallelization.wavefront.skew import plan_split_snapshots
 
     sdfg, outer, inner = _snapshot_nest(external_reader=True)
     assert plan_split_snapshots(outer, inner, sdfg) is None
@@ -640,7 +640,7 @@ def test_plan_split_snapshots_refuses_external_snapshot_reader():
 def test_plan_split_snapshots_is_non_mutating_then_commit_applies():
     """Planning must not touch the SDFG (so a later skew refusal is a no-op);
     committing then redirects the read onto the live array and empties the copy."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import commit_split_snapshots, plan_split_snapshots
+    from dace.transformation.passes.parallelization.wavefront.skew import commit_split_snapshots, plan_split_snapshots
 
     sdfg, outer, inner = _snapshot_nest(external_reader=False)
     cp = next(b for b in outer.nodes() if isinstance(b, SDFGState) and b.label == "cp")
@@ -671,7 +671,7 @@ def test_dependence_kind_symbolic_forward_positive_is_anti():
     miscompile). A backward symbolic read ``aa[i, j - S]`` (``(0, -S)``) stays
     ``'flow'``; an unannotated / unprovable-sign symbol also stays conservatively
     ``'flow'`` (the optimistic retry pins it with a runtime guard)."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
+    from dace.transformation.passes.parallelization.wavefront.skew import dependence_kind
 
     p = symbolic.pystr_to_symbolic
     S = dace.symbol("S")
@@ -1169,7 +1169,7 @@ def test_row_sweep_ti_wavefront_is_detected():
 
     Two things had to give. The column axis is the same ``1:N-1`` span in the write and in every
     read and never mentions ``t`` or ``i``, so it carries no dependence and is dropped
-    (:func:`~dace.transformation.passes.canonicalize.wavefront_skew.uniform_axes`). What is left
+    (:func:`~dace.transformation.passes.parallelization.wavefront.skew.uniform_axes`). What is left
     is a ONE-axis carrier written at ``A[i]`` independently of ``t``, so the array cell no longer
     names the iteration that wrote it -- the distances come from program order instead, and the
     repeated per-step write becomes an output dependence that is what keeps ``t`` sequential.

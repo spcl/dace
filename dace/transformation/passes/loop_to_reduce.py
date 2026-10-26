@@ -318,7 +318,7 @@ class PinCarriedTopLevelLoops(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> int | None:
         """:returns: The number of loops newly pinned, or ``None`` if none was."""
         from dace.transformation.interstate.loop_to_map import LoopToMap
-        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         pinned = 0
         for node, parent in list(sdfg.all_nodes_recursive()):

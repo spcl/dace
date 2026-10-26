@@ -64,7 +64,6 @@ from dace.transformation.passes.canonicalize.fuse_elementwise_into_gemv import F
 from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 from dace.transformation.passes.canonicalize.fuse_maps_at_shared_axes import FuseMapsAtSharedAxes
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
-from dace.transformation.passes.canonicalize.hold_sibling_chains import ParallelizeLoopsHoldingSiblingChains
 from dace.transformation.passes.canonicalize.induction_variable_substitution import (
     InductionVariableSubstitution,
     LoopCarriedRotationSubstitution,
@@ -91,7 +90,6 @@ from dace.transformation.passes.canonicalize.normalize_negative_stride import No
 from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
 from dace.transformation.passes.canonicalize.prune_and_inline_nested_sdfgs import PruneAndInlineNestedSDFGs
 from dace.transformation.passes.canonicalize.prune_unreferenced_transients import PruneUnreferencedTransients
-from dace.transformation.passes.canonicalize.reconstruct_wavefront_nest import ReconstructWavefrontNest
 from dace.transformation.passes.canonicalize.redundant_ordering_edge_elimination import RedundantOrderingEdgeElimination
 from dace.transformation.passes.canonicalize.reorder_state_for_loop_fusion import ReorderStateForLoopFusion
 from dace.transformation.passes.canonicalize.require_structured_control_flow import RequireStructuredControlFlow
@@ -106,7 +104,6 @@ from dace.transformation.passes.canonicalize.split_statements import SplitStatem
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
-from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
 from dace.transformation.passes.canonicalize.while_to_for import WhileToFor
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
     CleanAccessNodeToScalarSliceToTaskletPattern,
@@ -142,14 +139,18 @@ from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
+from dace.transformation.passes.parallelization.contracts.guarded_scatter import ScatterToGuardedMaps
+from dace.transformation.passes.parallelization.contracts.under_constraint import ParallelizeUnderConstraint
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.sibling_chains import ParallelizeLoopsHoldingSiblingChains
+from dace.transformation.passes.parallelization.wavefront.reconstruct_nest import ReconstructWavefrontNest
+from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
 from dace.transformation.passes.parallelization_prep import (
     DEFAULT_PEEL_LIMIT,
     DEFAULT_UNROLL_LIMIT,
     BestEffortLoopPeeling,
     ShortLoopUnroll,
 )
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
-from dace.transformation.passes.parallelize_under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.pattern_matching import (
     PatternApplyOnceEverywhere,
     PatternMatchAndApply,
@@ -164,7 +165,6 @@ from dace.transformation.passes.rematerialize_derived_temporaries import Remater
 from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.scalar_fission import PrivatizeArrays, PrivatizeScalars
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
-from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches

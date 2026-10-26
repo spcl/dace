@@ -16,7 +16,7 @@ find, are pinned in ``tests/canonicalize/canonicalize_wavefront_skew_test.py``.
 import pytest
 
 from dace import symbolic
-from dace.transformation.passes.canonicalize.wavefront_skew import (
+from dace.transformation.passes.parallelization.wavefront.skew import (
     MAX_RANGE_READ_WIDTH,
     axis_distance,
     axis_write_map,

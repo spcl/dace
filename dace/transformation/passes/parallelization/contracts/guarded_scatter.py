@@ -136,7 +136,7 @@ class ScatterToGuardedMaps(ppl.Pass):
         or ``None`` if no scatter loop was found.
         """
         from dace.sdfg.propagation import propagate_memlets_sdfg
-        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         scatter_loops, idx_arrays, sliced_guards, joint_writes = detect_scatter_loops_and_idx_arrays(sdfg)
         # The probes only read the graph, so they share its facts and one lift context per SDFG and contract kind
@@ -312,7 +312,7 @@ def lifts(
     :param probes: Analysis shared by the probes of an unchanged graph, filled on first use.
     """
     from dace.transformation.interstate.loop_to_map import LoopToMap, build_lift_context
-    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+    from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
     probe = LoopToMap()
     probe.contract_arrays = contract
@@ -1465,7 +1465,7 @@ def _wrap_loop_in_dispatcher(
         parent.add_edge(cb, e.dst, e.data)
 
     # Lift the loop inside the False branch to a Map.
-    from dace.transformation.passes.parallelize_loops import ParallelizeLoops  # avoid an import cycle
+    from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops  # avoid an import cycle
 
     root = parent.sdfg
     while root.parent_sdfg is not None:

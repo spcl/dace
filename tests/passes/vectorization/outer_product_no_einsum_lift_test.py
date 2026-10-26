@@ -17,8 +17,8 @@ import tests.corpus.measure_parallelization as mp
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.sdfg.nodes import LibraryNode
 from dace.transformation.dataflow.lift_einsum import LiftEinsum
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.parallelize import ParallelizePipeline
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 N = 16

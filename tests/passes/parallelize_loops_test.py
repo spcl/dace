@@ -32,7 +32,11 @@ from dace.transformation.interstate.loop_to_map import (
     control_flow_reads,
 )
 from dace.transformation.passes.analysis import smt_dependence
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops, candidate_loops, loop_order_key
+from dace.transformation.passes.parallelization.parallelize_loops import (
+    ParallelizeLoops,
+    candidate_loops,
+    loop_order_key,
+)
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 N = 24
@@ -362,7 +366,7 @@ def test_a_mapping_the_callee_stopped_needing_is_pruned():
     ['__map_fusion___tmp0', '__map_fusion___tmp1']``, one lift making the entry stale and a later
     one tripping over it.
     """
-    from dace.transformation.passes.parallelize_loops import prune_stale_symbol_mappings
+    from dace.transformation.passes.parallelization.parallelize_loops import prune_stale_symbol_mappings
 
     inner = dace.SDFG("callee_binds_it")
     inner.add_array("a", (4,), dace.float64)
@@ -584,7 +588,7 @@ def many_sibling_sweeps(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.fl
 def test_a_sweep_patches_its_context_instead_of_rebuilding_it_per_lift(monkeypatch) -> None:
     """Rebuilding the context walks the whole SDFG once per lift: quadratic in the loop count, 22% of
     the parallelize stage on warpx_field_gather (3300 lifts in one SDFG)."""
-    from dace.transformation.passes import parallelize_loops
+    from dace.transformation.passes.parallelization import parallelize_loops
 
     sdfg = many_sibling_sweeps.to_sdfg(simplify=True)
     built: list[dace.SDFG] = []
@@ -604,7 +608,7 @@ def test_a_patched_context_is_the_context_a_rebuild_builds(monkeypatch) -> None:
     """A patched context that drifted from the graph hands the next probe a wrong access index or a
     wrong "used after the loop" answer, which is a miscompile."""
     from dace.transformation.interstate.loop_to_map import symbol_bindings
-    from dace.transformation.passes import parallelize_loops
+    from dace.transformation.passes.parallelization import parallelize_loops
 
     sdfg = many_sibling_sweeps.to_sdfg(simplify=True)
     checked = []

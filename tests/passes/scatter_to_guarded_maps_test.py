@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`.
+"""Tests for :class:`~dace.transformation.passes.parallelization.contracts.guarded_scatter.ScatterToGuardedMaps`.
 
 End-to-end coverage: TSVC scatter kernels are detected, guarded, and parallelized
 by a single pass invocation. Per-array detection is checked (multiple distinct
@@ -16,7 +16,10 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps, detect_scatter_idx_arrays
+from dace.transformation.passes.parallelization.contracts.guarded_scatter import (
+    ScatterToGuardedMaps,
+    detect_scatter_idx_arrays,
+)
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 N = dace.symbol("N")

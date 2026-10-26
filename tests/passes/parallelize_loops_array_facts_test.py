@@ -9,7 +9,7 @@ import pytest
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import array_facts
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 M = dace.symbol("M")
 N = dace.symbol("N")

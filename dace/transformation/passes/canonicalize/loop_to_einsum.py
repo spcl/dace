@@ -317,7 +317,7 @@ def _run_probe_pipeline(probe: SDFG) -> None:
     from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
     from dace.transformation.interstate.sdfg_nesting import InlineSDFG
     from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
-    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+    from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
     from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
     from dace.transformation.passes.simplify import SimplifyPass
 

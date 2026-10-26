@@ -15,10 +15,10 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SymbolResolver
 from dace.symbolic import Scale
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
-from dace.transformation.passes.canonicalize.hold_sibling_chains import ParallelizeLoopsHoldingSiblingChains
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.sibling_chains import ParallelizeLoopsHoldingSiblingChains
+from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
 
 nblks = dace.symbol("nblks", dace.int64, small=True)
 nproma = dace.symbol("nproma", dace.int64)

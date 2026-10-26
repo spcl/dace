@@ -633,7 +633,7 @@ class SegmentConfinedLoops(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """:returns: how many loops were lifted, or ``None`` if none were."""
-        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         lifted = 0
         for region in list(sdfg.all_control_flow_regions()):

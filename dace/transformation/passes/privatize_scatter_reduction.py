@@ -10,7 +10,7 @@ map::
 The write slot ``bin[i]`` is not an affine function of the map parameter -- it is
 an integer read from an array -- so it is neither a plain per-element write (each
 iteration a distinct slot) nor a provable permutation (the
-:class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`
+:class:`~dace.transformation.passes.parallelization.contracts.guarded_scatter.ScatterToGuardedMaps`
 guard does not apply: histogram bins repeat). It is a genuine *reduction*: many
 iterations fold into the same slot. The DaCe CPU codegen lowers the per-iteration
 write to a ``reduce_atomic`` on ``hist[bin[i]]`` -- correct but, with ``T`` threads

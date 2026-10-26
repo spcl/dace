@@ -308,7 +308,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         """
         # avoid an import cycle
         from dace.transformation.interstate.loop_to_map import LoopToMap
-        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         xform = LoopToMap()
         with contextlib.redirect_stdout(io.StringIO()):
