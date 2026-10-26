@@ -20,7 +20,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 
-Value = int | float | str
+Value = int | float
 
 
 def staged_copies(sdfg: SDFG, names: dict[str, Value]) -> dict[str, Value]:
@@ -87,10 +87,8 @@ class ConfigPropagation(ppl.Pass):
     SDFG file, and return a root SDFG with the original signature that dispatches to them.
 
     The input SDFG is left untouched. A singleton domain is baked into every variant; only the multi-valued domains
-    select between variants.
+    select between variants. Values outside the domains run the unspecialized SDFG, saved next to the variants.
     """
-
-    CATEGORY: str = "Specialization"
 
     domains = properties.DictProperty(
         key_type=str, value_type=list, desc="Values each configuration symbol or container can take."
@@ -154,19 +152,20 @@ class ConfigPropagation(ppl.Pass):
             if name not in root.symbols:  # a shape may have declared it already
                 root.add_symbol(name, sdfg.symbols[name])
         os.makedirs(self.output_dir, exist_ok=True)
-        cond = None
-        if selecting:
-            cond = ConditionalBlock("config_dispatch")
-            root.add_node(cond, is_start_block=True)
-        for values in self.variant_values():
-            variant = self.build_variant(sdfg, values, selecting)
-            path = os.path.join(self.output_dir, f"{variant.name}.sdfgz")
-            variant.save(path, compress=True)
-            if cond is None:  # no choice left: one variant, called unconditionally
-                state = root.add_state(variant.name, is_start_block=True)
-            else:
-                branch = ControlFlowRegion(f"call_{variant.name}", sdfg=root)
-                cond.add_branch(CodeBlock(config_condition(sdfg, {n: values[n] for n in selecting})), branch)
-                state = branch.add_state(variant.name, is_start_block=True)
-            self.add_call(root, state, variant, path)
+        cond = ConditionalBlock("config_dispatch")
+        root.add_node(cond, is_start_block=True)
+        # Every domain is tested, singletons too: a variant is only correct for the values baked into it
+        calls = [
+            (self.build_variant(sdfg, values, selecting), config_condition(sdfg, values))
+            for values in self.variant_values()
+        ]
+        generic = copy.deepcopy(sdfg)
+        generic.name = f"{sdfg.name}_generic"
+        calls.append((generic, None))
+        for callee, condition in calls:
+            path = os.path.join(self.output_dir, f"{callee.name}.sdfgz")
+            callee.save(path, compress=True)
+            branch = ControlFlowRegion(f"call_{callee.name}", sdfg=root)
+            cond.add_branch(CodeBlock(condition) if condition else None, branch)
+            self.add_call(root, branch.add_state(callee.name, is_start_block=True), callee, path)
         return root
