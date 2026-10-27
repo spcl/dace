@@ -1209,6 +1209,66 @@ def build_lift_invariants(sdfg: SDFG) -> LiftInvariants:
     )
 
 
+def region_flow_reads(region: ControlFlowRegion, memo: dict[Any, set[str]] | None) -> list[set[str]]:
+    """The names each interstate edge of ``region``, and each header of a loop or conditional block of it, reads."""
+    out = []
+    for edge in region.edges():
+        reads = None if memo is None else memo.get(edge.data)
+        if reads is None:
+            reads = set(edge.data.free_symbols)
+            if memo is not None:
+                memo[edge.data] = reads
+        out.append(reads)
+    for block in region.nodes():
+        if not isinstance(block, (LoopRegion, ConditionalBlock)):
+            continue
+        reads = None if memo is None else memo.get(block)
+        if reads is None:
+            reads = {str(s) for c in block.get_meta_codeblocks() for s in c.get_free_symbols()}
+            if memo is not None:
+                memo[block] = reads
+        out.append(reads)
+    return out
+
+
+def index_flow_region(ctx: "LiftContext", region: ControlFlowRegion) -> None:
+    """Record in ``ctx`` the names ``region``'s edges and headers read."""
+    reads = ctx.flow_reads_of[region] = region_flow_reads(region, ctx.invariants.control_flow_reads)
+    for names in reads:
+        for name in names:
+            ctx.flow_readers.setdefault(name, Counter())[region] += 1
+
+
+def unindex_flow_region(ctx: "LiftContext", region: ControlFlowRegion) -> None:
+    """Drop from ``ctx`` what :func:`index_flow_region` recorded for ``region``."""
+    for names in ctx.flow_reads_of.pop(region, ()):
+        for name in names:
+            counts = ctx.flow_readers[name]
+            counts[region] -= 1
+            if not counts[region]:
+                del counts[region]
+
+
+def flow_read_outside(sdfg: sd.SDFG, loop: LoopRegion, names: set[str], ctx: Optional["LiftContext"]) -> set[str]:
+    """``names & control_flow_reads_outside(sdfg, loop, ctx)``, answered from ``ctx``'s index when there is one."""
+    if ctx is None:
+        return names & control_flow_reads_outside(sdfg, loop)
+    if ctx.flow_readers is None:
+        ctx.flow_readers, ctx.flow_reads_of = {}, {}
+        for region in sdfg.all_control_flow_regions():
+            index_flow_region(ctx, region)
+    found = set()
+    for name in names:
+        for region in ctx.flow_readers.get(name, ()):
+            # Outside unless ``loop`` encloses the region (or is it): the loop's own header lives in its parent
+            while region is not None and region is not loop and not isinstance(region, SDFG):
+                region = region.parent_graph
+            if region is not loop:
+                found.add(name)
+                break
+    return found
+
+
 def control_flow_reads_outside(sdfg: sd.SDFG, loop: LoopRegion, ctx: Optional["LiftContext"] = None) -> set[str]:
     """The names read by the interstate edges and by the loop and conditional headers of ``sdfg`` that lie
     outside ``loop``'s body: ``loop``'s own header included, nested SDFGs excluded (they read through their
@@ -1224,24 +1284,8 @@ def control_flow_reads_outside(sdfg: sd.SDFG, loop: LoopRegion, ctx: Optional["L
     inside = set(loop.all_control_flow_regions(recursive=True)) | {loop}
     names: set[str] = {str(s) for c in loop.get_meta_codeblocks() for s in c.get_free_symbols()}
     for region in sdfg.all_control_flow_regions():
-        if region in inside:
-            continue
-        for edge in region.edges():
-            reads = None if memo is None else memo.get(edge.data)
-            if reads is None:
-                reads = set(edge.data.free_symbols)
-                if memo is not None:
-                    memo[edge.data] = reads
-            names |= reads
-        for block in region.nodes():
-            if not isinstance(block, (LoopRegion, ConditionalBlock)):
-                continue
-            reads = None if memo is None else memo.get(block)
-            if reads is None:
-                reads = {str(s) for c in block.get_meta_codeblocks() for s in c.get_free_symbols()}
-                if memo is not None:
-                    memo[block] = reads
-            names |= reads
+        if region not in inside:
+            names.update(*region_flow_reads(region, memo))
     return names
 
 
@@ -1348,6 +1392,11 @@ class LiftContext:
     #: blocks that left the order are skipped by ``block_index``. Built on first use.
     symbol_uses: dict[str, list[Any]] | None = None
     symbol_kills: dict[str, list[Any]] | None = None
+    #: name -> the regions whose interstate edges or loop/conditional block headers read it, each with how many of
+    #: them do, and region -> the names each of those reads: :func:`control_flow_reads_outside` as an index over the
+    #: SDFG's regions. Built on first use.
+    flow_readers: dict[str, Counter] | None = None
+    flow_reads_of: dict[Any, list[set[str]]] | None = None
     #: name -> the loops of ``block_order`` whose iterator it is (see :func:`rebinds_after`).
     symbol_binders: dict[str, list[Any]] | None = None
 
@@ -1492,6 +1541,12 @@ def iterator_type(loop: LoopRegion, rebound: set[str], table: dict[str, dtypes.t
     return loop.new_symbols(table).get(itervar)
 
 
+def lift_facts(ctx: LiftContext, sdfg: SDFG) -> symbolic.Facts:
+    """``sdfg.facts()``, the names its interstate edges assign read off ``ctx`` instead of a walk."""
+    edge_assignments, _ = symbol_bindings(ctx, sdfg)
+    return sdfg.facts({name for name, count in edge_assignments.items() if count > 0})
+
+
 def declare_or_retype(sdfg: SDFG, name: str, dtype: dtypes.typeclass) -> None:
     """Declares ``name`` in ``sdfg`` at ``dtype``, retyping an existing declaration."""
     if name in sdfg.symbols:
@@ -1547,6 +1602,27 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: LiftC
             if itertype is not None:
                 declare_or_retype(nsdfg, name, itertype)
         region = region.parent_graph
+    # A symbol one interstate edge assigns, from names no edge assigns and no loop binds, is typed by the walk from
+    # that edge alone: find the edge instead of inferring every assignment of the SDFG.
+    once = {name for name in free - nsdfg.symbols.keys() if edge_assignments[name] == 1 and loop_variables[name] == 0}
+    if not once:
+        return
+    for edge in sdfg.all_interstate_edges():
+        for name in once.intersection(edge.data.assignments):
+            if name not in edge.data.new_symbol_names():
+                continue
+            rhs = edge.data.assignments[name]
+            reads = set(findall(r"[A-Za-z_]\w*", rhs))
+            if any(edge_assignments[n] or loop_variables[n] for n in reads):
+                continue
+            env = {
+                n: sdfg.arrays[n].dtype if n in sdfg.arrays else sdfg.symbols[n]
+                for n in reads
+                if n in sdfg.arrays or n in sdfg.symbols
+            }
+            dtype = infer_expr_type(rhs, env)
+            if dtype is not None:
+                declare_or_retype(nsdfg, name, dtype)
 
 
 def exhaustively_assigned(block: ConditionalBlock) -> set[str]:
@@ -1862,7 +1938,7 @@ class LoopLift:
         # ``Max``/``Min`` bound would otherwise confound). This maps the single-iteration middle
         # segment a range split leaves behind (e.g. the ``{x}`` clamp of the s1113 broadcast split),
         # where the dependence analysis has nothing to prove. The structural guards above still gate.
-        if loop_analysis.loop_provably_at_most_one_iteration(self.loop):
+        if loop_analysis.loop_provably_at_most_one_iteration(self.loop, None if ctx is None else lift_facts(ctx, sdfg)):
             return True
         # Independent by construction (a map lowered to this loop, or a piece of one): nothing to prove.
         if known_parallel:
@@ -1936,7 +2012,7 @@ class LoopLift:
         # A loop transient an outside header or interstate edge reads is live outside, though no access node there
         # names it (a symbol demoted to a scalar, read by a later loop's conditions): ``apply`` must not privatize it.
         if local_transients:
-            read_outside = local_transients & control_flow_reads_outside(sdfg, self.loop, ctx)
+            read_outside = flow_read_outside(sdfg, self.loop, local_transients, ctx)
             local_transients -= read_outside
             other_access_nodes |= read_outside
 
@@ -2344,7 +2420,7 @@ class LoopLift:
         if name not in read_before_written(self.loop, {name}, holders):
             return False
         _, local_transients = split_loop_containers(sdfg, loop_states, ctx)
-        local_transients -= control_flow_reads_outside(sdfg, self.loop, ctx)
+        local_transients -= flow_read_outside(sdfg, self.loop, local_transients, ctx)
         return name in local_transients and observable_from(self.loop, name, local_transients, loop_states, ctx)
 
     def test_read_memlet(
@@ -2608,10 +2684,14 @@ class LoopLift:
             # though no access node outside names it: a symbol demoted to a scalar is read by the conditions of
             # a LATER loop (fv3_dycore's ``if abs(__inl2_ord_inner) == 5``). Moved into the nest, those reads
             # were left naming a symbol nothing defines.
-            if outside_reads is None:
-                outside_reads = control_flow_reads_outside(sdfg, self.loop, lift_ctx)
-            if name in outside_reads:
-                continue
+            if lift_ctx is not None:
+                if flow_read_outside(sdfg, self.loop, {name}, lift_ctx):
+                    continue
+            else:
+                if outside_reads is None:
+                    outside_reads = control_flow_reads_outside(sdfg, self.loop)
+                if name in outside_reads:
+                    continue
             if lift_ctx is not None:
                 # The same question the scan below asks -- "does an access node for this name live
                 # in a state outside the loop?" -- answered from the prebuilt index. The scan is

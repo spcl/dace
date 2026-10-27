@@ -294,20 +294,25 @@ def _provably_le(a: symbolic.SymbolicType, b: symbolic.SymbolicType, facts: symb
     return symbolic.provably_le(sympy.sympify(a), sympy.sympify(b), facts)
 
 
-def loop_provably_at_most_one_iteration(loop: LoopRegion) -> bool:
+def loop_provably_at_most_one_iteration(loop: LoopRegion, facts: symbolic.Facts | None = None) -> bool:
     """Whether ``loop`` provably runs at most once (zero or one iterations).
 
     Such a loop carries no cross-iteration dependence by construction, so it is trivially DOALL --
     a ``LoopToMap`` can map it without any dependence analysis. Restricted to the unit ascending
     stride so the inclusive trip count is exactly ``end - start + 1``; the loop runs at most once iff
     ``end <= start``. Conservative: returns ``False`` whenever the bound cannot be proven.
+
+    :param facts: ``loop.sdfg.facts()``, when the caller holds it.
     """
     start = get_init_assignment(loop)
     end = get_loop_end(loop)  # inclusive
     step = get_loop_stride(loop)
-    # A loop not yet placed in an SDFG has no facts beyond its own bounds
-    facts = loop.sdfg.facts() if loop.sdfg is not None else symbolic.Facts.none()
-    if start is None or end is None or step is None or symbolic.simplify(step, facts) != 1:
+    if start is None or end is None or step is None:
+        return False
+    if facts is None:
+        # A loop not yet placed in an SDFG has no facts beyond its own bounds
+        facts = loop.sdfg.facts() if loop.sdfg is not None else symbolic.Facts.none()
+    if symbolic.simplify(step, facts) != 1:
         return False
     return _provably_le(symbolic.simplify(end, facts), symbolic.simplify(start, facts), facts)
 

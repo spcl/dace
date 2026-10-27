@@ -27,7 +27,9 @@ from dace.transformation.interstate.loop_to_map import (
     build_lift_context,
     build_lift_invariants,
     index_block_symbols,
+    index_flow_region,
     spans_small_symbols,
+    unindex_flow_region,
 )
 from dace.transformation.passes.analysis import array_facts, loop_analysis
 
@@ -97,6 +99,8 @@ class LiftSite:
     region_edges: Counter
     loop_edges: Counter
     inner_loops: list[LoopRegion]
+    #: the loop and every region within it (not across nested SDFGs)
+    loop_regions: list[Any]
 
     @staticmethod
     def capture(loop: LoopRegion) -> "LiftSite":
@@ -108,6 +112,7 @@ class LiftSite:
             region_edges=Counter(k for e in region.edges() for k in e.data.assignments),
             loop_edges=edge_assignment_counts(loop),
             inner_loops=[r for r in candidate_loops(loop) if r is not loop],
+            loop_regions=list(loop.all_control_flow_regions()),
         )
 
 
@@ -169,6 +174,11 @@ def patch_context(
     if ctx.symbol_uses is not None:
         for state in added:
             index_block_symbols(ctx, state)
+    if ctx.flow_readers is not None:
+        for gone in site.loop_regions:
+            unindex_flow_region(ctx, gone)
+        unindex_flow_region(ctx, region)
+        index_flow_region(ctx, region)
     return True
 
 

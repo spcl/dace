@@ -1434,21 +1434,25 @@ class SDFG(ControlFlowRegion):
         """The facts assumed of the contents of container ``name`` when the program is called."""
         return self._symbol_repo.data_facts(name)
 
-    def facts(self) -> symbolic.Facts:
+    def facts(self, assigned: AbstractSet[str] | None = None) -> symbolic.Facts:
         """The facts assumed about this SDFG's symbols, and that a symbol a data descriptor's dimension is a positive
         multiple of (``N``, ``2 * N``) is nonnegative, for explicit use in proofs. What is assumed of a symbol holds
-        for its value on entry only, so nothing is assumed of one an interstate edge assigns."""
+        for its value on entry only, so nothing is assumed of one an interstate edge assigns.
+
+        :param assigned: ``interstate_bound_names(self)``, when the caller keeps it up to date; walked otherwise.
+        """
         if _FACTS_MEMO is None:
-            return self.derive_facts()
+            return self.derive_facts(assigned)
         facts = _FACTS_MEMO.get(self)
         if facts is None:
-            facts = _FACTS_MEMO[self] = self.derive_facts()
+            facts = _FACTS_MEMO[self] = self.derive_facts(assigned)
         return facts
 
-    def derive_facts(self) -> symbolic.Facts:
+    def derive_facts(self, assigned: AbstractSet[str] | None = None) -> symbolic.Facts:
         """``facts()``, computed from the graph regardless of an active :func:`memoize_facts`."""
         own = self._symbol_repo.facts()
-        assigned = interstate_bound_names(self)
+        if assigned is None:
+            assigned = interstate_bound_names(self)
         if assigned:
             own = symbolic.Facts(
                 [relation for relation in own.relations if not symbolic.relation_names(relation) & assigned],

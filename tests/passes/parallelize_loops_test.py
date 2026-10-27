@@ -738,8 +738,8 @@ def test_every_memoized_fact_of_a_sweep_is_the_derived_one(monkeypatch) -> None:
     hits: list[dace.SDFG] = []
     original = dace.SDFG.facts
 
-    def checked(sd: dace.SDFG) -> dace.symbolic.Facts:
-        facts = original(sd)
+    def checked(sd: dace.SDFG, assigned=None) -> dace.symbolic.Facts:
+        facts = original(sd, assigned)
         assert facts == sd.derive_facts(), f"stale facts for {sd.label}"
         hits.append(sd)
         return facts
