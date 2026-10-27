@@ -419,7 +419,15 @@ class FuseMaps(ppl.Pass):
                             propagated.clear()
                         for xform, shapes in units:
                             self._drain(
-                                xform, shapes, cfg, state, state_id, pipeline_results, applied, propagated, forget_probes
+                                xform,
+                                shapes,
+                                cfg,
+                                state,
+                                state_id,
+                                pipeline_results,
+                                applied,
+                                propagated,
+                                forget_probes,
                             )
         for xform in vertical:
             xform.probe_symbols = None

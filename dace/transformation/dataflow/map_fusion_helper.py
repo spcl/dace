@@ -853,7 +853,9 @@ def reads_precede(
             continue
         if edge.src.data not in names:
             continue
-        if any(inner.dst not in reaching for inner in state.out_edges_by_connector(map_entry, "OUT_" + edge.dst_conn[3:])):
+        if any(
+            inner.dst not in reaching for inner in state.out_edges_by_connector(map_entry, "OUT_" + edge.dst_conn[3:])
+        ):
             return False
     return True
 
