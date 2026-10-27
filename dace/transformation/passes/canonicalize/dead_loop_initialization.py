@@ -136,14 +136,10 @@ def dead_fills(
         for node in state.data_nodes():
             if node.data in candidates:
                 outside.setdefault(node.data, []).append((state, node))
-    if not outside:
-        return []
-    _, written = loop.read_and_write_sets()
-    flow_reads = control_flow_reads_outside(sdfg, loop)
-    found = []
-    for name in sorted(written & outside.keys()):
-        desc = sdfg.arrays[name]
-        if isinstance(desc, data.View) or name in flow_reads:
+    # Every access outside the loop must be a lone constant fill: checked first, before the loop-wide analyses.
+    filled: dict[str, list[tuple[SDFGState, nodes.AccessNode, FillLibraryNode]]] = {}
+    for name in sorted(outside):
+        if isinstance(sdfg.arrays[name], data.View):
             continue
         fills = []
         for state, node in outside[name]:
@@ -158,8 +154,18 @@ def dead_fills(
                 break
             fills.append((state, node, producers[0].src))
         else:
-            if fills and tiles_every_iteration(loop, name, desc) and not carried_local_transients(loop, {name}):
-                found.extend(fills)
+            if fills:
+                filled[name] = fills
+    if not filled:
+        return []
+    _, written = loop.read_and_write_sets()
+    flow_reads = control_flow_reads_outside(sdfg, loop)
+    found = []
+    for name, fills in filled.items():
+        if name not in written or name in flow_reads:
+            continue
+        if tiles_every_iteration(loop, name, sdfg.arrays[name]) and not carried_local_transients(loop, {name}):
+            found.extend(fills)
     return found
 
 
