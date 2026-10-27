@@ -850,6 +850,55 @@ def test_a_symbol_the_start_block_reads_before_the_reset_stays_mapped():
     assert b[0] == 4
 
 
+def nested_node(state: dace.SDFGState) -> nodes.NestedSDFG:
+    return next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+
+
+def loop_through_a_scalar(read_after: bool) -> tuple[dace.SDFG, LoopRegion]:
+    """``for i: tmp = x[i] * 2; a[i] = tmp + 1``; with ``read_after``, ``tmp`` is also set before the loop and read by
+    the edge after it."""
+    N = dace.symbol("N")
+    sdfg = dace.SDFG(f"loop_through_a_scalar_{int(read_after)}")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_scalar("tmp", dace.float64, transient=True)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    st = loop.add_state("body", is_start_block=True)
+    t0 = st.add_tasklet("t0", {"inp": None}, {"out": None}, "out = inp * 2.0")
+    tmp = st.add_access("tmp")
+    st.add_edge(st.add_read("x"), None, t0, "inp", dace.Memlet("x[i]"))
+    st.add_edge(t0, "out", tmp, None, dace.Memlet("tmp"))
+    t1 = st.add_tasklet("t1", {"v": None}, {"out": None}, "out = v + 1.0")
+    st.add_edge(tmp, None, t1, "v", dace.Memlet("tmp"))
+    st.add_edge(t1, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
+    if read_after:
+        init = sdfg.add_state_before(loop, "init", is_start_block=True)
+        zero = init.add_tasklet("zero", {}, {"out": None}, "out = 0.0")
+        init.add_edge(zero, "out", init.add_write("tmp"), None, dace.Memlet("tmp"))
+        sdfg.add_edge(loop, sdfg.add_state("after"), dace.InterstateEdge(condition="tmp > 0.0"))
+    return sdfg, loop
+
+
+@pytest.mark.parametrize("read_after", [False, True], ids=["loop_only", "read_after"])
+def test_a_transient_moves_into_the_nest_only_if_nothing_else_uses_it(read_after):
+    """Without a use after the loop, ``tmp`` and the loop counter ``i`` stay inside the nested SDFG."""
+    sdfg, loop = loop_through_a_scalar(read_after)
+
+    node = nested_node(nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop])))
+    sdfg.validate()
+
+    assert ("tmp" in sdfg.arrays) == read_after
+    assert set(node.in_connectors) == {"x"} | ({"tmp"} if read_after else set())
+    if not read_after:
+        assert node.sdfg.arrays["tmp"].transient
+        assert sdfg.number_of_nodes() == 1  # No state hands ``i`` out
+        x = np.random.default_rng(4).random(16)
+        a = np.zeros(16)
+        sdfg(a=a, x=x, N=16)
+        assert np.allclose(a, x * 2.0 + 1.0)
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -879,3 +928,5 @@ if __name__ == "__main__":
     test_a_counter_the_loop_sets_and_the_parent_reads_is_exported_not_mapped()
     test_a_symbol_the_start_block_resets_is_bound_inside_not_an_argument()
     test_a_symbol_the_start_block_reads_before_the_reset_stays_mapped()
+    test_a_transient_moves_into_the_nest_only_if_nothing_else_uses_it(False)
+    test_a_transient_moves_into_the_nest_only_if_nothing_else_uses_it(True)
