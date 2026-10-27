@@ -2625,8 +2625,8 @@ class OffloadToAccelerator(ppl.Pass):
             return has_GPU_schedule(node)
         if not isinstance(node, nodes.NestedSDFG):
             return False
-        issued = (n for body in node.sdfg.states() for n in body.scope_children()[None])
-        return any(is_device_wide_libnode(n) for n in issued) or sdfg_only_launches(node.sdfg)
+        issued = ((n, body) for body in node.sdfg.states() for n in body.scope_children()[None])
+        return any(is_device_wide_libnode(n, body) for n, body in issued) or sdfg_only_launches(node.sdfg)
 
     @staticmethod
     def reads_host_pins_into_scalars(sdfg: SDFG, state: SDFGState, node: nodes.Node, pinned: AbstractSet[str]) -> bool:

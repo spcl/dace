@@ -6,7 +6,7 @@ from dace import symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.narrowing import as_basic
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.subsets import Range
 
 
@@ -24,23 +24,49 @@ def is_copy_or_fill_libnode(node: nodes.Node) -> bool:
     return isinstance(node, (CopyLibraryNode, FillLibraryNode))
 
 
-def is_device_wide_libnode(node: nodes.Node) -> bool:
+#: The lowerings a thread runs whole, inside a kernel.
+IN_KERNEL_IMPLEMENTATIONS = frozenset({"pure", "sequential"})
+
+
+def is_device_wide_libnode(node: nodes.Node, state: SDFGState | None = None) -> bool:
     """A library node whose expansion is a call only host code can issue.
 
     Copies and fills move data rather than compute it. The rest are host-issued -- a cuBLAS gemm is
     a call -- EXCEPT the expansions that say otherwise: a cub block reduce emits device code and
-    refuses to expand outside a kernel, so a map around one is that kernel, not a host loop.
+    refuses to expand outside a kernel, so a map around one is that kernel, not a host loop. Given its
+    ``state``, a node whose operands are all ``SMALL`` (:func:`small_operands`) is per-iteration work too:
+    a thread runs it whole, as the in-kernel lowering selection gives it.
     """
     if not isinstance(node, nodes.LibraryNode) or is_copy_or_fill_libnode(node):
         return False
     expansion = type(node).implementations.get(node.implementation or type(node).default_implementation)
-    return expansion is None or not expansion.runs_inside_kernel
+    if expansion is not None and expansion.runs_inside_kernel:
+        return False
+    return state is None or not small_operands(node, state)
+
+
+def small_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
+    """Whether ``node`` has an in-kernel lowering and every memlet of it moves a subset, or one of a container, whose
+    size names ``SMALL`` symbols only or is a literal, and some size names one."""
+    if not IN_KERNEL_IMPLEMENTATIONS & type(node).implementations.keys():
+        return False
+    facts = SymbolResolver().facts_at(state)
+    named = False
+    for edge in state.all_edges(node):
+        if edge.data.is_empty():
+            continue
+        sizes = [edge.data.subset.num_elements(), state.sdfg.arrays[edge.data.data].total_size]
+        small = [symbolic.is_small(size, facts) for size in sizes]
+        if not any(small) and not symbolic.pystr_to_symbolic(sizes[0]).is_number:
+            return False
+        named = named or any(small)
+    return named
 
 
 def encloses_device_wide_libnode(state: SDFGState, entry: nodes.MapEntry, scope_children: dict) -> bool:
     """Its scope holds a library node expanding to a call only host code can issue."""
     for node in scope_children.get(entry, ()):
-        if is_device_wide_libnode(node):
+        if is_device_wide_libnode(node, state):
             return True
         if isinstance(node, nodes.MapEntry) and encloses_device_wide_libnode(state, node, scope_children):
             return True
@@ -50,7 +76,7 @@ def encloses_device_wide_libnode(state: SDFGState, entry: nodes.MapEntry, scope_
 
 
 def sdfg_holds_device_wide_libnode(sdfg: SDFG) -> bool:
-    return any(is_device_wide_libnode(node) for node, _ in sdfg.all_nodes_recursive())
+    return any(is_device_wide_libnode(node, state) for node, state in sdfg.all_nodes_recursive())
 
 
 def sdfg_only_launches(sdfg: SDFG) -> bool:

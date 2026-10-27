@@ -470,6 +470,28 @@ def test_a_map_around_an_in_kernel_library_node_is_still_the_kernel():
     assert map_schedule(offloaded(sdfg, heuristics=False), "rows") == dtypes.ScheduleType.GPU_Device
 
 
+@pytest.mark.parametrize("small", [True, False])
+def test_a_map_around_a_library_node_over_small_operands_is_the_kernel(small):
+    """A reduce over a row of ``K`` elements, ``K`` declared ``SMALL``, is one thread's work, so the row map is the
+    kernel; over a row of a default-scale ``K`` it is a device-wide call the host issues per row."""
+    sdfg = dace.SDFG("map_over_small_reduce")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("A", [8, "K"], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
+    sdfg.add_array("row", ["K"], dace.float64, transient=True)
+    if small:
+        sdfg.set_symbol_scale("K", dace.symbolic.Scale.SMALL)
+    state = sdfg.add_state("body")
+    entry, exit_node = state.add_map("rows", dict(i="0:8"))
+    reduce_node = state.add_reduce("lambda a, b: a + b", None, 0.0)
+    row = state.add_access("row")
+    state.add_memlet_path(state.add_read("A"), entry, row, memlet=dace.Memlet("A[i, 0:K]", other_subset="0:K"))
+    state.add_edge(row, None, reduce_node, "_in", dace.Memlet("row[0:K]"))
+    state.add_memlet_path(reduce_node, exit_node, state.add_write("B"), memlet=dace.Memlet("B[i]"), src_conn="_out")
+
+    assert is_taskloop_map(state, entry, state.scope_children()) is not small
+
+
 def test_the_staged_row_of_a_launched_library_node_is_device_memory():
     sdfg = offloaded(map_over_reduce(), heuristics=True)
     assert storages(sdfg)["row"] == dtypes.StorageType.GPU_Global

@@ -51,6 +51,7 @@ from dace.transformation.auto.auto_optimize import (
 )
 from dace.transformation.dataflow import OTFMapFusion, RedundantArray, RedundantSecondArray
 from dace.transformation.interstate import InlineSDFG
+from dace.transformation.passes.bound_data_dependent_extents import BoundDataDependentExtents
 from dace.transformation.passes.canonicalize.beta_fold import BetaFold
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
@@ -798,6 +799,8 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
     SpecializeSmallGemms(dtypes.DeviceType.GPU).apply_pass(sdfg, {})
     # Before the offload makes a level map the kernel: its planes, along the contiguous axis, are the threads.
     demote_uncoalesced_level_maps(sdfg)
+    # Before the offload decides what a kernel can own: a buffer sized per iteration by data is allocated by the host.
+    BoundDataDependentExtents().apply_pass(sdfg, {})
     apply_gpu_storage(sdfg)
     # One validation for the whole offload, after the last step, instead of one per step.
     # Its own ``simplify`` would validate: simplified here instead, without validation.

@@ -478,7 +478,7 @@ def nondecreasing_fact(chain: list[ControlFlowBlock], name: str, desc: dt.Data, 
 
 def nonnegative_expr(expr: ast.AST, names: set[str]) -> bool:
     """Whether ``expr`` is a nonnegative constant, one of ``names`` or an element of one, or a sum, product,
-    ``min`` or ``max`` of those."""
+    ``min``, ``max`` or conditional choice of those."""
     if isinstance(expr, ast.Constant):
         return isinstance(expr.value, (int, float)) and not isinstance(expr.value, bool) and expr.value >= 0
     if isinstance(expr, ast.Name):
@@ -487,6 +487,8 @@ def nonnegative_expr(expr: ast.AST, names: set[str]) -> bool:
         return isinstance(expr.value, ast.Name) and expr.value.id in names
     if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Add, ast.Mult)):
         return nonnegative_expr(expr.left, names) and nonnegative_expr(expr.right, names)
+    if isinstance(expr, ast.IfExp):
+        return nonnegative_expr(expr.body, names) and nonnegative_expr(expr.orelse, names)
     if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id in ("min", "max") and expr.args:
         verdicts = [nonnegative_expr(a, names) for a in expr.args]
         return all(verdicts) if expr.func.id == "min" else any(verdicts)
