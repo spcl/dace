@@ -1336,7 +1336,10 @@ def isolate_nested_sdfg(
     # The larger of the pre and post parts stays in ``state``: only the other one and the middle move, so isolating
     # every nested SDFG of a state one after the other does not move the whole state each time.
     parent_graph = state.parent_graph
-    was_start = parent_graph.start_block is state
+    # Only a source or an explicitly set start can be the start block: the check skips the source-node walk otherwise
+    was_start = (
+        parent_graph.in_degree(state) == 0 or parent_graph._start_block is not None
+    ) and parent_graph.start_block is state
     label = state.label or None
     if len(post_nodes) >= len(pre_nodes):
         middle_state = parent_graph.add_state_before(
