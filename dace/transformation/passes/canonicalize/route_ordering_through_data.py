@@ -15,7 +15,6 @@ nodes it reads: the nest still runs between them, and inlining keeps those acces
 is refused where it would close a cycle.
 """
 
-import collections
 from typing import Any
 
 from dace import SDFG, Memlet, data
@@ -24,8 +23,8 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState
+from dace.transformation import helpers, transformation
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation import transformation
 
 
 def blocking_ordering_edges(
@@ -37,22 +36,34 @@ def blocking_ordering_edges(
     return ins, outs
 
 
-def reachable(
-    state: SDFGState, start: nodes.Node, forward: bool, skipped: MultiConnectorEdge[Memlet] | None
-) -> set[nodes.Node]:
-    """The nodes reachable from ``start`` (``forward``) or reaching it (backward), not using ``skipped``."""
-    seen = {start}
-    queue = collections.deque([start])
-    while queue:
-        current = queue.popleft()
-        for edge in state.out_edges(current) if forward else state.in_edges(current):
-            if edge is skipped:
-                continue
-            nxt = edge.dst if forward else edge.src
-            if nxt not in seen:
-                seen.add(nxt)
-                queue.append(nxt)
-    return seen
+def reach_bits(state: SDFGState, order: list[nodes.Node], index: dict[nodes.Node, int], skipped) -> dict:
+    """Per node of ``state``, the bitset (bit ``index[n]``) of the nodes it reaches, not using edge ``skipped``.
+
+    One pass in reverse topological ``order``: a state is acyclic.
+    """
+    bits: dict[nodes.Node, int] = {}
+    for current in reversed(order):
+        reach = 0
+        for edge in state.out_edges(current):
+            if edge is not skipped:
+                reach |= (1 << index[edge.dst]) | bits[edge.dst]
+        bits[current] = reach
+    return bits
+
+
+class StateFacts:
+    """What the decisions in one state read and no drop, reroute or split changes: the data each view aliases and
+    each node's accesses. A split leaves every existing node's touched and written data as it was."""
+
+    def __init__(self, state: SDFGState) -> None:
+        self.state = state
+        self.roots = viewed_data(state)
+        self._accesses: dict[nodes.Node, tuple[set[str], set[str]] | None] = {}
+
+    def accesses(self, node: nodes.Node) -> tuple[set[str], set[str]] | None:
+        if node not in self._accesses:
+            self._accesses[node] = accesses(self.state, node, self.roots)
+        return self._accesses[node]
 
 
 def viewed_data(state: SDFGState) -> dict[str, str | None]:
@@ -93,7 +104,7 @@ def conflict(left: tuple[set[str], set[str]] | None, right: tuple[set[str], set[
     return bool(left[1] & right[0] or right[1] & left[0])
 
 
-def guards_nothing(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> bool:
+def guards_nothing(state: SDFGState, edge: MultiConnectorEdge[Memlet], facts: StateFacts) -> bool:
     """Whether removing the ordering ``edge`` unorders no two nodes whose accesses conflict.
 
     Removing ``u -> v`` unorders a node before (or at) ``u`` from a node after (or at) ``v`` exactly when
@@ -108,39 +119,80 @@ def guards_nothing(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> bool:
         state.out_degree(edge.src) == 1 and scope[edge.src] is not None
     ):
         return False  # the edge is all that keeps an endpoint in its scope
-    roots = viewed_data(state)
-    after = reachable(state, edge.dst, True, None)
-    for before in reachable(state, edge.src, False, None):
-        lost = after - reachable(state, before, True, edge)
-        if lost and any(conflict(accesses(state, before, roots), accesses(state, node, roots)) for node in lost):
-            return False
+    order = list(nx.topological_sort(state.nx))
+    index = {n: i for i, n in enumerate(order)}
+    full, without = reach_bits(state, order, index, None), reach_bits(state, order, index, edge)
+    after = full[edge.dst] | (1 << index[edge.dst])
+    source_bit = 1 << index[edge.src]
+    for before in order:
+        if before is not edge.src and not full[before] & source_bit:
+            continue
+        lost = after & ~(without[before] | (1 << index[before]))
+        while lost:
+            low = lost & -lost
+            node = order[low.bit_length() - 1]
+            if conflict(facts.accesses(before), facts.accesses(node)):
+                return False
+            lost ^= low
     return True
 
 
-def route_through_data(state: SDFGState, node: nodes.NestedSDFG) -> bool:
+def own_access(state: SDFGState, node: nodes.NestedSDFG, access: nodes.AccessNode, outgoing: bool) -> list:
+    """``node``'s data edges into (``outgoing``) or out of ``access``, when ``access`` can hand them to an access node
+    of its own: a non-view sink (source) with other writers (readers), whose in-edges (out-edges) are unordered among
+    themselves. ``[]`` otherwise."""
+    if isinstance(access.desc(state.sdfg), data.View):
+        return []
+    if (state.out_degree(access) if outgoing else state.in_degree(access)) > 0:
+        return []
+    edges = state.out_edges(node) if outgoing else state.in_edges(node)
+    mine = [e for e in edges if not e.data.is_empty() and (e.dst if outgoing else e.src) is access]
+    others = state.in_degree(access) if outgoing else state.out_degree(access)
+    return mine if others > len(mine) else []
+
+
+def route_through_data(state: SDFGState, node: nodes.NestedSDFG, facts: StateFacts) -> bool:
     """Drop ``node``'s blocking ordering edges that guard nothing, and replace the others by edges through
     its data access nodes if that keeps the state acyclic.
+
+    An access node that closes the cycle only through its other writers (a shared sink) or readers (a shared source)
+    is first split, so that ``node`` gets an access node of its own.
 
     :returns: Whether anything was dropped or rerouted.
     """
     ins, outs = blocking_ordering_edges(state, node)
-    dropped = [edge for edge in [*ins, *outs] if guards_nothing(state, edge)]
+    dropped = [edge for edge in [*ins, *outs] if guards_nothing(state, edge, facts)]
     for edge in dropped:
         state.remove_edge(edge)
     ins, outs = blocking_ordering_edges(state, node)
     if not ins and not outs:
         return bool(dropped)
-    reads = [e.src for e in state.in_edges(node) if not e.data.is_empty()]
-    writes = [e.dst for e in state.out_edges(node) if not e.data.is_empty()]
+    reads = list(dict.fromkeys(e.src for e in state.in_edges(node) if not e.data.is_empty()))
+    writes = list(dict.fromkeys(e.dst for e in state.out_edges(node) if not e.data.is_empty()))
     if not all(isinstance(n, nodes.AccessNode) for n in reads + writes):
         return bool(dropped)
     if (outs and not writes) or (ins and not reads):
         return bool(dropped)
-    graph = state._nx
-    if any(nx.has_path(graph, e.dst, w) for e in outs for w in writes):
+    graph = state.nx
+    # An access node the nest owns alone cannot close a cycle; one it shares can, and is split if it may be.
+    to_split: list[tuple[nodes.AccessNode, list, bool]] = [
+        (written, own_access(state, node, written, outgoing=True), True)
+        for written in writes
+        if any(nx.has_path(graph, e.dst, written) for e in outs)
+    ]
+    to_split.extend(
+        (read, own_access(state, node, read, outgoing=False), False)
+        for read in reads
+        if any(nx.has_path(graph, read, e.src) for e in ins)
+    )
+    if any(not edges for _, edges, _ in to_split):
         return bool(dropped)
-    if any(nx.has_path(graph, r, e.src) for e in ins for r in reads):
-        return bool(dropped)
+    for access, edges, outgoing in to_split:
+        own = state.add_access(access.data)
+        for edge in edges:
+            helpers.redirect_edge(state, edge, **({"new_dst": own} if outgoing else {"new_src": own}))
+    reads = list(dict.fromkeys(e.src for e in state.in_edges(node) if not e.data.is_empty()))
+    writes = list(dict.fromkeys(e.dst for e in state.out_edges(node) if not e.data.is_empty()))
     for edge in outs:
         state.remove_edge(edge)
         for written in writes:
@@ -159,7 +211,7 @@ class RouteOrderingThroughData(ppl.Pass):
     CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Edges
+        return ppl.Modifies.Edges | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges))
@@ -175,6 +227,12 @@ class RouteOrderingThroughData(ppl.Pass):
         rerouted = 0
         for owner in sdfg.all_sdfgs_recursive():
             for state in owner.states():
-                for node in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]:
-                    rerouted += route_through_data(state, node)
+                blocked = [
+                    n
+                    for n in state.nodes()
+                    if isinstance(n, nodes.NestedSDFG) and any(blocking_ordering_edges(state, n))
+                ]
+                facts = StateFacts(state) if blocked else None
+                for node in blocked:
+                    rerouted += route_through_data(state, node, facts)
         return rerouted or None

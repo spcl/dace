@@ -134,7 +134,7 @@ def specialize_loop_under_condition(
 
     # Both clones still name the loop's scratch transients: a transient accessed outside the loop is one
     # LoopToMap cannot privatize, so the fallback gets its own copies (only one branch ever runs)
-    from dace.transformation.passes.scatter_to_guarded_maps import privatize_clone_local_transients
+    from dace.transformation.passes.parallelization.contracts.guarded_scatter import privatize_clone_local_transients
 
     privatize_clone_local_transients(owner_sdfg, par_loop, seq_loop)
     give_clone_its_own_iterators(owner_sdfg, conditional, seq_loop)

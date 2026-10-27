@@ -5,7 +5,7 @@ import warnings
 
 from dace import data as dt
 from dace import graphlib as nx
-from dace import memlet, properties, sdfg, subsets
+from dace import memlet, properties, sdfg, subsets, symbolic
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -222,6 +222,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # ask the same question the matcher answered. See ``apply``.
         self._matched_permissive = False
         self._side_effect_cache: dict[tuple[SDFGState, bool], bool] | None = None
+        self._region_facts: dict[ControlFlowRegion, symbolic.Facts] | None = None
 
     @property
     def connections_to_make(self):
@@ -236,6 +237,25 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     @side_effect_cache.setter
     def side_effect_cache(self, cache: dict[tuple[SDFGState, bool], bool] | None) -> None:
         self._side_effect_cache = cache
+
+    @property
+    def region_facts(self) -> dict[ControlFlowRegion, symbolic.Facts] | None:
+        """The facts inside each region, shared by the probes of one caller; ``None`` = derived per probe. A state
+        fusion changes neither the regions nor the symbols they are derived from."""
+        return self._region_facts
+
+    @region_facts.setter
+    def region_facts(self, cache: dict[ControlFlowRegion, symbolic.Facts] | None) -> None:
+        self._region_facts = cache
+
+    def state_facts(self, state: SDFGState) -> symbolic.Facts:
+        """The facts that hold in ``state``: those of its region, as it has no scope of its own."""
+        if self._region_facts is None:
+            return SymbolResolver().facts_at(state)
+        region = state.parent_graph
+        if region not in self._region_facts:
+            self._region_facts[region] = SymbolResolver().facts_at(state)
+        return self._region_facts[region]
 
     @staticmethod
     def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> list[CCDesc]:
@@ -277,6 +297,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         graph_b: SDFGState,
         group_b: list[nodes.AccessNode],
         inputs_b: bool,
+        facts: symbolic.Facts | None = None,
     ) -> bool:
         """
         Performs an all-pairs check for subset intersection on two
@@ -289,6 +310,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         :param graph_b: The graph in which the second set of nodes reside.
         :param group_b: The second set of nodes to check.
         :param inputs_b: If True, checks inputs of the second group.
+        :param facts: The facts in ``graph_a``; ``None`` derives them.
         :return: True if subsets intersect or result is indeterminate.
         """
         # Set traversal functions: the subset an edge accesses on the side of the group's node, never the other
@@ -309,7 +331,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             subset_b = dst_subset
 
         # Simple all-pairs check. The states are consecutive, so what holds in the first holds in the second.
-        facts = SymbolResolver().facts_at(graph_a)
+        facts = SymbolResolver().facts_at(graph_a) if facts is None else facts
         # An empty Memlet only orders, it accesses no data
         edges_a = [e for e in edges_a if not e.data.is_empty()]
         edges_b = [e for e in edges_b if not e.data.is_empty()]
@@ -357,7 +379,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     return True
         # Path not found, check memlets
         if StateFusionExtended.memlets_intersect(
-            first_state, nodes_first, first_read, second_state, nodes_second, second_read
+            first_state, nodes_first, first_read, second_state, nodes_second, second_read, self.state_facts(first_state)
         ):
             return False
         return True
@@ -410,7 +432,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         # Not ordered by dataflow. Only an actual overlap is a hazard.
         return not StateFusionExtended.memlets_intersect(
-            first_state, nodes_first, first_read, second_state, nodes_second, second_read
+            first_state, nodes_first, first_read, second_state, nodes_second, second_read, self.state_facts(first_state)
         )
 
     def state_blocks_fusion(self, state: SDFGState, sdfg, permissive: bool) -> bool:
@@ -645,7 +667,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # see ``is_read_view_binding``.
             top1, top2 = top_level_nodes(first_state), top_level_nodes(second_state)
             # The states are consecutive, so what holds in the first holds in the second
-            facts = SymbolResolver().facts_at(first_state)
+            facts = self.state_facts(first_state)
             first_input = in_state_order(
                 first_state, [n for n in first_state.source_nodes() if isinstance(n, nodes.AccessNode)], first_order
             )
@@ -1032,7 +1054,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                             if d in fused_cc.first_outputs:
                                 nodes_first = first_output_by_data.get(d, [])
                                 if StateFusionExtended.memlets_intersect(
-                                    first_state, nodes_first, False, second_state, nodes_second, False
+                                    first_state, nodes_first, False, second_state, nodes_second, False, facts
                                 ):
                                     self.connections_to_make.append(("waw", nodes_first, nodes_second))
                     # End of data race check

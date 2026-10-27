@@ -626,6 +626,9 @@ def suppress_writes(body: SDFG, name: str) -> None:
 
     for state in body.states():
         for node in [n for n in state.data_nodes() if n.data == name]:
+            # Cutting one store's dangling path can take another access node of ``name`` with it (a copy between two).
+            if node not in state.nodes():
+                continue
             for e in producer_edges(state, node):
                 sdutil.remove_edge_and_dangling_path(state, e)
             if node in state.nodes() and state.degree(node) == 0:

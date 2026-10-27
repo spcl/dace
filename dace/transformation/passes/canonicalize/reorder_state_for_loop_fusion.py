@@ -49,14 +49,11 @@ one is enforced):
       ``cfg``'s start block the entry path itself changes shape (execution would begin partway
       through the new chain). Refused; only a candidate whose blocks are all interior is considered.
 
-Even a legal reorder is pointless on its own: the point is only to unlock ``LoopFusion``. So the
-reorder fires only when it is BOTH dependence-legal AND ``LoopFusion.can_be_applied_to`` would accept
-the resulting ``loop1 -> loop2`` adjacency -- decided on a throwaway deep copy so a refusal never
-mutates the real SDFG. The pass itself never fuses; it only restores adjacency and leaves fusing to
-``FuseLoops``/``LoopFusion``, the same division of labour ``SinkStateIntoLoop`` uses.
+Checks run cheapest first: the edge shape (``candidates``), then the two loops' iteration spaces, then the
+bodies, then the name-level dependences. Only a reorder that is legal AND that ``LoopFusion.can_be_applied_to``
+accepts is kept: it is tried in place and undone on a refusal. The pass itself never fuses; ``FuseLoops`` does.
 """
 
-import copy
 from typing import Any
 
 from dace import SDFG
@@ -65,6 +62,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import (
     BreakBlock,
+    ConditionalBlock,
     ContinueBlock,
     ControlFlowBlock,
     ControlFlowRegion,
@@ -75,27 +73,22 @@ from dace.sdfg.state import (
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_fusion import LoopFusion
-from dace.transformation.passes.analysis.analysis import AccessSets
+from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis.analysis import names_read_by_text
 
-#: A ``(loop1, state, loop2)`` triple matching the ``loop1 -> state -> loop2`` chain, structurally
-#: eligible to be considered for the reorder (legality and fusability still to be decided).
+#: A ``(loop1, state, loop2)`` triple matching the ``loop1 -> state -> loop2`` chain.
 Candidate = tuple[LoopRegion, SDFGState, LoopRegion]
 
-#: Block types whose presence means control can leave ``loop2`` somewhere other than its normal
-#: successor edge -- see checklist item 7.
+#: Blocks through which control can leave ``loop2`` other than by its normal successor (item 7).
 ESCAPE_BLOCKS: tuple[type[ControlFlowBlock], ...] = (ReturnBlock, BreakBlock, ContinueBlock)
 
-#: Descriptor types for which two different names can name the same memory -- see checklist item 4.
+#: Descriptor types for which two different names can name the same memory (item 4).
 ALIASING_TYPES: tuple[type, ...] = (dt.View, dt.Reference)
 
 
 @transformation.explicit_cf_compatible
 class ReorderStateForLoopFusion(ppl.Pass):
-    """Reorder a between-loops SIBLING state past the second loop when doing so is dependence-legal
-    AND unlocks ``LoopFusion``. ``state`` is never nested into ``loop2``; it stays a sibling block
-    before and after, just moved from ``loop1 -> state -> loop2`` to ``loop1 -> loop2 -> state``.
-    Fires on neither condition alone, and refuses outright on anything undecidable -- see the module
-    docstring for the full checklist."""
+    """Move a state between two loops past the second loop when that is legal and unlocks ``LoopFusion``."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -105,63 +98,40 @@ class ReorderStateForLoopFusion(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
 
-    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
-        return [AccessSets]
-
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
-        """Reorder every legal, fusion-unlocking between-loops state in ``sdfg``, to a fixpoint.
+        """Reorder every legal, fusion-unlocking between-loops state in ``sdfg``.
 
-        :param sdfg: The SDFG to transform in place.
-        :returns: Number of states sunk, or ``None`` if none.
+        :returns: Number of states moved, or ``None`` if none.
         """
-        access_sets = pipeline_results.get(AccessSets.__name__)
-        if access_sets is None:
-            access_sets = AccessSets().apply_pass(sdfg, {})
-
         reordered = 0
-        changed = True
-        while changed:
-            changed = False
-            for sd in sdfg.all_sdfgs_recursive():
-                for cfg in list(sd.all_control_flow_regions(recursive=True)):
-                    # `sd`, not the top SDFG: the throwaway copy in `would_fuse` only has to carry the
-                    # SDFG the candidate actually lives in, and LoopFusion is handed that same scope.
-                    if isinstance(cfg, ControlFlowRegion) and self.reorder_one(sd, cfg, access_sets):
-                        reordered += 1
-                        changed = True
-                        break
-                if changed:
-                    break
-            if changed:
-                # The move can change which pairs of blocks are adjacent to which edges, so a stale
-                # access-set entry could under- or over-count what an endpoint now touches -- recompute.
-                access_sets = AccessSets().apply_pass(sdfg, {})
+        for sd in sdfg.all_sdfgs_recursive():
+            for cfg in list(sd.all_control_flow_regions(recursive=True)):
+                if not isinstance(cfg, ControlFlowRegion):
+                    continue
+                # A move rewires edges of ``cfg`` only; a refused triple stays refused.
+                refused: set[Candidate] = set()
+                while self.reorder_one(sd, cfg, refused):
+                    reordered += 1
         return reordered or None
 
     @staticmethod
     def candidates(cfg: ControlFlowRegion) -> list[Candidate]:
-        """Every structurally-eligible ``loop1 -> state -> loop2`` chain directly inside ``cfg``
-        (one level; nested chains are reached separately via ``all_control_flow_regions``).
-
-        Enforces checklist items 8/9/10/12: both edges around ``state`` unconditional and
-        assignment-free, ``state`` the sole path in and out, ``loop2`` with no other predecessor, and
-        neither of the two reordered blocks is the entry.
-        """
+        """Every ``loop1 -> state -> loop2`` chain directly inside ``cfg`` whose edges allow the move (items 8,
+        9, 10, 12)."""
         found: list[Candidate] = []
         start = cfg.start_block
         for state in cfg.nodes():
             if not isinstance(state, SDFGState) or state is start:  # item 12
                 continue
             in_edges, out_edges = cfg.in_edges(state), cfg.out_edges(state)
-            if len(in_edges) != 1 or len(out_edges) != 1:  # item 10: state is the only path in/out
+            if len(in_edges) != 1 or len(out_edges) != 1:  # item 10
                 continue
             first, second = in_edges[0].src, out_edges[0].dst
             if not isinstance(first, LoopRegion) or not isinstance(second, LoopRegion) or first is second:
                 continue
-            if second is start:  # item 12: second inherits state's out-edges, so it must not be the entry
+            if second is start:  # item 12
                 continue
-            # item 10: second must have no OTHER way in (also catches a parallel loop1 -> loop2 edge).
-            if len(cfg.in_edges(second)) != 1:
+            if len(cfg.in_edges(second)) != 1:  # item 10
                 continue
             if in_edges[0].data.assignments or out_edges[0].data.assignments:  # item 8
                 continue
@@ -172,109 +142,109 @@ class ReorderStateForLoopFusion(ppl.Pass):
 
     @staticmethod
     def escapes(second: LoopRegion) -> bool:
-        """Item 7: whether ``second``'s body contains a ``ReturnBlock``/``BreakBlock``/``ContinueBlock``
-        anywhere (any nesting depth; ``all_control_flow_blocks`` also follows a ``NestedSDFG`` down into
-        its own regions). Presence alone refuses -- reachability is not attempted."""
+        """Item 7: whether ``second`` holds a return, break or continue block at any depth."""
         return any(isinstance(b, ESCAPE_BLOCKS) for b in second.all_control_flow_blocks(recursive=True))
 
     @staticmethod
-    def nested_sdfgs_within(block: Any) -> bool:
-        """Item 5: whether ``block`` (a plain state, or a region such as ``second``) contains a
-        ``NestedSDFG`` node anywhere in its own states. Proving RAW/WAR/WAW disjointness, WCR/dynamic-
-        memlet safety, and aliasing THROUGH an SDFG-scope boundary needs data-flow this pass does not
-        have -- any ``NestedSDFG`` here refuses the whole candidate rather than guessing.
+    def opaque_code(block: SDFGState | LoopRegion, sdfg: SDFG) -> bool:
+        """Items 5 and 11: whether ``block`` holds a nested SDFG or a code node with side effects."""
+        states = [block] if isinstance(block, SDFGState) else block.states()
+        return any(
+            isinstance(n, nd.NestedSDFG) or (isinstance(n, nd.CodeNode) and n.has_side_effects(sdfg))
+            for s in states
+            for n in s.nodes()
+        )
+
+    @staticmethod
+    def access_sets(block: SDFGState | LoopRegion, arrays: Any) -> tuple[set[str], set[str]]:
+        """Containers ``block`` reads and writes: access nodes, plus data read by its loop headers, branch
+        conditions and inner interstate edges."""
+        reads: set[str] = set()
+        writes: set[str] = set()
+        states = [block] if isinstance(block, SDFGState) else block.states()
+        for s in states:
+            for an in s.data_nodes():
+                if s.in_degree(an):
+                    writes.add(an.data)
+                if s.out_degree(an):
+                    reads.add(an.data)
+        if isinstance(block, SDFGState):
+            return reads, writes
+        texts: list[str] = []
+        for b in [block, *block.all_control_flow_blocks()]:
+            if isinstance(b, LoopRegion):
+                texts.append(b.loop_condition.as_string)
+                texts.extend(
+                    t
+                    for t in (
+                        loop_analysis.assignment_text(b.init_statement, b.loop_variable),
+                        loop_analysis.assignment_text(b.update_statement, b.loop_variable),
+                    )
+                    if t
+                )
+            elif isinstance(b, ConditionalBlock):
+                texts.extend(c.as_string for c, _ in b.branches if c is not None)
+        for t in texts:
+            reads |= names_read_by_text(t) & arrays
+        for e in block.all_interstate_edges(recursive=True):
+            reads |= e.data.free_symbols & arrays
+        return reads, writes
+
+    @staticmethod
+    def reorder_legal(state: SDFGState, second: LoopRegion) -> bool:
+        """Whether running ``state`` after ``second`` changes nothing (items 7, 5, 11, 4, 1-3, cheapest first).
+
+        Dependences are by container name: a shared name is a conflict whatever the subsets.
         """
-        states = [block] if isinstance(block, SDFGState) else list(block.states())
-        return any(isinstance(n, nd.NestedSDFG) for s in states for n in s.nodes())
-
-    @staticmethod
-    def has_side_effecting_code(block: Any, sdfg: SDFG) -> bool:
-        """Item 11: whether ``block`` (a plain state, or a region such as ``second``) holds a code node
-        whose effects are not described by its memlets. Such a node is invisible to the name-level
-        RAW/WAR/WAW checks, so it has to disqualify the candidate from whichever side it sits on."""
-        states = [block] if isinstance(block, SDFGState) else list(block.states())
-        return any(isinstance(n, nd.CodeNode) and n.has_side_effects(sdfg) for s in states for n in s.nodes())
-
-    @staticmethod
-    def touches_aliasing_data(sdfg: SDFG, names: Any) -> bool:
-        """Item 4: whether any of ``names`` is a ``View``/``Reference`` descriptor in ``sdfg``. A name
-        not in ``sdfg.arrays`` (e.g. a free symbol AccessSets folded in from an edge) is not a data
-        descriptor and cannot alias anything, so it is skipped rather than raising."""
-        return any(isinstance(sdfg.arrays[name], ALIASING_TYPES) for name in names if name in sdfg.arrays)
-
-    @staticmethod
-    def reorder_legal(state: SDFGState, second: LoopRegion, access_sets: dict[Any, tuple[Any, Any]]) -> bool:
-        """Whether running ``state`` after ``second`` instead of before it changes nothing. Checks items
-        7, 11, 5 (+6), 4, then 1/2/3, cheapest first.
-
-        RAW/WAR/WAW are container-name-level, never subset-level: if two accesses name different data
-        descriptors they provably cannot conflict regardless of subset, so this is sound; a shared name
-        (WCR or not, dynamic or not) is always treated as a conflict even if the actual subsets might not
-        overlap -- an undecided overlap is not legal.
-        """
-        if ReorderStateForLoopFusion.escapes(second):  # item 7
-            return False
         sdfg = state.sdfg
-        if ReorderStateForLoopFusion.has_side_effecting_code(
-            state, sdfg
-        ) or ReorderStateForLoopFusion.has_side_effecting_code(second, sdfg):
-            return False  # item 11
-        if ReorderStateForLoopFusion.nested_sdfgs_within(state) or ReorderStateForLoopFusion.nested_sdfgs_within(
-            second
-        ):  # item 5 (+6)
+        if ReorderStateForLoopFusion.escapes(second):
             return False
-        reads_s, writes_s = access_sets[state]
-        reads_b, writes_b = access_sets[second]
-        if ReorderStateForLoopFusion.touches_aliasing_data(sdfg, reads_s | writes_s | reads_b | writes_b):  # item 4
+        if ReorderStateForLoopFusion.opaque_code(state, sdfg) or ReorderStateForLoopFusion.opaque_code(second, sdfg):
             return False
-        if writes_s & reads_b:  # item 1, RAW: state writes what second reads
+        arrays = sdfg.arrays.keys()
+        reads_s, writes_s = ReorderStateForLoopFusion.access_sets(state, arrays)
+        reads_b, writes_b = ReorderStateForLoopFusion.access_sets(second, arrays)
+        if any(isinstance(sdfg.arrays[n], ALIASING_TYPES) for n in reads_s | writes_s | reads_b | writes_b):
             return False
-        if reads_s & writes_b:  # item 2, WAR: state reads what second writes
-            return False
-        if writes_s & writes_b:  # item 3, WAW: both write the same container
-            return False
-        return True
+        return not (writes_s & reads_b or reads_s & writes_b or writes_s & writes_b)
 
     @staticmethod
-    def would_fuse(sdfg: SDFG, cfg: ControlFlowRegion, first: LoopRegion, state: SDFGState, second: LoopRegion) -> bool:
-        """Whether ``LoopFusion`` would accept ``first``/``second`` once ``state`` no longer sits between
-        them. Decided on a throwaway deep copy of the whole SDFG (memoized by object id, so the copies of
-        ``first``/``state``/``second`` are recoverable) -- a refusal here must never touch the real graph.
-        """
-        memo: dict[int, Any] = {}
-        sdfg_copy = copy.deepcopy(sdfg, memo)
-        ReorderStateForLoopFusion.reorder_past(memo[id(cfg)], memo[id(first)], memo[id(state)], memo[id(second)])
-        return LoopFusion.can_be_applied_to(sdfg_copy, first=memo[id(first)], second=memo[id(second)])
+    def reorder_past(
+        cfg: ControlFlowRegion, first: LoopRegion, state: SDFGState, second: LoopRegion
+    ) -> tuple[list, list]:
+        """Rewire ``first -> state -> second`` into ``first -> second -> state`` in place.
 
-    @staticmethod
-    def reorder_past(cfg: ControlFlowRegion, first: LoopRegion, state: SDFGState, second: LoopRegion) -> None:
-        """Rewire ``first -> state -> second`` into ``first -> second -> state``, in place.
-
-        ``state`` stays a SIBLING node of ``cfg`` throughout -- it is never added into ``second``'s own
-        node set, only re-targeted by edges, so its nesting level is unchanged by this reorder. It
-        inherits ``second``'s original outgoing edges (deep-copied, never the same edge-data object
-        shared across two edges); the two new connecting edges are fresh, plain, unconditional splices --
-        exactly the shape ``candidates`` already required of the edges being removed.
+        :returns: The removed and the added edges, for :meth:`undo_reorder`.
         """
-        tail_edges = list(cfg.out_edges(second))
-        cfg.remove_edge(cfg.edges_between(first, state)[0])
-        cfg.remove_edge(cfg.edges_between(state, second)[0])
-        for e in tail_edges:
+        removed = [cfg.edges_between(first, state)[0], cfg.edges_between(state, second)[0], *cfg.out_edges(second)]
+        for e in removed:
             cfg.remove_edge(e)
-        cfg.add_edge(first, second, InterstateEdge())
-        cfg.add_edge(second, state, InterstateEdge())
-        for e in tail_edges:
-            cfg.add_edge(state, e.dst, copy.deepcopy(e.data))
+        added = [cfg.add_edge(first, second, InterstateEdge()), cfg.add_edge(second, state, InterstateEdge())]
+        added += [cfg.add_edge(state, e.dst, e.data) for e in removed[2:]]
+        return removed, added
 
-    def reorder_one(self, sdfg: SDFG, cfg: ControlFlowRegion, access_sets: dict[Any, tuple[Any, Any]]) -> bool:
-        """Find and sink one legal, fusion-unlocking candidate inside ``cfg``."""
-        for first, state, second in self.candidates(cfg):
-            if not self.reorder_legal(state, second, access_sets):
+    @staticmethod
+    def undo_reorder(cfg: ControlFlowRegion, removed: list, added: list) -> None:
+        """Undo :meth:`reorder_past`."""
+        for e in added:
+            cfg.remove_edge(e)
+        for e in removed:
+            cfg.add_edge(e.src, e.dst, e.data)
+
+    def reorder_one(self, sdfg: SDFG, cfg: ControlFlowRegion, refused: set[Candidate]) -> bool:
+        """Move one legal, fusion-unlocking candidate inside ``cfg``; record the refused ones in ``refused``."""
+        for cand in self.candidates(cfg):
+            if cand in refused:
                 continue
-            if not self.would_fuse(sdfg, cfg, first, state, second):
+            first, state, second = cand
+            if not LoopFusion._same_iteration_space(first, second) or not self.reorder_legal(state, second):
+                refused.add(cand)
                 continue
-            self.reorder_past(cfg, first, state, second)
-            return True
+            removed, added = self.reorder_past(cfg, first, state, second)
+            if LoopFusion.can_be_applied_to(sdfg, first=first, second=second):
+                return True
+            self.undo_reorder(cfg, removed, added)
+            refused.add(cand)
         return False
 
 

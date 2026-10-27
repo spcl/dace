@@ -147,10 +147,24 @@ class _SymbolDTypeContext(threading.local):
 
     def declare(self, name: str, dtype: "dtypes.typeclass") -> None:
         """Adds ``name`` to the active level (no-op without one), for a symbol declared while it is active."""
-        if len(self.ctx_stack) > 1 and self._is_scalar_symbol_dtype(dtype):
-            level = {**self.ctx_stack[-1], name: dtype}
-            self.ctx_stack[-1] = types.MappingProxyType(level)
-            self.key_stack[-1] = AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
+        self.declare_all({name: dtype})
+
+    def declare_all(self, declared: Mapping[str, "dtypes.typeclass"]) -> None:
+        """Adds every name of ``declared`` to the active level at once; a name it already holds at that dtype is
+        no change."""
+        if len(self.ctx_stack) == 1:
+            return
+        current = self.ctx_stack[-1]
+        new = {
+            name: dtype
+            for name, dtype in declared.items()
+            if self._is_scalar_symbol_dtype(dtype) and (name not in current or current[name] != dtype)
+        }
+        if not new:
+            return
+        level = {**current, **new}
+        self.ctx_stack[-1] = types.MappingProxyType(level)
+        self.key_stack[-1] = AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
 
     def get(self) -> types.MappingProxyType:
         """Get the current active set of authoritative dtype."""
@@ -187,6 +201,11 @@ _SERIALIZATION_SYMBOL_DTYPES = _SymbolDTypeContext()
 def declare_symbol_dtype(name: str, dtype: "dtypes.typeclass") -> None:
     """Makes the active symbol-dtype authority (if any) know ``name``, declared while it is active."""
     _SERIALIZATION_SYMBOL_DTYPES.declare(name, dtype)
+
+
+def declare_symbol_dtypes(declared: Mapping[str, "dtypes.typeclass"]) -> None:
+    """:func:`declare_symbol_dtype` for every name of ``declared``, at the cost of one."""
+    _SERIALIZATION_SYMBOL_DTYPES.declare_all(declared)
 
 
 def declared_symbol_dtype(name: str) -> Optional["dtypes.typeclass"]:
@@ -1261,6 +1280,14 @@ def _overapproximate(expr):
         return expr
     if isinstance(expr, (sympy.Number, TypedConstant)):
         return expr
+
+    # A strided extent ``ceiling((Min(...) - i + 1) / k)``: ``ceiling`` is monotonic, so bounding the numerator bounds it
+    if isinstance(expr, sympy.ceiling):
+        numerator, denominator = sympy.fraction(sympy.together(expr.args[0]))
+        if denominator.is_Integer and denominator > 0:
+            bound = _overapproximate(numerator)
+            if bound != numerator:
+                return sympy.ceiling(bound / denominator)
 
     # Unification is MILLISECONDS against a microsecond structural test, so refuse on the head
     # first (measured 4.6x on the miss path). NOT gated on ``is_Add``: the trailing ``+ c`` is a
@@ -3977,6 +4004,23 @@ def fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
         return extremum.func(*kept)
 
     return expr.replace(lambda node: isinstance(node, (sympy.Min, sympy.Max)), fold)
+
+
+def convex_bound_terms(expr: sympy.Expr, upper: bool) -> list[sympy.Expr] | None:
+    """The terms whose conjunction ``x <= expr`` (``upper``) or ``x >= expr`` is: ``Min`` of an upper bound and
+    ``Max`` of a lower bound split into their arguments. ``None`` for the other extremum, a disjunction."""
+    keep, refuse = (sympy.Min, sympy.Max) if upper else (sympy.Max, sympy.Min)
+    if isinstance(expr, keep):
+        terms: list[sympy.Expr] = []
+        for arg in expr.args:
+            sub = convex_bound_terms(arg, upper)
+            if sub is None:
+                return None
+            terms += sub
+        return terms
+    if expr.has(refuse):
+        return None
+    return [expr]
 
 
 def extremum_union(func: type[sympy.Min] | type[sympy.Max], a: sympy.Expr, b: sympy.Expr, facts: Facts) -> sympy.Expr:

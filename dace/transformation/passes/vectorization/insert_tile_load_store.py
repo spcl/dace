@@ -118,6 +118,14 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
                 )
 
 
+def _side_of(memlet: Memlet, name: str) -> Memlet:
+    """``memlet`` spelled on the side of ``name``: a copy edge's memlet may name the other container, with ``name``'s
+    subset as its other subset."""
+    if memlet.data == name or memlet.other_subset is None:
+        return memlet
+    return Memlet(data=name, subset=copy.deepcopy(memlet.other_subset))
+
+
 def _libnode_boundary_memlet(other_memlet: Memlet) -> Memlet:
     # Memlet for an edge adjacent to a tile lib node (AN -> Load._src, TileScatter._dst -> AN, etc.).
     return Memlet(data=other_memlet.data, subset=copy.deepcopy(other_memlet.subset))
@@ -285,6 +293,7 @@ def stage_tile_load(
     :returns: ``(bridge_name, load_node)`` -- staged transient name + the load node.
     :raises ValueError: When ``gather_dims`` non-empty and ``set(gather_dims) != set(idx_sources)``.
     """
+    src_subset = _side_of(src_subset, an.data)
     if gather_dims and (idx_sources is None or set(gather_dims) != set(idx_sources)):
         raise ValueError(
             f"stage_tile_load: gather_dims {gather_dims!r} must match the keys of "
@@ -384,6 +393,7 @@ def stage_tile_store(
     :returns: ``(bridge_name, store_node)`` -- staged transient name + the store node.
     :raises ValueError: When ``gather_dims`` non-empty and ``set(gather_dims) != set(idx_sources)``.
     """
+    dst_subset = _side_of(dst_subset, an.data)
     if gather_dims and (idx_sources is None or set(gather_dims) != set(idx_sources)):
         raise ValueError(
             f"stage_tile_store: gather_dims {gather_dims!r} must match the keys of "

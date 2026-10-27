@@ -6,7 +6,7 @@ out, but a connector's descriptor is still compared in the parent's symbols (sca
 import numpy as np
 
 import dace
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 N, K = dace.symbol("N"), dace.symbol("K")
 

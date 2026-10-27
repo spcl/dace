@@ -76,7 +76,7 @@ def test_a_workspace_tiled_every_iteration_loses_its_fill_and_the_loop_maps():
     outer = next(r for r in sdfg.nodes() if isinstance(r, LoopRegion))
     xform = LoopToMap()
     xform.setup_match(sdfg, sdfg.cfg_id, -1, {LoopToMap.loop: sdfg.node_id(outer)}, 0, override=True)
-    assert xform.can_be_applied(sdfg, 0, sdfg), xform.last_refusal_reason
+    assert xform.can_be_applied(sdfg, 0, sdfg), xform.last_refusal
     rng = np.random.default_rng(0)
     a = rng.random((5, 6, 3))
     want, got = np.zeros((5, 6, 3)), np.zeros((5, 6, 3))

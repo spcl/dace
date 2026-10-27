@@ -60,7 +60,7 @@ def test_split_symbolic_forward_offset_valid_k_is_bit_exact_and_parallel():
     raw.compile()(A=Ar, B=Br, D=Dr, N=n, K=k)
 
     cand = _split_sym_forward.to_sdfg(simplify=True)
-    canonicalize(cand, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(cand, validate=True, peel_limit=4)
     assert any("snap" in nm for nm in cand.arrays), "the forward-read cone should snapshot A"
     assert _nmaps(cand) >= 1, "the symbolic-offset anti-dependence cone should parallelize"
     Ac, Bc, Dc = A0.copy(), B0.copy(), np.zeros(n)
@@ -78,7 +78,7 @@ def split_sym_forward_verdict(A0, B0, Dr, n, k) -> None:
     """
     try:
         cand = _split_sym_forward.to_sdfg(simplify=True)
-        canonicalize(cand, validate=True, peel_limit=4, break_anti_dependence=True)
+        canonicalize(cand, validate=True, peel_limit=4)
         Ac, Bc, Dc = A0.copy(), B0.copy(), np.zeros(n)
         cand.compile()(A=Ac, B=Bc, D=Dc, N=n, K=k)
         code = 0 if np.allclose(Dr, Dc, equal_nan=True) else 7
@@ -145,7 +145,7 @@ def test_split_mixed_read_kept_live_when_none_coexists_with_war():
     raw.compile()(A=Ar, B=Br, E=Er, D=Dr, N=n)
 
     cand = _split_mixed_numeric_none.to_sdfg(simplify=True)
-    canonicalize(cand, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(cand, validate=True, peel_limit=4)
     Ac, Bc, Ec, Dc = A0.copy(), B0.copy(), E0.copy(), np.zeros(n)
     cand.compile()(A=Ac, B=Bc, E=Ec, D=Dc, N=n)
 

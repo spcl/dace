@@ -32,7 +32,7 @@ from dace.transformation.estimator.enumeration import GreedyEnumerator
 
 # Transformations
 from dace.transformation.passes import FuseMaps
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation.subgraph.composite import CompositeFusion
 

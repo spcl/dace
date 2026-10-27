@@ -33,7 +33,6 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
 _PEEL_LIMIT = 4
-_BREAK_ANTI_DEP = True
 _UNROLL_LIMIT = 4
 _TOL = 1e-9
 
@@ -86,7 +85,6 @@ def test_canonicalize_tsvc_2_5_value_preserving(program):
             cand,
             validate=True,
             peel_limit=_PEEL_LIMIT,
-            break_anti_dependence=_BREAK_ANTI_DEP,
             unroll_limit=_UNROLL_LIMIT,
         )
     free = {str(s) for s in cand.free_symbols}

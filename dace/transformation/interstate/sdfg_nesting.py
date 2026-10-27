@@ -8,7 +8,7 @@ import warnings
 from copy import deepcopy as dc
 from functools import reduce
 
-from dace import Memlet, data, dtypes, memlet, symbolic
+from dace import Memlet, data, dtypes, memlet, subsets, symbolic
 from dace import graphlib as nx
 from dace.ordered import OrderedSet
 from dace.properties import Property, make_properties
@@ -250,8 +250,15 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         and (node.data not in in_connectors or nstate.in_degree(node) > 0)
                     ):
                         return False
+                    # An element input copied straight into an element output is staged in the scope
+                    # (``_stage_connector_copies``); a wider one would need the inner memlet in outer coordinates, and
+                    # one copied into another input has no such place.
                     if node.data in in_connectors and any(
-                        e.dst.data in all_connectors
+                        e.dst.data in in_connectors
+                        or (
+                            e.dst.data in out_connectors
+                            and self._staged_copy_form(graph, nested_sdfg, node.data, e.dst.data) is None
+                        )
                         for e in nstate.out_edges(node)
                         if isinstance(e.dst, nodes.AccessNode)
                     ):
@@ -743,6 +750,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Reconnect inlined SDFG
 
+        if nsdfg_scope_entry is not None:
+            self._stage_connector_copies(new_incoming_edges, new_outgoing_edges, nstate, state)
+
         # If both source and sink nodes are inputs/outputs, reconnect once
         edges_to_ignore = self._modify_access_to_access(new_incoming_edges, nsdfg, nstate, state, orig_data)
         edges_to_ignore |= self._modify_access_to_access(
@@ -897,6 +907,53 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for dnode in state.data_nodes():
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
+
+    @staticmethod
+    def _stage_connector_copies(
+        incoming: dict[nodes.Node, MultiConnectorEdge],
+        outgoing: dict[nodes.Node, MultiConnectorEdge],
+        nstate: SDFGState,
+        state: SDFGState,
+    ) -> None:
+        """In a scope, stage each copy from an input connector straight into an output one between the scope's entry
+        and exit, where dissolving both ends would leave it, in the form ``_staged_copy_form`` admitted: an element
+        copy as an assignment tasklet between the outer memlets, an identity view through an access node of the
+        input's outer container. The copy leaves ``nstate``, so the reconnection below does not see it."""
+        for source, top_in in incoming.items():
+            for inner in list(nstate.out_edges(source)):
+                top_out = outgoing.get(inner.dst)
+                if top_out is None:
+                    continue
+                if all(e.data.subset.num_elements() == 1 for e in (top_in, top_out)):
+                    staged = state.add_tasklet("copy", {"__inp"}, {"__out"}, "__out = __inp")
+                    state.add_edge(top_in.src, top_in.src_conn, staged, "__inp", dc(top_in.data))
+                    state.add_edge(staged, "__out", top_out.dst, top_out.dst_conn, dc(top_out.data))
+                else:
+                    staged = state.add_access(top_in.data.data)
+                    state.add_edge(top_in.src, top_in.src_conn, staged, None, dc(top_in.data))
+                    state.add_edge(staged, None, top_out.dst, top_out.dst_conn, dc(inner.data))
+                nstate.remove_edge(inner)
+
+    @staticmethod
+    def _staged_copy_form(state: SDFGState, nsdfg_node: nodes.NestedSDFG, inp: str, out: str) -> str | None:
+        """How a copy from input connector ``inp`` into output connector ``out`` is staged in the scope: ``"element"``
+        when both outer memlets are one element (an assignment tasklet between them), ``"identity"`` when both outer
+        memlets start at zero with the rank of the nested container (the inner memlet is then in outer coordinates),
+        else ``None``."""
+        ins = [e for e in state.in_edges(nsdfg_node) if e.dst_conn == inp]
+        outs = [e for e in state.out_edges(nsdfg_node) if e.src_conn == out]
+        if len(ins) != 1 or len(outs) != 1 or ins[0].data.subset is None or outs[0].data.subset is None:
+            return None
+        outer = (ins[0].data.subset, outs[0].data.subset)
+        if all(subset.num_elements() == 1 for subset in outer):
+            return "element"
+        nested = (nsdfg_node.sdfg.arrays[inp], nsdfg_node.sdfg.arrays[out])
+        if all(
+            isinstance(subset, subsets.Range) and len(subset) == len(desc.shape) and all(b == 0 for b, _, _ in subset)
+            for subset, desc in zip(outer, nested)
+        ):
+            return "identity"
+        return None
 
     def _modify_access_to_access(
         self,

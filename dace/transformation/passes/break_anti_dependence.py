@@ -249,8 +249,8 @@ def point_index(subset):
 class BreakAntiDependence(ppl.Pass):
     """Snapshot-rename loops with a pure WAR anti-dependence so they can map.
 
-    Off by default in pipelines (it adds a transient + a copy); enable it as a
-    tuning knob when the extra buffer is worth the parallelism.
+    Canonicalization always runs it; the CPU specialization chunks each snapshot into per-chunk seam
+    buffers (:class:`~dace.transformation.passes.cpu_specialization.ChunkAntiDependence`).
     """
 
     CATEGORY: str = "Optimization Preparation"
@@ -269,6 +269,8 @@ class BreakAntiDependence(ppl.Pass):
         self._unproven_offsets: list = []
         #: The facts a loop's offsets are asked under, per loop, for one pass run.
         self._facts_memo: dict = {}
+        #: What z3 may assume in a loop's queries, per loop, for one pass run.
+        self._solver_facts: dict = {}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -515,6 +517,7 @@ class BreakAntiDependence(ppl.Pass):
           an immutable array, so a loop that writes it is outside what the encoding says.
         """
         from dace.transformation.passes.analysis import smt_dependence
+        from dace.transformation.passes.parallelization.facts import SolverFacts
         from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
 
         if not smt_dependence.has_z3() or read_state is None:
@@ -539,7 +542,10 @@ class BreakAntiDependence(ppl.Pass):
         if start is None or end is None or stride is None:
             return ("complex", None)
         read_guard = None if guard is sympy.true else guard
-        ahead = smt_dependence.prove_read_ahead(rb, wb, ivar, start, end, stride, read_guard=read_guard)
+        if loop not in self._solver_facts:
+            self._solver_facts[loop] = SolverFacts(loop, self.offset_facts(loop, sdfg), set(internal_syms))
+        facts = self._solver_facts[loop]
+        ahead = smt_dependence.prove_read_ahead(rb, wb, ivar, start, end, stride, read_guard=read_guard, facts=facts)
         if ahead is not True:
             return ("complex", None)
         # Read-ahead only rules out the writes up to and including the reader's own iteration. When
@@ -547,7 +553,9 @@ class BreakAntiDependence(ppl.Pass):
         # ``a[i] -= aa[j, i] * a[j]`` reads a[j] from below an ``i`` range that starts at j + 1. That
         # is 'none', not 'WAR': snapshotting it would pay a copy to break a dependence that is not
         # there, and the copy costs the caller an extra transient and an extra (degenerate) map.
-        late = smt_dependence.prove_no_write_after_read(rb, wb, ivar, start, end, stride, read_guard=read_guard)
+        late = smt_dependence.prove_no_write_after_read(
+            rb, wb, ivar, start, end, stride, read_guard=read_guard, facts=facts
+        )
         return ("none", None) if late is True else ("WAR", None)
 
     def _walk_back_symbol_def(self, loop: LoopRegion, sym_name: str):
@@ -1238,7 +1246,8 @@ class BreakAntiDependence(ppl.Pass):
         """
         self._unproven_offsets = []
         plans = self.forward_read_plans(loop, sdfg)
-        if plans is None:
+        # Deriving the facts at a loop is the pass's whole cost; a loop with nothing to break needs none.
+        if not plans and not self._unproven_offsets:
             return 0
         facts = self.offset_facts(loop, sdfg)
         one = symbolic.pystr_to_symbolic("1")
@@ -1326,6 +1335,7 @@ class BreakAntiDependence(ppl.Pass):
         whole-array pure-WAR rename, or the per-edge read-ahead break that unbinds two statements
         of a loop that stays sequential."""
         self._facts_memo = {}
+        self._solver_facts = {}
         if self.forward_reads:
             applied = 0
             for loop in self._loops(sdfg):

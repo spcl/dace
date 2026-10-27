@@ -3302,16 +3302,31 @@ class SymbolResolver:
     def forget_within(self, sdfg: "SDFG") -> None:
         """Drops what was resolved inside ``sdfg`` and every SDFG nested in it, after a change to ``sdfg``'s graph.
         What an enclosing or unrelated SDFG resolved reads neither, and is kept."""
-        within = set(sdfg.all_sdfgs_recursive())
-        self._facts = {key: facts for key, facts in self._facts.items() if key[0].sdfg not in within}
-        self._data_facts = {key: facts for key, facts in self._data_facts.items() if key[0].sdfg not in within}
+        if sdfg.parent_sdfg is None:
+            # Every SDFG is within the root: drop all, without walking the tree
+            for table in (self._facts, self._data_facts, self._region_updates, self._per_sdfg, self._per_state):
+                table.clear()
+            self._per_scope.clear()
+            return
+        # Up the nesting chain of each resolved SDFG, not down the whole tree below ``sdfg``
+        inside: dict[SDFG, bool] = {}
+
+        def within(owner: "SDFG") -> bool:
+            if owner not in inside:
+                cursor = owner
+                while cursor is not None and cursor is not sdfg:
+                    cursor = cursor.parent_sdfg
+                inside[owner] = cursor is sdfg
+            return inside[owner]
+
+        self._facts = {key: facts for key, facts in self._facts.items() if not within(key[0].sdfg)}
+        self._data_facts = {key: facts for key, facts in self._data_facts.items() if not within(key[0].sdfg)}
         self._region_updates = {
-            key: updates for key, updates in self._region_updates.items() if key[0].sdfg not in within
+            key: updates for key, updates in self._region_updates.items() if not within(key[0].sdfg)
         }
-        for nested in within:
-            self._per_sdfg.pop(nested, None)
-            self._per_state.pop(nested, None)
-            self._per_scope.pop(nested, None)
+        for table in (self._per_sdfg, self._per_state, self._per_scope):
+            for nested in [owner for owner in table if within(owner)]:
+                del table[nested]
 
 
 def entry_bound_names(entry: nd.EntryNode) -> set[str]:

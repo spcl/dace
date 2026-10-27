@@ -53,7 +53,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.pipeline import build_stages
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 N = dace.symbol("N")
 M = dace.symbol("M")

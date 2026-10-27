@@ -26,6 +26,7 @@ from dace import memlet as mm
 from dace.ordered import OrderedSet
 from dace.sdfg import graph as gr
 from dace.sdfg.propagation import propagate_subset
+from dace.sdfg.sdfg import forget_all_facts, memoize_facts
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.symbolic import AND, OR, Subscript, bitwise_and, bitwise_or
 from dace.transformation import pass_pipeline as ppl
@@ -193,19 +194,23 @@ class LoopToReduce(ppl.Pass):
         only = None if self._only is None else {id(loop) for loop in self._only}
         if only is not None and not only:
             return None
-        for node, parent in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, LoopRegion) or (only is not None and id(node) not in only):
-                continue
-            info = _extract(node, _owner_sdfg(parent), permissive=self.permissive)
-            if info is None:
-                continue
-            if self.prefer == "wcr-scalar":
-                # Lift even a pinned (nested) reduction; ``_lift_wcr_scalar`` carries the pin
-                # onto the new loop so the downstream ``LoopToMap`` keeps it sequential.
-                _lift_wcr_scalar(parent, node, info)
-            else:
-                _lift(parent, node, info)
-            count += 1
+        # The matcher reads the facts of each loop's SDFG; they are derived once per SDFG between lifts
+        with memoize_facts():
+            for node, parent in list(sdfg.all_nodes_recursive()):
+                if not isinstance(node, LoopRegion) or (only is not None and id(node) not in only):
+                    continue
+                info = _extract(node, _owner_sdfg(parent), permissive=self.permissive)
+                if info is None:
+                    continue
+                with memoize_facts(active=False):
+                    if self.prefer == "wcr-scalar":
+                        # Lift even a pinned (nested) reduction; ``_lift_wcr_scalar`` carries the pin
+                        # onto the new loop so the downstream ``LoopToMap`` keeps it sequential.
+                        _lift_wcr_scalar(parent, node, info)
+                    else:
+                        _lift(parent, node, info)
+                forget_all_facts()
+                count += 1
 
         if count > 0:
             # Narrow memlets on the new ``Reduce`` libnode + read/write edges: lifting
@@ -280,17 +285,6 @@ class RetargetWCRAccumulator(ppl.Pass):
         return count or None
 
 
-def loop_to_map_refusal_is_carried(reason: str | None) -> bool:
-    """True iff a ``LoopToMap.can_be_applied`` refusal was caused by a loop-carried dependence."""
-    if reason is None:
-        return False
-    lo = reason.lower()
-    # Covers "self-recurrent carried symbol", "carried symbol dependency",
-    # "loop-carried forward/backward dependency", "writes ... may overlap across
-    # iterations", and "read-after-write conflict ...".
-    return any(k in lo for k in ("carried", "may overlap", "read-after-write conflict"))
-
-
 @xf.explicit_cf_compatible
 class PinCarriedTopLevelLoops(ppl.Pass):
     """Mark top-level loops ``pinned_sequential`` when ``LoopToMap`` refuses them for a
@@ -318,8 +312,11 @@ class PinCarriedTopLevelLoops(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> int | None:
         """:returns: The number of loops newly pinned, or ``None`` if none was."""
         from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops, ProbeSession
 
         pinned = 0
+        # A pin is read only by the pinned loop's own probe
+        session = ProbeSession()
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, LoopRegion) or not node.loop_variable:
                 continue
@@ -327,9 +324,8 @@ class PinCarriedTopLevelLoops(ppl.Pass):
                 continue
             owner = _owner_sdfg(node)
             probe = LoopToMap()
-            probe.loop = node
-            applicable = probe.can_be_applied(node.parent_graph, 0, owner, permissive=False)
-            if not applicable and loop_to_map_refusal_is_carried(probe.last_refusal_reason):
+            applicable = ParallelizeLoops().accepts(node, probe, session=session)
+            if not applicable and probe.last_refusal is not None and probe.last_refusal.kind.carried:
                 node.pinned_sequential = True
                 pinned += 1
         return pinned or None

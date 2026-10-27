@@ -1,33 +1,522 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
-from typing import Any, Optional
+from typing import Any
 
-from dace import SDFG, InterstateEdge
+from dace import SDFG, InterstateEdge, subsets, symbolic
+from dace import graphlib as nx
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes import analysis as ap
 
+#: A write or read of the whole container (the subset of every access to a scalar).
+WHOLE = "whole"
+#: A read whose element an expression picks at run time: covered only by a write of the whole container.
+ANY_ELEMENT = "any_element"
 
-class CarrierIndex:
-    """Where every data container of one SDFG is accessed, for :meth:`ScalarFission._carrier_free`.
 
-    ``node_states`` holds the state of each access node and ``edge_sources`` the source block of each interstate
-    edge reading the name, both in the order a walk of ``all_states`` / ``all_interstate_edges`` meets them. Asking
-    the walk once per container made the check quadratic in the SDFG size."""
+class AccessIndex:
+    """Where each data container of one SDFG is accessed; built once per pass run, refreshed per state.
 
-    __slots__ = ("node_states", "edge_sources")
+    ``nodes`` holds the access nodes of a state by container, computed on a state's first query.
+    ``states`` and ``edge_sources`` index the whole SDFG on first need: the states holding an access
+    node of a container, and the source block of every interstate edge naming it, in the order a walk
+    of ``states()`` / ``all_interstate_edges()`` meets them.
+
+    A rewrite keeps the index exact by calling :meth:`forget` on every state it changed.
+    """
+
+    __slots__ = ("sdfg", "by_state", "states_of", "edges_of", "mentioned")
 
     def __init__(self, sdfg: SDFG) -> None:
-        self.node_states: dict[str, list[SDFGState]] = defaultdict(list)
-        for state in sdfg.states():
+        self.sdfg = sdfg
+        self.by_state: dict[SDFGState, dict[str, list[nd.AccessNode]]] = {}
+        self.states_of: dict[str, list[SDFGState]] | None = None
+        self.edges_of: dict[str, list[ControlFlowBlock]] | None = None
+        self.mentioned: dict[ControlFlowBlock, frozenset[str] | None] = {}
+
+    def nodes(self, state: SDFGState, name: str) -> list[nd.AccessNode]:
+        """The access nodes of ``name`` in ``state``."""
+        table = self.by_state.get(state)
+        if table is None:
+            table = defaultdict(list)
             for node in state.data_nodes():
-                self.node_states[node.data].append(state)
-        self.edge_sources: dict[str, list[ControlFlowBlock]] = defaultdict(list)
-        for edge in sdfg.all_interstate_edges():
-            for symbol_name in dict.fromkeys(str(s) for s in edge.data.free_symbols):
-                self.edge_sources[symbol_name].append(edge.src)
+                table[node.data].append(node)
+            self.by_state[state] = table
+        return table.get(name, [])
+
+    def states(self, name: str) -> list[SDFGState]:
+        """Every state holding an access node of ``name``."""
+        if self.states_of is None:
+            self.states_of = defaultdict(list)
+            for state in self.sdfg.states():
+                for data in dict.fromkeys(node.data for node in state.data_nodes()):
+                    self.states_of[data].append(state)
+        return self.states_of.get(name, [])
+
+    def edge_sources(self, name: str) -> list[ControlFlowBlock]:
+        """The source block of every interstate edge whose free symbols name ``name``."""
+        if self.edges_of is None:
+            self.edges_of = defaultdict(list)
+            for edge in self.sdfg.all_interstate_edges():
+                for symbol_name in dict.fromkeys(str(s) for s in edge.data.free_symbols):
+                    self.edges_of[symbol_name].append(edge.src)
+        return self.edges_of.get(name, [])
+
+    def interstate_names(self) -> set[str]:
+        """Every name free on some interstate edge."""
+        self.edge_sources("")
+        return set(self.edges_of)
+
+    def confined_to(self, name: str, states: set[SDFGState]) -> bool:
+        """Whether every access of ``name`` lies in ``states`` and no interstate edge names it."""
+        return all(state in states for state in self.states(name)) and not self.edge_sources(name)
+
+    def mentions(self, block: ControlFlowBlock) -> frozenset[str] | None:
+        """The names ``block`` may access at its own level: its access nodes, the free symbols of its interstate
+        edges and of its loop or branch conditions, those of the blocks it holds; ``None`` when it holds a block
+        that may read anything (a break, continue or return)."""
+        if block in self.mentioned:
+            return self.mentioned[block]
+        names: set[str] | None
+        if isinstance(block, SDFGState):
+            self.nodes(block, "")
+            names = set(self.by_state[block])
+        elif isinstance(block, (ConditionalBlock, ControlFlowRegion)):
+            names = set()
+            for code in block.get_meta_codeblocks():
+                if code is not None:
+                    names |= code.get_free_symbols()
+            children = (
+                [branch for _, branch in block.branches] if isinstance(block, ConditionalBlock) else block.nodes()
+            )
+            if not isinstance(block, ConditionalBlock):
+                for edge in block.edges():
+                    names |= {str(sym) for sym in edge.data.free_symbols}
+            for child in children:
+                inner = self.mentions(child)
+                if inner is None:
+                    names = None
+                    break
+                names |= inner
+        else:
+            names = None
+        self.mentioned[block] = None if names is None else frozenset(names)
+        return self.mentioned[block]
+
+    def forget(self, *states: SDFGState) -> None:
+        """Drop what the index knows about ``states`` and the whole-SDFG tables, after a rewrite changed them."""
+        for state in states:
+            self.by_state.pop(state, None)
+        self.mentioned.clear()
+        self.states_of = None
+        self.edges_of = None
+
+
+def innermost_loop(block: ControlFlowBlock) -> LoopRegion | None:
+    """The innermost ``LoopRegion`` enclosing ``block``, or ``None``."""
+    region = block.parent_graph
+    while region is not None:
+        if isinstance(region, LoopRegion):
+            return region
+        region = region.parent_graph
+    return None
+
+
+def rename_memlet_tree(state: SDFGState, edge, old: str, new: str, node: nd.AccessNode) -> None:
+    """Rename ``old`` -> ``new`` on every memlet of ``edge``'s memlet tree that belongs to ``node``'s access.
+
+    The tree, not one path: an outer edge can fan out to several consumers inside a scope. It stops at
+    another access node of ``old``: a staging copy puts two separately versioned accesses in one tree.
+    ``_is_data_src`` is re-derived from the endpoints, since versioning a staging copy gives its two sides
+    different names.
+    """
+    for pe in state.memlet_tree(edge):
+        if pe.data is None or pe.data.data != old:
+            continue
+        if any(n is not node and isinstance(n, nd.AccessNode) and n.data == old for n in (pe.src, pe.dst)):
+            continue
+        pe.data.data = new
+        if isinstance(pe.src, nd.AccessNode) and pe.src.data == new:
+            pe.data._is_data_src = True
+        elif isinstance(pe.dst, nd.AccessNode) and pe.dst.data == new:
+            pe.data._is_data_src = False
+
+
+def rename_access(state: SDFGState, node: nd.AccessNode, aliases: set[str], new: str) -> None:
+    """Point ``node`` and every memlet on its edges that names one of ``aliases`` at ``new``.
+
+    :param aliases: The original container name plus every version already minted for it: a node renamed
+        twice in one pass no longer carries the original name on its memlets.
+    """
+    node.data = new
+    for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
+        if edge.data.data in aliases:
+            rename_memlet_tree(state, edge, edge.data.data, new, node)
+
+
+def rename_into_nested_sdfgs(states, old: str, new: str) -> None:
+    """Carry a rename ``old`` -> ``new`` across every ``NestedSDFG`` in ``states`` that an access renamed to
+    ``new`` feeds or drains through a connector named ``old``.
+
+    Renames the connector, the outer edge, the inner descriptor, inner access nodes, memlets and interstate
+    edges, and a ``symbol_mapping`` key, then recurses into deeper nests. A connector is renamed only when
+    its outer access node already carries ``new``: under per-scope versioning one nest is visited once per
+    scope, and each scope owns only its own edges.
+    """
+    if not states or old == new:
+        return
+    for state in states:
+        for n in state.nodes():
+            if not isinstance(n, nd.NestedSDFG):
+                continue
+            in_match = old in n.in_connectors and any(
+                e.dst_conn == old and isinstance(e.src, nd.AccessNode) and e.src.data == new for e in state.in_edges(n)
+            )
+            out_match = old in n.out_connectors and any(
+                e.src_conn == old and isinstance(e.dst, nd.AccessNode) and e.dst.data == new for e in state.out_edges(n)
+            )
+            if not (in_match or out_match or old in n.symbol_mapping):
+                continue
+            if in_match:
+                n.in_connectors[new] = n.in_connectors.pop(old)
+                for e in state.in_edges(n):
+                    if e.dst_conn == old and isinstance(e.src, nd.AccessNode) and e.src.data == new:
+                        e.dst_conn = new
+                        if e.data is not None and e.data.data == old:
+                            e.data.data = new
+            if out_match:
+                n.out_connectors[new] = n.out_connectors.pop(old)
+                for e in state.out_edges(n):
+                    if e.src_conn == old and isinstance(e.dst, nd.AccessNode) and e.dst.data == new:
+                        e.src_conn = new
+                        if e.data is not None and e.data.data == old:
+                            e.data.data = new
+            # By hand, not ``SDFG.replace_dict``: its symbolic replacement trips on the scalar's
+            # free-symbol typeclass coercion.
+            inner = n.sdfg
+            if old in inner.arrays:
+                inner.arrays[new] = inner.arrays.pop(old)
+                for inner_state in inner.states():
+                    for inn in inner_state.data_nodes():
+                        if inn.data == old:
+                            inn.data = new
+                    for ie in inner_state.edges():
+                        if ie.data is not None and ie.data.data == old:
+                            ie.data.data = new
+            for ise in inner.all_interstate_edges():
+                if any(str(s) == old for s in ise.data.free_symbols):
+                    ise.data.replace_dict({old: new})
+            if old in n.symbol_mapping:
+                n.symbol_mapping[new] = n.symbol_mapping.pop(old)
+            rename_into_nested_sdfgs(set(inner.states()), old, new)
+
+
+def has_wcr_write(state: SDFGState, node: nd.AccessNode) -> bool:
+    """Whether ``node`` is written through a write-conflict resolution: a read-modify-write, not a kill.
+
+    A ``Reduce`` with no identity counts too (:func:`~dace.transformation.passes.analysis.analysis.has_wcr_in_edge`).
+    """
+    return ap.has_wcr_in_edge(state, node)
+
+
+def axis_equal(a, b) -> bool:
+    """Whether two ``(begin, end, step)`` axis ranges are provably identical."""
+    return all(symbolic_equal(x, y) for x, y in zip(a, b))
+
+
+def symbolic_equal(a, b) -> bool:
+    """Whether ``a`` and ``b`` are provably equal (their difference simplifies to 0)."""
+    try:
+        return bool(symbolic.simplify(a - b) == 0)
+    except (TypeError, AttributeError):
+        return False
+
+
+def subsets_cover(writes: list, read, facts: symbolic.Facts) -> bool:
+    """Whether ``writes`` together provably cover ``read``.
+
+    Either one write covers it (``covers_precise``: a strided write does not cover the dense box it spans),
+    or several unit-step writes tile it as exactly adjacent chunks along one axis
+    (``buf[0:M] = ...; buf[M:2*M] = ...`` read as ``buf[0:2*M]``). Chunk boundaries are matched by
+    symbolic equality only.
+    """
+    if not isinstance(read, subsets.Range):
+        return False
+    dims = read.dims()
+    if any(isinstance(w, subsets.Range) and w.dims() == dims and w.covers_precise(read, facts) for w in writes):
+        return True
+    chunks = [w for w in writes if isinstance(w, subsets.Range) and w.dims() == dims]
+    if len(chunks) < 2:
+        return False
+    read_ranges = list(read.ranges)
+    varying = None
+    for ax in range(dims):
+        if all(axis_equal(c.ranges[ax], read_ranges[ax]) for c in chunks):
+            continue
+        if varying is not None:
+            return False
+        varying = ax
+    if varying is None:
+        return False
+    rb, re_, rs = read_ranges[varying]
+    if rs != 1:
+        return False
+    intervals = []
+    for c in chunks:
+        b, e, st = c.ranges[varying]
+        if st != 1:
+            return False
+        intervals.append((b, e))
+    frontier = rb
+    progressed = True
+    while progressed:
+        progressed = False
+        for i, (b, e) in enumerate(intervals):
+            if symbolic_equal(b, frontier):
+                frontier = e + 1
+                intervals.pop(i)
+                progressed = True
+                break
+    return symbolic_equal(frontier, re_ + 1)
+
+
+def point_subsets_equal(a: subsets.Range, b: subsets.Range) -> bool:
+    """Equality of two single-point ranges, by the lower bound of each axis."""
+    if len(a.ranges) != len(b.ranges):
+        return False
+    return all(
+        symbolic.pystr_to_symbolic(ar[0]) == symbolic.pystr_to_symbolic(br[0]) for ar, br in zip(a.ranges, b.ranges)
+    )
+
+
+def edge_subset(state: SDFGState, edge, node: nd.AccessNode):
+    """The subset of ``edge``'s memlet on ``node``'s side (by the memlet's own direction, so a self-copy
+    ``A -> A`` reports the read on its source and the write on its destination)."""
+    memlet = edge.data
+    if memlet is None:
+        return None
+    return memlet.get_src_subset(edge, state) if edge.src is node else memlet.get_dst_subset(edge, state)
+
+
+class Accesses:
+    """What the access nodes of one container read and definitely write, as :class:`MustDefinition` asks.
+
+    This base class is the whole-container view (scalars): a node with a non-empty incoming memlet
+    writes the container, a node with an outgoing edge reads it, and any write covers any read.
+    :class:`SlotAccesses` and :class:`SubsetAccesses` narrow it to one element and to memlet subsets.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def writes(self, state: SDFGState, node: nd.AccessNode) -> list:
+        return [WHOLE] if any(not e.data.is_empty() for e in state.in_edges(node)) else []
+
+    def reads(self, state: SDFGState, node: nd.AccessNode) -> list:
+        return [WHOLE] if state.out_degree(node) > 0 else []
+
+    def covered(self, writes: list, read) -> bool:
+        return bool(writes)
+
+    def key(self, write) -> Any:
+        """Identity of a write in the must-def set, so a join keeps the writes every path made."""
+        return write if write is WHOLE else str(write)
+
+    def read_by(self, names: set[str]) -> list:
+        """The reads an expression over ``names`` makes."""
+        return [WHOLE] if self.name in names else []
+
+
+class SlotAccesses(Accesses):
+    """One constant element ``name[slot]``: only accesses at that point count, and only a write at a
+    state's top scope is definite (a map with an empty range never runs its body)."""
+
+    def __init__(self, name: str, slot: subsets.Range) -> None:
+        super().__init__(name)
+        self.slot = slot
+
+    def touches(self, edges) -> bool:
+        return any(
+            e.data is not None
+            and e.data.data == self.name
+            and isinstance(e.data.subset, subsets.Range)
+            and point_subsets_equal(e.data.subset, self.slot)
+            for e in edges
+        )
+
+    def writes(self, state: SDFGState, node: nd.AccessNode) -> list:
+        return [WHOLE] if state.entry_node(node) is None and self.touches(state.in_edges(node)) else []
+
+    def reads(self, state: SDFGState, node: nd.AccessNode) -> list:
+        return [WHOLE] if self.touches(state.out_edges(node)) else []
+
+    def read_by(self, names: set[str]) -> list:
+        return [ANY_ELEMENT] if self.name in names else []
+
+    def covered(self, writes: list, read) -> bool:
+        return read is not ANY_ELEMENT and bool(writes)
+
+
+class SubsetAccesses(Accesses):
+    """Memlet subsets of an array: every incoming memlet writes its destination subset, every outgoing one
+    reads its source subset, and a read is covered when the writes together tile it (:func:`subsets_cover`)."""
+
+    def __init__(self, name: str, facts: symbolic.Facts) -> None:
+        super().__init__(name)
+        self.facts = facts
+
+    def writes(self, state: SDFGState, node: nd.AccessNode) -> list:
+        found = (edge_subset(state, e, node) for e in state.in_edges(node) if not e.data.is_empty())
+        return [w for w in found if w is not None]
+
+    def reads(self, state: SDFGState, node: nd.AccessNode) -> list:
+        found = (edge_subset(state, e, node) for e in state.out_edges(node) if not e.data.is_empty())
+        return [r for r in found if r is not None]
+
+    def read_by(self, names: set[str]) -> list:
+        return [ANY_ELEMENT] if self.name in names else []
+
+    def covered(self, writes: list, read) -> bool:
+        return read is not ANY_ELEMENT and subsets_cover(writes, read, self.facts)
+
+
+class MustDefinition:
+    """Forward must-definition of one container over the control-flow tree, for the question "is every read
+    preceded, on every path from the region's entry, by a write that covers it?".
+
+    The region tree is walked structurally (no ``states()`` list per query). Within a state a read is covered by
+    the writes of its own node and of every node with a dataflow path to it. A ``ConditionalBlock`` defines what
+    all its branches define when it has an ``else``; a loop may run zero times and defines nothing. Cycles in a
+    region are seeded pessimistically. Branch and loop-header conditions, and interstate edges, read the names
+    they mention. One instance per container and pass run: what a block defines is cached.
+    """
+
+    def __init__(self, accesses: Accesses, index: AccessIndex) -> None:
+        self.accesses = accesses
+        self.index = index
+        self.gen_cache: dict[ControlFlowBlock, dict] = {}
+
+    def exposed(self, region: ControlFlowRegion, defined: dict | None = None) -> bool:
+        """Whether a read in ``region`` may see a value from before ``region`` was entered.
+
+        :param defined: The writes known to have happened on entry, by :meth:`Accesses.key`.
+        """
+        return self.analyze(region, defined or {})[1]
+
+    def defined_at_exit(self, region: ControlFlowRegion, defined: dict | None = None) -> dict:
+        """The writes every path through ``region`` has made at its exit."""
+        return self.analyze(region, defined or {})[0]
+
+    def analyze(self, region: ControlFlowRegion, entry: dict) -> tuple[dict, bool]:
+        blocks = list(region.nodes())
+        if not blocks:
+            return dict(entry), False
+        gen = {b: self.gen(b) for b in blocks}
+        start = region.start_block
+        defs: dict[ControlFlowBlock, dict] = {b: {} for b in blocks}
+        defs[start] = dict(entry)
+        for _ in range(len(blocks) + 1):
+            changed = False
+            for b in blocks:
+                if b is start:
+                    continue
+                preds = [e.src for e in region.in_edges(b)]
+                new = self.meet([{**defs[p], **gen[p]} for p in preds]) if preds else {}
+                if new.keys() != defs[b].keys():
+                    defs[b] = new
+                    changed = True
+            if not changed:
+                break
+        exposed = any(self.block_exposed(b, defs[b]) for b in blocks)
+        if not exposed:
+            for edge in region.edges():
+                reads = self.accesses.read_by({str(s) for s in edge.data.free_symbols})
+                after = list({**defs[edge.src], **gen[edge.src]}.values())
+                if any(not self.accesses.covered(after, r) for r in reads):
+                    exposed = True
+                    break
+        sinks = [b for b in blocks if region.out_degree(b) == 0]
+        exit_defs = self.meet([{**defs[b], **gen[b]} for b in sinks]) if sinks else {}
+        return exit_defs, exposed
+
+    @staticmethod
+    def meet(sets: list[dict]) -> dict:
+        if not sets:
+            return {}
+        first, rest = sets[0], sets[1:]
+        return {k: v for k, v in first.items() if all(k in other for other in rest)}
+
+    def silent(self, block: ControlFlowBlock) -> bool:
+        """Whether ``block`` neither accesses the container nor holds a block that may read it."""
+        mentioned = self.index.mentions(block)
+        return mentioned is not None and self.accesses.name not in mentioned
+
+    def gen(self, block: ControlFlowBlock) -> dict:
+        """The writes every path through ``block`` makes, independent of what held on entry."""
+        cached = self.gen_cache.get(block)
+        if cached is not None:
+            return cached
+        if self.silent(block):
+            self.gen_cache[block] = {}
+            return self.gen_cache[block]
+        self.gen_cache[block] = {}
+        result: dict = {}
+        if isinstance(block, SDFGState):
+            for node in self.index.nodes(block, self.accesses.name):
+                for w in self.accesses.writes(block, node):
+                    result[self.accesses.key(w)] = w
+        elif isinstance(block, ConditionalBlock):
+            if any(cond is None for cond, _ in block.branches):
+                result = self.meet([self.analyze(branch, {})[0] for _, branch in block.branches])
+        elif isinstance(block, ControlFlowRegion) and not isinstance(block, LoopRegion):
+            result = self.analyze(block, {})[0]
+        self.gen_cache[block] = result
+        return result
+
+    def code_reads(self, codes) -> list:
+        names: set[str] = set()
+        for code in codes:
+            if code is not None:
+                names |= code.get_free_symbols()
+        return self.accesses.read_by(names)
+
+    def block_exposed(self, block: ControlFlowBlock, defined: dict) -> bool:
+        if self.silent(block):
+            return False
+        acc = self.accesses
+        held = list(defined.values())
+        if isinstance(block, SDFGState):
+            return self.state_exposed(block, held)
+        if isinstance(block, (ConditionalBlock, ControlFlowRegion)):
+            if any(not acc.covered(held, r) for r in self.code_reads(block.get_meta_codeblocks())):
+                return True
+            if isinstance(block, ConditionalBlock):
+                return any(self.analyze(branch, defined)[1] for _, branch in block.branches)
+            return self.analyze(block, defined)[1]
+        # Break, continue and return blocks hold no dataflow; an unknown block is conservatively a read.
+        return any(not acc.covered(held, r) for r in acc.read_by({acc.name}))
+
+    def state_exposed(self, state: SDFGState, held: list) -> bool:
+        acc = self.accesses
+        accessed = self.index.nodes(state, acc.name)
+        if not accessed:
+            return False
+        writes = {node: acc.writes(state, node) for node in accessed}
+        for node in accessed:
+            for read in acc.reads(state, node):
+                if acc.covered(held + writes[node], read):
+                    continue
+                before = [
+                    w
+                    for other in accessed
+                    if other is not node and writes[other] and nx.has_path(state.nx, other, node)
+                    for w in writes[other]
+                ]
+                if not before or not acc.covered(held + writes[node] + before, read):
+                    return True
+        return False
 
 
 @transformation.explicit_cf_compatible
@@ -102,7 +591,7 @@ class ScalarFission(ppl.Pass):
         # (see ``_inout_nsdfg_carried``). Leave it untouched, like ``cond_referenced``.
         inout_carried: set[str] = self._inout_nsdfg_carried(sdfg)
 
-        carriers: CarrierIndex | None = None
+        index = AccessIndex(sdfg)
         for name, write_scope_dict in shadow_scope_dict.items():
             desc = sdfg.arrays[name]
 
@@ -128,20 +617,18 @@ class ScalarFission(ppl.Pass):
             # zcor/zfac/zqe pattern). These are loop-local (no upward-exposed use),
             # so each enclosing loop gets its own copy -- scalar privatization.
             if None in write_scope_dict and name not in branch_referenced:
-                # Built on the first undominated container, after any renames made before it. A rename
-                # only rewrites the container being processed, so the entries of the rest stay exact.
-                if carriers is None:
-                    carriers = CarrierIndex(sdfg)
-                self._privatize_loop_local_undominated(sdfg, name, write_scope_dict[None], results, carriers)
+                # The index is filled lazily, after any renames made before. A rename only rewrites the
+                # container being processed, so the entries of the rest stay exact.
+                self._privatize_loop_local_undominated(sdfg, name, write_scope_dict[None], results, index)
 
             # A write-conflict-resolution write does not KILL the previous value, it reads it
-            # (see :meth:`is_wcr_write`), so it cannot start a new single-assignment version.
+            # (see :func:`has_wcr_write`), so it cannot start a new single-assignment version.
             # Skipping just that one scope is not enough: the write before it would still be
             # versioned while the WCR write kept the old name, cutting the chain between them. So a
             # container with a version-starting WCR write is left whole. (The undominated
             # privatization above is unaffected: it renames a loop's entire access group at once,
             # a pure alpha-rename that stays correct for an accumulator.)
-            if any(w is not None and self.is_wcr_write(w[0], w[1]) for w in write_scope_dict):
+            if any(w is not None and has_wcr_write(w[0], w[1]) for w in write_scope_dict):
                 continue
 
             # One dominating scope needs no fission unless undominated accesses share its name: a dead
@@ -149,18 +636,6 @@ class ScalarFission(ppl.Pass):
             # accesses tied to the outer scope, and LoopToMap refuses them.
             dominated = [w for w in write_scope_dict if w is not None]
             if len(dominated) == 0 or (len(dominated) == 1 and None not in write_scope_dict):
-                continue
-
-            # Versioning gives each access ONE name, so an access in two scopes (a read after a
-            # conditional whose branches write in nested loops, which the analysis cannot merge into
-            # one scope) would read only one branch's version. Leave such a container whole.
-            seen: set[int] = set()
-            overlapping = False
-            for accesses in write_scope_dict.values():
-                for _block, access in accesses:
-                    overlapping |= id(access) in seen
-                    seen.add(id(access))
-            if overlapping:
                 continue
 
             # Versioning gives each access ONE name, so an access in two scopes (a read after a
@@ -183,17 +658,13 @@ class ScalarFission(ppl.Pass):
                     newname = sdfg.add_datadesc(name, newdesc, find_new_name=True)
 
                     # Replace the write and any connected memlets with writes to the new data container.
-                    write_node = write[1]
-                    write_node.data = newname
-                    self.rename_node_memlets(write[0], write_node, aliases, newname)
+                    rename_access(write[0], write[1], aliases, newname)
 
                     # Replace all dominated reads and connected memlets.
                     affected_states: set[SDFGState] = {write[0]} if isinstance(write[0], SDFGState) else set()
                     for read in shadowed_reads:
                         if isinstance(read[1], nd.AccessNode):
-                            read_node = read[1]
-                            read_node.data = newname
-                            self.rename_node_memlets(read[0], read_node, aliases, newname)
+                            rename_access(read[0], read[1], aliases, newname)
                             if isinstance(read[0], SDFGState):
                                 affected_states.add(read[0])
                         elif isinstance(read[1], InterstateEdge):
@@ -204,38 +675,12 @@ class ScalarFission(ppl.Pass):
                     # Propagate the rename across every NestedSDFG boundary
                     # touched by the renamed accesses: connector names, inner
                     # arrays catalog, inner accesses + memlets, symbol_mapping.
-                    self._propagate_rename_into_nsdfgs(affected_states, name, newname)
+                    rename_into_nested_sdfgs(affected_states, name, newname)
                     results[name].add(newname)
         return results
 
     def report(self, pass_retval: Any) -> str | None:
         return f"Renamed {len(pass_retval)} scalars: {pass_retval}."
-
-    @staticmethod
-    def is_wcr_write(state: SDFGState, node: nd.AccessNode) -> bool:
-        """Whether ``node`` is written through a write-conflict-resolution memlet.
-
-        A WCR edge (``CR: Sum``, ``CR: Product``, ``CR: Min`` ...) is a READ-MODIFY-WRITE of its
-        destination: the resolution combines the incoming value with what the container already
-        holds. ``ScalarWriteShadowScopes`` sees only the write and reports it as a dominating one,
-        so fission would start a new version there -- and the resolution would then combine against
-        that fresh, never-written version instead of the value the previous write left behind.
-
-        The exposure is real rather than hypothetical: every in-pipeline caller runs this pass
-        BEFORE ``AugAssignToWCR``, when an accumulator is still a plain read-tasklet-write chain
-        and no WCR edge exists. The readable CPU generator's ``ssa_loop_scalars`` step re-runs it at
-        CODEGEN time, on a graph where those chains are already WCR memlets. On CLOUDSC full_cpu
-        that fissioned the ``ZQSAT`` saturation accumulator (``CR: Product`` / ``CR: Min``) and
-        moved 10 output arrays by up to 2.1e+01.
-
-        :param state: The state holding ``node``.
-        :param node: The written access node.
-        A ``Reduce`` with no identity is the same read-modify-write before it is expanded
-        (:func:`~dace.transformation.passes.analysis.analysis.has_wcr_in_edge`).
-
-        :returns: ``True`` if any incoming memlet carries a write-conflict resolution.
-        """
-        return ap.has_wcr_in_edge(state, node)
 
     @staticmethod
     def _inout_nsdfg_carried(sdfg: SDFG) -> set[str]:
@@ -275,437 +720,104 @@ class ScalarFission(ppl.Pass):
                     carried |= in_arrays & out_arrays
         return carried
 
-    def rename_node_memlets(self, state: SDFGState, node: nd.AccessNode, aliases: set[str], new: str) -> None:
-        """Point every memlet on ``node``'s edges that still names one of ``aliases`` at ``new``.
-
-        A node renamed twice in one pass no longer names the ORIGINAL container, so a guard on that
-        name alone leaves an edge whose memlet names neither endpoint.
-
-        :param state: The state holding ``node``.
-        :param node: The access node whose ``data`` was just set to ``new``.
-        :param aliases: The original container name plus every version already minted for it.
-        :param new: The container name to rename onto.
-        """
-        for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
-            if edge.data.data in aliases:
-                self._rename_memlet_path(state, edge, edge.data.data, new, node)
-
-    @staticmethod
-    def _rename_memlet_path(state: SDFGState, edge, old: str, new: str, node: nd.AccessNode) -> None:
-        """Rename ``old`` -> ``new`` on every memlet of ``edge``'s FULL memlet TREE belonging
-        to ``node``'s access.
-
-        An access-node write/read that flows THROUGH a scope boundary (MapExit /
-        MapEntry) has more than one edge carrying the same data: the inner edge
-        to/from the tasklet and the outer edge to/from the AccessNode, joined at the
-        scope's connector. Renaming only the outermost edge -- the historical
-        behavior -- left the inner edge, and therefore the scope node's pass-through
-        data, as ``old``, yielding an ``IN_x(old) -> OUT_x(new)`` mismatch across the
-        MapExit that fails validation.
-
-        The TREE, not the path: one outer edge can fan out to several consumers
-        inside the scope (an array read like ``pn[i+1, j]`` and ``pn[i-1, j]``
-        both arriving through one ``OUT_pn`` connector). ``memlet_path`` is a single
-        linear route and renames only one of those branches, leaving its siblings
-        naming a container their endpoint no longer references.
-
-        The tree STOPS at another AccessNode of ``old``: a staging copy puts two separate
-        accesses of the same container in one tree, versioned separately by the shadow analysis.
-
-        ``_is_data_src`` is re-derived from the endpoints, not carried over. It records which SIDE
-        of the copy ``data`` names, and versioning a staging copy is exactly the case where the two
-        sides stop sharing a name: the outer access becomes ``c2_1`` and the inner ``c2_0``, so a
-        flag inherited from the shared name now points at the other container. ``align_memlet``
-        reads it to decide a boundary memlet is already aligned, and a stale one makes memlet
-        propagation stamp the INNER name onto the edge that leaves the OUTER access node -- an edge
-        naming neither of its endpoints, which validation rejects.
-        """
-        for pe in state.memlet_tree(edge):
-            if pe.data is None or pe.data.data != old:
-                continue
-            if any(n is not node and isinstance(n, nd.AccessNode) and n.data == old for n in (pe.src, pe.dst)):
-                continue
-            pe.data.data = new
-            if isinstance(pe.src, nd.AccessNode) and pe.src.data == new:
-                pe.data._is_data_src = True
-            elif isinstance(pe.dst, nd.AccessNode) and pe.dst.data == new:
-                pe.data._is_data_src = False
-
     # #
     #  Privatization of undominated (None-scope) loop-local scalars
     # #
 
     def _privatize_loop_local_undominated(
-        self, sdfg: SDFG, name: str, accesses: set[tuple], results, carriers: Optional["CarrierIndex"] = None
+        self, sdfg: SDFG, name: str, accesses: set[tuple], results, index: AccessIndex | None = None
     ):
-        """Give a separate container to each loop's copy of a scalar whose reads
-        are not dominated by a single write (the ``None`` write-scope), when it
-        is provably loop-local. This is scalar privatization; it is legal only if
-        the scalar has **no upward-exposed use** in that loop (it is definitely
-        written before any read on every path -- e.g. written in all branches of
-        a conditional, read after the merge). A scalar that may be read before it
-        is written (a non-exhaustive ``if``) is loop-carried and is left alone.
+        """Give a separate container to each loop's copy of a scalar whose reads are not dominated by a
+        single write (the ``None`` write-scope), when it is provably loop-local: no upward-exposed use in
+        any loop touching it (see :meth:`_carrier_free`). A scalar that may be read before it is written
+        (a non-exhaustive ``if``) is loop-carried and is left alone.
 
-        The same must hold for every OTHER loop touching the scalar, or the groups are not
-        independent and privatizing one of them breaks a def-use chain into another --
-        see :func:`_carrier_free`.
-
-        :param sdfg: The SDFG being modified.
         :param name: The size-1 transient scalar.
         :param accesses: The ``None``-scope ``(block, node-or-edge)`` accesses.
         :param results: Accumulator mapping the original name to new names.
+        :param index: Where each container is accessed, shared by a run of queries; ``None`` builds one.
         """
-        # The ``None`` scope is ONE equivalence class, and splitting it per loop is only
-        # value-preserving when no value crosses a group boundary (see ``_carrier_free``).
-        if not self._carrier_free(sdfg, name, carriers):
+        index = index or AccessIndex(sdfg)
+        if not self._carrier_free(sdfg, name, index):
             return
 
         by_loop: dict[LoopRegion, list[tuple]] = defaultdict(list)
         for block, node in accesses:
-            # ``_carrier_free`` already established that every access sits inside a loop and that
-            # no loop reads ``name`` before defining it, which is this group's legality condition.
-            by_loop[self._innermost_loop(block)].append((block, node))
+            by_loop[innermost_loop(block)].append((block, node))
 
         for loop_accesses in by_loop.values():
             newname = sdfg.add_datadesc(name, sdfg.arrays[name].clone(), find_new_name=True)
             affected_states: set[SDFGState] = set()
             for block, node in loop_accesses:
                 if isinstance(node, nd.AccessNode):
-                    node.data = newname
-                    # Rename along the FULL memlet path, not just the immediate edge:
-                    # an access that flows through a MapEntry/MapExit has an inner and
-                    # an outer edge carrying the same data, and renaming only one leaves
-                    # the scope node's pass-through as ``name`` (IN_x(old)->OUT_x(new)
-                    # mismatch / dangling reference once ``name`` is later removed). Same
-                    # fix as the dominated-write path above. (polybench ``durbin``: the
-                    # loop-local reduction accumulator ``sum``.)
-                    for e in block.in_edges(node):
-                        if e.data.data == name:
-                            self._rename_memlet_path(block, e, name, newname, node)
-                    for e in block.out_edges(node):
-                        if e.data.data == name:
-                            self._rename_memlet_path(block, e, name, newname, node)
+                    rename_access(block, node, {name}, newname)
                     if isinstance(block, SDFGState):
                         affected_states.add(block)
                 elif isinstance(node, InterstateEdge):
                     node.replace_dict({name: newname})
-            self._propagate_rename_into_nsdfgs(affected_states, name, newname)
+            rename_into_nested_sdfgs(affected_states, name, newname)
             results[name].add(newname)
 
-    def _carrier_free(self, sdfg: SDFG, name: str, carriers: Optional["CarrierIndex"] = None) -> bool:
+    def _carrier_free(self, sdfg: SDFG, name: str, index: AccessIndex | None = None) -> bool:
         """Whether no value of ``name`` can flow from one loop to another, or out to non-loop scope.
 
-        The undominated (``None``) write scope is one equivalence class of accesses the shadow
-        analysis could not attribute to any dominating write. Handing each enclosing loop its own
-        copy is value-preserving only when no value crosses a group boundary; otherwise the
-        producing group is renamed away from the consuming one, and the consumer is left reading a
-        container nobody writes any more.
+        The undominated (``None``) write scope is one equivalence class with no def-use guarantee, so
+        privatizing its loop groups independently is value-preserving only when every access of ``name``
+        lives inside a loop that definitely defines it before reading it, and no such loop nests in
+        another (a nested loop's last value is live out into its parent). Otherwise the producing group
+        could be renamed away from its consumer (npbench ``vadv``).
 
-        That was exactly the npbench ``vadv`` shape. Every top-level block of that SDFG is a
-        ``LoopRegion``, and ``_find_dominating_write`` used to accept only an ``SDFGState`` as a
-        dominating write state, so a value produced in one top-level loop (``data_col``, written by
-        the first step of the backward substitution) and consumed by the next landed wholly in the
-        ``None`` scope.
-        The producing loop has no upward-exposed use of its own and was therefore privatized alone,
-        severing the chain -- a silent miscompile, since the consuming loop still validates.
-
-        ``must_write_state`` now roots that shape properly, so ``vadv`` no longer reaches here at
-        all. This gate stays because it guards the general case, not that one instance: whatever
-        the analysis still cannot attribute remains ONE equivalence class with no def-use
-        guarantee, and over the four corpora the gate refuses 11 array and 23 scalar containers
-        that do reach it.
-
-        Establishing "dead after this loop" properly means liveness across the whole control-flow
-        hierarchy. Instead, require the stronger and much cheaper property that EVERY access of
-        ``name`` -- not only the undominated ones -- lives inside a loop that definitely defines it
-        before reading it. Then no group can observe another group's value, every group is closed
-        under def-use, and privatizing them independently cannot move a value. Anything else is
-        refused wholesale rather than split.
-
-        :param sdfg: The SDFG being modified.
-        :param name: The data container to test.
-        :param carriers: Where each container is accessed, built once for a run of queries; ``None`` builds one.
-        :returns: ``True`` if the undominated groups of ``name`` may be privatized independently.
+        :param index: Where each container is accessed, built once for a run of queries; ``None`` builds one.
         """
-        if carriers is None:
-            carriers = CarrierIndex(sdfg)
+        index = index or AccessIndex(sdfg)
         loops: set[LoopRegion] = set()
-        # Interstate-edge reads are accesses too, and one at non-loop scope consumes whatever the
-        # loops left behind just as a top-level AccessNode would.
-        for block in (*carriers.node_states.get(name, ()), *carriers.edge_sources.get(name, ())):
-            loop = self._innermost_loop(block)
+        for block in (*index.states(name), *index.edge_sources(name)):
+            loop = innermost_loop(block)
             if loop is None:
                 return False
             loops.add(loop)
-        # A nested loop's last value is live out into its enclosing loop, so nested groups are not closed.
         for loop in loops:
-            outer = self._innermost_loop(loop)
+            outer = innermost_loop(loop)
             while outer is not None:
                 if outer in loops:
                     return False
-                outer = self._innermost_loop(outer)
-        return all(self._no_upward_exposed_use(loop, name, defined_on_entry=False) for loop in loops)
-
-    @staticmethod
-    def _propagate_rename_into_nsdfgs(states, old_name: str, new_name: str) -> None:
-        """Propagate a scalar rename across every ``NestedSDFG`` boundary
-        whose input/output connector matches ``old_name``.
-
-        The outer-side rename (``AccessNode.data``, surrounding memlets) is
-        not enough when the renamed scalar crosses into a ``NestedSDFG``:
-        the inner SDFG references the scalar by connector name, which
-        binds to its own arrays catalog entry of the same name. Without
-        propagation the inner SDFG ends up dangling (inner descriptor
-        keyed on the old name, outer side rewired to the new name).
-
-        For every NSDFG in ``states`` that has a connector named
-        ``old_name``, this helper:
-
-        * renames the IN / OUT connector ``old_name -> new_name``
-        * updates the connecting outer memlet's ``data`` if it still
-          references ``old_name``
-        * runs ``SDFG.replace_dict({old_name: new_name})`` on the inner
-          SDFG, which renames the inner arrays catalog entry, every
-          inner ``AccessNode.data``, every inner memlet, and any
-          symbol references including ``symbol_mapping`` values
-        * updates the ``symbol_mapping`` itself if ``old_name`` appears
-          as a KEY (the inner symbol name binding)
-
-        :param states: The set of outer ``SDFGState`` instances where
-                       the rename happened. Only NSDFGs reachable from
-                       these states get the propagation.
-        :param old_name: The original scalar name.
-        :param new_name: The renamed scalar name.
-        """
-        if not states or old_name == new_name:
-            return
-        for state in states:
-            for n in state.nodes():
-                if not isinstance(n, nd.NestedSDFG):
-                    continue
-                # Rename a connector only when the OUTER AccessNode wired to it was renamed
-                # to ``new_name`` by THIS scope. Under per-scope fission the same NSDFG read
-                # is visited once per scope; an unconditional ``old_name -> new_name`` binds
-                # the connector to whichever scope runs first (e.g. ``X_0``) even when the
-                # feeding AccessNode belongs to another scope (``X_1``), leaving a
-                # connector/AccessNode name mismatch that fails validation. Tie each
-                # connector rename to its edge's renamed endpoint.
-                in_match = old_name in n.in_connectors and any(
-                    e.dst_conn == old_name and isinstance(e.src, nd.AccessNode) and e.src.data == new_name
-                    for e in state.in_edges(n)
-                )
-                out_match = old_name in n.out_connectors and any(
-                    e.src_conn == old_name and isinstance(e.dst, nd.AccessNode) and e.dst.data == new_name
-                    for e in state.out_edges(n)
-                )
-                if not (in_match or out_match or old_name in n.symbol_mapping):
-                    continue
-                # 1. Rename the connector.
-                if in_match:
-                    n.in_connectors[new_name] = n.in_connectors.pop(old_name)
-                if out_match:
-                    n.out_connectors[new_name] = n.out_connectors.pop(old_name)
-                # 2. Update the outer-side edge (connector name + memlet) for the edges whose
-                #    renamed endpoint drove the connector rename.
-                if in_match:
-                    for e in state.in_edges(n):
-                        if e.dst_conn == old_name and isinstance(e.src, nd.AccessNode) and e.src.data == new_name:
-                            e.dst_conn = new_name
-                            if e.data is not None and e.data.data == old_name:
-                                e.data.data = new_name
-                if out_match:
-                    for e in state.out_edges(n):
-                        if e.src_conn == old_name and isinstance(e.dst, nd.AccessNode) and e.dst.data == new_name:
-                            e.src_conn = new_name
-                            if e.data is not None and e.data.data == old_name:
-                                e.data.data = new_name
-                # 3. Propagate INSIDE the NestedSDFG. We do this manually
-                #    (no ``SDFG.replace_dict``) to avoid its symbolic-
-                #    replacement pathway tripping on the scalar's free-
-                #    symbol typeclass coercion.
-                inner = n.sdfg
-                if old_name in inner.arrays:
-                    inner.arrays[new_name] = inner.arrays.pop(old_name)
-                    for inner_state in inner.states():
-                        for inn in inner_state.data_nodes():
-                            if inn.data == old_name:
-                                inn.data = new_name
-                        for ie in inner_state.edges():
-                            if ie.data is not None and ie.data.data == old_name:
-                                ie.data.data = new_name
-                # Interstate edges in the inner SDFG (rare for a scalar-
-                # carrier shape but cheap to cover).
-                for ise in inner.all_interstate_edges():
-                    if any(str(s) == old_name for s in ise.data.free_symbols):
-                        ise.data.replace_dict({old_name: new_name})
-                # 4. Symbol_mapping uses inner-side symbol names as keys
-                #    (when the scalar appears as a symbol there). If the
-                #    inner symbol was named ``old_name``, update the key.
-                if old_name in n.symbol_mapping:
-                    n.symbol_mapping[new_name] = n.symbol_mapping.pop(old_name)
-                # Recurse: inner NestedSDFGs may themselves carry the
-                #    scalar across another boundary.
-                ScalarFission._propagate_rename_into_nsdfgs(set(inner.states()), old_name, new_name)
-
-    @staticmethod
-    def _innermost_loop(block) -> LoopRegion | None:
-        """Find the innermost loop enclosing a block.
-
-        :param block: The control-flow block to search from.
-        :returns: The innermost enclosing ``LoopRegion``, or ``None`` if the block
-                  is not inside any loop.
-        """
-        region = block.parent_graph
-        while region is not None:
-            if isinstance(region, LoopRegion):
-                return region
-            region = region.parent_graph
-        return None
-
-    def _no_upward_exposed_use(self, region: ControlFlowRegion, name: str, defined_on_entry: bool) -> bool:
-        """Test scalar-privatization legality: ``name`` has no upward-exposed use
-        in ``region``, i.e. every read is preceded by a write on every path
-        (``name`` is definitely assigned before use). Path-insensitive must-def
-        analysis -- a non-exhaustive conditional does not establish a definition.
-
-        :param region: The region (typically a loop) to test.
-        :param name: The scalar data container.
-        :param defined_on_entry: Whether ``name`` is already defined on entry.
-        :returns: ``True`` if ``name`` has no upward-exposed use (privatizable).
-        """
-        return self._analyze_region(region, name, defined_on_entry)[1]
-
-    def _analyze_region(self, region: ControlFlowRegion, name: str, defined_on_entry: bool) -> tuple[bool, bool]:
-        """Forward must-def analysis of ``name`` over ``region``.
-
-        The fixpoint is seeded pessimistically (``False`` off the entry), so
-        cycles and unanalyzable shapes stay conservative -- a possibly-carried
-        scalar is never reported as privatizable.
-
-        :param region: The region to analyze.
-        :param name: The scalar data container.
-        :param defined_on_entry: Whether ``name`` is defined on entry to ``region``.
-        :returns: ``(definitely_defined_at_exit, no_upward_exposed_use)``.
-        """
-        blocks = list(region.nodes())
-        if not blocks:
-            return defined_on_entry, True
-        bdef = {b: self._block_defines(b, name) for b in blocks}
-        start = region.start_block
-        defn = dict.fromkeys(blocks, False)
-        for _ in range(len(blocks) + 1):
-            changed = False
-            for b in blocks:
-                if b is start:
-                    nv = defined_on_entry
-                else:
-                    preds = [e.src for e in region.in_edges(b)]
-                    nv = all(defn[p] or bdef[p] for p in preds) if preds else False
-                if nv != defn[b]:
-                    defn[b] = nv
-                    changed = True
-            if not changed:
-                break
-        no_ue = all(not self._block_ue(b, name, defn[b]) for b in blocks)
-        # An interstate edge naming ``name`` in its condition or an assignment READS it, right
-        # after its source block. ``_block_ue`` walks blocks only, so without this a region whose
-        # ONLY read is such an edge -- ``if I[i]:`` inside a loop lowers to exactly that -- reports
-        # no upward-exposed use, and ``_carrier_free`` then lets the reader be privatized away from
-        # its writer into a container nobody writes.
-        no_ue = no_ue and all(
-            defn[e.src] or bdef[e.src] for e in region.edges() if any(str(sym) == name for sym in e.data.free_symbols)
-        )
-        sinks = [b for b in blocks if region.out_degree(b) == 0]
-        must_def_exit = bool(sinks) and all(defn[b] or bdef[b] for b in sinks)
-        return must_def_exit, no_ue
-
-    def _block_defines(self, block, name: str) -> bool:
-        """Whether ``block`` definitely writes ``name`` on every path through it.
-        A conditional defines only if it is exhaustive (has an ``else``) and every
-        branch defines; a loop may run zero times and so never definitely defines.
-
-        :param block: The control-flow block.
-        :param name: The scalar data container.
-        :returns: ``True`` if ``name`` is written on every path through ``block``.
-        """
-        if isinstance(block, SDFGState):
-            return self._state_defines(block, name)
-        if isinstance(block, ConditionalBlock):
-            has_else = any(cond is None for cond, _ in block.branches)
-            return has_else and all(self._analyze_region(br, name, False)[0] for _, br in block.branches)
-        if isinstance(block, LoopRegion):
-            return False
-        if isinstance(block, ControlFlowRegion):
-            return self._analyze_region(block, name, False)[0]
-        return False
-
-    def _block_ue(self, block, name: str, defined_on_entry: bool) -> bool:
-        """Whether ``block`` has an upward-exposed read of ``name``.
-
-        :param block: The control-flow block.
-        :param name: The scalar data container.
-        :param defined_on_entry: Whether ``name`` is already defined on entry.
-        :returns: ``True`` if a read of ``name`` may execute before any write.
-        """
-        if defined_on_entry:
-            return False
-        if isinstance(block, SDFGState):
-            return self._state_reads_before_write(block, name)
-        if isinstance(block, ConditionalBlock):
-            return any(not self._analyze_region(br, name, False)[1] for _, br in block.branches)
-        if isinstance(block, ControlFlowRegion):
-            return not self._analyze_region(block, name, False)[1]
-        return True  # unknown block type -> conservative
-
-    @staticmethod
-    def _state_defines(state: SDFGState, name: str) -> bool:
-        """Whether ``state`` writes ``name`` (has a non-empty write to it).
-
-        :param state: The state to inspect.
-        :param name: The scalar data container.
-        :returns: ``True`` if ``name`` is written in ``state``.
-        """
-        return any(n.data == name and any(not e.data.is_empty() for e in state.in_edges(n)) for n in state.data_nodes())
-
-    @staticmethod
-    def _state_reads_before_write(state: SDFGState, name: str) -> bool:
-        """Whether ``state`` has an upward-exposed read of ``name``: an access
-        node that is read (has out-edges) but not written in the state (no
-        non-empty in-edge) reads the value coming from before the state.
-
-        :param state: The state to inspect.
-        :param name: The scalar data container.
-        :returns: ``True`` if a read precedes any write of ``name`` in ``state``.
-        """
-        for node in state.data_nodes():
-            if node.data != name:
-                continue
-            written = any(not e.data.is_empty() for e in state.in_edges(node))
-            if state.out_degree(node) > 0 and not written:
-                return True
-        return False
+                outer = innermost_loop(outer)
+        must_def = MustDefinition(Accesses(name), index)
+        return not any(must_def.exposed(loop) for loop in loops)
 
 
 @transformation.explicit_cf_compatible
-class PrivatizeScalars(ppl.Pipeline):
-    """Give every write-before-read transient scalar its own name (scalar privatization).
+class PrivatizeScalars(ppl.Pass):
+    """:class:`ScalarFission` with the analyses it depends on, as one self-contained pass.
 
-    A self-contained pipeline that runs :class:`ScalarFission` together with the
-    analysis it depends on (``ScalarWriteShadowScopes`` and that pass's own
-    dependencies), so it can be applied on its own --
-    ``PrivatizeScalars().apply_pass(sdfg, {})`` -- or dropped in as a single
-    element of a larger pipeline such as simplify. ``ScalarFission`` declares
-    those dependencies but cannot resolve them outside a pipeline.
-
-    A size-1 transient reused as a per-iteration temporary is written before it
-    is read on every iteration, so the iterations share only its *name*, not a
-    real value. Splitting each dominating write into its own container removes
-    that false write-after-write, which is what otherwise makes a shared
-    loop-local scalar block ``LoopToMap``.
+    Applicable on its own (``PrivatizeScalars().apply_pass(sdfg, {})``) or as a unit of a larger
+    pipeline: ``ScalarFission`` declares its analyses but cannot resolve them outside a pipeline.
+    Returns ``{"ScalarFission": renames}``, without the analyses' results.
     """
 
-    def __init__(self):
-        super().__init__([ScalarFission()])
+    CATEGORY: str = "Optimization Preparation"
+
+    def fission(self) -> ScalarFission:
+        return ScalarFission()
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # One application per placement: a recipe that wants another round places it again.
+        return False
+
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
+        return []
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
+        # The analyses key their results by ``cfg_id``; a list left stale by an earlier inliner would let
+        # the reachability analysis renumber it under the access-node analysis' cached result.
+        sdfg.reset_cfg_list()
+        fission = self.fission()
+        result = ppl.Pipeline([fission]).apply_pass(sdfg, {})
+        name = type(fission).__name__
+        return {name: result[name]} if result and result.get(name) else None
 
 
 @transformation.explicit_cf_compatible
@@ -737,20 +849,9 @@ class ArrayFission(ScalarFission):
 
 
 @transformation.explicit_cf_compatible
-class PrivatizeArrays(ppl.Pipeline):
-    """Give every provably fully-overwritten transient array its own name (array privatization).
+class PrivatizeArrays(PrivatizeScalars):
+    """:class:`ArrayFission` with the analyses it depends on, as one self-contained pass (see
+    :class:`PrivatizeScalars`). Only arrays every write provably overwrites in full are renamed."""
 
-    The array sibling of :class:`PrivatizeScalars`: a self-contained pipeline running
-    :class:`ArrayFission` together with the analysis it depends on, so it can be applied on its own
-    -- ``PrivatizeArrays().apply_pass(sdfg, {})`` -- or dropped into a larger recipe.
-
-    A transient array reused as a per-iteration temporary (``Tz = np.zeros(...)`` at the top of a
-    loop body) is fully written before it is read on every iteration, so the iterations share only
-    its *name*. Splitting each dominating write into its own container removes that false
-    write-after-write, which is what otherwise makes a shared temporary look loop-carried. Unlike
-    the scalar case the sharing is only false when the write covers the entire array, so the
-    underlying analysis refuses every array it cannot prove that for.
-    """
-
-    def __init__(self):
-        super().__init__([ArrayFission()])
+    def fission(self) -> ScalarFission:
+        return ArrayFission()

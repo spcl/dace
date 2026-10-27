@@ -134,9 +134,7 @@ def _canonicalized(name, tag="cvc"):
     """
     kernel = tsvc.collect(name=name)[0]
     sdfg = tsvc.to_sdfg(kernel, tag=tag, simplify=True)
-    canonicalize(
-        sdfg, validate=True, peel_limit=4, break_anti_dependence=True, nonnegative_symbols=known_nonnegative(sdfg)
-    )
+    canonicalize(sdfg, validate=True, peel_limit=4, nonnegative_symbols=known_nonnegative(sdfg))
     arrays, ck = tsvc.make_inputs(kernel, seed=1234)
     ref = {n: a.copy() for n, a in arrays.items()}
     REFERENCES[kernel.name](**ref, **ck)

@@ -317,7 +317,7 @@ def relift_planeless_groups(sdfg: SDFG, groups: list[ControlFlowBlock]) -> None:
     whether or not the probe can reconstruct it (velocity_tendencies' ``levelmask`` loop sets ``mask[jk]`` under a
     guard inside a sifted block loop)."""
     # Avoid import loops
-    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+    from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
     for group in groups:
         if isinstance(group, LoopRegion) and not block_planes(group) and holds_loop_without_planes(group):

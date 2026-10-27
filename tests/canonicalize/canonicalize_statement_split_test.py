@@ -48,7 +48,7 @@ def _canon_vs_raw(prog, inputs, **symbols):
     raw.compile()(**ref, **symbols)
 
     cand = prog.to_sdfg(simplify=True)
-    canonicalize(cand, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(cand, validate=True, peel_limit=4)
     got = {k: v.copy() for k, v in inputs.items()}
     cand.compile()(**got, **symbols)
 

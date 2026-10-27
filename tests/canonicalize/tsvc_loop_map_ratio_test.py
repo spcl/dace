@@ -30,7 +30,6 @@ from tests.corpus.tsvc_2_5 import tsvc_2_5
 #: unroll cap keeps ``heat3d``'s constant tile-8 inner loops from unrolling 512x
 #: (otherwise a single kernel runs for minutes); the rest is the production recipe.
 _PEEL_LIMIT = 4
-_BREAK_ANTI_DEP = True
 _UNROLL_LIMIT = 4
 
 #: (label, list of @dace.program objects).
@@ -55,7 +54,7 @@ def _count(program):
     """
     sdfg = program.to_sdfg(simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
-        canonicalize(sdfg, peel_limit=_PEEL_LIMIT, break_anti_dependence=_BREAK_ANTI_DEP, unroll_limit=_UNROLL_LIMIT)
+        canonicalize(sdfg, peel_limit=_PEEL_LIMIT, unroll_limit=_UNROLL_LIMIT)
     loops = sum(
         1 for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion) and not cfr.pinned_sequential
     )

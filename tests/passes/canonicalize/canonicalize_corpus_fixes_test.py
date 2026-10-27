@@ -71,7 +71,6 @@ def test_finalize_does_not_persist_reduction_scalar():
         validate=True,
         target="cpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
     )
@@ -130,7 +129,6 @@ def test_finalize_selects_openmp_for_reduce():
             validate=True,
             target="cpu",
             peel_limit=4,
-            break_anti_dependence=True,
             interchange_carry_with_map=True,
             scatter_to_guarded_maps=True,
         )
@@ -186,7 +184,6 @@ def test_finalize_selects_openmp_scan_for_prefix_scan():
         validate=True,
         target="cpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
     )
@@ -233,7 +230,6 @@ def test_finalize_nested_reduction_stays_sequential():
         validate=True,
         target="cpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
     )
@@ -319,7 +315,6 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
             validate=True,
             target="cpu",
             peel_limit=4,
-            break_anti_dependence=True,
             interchange_carry_with_map=True,
             scatter_to_guarded_maps=True,
         )

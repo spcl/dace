@@ -44,6 +44,28 @@ def test_conflicting_custom_wcr_updates_all_land(dtype):
     assert np.array_equal(out, -np.bincount(idx, minlength=4).astype(dtype.type))
 
 
+def test_two_custom_wcr_outputs_of_one_tasklet_compile():
+    """Both outputs of one tasklet reduce through their own lambda in the same scope."""
+    sdfg = dace.SDFG("two_custom_wcr")
+    sdfg.add_array("val", [N], dace.float64)
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "t",
+        {"i": "0:N"},
+        {"v": dace.Memlet("val[i]")},
+        "x = v\ny = 2 * v",
+        {"x": dace.Memlet("a[0]", wcr="lambda p, q: p - q"), "y": dace.Memlet("b[0]", wcr="lambda p, q: p - q")},
+        schedule=dtypes.ScheduleType.Sequential,
+        external_edges=True,
+    )
+    a, b = np.zeros(1), np.zeros(1)
+    sdfg(val=np.ones(10), a=a, b=b, N=10)
+    assert a[0] == -10 and b[0] == -20
+
+
 if __name__ == "__main__":
     test_conflicting_custom_wcr_updates_all_land(dace.float32)
     test_conflicting_custom_wcr_updates_all_land(dace.float64)
+    test_two_custom_wcr_outputs_of_one_tasklet_compile()

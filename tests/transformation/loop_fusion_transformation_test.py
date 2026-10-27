@@ -248,8 +248,8 @@ def doall_2d_map_pair(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
 
 def test_doall_map_bodied_pair_is_refused_and_fuses_only_on_opt_in():
     # Their only shared array (a) is read by both, so the dependence check clears the pair -- but the
-    # second loop is DOALL, and serializing a loop LoopToMap could map is not LoopFusion' call. Only
-    # ReconstructWavefrontNest's allow_doall_fuse opt-in gets it.
+    # second loop is DOALL, and serializing a loop LoopToMap could map is not LoopFusion' call unless
+    # ``defer_doall`` is off.
     before, after, applied, exact = run_fused(doall_2d_map_pair, mk2d(names=("a", "b", "c")), 24)
     assert exact
     assert applied == 0 and after == before
@@ -266,7 +266,8 @@ def test_doall_map_bodied_pair_is_refused_and_fuses_only_on_opt_in():
     xform = LoopFusion()
     xform.first, xform.second = first, second
     assert xform.can_be_applied(graph, 0, sdfg) is False
-    assert xform.can_be_applied(graph, 0, sdfg, allow_doall_fuse=True) is True
+    xform.defer_doall = False
+    assert xform.can_be_applied(graph, 0, sdfg) is True
 
     xform.apply(graph, sdfg)
     assert nloops(sdfg) == before - 1

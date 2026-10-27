@@ -7,6 +7,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import SDFG, SDFGState, dtypes, symbolic
 from dace import memlet as mm
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
@@ -217,7 +218,7 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
-        code = f"_result = cblas_{func}({n}, _x, {stride_x}, _y, {stride_y});"
+        code = f"_result = cblas_{func}({sym2cpp(n)}, _x, {sym2cpp(stride_x)}, _y, {sym2cpp(stride_y)});"
         # The return type is scalar in cblas_?dot signature
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, {"_result": dtype}, code, language=dace.dtypes.Language.CPP

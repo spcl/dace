@@ -27,6 +27,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
+from dace.utils import find_new_name
 
 
 def _unit_step(subset: subsets.Subset | None) -> bool:
@@ -116,6 +117,9 @@ class FuseElementwiseIntoGemv(ppl.Pass):
         if not isinstance(vec_node, nodes.AccessNode):
             return 0
         state.remove_node(node)
+        # A connector may not take the name of a container, symbol or constant of the SDFG
+        taken = set(sdfg.arrays) | set(sdfg.symbols) | set(sdfg.constants)
+        m, v, o = (find_new_name(name, taken) for name in ("__gv_m", "__gv_v", "__gv_o"))
         # y = 0, then y[i] += M[i, j] * v[j]; the zeroed node orders the init before the accumulation
         zeroed = state.add_access(out_name)
         out_param = out_params[0]
@@ -123,8 +127,8 @@ class FuseElementwiseIntoGemv(ppl.Pass):
             f"{node.label}_init",
             {out_param: ranges[out_param]},
             {},
-            "o = 0",
-            {"o": Memlet(f"{out_name}[{_offset(out_subset, out_params)}]")},
+            f"{o} = 0",
+            {o: Memlet(f"{out_name}[{_offset(out_subset, out_params)}]")},
             external_edges=True,
             output_nodes={out_name: zeroed},
         )
@@ -132,11 +136,11 @@ class FuseElementwiseIntoGemv(ppl.Pass):
             f"{node.label}_gemv",
             ranges,
             {
-                "m": Memlet(f"{mat_name}[{_offset(mat_subset, mat_params)}]"),
-                "v": Memlet(f"{vec_name}[{_offset(vec_subset, vec_params)}]"),
+                m: Memlet(f"{mat_name}[{_offset(mat_subset, mat_params)}]"),
+                v: Memlet(f"{vec_name}[{_offset(vec_subset, vec_params)}]"),
             },
-            "o = m * v",
-            {"o": Memlet(f"{out_name}[{_offset(out_subset, out_params)}]", wcr="lambda x, y: x + y")},
+            f"{o} = {m} * {v}",
+            {o: Memlet(f"{out_name}[{_offset(out_subset, out_params)}]", wcr="lambda x, y: x + y")},
             external_edges=True,
             input_nodes={mat_name: mat_node, vec_name: vec_node},
             output_nodes={out_name: out_node},

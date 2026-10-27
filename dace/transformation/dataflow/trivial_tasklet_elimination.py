@@ -142,7 +142,7 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
         # the outer mapped array -- so the merge would yield an invalid ``<scalar> -> MapExit``
         # edge whose ``memlet.data`` is the outer array (rejected by the SDFG validator and
         # StateFusionExtended's post-apply check). Keep the trivial copy tasklet at the map
-        # boundary; it is exactly the shape InsertAssignTaskletsAtMapBoundary re-creates.
+        # boundary.
         if expr_index == 2 and write_memlet.data != read.data:
             return False
 

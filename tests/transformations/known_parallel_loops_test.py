@@ -107,7 +107,8 @@ def fuse(sdfg: dace.SDFG, first: LoopRegion, second: LoopRegion) -> None:
     instance.setup_match(
         sdfg, graph.cfg_id, -1, {LoopFusion.first: graph.node_id(first), LoopFusion.second: graph.node_id(second)}, 0
     )
-    assert instance.can_be_applied(graph, 0, sdfg, allow_doall_fuse=True)
+    instance.defer_doall = False
+    assert instance.can_be_applied(graph, 0, sdfg)
     instance.apply(graph, sdfg)
 
 
@@ -147,7 +148,8 @@ def test_a_known_parallel_loop_does_not_fuse_with_a_sequential_one():
     instance.setup_match(
         sdfg, graph.cfg_id, -1, {LoopFusion.first: graph.node_id(first), LoopFusion.second: graph.node_id(second)}, 0
     )
-    assert not instance.can_be_applied(graph, 0, sdfg, allow_doall_fuse=True)
+    instance.defer_doall = False
+    assert not instance.can_be_applied(graph, 0, sdfg)
 
 
 def test_a_known_parallel_loop_fuses_with_a_provably_parallel_one_which_becomes_known_parallel():
@@ -172,7 +174,8 @@ def test_mixing_is_allowed_when_the_option_is_off():
     instance.setup_match(
         sdfg, graph.cfg_id, -1, {LoopFusion.first: graph.node_id(first), LoopFusion.second: graph.node_id(second)}, 0
     )
-    assert instance.can_be_applied(graph, 0, sdfg, allow_doall_fuse=True)
+    instance.defer_doall = False
+    assert instance.can_be_applied(graph, 0, sdfg)
     instance.apply(graph, sdfg)
     fused = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
     assert len(fused) == 1 and not fused[0].known_parallel

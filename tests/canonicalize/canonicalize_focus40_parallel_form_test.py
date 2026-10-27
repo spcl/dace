@@ -627,7 +627,7 @@ def test_fuse_move_ifs_fuses_both_guarded_nests_into_one_predicated_map():
     assert len(fused.params) == 2, f"the fused map must span i and j together, got {fused.params}"
     assert str(fused.range) == "0:LEN_2D, 0:LEN_2D", f"the fused map must cover the whole square, got {fused.range}"
 
-    # The row guard is staged once: a scalar filled from ``cond`` (an interstate symbol becomes one, as it shapes
+    # The row guard is staged once: a scalar filled from ``cond`` by a tasklet or a copy (an interstate symbol becomes one, as it shapes
     # neither an iteration domain nor an access), or an interstate assignment from ``cond``.
     row_guards = [
         lhs
@@ -641,7 +641,8 @@ def test_fuse_move_ifs_fuses_both_guarded_nests_into_one_predicated_map():
         for state in sd.states()
         for node in state.data_nodes()
         for e in state.in_edges(node)
-        if isinstance(e.src, nd.Tasklet) and [i.data.data for i in state.in_edges(e.src)] == ["cond"]
+        if (isinstance(e.src, nd.Tasklet) and [i.data.data for i in state.in_edges(e.src)] == ["cond"])
+        or (isinstance(e.src, nd.AccessNode) and e.src.data == "cond")
     ]
     assert len(row_guards) == 1, f"cond[i] must be staged exactly once inside the map body, got {row_guards}"
     guards = [

@@ -273,7 +273,7 @@ def test_2d_index_tie_breaking_matches_sequential(op, strict):
 
     sdfg = argmax2d.to_sdfg(simplify=True)
     sdfg.name = f"argmax2d_{'strict' if strict else 'non_strict'}"
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
     assert sum(1 for nd, _ in sdfg.all_nodes_recursive() if isinstance(nd, ArgReduce)) == 1, "2-D nest must lift"
     assert _num_loops(sdfg) == 0
 

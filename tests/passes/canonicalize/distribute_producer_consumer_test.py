@@ -405,7 +405,7 @@ def test_a_nested_sdfg_operand_is_not_expanded_for_a_split():
     """A shared transient a nested SDFG takes keeps its shape: its connector's inner descriptor must equal the outer
     one, so ``u[i]`` would need a view. The expansion fallback leaves such a loop whole (cloudsc's ``__tmp135``,
     read by an inlined ``where`` the frontend kept nested)."""
-    from dace.transformation.passes.buffer_expansion import expand_iteration_private
+    from dace.transformation.passes.buffer_expansion import iteration_private_buffers
 
     m = dace.symbol("M")
     sdfg = dace.SDFG("nested_operand_split")
@@ -435,7 +435,7 @@ def test_a_nested_sdfg_operand_is_not_expanded_for_a_split():
     consume.add_edge(tasklet, "out", consume.add_write("y"), None, dace.Memlet("y[i]"))
     sdfg.validate()
 
-    assert expand_iteration_private(sdfg, loop, {"u"}) is None
+    assert iteration_private_buffers(sdfg, loop, {"u"}) is None
     assert [str(d) for d in sdfg.arrays["u"].shape] == ["M"]
     sdfg.validate()
 

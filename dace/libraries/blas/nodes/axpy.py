@@ -8,6 +8,7 @@ import dace.sdfg.nodes
 from dace import SDFG, SDFGState, symbolic
 from dace import data as dt
 from dace import memlet as mm
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments, gpu_dialect
@@ -126,13 +127,13 @@ class ExpandAxpyOpenBLAS(ExpandTransformation):
         if dtype in (dace.complex64, dace.complex128):
             code = f"""
             {dtype.ctype} __alpha = {dtype.ctype}({a});
-            cblas_{prefix}copy({n}, _y, {sy}, _res, {sy});
-            cblas_{prefix}axpy({n}, &__alpha, _x, {sx}, _res, {sy});
+            cblas_{prefix}copy({sym2cpp(n)}, _y, {sym2cpp(sy)}, _res, {sym2cpp(sy)});
+            cblas_{prefix}axpy({sym2cpp(n)}, &__alpha, _x, {sym2cpp(sx)}, _res, {sym2cpp(sy)});
             """
         else:
             code = f"""
-            cblas_{prefix}copy({n}, _y, {sy}, _res, {sy});
-            cblas_{prefix}axpy({n}, ({dtype.ctype})({a}), _x, {sx}, _res, {sy});
+            cblas_{prefix}copy({sym2cpp(n)}, _y, {sym2cpp(sy)}, _res, {sym2cpp(sy)});
+            cblas_{prefix}axpy({sym2cpp(n)}, ({dtype.ctype})({a}), _x, {sym2cpp(sx)}, _res, {sym2cpp(sy)});
             """
         return dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP

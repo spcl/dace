@@ -24,9 +24,10 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
-from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.interstate.loop_to_map import LoopToMap, Refusal
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 
 def updated_in_state(state: SDFGState) -> set[str]:
@@ -52,13 +53,10 @@ def updated_containers(loop: LoopRegion, per_state: dict[SDFGState, set[str]]) -
 def refused_container(sdfg: SDFG, loop: LoopRegion) -> str | None:
     """The container whose non-affine write keeps ``loop`` from mapping, or ``None`` if it maps or refuses else."""
     probe = LoopToMap()
-    probe.setup_match(
-        sdfg, loop.parent_graph.cfg_id, -1, {LoopToMap.loop: loop.parent_graph.node_id(loop)}, 0, override=True
-    )
-    if probe.can_be_applied(loop.parent_graph, 0, sdfg):
+    if ParallelizeLoops().accepts(loop, probe):
         return None
-    reason = probe.last_refusal_reason or ""
-    return probe.last_refusal_container if "not uniquely indexed" in reason else None
+    refusal = probe.last_refusal
+    return refusal.container if refusal is not None and refusal.kind is Refusal.NON_UNIQUE_WRITE else None
 
 
 def in_place_update(sdfg: SDFG, state: SDFGState, name: str) -> AugAssignToWCR | None:

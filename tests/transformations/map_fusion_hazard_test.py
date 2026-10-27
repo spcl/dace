@@ -396,6 +396,134 @@ def test_reduction_independent_of_the_second_map_rides_along():
         assert np.array_equal(got[name], oracle[name]), f"fusion changed {name}: {got[name]} != {oracle[name]}"
 
 
+def _pointwise_map(state, label, inputs, output, out_subset, code):
+    """``output[out_subset] = code`` over ``i``, the tasklet reading ``a<k>`` from each ``(node, subset)``."""
+    map_entry, map_exit = state.add_map(label, dict(i=f"0:{N}"))
+    tasklet = state.add_tasklet(f"{label}_t", [f"a{k}" for k in range(len(inputs))], ["o"], code)
+    for k, (node, subset) in enumerate(inputs):
+        state.add_memlet_path(node, map_entry, tasklet, dst_conn=f"a{k}", memlet=dace.Memlet(f"{node.data}[{subset}]"))
+    state.add_memlet_path(tasklet, map_exit, output, src_conn="o", memlet=dace.Memlet(f"{output.data}[{out_subset}]"))
+    return map_entry
+
+
+def _read_before_update(second_reads_t: bool):
+    """``t = X[0] + 1`` reads ``X`` before ``X[0] *= 2`` updates it in place; ``out = U (+ t)`` reads the update
+    through ``U = X[0]``, so it runs after the update. Fused into ``out``'s Map, the read of ``X`` would too."""
+    sdfg = dace.SDFG(unique_name("read_before_update"))
+    sdfg.add_array("X", [2, N], dace.float64)
+    sdfg.add_array("U", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_array("t", [N], dace.float64, transient=second_reads_t)
+    state = sdfg.add_state("s", is_start_block=True)
+    x_read, x_updated, t, u, out = (state.add_access(name) for name in ("X", "X", "t", "U", "out"))
+    first = _pointwise_map(state, "first", [(x_read, "0, i")], t, "i", "o = a0 + 1.0")
+    _pointwise_map(state, "update", [(x_read, "0, i")], x_updated, "0, i", "o = 2.0 * a0")
+    _pointwise_map(state, "copy", [(x_updated, "0, i")], u, "i", "o = a0")
+    if second_reads_t:
+        second = _pointwise_map(state, "second", [(t, "i"), (u, "i")], out, "i", "o = a0 + a1")
+    else:
+        second = _pointwise_map(state, "second", [(u, "i")], out, "i", "o = a0")
+    sdfg.validate()
+    return sdfg, first, second
+
+
+def _run_read_before_update(sdfg):
+    args = {"X": np.arange(2 * N, dtype=np.float64).reshape(2, N), "U": np.zeros(N), "out": np.zeros(N)}
+    if "t" in sdfg.arrays and not sdfg.arrays["t"].transient:
+        args["t"] = np.zeros(N)
+    sdfg(**args)
+    return args
+
+
+def test_vertical_fusion_must_not_move_a_read_past_a_write():
+    """The fused Map runs where the second Map does, after the update of ``X``: the read of ``X`` must stay before."""
+    sdfg, first, second = _read_before_update(second_reads_t=True)
+    oracle = _run_read_before_update(sdfg)
+    assert np.array_equal(oracle["out"], 3.0 * oracle["U"] / 2.0 + 1.0)
+
+    state = sdfg.start_block
+    first_exit = state.exit_node(first)
+    match = {
+        dftrans.MapFusionVertical.first_map_exit: state.node_id(first_exit),
+        dftrans.MapFusionVertical.array: state.node_id(state.out_edges(first_exit)[0].dst),
+        dftrans.MapFusionVertical.second_map_entry: state.node_id(second),
+    }
+    xform = dftrans.MapFusionVertical()
+    xform.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), match, 0)
+    assert not xform.can_be_applied(state, 0, sdfg)
+
+    sdfg.apply_transformations_repeated(dftrans.MapFusionVertical, validate_all=True)
+    got = _run_read_before_update(sdfg)
+    for name, expected in oracle.items():
+        assert np.array_equal(got[name], expected), f"vertical fusion changed {name}: {got[name]} != {expected}"
+
+
+def test_horizontal_fusion_must_not_move_a_read_past_a_write():
+    """Fused with the second Map, the parallel first Map would read ``X`` after its update."""
+    sdfg, first, second = _read_before_update(second_reads_t=False)
+    oracle = _run_read_before_update(sdfg)
+
+    state = sdfg.start_block
+    xform = dftrans.MapFusionHorizontal()
+    match = {
+        dftrans.MapFusionHorizontal.first_parallel_map_entry: state.node_id(first),
+        dftrans.MapFusionHorizontal.second_parallel_map_entry: state.node_id(second),
+    }
+    xform.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), match, 0)
+    assert not xform.can_be_applied(state, 0, sdfg)
+
+    sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal, validate_all=True)
+    got = _run_read_before_update(sdfg)
+    for name, expected in oracle.items():
+        assert np.array_equal(got[name], expected), f"horizontal fusion changed {name}: {got[name]} != {expected}"
+
+
+def test_horizontal_fusion_must_not_merge_a_read_with_an_unordered_in_place_update():
+    """``t = X[0] + 1`` beside ``X[0] *= 2``: fused, the two bodies run in no fixed order."""
+    sdfg = dace.SDFG(unique_name("read_beside_update"))
+    sdfg.add_array("X", [2, N], dace.float64)
+    sdfg.add_array("t", [N], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    x_read, x_updated, t = (state.add_access(name) for name in ("X", "X", "t"))
+    first = _pointwise_map(state, "first", [(x_read, "0, i")], t, "i", "o = a0 + 1.0")
+    second = _pointwise_map(state, "update", [(x_read, "0, i")], x_updated, "0, i", "o = 2.0 * a0")
+    xform = dftrans.MapFusionHorizontal()
+    match = {
+        dftrans.MapFusionHorizontal.first_parallel_map_entry: state.node_id(first),
+        dftrans.MapFusionHorizontal.second_parallel_map_entry: state.node_id(second),
+    }
+    xform.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), match, 0)
+    assert not xform.can_be_applied(state, 0, sdfg)
+
+
+def test_vertical_fusion_must_not_move_a_side_read_past_the_in_place_write():
+    """The first Map reads ``X`` into ``d`` (the intermediate) and, in another tasklet, into ``s``; the second updates
+    ``X`` from ``d``. The intermediate orders only the read feeding it: fused, the copy into ``s`` could follow the
+    update."""
+    sdfg = dace.SDFG(unique_name("side_read_before_update"))
+    sdfg.add_array("X", [2, N], dace.float64)
+    sdfg.add_array("s", [N], dace.float64)
+    sdfg.add_array("d", [N], dace.float64, transient=True)
+    state = sdfg.add_state("s", is_start_block=True)
+    x_read, x_updated, d, side = (state.add_access(name) for name in ("X", "X", "d", "s"))
+    entry, exit_ = state.add_map("first", dict(i=f"0:{N}"))
+    for name, node, code in (("d", d, "o = a - 1.0"), ("s", side, "o = a")):
+        tasklet = state.add_tasklet(f"first_{name}", ["a"], ["o"], code)
+        state.add_memlet_path(x_read, entry, tasklet, dst_conn="a", memlet=dace.Memlet("X[0, i]"))
+        state.add_memlet_path(tasklet, exit_, node, src_conn="o", memlet=dace.Memlet(f"{name}[i]"))
+    second = _pointwise_map(state, "update", [(d, "i")], x_updated, "0, i", "o = 2.0 * a0")
+    sdfg.validate()
+
+    match = {
+        dftrans.MapFusionVertical.first_map_exit: state.node_id(exit_),
+        dftrans.MapFusionVertical.array: state.node_id(d),
+        dftrans.MapFusionVertical.second_map_entry: state.node_id(second),
+    }
+    xform = dftrans.MapFusionVertical()
+    xform.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), match, 0)
+    assert not xform.can_be_applied(state, 0, sdfg)
+
+
 if __name__ == "__main__":
     test_copy_memlet_naming_the_inner_container_hides_the_write()
     test_view_of_the_same_array_is_not_a_different_array()
@@ -404,3 +532,7 @@ if __name__ == "__main__":
     test_inout_split_must_not_redirect_a_read_inside_a_loop()
     test_reduction_consumed_by_the_second_map_is_not_fused()
     test_reduction_independent_of_the_second_map_rides_along()
+    test_vertical_fusion_must_not_move_a_read_past_a_write()
+    test_horizontal_fusion_must_not_move_a_read_past_a_write()
+    test_horizontal_fusion_must_not_merge_a_read_with_an_unordered_in_place_update()
+    test_vertical_fusion_must_not_move_a_side_read_past_the_in_place_write()

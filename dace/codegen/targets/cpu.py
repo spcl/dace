@@ -2076,7 +2076,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # General reduction
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
-        return f"const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})"
+        # The lambda is an argument, not a named local: two custom reductions in one scope must not redefine a name
+        return f"dace::wcr_custom<{dtype.ctype}>::{func}({custom_reduction}, {ptr}, {inname})"
 
     #: WCR operators ``omp atomic update`` accepts on the ``x = x op expr`` form. ``min``/``max`` take
     #: ``atomic compare`` (``cpf_atomic_max`` / ``cpf_atomic_min``), ``&&``/``||`` an ``atomic write``,

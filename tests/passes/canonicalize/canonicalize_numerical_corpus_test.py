@@ -34,7 +34,6 @@ from tests.corpus import corpus_suite as CS
 CPU = dict(
     target="cpu",
     peel_limit=4,
-    break_anti_dependence=True,
     interchange_carry_with_map=True,
     scatter_to_guarded_maps=True,
 )

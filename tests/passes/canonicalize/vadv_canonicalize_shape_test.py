@@ -30,7 +30,6 @@ from tests.npbench.weather_stencils import vadv_test as vadv
 CPU = dict(
     target="cpu",
     peel_limit=4,
-    break_anti_dependence=True,
     interchange_carry_with_map=True,
     scatter_to_guarded_maps=True,
 )

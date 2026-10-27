@@ -1068,7 +1068,7 @@ def test_2d_contiguous_argmax_with_two_indices():
         out[2] = float(yindex)
 
     sdfg = argmax2d.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
     assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ArgReduce)) == 1
     assert _num_loops(sdfg) == 0
 
@@ -1109,7 +1109,7 @@ def test_2d_argmax_refuses_non_contiguous_partial_rows():
         out[2] = float(yindex)
 
     sdfg = partial2d.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
     assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ArgReduce)) == 0
 
     m = 7

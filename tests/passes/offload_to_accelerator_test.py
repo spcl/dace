@@ -50,7 +50,7 @@ def canonicalized_with_gpu_inputs(name: str) -> dace.SDFG:
     """
     kernel = next(k for k in tsvc.collect() if k.name == name)
     sdfg = tsvc.to_sdfg(kernel, name, simplify=True)
-    canonicalize(sdfg, validate=False, validate_all=False, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=False, validate_all=False, peel_limit=4)
     for desc in sdfg.arrays.values():
         if not desc.transient:
             desc.storage = dtypes.StorageType.GPU_Global

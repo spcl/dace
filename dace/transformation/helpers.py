@@ -769,23 +769,21 @@ def nest_state_subgraph(
             node.sdfg.parent_sdfg = nsdfg
             node.sdfg.parent_nsdfg_node = node
 
-    def reads_whole_connector(edge: MultiConnectorEdge, name: str) -> bool:
-        """Whether the input boundary ``edge`` already ends on an AccessNode of ``name``'s whole container.
+    def reads_the_connector(edge: MultiConnectorEdge, name: str) -> bool:
+        """Whether the input boundary ``edge`` already ends on an AccessNode of ``name``.
 
         Then it needs no access node of its own inside: the ``name -> name`` copy that would be
         added is a no-op, and its write turns the input connector into a written descriptor, which
-        validation rejects. The connector IS that array inside the nested SDFG, so an access node of
-        it already reads the boundary data. Restricted to a whole-container access -- a partial one
-        still needs the copy that rebases it into the connector's coordinates.
+        validation rejects. The connector IS that array inside the nested SDFG, in the outer
+        descriptor's coordinates (:func:`boundary_descriptor`), so an access node of it already reads
+        the boundary data at its own subsets.
         """
-        if not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data != name:
-            return False
-        return edge.data.subset is not None and edge.data.subset.num_elements() == nsdfg.arrays[name].total_size
+        return isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name
 
     # Add access nodes and edges as necessary, each with the outer name its memlet tree spoke
     edges_to_rename = []
     for edge, name in input_names.items():
-        if reads_whole_connector(edge, name):
+        if reads_the_connector(edge, name):
             continue
         node = nstate.add_read(name)
         new_edge = copy.deepcopy(edge.data)
@@ -1270,6 +1268,8 @@ def isolate_nested_sdfg(
     # the post state, an output would lose its producer and the split would be refused. Only an output every producer
     # of which is in the pre state moves: the pre state keeps just the edges among its own nodes, so another writer's
     # edge into it would be dropped.
+    # Nor an output written by accumulation: it stays where the isolated node's own accumulations reach it (moved,
+    # the backward pass of a model lost two of its three gradient contributions).
     for node in list(pre_nodes):
         if not isinstance(node, nodes.AccessNode):
             pre_nodes.update(
@@ -1278,6 +1278,7 @@ def isolate_nested_sdfg(
                 if isinstance(oedge.dst, nodes.AccessNode)
                 and oedge.dst not in middle_nodes
                 and all(iedge.src in pre_nodes for iedge in state.in_edges(oedge.dst))
+                and all(iedge.data.wcr is None for iedge in state.in_edges(oedge.dst))
             )
 
     # These are the nodes that belongs to the Post State. There are two reasons why a
@@ -1957,7 +1958,8 @@ def extract_map_dims(
     if len(map_entry.map.params) > 1:
         entries = MapExpansion.apply_to(sdfg, map_entry=map_entry)
 
-        # Collapse extracted maps
+        # Collapse extracted maps. A collapse keeps the outer map's external memlets, which already hold the union
+        # over both maps, so nothing is propagated again
         extracted_map = entries[0]
         for idx in range(len(dims) - 1):
             extracted_map, _ = MapCollapse.apply_to(
@@ -1965,6 +1967,7 @@ def extract_map_dims(
                 outer_map_entry=extracted_map,
                 inner_map_entry=entries[idx + 1],
                 permissive=True,  # Since MapExpansion creates sequential maps
+                annotate=False,
             )
 
         # Collapse remaining maps, if any
@@ -1976,6 +1979,7 @@ def extract_map_dims(
                     outer_map_entry=map_to_collapse,
                     inner_map_entry=entries[idx + 1],
                     permissive=True,  # Since MapExpansion creates sequential maps
+                    annotate=False,
                 )
         else:
             # All dimensions extracted, no remainder

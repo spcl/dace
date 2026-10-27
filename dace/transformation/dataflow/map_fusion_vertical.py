@@ -166,6 +166,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     #:  `map_fusion_helper.propagate_fused_map_scope()`. `None` propagates everything.
     propagated_nsdfgs: dict[SDFG, None] | None = None
     scope_records: mfhelper.ScopeRecords | None = None
+    #: The resolver the probes share while the SDFG is unchanged, replaced by the driving pass at every rewrite.
+    #:  `None` derives the facts per probe.
+    probe_symbols: SymbolResolver | None = None
 
     def __init__(
         self,
@@ -457,7 +460,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  the data that goes through the scope nodes. `has_inner_read_write_dependency()`
         #  if used to check if there are internal dependencies.
         # Both tests below compare subsets at the facts inside the first Map; one resolver derives them once.
-        symbols = SymbolResolver()
+        symbols = SymbolResolver() if self.probe_symbols is None else self.probe_symbols
         if self.has_read_write_dependency(
             first_map_entry=first_map_entry,
             second_map_entry=second_map_entry,
@@ -466,6 +469,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             sdfg=sdfg,
             symbols=symbols,
         ):
+            return False
+
+        # The fused Map runs where the second one does: a read of the first one must not move past a write.
+        if mfhelper.read_overtaken_by_write(graph, first_map_entry, first_map_exit, second_map_entry):
             return False
 
         # Two maps can be serially fused if the node decomposition exists and
@@ -1898,6 +1905,18 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  node that is created because the intermediate is shared.
         # TODO(phimuell): Handle this case.
         if not fused_inout_data_names.isdisjoint(exchange_names):
+            return True
+
+        # The intermediate orders the first Map's reads before the second Map's writes only for a write that depends
+        #  on it: an independent one runs in no fixed order with the reads in the fused body.
+        if fused_inout_data_names and not mfhelper.writes_follow(
+            state, second_map_entry, second_map_exit, exchange_nodes, fused_inout_data_names
+        ):
+            return True
+        # Symmetrically, a read of the first Map is ordered before those writes only if it feeds the intermediate.
+        if fused_inout_data_names and not mfhelper.reads_precede(
+            state, first_map_entry, first_map_exit, exchange_nodes, fused_inout_data_names
+        ):
             return True
 
         # While it is forbidden that a data container, used as intermediate, is also

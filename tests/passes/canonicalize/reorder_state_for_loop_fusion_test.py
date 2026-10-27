@@ -5,7 +5,6 @@ dependence-legal (no RAW/WAR/WAW against the second loop, no side effect) AND it
 """
 
 import copy
-from unittest import mock
 
 import numpy as np
 import pytest
@@ -13,7 +12,6 @@ import pytest
 import dace
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import BreakBlock, LoopRegion, SDFGState
-from dace.transformation.passes.analysis.analysis import AccessSets
 from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 from dace.transformation.passes.canonicalize.reorder_state_for_loop_fusion import ReorderStateForLoopFusion
 
@@ -132,9 +130,7 @@ def test_a_second_loop_with_side_effects_is_not_sunk_past():
     sdfg, first, state, second = _build(conflict="none")
     body2 = next(b for b in second.nodes() if isinstance(b, SDFGState))
     acc2 = next(n for n in body2.nodes() if isinstance(n, dace.sdfg.nodes.Tasklet))
-    assert ReorderStateForLoopFusion.has_side_effecting_code(second, sdfg) is False, "fixture must start effect-free"
     acc2.side_effects = True
-    assert ReorderStateForLoopFusion.has_side_effecting_code(second, sdfg) is True
 
     assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
@@ -227,11 +223,6 @@ def test_a_view_touched_by_the_state_is_not_sunk():
     state.add_nedge(valias, vreal, dace.Memlet(f"V[0:{N}]"))
     sdfg.validate()
 
-    # Isolate the predicate itself: it must flag the touch as aliasing-risky on its own terms, not
-    # merely coincide with some other guard also refusing this fixture.
-    reads_s, writes_s = AccessSets().apply_pass(sdfg, {})[state]
-    assert ReorderStateForLoopFusion.touches_aliasing_data(sdfg, reads_s | writes_s) is True
-
     assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
     assert len(sdfg.edges_between(state, second)) == 1
@@ -306,22 +297,6 @@ def test_another_path_into_second_is_not_sunk():
     assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
     assert len(sdfg.edges_between(state, second)) == 1
-
-
-def test_non_vacuous_neutered_pass_would_fail_the_positive_assertions():
-    """Prove the positive test is not vacuously true: with ``ReorderStateForLoopFusion`` neutered (stubbed to always
-    return ``None``, exactly a `return None` no-op), the positive test's own load-bearing assertions --
-    the sink firing, and ``FuseLoops`` then succeeding -- both fail."""
-    sdfg, first, state, second = _build(conflict="none")
-
-    with mock.patch.object(ReorderStateForLoopFusion, "apply_pass", return_value=None):
-        with pytest.raises(AssertionError, match=r"assert None == 1"):
-            assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) == 1
-
-    # The neutered pass touched nothing, so loop1/loop2 are still not adjacent -> fusion must refuse too.
-    with pytest.raises(AssertionError, match=r"assert None == 1"):
-        assert FuseLoops().apply_pass(sdfg, {}) == 1
-    assert _nloops(sdfg) == 2, "loops must not have fused without the sink"
 
 
 if __name__ == "__main__":

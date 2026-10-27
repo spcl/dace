@@ -99,9 +99,7 @@ class EqualizeSymbolDtypes(ppl.Pass):
     def declare(declared: Mapping[str, dtypes.typeclass]) -> None:
         """Make the active authority follow the SDFG, so a name that a later pass parses from text comes out at the
         dtype the instances here are rebuilt at."""
-        for name, dtype in declared.items():
-            if is_scalar_dtype(dtype):
-                symbolic.declare_symbol_dtype(name, dtype)
+        symbolic.declare_symbol_dtypes(declared)
 
     def retype_descriptors(self, sdfg: SDFG, table: Mapping[str, dtypes.typeclass]) -> int:
         rewritten = 0

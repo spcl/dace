@@ -63,7 +63,7 @@ def test_a_threaded_fftw_plans_for_the_team(monkeypatch, threaded):
     from dace.libraries.fft.environments import fftw3
     from dace.libraries.fft.nodes.fft import Transform, fftw3_call
 
-    monkeypatch.setattr(fftw3, "threaded", lambda: threaded)
+    monkeypatch.setattr(fftw3, "threaded", lambda double: threaded)
     desc = data.Array(dace.complex128, [64])
     code = fftw3_call(Transform(desc, desc, [0], inverse=False, half_spectrum=False)).code.as_string
     assert ("fftw_plan_with_nthreads(__threads)" in code) == threaded

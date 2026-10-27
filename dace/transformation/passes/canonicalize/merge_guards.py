@@ -14,6 +14,7 @@ of a body per combination of branches, and the copies keep their transients' nam
 map body turns into one shared by every copy and code generation hoists it out of the parallel loop.
 """
 
+from collections import deque
 from typing import Any
 
 from dace import SDFG, InterstateEdge, symbolic
@@ -111,9 +112,31 @@ def flatten_else(inner: ConditionalBlock) -> bool:
     return True
 
 
-def merge_one(sdfg: SDFG) -> bool:
-    """Apply the first merge found in ``sdfg``'s own control flow, consecutive guards before nested ones."""
-    for region in sdfg.all_control_flow_regions(recursive=True):
+def attached(region: ControlFlowRegion) -> bool:
+    """Whether ``region`` is still part of its SDFG: a merge empties and detaches the branches it dissolves."""
+    while not isinstance(region, SDFG):
+        parent = region.parent_graph
+        if parent is None:
+            return False
+        if isinstance(parent, ConditionalBlock):
+            if all(branch is not region for _, branch in parent.branches):
+                return False
+        elif region not in parent.nodes():
+            return False
+        region = parent
+    return True
+
+
+def merge_region(region: ControlFlowRegion, pending: deque[ControlFlowRegion]) -> int:
+    """Apply every merge rooted at a guard of ``region``, consecutive guards before nested ones, and queue onto
+    ``pending`` the regions a merge changed elsewhere: the body that received a second body's blocks, the region of
+    the guard a nested one folded into."""
+    merged = 0
+    progress = True
+    # The guard a nested one folds into, read before the fold detaches ``region`` from it.
+    outer = region.parent_graph
+    while progress and attached(region):
+        progress = False
         for block in region.nodes():
             if not isinstance(block, ConditionalBlock):
                 continue
@@ -123,10 +146,17 @@ def merge_one(sdfg: SDFG) -> bool:
                 and isinstance(successors[0], ConditionalBlock)
                 and merge_consecutive(block, successors[0])
             ):
-                return True
-            if flatten_nested(block) or flatten_else(block):
-                return True
-    return False
+                pending.extend(branch for _, branch in block.branches)
+                progress = True
+            elif flatten_nested(block) or flatten_else(block):
+                pending.append(outer.parent_graph)
+                pending.extend(branch for _, branch in outer.branches)
+                return merged + 1
+            else:
+                continue
+            merged += 1
+            break
+    return merged
 
 
 @transformation.explicit_cf_compatible
@@ -151,9 +181,11 @@ class MergeGuards(ppl.Pass):
         :returns: How many merges were applied, or ``None`` if none.
         """
         merged = 0
-        for sd in sdfg.all_sdfgs_recursive():
-            while merge_one(sd):
-                merged += 1
+        # Every region once, nested SDFGs included; a merge queues what it changed, so nothing is scanned again
+        # for a merge elsewhere.
+        pending = deque(sdfg.all_control_flow_regions(recursive=True))
+        while pending:
+            merged += merge_region(pending.popleft(), pending)
         return merged or None
 
 

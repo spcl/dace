@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`.
+"""Tests for :class:`~dace.transformation.passes.parallelization.contracts.guarded_scatter.ScatterToGuardedMaps`.
 
 End-to-end coverage: TSVC scatter kernels are detected, guarded, and parallelized
 by a single pass invocation. Per-array detection is checked (multiple distinct
@@ -16,7 +16,10 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps, detect_scatter_idx_arrays
+from dace.transformation.passes.parallelization.contracts.guarded_scatter import (
+    ScatterToGuardedMaps,
+    detect_scatter_idx_arrays,
+)
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 N = dace.symbol("N")
@@ -263,28 +266,28 @@ def test_two_distinct_scatters_get_individual_guards():
 def test_the_contract_probes_read_each_sdfgs_facts_once(monkeypatch):
     """Every probe walked its SDFG's interstate edges for the facts, two probes per scatter loop on an unchanged
     graph: a third of this pass on warpx_esirkepov_deposition."""
-    from dace.transformation.interstate.loop_to_map import LoopToMap
+    from dace.transformation.interstate.loop_to_map import LoopLift
 
     sdfg = two_distinct_scatters.to_sdfg(simplify=True)
     UniqueLoopIterators().apply_pass(sdfg, {})
     walked = []
     probing = [False]
-    original_walk, original_probe = dace.sdfg.sdfg.interstate_bound_names, LoopToMap.can_be_applied
+    original_walk, original_probe = dace.sdfg.sdfg.interstate_bound_names, LoopLift.can_lift
 
     def walk(sd):
         if probing[0]:
             walked.append(sd)
         return original_walk(sd)
 
-    def probe(self, graph, expr_index, sd, permissive=False):
+    def probe(self, graph, sd, permissive=False):
         probing[0] = True
         try:
-            return original_probe(self, graph, expr_index, sd, permissive)
+            return original_probe(self, graph, sd, permissive)
         finally:
             probing[0] = False
 
     monkeypatch.setattr(dace.sdfg.sdfg, "interstate_bound_names", walk)
-    monkeypatch.setattr(LoopToMap, "can_be_applied", probe)
+    monkeypatch.setattr(LoopLift, "can_lift", probe)
     assert ScatterToGuardedMaps().apply_pass(sdfg, {}) == 2
     assert walked.count(sdfg) == 1, f"{walked.count(sdfg)} walks of the unchanged SDFG"
 

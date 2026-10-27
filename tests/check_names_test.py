@@ -165,6 +165,25 @@ def test_diff_mode_flags_the_module_name_only_for_a_newly_added_file(git_repo: p
     assert "NAME001" in result.stdout
 
 
+def test_diff_mode_does_not_flag_the_lines_a_moved_file_keeps(git_repo: pathlib.Path) -> None:
+    """A ``git mv`` adds no line: only what the move edits is checked, and the old module name is not new."""
+    # Git pairs a rename by similarity, so the kept part must outweigh the edit.
+    body = "".join(f"def kept_{i}():\n    _old = {i}\n    return _old\n\n\n" for i in range(8))
+    (git_repo / "mod.py").write_text(body)
+    run_git(["add", "mod.py"], git_repo)
+    run_git(["commit", "-q", "-m", "grow"], git_repo)
+    (git_repo / "pkg").mkdir()
+    run_git(["mv", "mod.py", "pkg/moved.py"], git_repo)
+    (git_repo / "pkg" / "moved.py").write_text(body + "def added_func():\n    _new = 2\n    return _new\n")
+    run_git(["add", "pkg/moved.py"], git_repo)
+    result = subprocess.run(
+        [sys.executable, str(CHECK_NAMES_PATH), "pkg/moved.py"], cwd=git_repo, capture_output=True, text=True
+    )
+    assert result.returncode == 1
+    assert "_new" in result.stdout
+    assert "_old" not in result.stdout
+
+
 def test_diff_mode_passes_on_a_no_op_commit(git_repo: pathlib.Path) -> None:
     result = subprocess.run(
         [sys.executable, str(CHECK_NAMES_PATH), "mod.py"], cwd=git_repo, capture_output=True, text=True

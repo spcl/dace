@@ -581,11 +581,15 @@ def map_body_per_lane_subsets(state: SDFGState, map_entry: dace.nodes.MapEntry) 
         sdfg = state.sdfg
         outer_params = tuple(map_entry.map.params)
         flat_aliases = {p: p for p in outer_params}
-        for e in list(state.in_edges(mx)):  # writes OUT of the body
-            if e.data is not None and e.data.data is not None and e.data.subset is not None:
-                desc = sdfg.arrays.get(e.data.data)
+        for e in list(state.in_edges(mx)):  # writes OUT of the body, each at the written container's side
+            if e.data is None or e.data.is_empty():
+                continue
+            written = state.memlet_path(e)[-1].dst
+            subset = e.data.get_dst_subset(e, state)
+            if isinstance(written, dace.nodes.AccessNode) and subset is not None:
+                desc = sdfg.arrays.get(written.data)
                 if desc is not None and not desc.transient:
-                    yield PerLaneWrite(e.data.subset, sdfg, state, outer_params, desc, flat_aliases)
+                    yield PerLaneWrite(subset, sdfg, state, outer_params, desc, flat_aliases)
         for node in map_body_nodes(state, map_entry):
             if isinstance(node, dace.nodes.NestedSDFG):
                 inner_iter = _inner_lane_vars(outer_params, node)
@@ -597,9 +601,10 @@ def map_body_per_lane_subsets(state: SDFGState, map_entry: dace.nodes.MapEntry) 
                         d = node.sdfg.arrays.get(an.data)
                         if d is None or d.transient:
                             continue
-                        for e in ist.in_edges(an):  # writes into the AN
-                            if e.data is not None and e.data.subset is not None:
-                                yield PerLaneWrite(e.data.subset, node.sdfg, ist, inner_iter, d, inner_aliases)
+                        for e in ist.in_edges(an):  # writes into the AN, at its own side of a copy
+                            subset = None if e.data is None or e.data.is_empty() else e.data.get_dst_subset(e, ist)
+                            if subset is not None:
+                                yield PerLaneWrite(subset, node.sdfg, ist, inner_iter, d, inner_aliases)
 
     return writes()
 

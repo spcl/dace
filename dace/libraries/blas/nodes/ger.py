@@ -9,6 +9,7 @@ from dace import data as dt
 from dace import library
 from dace import memlet as mm
 from dace import subsets as sbs
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
@@ -87,8 +88,8 @@ def ger_call(node, state, sdfg, environment=None) -> SDFG:
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
     (m, n), (lda,) = res.shape, layout.leading
     call = (
-        f"cblas_{routine.lower()}({order}, {m}, {n}, {arg['alpha']}, __x, {x.strides[0]}, __y, {y.strides[0]}, "
-        f"__res, {lda});"
+        f"cblas_{routine.lower()}({order}, {sym2cpp(m)}, {sym2cpp(n)}, {arg['alpha']}, __x, {sym2cpp(x.strides[0])}, "
+        f"__y, {sym2cpp(y.strides[0])}, __res, {sym2cpp(lda)});"
     )
     return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", scalars + call)
 

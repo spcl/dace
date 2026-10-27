@@ -7,7 +7,7 @@ import pytest
 import dace
 from dace.sdfg import infer_types
 from dace.transformation.passes.cpu_specialization.choose_omp_schedule import ChooseOmpSchedule
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 M = dace.symbol("M")
 N = dace.symbol("N")

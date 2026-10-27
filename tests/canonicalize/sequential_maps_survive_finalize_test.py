@@ -118,7 +118,7 @@ def names_behind(sdfg: dace.SDFG, condition: str) -> OrderedSet[str]:
     """Names ``condition`` reads once staged values are substituted back in.
 
     Canonicalize stages an array read (``cond_index = cond[i]``) into a symbol on an interstate
-    edge, or into a scalar a tasklet writes, and the branch predicate reads that, so the
+    edge, or into a scalar a tasklet or a copy writes, and the branch predicate reads that, so the
     predicate's own free symbols no longer mention the array the guard actually tests.
     """
     sources: dict[str, OrderedSet[str]] = defaultdict(OrderedSet)
@@ -130,7 +130,10 @@ def names_behind(sdfg: dace.SDFG, condition: str) -> OrderedSet[str]:
         for state in sd.states():
             for node in state.data_nodes():
                 for e in state.in_edges(node):
-                    sources[node.data] |= OrderedSet(i.data.data for i in state.in_edges(e.src) if i.data.data)
+                    if isinstance(e.src, nd.AccessNode):  # a copy: the staged value is its source container
+                        sources[node.data].add(e.src.data)
+                    else:
+                        sources[node.data] |= OrderedSet(i.data.data for i in state.in_edges(e.src) if i.data.data)
     names: OrderedSet[str] = OrderedSet(str(s) for s in CodeBlock(condition).get_free_symbols())
     for _ in range(len(sources) + 1):
         grown = OrderedSet(names)

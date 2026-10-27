@@ -401,7 +401,7 @@ def split_extrema(relation: Relation) -> list[Relation]:
     return [relation]
 
 
-@functools.lru_cache(maxsize=1024)
+@functools.lru_cache(maxsize=1 << 14)
 def solve(
     relations: tuple[Relation, ...], integers: frozenset[str]
 ) -> tuple[

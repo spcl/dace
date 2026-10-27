@@ -51,7 +51,6 @@ from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 from tests.passes.vectorization.tile_assertions import assert_tiled_unless_pinned
 
 PEEL_LIMIT = 4
-BREAK_ANTI_DEP = True
 UNROLL_LIMIT = 4
 TOL = 1e-9
 
@@ -147,7 +146,6 @@ def _canonicalized(program):
             cand,
             validate=True,
             peel_limit=PEEL_LIMIT,
-            break_anti_dependence=BREAK_ANTI_DEP,
             unroll_limit=UNROLL_LIMIT,
             nonnegative_symbols=known_nonnegative(cand),
         )

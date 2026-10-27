@@ -178,7 +178,7 @@ class ExpandTransposeMKL(ExpandTransformation):
             return ExpandTransposePure.expansion(node, state, sdfg)
 
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
-        code = f"mkl_{func}('R', 'T', {m}, {n}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
+        code = f"mkl_{func}('R', 'T', {sym2cpp(m)}, {sym2cpp(n)}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -245,7 +245,7 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         # Adaptations for BLAS API
         order = "CblasRowMajor"
         trans = "CblasTrans"
-        code = f"cblas_{func}({order}, {trans}, {m}, {n}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
+        code = f"cblas_{func}({order}, {trans}, {sym2cpp(m)}, {sym2cpp(n)}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -302,7 +302,7 @@ class ExpandTransposeGPUBLAS(ExpandTransformation):
             cls.environments[0].handle_setup_code(node)
             + f"""{cls.check_error}({cls.funcname(func)}(
                     {cls.handle}, {cls.op("T")}, {cls.op("N")},
-                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {lda}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {ldb}));
+                    {sym2cpp(m)}, {sym2cpp(n)}, {alpha}, ({cdtype}*)_inp, {lda}, {beta}, ({cdtype}*)_inp, {sym2cpp(m)}, ({cdtype}*)_out, {ldb}));
                 """
         )
 

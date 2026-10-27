@@ -52,8 +52,13 @@ def _ncond_blocks(sdfg):
 
 
 def outer_inner_loops(sdfg):
-    """The two LoopRegions of a single two-deep nest, outermost first."""
-    loops = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    """The two LoopRegions of a single two-deep nest, outermost first; a wavefront's diagonal does not count, its tile
+    row runs the original outer iterator."""
+    loops = [
+        r
+        for r in sdfg.all_control_flow_regions(recursive=True)
+        if isinstance(r, LoopRegion) and not r.loop_variable.startswith("_skew_t_")
+    ]
     assert len(loops) == 2, f"expected a two-deep nest, got {[r.label for r in loops]}"
     first, second = loops
     return (first, second) if second in first.all_control_flow_blocks() else (second, first)
