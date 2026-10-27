@@ -1333,67 +1333,51 @@ def isolate_nested_sdfg(
     if test_if_applicable:
         return True
 
-    # Now we are creating the two new states.
+    # The larger of the pre and post parts stays in ``state``: only the other one and the middle move, so isolating
+    # every nested SDFG of a state one after the other does not move the whole state each time.
     parent_graph = state.parent_graph
-    pre_state: dace.SDFGState = parent_graph.add_state_before(
-        state=state, label=(state.label + "_pre_state" if state.label else None)
-    )
-    post_state: dace.SDFGState = parent_graph.add_state_after(
-        state=state, label=(state.label + "_post_state" if state.label else None)
-    )
+    was_start = parent_graph.start_block is state
+    label = state.label or None
+    if len(post_nodes) >= len(pre_nodes):
+        middle_state = parent_graph.add_state_before(
+            state=state, label=label and label + "_nsdfg_state", is_start_block=was_start
+        )
+        pre_state = parent_graph.add_state_before(
+            state=middle_state, label=label and label + "_pre_state", is_start_block=was_start
+        )
+        post_state, kept = state, post_nodes
+    else:
+        pre_state, kept = state, pre_nodes
+        middle_state = parent_graph.add_state_after(state=state, label=label and label + "_nsdfg_state")
+        post_state = parent_graph.add_state_after(state=middle_state, label=label and label + "_post_state")
 
-    # We will now populate the pre state.
-    pre_old_to_new_map: dict[nodes.Node, nodes.Node] = dict()
-    for node in pre_nodes:
-        new_node = copy.deepcopy(node) if node in middle_nodes else node
-        pre_old_to_new_map[node] = new_node
-        pre_state.add_node(new_node)
+    # A node moves to the first other state that takes it; any further one gets a copy, as does every one that also
+    # stays. A moved edge keeps its memlet: only an edge that also stays is copied.
+    moved: set[nodes.Node] = set()
+    for target, members in ((pre_state, pre_nodes), (middle_state, middle_nodes), (post_state, post_nodes)):
+        if target is state:
+            continue
+        old_to_new: dict[nodes.Node, nodes.Node] = {}
+        for node in members:
+            if node in kept or node in moved:
+                old_to_new[node] = copy.deepcopy(node)
+            else:
+                old_to_new[node] = node
+                moved.add(node)
+            target.add_node(old_to_new[node])
+        for node in members:
+            for edge in state.in_edges(node):
+                if edge.src not in members:
+                    continue
+                memlet = copy.deepcopy(edge.data) if edge.src in kept and node in kept else edge.data
+                target.add_edge(old_to_new[edge.src], edge.src_conn, old_to_new[node], edge.dst_conn, memlet)
 
-    # Now add the edges, we only have to inspect the incoming ones.
-    for old_dst in pre_nodes:
-        new_dst = pre_old_to_new_map[old_dst]
-        for old_iedge in state.in_edges(old_dst):
-            old_src = old_iedge.src
-            if old_src in pre_nodes:
-                new_src = pre_old_to_new_map[old_src]
-                pre_state.add_edge(
-                    new_src,
-                    old_iedge.src_conn,
-                    new_dst,
-                    old_iedge.dst_conn,
-                    copy.deepcopy(old_iedge.data),
-                )
-
-    # Now we will populate the post state.
-    post_old_to_new_map: dict[nodes.Node, nodes.Node] = dict()
-    for node in post_nodes:
-        new_node = copy.deepcopy(node) if (node in middle_nodes or node in pre_nodes) else node
-        post_old_to_new_map[node] = new_node
-        post_state.add_node(new_node)
-
-    # Now make the connections inside the post node. For this we only have to look
-    #  at the outgoing edges in the original state.
-    for old_src in post_nodes:
-        new_src = post_old_to_new_map[old_src]
-        for old_oedge in state.out_edges(old_src):
-            old_dst = old_oedge.dst
-            if old_dst in post_nodes:
-                new_dst = post_old_to_new_map[old_dst]
-                post_state.add_edge(
-                    new_src,
-                    old_oedge.src_conn,
-                    new_dst,
-                    old_oedge.dst_conn,
-                    copy.deepcopy(old_oedge.data),
-                )
-
-    # Remove all nodes from the middle state that are not classified as middle nodes,
-    #  this will also remove all the edges that are no longer needed.
+    # What stays is the kept part; removing the rest drops its edges with it.
     for node in list(state.nodes()):
-        if node not in middle_nodes:
+        if node not in kept:
             state.remove_node(node)
 
-    return (pre_state, state, post_state)
+    return (pre_state, middle_state, post_state)
 
 
 def _get_internal_subset(
