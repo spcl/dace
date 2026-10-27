@@ -312,8 +312,9 @@ class WavefrontSkew(ppl.Pass):
             return None
         facts = SymbolResolver().facts_at(outer)
         extents = [(body.u_lo, body.u_hi)] + [(st.lo, st.hi) for st in body.statements if st.kind == "loop"]
-        if any(symbolic.is_small(hi - lo, facts) for lo, hi in extents):
-            return None  # a front is at most as wide as the shorter axis
+        # A front is at most as wide as the shorter axis: a SMALL or short literal axis leaves nothing to share
+        if any(symbolic.is_small_extent(hi - lo + 1, facts) for lo, hi in extents):
+            return None
         written = {acc.data for st in body.statements for acc in st.accesses if acc.write}
         if written & control_flow_reads(outer):
             return None

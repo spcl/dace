@@ -9,7 +9,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
 
-N = 12
+N = 80
 
 
 def stencil_through_copy() -> dace.SDFG:
