@@ -847,6 +847,32 @@ def test_code_generation_moves_a_symbolic_per_thread_array_out_of_the_kernel():
     assert not re.search(r"Copy\w*\([^;]*\bbuf\b", device), "the kernel copies buf onto itself"
 
 
+def kernel_computing_the_size_of_its_scratch() -> dace.SDFG:
+    """The nested body sets ``m = i + 1`` on an interstate edge and sizes its ``Register`` scratch ``buf[m]`` by it, as
+    a CSR row's length is read inside the kernel (npbench spmv)."""
+    sdfg = kernel_with_transient_behind_a_nested_sdfg()
+    inner = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    inner.add_symbol("m", dace.int64)
+    body = inner.start_block
+    size = inner.add_state_before(body, "size", is_start_block=True)
+    inner.edges_between(size, body)[0].data.assignments["m"] = "i + 1"
+    inner.arrays["buf"].set_shape(new_shape=[dace.symbol("m", dace.int64)])
+    inner.arrays["buf"].storage = REGISTER
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_scratch_the_kernel_sizes_stays_where_it_is():
+    """An allocation before the launch cannot use a size the kernel computes."""
+    sdfg = kernel_computing_the_size_of_its_scratch()
+
+    assert variable_length_only(sdfg) is None
+
+    inner = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    assert inner.arrays["buf"].storage == REGISTER and [str(d) for d in inner.arrays["buf"].shape] == ["m"]
+    sdfg.validate()
+
+
 @pytest.mark.gpu
 def test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values():
     import cupy  # Only present on GPU runners.
@@ -907,4 +933,5 @@ if __name__ == "__main__":
     test_variable_length_only_moves_a_symbolic_per_thread_array_out_of_any_kernel(GPU_DEVICE)
     test_variable_length_only_moves_a_symbolic_per_thread_array_out_of_any_kernel(dtypes.ScheduleType.GPU_Persistent)
     test_code_generation_moves_a_symbolic_per_thread_array_out_of_the_kernel()
+    test_a_scratch_the_kernel_sizes_stays_where_it_is()
     test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values()

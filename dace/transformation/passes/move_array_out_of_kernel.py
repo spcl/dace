@@ -223,6 +223,26 @@ def sdfg_chain(inner: SDFG, outer: SDFG) -> list[SDFG]:
     return chain
 
 
+def size_known_at_launch(
+    desc: dt.Array, hierarchy: list[SDFG], kernel: nodes.MapEntry, kernel_state: SDFGState
+) -> bool:
+    """``desc``'s shape, restated through the symbol mapping of every nest up to the kernel's SDFG, names only symbols
+    defined where the kernel launches: a size the kernel computes (a CSR row length) cannot size an allocation made
+    before it."""
+    shape = [symbolic.pystr_to_symbolic(extent) for extent in desc.shape]
+    for sdfg in hierarchy[:-1]:
+        mapping = sdfg.parent_nsdfg_node.symbol_mapping
+        names = {str(sym) for extent in shape for sym in extent.free_symbols}
+        if any(name not in mapping or assigns_symbol(sdfg, name) for name in names):
+            return False
+        replacements = {symbolic.symbol(name): symbolic.pystr_to_symbolic(mapping[name]) for name in names}
+        shape = [extent.subs(replacements) for extent in shape]
+    defined = kernel_state.symbols_defined_at(kernel)
+    return all(
+        str(sym) in defined and str(sym) not in kernel.map.params for extent in shape for sym in extent.free_symbols
+    )
+
+
 def binding_conflict(hierarchy: list[SDFG], needed: list[str]) -> tuple[SDFG, str] | None:
     """A nest between the kernel and the owner that means something else by one of ``needed``, if any."""
     for sdfg in reversed(hierarchy[:-1]):
@@ -321,8 +341,13 @@ class LiftPlan:
     needed: list[str]
 
 
-def plan_lift(name: str, owner: SDFG, kernel_state: SDFGState) -> LiftPlan | None:
-    """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if a nest would misread its index."""
+def plan_lift(name: str, owner: SDFG, kernel: nodes.MapEntry, kernel_state: SDFGState) -> LiftPlan | None:
+    """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if its size is only known inside the kernel
+    or a nest would misread its index."""
+    hierarchy = sdfg_chain(owner, kernel_state.sdfg)
+    if not size_known_at_launch(owner.arrays[name], hierarchy, kernel, kernel_state):
+        logger.debug("Not lifting '%s': the kernel computes its size", name)
+        return None
     accesses = [(node, state) for state in owner.states() for node in state.data_nodes() if node.data == name]
     levels = slice_levels(name, accesses)
     prefixes = [
@@ -337,7 +362,6 @@ def plan_lift(name: str, owner: SDFG, kernel_state: SDFGState) -> LiftPlan | Non
     bounds = [bound for _, prefix in prefixes for dim in prefix for bound in dim]
     bounds += layout.shape[: len(layout.shape) - len(desc.shape)]
     needed = sorted({str(sym) for bound in bounds for sym in symbolic.pystr_to_symbolic(bound).free_symbols})
-    hierarchy = sdfg_chain(owner, kernel_state.sdfg)
     conflict = binding_conflict(hierarchy, needed)
     if conflict is not None:
         logger.debug("Not lifting '%s': %s gives '%s' its own meaning", name, conflict[0].name, conflict[1])
@@ -581,7 +605,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
                 desc.storage = dtypes.StorageType.Register
                 handled += 1
                 continue
-            plan = plan_lift(name, owner, kernel_state)
+            plan = plan_lift(name, owner, kernel, kernel_state)
             if plan is None:
                 continue
             desc.storage = dtypes.StorageType.GPU_Global
