@@ -37,6 +37,10 @@ and interface, so that rule applications chain (`Equiv.trans_of_eq`).
   the region at path `p` by `permOfPairs pairs` (side condition: the
   permutation maps the region's block ids onto themselves, start and edges
   in range, mention counts kept).
+* `insertEmpty p j e` / `removeEmpty p j` (`Congr.insertEmpty`,
+  `Congr.removeEmpty`): insert an empty state `e` after block `j` of the
+  region at path `p` as its last block (it takes over `j`'s out-edges), or
+  remove such a state.
 
 The permutation is built from the id pairs by swaps (`permOfPairs`); its
 correctness is never assumed: the replayed SDFG is compared with the target.
@@ -68,6 +72,10 @@ inductive Step where
   | replaceState (path : List PathStep) (idx : BlockId) (s' : State)
   /-- Renumber the blocks of the region at path `path`. -/
   | relabelBlocks (path : List PathStep) (pairs : List (BlockId × BlockId))
+  /-- Insert the empty state `e` after block `idx` of the region at `path`. -/
+  | insertEmpty (path : List PathStep) (idx : BlockId) (e : State)
+  /-- Remove the last block of the region at `path`, an empty state after block `idx`. -/
+  | removeEmpty (path : List PathStep) (idx : BlockId)
   deriving Inhabited
 
 /-- Apply a rule, if its side condition holds. -/
@@ -86,6 +94,22 @@ def Step.apply? (g : SDFG) : Step → Option SDFG
       if c.blocksPermOk (permOfPairs pairs) && sameRegionMentions? g (c.relabelBlocks (permOfPairs pairs)) c then
         some (g.setRegionAt p (c.relabelBlocks (permOfPairs pairs)))
       else none
+    | none => none
+  | .insertEmpty p j e =>
+    match g.top.regionAt? p with
+    | some c =>
+      if c.insertOk? j e && sameRegionMentions? g (c.insertEmpty j e) c then some (g.setRegionAt p (c.insertEmpty j e))
+      else none
+    | none => none
+  | .removeEmpty p j =>
+    match g.top.regionAt? p with
+    | some c =>
+      match c.removeLast? j with
+      | some (c', e) =>
+        if Region.beq (c'.insertEmpty j e) c && c'.insertOk? j e && sameRegionMentions? g c' c then
+          some (g.setRegionAt p c')
+        else none
+      | none => none
     | none => none
 
 /-- What every rule guarantees: an equivalent SDFG with the same facts and
@@ -137,6 +161,31 @@ theorem Step.apply?_sound {g g' : SDFG} {st : Step} (h : st.apply? g = some g') 
         exact ⟨Congr.relabelBlocks hat hchk.1 hchk.2 hs, rfl, rfl⟩
       · cases h
     · cases h
+  | insertEmpty p j e =>
+    simp only [Step.apply?] at h
+    split at h
+    · rename_i c hat
+      split at h
+      · rename_i hchk
+        simp only [Bool.and_eq_true] at hchk
+        cases h
+        exact ⟨Congr.insertEmpty hat hchk.1 hchk.2 hs, rfl, rfl⟩
+      · cases h
+    · cases h
+  | removeEmpty p j =>
+    simp only [Step.apply?] at h
+    split at h
+    · rename_i c hat
+      split at h
+      · rename_i c' e _
+        split at h
+        · rename_i hchk
+          simp only [Bool.and_eq_true] at hchk
+          cases h
+          exact ⟨Congr.removeEmpty hat (Region.beq_sound hchk.1.1).symm hchk.1.2 hchk.2 hs, rfl, rfl⟩
+        · cases h
+      · cases h
+    · cases h
 
 /-- Apply a list of rules in order. -/
 def replay (g : SDFG) : List Step → Option SDFG
@@ -186,6 +235,21 @@ mutual
 
 /-- Rule applications that turn the region `ra` (at path `p`) into `rb`. -/
 partial def findRegion (p : List PathStep) (ra rb : Region) : Except String (List Step) := do
+  -- an empty state inserted or removed as the last block
+  if rb.blocks.length = ra.blocks.length + 1 then
+    match rb.blocks.getLast?, rb.edges.find? (·.dst = ra.blocks.length) with
+    | some (.state e), some ie =>
+      if e.nodes.isEmpty then
+        return [.insertEmpty p ie.src e] ++ (← findRegion p (ra.insertEmpty ie.src e) rb)
+    | _, _ => pure ()
+  if ra.blocks.length = rb.blocks.length + 1 then
+    match ra.blocks.getLast?, ra.edges.find? (·.dst = rb.blocks.length) with
+    | some (.state e), some ie =>
+      if e.nodes.isEmpty then
+        match ra.removeLast? ie.src with
+        | some (ra', _) => return [.removeEmpty p ie.src] ++ (← findRegion p ra' rb)
+        | none => pure ()
+    | _, _ => pure ()
   if ra.blocks.length ≠ rb.blocks.length then
     throw s!"regions with {ra.blocks.length} and {rb.blocks.length} blocks"
   -- blocks in another order: match them by label
@@ -226,6 +290,6 @@ into `b` (then `checkBy_sound` applies), or a reason. -/
 def sdfgCheck (a b : SDFG) : Except String (List Step) := do
   let sts ← findRegion [] a.top b.top
   if checkBy a b sts then pure sts
-  else throw "the SDFGs differ beyond the rules (node relabeling, state replacement, block renumbering)"
+  else throw "the SDFGs differ beyond the rules (node relabeling, state replacement, block renumbering, empty states)"
 
 end Dace

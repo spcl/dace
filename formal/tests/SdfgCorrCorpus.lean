@@ -9,7 +9,8 @@ For every corpus SDFG, a variant with the nodes of every state renumbered
 (reversed ids) must be certified `EQUIVALENT`, a variant
 with the node list of every state reordered (within components) must be
 certified, so must a variant with the blocks of every region in reverse
-order, and a variant with one edge reversed must not be. -/
+order and a variant with an empty state after the start block of every
+region (both directions), and a variant with one edge reversed must not be. -/
 
 open Dace
 
@@ -67,6 +68,18 @@ where
     | .cond lb brs => .cond lb (brs.map fun (c, r) => (c, reverseBlocks r))
     | b => b
 
+/-- Insert an empty state after the start block of every region (when every
+edge and the start are in range). -/
+partial def splitEmpty (r : Region) : Region :=
+  let r' := { r with blocks := r.blocks.map splitBlock }
+  if r'.insertOk? r'.start {} then r'.insertEmpty r'.start { label := "empty_split" } else r'
+where
+  splitBlock : Block → Block
+    | .region r => .region (splitEmpty r)
+    | .loop l => .loop { l with body := splitEmpty l.body }
+    | .cond lb brs => .cond lb (brs.map fun (c, r) => (c, splitEmpty r))
+    | b => b
+
 /-- Reverse the first edge of the first top-level state with edges (the
 nodes stay the same, the dataflow changes). -/
 partial def flipFirstEdge (r : Region) : Option Region :=
@@ -94,6 +107,7 @@ def main : IO Unit := do
   let mut steps := 0
   let mut rok := 0
   let mut bok := 0
+  let mut eok := 0
   for f in files.qsort (fun a b => a.toString < b.toString) do
     let name := (f.fileName.getD "").replace ".sdfg.json" ""
     match ← SDFG.Json.readSDFG f with
@@ -112,13 +126,18 @@ def main : IO Unit := do
       match sdfgCheck g { g with top := reverseBlocks g.top } with
       | .ok _ => bok := bok + 1
       | .error m => IO.println s!"UNKNOWN  {name} (blocks reversed): {m}"; bad := bad + 1
+      let ge := { g with top := splitEmpty g.top }
+      match sdfgCheck g ge, sdfgCheck ge g with
+      | .ok _, .ok _ => eok := eok + 1
+      | .error m, _ => IO.println s!"UNKNOWN  {name} (empty state inserted): {m}"; bad := bad + 1
+      | _, .error m => IO.println s!"UNKNOWN  {name} (empty state removed): {m}"; bad := bad + 1
       match flipFirstEdge g.top with
       | some top =>
         if (sdfgCheck g { g with top }).toBool then
           IO.println s!"WRONGLY EQUIVALENT {name} (flipped edge)"
           bad := bad + 1
       | none => pure ()
-  IO.println s!"{ok} relabeled variants certified ({steps} rule applications), {rok} reordered, {bok} with blocks reversed, {bad} failures"
+  IO.println s!"{ok} relabeled variants certified ({steps} rule applications), {rok} reordered, {bok} with blocks reversed, {eok} with empty states inserted and removed, {bad} failures"
   if bad > 0 then throw <| IO.userError s!"{bad} failures"
 
 #eval main

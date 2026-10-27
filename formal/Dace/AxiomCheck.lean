@@ -310,5 +310,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.StateExec.local
 #print axioms Dace.Congr.regionEquiv
 #print axioms Dace.Congr.relabelBlocks
+#print axioms Dace.Congr.insertEmpty
+#print axioms Dace.Congr.removeEmpty
 #print axioms Dace.SDFG.beq_sound
 #print axioms Dace.checkBy_sound
