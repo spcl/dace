@@ -179,10 +179,11 @@ inductive IterExec : Ctx → Valuation → State → NodeId → List Sym → Lis
       (hb : OrderedExec ctx (ρ.bindIdx params i) s (s.scopeNodes entry) (s.directChildren (some entry))
               (iterStart priv pre) (.err e)) :
       IterExec ctx ρ s entry params priv pre (i :: rest) (.err e)
+  /-- A later iteration fails, whatever this one does: iterations run in
+      parallel, so any failing iteration's error is an outcome
+      (`Decisions.md#D3`). -/
   | tailErr {ctx : Ctx} {ρ : Valuation} {s : State} {entry : NodeId} {params : List Sym} {priv : List Name}
-      {pre st : St} {i : Idx} {rest : List Idx} {e : ErrReason}
-      (hb : OrderedExec ctx (ρ.bindIdx params i) s (s.scopeNodes entry) (s.directChildren (some entry))
-              (iterStart priv pre) (.ok st))
+      {pre : St} {i : Idx} {rest : List Idx} {e : ErrReason}
       (hr : IterExec ctx ρ s entry params priv pre rest (.err e)) :
       IterExec ctx ρ s entry params priv pre (i :: rest) (.err e)
   | cons {ctx : Ctx} {ρ : Valuation} {s : State} {entry : NodeId} {params : List Sym} {priv : List Name}
@@ -242,9 +243,11 @@ inductive CompsExec : Ctx → Valuation → State → Mem → List (List NodeId)
       {e : ErrReason}
       (hc : OrderedExec ctx ρ s comp (s.topLevelOf comp) { mem := m } (.err e)) :
       CompsExec ctx ρ s m (comp :: rest) (.err e)
+  /-- A later component fails, whatever this one does: components run
+      concurrently, so any failing component's error is an outcome
+      (`Decisions.md#D4`). -/
   | tailErr {ctx : Ctx} {ρ : Valuation} {s : State} {m : Mem} {comp : List NodeId} {rest : List (List NodeId)}
-      {st : St} {e : ErrReason}
-      (hc : OrderedExec ctx ρ s comp (s.topLevelOf comp) { mem := m } (.ok st))
+      {e : ErrReason}
       (hr : CompsExec ctx ρ s m rest (.err e)) :
       CompsExec ctx ρ s m (comp :: rest) (.err e)
   | cons {ctx : Ctx} {ρ : Valuation} {s : State} {m : Mem} {comp : List NodeId} {rest : List (List NodeId)}

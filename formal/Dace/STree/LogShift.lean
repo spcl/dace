@@ -243,8 +243,7 @@ theorem STree.IterExec.of_eq {params : List Sym} {body : List SNode} {priv : Lis
     STree.IterExec tc params body priv pre pts r → STree.IterExec tc params body priv pre' pts r
   | .nil => .nil
   | .headErr hb he => .headErr (by unfold iterStartT at hb ⊢; rw [hρ, hm]; exact hb) he
-  | .tailErr hb hl hr =>
-    .tailErr (by unfold iterStartT at hb ⊢; rw [hρ, hm]; exact hb) hl (STree.IterExec.of_eq hρ hm hr)
+  | .tailErr hr => .tailErr (STree.IterExec.of_eq hρ hm hr)
   | .cons hb hl hr =>
     .cons (by unfold iterStartT at hb ⊢; rw [hρ, hm]; exact hb) hl (STree.IterExec.of_eq hρ hm hr)
 

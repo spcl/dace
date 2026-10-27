@@ -394,10 +394,9 @@ theorem IterExec.det {ρ : Valuation} {entry : NodeId} {params : List Sym} {priv
     | cons hb' _ =>
       obtain ⟨_, hr, -⟩ := OrderedExec.det hscope.1 hscope.2 hb hb' (by rw [he.iterStart]; exact St.Eqv.refl _)
       cases hr
-  | .tailErr hb hr, hx, he => by
+  | .tailErr hr, hx, he => by
     cases hx with
-    | cons hb' hr' =>
-      obtain ⟨_, _, -⟩ := OrderedExec.det hscope.1 hscope.2 hb hb' (by rw [he.iterStart]; exact St.Eqv.refl _)
+    | cons _ hr' =>
       obtain ⟨_, hr₂, -⟩ := IterExec.det hscope hr hr' he
       cases hr₂
   | .cons hb hr, hx, he => by
@@ -427,7 +426,7 @@ theorem CompsExec.det {ρ : Valuation} {m : Mem} :
       | headErr hc₁ =>
         obtain ⟨_, hr, -⟩ := OrderedExec.det h hl hsc hc.1 hc.2 hc₁ hc' (St.Eqv.refl _)
         cases hr
-      | tailErr _ hr =>
+      | tailErr hr =>
         obtain ⟨_, hr₂, -⟩ := CompsExec.det hcs' hr hr'
         cases hr₂
       | cons hc₁ hr =>

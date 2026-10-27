@@ -679,7 +679,7 @@ theorem IterExec.of_iterStart_eq {entry : NodeId} {params : List Sym} {priv : Li
     IterExec ctx ρ s entry params priv pre pts r → IterExec ctx ρ s entry params priv pre' pts r
   | .nil => .nil
   | .headErr hb => .headErr (he ▸ hb)
-  | .tailErr hb hr => .tailErr (he ▸ hb) (IterExec.of_iterStart_eq he hr)
+  | .tailErr hr => .tailErr (IterExec.of_iterStart_eq he hr)
   | .cons hb hr => .cons (he ▸ hb) (IterExec.of_iterStart_eq he hr)
 
 /-- The map iterations do not read the log of the pre-map state. -/

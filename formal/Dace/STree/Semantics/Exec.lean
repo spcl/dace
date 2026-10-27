@@ -194,10 +194,12 @@ inductive IterExec : TCtx → List Sym → List SNode → List Name → CSt → 
       (hb : ListExec tc body false {} body (iterStartT priv pre (pre.ρ.bindIdx params i)) res)
       (he : iterLog priv res = .err e) :
       IterExec tc params body priv pre (i :: rest) (.err e)
+  /-- A later iteration fails, whatever this one does: iterations run in
+      parallel, so any failing iteration's error is an outcome
+      (`Decisions.md#D3`). -/
   | tailErr {tc : TCtx} {params : List Sym} {body : List SNode} {priv : List Name} {pre : CSt} {i : Idx}
-      {rest : List Idx} {res : Res (TCtl × CSt)} {g : Log} {e : ErrReason}
-      (hb : ListExec tc body false {} body (iterStartT priv pre (pre.ρ.bindIdx params i)) res)
-      (hl : iterLog priv res = .ok g) (hr : IterExec tc params body priv pre rest (.err e)) :
+      {rest : List Idx} {e : ErrReason}
+      (hr : IterExec tc params body priv pre rest (.err e)) :
       IterExec tc params body priv pre (i :: rest) (.err e)
   | cons {tc : TCtx} {params : List Sym} {body : List SNode} {priv : List Name} {pre : CSt} {i : Idx}
       {rest : List Idx} {res : Res (TCtl × CSt)} {g : Log} {logs : List Log}

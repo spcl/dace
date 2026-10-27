@@ -865,7 +865,7 @@ theorem IterExec.frame {ρ : Valuation} {entry : NodeId} {params : List Sym} {pr
     subst hr
     exact ⟨fun _ hg => (by cases hg), fun _ _ _ => .nil⟩
   | .headErr _, _, hr => by cases hr
-  | .tailErr _ _, _, hr => by cases hr
+  | .tailErr _, _, hr => by cases hr
   | .cons hb hrest, logs, hr => by
     have ihb := OrderedExec.frame hb _ rfl
     have ihr := IterExec.frame hpriv hrest _ rfl

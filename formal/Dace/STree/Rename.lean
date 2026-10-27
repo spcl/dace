@@ -1239,13 +1239,10 @@ theorem IterExec.ren {params : List Sym} {body : List SNode} {priv : List Name} 
     rw [he] at this
     obtain ⟨e', he'⟩ := Res.exists_err_of_get? this
     exact ⟨_, .headErr hb' he', rfl⟩
-  | .tailErr hb hl hi, hok => by
-    obtain ⟨r', hb', hr⟩ := ListExec.ren hb hok hok
-    have := iterLog_get? priv hr
-    rw [hl, Res.get?_ok, Res.get?_eq_some] at this
+  | .tailErr hi, hok => by
     obtain ⟨r'', hi', hr''⟩ := IterExec.ren hi hok
     obtain ⟨e', rfl⟩ := Res.exists_err_of_get? (by rw [hr'']; rfl)
-    exact ⟨_, .tailErr hb' this hi', rfl⟩
+    exact ⟨_, .tailErr hi', rfl⟩
   | .cons hb hl hi, hok => by
     obtain ⟨r', hb', hr⟩ := ListExec.ren hb hok hok
     have := iterLog_get? priv hr

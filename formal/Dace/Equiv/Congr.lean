@@ -212,7 +212,7 @@ theorem IterExec.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {ρ : Valuation} {s
     IterExec ctx' ρ s entry params priv pre pts r → IterExec ctx ρ s entry params priv pre pts r
   | .nil => .nil
   | .headErr hb => .headErr (OrderedExec.congr h hb)
-  | .tailErr hb hr => .tailErr (OrderedExec.congr h hb) (IterExec.congr h hr)
+  | .tailErr hr => .tailErr (IterExec.congr h hr)
   | .cons hb hr => .cons (OrderedExec.congr h hb) (IterExec.congr h hr)
 
 theorem ConsumeTasks.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {ρ : Valuation} {s : State} {entry : NodeId}
@@ -236,7 +236,7 @@ theorem CompsExec.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {ρ : Valuation} {
     {comps : List (List NodeId)} {r : Res (List Log)} : CompsExec ctx' ρ s m comps r → CompsExec ctx ρ s m comps r
   | .nil => .nil
   | .headErr hc => .headErr (OrderedExec.congr h hc)
-  | .tailErr hc hr => .tailErr (OrderedExec.congr h hc) (CompsExec.congr h hr)
+  | .tailErr hr => .tailErr (CompsExec.congr h hr)
   | .cons hc hr => .cons (OrderedExec.congr h hc) (CompsExec.congr h hr)
 
 theorem StateExec.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {cst : CSt} {s : State} {r : Res (Ctl × CSt)} :

@@ -404,7 +404,7 @@ theorem IterExec.fp_pairs {ctx : Ctx} {m₀ : Mem} {ρ : Valuation} {s : State} 
         (LocPred.ofAccesses ctx m₀ (ρ.bindIdx params i) (Access.shared ctx priv A))) logs pts
   | _, _, _, .nil, hr => by cases hr; exact .nil
   | _, _, _, .headErr _, hr => by cases hr
-  | _, _, _, .tailErr _ _, hr => by cases hr
+  | _, _, _, .tailErr _, hr => by cases hr
   | _, _, _, .cons hb hrest, hr => by
     cases hr
     exact .cons (((OrderedExec.fp_step hb rfl hinc (by simpa [iterStart] using hal)).2 Log.Within.empty).dropShared hna _)
@@ -673,7 +673,7 @@ theorem IterExec.clean {ρ : Valuation} {entry : NodeId} {params : List Sym} {pr
   | .headErr hb, hC, hna, hok => by
     obtain ⟨G', rfl⟩ := bodyOk_succ hok
     exact Res.Clean.err_of rfl (OrderedExec.clean hb (hC _ (List.mem_cons_self ..)) (by simpa [NoAlias, iterStart] using hna) hok)
-  | .tailErr _ hr, hC, hna, hok => IterExec.clean hr (fun i hi => hC i (List.mem_cons_of_mem _ hi)) hna hok
+  | .tailErr hr, hC, hna, hok => IterExec.clean hr (fun i hi => hC i (List.mem_cons_of_mem _ hi)) hna hok
   | .cons _ _, _, _, _ => Res.Clean.ok _
 
 end
@@ -699,7 +699,7 @@ theorem CompsExec.clean {ρ : Valuation} {s : State} {m : Mem} {F G : Nat} {C : 
     have h := hok _ (List.mem_cons_self ..)
     obtain ⟨G', rfl⟩ := bodyOk_succ h
     exact Res.Clean.err_of rfl (OrderedExec.clean horc hinj hc hC hna h)
-  | _, _, .tailErr _ hr, hC, hna, hok =>
+  | _, _, .tailErr hr, hC, hna, hok =>
     CompsExec.clean hr hC hna fun comp hc => hok comp (List.mem_cons_of_mem _ hc)
   | _, _, .cons _ _, _, _, _ => Res.Clean.ok _
 

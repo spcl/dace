@@ -466,8 +466,7 @@ theorem IterExec.retarget {tc : TCtx} {params : List Sym} {body : List SNode} {p
       STree.IterExec tc params (SNodes.retarget L body) priv pre pts r
   | .nil, _ => .nil
   | .headErr hb he, hok => .headErr (ListExec.retarget hb hok hok) (by rw [iterLog_retarget]; exact he)
-  | .tailErr hb hl hi, hok =>
-    .tailErr (ListExec.retarget hb hok hok) (by rw [iterLog_retarget]; exact hl) (IterExec.retarget hi hok)
+  | .tailErr hi, hok => .tailErr (IterExec.retarget hi hok)
   | .cons hb hl hi, hok =>
     .cons (ListExec.retarget hb hok hok) (by rw [iterLog_retarget]; exact hl) (IterExec.retarget hi hok)
 

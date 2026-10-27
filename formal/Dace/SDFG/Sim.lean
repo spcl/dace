@@ -3154,20 +3154,17 @@ theorem IterExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw 
     obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.sim hc hw hS hb _ (iterStart_sim h hp)
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     exact ⟨_, .headErr hb₂, ResSim.of_err hu⟩
-  | .tailErr hb hrest, priv₂, pre₂, hp, h => by
-    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.sim hc hw hS hb _ (iterStart_sim h hp)
-    rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, ha⟩
-    · exact ⟨_, .headErr hb₂, ResSim.ub hu _⟩
-    · obtain ⟨r₃, hrest₂, hr₃⟩ := IterExec.sim hc hw hS hrest _ _ hp h
-      obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
-      exact ⟨_, .tailErr hb₂ hrest₂, ResSim.of_err hu⟩
+  | .tailErr hrest, priv₂, pre₂, hp, h => by
+    obtain ⟨r₃, hrest₂, hr₃⟩ := IterExec.sim hc hw hS hrest _ _ hp h
+    obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
+    exact ⟨_, .tailErr hrest₂, ResSim.of_err hu⟩
   | .cons hb hrest, priv₂, pre₂, hp, h => by
     obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.sim hc hw hS hb _ (iterStart_sim h hp)
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, ha⟩
     · exact ⟨_, .headErr hb₂, ResSim.ub hu _⟩
     · obtain ⟨r₃, hrest₂, hr₃⟩ := IterExec.sim hc hw hS hrest _ _ hp h
       rcases ResSim.ok_cases hr₃ with ⟨e, rfl, hu⟩ | ⟨logs₂, rfl, hl, hlP⟩
-      · exact ⟨_, .tailErr hb₂ hrest₂, ResSim.ub hu _⟩
+      · exact ⟨_, .tailErr hrest₂, ResSim.ub hu _⟩
       · refine ⟨_, .cons hb₂ hrest₂, ResSim.ok ⟨?_, ?_⟩⟩
         · rw [hl, ha.log, Log.dropNames_congr hp, ← Log.ren_dropNames]
           rfl
@@ -3235,20 +3232,17 @@ theorem CompsExec.sim {ctx₂ ctx₁ : Ctx} (hc : CtxSim π P ctx₂ ctx₁) (hw
     obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.sim hc hw hS hcp { mem := m₂ } ⟨h, rfl, rfl, Log.NamesP.empty P⟩
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     exact ⟨_, .headErr hc₂, ResSim.of_err hu⟩
-  | .tailErr hcp hrest, m₂, h => by
-    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.sim hc hw hS hcp { mem := m₂ } ⟨h, rfl, rfl, Log.NamesP.empty P⟩
-    rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, ha⟩
-    · exact ⟨_, .headErr hc₂, ResSim.ub hu _⟩
-    · obtain ⟨r₃, hrest₂, hr₃⟩ := CompsExec.sim hc hw hS hrest _ h
-      obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
-      exact ⟨_, .tailErr hc₂ hrest₂, ResSim.of_err hu⟩
+  | .tailErr hrest, m₂, h => by
+    obtain ⟨r₃, hrest₂, hr₃⟩ := CompsExec.sim hc hw hS hrest _ h
+    obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
+    exact ⟨_, .tailErr hrest₂, ResSim.of_err hu⟩
   | .cons hcp hrest, m₂, h => by
     obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.sim hc hw hS hcp { mem := m₂ } ⟨h, rfl, rfl, Log.NamesP.empty P⟩
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, ha⟩
     · exact ⟨_, .headErr hc₂, ResSim.ub hu _⟩
     · obtain ⟨r₃, hrest₂, hr₃⟩ := CompsExec.sim hc hw hS hrest _ h
       rcases ResSim.ok_cases hr₃ with ⟨e, rfl, hu⟩ | ⟨logs₂, rfl, hl, hlP⟩
-      · exact ⟨_, .tailErr hc₂ hrest₂, ResSim.ub hu _⟩
+      · exact ⟨_, .tailErr hrest₂, ResSim.ub hu _⟩
       · refine ⟨_, .cons hc₂ hrest₂, ResSim.ok ⟨?_, ?_⟩⟩
         · rw [hl, ha.log]; rfl
         · intro g hg

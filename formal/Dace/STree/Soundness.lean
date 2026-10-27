@@ -196,7 +196,7 @@ theorem execIter_succ {fuel : Nat} (ih : STree.Sound fuel) {tc : TCtx} {params :
       next g hl =>
         split at h
         · cases h
-        next e hr => cases h; exact .tailErr (ih.list hb) hl (ih.iter hr)
+        next e hr => cases h; exact .tailErr (ih.iter hr)
         next logs hr => cases h; exact .cons (ih.list hb) hl (ih.iter hr)
 
 theorem execConsume_succ {fuel : Nat} (ih : STree.Sound fuel) {tc : TCtx} {ρ : Valuation} {c : ConsumeNode}

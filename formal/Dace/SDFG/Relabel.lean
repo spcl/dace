@@ -1639,14 +1639,10 @@ theorem IterExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) 
     refine ⟨_, .headErr ?_, ResSim.of_err hu⟩
     rw [State.scopeNodes_relabel, State.directChildren_some_relabel, iterStart_relabel]
     exact hb₂
-  | .tailErr hb hrest => by
-    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hfix hb
-    rw [← State.scopeNodes_relabel, ← State.directChildren_some_relabel, ← iterStart_relabel] at hb₂
-    rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, rfl⟩
-    · exact ⟨_, .headErr hb₂, ResSim.ub hu _⟩
-    · obtain ⟨r₃, hr₂, hr₃⟩ := IterExec.relabel hfix hrest
-      obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
-      exact ⟨_, .tailErr hb₂ hr₂, ResSim.of_err hu⟩
+  | .tailErr hrest => by
+    obtain ⟨r₃, hr₂, hr₃⟩ := IterExec.relabel hfix hrest
+    obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
+    exact ⟨_, .tailErr hr₂, ResSim.of_err hu⟩
   | .cons hb hrest => by
     obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hfix hb
     rw [← State.scopeNodes_relabel, ← State.directChildren_some_relabel, ← iterStart_relabel] at hb₂
@@ -1654,7 +1650,7 @@ theorem IterExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) 
     · exact ⟨_, .headErr hb₂, ResSim.ub hu _⟩
     · obtain ⟨r₃, hr₂, hr₃⟩ := IterExec.relabel hfix hrest
       rcases ResSim.ok_cases hr₃ with ⟨e, rfl, hu⟩ | ⟨b₂, rfl, rfl⟩
-      · exact ⟨_, .tailErr hb₂ hr₂, ResSim.ub hu _⟩
+      · exact ⟨_, .tailErr hr₂, ResSim.ub hu _⟩
       · exact ⟨_, .cons hb₂ hr₂, ResSim.ok rfl⟩
 
 theorem ConsumeTasks.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) {entry : NodeId} {c : ConsumeNode}
@@ -1699,14 +1695,10 @@ theorem CompsExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ)
     refine ⟨_, .headErr ?_, ResSim.of_err hu⟩
     rw [State.topLevelOf_relabel]
     exact hc₂
-  | _, _, .tailErr hc hrest => by
-    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.relabel hfix hc
-    rw [← State.topLevelOf_relabel] at hc₂
-    rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, rfl⟩
-    · exact ⟨_, .headErr hc₂, ResSim.ub hu _⟩
-    · obtain ⟨r₃, hr₂, hr₃⟩ := CompsExec.relabel hfix hrest
-      obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
-      exact ⟨_, .tailErr hc₂ hr₂, ResSim.of_err hu⟩
+  | _, _, .tailErr hrest => by
+    obtain ⟨r₃, hr₂, hr₃⟩ := CompsExec.relabel hfix hrest
+    obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
+    exact ⟨_, .tailErr hr₂, ResSim.of_err hu⟩
   | _, _, .cons hc hrest => by
     obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.relabel hfix hc
     rw [← State.topLevelOf_relabel] at hc₂
@@ -1714,7 +1706,7 @@ theorem CompsExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ)
     · exact ⟨_, .headErr hc₂, ResSim.ub hu _⟩
     · obtain ⟨r₃, hr₂, hr₃⟩ := CompsExec.relabel hfix hrest
       rcases ResSim.ok_cases hr₃ with ⟨e, rfl, hu⟩ | ⟨b₂, rfl, rfl⟩
-      · exact ⟨_, .tailErr hc₂ hr₂, ResSim.ub hu _⟩
+      · exact ⟨_, .tailErr hr₂, ResSim.ub hu _⟩
       · exact ⟨_, .cons hc₂ hr₂, ResSim.ok rfl⟩
 
 /-- **A relabeled state runs like the state**: every run of `s` is matched by a

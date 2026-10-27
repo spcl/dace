@@ -1171,7 +1171,7 @@ theorem IterExec.fp_logs {ρ : Valuation} {s : State} {entry : NodeId} {params :
     intro g hg
     exact absurd hg List.not_mem_nil
   | .headErr _, hr, _, _ => by cases hr
-  | .tailErr _ _, hr, _, _ => by cases hr
+  | .tailErr _, hr, _, _ => by cases hr
   | .cons (i := i) hb hrest, hr, hinc, hal => by
     have h₁ := OrderedExec.fp_step hb rfl hinc (by simpa [iterStart] using hal)
     have h₂ := IterExec.fp_logs hrest rfl hinc hal
@@ -1224,7 +1224,7 @@ theorem CompsExec.fp_logs {ctx : Ctx} {ρ : Valuation} {s : State} {m : Mem} {F 
         g.Within (LocPred.ofAccesses ctx m ρ A)) comps logs
   | _, _, _, .nil, hr => by cases hr; exact .nil
   | _, _, _, .headErr _, hr => by cases hr
-  | _, _, _, .tailErr _ _, hr => by cases hr
+  | _, _, _, .tailErr _, hr => by cases hr
   | _, _, _, .cons hc hrest, hr => by
     have h₂ := CompsExec.fp_logs (F := F) hrest rfl
     cases hr

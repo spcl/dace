@@ -1557,20 +1557,17 @@ theorem iter_matched_of {n : DNode} {mp : MapNode} {body : List SNode} {privS pr
       · exact .inl ⟨e', hu, .headErr hx⟩
       · cases hlog; exact .inr (.inl ⟨_, _, rfl, .headErr hx⟩)
       · cases hlog
-    | tailErr hb hlog hr =>
-      rcases hbody i hb with ⟨e', hu, hx⟩ | ⟨e', e'', rfl, hx⟩ | ⟨st', hx, cst', rfl, hlg⟩
-      · exact .inl ⟨e', hu, .headErr hx⟩
-      · cases hlog
-      · rcases ih hr with ⟨e', hu, hy⟩ | ⟨e', e'', he', hy⟩ | ⟨logs, hl', -⟩
-        · exact .inl ⟨e', hu, .tailErr hx hy⟩
-        · exact .inr (.inl ⟨e', e'', he', .tailErr hx hy⟩)
-        · cases hl'
+    | tailErr hr =>
+      rcases ih hr with ⟨e', hu, hy⟩ | ⟨e', e'', he', hy⟩ | ⟨logs, hl', -⟩
+      · exact .inl ⟨e', hu, .tailErr hy⟩
+      · exact .inr (.inl ⟨e', e'', he', .tailErr hy⟩)
+      · cases hl'
     | cons hb hlog hr =>
       rcases hbody i hb with ⟨e', hu, hx⟩ | ⟨e', e'', rfl, hx⟩ | ⟨st', hx, cst', rfl, hlg⟩
       · exact .inl ⟨e', hu, .headErr hx⟩
       · cases hlog
       · rcases ih hr with ⟨e', hu, hy⟩ | ⟨e', e'', he', hy⟩ | ⟨logs', hl', hy⟩
-        · exact .inl ⟨e', hu, .tailErr hx hy⟩
+        · exact .inl ⟨e', hu, .tailErr hy⟩
         · cases he'
         · cases hl'
           simp only [iterLog, Res.ok.injEq] at hlog

@@ -1049,16 +1049,14 @@ theorem IterExec.matchedBody (hbody : BodyMatchedE ctx s' s M) {ρ : Valuation} 
   | .headErr hb => by
     obtain ⟨e₀, hr, hbl⟩ := (hbody _ _ _ hb).err_cases
     exact ⟨_, .headErr hr, hbl _⟩
-  | .tailErr hb hr => by
-    rcases (hbody _ _ _ hb).ok_cases with ⟨e, he, hx⟩ | ⟨a, hx, -⟩
-    · exact MatchedE.of_ub (.headErr hx) he
-    · obtain ⟨e₀, hr₀, hb₀⟩ := MatchedE.err_cases (IterExec.matchedBody hbody hr)
-      exact ⟨_, .tailErr hx hr₀, hb₀ _⟩
+  | .tailErr hr => by
+    obtain ⟨e₀, hr₀, hb₀⟩ := MatchedE.err_cases (IterExec.matchedBody hbody hr)
+    exact ⟨_, .tailErr hr₀, hb₀ _⟩
   | .cons hb hr => by
     rcases (hbody _ _ _ hb).ok_cases with ⟨e, he, hx⟩ | ⟨a, hx, hle⟩
     · exact MatchedE.of_ub (.headErr hx) he
     · rcases MatchedE.ok_cases (IterExec.matchedBody hbody hr) with ⟨e, he, hx'⟩ | ⟨logs, hx', hl⟩
-      · exact MatchedE.of_ub (.tailErr hx hx') he
+      · exact MatchedE.of_ub (.tailErr hx') he
       · exact MatchedE.of_rel (.cons hx hx') (List.Forall₂.cons hle hl)
 
 variable (hF : OuterFacts ctx s' s M) (hw : ctx.I.wcr.Lawful) (hbody : BodyMatchedE ctx s' s M)
@@ -1210,20 +1208,16 @@ theorem IterExec.matchedB {ρ : Valuation} {P : NodeId} {params : List Sym} {pri
       (by rw [hdir, hF.viewOrder ho]; exact hF.bindViews (fun id hid => ho id (State.viewOrder_sub hid)) _) ho
     obtain ⟨e₀, hr, hbl⟩ := h₁.err_cases
     exact ⟨_, .headErr hr, hbl _⟩
-  | .tailErr hb hr, hc, hdir, ho => by
-    have h₁ := OrderedExec.matchedB hb _ _ hc (by rw [hdir])
-      (by rw [hdir, hF.viewOrder ho]; exact hF.bindViews (fun id hid => ho id (State.viewOrder_sub hid)) _) ho
-    rcases h₁.ok_cases with ⟨e, he, hx⟩ | ⟨a, hx, -⟩
-    · exact MatchedE.of_ub (.headErr hx) he
-    · obtain ⟨e₀, hr₀, hb₀⟩ := MatchedE.err_cases (IterExec.matchedB hr hc hdir ho)
-      exact ⟨_, .tailErr hx hr₀, hb₀ _⟩
+  | .tailErr hr, hc, hdir, ho => by
+    obtain ⟨e₀, hr₀, hb₀⟩ := MatchedE.err_cases (IterExec.matchedB hr hc hdir ho)
+    exact ⟨_, .tailErr hr₀, hb₀ _⟩
   | .cons hb hr, hc, hdir, ho => by
     have h₁ := OrderedExec.matchedB hb _ _ hc (by rw [hdir])
       (by rw [hdir, hF.viewOrder ho]; exact hF.bindViews (fun id hid => ho id (State.viewOrder_sub hid)) _) ho
     rcases h₁.ok_cases with ⟨e, he, hx⟩ | ⟨a, hx, ha⟩
     · exact MatchedE.of_ub (.headErr hx) he
     · rcases MatchedE.ok_cases (IterExec.matchedB hr hc hdir ho) with ⟨e, he, hx'⟩ | ⟨logs, hx', hl⟩
-      · exact MatchedE.of_ub (.tailErr hx hx') he
+      · exact MatchedE.of_ub (.tailErr hx') he
       · exact MatchedE.of_rel (.cons hx hx') (List.Forall₂.cons (ha.2.2.dropNames _) hl)
 
 end
@@ -1241,18 +1235,15 @@ theorem CompsExec.matchedB {ρ : Valuation} {m : Mem} :
     have h₁ := OrderedExec.matchedB hF hw hbody hc _ _ hcorr (OuterFacts.topPerm htop) (hF.topViews htop hout _ _) hout
     obtain ⟨e₀, hr, hb⟩ := MatchedE.err_cases h₁
     exact ⟨_, .headErr hr, hb _⟩
-  | _, _, _, .tailErr hc hr, .cons ⟨hcorr, htop, hout⟩ hrest => by
-    have h₁ := OrderedExec.matchedB hF hw hbody hc _ _ hcorr (OuterFacts.topPerm htop) (hF.topViews htop hout _ _) hout
-    rcases MatchedE.ok_cases h₁ with ⟨e, he, hx⟩ | ⟨a, hx, -⟩
-    · exact MatchedE.of_ub (.headErr hx) he
-    · obtain ⟨e₀, hr₀, hb₀⟩ := MatchedE.err_cases (CompsExec.matchedB hr hrest)
-      exact ⟨_, .tailErr hx hr₀, hb₀ _⟩
+  | _, _, _, .tailErr hr, .cons _ hrest => by
+    obtain ⟨e₀, hr₀, hb₀⟩ := MatchedE.err_cases (CompsExec.matchedB hr hrest)
+    exact ⟨_, .tailErr hr₀, hb₀ _⟩
   | _, _, _, .cons hc hr, .cons ⟨hcorr, htop, hout⟩ hrest => by
     have h₁ := OrderedExec.matchedB hF hw hbody hc _ _ hcorr (OuterFacts.topPerm htop) (hF.topViews htop hout _ _) hout
     rcases MatchedE.ok_cases h₁ with ⟨e, he, hx⟩ | ⟨a, hx, ha⟩
     · exact MatchedE.of_ub (.headErr hx) he
     · rcases MatchedE.ok_cases (CompsExec.matchedB hr hrest) with ⟨e, he, hx'⟩ | ⟨logs, hx', hl⟩
-      · exact MatchedE.of_ub (.tailErr hx hx') he
+      · exact MatchedE.of_ub (.tailErr hx') he
       · exact MatchedE.of_rel (.cons hx hx') (List.Forall₂.cons ha.2.2 hl)
 
 /-- **The state with the body replaced is matched by the original state.** -/

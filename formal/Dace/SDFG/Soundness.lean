@@ -177,7 +177,7 @@ theorem execIter_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {ρ : Valuation
     next st hb =>
       split at h
       · cases h
-      next e hr => cases h; exact .tailErr (ih.ordered hb) (ih.iter hr)
+      next e hr => cases h; exact .tailErr (ih.iter hr)
       next logs hr => cases h; exact .cons (ih.ordered hb) (ih.iter hr)
 
 theorem execConsume_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {ρ : Valuation} {s : State} {entry : NodeId}
@@ -219,7 +219,7 @@ theorem execComps_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {ρ : Valuatio
     next st hc =>
       split at h
       · cases h
-      next e hr => cases h; exact .tailErr (ih.ordered hc) (ih.comps hr)
+      next e hr => cases h; exact .tailErr (ih.comps hr)
       next logs hr => cases h; exact .cons (ih.ordered hc) (ih.comps hr)
 
 theorem execState_succ {fuel : Nat} (ih : Sound fuel) {ctx : Ctx} {cst : CSt} {s : State} {r : Res (Ctl × CSt)}
