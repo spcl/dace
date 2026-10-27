@@ -359,7 +359,6 @@ def run_numerical_offloading_test(sdfg, param_dict: dict, result_array1, result_
     input2 = param_dict
     input2[result_name] = result_array2
 
-    # print("PARAMS:", sdfg.arglist())
     sdfg(**input2)
 
     # assert the results are equal
