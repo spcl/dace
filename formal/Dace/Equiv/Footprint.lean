@@ -8,10 +8,10 @@ import Dace.SDFG.Footprint
 fragment log only locations hit by their static footprint (`nodeFp`), where
 subsets and map ranges are enumerated as the semantics does: under
 `Ctx.exprInterp`/`Ctx.val` of the memory at the time, which may read data
-(`Decisions.md#D33`; R1/R2 design F5).  This file removes that memory
+(`Decisions.md#D33`).  This file removes that memory
 dependence for **pure** subsets and ranges (`Ctx.pointsPure`,
 `Ctx.rangePure` of `Dace.SDFG.Footprinted`: no `subscript`, no free symbol
-naming a scalar container), so that `raceFree?` (R2.7) can combine
+naming a scalar container), so that `raceFree?` can combine
 footprints with `iterDisjoint?` (`Dace.Core.SymSubset`), which reasons about
 `Subset.points` and `DataDesc.linearOffset` under `ctx.I.expr` and a plain
 valuation:

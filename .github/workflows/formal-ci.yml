@@ -49,19 +49,23 @@ jobs:
           g++ --version
           cmake --version
 
-      - name: Build Lean library (with Mathlib cache)
+      # Mathlib's prebuilt `.olean`s come from its cache (`lake exe cache get`).
+      # The executables are built here too, so that lean-action's GitHub cache
+      # of `formal/.lake` (saved right after this build, keyed on the toolchain
+      # and the Lake manifest, restoring the latest commit's on a miss) also
+      # holds Mathlib's object files: the Mathlib cache provides only the C code,
+      # and compiling it for the executables otherwise takes most of the job.
+      - name: Build Lean library and executables (with Mathlib and GitHub caches)
         uses: leanprover/lean-action@v1
         with:
           lake-package-directory: formal
           use-mathlib-cache: true
+          use-github-cache: true
+          build-args: "Dace dace-interp dace-equiv"
 
       - name: Sorry / axiom / import-isolation checks
         working-directory: formal
         run: scripts/check_axioms.sh
-
-      - name: Build executables
-        working-directory: formal
-        run: lake build dace-interp dace-equiv
 
       - name: Generate the corpus (SDFG and schedule-tree JSON)
         run: python formal/scripts/dump_corpus.py

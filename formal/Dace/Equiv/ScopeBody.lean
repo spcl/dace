@@ -5,8 +5,7 @@ import Dace.Equiv.Order
 /-!
 # Congruence: replacing the body of a map scope
 
-The second congruence principle of the equivalence framework (R1.5, R1
-design §2.3): replacing the body of one map scope of a state by a body whose
+The second congruence principle of the equivalence framework: replacing the body of one map scope of a state by a body whose
 iterations are matched by the old body's iterations refines the SDFG
 (`Congr.scopeBody`; both directions give `Equiv`, `Congr.scopeBodyEquiv`).
 An atom proves only `BodyMatchedE`: one iteration of the new body, from any
@@ -1507,7 +1506,7 @@ theorem scopeBody_blockMatchedE {g : SDFG} {s' s : State} {M : NodeId} (hchk : s
   | state h =>
     exact (StateExec.matchedB (sameOutside?_spec hchk hN hE I) hI hbody h).mono (fun _ _ h => h) fun _ h => .state h
 
-/-- **Map-body congruence** (R1.5, R1 design §2.3): replacing the body of the
+/-- **Map-body congruence**: replacing the body of the
 map with entry `M` in the state at path `p`, index `i` of `g` refines `g` if
 
 * `sameOutside? g s' s M`: everything outside the bodies is seen the same way

@@ -4,8 +4,7 @@ import Dace.SDFG.LogShift
 /-!
 # Congruence: replacing a control-flow block
 
-The first congruence principle of the equivalence framework (R1 design
-§2.3): replacing one control-flow block of an SDFG (a state, a loop, a
+The first congruence principle of the equivalence framework: replacing one control-flow block of an SDFG (a state, a loop, a
 conditional, a sub-region, at any depth of the control-flow hierarchy) by a
 block whose runs it matches yields a refinement of the whole SDFG.
 
@@ -71,7 +70,7 @@ turns `MatchedE` into `Refines` (`Refines.of_matchedE`).
   (`LoopGuard.matchedE`, `LoopIter.matchedE`, `LoopTail.matchedE`) or conditional
   (`CondExec.matchedE`), with the motive "matched by the old relation from a
   `CSt.Rel`-related start"; unchanged blocks match themselves by the
-  R1.3 lemmas (`BlockExec.rel`).
+  log-shift lemmas (`BlockExec.rel`).
 * `Congr.block`: `Refines (g.setBlockAt p i b').prog g.prog` if the block at
   the path is `b`, `sameTransientMentions? g b' b`, every run of `b'` is
   matched (`MatchedE`) by a run of `b` from the same state in the context of `g`
@@ -517,7 +516,7 @@ def RegionMatchedE (ctx : Ctx) (rg' rg : Region) : Prop :=
     MatchedE CtlRel (RegionExec ctx a rg) r'
 
 /-- From matching from equal start states (the form atoms prove), by the
-log-shift lemmas of R1.3. -/
+log-shift lemmas. -/
 theorem BlockMatchedE.of_same {ctx : Ctx} {b' b : Block}
     (h : ∀ cst r', BlockExec ctx cst b' r' → MatchedE CtlRel (BlockExec ctx cst b) r') : BlockMatchedE ctx b' b := by
   intro a' a ha r' hr'
@@ -1363,7 +1362,7 @@ theorem Congr.exec_matchedE {g : SDFG} {p : List PathStep} {i : BlockId} {b' b :
     exact (hreg _ _ (CSt.Rel.refl _) _ h).okCases (fun _ hu hy => MatchedE.of_ub (SDFG.Exec.intro (.err hy)) hu)
       (fun _ hrel hy => MatchedE.of_rel (SDFG.Exec.intro (.run hy hc)) hrel.2.1)
 
-/-- **Block congruence** (R1 design §2.3): replacing the block `b` at path
+/-- **Block congruence**: replacing the block `b` at path
 `p`, index `i` of `g` by `b'` refines `g` if
 
 * `b'` mentions every `Scope`-lifetime transient as often as `b` does

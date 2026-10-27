@@ -9,7 +9,7 @@ import Dace.Core.SymSubset
 # Static race freedom (`raceFree?`)
 
 A sound, incomplete check that an SDFG never ends in a race
-(`RaceFree`, R1/R2 design §3.6).  Races arise only where parallel logs are
+(`RaceFree`).  Races arise only where parallel logs are
 merged (map iterations, state components) and in the happens-before check
 of a sequential execution (`Decisions.md#D61`); every other function of the
 semantics is race-free (`Dace.SDFG.Clean`).  The check bounds the logs by
@@ -174,7 +174,7 @@ theorem bindIdx_binds (ρ : Valuation) :
       exact ho s fun h => hs (List.mem_cons_of_mem _ h)
 
 /-- `iterDisjoint?` with undecided obligations accepted by the oracle `orc`
-(R1/R2 design §3.5: obligations are discharged outside, e.g. by the Lean
+(obligations are discharged outside, e.g. by the Lean
 kernel on the file `Query.toLeanFile` emits).  With `orc = fun _ => false`
 it is `iterDisjoint?`. -/
 def iterDisjointWith? (orc : Query → Bool) (C : Constraints) (params : List Sym) (rng : Range) (dA : DataDesc)

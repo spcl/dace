@@ -17,7 +17,7 @@ if grep -rn --include='*.lean' -E '\bsorry\b' Dace Tools 2>/dev/null; then
 fi
 
 echo "== Mathlib import isolation"
-if grep -rln --include='*.lean' -E '^import Mathlib' Dace Tools 2>/dev/null | grep -v '^Dace/Prelude.lean$'; then
+if grep -rln --include='*.lean' -E '^(public )?import Mathlib' Dace Tools 2>/dev/null | grep -v '^Dace/Prelude.lean$'; then
   echo "error: Mathlib imported outside Dace/Prelude.lean" >&2
   exit 1
 fi

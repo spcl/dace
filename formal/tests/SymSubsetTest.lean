@@ -62,7 +62,7 @@ def C1 : Constraints := { C0 with sign := [("T", .pos), ("N", .pos)] }
 
 Corpus-like accesses; `A` in one iteration against `B` in another.  Accesses
 to different containers (axpy `x[i]` vs `y[i]`) never conflict and are not
-asked: the caller compares container names (R2.7). -/
+asked: the caller compares container names (`raceFree?`). -/
 
 def vec (n : String) : DataDesc := DataDesc.array (.float 64) [E n]
 

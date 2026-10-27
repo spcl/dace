@@ -40,7 +40,7 @@ entries only):
 * `CompsExec.fp_logs`: the log of every state component is covered by the
   footprint of its top-level nodes.
 
-Reads that are **not** logged (`Decisions.md#D33`, R1/R2 design F5: data in
+Reads that are **not** logged (`Decisions.md#D33`: data in
 dataflow expressions such as symbolic subset bounds and reduction
 identities, stream peeks, alias lookups) are outside the scope of a
 footprint; the fragment of `Dace.Equiv.Footprint` excludes data in subset

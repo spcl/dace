@@ -5,7 +5,7 @@ import Dace.Core.MergeLemmas
 /-!
 # Matching of fragment outcomes
 
-Building blocks of the congruence proofs (R1 design §2.2): relations between
+Building blocks of the congruence proofs: relations between
 the intermediate states of two executions and the matching of one outcome
 by the outcome set of a fragment.
 

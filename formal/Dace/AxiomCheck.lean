@@ -15,7 +15,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.SDFG.run_sound
 #print axioms Dace.SDFG.run_ok_sound
 
--- R1.1: algebra of logs and of their parallel merge.
+-- Algebra of logs and of their parallel merge.
 #print axioms Dace.Log.seq_assoc
 #print axioms Dace.Log.empty_seq
 #print axioms Dace.Log.WF.seq
@@ -52,7 +52,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.STree.run_sound
 #print axioms Dace.STree.run_ok_sound
 
--- R0.4: specification of the (total) scope, component, memlet-tree and topological-order functions.
+-- Specification of the (total) scope, component, memlet-tree and topological-order functions.
 #print axioms Dace.mem_closure
 #print axioms Dace.closure_nodup
 #print axioms Dace.State.scopeWF?_sound
@@ -71,14 +71,14 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.State.topoOrder_spec
 #print axioms Dace.State.isTopologicalOrder_perm
 
--- R0.5: happens-before races (reachability, trace logs).
+-- Happens-before races (reachability, trace logs).
 #print axioms Dace.State.reaches_iff
 #print axioms Dace.State.reaches_irrefl
 #print axioms Dace.SeqExec.log_eq
 #print axioms Dace.SeqExec.log_eq_seqAll
 #print axioms Dace.SeqExec.log_eq_seqAll_empty
 
--- R2.1–R2.3: facts, polynomial normal form, certificate checking.
+-- Facts, polynomial normal form, certificate checking.
 #print axioms Dace.Constraints.satisfies_empty
 #print axioms Dace.toPoly?_sound
 #print axioms Dace.toPoly?_spec
@@ -89,7 +89,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Query.decide_sound
 #print axioms Dace.Constraints.toHyps_sound
 
--- R2.4: points of subsets and verified subset procedures.
+-- Points of subsets and verified subset procedures.
 #print axioms Dace.Expr.eval_congr
 #print axioms Dace.Expr.eval_subst
 #print axioms Dace.Dim.mem_elems
@@ -105,7 +105,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.iterObligations?_sound
 #print axioms Dace.iterDisjoint?_sound
 
--- R1.2: observables, refinement and equivalence.
+-- Observables, refinement and equivalence.
 #print axioms Dace.Refines.refl_of_supported
 #print axioms Dace.Refines.refl_iff_supported
 #print axioms Dace.Refines.trans
@@ -116,7 +116,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Refines_iff_matched
 #print axioms Dace.Matched.trans
 
--- R1.3: logs are write-only (log-shift lemmas for both relation families).
+-- Logs are write-only (log-shift lemmas for both relation families).
 #print axioms Dace.NodeExec.shift_iff
 #print axioms Dace.SeqExec.shift_iff
 #print axioms Dace.OrderedExec.shift_iff
@@ -149,7 +149,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.STree.NodeExec.rel
 #print axioms Dace.STree.ListExec.rel
 
--- R2.6: static footprints of dataflow executions.
+-- Static footprints of dataflow executions.
 #print axioms Dace.NodeExec.fp_step
 #print axioms Dace.SeqExec.fp_step
 #print axioms Dace.SeqExec.fp_trace
@@ -161,7 +161,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.IterExec.footprint
 #print axioms Dace.Access.hit_static
 
--- R1.4: block congruence (context congruence, paths, block replacement).
+-- Block congruence (context congruence, paths, block replacement).
 #print axioms Dace.BlockExec.congr_iff
 #print axioms Dace.SDFGExec.congr_iff
 #print axioms Dace.NodeExec.congr
@@ -181,7 +181,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Congr.splitEmpty
 #print axioms Dace.Congr.mergeEmpty
 
--- R1.6: frame property, St-coherence and order independence on `SeqPure`.
+-- Frame property, St-coherence and order independence on `SeqPure`.
 #print axioms Dace.Ctx.eval_pure
 #print axioms Dace.Ctx.pointsOf_pure
 #print axioms Dace.FootA.bind
@@ -208,14 +208,14 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.CompsExec.sequential
 #print axioms Dace.CompsExec.merge_perm
 
--- R2.7: static race freedom
+-- Static race freedom
 #print axioms Dace.raceFree?_sound
 #print axioms Dace.NodeExec.clean
 #print axioms Dace.RegionExec.cgood
 #print axioms Dace.execSimple_clean
 #print axioms Dace.raceFreeWith_sound
 
--- R1.5: map-body congruence
+-- Map-body congruence
 #print axioms Dace.Congr.scopeBody
 #print axioms Dace.Congr.scopeBodyEquiv
 #print axioms Dace.Congr.mapBody
@@ -224,7 +224,7 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.State.isTopologicalOrder_splice
 #print axioms Dace.NodeLocal.execSimple
 
--- R1.6: determinism
+-- Determinism
 #print axioms Dace.NodeExec.det
 #print axioms Dace.OrderedExec.det
 #print axioms Dace.CompsExec.det
