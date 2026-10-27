@@ -23,7 +23,8 @@ entry to the inner entry (rewired, no data moves), or a side-effect-free tasklet
 * writes only transients that no node outside the chain accesses (per-iteration private), and
   feeds its results only to the inner map.
 
-An inner map over ``SMALL`` axes stays a loop in each thread. Anything else between the two entries (a nested map such as a per-k reduction, a nested SDFG, a
+An inner map over ``SMALL`` axes stays a loop in each thread, and a ``SMALL`` outer axis leaves the collapsed grid for a
+loop inside it. Anything else between the two entries (a nested map such as a per-k reduction, a nested SDFG, a
 larger buffer), an inner map with provably fewer iterations than a warp (one thread walks it),
 any node between the two exits, a write-conflict-resolved output of the inner
 map, or an inner range that depends on the outer parameters is refused, leaving the graph
@@ -41,7 +42,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.map_collapse import MapCollapse
-from dace.transformation.helpers import redirect_edge, small_map_axes
+from dace.transformation.helpers import isolate_small_map_axes, redirect_edge, small_map_axes
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import statically_narrower_than_warp
 
 SERIAL_OR_DEVICE = (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default, dtypes.ScheduleType.GPU_Device)
@@ -255,7 +256,9 @@ class ContiguousAxisToThreads(ppl.Pass):
         )
         if not collapse.can_be_applied(state, 0, sdfg, permissive=True):
             raise RuntimeError(f"{outer.map.label}: MapCollapse refused a nest this pass made perfect")
-        collapse.apply(state, sdfg)
+        kernel, _ = collapse.apply(state, sdfg)
+        # A SMALL outer axis left the grid for the threads to walk; the collapse brought it back
+        isolate_small_map_axes(state, kernel, resolver)
         return True
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:

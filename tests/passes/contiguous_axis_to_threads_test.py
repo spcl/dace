@@ -203,6 +203,24 @@ def test_the_gpu_finalization_band_makes_the_unit_stride_axis_a_thread_index():
     assert [p.removeprefix("g_") for p in entry.map.params] == ["k", "l"], entry.map.params
 
 
+def test_a_small_outer_axis_stays_out_of_the_collapsed_grid():
+    """``K`` declared ``SMALL``, its per-row chain sunk into the lanes: the unit-stride ``l`` takes the grid and each
+    thread walks ``k``."""
+
+    def build():
+        sdfg = chain_nest()
+        sdfg.set_symbol_scale("K", dace.symbolic.Scale.SMALL)
+        return sdfg
+
+    sdfg = offloaded(build)
+    assert ContiguousAxisToThreads().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    entry, state = only_kernel(sdfg)
+    assert entry.map.params == ["l"], entry.map.params
+    inner = [n.map for n in state.scope_subgraph(entry).nodes() if isinstance(n, nodes.MapEntry) and n is not entry]
+    assert [m.params for m in inner] == [["k"]] and inner[0].schedule == dtypes.ScheduleType.Sequential
+
+
 def test_a_forwarded_scalar_is_read_through_the_kernel_entry():
     """The CloudSC ``single_state_body_30`` shape: a per-row access node that moves no data."""
     sdfg = offloaded(forwarded_scalar_nest)
