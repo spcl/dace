@@ -21,7 +21,7 @@ env:
   UV_FROZEN: 1 # sync without updating uv.lock
   UV_NO_DEV: 1 # don't install dev dependency group by default
   # The dace-fortran release the frontend comes from: a tag, so a DaCe API change pins the release that follows it.
-  DACE_FORTRAN_REF: v1.0.1
+  DACE_FORTRAN_REF: v1.0.2
   LLVM_VERSION: '22'
   OMPI_MCA_pml: ob1
   OMPI_MCA_btl: self,vader
