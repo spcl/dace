@@ -170,15 +170,29 @@ def find_chains(region: ControlFlowRegion, sdfg: SDFG) -> list[MegakernelChain]:
                 close()
             continue
         close()
-        for child in child_regions(block):
-            chains.extend(find_chains(child, sdfg))
+        for child, child_sdfg in child_regions(block, sdfg):
+            chains.extend(find_chains(child, child_sdfg))
     close()
     return chains
 
 
-def child_regions(block: ControlFlowBlock) -> list[ControlFlowRegion]:
+def runs_on_host(node: nodes.Node, state: SDFGState) -> bool:
+    """Whether no GPU scope encloses ``node`` in ``state``."""
+    scope = state.entry_node(node)
+    while scope is not None:
+        if scope.map.schedule in dtypes.GPU_SCHEDULES:
+            return False
+        scope = state.entry_node(scope)
+    return True
+
+
+def child_regions(block: ControlFlowBlock, sdfg: SDFG) -> list[tuple[ControlFlowRegion, SDFG]]:
+    """The regions inside ``block`` that may hold chains, with their SDFGs: branches, a region's body, and the nested
+    SDFGs a state calls from the host (a host loop over a nested SDFG of kernels, for example)."""
     if isinstance(block, ConditionalBlock):
-        return [branch for cond, branch in block.branches]
+        return [(branch, sdfg) for cond, branch in block.branches]
     if isinstance(block, ControlFlowRegion):
-        return [block]
+        return [(block, sdfg)]
+    if isinstance(block, SDFGState):
+        return [(n.sdfg, n.sdfg) for n in block.nodes() if isinstance(n, nodes.NestedSDFG) and runs_on_host(n, block)]
     return []

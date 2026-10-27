@@ -50,7 +50,7 @@ def gpu_sdfg(name: str) -> dace.SDFG:
 
 
 def add_kernel(state: dace.SDFGState, label: str, src: str = "A", dst: str = "A") -> None:
-    state.add_mapped_tasklet(
+    tasklet, entry, exit_ = state.add_mapped_tasklet(
         label,
         {"i": "0:N"},
         {"a": dace.Memlet(f"{src}[i]")},
@@ -59,6 +59,7 @@ def add_kernel(state: dace.SDFGState, label: str, src: str = "A", dst: str = "A"
         schedule=dace.ScheduleType.GPU_Device,
         external_edges=True,
     )
+    entry.map.gpu_block_size = [256, 1, 1]
 
 
 def add_time_loop(sdfg: dace.SDFG, label: str, condition: str = "t < T") -> LoopRegion:
@@ -272,6 +273,51 @@ def test_the_fused_stencil_matches_the_kernel_per_step_version(program, dtype, r
         np.testing.assert_array_equal(inputs[name], want[name])
 
 
+def kernels_under_a_host_loop() -> dace.SDFG:
+    """``for b in 0:4 (host): nested { B = A + 1; A = B + 1 }``: two dependent kernels per host iteration."""
+    body = gpu_sdfg("megakernel_block_body")
+    straight(body, [("A", "B"), ("B", "A")])
+    body.remove_data("C")
+    body.remove_symbol("T")
+    sdfg = gpu_sdfg("megakernel_host_loop")
+    sdfg.remove_data("C")
+    state = sdfg.add_state("blocks", is_start_block=True)
+    entry, exit_ = state.add_map("blocks", {"b": "0:4"}, schedule=dace.ScheduleType.Sequential)
+    node = state.add_nested_sdfg(body, {"A": None, "B": None}, {"A": None, "B": None})
+    for name in "AB":
+        state.add_memlet_path(state.add_read(name), entry, node, dst_conn=name, memlet=dace.Memlet(f"{name}[0:N]"))
+        state.add_memlet_path(node, exit_, state.add_write(name), src_conn=name, memlet=dace.Memlet(f"{name}[0:N]"))
+    return sdfg
+
+
+def test_kernels_in_a_nested_sdfg_under_a_host_loop_form_a_chain():
+    """The host loop stays on the host; the nested SDFG it calls is one chain, fused once per host iteration."""
+    sdfg = kernels_under_a_host_loop()
+    sdfg.validate()
+    chains = chains_of(sdfg)
+    assert len(chains) == 1 and chains[0].region.name == "megakernel_block_body"
+    assert len(chains[0].kernels) == 2
+
+
+@pytest.mark.gpu
+def test_a_megakernel_per_host_iteration_matches_the_kernels():
+    import cupy
+
+    sdfg = kernels_under_a_host_loop()
+    fused = copy.deepcopy(sdfg)
+    fused.name = "megakernel_host_loop_fused"
+    assert len(MegaKernelOptimization().apply_pass(fused, {})) == 1
+    fused.validate()
+    init = np.random.default_rng(0).random(1000)
+    want = {name: cupy.asarray(init) for name in "AB"}
+    got = {name: cupy.asarray(init) for name in "AB"}
+    sdfg(N=1000, **want)
+    with new_gpu_codegen():
+        fused(N=1000, **got)
+    for name in "AB":
+        np.testing.assert_array_equal(cupy.asnumpy(got[name]), cupy.asnumpy(want[name]))
+
+
 if __name__ == "__main__":
     test_a_time_loop_of_stencil_kernels_is_one_chain(jacobi_2d_test.kernel)
     test_a_time_loop_of_stencil_kernels_is_one_chain(heat_3d_test.heat_3d_kernel)
@@ -290,3 +336,5 @@ if __name__ == "__main__":
         test_a_stencil_time_loop_is_one_cooperative_launch_with_two_grid_syncs(program)
     for stencil in STENCILS:
         test_the_fused_stencil_matches_the_kernel_per_step_version(*stencil)
+    test_kernels_in_a_nested_sdfg_under_a_host_loop_form_a_chain()
+    test_a_megakernel_per_host_iteration_matches_the_kernels()
