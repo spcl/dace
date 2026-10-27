@@ -16,6 +16,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import SDFG, SDFGState, symbolic
 from dace import memlet as mm
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.transformation.transformation import ExpandTransformation
@@ -83,13 +84,13 @@ class ExpandScalOpenBLAS(ExpandTransformation):
         if dtype in (dace.complex64, dace.complex128):
             code = f"""
             {dtype.ctype} __alpha = {dtype.ctype}({a});
-            cblas_{prefix}copy({n}, _x, {stride_x}, _res, {stride_res});
-            cblas_{prefix}scal({n}, &__alpha, _res, {stride_res});
+            cblas_{prefix}copy({sym2cpp(n)}, _x, {sym2cpp(stride_x)}, _res, {sym2cpp(stride_res)});
+            cblas_{prefix}scal({sym2cpp(n)}, &__alpha, _res, {sym2cpp(stride_res)});
             """
         else:
             code = f"""
-            cblas_{prefix}copy({n}, _x, {stride_x}, _res, {stride_res});
-            cblas_{prefix}scal({n}, ({dtype.ctype})({a}), _res, {stride_res});
+            cblas_{prefix}copy({sym2cpp(n)}, _x, {sym2cpp(stride_x)}, _res, {sym2cpp(stride_res)});
+            cblas_{prefix}scal({sym2cpp(n)}, ({dtype.ctype})({a}), _res, {sym2cpp(stride_res)});
             """
 
         tasklet = dace.sdfg.nodes.Tasklet(
