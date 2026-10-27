@@ -44,6 +44,8 @@ def test_tile_extent(max_elem, min_elem, expected):
     [
         (dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [2048, 64, 1]),
         (dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [64, 1, 4]),
+        # A tile grid holds one slot per tile, not one per element it steps over
+        (dict(i="0:128:16", j="0:32"), [64], None, [8, 32, 64], [2048, 64, 1]),
     ],
 )
 def test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(

@@ -111,11 +111,19 @@ def lift_prefix(levels: list[Scope], state: SDFGState, src: nodes.Node) -> Prefi
             entry.map.params, entry.map.range, entry.map.range.min_element(), strict=True
         ):
             if inside:
-                index = symbolic.symbol(param) - origin
+                index = slot(symbolic.symbol(param) - origin, step)
                 prefix.append((index, index, sympy.S.One))
-            else:
+            elif step == 1:
                 prefix.append((start - origin, end - origin, step))
+            else:
+                prefix.append((slot(start - origin, step), slot(end - origin, step), sympy.S.One))
     return prefix
+
+
+def slot(offset: symbolic.SymbolicType, step: symbolic.SymbolicType) -> symbolic.SymbolicType:
+    """The slot of the iteration ``offset`` past a level's first one: one slot per iteration, also for a strided level
+    (a tile grid), whose slots would otherwise leave ``step - 1`` unused between two."""
+    return offset if step == 1 else symbolic.int_floor(offset, step)
 
 
 def assigns_symbol(sdfg: SDFG, name: str) -> bool:
@@ -562,8 +570,10 @@ class MoveArrayOutOfKernel(ppl.Pass):
         new_offsets = list(array_desc.offset)
         for level in levels:
             extended_size = [
-                symbolic.tile_extent(mx, mn)
-                for mx, mn in zip(level.map.range.max_element(), level.map.range.min_element(), strict=True)
+                symbolic.tile_extent(mx, mn) if step == 1 else symbolic.int_ceil(symbolic.tile_extent(mx, mn), step)
+                for mx, mn, (begin, end, step) in zip(
+                    level.map.range.max_element(), level.map.range.min_element(), level.map.range, strict=True
+                )
             ] + extended_size
             new_offsets = [0 for _ in level.map.params] + new_offsets
 
