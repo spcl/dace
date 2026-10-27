@@ -93,7 +93,7 @@ not apply: a tile runs its whole carry on one thread. A loop this pass refuses i
 ``HoistParallelRegion``, which keeps the barrier per trip.
 """
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from functools import lru_cache
 from typing import Any, NamedTuple
 
@@ -262,6 +262,26 @@ def resolved(name: str, indices: list[Any], bindings: dict[str, ViewBinding], sd
     return binding.data, composed
 
 
+def copy_edges(state: SDFGState, nodes_of: Iterable[nodes.Node]) -> list:
+    """The access-node-to-access-node copies out of ``nodes_of``; a view's defining edge moves no data."""
+    return [
+        e
+        for node in nodes_of
+        if isinstance(node, nodes.AccessNode)
+        for e in state.out_edges(node)
+        if isinstance(e.dst, nodes.AccessNode)
+        and not e.data.is_empty()
+        and not any(isinstance(n.desc(state.sdfg), data.View) for n in (e.src, e.dst))
+    ]
+
+
+def copy_sides(state: SDFGState, edge) -> tuple[tuple[str, list[Any]], tuple[str, list[Any]]]:
+    """A copy's source and destination as ``(name, index expressions)``, each side read off the edge."""
+    source = (edge.src.data, index_expressions(edge.data.get_src_subset(edge, state)))
+    target = (edge.dst.data, index_expressions(edge.data.get_dst_subset(edge, state)))
+    return source, target
+
+
 def collect_accesses(
     state: SDFGState,
     scope_node: nodes.MapEntry,
@@ -291,7 +311,19 @@ def collect_accesses(
     if bindings is None:
         return False
     allowed = allowed | {bindings[name].data for name in allowed if name in bindings}
-    for node in state.scope_subgraph(scope_node, include_entry=False, include_exit=False).nodes():
+    body = state.scope_subgraph(scope_node, include_entry=False, include_exit=False).nodes()
+    # A copy inside the scope reads its source and writes its destination, each at its own side of the edge.
+    for edge in copy_edges(state, body):
+        (src, src_indices), (dst, dst_indices) = copy_sides(state, edge)
+        name, indices = resolved(src, src_indices, bindings, state.sdfg)
+        if name in allowed:
+            reads.setdefault(name, []).append(indices)
+        name, indices = resolved(dst, dst_indices, bindings, state.sdfg)
+        if name in allowed:
+            writes.setdefault(name, []).append(indices)
+            if edge.data.wcr is not None:
+                reads.setdefault(name, []).append(indices)
+    for node in body:
         if isinstance(node, nodes.Tasklet):
             for edge in state.in_edges(node):
                 if edge.data.is_empty() or edge.data.subset is None:
@@ -653,8 +685,8 @@ def record_control_flow_reads(
 
 def inner_nests(state: SDFGState, entry: nodes.MapEntry) -> list[InnerNest] | None:
     """The map nests of the nested SDFGs in ``entry``'s scope, or ``None`` if one of them holds something a tile
-    cannot narrow: a statement outside every map that writes data from outside the nest, a copy or library node
-    at the top level, or a nested SDFG of its own."""
+    cannot narrow: a statement (tasklet or copy) outside every map that writes data from outside the nest, a
+    library node at the top level, or a nested SDFG of its own."""
     nests: list[InnerNest] = []
     for node in state.scope_subgraph(entry).nodes():
         if not isinstance(node, nodes.NestedSDFG):
@@ -671,10 +703,7 @@ def inner_nests(state: SDFGState, entry: nodes.MapEntry) -> list[InnerNest] | No
                     return None
                 if isinstance(inner, nodes.MapEntry):
                     nests.append(InnerNest(node, inner_state, inner, nest_axes(map_nest(inner, children))))
-            if any(
-                isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode) and not e.data.is_empty()
-                for e in inner_state.edges()
-            ):
+            if any(e.dst.data in outside for e in copy_edges(inner_state, children[None])):
                 return None
     return nests
 
@@ -847,7 +876,7 @@ def outer_names(state: SDFGState, node: nodes.NestedSDFG) -> dict[str, str]:
 
 def replicated_reads(state: SDFGState, node: nodes.NestedSDFG, reads: dict[str, list[list[Any]]]) -> bool:
     """Add what every tile runs of ``node`` outside its maps to ``reads``, in the enclosing names and symbols:
-    the tasklets beside the maps (:func:`inner_nests` admits them only while they write nothing from
+    the tasklets and copies beside the maps (:func:`inner_nests` admits them only while they write nothing from
     outside) and its control flow (:func:`control_flow_reads`). What they read must be no other tile's write.
 
     :returns: ``False`` if a view of ``node`` cannot be resolved (:func:`view_bindings`).
@@ -868,6 +897,11 @@ def replicated_reads(state: SDFGState, node: nodes.NestedSDFG, reads: dict[str, 
                 name, indices = resolved(edge.data.data, index_expressions(edge.data.subset), bindings, node.sdfg)
                 if name in outer_name:
                     reads.setdefault(outer_name[name], []).append(rewritten(indices, node.symbol_mapping))
+        for edge in copy_edges(inner_state, [n for n in inner_state.nodes() if scope[n] is None]):
+            (src, src_indices), _ = copy_sides(inner_state, edge)
+            name, indices = resolved(src, src_indices, bindings, node.sdfg)
+            if name in outer_name:
+                reads.setdefault(outer_name[name], []).append(rewritten(indices, node.symbol_mapping))
     return True
 
 
@@ -936,7 +970,7 @@ def replicable(tasklet: nodes.Tasklet, state: SDFGState, private: set[str]) -> b
 def collect_replicated_reads(
     state: SDFGState, top: list[nodes.Node], private: set[str], reads: dict[str, list[list[Any]]]
 ) -> bool:
-    """Add the reads of the tasklets among ``top`` -- the statements beside the maps -- to ``reads``.
+    """Add the reads of the tasklets and copies among ``top`` -- the statements beside the maps -- to ``reads``.
 
     Such a statement runs in EVERY tile, with no barrier to order it. That is the same as running it once
     only if what it writes is each tile's own (:func:`replicable`) and what it reads no other tile writes
@@ -948,6 +982,13 @@ def collect_replicated_reads(
     bindings = view_bindings(state)
     if bindings is None:
         return False
+    # A copy beside the maps is such a statement too, replicable on the same terms as a tasklet.
+    for edge in copy_edges(state, top):
+        if not (edge.dst.data in private and edge.dst.desc(state.sdfg).total_size == 1):
+            return False
+        (src, src_indices), _ = copy_sides(state, edge)
+        name, indices = resolved(src, src_indices, bindings, state.sdfg)
+        reads.setdefault(name, []).append(indices)
     for node in top:
         if not isinstance(node, nodes.Tasklet):
             continue

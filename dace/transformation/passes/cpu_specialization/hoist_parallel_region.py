@@ -55,6 +55,7 @@ refused where it cannot:
   iteration -- run once, by one thread, with a barrier after);
 - a ``Sequential`` map with no parallel map inside it -- one ``cpu_specialize`` sequentialized for
   its size -- becomes a worksharing map: inside the team it costs one barrier, not a fork;
+- an edge between two ACCESS NODES copying one element is an assignment statement, run as one (a tasklet);
 - an edge between two ACCESS NODES is a bulk copy, the statement that does not look like one:
   ``jacobi_2d``'s ``A[1:N-1, 1:N-1] = B[1:N-1, 1:N-1]`` is two access nodes and a memlet, and
   replicated it has every thread write the whole array with no barrier before the next trip reads
@@ -171,6 +172,27 @@ def bulk_copies(state: SDFGState) -> list[MultiConnectorEdge[Memlet]]:
         and scopes[edge.src] is None
         and not binds_a_view(edge, state)
     ]
+
+
+def element_copy(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> bool:
+    """Whether the copy ``edge`` moves one element: a statement like an assignment tasklet, run as one."""
+    return (
+        all(
+            subset is not None and subset.num_elements_exact() == 1
+            for subset in (edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state))
+        )
+        and edge.data.wcr is None
+    )
+
+
+def copy_as_assignment(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> nodes.Tasklet:
+    """Run the element copy ``edge`` as an assignment tasklet, which the team treats like any statement."""
+    source, target = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
+    tasklet = state.add_tasklet(f"copy_{edge.src.data}_{edge.dst.data}", {"__inp"}, {"__out"}, "__out = __inp")
+    state.add_edge(edge.src, edge.src_conn, tasklet, "__inp", Memlet(data=edge.src.data, subset=copy.deepcopy(source)))
+    state.add_edge(tasklet, "__out", edge.dst, edge.dst_conn, Memlet(data=edge.dst.data, subset=copy.deepcopy(target)))
+    state.remove_edge(edge)
+    return tasklet
 
 
 def shares_out_as_a_map(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> bool:
@@ -389,7 +411,7 @@ def replication_free(loop: LoopRegion, resolver: SymbolResolver, memo: dict[node
             return False
         if not isinstance(block, SDFGState):
             continue
-        if not all(shares_out_as_a_map(edge, block) for edge in bulk_copies(block)):
+        if not all(element_copy(edge, block) or shares_out_as_a_map(edge, block) for edge in bulk_copies(block)):
             return False
         for node in top_level_nodes(block):
             if isinstance(node, (nodes.AccessNode, nodes.Tasklet)) or elementwise(node):
@@ -550,6 +572,9 @@ def share_out_bulk_statements(sdfg: SDFG, loop: LoopRegion) -> None:
             continue
         forward_copies_into_exits(block, carried)
         for edge in bulk_copies(block):
+            if element_copy(edge, block):
+                copy_as_assignment(edge, block)
+                continue
             entry, _ = memlet_utils.memlet_to_map(edge, block, block.sdfg)
             entry.map.schedule = WORKSHARED
         for node in [n for n in top_level_nodes(block) if elementwise(n)]:
