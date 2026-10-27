@@ -294,7 +294,7 @@ def with_proof_locals(facts: dace.symbolic.Facts, expr: SymbolicType) -> dace.sy
         for s in local
     ]
     return dace.symbolic.Facts(
-        (*facts.relations, *relations),
+        (*facts.known(), *relations),
         facts.integers | {s.name for s in local},
         facts.small,
         facts.parameters,

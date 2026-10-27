@@ -3198,14 +3198,17 @@ class SymbolResolver:
                 declared = scope_facts(sdfg.symbol_repo.scopes[owner])
                 relations.extend(declared.relations)
                 integers |= declared.integers
-        try:
-            return symbolic.Facts(
-                tuple(relations), frozenset(integers), frozenset(small), frozenset(parameters), own.assumed
-            )
-        except symbolic.InconsistentAssumptionsError:
-            # A range the facts prove empty: its body never runs, so it is sound to know less there
-            kept = tuple(relation for relation in relations if relation not in from_ranges)
-            return symbolic.Facts(kept, frozenset(integers), frozenset(small), frozenset(parameters), own.assumed)
+        # Solved by the first proof that needs them: most scopes are never asked. A range the facts prove empty has a
+        # body that never runs, so it is sound to know less there: without its bounds.
+        return symbolic.Facts(
+            tuple(relations),
+            frozenset(integers),
+            frozenset(small),
+            frozenset(parameters),
+            own.assumed,
+            check=False,
+            fallback=tuple(relation for relation in relations if relation not in from_ranges),
+        )
 
     def outer_facts(self, sdfg: "SDFG") -> tuple[list[symbolic.Relation], set[str], set[str], frozenset[str]]:
         """The facts at the node nesting ``sdfg``, over renamed outer symbols, with each mapped symbol equal to its
@@ -3227,11 +3230,12 @@ class SymbolResolver:
         unreadable = frozenset(
             name for name, value in mapped.items() if not {str(f) for f in value.free_symbols} <= outer.parameters
         )
-        names = {name for relation in outer.relations for name in symbolic.relation_names(relation)}
+        known = outer.known()
+        names = {name for relation in known for name in symbolic.relation_names(relation)}
         names |= {str(free) for value in mapped.values() for free in value.free_symbols}
         # ':' cannot appear in a DaCe name, so a renamed outer symbol never meets an inner one
         renamed = {name: sympy.Symbol(f"outer:{name}") for name in names}
-        relations = [relation.replaced(renamed) for relation in outer.relations]
+        relations = [relation.replaced(renamed) for relation in known]
         relations += [
             symbolic.Relation(symbolic.RelationKind.EQ, symbolic.symbol(name), symbolic.replace_symbols(value, renamed))
             for name, value in mapped.items()
