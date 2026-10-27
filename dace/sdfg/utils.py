@@ -1796,6 +1796,8 @@ def fuse_states(
 
     for sd in sdfg.all_sdfgs_recursive():
         for cfg in sd.all_control_flow_regions():
+            # Fusing states changes neither the regions nor the symbols the facts of a state are derived from
+            region_facts: dict = {}
             while True:
                 edges = list(cfg.nx.edges)
                 applied = 0
@@ -1813,6 +1815,7 @@ def fuse_states(
                         sf = StateFusionExtended()
                         sf.aggressive_merges = aggressive_merges
                         sf.order_array_seeds = order_array_seeds
+                        sf.region_facts = region_facts
                         sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
                         if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
                             sf.apply(cfg, sd)
