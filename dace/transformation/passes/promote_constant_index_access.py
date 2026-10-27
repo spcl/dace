@@ -99,6 +99,31 @@ from dace.transformation.passes.scalar_fission import AccessIndex, MustDefinitio
 _PRIVATIZABLE_LIFETIMES = (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.SDFG)
 
 
+class _Reach:
+    """The states reachable from each state of a graph given by its adjacency, each derived once on first lookup."""
+
+    __slots__ = ("adj", "known")
+
+    def __init__(self, adj: dict[SDFGState, list[SDFGState]]) -> None:
+        self.adj = adj
+        self.known: dict[SDFGState, set[SDFGState]] = {}
+
+    def get(self, state: SDFGState, default=()) -> set[SDFGState]:
+        if state not in self.adj:
+            return default
+        seen = self.known.get(state)
+        if seen is None:
+            seen = set(self.adj[state])
+            stack = list(seen)
+            while stack:
+                for nxt in self.adj[stack.pop()]:
+                    if nxt not in seen:
+                        seen.add(nxt)
+                        stack.append(nxt)
+            self.known[state] = seen
+        return seen
+
+
 @properties.make_properties
 class PromoteConstantIndexAccess(ppl.Pass):
     """Privatize a constant-index slot of a shared array inside a loop to unblock LoopToMap.
@@ -434,9 +459,6 @@ class PromoteConstantIndexAccess(ppl.Pass):
                     writes.append((state, n))
         writes_set = set(writes)
 
-        # Successor map for states reachable inside the loop body.
-        succ_states = self._loop_state_successors(loop, body_states)
-
         # Iedge-derived seed: any iedge in the body whose RHS/condition
         # references ``name`` taints the iedge's LHS symbols. Subsequent
         # state code (tasklet bodies, memlet index expressions) that uses
@@ -468,6 +490,9 @@ class PromoteConstantIndexAccess(ppl.Pass):
             return True
         if not reads or not writes_set:
             return False
+
+        # States reachable inside the loop body, derived per state the taint actually leaves.
+        succ_states = self._loop_state_successors(loop, body_states)
 
         # Multi-state taint BFS from each read AccessNode of name[slot].
         # A reached write of name[slot] (other than the seed) signals RMW.
@@ -501,27 +526,15 @@ class PromoteConstantIndexAccess(ppl.Pass):
         return False
 
     @staticmethod
-    def _loop_state_successors(loop: LoopRegion, body_states: list[SDFGState]) -> dict[SDFGState, set[SDFGState]]:
-        """For each state in ``body_states``, the transitive set of body
-        states reachable via interstate edges inside ``loop``.
-        """
+    def _loop_state_successors(loop: LoopRegion, body_states: list[SDFGState]) -> "_Reach":
+        """For each state in ``body_states``, the transitive set of body states reachable via interstate edges inside
+        ``loop``, derived on first lookup."""
         body_set = set(body_states)
-        adj: dict[SDFGState, set[SDFGState]] = {s: set() for s in body_states}
+        adj: dict[SDFGState, list[SDFGState]] = {s: [] for s in body_states}
         for edge in loop.all_interstate_edges():
             if edge.src in body_set and edge.dst in body_set:
-                adj[edge.src].add(edge.dst)
-        # Transitive closure (small body sizes; Floyd-Warshall-style is fine).
-        for s in body_states:
-            stack = list(adj[s])
-            seen: set[SDFGState] = set(stack)
-            while stack:
-                cur = stack.pop()
-                for nxt in adj.get(cur, ()):
-                    if nxt not in seen:
-                        seen.add(nxt)
-                        stack.append(nxt)
-            adj[s] = seen
-        return adj
+                adj[edge.src].append(edge.dst)
+        return _Reach(adj)
 
     @staticmethod
     def _expr_references_name(expr_str: Any, name: str) -> bool:
