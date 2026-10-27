@@ -286,6 +286,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     _FUNCTIONS = ["min", "max"]
     _EXPR_MAP = {"-": ("+", "-({expr})"), "/": ("*", "((decltype({expr}))1)/({expr})")}
     _PYOP_MAP = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.BitXor: "^", ast.Mod: "%", ast.Div: "/"}
+    _NONCOMMUTATIVE = frozenset({"-", "/", "%"})
     _PYBOOLOP_MAP = {ast.Or: "or", ast.And: "and"}
     # Order-independent combines for copy-wrapped RMW. Subtraction only with acc on left
     # (checked at match): ``a - b1 - b2 == a - (b1 + b2)`` is order-independent.
@@ -315,11 +316,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             op, operands = rhs.func.id, tuple(rhs.args)
         else:
             return []
-        return [
-            (op, mine.id, other)
-            for mine, other in (operands, operands[::-1])
-            if isinstance(mine, ast.Name) and mine.id in inconns
-        ]
+        # ``x - acc`` is no update of ``acc``: a non-commutative operator takes the accumulator on its left only
+        orders = (operands,) if op in AugAssignToWCR._NONCOMMUTATIVE else (operands, operands[::-1])
+        return [(op, mine.id, other) for mine, other in orders if isinstance(mine, ast.Name) and mine.id in inconns]
 
     @staticmethod
     def python_update(
@@ -334,6 +333,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         for op, inconn, other in AugAssignToWCR.python_updates(tasklet, list(by_conn)):
             # The accumulator reads the element written: ``A[i,j] = A[i,k] * A[k,j]`` is no update of ``A[i,j]``
             if reads_written_element(by_conn[inconn], outedge):
+                if op == "-":
+                    # ``acc - x`` is ``acc + (-x)`` exactly: a sum, which atomics and privatization know
+                    return "+", by_conn[inconn], ast.UnaryOp(op=ast.USub(), operand=other)
                 return op, by_conn[inconn], other
         return None
 
@@ -596,6 +598,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 and right.id in in_conns
                 and right.id != acc_conn
             ):
+                if op == "-":
+                    # ``acc - x`` is ``acc + (-x)`` exactly: a sum, which atomics and privatization know
+                    return "+", ast.UnaryOp(op=ast.USub(), operand=right), True
                 return op, right, True
             if (
                 isinstance(right, ast.Name)

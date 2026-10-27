@@ -792,6 +792,25 @@ def test_aug_assign_fission_moves_the_whole_map_of_a_multi_tasklet_update():
     assert np.allclose(A, 3.0 * B)
 
 
+@pytest.mark.parametrize("code,expected", [("o = x - acc", lambda b, c: c - b), ("o = acc - x", lambda b, c: b - c)])
+def test_aug_assign_python_subtraction_keeps_its_operand_order(code, expected):
+    """``b = c - b`` is no update of ``b``; ``b = b - c`` is, and becomes a sum of ``-c``."""
+    sdfg = dace.SDFG("subtraction_order")
+    sdfg.add_array("b", [1], dace.float64)
+    sdfg.add_array("c", [1], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("t", {"x", "acc"}, {"o"}, code)
+    state.add_edge(state.add_read("c"), None, tasklet, "x", dace.Memlet("c[0]"))
+    state.add_edge(state.add_read("b"), None, tasklet, "acc", dace.Memlet("b[0]"))
+    state.add_edge(tasklet, "o", state.add_write("b"), None, dace.Memlet("b[0]"))
+    sdfg.apply_transformations_repeated(AugAssignToWCR)
+    assert all("a - b" not in (e.data.wcr or "") for e in state.edges())
+    b, c = np.array([3.0]), np.array([10.0])
+    reference = expected(b.copy(), c)
+    sdfg(b=b, c=c)
+    assert np.allclose(b, reference)
+
+
 if __name__ == "__main__":
     test_aug_assign_python_logical_or()
     test_aug_assign_tasklet_lhs()
@@ -826,3 +845,4 @@ if __name__ == "__main__":
     test_aug_assign_python_min_max("min(k, a)", np.minimum)
     test_aug_assign_python_reads_another_element()
     test_aug_assign_python_reads_another_array()
+    test_aug_assign_python_subtraction_keeps_its_operand_order("o = x - acc", lambda b, c: c - b)
