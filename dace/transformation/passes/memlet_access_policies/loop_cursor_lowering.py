@@ -352,7 +352,11 @@ def lower_loop_cursors(
             policy: LoopCursor = memlet.access_policy
             desc = state.sdfg.arrays.get(memlet.data)
             dec = None
-            if flat_addressable_array(desc) and (path.is_read or flat_length(desc, memlet.subset) is not None):
+            if (
+                flat_addressable_array(desc)
+                and isinstance(memlet.subset, Range)
+                and (path.is_read or flat_length(desc, memlet.subset) is not None)
+            ):
                 dec = decompose_on_path(path, edge, level, loop, inner_cache)
             if dec is None or sp.expand(dec.step - policy.step) != 0:
                 warnings.warn(

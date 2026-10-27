@@ -487,7 +487,17 @@ reference is set at the entry of the memlet's own SDFG. For example, the loop
   for i in range(N):
       B[i] = A[i, 3] + 2 * A[i, 7]
 
-is generated as (schematically):
+(with ``A`` of shape ``[N, 16]``) is generated as follows (schematically). With the default copy-on-access policy,
+every access evaluates its full offset expression:
+
+.. code-block:: c
+
+  for (i = 0; i < N; i = i + 1) {
+      B[i] = A[(16 * i) + 3] + 2 * A[(16 * i) + 7];
+  }
+
+With loop-cursor policies, the offsets become two cursors that advance by one addition per iteration, and the
+second access to ``A`` shares the first one's cursor with an immediate of 4:
 
 .. code-block:: c
 

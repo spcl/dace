@@ -41,6 +41,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.memlet_access_policies import LoopCursor
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import LoopRegion
+from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
@@ -165,7 +166,7 @@ def analyze_edge(
     :return: The level of the loop's SDFG on the path and the decomposition (in that SDFG's symbols), or ``None``.
     """
     desc = path.leaf.sdfg.arrays.get(edge.data.data)
-    if not flat_addressable_array(desc):
+    if not flat_addressable_array(desc) or not isinstance(edge.data.subset, Range):
         return None
     if not path.is_read and flat_length(desc, edge.data.subset) is None:
         return None  # non-contiguous writes are not lowered (window references are read-only)

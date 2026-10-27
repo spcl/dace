@@ -15,10 +15,6 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
 from dace.subsets import Range
 
-_SCOPE_NODES = (nodes.EntryNode, nodes.ExitNode)
-_GPU_KERNEL_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)
-_LANE_SCHEDULES = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
-
 
 # ---------------------------------------------------------------------------------------------------------------
 # Symbolic helpers
@@ -46,11 +42,10 @@ def base_offset(desc: dt.Data, memlet: Memlet) -> sp.Basic:
     return symbolic.pystr_to_symbolic(subset.at([0] * len(desc.strides), desc.strides))
 
 
-def flat_length(desc: dt.Data, subset) -> symbolic.SymbolicType | None:
+def flat_length(desc: dt.Data, subset: Range) -> symbolic.SymbolicType | None:
     """Number of elements of ``subset`` if it is a contiguous run in memory (at most one dimension of size > 1,
-    with unit step and unit stride), otherwise ``None``."""
-    if not isinstance(subset, Range):
-        return None
+    with unit step and unit stride), otherwise ``None``. Callers only pass :class:`~dace.subsets.Range` subsets
+    (memlets with other subsets get no loop cursor)."""
     sizes = subset.size()
     wide = [d for d, s in enumerate(sizes) if sp.sympify(s) != 1]
     if not wide:
@@ -85,7 +80,8 @@ def leaf_edges(state: SDFGState) -> Iterator[MultiConnectorEdge[Memlet]]:
             continue
         if isinstance(e.src, nodes.NestedSDFG) or isinstance(e.dst, nodes.NestedSDFG):
             continue
-        src_scope, dst_scope = isinstance(e.src, _SCOPE_NODES), isinstance(e.dst, _SCOPE_NODES)
+        src_scope = isinstance(e.src, (nodes.EntryNode, nodes.ExitNode))
+        dst_scope = isinstance(e.dst, (nodes.EntryNode, nodes.ExitNode))
         if src_scope and dst_scope:
             continue  # between two scope nodes: never innermost
         if not src_scope and not dst_scope:
@@ -99,7 +95,7 @@ def leaf_edges(state: SDFGState) -> Iterator[MultiConnectorEdge[Memlet]]:
 
 def scope_node(edge: MultiConnectorEdge[Memlet]) -> nodes.Node:
     """A node whose scope is the scope the leaf memlet is accessed in (used to find lane symbols)."""
-    return edge.dst if not isinstance(edge.dst, _SCOPE_NODES) else edge.src
+    return edge.dst if not isinstance(edge.dst, (nodes.EntryNode, nodes.ExitNode)) else edge.src
 
 
 def path_root(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> tuple[nodes.AccessNode | None, bool]:
@@ -152,15 +148,18 @@ def inner_symbols(loop: LoopRegion) -> set[str]:
 
 
 def lane_symbols(state: SDFGState, node: nodes.Node) -> set[str]:
-    """Parameters of enclosing maps that code generation assigns to threads/lanes (GPU_ThreadBlock/GPU_Warp
-    maps, or a map directly nested in a GPU kernel map -- the ``[0:W, 0:64]`` wave/lane convention)."""
+    """Parameters of enclosing maps that code generation assigns to threads/lanes (maps with a schedule in
+    :data:`dace.dtypes.GPU_THREAD_SCHEDULES`, or a map directly nested in a GPU kernel map -- the ``[0:W, 0:64]``
+    wave/lane convention)."""
     sdict = state.scope_dict()
     result: set[str] = set()
     cur = sdict.get(node)
     while cur is not None:
         parent = sdict.get(cur)
         sched = cur.map.schedule
-        if sched in _LANE_SCHEDULES or (parent is not None and parent.map.schedule in _GPU_KERNEL_SCHEDULES):
+        if sched in dtypes.GPU_THREAD_SCHEDULES or (
+            parent is not None and parent.map.schedule in dtypes.GPU_KERNEL_SCHEDULES
+        ):
             result.update(cur.map.params)
         cur = parent
     return result

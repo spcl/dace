@@ -3,12 +3,13 @@
 Functions for generating C++ code for control flow in SDFGs using control flow regions.
 """
 
+import ast
 import re
 import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from dace import dtypes
+from dace import dtypes, properties
 from dace.codegen.common import unparse_interstate_edge
 from dace.codegen.prettycode import CodeIOStream
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -93,7 +94,7 @@ def _generate_interstate_edge_code(
     return expr
 
 
-def _statements(block) -> list:
+def _statements(block: properties.CodeBlock) -> list[ast.AST | str]:
     """The statements of a :class:`~dace.properties.CodeBlock` as a list (a loop's init or update block may hold
     several, e.g. the loop variable plus loop-carried symbols such as address cursors)."""
     code = block.code
