@@ -28,6 +28,16 @@ wheels = [
 ]
 
 [[package]]
+name = "alloy"
+version = "0.0.1"
+source = { git = "https://github.com/ThrudPrimrose/alloy.git?rev=8dc19158cf1c1489379eefc75c47e7957aa60713#8dc19158cf1c1489379eefc75c47e7957aa60713" }
+dependencies = [
+    { name = "dace" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "pydantic" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -954,6 +964,9 @@ agent-openai = [
     { name = "openai" },
     { name = "pydantic" },
 ]
+alloy = [
+    { name = "alloy", marker = "python_full_version >= '3.12'" },
+]
 fastgraph = [
     { name = "rustworkx" },
 ]
@@ -1055,6 +1068,7 @@ testing = [
 
 [package.metadata]
 requires-dist = [
+    { name = "alloy", marker = "python_full_version >= '3.12' and extra == 'alloy'", git = "https://github.com/ThrudPrimrose/alloy.git?rev=8dc19158cf1c1489379eefc75c47e7957aa60713" },
     { name = "anthropic", marker = "extra == 'agent'", specifier = ">=1.0" },
     { name = "anthropic", marker = "extra == 'agent-anthropic'", specifier = ">=1.0" },
     { name = "astunparse" },
@@ -1095,7 +1109,7 @@ requires-dist = [
     { name = "typing-extensions" },
     { name = "z3-solver" },
 ]
-provides-extras = ["ml", "mpi", "gpu", "fastgraph", "agent-anthropic", "agent-openai", "agent"]
+provides-extras = ["ml", "mpi", "gpu", "fastgraph", "agent-anthropic", "agent-openai", "agent", "alloy"]
 
 [package.metadata.requires-dev]
 dev = [

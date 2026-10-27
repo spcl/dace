@@ -101,7 +101,7 @@ agent-anthropic = ["anthropic>=1.0", "pydantic>=2"]
 agent-openai = ["openai>=1.66", "pydantic>=2"]
 agent = ["anthropic>=1.0", "openai>=1.66", "pydantic>=2"]
 # Alloy as the build (config compiler.build_plugin = alloy-speculative or alloy-profile); Alloy depends on a bare dace.
-alloy = ["alloy @ git+https://github.com/ThrudPrimrose/alloy.git@8dc19158cf1c1489379eefc75c47e7957aa60713"]
+alloy = ["alloy @ git+https://github.com/ThrudPrimrose/alloy.git@8dc19158cf1c1489379eefc75c47e7957aa60713 ; python_version >= '3.12'"]
 
 [project.scripts]
 dacelab = "dace.cli.dacelab:main"
