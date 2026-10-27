@@ -672,7 +672,34 @@ def test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds
     assert np.allclose(C, expected)
 
 
+def test_an_interleaving_contraction_of_device_tensors_keeps_its_product_on_the_device():
+    """cp2k_trs4 on GPU: the batched GEMM's product that the transpose reads lives where the operands do."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    gpu = dace.dtypes.StorageType.GPU_Global
+    sdfg = dace.SDFG("device_interleaved_einsum")
+    sdfg.add_array("A", (6, 5, 4), dace.float64, storage=gpu)
+    sdfg.add_array("B", (6, 3, 4, 5), dace.float64, storage=gpu)
+    sdfg.add_array("C", (6, 3, 5, 5), dace.float64, storage=gpu)
+    state = sdfg.add_state()
+    enode = Einsum("einsum")
+    enode.einsum_str = "ijk,ilkm->iljm"
+    enode.beta = 1.0
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
+    state.add_node(enode)
+    state.add_edge(state.add_read("A"), None, enode, "a", dace.Memlet("A"))
+    state.add_edge(state.add_read("B"), None, enode, "b", dace.Memlet("B"))
+    state.add_edge(enode, "out", state.add_write("C"), None, dace.Memlet("C"))
+    enode.expand(sdfg, state)
+
+    tensors = {name: desc.storage for _, name, desc in sdfg.arrays_recursive() if len(desc.shape) == 4}
+    assert "TensorTranspose" in contraction_nodes(sdfg)
+    assert set(tensors.values()) == {gpu}, tensors
+
+
 if __name__ == "__main__":
+    test_an_interleaving_contraction_of_device_tensors_keeps_its_product_on_the_device()
     test_general_einsum()
     test_matmul()
     test_batch_matmul()

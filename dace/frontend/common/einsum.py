@@ -426,10 +426,13 @@ def _create_einsum_internal(
     if output is None:
         # numpy's result type of every operand: a float64 x complex128 contraction is complex128.
         dtype = dtype or dtypes.result_type_of(*(sdfg.arrays[array].dtype for array in arrays))
+        # The result lives where its operands do: an expansion after offloading must not leave it ``Default``
+        storages = {sdfg.arrays[array].storage for array in arrays}
+        storage = storages.pop() if len(storages) == 1 else dtypes.StorageType.Default
         if output_name is None:
-            output, odesc = sdfg.add_temp_transient(output_shape, dtype)
+            output, odesc = sdfg.add_temp_transient(output_shape, dtype, storage=storage)
         else:
-            output, odesc = sdfg.add_transient(output_name, output_shape, dtype, find_new_name=True)
+            output, odesc = sdfg.add_transient(output_name, output_shape, dtype, storage=storage, find_new_name=True)
         to_init = True
     else:
         odesc = sdfg.arrays[output]
