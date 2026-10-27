@@ -110,7 +110,9 @@ class ExpandMemcpyCUDAStaged(ExpandTransformation):
                 {"_in": dace.Memlet(f"{src}[{index}]")},
                 "_out = _in",
                 {"_out": dace.Memlet(f"{dst}[{index}]")},
-                schedule=dtypes.ScheduleType.GPU_Device if on_device else dtypes.ScheduleType.Default,
+                # Explicit on the host too: a Default map nested under a GPU schedule (the cast-on-copy staging)
+                # would inherit it and run as a kernel over host buffers
+                schedule=dtypes.ScheduleType.GPU_Device if on_device else dtypes.ScheduleType.CPU_Multicore,
                 external_edges=True,
             )
 
