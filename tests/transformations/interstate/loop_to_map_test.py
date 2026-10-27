@@ -1002,7 +1002,7 @@ def test_dynamic_write_slab_separated_by_iteration_var():
     # The aggregated MapExit memlet is dynamic (conditional write), with
     # dst_subset ``[0:NPROMA, level]``.
     found_dyn = False
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for n in state.nodes():
             if isinstance(n, nodes.MapExit):
                 for e in state.out_edges(n):
@@ -1176,7 +1176,7 @@ def test_mapped_symbol_the_child_does_not_declare():
     for node in bodies:
         undeclared = node.symbol_mapping.keys() - node.sdfg.symbols.keys() - node.in_connectors.keys()
         assert not undeclared, f"{node.sdfg.name}: mapped without a declared type: {sorted(undeclared)}"
-    assert bodies[0].sdfg.symbols["k"] == dace.int32, "the carried-in symbol kept its type"
+    assert "k" not in bodies[0].symbol_mapping, "the loop body does not use k, so k is not forwarded"
 
     sdfg.validate()
     sdfg.compile()
@@ -1268,7 +1268,102 @@ def test_transposed_read_and_write_alias_only_in_one_iteration():
     assert np.allclose(aa, ref)
 
 
+def test_a_symbol_assigned_later_stays_out_of_the_mapping():
+    """The nested SDFG a lift makes maps only the symbols it reads: a mapping entry is a read, and ``later`` is
+    assigned only after the loop, so mapping it would make it a free symbol of the whole SDFG."""
+    sdfg = dace.SDFG("l2m_later_symbol")
+    sdfg.add_array("A", [10, 10], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_symbol("later", dace.int64)
+    outer = LoopRegion("outer", "j < 10", "j", "j = 0", "j = j + 1")
+    sdfg.add_node(outer, is_start_block=True)
+    fill = LoopRegion("fill", "i < 10", "i", "i = 0", "i = i + 1")
+    outer.add_node(fill, is_start_block=True)
+    body = fill.add_state("body", is_start_block=True)
+    zero = body.add_tasklet("zero", {}, {"o"}, "o = 0.0")
+    body.add_edge(zero, "o", body.add_write("A"), None, dace.Memlet("A[i, j]"))
+    use = sdfg.add_state("use")
+    sdfg.add_edge(outer, use, dace.InterstateEdge(assignments={"later": "3"}))
+    read = use.add_tasklet("read", {}, {"o"}, "o = later")
+    use.add_edge(read, "o", use.add_write("B"), None, dace.Memlet("B[0]"))
+    sdfg.validate()
+    before = {str(s) for s in sdfg.free_symbols}
+
+    LoopToMap.apply_to(sdfg, loop=fill)
+
+    assert not any(block is fill for block, _ in sdfg.all_nodes_recursive())
+    assert {str(s) for s in sdfg.free_symbols} <= before
+    sdfg.validate()
+
+
+def test_transient_read_only_on_interstate_edges_of_two_loops():
+    """``k = C[i % 2]`` on an interstate edge is the only read of the constant ``C`` in each of two loops, as
+    graupel's unrolled species index ``iqx = Cqp_ind[...]``. Neither loop owns ``C``: mapping the first must not
+    move it into its body, or the second loop reads a container its SDFG no longer has."""
+    sdfg = dace.SDFG("transient_read_on_edges_of_two_loops")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_array("C", [2], dace.int64, transient=True)
+    sdfg.add_constant("C", np.array([3, 5], dtype=np.int64), sdfg.arrays["C"])
+    sdfg.add_array("A", ["N"], dace.int64)
+    sdfg.add_array("B", ["N"], dace.int64)
+    previous = sdfg.add_state("init", is_start_block=True)
+    for out in ("A", "B"):
+        loop = LoopRegion(f"loop_{out}", "i < N", "i", "i = 0", "i = i + 1")
+        sdfg.add_node(loop)
+        sdfg.add_edge(previous, loop, dace.InterstateEdge())
+        first = loop.add_state(f"first_{out}", is_start_block=True)
+        use = loop.add_state_after(first, f"use_{out}", assignments={"k": "C[i % 2]"})
+        write = use.add_tasklet(f"write_{out}", {}, {"o"}, "o = k")
+        use.add_edge(write, "o", use.add_write(out), None, dace.Memlet(f"{out}[i]"))
+        previous = loop
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
+    assert "C" in sdfg.arrays
+
+    A, B = np.zeros(16, dtype=np.int64), np.zeros(16, dtype=np.int64)
+    sdfg(A=A, B=B, N=16)
+    expected = np.where(np.arange(16) % 2 == 0, 3, 5)
+    assert np.array_equal(A, expected) and np.array_equal(B, expected)
+
+
+def test_symbol_assigned_in_every_branch_before_its_read():
+    """``if A[i] > 0.5: z = 1 else: z = A[i]; w = 2 * z; B[i] = w`` with ``z`` an interstate symbol, as CloudSC's ZFAC
+    is once fissioned per loop. The edge leaving the conditional reads ``z`` after either branch assigned it, so the
+    loop maps."""
+    sdfg = dace.SDFG("symbol_assigned_in_every_branch")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("z", dace.float64)
+    sdfg.add_symbol("w", dace.float64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    sdfg.add_array("B", ["N"], dace.float64)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    cond = ConditionalBlock("pick")
+    for condition, value in (("A[i] > 0.5", "1.0"), (None, "A[i]")):
+        branch = ControlFlowRegion(f"branch_{len(cond.branches)}")
+        first = branch.add_state(is_start_block=True)
+        branch.add_state_after(first, assignments={"z": value})
+        cond.add_branch(None if condition is None else dace.properties.CodeBlock(condition), branch)
+    loop.add_node(cond, is_start_block=True)
+    use = loop.add_state("use")
+    loop.add_edge(cond, use, dace.InterstateEdge(assignments={"w": "2.0 * z"}))
+    tasklet = use.add_tasklet("scale", {}, {"o"}, "o = w")
+    use.add_edge(tasklet, "o", use.add_write("B"), None, dace.Memlet("B[i]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1
+
+    A = np.arange(16, dtype=np.float64) / 15.0
+    B = np.zeros(16)
+    sdfg(A=A, B=B, N=16)
+    assert np.array_equal(B, 2.0 * np.where(A > 0.5, 1.0, A))
+
+
 if __name__ == "__main__":
+    test_transient_read_only_on_interstate_edges_of_two_loops()
+    test_symbol_assigned_in_every_branch_before_its_read()
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=16, type=int)
     args = parser.parse_args()

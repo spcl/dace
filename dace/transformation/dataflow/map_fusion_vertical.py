@@ -135,6 +135,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         category="Applicability",
         desc="If `True` all outputs of the first Map must be intermediate, i.e., going into the second Map.",
     )
+    allow_intermediates_with_symbolic_size = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="If `True` then intermediates with symbolic sizes are allowed. Set to `False` to avoid dynamic memory allocations inside Maps.",
+    )
 
     never_consolidate_edges = properties.Property(
         dtype=bool,
@@ -157,6 +163,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assume_always_shared: bool | None = None,
         require_exclusive_intermediates: bool | None = None,
         require_all_intermediates: bool | None = None,
+        allow_intermediates_with_symbolic_size: bool | None = None,
         consolidate_edges_only_if_not_extending: bool | None = None,
         never_consolidate_edges: bool | None = None,
         **kwargs: Any,
@@ -182,6 +189,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             self.require_exclusive_intermediates = require_exclusive_intermediates
         if require_all_intermediates is not None:
             self.require_all_intermediates = require_all_intermediates
+        if allow_intermediates_with_symbolic_size is not None:
+            self.allow_intermediates_with_symbolic_size = allow_intermediates_with_symbolic_size
         if never_consolidate_edges is not None:
             self.never_consolidate_edges = never_consolidate_edges
         if consolidate_edges_only_if_not_extending is not None:
@@ -569,12 +578,19 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     producer_subset=producer_edge.data.dst_subset, inter_desc=intermediate_desc
                 )
 
+                # If the fused Map would create a new intermediate with symbolic size,
+                #  dynamic memory allocation may be required. Prevent this unless the
+                #  user explicitly opted in via `allow_intermediates_with_symbolic_size`.
+                if isinstance(intermediate_desc, dace.data.Array) and not self.allow_intermediates_with_symbolic_size:
+                    if not all(str(dim).isdigit() for dim in reduced_inter_shape):
+                        return None
+
                 # If we reduce the intermediate node then we also change the underlying
                 #  memory layout, i.e. the strides. This change is not captured by the
                 #  data dependency checks. Thus we have to check them separately here.
                 for final_producer_edge in state.memlet_tree(producer_edge).leaves():
                     assert not final_producer_edge.data.is_empty()
-                    final_producer = final_producer_edge.dst
+                    final_producer = final_producer_edge.src
                     if isinstance(final_producer, nodes.NestedSDFG):
                         if not self._check_if_nested_sdfg_can_be_handled(
                             state=state,
@@ -1057,7 +1073,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         self,
         producer_subset: subsets.Range,
         inter_desc: dace.data.Data,
-    ) -> tuple[tuple[int, ...], tuple[int, ...], list[int]]:
+    ) -> tuple[tuple[dace.symbolic.SymbolicType, ...], tuple[dace.symbolic.SymbolicType, ...], list[int]]:
         """Compute the size of the new (reduced) intermediate.
 
         `MapFusionVertical` does not only fuses Map, but, depending on the situation, also
@@ -1068,7 +1084,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             * The raw shape of the reduced intermediate.
             * The cleared shape of the reduced intermediate, essentially the raw shape
                 with all shape 1 dimensions removed.
-            * Which dimensions of the raw shape have been removed to get the cleared shape.
+            * Indexes of the squeezed dimensions, i.e., the dimensions that were removed
+                from the raw shape to get the cleared shape.
 
         :param producer_subset: The subset that was used to write into the intermediate.
         :param inter_desc: The data descriptor for the intermediate.
@@ -1082,7 +1099,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         inter_shape = inter_desc.shape
         if not self.strict_dataflow:
             squeezed_dims: list[int] = []  # These are the dimensions we removed.
-            new_inter_shape: list[int] = []  # This is the final shape of the new intermediate.
+            new_inter_shape: list[dace.symbolic.SymbolicType] = []  # This is the final shape of the new intermediate.
             for dim, (proposed_dim_size, full_dim_size) in enumerate(zip(new_inter_shape_raw, inter_shape)):
                 if full_dim_size == 1:  # Must be kept!
                     new_inter_shape.append(proposed_dim_size)
@@ -1606,7 +1623,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         If `scope_node` is a `MapEntry` it will operate on the set of incoming edges
         and if it is an `MapExit` on the set of outgoing edges. The function will
         then determine all access nodes that have a connection through these edges
-        to the scope nodes (edges that does not lead to access nodes are ignored).
+        to the scope nodes, edges that does not lead to access nodes or are empty are ignored.
         The function returns a set that contains all access nodes that were found.
         It is important that this set will also contain views.
 
@@ -1619,8 +1636,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         else:
             get_edges = lambda node: state.out_edges(node)  # noqa: E731 [lambda-assignment]
             other_node = lambda e: e.dst  # noqa: E731 [lambda-assignment]
+        # An empty Memlet only orders the node against the scope, it accesses nothing
         access_set: set[nodes.AccessNode] = {
-            node for node in map(other_node, get_edges(scope_node)) if isinstance(node, nodes.AccessNode)
+            other_node(edge)
+            for edge in get_edges(scope_node)
+            if not (edge.data.is_empty() or not isinstance(other_node(edge), nodes.AccessNode))
         }
 
         return access_set
@@ -1649,13 +1669,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Is the node used for reading or for writing.
         #  This influences how we have to proceed.
         if isinstance(scope_node, nodes.MapEntry):
-            outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node]
+            outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node and not e.data.is_empty()]
             get_subset = lambda e: e.data.src_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.out_edges_by_connector(scope_node, "OUT_" + e.dst_conn[3:])
             )
         else:
-            outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node]
+            outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node and not e.data.is_empty()]
             get_subset = lambda e: e.data.dst_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.in_edges_by_connector(scope_node, "IN_" + e.src_conn[4:])
@@ -1736,15 +1756,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         is_incomming_edge = outer_edge.dst is nsdfg
         assert (is_incomming_edge) or (outer_edge.src is nsdfg)
 
-        intermediate_data_outside: str = intermediate.data
         inner_sdfg = nsdfg.sdfg
         inner_data = outer_edge.dst_conn if is_incomming_edge else outer_edge.src_conn
         assert inner_data in inner_sdfg.arrays
         inner_desc = inner_sdfg.arrays[inner_data]
 
-        # We do not allow that the data is used as input and output.
-        # TODO(phimuell): In this situation it should be enough.
-        if intermediate_data_outside in nsdfg.in_connectors and intermediate_data_outside in nsdfg.out_connectors:
+        # `inner_data` is a connector on the side of `outer_edge`; the same connector on the other side means the
+        #  nested SDFG reads and writes the data in place, which is not handled.
+        if inner_data in (nsdfg.out_connectors if is_incomming_edge else nsdfg.in_connectors):
             return False
 
         # The inner data is an array or a scalar.
@@ -1763,7 +1782,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # which also restates the views of it whose rank matches the reduced intermediate, with or without its
             # degenerate dimensions (depending on `strict_dataflow`). A view of a single element has no strides.
             allowed_view_ranks = {len(reduced_intermediate_shape), sum(1 for s in reduced_intermediate_shape if s != 1)}
-            for inner_state in inner_sdfg.all_states():
+            for inner_state in inner_sdfg.states():
                 for inner_node in inner_state.data_nodes():
                     if inner_node.data != inner_data:
                         continue

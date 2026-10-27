@@ -66,7 +66,7 @@ def test_range_reads_variables():
 
     # Every scalar a bound reads is a copy of an element of ``indptr``
     copied = set()
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.data_nodes():
             if any(memlet.data == node.data for memlet in inputs.values()):
                 for edge in state.in_edges(node):

@@ -1,0 +1,171 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+from dace import dtypes, library
+from dace.codegen.targets.cpp import sym2cpp
+from dace.libraries.comm import environments, utils
+from dace.libraries.comm.nodes.node import (
+    CommNode,
+    NcclExpansion,
+    comm_tasklet,
+    count_expression,
+    gpu_buffers_ready,
+    input_descriptor_name,
+    mpi_communicator,
+    nccl_communicator,
+    nccl_tasklet,
+    pack_noncontiguous_buffers,
+    scaled,
+    validate_nccl_buffers,
+)
+from dace.transformation.transformation import ExpandTransformation
+from dace.utils import prod as _prod
+
+
+@library.expansion
+class ExpandScatterMPI(ExpandTransformation):
+    environments = [environments.mpi.MPI]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        (inbuffer, in_count_str), (outbuffer, out_count_str), root = node.validate(parent_sdfg, parent_state)
+        in_mpi_dtype_str = utils.MPI_DDT(inbuffer.dtype.base_type)
+        out_mpi_dtype_str = utils.MPI_DDT(outbuffer.dtype.base_type)
+
+        if inbuffer.dtype.veclen > 1:
+            raise (NotImplementedError)
+        comm = mpi_communicator(node, parent_state)
+        code = (
+            gpu_buffers_ready(node, parent_sdfg, parent_state)
+            + f"""
+            int _commsize;
+            MPI_Comm_size({comm}, &_commsize);
+            MPI_Scatter(_inbuffer, ({in_count_str})/_commsize, {in_mpi_dtype_str},
+                        _outbuffer, {out_count_str}, {out_mpi_dtype_str},
+                        _root, {comm});
+            """
+        )
+        return comm_tasklet(node, parent_state, code)
+
+
+@library.expansion
+class ExpandScatterNCCL(NcclExpansion):
+    """Scatters equal chunks of the root's input buffer through ``ncclScatter``, which
+    ``dace::comm::Scatter`` replaces with grouped point-to-point calls where NCCL lacks it."""
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        pack_noncontiguous_buffers(node, parent_sdfg, parent_state)
+        (inbuffer, in_count_str), (outbuffer, out_count_str), _ = node.validate(parent_sdfg, parent_state)
+        validate_nccl_buffers(node, inbuffer, outbuffer)
+        nccl_type, factor = utils.nccl_transfer_type(inbuffer.dtype.base_type)
+        comm = nccl_communicator(node, parent_sdfg, parent_state)
+        body = f"""
+            dace::comm::Scatter(_inbuffer, _outbuffer, {scaled(out_count_str, factor)}, {nccl_type}, int(_root), __comm,
+                                __dace_current_stream);
+            """
+        return nccl_tasklet(node, parent_state, comm, body)
+
+
+@library.node
+class Scatter(CommNode):
+    # Global properties
+    implementations = {
+        "MPI": ExpandScatterMPI,
+        "NCCL": ExpandScatterNCCL,
+    }
+    default_implementation = None
+
+    def __init__(self, name, *args, **kwargs):
+        super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
+
+    def validate(self, sdfg, state):
+        """
+        :return: A three-tuple (buffer, root) of the three data descriptors in the
+                 parent SDFG.
+        """
+
+        inbuffer, outbuffer, root = None, None, None
+        for e in state.out_edges(self):
+            if e.src_conn == "_outbuffer":
+                outbuffer = sdfg.arrays[e.data.data]
+        for e in state.in_edges(self):
+            if e.dst_conn == "_inbuffer":
+                inbuffer = sdfg.arrays[e.data.data]
+            if e.dst_conn == "_root":
+                root = sdfg.arrays[e.data.data]
+
+        if root.dtype.base_type != dtypes.int32:
+            raise (ValueError("Scatter root must be an integer!"))
+
+        in_count_str = "XXX"
+        out_count_str = "XXX"
+        for _, src_conn, _, _, data in state.out_edges(self):
+            if src_conn == "_outbuffer":
+                out_count_str = count_expression(data.subset)
+        for _, _, _, dst_conn, data in state.in_edges(self):
+            if dst_conn == "_inbuffer":
+                in_count_str = count_expression(data.subset)
+
+        return (inbuffer, in_count_str), (outbuffer, out_count_str), root
+
+
+@library.expansion
+class ExpandBlockScatterMPI(ExpandTransformation):
+    environments = [environments.mpi.MPI]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        inp_buffer, out_buffer = node.validate(parent_sdfg, parent_state)
+        mpi_dtype_str = utils.MPI_DDT(out_buffer.dtype.base_type)
+
+        if inp_buffer.dtype.veclen > 1:
+            raise NotImplementedError
+
+        subarray_type = input_descriptor_name(node, parent_state, "_subarray")
+        scatter_grid = input_descriptor_name(node, parent_state, "_scatter_grid")
+        bcast_grid = input_descriptor_name(node, parent_state, "_bcast_grid")
+        if subarray_type is None:
+            raise ValueError("BlockScatter requires an incoming _subarray connector")
+        if scatter_grid is None:
+            raise ValueError("BlockScatter requires an incoming _scatter_grid connector")
+
+        code = f"""
+            if (__state->{scatter_grid}_valid) {{
+                MPI_Scatterv(_inp_buffer, __state->{subarray_type}_counts, __state->{subarray_type}_displs, __state->{subarray_type}, _out_buffer, {sym2cpp(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _scatter_grid);
+            }}
+        """
+        if bcast_grid:
+            code += f"""
+                if (__state->{bcast_grid}_valid) {{
+                    MPI_Bcast(_out_buffer, {sym2cpp(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, _bcast_grid);
+                }}
+            """
+
+        return comm_tasklet(node, parent_state, code)
+
+
+@library.node
+class BlockScatter(CommNode):
+    # Global properties
+    implementations = {
+        "MPI": ExpandBlockScatterMPI,
+    }
+    default_implementation = "MPI"
+
+    def __init__(self, name, *args, **kwargs):
+        super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)
+
+    def validate(self, sdfg, state):
+        """
+        :return: A tuple (inbuffer, outbuffer) of the twodata descriptors in the parent SDFG.
+        """
+
+        inp_buffer, out_buffer = None, None
+        for e in state.out_edges(self):
+            if e.src_conn == "_out_buffer":
+                out_buffer = sdfg.arrays[e.data.data]
+        for e in state.in_edges(self):
+            if e.dst_conn == "_inp_buffer":
+                inp_buffer = sdfg.arrays[e.data.data]
+
+        return inp_buffer, out_buffer

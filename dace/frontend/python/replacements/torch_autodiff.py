@@ -7,10 +7,9 @@ import itertools
 from collections.abc import Sequence
 
 import dace.sdfg.sdfg
-from dace import SDFG, SDFGState, data
+from dace import SDFG, SDFGState, data, utils
 from dace.autodiff import analysis as autodiff_analysis
 from dace.autodiff.library.library import BackwardPass, ParameterArray
-from dace.data import find_new_name
 from dace.frontend.common import op_repository
 from dace.frontend.python import common, newast
 from dace.libraries.onnx.op_implementations.common import iterables_equal
@@ -105,7 +104,7 @@ def backward(
         param_desc: ParameterArray = sdfg.arrays[param]
         grad_name = param_desc.add_gradient_buffer(sdfg, param)
 
-        conn_name = find_new_name(grad_name, bwd_node.out_connectors)
+        conn_name = utils.find_new_name(grad_name, bwd_node.out_connectors)
         bwd_node.required_gradients[param] = conn_name
         bwd_node.add_out_connector(conn_name)
         write_an = state.add_write(grad_name)

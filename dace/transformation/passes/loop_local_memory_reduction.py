@@ -9,6 +9,7 @@ from dace import data as dt
 from dace import properties, symbolic
 from dace import sdfg as sd
 from dace.data import Scalar
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.subsets import Range
 from dace.symbolic import issymbolic, pystr_to_symbolic
@@ -128,7 +129,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
     def depends_on(self):
         return [StateReachability, FindAccessStates, ConditionUniqueWrites]
 
-    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: dict[str, Any]) -> set[str] | None:
+    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: dict[str, Any]) -> int | None:
         self.num_applications = 0
         self.out_of_loop_states_cache = {}
 
@@ -164,6 +165,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
                     self._apply_for_array(arr, sdfg, node, changing_syms)
 
         self.out_of_loop_states_cache = {}
+        return self.num_applications or None
 
     def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[tuple | None]:
         # list of tuples of (a, b) for a*i + b, None if cannot be determined
@@ -191,17 +193,17 @@ class LoopLocalMemoryReduction(ppl.Pass):
         all_write_indices = list()
 
         read_edges = {
-            e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
+            e for st in loop.states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
         }
         uncond_write_edges = {
             e
-            for st in loop.all_states()
+            for st in loop.states()
             for an in st.data_nodes()
             if an.data == array_name and an not in self.cond_unique
             for e in st.in_edges(an)
         }
         all_write_edges = {
-            e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
+            e for st in loop.states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
         }
 
         for edge in read_edges:
@@ -283,10 +285,14 @@ class LoopLocalMemoryReduction(ppl.Pass):
             if span == 0:
                 cond = all(
                     st.in_degree(an) > 0 and st.out_degree(an) > 0
-                    for st in loop.all_states()
+                    for st in loop.states()
                     for an in st.data_nodes()
                     if an.data == array_name
                 )
+
+            # A slot read in the same iteration can still be reused when every read follows every write
+            if cond in (False, sp.false):
+                cond = self._writes_precede_reads(array_name, loop)
 
             # Add positive symbol assumption
             if self.assume_positive_symbols and issymbolic(cond):
@@ -322,6 +328,38 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 k_values.append(k + 1)  # +1 because k is the highest index accessed, so size is k+1
         return k_values
 
+    def _writes_precede_reads(self, array_name: str, loop: LoopRegion) -> bool:
+        """Whether, within one iteration of ``loop``, every read of ``array_name`` happens after every write."""
+        reads, writes = [], []
+        for state in loop.states():
+            for node in state.data_nodes():
+                if node.data == array_name:
+                    if state.in_degree(node) > 0:
+                        writes.append((state, node))
+                    if state.out_degree(node) > 0:
+                        reads.append((state, node))
+        if not reads or not writes:
+            return False
+
+        def body_block(block):
+            while block.parent_graph is not loop:
+                block = block.parent_graph
+            return block
+
+        for read_state, read in reads:
+            for write_state, write in writes:
+                if write is read:  # an access node orders its writes before its reads
+                    continue
+                if read_state is write_state:
+                    if read not in sdutil.find_downstream_nodes(write, read_state):
+                        return False
+                    continue
+                # The loop body's own edges, without the back edge: reachable within one iteration
+                before, after = body_block(write_state), body_block(read_state)
+                if before is after or after not in loop.bfs_nodes(before):
+                    return False
+        return True
+
     def _write_is_loop_local(
         self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG, loop: LoopRegion
     ) -> bool:
@@ -331,7 +369,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         if loop in self.out_of_loop_states_cache:
             out_of_loop_states = self.out_of_loop_states_cache[loop]
         else:
-            loop_states = set(loop.all_states())
+            loop_states = set(loop.states())
             states_reach = self.states_reach[sdfg.cfg_id]
             out_of_loop_states = {v for st in loop_states for v in states_reach[st] if v not in loop_states}
             self.out_of_loop_states_cache[loop] = out_of_loop_states
@@ -344,7 +382,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
     def _get_max_indices_before_loop(self, array_name: str, sdfg: sd.SDFG, loop: LoopRegion) -> list[int]:
         # Collect all read and write subsets of the array before the loop.
-        loop_states = set(loop.all_states())
+        loop_states = set(loop.states())
         subsets = set()
         for v1 in self.states_reach.values():
             for k2, v2 in v1.items():
@@ -501,10 +539,10 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         # Replace all read and write edges in the loop with modulo accesses.
         read_edges = {
-            e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
+            e for st in sdfg.states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
         }
         write_edges = {
-            e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
+            e for st in sdfg.states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
         }
 
         # XXX: We use abs() because pystr_to_symbolic() rewrites modulo operations, e.g. (-i + 32) % 31 -> Mod(1 - i, 31), which changes the behavior as C++ modulo differs from Python for negative numbers.
