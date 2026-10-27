@@ -14,16 +14,12 @@ from dace.libraries.standard.nodes import ComputePersistentKernelRange
 from dace.libraries.standard.nodes.compute_persistent_kernel_range import NBLK_CONNECTOR
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.megakernel.discovery import (
-    MegakernelChain,
-    code_names,
-    find_chains,
-    is_kernel,
-    states_in,
-)
+from dace.transformation.passes.megakernel.discovery import MegakernelChain, find_chains, is_kernel
 from dace.transformation.passes.megakernel.grid_stride import grid_stride
 from dace.transformation.passes.megakernel.grid_sync import InsertGridSyncs
 
@@ -32,112 +28,55 @@ THREAD_INDEX = "__mk_tid"
 THREAD_COUNT = "__mk_nthreads"
 
 
-def chain_names(blocks: list[ControlFlowBlock], edges: list) -> tuple[set[str], set[str], set[str]]:
-    """The containers ``blocks`` read and write, and the symbols the chain assigns (interstate edges, loop
-    variables)."""
-    reads, writes, assigned = set(), set(), set()
-    sdfg = blocks[0].sdfg
-    for state in (s for b in blocks for s in states_in(b)):
-        state_reads, state_writes = state.read_and_write_sets()
-        reads |= state_reads
-        writes |= state_writes
-    regions = [b for b in blocks if isinstance(b, ControlFlowRegion)]
-    regions += [r for b in regions for r in b.all_control_flow_regions() if r is not b]
-    for region in regions:
-        edges = edges + list(region.edges())
-        if isinstance(region, LoopRegion):
-            assigned.add(region.loop_variable)
-            codes = (region.loop_condition, region.init_statement, region.update_statement)
-            reads |= {n for code in codes if code is not None for n in code_names(code)} & sdfg.arrays.keys()
-    for edge in edges:
-        assigned |= edge.data.assignments.keys()
-        reads |= edge.data.read_symbols() & sdfg.arrays.keys()
-    return reads, writes, assigned
+def nested_blocks(blocks: list[ControlFlowBlock]) -> list[ControlFlowBlock]:
+    """``blocks`` and every block inside them."""
+    inner = [b for block in blocks if isinstance(block, ControlFlowRegion) for b in block.all_control_flow_blocks()]
+    return blocks + inner
 
 
-def used_outside(sdfg: SDFG, inside: set[int]) -> tuple[set[str], set[str]]:
-    """The containers and symbols that the states and interstate edges outside the blocks with ids ``inside`` use."""
-    data, symbols = set(), set()
-    for state in sdfg.states():
-        if id(state) not in inside:
-            data |= {n.data for n in state.data_nodes()}
-            symbols |= state.free_symbols
-    for edge in sdfg.all_interstate_edges():
-        if id(edge.src) not in inside:
-            symbols |= edge.data.free_symbols
-    return data, symbols
+def assigned_symbols(chain: MegakernelChain) -> set[str]:
+    """The symbols ``chain`` assigns: its loop variables and the assignments on its interstate edges."""
+    blocks = chain.blocks
+    edges = [e for b in blocks[:-1] for e in chain.region.out_edges(b)]
+    regions = [b for b in nested_blocks(blocks) if isinstance(b, ControlFlowRegion)]
+    edges += [e for region in regions for e in region.edges()]
+    assigned = {r.loop_variable for r in regions if isinstance(r, LoopRegion) and r.loop_variable}
+    return assigned.union(*(e.data.assignments.keys() for e in edges))
 
 
-def move_blocks(region: ControlFlowRegion, blocks: list[ControlFlowBlock], host: SDFGState, name: str) -> SDFG:
-    """Moves the consecutive ``blocks`` of ``region``, with the edges between them, into a new SDFG; ``host`` takes
-    their place in ``region``."""
-    inner_edges = [e for b in blocks[:-1] for e in region.out_edges(b)]
-    for edge in region.in_edges(blocks[0]):
-        region.add_edge(edge.src, host, edge.data)
-    for edge in region.out_edges(blocks[-1]):
-        region.add_edge(host, edge.dst, edge.data)
-    was_start = region.start_block is blocks[0]
-    body = SDFG(name)
-    for block in blocks:
-        region.remove_node(block)
-        body.add_node(block, is_start_block=block is blocks[0])
-    if was_start:
-        region.start_block = region.node_id(host)
-    for edge in inner_edges:
-        body.add_edge(edge.src, edge.dst, edge.data)
-    body.reset_cfg_list()
-    return body
+def keep_global_memory_outside(host: SDFGState, node: nodes.NestedSDFG) -> None:
+    """Allocates the global-memory transients of ``node`` in its parent instead: a kernel cannot allocate them."""
+    sdfg, body = host.sdfg, node.sdfg
+    for name, desc in list(body.arrays.items()):
+        if desc.transient and desc.storage == dtypes.StorageType.GPU_Global:
+            sdfg.add_datadesc(name, copy.deepcopy(desc))
+            desc.transient = False
+            node.add_out_connector(name)
+            host.add_edge(node, name, host.add_write(name), None, Memlet.from_array(name, desc))
 
 
-def declare_body_data(sdfg: SDFG, body: SDFG, names: set[str], outside_data: set[str]) -> set[str]:
-    """Declares the containers ``names`` and the free symbols in ``body``. Thread-private transients that only the
-    body uses move into it; everything else, global memory included, stays allocated outside the kernel.
+def nest_chain(chain: MegakernelChain) -> tuple[SDFGState, nodes.NestedSDFG] | None:
+    """Moves the blocks of ``chain`` into a nested SDFG, which global memory and the symbols the code after it reads
+    stay outside of.
 
-    :return: The transients only the body uses: their values never enter or leave it.
-    """
-    private = set()
-    for data_name in sorted(names):
-        desc = sdfg.arrays[data_name]
-        if desc.transient and data_name not in outside_data:
-            private.add(data_name)
-            if desc.storage != dtypes.StorageType.GPU_Global:
-                sdfg.remove_data(data_name, validate=False)
-                body.add_datadesc(data_name, desc)
-                continue
-        desc = copy.deepcopy(desc)
-        desc.transient = False
-        body.add_datadesc(data_name, desc)
-    for sym in sorted(body.free_symbols - body.symbols.keys() - body.arrays.keys() - {THREAD_INDEX, THREAD_COUNT}):
-        body.add_symbol(sym, sdfg.symbols.get(sym, dtypes.int64))
-    for sym in (THREAD_INDEX, THREAD_COUNT):
-        body.add_symbol(sym, dtypes.int64)
-    return private
-
-
-def nest_chain(chain: MegakernelChain, host: SDFGState, name: str) -> nodes.NestedSDFG | None:
-    """Moves the blocks of ``chain`` into a new SDFG, called from ``host``. The loop variables stay inside, unlike
-    ``nest_sdfg_subgraph``, which hands them out.
-
-    :return: The nested SDFG, or ``None`` (nothing changed) when code after the chain reads a symbol it assigns.
+    :return: The state calling the nested SDFG and its node, or ``None`` (nothing changed) when code outside the chain
+             reads a symbol the chain assigns: a kernel cannot hand it out.
     """
     region, blocks = chain.region, chain.blocks
     sdfg = region.sdfg
-    reads, writes, assigned = chain_names(blocks, [e for b in blocks[:-1] for e in region.out_edges(b)])
-    inside = {id(b) for b in blocks} | {id(s) for b in blocks for s in states_in(b)}
-    outside_data, outside_symbols = used_outside(sdfg, inside)
-    if assigned & outside_symbols:
+    if assigned_symbols(chain) & xfh.symbols_read_outside(sdfg, set(nested_blocks(blocks))):
         return None
-    body = move_blocks(region, blocks, host, name)
-    private = declare_body_data(sdfg, body, reads | writes, outside_data)
-
-    ins = dict.fromkeys(sorted(reads - private))
-    outs = dict.fromkeys(n for n in sorted(writes) if not body.arrays[n].transient)
-    node = host.add_nested_sdfg(body, ins, outs, {s: s for s in body.symbols})
-    for n in ins:
-        host.add_edge(host.add_read(n), None, node, n, Memlet.from_array(n, sdfg.arrays[n]))
-    for n in outs:
-        host.add_edge(node, n, host.add_write(n), None, Memlet.from_array(n, sdfg.arrays[n]))
-    return node
+    if len(blocks) == 1 and isinstance(blocks[0], SDFGState):
+        host = blocks[0]
+        node = xfh.nest_state_subgraph(sdfg, host, SubgraphView(host, host.nodes()))
+    else:
+        host = xfh.nest_sdfg_subgraph(sdfg, SubgraphView(region, blocks))
+        node = next(n for n in host.nodes() if isinstance(n, nodes.NestedSDFG))
+    keep_global_memory_outside(host, node)
+    for sym in (THREAD_INDEX, THREAD_COUNT):
+        node.sdfg.add_symbol(sym, dtypes.int64)
+    node.symbol_mapping[THREAD_INDEX] = THREAD_INDEX
+    return host, node
 
 
 def launch_cooperatively(host: SDFGState, node: nodes.NestedSDFG, handle: str, block_size: int) -> None:
@@ -204,13 +143,11 @@ class MegaKernelOptimization(ppl.Pass):
         """:return: The chains fused into a megakernel each."""
         fused = []
         for chain in find_chains(self._region if self._region is not None else sdfg, sdfg):
-            handle = f"{chain.region.sdfg.name}_megakernel_{len(fused)}"
-            host = chain.region.add_state(handle)
-            node = nest_chain(chain, host, f"{handle}_body")
-            if node is None:
-                chain.region.remove_node(host)
+            nested = nest_chain(chain)
+            if nested is None:
                 continue
-            launch_cooperatively(host, node, handle, self.block_size)
+            host, node = nested
+            launch_cooperatively(host, node, f"{chain.region.sdfg.name}_megakernel_{len(fused)}", self.block_size)
             self.lower_body(node.sdfg)
             fused.append(chain)
         return fused or None
