@@ -23,9 +23,9 @@ pytestmark = pytest.mark.long
 ENTRY = "mo_velocity_advection::velocity_tendencies"
 DOMAINS = {"lvn_only": [0, 1], "istep": [1, 2], "ldeepatmo": [0], "lextra_diffu": [1]}
 CONFIG_NAMES = tuple(DOMAINS)
-#: Maps after parallelization per (lvn_only, istep); the unspecialized kernel has 61. Fewer maps is what
+#: Maps after parallelization per (lvn_only, istep); the unspecialized kernel has 39. Fewer maps is what
 #: pruning the configuration branches buys, so a change here is a change in what the pipeline removes.
-MAPS = {(0, 1): 51, (0, 2): 38, (1, 1): 38, (1, 2): 26}
+MAPS = {(0, 1): 34, (0, 2): 26, (1, 1): 27, (1, 2): 19}
 
 
 def dace_fortran_root() -> Path:
