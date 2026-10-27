@@ -176,11 +176,13 @@ def data_segment(
 
 def small_count(count: Any, facts: symbolic.Facts) -> bool:
     """Whether an iteration count is small: :func:`symbolic.is_small_extent`, or provably bounded below
-    ``SMALL_CONSTANT_EXTENT`` (a peeled ``Min(0, N - 2) + 1``)."""
+    ``SMALL_CONSTANT_EXTENT`` (a peeled ``Min(0, N - 2) + 1``), or over the thread count alone (a per-thread seam)."""
     if symbolic.is_small_extent(count, facts):
         return True
     if not symbolic.issymbolic(count):
         return False
+    if {str(free) for free in sympy.sympify(count).free_symbols} == {symbolic.NUM_THREADS_SYMBOL}:
+        return True
     upper = symbolic.numeric_bounds(count)[1]
     if upper is not None and upper < SMALL_CONSTANT_EXTENT:
         return True

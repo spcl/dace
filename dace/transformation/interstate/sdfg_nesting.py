@@ -55,24 +55,56 @@ def _is_view_of(state: SDFGState, node: nodes.Node, viewed: nodes.AccessNode) ->
 
 def keep_nest_order(state: SDFGState, inlined: set[nodes.Node], successors: set[nodes.Node]) -> None:
     """
-    Order every inlined node before each successor of the nested node it replaced, where no path does yet.
+    Order every inlined node before each successor of the nested node it replaced, where the two conflict on a
+    container and no path does yet.
 
     The nested node ran as a unit: whatever followed it waited for all of its body. Spliced in, only data dependences
     remain, so a later write to a container the body read (an anti-dependence) could be sorted before that read and
-    the read would see the new value. An empty memlet from each such body node restores the unit's order.
+    the read would see the new value. An empty memlet from each such body node restores the order; a body node that
+    shares no written container with what follows stays free, so later fusions see only the dependences that exist.
 
     :param state: The state the nested SDFG was inlined into.
     :param inlined: The nodes of the inlined body.
     :param successors: The nodes the nested SDFG node's out-edges led to, recorded before inlining.
     """
-    body = [n for n in inlined if n in state.nodes()]
+    body = [(n, *accessed(state, n)) for n in inlined if n in state.nodes()]
     for succ in successors:
         if succ not in state.nodes():
             continue  # moved to another state by a fission: the state boundary orders it
         reaches = ancestors(state, succ)
-        for node in body:
-            if node is not succ and node not in reaches and not any(o.dst in body for o in state.out_edges(node)):
+        after_reads: set[str] = set()
+        after_writes: set[str] = set()
+        for node in descendants(state, succ) | {succ}:
+            reads, writes = accessed(state, node)
+            after_reads |= reads
+            after_writes |= writes
+        for node, reads, writes in body:
+            if node is succ or node in reaches:
+                continue
+            opaque = not reads and not writes and not isinstance(node, nodes.AccessNode)
+            if opaque or reads & after_writes or writes & (after_reads | after_writes):
                 state.add_nedge(node, succ, Memlet())
+
+
+def accessed(state: SDFGState, node: nodes.Node) -> tuple[set[str], set[str]]:
+    """The containers ``node`` reads and writes through its edges."""
+    if isinstance(node, nodes.AccessNode):
+        return ({node.data} if state.out_degree(node) else set()), ({node.data} if state.in_degree(node) else set())
+    reads = {e.data.data for e in state.in_edges(node) if e.data.data is not None}
+    writes = {e.data.data for e in state.out_edges(node) if e.data.data is not None}
+    return reads, writes
+
+
+def descendants(state: SDFGState, node: nodes.Node) -> set[nodes.Node]:
+    """Every node of ``state`` that ``node`` has a path to."""
+    seen: set[nodes.Node] = set()
+    stack = [node]
+    while stack:
+        for edge in state.out_edges(stack.pop()):
+            if edge.dst not in seen:
+                seen.add(edge.dst)
+                stack.append(edge.dst)
+    return seen
 
 
 def ancestors(state: SDFGState, node: nodes.Node) -> set[nodes.Node]:
