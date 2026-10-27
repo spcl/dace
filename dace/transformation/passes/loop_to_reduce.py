@@ -26,6 +26,7 @@ from dace import memlet as mm
 from dace.ordered import OrderedSet
 from dace.sdfg import graph as gr
 from dace.sdfg.propagation import propagate_subset
+from dace.sdfg.sdfg import forget_all_facts, memoize_facts
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.symbolic import AND, OR, Subscript, bitwise_and, bitwise_or
 from dace.transformation import pass_pipeline as ppl
@@ -193,19 +194,23 @@ class LoopToReduce(ppl.Pass):
         only = None if self._only is None else {id(loop) for loop in self._only}
         if only is not None and not only:
             return None
-        for node, parent in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, LoopRegion) or (only is not None and id(node) not in only):
-                continue
-            info = _extract(node, _owner_sdfg(parent), permissive=self.permissive)
-            if info is None:
-                continue
-            if self.prefer == "wcr-scalar":
-                # Lift even a pinned (nested) reduction; ``_lift_wcr_scalar`` carries the pin
-                # onto the new loop so the downstream ``LoopToMap`` keeps it sequential.
-                _lift_wcr_scalar(parent, node, info)
-            else:
-                _lift(parent, node, info)
-            count += 1
+        # The matcher reads the facts of each loop's SDFG; they are derived once per SDFG between lifts
+        with memoize_facts():
+            for node, parent in list(sdfg.all_nodes_recursive()):
+                if not isinstance(node, LoopRegion) or (only is not None and id(node) not in only):
+                    continue
+                info = _extract(node, _owner_sdfg(parent), permissive=self.permissive)
+                if info is None:
+                    continue
+                with memoize_facts(active=False):
+                    if self.prefer == "wcr-scalar":
+                        # Lift even a pinned (nested) reduction; ``_lift_wcr_scalar`` carries the pin
+                        # onto the new loop so the downstream ``LoopToMap`` keeps it sequential.
+                        _lift_wcr_scalar(parent, node, info)
+                    else:
+                        _lift(parent, node, info)
+                forget_all_facts()
+                count += 1
 
         if count > 0:
             # Narrow memlets on the new ``Reduce`` libnode + read/write edges: lifting
