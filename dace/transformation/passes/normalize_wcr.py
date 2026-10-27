@@ -34,7 +34,7 @@ MapExit`` edge for ``oc`` is plain, the pass:
    per-iteration private :class:`~dace.sdfg.nodes.AccessNode` inserted between the
    NestedSDFG output and the MapExit (a WCR left directly on the pointer-typed
    ``NestedSDFG -> MapExit`` connector is dropped by the CPU codegen; see
-   :mod:`dace.transformation.passes.normalize_wcr_source`). The outer accumulator is
+   :meth:`NormalizeWCR.source_from_access_nodes`). The outer accumulator is
    already identity-seeded for the ``+`` kernels; for ``min`` / ``max`` a seed is
    inserted only when one is missing.
 
@@ -42,6 +42,17 @@ The read-write rewrite creates a fresh output connector ``_nnr_rwout_<oc>``,
 re-routes the addend through a body-local scratch, and inserts a plain tasklet that
 computes ``oc_out = oc_in OP addend``. The new output is write-only and the boundary
 edge becomes a plain copy, so the pass is idempotent.
+
+Then every WCR edge a NestedSDFG sources, or a Tasklet sources into a map exit, is
+sourced from an AccessNode instead
+(:meth:`NormalizeWCR.source_from_access_nodes`): a per-iteration private ``_wcr_priv``
+transient takes the producer's plain write and carries the WCR on. The CPU codegen
+drops a WCR on a NestedSDFG's pointer-typed output connector, and the reduction
+lowerings (OpenMP clause, tree reductions) read the ``AccessNode -[wcr]-> MapExit``
+partial. A Tasklet WCR into an access node is left alone: codegen resolves it on its
+scalar connector, and a private access node would only turn it into an accumulating copy.
+The same rewrite identity-seeds a fresh accumulator that is only ever WCR-written
+(:meth:`NormalizeWCR.seed_accumulator`).
 """
 
 import ast
@@ -50,10 +61,11 @@ from typing import Any
 
 import numpy
 
-from dace import SDFG, SDFGState, data, dtypes, symbolic
+from dace import SDFG, SDFGState, data, dtypes, subsets, symbolic
+from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.symbolic import symbol
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -137,11 +149,49 @@ def _identity_value(op: str, dtype: dtypes.typeclass):
     raise ValueError(f"unknown op {op!r}")
 
 
+def accumulates_into(sd: SDFG, targets: set[str]) -> bool:
+    """True if ``sd`` -- or a NestedSDFG below it, reached by following the connector binding -- folds into one of
+    ``targets`` instead of plain-writing it: either a WCR edge accumulating onto the name, or any read of it (an
+    in-place read-modify-write). Membership-only: the answer is an order-independent OR over the subtree.
+    """
+    for ist in sd.states():
+        for e in ist.edges():
+            if e.data is None or e.data.is_empty():
+                continue
+            if e.data.wcr is not None and (
+                e.data.data in targets or (isinstance(e.dst, nodes.AccessNode) and e.dst.data in targets)
+            ):
+                return True
+            if isinstance(e.src, nodes.AccessNode) and e.src.data in targets:
+                return True
+        for node in ist.nodes():
+            if not isinstance(node, nodes.NestedSDFG):
+                continue
+            inner: set[str] = set()
+            for oe in ist.out_edges(node):
+                if (
+                    oe.src_conn
+                    and oe.data is not None
+                    and (oe.data.data in targets or (isinstance(oe.dst, nodes.AccessNode) and oe.dst.data in targets))
+                ):
+                    inner.add(oe.src_conn)
+            for ie in ist.in_edges(node):
+                if (
+                    ie.dst_conn
+                    and ie.data is not None
+                    and (ie.data.data in targets or (isinstance(ie.src, nodes.AccessNode) and ie.src.data in targets))
+                ):
+                    inner.add(ie.dst_conn)
+            if inner and accumulates_into(node.sdfg, inner):
+                return True
+    return False
+
+
 @transformation.explicit_cf_compatible
 class NormalizeWCR(ppl.Pass):
     """Normalize WCR into the codegen-supported shapes.
 
-    Two rewrites, both under a map-body NestedSDFG:
+    First the map-body NestedSDFG reductions (:meth:`normalize_nested_reductions`):
     - Scalar reduction (``num_elements()==1``): masked in-nsdfg write-only WCR ->
       seeded-body-local transient + WCR on the ``NestedSDFG -> MapExit ->
       accumulator`` edge chain (see module docstring).
@@ -160,6 +210,8 @@ class NormalizeWCR(ppl.Pass):
     partially-canonicalized body and is unsound, so canonicalize keeps it off until the
     pipeline is reordered to run this pass after ``LoopToMap`` (per the WCR design). The
     scalar rewrite is always on.
+
+    Then every WCR edge gets an AccessNode source (:meth:`source_from_access_nodes`).
     """
 
     #: Validate the SDFG after a rewrite. Canonicalization turns it off and validates its own result once, when asked.
@@ -330,7 +382,7 @@ class NormalizeWCR(ppl.Pass):
         # Rewrite the map level: put the reduction on the accumulator edge chain.
         # The WCR must source from an AccessNode: a WCR left on the NestedSDFG->MapExit
         # edge is a *pointer*-typed connector, which the CPU codegen's WCR path drops
-        # (see NormalizeWCRSource). Insert a per-iteration private AccessNode between the
+        # (see ``source_from_access_nodes``). Insert a per-iteration private AccessNode between the
         # NestedSDFG output and the MapExit so the reduction is AccessNode-sourced.
         out_priv_desc = self._seed_desc(oc_desc)
         out_priv = state.sdfg.add_datadesc(f"_nnr_out_{oc}", out_priv_desc, find_new_name=True)
@@ -678,7 +730,11 @@ class NormalizeWCR(ppl.Pass):
         state.add_edge(nsdfg, out_conn_name, out_edge.dst, out_edge.dst_conn, copy.deepcopy(out_edge.data))
         return True
 
-    def _apply(self, sdfg: SDFG) -> int:
+    def normalize_nested_reductions(self, sdfg: SDFG) -> int:
+        """Rewrite every map-body NestedSDFG reduction output (the write-only and read-write shapes).
+
+        :returns: The number of rewritten outputs.
+        """
         total = 0
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():
@@ -698,17 +754,317 @@ class NormalizeWCR(ppl.Pass):
                             total += 1
         return total
 
+    @staticmethod
+    def partial_source_descriptor(
+        src: nodes.CodeNode, src_conn: str, target_desc: data.Data | None
+    ) -> data.Data | None:
+        """The descriptor the private partial mirrors: a NestedSDFG's inner connector array, or a Scalar of the WCR
+        target's element type for a Tasklet (its out connectors stay uninferred)."""
+        if isinstance(src, nodes.NestedSDFG):
+            return src.sdfg.arrays.get(src_conn)
+        if isinstance(src, nodes.Tasklet) and target_desc is not None:
+            return data.Scalar(target_desc.dtype)
+        return None
+
+    @staticmethod
+    def partial_descriptor(inner: data.Data) -> data.Data:
+        """A Scope-lifetime transient matching ``inner`` element-wise: a Scalar for one element, else a copy."""
+        if isinstance(inner, data.Scalar) or (isinstance(inner, data.Array) and tuple(inner.shape) == (1,)):
+            return data.Scalar(
+                inner.dtype,
+                transient=True,
+                storage=dtypes.StorageType.Default,
+                lifetime=dtypes.AllocationLifetime.Scope,
+            )
+        new = copy.deepcopy(inner)
+        new.transient = True
+        new.storage = dtypes.StorageType.Default
+        new.lifetime = dtypes.AllocationLifetime.Scope
+        return new
+
+    @staticmethod
+    def enclosing_map_params(state: SDFGState, e, scope: dict) -> set[str]:
+        """Parameters of every map enclosing ``e``'s source, plus the destination map's when ``e`` enters its exit.
+        ``scope`` is the state's pre-rewrite ``scope_dict()``."""
+        params: set[str] = set()
+        node = scope.get(e.src)
+        while node is not None:
+            if isinstance(node, nodes.MapEntry):
+                params.update(node.map.params)
+            node = scope.get(node)
+        if isinstance(e.dst, nodes.MapExit):
+            params.update(state.entry_node(e.dst).map.params)
+        return params
+
+    def is_write_once_wcr(self, state: SDFGState, e, scope: dict) -> bool:
+        """True if the WCR writes a slot that varies with an enclosing (or destination) map parameter, not a fold into
+        one constant slot. Only such a fresh accumulator is identity-seeded: a constant-slot fold either has its own
+        init or continues a live value threaded in under another name (nussinov's ``_priv_table``)."""
+        if e.data.subset is None:
+            return False
+        subsyms = {str(x) for x in e.data.subset.free_symbols}
+        if not subsyms:
+            return False
+        return bool(self.enclosing_map_params(state, e, scope) & subsyms)
+
+    @staticmethod
+    def folds_into_multi_element_connector(src: nodes.NestedSDFG, src_conn: str, priv_desc: data.Data) -> bool:
+        """True if ``src``'s body folds into (WCR-writes or reads) a multi-element output connector ``src_conn``.
+
+        Such a connector is itself an accumulator the body only partly updates; a whole-buffer partial copies back
+        slots the iteration never wrote (unseeded). A single-element connector the body folds into is covered whole.
+        """
+        if isinstance(priv_desc, data.Scalar):
+            return False
+        return accumulates_into(src.sdfg, {src_conn})
+
+    def rewrite_wcr_sources(self, sdfg: SDFG, state: SDFGState, requests: dict[str, list]) -> int:
+        """Source every WCR edge of ``state`` a NestedSDFG writes, or a Tasklet writes into a map exit, from a fresh
+        private AccessNode; record each WCR destination in ``requests`` (``name -> [wcr, all write-once, writing
+        states]``) for seeding. A Tasklet WCR into an access node stays: codegen resolves it on its scalar
+        connector, and a private access node would only turn it into an accumulating copy.
+
+        :returns: The number of rewritten edges.
+        """
+        targets = [
+            e
+            for e in state.edges()
+            if e.data is not None
+            and e.data.wcr is not None
+            and (
+                isinstance(e.src, nodes.NestedSDFG)
+                or (isinstance(e.src, nodes.Tasklet) and isinstance(e.dst, nodes.MapExit))
+            )
+        ]
+        if not targets:
+            return 0
+        # The write-once test reads the pre-rewrite topology; the inserted access nodes invalidate the scope cache.
+        scope = state.scope_dict()
+        write_once = {e: self.is_write_once_wcr(state, e, scope) for e in targets}
+        rewritten = 0
+        for e in targets:
+            src, src_conn = e.src, e.src_conn
+            if src_conn is None:
+                continue
+            # An in/out connector split on its out side only would bind one name to two outer arrays.
+            if isinstance(src, nodes.NestedSDFG) and src_conn in src.in_connectors:
+                continue
+            # A data-dependent scatter accumulates on its inner per-element WCR; a whole-array partial reads back the
+            # elements the iteration never wrote (``PrivatizeScatterReduction`` owns the reducible ones).
+            if isinstance(src, nodes.NestedSDFG) and is_data_dependent_scatter_sink(src, src_conn):
+                continue
+            target_desc = sdfg.arrays.get(e.data.data) if e.data.data else None
+            inner = self.partial_source_descriptor(src, src_conn, target_desc)
+            if inner is None:
+                continue
+            priv_desc = self.partial_descriptor(inner)
+            if isinstance(src, nodes.NestedSDFG) and self.folds_into_multi_element_connector(src, src_conn, priv_desc):
+                continue
+            # A partial sized by a symbol this SDFG does not define (a triangular ``i + 1`` extent) would leak it.
+            if {str(sym) for sym in priv_desc.free_symbols} - set(sdfg.symbols.keys()):
+                continue
+            priv_name = sdfg.add_datadesc(f"_wcr_priv_{src.label}_{src_conn}", priv_desc, find_new_name=True)
+            priv_node = state.add_access(priv_name)
+            state.add_edge(src, src_conn, priv_node, None, Memlet(data=priv_name, subset=self._full_subset(priv_desc)))
+            state.add_edge(priv_node, None, e.dst, e.dst_conn, copy.deepcopy(e.data))
+            state.remove_edge(e)
+            rewritten += 1
+            if e.data.data:
+                entry = requests.setdefault(e.data.data, [e.data.wcr, True, set()])
+                entry[1] = entry[1] and write_once[e]
+                entry[2].add(state)
+        return rewritten
+
+    @staticmethod
+    def plain_written(sd: SDFG) -> set[str]:
+        """Every name in ``sd`` an access node receives a plain (non-WCR) write into, a copy whose memlet names its
+        source included."""
+        out: set[str] = set()
+        for st in sd.states():
+            for e in st.edges():
+                if (
+                    e.data is not None
+                    and e.data.wcr is None
+                    and not e.data.is_empty()
+                    and isinstance(e.dst, nodes.AccessNode)
+                ):
+                    out.add(e.dst.data)
+        return out
+
+    @staticmethod
+    def is_fresh_storage(sd: SDFG, name: str, desc: data.Data) -> bool:
+        """``name`` is DaCe-owned scratch safe to seed: a transient, or an out-only nested connector every caller binds
+        to a transient, and no enclosing map iteration folds into the same caller slots (an out-only connector may
+        alias a live caller array: gramschmidt's ``__tmp_78 -> &A[j]``)."""
+        if desc.transient:
+            return True
+        parent = sd.parent_nsdfg_node
+        if parent is None:
+            return False
+        if name in parent.in_connectors or name not in parent.out_connectors:
+            return False
+        parent_state, parent_sdfg = sd.parent, sd.parent_sdfg
+        if parent_state is None or parent_sdfg is None:
+            return False
+        bound = [oe for oe in parent_state.out_edges(parent) if oe.src_conn == name]
+        if not bound:
+            return False
+        params: set[str] = set()
+        scope = parent_state.entry_node(parent)
+        while scope is not None:
+            params |= set(scope.map.params)
+            scope = parent_state.entry_node(scope)
+        for oe in bound:
+            cdesc = parent_sdfg.arrays.get(oe.data.data)
+            if cdesc is None or not cdesc.transient:
+                return False
+            if oe.data.wcr is not None and params and not {str(sym) for sym in oe.data.subset.free_symbols} & params:
+                return False
+        return True
+
+    def seedable_accumulator(self, sd: SDFG, name: str, plain_written: set[str]) -> bool:
+        """True if ``name`` is fresh storage with no plain writer and no shape symbol ``sd`` does not define."""
+        desc = sd.arrays.get(name)
+        if desc is None or name in plain_written:
+            return False
+        if {str(sym) for sym in desc.free_symbols} - set(sd.symbols.keys()):
+            return False
+        return self.is_fresh_storage(sd, name, desc)
+
+    @staticmethod
+    def enclosing_loops(block) -> list[LoopRegion]:
+        """The LoopRegion ancestors of ``block``, innermost first."""
+        loops: list[LoopRegion] = []
+        cur = block.parent_graph
+        while cur is not None:
+            if isinstance(cur, LoopRegion):
+                loops.append(cur)
+            cur = cur.parent_graph if isinstance(cur, ControlFlowRegion) else None
+        return loops
+
+    def seed_placement(self, name: str, states: set[SDFGState]):
+        """The block the seed goes before: the innermost enclosing loop summed over (its variable does not index
+        ``name``), else the reducing state; ``None`` when ambiguous (several states, several summed loops)."""
+        if len(states) != 1:
+            return None
+        state = next(iter(states))
+        idx_syms: set[str] = set()
+        for e in state.edges():
+            if (
+                e.data is not None
+                and e.data.data == name
+                and e.data.wcr is not None
+                and isinstance(e.dst, nodes.AccessNode)
+                and e.dst.data == name
+            ):
+                sub = e.data.get_dst_subset(e, state) or e.data.subset
+                if sub is not None:
+                    idx_syms |= {str(sym) for sym in sub.free_symbols}
+        summed = [
+            ln for ln in self.enclosing_loops(state) if ln.loop_variable and str(ln.loop_variable) not in idx_syms
+        ]
+        if not summed:
+            return state
+        return summed[0] if len(summed) == 1 else None
+
+    @staticmethod
+    def identity_literal(val: Any, dtype: dtypes.typeclass) -> str:
+        """A codegen-safe literal for the reduction identity at ``dtype`` (a Python scalar, never ``np.float64(...)``)."""
+        nptype = dtype.type
+        if numpy.issubdtype(nptype, numpy.bool_):
+            return "True" if val else "False"
+        if numpy.issubdtype(nptype, numpy.complexfloating):
+            c = complex(val)
+            return f"complex({c.real!r}, {c.imag!r})"
+        if numpy.issubdtype(nptype, numpy.integer):
+            return str(int(val))
+        return repr(float(val))
+
+    @staticmethod
+    def written_window(sd: SDFG, name: str, state: SDFGState, desc: data.Data) -> subsets.Range:
+        """The bounding box of the reduction's WCR writes into ``name`` in ``state``; the whole array when a write has
+        no subset or a bound names a symbol ``sd`` does not define."""
+        whole = subsets.Range([(0, extent - 1, 1) for extent in desc.shape])
+        window = None
+        for e in state.edges():
+            if not (isinstance(e.dst, nodes.AccessNode) and e.dst.data == name and e.data.wcr is not None):
+                continue
+            sub = e.data.get_dst_subset(e, state) or e.data.subset
+            if sub is None or len(sub) != len(desc.shape):
+                return whole
+            window = copy.deepcopy(sub) if window is None else subsets.bounding_box_union(window, sub, sd.facts())
+        if window is None or {str(sym) for sym in window.free_symbols} - set(sd.symbols.keys()):
+            return whole
+        return window
+
+    def seed_accumulator(self, sd: SDFG, name: str, wcr: str, states: set[SDFGState]) -> bool:
+        """Prepend a state writing the reduction identity into the fresh accumulator ``name`` (a tasklet, not
+        ``setzero``: ``*``, ``min`` and ``max`` have other identities).
+
+        :returns: Whether a seed was emitted.
+        """
+        desc = sd.arrays.get(name)
+        if desc is None:
+            return False
+        red = detect_reduction_type(wcr)
+        if red is None:
+            return False
+        try:
+            val = dtypes.reduction_identity(desc.dtype, red)
+        except (TypeError, ValueError):
+            return False
+        if val is None:
+            return False
+        before = self.seed_placement(name, states)
+        if before is None:
+            return False
+        parent: ControlFlowRegion = before.parent_graph
+        seed = parent.add_state_before(before, label=name + "_wcr_seed", is_start_block=parent.start_block is before)
+        lit = self.identity_literal(val, desc.dtype)
+        w = seed.add_write(name)
+        if isinstance(desc, data.Scalar) or tuple(desc.shape) == (1,):
+            t = seed.add_tasklet(name + "_wcr_seed", {}, {"__out"}, f"__out = {lit}")
+            seed.add_edge(t, "__out", w, None, Memlet(data=name, subset="0"))
+        else:
+            me, mx = seed.add_map(name + "_wcr_seed", {f"_wcrseed_i{d}": f"0:{s}" for d, s in enumerate(desc.shape)})
+            me.map.range = self.written_window(sd, name, next(iter(states)), desc)
+            t = seed.add_tasklet(name + "_wcr_seed", {}, {"__out"}, f"__out = {lit}")
+            idx = ", ".join(f"_wcrseed_i{d}" for d in range(len(desc.shape)))
+            seed.add_edge(me, None, t, None, Memlet())
+            seed.add_memlet_path(t, mx, w, src_conn="__out", memlet=Memlet(data=name, subset=idx))
+        return True
+
+    def source_from_access_nodes(self, sdfg: SDFG) -> int:
+        """Source every WCR edge a NestedSDFG writes, or a Tasklet writes into a map exit, from a private AccessNode (:meth:`rewrite_wcr_sources`), then identity-seed each fresh accumulator they reduce into when every
+        write into it is write-once (:meth:`seed_accumulator`).
+
+        :returns: The number of rewritten edges.
+        """
+        total = 0
+        for sd in list(sdfg.all_sdfgs_recursive()):
+            requests: dict[str, list] = {}
+            for state in list(sd.states()):
+                total += self.rewrite_wcr_sources(sd, state, requests)
+            if not requests:
+                continue
+            plain = self.plain_written(sd)
+            for name, (wcr, all_write_once, states) in requests.items():
+                if all_write_once and self.seedable_accumulator(sd, name, plain):
+                    self.seed_accumulator(sd, name, wcr, states)
+        return total
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, set[str]] | None:
-        """Normalize every masked in-nsdfg write-only WCR reduction under a Map.
+        """Normalize the map-body nested reductions, then source the WCR edges from access nodes.
 
         :param sdfg: The SDFG to normalize.
         :param pipeline_results: Results of prior passes in the pipeline (unused).
-        :returns: ``None`` if nothing was rewritten; otherwise a single-entry dict with
-                  the rewritten-output count under key ``normalized_nested_reductions``.
+        :returns: ``None`` if nothing was rewritten; otherwise the counts under ``normalized_nested_reductions`` and
+                  ``normalized_wcr_edges``.
         """
-        n = self._apply(sdfg)
-        if n == 0:
+        nested = self.normalize_nested_reductions(sdfg)
+        sourced = self.source_from_access_nodes(sdfg)
+        if nested == 0 and sourced == 0:
             return None
         if self.validate:
             sdfg.validate()
-        return {"normalized_nested_reductions": {str(n)}}
+        return {"normalized_nested_reductions": {str(nested)}, "normalized_wcr_edges": {str(sourced)}}

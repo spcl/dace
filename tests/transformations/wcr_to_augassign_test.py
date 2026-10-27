@@ -82,7 +82,7 @@ def test_noncommutative_operand_order():
 
 def test_scalar_source_multidim_target_subset():
     """expr_index-2 (``AccessNode -[wcr]-> AccessNode``): a SCALAR WCR source (the
-    per-iteration transient ``NormalizeWCRSource`` inserts) writing a
+    per-iteration transient ``NormalizeWCR`` inserts) writing a
     MULTI-DIMENSIONAL target element (``aa[2, 3]``). Reverting must read the source
     at its OWN scalar subset, not the target's 2-D slice -- regression for the
     s2101 / s2275 corpus failure ``Memlet subset does not match node dimension
@@ -98,7 +98,7 @@ def test_scalar_source_multidim_target_subset():
     aa = state.add_write("aa")
     state.add_edge(producer, "o", src, None, dace.Memlet("src[0]"))
     # WCR source is the scalar ``src``; target is the 2-D element aa[2, 3]
-    # (``other_subset`` unset -- the shape NormalizeWCRSource + LoopToMap produce).
+    # (``other_subset`` unset -- the shape NormalizeWCR + LoopToMap produce).
     state.add_edge(src, None, aa, None, dace.Memlet(data="aa", subset="2, 3", wcr="lambda a, b: a + b"))
     sdfg.validate()
 

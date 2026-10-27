@@ -509,7 +509,7 @@ def test_readwrite_connector_with_a_second_plain_write_is_left_alone():
     first.add_edge(t, "__out", first.add_write("b_io"), None, dace.Memlet("b_io[i]"))
     sdfg.validate()
 
-    assert NormalizeWCR().apply_pass(sdfg, {}) is None
+    assert NormalizeWCR().normalize_nested_reductions(sdfg) == 0
     sdfg.validate()
 
 

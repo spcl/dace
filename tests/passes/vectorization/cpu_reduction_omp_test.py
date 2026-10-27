@@ -121,7 +121,7 @@ def test_emits_omp_reduction_clause(kind):
 
 @pytest.mark.parametrize("kind", list(PROGRAMS))
 def test_partial_folds_to_single_element(kind):
-    """The interposed reduction partial (``NormalizeWCRSource``'s ``_wcr_priv_*_acc`` on the
+    """The interposed reduction partial (``NormalizeWCR``'s ``_wcr_priv_*_acc`` on the
     ``NSDFG -> AccessNode -[wcr]-> MapExit`` boundary) folds onto a single element -- a scalar,
     not a widened tile buffer -- and the accumulator the clause names stays a true Scalar
     (the clause needs a scalar, not a pointer-passed array slot).

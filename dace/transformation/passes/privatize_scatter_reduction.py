@@ -48,7 +48,7 @@ that pass's drop-WCR shortcut, which is unsound for a scatter: it rewrites
 scalar accumulator, but a scatter writes only ONE element of a bounded ``oc``,
 leaving the rest of a per-iteration whole-array private buffer uninitialised (read
 back into the sum -> garbage). Because this pass makes the outer edge non-plain,
-``NormalizeWCR`` and ``NormalizeWCRSource`` both skip the scatter (the latter via
+``NormalizeWCR`` skips the scatter in both its rewrites (the access-node sourcing via
 :func:`scatter_reduction_wcr_edge`, so its per-iteration whole-array buffer -- the
 same latent bug -- is never inserted either).
 
@@ -191,9 +191,8 @@ def data_dependent_scatter_wcr_edge(nsdfg: nodes.NestedSDFG, oc: str):
     offset). The reducer is *not* consulted -- ``+`` / ``-`` / ``*`` / ``/`` / ``min`` /
     ``max`` / a custom lambda all match.
 
-    It is the fail-safe predicate the WCR-normalization passes
-    (:class:`~dace.transformation.passes.normalize_wcr.NormalizeWCR`,
-    :class:`~dace.transformation.passes.normalize_wcr_source.NormalizeWCRSource`) key their
+    It is the fail-safe predicate the WCR normalization
+    (:class:`~dace.transformation.passes.normalize_wcr.NormalizeWCR`) keys its
     refusal on: the drop-WCR / whole-buffer ``_nnr_out`` / ``_wcr_priv`` rewrites are
     UNSOUND for such a sink -- only one element of a per-iteration whole-array buffer is
     written, the rest read back uninitialised -- so both refuse it (any op, any device)

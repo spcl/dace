@@ -10,7 +10,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.transformation.dataflow import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.interstate import InlineSDFG
-from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 
@@ -1350,7 +1350,7 @@ def scale_and_sum(A: dace.float64[16], B: dace.float64[16], S: dace.float64[1]):
 def nested_body_reducing_through_an_access_node(program) -> dace.SDFG:
     """``map { nested SDFG } -> access node -wcr-> map exit``: the body nested, the reduction left outside it."""
     sdfg = program.to_sdfg(simplify=True)
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     state = sdfg.start_block
     entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
     leaves = {e.src for e in state.in_edges(state.exit_node(entry)) if e.data.wcr}

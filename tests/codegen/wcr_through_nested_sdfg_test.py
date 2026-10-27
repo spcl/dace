@@ -23,7 +23,7 @@ import pytest
 
 import dace
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
-from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.vectorization.lower_reduction_wcr import lower_reduction_wcr_in_body
 
 
@@ -31,8 +31,8 @@ def _normalize_wcr_source(sdfg: dace.SDFG) -> None:
     """Normalize WCR edges so they source from an AccessNode, then drop the now-
     redundant in-body WCRs that ``nest_state_subgraph`` duplicated onto the inner
     body edge.  This mirrors the vectorization pipeline's two-step recipe
-    (``NormalizeWCRSource`` + ``lower_reduction_wcr_in_body``)."""
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    (``NormalizeWCR.source_from_access_nodes`` + ``lower_reduction_wcr_in_body``)."""
+    NormalizeWCR().source_from_access_nodes(sdfg)
     for sd in sdfg.all_sdfgs_recursive():
         if sd is sdfg:
             continue
@@ -86,7 +86,7 @@ def test_wcr_through_nested_sdfg_sum_reduction():
     """A WCR-sum edge whose source is a NestedSDFG (one Map iteration per body
     invocation) should accumulate correctly: ``acc[0] += sum(src)``.
 
-    ``NormalizeWCRSource`` rewrites the non-canonical ``NestedSDFG -[wcr]-> MapExit``
+    ``NormalizeWCR`` rewrites the non-canonical ``NestedSDFG -[wcr]-> MapExit``
     shape to ``NestedSDFG -> AccessNode -[wcr]-> MapExit`` before codegen.
     """
     n = 64
@@ -224,7 +224,7 @@ def test_wcr_via_private_scalar_edge_sourced_from_access_node():
 def test_nest_state_subgraph_emits_detectable_wcr_shape(wcr_str, binop):
     """The pipeline should turn ``nest_state_subgraph`` output into
     ``NestedSDFG -> AccessNode -[wcr]-> MapExit -> AN(acc)`` (the canonical shape the
-    codegen recognises), for every associative WCR op. ``NormalizeWCRSource`` performs
+    codegen recognises), for every associative WCR op. ``NormalizeWCR`` performs
     that rewrite; ``functools.reduce`` over ``src`` is the reference.
     """
     import functools
@@ -288,7 +288,7 @@ def test_nest_state_subgraph_wcr_placement():
     """``nest_state_subgraph`` (the helper underlying ``NestInnermostMapBodyIntoNSDFG``)
     wraps a Map body in a NestedSDFG. When the wrapped body has a WCR output, the
     helper emits the WCR on the NSDFG -> MapExit edge (codegen drops it). The
-    canonical shape is ``NSDFG -> AN -[wcr]-> MapExit``; ``NormalizeWCRSource``
+    canonical shape is ``NSDFG -> AN -[wcr]-> MapExit``; ``NormalizeWCR``
     rewrites to it without changing core helpers.
     """
     from dace.sdfg.graph import SubgraphView

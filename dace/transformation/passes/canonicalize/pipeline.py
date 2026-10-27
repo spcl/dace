@@ -135,7 +135,6 @@ from dace.transformation.passes.loop_to_state_scan import LoopToStateScan
 from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
-from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.parallelization.contracts.guarded_scatter import ScatterToGuardedMaps
 from dace.transformation.passes.parallelization.contracts.under_constraint import ParallelizeUnderConstraint
@@ -960,7 +959,6 @@ def derive_parallelism(
                 [
                     *[(unit, isinstance(unit, PruneAndInlineNestedSDFGs)) for _, unit in _inline_single_state(label)],
                     (StructuralCleanup(), False),
-                    (NormalizeWCR(), False),
                     (CarriedAccumulationToWCR(), True),
                 ],
                 [
@@ -1041,7 +1039,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     fuses conditions; lift what fusion exposed; the final tidy. Invariant guards stay pushed in: hoisting them is
     the specialization step ``hoist_invariant_guards``."""
     label = RECOMPOSE
-    s: Stages = [(label, NormalizeWCRSource()), (label, RevertNonReductionWCR())]
+    s: Stages = [(label, RevertNonReductionWCR())]
     # Before fusion: the WCR map it leaves fuses with the matrix's producer
     s += [(label, FuseElementwiseIntoGemv())]
     s += [
@@ -1061,6 +1059,9 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     # A memset the control flow after it overwrites unread (velocity's zeta_value, swept level by level) goes before
     # fusion, so its state does not stand between the maps; the finish runs it again for the fills lifted after.
     s += [(label, DeadFillElimination())]
+    # Once every reduction is a map's and before fusion, which double-counts an in-body one: the in-body reductions
+    # surface onto the map boundary (``MoveIfIntoMap`` nests one above) and every WCR is sourced from an access node.
+    s += [(label, NormalizeWCR())]
 
     s += [(FUSE, maximal_fusion(target))]
     label = AFTER_FUSION
@@ -1070,7 +1071,6 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
         s += _inline_single_state(label)
     if lift:
         s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
-    s += [(label, NormalizeWCRSource())]
     s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True)]))]
     s += [*_inline_single_state(label), (label, PruneEmptyConditionalBranches())]
     s += [
@@ -1165,7 +1165,7 @@ def disable_unit_validation(unit: ppl.Pass) -> None:
     if isinstance(unit, (PatternMatchAndApply, FuseMaps)):
         unit.validate = False
         unit.validate_all = False
-    if isinstance(unit, (NormalizeWCR, NormalizeWCRSource)):
+    if isinstance(unit, NormalizeWCR):
         unit.validate = False
     if isinstance(unit, ppl.Pipeline):
         for member in unit.passes:

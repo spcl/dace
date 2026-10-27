@@ -266,7 +266,7 @@ def test_spmv_bypass_keeps_sdfg_valid():
     from dace.transformation.dataflow import WCRToAugAssign
     from dace.transformation.interstate import LoopToMap, RefineNestedAccess
     from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
-    from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+    from dace.transformation.passes.normalize_wcr import NormalizeWCR
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import normalize_loop_nests
 
     n = dace.symbol("n")
@@ -297,7 +297,7 @@ def test_spmv_bypass_keeps_sdfg_valid():
     sdfg.apply_transformations_repeated([LoopToMap, RefineNestedAccess], permissive=False, validate=False)
     normalize_loop_nests(sdfg)
     ConvertLengthOneArraysToScalars(recursive=True, preserve_abi=True).apply_pass(sdfg, {})
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
 
     sdfg.validate()  # BEFORE bypass: valid
     BypassTrivialAssignTasklets().apply_pass(sdfg, {})

@@ -16,7 +16,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
-from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource, accumulates_into
+from dace.transformation.passes.normalize_wcr import NormalizeWCR, accumulates_into
 from dace.transformation.passes.vectorization.lower_reduction_wcr import lower_reduction_wcr_in_body
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
     SCALAR_TAIL_MARKER,
@@ -93,7 +93,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
 
     def _body_is_nested_reduction(self, state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
         # True if the body is already a nested reduction: one NestedSDFG plus only boundary reduction AccessNodes (each
-        # with a WCR edge to the MapExit -- the partial ``NormalizeWCRSource`` interposed on ``NSDFG -> AccessNode
+        # with a WCR edge to the MapExit -- the partial ``NormalizeWCR`` interposed on ``NSDFG -> AccessNode
         # -[wcr]-> MapExit``) whose connector the body folds into. A body that only writes its addend there (the
         # canonical ``NormalizeWCR`` partial) is not nested yet.
         map_exit = state.exit_node(map_entry)
@@ -171,7 +171,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             if get_single_nsdfg_inside_map(g, n) is not None:
                 continue
             # Idempotency: a body already nested by a prior run is ``NSDFG -> AccessNode -[wcr]->
-            # MapExit`` (the reduction partial ``NormalizeWCRSource`` interposed). Re-nesting it
+            # MapExit`` (the reduction partial ``NormalizeWCR`` interposed). Re-nesting it
             # would pull that boundary WCR back inside the body. Skip when the body is one NSDFG
             # plus only boundary reduction AccessNodes (each ``-[wcr]-> MapExit``).
             if self._body_is_nested_reduction(g, n):
@@ -203,9 +203,9 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             nested_bodies.append((nsdfg_node, is_tail))
         nested = len(nested_bodies)
         if nested:
-            # The WCR sink now flows from the NSDFG; interpose a private scalar (NormalizeWCRSource) so CPU
+            # The WCR sink now flows from the NSDFG; interpose a private scalar (NormalizeWCR) so CPU
             # codegen emits the boundary WCR as an OpenMP reduction.
-            NormalizeWCRSource().apply_pass(sdfg, {})
+            NormalizeWCR().source_from_access_nodes(sdfg)
             # Rewrite the WCR ``nest_state_subgraph`` duplicated onto the inner body edge to ``acc = acc <op> src``
             # (foldable via TileReduce); the boundary WCR stays. Postamble tails keep it.
             for nsdfg_node, is_tail in nested_bodies:

@@ -1531,7 +1531,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             m = edge.data
             # ``__in1``/``__out`` address DEST (output); ``__in2`` reads SOURCE (inp). Resolve
             # each side from the edge via get_src/dst_subset so a SCALAR WCR source (per-iter
-            # transient from NormalizeWCRSource, ``other_subset`` None) reads its OWN element
+            # partial from NormalizeWCR, ``other_subset`` None) reads its OWN element
             # instead of inheriting dest's (possibly multi-dim) slice -- inheriting gave the
             # "expected 1, got 2" mismatch on 2-D writes (``aa[i, i]``). ``None`` side = whole array.
             out_subset = m.get_dst_subset(edge, state)
@@ -1543,7 +1543,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             if not dims:
                 # Scalar RMW: ``__in1``/``__out`` address DEST (output); ``__in2`` reads SOURCE
                 # (inp). Resolve each side from the edge via get_src/dst_subset so a SCALAR WCR
-                # source (per-iter transient from NormalizeWCRSource, ``other_subset`` None) reads
+                # source (per-iter partial from NormalizeWCR, ``other_subset`` None) reads
                 # its OWN element instead of inheriting dest's (possibly multi-dim) slice --
                 # inheriting gave the "expected 1, got 2" mismatch on 2-D writes (``aa[i, i]``).
                 # ``None`` side = whole array.

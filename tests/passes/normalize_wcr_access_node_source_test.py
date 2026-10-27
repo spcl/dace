@@ -1,10 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`~dace.transformation.passes.normalize_wcr_source.NormalizeWCRSource`.
+"""Tests for the access-node sourcing of :class:`~dace.transformation.passes.normalize_wcr.NormalizeWCR`.
 
-The pass maintains the invariant that every WCR-bearing edge in the SDFG sources from
-an :class:`~dace.nodes.AccessNode` (the canonical reduction shape DaCe codegen
-recognises). Tasklet- and NestedSDFG-sourced WCR get a freshly inserted private
-transient between producer and consumer.
+Every WCR edge a Tasklet writes into a map exit, or a NestedSDFG writes anywhere, is sourced
+from an :class:`~dace.nodes.AccessNode` (the canonical reduction shape DaCe codegen
+recognises): a freshly inserted private transient sits between producer and consumer.
 """
 
 import copy
@@ -16,7 +15,7 @@ import pytest
 import dace
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.propagation import propagate_memlets_sdfg
-from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
 
 def _wcr_source_classes(sdfg: dace.SDFG):
@@ -70,7 +69,7 @@ def test_pass_rewrites_nsdfg_source_to_access_node():
     pre = _wcr_source_classes(sdfg)
     assert "NestedSDFG" in pre, f"fixture should have NSDFG-source WCR; got {pre}"
 
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
 
     post = _wcr_source_classes(sdfg)
     assert "NestedSDFG" not in post, f"pass should remove all NSDFG-source WCR edges; got {post}"
@@ -84,7 +83,7 @@ def test_pass_rewrite_is_numerically_correct():
     last thread's value, orders of magnitude off)."""
     n = 64
     sdfg = _build_nsdfg_wcr_sum(n)
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
 
     rng = np.random.default_rng(0)
     src = rng.uniform(-1.0, 1.0, size=n)
@@ -97,7 +96,7 @@ def test_pass_preserves_initial_accumulator_value():
     """The pre-Map value of ``acc[0]`` is preserved (WCR accumulates into it)."""
     n = 32
     sdfg = _build_nsdfg_wcr_sum(n)
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
 
     rng = np.random.default_rng(1)
     src = rng.uniform(-1.0, 1.0, size=n)
@@ -126,7 +125,7 @@ def test_pass_handles_every_associative_wcr(wcr_str, binop, init, domain):
         for e in st.edges():
             if e.data is not None and e.data.wcr is not None:
                 e.data.wcr = wcr_str
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
 
     rng = np.random.default_rng(hash(wcr_str) & 0xFFFFFFFF)
     src = rng.uniform(*domain, size=n)
@@ -140,9 +139,9 @@ def test_pass_is_idempotent():
     """Re-running the pass finds no WCR edges sourced from a CodeNode -- it is a no-op
     on already-normalised SDFGs."""
     sdfg = _build_nsdfg_wcr_sum(16)
-    first = NormalizeWCRSource().apply_pass(sdfg, {})
+    first = NormalizeWCR().apply_pass(sdfg, {})
     assert first is not None, "first apply should report a rewrite"
-    second = NormalizeWCRSource().apply_pass(sdfg, {})
+    second = NormalizeWCR().apply_pass(sdfg, {})
     assert second is None, f"second apply should be a no-op; got {second}"
 
 
@@ -165,7 +164,7 @@ def test_pass_rewrites_tasklet_source_wcr_too():
     )
     sdfg.validate()
 
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
 
     post = _wcr_source_classes(sdfg)
     assert "Tasklet" not in post, f"pass should remove Tasklet-source WCR; got {post}"
@@ -197,7 +196,7 @@ def test_pass_no_op_on_canonical_access_node_source_wcr():
     sdfg.validate()
 
     before = copy.deepcopy(sdfg.to_json())
-    res = NormalizeWCRSource().apply_pass(sdfg, {})
+    res = NormalizeWCR().apply_pass(sdfg, {})
     assert res is None, "canonical-shape SDFG should be left alone"
 
     rng = np.random.default_rng(4)
@@ -205,6 +204,22 @@ def test_pass_no_op_on_canonical_access_node_source_wcr():
     acc = np.zeros(1, dtype=np.float64)
     sdfg(src=src, acc=acc)
     assert np.isclose(acc[0], src.sum())
+
+
+def test_pass_leaves_a_map_free_tasklet_wcr_alone():
+    """A WCR a tasklet writes outside every map is resolved on its scalar connector; a private
+    access node would only turn it into an accumulating copy."""
+    sdfg = dace.SDFG("map_free_tasklet_wcr")
+    sdfg.add_array("src", [1], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    st = sdfg.add_state("m")
+    t = st.add_tasklet("id", {"_in"}, {"_out"}, "_out = _in")
+    st.add_edge(st.add_read("src"), None, t, "_in", dace.Memlet("src[0]"))
+    st.add_edge(t, "_out", st.add_write("acc"), None, dace.Memlet(data="acc", subset="0", wcr="lambda a, b: a + b"))
+    sdfg.validate()
+
+    assert NormalizeWCR().apply_pass(sdfg, {}) is None
+    assert _wcr_source_classes(sdfg) == ["Tasklet"]
 
 
 def _build_nsdfg_inout_wcr_sdfg() -> dace.SDFG:
@@ -249,7 +264,7 @@ def _build_nsdfg_inout_wcr_sdfg() -> dace.SDFG:
 
 
 def test_skips_rewrite_when_nsdfg_output_is_also_inout_connector():
-    """``NormalizeWCRSource`` must not rewrite a WCR-bearing edge whose source
+    """``NormalizeWCR`` must not rewrite a WCR-bearing edge whose source
     is a ``NestedSDFG`` and whose ``src_conn`` is ALSO an in-connector on that
     NestedSDFG (i.e. the connector is InOut).
 
@@ -262,7 +277,7 @@ def test_skips_rewrite_when_nsdfg_output_is_also_inout_connector():
     With the skip predicate the WCR stays on the direct
     ``NestedSDFG -> AccessNode`` edge; codegen falls back to its atomic-add
     path. The SDFG validates, compiles, and computes the right value."""
-    from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+    from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
     sdfg = _build_nsdfg_inout_wcr_sdfg()
 
@@ -281,7 +296,7 @@ def test_skips_rewrite_when_nsdfg_output_is_also_inout_connector():
     # connected to different input ({'out'}) and output
     # ({'_wcr_priv_loop_body_out'}) arrays"). Post-fix the pass leaves the
     # InOut edge intact.
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     sdfg.validate()
 
     rng = np.random.default_rng(42)
@@ -317,7 +332,7 @@ def test_seed_fresh_write_once_accumulator():
     sdfg.validate()
 
     assert not _seed_states(sdfg)
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     assert _seed_states(sdfg), "fresh write-once WCR accumulator must be identity-seeded"
 
     rng = np.random.default_rng(0)
@@ -353,7 +368,7 @@ def test_seed_covers_only_the_window_the_reduction_writes():
     propagate_memlets_sdfg(sdfg)
     sdfg.validate()
 
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     sdfg.validate()
 
     seed_maps = [
@@ -386,7 +401,7 @@ def test_seed_spares_top_level_argument():
     st.add_memlet_path(t, mx, aw, src_conn="_out", memlet=dace.Memlet(data="acc", subset="i", wcr="lambda a, b: a + b"))
     sdfg.validate()
 
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     assert not _seed_states(sdfg), "in-place WCR onto a top-level argument must not be seeded"
 
     rng = np.random.default_rng(3)
@@ -414,7 +429,7 @@ def test_seed_spares_same_slot_fold():
     st.add_memlet_path(t, mx, aw, src_conn="_out", memlet=dace.Memlet(data="acc", subset="0", wcr="lambda a, b: a + b"))
     sdfg.validate()
 
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     assert not _seed_states(sdfg), "same-slot fold onto a live accumulator must not be seeded"
 
     src = np.ones(n)
@@ -451,7 +466,7 @@ def test_seed_spares_nested_out_only_aliasing_live_array():
     st.add_edge(nsdfg, "out", st.add_write("A"), None, dace.Memlet(f"A[0:{n}]"))  # plain outer edge: out -> live A
     sdfg.validate()
 
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     assert not _seed_states(sdfg), "an out-only connector aliasing a live array must not be seeded"
 
     A = np.full(n, 10.0)
@@ -506,7 +521,7 @@ def test_seed_spares_a_scatter_called_once_per_map_iteration():
     st3.add_nedge(st3.add_read("acc"), st3.add_write("out"), dace.Memlet(f"acc[0:{k}, 0:{m}]"))
     sdfg.validate()
 
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     assert not _seed_states(sdfg), "a per-iteration call into a filled accumulator must not be seeded"
 
     rng = np.random.default_rng(0)
@@ -546,7 +561,7 @@ def test_seed_spares_source_oriented_plain_init():
     s3.add_edge(s3.add_read("acc"), None, s3.add_write("out"), None, dace.Memlet(f"acc[0:{n}]"))
     sdfg.validate()
 
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     assert not _seed_states(sdfg), "acc already has a (source-oriented) plain init; must not be re-seeded"
 
     rng = np.random.default_rng(2)
@@ -604,7 +619,7 @@ def _accumulating_connector_oracle(n: int) -> np.ndarray:
 
 
 def test_skips_rewrite_when_nsdfg_wcr_accumulates_into_its_output_connector():
-    """``NormalizeWCRSource`` must not re-home an output connector that the body
+    """``NormalizeWCR`` must not re-home an output connector that the body
     WCR-*accumulates* into onto a whole-array ``_wcr_priv`` buffer.
 
     The rewrite copies the WHOLE private buffer out to the consumer, which is only
@@ -625,13 +640,13 @@ def test_skips_rewrite_when_nsdfg_wcr_accumulates_into_its_output_connector():
     connector keeps its direct ``NestedSDFG -> MapExit`` WCR edge, so the inner
     per-element WCR accumulates straight onto the target -- which is already correct.
     """
-    from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+    from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
     n = 4
     sdfg = _build_nsdfg_accumulating_connector_sdfg(n)
     assert "NestedSDFG" in _wcr_source_classes(sdfg), "fixture should have NSDFG-source WCR"
 
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     sdfg.validate()
 
     # Structural: the accumulating connector must keep its direct NestedSDFG-sourced WCR
