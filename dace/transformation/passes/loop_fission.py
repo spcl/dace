@@ -701,42 +701,43 @@ class LoopFission(ppl.Pass):
         is_start = parent.start_block is loop
         orig_order = _linear_blocks(loop, allow_assignments=True)
         keep_idx = [sorted(required(orig_order).index(b) for b in g) for g in groups]
+        order = required(orig_order)
         # The last group keeping a block takes the block itself, as ``loop`` is dropped below; only a block a later
         # group keeps too is copied.
-        last_group = {required(orig_order)[i]: gi for gi, idxs in enumerate(keep_idx) for i in idxs}
+        last_group = {order[i]: gi for gi, idxs in enumerate(keep_idx) for i in idxs}
+        # An edge between two blocks that stay adjacent keeps its data (a symbol it assigns feeds the next block).
+        kept_edges = edge_data_by_ends(loop)
+        # The loop without its body, copied once per group: a body split n ways is not copied n times whole.
+        memo = {id(b): b for b in loop.nodes()}
+        memo.update((id(e.data), e.data) for e in loop.edges())
+        shell = copy.deepcopy(loop, memo)
+        for b in list(shell.nodes()):
+            shell.remove_node(b)
+
+        position = {b: i for i, b in enumerate(loop.nodes())}
 
         clones: list[LoopRegion] = []
-        moved: list[tuple[ControlFlowBlock, LoopRegion]] = []
         for gi, idxs in enumerate(keep_idx):
-            # The blocks this group does not copy stand in as themselves until the pruning below drops them, so a
-            # body split n ways is not copied n times whole (CloudSC: 51 groups, 3 min); the body edges are rebuilt
-            # below, so neither is their data.
-            copied = {required(orig_order)[i]: None for i in idxs if last_group[required(orig_order)[i]] != gi}
-            memo = {id(b): b for b in loop.nodes() if b not in copied}
-            memo.update((id(e.data), e.data) for e in loop.edges())
-            clone = copy.deepcopy(loop, memo)
+            clone = copy.deepcopy(shell)
             clone.label = f"{loop.label}_fis{gi}"
-            corder = _linear_blocks(clone, allow_assignments=True)
-            keep = [required(corder)[i] for i in idxs]
-            # An edge between two blocks that stay adjacent keeps its data (a symbol it assigns feeds the next block).
-            kept_edges = edge_data_by_ends(clone)
-            for b in [b for b in clone.nodes() if b not in keep]:
-                clone.remove_node(b)
-            for e in list(clone.edges()):
-                clone.remove_edge(e)
-            for a, b in zip(keep, keep[1:]):
+            originals = [order[i] for i in idxs]
+            # Added in the loop's own block order, as a pruned copy of the loop holds them.
+            claimed = {}
+            for b in sorted(originals, key=position.__getitem__):
+                if last_group[b] == gi:
+                    # Leaves ``loop``, and the CFG list with it, before the clone claims it.
+                    loop.remove_node(b)
+                    claimed[b] = b
+                else:
+                    claimed[b] = copy.deepcopy(b)
+                clone.add_node(claimed[b])
+            for a, b in zip(originals, originals[1:]):
                 data = kept_edges.get((a, b))
-                clone.add_edge(a, b, InterstateEdge() if data is None else copy.deepcopy(data))
-            clone.start_block = clone.node_id(keep[0])
-            moved += [(b, clone) for b in keep if last_group.get(b) == gi]
+                clone.add_edge(claimed[a], claimed[b], InterstateEdge() if data is None else copy.deepcopy(data))
+            clone.start_block = clone.node_id(claimed[originals[0]])
             clones.append(clone)
 
-        # A moved block leaves ``loop``, and the CFG list with it, before its clone claims it.
-        for b, clone in moved:
-            loop.remove_node(b)
-            b.parent_graph = clone
         for clone in clones:
-            # Added once pruned, so the stand-ins never join the tree.
             parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
 
         for e in in_edges:
