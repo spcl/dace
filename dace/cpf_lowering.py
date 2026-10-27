@@ -3788,6 +3788,12 @@ VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
     ),
 }
 
+#: Per device dialect, the vendor libraries of the other device toolkit.
+OTHER_DEVICE_LIBRARIES: dict[Dialect, frozenset[str]] = {
+    Dialect.STANDALONE_HIP: frozenset({"cuBLAS", "cuSolverDn", "cuFFT"}),
+    Dialect.STANDALONE_CUDA: frozenset({"hipBLAS", "hipSolverDn", "hipFFT"}),
+}
+
 #: The namespace a unit's inlined vendor wrappers live in, in place of ``dace``.
 VENDOR_NAMESPACE = "cpf_vendor"
 
@@ -3800,10 +3806,18 @@ def respell_vendor_namespaces(code: str) -> str:
     return VENDOR_QUALIFIED.sub(lambda match: f"{VENDOR_NAMESPACE}::{match.group(1)}::", code)
 
 
-def vendor_wrapper(path: str, seen: set[str]) -> tuple[list[str], str]:
+#: The condition DaCe's GPU wrappers select their HIP spelling under.
+HIP_BRANCH = re.compile(r"\s*#\s*if\s+defined\(__HIPCC__\)\s*\|\|\s*defined\(WITH_HIP\)\s*$")
+
+
+def vendor_wrapper(path: str, seen: set[str], hip: bool = False) -> tuple[list[str], str]:
     """DaCe's wrapper header at ``path`` (relative to the ``dace`` package) as inline text: its system includes,
     and its body with ``namespace dace`` respelled to :data:`VENDOR_NAMESPACE`. A wrapper it includes by quoted
     path comes first, once per unit (``seen``); ``#pragma once`` and comments-only lines are dropped.
+
+    The header's HIP/CUDA branch is resolved for the unit (``hip``), and a ``#define`` of that branch becomes
+    what it stands for: an object-like rename is applied to the text, a configuration flag (``HIPBLAS_V2``, the
+    default from ROCm 7 on) is dropped. A nested ``#if`` of the branch stays inline, its includes with it.
 
     :returns: ``(system headers, definitions)``.
     """
@@ -3815,8 +3829,37 @@ def vendor_wrapper(path: str, seen: set[str]) -> tuple[list[str], str]:
     seen.add(full)
     headers: list[str] = []
     body: list[str] = []
+    renames: dict[str, str] = {}
+    # Inside the HIP/CUDA conditional: whether its current branch is the unit's, and how deep a nested #if is
+    branch: bool | None = None
+    depth = 0
     with open(full) as handle:
         for line in handle:
+            if branch is None and HIP_BRANCH.match(line):
+                branch = hip
+                continue
+            if branch is not None:
+                directive = re.match(r"\s*#\s*(if|ifdef|ifndef|else|elif|endif)\b", line)
+                if directive and depth == 0 and directive.group(1) == "else":
+                    branch = not hip
+                    continue
+                if directive and depth == 0 and directive.group(1) == "endif":
+                    branch = None
+                    continue
+                if directive and directive.group(1).startswith("if"):
+                    depth += 1
+                elif directive and directive.group(1) == "endif":
+                    depth -= 1
+                if not branch:
+                    continue
+                define = re.match(r"\s*#\s*define\s+(\w+)(?:\s+(\w+))?", line)
+                if define:
+                    if define.group(2):
+                        renames[define.group(1)] = define.group(2)
+                    continue
+                if depth > 0:
+                    body.append(line.rstrip("\n"))
+                    continue
             include = re.match(r'\s*#\s*include\s*([<"])([^>"]+)[>"]', line)
             if include and include.group(1) == "<":
                 headers.append(f"<{include.group(2)}>")
@@ -3825,12 +3868,14 @@ def vendor_wrapper(path: str, seen: set[str]) -> tuple[list[str], str]:
                     os.path.normpath(os.path.join(os.path.dirname(full), include.group(2))),
                     os.path.dirname(dace.__file__),
                 )
-                nested_headers, nested_body = vendor_wrapper(nested, seen)
+                nested_headers, nested_body = vendor_wrapper(nested, seen, hip)
                 headers += nested_headers
                 body.append(nested_body)
             elif not re.match(r"\s*#\s*pragma\s+once", line):
                 body.append(line.rstrip("\n"))
     text = "\n".join(body).strip("\n")
+    if renames:
+        text = re.sub(r"\b(%s)\b" % "|".join(map(re.escape, renames)), lambda match: renames[match.group(1)], text)
     text = re.sub(r"\bnamespace\s+dace\b", f"namespace {VENDOR_NAMESPACE}", text)
     text = re.sub(r"//\s*namespace dace\b", f"// namespace {VENDOR_NAMESPACE}", text)
     return headers, respell_vendor_namespaces(text)
@@ -3882,7 +3927,7 @@ def vendor_environments(environments) -> list:
     return [found[name] for name in sorted(found)]
 
 
-def vendor_libraries(environments, code: str) -> list[VendorLibrary]:
+def vendor_libraries(environments, code: str, dialect: Dialect | None = None) -> list[VendorLibrary]:
     """The :data:`VENDOR_LIBRARIES` entries of ``environments`` (code-object names) that ``code`` uses, in key
     order. An environment is listed for the library a node PREFERS, also when its expansion fell back to the pure
     one (an int64 GEMV has no CBLAS call); such a unit carries none of the library's headers or link tokens. A
@@ -3890,10 +3935,14 @@ def vendor_libraries(environments, code: str) -> list[VendorLibrary]:
     inlined wrapper's namespace (a state struct's handle field, which the device unit repeats without the call)."""
     named = {family for family, names in VENDOR_NAMES.items() if names.search(code)}
     wrapped = VENDOR_QUALIFIED.search(code) is not None or f"{VENDOR_NAMESPACE}::" in code
+    # A HIP unit shares the CUDA libraries' wrappers and so their namespace, but never links the CUDA ones
+    foreign = OTHER_DEVICE_LIBRARIES.get(_active_dialect if dialect is None else dialect, frozenset())
     return [
         library
-        for library in (VENDOR_LIBRARIES[env.__name__] for env in vendor_environments(environments))
-        if named.intersection(library.families) or (library.wrapper and wrapped)
+        for name, library in (
+            (env.__name__, VENDOR_LIBRARIES[env.__name__]) for env in vendor_environments(environments)
+        )
+        if name not in foreign and (named.intersection(library.families) or (library.wrapper and wrapped))
     ]
 
 

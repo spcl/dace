@@ -197,6 +197,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "ReduceScatter": "MPI_Reduce_scatter: reduce across ranks, scatter the result blocks",
     "Scal": "BLAS scal: x = alpha * x",
     "Scan": "scan: running (prefix) fold along an axis",
+    "Sync": "sync: barrier among the threads of a warp, block or grid, or a host wait for a stream or the device",
     "Scatter": "MPI_Scatter: distribute from the root to every rank",
     "ScatterConflictCheck": "scatter conflict check: detect indices written more than once",
     "Send": "MPI_Send: blocking send",
@@ -1261,7 +1262,7 @@ def preamble(
     used = cpf_lowering.helpers_used(code, dialect)
     definitions = cpf_lowering.definitions_for(used, dialect)
     headers = cpf_lowering.headers_for(used, dialect)
-    vendors = cpf_lowering.vendor_libraries(environments, code)
+    vendors = cpf_lowering.vendor_libraries(environments, code, dialect)
     lines = ["// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime."]
     if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS:
         lines += CONTRACT_LINES
@@ -1276,7 +1277,9 @@ def preamble(
     for vendor in vendors:
         # The wrappers are C++; a C unit's expansions call the vendor directly.
         if vendor.wrapper and dialect is not cpf_lowering.Dialect.STANDALONE_C:
-            wrapper_headers, wrapper = cpf_lowering.vendor_wrapper(vendor.wrapper, seen_wrappers)
+            wrapper_headers, wrapper = cpf_lowering.vendor_wrapper(
+                vendor.wrapper, seen_wrappers, hip=dialect is cpf_lowering.Dialect.STANDALONE_HIP
+            )
             vendor_headers += wrapper_headers
             wrappers.append(wrapper)
     lines += [f"#include {header}" for header in dict.fromkeys(vendor_headers) if header not in headers]
@@ -1735,7 +1738,7 @@ def link_libraries(frame: CodeObject, dialect: cpf_lowering.Dialect, code: str =
     """The libraries of the frame's environments, by environment name, without those CPF supplies itself. Only
     link-only environments carry any here: the standalone footer refuses every other kind."""
     libraries: list[str] = []
-    for vendor in cpf_lowering.vendor_libraries(frame.environments, code):
+    for vendor in cpf_lowering.vendor_libraries(frame.environments, code, dialect):
         libraries += vendor.link_tokens(code)
     for name in sorted(frame.environments):
         env = get_environment(name)
