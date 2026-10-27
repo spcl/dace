@@ -18,9 +18,12 @@ equivalence is concerned (`Decisions.md#D63`, `#D64`):
   are plain containers addressed by their own names, as `dace-interp` lays
   them out with `Mem.write (Loc.elem name offset)`);
 * `interfaceOf`: the observable containers of a descriptor repository
-  (`Decisions.md#D63`): every non-transient container that is not a view or
-  reference; views and references are aliases, observed through the
-  containers they alias;
+  (`Decisions.md#D63`): every container that is not a view or reference and
+  is non-transient or a transient that outlives the run (`Persistent`,
+  `External`: a change to them is a change of the system's state, like a
+  change to an argument); views and references are aliases, observed
+  through the containers they alias.  `SDFG.interface` adds the
+  `Persistent`/`External` transients of nested SDFGs, by memory name;
 * `obsEq`: two final memories agree on every location (cells and queues)
   of the observable containers.
 -/
@@ -33,10 +36,11 @@ namespace Dace
 
 /-- Is a container with descriptor `d` observable after the program ends
 (`Decisions.md#D63`)?  Every non-transient container is, whatever its name,
-kind or storage.  Views and references are aliases (`Decisions.md#D11`) and
-not observed by name. -/
+kind or storage, and so is every transient that outlives the run
+(`DataDesc.outlivesRun`: `Persistent`, `External`).  Views and references are
+aliases (`Decisions.md#D11`) and not observed by name. -/
 def DataDesc.isObservable (d : DataDesc) : Bool :=
-  !d.transient &&
+  (!d.transient || d.outlivesRun) &&
     match d.kind with
     | .view _ | .reference _ => false
     | .scalar | .array | .stream _ | .structure _ _ | .containerArray _ => true
@@ -46,8 +50,11 @@ order. -/
 def interfaceOf (arrays : List (Name × DataDesc)) : List Name :=
   (arrays.filter fun (_, d) => d.isObservable).map Prod.fst
 
-/-- The observable containers of an SDFG (`Decisions.md#D63`). -/
-def SDFG.interface (g : SDFG) : List Name := interfaceOf g.arrays
+/-- The observable containers of an SDFG (`Decisions.md#D63`): those of its
+descriptor repository and, by memory name (one storage per nested-SDFG node,
+`Decisions.md#D68`), the `Persistent`/`External` transients of the SDFGs
+nested in it. -/
+def SDFG.interface (g : SDFG) : List Name := interfaceOf g.arrays ++ Region.outlivingNames "" g.top
 
 /-- The observable containers of a schedule tree (`Decisions.md#D63`). -/
 def STree.interface (t : STree) : List Name := interfaceOf t.containers

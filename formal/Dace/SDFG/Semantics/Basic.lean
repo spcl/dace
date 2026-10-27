@@ -647,6 +647,49 @@ def NodeKind.externalNames (pfx : String) (id : NodeId) : NodeKind → List Name
 
 end
 
+/-- A transient that outlives a run of its program (`Decisions.md#D63`):
+`Persistent` (allocated by the init code, kept across calls) or `External`
+(managed by the caller). -/
+def DataDesc.outlivesRun (d : DataDesc) : Bool :=
+  d.transient && (d.lifetime == .persistent || d.lifetime == .external)
+
+mutual
+
+/-- Memory names of the transients that outlive a run (`DataDesc.outlivesRun`)
+of an SDFG invoked under the memory-name prefix `pfx` and of the SDFGs nested
+in it, as `SDFG.externalNames`. -/
+def SDFG.outlivingNames (pfx : String) : SDFG → List Name
+  | ⟨_, arrays, _, _, _, top, _⟩ =>
+    (arrays.filter fun (_, d) => d.outlivesRun).map (pfx ++ ·.1) ++ Region.outlivingNames pfx top
+
+def Region.outlivingNames (pfx : String) : Region → List Name
+  | ⟨_, _, blocks, _, _⟩ => Blocks.outlivingNames pfx blocks
+
+def Blocks.outlivingNames (pfx : String) : List Block → List Name
+  | [] => []
+  | b :: bs => Block.outlivingNames pfx b ++ Blocks.outlivingNames pfx bs
+
+def Block.outlivingNames (pfx : String) : Block → List Name
+  | .state ⟨_, nodes, _, _⟩ => DNodes.outlivingNames pfx nodes
+  | .region r => Region.outlivingNames pfx r
+  | .loop ⟨_, _, _, _, _, _, _, body⟩ => Region.outlivingNames pfx body
+  | .cond _ brs => Branches.outlivingNames pfx brs
+  | .breakBlock | .continueBlock | .returnBlock => []
+
+def Branches.outlivingNames (pfx : String) : List (Option Expr × Region) → List Name
+  | [] => []
+  | (_, r) :: rest => Region.outlivingNames pfx r ++ Branches.outlivingNames pfx rest
+
+def DNodes.outlivingNames (pfx : String) : List DNode → List Name
+  | [] => []
+  | ⟨id, _, _, _, _, kind⟩ :: ns => NodeKind.outlivingNames pfx id kind ++ DNodes.outlivingNames pfx ns
+
+def NodeKind.outlivingNames (pfx : String) (id : NodeId) : NodeKind → List Name
+  | .nested g _ _ => SDFG.outlivingNames (pfx ++ g.name ++ "#" ++ toString id ++ "/") g
+  | _ => []
+
+end
+
 /-- The memory names defined at the start of a run of `g`: its arguments
 and the `External` transients at any nesting depth. -/
 def SDFG.keepAtStart (g : SDFG) (n : Name) : Bool :=

@@ -115,6 +115,30 @@ example : Refines ident ident := by
   · intro I ρ m r hr
     exact .inl (.inl hr)
 
+/-! ## Transients that outlive a run
+
+`Persistent` and `External` transients keep their contents across calls, so
+they are observed like arguments; `Global`, `SDFG` and `Scope` transients are
+allocated per run (`Decisions.md#D63`, `#D68`). -/
+
+def arr (transient : Bool) (lt : Lifetime := .scope) : DataDesc :=
+  { DataDesc.array (.float 64) [4] transient with lifetime := lt }
+
+def lifetimes : List (Name × DataDesc) :=
+  [("A", arr false), ("P", arr true .persistent), ("X", arr true .external),
+   ("G", arr true .global), ("S", arr true .sdfg), ("T", arr true)]
+
+#guard interfaceOf lifetimes == ["A", "P", "X"]
+
+/-- An SDFG nesting `lifetimes` in node 3 of its only state: the inner
+`Persistent`/`External` transients are observed by memory name. -/
+def outer : SDFG where
+  name := "outer"
+  arrays := [("B", arr false)]
+  top := { blocks := [.state { nodes := [{ id := 3, kind := .nested { name := "inner", arrays := lifetimes, top := {} } [] false }] }] }
+
+#guard outer.interface == ["B", "inner#3/P", "inner#3/X"]
+
 /-! ## Observable interfaces of the corpus -/
 
 def corpusDir : IO System.FilePath :=
