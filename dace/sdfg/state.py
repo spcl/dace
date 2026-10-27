@@ -816,11 +816,12 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             update = {k: v for k, v in update.items() if v is not None}
             dic.update(update)
 
-        # Add data-descriptor free symbols
+        # Add data-descriptor free symbols the SDFG does not declare: a declaration wins over the type of the symbol
+        # object a shape holds
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 if sym.dtype is not None:
-                    defined_syms[str(sym)] = sym.dtype
+                    defined_syms.setdefault(str(sym), sym.dtype)
 
         # Add inter-state symbols
         try:
