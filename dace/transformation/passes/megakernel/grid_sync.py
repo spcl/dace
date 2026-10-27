@@ -7,7 +7,7 @@ can follow each other, plus the wrap-around of every loop: from the end of an it
 Dependences are tracked per container; only containers every thread sees (global memory) count.
 """
 
-from dace import SDFG, SDFGState, dtypes
+from dace import SDFG, SDFGState, dtypes, properties
 from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
@@ -15,16 +15,16 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegio
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.megakernel.discovery import is_kernel, linear_chain, states_in
+from dace.transformation.passes.megakernel.discovery import TARGETS, Target, is_kernel, linear_chain, states_in
 
 #: Containers a stage reads and writes
 Accesses = tuple[frozenset[str], frozenset[str]]
 NO_ACCESSES: Accesses = (frozenset(), frozenset())
 
 
-def split_into_stages(state: SDFGState) -> list[SDFGState]:
+def split_into_stages(state: SDFGState, target: Target) -> list[SDFGState]:
     """Moves every kernel of ``state`` but the last into a state of its own before ``state``, in dataflow order."""
-    kernels = [n for n in sdutil.dfs_topological_sort(state) if is_kernel(n, state)]
+    kernels = [n for n in sdutil.dfs_topological_sort(state) if is_kernel(n, state, target)]
     stages = [
         xfh.state_fission(SubgraphView(state, state.scope_subgraph(k).nodes()), label=f"stage_{k.label}")
         for k in kernels[:-1]
@@ -32,15 +32,15 @@ def split_into_stages(state: SDFGState) -> list[SDFGState]:
     return stages + [state]
 
 
-def shared_accesses(block: ControlFlowBlock) -> Accesses:
-    """The global-memory containers ``block`` reads and writes."""
+def shared_accesses(block: ControlFlowBlock, target: Target) -> Accesses:
+    """The containers that every thread sees which ``block`` reads and writes."""
     reads, writes = set(), set()
     for state in states_in(block):
         state_reads, state_writes = state.read_and_write_sets()
         reads |= state_reads
         writes |= state_writes
     sdfg = block.sdfg
-    shared = {name for name in reads | writes if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global}
+    shared = {name for name in reads | writes if target.shares(sdfg.arrays[name])}
     return frozenset(reads & shared), frozenset(writes & shared)
 
 
@@ -68,23 +68,24 @@ def add_grid_sync(region: ControlFlowRegion, after: ControlFlowBlock | None, bef
     state.add_node(Sync("grid_sync", scope=SyncScope.GRID))
 
 
-def head_accesses(region: ControlFlowRegion) -> Accesses:
+def head_accesses(region: ControlFlowRegion, target: Target) -> Accesses:
     """What ``region`` touches before its first grid barrier: what the previous iteration must be done with."""
     seen = NO_ACCESSES
     for block in linear_chain(region):
         if is_grid_sync(block):
             break
-        seen = union(seen, shared_accesses(block))
+        seen = union(seen, shared_accesses(block, target))
     return seen
 
 
 class GridSyncPlacer:
     """Walks a megakernel body in program order and adds the grid barriers; counts them in ``added``."""
 
-    __slots__ = ("added",)
+    __slots__ = ("added", "target")
 
-    def __init__(self) -> None:
+    def __init__(self, target: Target) -> None:
         self.added = 0
+        self.target = target
 
     def walk(self, region: ControlFlowRegion, pending: Accesses) -> Accesses:
         """Places the barriers of ``region``, entered with ``pending`` accesses not yet behind a barrier.
@@ -100,7 +101,7 @@ class GridSyncPlacer:
                 otherwise = [] if any(cond is None for cond, branch in block.branches) else [pending]
                 pending = union(*ends, *otherwise)
             else:
-                accesses = shared_accesses(block)
+                accesses = shared_accesses(block, self.target)
                 if conflict(pending, accesses):
                     add_grid_sync(region, previous, block)
                     self.added += 1
@@ -112,19 +113,28 @@ class GridSyncPlacer:
 
     def loop(self, loop: LoopRegion, pending: Accesses) -> Accesses:
         end = self.walk(loop, pending)
-        if conflict(end, head_accesses(loop)):
+        if conflict(end, head_accesses(loop, self.target)):
             add_grid_sync(loop, linear_chain(loop)[-1], None)
             self.added += 1
             end = NO_ACCESSES
         return union(pending, end)  # The loop may also run no iteration
 
 
+@properties.make_properties
 @transformation.explicit_cf_compatible
 class InsertGridSyncs(ppl.Pass):
     """Splits a megakernel body (a hierarchical linear CFG of kernels) into one stage per kernel and adds the grid
     barriers between dependent stages. Returns the number of barriers added."""
 
     CATEGORY: str = "Optimization Preparation"
+
+    device = properties.EnumProperty(
+        dtype=dtypes.DeviceType, default=dtypes.DeviceType.GPU, desc="The device whose kernels are the stages"
+    )
+
+    def __init__(self, device: dtypes.DeviceType = dtypes.DeviceType.GPU) -> None:
+        super().__init__()
+        self.device = device
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes
@@ -133,9 +143,10 @@ class InsertGridSyncs(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> int | None:
+        target = TARGETS[self.device]
         for state in list(sdfg.states()):
-            if sum(is_kernel(n, state) for n in state.nodes()) > 1:
-                split_into_stages(state)
-        placer = GridSyncPlacer()
+            if sum(is_kernel(n, state, target) for n in state.nodes()) > 1:
+                split_into_stages(state, target)
+        placer = GridSyncPlacer(target)
         placer.walk(sdfg, NO_ACCESSES)
         return placer.added or None

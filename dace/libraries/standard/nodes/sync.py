@@ -133,12 +133,16 @@ class ExpandHIP(ExpandTransformation):
 
 @library.register_expansion(Sync, "Auto")
 class ExpandAuto(ExpandTransformation):
-    """The expansion of the configured GPU backend."""
+    """The OpenMP expansion for a barrier in a CPU team (``CPU_Persistent``), else that of the configured GPU
+    backend."""
 
     environments = []
 
     @staticmethod
     def expansion(node: Sync, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        in_team = enclosing_cpu_parallel_schedule(parent_sdfg, parent_state, node) == dtypes.ScheduleType.CPU_Persistent
+        if in_team and not is_devicelevel_gpu(parent_sdfg, parent_state, node):
+            return ExpandOpenMP.expansion(node, parent_state, parent_sdfg)
         return expand_sync(node, parent_state, get_gpu_backend())
 
 

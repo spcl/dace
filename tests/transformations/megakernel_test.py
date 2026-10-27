@@ -147,6 +147,7 @@ def test_a_cooperative_kernel_launches_cooperatively_and_sizes_its_grid():
     assert "LaunchKernel(" not in code
     assert "__dace_persistent_blocks_counter(__state)" in code  # the host asks before the launch
     assert "OccupancyMaxActiveBlocksPerMultiprocessor" in code
+    assert "occupancy query failed" in code  # a failed query reports its GPU error, not "does not fit"
 
 
 @pytest.mark.gpu
@@ -318,6 +319,32 @@ def test_a_megakernel_per_host_iteration_matches_the_kernels():
         np.testing.assert_array_equal(cupy.asnumpy(got[name]), cupy.asnumpy(want[name]))
 
 
+@pytest.mark.parametrize("program, dtype, rank, size", STENCILS, ids=STENCIL_IDS)
+def test_a_cpu_stencil_time_loop_is_one_omp_team_with_two_barriers(program, dtype, rank, size):
+    """On the CPU, the time loop runs in one ``omp parallel`` team: each stencil is an ``omp for nowait`` and the
+    same two grid barriers become ``omp barrier``s."""
+    sdfg = program.to_sdfg(simplify=True)
+    auto_optimize(sdfg, dace.dtypes.DeviceType.CPU)
+    fused = copy.deepcopy(sdfg)
+    fused.name = f"{sdfg.name}_cpu_megakernel"
+    assert len(MegaKernelOptimization(device=dace.dtypes.DeviceType.CPU).apply_pass(fused, {})) == 1
+    fused.validate()
+    team = next(n for n, s in fused.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+    team.map.omp_num_threads = 4
+
+    code = fused.generate_code()[0].clean_code
+    assert code.count("#pragma omp parallel") == 1
+    assert code.count("#pragma omp for nowait") == 2 and code.count("#pragma omp barrier") == 2
+
+    rng = np.random.default_rng(0)
+    inputs = {name: rng.random((size,) * rank).astype(dtype) for name in "AB"}
+    want = copy.deepcopy(inputs)
+    sdfg(TSTEPS=9, N=size, **want)
+    fused(TSTEPS=9, N=size, **inputs)
+    for name in "AB":
+        np.testing.assert_array_equal(inputs[name], want[name])
+
+
 if __name__ == "__main__":
     test_a_time_loop_of_stencil_kernels_is_one_chain(jacobi_2d_test.kernel)
     test_a_time_loop_of_stencil_kernels_is_one_chain(heat_3d_test.heat_3d_kernel)
@@ -338,3 +365,5 @@ if __name__ == "__main__":
         test_the_fused_stencil_matches_the_kernel_per_step_version(*stencil)
     test_kernels_in_a_nested_sdfg_under_a_host_loop_form_a_chain()
     test_a_megakernel_per_host_iteration_matches_the_kernels()
+    for stencil in STENCILS:
+        test_a_cpu_stencil_time_loop_is_one_omp_team_with_two_barriers(*stencil)

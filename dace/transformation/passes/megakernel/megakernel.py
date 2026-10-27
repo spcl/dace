@@ -19,7 +19,7 @@ from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.megakernel.discovery import MegakernelChain, find_chains, is_kernel
+from dace.transformation.passes.megakernel.discovery import TARGETS, MegakernelChain, Target, find_chains, is_kernel
 from dace.transformation.passes.megakernel.grid_stride import grid_stride
 from dace.transformation.passes.megakernel.grid_sync import InsertGridSyncs
 
@@ -58,18 +58,22 @@ def used_outside_chain(chain: MegakernelChain) -> set[str]:
     return names
 
 
-def keep_global_memory_outside(host: SDFGState, node: nodes.NestedSDFG) -> None:
-    """Allocates the global-memory transients of ``node`` in its parent instead: a kernel cannot allocate them."""
+def keep_shared_memory_outside(host: SDFGState, node: nodes.NestedSDFG, target: Target) -> None:
+    """Allocates in the parent of ``node`` the transients its stages share: a GPU kernel cannot allocate global
+    memory, and every thread of a CPU team would allocate its own copy. Containers only one kernel's scope uses
+    stay inside."""
     sdfg, body = host.sdfg, node.sdfg
+    between_stages = {n.data for state in body.states() for n in state.data_nodes() if state.entry_node(n) is None}
     for name, desc in list(body.arrays.items()):
-        if desc.transient and desc.storage == dtypes.StorageType.GPU_Global:
+        stage_shared = name in between_stages and target.shares(desc)
+        if desc.transient and (stage_shared or desc.storage == dtypes.StorageType.GPU_Global):
             sdfg.add_datadesc(name, copy.deepcopy(desc))
             desc.transient = False
             node.add_out_connector(name)
             host.add_edge(node, name, host.add_write(name), None, Memlet.from_array(name, desc))
 
 
-def nest_chain(chain: MegakernelChain) -> tuple[SDFGState, nodes.NestedSDFG] | None:
+def nest_chain(chain: MegakernelChain, target: Target) -> tuple[SDFGState, nodes.NestedSDFG] | None:
     """Moves the blocks of ``chain`` into a nested SDFG, which global memory and the symbols the code after it reads
     stay outside of.
 
@@ -86,10 +90,7 @@ def nest_chain(chain: MegakernelChain) -> tuple[SDFGState, nodes.NestedSDFG] | N
     else:
         host = xfh.nest_sdfg_subgraph(sdfg, SubgraphView(region, blocks))
         node = next(n for n in host.nodes() if isinstance(n, nodes.NestedSDFG))
-    keep_global_memory_outside(host, node)
-    for sym in (THREAD_INDEX, THREAD_COUNT):
-        node.sdfg.add_symbol(sym, dtypes.int64)
-    node.symbol_mapping[THREAD_INDEX] = THREAD_INDEX
+    keep_shared_memory_outside(host, node, target)
     return host, node
 
 
@@ -112,7 +113,23 @@ def launch_cooperatively(host: SDFGState, node: nodes.NestedSDFG, handle: str, b
     entry.map.gpu_block_size = [block_size, 1, 1]
     entry.map.cooperative = entry.map.explicit_sync = True
     entry.map.kernel_handle = handle
+    for sym in (THREAD_INDEX, THREAD_COUNT):
+        node.sdfg.add_symbol(sym, dtypes.int64)
+    node.symbol_mapping[THREAD_INDEX] = THREAD_INDEX
     node.symbol_mapping[THREAD_COUNT] = f"{nblk} * {block_size}"
+    wrap(host, node, entry, exit_)
+
+
+def launch_team(host: SDFGState, node: nodes.NestedSDFG, handle: str, num_threads: int) -> None:
+    """Wraps ``node`` into a ``CPU_Persistent`` map: one OpenMP team (``omp parallel``) runs every stage. The map's
+    range is not read; the team has ``num_threads`` threads, or OpenMP's default for 0."""
+    entry, exit_ = host.add_map(handle, {THREAD_INDEX: "0:1"}, schedule=dtypes.ScheduleType.CPU_Persistent)
+    entry.map.omp_num_threads = num_threads
+    wrap(host, node, entry, exit_)
+
+
+def wrap(host: SDFGState, node: nodes.NestedSDFG, entry: nodes.MapEntry, exit_: nodes.MapExit) -> None:
+    """Routes the connectors of ``node`` through the map ``entry`` / ``exit_``."""
     for edge in host.in_edges(node):
         host.remove_edge(edge)
         host.add_memlet_path(edge.src, entry, node, dst_conn=edge.dst_conn, memlet=edge.data)
@@ -128,11 +145,12 @@ def launch_cooperatively(host: SDFGState, node: nodes.NestedSDFG, handle: str, b
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MegaKernelOptimization(ppl.Pass):
-    """Fuses the GPU kernels of every maximal hierarchical linear chain in ``region`` (default: the whole SDFG) into
-    one persistent kernel.
+    """Fuses the kernels of every maximal hierarchical linear chain in ``region`` (default: the whole SDFG) into one
+    persistent kernel: on the GPU, a cooperative grid-stride kernel; on the CPU, one OpenMP team whose stages are
+    ``omp for nowait`` loops. Both separate dependent stages with grid barriers.
 
-    ``small_symbols`` names the symbols whose extents are too short to spread over the grid: a map dimension whose
-    extent names only them stays a loop in every thread. The pass reads no symbol facts of the SDFG.
+    ``small_symbols`` names the symbols whose extents are too short to spread over the GPU grid: a map dimension
+    whose extent names only them stays a loop in every thread. The pass reads no symbol facts of the SDFG.
     """
 
     CATEGORY: str = "Optimization Preparation"
@@ -140,12 +158,22 @@ class MegaKernelOptimization(ppl.Pass):
     small_symbols = properties.SetProperty(
         element_type=str, default=set(), desc="Symbols whose extents stay a loop in every thread"
     )
-    block_size = properties.Property(dtype=int, default=256, desc="Threads per block of the megakernel")
+    block_size = properties.Property(dtype=int, default=256, desc="Threads per block of a GPU megakernel")
+    device = properties.EnumProperty(
+        dtype=dtypes.DeviceType, default=dtypes.DeviceType.GPU, desc="The device whose kernels are fused"
+    )
+    num_threads = properties.Property(dtype=int, default=0, desc="Threads of a CPU team; 0 is OpenMP's default")
 
-    def __init__(self, region: ControlFlowRegion | None = None, small_symbols: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        region: ControlFlowRegion | None = None,
+        small_symbols: set[str] | None = None,
+        device: dtypes.DeviceType = dtypes.DeviceType.GPU,
+    ) -> None:
         super().__init__()
         self._region = region
         self.small_symbols = set(small_symbols or ())
+        self.device = device
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -155,19 +183,28 @@ class MegaKernelOptimization(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> list[MegakernelChain] | None:
         """:return: The chains fused into a megakernel each."""
+        target = TARGETS[self.device]
         fused = []
-        for chain in find_chains(self._region if self._region is not None else sdfg, sdfg):
-            nested = nest_chain(chain)
+        for chain in find_chains(self._region if self._region is not None else sdfg, sdfg, target):
+            nested = nest_chain(chain, target)
             if nested is None:
                 continue
             host, node = nested
-            launch_cooperatively(host, node, f"{chain.region.sdfg.name}_megakernel_{len(fused)}", self.block_size)
-            self.lower_body(node.sdfg)
+            handle = f"{chain.region.sdfg.name}_megakernel_{len(fused)}"
+            node.sdfg.name = f"{handle}_body"
+            if self.device == dtypes.DeviceType.GPU:
+                launch_cooperatively(host, node, handle, self.block_size)
+            else:
+                launch_team(host, node, handle, self.num_threads)
+            self.lower_body(node.sdfg, target)
             fused.append(chain)
         return fused or None
 
-    def lower_body(self, body: SDFG) -> None:
-        InsertGridSyncs().apply_pass(body, {})
+    def lower_body(self, body: SDFG, target: Target) -> None:
+        InsertGridSyncs(self.device).apply_pass(body, {})
         for state in body.states():
-            for entry in [n for n in state.nodes() if is_kernel(n, state)]:
-                grid_stride(body, state, entry, THREAD_INDEX, THREAD_COUNT, self.small_symbols)
+            for entry in [n for n in state.nodes() if is_kernel(n, state, target)]:
+                if self.device == dtypes.DeviceType.GPU:
+                    grid_stride(body, state, entry, THREAD_INDEX, THREAD_COUNT, self.small_symbols)
+                else:  # Work-shared by the team, which the stage's barrier (if any) waits for
+                    entry.map.omp_nowait = True
