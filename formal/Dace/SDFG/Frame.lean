@@ -1155,13 +1155,13 @@ theorem bindCodeInputs_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNod
       simpa [he, Bind.bind, Res.bind, Pure.pure] using this
 
 /-- Without code consumers of the outputs, a nested call ends with the inner
-memory and the inner log without the dropped names. -/
+memory with the dropped names freed and the inner log without them. -/
 theorem nestedFinish_data' {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode} {dropped : List Name} {pre : St}
     {m₂ : Mem} {g₂ : Log} (h : s.DataOuts n) :
     nestedFinish ctx' ρ' s n dropped pre m₂ g₂ =
-      .ok { mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } := by
+      .ok { mem := m₂.allocAll dropped, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } := by
   unfold nestedFinish
-  generalize ({ mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } : St) = acc
+  generalize ({ mem := m₂.allocAll dropped, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } : St) = acc
   unfold State.DataOuts at h
   generalize s.outEdges n.id = es at h ⊢
   induction es generalizing acc with

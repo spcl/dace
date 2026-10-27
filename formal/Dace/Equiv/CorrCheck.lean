@@ -147,7 +147,7 @@ theorem sameMembers?_sound {l₁ l₂ : List Name} (h : sameMembers? l₁ l₂ =
 /-- Decision procedure for `NestedMapOk`. -/
 def nestedMapOk? (ctx : Ctx) (inner : SDFG) (mapping : List (Sym × Expr)) : Bool :=
   mapping.all (fun p => p.2 == .sym p.1 && !ctx.isScalarName p.1) && inner.constants.isEmpty &&
-    !inner.ownsOutliving
+    !inner.ownsShared
 
 theorem nestedMapOk?_sound {ctx : Ctx} {inner : SDFG} {mapping : List (Sym × Expr)}
     (h : nestedMapOk? ctx inner mapping = true) : NestedMapOk ctx inner mapping := by

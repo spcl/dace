@@ -1464,8 +1464,8 @@ theorem nestedFinish_relabel (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNo
   unfold nestedFinish
   dsimp only
   rw [DNode.relabel_id, State.outEdges_relabel, List.foldlM_map,
-    show ({ mem := m₂, log := (pre.relabel φ).log.seq (g₂.dropNames aliased), vals := (pre.relabel φ).vals } : St) =
-      St.relabel φ { mem := m₂, log := pre.log.seq (g₂.dropNames aliased), vals := pre.vals } from rfl]
+    show ({ mem := Mem.allocAll m₂ aliased, log := (pre.relabel φ).log.seq (g₂.dropNames aliased), vals := (pre.relabel φ).vals } : St) =
+      St.relabel φ { mem := Mem.allocAll m₂ aliased, log := pre.log.seq (g₂.dropNames aliased), vals := pre.vals } from rfl]
   refine List.foldlM_res_comm₂ (St.relabel φ) (fun st e => ?_) _ _
   simp only [DEdge.relabel_data, DEdge.relabel_srcConn, State.dstEndpoint_relabel]
   split

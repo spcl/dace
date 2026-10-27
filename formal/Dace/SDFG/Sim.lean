@@ -2721,7 +2721,7 @@ theorem nestedFinish_sim {c₂ c₁ : Ctx} (hcI : CtxSim π P c₂ c₁) (hall :
     ResSim (St.Sim π P L) (nestedFinish c₂ ρ' s n (dropped.map π) pre₂ m₂ (g.ren π))
       (nestedFinish c₁ ρ' s n dropped pre₁ m₁ g) := by
   unfold nestedFinish
-  refine ResSim.foldlM (fun e a b hab => ?_) _ ⟨hm, ?_, h.vals, h.logP.seq (hg.dropNames _)⟩
+  refine ResSim.foldlM (fun e a b hab => ?_) _ ⟨Mem.Sim.allocAll dropped hm, ?_, h.vals, h.logP.seq (hg.dropNames _)⟩
   · split
     · split
       · rw [Ctx.loc_sim hcI hm ρ' (hall _).good₀]

@@ -612,14 +612,22 @@ def DataDesc.definedAtStart (d : DataDesc) : Bool := !d.transient || d.lifetime 
 
 /-- A transient that outlives a run of its program (`Decisions.md#D63`):
 `Persistent` (allocated by the init code, kept across calls) or `External`
-(managed by the caller).  Only the top-level SDFG may own one: canonical
-SDFGs hoist them out of nested SDFGs (`HoistOutlivingTransients`), and a
-nested SDFG that still owns one is `malformed` when invoked (`nestedSetup`). -/
+(managed by the caller). -/
 def DataDesc.outlivesRun (d : DataDesc) : Bool :=
   d.transient && (d.lifetime == .persistent || d.lifetime == .external)
 
-/-- Does an SDFG own a transient that outlives a run? -/
-def SDFG.ownsOutliving (g : SDFG) : Bool := g.arrays.any fun (_, d) => d.outlivesRun
+/-- A transient whose storage outlives a single call of its SDFG:
+`Persistent`, `External` or `Global` (allocated once per run at the start
+of the outermost SDFG and shared by all calls).  Only the top-level SDFG may
+own one: canonical SDFGs hoist them out of nested SDFGs (DaCe pass
+`HoistSharedTransients` of `CanonicalizationPipeline`), and a nested SDFG that still owns one is
+`malformed` when invoked (`nestedCheck`).  Nested SDFGs thus own only
+per-call transients (`SDFG.callTransients`). -/
+def DataDesc.sharedAcrossCalls (d : DataDesc) : Bool :=
+  d.transient && (d.lifetime == .persistent || d.lifetime == .external || d.lifetime == .global)
+
+/-- Does an SDFG own a transient shared across calls? -/
+def SDFG.ownsShared (g : SDFG) : Bool := g.arrays.any fun (_, d) => d.sharedAcrossCalls
 
 /-- The memory names defined at the start of a run of `g`: its arguments
 and its `External` transients. -/

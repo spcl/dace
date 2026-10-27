@@ -451,11 +451,11 @@ theorem bindCodeInputs_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNod
     | invalid => rw [hE] at hd; cases hd
 
 /-- Without code consumers of the outputs, a nested call ends with the inner
-memory and the inner log without the dropped names. -/
+memory with the dropped names freed and the inner log without them. -/
 theorem nestedFinish_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode} {dropped : List Name} {pre : St}
     {m₂ : Mem} {g₂ : Log} (h : s.DataOuts n) :
     nestedFinish ctx' ρ' s n dropped pre m₂ g₂ =
-      .ok { mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } :=
+      .ok { mem := m₂.allocAll dropped, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } :=
   nestedFinish_data' h
 
 theorem nestedSetup_eq {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {inner : SDFG}

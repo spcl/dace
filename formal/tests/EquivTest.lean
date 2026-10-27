@@ -131,9 +131,9 @@ def lifetimes : List (Name × DataDesc) :=
 #guard interfaceOf lifetimes == ["A", "P", "X"]
 
 /-- An SDFG nesting `lifetimes` in node 3 of its only state.  Nested SDFGs
-may not own `Persistent`/`External` transients (canonical SDFGs hoist them to
-the top level): the interface is the outer one, and invoking the nested SDFG
-is `malformed`. -/
+may own only per-call transients (canonical SDFGs hoist `Persistent`,
+`External` and `Global` ones to the top level): the interface is the outer
+one, and invoking the nested SDFG is `malformed`. -/
 def innerSDFG : SDFG := { name := "inner", arrays := lifetimes, top := {} }
 
 def outer : SDFG where
@@ -145,7 +145,10 @@ def outer : SDFG where
 #guard match nestedCheck innerSDFG with
   | .err (.malformed _) => true
   | _ => false
-#guard match nestedCheck { innerSDFG with arrays := [("G", arr true .global), ("T", arr true)] } with
+#guard match nestedCheck { innerSDFG with arrays := [("G", arr true .global)] } with
+  | .err (.malformed _) => true
+  | _ => false
+#guard match nestedCheck { innerSDFG with arrays := [("A", arr false), ("S", arr true .sdfg), ("T", arr true)] } with
   | .ok () => true
   | _ => false
 

@@ -833,12 +833,13 @@ def Ctx.allocate (ctx : Ctx) (ts : List Name) (m : Mem) : Mem :=
     rw [ih]
     split <;> rfl
 
-/-- A nested SDFG may not own a transient that outlives a run
-(`Decisions.md#D63`): canonical SDFGs hoist `Persistent` and `External`
-transients to the top-level SDFG (`HoistOutlivingTransients`). -/
+/-- A nested SDFG may own only per-call transients (`Decisions.md#D63`,
+`#D68`): canonical SDFGs hoist `Persistent`, `External` and `Global`
+transients to the top-level SDFG (`DataDesc.sharedAcrossCalls`). -/
 def nestedCheck (inner : SDFG) : Res Unit :=
-  if inner.ownsOutliving then
-    .err (.malformed s!"nested SDFG '{inner.name}' owns a Persistent or External transient (hoist it to the top level)")
+  if inner.ownsShared then
+    .err (.malformed
+      s!"nested SDFG '{inner.name}' owns a Persistent, External or Global transient (hoist it to the top level)")
   else .ok ()
 
 /-- Set-up of a nested invocation: connector bindings, inner context,
@@ -857,12 +858,16 @@ def nestedSetup (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (inner : SD
   let (st, codes) ← bindCodeInputs ctx' ρ' s n st
   pure (ctx', ρ', st, codes ++ inner.callTransients.map ctx'.cname)
 
-/-- Tear-down of a nested invocation: keep the memory, contribute the inner
-log without the names private to the call (`dropped`, from `nestedSetup`),
-and pass scalar outputs on to code consumers. -/
+/-- Tear-down of a nested invocation: keep the memory, but free the names
+private to the call (`dropped`, from `nestedSetup`: its per-call transients
+and code-connector scalars, which become uninitialized again, like DaCe
+deallocating them on return, `Decisions.md#D68`), contribute the inner log
+without them, and pass scalar outputs, read from the inner memory, on to code
+consumers.  After a call nothing is left at its private names, so their
+memory names (which contain the node id, `Ctx.enter`) are unobservable. -/
 def nestedFinish (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : DNode) (dropped : List Name) (pre : St)
     (m₂ : Mem) (g₂ : Log) : Res St :=
-  let st : St := { mem := m₂, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals }
+  let st : St := { mem := m₂.allocAll dropped, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals }
   (s.outEdges n.id).foldlM (fun st e =>
     match e.data, e.srcConn with
     | .memlet _, some c =>
