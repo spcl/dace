@@ -910,17 +910,23 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nstate: SDFGState,
         state: SDFGState,
     ) -> None:
-        """In a scope, give each copy from an input connector straight into an output one an access node of the input's
-        outer container between the scope's entry and exit; dissolving both ends would leave the copy between them.
-        The copy leaves ``nstate``, so the reconnection below does not see it."""
+        """In a scope, stage each copy from an input connector straight into an output one between the scope's entry
+        and exit, where dissolving both ends would leave it: an element copy as an assignment tasklet between the outer
+        memlets, a larger one through an access node of the input's outer container. The copy leaves ``nstate``, so
+        the reconnection below does not see it."""
         for source, top_in in incoming.items():
             for inner in list(nstate.out_edges(source)):
                 top_out = outgoing.get(inner.dst)
                 if top_out is None:
                     continue
-                staged = state.add_access(top_in.data.data)
-                state.add_edge(top_in.src, top_in.src_conn, staged, None, dc(top_in.data))
-                state.add_edge(staged, None, top_out.dst, top_out.dst_conn, dc(inner.data))
+                if top_in.data.subset.num_elements() == 1 and top_out.data.subset.num_elements() == 1:
+                    staged = state.add_tasklet("copy", {"__inp"}, {"__out"}, "__out = __inp")
+                    state.add_edge(top_in.src, top_in.src_conn, staged, "__inp", dc(top_in.data))
+                    state.add_edge(staged, "__out", top_out.dst, top_out.dst_conn, dc(top_out.data))
+                else:
+                    staged = state.add_access(top_in.data.data)
+                    state.add_edge(top_in.src, top_in.src_conn, staged, None, dc(top_in.data))
+                    state.add_edge(staged, None, top_out.dst, top_out.dst_conn, dc(inner.data))
                 nstate.remove_edge(inner)
 
     def _modify_access_to_access(
