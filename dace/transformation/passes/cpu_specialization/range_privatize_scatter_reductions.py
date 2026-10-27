@@ -183,6 +183,11 @@ def _is_scalar(desc: data.Data) -> bool:
     )
 
 
+def _single_element(desc: data.Data | None) -> bool:
+    """Whether ``desc`` is an array of one element, so any in-bounds subscript reads that element."""
+    return type(desc) is data.Array and symbolic.simplify(desc.total_size - 1) == 0
+
+
 def _sequential_entry(state: SDFGState, entry: nodes.MapEntry) -> bool:
     """A sequential map with a static, positive-step range."""
     if entry.map.schedule != dtypes.ScheduleType.Sequential:
@@ -348,7 +353,9 @@ class SiteSlicer:
         key = ("node", id(node))
         if key in self.memo:
             return self.memo[key]
-        if state.in_degree(node) != 1 or state.entry_node(node) is not None:
+        # At the top, a value the map body computes before the call runs once per iteration, as the call does.
+        scope = self.map_entry if nest.node is None else None
+        if state.in_degree(node) != 1 or state.entry_node(node) is not scope:
             raise Refuse(node.data)
         edge = state.in_edges(node)[0]
         dtype = nest.sdfg.arrays[node.data].dtype
@@ -432,6 +439,8 @@ class SiteSlicer:
             def visit_Subscript(self, node: ast.Subscript):
                 if not isinstance(node.value, ast.Name):
                     raise Refuse(ast.unparse(node))
+                if _single_element(nest.sdfg.arrays.get(node.value.id)):
+                    return ast.Name(id=slicer.scalar(nest, node.value.id, at), ctx=ast.Load())
                 node.value = ast.Name(id=slicer.array(nest, node.value.id), ctx=ast.Load())
                 node.slice = self.visit(node.slice)
                 return node
@@ -726,7 +735,9 @@ class ScatterAnalysis:
             raise Refuse(loop.label)
         var = loop.loop_variable
         dtype = loop.new_symbols(dict(nest.sdfg.symbols)).get(var) or nest.sdfg.symbols.get(var)
-        if dtype is None or len(nest.assigned.get(var, [])) != 1:
+        # The loop's frame binds ``var`` for its body; a sibling loop over the same name does not reach it, a body
+        # edge assigning it would.
+        if dtype is None or any(edge is not None for _region, edge in nest.assigned.get(var, [])):
             raise Refuse(loop.label)
         init, update = loop.init_statement.code, loop.update_statement.code
         if len(init) != 1 or len(update) != 1:
