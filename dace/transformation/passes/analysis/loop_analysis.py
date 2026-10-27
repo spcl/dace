@@ -164,6 +164,7 @@ def counter_used_outside_loop(
     sdfg: "SDFG",
     use_sites: dict[str, set[int]] | None = None,
     descriptor_symbols: set[str] | None = None,
+    rebinding: dict[str, list[LoopRegion]] | None = None,
 ) -> bool:
     """Whether ``name`` is read or written anywhere outside ``loop``.
 
@@ -174,17 +175,32 @@ def counter_used_outside_loop(
     value at a nesting boundary -- has to ask this, not assume it.
 
     Pass ``use_sites`` / ``descriptor_symbols`` from :func:`symbol_use_sites` when asking about several
-    loops of the same SDFG; omitted, the index is built here for this one query.
+    loops of the same SDFG; omitted, the index is built here for this one query. ``rebinding`` is
+    :func:`rebinding_loops` of ``sdfg``, likewise.
     """
     if use_sites is None or descriptor_symbols is None:
         use_sites, descriptor_symbols = symbol_use_sites(sdfg)
     inside = {id(loop)}
     # Another loop that binds the same counter outright reads its own value, not this loop's
-    for other in [loop] + [b for b in sdfg.all_control_flow_blocks() if b is not loop and rebinds_counter(b, name)]:
+    others = (
+        [b for b in sdfg.all_control_flow_blocks() if rebinds_counter(b, name)]
+        if rebinding is None
+        else rebinding.get(name, [])
+    )
+    for other in [loop] + [b for b in others if b is not loop]:
         inside.add(id(other))
         inside.update(id(block) for block in other.all_control_flow_blocks())
         inside.update(id(edge) for edge in other.all_interstate_edges())
     return symbol_used_outside(name, inside, use_sites, descriptor_symbols)
+
+
+def rebinding_loops(sdfg: "SDFG") -> dict[str, list[LoopRegion]]:
+    """Per counter name, the loops of ``sdfg`` that bind it outright (:func:`rebinds_counter`), in block order."""
+    found: dict[str, list[LoopRegion]] = {}
+    for block in sdfg.all_control_flow_blocks():
+        if isinstance(block, LoopRegion) and rebinds_counter(block, block.loop_variable):
+            found.setdefault(block.loop_variable, []).append(block)
+    return found
 
 
 def rebinds_counter(block: ControlFlowBlock, name: str) -> bool:

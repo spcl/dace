@@ -389,11 +389,17 @@ class LoopSplitIndex:
     sdfg: SDFG
     use: tuple[dict[str, set[int]], set[str]] | None = None
     local: LocalTransientIndex | None = None
+    rebinding: dict[str, list[LoopRegion]] | None = None
 
     def use_sites(self) -> tuple[dict[str, set[int]], set[str]]:
         if self.use is None:
             self.use = loop_analysis.symbol_use_sites(self.sdfg)
         return self.use
+
+    def rebinding_loops(self) -> dict[str, list[LoopRegion]]:
+        if self.rebinding is None:
+            self.rebinding = loop_analysis.rebinding_loops(self.sdfg)
+        return self.rebinding
 
     def local_transients(self, loop: LoopRegion) -> dict[str, None]:
         if self.local is None:
@@ -404,6 +410,7 @@ class LoopSplitIndex:
         # Both key on id(), which CPython recycles once a split destroys the blocks.
         self.use = None
         self.local = None
+        self.rebinding = None
 
 
 def _output_dependency(sdfg: SDFG, out_name: str, input_names: dict[str, None]) -> dict[str, None]:
@@ -1333,7 +1340,9 @@ class SplitStatements(ppl.Pass):
         # A counter something outside the loop reads is EXPORTED by the outlining as an extra
         # scalar output, which the per-output clones would each have to write. Leave those alone.
         use_sites, descriptor_symbols = index.use_sites()
-        if loop_analysis.counter_used_outside_loop(loop.loop_variable, loop, sdfg, use_sites, descriptor_symbols):
+        if loop_analysis.counter_used_outside_loop(
+            loop.loop_variable, loop, sdfg, use_sites, descriptor_symbols, index.rebinding_loops()
+        ):
             return None
 
         # Empty memlets are ORDERING edges, so they neither read nor write: counting one as a write
