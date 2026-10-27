@@ -1,6 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import ctypes.util
-
 import dace.library
 from dace.libraries import hip_dialect
 from dace.libraries.blas.environments.cublas import cuBLAS
@@ -31,4 +29,4 @@ class hipBLAS:
 
     @staticmethod
     def is_installed():
-        return ctypes.util.find_library("hipblas") is not None
+        return hip_dialect.find_rocm_library("hipblas") is not None

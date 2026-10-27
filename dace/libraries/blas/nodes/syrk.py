@@ -3,7 +3,7 @@ import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
 from dace.sdfg import nodes
@@ -97,7 +97,7 @@ class Syrk(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandSyrkPure,
-        **gpu_dialect.vendor_expansions("Syrk", syrk_call),
+        **vendor.vendor_expansions("Syrk", syrk_call),
     }
     default_implementation = None
 

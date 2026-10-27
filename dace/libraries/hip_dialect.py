@@ -6,8 +6,12 @@ those name for name, so a HIP expansion is the CUDA expansion with its code rena
 in order.
 """
 
+import ctypes.util
 import functools
+import os
+import pathlib
 import re
+import shutil
 
 from dace import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -47,6 +51,27 @@ TENSOR = (
 
 #: The GPU BLAS each GPU solver implementation pairs with, for the transposes around a solver call.
 GPU_SOLVER_BLAS = {"cuSolverDn": "cuBLAS", "hipSolverDn": "hipBLAS"}
+
+
+def rocm_roots() -> list[pathlib.Path]:
+    """The ROCm installation roots: ``ROCM_PATH``, ``HIP_PATH``, then the root of the ``hipcc`` on ``PATH``."""
+    roots = [pathlib.Path(os.environ[v]) for v in ("ROCM_PATH", "HIP_PATH") if os.environ.get(v)]
+    hipcc = shutil.which("hipcc")
+    if hipcc is not None:
+        roots.append(pathlib.Path(hipcc).resolve().parent.parent)
+    return roots
+
+
+def find_rocm_library(name: str) -> str | None:
+    """The path of ROCm library ``name`` (``hipblas``): the loader's search first, then each ROCm root, whose
+    ``lib`` directory the loader rarely lists."""
+    found = ctypes.util.find_library(name)
+    if found is not None:
+        return found
+    for root in rocm_roots():
+        for library in sorted((root / "lib").glob(f"lib{name}.so*")):
+            return str(library)
+    return None
 
 
 def to_hip(code: str, names) -> str:

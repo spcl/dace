@@ -65,7 +65,8 @@ def build(
     node.implementation = implementation
     storage = dace.StorageType.GPU_Global if implementation in GPU_IMPLEMENTATIONS else dace.StorageType.Default
     for connector, (array_name, value) in {**inputs, **outputs}.items():
-        array(sdfg, array_name, value, storage)
+        if array_name not in sdfg.arrays:
+            array(sdfg, array_name, value, storage)
     for connector, (array_name, _) in inputs.items():
         state.add_edge(
             state.add_read(array_name),
@@ -303,6 +304,61 @@ def test_vendor_expansion_calls_the_library(implementation, name):
     code = "".join(t.code.as_string for t, _ in sdfg.all_nodes_recursive() if isinstance(t, dace.nodes.Tasklet))
     assert VENDOR_ROUTINES[implementation].format(name) in code
     assert not any(isinstance(n, dace.nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
+
+
+def copy_states(sdfg: dace.SDFG) -> list[str]:
+    return [
+        n.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.SDFGState) and n.label.endswith("_copy")
+    ]
+
+
+@pytest.mark.parametrize("implementation", list(VENDOR_ROUTINES))
+def test_in_place_update_does_not_copy_the_operand(implementation):
+    """``A = A + x y^T`` and ``x = a x`` hand the vendor routine the operand itself; an out-of-place call still copies
+    it first. Expanding needs neither the library nor a device."""
+    a, x, y = np.zeros((4, 3)), np.zeros(4), np.zeros(3)
+    ger_in = {"_A": ("A", a), "_x": ("x", x), "_y": ("y", y)}
+    in_place = build("ger_in_place", Ger("ger"), implementation, ger_in, {"_res": ("A", a)})
+    out_of_place = build("ger_out_of_place", Ger("ger"), implementation, ger_in, {"_res": ("B", a)})
+    scal = build("scal_in_place", Scal("scal", a=2.0), implementation, {"_x": ("x", x)}, {"_res": ("x", x)})
+    for sdfg in (in_place, out_of_place, scal):
+        sdfg.expand_library_nodes()
+    assert copy_states(in_place) == [] and copy_states(scal) == []
+    assert copy_states(out_of_place) == ["ger_copy"]
+
+
+@pytest.mark.parametrize("implementation", list(VENDOR_ROUTINES))
+@pytest.mark.parametrize("name", ["symv", "symm"])
+def test_beta_zero_does_not_copy_the_accumulator(implementation, name):
+    """With beta == 0 the vendor routine overwrites the accumulator, so it is not copied first; any other beta reads
+    it. Expanding needs neither the library nor a device."""
+    make, inputs, (output, shape) = VENDOR_NODES[name]
+    labels = {}
+    for beta in (0, 0.5):
+        node = make()
+        node.beta = beta
+        values = {c: (c.strip("_").lower(), np.zeros(s)) for c, s in inputs.items()}
+        sdfg = build(f"{name}_beta", node, implementation, values, {output: ("out", np.zeros(shape))})
+        sdfg.expand_library_nodes()
+        labels[beta] = copy_states(sdfg)
+    assert labels == {0: [], 0.5: [f"{name}_copy"]}
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+def test_in_place_ger_and_scal(implementation):
+    a, x, y = matrix((5, 3), "C"), rng.standard_normal(5), rng.standard_normal(3)
+    expected = a + 2.0 * np.outer(x, y)
+    run(
+        "ger_alias",
+        Ger("ger", alpha=2.0),
+        implementation,
+        {"_A": ("A", a), "_x": ("x", x), "_y": ("y", y)},
+        {"_res": ("A", a)},
+    )
+    np.testing.assert_allclose(a, expected)
+    expected = 2.5 * x
+    run("scal_alias", Scal("scal", a=2.5), implementation, {"_x": ("x", x)}, {"_res": ("x", x)})
+    np.testing.assert_allclose(x, expected)
 
 
 @pytest.mark.parametrize("implementation", GPU_IMPLEMENTATIONS)

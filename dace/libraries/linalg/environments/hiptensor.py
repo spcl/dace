@@ -29,3 +29,7 @@ class hipTensor:
     @staticmethod
     def handle_setup_code(node):
         return hip_dialect.to_hip(cuTensor.handle_setup_code(node), hip_dialect.TENSOR)
+
+    @staticmethod
+    def is_installed():
+        return hip_dialect.find_rocm_library("hiptensor") is not None
