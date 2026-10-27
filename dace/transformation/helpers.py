@@ -17,6 +17,7 @@ from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, graph, nodes, utils
 from dace.sdfg.graph import Edge, MultiConnectorEdge, SubgraphView
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
@@ -1982,7 +1983,8 @@ def small_map_axes(state: SDFGState, map_entry: nodes.MapEntry, resolver: Symbol
     """Per parameter of ``map_entry``, whether its extent is too small to share out
     (:func:`~dace.symbolic.is_small_extent`), at the facts around the map."""
     facts = resolver.facts_at(state, map_entry)
-    return [symbolic.is_small_extent(end - begin + 1, facts) for begin, end, _ in map_entry.map.range.ranges]
+    # A range bound may be a SymExpr; its main expression is the extent
+    return [symbolic.is_small_extent(as_expr(end - begin + 1), facts) for begin, end, _ in map_entry.map.range.ranges]
 
 
 def isolate_small_map_axes(

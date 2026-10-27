@@ -102,7 +102,8 @@ def score_indexed_strides(edges, sdfg, var_names) -> dict[str, tuple[object, obj
         if subset is None or len(subset) != len(desc.strides):
             continue
         for rng, stride in zip(subset.ndrange(), desc.strides):
-            index_expr = pystr_to_symbolic(rng[0])
+            # A subset bound may be a SymExpr (main and approximate expressions): its main one is the index
+            index_expr = as_expr(pystr_to_symbolic(rng[0]))
             # The expression may carry the map parameter as a plain sympy
             # ``Symbol`` while ``pystr_to_symbolic`` returns a DaCe ``symbol``.
             # Coefficient extraction is object-sensitive, so resolve each name to
