@@ -262,7 +262,7 @@ def test_a_tensor_permutation_does_not_delegate_to_a_library_the_host_cannot_bui
 def test_hiptensor_counts_as_installed_only_with_its_v2_header(tmp_path, monkeypatch) -> None:
     """The library alone is not enough: ``dace_hiptensor.h`` includes ``hiptensor/hiptensor.h``, which
     ROCm 6.3 does not ship (it has ``hiptensor/hiptensor.hpp``, the older API)."""
-    monkeypatch.setattr(hiptensor.ctypes.util, "find_library", lambda name: f"lib{name}.so")
+    monkeypatch.setattr(hiptensor.hip_dialect, "find_rocm_library", lambda name: f"lib{name}.so")
     monkeypatch.setenv("ROCM_PATH", str(tmp_path))
     header = tmp_path / "include" / "hiptensor"
     header.mkdir(parents=True)
@@ -566,6 +566,12 @@ def persistent_kernel(x: dace.float32[SIZE_SYMBOL], b: dace.float32[SIZE_SYMBOL]
                 a << x[i]
                 o >> b[i]
                 o = a * 2.0
+        # Reads what other blocks wrote, so the grid synchronizes between the two steps
+        for i in dace.map[0:SIZE_SYMBOL]:
+            with dace.tasklet:
+                a << b[SIZE_SYMBOL - 1 - i]
+                o >> x[i]
+                o = a + 1.0
 
 
 def make_outermost_map_persistent(sdfg) -> None:

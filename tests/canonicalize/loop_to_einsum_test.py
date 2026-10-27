@@ -166,7 +166,7 @@ def self_referential_matmul(C: dace.float64[N, N], B: dace.float64[N, N]):
 
 @dace.program
 def subtracting_matmul(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
-    """``-=`` is not a ``Sum`` reduction, so it is not an einsum contraction."""
+    """``C -= A @ B``: a ``Sum`` of the negated product, so a contraction with ``alpha = -1``."""
     for i in range(N):
         for j in range(N):
             for k in range(N):
@@ -398,7 +398,6 @@ def test_mixed_loop_and_map_contraction_lifts():
     [
         (triangular_matvec, "a parameter-dependent (triangular) bound is not a dense contraction"),
         (self_referential_matmul, "the output feeding its own contraction is a loop-carried dependence"),
-        (subtracting_matmul, "``-=`` is not a Sum reduction"),
     ],
 )
 def test_refused_shapes(program, reason):
@@ -412,6 +411,17 @@ def test_refused_shapes(program, reason):
     assert _n_transpose(sdfg) == 0, reason
     assert _n_loops(sdfg) == loops_before, "the refused nest must be left untouched"
     sdfg.validate()
+
+
+def test_a_subtracting_contraction_is_lifted_with_a_negative_alpha():
+    sdfg = subtracting_matmul.to_sdfg(simplify=True)
+    LoopToEinsum().apply_pass(sdfg, {})
+    assert _n_einsum(sdfg) == 1
+    rng = np.random.default_rng(0)
+    A, B, C = (rng.random((7, 7)) for name in "ABC")
+    expected = C - A @ B
+    sdfg(A=A, B=B, C=C, N=7)
+    assert np.allclose(C, expected)
 
 
 def test_ordering_memlet_is_not_a_prior_writer():

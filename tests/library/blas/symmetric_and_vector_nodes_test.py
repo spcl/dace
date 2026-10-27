@@ -328,7 +328,12 @@ def test_vendor_expansion_calls_the_library(implementation, name):
 
 
 def copy_states(sdfg: dace.SDFG) -> list[str]:
-    return [state.label for state in sdfg.all_states() if state.label.endswith("_copy")]
+    return [
+        state.label
+        for nested in sdfg.all_sdfgs_recursive()
+        for state in nested.states()
+        if state.label.endswith("_copy")
+    ]
 
 
 @pytest.mark.parametrize("implementation", list(VENDOR_ROUTINES))
