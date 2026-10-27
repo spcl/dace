@@ -238,9 +238,7 @@ class SelectGPUDeviceBlockSize(ppl.Pass):
     """Assign a domain-matched ``gpu_block_size`` to every eligible ``GPU_Device`` map.
 
     Eligible = ``GPU_Device`` schedule, no user-set ``gpu_block_size``, and no inner map that owns
-    the thread-block level. See :func:`pick_gpu_block_size` for the selection logic. An eligible map's
-    ordinal (its place among the eligible maps, in walk order) named in
-    ``compiler.cuda.block_size_overrides`` takes that block instead (:func:`block_size_overrides`).
+    the thread-block level. See :func:`pick_gpu_block_size` for the selection logic.
     """
 
     CATEGORY: str = "Optimization"
@@ -256,8 +254,6 @@ class SelectGPUDeviceBlockSize(ppl.Pass):
         """Set ``gpu_block_size`` on eligible device maps. Returns ``{map label: block size}``
         for the maps it assigned, or ``None`` if it assigned none."""
         assigned: dict[str, list[int]] = {}
-        overrides = block_size_overrides()
-        ordinal = -1
         for node, state in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.MapEntry):
                 continue
@@ -268,13 +264,10 @@ class SelectGPUDeviceBlockSize(ppl.Pass):
                 continue
             if scope_contains_threadblock_map(state, node):
                 continue
-            ordinal += 1
-            if ordinal in overrides:
-                block_size = list(overrides[ordinal])
             # A tree-reduction map wants a deep block regardless of its domain rank -- the
             # block-reduce folds along the flattened block, so more threads = more reduction
             # per block. A plain map falls back to the domain-matched shape.
-            elif map_is_tree_reduction(state, node):
+            if map_is_tree_reduction(state, node):
                 block_size = list(TREE_REDUCTION_BLOCK_SIZE)
             else:
                 block_size = pick_gpu_block_size(gpu_map, unit_stride_counts(state.sdfg, state, node))
@@ -283,23 +276,6 @@ class SelectGPUDeviceBlockSize(ppl.Pass):
             gpu_map.gpu_block_size = block_size
             assigned[gpu_map.label] = block_size
         return assigned or None
-
-
-def block_size_overrides() -> dict[int, tuple[int, int, int]]:
-    """``compiler.cuda.block_size_overrides`` parsed: ordinal -> block.
-
-    :raises ValueError: an entry is not ``ordinal:x,y,z`` with positive sizes.
-    """
-    overrides: dict[int, tuple[int, int, int]] = {}
-    for entry in filter(
-        None, (part.strip() for part in Config.get("compiler", "cuda", "block_size_overrides").split(";"))
-    ):
-        ordinal, separator, block = entry.partition(":")
-        sizes = tuple(int(size) for size in block.split(",")) if separator else ()
-        if len(sizes) != 3 or min(sizes) < 1 or not ordinal.strip().isdigit():
-            raise ValueError(f"compiler.cuda.block_size_overrides: {entry!r} is not ordinal:x,y,z")
-        overrides[int(ordinal)] = (sizes[0], sizes[1], sizes[2])
-    return overrides
 
 
 def select_gpu_device_block_size(sdfg: SDFG) -> dict[str, list[int]]:

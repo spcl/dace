@@ -682,6 +682,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         pure_outputs, exclusive_outputs, shared_outputs = output_partition
         assert (not self.require_exclusive_intermediates) or (len(shared_outputs) == 0)
 
+        # Also before the rewiring: the reads of the first Map the second Map's writes must stay behind
+        anti_dependences = mfhelper.anti_dependences(graph, first_map_entry, second_map_exit)
+
         # Collected BEFORE the rewiring, which deletes the intermediates carrying these edges.
         ordering_sources = self.ordering_sources_of_intermediates(
             graph, first_map_exit, exclusive_outputs | shared_outputs
@@ -766,6 +769,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # Now turn the second output node into the output node of the first Map.
         second_map_exit.map = first_map_entry.map
+
+        mfhelper.keep_anti_dependences(graph, anti_dependences)
 
         # Put back the happens-before the rewrite took out of the graph, see
         #  `ordering_sources_of_intermediates`.

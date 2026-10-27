@@ -938,16 +938,6 @@ required:
                             If empty, the SDFG build will detect the local HIP architecture.
                         default: ''
 
-                    block_size_overrides:
-                        type: str
-                        title: Thread-block sizes an autotuner sets per kernel
-                        description: >
-                            Semicolon-separated ``ordinal:x,y,z`` entries. ``SelectGPUDeviceBlockSize``
-                            numbers the device maps it would pick a block for (0, 1, ... in walk order) and
-                            gives map ``ordinal`` the block ``x,y,z`` instead of its own pick; the thread-block
-                            tiling after it follows that block. Empty: every map gets the pass's pick.
-                        default: ''
-
                     default_block_size:
                         type: str
                         title: Default thread-block size

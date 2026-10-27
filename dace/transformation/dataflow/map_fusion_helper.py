@@ -834,6 +834,43 @@ def read_overtaken_by_write(
     return any(written_within(w, before_later) and not written_within(w, before_reader) for w in writers)
 
 
+def anti_dependences(
+    state: dace.SDFGState, first_entry: nodes.MapEntry, second_exit: nodes.MapExit
+) -> list[tuple[nodes.Node, nodes.Node]]:
+    """The ``(reader, writer)`` pairs of a fusion: a node of the first Map's body reads a container that a node of the
+    second Map's body writes. Apart, the Map boundary runs every read first; fused, only a path in the body does.
+
+    A nested scope stands for its whole body: a reader by its exit, a writer by its entry.
+
+    :param state: The state of both Maps.
+    :param first_entry: The entry of the first Map.
+    :param second_exit: The exit of the second Map.
+    """
+    readers: dict[str, list[nodes.Node]] = {}
+    for edge in state.out_edges(first_entry):
+        if edge.data.is_empty() or edge.data.data is None:
+            continue
+        reader = state.exit_node(edge.dst) if isinstance(edge.dst, nodes.EntryNode) else edge.dst
+        readers.setdefault(edge.data.data, []).append(reader)
+    pairs: list[tuple[nodes.Node, nodes.Node]] = []
+    for edge in state.in_edges(second_exit):
+        if edge.data.is_empty() or edge.data.data not in readers:
+            continue
+        writer = state.entry_node(edge.src) if isinstance(edge.src, nodes.ExitNode) else edge.src
+        pairs.extend((reader, writer) for reader in readers[edge.data.data] if reader is not writer)
+    return pairs
+
+
+def keep_anti_dependences(state: dace.SDFGState, pairs: list[tuple[nodes.Node, nodes.Node]]) -> None:
+    """Order each reader of :func:`anti_dependences` before its writer with an empty Memlet, where no path orders
+    the two either way. A path from the writer to the reader means the read consumes the write (an in-place
+    intermediate), and the edge would close a cycle."""
+    for reader, writer in pairs:
+        upstream = sdutils.find_upstream_nodes(writer, state)
+        if reader not in upstream and writer not in sdutils.find_upstream_nodes(reader, state):
+            state.add_nedge(reader, writer, dace.Memlet())
+
+
 def writes_follow(
     state: dace.SDFGState,
     map_entry: nodes.MapEntry,
