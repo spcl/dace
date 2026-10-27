@@ -928,14 +928,14 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
     def replace(self, repl_dict):
-        keys_by_name = _keys_by_name(repl_dict)
+        keys_by_name = symbolic.keys_by_free_name(repl_dict)
         for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges, self.tile_sizes)):
             self.ranges[i] = (
-                _subs(rb, repl_dict, keys_by_name),
-                _subs(re, repl_dict, keys_by_name),
-                _subs(rs, repl_dict, keys_by_name),
+                symbolic.subs_reachable(rb, repl_dict, keys_by_name),
+                symbolic.subs_reachable(re, repl_dict, keys_by_name),
+                symbolic.subs_reachable(rs, repl_dict, keys_by_name),
             )
-            self.tile_sizes[i] = _subs(ts, repl_dict, keys_by_name)
+            self.tile_sizes[i] = symbolic.subs_reachable(ts, repl_dict, keys_by_name)
 
     def intersects(self, other: "Range", facts: symbolic.Facts) -> symbolic.Truth:
         """Whether this range and ``other`` overlap under ``facts``."""

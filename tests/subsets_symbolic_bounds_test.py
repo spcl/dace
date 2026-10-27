@@ -42,5 +42,28 @@ def test_setitem_keeps_bounds_symbolic():
         rng[0] = (1, 2)
 
 
+def test_replace_renames_a_subscripted_container():
+    """``Subscript.free_symbols`` leaves out the container, so ``replace`` must still reach ``idx`` in ``idx[i]``."""
+    for old, new in ((symbolic.symbol("idx"), symbolic.symbol("jdx")), ("idx", "jdx")):
+        rng = subsets.Range.from_string("idx[i]:idx[i] + 4")
+        rng.replace({old: new})
+        start, end, step = rng.ndrange()[0]
+        assert symbolic.arrays(start) == symbolic.arrays(end) == {"jdx"}
+
+
+def test_replace_matches_a_full_subs():
+    """Dropping unreachable entries must not change the result, including entries reached only through the value of
+    another entry, which ``subs`` may apply in either order."""
+    cases = ({"N": "M", "M": "K", "Z": "0"}, {"M": "K", "N": "M"}, {"N": "M + P", "P": "2"}, {"Z": "0"})
+    for case in cases:
+        repl = {symbolic.symbol(k): symbolic.pystr_to_symbolic(v) for k, v in case.items()}
+        rng = subsets.Range.from_string("0:N, 0:P")
+        expected = [tuple(b.subs(repl) for b in bounds) for bounds in rng.ndrange()]
+        rng.replace(repl)
+        assert rng.ndrange() == expected, case
+
+
 if __name__ == "__main__":
     test_setitem_keeps_bounds_symbolic()
+    test_replace_renames_a_subscripted_container()
+    test_replace_matches_a_full_subs()

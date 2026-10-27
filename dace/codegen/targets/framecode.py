@@ -978,7 +978,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Symbols-and-constants stays here: it is memoized on this code generator, not on the SDFG.
         fsyms = {sdfg.cfg_id: self.symbols_and_constants(sdfg) for sdfg in top_sdfg.all_sdfgs_recursive()}
         # Per SDFG, built on its first container that needs a common (post)dominator.
-        dominance: dict[int, tuple[_DominatorTree, _DominatorTree]] = {}
+        dominance: dict[int, tuple[DominatorTree, DominatorTree]] = {}
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             if isinstance(desc, data.DistributedDescriptor):
@@ -1208,7 +1208,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
                     if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
                         if sdfg.cfg_id not in dominance:
-                            dominance[sdfg.cfg_id] = _dominator_trees(sdfg)
+                            dominance[sdfg.cfg_id] = dominator_trees(sdfg)
                         first_state_instance, last_state_instance = _get_dominator_and_postdominator(
                             instances, *dominance[sdfg.cfg_id]
                         )
@@ -1660,7 +1660,7 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     return block
 
 
-class _DominatorTree:
+class DominatorTree:
     """The tree of ``immediate`` (a root maps to itself), numbered by a DFS: ``a`` dominates ``b`` iff ``b``'s
     entry/exit interval lies within ``a``'s. One walk answers every query, where the transitive closure of the tree is
     quadratic in its depth."""
@@ -1699,16 +1699,16 @@ class _DominatorTree:
         return self.entry[a] <= self.entry[b] and self.exit[b] <= self.exit[a]
 
 
-def _dominator_trees(sdfg: SDFG) -> tuple[_DominatorTree, _DominatorTree]:
+def dominator_trees(sdfg: SDFG) -> tuple[DominatorTree, DominatorTree]:
     """The dominator and post-dominator trees of the blocks of ``sdfg``, across its control flow regions."""
     idom: dict[ControlFlowBlock, ControlFlowBlock] = {}
     ipostdom: dict[ControlFlowBlock, ControlFlowBlock] = {}
     utils.get_control_flow_block_dominators(sdfg, idom, None, ipostdom, None)
-    return _DominatorTree(idom), _DominatorTree(ipostdom)
+    return DominatorTree(idom), DominatorTree(ipostdom)
 
 
 def _get_dominator_and_postdominator(
-    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: _DominatorTree, postdom: _DominatorTree
+    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: DominatorTree, postdom: DominatorTree
 ):
     """
     Gets the closest common dominator and post-dominator for a list of states.
@@ -1718,13 +1718,13 @@ def _get_dominator_and_postdominator(
     data_name = accesses[0][1].data
 
     start_state = states[0]
-    while not all(dom.dominates(start_state, n) for n in states):
+    while any(not dom.dominates(start_state, n) for n in states):
         if dom.immediate[start_state] is start_state:
             raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
         start_state = dom.immediate[start_state]
 
     end_state = states[-1]
-    while not all(postdom.dominates(end_state, n) for n in states):
+    while any(not postdom.dominates(end_state, n) for n in states):
         if postdom.immediate[end_state] is end_state:
             raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
         end_state = postdom.immediate[end_state]

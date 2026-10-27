@@ -8,11 +8,9 @@ import collections.abc
 import contextvars
 import copy
 import functools
-import inspect
 import itertools
 import re
 import sys
-import types
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
@@ -88,25 +86,10 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return explicit_lineinfo
 
     if dace.Config.get("compiler", "lineinfo") == "inspect":
-        # Two frames up is this function's caller's caller; ``inspect.stack()`` would resolve every frame to the root
-        lineno, filename = caller_position(sys._getframe(2))
-        return dtypes.DebugInfo(lineno, 0, lineno, 0, filename)
+        caller = sys._getframe(2)
+        return dtypes.DebugInfo(caller.f_lineno, 0, caller.f_lineno, 0, caller.f_code.co_filename)
 
     return None
-
-
-#: ``(code, instruction offset) -> (line, file)`` per resolved call site; ``getframeinfo`` stats the file each call.
-CALLER_POSITIONS: dict[tuple[types.CodeType, int], tuple[int, str]] = {}
-
-
-def caller_position(frame: types.FrameType) -> tuple[int, str]:
-    """``(lineno, filename)`` as ``inspect.getframeinfo(frame, context=0)`` reports them, once per call site."""
-    key = (frame.f_code, frame.f_lasti)
-    position = CALLER_POSITIONS.get(key)
-    if position is None:
-        info = inspect.getframeinfo(frame, context=0)
-        position = CALLER_POSITIONS[key] = (info.lineno, info.filename)
-    return position
 
 
 #: One map dimension: a range string, a subset, or a ``(begin, end, step)`` triple of symbolic bounds.
@@ -877,8 +860,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             start_block = None
         if isinstance(start_block, AbstractControlFlowRegion):
             update_if_not_none(defined_syms, start_block.new_symbols(defined_syms))
-        # ``new_symbols(sdfg, ...)`` rebuilds this type environment (the symbols overridden by every array's dtype)
-        # per edge; keep it alongside ``defined_syms`` instead.
+        # ``new_symbols(sdfg, ...)`` rebuilds this type environment per edge; keep it alongside ``defined_syms``
         array_types = {k: v.dtype for k, v in sdfg.arrays.items()}
         environment = {**defined_syms, **array_types}
         for edge in sdfg.all_interstate_edges():
@@ -3943,8 +3925,7 @@ class AbstractControlFlowRegion(
         super().remove_edge(edge)
 
     def _ensure_unique_block_name(self, proposed: str | None = None) -> str:
-        # Every name ever issued here: ``add_node`` and the ``label`` setter record them. A removed block keeps its
-        # name reserved, as an inlined reference may still point at it.
+        # ``add_node`` and the ``label`` setter record every name; a removed block keeps its name reserved
         return utils.find_new_name(proposed or "block", self._labels)
 
     def add_node(
@@ -3991,10 +3972,12 @@ class AbstractControlFlowRegion(
         # `_start_block` is an index into the node list, so any removal invalidates it:
         # the indices of later nodes shift down, leaving it pointing at a different block
         # or past the end. Re-resolve it by identity around the removal.
-        if self._start_block is not None:
+        # Deserialization can leave it out of range on entry
+        if self._start_block is not None and 0 <= self._start_block < self.number_of_nodes():
             start_block = self.node(self._start_block)
         else:
             start_block = None
+            self._start_block = None
         # A block already added to another region (and so re-parented) moved: nothing leaves the tree.
         released = contributed_regions(node) if node.parent_graph is self else []
         super().remove_node(node)

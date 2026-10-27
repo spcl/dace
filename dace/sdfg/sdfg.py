@@ -61,7 +61,6 @@ from dace.sdfg.graph import (
     copy_edge_index,
     copy_graph_field,
     copy_node_index,
-    frozen_node_ids,
     generate_element_id,
 )
 from dace.sdfg.replace import replace_properties_dict, symbolic_replacements
@@ -1059,7 +1058,7 @@ class SDFG(ControlFlowRegion):
         # (e.g. interstate-edge conditions/assignments) emit a deterministic dtype.
         # Each nested SDFG re-pushes its own symbols, and the previous authority is
         # restored on exit.
-        with symbolic.serialization_symbol_dtypes(self.symbols), frozen_node_ids():
+        with symbolic.serialization_symbol_dtypes(self.symbols):
             tmp = super().to_json()
         tmp["attributes"]["symbol_repo"] = self._symbol_repo.to_json(self)
         if is_root:

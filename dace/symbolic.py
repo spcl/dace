@@ -1617,6 +1617,39 @@ def scalars(expr: SymbolicType | str, descriptors: dict[str, Any]) -> set[str]:
     return {str(s) for s in expr.free_symbols if isinstance(descriptors.get(str(s)), data.Scalar)}
 
 
+def substitutable_names(expr: SymbolicType | SymExpr | str) -> set[str]:
+    """Names a ``subs`` key can match in ``expr``: free symbols, functions and subscripted containers."""
+    if isinstance(expr, SymExpr):
+        return substitutable_names(expr.expr) | substitutable_names(expr.approx)
+    return free_symbols_and_functions(expr) | arrays(expr)
+
+
+def keys_by_free_name(repl_dict: dict) -> dict[str, list]:
+    """Groups the keys of ``repl_dict`` under every name they mention, for :func:`subs_reachable`."""
+    keys_by_name: dict[str, list] = {}
+    for key in repl_dict:
+        for name in substitutable_names(key):
+            keys_by_name.setdefault(name, []).append(key)
+    return keys_by_name
+
+
+def subs_reachable(expr, repl_dict: dict, keys_by_name: dict[str, list]):
+    """``expr.subs(repl_dict)`` with only the entries that can reach ``expr``, directly or through the value of another
+    entry: SymPy walks ``expr`` once per entry it is given. ``keys_by_name`` is ``keys_by_free_name(repl_dict)``."""
+    if not issymbolic(expr):
+        return expr
+    reachable: dict = {}
+    pending = list(substitutable_names(expr))
+    while pending:
+        for key in keys_by_name.get(pending.pop(), ()):
+            if key not in reachable:
+                reachable[key] = None
+                pending.extend(substitutable_names(repl_dict[key]))
+    if not reachable:
+        return expr
+    return expr.subs({key: value for key, value in repl_dict.items() if key in reachable})
+
+
 def is_undefined(expr: SymbolicType | str) -> bool:
     """
     Checks if a symbolic expression contains any UndefinedSymbol atoms.
