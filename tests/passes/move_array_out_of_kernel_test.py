@@ -119,13 +119,13 @@ def kernel_with_transient_behind_a_nested_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def buf_scopes(sdfg: dace.SDFG) -> list:
+def buf_scopes(sdfg: dace.SDFG, name: str = "buf") -> list:
     return [
         state.scope_dict()[node]
         for sub in sdfg.all_sdfgs_recursive()
         for state in sub.states()
         for node in state.data_nodes()
-        if node.data == "buf"
+        if node.data == name
     ]
 
 
@@ -290,8 +290,7 @@ def kernel_with_a_thread_block_around_its_scratch() -> dace.SDFG:
 
 
 def test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel():
-    """Shape gains ``[KERNEL, BLOCK]`` outermost first; every access leads with ``[i, t]`` and each map exit carries
-    exactly the slices of its own iterations (a whole-buffer edge would lower to a racing copy)."""
+    """Shape gains ``[KERNEL, BLOCK]`` outermost first, and every access leads with ``[i, t]``."""
     sdfg = kernel_with_a_thread_block_around_its_scratch()
     lift(sdfg)
 
@@ -311,12 +310,15 @@ def test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel():
         }
         assert len(offsets) == KERNEL_EXTENT * BLOCK_EXTENT, f"{edge.data}: two iterations share one slice"
         assert min(offsets) >= 0 and max(offsets) < int(desc.total_size), (edge.data, min(offsets), max(offsets))
-    moved = {
-        e.dst.map.label: int(e.data.subset.num_elements())
+    # Through a scope exit a memlet from ``tmp`` to ``tmp`` lowers to a copy every thread runs onto the first slice,
+    # so the route that places the allocation outside the kernel only orders.
+    exits = [
+        e
         for e in sdfg.start_state.edges()
-        if isinstance(e.dst, dace.nodes.MapExit) and e.data.data == "tmp"
-    }
-    assert moved == {"block": SCRATCH_EXTENT, "kernel": BLOCK_EXTENT * SCRATCH_EXTENT}, moved
+        if isinstance(e.dst, dace.nodes.MapExit) and isinstance(e.src, dace.nodes.AccessNode) and e.src.data == "tmp"
+    ]
+    assert exits and all(e.data.is_empty() for e in exits), [str(e.data) for e in exits]
+    assert any(scope is None for scope in buf_scopes(sdfg, "tmp")), "no access outside the kernel"
 
 
 def add_sequential_map(state: dace.SDFGState, param: str, extent, read: str, write: str, *, code: str):
@@ -804,6 +806,85 @@ def test_a_moved_symbolic_register_scratch_below_a_nested_sdfg_computes_the_righ
     assert np.allclose(cupy.asnumpy(out), host_a[:, ::-1] * 2.0 + 1.0)
 
 
+def variable_length_only(sdfg: dace.SDFG) -> int | None:
+    return MoveArrayOutOfKernel(only_variable_length=True).apply_pass(sdfg, {})
+
+
+@pytest.mark.parametrize("shape, storage", [((LIMIT + 1,), REGISTER), ((4,), GLOBAL)])
+def test_variable_length_only_leaves_a_constant_size_array_alone(shape, storage):
+    """Code generation runs this mode: a constant-size local compiles, so its storage is the caller's choice."""
+    sdfg = kernel_with_internal_transient(shape, storage)
+
+    assert variable_length_only(sdfg) is None
+
+    assert sdfg.arrays["buf"].storage == storage and tuple(sdfg.arrays["buf"].shape) == shape
+
+
+@pytest.mark.parametrize("schedule", [GPU_DEVICE, dtypes.ScheduleType.GPU_Persistent])
+def test_variable_length_only_moves_a_symbolic_per_thread_array_out_of_any_kernel(schedule):
+    sdfg = kernel_with_internal_transient((NX,), REGISTER)
+    (kernel,) = [n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry)]
+    kernel.map.schedule = schedule
+
+    assert variable_length_only(sdfg) == 1
+
+    buf = sdfg.arrays["buf"]
+    assert buf.storage == GLOBAL and [str(d) for d in buf.shape] == ["128", "NX"], buf
+    assert buf_scopes(sdfg).count(None) == 1, "the moved array is allocated outside the kernel"
+    sdfg.validate()
+
+
+def test_code_generation_moves_a_symbolic_per_thread_array_out_of_the_kernel():
+    """C++ has no variable-length arrays: declared inside the kernel, ``buf[NX]`` does not compile."""
+    sdfg = kernel_with_internal_transient((NX,), REGISTER)
+
+    objects = sdfg.generate_code()
+    host = "\n".join(obj.clean_code for obj in objects)
+    (device,) = [obj.clean_code for obj in objects if obj.language == "cu"]
+
+    assert not re.search(r"double\s+buf\s*\[\s*NX", device), "buf is declared per thread with a symbolic size"
+    assert re.search(r"(cudaMalloc|hipMalloc)\(\(void\*\*\)&buf,", host), "buf is not allocated outside the kernel"
+    assert not re.search(r"Copy\w*\([^;]*\bbuf\b", device), "the kernel copies buf onto itself"
+
+
+def kernel_computing_the_size_of_its_scratch() -> dace.SDFG:
+    """The nested body sets ``m = i + 1`` on an interstate edge and sizes its ``Register`` scratch ``buf[m]`` by it, as
+    a CSR row's length is read inside the kernel (npbench spmv)."""
+    sdfg = kernel_with_transient_behind_a_nested_sdfg()
+    inner = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    inner.add_symbol("m", dace.int64)
+    body = inner.start_block
+    size = inner.add_state_before(body, "size", is_start_block=True)
+    inner.edges_between(size, body)[0].data.assignments["m"] = "i + 1"
+    inner.arrays["buf"].set_shape(new_shape=[dace.symbol("m", dace.int64)])
+    inner.arrays["buf"].storage = REGISTER
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_scratch_the_kernel_sizes_stays_where_it_is():
+    """An allocation before the launch cannot use a size the kernel computes."""
+    sdfg = kernel_computing_the_size_of_its_scratch()
+
+    assert variable_length_only(sdfg) is None
+
+    inner = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    assert inner.arrays["buf"].storage == REGISTER and [str(d) for d in inner.arrays["buf"].shape] == ["m"]
+    sdfg.validate()
+
+
+@pytest.mark.gpu
+def test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values():
+    import cupy  # Only present on GPU runners.
+
+    sdfg = kernel_with_internal_transient((NX,), REGISTER)
+    out = cupy.zeros(128)
+
+    sdfg(A=out, NX=4)
+
+    assert np.array_equal(cupy.asnumpy(out), np.ones(128))
+
+
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)
@@ -847,3 +928,10 @@ if __name__ == "__main__":
     test_a_small_accumulator_is_lifted_not_demoted()
     test_the_lifted_accumulator_sums_each_row()
     test_a_moved_symbolic_register_scratch_below_a_nested_sdfg_computes_the_right_values()
+    test_variable_length_only_leaves_a_constant_size_array_alone((LIMIT + 1,), REGISTER)
+    test_variable_length_only_leaves_a_constant_size_array_alone((4,), GLOBAL)
+    test_variable_length_only_moves_a_symbolic_per_thread_array_out_of_any_kernel(GPU_DEVICE)
+    test_variable_length_only_moves_a_symbolic_per_thread_array_out_of_any_kernel(dtypes.ScheduleType.GPU_Persistent)
+    test_code_generation_moves_a_symbolic_per_thread_array_out_of_the_kernel()
+    test_a_scratch_the_kernel_sizes_stays_where_it_is()
+    test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values()
