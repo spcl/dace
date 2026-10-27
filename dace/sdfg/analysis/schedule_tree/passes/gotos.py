@@ -1,60 +1,7 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Assortment of passes for schedule trees.
-"""
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Eliminating forward gotos by restructuring conditionals."""
 
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-
-
-def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
-    """
-    Removes unused and duplicate labels from the schedule tree. Labels in general blocks are only removed if duplicate.
-
-    :param stree: The schedule tree to remove labels from.
-    """
-
-    class FindGotos(tn.ScheduleNodeVisitor):
-        def __init__(self):
-            self.gotos: set[str] = set()
-
-        def visit_GotoNode(self, node: tn.GotoNode):
-            if node.target is not None:
-                self.gotos.add(node.target)
-
-    class RemoveLabels(tn.ScheduleNodeTransformer):
-        def __init__(self, labels_to_keep: set[str]) -> None:
-            self.labels_to_keep = labels_to_keep
-            self.labels_seen = set()
-
-        def visit_StateLabel(self, node: tn.StateLabel):
-            # Labels in general blocks separate their blocks, even if no goto jumps to them
-            if node.name not in self.labels_to_keep and not isinstance(node.parent, tn.GBlock):
-                return None
-            if node.name in self.labels_seen:
-                return None
-            self.labels_seen.add(node.name)
-            return node
-
-    fg = FindGotos()
-    fg.visit(stree)
-    return RemoveLabels(fg.gotos).visit(stree)
-
-
-def remove_empty_scopes(stree: tn.ScheduleTreeScope):
-    """
-    Removes empty scopes from the schedule tree.
-
-    :warning: This pass is not safe to use for for-loops, as it will remove indices that may be used after the loop.
-    """
-
-    class RemoveEmptyScopes(tn.ScheduleNodeTransformer):
-        def visit_scope(self, node: tn.ScheduleTreeScope):
-            if len(node.children) == 0:
-                return None
-
-            return self.generic_visit(node)
-
-    return RemoveEmptyScopes().visit(stree)
 
 
 def _contains_goto(node: tn.ScheduleTreeNode, label: str | None) -> bool:

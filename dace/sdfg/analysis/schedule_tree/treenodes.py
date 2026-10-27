@@ -259,6 +259,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     constants: dict[str, tuple[data.Data, Any]]
     callback_mapping: dict[str, str]
     arg_names: list[str]
+    zero_initialized: set[str]  #: Containers whose memory is zeroed when allocated
     global_code: dict[str, CodeBlock]  #: Code generated in a global scope, per target
     init_code: dict[str, CodeBlock]  #: Code generated in the initialization function, per target
     exit_code: dict[str, CodeBlock]  #: Code generated in the finalization function, per target
@@ -273,6 +274,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         constants: dict[str, tuple[data.Data, Any]] | None = None,
         callback_mapping: dict[str, str] | None = None,
         arg_names: list[str] | None = None,
+        zero_initialized: set[str] | None = None,
         global_code: dict[str, CodeBlock] | None = None,
         init_code: dict[str, CodeBlock] | None = None,
         exit_code: dict[str, CodeBlock] | None = None,
@@ -285,6 +287,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         self.constants = constants if constants is not None else dict()
         self.callback_mapping = callback_mapping if callback_mapping is not None else dict()
         self.arg_names = arg_names if arg_names is not None else list()
+        self.zero_initialized = zero_initialized if zero_initialized is not None else set()
         self.global_code = global_code if global_code is not None else dict()
         self.init_code = init_code if init_code is not None else dict()
         self.exit_code = exit_code if exit_code is not None else dict()

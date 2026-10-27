@@ -1,5 +1,6 @@
 from .analysis import StateReachability, AccessSets, FindAccessStates
 from .array_elimination import ArrayElimination
+from .predicate_to_integer_array import PredicateToIntegerArray
 from .consolidate_edges import ConsolidateEdges
 from .constant_propagation import ConstantPropagation
 from .dead_dataflow_elimination import DeadDataflowElimination
@@ -7,6 +8,7 @@ from .dead_state_elimination import DeadStateElimination
 from .full_map_fusion import FullMapFusion
 from .fusion_inline import FuseStates, InlineSDFGs
 from .loop_local_memory_reduction import LoopLocalMemoryReduction
+from .loop_range_reduction import LoopRangeReduction
 from .optional_arrays import OptionalArrayInference
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
 from .prune_symbols import RemoveUnusedSymbols
