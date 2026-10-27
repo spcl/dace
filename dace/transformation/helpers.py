@@ -131,6 +131,11 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
         nsdfg.add_nodes_from([s for s in blocks if s is not source_node])
         for e in subgraph.edges():
             nsdfg.add_edge(e.src, e.dst, e.data)
+        # SDFGs nested in the moved states now have the new SDFG as their parent
+        for state in nsdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    node.sdfg.parent_sdfg = nsdfg
 
         # Annotate any transitions to return blocks in the inner, nested SDFG by first setting the added transient
         # scalar to 1 / true to detect that the inner SDFG returned.
