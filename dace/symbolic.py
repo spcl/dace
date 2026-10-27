@@ -147,10 +147,24 @@ class _SymbolDTypeContext(threading.local):
 
     def declare(self, name: str, dtype: "dtypes.typeclass") -> None:
         """Adds ``name`` to the active level (no-op without one), for a symbol declared while it is active."""
-        if len(self.ctx_stack) > 1 and self._is_scalar_symbol_dtype(dtype):
-            level = {**self.ctx_stack[-1], name: dtype}
-            self.ctx_stack[-1] = types.MappingProxyType(level)
-            self.key_stack[-1] = AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
+        self.declare_all({name: dtype})
+
+    def declare_all(self, declared: Mapping[str, "dtypes.typeclass"]) -> None:
+        """Adds every name of ``declared`` to the active level at once; a name it already holds at that dtype is
+        no change."""
+        if len(self.ctx_stack) == 1:
+            return
+        current = self.ctx_stack[-1]
+        new = {
+            name: dtype
+            for name, dtype in declared.items()
+            if self._is_scalar_symbol_dtype(dtype) and (name not in current or current[name] != dtype)
+        }
+        if not new:
+            return
+        level = {**current, **new}
+        self.ctx_stack[-1] = types.MappingProxyType(level)
+        self.key_stack[-1] = AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
 
     def get(self) -> types.MappingProxyType:
         """Get the current active set of authoritative dtype."""
@@ -187,6 +201,11 @@ _SERIALIZATION_SYMBOL_DTYPES = _SymbolDTypeContext()
 def declare_symbol_dtype(name: str, dtype: "dtypes.typeclass") -> None:
     """Makes the active symbol-dtype authority (if any) know ``name``, declared while it is active."""
     _SERIALIZATION_SYMBOL_DTYPES.declare(name, dtype)
+
+
+def declare_symbol_dtypes(declared: Mapping[str, "dtypes.typeclass"]) -> None:
+    """:func:`declare_symbol_dtype` for every name of ``declared``, at the cost of one."""
+    _SERIALIZATION_SYMBOL_DTYPES.declare_all(declared)
 
 
 def declared_symbol_dtype(name: str) -> Optional["dtypes.typeclass"]:
