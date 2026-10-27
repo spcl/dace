@@ -8,10 +8,13 @@ edges.
 """
 
 import copy
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from dace import memlet as mm
 from dace import sdfg as sd
+from dace import symbolic
+from dace.data import Data
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
@@ -137,7 +140,7 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         state = match.branch_state
         scope = state.scope_subgraph(entry, include_entry=False, include_exit=False)
         names = {e.data.data for e in scope.edges() if e.data.data is not None}
-        symbols = {str(s) for s in scope.free_symbols}
+        symbols = set(scope.free_symbols)
         for node in scope.nodes():
             if isinstance(node, NestedSDFG):
                 names |= node.sdfg.arrays.keys()
@@ -191,27 +194,47 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             inner.add_edge(copies[e.src], dst, InterstateEdge(assignments=dict(e.data.assignments)))
 
 
+def names_read(expr: str, arrays: Mapping[str, Data]) -> tuple[set[str], set[str]]:
+    """The data containers and the symbols ``expr`` reads."""
+    data = symbolic.arrays(expr) | symbolic.scalars(expr, arrays)
+    return data, symbolic.free_symbols_and_functions(expr) - data
+
+
+def edges_read(edges: list, arrays: Mapping[str, Data]) -> tuple[set[str], set[str]]:
+    """The data containers and the symbols the conditions and assignments of ``edges`` read."""
+    data: set[str] = set()
+    symbols: set[str] = set()
+    for e in edges:
+        for expr in (e.data.condition.as_string, *e.data.assignments.values()):
+            expr_data, expr_symbols = names_read(expr, arrays)
+            data |= expr_data
+            symbols |= expr_symbols
+    return data, symbols
+
+
+def descriptor_symbols(arrays: Mapping[str, Data], names: Iterable[str]) -> set[str]:
+    """The symbols the shapes, strides and offsets of the named containers use."""
+    return {str(s) for name in names for s in arrays[name].free_symbols}
+
+
 def guard_footprint(
     enclosing: sd.SDFG, cond_block: ConditionalBlock, branch_state: SDFGState, chain: list[SDFGState]
 ) -> GuardMatch:
     """What the guard chain and condition read, write as transients, assign and use as symbols."""
-    cond_names = cond_block.branches[0][0].get_free_symbols()
-    reads = {s for s in cond_names if s in enclosing.arrays}
-    symbols = {s for s in cond_names if s not in enclosing.arrays}
+    guard_edges = [e for b in chain for e in enclosing.out_edges(b)]
+    reads, symbols = names_read(cond_block.branches[0][0].as_string, enclosing.arrays)
+    edge_reads, edge_symbols = edges_read(guard_edges, enclosing.arrays)
+    reads |= edge_reads
+    symbols |= edge_symbols
     written: set[str] = set()
     for state in chain:
         state_reads, state_writes = state.read_and_write_sets()
         reads |= state_reads
         written |= state_writes
         symbols |= state.used_symbols(all_symbols=True)
-    assigned: set[str] = set()
-    for e in (e for b in chain for e in enclosing.out_edges(b)):
-        reads |= {m.data for m in e.data.get_read_memlets(enclosing.arrays, include_scalars=True)}
-        symbols |= e.data.used_symbols(all_symbols=True) - enclosing.arrays.keys()
-        assigned |= e.data.assignments.keys()
+    assigned = {name for e in guard_edges for name in e.data.assignments}
     reads -= written
-    for name in reads:
-        symbols |= {str(s) for s in enclosing.arrays[name].free_symbols}
+    symbols |= descriptor_symbols(enclosing.arrays, reads)
     return GuardMatch(enclosing, branch_state, chain, reads, written, assigned, symbols - assigned)
 
 
@@ -229,14 +252,14 @@ def private_to_guard(match: GuardMatch) -> bool:
 
 
 def outside_guard(match: GuardMatch) -> tuple[set[str], set[str]]:
-    """The data read and the symbols used in the outer body outside the guard, except for the branch's data."""
+    """The data read and the symbols used or assigned in the outer body outside the guard."""
     enclosing = match.enclosing
     guard_edges = [e for b in match.chain for e in enclosing.out_edges(b)]
     outside_edges = [e for e in enclosing.edges() if e not in guard_edges]
-    reads = {m.data for e in outside_edges for m in e.data.get_read_memlets(enclosing.arrays, True)}
-    symbols = match.branch_state.used_symbols(all_symbols=True)
-    symbols |= {s for e in outside_edges for s in e.data.used_symbols(all_symbols=True)}
-    symbols |= {str(s) for desc in enclosing.arrays.values() for s in desc.free_symbols}
+    reads, symbols = edges_read(outside_edges, enclosing.arrays)
+    symbols |= {name for e in outside_edges for name in e.data.assignments}
+    symbols |= match.branch_state.used_symbols(all_symbols=True)
+    symbols |= descriptor_symbols(enclosing.arrays, enclosing.arrays)
     return reads, symbols
 
 
