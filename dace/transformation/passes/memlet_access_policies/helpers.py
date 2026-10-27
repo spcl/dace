@@ -44,19 +44,15 @@ def base_offset(desc: dt.Data, memlet: Memlet) -> sp.Basic:
 
 
 def flat_length(desc: dt.Data, subset: Range) -> symbolic.SymbolicType | None:
-    """Number of elements of ``subset`` if it is a contiguous run in memory (at most one dimension of size > 1,
-    with unit step and unit stride), otherwise ``None``. Callers only pass :class:`~dace.subsets.Range` subsets
-    (memlets with other subsets get no loop cursor)."""
-    sizes = subset.size()
-    wide = [d for d, s in enumerate(sizes) if sp.sympify(s) != 1]
-    if not wide:
-        return sp.Integer(1)
-    if len(wide) > 1:
+    """Number of elements of ``subset`` if it is a contiguous run in memory (see
+    :meth:`~dace.subsets.Range.contiguous_length`) with at most one dimension of size > 1, otherwise ``None``.
+    Callers only pass :class:`~dace.subsets.Range` subsets (memlets with other subsets get no loop cursor).
+    Contiguous runs over several dimensions are excluded: rewriting them to the flat reference would change the
+    memlet's shape, which library nodes expanded after the lowering may rely on (reads of such runs keep their shape
+    through window references)."""
+    if sum(1 for size in subset.size() if size != 1) > 1:
         return None
-    d = wide[0]
-    if sp.sympify(subset.ranges[d][2]) != 1 or sp.sympify(desc.strides[d]) != 1:
-        return None
-    return sp.sympify(sizes[d])
+    return subset.contiguous_length(desc.strides)
 
 
 def flat_addressable_array(desc: dt.Data | None) -> bool:
