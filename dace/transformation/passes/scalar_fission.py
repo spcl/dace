@@ -382,6 +382,24 @@ class SubsetAccesses(Accesses):
         return read is not ANY_ELEMENT and subsets_cover(writes, read, self.facts)
 
 
+def topological_order(
+    blocks: list[ControlFlowBlock], incoming: dict[ControlFlowBlock, list[ControlFlowBlock]]
+) -> list[ControlFlowBlock] | None:
+    """``blocks`` with every block after its predecessors in ``incoming``, ties in block order; ``None`` on a cycle."""
+    pending = {b: len(incoming[b]) for b in blocks}
+    successors: dict[ControlFlowBlock, list[ControlFlowBlock]] = {b: [] for b in blocks}
+    for b in blocks:
+        for p in incoming[b]:
+            successors[p].append(b)
+    order = [b for b in blocks if not pending[b]]
+    for b in order:
+        for succ in successors[b]:
+            pending[succ] -= 1
+            if not pending[succ]:
+                order.append(succ)
+    return order if len(order) == len(blocks) else None
+
+
 class MustDefinition:
     """Forward must-definition of one container over the control-flow tree, for the question "is every read
     preceded, on every path from the region's entry, by a write that covers it?".
@@ -417,13 +435,22 @@ class MustDefinition:
         start = region.start_block
         defs: dict[ControlFlowBlock, dict] = {b: {} for b in blocks}
         defs[start] = dict(entry)
-        for _ in range(len(blocks) + 1):
+        incoming = {b: [e.src for e in region.in_edges(b)] for b in blocks}
+        order = topological_order(blocks, incoming)
+        # Acyclic: one sweep in dependence order is the fixpoint; otherwise sweep in block order until it holds
+        for _ in range(1 if order is not None else len(blocks) + 1):
             changed = False
-            for b in blocks:
+            for b in blocks if order is None else order:
                 if b is start:
                     continue
-                preds = [e.src for e in region.in_edges(b)]
-                new = self.meet([{**defs[p], **gen[p]} for p in preds]) if preds else {}
+                sources = incoming[b]
+                # The sets are never updated in place, so a block whose one predecessor writes nothing shares its set
+                if not sources or all(not defs[p] and not gen[p] for p in sources):
+                    new = {}
+                elif len(sources) == 1 and not gen[sources[0]]:
+                    new = defs[sources[0]]
+                else:
+                    new = self.meet([{**defs[p], **gen[p]} for p in sources])
                 if new.keys() != defs[b].keys():
                     defs[b] = new
                     changed = True

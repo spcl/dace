@@ -370,6 +370,7 @@ class BufferExpansion(ppl.Pass):
         if loop_states is None:
             loop_states = set(loop.states())
         candidates: list[str] = []
+        library_operands: set[str] | None = None
         # Nothing changes while the buffers are judged, so every cover test shares the facts of the SDFG.
         with memoize_facts():
             for name, desc in sdfg.arrays.items():
@@ -400,28 +401,30 @@ class BufferExpansion(ppl.Pass):
                 # body is a library-node call gives no speedup -- a loop of (tiny) BLAS/
                 # cuBLAS GEMMs serializes on one stream / oversubscribes BLAS threads -- so
                 # the loop should stay sequential rather than become a Map of library calls.
-                if self._is_library_node_operand(loop_states, name):
+                if library_operands is None:
+                    library_operands = self._library_node_operands(loop_states)
+                if name in library_operands:
                     continue
                 if self.defined_before_read(loop, name, index, loop_states):
                     candidates.append(name)
         return candidates
 
     @staticmethod
-    def _is_library_node_operand(loop_states: set[SDFGState], name: str) -> bool:
-        """True if ``name`` is a direct input/output of a library node in ``loop_states``.
+    def _library_node_operands(loop_states: set[SDFGState]) -> set[str]:
+        """The containers that are a direct input/output of a library node in ``loop_states``.
 
         Such a buffer is a shape-constrained operand (e.g. a GEMM's 2D slice); expanding
         it both breaks the library node's expansion and yields no parallelism (the
         library calls serialize), so it must not be expanded.
         """
+        operands: set[str] = set()
         for state in loop_states:
-            for n in state.nodes():
-                if isinstance(n, nodes.AccessNode) and n.data == name:
-                    if any(isinstance(e.src, nodes.LibraryNode) for e in state.in_edges(n)):
-                        return True
-                    if any(isinstance(e.dst, nodes.LibraryNode) for e in state.out_edges(n)):
-                        return True
-        return False
+            for n in state.data_nodes():
+                if any(isinstance(e.src, nodes.LibraryNode) for e in state.in_edges(n)) or any(
+                    isinstance(e.dst, nodes.LibraryNode) for e in state.out_edges(n)
+                ):
+                    operands.add(n.data)
+        return operands
 
     @staticmethod
     def defined_before_read(loop: LoopRegion, name: str, index: AccessIndex | None = None, loop_states=None) -> bool:
