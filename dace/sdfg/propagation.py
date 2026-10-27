@@ -295,6 +295,11 @@ class AffineSMemlet(SeparableMemletPattern):
         result_begin = rb.subs(self.param, low).expand()
         result_end = re.subs(self.param, high).expand()
 
+        # A map of one iteration (a wavefront's degenerate front) maps the access to itself; the stride below
+        # would divide by its zero span
+        if simplify(node_re - node_rb, facts) == 0:
+            return (simplify(result_begin, facts), simplify(result_end, facts), rs, rt)
+
         # Special case: a point access in a strided map accesses every ``multiplier * stride``-th element
         if node_rs != 1 and rb == re and rs == 1 and rt == 1 and self.multiplier.is_Integer and self.multiplier > 0:
             return (result_begin, result_end, self.multiplier * node_rs, 1)
