@@ -1368,9 +1368,39 @@ def index_block_symbols(ctx: LiftContext, block) -> None:
 
 
 def rebinds_after(loop: LoopRegion, block: Any, name: str) -> bool:
-    """Whether ``block`` is a loop of ``loop``'s own region whose iterator is ``name``: its init assigns ``name`` before
-    anything after it reads it, so a value ``loop`` left behind is dead from there on."""
-    return isinstance(block, LoopRegion) and block.parent_graph is loop.parent_graph and block.loop_variable == name
+    """Whether ``block`` is a loop of ``loop``'s own region, or of a region enclosing it in the same SDFG, whose
+    iterator is ``name``: its init assigns ``name`` before anything after it reads it, so a value ``loop`` left behind
+    is dead from there on."""
+    if not isinstance(block, LoopRegion) or block.loop_variable != name:
+        return False
+    region = loop.parent_graph
+    while region is not None:
+        if block.parent_graph is region:
+            return True
+        if isinstance(region, SDFG):
+            return False
+        region = region.parent_graph
+    return False
+
+
+def rebound_around(loop: LoopRegion, block: Any, name: str) -> bool:
+    """Whether ``block`` lies in the body of a loop other than (and not enclosing) ``loop`` whose iterator is ``name``:
+    a read of ``name`` there reads that loop's own binding, not a value ``loop`` left behind."""
+    region = block.parent_graph
+    while region is not None and not isinstance(region, SDFG):
+        if region is loop:
+            return False
+        if isinstance(region, LoopRegion) and region.loop_variable == name:
+            return not any(r is region for r in _enclosing_regions(loop))
+        region = region.parent_graph
+    return False
+
+
+def _enclosing_regions(block: Any):
+    region = block.parent_graph
+    while region is not None and not isinstance(region, SDFG):
+        yield region
+        region = region.parent_graph
 
 
 def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: set[str], loop_blocks: set[Any]) -> bool:
@@ -2183,7 +2213,11 @@ class LoopLift:
                 break
 
             # Check state contents
-            used_after = symbols_that_may_be_used & block_free_symbols(block, ctx)
+            used_after = {
+                name
+                for name in symbols_that_may_be_used & block_free_symbols(block, ctx)
+                if not rebound_around(self.loop, block, name)
+            }
             if used_after:
                 return refuse(
                     Refusal.LIVE_OUT_SYMBOL,
@@ -2194,7 +2228,11 @@ class LoopLift:
             # Check inter-state edges
             reassigned_symbols = None
             for e in block.parent_graph.out_edges(block):
-                live = symbols_that_may_be_used & edge_read_symbols(e.data, ctx)
+                live = {
+                    name
+                    for name in symbols_that_may_be_used & edge_read_symbols(e.data, ctx)
+                    if not rebound_around(self.loop, block, name)
+                }
                 if live:
                     return refuse(
                         Refusal.LIVE_OUT_SYMBOL,
