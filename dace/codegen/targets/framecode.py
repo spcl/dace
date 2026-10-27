@@ -940,8 +940,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
     def _can_allocate(
         self, sdfg: SDFG, state: SDFGState, desc: data.Data, scope: nodes.EntryNode | SDFGState | SDFG
     ) -> bool:
-        # Views allocate no memory: they are bound at their access node, whose subset may use scope parameters
-        if isinstance(desc, data.View):
+        # Views and references allocate no memory: a view is bound at its access node, whose subset may use scope
+        # parameters, and a reference is a pointer set where it is used
+        if isinstance(desc, (data.View, data.Reference)):
             return True
 
         schedule = self._get_schedule(scope)

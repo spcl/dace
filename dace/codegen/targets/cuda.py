@@ -712,7 +712,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         if isinstance(nodedesc, dace.data.Stream):
             return self.deallocate_stream(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream)
-        elif isinstance(nodedesc, dace.data.View):
+        elif isinstance(nodedesc, (dace.data.View, dace.data.Reference)):
             return
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:

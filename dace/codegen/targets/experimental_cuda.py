@@ -100,6 +100,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Every pooled array released early, which the end of its lifetime must not free again
         self.pool_released_early: OrderedSet[tuple[SDFG, str]] = OrderedSet()
         self.has_pool = False
+        # Nested-SDFG transients the kernel passes in itself; this generator passes none
+        self.extra_nsdfg_args: list[tuple[str, str, str]] = []
 
         cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
         assert isinstance(cpu_codegen, CPUCodeGen)  # the generic node dispatcher is always the CPU target
@@ -1011,7 +1013,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, dace.data.Stream):
             raise NotImplementedError("stream code is not implemented in ExperimentalCUDACodeGen (yet)")
 
-        if isinstance(nodedesc, dace.data.View):
+        # A view or a reference points into memory it does not own
+        if isinstance(nodedesc, (dace.data.View, dace.data.Reference)):
             return
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:

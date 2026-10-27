@@ -547,7 +547,8 @@ def ndcopy_to_strided_copy(
     dst_copylen = symbolic.pystr_to_symbolic(dst_copylen).simplify()
 
     # Whether each side is one run of memory (then its span is the run). Comparing the span with the volume is not
-    # enough: overlapping strides can match the volume without being contiguous.
+    # enough: overlapping strides can match the volume without being contiguous; nor is contiguity: a broadcast
+    # source is one run of fewer elements than the copy.
     src_contiguous = _is_contiguous_run(src_subset, src_strides)
     dst_contiguous = _is_contiguous_run(dst_subset, dst_strides)
 
@@ -557,7 +558,7 @@ def ndcopy_to_strided_copy(
     # the symbolic math engine fails to produce the same expressions for both
     # arrays.
     if tuple(src_strides) == tuple(dst_strides) and (
-        (src_contiguous and dst_contiguous)
+        (src_contiguous and dst_contiguous and src_copylen == copy_length and dst_copylen == copy_length)
         or (tuple(src_shape) == tuple(copy_shape) and tuple(dst_shape) == tuple(copy_shape))
     ):
         # Emit 1D copy of the whole array
@@ -568,6 +569,7 @@ def ndcopy_to_strided_copy(
         first_src_index == first_dst_index
         and last_src_index == last_dst_index
         and src_contiguous
+        and copy_length == src_copylen
         and _is_c_contiguous(src_shape, src_strides)
         and _is_c_contiguous(dst_shape, dst_strides)
     ):

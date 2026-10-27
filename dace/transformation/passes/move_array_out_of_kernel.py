@@ -80,7 +80,8 @@ def needs_global_memory(desc: dt.Data, max_register_elements: int) -> bool:
     """A kernel-internal transient that belongs in device-global memory: ``GPU_Global``, or device-local with a
     symbolic extent (a variable-length array nvcc rejects) or more than ``max_register_elements`` elements (more
     per-thread registers than an intermediate should take; it spills to local memory anyway)."""
-    if not isinstance(desc, dt.Array) or isinstance(desc, dt.View) or not desc.transient:
+    # A view or a reference owns no memory: it points into what it binds
+    if not isinstance(desc, dt.Array) or isinstance(desc, (dt.View, dt.Reference)) or not desc.transient:
         return False
     if desc.storage is dtypes.StorageType.GPU_Global:
         return True
@@ -324,8 +325,8 @@ class MoveArrayOutOfKernel(ppl.Pass):
                     if edge.data.is_empty() or edge.data.wcr is not None:
                         continue
                     descs = (nsdfg.arrays[edge.src.data], nsdfg.arrays[edge.dst.data])
-                    # An edge into or out of a view aliases its data; it copies nothing.
-                    if any(isinstance(desc, dt.View) for desc in descs):
+                    # An edge into or out of a view, or setting a reference, aliases its data; it copies nothing.
+                    if any(isinstance(desc, (dt.View, dt.Reference)) for desc in descs):
                         continue
                     if (
                         all(desc.storage is dtypes.StorageType.GPU_Global for desc in descs)
