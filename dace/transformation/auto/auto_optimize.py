@@ -12,7 +12,7 @@ from dace import data as dt
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl
 from dace.libraries.blas.environments import openblas
-from dace.libraries.linalg.environments import cutensor, hiptensor
+from dace.libraries.linalg.environments import hiptensor
 from dace.sdfg import SDFG, infer_types, nodes
 from dace.sdfg import graph as gr
 from dace.sdfg.graph import SubgraphView
@@ -369,11 +369,10 @@ def find_fast_library(device: dtypes.DeviceType) -> list[str]:
         except RuntimeError:
             backend = "none"
 
-        # The tensor libraries ship apart from the toolkit, so they are listed only where installed
         if backend == "cuda":
-            tensor = ["cuTENSOR"] if cutensor.cuTensor.is_installed() else []
-            return ["cuBLAS", "cuSolverDn", "GPUAuto", *tensor, "CUB", "pure"]
+            return ["cuBLAS", "cuSolverDn", "GPUAuto", "cuTENSOR", "CUB", "pure"]
         elif backend == "hip":
+            # hipTensor ships apart from ROCm, so it is listed only where installed
             tensor = ["hipTensor"] if hiptensor.hipTensor.is_installed() else []
             return ["hipBLAS", "hipSolverDn", "GPUAuto", *tensor, "pure"]
         else:

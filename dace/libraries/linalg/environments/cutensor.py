@@ -1,8 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe library environment for the NVIDIA cuTENSOR backend."""
 
-import ctypes.util
-
 import dace.library
 
 
@@ -48,7 +46,3 @@ class cuTensor:
 cutensorHandle_t &__dace_cutensor_handle = __state->cutensor_handle.Get();
 // cutensorSetStream(__dace_cutensor_handle, __dace_current_stream);\n"""
         )
-
-    @staticmethod
-    def is_installed():
-        return ctypes.util.find_library("cutensor") is not None
