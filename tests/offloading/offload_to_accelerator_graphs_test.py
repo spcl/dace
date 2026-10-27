@@ -425,30 +425,14 @@ def test_loopregion_offload():
 
 
 @pytest.mark.gpu
-def test_conditional_offload_if():
+@pytest.mark.parametrize("flag", [0, 1])
+def test_a_branch_between_two_maps_computes_what_the_host_computes(flag):
     sdfg = conditional_branch_map_sdfg()
 
     orig_output = np.zeros(5, dtype=np.float64)
     new_output = np.zeros(5, dtype=np.float64)
     run_numerical_offloading_test(
-        sdfg,
-        {"inp": np.arange(5, dtype=np.float64), "flag": np.int32(0)},  # run with flag == 0
-        orig_output,
-        new_output,
-    )
-
-
-@pytest.mark.gpu
-def test_conditional_offload_else():
-    sdfg = conditional_branch_map_sdfg()
-
-    orig_output = np.zeros(5, dtype=np.float64)
-    new_output = np.zeros(5, dtype=np.float64)
-    run_numerical_offloading_test(
-        sdfg,
-        {"inp": np.arange(5, dtype=np.float64), "flag": np.int32(1)},  # run with flag == 1
-        orig_output,
-        new_output,
+        sdfg, {"inp": np.arange(5, dtype=np.float64), "flag": np.int32(flag)}, orig_output, new_output
     )
 
 
@@ -508,104 +492,42 @@ def test_edge_assignment_sdfg():
 
 
 @pytest.mark.gpu
-def test_tasklet_map_wrapper():
-    sdfg = tasklet_map_wrapper_sdfg()
+@pytest.mark.parametrize("larger", [False, True])
+def test_host_tasklets_wrapped_in_size1_maps_compute_what_the_host_computes(larger):
+    sdfg = tasklet_map_wrapper_larger_sdfg() if larger else tasklet_map_wrapper_sdfg()
 
-    A = np.arange(16, dtype=np.float64).reshape(4, 4) / 10.0
+    inputs = {"A": np.arange(16, dtype=np.float64).reshape(4, 4) / 10.0}
+    if larger:
+        inputs["B"] = np.zeros((4, 4), dtype=np.float64)
     orig_out = np.zeros((4, 4), dtype=np.float64)
     new_out = np.zeros((4, 4), dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"A": A},
-        orig_out,
-        new_out,
-    )
+    run_numerical_offloading_test(sdfg, inputs, orig_out, new_out)
 
 
 @pytest.mark.gpu
-def test_tasklet_map_wrapper_larger():
-    sdfg = tasklet_map_wrapper_larger_sdfg()
+@pytest.mark.parametrize("length_one_array", [False, True])
+def test_a_fill_from_a_single_element_computes_what_the_host_computes(length_one_array):
+    sdfg = len1_array_init_sdfg() if length_one_array else scalar_init_sdfg()
 
-    A = np.arange(16, dtype=np.float64).reshape(4, 4) / 10.0
-    B = np.zeros((4, 4), dtype=np.float64)
-    orig_out = np.zeros((4, 4), dtype=np.float64)
-    new_out = np.zeros((4, 4), dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"A": A, "B": B},
-        orig_out,
-        new_out,
-    )
-
-
-@pytest.mark.gpu
-def test_scalar_init():
-    sdfg = scalar_init_sdfg()
-
-    alpha = np.float64(3.5)
+    alpha = np.ones(1, dtype=np.float64) if length_one_array else np.float64(3.5)
     A = np.zeros(16, dtype=np.float64)
     orig_out = np.zeros(16, dtype=np.float64)
     new_out = np.zeros(16, dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"alpha": alpha, "A": A},
-        orig_out,
-        new_out,
-    )
+    run_numerical_offloading_test(sdfg, {"alpha": alpha, "A": A}, orig_out, new_out)
 
 
 @pytest.mark.gpu
-def test_len1_array_init():
-    sdfg = len1_array_init_sdfg()
-
-    alpha = np.ones(1, dtype=np.float64)
-    A = np.zeros(16, dtype=np.float64)
-    orig_out = np.zeros(16, dtype=np.float64)
-    new_out = np.zeros(16, dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"alpha": alpha, "A": A},
-        orig_out,
-        new_out,
-    )
-
-
-@pytest.mark.gpu
-def test_reduce_to_array():
-    sdfg = reduce_to_array_sdfg()
+@pytest.mark.parametrize("build", [reduce_to_array_sdfg, reduce_to_scalar_sdfg])
+def test_a_reduction_computes_what_the_host_computes(build):
+    sdfg = build()
     inp = np.arange(16, dtype=np.float64) + 1.0
     orig_out = np.zeros(1, dtype=np.float64)
     new_out = np.zeros(1, dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"inp": inp},
-        orig_out,
-        new_out,
-    )
+    run_numerical_offloading_test(sdfg, {"inp": inp}, orig_out, new_out)
 
 
 @pytest.mark.gpu
-def test_reduce_to_scalar():
-    sdfg = reduce_to_scalar_sdfg()
-    inp = np.arange(16, dtype=np.float64) + 1.0
-    orig_out = np.zeros(1, dtype=np.float64)
-    new_out = np.zeros(1, dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"inp": inp},
-        orig_out,
-        new_out,
-    )
-
-
-@pytest.mark.gpu
-def test_single_element_copy():
+def test_a_single_element_copy_computes_what_the_host_computes():
     sdfg = single_element_copy_sdfg()
     A = np.arange(16, dtype=np.float64)
     B = np.arange(16, dtype=np.float64) + 5.0
@@ -1136,18 +1058,18 @@ if __name__ == "__main__":
         test_cpu_scalars_no_copies()
         test_copy_scalar_to_gpu_and_back()
         test_loopregion_offload()
-        test_conditional_offload_if()
-        test_conditional_offload_else()
+        for flag in (0, 1):
+            test_a_branch_between_two_maps_computes_what_the_host_computes(flag)
         test_nested_sdfg()
         test_kernel_sdfg()
         test_edge_assignment_sdfg()
-        test_tasklet_map_wrapper()
-        test_tasklet_map_wrapper_larger()
-        test_scalar_init()
-        test_len1_array_init()
-        test_reduce_to_array()
-        test_reduce_to_scalar()
-        test_single_element_copy()
+        for larger in (False, True):
+            test_host_tasklets_wrapped_in_size1_maps_compute_what_the_host_computes(larger)
+        for length_one_array in (False, True):
+            test_a_fill_from_a_single_element_computes_what_the_host_computes(length_one_array)
+        for build in (reduce_to_array_sdfg, reduce_to_scalar_sdfg):
+            test_a_reduction_computes_what_the_host_computes(build)
+        test_a_single_element_copy_computes_what_the_host_computes()
         for arms_meet in ARMS_MEET:
             test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet)
         for return_after_arm in RETURN_AFTER_ARM:

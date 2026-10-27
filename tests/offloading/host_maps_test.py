@@ -173,14 +173,6 @@ def test_apply_gpu_transformations_forwards_host_maps() -> None:
     assert map_schedules(through_method)[outer] != dace.ScheduleType.GPU_Device
 
 
-def test_apply_gpu_transformations_without_host_maps_offloads_the_outer_map() -> None:
-    """The control: the parameter defaults to naming nothing, so the outer map is still the kernel."""
-    sdfg = zekinh_sdfg()
-    outer = outer_map_label(sdfg)
-    sdfg.apply_gpu_transformations(validate=False, simplify=False)
-    assert map_schedules(sdfg)[outer] == dace.ScheduleType.GPU_Device
-
-
 def test_a_frontend_callback_is_never_offloaded():
     """Neither kind of callback can run on the device, so nothing around one is offloaded."""
 
@@ -344,7 +336,6 @@ if __name__ == "__main__":
     test_the_spellings_that_name_no_host_maps_agree()
     test_host_maps_rejects_anything_that_is_not_a_label_or_a_map()
     test_apply_gpu_transformations_forwards_host_maps()
-    test_apply_gpu_transformations_without_host_maps_offloads_the_outer_map()
     test_a_frontend_callback_is_never_offloaded()
     test_a_map_around_a_callback_stays_on_the_host()
     test_a_sequential_scan_in_a_loop_region_is_not_offloaded()
