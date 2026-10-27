@@ -21,21 +21,18 @@ class GPUStreamPipeline(Pipeline):
     needs no guard of its own.
     """
 
-    def __init__(self,
-                 scheduling_strategy: GPUStreamSchedulingStrategy
-                 | None = None):
+    def __init__(self, scheduling_strategy: GPUStreamSchedulingStrategy | None = None):
         if scheduling_strategy is None:
             scheduling_strategy = AutoGPUStreamScheduler(
-                synchronize_on_exit=Config.get("compiler", "cuda",
-                                               "synchronize_on_exit"))
+                synchronize_on_exit=Config.get("compiler", "cuda", "synchronize_on_exit")
+            )
         elif not isinstance(scheduling_strategy, GPUStreamSchedulingStrategy):
             raise TypeError(
                 f"scheduling_strategy must be a GPUStreamSchedulingStrategy instance, "
-                f"got {type(scheduling_strategy).__name__}.")
+                f"got {type(scheduling_strategy).__name__}."
+            )
         self._scheduling_strategy = scheduling_strategy
-        super().__init__(
-            [scheduling_strategy,
-             GPUStreamWiring(scheduling_strategy)])
+        super().__init__([scheduling_strategy, GPUStreamWiring(scheduling_strategy)])
 
 
 class GPUCodegenPreprocessPipeline(Pipeline):
@@ -49,7 +46,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         """
         # Local imports: avoid circular import in ``dace.transformation`` package init.
         from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (
-            DemoteKernelInternalArraysToScalars, )
+            DemoteKernelInternalArraysToScalars,
+        )
         from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
             AddThreadBlockMaps,
             ExpandLibraryNodes,
@@ -75,27 +73,26 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #   * InsertMemoryEngineBulkCopies (optional) between InsertExplicitCopies, which creates the copy
         #     nodes, and ExpandLibraryNodes; before AddThreadBlockMaps, whose thread-block map would enclose
         #     the copies, which the memory engine rejects.
-        strategy = AutoGPUStreamScheduler(synchronize_on_exit=Config.get(
-            "compiler", "cuda", "synchronize_on_exit"))
+        strategy = AutoGPUStreamScheduler(synchronize_on_exit=Config.get("compiler", "cuda", "synchronize_on_exit"))
         scalar_promotion = PromoteScalarOutputsToArrays()
         scalar_promotion.gpu = True
         if memory_engine_copies is None:
-            memory_engine_copies = Config.get_bool('compiler', 'cuda',
-                                                   'memory_engine_copies')
-        copy_selection = [InsertMemoryEngineBulkCopies()
-                          ] if memory_engine_copies else []
-        super().__init__([
-            InferDefaultSchedulesAndStorages(),
-            NestedGPUDeviceMapLowering(),
-            scalar_promotion,
-            MoveArrayOutOfKernel(),
-            InsertExplicitCopies(),
-            *copy_selection,
-            ExpandLibraryNodes(),
-            strategy,
-            GPUStreamWiring(strategy),
-            SynchronizeStreamUnawareGPUCallbacks(),
-            AddThreadBlockMaps(),
-            DemoteKernelInternalArraysToScalars(),
-            ReinferConnectorTypes(),
-        ])
+            memory_engine_copies = Config.get_bool("compiler", "cuda", "memory_engine_copies")
+        copy_selection = [InsertMemoryEngineBulkCopies()] if memory_engine_copies else []
+        super().__init__(
+            [
+                InferDefaultSchedulesAndStorages(),
+                NestedGPUDeviceMapLowering(),
+                scalar_promotion,
+                MoveArrayOutOfKernel(),
+                InsertExplicitCopies(),
+                *copy_selection,
+                ExpandLibraryNodes(),
+                strategy,
+                GPUStreamWiring(strategy),
+                SynchronizeStreamUnawareGPUCallbacks(),
+                AddThreadBlockMaps(),
+                DemoteKernelInternalArraysToScalars(),
+                ReinferConnectorTypes(),
+            ]
+        )

@@ -1,17 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass replacing ``Default`` and ``Auto`` implementations of ``CopyLibraryNodes`` with ``MemoryEngineBulk`` where possible."""
-from typing import TYPE_CHECKING, Any, Dict, Optional
+
+from typing import TYPE_CHECKING, Any
 
 from dace import properties
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.copy.common import memory_engine_bulk_reason
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.dataflow import InLocalStorage, OutLocalStorage
 from dace.transformation.passes import PatternMatchAndApplyRepeated
 from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import InferDefaultSchedulesAndStorages
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-from dace.libraries.standard.nodes.copy import CopyLibraryNode
-from dace.libraries.standard.nodes.copy.common import memory_engine_bulk_reason
 
 
 @properties.make_properties
@@ -36,7 +38,7 @@ class InsertMemoryEngineBulkCopies(ppl.Pass):
     def depends_on(self):
         return {InsertExplicitCopies, InferDefaultSchedulesAndStorages}
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Set the implementation of every supporting ``CopyLibraryNode`` to ``MemoryEngineBulk``.
 
         :param sdfg: The SDFG to transform, recursively including nested SDFGs.
@@ -71,31 +73,35 @@ if TYPE_CHECKING:
 
     class InsertGlobalToSharedMemoryEngineBulkCopiesPipeline(ppl.Pipeline):
         """Inserts memory engine copies from ``GPU_Global`` to ``GPU_Shared``."""
-        ...
 
     class InsertSharedToGlobalMemoryEngineBulkCopiesPipeline(ppl.Pipeline):
         """Inserts memory engine copies from ``GPU_Shared`` to ``GPU_Global``."""
-        ...
 
     class InsertMemoryEngineBulkCopiesPipeline(ppl.Pipeline):
         """Inserts memory engine copies in both directions."""
-        ...
+
 else:
-    InsertGlobalToSharedMemoryEngineBulkCopiesPipeline = lambda: ppl.Pipeline([
-        PatternMatchAndApplyRepeated([InLocalStorage()]),
-        InsertExplicitCopies(),
-        InferDefaultSchedulesAndStorages(),
-        InsertMemoryEngineBulkCopies()
-    ])
-    InsertSharedToGlobalMemoryEngineBulkCopiesPipeline = lambda: ppl.Pipeline([
-        PatternMatchAndApplyRepeated([OutLocalStorage()]),
-        InsertExplicitCopies(),
-        InferDefaultSchedulesAndStorages(),
-        InsertMemoryEngineBulkCopies()
-    ])
-    InsertMemoryEngineBulkCopiesPipeline = lambda: ppl.Pipeline([
-        PatternMatchAndApplyRepeated([InLocalStorage(), OutLocalStorage()]),
-        InsertExplicitCopies(),
-        InferDefaultSchedulesAndStorages(),
-        InsertMemoryEngineBulkCopies()
-    ])
+    InsertGlobalToSharedMemoryEngineBulkCopiesPipeline = lambda: ppl.Pipeline(
+        [
+            PatternMatchAndApplyRepeated([InLocalStorage()]),
+            InsertExplicitCopies(),
+            InferDefaultSchedulesAndStorages(),
+            InsertMemoryEngineBulkCopies(),
+        ]
+    )
+    InsertSharedToGlobalMemoryEngineBulkCopiesPipeline = lambda: ppl.Pipeline(
+        [
+            PatternMatchAndApplyRepeated([OutLocalStorage()]),
+            InsertExplicitCopies(),
+            InferDefaultSchedulesAndStorages(),
+            InsertMemoryEngineBulkCopies(),
+        ]
+    )
+    InsertMemoryEngineBulkCopiesPipeline = lambda: ppl.Pipeline(
+        [
+            PatternMatchAndApplyRepeated([InLocalStorage(), OutLocalStorage()]),
+            InsertExplicitCopies(),
+            InferDefaultSchedulesAndStorages(),
+            InsertMemoryEngineBulkCopies(),
+        ]
+    )
