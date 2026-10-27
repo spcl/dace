@@ -41,6 +41,8 @@ one: promoting first is what stops a tagged kernel from getting a second.
 
 from typing import Any
 
+import sympy
+
 import dace
 from dace import SDFG, dtypes, properties
 from dace.sdfg import nodes
@@ -111,9 +113,15 @@ def promotable(sdfg: SDFG, state, entry: nodes.MapEntry) -> bool:
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
 
     device_scopes = 0
+    # The block size is fixed at the launch: a tile whose extent reads an enclosing scope's variable has none
+    extent = {str(free) for size in entry.map.range.size_exact() for free in sympy.sympify(size).free_symbols}
     for scope in get_parent_map_and_loop_scopes(sdfg, entry, state):
         if not isinstance(scope, nodes.MapEntry):
+            if isinstance(scope, LoopRegion) and scope.loop_variable in extent:
+                return False
             continue  # a sequential loop between kernel and tile is fine: the block re-executes
+        if extent & set(scope.map.params):
+            return False
         if scope.map.schedule in WITHIN_A_BLOCK:
             return False
         if scope.map.schedule == dtypes.ScheduleType.GPU_Device:
