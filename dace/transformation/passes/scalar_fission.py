@@ -817,7 +817,7 @@ class PrivatizeScalars(ppl.Pass):
         fission = self.fission()
         result = ppl.Pipeline([fission]).apply_pass(sdfg, {})
         name = type(fission).__name__
-        return {name: result[name]} if result and name in result else None
+        return {name: result[name]} if result and result.get(name) else None
 
 
 @transformation.explicit_cf_compatible

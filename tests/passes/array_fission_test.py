@@ -149,7 +149,7 @@ def test_full_overwrite_is_privatized_and_parallelizes():
     # whole-array write is not indexed by the iteration variable, so LoopToMap refuses.
     assert sdfg.apply_transformations_repeated([LoopToMap]) == 0
 
-    renamed = PrivatizeArrays().apply_pass(sdfg, {})["ArrayFission"]
+    renamed = (PrivatizeArrays().apply_pass(sdfg, {}) or {}).get("ArrayFission", {})
     sdfg.validate()
     assert len(renamed["tmp"]) >= 2, f"expected one container per dominating write, got {dict(renamed)}"
 
@@ -194,7 +194,7 @@ def test_fanout_reads_rename_every_branch():
     ]
     assert fanned, "fixture no longer produces a fanned-out map connector"
 
-    renamed = PrivatizeArrays().apply_pass(sdfg, {})["ArrayFission"]
+    renamed = (PrivatizeArrays().apply_pass(sdfg, {}) or {}).get("ArrayFission", {})
     assert len(renamed["tmp"]) >= 2
     sdfg.validate()
 
@@ -223,7 +223,7 @@ def test_partial_overwrite_is_refused():
     assert "tmp" not in fully_overwritten_arrays(sdfg)
 
     before = sdfg.to_json()
-    renamed = PrivatizeArrays().apply_pass(sdfg, {})["ArrayFission"]
+    renamed = (PrivatizeArrays().apply_pass(sdfg, {}) or {}).get("ArrayFission", {})
     assert not renamed, f"partially overwritten array was versioned: {dict(renamed)}"
     # A pass that does not apply must not mutate the SDFG.
     assert sdfg.to_json() == before
@@ -260,7 +260,7 @@ def test_conditional_overwrite_is_refused():
     assert "tmp" in fully_overwritten_arrays(sdfg)
 
     before = sdfg.to_json()
-    renamed = PrivatizeArrays().apply_pass(sdfg, {})["ArrayFission"]
+    renamed = (PrivatizeArrays().apply_pass(sdfg, {}) or {}).get("ArrayFission", {})
     assert not renamed, f"conditionally written array was versioned: {dict(renamed)}"
     assert sdfg.to_json() == before
     assert loop_count(sdfg) == 1
@@ -323,7 +323,7 @@ def test_carried_between_loops_is_refused():
     assert all(isinstance(block, LoopRegion) for block in sdfg.nodes()), "fixture lost the vadv shape"
 
     before = sdfg.to_json()
-    renamed = PrivatizeArrays().apply_pass(sdfg, {})["ArrayFission"]
+    renamed = (PrivatizeArrays().apply_pass(sdfg, {}) or {}).get("ArrayFission", {})
     assert not renamed, f"a loop-carried array was versioned: {dict(renamed)}"
     # A pass that does not apply must not mutate the SDFG.
     assert sdfg.to_json() == before
@@ -356,7 +356,7 @@ def test_region_write_is_a_dominating_write():
     scopes = Pipeline([ArrayWriteShadowScopes()]).apply_pass(sdfg, {})["ArrayWriteShadowScopes"][0]["tmp"]
     assert len([w for w in scopes if w is not None]) == 2, f"expected one root per producer loop, got {scopes}"
 
-    renamed = PrivatizeArrays().apply_pass(sdfg, {})["ArrayFission"]
+    renamed = (PrivatizeArrays().apply_pass(sdfg, {}) or {}).get("ArrayFission", {})
     sdfg.validate()
     assert len(renamed["tmp"]) >= 2, f"expected one container per dominating write, got {dict(renamed)}"
 
@@ -395,7 +395,7 @@ def test_symbolic_trip_count_producer_is_refused():
     assert not isinstance(roots[0][0].parent_graph, LoopRegion), "a zero-trip loop was accepted as a must-def"
 
     before = sdfg.to_json()
-    renamed = PrivatizeArrays().apply_pass(sdfg, {})["ArrayFission"]
+    renamed = (PrivatizeArrays().apply_pass(sdfg, {}) or {}).get("ArrayFission", {})
     assert not renamed, f"an array behind a symbolic trip count was versioned: {dict(renamed)}"
     # A pass that does not apply must not mutate the SDFG.
     assert sdfg.to_json() == before
@@ -511,7 +511,7 @@ def test_beta_accumulate_libnode_is_refused():
     sdfg = _beta_libnode_sdfg(beta=1.0)
     assert "tmp" not in fully_overwritten_arrays(sdfg)
     before = sdfg.to_json()
-    renamed = PrivatizeArrays().apply_pass(sdfg, {})["ArrayFission"]
+    renamed = (PrivatizeArrays().apply_pass(sdfg, {}) or {}).get("ArrayFission", {})
     assert not renamed, f"a beta-accumulate libnode write was versioned: {dict(renamed)}"
     assert sdfg.to_json() == before
 
@@ -573,7 +573,7 @@ def test_interstate_read_blocks_per_loop_privatization():
     """
     sdfg = interstate_masked_read.to_sdfg(simplify=True)
     sdfg.reset_cfg_list()
-    renamed = PrivatizeArrays().apply_pass(sdfg, {})["ArrayFission"]
+    renamed = (PrivatizeArrays().apply_pass(sdfg, {}) or {}).get("ArrayFission", {})
     assert not renamed, f"an interstate-edge-read array was versioned per loop: {dict(renamed)}"
 
     read, written = tmp_family_reads_and_writes(sdfg, "tmp")

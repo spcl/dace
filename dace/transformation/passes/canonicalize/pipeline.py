@@ -746,7 +746,7 @@ def statement_round() -> list[ppl.Pass]:
     units += [HoistInductionVariableUpdates(), InductionVariableSubstitution()]
     units += [PropagateIndexSubsets(), RemoveUnusedSymbols(), PropagateAndPrune()]
     units += [ForwardStoreToLoad(), SplitStatements()]
-    units += [PhaseFixpoint("clean_anti_dependency", clean_anti_dependency_units, 1)]
+    units += clean_anti_dependency_units()
     units += [LoopInvariantCodeMotion()]
     units += [RevertNonReductionWCR()]
     units += dead_dataflow_units()
@@ -1253,6 +1253,8 @@ SETTLED_UNITS: tuple[type[ppl.Pass], ...] = (
     PruneAndInlineNestedSDFGs,
     PropagateAndPrune,
     SymbolDedup,
+    PrivatizeScalars,
+    PrivatizeArrays,
 )
 
 
