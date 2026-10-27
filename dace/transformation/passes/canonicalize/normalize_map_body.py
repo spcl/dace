@@ -142,7 +142,12 @@ def co_written_connectors(state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.
     :param drop: The sibling being folded into ``keep``.
     :returns: ``{drop out-connector: keep out-connector}``.
     """
-    plain = [e for e in state.out_edges(keep) if e.src_conn is not None and e.data.data and e.data.wcr is None]
+    # Through an access node only: two writes through a map exit leave by connectors of their own
+    plain = [
+        e
+        for e in state.out_edges(keep)
+        if e.src_conn is not None and e.data.data and e.data.wcr is None and isinstance(e.dst, nodes.AccessNode)
+    ]
     written = {(e.dst, e.data.data): e.src_conn for e in plain}
     return {
         e.src_conn: written[e.dst, e.data.data]
