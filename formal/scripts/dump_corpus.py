@@ -31,6 +31,7 @@ from roundtrip_corpus import collect as collect_roundtrip  # noqa: E402
 import dace  # noqa: E402
 from dace.sdfg.analysis.schedule_tree import serialize as stree_serialize  # noqa: E402
 from dace.transformation.dataflow import MapTiling  # noqa: E402
+from dace.transformation.passes.canonicalize import CanonicalizationPipeline  # noqa: E402
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -50,6 +51,11 @@ def _scrub_paths(obj):
 
 
 def save(sdfg: dace.SDFG, out_dir: str, name: str) -> str:
+    # Canonicalization required by the formal semantics (e.g., nested SDFGs may not own Persistent, External or
+    # Global transients), applied last so that no later step undoes it.
+    if CanonicalizationPipeline().apply_pass(sdfg, {}) is not None:
+        print("canonicalized", name)
+        sdfg.validate()
     path = os.path.join(out_dir, f"{name}.sdfg.json")
     with open(path, "w") as f:
         f.write(dace.serialize.dumps(_scrub_paths(sdfg.to_json())))

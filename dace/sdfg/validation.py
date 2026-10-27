@@ -799,6 +799,8 @@ def validate_state(
                     and state.out_degree(node) > 0
                     # Streams do not need to be initialized
                     and not isinstance(arr, dt.Stream)
+                    # Outliving transients keep their contents from previous runs (or the caller sets them)
+                    and arr.lifetime not in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)
                 ):
                     if node.setzero == False:
                         warnings.warn(f'WARNING: Use of uninitialized transient "{node.data}" in state "{state.label}"')
