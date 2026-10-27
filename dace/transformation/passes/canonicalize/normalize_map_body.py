@@ -316,6 +316,8 @@ class NormalizeMapBody(ppl.Pass):
                     drepl[drop_conn] = keep_conn
             # A container both write through one access node is one array of the merged node as well.
             co_written = co_written_connectors(state, keep, drop)
+            # Asked before the rewiring below: half rewired, the scope is not walkable
+            facts = SymbolResolver().facts_at(state, keep) if co_written else None
             for drop_conn, keep_conn in co_written.items():
                 renamed = drepl.get(drop_conn, drop_conn)
                 if renamed != keep_conn:
@@ -364,7 +366,6 @@ class NormalizeMapBody(ppl.Pass):
                     continue
                 if e.src_conn in co_written:
                     (write,) = [w for w in state.out_edges_by_connector(keep, co_written[e.src_conn]) if w.dst is e.dst]
-                    facts = SymbolResolver().facts_at(state, keep)
                     write.data.subset = subsets.union(write.data.subset, e.data.subset, facts)
                     state.remove_edge(e)
                     continue

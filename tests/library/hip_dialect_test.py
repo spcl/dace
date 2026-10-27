@@ -71,7 +71,7 @@ CASES = [
         {"_xin": ("A", [4, 4], F64)},
         {"_xout": ("A", [4, 4], F64), "_res": ("info", [1], dace.int32)},
         "hipSolverDn",
-        ["hipsolverDnDpotrf(", "HIPSOLVER_FILL_MODE_", "hipMalloc"],
+        ["hipsolverDnDpotrf(", "HIPSOLVER_FILL_MODE_", "gpuMalloc"],
     ),
     (
         Getrs("getrs"),
@@ -92,7 +92,7 @@ CASES = [
         TensorDot("tdot", left_axes=[1], right_axes=[0]),
         {"_left_tensor": ("A", [3, 4], F64), "_right_tensor": ("B", [4, 5], F64)},
         {"_out_tensor": ("C", [3, 5], F64)},
-        "hipTensor",
+        "hipTENSOR",
         ["hiptensorContract(", "HIPTENSOR_R_64F"],
     ),
 ]

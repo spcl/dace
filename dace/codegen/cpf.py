@@ -1409,6 +1409,9 @@ COMPILE_CHECK_TOOLCHAINS: dict[cpf_lowering.Dialect, tuple[str, str, str, tuple[
     cpf_lowering.Dialect.STANDALONE_C: ("c23", ".c", "CC", ("gcc", "cc")),
 }
 
+#: The draft name a compiler older than a standard's final name accepts for it.
+STANDARD_DRAFT_NAMES: dict[str, str] = {"c23": "c2x", "c++20": "c++2a"}
+
 #: What a ``'cuda'`` unit is built with besides the output flags. ``--expt-relaxed-constexpr`` is what
 #: DaCe's own CUDA build adds (``dace/codegen/CMakeLists.txt``): kernels call the ``constexpr`` index
 #: and runtime helpers, which nvcc otherwise treats as host-only. hipcc needs no such flag.
@@ -1518,6 +1521,10 @@ def compile_check(
             handle.write(code)
         command = [compiler, "-std=" + standard, *COMPILE_CHECK_FLAGS, *extra_flags, source]
         proc = subprocess.run(command, cwd=workdir, capture_output=True, text=True)
+        if proc.returncode != 0 and standard in STANDARD_DRAFT_NAMES and f"-std={standard}" in proc.stderr:
+            # A compiler older than the standard's name knows it by its draft name (gcc 13: ``-std=c2x``)
+            command[1] = "-std=" + STANDARD_DRAFT_NAMES[standard]
+            proc = subprocess.run(command, cwd=workdir, capture_output=True, text=True)
         if proc.returncode == 0:
             return
         first = next((line for line in proc.stderr.splitlines() if " error" in line), proc.stderr.strip())
