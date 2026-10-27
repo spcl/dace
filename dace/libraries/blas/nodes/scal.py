@@ -4,7 +4,7 @@ from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -55,7 +55,7 @@ class Scal(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandScalPure,
-        **gpu_dialect.vendor_expansions("Scal", scal_call),
+        **vendor.vendor_expansions("Scal", scal_call),
     }
     default_implementation = None
 

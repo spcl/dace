@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe library environment for the AMD hipTensor backend."""
 
-import ctypes.util
 import os
 import pathlib
 import shutil
 
 import dace.library
+from dace.libraries import hip_dialect
 
 
 @dace.library.environment
@@ -89,6 +89,6 @@ hiptensorHandle_t &__dace_hiptensor_handle = __state->hiptensor_handle.Get();\n"
         cuTENSOR-v2-shaped header ``hiptensor/hiptensor.h``. ROCm 6.3 ships the library with only the
         older ``hiptensor.hpp`` API, and a node lowered to it failed to compile (cp2k_grid_integrate,
         ls3df_scf on the canon GPU column on mi200)."""
-        if ctypes.util.find_library("hiptensor") is None:
+        if hip_dialect.find_rocm_library("hiptensor") is None:
             return False
         return any((pathlib.Path(root) / "hiptensor" / "hiptensor.h").is_file() for root in hipTensor.cmake_includes())

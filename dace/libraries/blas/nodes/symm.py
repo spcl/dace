@@ -3,7 +3,7 @@ import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
 from dace.sdfg import nodes
@@ -74,7 +74,9 @@ def symm_call(node, state, sdfg, environment=None) -> SDFG:
             f"{gpu.pointer('__Cout')}, {ldc})"
         )
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
-        return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", code)
+        return blas_helpers.in_place_call(
+            node, state, sdfg, "_Cin", "_Cout", code, overwrites=equal_valued(0, node.beta)
+        )
     scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
     side = "CblasRight" if node.side else "CblasLeft"
@@ -83,7 +85,9 @@ def symm_call(node, state, sdfg, environment=None) -> SDFG:
         f"cblas_{prefix.lower()}symm({order}, {side}, {uplo}, {m}, {n}, {arg['alpha']}, __A, {lda}, __B, {ldb}, "
         f"{arg['beta']}, __Cout, {ldc});"
     )
-    return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", scalars + call)
+    return blas_helpers.in_place_call(
+        node, state, sdfg, "_Cin", "_Cout", scalars + call, overwrites=equal_valued(0, node.beta)
+    )
 
 
 @library.node
@@ -93,7 +97,7 @@ class Symm(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandSymmPure,
-        **gpu_dialect.vendor_expansions("Symm", symm_call),
+        **vendor.vendor_expansions("Symm", symm_call),
     }
     default_implementation = None
 

@@ -11,7 +11,7 @@ from dace import memlet as mm
 from dace import subsets as sbs
 from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.properties import SymbolicProperty
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -124,7 +124,7 @@ class Ger(LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandGerPure,
-        **gpu_dialect.vendor_expansions("Ger", ger_call),
+        **vendor.vendor_expansions("Ger", ger_call),
     }
     default_implementation = None
 

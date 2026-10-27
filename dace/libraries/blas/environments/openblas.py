@@ -322,4 +322,7 @@ class OpenBLAS:
         # _mode(), not cmake_libraries(): the latter dlopens the library to probe its threading
         # flavor, which maps an OpenMP OpenBLAS's libgomp -- and is_installed() runs in ``skipif``
         # arguments at test collection.
-        return OpenBLAS._mode() is not None
+        # Every expansion includes lapacke.h: LAPACKE is its own library on most Linux distributions and part of
+        # libopenblas elsewhere (Homebrew, source builds).
+        lapacke = ctypes.util.find_library("lapacke") or ctypes.util.find_library("openblas")
+        return lapacke is not None and OpenBLAS._mode() is not None

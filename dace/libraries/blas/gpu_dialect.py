@@ -5,10 +5,8 @@ these; the hipBLAS expansion is the same call renamed (:mod:`dace.libraries.hip_
 from collections.abc import Callable
 from typing import NamedTuple
 
-from dace import dtypes, library
-from dace.libraries import hip_dialect
-from dace.libraries.blas import blas_helpers, environments
-from dace.transformation.transformation import ExpandTransformation
+from dace import dtypes
+from dace.libraries.blas import blas_helpers
 
 #: The handle variable the environment's ``handle_setup_code`` puts in scope.
 HANDLE = "__dace_cublas_handle"
@@ -84,35 +82,6 @@ def call_code(call: GpuCall, environment: type, node, scalars: str, routine_call
         + f"{check}({routine_call});\n"
         + f"{check}(cublasSetPointerMode({HANDLE}, CUBLAS_POINTER_MODE_DEVICE));\n"
     )
-
-
-def vendor_expansions(node_name: str, call: Callable) -> dict[str, type[ExpandTransformation]]:
-    """The OpenBLAS, MKL, cuBLAS and hipBLAS expansions of a node, each validating the node and returning
-    ``call(node, state, sdfg, gpu_environment)``; the CPU libraries get ``None``, as both are CBLAS. hipBLAS is the
-    cuBLAS expansion renamed."""
-    backends = {
-        "OpenBLAS": (environments.openblas.OpenBLAS, False),
-        "MKL": (environments.intel_mkl.IntelMKL, False),
-        "cuBLAS": (environments.cublas.cuBLAS, True),
-    }
-    expansions = {}
-    for implementation, (environment, gpu) in backends.items():
-
-        def expansion(node, parent_state, parent_sdfg, *, bound_environment=environment if gpu else None, **kwargs):
-            node.validate(parent_sdfg, parent_state)
-            return call(node, parent_state, parent_sdfg, bound_environment)
-
-        name = f"Expand{node_name}{implementation[0].upper()}{implementation[1:]}"
-        attributes = {
-            "environments": [environment],
-            "expansion": staticmethod(expansion),
-            "__module__": call.__module__,
-        }
-        expansions[implementation] = library.expansion(type(name, (ExpandTransformation,), attributes))
-    expansions["hipBLAS"] = hip_dialect.hip_expansion(
-        expansions["cuBLAS"], environments.hipblas.hipBLAS, hip_dialect.BLAS
-    )
-    return expansions
 
 
 # The cuBLAS vocabulary the GEMM-family expansions spell their calls in; hipBLAS renames them.
