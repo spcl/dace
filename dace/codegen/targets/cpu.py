@@ -20,6 +20,7 @@ from dace.codegen.common import (
     emits_tree_reductions,
     sym2cpp,
     unparse_interstate_edge,
+    unroll_pragma,
     update_persistent_desc,
 )
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
@@ -4300,8 +4301,8 @@ class CPUCodeGen(TargetCodeGenerator):
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
                 map_header += "#pragma omp parallel"
 
-            # OpenMP schedule properties
-            if not in_persistent and not range_private:
+            # OpenMP schedule properties, also on a worksharing loop inside a persistent team
+            if not range_private:
                 if node.map.omp_schedule != dtypes.OMPScheduleType.Default:
                     schedule = " schedule("
                     if node.map.omp_schedule == dtypes.OMPScheduleType.Static:
@@ -4323,6 +4324,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     schedule += ")"
                     map_header += schedule
 
+            if not in_persistent and not range_private:
                 if node.map.omp_num_threads > 0:
                     map_header += f" num_threads({node.map.omp_num_threads})"
 
@@ -4440,15 +4442,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 result.write("int __omp_num_threads = omp_get_num_threads();", cfg, state_id, node)
         elif not range_private:
             loop_ctypes = self.map_loop_ctypes(sdfg, state_dfg, node)
+            in_gpu_kernel = is_devicelevel_gpu(sdfg, state_dfg, node)
             for i, r in enumerate(node.map.range):
                 var = map_params[i]
                 begin, end, skip = r
 
-                if node.map.unroll:
-                    unroll_pragma = "#pragma unroll"
-                    if node.map.unroll_factor:
-                        unroll_pragma += f" {node.map.unroll_factor}"
-                    result.write(unroll_pragma, cfg, state_id, node)
+                pragma = unroll_pragma(node.map.unroll, node.map.unroll_factor, in_gpu_kernel)
+                if pragma is not None:
+                    result.write(pragma, cfg, state_id, node)
 
                 # Determine whether this loop will be immediately preceded by an OpenMP directive.
                 # CPU_Multicore / CPU_Persistent emit the pragma in map_header above. A Sequential

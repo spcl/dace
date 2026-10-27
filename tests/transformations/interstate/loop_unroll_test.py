@@ -116,7 +116,7 @@ def test_compiler_unroll_pragma():
     loop.unroll = True
     loop.unroll_factor = 5
     unrolled_loop_code = sdfg.generate_code()[0].clean_code
-    unroll_pragma = re.search(r"#pragma unroll 5", unrolled_loop_code) is not None
+    unroll_pragma = re.search(r"#pragma omp unroll partial\(5\)", unrolled_loop_code) is not None
     assert unroll_pragma, "Unroll pragma not found in generated code after setting unroll_pragma to True."
 
 

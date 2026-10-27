@@ -84,10 +84,10 @@ def config_condition(sdfg: SDFG, values: dict[str, Value]) -> str:
 @properties.make_properties
 class ConfigPropagation(ppl.Pass):
     """Specialize the SDFG for each combination of the configuration domains, saving every variant as an external
-    SDFG file, and return a root SDFG with the original signature that dispatches to them.
+    SDFG file, and turn the SDFG itself into the caller that dispatches to them, with its signature unchanged.
 
-    The input SDFG is left untouched. A singleton domain is baked into every variant; only the multi-valued domains
-    select between variants. Values outside the domains run the unspecialized SDFG, saved next to the variants.
+    A singleton domain is baked into every variant; only the multi-valued domains select between variants. Values
+    outside the domains run the unspecialized SDFG, saved next to the variants.
     """
 
     domains = properties.DictProperty(
@@ -101,7 +101,7 @@ class ConfigPropagation(ppl.Pass):
         self.output_dir = output_dir
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Nothing
+        return ppl.Modifies.Everything
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
@@ -142,18 +142,12 @@ class ConfigPropagation(ppl.Pass):
             state.add_edge(node, name, state.add_write(name), None, root.make_array_memlet(name))
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> SDFG:
-        """:return: The dispatcher SDFG; the variants are written to ``output_dir``."""
+        """Turns ``sdfg`` into the dispatcher, in place: one ``if / else if / else`` over the configuration that calls
+        the variants and, last, the generic SDFG, all written to ``output_dir``.
+
+        :return: ``sdfg``, now the dispatcher.
+        """
         selecting = [name for name, vals in self.domains.items() if len(vals) > 1]
-        root = SDFG(sdfg.name)
-        for name, desc in sdfg.arrays.items():
-            if not desc.transient:
-                root.add_datadesc(name, copy.deepcopy(desc))
-        for name in sorted(str(s) for s in sdfg.free_symbols):
-            if name not in root.symbols:  # a shape may have declared it already
-                root.add_symbol(name, sdfg.symbols[name])
-        os.makedirs(self.output_dir, exist_ok=True)
-        cond = ConditionalBlock("config_dispatch")
-        root.add_node(cond, is_start_block=True)
         # Every domain is tested, singletons too: a variant is only correct for the values baked into it
         calls = [
             (self.build_variant(sdfg, values, selecting), config_condition(sdfg, values))
@@ -162,10 +156,27 @@ class ConfigPropagation(ppl.Pass):
         generic = copy.deepcopy(sdfg)
         generic.name = f"{sdfg.name}_generic"
         calls.append((generic, None))
+        become_caller(sdfg)
+
+        os.makedirs(self.output_dir, exist_ok=True)
+        cond = ConditionalBlock("config_dispatch")
+        sdfg.add_node(cond, is_start_block=True)
         for callee, condition in calls:
             path = os.path.join(self.output_dir, f"{callee.name}.sdfgz")
             callee.save(path, compress=True)
-            branch = ControlFlowRegion(f"call_{callee.name}", sdfg=root)
+            branch = ControlFlowRegion(f"call_{callee.name}", sdfg=sdfg)
             cond.add_branch(CodeBlock(condition) if condition else None, branch)
-            self.add_call(root, branch.add_state(callee.name, is_start_block=True), callee, path)
-        return root
+            self.add_call(sdfg, branch.add_state(callee.name, is_start_block=True), callee, path)
+        return sdfg
+
+
+def become_caller(sdfg: SDFG) -> None:
+    """Empties ``sdfg`` down to its signature: no blocks, no transients, and only the symbols it reads."""
+    free = {str(s) for s in sdfg.free_symbols}
+    for block in list(sdfg.nodes()):
+        sdfg.remove_node(block)
+    for name in [name for name, desc in sdfg.arrays.items() if desc.transient]:
+        sdfg.remove_data(name, validate=False)
+    for name in [name for name in sdfg.symbols if name not in free]:
+        sdfg.remove_symbol(name)
+    sdfg.reset_cfg_list()

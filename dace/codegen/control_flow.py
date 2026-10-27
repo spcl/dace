@@ -10,10 +10,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from dace import cpf_lowering, dtypes, properties
-from dace.codegen.common import unparse_interstate_edge
+from dace.codegen.common import unparse_interstate_edge, unroll_pragma
 from dace.codegen.prettycode import CodeIOStream
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.graph import Edge
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
@@ -186,11 +187,12 @@ def _loop_region_to_code(
     else:
         init = ", ".join(inits)
         update = ", ".join(updates)
-        if loop.unroll:
-            if loop.unroll_factor >= 1:
-                expr += f"#pragma unroll {loop.unroll_factor}\n"
-            else:
-                expr += "#pragma unroll\n"
+        in_gpu_kernel = sdfg.parent_nsdfg_node is not None and is_devicelevel_gpu(
+            sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node
+        )
+        pragma = unroll_pragma(loop.unroll, loop.unroll_factor, in_gpu_kernel)
+        if pragma is not None:
+            expr += f"{pragma}\n"
         expr += f"for ({init}; {cond}; {update}) {{\n"
         expr += _clean_loop_body(control_flow_region_to_code(loop, dispatch_state, codegen, symbols))
         expr += "\n}\n"

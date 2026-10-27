@@ -2,9 +2,11 @@
 """``MegaKernelOptimization``: run each maximal hierarchical linear chain of GPU kernels as one persistent,
 cooperative kernel.
 
-A chain moves into the body of one ``GPU_Device`` map that launches as many thread blocks as the device holds at once
+Preparation (``GatherKernelStates``) first gathers the kernels of consecutive states into one state. A chain moves into
+the body of one ``GPU_Device`` map that launches as many thread blocks as the device holds at once
 (``ComputePersistentKernelRange``). In the body, every kernel becomes a grid-stride loop (``grid_stride``) and grid
-barriers separate the dependent ones (``InsertGridSyncs``).
+barriers separate the dependent ones (``InsertGridSyncs``). Where scheduling stages by thread ownership saves barriers,
+a stage runs each iteration in the thread that owns the elements it writes instead (``ownership``).
 """
 
 import copy
@@ -15,13 +17,22 @@ from dace.libraries.standard.nodes.compute_persistent_kernel_range import NBLK_C
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.megakernel.discovery import TARGETS, MegakernelChain, Target, find_chains, is_kernel
+from dace.transformation.passes.megakernel.discovery import (
+    TARGETS,
+    MegakernelChain,
+    Target,
+    find_chains,
+    is_kernel,
+    kernels_in,
+)
+from dace.transformation.passes.megakernel.gather_kernels import GatherKernelStates
 from dace.transformation.passes.megakernel.grid_stride import grid_stride
 from dace.transformation.passes.megakernel.grid_sync import InsertGridSyncs
+from dace.transformation.passes.megakernel.ownership import own_stride
 
 #: The thread index of the megakernel map, and the number of its threads, inside the body
 THREAD_INDEX = "__mk_tid"
@@ -29,8 +40,13 @@ THREAD_COUNT = "__mk_nthreads"
 
 
 def nested_blocks(blocks: list[ControlFlowBlock]) -> list[ControlFlowBlock]:
-    """``blocks`` and every block inside them."""
-    inner = [b for block in blocks if isinstance(block, ControlFlowRegion) for b in block.all_control_flow_blocks()]
+    """``blocks`` and every block inside them, conditional branches included."""
+    inner = [
+        b
+        for block in blocks
+        if isinstance(block, (ControlFlowRegion, ConditionalBlock))
+        for b in block.all_control_flow_blocks()
+    ]
     return blocks + inner
 
 
@@ -80,6 +96,10 @@ def nest_chain(chain: MegakernelChain, target: Target) -> tuple[SDFGState, nodes
     :return: The state calling the nested SDFG and its node, or ``None`` (nothing changed) when code outside the chain
              reads a symbol the chain assigns: a kernel cannot hand it out.
     """
+    # Leading blocks without kernels that assign what code outside reads (bounds computed in a conditional) stay on
+    # the host, which passes the values in
+    while assigned_symbols(chain) & used_outside_chain(chain) and not kernels_in(chain.blocks[0], target):
+        chain.blocks.pop(0)
     region, blocks = chain.region, chain.blocks
     sdfg = region.sdfg
     if assigned_symbols(chain) & used_outside_chain(chain):
@@ -163,6 +183,7 @@ class MegaKernelOptimization(ppl.Pass):
         dtype=dtypes.DeviceType, default=dtypes.DeviceType.GPU, desc="The device whose kernels are fused"
     )
     num_threads = properties.Property(dtype=int, default=0, desc="Threads of a CPU team; 0 is OpenMP's default")
+    sync_all = properties.Property(dtype=bool, default=True, desc="Grid barrier between every two stages")
 
     def __init__(
         self,
@@ -184,6 +205,7 @@ class MegaKernelOptimization(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> list[MegakernelChain] | None:
         """:return: The chains fused into a megakernel each."""
         target = TARGETS[self.device]
+        GatherKernelStates(self.device).apply_pass(sdfg, {})
         fused = []
         for chain in find_chains(self._region if self._region is not None else sdfg, sdfg, target):
             nested = nest_chain(chain, target)
@@ -201,10 +223,16 @@ class MegaKernelOptimization(ppl.Pass):
         return fused or None
 
     def lower_body(self, body: SDFG, target: Target) -> None:
-        InsertGridSyncs(self.device).apply_pass(body, {})
+        syncs = InsertGridSyncs(self.device, self.sync_all, small_symbols=self.small_symbols)
+        syncs.apply_pass(body, {})
+        owners = syncs.plan.owners if syncs.plan is not None else {}
         for state in body.states():
             for entry in [n for n in state.nodes() if is_kernel(n, state, target)]:
-                if self.device == dtypes.DeviceType.GPU:
+                if state in owners:
+                    own_stride(body, state, entry, owners[state], syncs.plan, THREAD_INDEX, THREAD_COUNT)
+                elif self.device == dtypes.DeviceType.GPU:
                     grid_stride(body, state, entry, THREAD_INDEX, THREAD_COUNT, self.small_symbols)
-                else:  # Work-shared by the team, which the stage's barrier (if any) waits for
+                else:  # Work-shared by the team, which the stage's barrier (if any) waits for. Static, so that every
+                    # stage over the same range gives a thread the same iterations
                     entry.map.omp_nowait = True
+                    entry.map.omp_schedule = dtypes.OMPScheduleType.Static
