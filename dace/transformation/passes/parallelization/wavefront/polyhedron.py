@@ -41,7 +41,6 @@ from dace.sdfg.analysis.polyhedral_isl import (
     collect_basic_sets,
     constraint_to_sympy,
     dedupe_terms,
-    is_domain_empty,
     make_set,
     pwaff_bound,
     subs_by_name,

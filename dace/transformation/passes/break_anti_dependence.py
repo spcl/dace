@@ -546,7 +546,9 @@ class BreakAntiDependence(ppl.Pass):
             self._solver_facts[loop] = SolverFacts(loop, self.offset_facts(loop, sdfg), set(internal_syms))
         facts = self._solver_facts[loop]
         with canon_stats.timed("z3", loop):
-            ahead = smt_dependence.prove_read_ahead(rb, wb, ivar, start, end, stride, read_guard=read_guard, facts=facts)
+            ahead = smt_dependence.prove_read_ahead(
+                rb, wb, ivar, start, end, stride, read_guard=read_guard, facts=facts
+            )
         if ahead is not True:
             return ("complex", None)
         # Read-ahead only rules out the writes up to and including the reader's own iteration. When

@@ -907,7 +907,7 @@ class SDFG(ControlFlowRegion):
         self._symbol_repo = SymbolRepo()
         self._bound_names: tuple[frozenset[str], frozenset[str]] | None = None
         #: Per-state ``(len(symbols), defined_symbols())`` of one ``expand_library_nodes`` sweep; ``None`` outside it
-        self._expansion_symbols: dict["SDFGState", tuple[int, dict[str, dt.Data]]] | None = None
+        self._expansion_symbols: dict[SDFGState, tuple[int, dict[str, dt.Data]]] | None = None
         #: The ``CanonStats`` recording a ``canonicalize(stats=...)`` run of this root SDFG; ``None`` otherwise
         self._canon_stats = None
         # Symbols ``add_datadesc`` declared because a shape names them; a scope that binds one later takes it over
