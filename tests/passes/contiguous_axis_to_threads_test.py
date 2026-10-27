@@ -153,6 +153,14 @@ def narrow_inner_nest():
     return sdfg
 
 
+def small_inner_nest():
+    """The bare nest with ``L`` declared ``SMALL``: the offload keeps it out of the grid, so it stays each thread's
+    loop rather than becoming the thread axis."""
+    sdfg = bare_nest()
+    sdfg.set_symbol_scale("L", dace.symbolic.Scale.SMALL)
+    return sdfg
+
+
 def offloaded(builder):
     sdfg = builder()
     sdfg.validate()
@@ -222,6 +230,7 @@ def test_a_per_row_scalar_chain_is_recomputed_in_every_lane():
         per_row_output_nest,
         threads_already_contiguous_nest,
         narrow_inner_nest,
+        small_inner_nest,
     ],
 )
 def test_a_nest_the_sink_or_collapse_would_change_is_left_untouched(builder):

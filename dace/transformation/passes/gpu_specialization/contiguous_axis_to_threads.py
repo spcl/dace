@@ -23,7 +23,7 @@ entry to the inner entry (rewired, no data moves), or a side-effect-free tasklet
 * writes only transients that no node outside the chain accesses (per-iteration private), and
   feeds its results only to the inner map.
 
-Anything else between the two entries (a nested map such as a per-k reduction, a nested SDFG, a
+An inner map over ``SMALL`` axes stays a loop in each thread. Anything else between the two entries (a nested map such as a per-k reduction, a nested SDFG, a
 larger buffer), an inner map with provably fewer iterations than a warp (one thread walks it),
 any node between the two exits, a write-conflict-resolved output of the inner
 map, or an inner range that depends on the outer parameters is refused, leaving the graph
@@ -38,9 +38,10 @@ from dace import SDFG, Memlet, SDFGState, data, dtypes, properties, symbolic
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.map_collapse import MapCollapse
-from dace.transformation.helpers import redirect_edge
+from dace.transformation.helpers import redirect_edge, small_map_axes
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import statically_narrower_than_warp
 
 SERIAL_OR_DEVICE = (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default, dtypes.ScheduleType.GPU_Device)
@@ -209,13 +210,16 @@ class ContiguousAxisToThreads(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def promote(self, state: SDFGState, sdfg: SDFG, outer: nodes.MapEntry, collapse: MapCollapse) -> bool:
+    def promote(
+        self, state: SDFGState, sdfg: SDFG, outer: nodes.MapEntry, collapse: MapCollapse, resolver: SymbolResolver
+    ) -> bool:
         children = state.scope_children()[outer]
         inners = [c for c in children if isinstance(c, nodes.MapEntry)]
         if len(inners) != 1 or inners[0].map.schedule not in SERIAL_OR_DEVICE:
             return False
         inner = inners[0]
-        if statically_narrower_than_warp(inner):
+        # A SMALL axis (the offload isolated it for this) stays a loop in each thread, never a thread axis
+        if statically_narrower_than_warp(inner) or any(small_map_axes(state, inner, resolver)):
             return False
         outer_exit, inner_exit = state.exit_node(outer), state.exit_node(inner)
         prologue = [c for c in children if c not in (inner, inner_exit, outer_exit)]
@@ -262,6 +266,7 @@ class ContiguousAxisToThreads(ppl.Pass):
         :returns: how many kernels were collapsed, or ``None`` if none were.
         """
         collapse = MapCollapse()
+        resolver = SymbolResolver()
         collapsed = 0
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():
@@ -273,5 +278,5 @@ class ContiguousAxisToThreads(ppl.Pass):
                     and scope[n] is None
                     and n.map.schedule == dtypes.ScheduleType.GPU_Device
                 ]
-                collapsed += sum(self.promote(state, sd, k, collapse) for k in kernels)
+                collapsed += sum(self.promote(state, sd, k, collapse, resolver) for k in kernels)
         return collapsed or None
