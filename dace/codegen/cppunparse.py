@@ -859,7 +859,8 @@ class CPPUnparser:
         "BitXor": "^",
         "BitAnd": "&",
     }
-    funcops = {"FloorDiv": (" /", "dace::math::ifloor"), "MatMult": (",", "dace::gemm")}
+    # ``//`` rounds toward negative infinity; ``ifloor(a / b)`` floored an integer quotient C had already truncated
+    funcops = {"FloorDiv": (",", "py_floor"), "MatMult": (",", "dace::gemm")}
 
     def _BinOp(self, t):
         # Operations that require a function call
