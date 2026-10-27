@@ -14,6 +14,7 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
 from dace.subsets import Range
+from dace.transformation import gpu_helpers
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -147,21 +148,104 @@ def inner_symbols(loop: LoopRegion) -> set[str]:
     return result
 
 
-def lane_symbols(state: SDFGState, node: nodes.Node) -> set[str]:
-    """Parameters of enclosing maps that code generation assigns to threads/lanes (maps with a schedule in
-    :data:`dace.dtypes.GPU_THREAD_SCHEDULES`, or a map directly nested in a GPU kernel map -- the ``[0:W, 0:64]``
-    wave/lane convention)."""
+def lane_symbols(
+    state: SDFGState,
+    node: nodes.Node,
+    kernel_dims: dict[nodes.MapEntry, gpu_helpers.KernelDimensions | None] | None = None,
+) -> set[str]:
+    """Symbols of ``state``'s SDFG, in scope at ``node``, whose value differs between the threads of one GPU thread
+    block (the *lanes*), following the thread indices code generation assigns to map parameters (see
+    :func:`~dace.transformation.gpu_helpers.kernel_dimensions`):
+
+    * parameters of ``GPU_ThreadBlock``, ``GPU_ThreadBlock_Dynamic`` and ``GPU_Warp`` maps;
+    * parameters of a (non-persistent) kernel map without ``GPU_ThreadBlock`` maps (or with dynamic ones), in grid
+      dimensions with more than one thread per block, where code generation adds ``threadIdx`` to the block index;
+    * parameters of ``GPU_Device`` maps nested in a kernel, in grid dimensions with more than one thread per block
+      (by default their dimensions have one thread per block, so their parameters vary per block only);
+    * symbols of a nested SDFG in a kernel that its symbol mapping binds to lanes of the enclosing SDFG.
+
+    Other maps in a kernel (e.g., sequential ones) run within each thread and contribute no lanes. The
+    classification only steers which address terms a loop cursor carries; it never affects correctness.
+
+    :param kernel_dims: A cache of kernel dimensions per kernel map entry, shared across calls.
+    """
+    return _lanes_and_kernel(state, node, {} if kernel_dims is None else kernel_dims)[0]
+
+
+def _lanes_and_kernel(
+    state: SDFGState,
+    node: nodes.Node,
+    kernel_dims: dict[nodes.MapEntry, gpu_helpers.KernelDimensions | None],
+) -> tuple[set[str], tuple[nodes.MapEntry, gpu_helpers.KernelDimensions | None] | None]:
+    """The lanes at ``node`` (see :func:`lane_symbols`) and the enclosing kernel map with its dimensions
+    (``None`` dimensions if code generation could not derive them), or ``None`` outside of GPU kernels."""
+    lanes: set[str] = set()
+    kernel = None
+    parent_node, parent_state = state.sdfg.parent_nsdfg_node, state.sdfg.parent
+    if parent_node is not None and parent_state is not None:
+        outer_lanes, kernel = _lanes_and_kernel(parent_state, parent_node, kernel_dims)
+        for name, value in parent_node.symbol_mapping.items():
+            value = value if isinstance(value, sp.Basic) else symbolic.pystr_to_symbolic(value)
+            if symbol_names(value) & outer_lanes:
+                lanes.add(str(name))
+
     sdict = state.scope_dict()
-    result: set[str] = set()
+    scopes = []
     cur = sdict.get(node)
     while cur is not None:
-        parent = sdict.get(cur)
-        sched = cur.map.schedule
-        if sched in dtypes.GPU_THREAD_SCHEDULES or (
-            parent is not None and parent.map.schedule in dtypes.GPU_KERNEL_SCHEDULES
+        scopes.append(cur)
+        cur = sdict.get(cur)
+    for entry in reversed(scopes):  # Outermost first
+        schedule = entry.map.schedule
+        if kernel is None:
+            if schedule in dtypes.GPU_KERNEL_SCHEDULES:
+                if entry not in kernel_dims:
+                    try:
+                        kernel_dims[entry] = gpu_helpers.kernel_dimensions(entry, state.scope_subgraph(entry))
+                    except NotImplementedError:
+                        kernel_dims[entry] = None  # Code generation rejects the kernel too
+                kernel = (entry, kernel_dims[entry])
+                if schedule != dtypes.ScheduleType.GPU_Persistent:  # A persistent kernel defines no indices
+                    lanes |= _thread_varying_params(entry.map.params, kernel[1], 0, by_thread_block_maps=True)
+            continue  # Outside of GPU kernels there are no lanes
+        if schedule in (
+            dtypes.ScheduleType.GPU_ThreadBlock,
+            dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+            dtypes.ScheduleType.GPU_Warp,
         ):
-            result.update(cur.map.params)
-        cur = parent
+            lanes.update(entry.map.params)
+        elif schedule == dtypes.ScheduleType.GPU_Device:
+            kernel_entry, dims = kernel
+            if kernel_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent:
+                # A grid-stride loop over the persistent grid's leading dimensions
+                lanes |= _thread_varying_params(entry.map.params, dims, 0, by_thread_block_maps=True)
+            else:
+                # Extra grid dimensions after the kernel map's own
+                lanes |= _thread_varying_params(
+                    entry.map.params, dims, len(kernel_entry.map.params), by_thread_block_maps=False
+                )
+    return lanes, kernel
+
+
+def _thread_varying_params(
+    params: list[str], dims: gpu_helpers.KernelDimensions | None, first_dim: int, by_thread_block_maps: bool
+) -> set[str]:
+    """The parameters of a device-level map whose index code generation offsets by ``threadIdx``: the parameter
+    in grid dimension ``d`` (the last parameter is in ``first_dim``, beyond the third dimension they share it) if
+    the kernel's block has more than one thread in ``d``.
+
+    :param by_thread_block_maps: Whether ``GPU_ThreadBlock`` maps take over the threads (then only a kernel with
+                                 dynamic thread-block maps offsets the index), as for the kernel map itself.
+    """
+    if dims is None:
+        return set(params)  # Unknown dimensions: conservatively all
+    if by_thread_block_maps and dims.has_tbmap and not dims.has_dtbmap:
+        return set()
+    result = set()
+    for i, param in enumerate(reversed(params)):
+        d = min(first_dim + i, 2) if by_thread_block_maps else first_dim + i
+        if d < 3 and (dims.block_size[d] != 1) is not False:
+            result.add(param)
     return result
 
 
@@ -194,8 +278,18 @@ class GlobalPath:
     where the nested SDFGs do not already receive it.
     """
 
-    def __init__(self, state: SDFGState, edge: MultiConnectorEdge[Memlet], is_read: bool):
+    def __init__(
+        self,
+        state: SDFGState,
+        edge: MultiConnectorEdge[Memlet],
+        is_read: bool,
+        kernel_dims: dict[nodes.MapEntry, gpu_helpers.KernelDimensions | None] | None = None,
+    ):
+        """
+        :param kernel_dims: A cache of GPU kernel dimensions (see :func:`lane_symbols`), shared across paths.
+        """
         self.is_read = is_read
+        self._kernel_dims = {} if kernel_dims is None else kernel_dims
         self.levels: list[PathLevel] = [PathLevel(state.sdfg, state, scope_node(edge), edge.data.data)]
         self._mappings: list[dict[str, sp.Basic] | None] = [None]  #: Per level, its node's symbol mapping.
         self._atoms: dict[str, tuple[int, sp.Basic]] = {}  #: Atom name -> (level, symbol it stands for).
@@ -269,7 +363,7 @@ class GlobalPath:
         result: set[str] = set()
         for k in range(level + 1):
             lv = self.levels[k]
-            for name in lane_symbols(lv.state, lv.node):
+            for name in lane_symbols(lv.state, lv.node, self._kernel_dims):
                 result |= symbol_names(self.to_level(symbolic.pystr_to_symbolic(name), level, source=k))
         return result
 

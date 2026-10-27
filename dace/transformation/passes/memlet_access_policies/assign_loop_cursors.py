@@ -37,13 +37,14 @@ import sympy as sp
 from dace import SDFG, properties, symbolic
 from dace import data as dt
 from dace.memlet import Memlet
+from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.memlet_access_policies import LoopCursor
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import LoopRegion
 from dace.subsets import Range
+from dace.transformation import gpu_helpers, transformation
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.memlet_access_policies.helpers import (
     GlobalPath,
@@ -260,6 +261,7 @@ class AssignLoopCursors(ppl.Pass):
         assigned = skipped = 0
         classes: set[tuple] = set()
         inner_cache: dict[LoopRegion, set[str]] = {}
+        kernel_dims: dict[nodes.MapEntry, gpu_helpers.KernelDimensions | None] = {}
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 for edge in leaf_edges(state):
@@ -276,7 +278,7 @@ class AssignLoopCursors(ppl.Pass):
                     if root is None:
                         skipped += bool(enclosing_loops(state))
                         continue
-                    path = GlobalPath(state, edge, is_read)
+                    path = GlobalPath(state, edge, is_read, kernel_dims)
                     if not path.loops():
                         continue
                     found = analyze_edge(path, edge, inner_cache)

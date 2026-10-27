@@ -12,9 +12,10 @@ import pytest
 import dace
 from dace.sdfg.memlet_access_policies import CopyOnAccess, LoopCursor
 from dace.sdfg.state import LoopRegion
+from dace.transformation import gpu_helpers
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.memlet_access_policies import AssignLoopCursors
-from dace.transformation.passes.memlet_access_policies.helpers import leaf_edges
+from dace.transformation.passes.memlet_access_policies.helpers import lane_symbols, leaf_edges
 from dace.transformation.passes.memlet_access_policy_lowering import LowerMemletAccessPolicies
 
 N = dace.symbol("N")
@@ -915,6 +916,90 @@ def test_k_loop_with_successive_ij_nests_shares_k_cursors():
     np.testing.assert_allclose(C, 3 * A)
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# Lanes: map parameters that differ between the threads of a block, as GPU code generation assigns them
+# ---------------------------------------------------------------------------------------------------------------
+def _map_nest(*scopes):
+    """A state with nested maps ``(name, {param: range}, schedule[, gpu_block_size])``, outermost first, around an
+    empty tasklet; returns the state, the tasklet and the map entries."""
+    sdfg = dace.SDFG("lanes")
+    state = sdfg.add_state()
+    entries, exits = [], []
+    for name, ranges, schedule, *block in scopes:
+        entry, exit_ = state.add_map(name, ranges, schedule=schedule)
+        if block:
+            entry.map.gpu_block_size = block[0]
+        entries.append(entry)
+        exits.append(exit_)
+    tasklet = state.add_tasklet("t", {}, {}, "")
+    path = entries + [tasklet] + exits[::-1]
+    for src, dst in zip(path, path[1:]):
+        state.add_nedge(src, dst, dace.Memlet())
+    return state, tasklet, entries
+
+
+def test_lanes_kernel_map_without_thread_block_map():
+    # The ``[0:W, 0:64]`` convention: with a 64x1x1 block, only the innermost parameter is offset by threadIdx.
+    state, tasklet, (kernel,) = _map_nest(("k", {"w": "0:W", "l": "0:64"}, dace.ScheduleType.GPU_Device, [64, 1, 1]))
+    assert lane_symbols(state, tasklet) == {"l"}
+    assert kernel.map.gpu_block_size == [64, 1, 1]  # computing the kernel dimensions leaves the SDFG alone
+    # Outside of the kernel nothing is a lane.
+    assert lane_symbols(state, kernel) == set()
+
+
+def test_lanes_thread_block_map_takes_over_threads():
+    state, tasklet, _ = _map_nest(
+        ("k", {"b": "0:N:64"}, dace.ScheduleType.GPU_Device),
+        ("tb", {"t": "0:64"}, dace.ScheduleType.GPU_ThreadBlock),
+    )
+    assert lane_symbols(state, tasklet) == {"t"}
+
+
+def test_lanes_nested_device_and_sequential_maps_are_not_lanes():
+    # Nested device maps get extra grid dimensions with one thread per block; a sequential map runs within a thread.
+    state, tasklet, _ = _map_nest(
+        ("k", {"i": "0:N"}, dace.ScheduleType.GPU_Device, [32, 1, 1]),
+        ("d", {"j": "0:M"}, dace.ScheduleType.GPU_Device),
+        ("s", {"s": "0:4"}, dace.ScheduleType.Sequential),
+    )
+    assert lane_symbols(state, tasklet) == {"i"}
+    # With threads in the extra grid dimension, the nested device map's parameter is offset by threadIdx too.
+    state, tasklet, _ = _map_nest(
+        ("k", {"i": "0:N"}, dace.ScheduleType.GPU_Device, [32, 4, 1]),
+        ("d", {"j": "0:M"}, dace.ScheduleType.GPU_Device),
+    )
+    assert lane_symbols(state, tasklet) == {"i", "j"}
+
+
+def test_lanes_persistent_kernel_grid_stride_maps():
+    state, tasklet, _ = _map_nest(
+        ("p", {"p": "0:2"}, dace.ScheduleType.GPU_Persistent, [64, 1, 1]),
+        ("d", {"j": "0:M"}, dace.ScheduleType.GPU_Device),
+    )
+    assert lane_symbols(state, tasklet) == {"j"}
+
+
+def test_lanes_pass_into_nested_sdfgs():
+    state, _, (kernel,) = _map_nest(("k", {"w": "0:W", "l": "0:64"}, dace.ScheduleType.GPU_Device, [64, 1, 1]))
+    inner = dace.SDFG("inner")
+    inner.add_symbol("lane", dace.int64)
+    inner.add_symbol("wave", dace.int64)
+    istate = inner.add_state()
+    itasklet = istate.add_tasklet("it", {}, {}, "")
+    tasklet = next(n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet))
+    nsdfg = state.add_nested_sdfg(inner, {}, {}, symbol_mapping={"lane": "l + 1", "wave": "w"})
+    for e in state.in_edges(tasklet):
+        state.add_nedge(e.src, nsdfg, dace.Memlet())
+    for e in state.out_edges(tasklet):
+        state.add_nedge(nsdfg, e.dst, dace.Memlet())
+    state.remove_node(tasklet)
+    assert lane_symbols(istate, itasklet) == {"lane"}
+    # The kernel dimensions are computed once per kernel and cached.
+    cache = {}
+    lane_symbols(istate, itasklet, cache)
+    assert list(cache) == [kernel] and isinstance(cache[kernel], gpu_helpers.KernelDimensions)
+
+
 if __name__ == "__main__":
     test_default_policy_is_copy_on_access()
     test_policy_shared_cursor_and_inner_immediate()
@@ -941,3 +1026,8 @@ if __name__ == "__main__":
     test_access_node_inside_map_is_a_leaf()
     test_stencil3d_window_padded_strides_and_offset()
     test_k_loop_with_successive_ij_nests_shares_k_cursors()
+    test_lanes_kernel_map_without_thread_block_map()
+    test_lanes_thread_block_map_takes_over_threads()
+    test_lanes_nested_device_and_sequential_maps_are_not_lanes()
+    test_lanes_persistent_kernel_grid_stride_maps()
+    test_lanes_pass_into_nested_sdfgs()

@@ -27,6 +27,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.memlet_access_policies import CopyOnAccess, LoopCursor
 from dace.sdfg.state import LoopRegion
 from dace.subsets import Range
+from dace.transformation import gpu_helpers
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.memlet_access_policies.assign_loop_cursors import (
     OffsetDecomposition,
@@ -300,6 +301,7 @@ def lower_loop_cursors(
     tables: dict[SDFG, _CursorTable] = {}
     refs: dict[SDFG, _References] = {}
     lowered = dropped = 0
+    kernel_dims: dict[nodes.MapEntry, gpu_helpers.KernelDimensions | None] = {}
 
     # Collect per loop, skipping memlets that were already lowered and dropping stale policies.
     per_loop: dict[LoopRegion, list[tuple[SDFGState, MultiConnectorEdge[Memlet], GlobalPath, int]]] = {}
@@ -314,7 +316,7 @@ def lower_loop_cursors(
                 dropped += 1
             continue
         root, is_read = path_root(state, edge)
-        path = GlobalPath(state, edge, is_read) if root is not None else None
+        path = GlobalPath(state, edge, is_read, kernel_dims) if root is not None else None
         found = path.find_loop(policy.loop, policy.variable) if path is not None else None
         if found is None:
             warnings.warn(
