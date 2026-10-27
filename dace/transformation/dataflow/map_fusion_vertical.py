@@ -1910,6 +1910,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             state, second_map_entry, second_map_exit, exchange_nodes, fused_inout_data_names
         ):
             return True
+        # Symmetrically, a read of the first Map is ordered before those writes only if it feeds the intermediate.
+        if fused_inout_data_names and not mfhelper.reads_precede(
+            state, first_map_entry, first_map_exit, exchange_nodes, fused_inout_data_names
+        ):
+            return True
 
         # While it is forbidden that a data container, used as intermediate, is also
         #  used as output of the second Map. It is allowed that the data container

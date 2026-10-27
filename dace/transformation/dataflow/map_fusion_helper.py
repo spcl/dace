@@ -831,6 +831,33 @@ def writes_follow(
     return True
 
 
+def reads_precede(
+    state: dace.SDFGState,
+    map_entry: nodes.MapEntry,
+    map_exit: nodes.MapExit,
+    sinks: set[nodes.AccessNode],
+    names: set[str],
+) -> bool:
+    """Whether every read of the Map ``map_entry`` from one of ``names`` reaches, in its body, a write to one of the
+    access nodes ``sinks``."""
+    connectors = {e.src_conn[4:] for e in state.out_edges(map_exit) if e.dst in sinks and e.src_conn}
+    reaching = {e.src for e in state.in_edges(map_exit) if e.dst_conn and e.dst_conn[3:] in connectors}
+    frontier = list(reaching)
+    while frontier:
+        for edge in state.in_edges(frontier.pop()):
+            if edge.src is not map_entry and edge.src not in reaching:
+                reaching.add(edge.src)
+                frontier.append(edge.src)
+    for edge in state.in_edges(map_entry):
+        if edge.data.is_empty() or not edge.dst_conn or not isinstance(edge.src, nodes.AccessNode):
+            continue
+        if edge.src.data not in names:
+            continue
+        if any(inner.dst not in reaching for inner in state.out_edges_by_connector(map_entry, "OUT_" + edge.dst_conn[3:])):
+            return False
+    return True
+
+
 def scope_accesses(
     state: dace.SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit
 ) -> tuple[list[tuple[str | None, Any]], list[tuple[str | None, Any]]]:

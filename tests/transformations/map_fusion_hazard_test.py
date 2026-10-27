@@ -496,6 +496,34 @@ def test_horizontal_fusion_must_not_merge_a_read_with_an_unordered_in_place_upda
     assert not xform.can_be_applied(state, 0, sdfg)
 
 
+def test_vertical_fusion_must_not_move_a_side_read_past_the_in_place_write():
+    """The first Map reads ``X`` into ``d`` (the intermediate) and, in another tasklet, into ``s``; the second updates
+    ``X`` from ``d``. The intermediate orders only the read feeding it: fused, the copy into ``s`` could follow the
+    update."""
+    sdfg = dace.SDFG(unique_name("side_read_before_update"))
+    sdfg.add_array("X", [2, N], dace.float64)
+    sdfg.add_array("s", [N], dace.float64)
+    sdfg.add_array("d", [N], dace.float64, transient=True)
+    state = sdfg.add_state("s", is_start_block=True)
+    x_read, x_updated, d, side = (state.add_access(name) for name in ("X", "X", "d", "s"))
+    entry, exit_ = state.add_map("first", dict(i=f"0:{N}"))
+    for name, node, code in (("d", d, "o = a - 1.0"), ("s", side, "o = a")):
+        tasklet = state.add_tasklet(f"first_{name}", ["a"], ["o"], code)
+        state.add_memlet_path(x_read, entry, tasklet, dst_conn="a", memlet=dace.Memlet("X[0, i]"))
+        state.add_memlet_path(tasklet, exit_, node, src_conn="o", memlet=dace.Memlet(f"{name}[i]"))
+    second = _pointwise_map(state, "update", [(d, "i")], x_updated, "0, i", "o = 2.0 * a0")
+    sdfg.validate()
+
+    match = {
+        dftrans.MapFusionVertical.first_map_exit: state.node_id(exit_),
+        dftrans.MapFusionVertical.array: state.node_id(d),
+        dftrans.MapFusionVertical.second_map_entry: state.node_id(second),
+    }
+    xform = dftrans.MapFusionVertical()
+    xform.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), match, 0)
+    assert not xform.can_be_applied(state, 0, sdfg)
+
+
 if __name__ == "__main__":
     test_copy_memlet_naming_the_inner_container_hides_the_write()
     test_view_of_the_same_array_is_not_a_different_array()
@@ -507,3 +535,4 @@ if __name__ == "__main__":
     test_vertical_fusion_must_not_move_a_read_past_a_write()
     test_horizontal_fusion_must_not_move_a_read_past_a_write()
     test_horizontal_fusion_must_not_merge_a_read_with_an_unordered_in_place_update()
+    test_vertical_fusion_must_not_move_a_side_read_past_the_in_place_write()
