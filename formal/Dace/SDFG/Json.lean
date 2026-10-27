@@ -361,6 +361,57 @@ def typeFacts (types : List (Sym × Dtype)) : Constraints :=
       | .int _ false => some (s, Pred.nonneg)
       | _ => none }
 
+/-- The strings of an SDFG's JSON, without those of its nested SDFGs (objects
+with `"type": "SDFG"` below the root), whose symbols are their own. -/
+partial def ownStrings (j : Json) (root : Bool := true) : List String :=
+  match j with
+  | .str s => [s]
+  | .arr a => a.toList.flatMap (ownStrings · false)
+  | .obj kvs =>
+    if !root && (match j.getObjVal? "type" with | .ok (.str "SDFG") => true | _ => false) then []
+    else kvs.toList.flatMap fun (_, v) => ownStrings v false
+  | _ => []
+
+/-- The facts a SymPy assumption `k=True` states about an integer symbol `x`
+(https://docs.sympy.org/latest/guides/assumptions.html#predicates): signs,
+`zero` (`x = 0`), `even` (`2 ∣ x`), `odd` (`2 ∣ x - 1`), `prime` (`x ≥ 2`)
+and `composite` (`x ≥ 4`).  Assumptions every integer satisfies (`integer`,
+`rational`, `real`, `finite`, …) add nothing; those no integer satisfies
+(`noninteger`, `irrational`, `imaginary`, `infinite`, …) are ignored, since an
+unsatisfiable fact would make every claim vacuous. -/
+def assumptionFacts (x : Sym) : String → List (Sym × Pred) × List Relation
+  | "positive" => ([(x, .pos)], [])
+  | "nonnegative" => ([(x, .nonneg)], [])
+  | "negative" => ([(x, .neg)], [])
+  | "nonpositive" => ([(x, .nonpos)], [])
+  | "nonzero" => ([(x, .nonzero)], [])
+  | "zero" => ([], [{ kind := .eq, lhs := .sym x, rhs := .lit (.int 0) }])
+  | "even" => ([], [{ kind := .dvd, lhs := .lit (.int 2), rhs := .sym x }])
+  | "odd" => ([], [{ kind := .dvd, lhs := .lit (.int 2), rhs := .bin .sub (.sym x) (.lit (.int 1)) }])
+  | "prime" => ([], [{ kind := .le, lhs := .lit (.int 2), rhs := .sym x }])
+  | "composite" => ([], [{ kind := .le, lhs := .lit (.int 4), rhs := .sym x }])
+  | _ => ([], [])
+
+/-- The facts of the typed symbols `symbol($N, k=v, …)` in an SDFG's
+expressions (`Decisions.md#D60`, `Parse.symbolAssumptions`): every assumption
+set to `True` (`assumptionFacts`) and an unsigned `dtype` (nonnegative).
+Only symbols declared with an integer type (`types`) get facts, which keeps
+them satisfiable: the valuation binds such symbols to integers.  Every
+occurrence counts (DaCe may have simplified with any of them). -/
+def inlineFacts (types : List (Sym × Dtype)) (strs : List String) :
+    List (Sym × Pred) × List Relation :=
+  let isInt (x : Sym) : Bool := types.any fun (s, t) => s == x && t matches .int _ _
+  let facts : List (List (Sym × Pred) × List Relation) := strs.flatMap fun str =>
+    if !str.contains '$' then [] else
+    (Parse.symbolAssumptions str).flatMap fun (x, kws) =>
+      if !isInt x then [] else
+      kws.map fun (k, v) => match k, v with
+        | "dtype", .attr (.sym "dace") t =>
+          if dtypeOfString t matches .int _ false then ([(x, .nonneg)], []) else ([], [])
+        | k, .lit (.bool true) => assumptionFacts x k
+        | _, _ => ([], [])
+  ((facts.flatMap (·.1)).eraseDups, (facts.flatMap (·.2)).eraseDups)
+
 /-- The facts of `attributes.symbol_repo` (`symbol_repo.py`, `SymbolRepo.to_json`)
 and the declared parameter types.  Only `params` is read: the scale facts
 (`small`, `MUCH_LT`), `runtime_assumptions` and the facts of inner scopes are
@@ -600,6 +651,10 @@ partial def sdfg (j : Json) : P SDFG := do
     | some r => symbolRepo r
   -- with a symbol repository, `SDFG.symbols` is a view of `params.types`
   let symbols := if symbols.isEmpty then repoTypes else symbols
+  let (signs, rels) := inlineFacts symbols (ownStrings j)
+  let facts := { facts with
+    sign := facts.sign ++ signs.filter (· ∉ facts.sign)
+    rels := facts.rels ++ rels.filter (· ∉ facts.rels) }
   declareConsumeChunks
     { name, arrays, symbols, constants, argNames, top := { top with label := name }, facts }
 

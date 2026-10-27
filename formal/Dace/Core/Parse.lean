@@ -406,12 +406,13 @@ partial def parseAtom : P Expr := do
     if (← peek) = .lparen then
       -- typed symbol `symbol($N, dtype=dace.int64, nonnegative=True, …)`
       -- (`DaceSympySerializer._print_Symbol`): the symbol `N`; its dtype and
-      -- assumptions are dropped (`Decisions.md#D22`, `#D1`)
+      -- assumptions are not part of the expression (`Decisions.md#D22`, `#D1`);
+      -- the SDFG importer reads them as facts (`symbolAssumptions`, `#D60`)
       advance
       match ← peek with
       | .ident x =>
         advance
-        parseSymbolKwargs
+        let _ ← parseSymbolKwargs
         pure (.sym x)
       | _ => failure
     else pure (.sym "symbol")
@@ -430,20 +431,22 @@ partial def parseAtom : P Expr := do
   | _ => failure
 
 /-- The keyword arguments `, k = v` of a typed symbol up to (and consuming)
-the closing parenthesis; the values are parsed and discarded. -/
-partial def parseSymbolKwargs : P Unit := do
+the closing parenthesis. -/
+partial def parseSymbolKwargs : P (List (String × Expr)) := do
+  let mut kws := #[]
   repeat
     match ← peek with
     | .rparen => advance; break
     | .comma =>
       advance
       match ← peek with
-      | .ident _ =>
+      | .ident k =>
         advance
         expect (.op "=")
-        let _ ← parseTernary
+        kws := kws.push (k, ← parseTernary)
       | _ => failure
     | _ => failure
+  pure kws.toList
 
 end
 
@@ -452,6 +455,42 @@ def parseExpr (s : String) : Option Expr := do
   let toks ← tokenize s
   let (e, st) ← (parseTernary).run { toks := toks.toArray }
   if st.toks.getD st.pos .eof = .eof then some e else none
+
+/-- The calls `symbol($…)` in `s`, with balanced parentheses, as strings. -/
+partial def typedSymbolCalls (s : String) : List String :=
+  let pre := "symbol($".toList
+  -- the characters up to the parenthesis closing depth `d`, and the rest
+  let rec close (d : Nat) (acc : List Char) : List Char → Option (List Char × List Char)
+    | [] => none
+    | ')' :: cs => if d = 1 then some ((')' :: acc).reverse, cs) else close (d - 1) (')' :: acc) cs
+    | '(' :: cs => close (d + 1) ('(' :: acc) cs
+    | c :: cs => close d (c :: acc) cs
+  let rec scan : List Char → List String
+    | [] => []
+    | cs@(_ :: rest) =>
+      if pre.isPrefixOf cs then
+        match close 1 [] (cs.drop "symbol(".length) with
+        | some (inner, after) => String.ofList ("symbol(".toList ++ inner) :: scan after
+        | none => []
+      else scan rest
+  scan s.toList
+
+/-- The typed symbols `symbol($N, k=v, …)` occurring anywhere in `s` (also in
+strings that are not expressions, such as subsets `0:symbol($N, …)`), each
+with its keyword arguments (`DaceSympySerializer._print_Symbol` prints the
+symbol's `True` assumptions not implied by its dtype, and the dtype if it is
+not the default). -/
+def symbolAssumptions (s : String) : List (Sym × List (String × Expr)) :=
+  (typedSymbolCalls s).filterMap fun call => do
+    let toks ← tokenize call
+    let p : P (Sym × List (String × Expr)) := do
+      expect (.ident "symbol")
+      expect .lparen
+      match ← peek with
+      | .ident x => advance; pure (x, ← parseSymbolKwargs)
+      | _ => failure
+    let (r, _) ← p.run { toks := toks.toArray }
+    pure r
 
 /-- Parse an expression from a token list (a slice of a tokenized statement).
 A single `Token.eof` is appended so the precedence parser terminates. -/
