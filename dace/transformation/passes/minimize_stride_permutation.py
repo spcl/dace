@@ -51,7 +51,7 @@ from dace.transformation.dataflow.map_interchange import MapInterchange
 NO_HOME_SCORE = sympy.oo
 
 
-def _to_float(value: object) -> float:
+def score_to_float(value: object) -> float:
     """Best-effort conversion of a (possibly symbolic) score to a sortable float.
 
     Non-numeric symbolic values cannot be reliably ordered, so they map to
