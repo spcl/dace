@@ -1331,13 +1331,13 @@ def _get_dominator_and_postdominator(
     data_name = accesses[0][1].data
 
     start_state = states[0]
-    while not all(dom.dominates(start_state, n) for n in states):
+    while any(not dom.dominates(start_state, n) for n in states):
         if dom.immediate[start_state] is start_state:
             raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
         start_state = dom.immediate[start_state]
 
     end_state = states[-1]
-    while not all(postdom.dominates(end_state, n) for n in states):
+    while any(not postdom.dominates(end_state, n) for n in states):
         if postdom.immediate[end_state] is end_state:
             raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
         end_state = postdom.immediate[end_state]

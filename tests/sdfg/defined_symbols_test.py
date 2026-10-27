@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``SDFGState.defined_symbols`` types interstate assignments from one environment kept per call."""
 
+from unittest import mock
+
 import dace
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import LoopRegion
@@ -23,19 +25,18 @@ def assigning_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def test_defined_symbols_builds_no_type_environment_per_edge(monkeypatch):
+def test_defined_symbols_builds_no_type_environment_per_edge():
     """``new_symbols(sdfg, ...)`` copies the symbols and every array's dtype per assigning edge:
     2.4 s per call on warpx_field_gather, once per LoopToMap lift that nests a body."""
     sdfg = assigning_sdfg()
     state = next(s for s in sdfg.states() if s.label == "last")
-    rebuilt = []
-    original = InterstateEdge.new_symbols
+    with mock.patch.object(
+        InterstateEdge, "new_symbols", autospec=True, side_effect=InterstateEdge.new_symbols
+    ) as new_symbols:
+        state.defined_symbols()
+    assert new_symbols.called
+    assert [c for c in new_symbols.call_args_list if c.args[1] is not None] == []
 
-    def recorded(self, sd, symbols):
-        if sd is not None:
-            rebuilt.append(self)
-        return original(self, sd, symbols)
 
-    monkeypatch.setattr(InterstateEdge, "new_symbols", recorded)
-    state.defined_symbols()
-    assert rebuilt == []
+if __name__ == "__main__":
+    test_defined_symbols_builds_no_type_environment_per_edge()

@@ -338,39 +338,6 @@ def symbolic_range_tuple(value):
     return tuple(tuple_to_symexpr(v) for v in value)
 
 
-def mentioned_names(expr: object) -> set[str]:
-    if isinstance(expr, symbolic.SymExpr):
-        return mentioned_names(expr.expr) | mentioned_names(expr.approx)
-    if isinstance(expr, sp.Basic):
-        return {str(sym) for sym in expr.free_symbols}
-    return {str(expr)}
-
-
-def keys_by_mentioned_name(repl_dict: dict) -> dict[str, list]:
-    keys_by_name: dict[str, list] = {}
-    for key in repl_dict:
-        for name in mentioned_names(key):
-            keys_by_name.setdefault(name, []).append(key)
-    return keys_by_name
-
-
-def subs_reachable(expr, repl_dict: dict, keys_by_name: dict[str, list]):
-    """``expr.subs(repl_dict)`` with only the entries that can reach ``expr``, directly or through the value of another
-    entry: SymPy walks ``expr`` once per entry it is given."""
-    if not symbolic.issymbolic(expr):
-        return expr
-    reachable: dict = {}
-    pending = list(mentioned_names(expr))
-    while pending:
-        for key in keys_by_name.get(pending.pop(), ()):
-            if key not in reachable:
-                reachable[key] = None
-                pending.extend(mentioned_names(repl_dict[key]))
-    if not reachable:
-        return expr
-    return expr.subs({key: value for key, value in repl_dict.items() if key in reachable})
-
-
 @dace.serialize.serializable
 class Range(Subset):
     """Subset defined in terms of a fixed range."""
@@ -1018,14 +985,14 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
     def replace(self, repl_dict):
-        keys_by_name = keys_by_mentioned_name(repl_dict)
+        keys_by_name = symbolic.keys_by_free_name(repl_dict)
         for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges, self.tile_sizes)):
             self.ranges[i] = (
-                subs_reachable(rb, repl_dict, keys_by_name),
-                subs_reachable(re, repl_dict, keys_by_name),
-                subs_reachable(rs, repl_dict, keys_by_name),
+                symbolic.subs_reachable(rb, repl_dict, keys_by_name),
+                symbolic.subs_reachable(re, repl_dict, keys_by_name),
+                symbolic.subs_reachable(rs, repl_dict, keys_by_name),
             )
-            self.tile_sizes[i] = subs_reachable(ts, repl_dict, keys_by_name)
+            self.tile_sizes[i] = symbolic.subs_reachable(ts, repl_dict, keys_by_name)
 
     def intersects(self, other: "Range"):
         type_error = False
