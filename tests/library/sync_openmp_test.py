@@ -11,7 +11,7 @@ from dace.libraries.standard.nodes.sync import Sync, SyncScope
 NTHREADS = 4
 
 
-def phases_sdfg(name: str, schedule: dace.ScheduleType, scope: SyncScope) -> dace.SDFG:
+def phases_sdfg(name: str, schedule: dace.ScheduleType, scope: SyncScope, implementation: str = "OpenMP") -> dace.SDFG:
     """Thread ``t`` writes ``A[t]``, waits at the barrier, then reads its neighbor's ``A[(t + 1) % 4]``."""
     inner = dace.SDFG(f"{name}_phases")
     inner.add_symbol("t", dace.int64)
@@ -22,7 +22,7 @@ def phases_sdfg(name: str, schedule: dace.ScheduleType, scope: SyncScope) -> dac
     write.add_edge(task, "a", write.add_write("A"), None, dace.Memlet("A[t]"))
     wait = inner.add_state_after(write, "wait")
     barrier = Sync("barrier", scope=scope)
-    barrier.implementation = "OpenMP"
+    barrier.implementation = implementation
     wait.add_node(barrier)
     read = inner.add_state_after(wait, "read")
     task = read.add_tasklet("read", {"a"}, {"b"}, "b = a")
@@ -78,9 +78,17 @@ def test_grid_barrier_in_a_team_is_a_team_barrier():
     assert sdfg.generate_code()[0].clean_code.count("#pragma omp barrier") == 1
 
 
+def test_an_automatic_barrier_in_a_team_is_a_team_barrier():
+    """``Auto`` picks the OpenMP barrier inside a CPU team rather than the GPU grid barrier."""
+    sdfg = phases_sdfg("omp_auto_barrier", dace.ScheduleType.CPU_Persistent, SyncScope.GRID, implementation="Auto")
+    code = sdfg.generate_code()[0].clean_code
+    assert code.count("#pragma omp barrier") == 1 and "cooperative_groups" not in code
+
+
 if __name__ == "__main__":
     test_team_barrier_orders_the_phases()
     test_warp_barrier_on_a_cpu_waits_for_nobody()
     test_one_thread_needs_no_barrier()
     test_worksharing_map_cannot_hold_a_barrier()
     test_grid_barrier_in_a_team_is_a_team_barrier()
+    test_an_automatic_barrier_in_a_team_is_a_team_barrier()

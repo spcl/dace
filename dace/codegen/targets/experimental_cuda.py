@@ -1141,7 +1141,8 @@ def persistent_blocks_function(
 ) -> str:
     """The definition of :func:`persistent_blocks_name` for a cooperative kernel: the configured share of the device
     (``persistent_map_SM_fraction`` x ``persistent_map_occupancy`` blocks), clamped to the blocks that are resident at
-    once, which a grid barrier needs. A kernel that does not fit even once is an error, never a one-block launch."""
+    once, which a grid barrier needs. A kernel that does not fit even once is an error, never a one-block launch; a
+    failed occupancy query (e.g., an earlier kernel's fault) reports its own error instead."""
     threads = functools.reduce(lambda a, b: a * b, block_dims, 1)
     if symbolic.issymbolic(threads):
         raise ValueError(f"Cooperative kernel {kernel_name}: the block size {block_dims} must be a constant")
@@ -1158,7 +1159,10 @@ int {name}({state_param})
     int sms;
     DACE_GPU_CHECK({backend}DeviceGetAttribute(&sms, {sm_attribute}, device));
     int per_sm = 0;
-    DACE_GPU_CHECK({backend}OccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, {kernel_name}, {sym2cpp(threads)}, {sym2cpp(dynsmem_size)}));
+    gpuError_t query = {backend}OccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, {kernel_name}, {sym2cpp(threads)}, {sym2cpp(dynsmem_size)});
+    if (query != (gpuError_t)0) {{
+        throw std::runtime_error(std::string("Cooperative kernel {kernel_name}: occupancy query failed: ") + gpuGetErrorString(query));
+    }}
     if (per_sm <= 0) {{
         throw std::runtime_error("Cooperative kernel {kernel_name} does not fit a multiprocessor even once");
     }}
