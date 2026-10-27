@@ -267,7 +267,7 @@ class ParallelizeLoops(ppl.Pass):
         with scope:
             # Every probe reads the facts of its loop's SDFG and of each SDFG nesting it; only a lift changes them,
             # and ``lift`` drops the lifted SDFG's.
-            with memoize_facts():
+            with memoize_facts(sdfg):
                 # One instance, reused: setting ``loop`` and probing overwrites every field a probe reads.
                 xform = LoopLift()
                 xform.symbol_resolver = SymbolResolver()
@@ -361,7 +361,7 @@ class ParallelizeLoops(ppl.Pass):
         # The lifted states are propagated below, whole: the rewrite need not propagate each memlet it routes.
         propagate_edges, xform.propagate_edges = xform.propagate_edges, False
         try:
-            with memoize_facts(active=False):
+            with memoize_facts(loop, active=False):
                 xform.rewrite()
         finally:
             xform.propagate_edges = propagate_edges

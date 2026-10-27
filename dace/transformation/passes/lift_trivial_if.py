@@ -402,7 +402,7 @@ class LiftTrivialIf(ppl.Pass):
                             break
                         if self.dead_branch(cnd, cfb):
                             cfb.remove_branch(cfg)
-                            forget_all_facts()  # The branch may have held interstate assignments
+                            forget_all_facts(graph)  # The branch may have held interstate assignments
                             rmed_count += 1
 
                 # Supported variants:
@@ -415,14 +415,14 @@ class LiftTrivialIf(ppl.Pass):
                     taken = ControlFlowRegion(label=f"empty_cfg_of_{cfb.label}", sdfg=cfb.sdfg, parent=cfb)
                     taken.add_state(label="empty_placholder", is_start_block=True)
                     cfb.add_branch(condition=None, branch=taken)
-                    forget_all_facts()
+                    forget_all_facts(graph)
                 cfb_to_rm_cfg_to_keep[(cfb, taken)] = None
 
         for cfb, cfg in cfb_to_rm_cfg_to_keep:
             existing = {n.label for n in graph.nodes()}
             before = {id(n) for n in graph.nodes()}
             move_branch_cfg_up_discard_conditions(cfb, cfg)
-            forget_all_facts()  # The discarded branches may have held interstate assignments
+            forget_all_facts(graph)  # The discarded branches may have held interstate assignments
             assert cfb not in graph.nodes()
             # Bookkeep only the spliced-in subtree, not the whole SDFG -- the old whole-SDFG walk here
             # ran once per control-flow block and was quadratic (on CLOUDSC ~10s of a 15s run).
@@ -490,7 +490,7 @@ class LiftTrivialIf(ppl.Pass):
         """
         # Every decided guard resolves the facts at its conditional, whose SDFG-wide part (``SDFG.facts()``) only a
         # removal changes: share it between guards, drop it at every removal.
-        with memoize_facts():
+        with memoize_facts(sdfg):
             rmed_count = self._detect_trivial_ifs_and_rm_cfg(sdfg)
         if not rmed_count:
             return None

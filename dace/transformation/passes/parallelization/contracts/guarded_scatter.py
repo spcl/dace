@@ -143,7 +143,7 @@ class ScatterToGuardedMaps(ppl.Pass):
 
         scatter_loops, idx_arrays, sliced_guards, joint_writes = detect_scatter_loops_and_idx_arrays(sdfg)
         # The probes only read the graph, so they share its facts and one lift context per SDFG and contract kind
-        with memoize_facts():
+        with memoize_facts(sdfg):
             probes = ContractProbes()
             scatter_loops = [
                 loop for loop in scatter_loops if needs_contract(sdfg, loop, joint_writes, probes, refusals)

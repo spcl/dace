@@ -37,7 +37,7 @@ class ConsolidateEdges(ppl.Pass):
         :return: Number of edges removed, or None if nothing was performed.
         """
         # Consolidation rewrites memlets and connectors only, so the facts of every SDFG hold throughout
-        with memoize_facts():
+        with memoize_facts(sdfg):
             edges_removed = sdutil.consolidate_edges(sdfg)
         if edges_removed == 0:
             return None

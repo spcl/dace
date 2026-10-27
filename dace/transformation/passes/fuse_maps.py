@@ -407,14 +407,14 @@ class FuseMaps(ppl.Pass):
         forget_probes()
         applied: AppliedMap = collections.defaultdict(list)
         # The probes between two fusions share the facts of each SDFG; ``_drain`` drops them at every fusion.
-        with memoize_facts():
+        with memoize_facts(sdfg):
             for _ in range(FUSE_ROUNDS):
                 for cfg in sdfg.all_control_flow_regions(recursive=True):
                     for state_id, state in enumerate(cfg.nodes()):
                         if not isinstance(state, SDFGState):
                             continue
                         if self.align_step_equivalent_maps and align_step_equivalent_candidates(state):
-                            forget_all_facts()
+                            forget_all_facts(sdfg)
                             forget_probes()
                             propagated.clear()
                         for xform, shapes in units:
@@ -490,9 +490,9 @@ class FuseMaps(ppl.Pass):
                     else:
                         # Any other fusion is not known to leave nested SDFGs untouched.
                         propagated.clear()
-                    with memoize_facts(active=False):
+                    with memoize_facts(state, active=False):
                         applied[name].append(xform.apply(state, owner))
-                    forget_all_facts()
+                    forget_all_facts(state)
                     forget_probes()
                     if self.validate_all:
                         validate_state(state, state_id, owner, initialized_transients=set(owner.arrays.keys()))

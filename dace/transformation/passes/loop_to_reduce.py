@@ -195,21 +195,21 @@ class LoopToReduce(ppl.Pass):
         if only is not None and not only:
             return None
         # The matcher reads the facts of each loop's SDFG; they are derived once per SDFG between lifts
-        with memoize_facts():
+        with memoize_facts(sdfg):
             for node, parent in list(sdfg.all_nodes_recursive()):
                 if not isinstance(node, LoopRegion) or (only is not None and id(node) not in only):
                     continue
                 info = _extract(node, _owner_sdfg(parent), permissive=self.permissive)
                 if info is None:
                     continue
-                with memoize_facts(active=False):
+                with memoize_facts(sdfg, active=False):
                     if self.prefer == "wcr-scalar":
                         # Lift even a pinned (nested) reduction; ``_lift_wcr_scalar`` carries the pin
                         # onto the new loop so the downstream ``LoopToMap`` keeps it sequential.
                         _lift_wcr_scalar(parent, node, info)
                     else:
                         _lift(parent, node, info)
-                forget_all_facts()
+                forget_all_facts(sdfg)
                 count += 1
 
         if count > 0:

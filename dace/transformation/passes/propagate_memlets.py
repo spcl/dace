@@ -54,7 +54,7 @@ class PropagateMemlets(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         # Propagation rewrites derived memlets only: one resolver and one facts memo serve the whole walk
         symbols = SymbolResolver()
-        with memoize_facts():
+        with memoize_facts(sdfg):
             for nested in sdfg.all_sdfgs_recursive():
                 for state in nested.states():
                     propagate_memlets_scope(nested, state, state.scope_leaves(), symbols=symbols)

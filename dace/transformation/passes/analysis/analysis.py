@@ -1170,7 +1170,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                  are dominated by that write.
         """
         # An analysis changes nothing, so the facts each must-write test derives for a loop's trip count are shared.
-        with memoize_facts():
+        with memoize_facts(top_sdfg):
             return self.write_scopes(top_sdfg, pipeline_results)
 
     def write_scopes(self, top_sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[int, WriteScopeDict]:

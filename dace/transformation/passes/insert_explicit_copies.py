@@ -196,7 +196,7 @@ class InsertExplicitCopies(ppl.Pass):
         """
         count = 0
         # The copies it inserts change no symbol, interstate edge or existing descriptor: the facts hold throughout
-        with memoize_facts():
+        with memoize_facts(sdfg):
             for nsdfg in sdfg.all_sdfgs_recursive():
                 self.free_copy_connector_names(nsdfg, connectors=False)
                 inserted = 0

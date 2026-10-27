@@ -202,7 +202,7 @@ class ArrayElimination(ppl.Pass):
         # The SDFG-wide facts (``SDFG.facts()``, a walk of every interstate edge and descriptor) each redundant-copy
         # probe resolves are shared by the whole sweep: merging access nodes touches no symbol, descriptor or
         # interstate edge, and every applied transformation drops them (``_apply_forgetting_facts``).
-        with memoize_facts():
+        with memoize_facts(sdfg):
             self._eliminate_in_states(sdfg, state_order, access_sets, reachable, result)
 
         # If node is completely removed from graph, erase data descriptor
@@ -443,14 +443,14 @@ class ArrayElimination(ppl.Pass):
         """
         # Every probe resolves the facts at its node, whose SDFG-wide part (``SDFG.facts()``, a walk of every
         # interstate edge and descriptor) only an apply changes: share it between probes, drop it after each apply.
-        with memoize_facts():
+        with memoize_facts(sdfg):
             return self._remove_redundant_copies(sdfg, state, removable_data, access_nodes)
 
     @staticmethod
     def _apply_forgetting_facts(xform: SingleStateTransformation, state: SDFGState, sdfg: SDFG) -> Any:
-        with memoize_facts(active=False):
+        with memoize_facts(sdfg, active=False):
             ret = xform.apply(state, sdfg)
-        forget_all_facts()
+        forget_all_facts(sdfg)
         return ret
 
     def _remove_redundant_copies(

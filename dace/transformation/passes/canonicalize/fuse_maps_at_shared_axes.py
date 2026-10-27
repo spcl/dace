@@ -149,7 +149,7 @@ class FuseMapsAtSharedAxes(ppl.Pass):
         fusion._pipeline_results = pipeline_results
         if fusion.can_be_applied(state, 0, sdfg):
             fusion.apply(state, sdfg)
-            forget_all_facts()
+            forget_all_facts(sdfg)
             return None
         merged, _ = sdutil.merge_maps(state, outer, state.exit_node(outer), inner, state.exit_node(inner))
         reorder(merged, original)

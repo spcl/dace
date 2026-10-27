@@ -1247,7 +1247,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         # only by mapping strictly more: the first candidate reaching a count keeps it.
         best_count, best = 0, None
         # Each probe resolves the facts of the SDFG for every guard it decides; shared until a probe edits a branch.
-        with memoize_facts():
+        with memoize_facts(sdfg):
             for x in candidates:
                 singleton = x not in two_way
                 clamp = self._split_sides_needing_clamp(loop, x) or frozenset()
@@ -1347,7 +1347,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 cfb.branches[:] = entries
             loop.init_statement, loop.loop_condition = header
             if branches:
-                forget_all_facts()  # the restored branches hold their interstate assignments again
+                forget_all_facts(loop)  # the restored branches hold their interstate assignments again
 
     @staticmethod
     def _lift_trivial_ifs_virtually(loop: LoopRegion, saved: dict[ConditionalBlock, list]) -> None:
@@ -1382,7 +1382,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                     if lift.dead_branch(entries[index][0], cfb):
                         saved.setdefault(cfb, original)
                         del entries[index]
-                        forget_all_facts()  # the branch may have held interstate assignments
+                        forget_all_facts(loop)  # the branch may have held interstate assignments
                         changed = True
                     else:
                         index += 1
@@ -1390,7 +1390,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 if decided:
                     saved.setdefault(cfb, original)
                     entries[:] = [] if taken is None else [(None, taken)]
-                    forget_all_facts()
+                    forget_all_facts(loop)
                     resolved.add(cfb)
                     changed = True
 

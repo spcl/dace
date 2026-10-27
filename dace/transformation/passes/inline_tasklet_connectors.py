@@ -51,7 +51,7 @@ class InlineTaskletConnectors(ppl.Pass):
         """
         # Planning rewrites nothing, so one resolver and one facts memo serve every tasklet: the facts of a scope are
         # derived once, not once per tasklet in it.
-        with memoize_facts():
+        with memoize_facts(sdfg):
             return self._plan(sdfg, SymbolResolver())
 
     def _plan(

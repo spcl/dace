@@ -372,7 +372,7 @@ class BufferExpansion(ppl.Pass):
         candidates: list[str] = []
         library_operands: set[str] | None = None
         # Nothing changes while the buffers are judged, so every cover test shares the facts of the SDFG.
-        with memoize_facts():
+        with memoize_facts(sdfg):
             for name, desc in sdfg.arrays.items():
                 if names is not None and name not in names:
                     continue

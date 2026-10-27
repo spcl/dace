@@ -239,37 +239,45 @@ def interstate_bound_names(sdfg: "SDFG") -> set[str]:
     return {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
 
 
-#: SDFG -> its ``facts()``, while :func:`memoize_facts` is active; ``None`` otherwise.
-_FACTS_MEMO: dict["SDFG", symbolic.Facts] | None = None
+def root_sdfg(anchor: Any) -> "SDFG":
+    """The outermost SDFG holding ``anchor``, an SDFG or a block of one."""
+    sdfg = anchor if isinstance(anchor, SDFG) else anchor.sdfg
+    while sdfg.parent_sdfg is not None:
+        sdfg = sdfg.parent_sdfg
+    return sdfg
 
 
 @contextlib.contextmanager
-def memoize_facts(active: bool = True) -> Iterator[None]:
-    """Compute ``SDFG.facts()`` once per SDFG inside the block, or, with ``active=False``, suspend an enclosing memo.
+def memoize_facts(anchor: Any, active: bool = True) -> Iterator[None]:
+    """Compute ``SDFG.facts()`` once per SDFG of ``anchor``'s SDFG tree inside the block, or, with ``active=False``,
+    suspend an enclosing memo. The memo lives on the root SDFG.
 
     ``facts()`` walks every interstate edge and data descriptor of the SDFG, so a span probing one graph many times
     pays it once per SDFG. The caller owns invalidation: it drops every SDFG it changes with :func:`forget_facts`,
     and suspends the memo while a change is under way.
     """
-    global _FACTS_MEMO
-    enclosing = _FACTS_MEMO
-    _FACTS_MEMO = {} if active else None
+    root = root_sdfg(anchor)
+    enclosing = root._facts_memo
+    root._facts_memo = {} if active else None
     try:
         yield
     finally:
-        _FACTS_MEMO = enclosing
+        root._facts_memo = enclosing
 
 
 def forget_facts(sdfg: "SDFG") -> None:
     """Drop the memoized facts of ``sdfg``, after a change to its symbols, data descriptors or interstate edges."""
-    if _FACTS_MEMO is not None:
-        _FACTS_MEMO.pop(sdfg, None)
+    memo = root_sdfg(sdfg)._facts_memo
+    if memo is not None:
+        memo.pop(sdfg, None)
 
 
-def forget_all_facts() -> None:
-    """Drop every memoized fact, after a change whose reach over the SDFG tree the caller does not track."""
-    if _FACTS_MEMO is not None:
-        _FACTS_MEMO.clear()
+def forget_all_facts(anchor: Any) -> None:
+    """Drop every memoized fact of ``anchor``'s SDFG tree, after a change whose reach over the tree the caller does
+    not track."""
+    memo = root_sdfg(anchor)._facts_memo
+    if memo is not None:
+        memo.clear()
 
 
 def _replace_dict_keys(d, renames: Mapping) -> None:
@@ -910,6 +918,8 @@ class SDFG(ControlFlowRegion):
         self._expansion_symbols: dict[SDFGState, tuple[int, dict[str, dt.Data]]] | None = None
         #: The ``CanonStats`` recording a ``canonicalize(stats=...)`` run of this root SDFG; ``None`` otherwise
         self._canon_stats = None
+        #: SDFG of this tree -> its ``facts()``, while :func:`memoize_facts` is active on this root; ``None`` otherwise
+        self._facts_memo: dict[SDFG, symbolic.Facts] | None = None
         # Symbols ``add_datadesc`` declared because a shape names them; a scope that binds one later takes it over
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
@@ -956,7 +966,7 @@ class SDFG(ControlFlowRegion):
                 "_symbol_repo",
             ):
                 continue
-            if k in ("_expansion_symbols", "_canon_stats"):
+            if k in ("_expansion_symbols", "_canon_stats", "_facts_memo"):
                 setattr(result, k, None)
                 continue
             setattr(result, k, copy_graph_field(self, k, v, memo))
@@ -1447,11 +1457,12 @@ class SDFG(ControlFlowRegion):
 
         :param assigned: ``interstate_bound_names(self)``, when the caller keeps it up to date; walked otherwise.
         """
-        if _FACTS_MEMO is None:
+        memo = root_sdfg(self)._facts_memo
+        if memo is None:
             return self.derive_facts(assigned)
-        facts = _FACTS_MEMO.get(self)
+        facts = memo.get(self)
         if facts is None:
-            facts = _FACTS_MEMO[self] = self.derive_facts(assigned)
+            facts = memo[self] = self.derive_facts(assigned)
         return facts
 
     def derive_facts(self, assigned: AbstractSet[str] | None = None) -> symbolic.Facts:

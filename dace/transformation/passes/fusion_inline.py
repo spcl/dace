@@ -71,7 +71,7 @@ class FuseStates(ppl.Pass):
         # fusion leaves them as they are: it touches no symbol or descriptor, and it moves the assignments of the
         # fused edge onto the edges into the first block (or a new empty predecessor), so every SDFG assigns the same
         # names.
-        with memoize_facts():
+        with memoize_facts(sdfg):
             fused = fuse_states(sdfg, self.permissive, self.progress, self.aggressive_merges, self.order_array_seeds)
         return fused or None
 
