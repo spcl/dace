@@ -2554,26 +2554,26 @@ theorem lookup_P {conns : List (Name × Name)} (hP : ∀ x ∈ conns, P x.2) {n 
     · exact ih (fun y hy => hP y (List.mem_cons_of_mem _ hy)) h
 
 omit hc in
-theorem enter_cname_ren (hsc : ScopeSim π P ctx₂ ctx₁) (inner : SDFG) (node : NodeId) :
+theorem enter_cname_ren (hsc : ScopeSim π P ctx₂ ctx₁) (inner : SDFG) :
     ∀ (conns : List (Name × Name)) (x : Name),
-      (ctx₂.enter inner node (renConns π conns)).cname x = π ((ctx₁.enter inner node conns).cname x)
+      (ctx₂.enter inner (renConns π conns)).cname x = π ((ctx₁.enter inner conns).cname x)
   | [], x => by simp only [Ctx.enter, renConns, List.map_nil, List.lookup, Option.getD_none, (hsc _).1]
   | (c, l) :: cs, x => by
-    have ih := enter_cname_ren hsc inner node cs x
+    have ih := enter_cname_ren hsc inner cs x
     simp only [Ctx.enter, renConns, List.map_cons, List.lookup] at ih ⊢
     split <;> simp_all
 
 /-- Entering a nested SDFG from contexts related by `π`, with connector
 bindings related by `π` and satisfying `P`: the inner contexts agree on every
 name. -/
-theorem enter_sim (hsc : ScopeSim π P ctx₂ ctx₁) (inner : SDFG) (node : NodeId) (conns : List (Name × Name))
+theorem enter_sim (hsc : ScopeSim π P ctx₂ ctx₁) (inner : SDFG) (conns : List (Name × Name))
     (hP : ∀ x ∈ conns, P x.2) :
-    CtxSim π P (ctx₂.enter inner node (renConns π conns)) (ctx₁.enter inner node conns) ∧
-      (∀ x, Ctx.Strong π P (ctx₂.enter inner node (renConns π conns)) (ctx₁.enter inner node conns) x) ∧
-      ScopeSim π P (ctx₂.enter inner node (renConns π conns)) (ctx₁.enter inner node conns) := by
-  have hcn : ∀ x, (ctx₂.enter inner node (renConns π conns)).cname x = π ((ctx₁.enter inner node conns).cname x) :=
-    fun x => enter_cname_ren hsc inner node conns x
-  have hPc : ∀ x, P ((ctx₁.enter inner node conns).cname x) := by
+    CtxSim π P (ctx₂.enter inner (renConns π conns)) (ctx₁.enter inner conns) ∧
+      (∀ x, Ctx.Strong π P (ctx₂.enter inner (renConns π conns)) (ctx₁.enter inner conns) x) ∧
+      ScopeSim π P (ctx₂.enter inner (renConns π conns)) (ctx₁.enter inner conns) := by
+  have hcn : ∀ x, (ctx₂.enter inner (renConns π conns)).cname x = π ((ctx₁.enter inner conns).cname x) :=
+    fun x => enter_cname_ren hsc inner conns x
+  have hPc : ∀ x, P ((ctx₁.enter inner conns).cname x) := by
     intro x
     simp only [Ctx.enter]
     cases h : conns.lookup x with
@@ -2691,12 +2691,12 @@ theorem nestedSetup_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNod
   | err e => exact ResSim.err e
   | ok conns =>
     simp only [Res.map, Res.ok_bind]
-    obtain ⟨hcI, hall, hscI⟩ := enter_sim hc (hS.scope ⟨n, hn, inner, mapping, ni, hk⟩) inner n.id conns
+    obtain ⟨hcI, hall, hscI⟩ := enter_sim hc (hS.scope ⟨n, hn, inner, mapping, ni, hk⟩) inner conns
       (nestedBindings_P hS n hb)
     refine ResSim.bindEq (nestedValuation_sim hc ρ hS hn hk h.mem) fun ρ' => ?_
     have hs : St.Sim π P L
-        { st₂ with mem := st₂.mem.allocAll (inner.callTransients.map (ctx₂.enter inner n.id (renConns π conns)).cname) }
-        { st₁ with mem := st₁.mem.allocAll (inner.callTransients.map (ctx₁.enter inner n.id conns).cname) } :=
+        { st₂ with mem := st₂.mem.allocAll (inner.callTransients.map (ctx₂.enter inner (renConns π conns)).cname) }
+        { st₁ with mem := st₁.mem.allocAll (inner.callTransients.map (ctx₁.enter inner conns).cname) } :=
       h.withMem (h.mem.allocAll_congr fun x => by
         rw [List.map_map, List.map_congr_left fun t _ => (hall t).cname]; rfl)
     refine ResSim.bind (bindCodeInputs_sim hcI hall ρ' s n hs) fun x y hxy => ?_
@@ -2954,8 +2954,8 @@ theorem nestedSetup_I {ctx ctx' : Ctx} {ρ ρ' : Valuation} {s : State} {n : DNo
     | ok ρ₀ =>
       rw [hv] at h
       simp only [Res.ok_bind] at h
-      cases hc : bindCodeInputs (ctx.enter inner n.id conns) ρ₀ s n
-          { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner n.id conns).cname) } with
+      cases hc : bindCodeInputs (ctx.enter inner conns) ρ₀ s n
+          { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner conns).cname) } with
       | err e => rw [hc] at h; cases h
       | ok x =>
         rw [hc] at h

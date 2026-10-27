@@ -25,7 +25,7 @@ and interface, so that rule applications chain (`Equiv.trans_of_eq`).
 
 * `relabel p i pairs` (`Congr.relabelState`): renumber the nodes of the
   state at path `p`, index `i` by the permutation `permOfPairs pairs`
-  (side condition: nested SDFG nodes keep their ids).
+  (no side condition).
 
 The permutation is built from the id pairs by swaps (`permOfPairs`); its
 correctness is never assumed: the replayed SDFG is compared with the target.
@@ -49,16 +49,6 @@ def permOfPairs : List (NodeId × NodeId) → Equiv.Perm NodeId
   | [] => 1
   | (a, b) :: rest => Equiv.swap (permOfPairs rest a) b * permOfPairs rest
 
-/-- Do the nested SDFG nodes of `s` keep their ids under `φ`? -/
-def State.fixesNested? (φ : Equiv.Perm NodeId) (s : State) : Bool :=
-  s.nodes.all fun n => !n.isNested || φ n.id == n.id
-
-theorem State.fixesNested?_sound {φ : Equiv.Perm NodeId} {s : State} (h : s.fixesNested? φ = true) :
-    s.FixesNested φ := by
-  intro n hn hnest
-  have := List.all_eq_true.1 h n hn
-  simpa [hnest] using this
-
 /-- One rule application. -/
 inductive Step where
   /-- Relabel the nodes of the state at path `path`, index `idx`. -/
@@ -69,9 +59,7 @@ inductive Step where
 def Step.apply? (g : SDFG) : Step → Option SDFG
   | .relabel p i pairs =>
     match g.top.blockAt? p i with
-    | some (.state s) =>
-      if s.fixesNested? (permOfPairs pairs) then some (g.setBlockAt p i (.state (s.relabel (permOfPairs pairs))))
-      else none
+    | some (.state s) => some (g.setBlockAt p i (.state (s.relabel (permOfPairs pairs))))
     | _ => none
 
 /-- What every rule guarantees: an equivalent SDFG with the same facts and
@@ -99,12 +87,8 @@ theorem Step.apply?_sound {g g' : SDFG} {st : Step} (h : st.apply? g = some g') 
     simp only [Step.apply?] at h
     split at h
     · rename_i s hat
-      split at h
-      · rename_i hfix
-        cases h
-        have hfix := State.fixesNested?_sound hfix
-        exact ⟨Congr.relabelState hat hfix hs, rfl, rfl⟩
-      · cases h
+      cases h
+      exact ⟨Congr.relabelState hat hs, rfl, rfl⟩
     · cases h
 
 /-- Apply a list of rules in order. -/

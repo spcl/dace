@@ -8,7 +8,7 @@ import Dace.Equiv.Congr
 The first rule of the SDFG–SDFG checker (`Dace.Equiv.SdfgCorr`): replacing a
 state of an SDFG, at any depth of the control-flow hierarchy, by the same
 state with its nodes renumbered (`State.relabel φ` for a permutation `φ` of
-node ids that fixes the nested SDFG nodes) gives an equivalent SDFG.
+node ids) gives an equivalent SDFG.
 
 The state-level argument is `StateExec.relabel` / `StateExec.of_relabel`
 (`Dace.SDFG.Relabel`): runs correspond with equal outcomes, except that a
@@ -36,20 +36,19 @@ theorem Res.Below.of_resSim {r₂ r : Res (Ctl × CSt)} (h : ResSim Eq r₂ r) :
   · exact .inr (CtlRel.refl _)
 
 /-- **Relabeling rule**: renumbering the nodes of the state at path `p`,
-index `i` by a permutation that fixes its nested SDFG nodes gives an
-equivalent SDFG. -/
+index `i` by any permutation gives an equivalent SDFG. -/
 theorem Congr.relabelState {g : SDFG} {p : List PathStep} {i : BlockId} {s : State}
-    (hat : g.top.blockAt? p i = some (.state s)) (hfix : s.FixesNested φ) (hsup : Supported g.prog) :
+    (hat : g.top.blockAt? p i = some (.state s)) (hsup : Supported g.prog) :
     Equiv (g.setBlockAt p i (.state (s.relabel φ))).prog g.prog := by
   refine Congr.blockEquiv hat (sameTransientMentions?_relabel g s) (fun I _ cst r' h => ?_)
     (fun I _ cst r h => ?_) hsup
   · cases h with
     | state h =>
-      obtain ⟨r, hr, hs⟩ := StateExec.of_relabel hfix h
+      obtain ⟨r, hr, hs⟩ := StateExec.of_relabel h
       exact ⟨r, .state hr, Res.Below.of_resSim hs⟩
   · cases h with
     | state h =>
-      obtain ⟨r₂, hr, hs⟩ := StateExec.relabel hfix h
+      obtain ⟨r₂, hr, hs⟩ := StateExec.relabel h
       exact ⟨r₂, .state hr, Res.Below.of_resSim hs⟩
 
 end Dace

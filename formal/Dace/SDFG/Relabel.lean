@@ -25,9 +25,9 @@ transformation adds or removes one (node ids are positions in the node list).
 * The race witness of a happens-before race names the two nodes; races are
   undefined behavior, so the outcomes are related by `ResSim`, which lets a
   run end in any undefined behavior the other run has.
-* The memory names of a nested SDFG's containers contain the id of its node
-  (`Ctx.enter`): v1 requires `φ` to fix the ids of nested SDFG nodes
-  (`State.FixesNested`).
+* Memory names never contain node ids: a nested SDFG's per-call containers
+  live under `inner.name/` (`Ctx.enter`), so nested SDFG nodes may be
+  renumbered like any other node.
 
 ## Main results
 
@@ -35,7 +35,7 @@ transformation adds or removes one (node ids are positions in the node list).
   `IterExec.relabel`, `ConsumeTasks.relabel`, `CompsExec.relabel`,
   `StateExec.relabel`: a run of the state is matched by a run of the relabeled
   state with relabeled arguments and the relabeled (or an undefined) outcome.
-* `StateExec.relabel_iff`-style use in both directions through `φ.symm`
+* `StateExec.of_relabel`: the converse, through `φ.symm`
   (`State.relabel_symm`).
 -/
 
@@ -1442,18 +1442,18 @@ theorem bindCodeInputs_relabel (ctx' : Ctx) (ρ' : Valuation) (s : State) (n : D
 abbrev relabelNested (φ : Equiv.Perm NodeId) : Ctx × Valuation × St × List Name → Ctx × Valuation × St × List Name :=
   Prod.map id (Prod.map id (Prod.map (St.relabel φ) id))
 
-theorem nestedSetup_relabel (s : State) (n : DNode) (hn : φ n.id = n.id) (inner : SDFG) (mapping : List (Sym × Expr))
+theorem nestedSetup_relabel (s : State) (n : DNode) (inner : SDFG) (mapping : List (Sym × Expr))
     (st : St) :
     nestedSetup ctx ρ (s.relabel φ) (n.relabel φ) inner mapping (st.relabel φ) =
       (nestedSetup ctx ρ s n inner mapping st).map (relabelNested φ) := by
   unfold nestedSetup
-  rw [nestedBindings_relabel, DNode.relabel_id, hn]
+  rw [nestedBindings_relabel]
   refine Res.bind_shift' _ fun _ => ?_
   refine Res.bind_shift' _ fun conns => ?_
   simp only [St.relabel_mem]
   refine Res.bind_shift' _ fun ρ' => ?_
-  have : ({ st.relabel φ with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner n.id conns).cname) } : St) =
-      St.relabel φ { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner n.id conns).cname) } := rfl
+  have : ({ st.relabel φ with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner conns).cname) } : St) =
+      St.relabel φ { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner conns).cname) } := rfl
   rw [this, bindCodeInputs_relabel]
   exact Res.bind_shift _ fun ⟨st', codes⟩ => rfl
 
@@ -1478,10 +1478,6 @@ end Leaf
 
 /-! ## Execution relations -/
 
-/-- `φ` fixes the ids of the nested SDFG nodes of `s` (their memory-name
-prefixes, `Ctx.enter`). -/
-def State.FixesNested (φ : Equiv.Perm NodeId) (s : State) : Prop := ∀ n ∈ s.nodes, n.isNested = true → φ n.id = n.id
-
 theorem ResSim.of_map {α : Type} (g : α → α) (r : Res α) : ResSim (fun a₂ a => a₂ = g a) (r.map g) r := by
   cases r with
   | ok a => exact ResSim.ok rfl
@@ -1505,7 +1501,7 @@ abbrev relabelSeq (φ : Equiv.Perm NodeId) (x : St × List (NodeId × Log)) : St
 
 mutual
 
-theorem NodeExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) {n : DNode} (hn : n ∈ s.nodes)
+theorem NodeExec.relabel {ρ : Valuation} {s : State} {n : DNode}
     {st : St} {r : Res St} :
     NodeExec ctx ρ s n st r →
       ∃ r₂, NodeExec ctx ρ (s.relabel φ) (n.relabel φ) (st.relabel φ) r₂ ∧ ResSim (fun a₂ a => a₂ = a.relabel φ) r₂ r
@@ -1514,14 +1510,14 @@ theorem NodeExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) 
   | .mapSetupErr hk he => ⟨_, .mapSetupErr (by rw [DNode.relabel_kind]; exact hk)
       (by rw [mapSetup_relabel, he]; rfl), ResSim.err _⟩
   | .mapIterErr (st₁ := st₁) hk hs hi => by
-    obtain ⟨r₂, hi₂, hr⟩ := IterExec.relabel hfix hi
+    obtain ⟨r₂, hi₂, hr⟩ := IterExec.relabel hi
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     refine ⟨_, .mapIterErr (st₁ := st₁.relabel φ) (by rw [DNode.relabel_kind]; exact hk)
       (by rw [mapSetup_relabel, hs]; rfl) ?_, ResSim.of_err hu⟩
     rw [DNode.relabel_id, Ctx.privateTransients_relabel]
     exact hi₂
   | .mapScope (st₁ := st₁) (logs := logs) (mp := mp) (ρ' := ρ') (pts := pts) hk hs hi => by
-    obtain ⟨r₂, hi₂, hr⟩ := IterExec.relabel hfix hi
+    obtain ⟨r₂, hi₂, hr⟩ := IterExec.relabel hi
     have hk' : (n.relabel φ).kind = .mapEntry mp := by rw [DNode.relabel_kind]; exact hk
     have hs' : mapSetup ctx ρ (s.relabel φ) (n.relabel φ) mp (st.relabel φ) = .ok (ρ', st₁.relabel φ, pts) := by
       rw [mapSetup_relabel, hs]; rfl
@@ -1534,14 +1530,14 @@ theorem NodeExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) 
   | .consumeSetupErr hk he => ⟨_, .consumeSetupErr (by rw [DNode.relabel_kind]; exact hk)
       (by rw [consumeSetup_relabel, he]; rfl), ResSim.err _⟩
   | .consumeTasksErr (st₁ := st₁) hk hs ht => by
-    obtain ⟨r₂, ht₂, hr⟩ := ConsumeTasks.relabel hfix ht
+    obtain ⟨r₂, ht₂, hr⟩ := ConsumeTasks.relabel ht
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     refine ⟨_, .consumeTasksErr (st₁ := st₁.relabel φ) (by rw [DNode.relabel_kind]; exact hk)
       (by rw [consumeSetup_relabel, hs]; rfl) ?_, ResSim.of_err hu⟩
     rw [DNode.relabel_id, Ctx.privateTransients_relabel]
     exact ht₂
   | .consumeScope (st₁ := st₁) (c := c) (ρ' := ρ') (l := l) (np := np) hk hs ht => by
-    obtain ⟨r₂, ht₂, hr⟩ := ConsumeTasks.relabel hfix ht
+    obtain ⟨r₂, ht₂, hr⟩ := ConsumeTasks.relabel ht
     have hk' : (n.relabel φ).kind = .consumeEntry c := by rw [DNode.relabel_kind]; exact hk
     have hs' : consumeSetup ctx ρ (s.relabel φ) (n.relabel φ) c (st.relabel φ) = .ok (ρ', st₁.relabel φ, l, np) := by
       rw [consumeSetup_relabel, hs]; rfl
@@ -1552,21 +1548,18 @@ theorem NodeExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) 
       rw [consumeFinish_relabel]
       exact ResSim.of_map _ _
   | .nestedSetupErr hk he => by
-    have hfx := hfix n hn (by simp [DNode.isNested, hk])
     exact ⟨_, .nestedSetupErr (by rw [DNode.relabel_kind]; exact hk)
-      (by rw [nestedSetup_relabel _ _ _ _ hfx, he]; rfl), ResSim.err _⟩
+      (by rw [nestedSetup_relabel, he]; rfl), ResSim.err _⟩
   | .nestedInnerErr (st₁ := st₁) hk hs hr => by
-    have hfx := hfix n hn (by simp [DNode.isNested, hk])
     exact ⟨_, .nestedInnerErr (st₁ := st₁.relabel φ) (by rw [DNode.relabel_kind]; exact hk)
-      (by rw [nestedSetup_relabel _ _ _ _ hfx, hs]; rfl) hr, ResSim.err _⟩
+      (by rw [nestedSetup_relabel, hs]; rfl) hr, ResSim.err _⟩
   | .nested (st₁ := st₁) hk hs hr => by
-    have hfx := hfix n hn (by simp [DNode.isNested, hk])
     refine ⟨_, .nested (st₁ := st₁.relabel φ) (by rw [DNode.relabel_kind]; exact hk)
-      (by rw [nestedSetup_relabel _ _ _ _ hfx, hs]; rfl) hr, ?_⟩
+      (by rw [nestedSetup_relabel, hs]; rfl) hr, ?_⟩
     rw [nestedFinish_relabel]
     exact ResSim.of_map _ _
 
-theorem SeqExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) {ids : List NodeId} {st : St}
+theorem SeqExec.relabel {ρ : Valuation} {s : State} {ids : List NodeId} {st : St}
     {r : Res (St × List (NodeId × Log))} :
     SeqExec ctx ρ s ids st r →
       ∃ r₂, SeqExec ctx ρ (s.relabel φ) (ids.map φ) (st.relabel φ) r₂ ∧
@@ -1574,28 +1567,28 @@ theorem SeqExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) {
   | .nil => ⟨_, .nil, ResSim.ok rfl⟩
   | .missing hm => ⟨_, .missing (by rw [State.node?_relabel, hm]; rfl), ResSim.err _⟩
   | .headErr hn hx => by
-    obtain ⟨r₂, hx₂, hr⟩ := NodeExec.relabel hfix (State.node?_mem hn) hx
+    obtain ⟨r₂, hx₂, hr⟩ := NodeExec.relabel hx
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     exact ⟨_, .headErr (by rw [State.node?_relabel, hn]; rfl) hx₂, ResSim.of_err hu⟩
   | .tailErr (id := id) (n := n) hn hx hrest => by
-    obtain ⟨r₂, hx₂, hr⟩ := NodeExec.relabel hfix (State.node?_mem hn) hx
+    obtain ⟨r₂, hx₂, hr⟩ := NodeExec.relabel hx
     have hn' : (s.relabel φ).node? (φ id) = some (n.relabel φ) := by rw [State.node?_relabel, hn]; rfl
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, rfl⟩
     · exact ⟨_, .headErr hn' hx₂, ResSim.ub hu _⟩
-    · obtain ⟨r₃, hrest₂, hr₃⟩ := SeqExec.relabel hfix hrest
+    · obtain ⟨r₃, hrest₂, hr₃⟩ := SeqExec.relabel hrest
       obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
       exact ⟨_, .tailErr hn' hx₂ hrest₂, ResSim.of_err hu⟩
   | .cons (id := id) (n := n) hn hx hrest => by
-    obtain ⟨r₂, hx₂, hr⟩ := NodeExec.relabel hfix (State.node?_mem hn) hx
+    obtain ⟨r₂, hx₂, hr⟩ := NodeExec.relabel hx
     have hn' : (s.relabel φ).node? (φ id) = some (n.relabel φ) := by rw [State.node?_relabel, hn]; rfl
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, rfl⟩
     · exact ⟨_, .headErr hn' hx₂, ResSim.ub hu _⟩
-    · obtain ⟨r₃, hrest₂, hr₃⟩ := SeqExec.relabel hfix hrest
+    · obtain ⟨r₃, hrest₂, hr₃⟩ := SeqExec.relabel hrest
       rcases ResSim.ok_cases hr₃ with ⟨e, rfl, hu⟩ | ⟨b₂, rfl, rfl⟩
       · exact ⟨_, .tailErr hn' hx₂ hrest₂, ResSim.ub hu _⟩
       · exact ⟨_, .cons hn' hx₂ hrest₂, ResSim.ok rfl⟩
 
-theorem OrderedExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) {all direct : List NodeId}
+theorem OrderedExec.relabel {ρ : Valuation} {s : State} {all direct : List NodeId}
     {st : St} {r : Res St} :
     OrderedExec ctx ρ s all direct st r →
       ∃ r₂, OrderedExec ctx ρ (s.relabel φ) (all.map φ) (direct.map φ) (st.relabel φ) r₂ ∧
@@ -1603,7 +1596,7 @@ theorem OrderedExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested �
   | .prologueErr hp => ⟨_, .prologueErr (by rw [State.viewOrder_relabel, bindViews_relabel, hp]; rfl),
       ResSim.err _⟩
   | .seqErr (order := order) (st₁ := st₁) ho hp hs => by
-    obtain ⟨r₂, hs₂, hr⟩ := SeqExec.relabel hfix hs
+    obtain ⟨r₂, hs₂, hr⟩ := SeqExec.relabel hs
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     refine ⟨_, .seqErr (order := order.map φ) (st₁ := st₁.relabel φ)
       (by rw [State.isTopologicalOrder_relabel]; exact ho)
@@ -1611,7 +1604,7 @@ theorem OrderedExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested �
     rw [List.filter_contains_map_perm]
     exact hs₂
   | .hbRace (order := order) (st₁ := st₁) ho hp hs hf => by
-    obtain ⟨r₂, hs₂, hr⟩ := SeqExec.relabel hfix hs
+    obtain ⟨r₂, hs₂, hr⟩ := SeqExec.relabel hs
     have ho' := (State.isTopologicalOrder_relabel (φ := φ) s _ order).trans ho
     have hp' : bindViews ctx ρ (s.relabel φ) ((s.relabel φ).viewOrder ctx (direct.map φ)) (st.relabel φ) =
         .ok (st₁.relabel φ) := by rw [State.viewOrder_relabel, bindViews_relabel, hp]; rfl
@@ -1620,7 +1613,7 @@ theorem OrderedExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested �
     · exact ⟨_, .seqErr ho' hp' hs₂, ResSim.ub hu _⟩
     · exact ⟨_, .hbRace ho' hp' hs₂ (by rw [State.hbFree_relabel]; exact hf), ResSim.ub rfl _⟩
   | .run (order := order) (st₁ := st₁) ho hp hs hf => by
-    obtain ⟨r₂, hs₂, hr⟩ := SeqExec.relabel hfix hs
+    obtain ⟨r₂, hs₂, hr⟩ := SeqExec.relabel hs
     have ho' := (State.isTopologicalOrder_relabel (φ := φ) s _ order).trans ho
     have hp' : bindViews ctx ρ (s.relabel φ) ((s.relabel φ).viewOrder ctx (direct.map φ)) (st.relabel φ) =
         .ok (st₁.relabel φ) := by rw [State.viewOrder_relabel, bindViews_relabel, hp]; rfl
@@ -1629,83 +1622,83 @@ theorem OrderedExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested �
     · exact ⟨_, .seqErr ho' hp' hs₂, ResSim.ub hu _⟩
     · exact ⟨_, .run ho' hp' hs₂ (by rw [State.hbFree_relabel]; exact hf), ResSim.ok rfl⟩
 
-theorem IterExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) {entry : NodeId} {params : List Sym}
+theorem IterExec.relabel {ρ : Valuation} {s : State} {entry : NodeId} {params : List Sym}
     {priv : List Name} {pre : St} {pts : List Idx} {r : Res (List Log)} :
     IterExec ctx ρ s entry params priv pre pts r →
       ∃ r₂, IterExec ctx ρ (s.relabel φ) (φ entry) params priv (pre.relabel φ) pts r₂ ∧ ResSim Eq r₂ r
   | .nil => ⟨_, .nil, ResSim.ok rfl⟩
   | .headErr hb => by
-    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hfix hb
+    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hb
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     refine ⟨_, .headErr ?_, ResSim.of_err hu⟩
     rw [State.scopeNodes_relabel, State.directChildren_some_relabel, iterStart_relabel]
     exact hb₂
   | .tailErr hrest => by
-    obtain ⟨r₃, hr₂, hr₃⟩ := IterExec.relabel hfix hrest
+    obtain ⟨r₃, hr₂, hr₃⟩ := IterExec.relabel hrest
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
     exact ⟨_, .tailErr hr₂, ResSim.of_err hu⟩
   | .cons hb hrest => by
-    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hfix hb
+    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hb
     rw [← State.scopeNodes_relabel, ← State.directChildren_some_relabel, ← iterStart_relabel] at hb₂
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, rfl⟩
     · exact ⟨_, .headErr hb₂, ResSim.ub hu _⟩
-    · obtain ⟨r₃, hr₂, hr₃⟩ := IterExec.relabel hfix hrest
+    · obtain ⟨r₃, hr₂, hr₃⟩ := IterExec.relabel hrest
       rcases ResSim.ok_cases hr₃ with ⟨e, rfl, hu⟩ | ⟨b₂, rfl, rfl⟩
       · exact ⟨_, .tailErr hr₂, ResSim.ub hu _⟩
       · exact ⟨_, .cons hb₂ hr₂, ResSim.ok rfl⟩
 
-theorem ConsumeTasks.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) {entry : NodeId} {c : ConsumeNode}
+theorem ConsumeTasks.relabel {ρ : Valuation} {s : State} {entry : NodeId} {c : ConsumeNode}
     {l : Loc} {np : Int} {priv : List Name} {pre : St} {q : List Val} {r : Res (List Log × List Val × List Val)} :
     ConsumeTasks ctx ρ s entry c l np priv pre q r →
       ∃ r₂, ConsumeTasks ctx ρ (s.relabel φ) (φ entry) c l np priv (pre.relabel φ) q r₂ ∧ ResSim Eq r₂ r
   | .condErr hc => ⟨_, .condErr hc, ResSim.err _⟩
   | .stop hc => ⟨_, .stop hc, ResSim.ok rfl⟩
   | .bodyErr hc hq hp hb => by
-    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hfix hb
+    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hb
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     refine ⟨_, .bodyErr hc hq hp ?_, ResSim.of_err hu⟩
     rw [State.scopeNodes_relabel, State.directChildren_some_relabel, taskStart_relabel]
     exact hb₂
   | .restErr hc hq hp hb hrest => by
-    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hfix hb
+    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hb
     rw [← State.scopeNodes_relabel, ← State.directChildren_some_relabel, ← taskStart_relabel] at hb₂
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, rfl⟩
     · exact ⟨_, .bodyErr hc hq hp hb₂, ResSim.ub hu _⟩
-    · obtain ⟨r₃, hr₂, hr₃⟩ := ConsumeTasks.relabel hfix hrest
+    · obtain ⟨r₃, hr₂, hr₃⟩ := ConsumeTasks.relabel hrest
       obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
       exact ⟨_, .restErr hc hq hp hb₂ hr₂, ResSim.of_err hu⟩
   | .step hc hq hp hb hrest => by
-    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hfix hb
+    obtain ⟨r₂, hb₂, hr⟩ := OrderedExec.relabel hb
     rw [← State.scopeNodes_relabel, ← State.directChildren_some_relabel, ← taskStart_relabel] at hb₂
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, rfl⟩
     · exact ⟨_, .bodyErr hc hq hp hb₂, ResSim.ub hu _⟩
-    · obtain ⟨r₃, hr₂, hr₃⟩ := ConsumeTasks.relabel hfix hrest
+    · obtain ⟨r₃, hr₂, hr₃⟩ := ConsumeTasks.relabel hrest
       rcases ResSim.ok_cases hr₃ with ⟨e, rfl, hu⟩ | ⟨b₂, rfl, rfl⟩
       · exact ⟨_, .restErr hc hq hp hb₂ hr₂, ResSim.ub hu _⟩
       · exact ⟨_, .step hc hq hp hb₂ hr₂, ResSim.ok rfl⟩
 
 end
 
-theorem CompsExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ) {m : Mem} :
+theorem CompsExec.relabel {ρ : Valuation} {s : State} {m : Mem} :
     ∀ {comps : List (List NodeId)} {r : Res (List Log)}, CompsExec ctx ρ s m comps r →
       ∃ r₂, CompsExec ctx ρ (s.relabel φ) m (comps.map (List.map φ)) r₂ ∧ ResSim Eq r₂ r
   | _, _, .nil => ⟨_, .nil, ResSim.ok rfl⟩
   | _, _, .headErr hc => by
-    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.relabel hfix hc
+    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.relabel hc
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     refine ⟨_, .headErr ?_, ResSim.of_err hu⟩
     rw [State.topLevelOf_relabel]
     exact hc₂
   | _, _, .tailErr hrest => by
-    obtain ⟨r₃, hr₂, hr₃⟩ := CompsExec.relabel hfix hrest
+    obtain ⟨r₃, hr₂, hr₃⟩ := CompsExec.relabel hrest
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr₃
     exact ⟨_, .tailErr hr₂, ResSim.of_err hu⟩
   | _, _, .cons hc hrest => by
-    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.relabel hfix hc
+    obtain ⟨r₂, hc₂, hr⟩ := OrderedExec.relabel hc
     rw [← State.topLevelOf_relabel] at hc₂
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨a₂, rfl, rfl⟩
     · exact ⟨_, .headErr hc₂, ResSim.ub hu _⟩
-    · obtain ⟨r₃, hr₂, hr₃⟩ := CompsExec.relabel hfix hrest
+    · obtain ⟨r₃, hr₂, hr₃⟩ := CompsExec.relabel hrest
       rcases ResSim.ok_cases hr₃ with ⟨e, rfl, hu⟩ | ⟨b₂, rfl, rfl⟩
       · exact ⟨_, .tailErr hr₂, ResSim.ub hu _⟩
       · exact ⟨_, .cons hc₂ hr₂, ResSim.ok rfl⟩
@@ -1714,35 +1707,27 @@ theorem CompsExec.relabel {ρ : Valuation} {s : State} (hfix : s.FixesNested φ)
 run of `s.relabel φ` from the same control state with the same outcome, or the
 relabeled run is undefined behavior (a race whose witness names the
 relabeled nodes). -/
-theorem StateExec.relabel {cst : CSt} {s : State} (hfix : s.FixesNested φ) {r : Res (Ctl × CSt)}
+theorem StateExec.relabel {cst : CSt} {s : State} {r : Res (Ctl × CSt)}
     (h : StateExec ctx cst s r) : ∃ r₂, StateExec ctx cst (s.relabel φ) r₂ ∧ ResSim Eq r₂ r := by
   cases h with
   | compsErr hc =>
-    obtain ⟨r₂, hc₂, hr⟩ := CompsExec.relabel hfix hc
+    obtain ⟨r₂, hc₂, hr⟩ := CompsExec.relabel hc
     obtain ⟨e', rfl, hu⟩ := ResSim.err_inv hr
     refine ⟨_, .compsErr ?_, ResSim.of_err hu⟩
     rw [State.components_relabel, Ctx.stateTransients_relabel]
     exact hc₂
   | run hc =>
-    obtain ⟨r₂, hc₂, hr⟩ := CompsExec.relabel hfix hc
+    obtain ⟨r₂, hc₂, hr⟩ := CompsExec.relabel hc
     rw [← Ctx.stateTransients_relabel (φ := φ), ← State.components_relabel] at hc₂
     rcases ResSim.ok_cases hr with ⟨e, rfl, hu⟩ | ⟨logs, rfl, rfl⟩
     · exact ⟨_, .compsErr hc₂, ResSim.ub hu _⟩
     · exact ⟨_, .run hc₂, ResSim.of_eq fun _ => rfl⟩
 
-theorem State.FixesNested.relabel {s : State} (h : s.FixesNested φ) : (s.relabel φ).FixesNested φ.symm := by
-  intro n hn hnest
-  simp only [State.relabel_nodes, List.mem_map] at hn
-  obtain ⟨n₀, hn₀, rfl⟩ := hn
-  have := h n₀ hn₀ hnest
-  simp only [DNode.relabel_id, this]
-  exact φ.symm_apply_eq.2 this.symm
-
 /-- The converse direction: every run of the relabeled state is matched by a
 run of `s`. -/
-theorem StateExec.of_relabel {cst : CSt} {s : State} (hfix : s.FixesNested φ) {r : Res (Ctl × CSt)}
+theorem StateExec.of_relabel {cst : CSt} {s : State} {r : Res (Ctl × CSt)}
     (h : StateExec ctx cst (s.relabel φ) r) : ∃ r₂, StateExec ctx cst s r₂ ∧ ResSim Eq r₂ r := by
-  have := StateExec.relabel (φ := φ.symm) hfix.relabel h
+  have := StateExec.relabel (φ := φ.symm) h
   rwa [State.relabel_symm] at this
 
 end Relations

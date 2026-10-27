@@ -187,8 +187,8 @@ theorem nameOkD_sound {π : Equiv.Perm Name} {c₂ c₁ : Ctx} {x : Name} (h : n
 context and the tree's (`InnerNames`); the inner states contain no nested
 SDFGs. -/
 def innerNames? (ctx : Ctx) (tc : TCtx) (inner : SDFG) (node : NodeId) (conns : List (Name × Name)) : Bool :=
-  Region.namesOk? (nameOkD 1 (ctx.enter inner node conns) (tc.innerCtx inner))
-    (nameOkE 1 (ctx.enter inner node conns) (tc.innerCtx inner)) false inner.top
+  Region.namesOk? (nameOkD 1 (ctx.enter inner conns) (tc.innerCtx inner))
+    (nameOkE 1 (ctx.enter inner conns) (tc.innerCtx inner)) false inner.top
 
 theorem innerNames?_sound {ctx : Ctx} {tc : TCtx} {inner : SDFG} {node : NodeId} {conns : List (Name × Name)}
     (h : innerNames? ctx tc inner node conns = true) : InnerNames ctx tc inner node conns := by
@@ -242,7 +242,7 @@ def nestedChild (ctx : Ctx) (tc : TCtx) (nest : Equiv.Perm Name → SDFG → Lis
                 nestedMapOk? ctx inner mapping = true ∧ (nestedConns nd).all (fun c => (nestedEndpoint s nd c).isData) = true ∧
                 s.dataOuts? nd = true ∧
                 sameMembers? (tc.privateTransients body)
-                  (ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner nd.id conns).cname) = true ∧
+                  (ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner conns).cname) = true ∧
                 innerNames? ctx (tc.renT (connPerm conns)) inner nd.id conns = true ∧
                 nest (connPerm conns) inner body = true ∧
                 s.isTopologicalOrder (s.scopeNodes n.id) full = true
@@ -1652,7 +1652,7 @@ and the SDFG's. -/
 def nestedPairs (g : SDFG) : List (Name × Name) :=
   g.top.allStates.flatMap fun s => s.nodes.flatMap fun n =>
     match n.kind with
-    | .nested inner _ _ => inner.callTransients.map fun t => (t, inner.name ++ "#" ++ toString n.id ++ "/" ++ t)
+    | .nested inner _ _ => inner.callTransients.map fun t => (t, inner.name ++ "/" ++ t)
     | _ => []
 
 /-- The renaming between `g` and its flattened tree. -/

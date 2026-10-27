@@ -216,7 +216,7 @@ structure Ctx where
   at top level, `Ctx.enter`). -/
   cname : Name → Name := id
   /-- Memory name of a name private to the current invocation: the inner
-  containers of a nested SDFG live under `scope (inner.name#node/ ++ n)`
+  containers of a nested SDFG live under `scope (inner.name/ ++ n)`
   (the identity at top level). -/
   scope : Name → Name := id
 
@@ -224,12 +224,17 @@ namespace Ctx
 
 def desc? (ctx : Ctx) (n : Name) : Option DataDesc := ctx.g.array? n
 
-/-- Context of a nested SDFG invoked by node `node` (`Decisions.md#D34`):
-a connector bound in `conns` names the memory of the outer container on its
-edge, every other inner container lives under the call prefix
-`inner.name#node/`. -/
-def enter (ctx : Ctx) (inner : SDFG) (node : NodeId) (conns : List (Name × Name)) : Ctx :=
-  let sc := fun n => ctx.scope (inner.name ++ "#" ++ toString node ++ "/" ++ n)
+/-- Context of a nested SDFG (`Decisions.md#D34`): a connector bound in
+`conns` names the memory of the outer container on its edge, every other
+inner container lives under the call prefix `inner.name/`.  The prefix does
+not name the node: an inner container that is not a connector is a per-call
+transient (canonical form, `nestedCheck`), allocated when the call starts,
+private to it (dropped from its log) and freed when it returns
+(`nestedFinish`), so calls of different nodes of the same nested SDFG never
+see each other's per-call names (`Decisions.md#D68`).  Renumbering, reordering
+or moving nodes therefore never changes a memory name. -/
+def enter (ctx : Ctx) (inner : SDFG) (conns : List (Name × Name)) : Ctx :=
+  let sc := fun n => ctx.scope (inner.name ++ "/" ++ n)
   { ctx with g := inner, cname := fun n => (conns.lookup n).getD (sc n), scope := sc }
 
 def isView (ctx : Ctx) (n : Name) : Bool := (ctx.desc? n).any (·.isView)

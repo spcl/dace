@@ -617,8 +617,8 @@ theorem nestedSetup_shift (s : State) (n : DNode) (inner : SDFG) (mapping : List
   refine Res.bind_shift' _ fun conns => ?_
   simp only [St.shift_mem]
   refine Res.bind_shift' _ fun ρ' => ?_
-  have : ({ st.shift L with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner n.id conns).cname) } : St) =
-      St.shift L { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner n.id conns).cname) } := rfl
+  have : ({ st.shift L with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner conns).cname) } : St) =
+      St.shift L { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner conns).cname) } := rfl
   rw [this, bindCodeInputs_shift]
   exact Res.bind_shift _ fun ⟨st', codes⟩ => rfl
 

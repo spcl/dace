@@ -463,9 +463,9 @@ theorem nestedSetup_eq {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {inn
     (hb : nestedBindings ctx s n = .ok conns)
     (hcode : ∀ c ∈ nestedConns n, (nestedEndpoint s n c).isData = true) :
     nestedSetup ctx ρ s n inner mapping st = (nestedValuation ctx ρ st.mem mapping).bind fun ρ' =>
-      .ok (ctx.enter inner n.id conns, ρ',
-        { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner n.id conns).cname) },
-        inner.callTransients.map (ctx.enter inner n.id conns).cname) := by
+      .ok (ctx.enter inner conns, ρ',
+        { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner conns).cname) },
+        inner.callTransients.map (ctx.enter inner conns).cname) := by
   unfold nestedSetup
   rw [hck, Res.ok_bind, hb]
   simp only [Res.ok_bind]
@@ -492,7 +492,7 @@ def InnerCorr (tc : TCtx) (σ : Equiv.Perm Name) (inner : SDFG) (body : List SNo
 /-- The context of a nested call and the tree's context agree on the names
 of the inner SDFG's top region, for every interpretation. -/
 def InnerNames (ctx : Ctx) (tc : TCtx) (inner : SDFG) (node : NodeId) (conns : List (Name × Name)) : Prop :=
-  ∀ I : Interp, Region.Names 1 (fun _ => True) ({ ctx with I }.enter inner node conns) ((tc.withI I).innerCtx inner)
+  ∀ I : Interp, Region.Names 1 (fun _ => True) ({ ctx with I }.enter inner conns) ((tc.withI I).innerCtx inner)
     inner.top
 
 /-- Access or exit nodes without copies into them (the exit of a map whose
@@ -684,7 +684,7 @@ inductive SegCorr (ctx : Ctx) : TCtx → State → List NodeId → List SNode �
       (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
       (hout : s.DataOuts nd)
       (hpriv : ∀ x, x ∈ tc.privateTransients body ↔
-        x ∈ ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner nd.id conns).cname)
+        x ∈ ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner conns).cname)
       (hnames : InnerNames ctx (tc.renT σ) inner nd.id conns) (hinner : InnerCorr tc σ inner body)
       (h : SegCorr ctx tc s o cs) :
       SegCorr ctx tc s (id :: o) (ds ++ .mapScope mp body :: cs)
@@ -1666,9 +1666,9 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
     (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
     (hout : s.DataOuts nd)
     (hpriv : ∀ x, x ∈ tc.privateTransients body ↔
-      x ∈ ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner nd.id conns).cname)
+      x ∈ ctx.privateTransients s n.id ++ inner.callTransients.map (ctx.enter inner conns).cname)
     {cT : Ctx} (hcI : cT.I = tc.ctx.I) (hct : cT.g.top = inner.top)
-    (hnames : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) cT inner.top)
+    (hnames : Region.Names 1 (fun _ => True) (ctx.enter inner conns) cT inner.top)
     (hinner : ∀ (cst : CSt) (r : Res (TCtl × CSt)), STree.ListExec tc body false {} body cst r →
       NestedOut (RegionAt cT inner.top cst inner.top.start) r)
     {pre : CSt} {st₁ : St} (hm : st₁.mem = pre.mem) (i : Idx) {res : Res (TCtl × CSt)}
@@ -1713,13 +1713,13 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
   simp only [Res.bind] at hset
   have hmem : Mem.Sim 1 (fun _ => True) (fun _ => True)
       ((iterStart (ctx.privateTransients s n.id) st₁).forNode.mem.allocAll
-        (inner.callTransients.map (ctx.enter inner nd.id conns).cname))
+        (inner.callTransients.map (ctx.enter inner conns).cname))
       (iterStartT (tc.privateTransients body) pre (pre.ρ.bindIdx mp.params i)).mem := by
     simp only [St.forNode, iterStart, iterStartT, hm, Mem.allocAll_append]
     refine (Mem.Sim.refl pre.mem).allocAll_congr fun x => ?_
     simp only [Equiv.Perm.coe_one, List.map_id_fun, id_eq]
     exact (hpriv x).symm
-  have hc : CtxSim 1 (fun _ => True) (ctx.enter inner nd.id conns) cT :=
+  have hc : CtxSim 1 (fun _ => True) (ctx.enter inner conns) cT :=
     ⟨by rw [hcI, I_eq he]; rfl, hct.symm⟩
   have hw' : ∀ op v, cT.I.wcr op .undef v = .undef := by
     rw [hcI, I_eq he]; exact hw
@@ -1792,7 +1792,7 @@ theorem nested_call (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {nd : DNode}
     (hcode : ∀ c ∈ nestedConns nd, (nestedEndpoint s nd c).isData = true)
     (hout : s.DataOuts nd) (hctr : inner.callTransients = [])
     {cT : Ctx} (hcI : cT.I = tc.ctx.I) (hct : cT.g.top = inner.top)
-    (hnames : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) cT inner.top)
+    (hnames : Region.Names 1 (fun _ => True) (ctx.enter inner conns) cT inner.top)
     (ρ : Valuation) (st₀ : St) {res : Res (TCtl × CSt)}
     (hR : NestedOut (RegionAt cT inner.top { ρ, mem := st₀.mem } inner.top.start) res) :
     (∃ e, e.isUB = true ∧ NodeExec ctx ρ s nd st₀ (.err e)) ∨
@@ -1808,7 +1808,7 @@ theorem nested_call (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {nd : DNode}
   have hst₀ : ({ st₀ with mem := st₀.mem.allocAll [] } : St) = st₀ := by cases st₀; rfl
   rw [hst₀] at hset
   have hmem : Mem.Sim 1 (fun _ => True) (fun _ => False) st₀.mem st₀.mem := Mem.Sim.refl _
-  have hc : CtxSim 1 (fun _ => True) (ctx.enter inner nd.id conns) cT :=
+  have hc : CtxSim 1 (fun _ => True) (ctx.enter inner conns) cT :=
     ⟨by rw [hcI, I_eq he]; rfl, hct.symm⟩
   have hw' : ∀ op v, cT.I.wcr op .undef v = .undef := by
     rw [hcI, I_eq he]; exact hw
@@ -2262,7 +2262,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
     intro full' gb rest cst r st hx hrel
     have htc : tc.withI ctx.I = tc := by rw [← I_eq he]; rfl
     have htcR : (tc.renT σ).withI ctx.I = tc.renT σ := by rw [← I_eq he]; rfl
-    have hnames' : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) ((tc.renT σ).innerCtx inner)
+    have hnames' : Region.Names 1 (fun _ => True) (ctx.enter inner conns) ((tc.renT σ).innerCtx inner)
         inner.top := by
       have := hnames ctx.I
       rw [htcR] at this
@@ -2281,7 +2281,7 @@ theorem SegCorr.matched (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {o : Lis
     rw [List.append_assoc] at hx
     have htc : tc.withI ctx.I = tc := by rw [← I_eq he]; rfl
     have htcR : (tc.renT σ).withI ctx.I = tc.renT σ := by rw [← I_eq he]; rfl
-    have hnames' : Region.Names 1 (fun _ => True) (ctx.enter inner nd.id conns) ((tc.renT σ).innerCtx inner)
+    have hnames' : Region.Names 1 (fun _ => True) (ctx.enter inner conns) ((tc.renT σ).innerCtx inner)
         inner.top := by
       have := hnames ctx.I
       rw [htcR] at this

@@ -6,7 +6,7 @@ import Dace
 corpus (`scripts/dump_corpus.py`).
 
 For every corpus SDFG, a variant with the nodes of every state renumbered
-(reversed ids, nested SDFG nodes fixed) must be certified `EQUIVALENT`, and a
+(reversed ids) must be certified `EQUIVALENT`, and a
 variant with one state label changed must not be. -/
 
 open Dace
@@ -14,9 +14,9 @@ open Dace
 def corpusDir : IO System.FilePath :=
   return (← IO.getEnv "DACE_FORMAL_CORPUS").getD "tests/corpus"
 
-/-- Reverse the ids of the nodes that are not nested SDFGs. -/
+/-- Reverse the ids of all nodes (nested SDFG nodes included). -/
 def reversePairs (s : State) : List (NodeId × NodeId) :=
-  let ids := (s.nodes.filter (!·.isNested)).map (·.id)
+  let ids := s.nodes.map (·.id)
   ids.zip ids.reverse
 
 mutual

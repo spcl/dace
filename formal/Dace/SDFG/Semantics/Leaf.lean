@@ -852,7 +852,7 @@ def nestedSetup (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (inner : SD
     (st : St) : Res (Ctx × Valuation × St × List Name) := do
   nestedCheck inner
   let conns ← nestedBindings ctx s n
-  let ctx' := ctx.enter inner n.id conns
+  let ctx' := ctx.enter inner conns
   let ρ' ← nestedValuation ctx ρ st.mem mapping
   let st := { st with mem := st.mem.allocAll (inner.callTransients.map ctx'.cname) }
   let (st, codes) ← bindCodeInputs ctx' ρ' s n st
