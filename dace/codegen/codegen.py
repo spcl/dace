@@ -428,6 +428,14 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         tile_kernels,
     )
 
+    # Lower memlet access policies (e.g. loop-carried address cursors) to ordinary SDFG constructs on this
+    # code-generation copy of the SDFG. This is a no-op unless a memlet carries a non-default policy. It must
+    # follow InsertExplicitCopies (which moves the policy of a lifted copy onto the library node's operand
+    # memlet) and precede library-node expansion (whose generated code addresses the rewritten operands).
+    from dace.transformation.passes.memlet_access_policy_lowering import LowerMemletAccessPolicies
+
+    LowerMemletAccessPolicies().apply_pass(sdfg, {})
+
     kernels = tile_kernels(sdfg)
     check_tile_toolchain(bool(kernels))
     for tile_kernel, _ in kernels:
