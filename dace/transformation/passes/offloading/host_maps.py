@@ -11,7 +11,7 @@ from ordered_set import OrderedSet
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import subsets, symbolic
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 
 #: ``False``/``None``/``[]``: no host maps; ``True``: derive them; a list: these map labels or ``MapEntry`` nodes.
 HostMapSpec = bool | list[str | nodes.MapEntry] | None
@@ -67,7 +67,7 @@ def is_host_map(
         return True
     # Nor a host-issued library call: the map around it launches it from the host.
     scope = state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes()
-    if any(helpers.holds_device_wide_libnode(node) for node in scope):
+    if any(helpers.holds(node, helpers.is_device_wide_libnode) for node in scope):
         return True
     return auto and only_launches(state.scope_children()[entry])
 
@@ -116,12 +116,7 @@ def host_code_containers(sdfg: SDFG, region: ControlFlowRegion) -> OrderedSet[st
         for node in state.nodes():
             if isinstance(node, nodes.Tasklet) and scopes[node] is None:
                 touched |= OrderedSet(e.data.data for e in state.all_edges(node) if not e.data.is_empty())
-    for edge in region.all_interstate_edges(recursive=True):
-        touched |= OrderedSet(m.data for m in edge.data.get_read_memlets(sdfg.arrays))
-    for block in itertools.chain([region], region.all_control_flow_blocks(recursive=True)):
-        if isinstance(block, (LoopRegion, ConditionalBlock)):
-            touched |= OrderedSet(m.data for m in block.get_meta_read_memlets())
-    return touched
+    return touched | helpers.control_flow_reads(sdfg, region)
 
 
 def map_containers_and_traffic(state: SDFGState, entry: nodes.MapEntry) -> tuple[OrderedSet[str], Any]:

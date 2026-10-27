@@ -131,7 +131,7 @@ class Placement:
         entry: Where = {}
         self.first_uses(loop, entry)
         self.move(where, entry, region, loop, before=True, hoist_over=above)
-        twins.rename_header_reads(self.sdfg, loop, self.header_reads(loop))
+        twins.rename_header_reads(self.sdfg, loop, helpers.header_reads(self.sdfg, loop))
         body_end, last = self.walk(loop, dict(where), dict(where))
         if body_end is not None:
             self.restore(body_end, where, loop, last, before=False)
@@ -139,8 +139,8 @@ class Placement:
     def visit_conditional(
         self, region: ControlFlowRegion, block: ConditionalBlock, where: Where, loop_entry: Where
     ) -> Where | None:
-        self.move(where, dict.fromkeys(self.header_reads(block), False), region, block, before=True)
-        twins.rename_header_reads(self.sdfg, block, self.header_reads(block))
+        self.move(where, dict.fromkeys(helpers.header_reads(self.sdfg, block), False), region, block, before=True)
+        twins.rename_header_reads(self.sdfg, block, helpers.header_reads(self.sdfg, block))
         exits = []
         for _, arm in block.branches:
             end, last = self.walk(arm, dict(where), loop_entry)
@@ -169,7 +169,7 @@ class Placement:
                 for name in wants.cpu:
                     entry.setdefault(name, False)
                 continue
-            for name in self.header_reads(block):
+            for name in helpers.header_reads(self.sdfg, block):
                 entry.setdefault(name, False)
             if isinstance(block, ConditionalBlock):
                 for _, arm in block.branches:
@@ -248,15 +248,5 @@ class Placement:
 
     def edge_reads(self, region: ControlFlowRegion, block: ControlFlowBlock) -> OrderedSet[str]:
         """The arrays the interstate edges into ``block`` read."""
-        return OrderedSet(
-            name
-            for edge in region.in_edges(block)
-            for name in edge.data.used_arrays(self.sdfg.arrays)
-            if helpers.is_array(name, self.sdfg)
-        )
-
-    def header_reads(self, block: ControlFlowBlock) -> OrderedSet[str]:
-        """The containers a loop's or a conditional's header reads on the host."""
-        if not isinstance(block, (ConditionalBlock, LoopRegion)):
-            return OrderedSet()
-        return OrderedSet(memlet.data for memlet in block.get_meta_read_memlets() if memlet.data in self.sdfg.arrays)
+        reads = helpers.interstate_reads(self.sdfg, region.in_edges(block))
+        return OrderedSet(name for name in reads if helpers.is_array(name, self.sdfg))

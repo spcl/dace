@@ -1,14 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Facts about containers and nodes shared by the offloading phases."""
 
-from collections.abc import Container
+from collections.abc import Callable, Container, Iterable
 
 from ordered_set import OrderedSet
 
 from dace import data, dtypes, subsets, symbolic, utils
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.graph import Edge
 from dace.sdfg.scope import is_devicelevel_gpu
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.sdfg.utils import get_view_node
 
 #: Connectors the Python frontend wires to ``__pystate`` around a callback, to block reordering.
@@ -50,14 +52,21 @@ def scope_holds_callback(state: SDFGState, entry: nodes.MapEntry, callbacks: Con
     return False
 
 
+def holds(node: nodes.Node, predicate: Callable[[nodes.Node], bool]) -> bool:
+    """``predicate`` holds for ``node``, or for a node at any depth of the nested SDFG ``node`` is."""
+    if isinstance(node, nodes.NestedSDFG):
+        return any(predicate(inner) for inner, _ in node.sdfg.all_nodes_recursive())
+    return predicate(node)
+
+
+def is_device_node(node: nodes.Node) -> bool:
+    """A map or library node scheduled on the device."""
+    return isinstance(node, (nodes.MapEntry, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
+
+
 def is_device_work(node: nodes.Node) -> bool:
     """A map or library node scheduled on the device, or a nested SDFG holding one."""
-    if isinstance(node, nodes.NestedSDFG):
-        return any(
-            isinstance(inner, (nodes.MapEntry, nodes.LibraryNode)) and inner.schedule in dtypes.GPU_SCHEDULES
-            for inner, _ in node.sdfg.all_nodes_recursive()
-        )
-    return isinstance(node, (nodes.MapEntry, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
+    return holds(node, is_device_node)
 
 
 def is_device_wide_libnode(node: nodes.Node) -> bool:
@@ -73,10 +82,24 @@ def is_device_wide_libnode(node: nodes.Node) -> bool:
     )
 
 
-def holds_device_wide_libnode(node: nodes.Node) -> bool:
-    if isinstance(node, nodes.NestedSDFG):
-        return any(is_device_wide_libnode(inner) for inner, _ in node.sdfg.all_nodes_recursive())
-    return is_device_wide_libnode(node)
+def interstate_reads(sdfg: SDFG, edges: Iterable[Edge]) -> OrderedSet[str]:
+    """The containers of ``sdfg`` that ``edges`` read; interstate edges are host code."""
+    return OrderedSet(name for edge in edges for name in edge.data.used_arrays(sdfg.arrays))
+
+
+def header_reads(sdfg: SDFG, block: ControlFlowBlock) -> OrderedSet[str]:
+    """The containers a loop's or a conditional's header reads on the host."""
+    if not isinstance(block, (ConditionalBlock, LoopRegion)):
+        return OrderedSet()
+    return OrderedSet(memlet.data for memlet in block.get_meta_read_memlets() if memlet.data in sdfg.arrays)
+
+
+def control_flow_reads(sdfg: SDFG, region: ControlFlowRegion) -> OrderedSet[str]:
+    """What the interstate edges and the loop and branch headers in ``region`` read, at any depth."""
+    reads = interstate_reads(sdfg, region.all_interstate_edges(recursive=True))
+    for block in (region, *region.all_control_flow_blocks(recursive=True)):
+        reads |= header_reads(sdfg, block)
+    return reads
 
 
 def is_array_stored_on_GPU(sdfg: SDFG, array_name: str) -> bool:

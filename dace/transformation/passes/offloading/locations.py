@@ -60,11 +60,7 @@ class Locations:
             wants = self.of_state(state)
             gpu |= wants.gpu
             cpu |= wants.cpu
-        for edge in self.sdfg.all_interstate_edges():
-            cpu |= OrderedSet(edge.data.used_arrays(self.sdfg.arrays))
-        for region in self.sdfg.all_control_flow_regions():
-            cpu |= OrderedSet(memlet.data for memlet in region.get_meta_read_memlets())
-        return Wants(gpu, cpu)
+        return Wants(gpu, cpu | helpers.control_flow_reads(self.sdfg, self.sdfg))
 
     def used_by_edge(self, state: SDFGState, edge: MultiConnectorEdge, is_out_edge: bool) -> OrderedSet[str]:
         sdfg = self.sdfg
