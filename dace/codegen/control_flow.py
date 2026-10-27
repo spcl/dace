@@ -236,14 +236,14 @@ def _conditional_block_to_code(
 def allocation_on_entry(region: AbstractControlFlowRegion, codegen: "DaCeCodeGenerator") -> str:
     """Generates the allocation of the data that is allocated when ``region`` is entered."""
     stream = CodeIOStream()
-    codegen.allocate_arrays_in_scope(region.sdfg, region.parent_graph, region, stream, stream)
+    codegen.allocate_arrays_in_scope(region.sdfg, region.parent_graph, region, codegen.region_function_stream, stream)
     return stream.getvalue()
 
 
 def deallocation_on_exit(region: AbstractControlFlowRegion, codegen: "DaCeCodeGenerator") -> str:
     """Generates the deallocation of the data that is deallocated when ``region`` is left."""
     stream = CodeIOStream()
-    codegen.deallocate_arrays_in_scope(region.sdfg, region.parent_graph, region, stream, stream)
+    codegen.deallocate_arrays_in_scope(region.sdfg, region.parent_graph, region, codegen.region_function_stream, stream)
     return stream.getvalue()
 
 

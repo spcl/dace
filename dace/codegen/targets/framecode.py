@@ -100,6 +100,8 @@ class DaCeCodeGenerator:
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
+        # File-scope stream of the SDFG whose control flow is being generated (see ``generate_states``)
+        self.region_function_stream = CodeIOStream()
         self.statestruct: list[str] = []
         self.environments: list[Any] = []
         # OrderedSet for the same reason as used_targets: codegen.py iterates this to order
@@ -911,7 +913,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
-        callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, dict(sdfg.symbols)), sdfg)
+        # A region's allocations write their helpers (index and size functions) to file scope, as a state's do
+        enclosing, self.region_function_stream = self.region_function_stream, global_stream
+        try:
+            callsite_stream.write(
+                cflow.control_flow_region_to_code(sdfg, dispatch_state, self, dict(sdfg.symbols)), sdfg
+            )
+        finally:
+            self.region_function_stream = enclosing
 
         opbar.done()
 
