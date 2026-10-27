@@ -9,7 +9,14 @@ Verified checks on SDFGs (and, later, equivalence of IR pairs):
 ```
 lake exe dace-equiv racefree [--emit-obligations DIR] <sdfg.json>...
 lake exe dace-equiv stree <sdfg.json> <stree.json>
+lake exe dace-equiv sdfg <a.sdfg.json> <b.sdfg.json>
 ```
+
+`sdfg` runs the SDFG–SDFG checker (`Dace.Equiv.SdfgCorr`): it searches for
+rule applications turning `a` into `b`, replays them through the proven
+rules and compares the result with `b`.  It prints `EQUIVALENT` (theorem
+`Dace.checkBy_sound`: `b` is equivalent to `a` when `a` is supported, exit
+`0`) or `UNKNOWN: <reason>` (exit `1`).
 
 `stree` runs the pair checker `Corr.corr?` (`Dace.Equiv.CorrCheck`) on an
 SDFG and its schedule tree and prints `REFINES` (every run of the tree is a
@@ -76,11 +83,25 @@ def streeMain (sp tp : String) : IO UInt32 := do
       IO.println s!"UNKNOWN {tp} {sp}: {m}"
       return 1
 
+def sdfgMain (ap bp : String) : IO UInt32 := do
+  match ← SDFG.Json.readSDFG ap, ← SDFG.Json.readSDFG bp with
+  | .error e, _ => IO.println s!"ERROR {ap}: cannot import SDFG: {e}"; return 1
+  | _, .error e => IO.println s!"ERROR {bp}: cannot import SDFG: {e}"; return 1
+  | .ok a, .ok b =>
+    match sdfgCheck a b with
+    | .ok sts =>
+      IO.println s!"EQUIVALENT {bp} {ap} ({sts.length} rule applications, theorem Dace.checkBy_sound)"
+      return 0
+    | .error m =>
+      IO.println s!"UNKNOWN {bp} {ap}: {m}"
+      return 1
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | "racefree" :: "--emit-obligations" :: dir :: paths@(_ :: _) => raceFreeMain (some dir) paths
   | "racefree" :: paths@(_ :: _) => raceFreeMain none paths
   | ["stree", sp, tp] => streeMain sp tp
+  | ["sdfg", ap, bp] => sdfgMain ap bp
   | _ =>
-    IO.eprintln "usage: dace-equiv racefree [--emit-obligations DIR] <sdfg.json>...\n       dace-equiv stree <sdfg.json> <stree.json>"
+    IO.eprintln "usage: dace-equiv racefree [--emit-obligations DIR] <sdfg.json>...\n       dace-equiv stree <sdfg.json> <stree.json>\n       dace-equiv sdfg <a.sdfg.json> <b.sdfg.json>"
     return 2

@@ -82,7 +82,7 @@ def execSeq (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (ids : List No
     | [] => some (.ok (st, []))
     | id :: rest =>
       match s.node? id with
-      | none => some (.err (.malformed s!"unknown node {id}"))
+      | none => some (.err (.malformed "unknown node in an execution order"))
       | some n =>
         match execNode fuel ctx ρ s n st.forNode with
         | none => none

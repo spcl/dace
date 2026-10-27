@@ -77,6 +77,15 @@ representations:
   one set from a code node fails in both IRs (`unsupported`, D55).  Tree
   memlets may omit a subset that the SDFG gives as the full range (`SubCorr`).
   `tests/EquivCorpus.lean` prints the corpus verdicts.
+  SDFG–SDFG equivalence (`Equiv/SdfgCorr`, `lake exe dace-equiv sdfg
+  <a.sdfg.json> <b.sdfg.json>`): an untrusted search proposes rule
+  applications, a verified replay applies them and compares the result with
+  the second SDFG (`SDFG.beq`, sound); `checkBy_sound`: the SDFGs are
+  equivalent when the first is supported.  Rules: node renumbering of a state
+  (`Congr.relabelState`, from `SDFG/Relabel.lean`: every state-level relation
+  is invariant under a permutation of node ids fixing nested SDFG nodes).
+  `tests/SdfgCorrCorpus.lean` certifies a renumbered variant of every corpus
+  program.
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).
 

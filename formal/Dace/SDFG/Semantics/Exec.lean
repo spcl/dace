@@ -123,7 +123,7 @@ inductive SeqExec : Ctx → Valuation → State → List NodeId → St → Res (
       SeqExec ctx ρ s [] st (.ok (st, []))
   | missing {ctx : Ctx} {ρ : Valuation} {s : State} {id : NodeId} {rest : List NodeId} {st : St}
       (h : s.node? id = none) :
-      SeqExec ctx ρ s (id :: rest) st (.err (.malformed s!"unknown node {id}"))
+      SeqExec ctx ρ s (id :: rest) st (.err (.malformed "unknown node in an execution order"))
   | headErr {ctx : Ctx} {ρ : Valuation} {s : State} {id : NodeId} {rest : List NodeId} {n : DNode} {st : St}
       {e : ErrReason}
       (h : s.node? id = some n) (hn : NodeExec ctx ρ s n st.forNode (.err e)) :

@@ -302,3 +302,9 @@ Axiom audit: every trusted theorem of the development is listed here so that
 #print axioms Dace.Corr.GPos.matched
 #print axioms Dace.Corr.gposCheck_sound
 #print axioms Dace.Corr.RegionAt.noEscape
+-- SDFG–SDFG checker (M5c): node relabeling, sound equality, replay.
+#print axioms Dace.StateExec.relabel
+#print axioms Dace.StateExec.of_relabel
+#print axioms Dace.Congr.relabelState
+#print axioms Dace.SDFG.beq_sound
+#print axioms Dace.checkBy_sound
