@@ -1176,7 +1176,7 @@ def test_mapped_symbol_the_child_does_not_declare():
     for node in bodies:
         undeclared = node.symbol_mapping.keys() - node.sdfg.symbols.keys() - node.in_connectors.keys()
         assert not undeclared, f"{node.sdfg.name}: mapped without a declared type: {sorted(undeclared)}"
-    assert bodies[0].sdfg.symbols["k"] == dace.int32, "the carried-in symbol kept its type"
+    assert "k" not in bodies[0].symbol_mapping, "the loop body does not use k, so k is not forwarded"
 
     sdfg.validate()
     sdfg.compile()
