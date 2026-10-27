@@ -18,6 +18,7 @@ from dace.transformation import helpers, passes
 from dace.transformation.passes.outline_to_external_calls import replace_with_external_call
 
 N = dace.symbol("N", dtype=dace.int64)
+M = dace.symbol("M", dtype=dace.int64)
 SIZE = 64
 
 
@@ -72,6 +73,12 @@ def strided_sum(a: dace.float64[N], out: dace.float64[1], inc: dace.int64):
         off = inc + i
         s = s + a[off]
     out[0] = s
+
+
+@dace.program
+def first_part(a: dace.float64[N]):
+    for i in dace.map[0:M]:
+        a[i] = a[i] + 1.0
 
 
 def outlined(program, name: str):
@@ -388,3 +395,13 @@ def test_a_scalar_argument_the_nest_reads_as_a_symbol_crosses_by_value():
 
     assert "inc" in call.abi_order and "int64_t inc" in call.signature
     assert out[0] == a[1:].sum()
+
+
+def test_a_symbol_only_the_kernel_reads_stays_an_argument_of_the_program():
+    sdfg, (call,) = outlined(first_part, "extcall_kernel_only_symbol")
+    a = np.arange(float(SIZE))
+
+    sdfg(a=a, N=SIZE, M=SIZE // 2)
+
+    assert "M" in call.abi_order and "M" in sdfg.arglist()
+    assert np.array_equal(a, np.arange(float(SIZE)) + (np.arange(SIZE) < SIZE // 2))
