@@ -739,19 +739,29 @@ class NormalizeWCR(ppl.Pass):
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():
                 for nsdfg in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]:
-                    if not isinstance(state.entry_node(nsdfg), nodes.MapEntry):
-                        continue
-                    write_only = [oc for oc in nsdfg.out_connectors if oc not in nsdfg.in_connectors]
-                    for oc in write_only:
-                        # Slice WCR (num_elements > 1) -> extract; scalar WCR -> seed-local rewrite.
-                        if self.extract_slice_wcr and self._extract_slice_wcr(state, nsdfg, oc):
-                            total += 1
-                        elif self._rewrite_nsdfg_output(state, nsdfg, oc):
-                            total += 1
-                    readwrite = [oc for oc in nsdfg.out_connectors if oc in nsdfg.in_connectors]
-                    for oc in readwrite:
-                        if self._rewrite_readwrite_output(state, nsdfg, oc):
-                            total += 1
+                    total += self.normalize_nested_node(state, nsdfg)
+        return total
+
+    def normalize_nested_node(self, state: SDFGState, nsdfg: nodes.NestedSDFG) -> int:
+        """Rewrite the reduction outputs of the map-body NestedSDFG ``nsdfg``; a pass nesting a map body after this
+        one ran calls it on the nest it makes.
+
+        :returns: The number of rewritten outputs.
+        """
+        if not isinstance(state.entry_node(nsdfg), nodes.MapEntry):
+            return 0
+        total = 0
+        write_only = [oc for oc in nsdfg.out_connectors if oc not in nsdfg.in_connectors]
+        for oc in write_only:
+            # Slice WCR (num_elements > 1) -> extract; scalar WCR -> seed-local rewrite.
+            if self.extract_slice_wcr and self._extract_slice_wcr(state, nsdfg, oc):
+                total += 1
+            elif self._rewrite_nsdfg_output(state, nsdfg, oc):
+                total += 1
+        readwrite = [oc for oc in nsdfg.out_connectors if oc in nsdfg.in_connectors]
+        for oc in readwrite:
+            if self._rewrite_readwrite_output(state, nsdfg, oc):
+                total += 1
         return total
 
     @staticmethod

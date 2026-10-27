@@ -959,6 +959,9 @@ def derive_parallelism(
                 [
                     *[(unit, isinstance(unit, PruneAndInlineNestedSDFGs)) for _, unit in _inline_single_state(label)],
                     (StructuralCleanup(), False),
+                    # Once LoopToMap made the reductions maps': in-body ones surface onto the map boundary, which
+                    # the lifts below and fusion read, and every WCR is sourced from an access node.
+                    (NormalizeWCR(), False),
                     (CarriedAccumulationToWCR(), True),
                 ],
                 [
@@ -1059,9 +1062,6 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     # A memset the control flow after it overwrites unread (velocity's zeta_value, swept level by level) goes before
     # fusion, so its state does not stand between the maps; the finish runs it again for the fills lifted after.
     s += [(label, DeadFillElimination())]
-    # Once every reduction is a map's and before fusion, which double-counts an in-body one: the in-body reductions
-    # surface onto the map boundary (``MoveIfIntoMap`` nests one above) and every WCR is sourced from an access node.
-    s += [(label, NormalizeWCR())]
 
     s += [(FUSE, maximal_fusion(target))]
     label = AFTER_FUSION
