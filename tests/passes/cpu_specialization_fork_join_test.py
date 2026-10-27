@@ -190,9 +190,17 @@ def test_a_counter_of_a_row_segment_goes_sequential(inner_reads_data):
         sdfg.add_symbol(name, dace.int64)
     rows = loop(sdfg, "rows", "N")
     read = rows.add_state("read_row", is_start_block=True)
-    segment = LoopRegion("segment", "k < hi" if inner_reads_data else "k < M", "k", "k = lo" if inner_reads_data else "k = 0", "k = k + 1")
+    segment = LoopRegion(
+        "segment",
+        "k < hi" if inner_reads_data else "k < M",
+        "k",
+        "k = lo" if inner_reads_data else "k = 0",
+        "k = k + 1",
+    )
     rows.add_node(segment)
-    rows.add_edge(read, segment, dace.InterstateEdge(assignments={"cnt": "0", "lo": "indptr[it]", "hi": "indptr[it + 1]"}))
+    rows.add_edge(
+        read, segment, dace.InterstateEdge(assignments={"cnt": "0", "lo": "indptr[it]", "hi": "indptr[it + 1]"})
+    )
     first = segment.add_state("visit", is_start_block=True)
     segment.add_edge(first, segment.add_state("counted"), dace.InterstateEdge(assignments={"cnt": "cnt + 1"}))
     body = map_state(rows, sdfg, "body", ["0:cnt"])

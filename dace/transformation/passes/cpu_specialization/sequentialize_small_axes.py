@@ -205,7 +205,9 @@ def segment_counter(state: SDFGState, name: str) -> bool:
             bounds = (loop_analysis.get_init_assignment(inner), loop_analysis.get_loop_end(inner))
             if inner is loop or any(b is None for b in bounds):
                 return False
-            if not all(data_derived(state.sdfg, {str(s) for s in symbolic.free_symbols_and_functions(b)}) for b in bounds):
+            if not all(
+                data_derived(state.sdfg, {str(s) for s in symbolic.free_symbols_and_functions(b)}) for b in bounds
+            ):
                 return False
             increments += 1
     return increments > 0
