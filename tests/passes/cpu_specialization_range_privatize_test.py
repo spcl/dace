@@ -259,6 +259,24 @@ def test_float_sum_matches_add_at(pattern, m):
     assert np.allclose(out, ref, rtol=1e-12, atol=1e-12)
 
 
+def test_iterations_sorted_by_row_match_add_at_and_repeat_bitwise():
+    """A random scatter over an array larger than a thread's cache share: every chunk spans all rows, so the
+    iterations are sorted by row and each thread privatizes about an eighth of them; the fold is in thread order."""
+    sdfg, code = _specialize(scatter_sum, "sum_sorted", threads=8)
+    _assert_range_privatized(sdfg, code)
+    n, m = 1 << 21, 1 << 18
+    idx = _indices("random", n, m)
+    val = np.random.default_rng(5).random(n)
+    out = np.random.default_rng(6).random(m)
+    ref = out.copy()
+    np.add.at(ref, idx, val)
+    first, second = out.copy(), out.copy()
+    _run(sdfg, idx=idx, val=val, out=first, N=n, M=m)
+    _run(sdfg, idx=idx, val=val, out=second, N=n, M=m)
+    assert np.allclose(first, ref, rtol=1e-12, atol=1e-12)
+    assert np.array_equal(first, second)
+
+
 @pytest.mark.parametrize("n", [0, 1, 3])
 def test_fewer_iterations_than_threads(n):
     """Threads with an empty chunk hold no span and take no part in the combine."""
@@ -345,7 +363,7 @@ def test_two_accumulators_of_different_types_share_one_pre_pass():
     sdfg, code = _specialize(scatter_two_dtypes, "twotypes")
     _assert_range_privatized(sdfg, code, "out", "cnt")
     assert "Accumulator<dace::ReductionType::Sum, int, true>" in code
-    assert "__rp0_lo0" in code and "__rp0_lo1" not in code, "the same rows need one pre-pass"
+    assert "__rp0_lo[0] = " in code and "__rp0_lo[1] = " not in code, "the same rows need one pre-pass"
     idx = _indices("random", NV, MV)
     val = np.random.default_rng(12).random(NV)
     out = np.zeros(MV)
@@ -360,7 +378,7 @@ def test_two_accumulators_of_different_types_share_one_pre_pass():
 def test_two_accumulators_with_different_indices_have_one_span_each():
     sdfg, code = _specialize(scatter_two_index_sets, "twoindex")
     _assert_range_privatized(sdfg, code, "out", "cnt")
-    assert "__rp0_lo1" in code
+    assert "__rp0_lo[1] = " in code
     a = _indices("sorted", NV, MV)
     b = _indices("random", NV, MV)
     val = np.random.default_rng(19).random(NV)

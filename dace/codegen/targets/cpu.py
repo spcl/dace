@@ -3901,7 +3901,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(stmt, rpsr.Let):
                 lines.append(f"const {stmt.dtype.ctype} {stmt.name} = {expr(stmt.expr)};")
             elif isinstance(stmt, rpsr.Row):
-                lines.append(row.format(expr(stmt.expr)))
+                lines.append(row.format(expr(stmt.expr), expr(stmt.weight)))
             elif isinstance(stmt, rpsr.Guard):
                 lines += [f"if ({expr(stmt.cond)}) {{", *self._range_private_site(sdfg, stmt.body, types, row), "}"]
             elif isinstance(stmt, rpsr.Loop):
@@ -3931,6 +3931,20 @@ class CPUCodeGen(TargetCodeGenerator):
                 CPUCodeGen._range_private_locals(stmt.body, types)
         return types
 
+    def _range_private_params(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry, index: str) -> list[str]:
+        """Declarations of the parameters of ``node`` at the linear iteration ``index`` of its range, the last
+        parameter running fastest."""
+        lines, stride = [], ""
+        sizes = node.map.range.size(for_codegen=True)
+        for var, (begin, end, step), size, ctype in reversed(
+            list(zip(node.map.params, node.map.range, sizes, self.map_loop_ctypes(sdfg, state, node)))
+        ):
+            ctype = "int64_t" if ctype == "auto" else ctype
+            position = f"({index}{stride})" if len(sizes) == 1 else f"(({index}{stride}) % ({cpp.sym2cpp(size)}))"
+            lines.append(f"const {ctype} {var} = {cpp.sym2cpp(begin)} + {cpp.sym2cpp(step)} * {position};")
+            stride += f" / ({cpp.sym2cpp(size)})"
+        return lines[::-1]
+
     def _open_range_private(
         self,
         sdfg: SDFG,
@@ -3942,9 +3956,10 @@ class CPUCodeGen(TargetCodeGenerator):
         cfg: ControlFlowRegion,
         state_id: int,
     ) -> dict:
-        """Open the parallel region of a range-privatized map: the index pre-pass over each thread's
-        static chunk, then each accumulator's private rows shadowing its pointer. Returns the plan
-        :meth:`_close_range_private` combines."""
+        """Open the parallel region of a range-privatized map: the index pre-pass over each thread's chunk of
+        the linearized range, the ``dace::range_private::Order`` that chooses the iteration order from it, then
+        each accumulator's private rows shadowing its pointer. Returns the plan :meth:`_close_range_private`
+        combines and the body loop iterates."""
         function_stream.write("#include <omp.h>\n#include <dace/range_private.h>", cfg, state_id, node)
         prefix = f"__rp{self._range_private_count}"
         self._range_private_count += 1
@@ -3953,6 +3968,10 @@ class CPUCodeGen(TargetCodeGenerator):
             groups.setdefault(sources.sites, []).append(name)
 
         nthreads = str(node.map.omp_num_threads) if node.map.omp_num_threads > 0 else "omp_get_max_threads()"
+        trips = " * ".join(
+            f"std::max<int64_t>(0, {cpp.sym2cpp(size)})" for size in node.map.range.size(for_codegen=True)
+        )
+        order = f"{prefix}_order"
         lines = [f"const int {prefix}_nt = {nthreads};"]
         plan = {"prefix": prefix, "accumulators": [], "flags": {}}
         for name, (redtype, _sources) in targets.items():
@@ -3966,33 +3985,41 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             plan["accumulators"].append(ptr)
             plan["flags"][name] = f"{prefix}_atomic_{ptr}" if atomic else None
+        row_bytes = [
+            " + ".join(f"{cpp.sym2cpp(sdfg.arrays[n].strides[0])} * {sdfg.arrays[n].dtype.bytes}" for n in names)
+            for names in groups.values()
+        ]
+        g = len(groups)
         lines += [
+            f"dace::range_private::Order {order}({prefix}_nt, {trips}, {g});",
+            f"const int64_t {prefix}_rb[{g}] = {{{', '.join(f'(int64_t)({b})' for b in row_bytes)}}};",
             f"#pragma omp parallel num_threads({prefix}_nt)",
             "{",
             f"const int {prefix}_t = omp_get_thread_num();",
+            f"const int {prefix}_T = omp_get_num_threads();",
+            f"for (int64_t {prefix}_k = {order}.first({prefix}_t, {prefix}_T); "
+            f"{prefix}_k < {order}.first({prefix}_t + 1, {prefix}_T); ++{prefix}_k) {{",
+            *self._range_private_params(sdfg, state, node, f"{prefix}_k"),
+            f"int64_t {prefix}_lo[{g}], {prefix}_hi[{g}], {prefix}_n[{g}];",
         ]
-        collapse = f" collapse({node.map.collapse})" if node.map.collapse > 1 else ""
-        ctypes = self.map_loop_ctypes(sdfg, state, node)
-        for g, (sites, names) in enumerate(groups.items()):
-            lo, hi, count = f"{prefix}_lo{g}", f"{prefix}_hi{g}", f"{prefix}_n{g}"
+        for i, sites in enumerate(groups):
+            lo, hi, count = f"{prefix}_lo[{i}]", f"{prefix}_hi[{i}]", f"{prefix}_n[{i}]"
             lines.append(
-                f"int64_t {lo} = std::numeric_limits<int64_t>::max(), "
-                f"{hi} = std::numeric_limits<int64_t>::min(), {count} = 0;"
+                f"{lo} = std::numeric_limits<int64_t>::max(); {hi} = std::numeric_limits<int64_t>::min(); {count} = 0;"
             )
-            lines.append(f"#pragma omp for schedule(static) nowait{collapse}")
-            for var, (begin, end, step), ctype in zip(node.map.params, node.map.range, ctypes):
-                lines.append(
-                    f"for ({ctype} {var} = {cpp.sym2cpp(begin)}; {var} < {cpp.sym2cpp(end + 1)}; "
-                    f"{var} += {cpp.sym2cpp(step)}) {{"
-                )
             row = (
                 f"{{{{ const int64_t {prefix}_v = (int64_t)({{}}); {lo} = std::min({lo}, {prefix}_v); "
-                f"{hi} = std::max({hi}, {prefix}_v); ++{count}; }}}}"
+                f"{hi} = std::max({hi}, {prefix}_v); {count} += {{}}; }}}}"
             )
             for site in sites:
                 types = self._range_private_locals(site, {})
                 lines += ["{", *self._range_private_site(sdfg, site, types, row), "}"]
-            lines += ["}"] * len(node.map.params)
+        lines += [
+            f"{order}.note({prefix}_t, {prefix}_k, {prefix}_lo, {prefix}_hi, {prefix}_n);",
+            "}",
+            f"{order}.arrange({prefix}_t, {prefix}_T, {prefix}_rb);",
+        ]
+        for i, names in enumerate(groups.values()):
             for name in names:
                 desc = sdfg.arrays[name]
                 ptr, ctype = self.ptr(name, desc, sdfg), desc.dtype.ctype
@@ -4000,20 +4027,34 @@ class CPUCodeGen(TargetCodeGenerator):
                 lines += [
                     f"{ctype}* const {prefix}_shared_{ptr} = {ptr};",
                     f"bool {flag};",
-                    f"{ctype}* {ptr} = {prefix}_{ptr}.open({prefix}_t, {prefix}_shared_{ptr}, {lo}, {hi}, {count}, {flag});",
+                    f"{ctype}* {ptr} = {prefix}_{ptr}.open({prefix}_t, {prefix}_shared_{ptr}, "
+                    f"{order}.lo({prefix}_t, {i}), {order}.hi({prefix}_t, {i}), {order}.updates({prefix}_t, {i}), "
+                    f"{flag});",
                 ]
         result.write("\n".join(lines), cfg, state_id, node)
         return plan
 
+    def _range_private_loop(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry, plan: dict) -> str:
+        """The body loop of a range-privatized map: the thread's chunk in the chosen order, one brace per
+        parameter as the map exit closes."""
+        p = plan["prefix"]
+        lines = [
+            f"for (int64_t {p}_k = {p}_order.first({p}_t, {p}_T); {p}_k < {p}_order.first({p}_t + 1, {p}_T); "
+            f"++{p}_k) {{",
+            f"const int64_t {p}_i = {p}_order[{p}_k];",
+            *self._range_private_params(sdfg, state, node, f"{p}_i"),
+        ]
+        return "\n".join(lines + ["{"] * (len(node.map.params) - 1))
+
     def _close_range_private(
         self, plan: dict, result: CodeIOStream, cfg: ControlFlowRegion, state_id: int, node: nodes.MapExit
     ) -> None:
-        """Fold every thread's private rows into the shared accumulators once all bodies are done, and
-        close the region."""
+        """Fold every thread's private rows into the shared accumulators once all bodies are done, and close the
+        region."""
         p = plan["prefix"]
-        lines = ["#pragma omp barrier", "{", f"const int {p}_T = omp_get_num_threads();"]
+        lines = ["#pragma omp barrier"]
         lines += [f"{p}_{ptr}.combine({p}_t, {p}_T, {p}_shared_{ptr});" for ptr in plan["accumulators"]]
-        lines += ["}", "}"]
+        lines += ["}"]
         result.write("\n".join(lines), cfg, state_id, node)
 
     def _range_private_flag(self, name: str) -> str | None:
@@ -4138,10 +4179,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     # If already in a #pragma omp parallel, no need to use it twice
                     map_header += "#pragma omp for"
                     # TODO(later): barriers and map_header += " nowait"
-                elif range_private:
-                    # The region opens in the range-privatized prelude; both of its loops share this schedule.
-                    map_header += "#pragma omp for schedule(static) nowait"
-                else:
+                elif not range_private:
+                    # A range-privatized map opens its region and partitions its loops in its prelude.
                     map_header += "#pragma omp parallel for"
 
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
@@ -4213,8 +4252,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # Push scope frame even if empty -- ``_generate_MapExit`` always pops. Keyed by
             # target data name so the nested WCR write's covered-check (``memlet.data in
             # frame``) skips the now-redundant atomic and accumulates into the private copy.
-            frame = {dname: op for op, _ct, dname, _dec in omp_reductions}
-            frame.update({name: redtype for name, (redtype, _sources) in range_private.items()})
+            # A range-privatized region has no worksharing loop to carry a clause: its other accumulators stay atomic.
+            frame = {} if range_private else {dname: op for op, target, dname, declare in omp_reductions}
+            frame.update({name: plan[0] for name, plan in range_private.items()})
             self._omp_reduction_scope_stack.append(frame)
 
         # A sequential map's WCR accumulator lives in a local scalar for the loop's duration --
@@ -4255,7 +4295,9 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             self._range_private_maps[node.map] = plan
             self._range_private_flags.append(plan["flags"])
-        result.write(map_header, cfg, state_id, node)
+            result.write(self._range_private_loop(sdfg, state_dfg, node, plan), cfg, state_id, node)
+        else:
+            result.write(map_header, cfg, state_id, node)
 
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
             result.write("{\n", cfg, state_id, node)
@@ -4277,7 +4319,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 result.write(f"int {node.map.params[0]} = omp_get_thread_num();", cfg, state_id, node)
             if ntid_is_used:
                 result.write("int __omp_num_threads = omp_get_num_threads();", cfg, state_id, node)
-        else:
+        elif not range_private:
             loop_ctypes = self.map_loop_ctypes(sdfg, state_dfg, node)
             for i, r in enumerate(node.map.range):
                 var = map_params[i]

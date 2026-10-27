@@ -137,9 +137,10 @@ class Guard:
 
 @dataclass(frozen=True)
 class Row:
-    """The row a write lands in, symbolic over earlier names."""
+    """The row a write lands in, symbolic over earlier names, and how many writes it stands for."""
 
     expr: Any
+    weight: Any = 1
 
 
 @dataclass(frozen=True)
@@ -228,7 +229,7 @@ class Frame:
     nest: Nest
     stmts: list = field(default_factory=list)
     vars: dict[str, str] = field(default_factory=dict)  # name in the nest -> local
-    used: bool = False
+    used: set[str] = field(default_factory=set)  # names of ``vars`` the index computation reads
     order: dict = field(default_factory=dict)  # region frame: chain block -> index
     edges: dict = field(default_factory=dict)  # region frame: chain edge -> index
     payload: Any = None
@@ -281,7 +282,7 @@ class SiteSlicer:
         for i in range(min(at[0], len(self.frames) - 1), -1, -1):
             f = self.frames[i]
             if f.nest is nest and name in f.vars:
-                f.used = True
+                f.used.add(name)
                 return f.vars[name]
         if nest.node is None:
             if name in nest.sdfg.arrays:
@@ -517,25 +518,36 @@ class SiteSlicer:
         return len(self.frames) - 1
 
     def build(self) -> tuple:
-        def tree(i: int) -> tuple:
+        def tree(i: int, weight) -> tuple:
             if i == len(self.frames):
                 return ()
             f = self.frames[i]
-            inner = tuple(f.stmts) + tree(i + 1)
+            below = self.frames[i:]
+            # Without a guard or value below, a loop variable no row reads only multiplies the rows' writes.
+            free = not any(g.kind == "guard" or any(isinstance(s, Let) for s in g.stmts) for g in below)
+            kept = []
+            if f.kind == "map":
+                read = {f.vars[n] for n in f.used}
+                kept = [k for k, v in enumerate(f.payload[0]) if v in read or not free]
+                for k, (begin, end, step) in enumerate(f.payload[2]):
+                    if k not in kept:
+                        weight = weight * symbolic.sympy.Max(0, symbolic.int_floor(end - begin, step) + 1)
+            stmts = tuple(Row(s.expr, weight) if isinstance(s, Row) else s for s in f.stmts)
+            inner = stmts + tree(i + 1, weight)
             if f.kind in ("region", "top", "nest"):
                 return inner
             if f.kind == "guard":
                 return (Guard(f.payload, inner),)
-            below = self.frames[i:]
-            if not f.used and not any(g.kind == "guard" or any(isinstance(s, Let) for s in g.stmts) for g in below):
-                return inner
             if f.kind == "loop":
+                if not f.used and free:
+                    return inner
                 var, dtype, init, cond, update = f.payload
                 return (Loop(var, dtype, init, cond, update, inner),)
-            names, types, ranges = f.payload
-            return (MapLoop(names, types, ranges, inner),)
+            if not kept:
+                return inner
+            return (MapLoop(*(tuple(x[k] for k in kept) for x in f.payload), inner),)
 
-        return tree(0)
+        return tree(0, 1)
 
 
 def _nest_tables(nest: Nest) -> None:
