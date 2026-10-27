@@ -274,6 +274,50 @@ def test_a_container_moved_across_the_boundary_gets_one_connector():
     assert np.allclose(a, (np.arange(8.0) + 1) * 2)
 
 
+def loop_through_a_temporary() -> tuple[dace.SDFG, LoopRegion]:
+    """``for i: tmp[i] = A[i] + 1; A[i] = tmp[i] * 2``. ``i`` is not an SDFG symbol, and only the loop uses ``tmp``."""
+    sdfg = dace.SDFG("loop_through_a_temporary")
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_transient("tmp", [10], dace.float64)
+    loop = LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state("first", is_start_block=True)
+    first.add_mapped_tasklet(
+        "inc",
+        {"j": "i:i+1"},
+        {"a": dace.Memlet("A[j]")},
+        "b = a + 1",
+        {"b": dace.Memlet("tmp[j]")},
+        external_edges=True,
+    )
+    second = loop.add_state_after(first, "second")
+    second.add_mapped_tasklet(
+        "dbl",
+        {"j": "i:i+1"},
+        {"a": dace.Memlet("tmp[j]")},
+        "b = a * 2",
+        {"b": dace.Memlet("A[j]")},
+        external_edges=True,
+    )
+    sdfg.add_state_after(loop, "after")
+    return sdfg, loop
+
+
+def test_a_loop_nests_with_only_the_data_it_shares():
+    """The loop variable, which nothing after the loop reads, and the loop-only ``tmp`` stay inside the nested SDFG."""
+    sdfg, loop = loop_through_a_temporary()
+    state = nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
+    sdfg.validate()
+
+    nested = next(n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    assert set(nested.in_connectors) == set(nested.out_connectors) == {"A"}
+    assert "tmp" not in sdfg.arrays and nested.sdfg.arrays["tmp"].transient
+    assert {b.label for b in sdfg.nodes()} == {"nested_sdfg_parent", "after"}
+    a = np.arange(10.0)
+    sdfg(A=a)
+    assert np.array_equal(a, (np.arange(10.0) + 1) * 2)
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -286,3 +330,4 @@ if __name__ == "__main__":
     test_nest_cf_simple_if_chain()
     test_nest_two_loops_with_same_variable()
     test_a_container_moved_across_the_boundary_gets_one_connector()
+    test_a_loop_nests_with_only_the_data_it_shares()

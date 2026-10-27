@@ -119,12 +119,13 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
         # Find NestedSDFG's unique data
         rw_set = read_set | write_set
         unique_set = set()
+        nested_blocks = set(all_blocks)
         for name in rw_set:
             if not sdfg.arrays[name].transient:
                 continue
             found = False
             for state in sdfg.states():
-                if state in blocks:
+                if state in nested_blocks:
                     continue
                 for node in state.nodes():
                     if isinstance(node, nodes.AccessNode) and node.data == name:
@@ -221,22 +222,21 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
         # (outer) SDFG through a symbol-scalar-symbol conversion. This is happening in two parts: (1) inside the nested
         # SDFG (symbol -> scalar), (2) in the outer SDFG, just after the SDFGState containing the NestedSDFG node
         # (scalar -> symbol).
-        ndefined_symbols = set()
-        out_mapping = {}
-        out_state = None
+        # Only the symbols that code outside the subgraph reads are handed out.
+        ndefined_types = {}
         for e in nsdfg.all_interstate_edges():
-            ndefined_symbols.update(set(e.data.assignments.keys()))
+            ndefined_types.update(e.data.new_symbols(sdfg, sdfg.symbols))
         for b in all_blocks:
             if isinstance(b, LoopRegion) and b.loop_variable is not None and b.loop_variable != "" and b.init_statement:
-                ndefined_symbols.add(b.loop_variable)
+                ndefined_types.update(b.new_symbols(sdfg.symbols))
+        ndefined_symbols = sorted(ndefined_types.keys() & symbols_read_outside(sdfg, nested_blocks))
+        out_mapping = {}
+        out_state = None
         if ndefined_symbols:
             out_state = nsdfg.add_state("symbolic_output")
             nsdfg.add_edge(sink_node, out_state, InterstateEdge())
             for s in ndefined_symbols:
-                if s in nsdfg.symbols:
-                    dtype = nsdfg.symbols[s]
-                else:
-                    dtype = sdfg.symbols[s]
+                dtype = nsdfg.symbols.get(s, sdfg.symbols.get(s, ndefined_types[s]))
                 # The connector connects the two scalars by name, so it must be free in both SDFGs
                 name = sdfg._find_new_name(f"__sym_out_{s}")
                 suffix = 0
@@ -253,11 +253,13 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
                 write_set.add(name)
 
         # Add NestedSDFG node
-        fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
-        fsymbols.update(defined_symbols)
-        fsymbols = fsymbols - strictly_defined_symbols
+        # A symbol the subgraph defines is passed in only if the subgraph reads it first; else it is declared inside
+        inner_free = nsdfg.free_symbols
+        fsymbols = (sdfg.symbols.keys() | inner_free) - strictly_defined_symbols - (defined_symbols - inner_free)
         mapping = {s: s for s in fsymbols}
-        cnode = new_state.add_nested_sdfg(nsdfg, read_set, write_set, mapping)
+        cnode = new_state.add_nested_sdfg(
+            nsdfg, dict.fromkeys(sorted(read_set)), dict.fromkeys(sorted(write_set)), mapping
+        )
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
                 sdfg.remove_symbol(s)
@@ -283,6 +285,19 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
         return_state = blocks[0]
 
     return return_state
+
+
+def symbols_read_outside(sdfg: SDFG, inside: set[ControlFlowBlock]) -> set[str]:
+    """The symbols that the blocks and interstate edges of ``sdfg`` outside ``inside`` read. ``inside`` lists the
+    nested blocks of its regions too; a region outside ``inside`` counts only its own conditions."""
+    read = set()
+    for block in sdfg.all_control_flow_blocks():
+        if block not in inside:
+            read |= block.used_symbols(all_symbols=True, with_contents=isinstance(block, SDFGState))
+    for edge in sdfg.all_interstate_edges():
+        if edge.src not in inside or edge.dst not in inside:
+            read |= edge.data.used_symbols(all_symbols=True)
+    return read
 
 
 def nest_sdfg_control_flow(sdfg: SDFG):
