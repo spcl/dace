@@ -21,6 +21,15 @@ def code_of(sdfg: dace.SDFG) -> str:
     return "\n".join(t.code.as_string for t, parent in sdfg.all_nodes_recursive() if isinstance(t, dace.nodes.Tasklet))
 
 
+def environments_of(sdfg: dace.SDFG) -> set[str]:
+    return {
+        env
+        for t, parent in sdfg.all_nodes_recursive()
+        if isinstance(t, (dace.nodes.CodeNode, dace.nodes.LibraryNode))
+        for env in t.environments or ()
+    }
+
+
 def connect(node, inputs: dict, outputs: dict, implementation: str) -> dace.SDFG:
     sdfg = dace.SDFG(f"hip_{type(node).__name__.lower()}")
     state = sdfg.add_state()
@@ -73,6 +82,14 @@ CASES = [
         "hipSolverDn",
         ["hipsolverDnDpotrf(", "HIPSOLVER_FILL_MODE_", "gpuMalloc"],
     ),
+    # A complex operand is handed over as the solver's own complex type
+    (
+        Potrf("potrf"),
+        {"_xin": ("A", [4, 4], dace.complex128)},
+        {"_xout": ("A", [4, 4], dace.complex128), "_res": ("info", [1], dace.int32)},
+        "hipSolverDn",
+        ["hipsolverDnZpotrf(", "(hipDoubleComplex*)_xin"],
+    ),
     (
         Getrs("getrs"),
         {"_a": ("A", [4, 4], F64), "_rhs_in": ("B", [4, 2], F64), "_ipiv": ("p", [4], dace.int32)},
@@ -100,7 +117,11 @@ CASES = [
 
 @pytest.mark.parametrize("node,inputs,outputs,implementation,expected", CASES, ids=lambda c: getattr(c, "label", None))
 def test_hip_expansion_speaks_hip(node, inputs, outputs, implementation, expected):
-    code = code_of(connect(node, inputs, outputs, implementation))
+    sdfg = connect(node, inputs, outputs, implementation)
+    code = code_of(sdfg)
     for name in expected:
         assert name in code, (name, code[:400])
     assert not CUDA_NAMES.search(code), CUDA_NAMES.search(code).group(0)
+    # A CUDA environment would link the CUDA library (``-lcublas`` on a ROCm host)
+    linked = environments_of(sdfg)
+    assert not any(".cublas." in env or ".cusolverdn." in env or ".cutensor." in env for env in linked), linked

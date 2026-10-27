@@ -81,25 +81,30 @@ def to_hip(code: str, names) -> str:
     return code
 
 
-def rename_code(result, names) -> None:
-    """Renames the C++ code of ``result``, a tasklet or an SDFG, recursively."""
-    if isinstance(result, nodes.Tasklet):
-        result.code.as_string = to_hip(result.code.as_string, names)
-        return
+def rename_code(result, names, environments: dict[str, str] | None = None) -> None:
+    """Renames the C++ code of ``result``, a tasklet or an SDFG, recursively, and retargets the environments its
+    tasklets name through ``environments`` (CUDA class path to HIP class path)."""
     if isinstance(result, nodes.NestedSDFG):
         result = result.sdfg
-    for node, parent in result.all_nodes_recursive():
-        if isinstance(node, nodes.Tasklet):
-            node.code.as_string = to_hip(node.code.as_string, names)
+    found = [result] if isinstance(result, nodes.Tasklet) else [node for node, _ in result.all_nodes_recursive()]
+    for node in found:
+        if not isinstance(node, nodes.Tasklet):
+            continue
+        node.code.as_string = to_hip(node.code.as_string, names)
+        if environments and node.environments:
+            node.environments = {environments.get(env, env) for env in node.environments}
 
 
 def hip_expansion(cuda_expansion: type[ExpandTransformation], environment: type, names) -> type[ExpandTransformation]:
     """The HIP expansion of ``cuda_expansion``: same graph, code renamed through ``names``, linked to ``environment``."""
 
+    # The CUDA expansion tags the tasklets it builds with its own environments, which link the CUDA library
+    retarget = {env.full_class_path(): environment.full_class_path() for env in cuda_expansion.environments}
+
     @functools.wraps(cuda_expansion.expansion)
     def expansion(*args, **kwargs):
         result = cuda_expansion.expansion(*args, **kwargs)
-        rename_code(result, names)
+        rename_code(result, names, retarget)
         return result
 
     # ExpandGemmCuBLAS -> ExpandGemmHipBLAS, cuFFTFFTExpansion -> hipFFTFFTExpansion

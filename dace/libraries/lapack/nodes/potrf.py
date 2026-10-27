@@ -107,13 +107,13 @@ class ExpandPotrfCuSolverDn(ExpandPotrfGPUSolver):
                 int __dace_workspace_size = 0;
                 {ctype}* __dace_workspace;
                 cusolverDn{func}_bufferSize(
-                    __dace_cusolverDn_handle, {uplo}, {rows}, _xin,
+                    __dace_cusolverDn_handle, {uplo}, {rows}, ({ctype}*)_xin,
                     {stride}, &__dace_workspace_size);
                 gpuMalloc<{ctype}>(
                     &__dace_workspace,
                     sizeof({ctype}) * __dace_workspace_size);
                 cusolverDn{func}(
-                    __dace_cusolverDn_handle, {uplo}, {rows}, _xin,
+                    __dace_cusolverDn_handle, {uplo}, {rows}, ({ctype}*)_xin,
                     {stride}, __dace_workspace, __dace_workspace_size, _res);
                 gpuFree(__dace_workspace);
                 """
