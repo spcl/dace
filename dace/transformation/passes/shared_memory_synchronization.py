@@ -43,6 +43,21 @@ def followed_by_barrier(node: Node, state: SDFGState) -> bool:
     return any(is_barrier(succ) for succ in state.successors(node))
 
 
+def in_explicitly_synchronized_kernel(state: SDFGState, node: Node) -> bool:
+    """Whether ``node`` runs in a kernel whose producer placed every barrier (``Map.explicit_sync``), across nested
+    SDFGs."""
+    sdfg = state.sdfg
+    while True:
+        scope = state.entry_node(node)
+        while scope is not None:
+            if scope.map.schedule == dtypes.ScheduleType.GPU_Device:
+                return scope.map.explicit_sync
+            scope = state.entry_node(scope)
+        if sdfg.parent_nsdfg_node is None:
+            return False
+        sdfg, state, node = sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DefaultSharedMemorySync(ppl.Pass):
@@ -57,6 +72,8 @@ class DefaultSharedMemorySync(ppl.Pass):
         tb_map_exits: dict[MapExit, SDFGState] = {}
         collaborative_smem_copies: dict[AccessNode, SDFGState] = {}
         for node, parent_state in sdfg.all_nodes_recursive():
+            if isinstance(node, (MapExit, AccessNode)) and in_explicitly_synchronized_kernel(parent_state, node):
+                continue
             if isinstance(node, MapExit) and node.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 # The barriers of a tile node's threads are placed by InsertTileSync
                 if not node.map.label.startswith(TILE_THREADS_MAP):

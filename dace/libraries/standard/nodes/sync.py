@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``Sync``: a barrier among the threads of a warp, a thread block or a whole grid of a GPU kernel, or a host wait for
-a GPU stream or the whole device."""
+"""``Sync``: a barrier among the threads of a warp, a thread block or a whole grid of a GPU kernel, or of an OpenMP
+team, or a host wait for a GPU stream or the whole device."""
 
 import enum
 
 import dace
 from dace import dtypes, library, nodes, properties
 from dace.codegen.common import get_gpu_backend
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -139,3 +140,44 @@ class ExpandAuto(ExpandTransformation):
     @staticmethod
     def expansion(node: Sync, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         return expand_sync(node, parent_state, get_gpu_backend())
+
+
+def enclosing_cpu_parallel_schedule(
+    sdfg: dace.SDFG, state: dace.SDFGState, node: nodes.Node
+) -> dtypes.ScheduleType | None:
+    """The schedule of the innermost ``CPU_Multicore`` or ``CPU_Persistent`` map around ``node``, across nested
+    SDFGs; ``None`` when one thread runs it."""
+    parallel = (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
+    while True:
+        scopes = state.scope_dict()
+        scope = scopes[node]
+        while scope is not None:
+            if scope.schedule in parallel:
+                return scope.schedule
+            scope = scopes[scope]
+        if sdfg.parent_nsdfg_node is None:
+            return None
+        sdfg, state, node = sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node
+
+
+@library.register_expansion(Sync, "OpenMP")
+class ExpandOpenMP(ExpandTransformation):
+    """``#pragma omp barrier`` for the team of the enclosing ``CPU_Persistent`` region (an ``omp parallel``), whether
+    the barrier names the block or the grid. A warp is one thread on a CPU and one thread waits for nobody, so both
+    need no statement; a worksharing ``omp for`` (``CPU_Multicore``) cannot hold a barrier."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: Sync, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        if node.scope in (SyncScope.STREAM, SyncScope.DEVICE):
+            raise ValueError(f"{node.label}: a {node.scope.value} wait has no OpenMP lowering")
+        if is_devicelevel_gpu(parent_sdfg, parent_state, node):
+            raise ValueError(f"{node.label}: the OpenMP barrier cannot run in a GPU kernel")
+        schedule = enclosing_cpu_parallel_schedule(parent_sdfg, parent_state, node)
+        if schedule == dtypes.ScheduleType.CPU_Multicore:
+            raise ValueError(f"{node.label}: an OpenMP barrier cannot be inside a worksharing (CPU_Multicore) map")
+        code = ""
+        if schedule == dtypes.ScheduleType.CPU_Persistent and node.scope != SyncScope.WARP:
+            code = "#pragma omp barrier"
+        return nodes.Tasklet(node.label, {}, {}, code, language=dace.Language.CPP, side_effects=True)

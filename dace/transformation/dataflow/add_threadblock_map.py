@@ -219,6 +219,13 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         # Instrumentation times the kernel: it moves to the kernel map, the thread-block map is not timed on its own.
         new_kernel_entry.map.instrument = kernel_map_entry.map.instrument
         kernel_map_entry.map.instrument = dtypes.InstrumentationType.No_Instrumentation
+        # The launch is the kernel's: its launch mode, synchronization owner and handle move to the kernel map
+        new_kernel_entry.map.cooperative = kernel_map_entry.map.cooperative
+        new_kernel_entry.map.explicit_sync = kernel_map_entry.map.explicit_sync
+        new_kernel_entry.map.kernel_handle = kernel_map_entry.map.kernel_handle
+        kernel_map_entry.map.cooperative = False
+        kernel_map_entry.map.explicit_sync = False
+        kernel_map_entry.map.kernel_handle = None
 
     def preprocess_default_dims(self):
         """

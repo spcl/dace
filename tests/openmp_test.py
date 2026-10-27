@@ -176,6 +176,51 @@ def test_omp_get_ntid():
     assert np.allclose(a, 3)
 
 
+def test_omp_nowait_in_parallel():
+    """Two independent worksharing loops in one team: the first drops its implicit barrier, the second keeps it."""
+
+    @dace.program
+    def tester(A: dace.float64[20], B: dace.float64[20]):
+        for t in dace.map[0:1] @ dace.ScheduleType.CPU_Persistent:
+            for i in dace.map[0:20] @ dace.ScheduleType.CPU_Multicore:
+                A[i] += 1
+            for j in dace.map[0:20] @ dace.ScheduleType.CPU_Multicore:
+                B[j] += 2
+
+    sdfg = tester.to_sdfg()
+    first = next(
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and n.map.params == ["i"]
+    )
+    first.map.omp_nowait = True
+    pragmas = [line.split() for line in sdfg.generate_code()[0].clean_code.splitlines() if "#pragma omp for" in line]
+    assert len(pragmas) == 2
+    assert sorted("nowait" in pragma for pragma in pragmas) == [False, True]
+
+    # The property survives serialization
+    assert dace.SDFG.from_json(sdfg.to_json()).generate_code()[0].clean_code.count("nowait") == 1
+
+    a, b = np.random.rand(20), np.random.rand(20)
+    ref_a, ref_b = a + 1, b + 2
+    sdfg(A=a, B=b)
+    assert np.allclose(a, ref_a) and np.allclose(b, ref_b)
+
+
+def test_omp_nowait_outside_parallel_is_ignored():
+    """A map that opens its own parallel region joins at its end, so nowait has nothing to drop."""
+
+    @dace.program
+    def tester(A: dace.float64[20]):
+        for i in dace.map[0:20] @ dace.ScheduleType.CPU_Multicore:
+            A[i] += 1
+
+    sdfg = tester.to_sdfg()
+    me = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+    me.map.omp_nowait = True
+    code = sdfg.generate_code()[0].clean_code
+    assert "#pragma omp parallel for" in code
+    assert "nowait" not in code
+
+
 if __name__ == "__main__":
     test_lack_of_omp_props()
     test_omp_props()
@@ -184,3 +229,5 @@ if __name__ == "__main__":
     test_omp_get_tid()
     test_omp_get_tid_elision()
     test_omp_get_ntid()
+    test_omp_nowait_in_parallel()
+    test_omp_nowait_outside_parallel_is_ignored()

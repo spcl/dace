@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Experimental CUDA code generator: emits kernels, streams, and host glue for GPU SDFGs."""
 
+import functools
 from typing import TYPE_CHECKING, Any
 
 import dace
@@ -206,6 +207,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 )
                 self._kernel_arglists[node].update(dynamic_map_input_args(state, node))
 
+    def state_param(self) -> str:
+        """The parameter through which host functions of this program reach its state."""
+        return f"{mangle_dace_state_struct_name(self._global_sdfg)} *__state"
+
     @property
     def has_initializer(self) -> bool:
         return True
@@ -382,6 +387,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             state_id,
             scope_entry,
         )
+        if scope_entry.map.cooperative and scope_entry.map.kernel_handle is not None:
+            function_stream.write(
+                f"DACE_EXPORTED int {persistent_blocks_name(scope_entry.map.kernel_handle)}({self.state_param()});\n",
+                cfg,
+                state_id,
+                scope_entry,
+            )
 
         # Wrap the invocation in a block so dynamic-input local declarations don't leak.
         state = cfg.state(state_id)
@@ -475,10 +487,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._localcode.write(dynamic_shared_memory_request(kernel_name, scope_entry), cfg, state_id, scope_entry)
         stream_var_name = config_str("compiler", "cuda", "gpu_stream_name").split(",")[1]
         kargs = ", ".join(["(void *)&" + arg for arg in kernel_args_as_input])
+        # A grid barrier needs every block resident at once, which only a cooperative launch guarantees
+        launch = "LaunchCooperativeKernel" if scope_entry.map.cooperative else "LaunchKernel"
         self._localcode.write(
             f"""
             void  *{kernel_name}_args[] = {{ {kargs} }};
-            gpuError_t __err = {self.backend}LaunchKernel((void*){kernel_name}, dim3({gdims}), dim3({bdims}), {kernel_name}_args, {sym2cpp(dynsmem_size)}, {stream_var_name});
+            gpuError_t __err = {self.backend}{launch}((void*){kernel_name}, dim3({gdims}), dim3({bdims}), {kernel_name}_args, {sym2cpp(dynsmem_size)}, {stream_var_name});
             """,
             cfg,
             state_id,
@@ -489,6 +503,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._localcode.write(generate_sync_debug_call())
 
         self._localcode.write("}", cfg, state_id, scope_entry)
+        if scope_entry.map.cooperative and scope_entry.map.kernel_handle is not None:
+            self._localcode.write(
+                persistent_blocks_function(
+                    kernel_name, scope_entry, block_dims, dynsmem_size, self.backend, self.state_param()
+                ),
+                cfg,
+                state_id,
+                scope_entry,
+            )
 
     def copy_memory(
         self,
@@ -1275,7 +1298,10 @@ class KernelSpec:
             m.schedule == dtypes.ScheduleType.GPU_ThreadBlock
             for m, _ in gpu_scope_maps_recursive(kernel_parent_state.scope_subgraph(kernel_map_entry))
         )
-        self.chiplets: int = chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, False, [])
+        # A cooperative grid must fit the device as launched, so it is never padded over chiplets
+        self.chiplets: int = (
+            1 if kernel_map_entry.map.cooperative else chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, False, [])
+        )
         self.grid_dims, self.chiplet_chunk = distribute_over_chiplets(
             kernel_map_entry, list(self.grid_dims), self.chiplets
         )
@@ -1294,3 +1320,40 @@ class KernelSpec:
                 f"Unsupported backend '{cudaCodeGen.backend}' in ExperimentalCUDACodeGen. "
                 "Only 'cuda' and 'hip' are supported."
             )
+
+
+def persistent_blocks_name(handle: str) -> str:
+    """The host function returning how many blocks of the cooperative kernel named ``handle`` fit the device."""
+    return f"__dace_persistent_blocks_{handle}"
+
+
+def persistent_blocks_function(
+    kernel_name: str, kernel_entry: nodes.MapEntry, block_dims: list, dynsmem_size, backend: str, state_param: str
+) -> str:
+    """The definition of :func:`persistent_blocks_name` for a cooperative kernel: the configured share of the device
+    (``persistent_map_SM_fraction`` x ``persistent_map_occupancy`` blocks), clamped to the blocks that are resident at
+    once, which a grid barrier needs. A kernel that does not fit even once is an error, never a one-block launch."""
+    threads = functools.reduce(lambda a, b: a * b, block_dims, 1)
+    if symbolic.issymbolic(threads):
+        raise ValueError(f"Cooperative kernel {kernel_name}: the block size {block_dims} must be a constant")
+    sm_attribute = "hipDeviceAttributeMultiprocessorCount" if backend == "hip" else "cudaDevAttrMultiProcessorCount"
+    fraction = Config.get("compiler", "cuda", "persistent_map_SM_fraction")
+    occupancy = Config.get("compiler", "cuda", "persistent_map_occupancy")
+    name = persistent_blocks_name(kernel_entry.map.kernel_handle)
+    return f"""
+DACE_EXPORTED int {name}({state_param});
+int {name}({state_param})
+{{
+    int device;
+    DACE_GPU_CHECK({backend}GetDevice(&device));
+    int sms;
+    DACE_GPU_CHECK({backend}DeviceGetAttribute(&sms, {sm_attribute}, device));
+    int per_sm = 0;
+    DACE_GPU_CHECK({backend}OccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, {kernel_name}, {sym2cpp(threads)}, {sym2cpp(dynsmem_size)}));
+    if (per_sm <= 0) {{
+        throw std::runtime_error("Cooperative kernel {kernel_name} does not fit a multiprocessor even once");
+    }}
+    int requested = ((int) ceil({fraction} * sms)) * {occupancy};
+    return std::min(std::max(1, requested), per_sm * sms);
+}}
+"""
