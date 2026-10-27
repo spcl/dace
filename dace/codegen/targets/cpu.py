@@ -756,6 +756,8 @@ class CPUCodeGen(TargetCodeGenerator):
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ) -> None:
+        if hands_on_unchanged(dfg, src_node, dst_node, edge):
+            return
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
             try:
@@ -2606,3 +2608,16 @@ def allocate_register_array(
             "memset(%s, 0, sizeof(%s)*(%s));\n" % (name, nodedesc.dtype.ctype, bound), cfg, state_id, node
         )
     define_var(name, DefinedType.Pointer, ctypedef)
+
+
+def hands_on_unchanged(
+    dfg: StateSubgraphView, src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[mmlt.Memlet]
+) -> bool:
+    """Whether ``edge`` hands one container on through scope exits as itself, with a single subset: that moves
+    nothing. A copy would take the exit's slice as the source and the whole container as the target."""
+    return (
+        isinstance(src_node, nodes.AccessNode)
+        and isinstance(dst_node, nodes.AccessNode)
+        and src_node.data == dst_node.data
+        and all(e.data.data == src_node.data and e.data.other_subset is None for e in dfg.memlet_path(edge))
+    )
