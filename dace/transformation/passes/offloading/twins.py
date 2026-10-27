@@ -7,6 +7,7 @@ from ordered_set import OrderedSet
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import Memlet, data, dtypes, subsets
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
@@ -123,13 +124,10 @@ def insert_copy_state(
 
 def register_twin(sdfg: SDFG, twin: str, home: str) -> None:
     """Declare ``twin``, the copy of ``home`` on the other side."""
-    desc = sdfg.arrays[home]
-    on_device = helpers.is_array_stored_on_GPU(sdfg, home)
-    storage = dtypes.StorageType.Default if on_device else dtypes.StorageType.GPU_Global
-    if isinstance(desc, data.View):
-        sdfg.add_view(twin, desc.shape, desc.dtype, storage=storage)
-    else:
-        sdfg.add_array(twin, desc.shape, desc.dtype, storage=storage, transient=True)
+    desc = sdfg.arrays[home].clone()  # same layout: a kernel or nested SDFG reads either through the same strides
+    desc.storage = dtypes.StorageType.Default if desc.storage in GPU_RESIDENT_STORAGES else dtypes.StorageType.GPU_Global
+    desc.transient = True
+    sdfg.add_datadesc(twin, desc)
 
 
 class Copy(NamedTuple):

@@ -290,27 +290,30 @@ def refuse_by_value_scalars_the_device_writes(sdfg: SDFG) -> None:
         )
 
 
+def kernels_touching(sdfg: SDFG) -> dict[str, OrderedSet[nodes.MapEntry | None]]:
+    """The kernels each container of ``sdfg`` is accessed in; None stands for an access outside every kernel."""
+    touching: dict[str, OrderedSet[nodes.MapEntry | None]] = {}
+    for state in sdfg.states():
+        scopes = state.scope_dict()
+        for node in state.data_nodes():
+            touching.setdefault(node.data, OrderedSet()).add(enclosing_kernel(scopes, node))
+    return touching
+
+
 def register_kernel_local_transients(sdfg: SDFG, placed_on_gpu: Container[str]) -> None:
     """Make a register of every transient (Default, or put on the device by this pass) that only one kernel accesses."""
     for nested in sdfg.all_sdfgs_recursive():
-        kernels: dict[str, OrderedSet[nodes.MapEntry | None]] = {}
-        for state in nested.states():
-            scopes = state.scope_dict()
-            for node in state.data_nodes():
-                desc = nested.arrays.get(node.data)
-                if (
-                    desc is None
-                    or not desc.transient
-                    or isinstance(desc, (data.View, data.Stream))
-                    or not (
-                        desc.storage == dtypes.StorageType.Default or (nested is sdfg and node.data in placed_on_gpu)
-                    )
-                ):
-                    continue
-                kernels.setdefault(node.data, OrderedSet()).add(enclosing_kernel(scopes, node))
-        for name, owners in kernels.items():
+        for name, owners in kernels_touching(nested).items():
+            desc = nested.arrays.get(name)
+            if (
+                desc is None
+                or not desc.transient
+                or isinstance(desc, (data.View, data.Stream))
+                or not (desc.storage == dtypes.StorageType.Default or (nested is sdfg and name in placed_on_gpu))
+            ):
+                continue
             if len(owners) == 1 and owners[0] is not None:
-                nested.arrays[name].storage = dtypes.StorageType.Register
+                desc.storage = dtypes.StorageType.Register
 
 
 def new_map_identifiers(state: SDFGState, map_label: str, map_param: str) -> tuple[str, str]:

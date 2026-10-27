@@ -58,6 +58,23 @@ def test_a_copy_feeding_a_dynamic_map_input_stays_where_it_is():
     assert edge.src.data == "s", edge.src
 
 
+def test_an_ordering_edge_into_a_scalar_is_not_a_copy():
+    """``X -(empty)-> s -> map`` orders ``s`` after ``X`` and copies nothing; routed through the map it would be an empty
+    memlet on a data connector, which breaks connector type inference (ICON velocity tendencies, ``maxvcfl -> dtime``)."""
+    sdfg, entry = copy_into_map(dynamic_range=False)
+    state = sdfg.start_state
+    (copy,) = [e for e in state.edges() if isinstance(e.src, dace.nodes.AccessNode) and e.src.data == "L"]
+    state.remove_edge(copy)
+    state.add_nedge(copy.src, copy.dst, Memlet())
+
+    single_element_copies_into_map(sdfg)
+
+    sdfg.validate()
+    (edge,) = [e for e in state.in_edges(entry) if e.dst_conn == "IN_s"]
+    assert edge.src.data == "s" and not edge.data.is_empty(), edge
+
+
 if __name__ == "__main__":
     test_a_copy_read_through_a_pass_through_connector_moves_into_the_map()
     test_a_copy_feeding_a_dynamic_map_input_stays_where_it_is()
+    test_an_ordering_edge_into_a_scalar_is_not_a_copy()

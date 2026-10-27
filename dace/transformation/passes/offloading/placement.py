@@ -37,7 +37,7 @@ Where = dict[str, bool]
 class Placement:
     """Place the containers of one SDFG, given what each of its states wants; run it with :meth:`apply`."""
 
-    __slots__ = ("fixed_storage", "initial", "placed_on_gpu", "plan", "sdfg", "touched_by", "wants")
+    __slots__ = ("fixed_storage", "initial", "placed_on_gpu", "plan", "scope_local", "sdfg", "touched_by", "wants")
 
     def __init__(self, sdfg: SDFG, wants: dict[SDFGState, Wants]) -> None:
         self.sdfg = sdfg
@@ -48,12 +48,18 @@ class Placement:
             for name, desc in sdfg.arrays.items()
             if not desc.transient and helpers.is_array(name, sdfg)
         }
-        # A shared-memory or register container keeps the scope-local storage it was given.
-        self.fixed_storage = OrderedSet(
+        # A shared-memory or register container that one kernel holds, or no device code uses, keeps its scope-local
+        # storage and is never placed. One device code hands between launches (dace-fortran's loop-local arrays in an ICON block
+        # body) is a buffer like any other.
+        touching = helpers.kernels_touching(sdfg)
+        on_device = OrderedSet(name for state_wants in wants.values() for name in state_wants.gpu)
+        self.scope_local = OrderedSet(
             name
             for name, desc in sdfg.arrays.items()
             if desc.storage in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register)
+            and (name not in on_device or (len(touching[name]) == 1 and touching[name][0] is not None))
         )
+        self.fixed_storage = OrderedSet(self.scope_local)
         #: Transients this placement put in device memory.
         self.placed_on_gpu: OrderedSet[str] = OrderedSet()
         self.plan = twins.CopyPlan(sdfg)
@@ -188,6 +194,8 @@ class Placement:
         """
         grouped: dict[tuple[ControlFlowBlock, bool], OrderedSet[str]] = {}
         for name, on_gpu in targets.items():
+            if name in self.scope_local:
+                continue
             current = where.get(name)
             where[name] = on_gpu
             if current is None:

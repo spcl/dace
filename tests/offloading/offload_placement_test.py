@@ -924,6 +924,83 @@ def test_a_shared_memory_transient_keeps_its_storage():
     assert sdfg.arrays["tile"].storage == dtypes.StorageType.GPU_Shared
 
 
+def column_major_input() -> dace.SDFG:
+    """A kernel doubles the column-major ``A`` into ``B``."""
+    sdfg = dace.SDFG("column_major_input")
+    sdfg.add_array("A", [4, 8], dace.float64, strides=[1, 4])
+    sdfg.add_array("B", [4, 8], dace.float64)
+    state = sdfg.add_state("kernel")
+    state.add_mapped_tasklet(
+        "double",
+        {"i": "0:4", "j": "0:8"},
+        {"a": dace.Memlet("A[i, j]")},
+        "b = 2 * a",
+        {"b": dace.Memlet("B[i, j]")},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_device_twin_keeps_the_layout_of_its_home():
+    """The twin was declared row-major: a nested SDFG bound to it no longer matched its own column-major descriptor
+    (ICON velocity tendencies)."""
+    sdfg = column_major_input()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    sdfg.validate()
+    home, twin = sdfg.arrays["A"], sdfg.arrays[helpers.gpu_name("A")]
+    assert (twin.strides, twin.total_size) == (home.strides, home.total_size), (twin.strides, home.strides)
+
+
+def register_array_two_kernels_share() -> dace.SDFG:
+    """One map fills the ``Register`` array ``tmp`` and a second map reads it, as dace-fortran declares the loop-local
+    arrays of an ICON block body."""
+    sdfg = dace.SDFG("register_array_two_kernels_share")
+    sdfg.add_array("A", [LENGTH], dace.float64)
+    sdfg.add_array("B", [LENGTH], dace.float64)
+    sdfg.add_transient("tmp", [LENGTH], dace.float64, storage=dtypes.StorageType.Register)
+    state = sdfg.add_state("kernels")
+    tmp = state.add_access("tmp")
+    state.add_mapped_tasklet(
+        "fill",
+        {"i": f"0:{LENGTH}"},
+        {"a": dace.Memlet("A[i]")},
+        "t = a + 1",
+        {"t": dace.Memlet("tmp[i]")},
+        output_nodes={"tmp": tmp},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "use",
+        {"i": f"0:{LENGTH}"},
+        {"t": dace.Memlet("tmp[i]")},
+        "b = 2 * t",
+        {"b": dace.Memlet("B[i]")},
+        input_nodes={"tmp": tmp},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_register_array_two_kernels_share_is_device_memory():
+    """Kept a register, it was a host stack array both kernels were handed."""
+    sdfg = register_array_two_kernels_share()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert sdfg.arrays["tmp"].storage == dtypes.StorageType.GPU_Global
+
+
+@pytest.mark.gpu
+def test_a_register_array_two_kernels_share_computes_what_numpy_computes():
+    sdfg = register_array_two_kernels_share()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    a = np.random.default_rng(0).random(LENGTH)
+    b = np.zeros(LENGTH)
+    sdfg(A=a, B=b)
+    np.testing.assert_array_equal(b, 2 * (a + 1))
+
+
 if __name__ == "__main__":
     test_an_interstate_read_does_not_hand_the_next_state_the_device_name()
     test_fusing_the_wrappers_does_not_validate_before_the_copies_exist()
@@ -949,6 +1026,8 @@ if __name__ == "__main__":
     for length in LENGTHS:
         test_a_host_accumulator_is_copied_once_each_way_and_not_wrapped(length)
     test_a_shared_memory_transient_keeps_its_storage()
+    test_a_device_twin_keeps_the_layout_of_its_home()
+    test_a_register_array_two_kernels_share_is_device_memory()
     if len(sys.argv) > 1 and sys.argv[1] == "gpu":
         test_the_fused_wrappers_compute_what_the_host_tasklets_computed()
         test_a_join_hands_on_the_locations_its_later_arm_carries_and_computes()
@@ -958,3 +1037,4 @@ if __name__ == "__main__":
         test_a_length_one_local_of_a_one_iteration_map_computes_what_numpy_computes()
         for length in LENGTHS:
             test_a_host_accumulator_beside_a_kernel_computes_what_numpy_computes(length)
+        test_a_register_array_two_kernels_share_computes_what_numpy_computes()

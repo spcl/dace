@@ -58,17 +58,21 @@ def single_element_copies_into_map(sdfg: SDFG) -> None:
         if is_movable_copy(sdfg, state, access)
     ]
     for state, access, map_entry in changes:
-        rewire_access_into_map(state, access, map_entry)
+        if is_movable_copy(sdfg, state, access):  # an earlier rewiring may have taken its edges
+            rewire_access_into_map(state, access, map_entry)
 
 
 def is_movable_copy(sdfg: SDFG, state: SDFGState, access: nodes.Node) -> bool:
     """A single-element container copied from another container and read only through a pass-through connector of
-    one map (another reader would be left inside the map's scope; a dynamic input is not passed-on data)."""
+    one map (another reader would be left inside the map's scope; a dynamic input is not passed-on data; an empty
+    memlet only orders, it copies nothing)."""
     return (
         isinstance(access, nodes.AccessNode)
         and state.in_degree(access) == 1
         and state.out_degree(access) == 1
         and isinstance(state.in_edges(access)[0].src, nodes.AccessNode)
+        and not state.in_edges(access)[0].data.is_empty()
+        and isinstance(state.out_edges(access)[0].dst, nodes.MapEntry)
         and (state.out_edges(access)[0].dst_conn or "").startswith("IN_")
         and (isinstance(sdfg.arrays[access.data], data.Scalar) or helpers.is_length1_array(access.data, sdfg))
     )
