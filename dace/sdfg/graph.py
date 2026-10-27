@@ -6,8 +6,6 @@ import itertools
 import uuid
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import networkx as nx
