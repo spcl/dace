@@ -16,6 +16,7 @@ from dace.sdfg import SDFG, SDFGState, dealias, nodes, propagation, utils
 from dace.sdfg import sdfg as sdfg_module
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
+from dace.sdfg.replace import replace_in_codeblock
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, transformation
 from dace.utils import find_new_name
@@ -793,6 +794,15 @@ class InlineSDFG(transformation.SingleStateTransformation):
             elif edge.data.data in repldict:
                 orig_data[edge] = edge.data.data
                 edge.data.data = repldict[edge.data.data]
+        # A tasklet may name a container in its code rather than through a connector (the readable generator's
+        # ``InlineTaskletConnectors``); it reads the container under its new name too.
+        renamed = {old: new for old, new in repldict.items() if old != new}
+        for node in nstate.nodes():
+            if isinstance(node, nodes.Tasklet) and renamed:
+                names = renamed.keys() - node.in_connectors.keys() - node.out_connectors.keys()
+                code_repl = {name: renamed[name] for name in names if name in node.code.as_string}
+                if code_repl:
+                    replace_in_codeblock(node.code, code_repl, node, nsdfg)
 
         # Add extra access nodes for out/in view nodes
         inv_reshapes = {repldict[r]: r for r in reshapes}

@@ -134,3 +134,34 @@ if __name__ == "__main__":
     test_an_inlined_transient_is_named_apart_from_a_connector()
     test_a_multistate_inlined_transient_is_named_apart_from_a_connector()
     test_an_inlined_connector_moves_aside_for_a_parent_transient()
+
+
+def test_a_tasklet_naming_its_container_in_code_reads_it_under_the_outer_name():
+    """CloudSC's flux nest binds connector ``zlneg_0`` to the outer ``zlneg``, and the readable generator's
+    ``InlineTaskletConnectors`` wrote ``zlneg_0[1, ...]`` into the tasklet's code; inlined, the code reads ``zlneg``."""
+    nest = dace.SDFG("nest_named_in_code")
+    nest.add_symbol("i", dace.int64)
+    nest.add_array("a_0", [2, 4], dace.float64)
+    nest.add_array("y", [4], dace.float64)
+    ns = nest.add_state("s")
+    t = ns.add_tasklet("scale", {"__in1"}, {"__out"}, "__out = a_0[1, i] * 2.0")
+    ns.add_edge(ns.add_read("a_0"), None, t, "__in1", dace.Memlet("a_0[1, i]"))
+    ns.add_edge(t, "__out", ns.add_write("y"), None, dace.Memlet("y[i]"))
+
+    sdfg = dace.SDFG("inline_code_named_container")
+    sdfg.add_array("A", [2, 4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("m", dict(i="0:4"))
+    node = state.add_nested_sdfg(nest, {"a_0"}, {"y"}, symbol_mapping={"i": "i"})
+    state.add_memlet_path(state.add_read("A"), me, node, dst_conn="a_0", memlet=dace.Memlet("A[1, i]"))
+    state.add_memlet_path(node, mx, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(InlineSDFG) == 1
+    sdfg.validate()
+    (tasklet,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    assert "a_0" not in tasklet.code.as_string and "A[1, i]" in tasklet.code.as_string
+    a, b = np.arange(8.0).reshape(2, 4), np.zeros(4)
+    sdfg(A=a, B=b)
+    assert np.allclose(b, 2.0 * a[1])
