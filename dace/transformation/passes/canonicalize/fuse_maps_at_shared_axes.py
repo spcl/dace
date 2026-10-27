@@ -134,6 +134,8 @@ class FuseMapsAtSharedAxes(ppl.Pass):
         split = consumer if split_consumer else producer
         original = list(split.map.params)
         collapse = split.map.collapse
+        # A thread block sized for all of the split map's axes fits none of the maps it splits into
+        block = split.map.gpu_block_size
         rest = [p for p in original if p not in axes]
         reorder(split, axes + rest)
         expansion = MapExpansion()
@@ -143,6 +145,7 @@ class FuseMapsAtSharedAxes(ppl.Pass):
         expansion.expansion_limit = len(axes)
         entries = expansion.apply(state, sdfg)
         outer, inner = entries[0], entries[-1]
+        outer.map.gpu_block_size = None
         # Expansion leaves one map per shared axis; they become one outer map again.
         for middle in entries[1 : len(axes)]:
             outer, _ = sdutil.merge_maps(state, outer, state.exit_node(outer), middle, state.exit_node(middle))
@@ -167,4 +170,5 @@ class FuseMapsAtSharedAxes(ppl.Pass):
         merged, _ = sdutil.merge_maps(state, outer, state.exit_node(outer), inner, state.exit_node(inner))
         reorder(merged, original)
         merged.map.collapse = collapse
+        merged.map.gpu_block_size = block
         return merged
