@@ -48,6 +48,11 @@ class MapExpansion(pm.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
 
+    @staticmethod
+    def annotates_memlets():
+        # ``apply`` propagates the expanded scope itself; the union an outer memlet holds is unchanged
+        return True
+
     def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
         # A candidate subgraph matches the map-expansion pattern when it
         # includes an N-dimensional map, with N greater than one.
@@ -130,6 +135,9 @@ class MapExpansion(pm.SingleStateTransformation):
         # Reuse the map that is already existing for the first one.
         current_map.params = new_maps[0].params
         current_map.range = new_maps[0].range
+        # ``collapse`` counts the loops the schedule fuses, and the reused map has fewer of them
+        # now; leaving it stale emits ``collapse(2)`` on a one-dimensional loop.
+        current_map.collapse = min(current_map.collapse, len(current_map.params))
         new_maps.pop(0)
 
         # Create new map entries and exits
