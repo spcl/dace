@@ -151,6 +151,7 @@ def rename_map_parameters(
         return
 
     second_map_scope = state.scope_subgraph(entry_node=second_map_entry)
+    rename_capturing_inner_params(state, second_map_entry, set(repl_dict.values()))
     # Why is this thing in symbolic and not in replace?
     # The rename parses the new names from strings; type them as the second map declares the old ones.
     declared = second_map_entry.new_symbols(state.sdfg, state, state.symbols_defined_at(second_map_entry))
@@ -165,6 +166,34 @@ def rename_map_parameters(
     #  parameter of the map, so we will do it the hard way.
     second_map.params = copy.deepcopy(first_map.params)
     second_map.range = copy.deepcopy(first_map.range)
+
+
+def rename_capturing_inner_params(state: dace.SDFGState, map_entry: nodes.MapEntry, names: set[str]) -> None:
+    """Give each Map nested in ``map_entry``'s scope that binds one of ``names`` a fresh parameter instead, so renaming
+    ``map_entry``'s parameters to ``names`` cannot be captured by the inner Map."""
+    inner = [
+        node
+        for node in state.scope_subgraph(entry_node=map_entry, include_entry=False, include_exit=False).nodes()
+        if isinstance(node, nodes.MapEntry) and not names.isdisjoint(node.map.params)
+    ]
+    if not inner:
+        return
+    taken = set(state.sdfg.symbols) | set(state.sdfg.arrays) | names
+    taken.update(p for node in state.nodes() if isinstance(node, nodes.MapEntry) for p in node.map.params)
+    for node in inner:
+        repl: dict[str, str] = {}
+        for param in node.map.params:
+            if param not in names:
+                continue
+            k = 0
+            while f"{param}_{k}" in taken:
+                k += 1
+            repl[param] = f"{param}_{k}"
+            taken.add(repl[param])
+        declared = node.new_symbols(state.sdfg, state, state.symbols_defined_at(node))
+        with symbolic.serialization_symbol_dtypes({repl[p]: declared[p] for p in repl}, inherit=True):
+            symbolic.safe_replace(mapping=repl, replace_callback=state.scope_subgraph(entry_node=node).replace_dict)
+        node.map.params = [repl.get(p, p) for p in node.map.params]
 
 
 def get_new_conn_name(
