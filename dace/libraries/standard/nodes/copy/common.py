@@ -402,6 +402,9 @@ def _make_mapped_tasklet_expansion(
         schedule=schedule,
         external_edges=True,
     )
+    # Bandwidth-bound: 256 threads a block keep the memory pipeline full where the 32-thread default does not
+    if schedule == dtypes.ScheduleType.GPU_Device:
+        map_entry.map.gpu_block_size = [256, 1, 1]
 
     return ctx.sdfg
 

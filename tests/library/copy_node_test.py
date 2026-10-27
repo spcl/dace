@@ -1159,13 +1159,7 @@ def test_copy_cross_storage_validation_rejects_without_flag():
 
 
 def test_copy_across_dtypes_casts_rather_than_memcpying():
-    """A copy that changes dtype is carried as a CAST, not refused and not memcpy'd.
-
-    No memcpy variant can convert, so the selector has to route this to a tasklet form and the
-    tasklet has to spell the conversion. Refusing it instead left the classic CPU generator
-    emitting a CopyND template instantiated on one element type and handed a pointer of the other,
-    which does not compile (npbench adi).
-    """
+    """A dtype-changing copy expands to a tasklet that spells the cast (npbench adi did not compile)."""
     sdfg, _ = _make_copy_sdfg(
         _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float32, name="A"),
         _ArraySpec(shape=[10], storage=dace.dtypes.StorageType.CPU_Heap, dtype=dace.float64, name="B"),
@@ -1183,6 +1177,64 @@ def test_copy_across_dtypes_casts_rather_than_memcpying():
     ]
     assert casts, "the converting copy left no tasklet to carry the cast"
     assert any("dace.float64(" in c for c in casts), casts
+
+
+def tasklet_codes(sdfg: dace.SDFG) -> list[str]:
+    """The code of every tasklet in ``sdfg`` and its nested SDFGs."""
+    return [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.Tasklet)]
+
+
+@pytest.mark.parametrize(
+    "src_dtype, dst_dtype, single",
+    [(dace.float64, dace.float32, False), (dace.float64, dace.float32, True), (dace.int32, dace.float64, False)],
+)
+def test_gpu_to_gpu_cast_is_a_kernel_not_a_memcpy(src_dtype, dst_dtype, single):
+    """A converting GPU_Global -> GPU_Global copy is a tasklet (mapped on the device), never a gpuMemcpy."""
+    shape = [1] if single else [16]
+    sdfg, node = _make_copy_sdfg(
+        _ArraySpec(shape=shape, storage=dace.dtypes.StorageType.GPU_Global, dtype=src_dtype, name="A"),
+        _ArraySpec(shape=shape, storage=dace.dtypes.StorageType.GPU_Global, dtype=dst_dtype, name="B"),
+        name="gpu_cast",
+    )
+    assert select_copy_implementation(node, sdfg.start_state) == ("Tasklet" if single else "MappedTasklet")
+    sdfg.expand_library_nodes()
+    codes = tasklet_codes(sdfg)
+    assert any(f"dace.{dst_dtype.to_string()}(" in c for c in codes), codes
+    assert not any("Memcpy" in c for c in codes), codes
+    if not single:
+        maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry)]
+        assert [(m.map.schedule, m.map.gpu_block_size) for m in maps] == [(dace.ScheduleType.GPU_Device, [256, 1, 1])]
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("strided", [False, True])
+def test_host_device_cast_round_trip(strided):
+    """fp64 host -> fp32 device -> fp64 host rounds every element to fp32, strided host side included."""
+    shape, sub = ((8, 16), "0:8, 0:16:2") if strided else ((64,), "0:64")
+    dev_shape = (8, 8) if strided else shape
+    dev_sub = ", ".join(f"0:{n}" for n in dev_shape)
+    sdfg = dace.SDFG(f"host_device_cast_round_trip_{int(strided)}")
+    sdfg.add_array("A", shape, dace.float64)
+    sdfg.add_array("B", shape, dace.float64)
+    sdfg.add_transient("G", dev_shape, dace.float32, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    a, g, b = state.add_read("A"), state.add_access("G"), state.add_write("B")
+    h2d, d2h = CopyLibraryNode("h2d"), CopyLibraryNode("d2h")
+    state.add_edge(a, None, h2d, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"A[{sub}]"))
+    state.add_edge(h2d, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, g, None, dace.Memlet(f"G[{dev_sub}]"))
+    state.add_edge(g, None, d2h, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"G[{dev_sub}]"))
+    state.add_edge(d2h, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet(f"B[{sub}]"))
+
+    rng = np.random.default_rng(0)
+    A = rng.random(shape)
+    B = np.zeros(shape)
+    sdfg(A=A, B=B)
+    region = (slice(None), slice(0, 16, 2)) if strided else slice(None)
+    expected = A[region].astype(np.float32).astype(np.float64)
+    np.testing.assert_array_equal(B[region], expected)
+    assert not np.array_equal(B[region], A[region]), "the round trip did not narrow"
+    code = "".join(obj.code for obj in sdfg.generate_code())
+    assert "MallocAsync" in code
 
 
 def test_cpu_memcpy_rejects_non_contiguous_subset():
