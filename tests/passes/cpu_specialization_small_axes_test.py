@@ -120,7 +120,8 @@ def test_a_row_map_whose_range_reads_the_block_shares_out_the_rows():
     assert map_nest(sdfg) == [(["b"], SEQ), (["i"], PAR)]
 
 
-def test_a_block_map_without_a_large_axis_is_left_alone():
+def test_a_block_map_without_a_large_axis_runs_sequentially():
+    """Only ``SMALL`` axes: a handful of iterations, too few to share out."""
     sdfg = blocked_sdfg("cpu_blocks_only")
     state = sdfg.add_state("compute")
     state.add_mapped_tasklet(
@@ -132,8 +133,8 @@ def test_a_block_map_without_a_large_axis_is_left_alone():
         schedule=PAR,
         external_edges=True,
     )
-    assert SequentializeSmallAxes().apply_pass(sdfg, {}) is None
-    assert map_nest(sdfg) == [(["b"], PAR)]
+    assert SequentializeSmallAxes().apply_pass(sdfg, {}) == 1
+    assert map_nest(sdfg) == [(["b"], SEQ)]
 
 
 def test_a_block_axis_after_a_large_one_keeps_its_place():
@@ -234,7 +235,7 @@ if __name__ == "__main__":
     test_a_leading_block_axis_is_collapsed_with_the_next()
     test_a_block_map_around_a_row_map_shares_out_the_rows()
     test_a_row_map_whose_range_reads_the_block_shares_out_the_rows()
-    test_a_block_map_without_a_large_axis_is_left_alone()
+    test_a_block_map_without_a_large_axis_runs_sequentially()
     test_a_block_axis_after_a_large_one_keeps_its_place()
     test_without_small_symbols_nothing_changes()
     test_a_leading_literal_small_axis_is_collapsed_with_the_next()

@@ -567,12 +567,12 @@ def libnode_domain_small(node: nodes.LibraryNode, state: SDFGState) -> bool:
 def libnode_reads_data_segment(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether a sequential loop encloses ``node`` and a memlet volume of it is read from data (a CSR row): a handful
     of elements per entry that nothing bounds at compile time, as for a map
-    (:mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`, rule 3).
+    (:mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`, rule 3).
 
     :param node: The library node.
     :param state: The state containing ``node``.
     """
-    from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
+    from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import (
         data_derived,
         in_sequential_loop,
     )  # Avoid an import cycle.

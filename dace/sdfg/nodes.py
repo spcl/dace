@@ -1768,7 +1768,7 @@ def full_class_path(cls_or_obj: type | object):
 @make_properties
 class LibraryNode(CodeNode):
     #: Whether a parallel schedule of this node is serialized when an enclosing loop re-enters it (see
-    #: ``SequentializeUnprofitableParallelScopes``). A node whose work per entry is the chunk the loop hands it opts out.
+    #: ``SequentializeSmallAxes``). A node whose work per entry is the chunk the loop hands it opts out.
     serial_on_loop_reentry: bool = True
 
     def folds_onto_output(self) -> bool:

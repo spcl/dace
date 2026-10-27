@@ -272,32 +272,16 @@ def test_s343_static_extents_lift_the_whole_nest():
     ``total`` is a ``Reduce`` over the shaped mask, so the cursor the nest leaves behind counts
     every taken iteration of BOTH levels.
 
-    A literal extent is also a size the CPU cost model can read, and the two phases land on
-    OPPOSITE sides of it: the mask phase is the 24x24 nest (576 iterations, above the 256-iteration
-    break-even) and the scatter phase is the 24-iteration cursor sweep (below it). So the terminal
-    ``cpu_specialize`` band must pin exactly one of them -- which is a sharper statement than a size
-    where both fall the same way, since it fails if the band stops running, if it runs on the wrong
-    phase, or if it stops reading iteration counts at all. That is a target decision and not a
-    property of the lift, so the lift's own parallelism is read separately with the cost model
-    switched off -- threshold 0, its documented A/B lever, which leaves the maps exactly as
-    canonicalization built them.
+    A literal extent is also a size the CPU specialization reads, and the two phases land on opposite sides of
+    small: the mask phase is the 24x24 nest (576 iterations) and the scatter phase the 24-iteration cursor sweep,
+    so exactly one of them keeps a parallel region.
     """
     sdfg = build(s343_static_kernel)
     assert lifted(sdfg)
     assert nest_claimed(sdfg, 2)
     assert not phases_under_a_loop(sdfg)
     assert num_maps(sdfg) >= 2
-    # Exactly the 576-iteration mask phase; the 24-iteration scatter phase cannot pay for a fork.
-    # The break-even is PINNED, not inherited: CalibrateCpuThresholds scales it by the host's core
-    # count on purpose (``scale_for_team``), so on a 64-core node it becomes 2048 -- above BOTH
-    # phases, and the test then reads 0 and blames the band for a decision the calibration made.
-    # 512 rather than the 256 named above because calibration only leaves a key alone when it
-    # DIFFERS from the schema default, and 256 IS that default: pinning to it is indistinguishable
-    # from not pinning at all. Any value with 24 < v < 576 states the same thing about the band.
-    with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_region", value=512):
-        assert omp_parallel_for(build(s343_static_kernel)) == 1
-    with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_region", value=0):
-        assert omp_parallel_for(build(s343_static_kernel)) >= 2
+    assert omp_parallel_for(build(s343_static_kernel)) == 1
 
     rng = np.random.default_rng(3431)
     for scale in (1.0, -1.0, 0.25):

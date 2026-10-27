@@ -277,7 +277,7 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
 
     The extent is a CONSTANT below the break-even because that is the only input the decision reads.
     It is rule 2 of
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`,
+    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`,
     which compares the map's OWN iteration count against the threshold and assumes a SYMBOLIC count
     is big enough -- correctly so: the same nest measured 2526 ms parallel against 2744 ms
     sequential at N=1400. Both enclosing loops carry the dependence and stay loops; neither is
@@ -289,9 +289,6 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
     from dace.transformation.passes.cpu_specialization import cpu_specialize
-    from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
-        min_work_per_region,
-    )
 
     @dace.program
     def nussinov_shaped(
@@ -305,7 +302,7 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
                     out[i, j] = max(out[i, j], A[i, k] + A[k, j])
 
     with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_region", value=REDUCTION_BREAK_EVEN):
-        assert min_work_per_region() == REDUCTION_BREAK_EVEN, (
+        assert int(dace.Config.get("compiler", "cpu", "parallel_min_work_per_region")) == REDUCTION_BREAK_EVEN, (
             "DACE_compiler_cpu_parallel_min_work_per_region overrides the pin, so the reduction no "
             "longer sits below the break-even; unset it to run this test"
         )

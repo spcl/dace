@@ -708,9 +708,10 @@ def divides(query: Relation, facts: Facts) -> Truth:
 
 
 def is_small(expr: sympy.Expr, facts: Facts) -> bool:
-    """Whether every symbol of ``expr`` is ``SMALL``; an expression of literals only has the default scale."""
+    """Whether every symbol of ``expr`` is ``SMALL`` or the thread count (a handful against any data size); an
+    expression of literals only has the default scale."""
     names = {str(free) for free in sympy.sympify(expr).free_symbols}
-    return bool(names) and names <= facts.small
+    return bool(names) and names <= facts.small | {symbolic.NUM_THREADS_SYMBOL}
 
 
 #: A literal extent below this is as small as a ``SMALL`` symbol for a schedule: too few iterations to share out.

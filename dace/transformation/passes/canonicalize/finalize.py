@@ -64,7 +64,7 @@ from dace.transformation.passes.cpu_specialization.demote_level_maps import (
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
 from dace.transformation.passes.cpu_specialization.interchange_loops_into_lane_maps import InterchangeLoopsIntoLaneMaps
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
-from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
+from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import (
     assigned_in_enclosing_loop,
     release_one_trip_maps,
 )

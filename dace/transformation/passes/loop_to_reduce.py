@@ -69,11 +69,11 @@ def _nested_in_sequential_loop(loop: LoopRegion) -> bool:
     serialize: a region entered ``E`` times costs ``E * (fork + work / P)`` against ``E *
     work`` sequential, so ``E`` cancels and only the region's own work decides. That decision
     is the CPU cost model's, in
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`.
+    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`.
 
     A PARALLEL map found on the way out ends the walk with ``False``. Such a loop is already
     covered, and better, by the CPU cost model's nested-parallelism rule
-    (:mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`),
+    (:mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`),
     which sequentializes it at specialization time and leaves the canonical form parallel. Pinning
     it here instead would bake a CPU decision into the device-neutral graph for no gain -- measured
     on nussinov, whose ``(i, j)`` nest ``WavefrontSkew`` now turns into a parallel diagonal map:
@@ -298,7 +298,7 @@ class PinCarriedTopLevelLoops(ppl.Pass):
     Scope is top-level only -- a loop nested in another loop is skipped. Nesting on its own is
     not a reason to serialize anything; whether a parallel scope earns its OpenMP region is a
     CPU question and belongs to
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`.
+    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`.
     """
 
     CATEGORY: str = "Optimization Preparation"
