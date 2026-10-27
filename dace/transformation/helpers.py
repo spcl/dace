@@ -1958,7 +1958,8 @@ def extract_map_dims(
     if len(map_entry.map.params) > 1:
         entries = MapExpansion.apply_to(sdfg, map_entry=map_entry)
 
-        # Collapse extracted maps
+        # Collapse extracted maps. A collapse keeps the outer map's external memlets, which already hold the union
+        # over both maps, so nothing is propagated again
         extracted_map = entries[0]
         for idx in range(len(dims) - 1):
             extracted_map, _ = MapCollapse.apply_to(
@@ -1966,6 +1967,7 @@ def extract_map_dims(
                 outer_map_entry=extracted_map,
                 inner_map_entry=entries[idx + 1],
                 permissive=True,  # Since MapExpansion creates sequential maps
+                annotate=False,
             )
 
         # Collapse remaining maps, if any
@@ -1977,6 +1979,7 @@ def extract_map_dims(
                     outer_map_entry=map_to_collapse,
                     inner_map_entry=entries[idx + 1],
                     permissive=True,  # Since MapExpansion creates sequential maps
+                    annotate=False,
                 )
         else:
             # All dimensions extracted, no remainder

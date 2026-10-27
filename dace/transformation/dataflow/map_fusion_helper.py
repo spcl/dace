@@ -404,25 +404,28 @@ def propagate_fused_map_scope(
     # Read once: propagation rewrites memlets only, never the symbols, descriptors and interstate edges
     #  this table is built from, and `symbols_defined_at` otherwise rebuilds it per nested SDFG.
     scope_symbols = dace.sdfg.state.sdfg_scope_symbols(sdfg)
+    symbols = SymbolResolver(sdfg, scope_symbols)
     for node in state.scope_subgraph(map_entry).nodes():
         if not isinstance(node, nodes.NestedSDFG):
             continue
-        if propagated_nsdfgs is None or node.sdfg not in propagated_nsdfgs:
-            propagation.propagate_memlets_sdfg(node.sdfg)
-            if propagated_nsdfgs is not None:
-                propagated_nsdfgs[node.sdfg] = None
-        propagation.propagate_memlets_nested_sdfg(sdfg, state, node, SymbolResolver(sdfg, scope_symbols))
+        # A nested SDFG recorded as propagated had its outer memlets propagated with it, under a Map of the same
+        #  range: a fusion renames them with the parameters, so they are current
+        if propagated_nsdfgs is not None and node.sdfg in propagated_nsdfgs:
+            continue
+        propagation.propagate_memlets_sdfg(node.sdfg)
+        if propagated_nsdfgs is not None:
+            propagated_nsdfgs[node.sdfg] = None
+        propagation.propagate_memlets_nested_sdfg(sdfg, state, node, symbols)
 
     # Only the scopes on the walk up from the leaves inside `map_entry` are built, not the whole state's
     #  `scope_tree()`, which every fusion invalidates.
     leaves = scope_leaves_below(state, map_entry)
     if scope_records is None:
-        propagation.propagate_memlets_scope(sdfg, state, leaves, symbols=SymbolResolver(sdfg, scope_symbols))
+        propagation.propagate_memlets_scope(sdfg, state, leaves, symbols=symbols)
         return
     # `propagate_memlets_scope()`'s frontier walk; each scope's last visit comes after all of its children's.
     #  One resolver for the walk, as `propagate_memlets_scope()` does: the facts of a scope are derived once,
     #  not once per propagated edge, and nothing the walk rewrites (memlets) is read by them.
-    symbols = SymbolResolver(sdfg, scope_symbols)
     frontier: dict[ScopeTree, None] = dict.fromkeys(leaves)
     while frontier:
         parents: dict[ScopeTree, None] = {}
