@@ -73,6 +73,44 @@ from dace.transformation import transformation
 from dace.transformation.passes.privatize_scatter_reduction import is_data_dependent_scatter_sink
 
 
+def accumulates_into(sd: SDFG, targets: set[str]) -> bool:
+    """True if ``sd`` -- or a NestedSDFG below it, reached by following the connector binding -- folds into one of
+    ``targets`` instead of plain-writing it: either a WCR edge accumulating onto the name, or any read of it (an
+    in-place read-modify-write). Membership-only: the answer is an order-independent OR over the subtree.
+    """
+    for ist in sd.states():
+        for e in ist.edges():
+            if e.data is None or e.data.is_empty():
+                continue
+            if e.data.wcr is not None and (
+                e.data.data in targets or (isinstance(e.dst, nodes.AccessNode) and e.dst.data in targets)
+            ):
+                return True
+            if isinstance(e.src, nodes.AccessNode) and e.src.data in targets:
+                return True
+        for node in ist.nodes():
+            if not isinstance(node, nodes.NestedSDFG):
+                continue
+            inner: set[str] = set()
+            for oe in ist.out_edges(node):
+                if (
+                    oe.src_conn
+                    and oe.data is not None
+                    and (oe.data.data in targets or (isinstance(oe.dst, nodes.AccessNode) and oe.dst.data in targets))
+                ):
+                    inner.add(oe.src_conn)
+            for ie in ist.in_edges(node):
+                if (
+                    ie.dst_conn
+                    and ie.data is not None
+                    and (ie.data.data in targets or (isinstance(ie.src, nodes.AccessNode) and ie.src.data in targets))
+                ):
+                    inner.add(ie.dst_conn)
+            if inner and accumulates_into(node.sdfg, inner):
+                return True
+    return False
+
+
 @transformation.explicit_cf_compatible
 class NormalizeWCRSource(ppl.Pass):
     """Insert an intermediate :class:`AccessNode` between every WCR-source CodeNode and its
@@ -204,58 +242,14 @@ class NormalizeWCRSource(ppl.Pass):
         therefore decisive on its own -- the ``_wcr_priv`` buffer is never seeded with the live
         value, so re-homing such a connector onto it reads uninitialized memory.
 
-        The search descends into nested SDFGs (:meth:`_accumulates_into`), following the
+        The search descends into nested SDFGs (:func:`accumulates_into`), following the
         connector binding down: once the body is a loop, the accumulation sits one level
         further in the ``loop_body`` NestedSDFG and ``src.sdfg``'s own states may carry
         neither the WCR nor the read.
         """
         if isinstance(priv_desc, data.Scalar):
             return False
-        return self._accumulates_into(src.sdfg, {src_conn})
-
-    @classmethod
-    def _accumulates_into(cls, sd: SDFG, targets: set[str]) -> bool:
-        """True if ``sd`` -- or a NestedSDFG below it, reached by following the connector
-        binding -- folds into one of ``targets`` instead of plain-writing it: either a WCR
-        edge accumulating onto the name, or any read of it (an in-place read-modify-write).
-
-        Membership-only: the answer is an order-independent OR over the subtree.
-        """
-        for ist in sd.states():
-            for e in ist.edges():
-                if e.data is None or e.data.is_empty():
-                    continue
-                if e.data.wcr is not None and (
-                    e.data.data in targets or (isinstance(e.dst, nodes.AccessNode) and e.dst.data in targets)
-                ):
-                    return True
-                if isinstance(e.src, nodes.AccessNode) and e.src.data in targets:
-                    return True
-            for node in ist.nodes():
-                if not isinstance(node, nodes.NestedSDFG):
-                    continue
-                inner: set[str] = set()
-                for oe in ist.out_edges(node):
-                    if (
-                        oe.src_conn
-                        and oe.data is not None
-                        and (
-                            oe.data.data in targets or (isinstance(oe.dst, nodes.AccessNode) and oe.dst.data in targets)
-                        )
-                    ):
-                        inner.add(oe.src_conn)
-                for ie in ist.in_edges(node):
-                    if (
-                        ie.dst_conn
-                        and ie.data is not None
-                        and (
-                            ie.data.data in targets or (isinstance(ie.src, nodes.AccessNode) and ie.src.data in targets)
-                        )
-                    ):
-                        inner.add(ie.dst_conn)
-                if inner and cls._accumulates_into(node.sdfg, inner):
-                    return True
-        return False
+        return accumulates_into(src.sdfg, {src_conn})
 
     def _rewrite_state(self, sdfg: SDFG, state: SDFGState) -> tuple[int, list[tuple[str, str, bool, SDFGState]]]:
         """Rewrite WCR edges whose source is a Tasklet or NestedSDFG.

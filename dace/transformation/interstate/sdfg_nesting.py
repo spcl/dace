@@ -1005,6 +1005,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     state.add_edge(top_in.src, top_in.src_conn, staged, "__inp", dc(top_in.data))
                     state.add_edge(staged, "__out", top_out.dst, top_out.dst_conn, dc(top_out.data))
                 else:
+                    # The inner memlet is in outer coordinates (``_staged_copy_form``); it names the outer destination.
+                    _rename_copy_memlet(inner, nstate, top_out.data.data, data_is_src=False)
                     staged = state.add_access(top_in.data.data)
                     state.add_edge(top_in.src, top_in.src_conn, staged, None, dc(top_in.data))
                     state.add_edge(staged, None, top_out.dst, top_out.dst_conn, dc(inner.data))
@@ -1013,9 +1015,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
     @staticmethod
     def _staged_copy_form(state: SDFGState, nsdfg_node: nodes.NestedSDFG, inp: str, out: str) -> str | None:
         """How a copy from input connector ``inp`` into output connector ``out`` is staged in the scope: ``"element"``
-        when both outer memlets are one element (an assignment tasklet between them), ``"identity"`` when both outer
-        memlets start at zero with the rank of the nested container (the inner memlet is then in outer coordinates),
-        else ``None``."""
+        when both outer memlets are one element (an assignment tasklet between them), ``"identity"`` when the inner
+        memlet is in outer coordinates -- both outer memlets start at zero with the rank of the nested container, or
+        both connectors are their whole outer containers (No-View) -- else ``None``."""
         ins = [e for e in state.in_edges(nsdfg_node) if e.dst_conn == inp]
         outs = [e for e in state.out_edges(nsdfg_node) if e.src_conn == out]
         if len(ins) != 1 or len(outs) != 1 or ins[0].data.subset is None or outs[0].data.subset is None:
@@ -1027,6 +1029,11 @@ class InlineSDFG(transformation.SingleStateTransformation):
         if all(
             isinstance(subset, subsets.Range) and len(subset) == len(desc.shape) and all(b == 0 for b, _, _ in subset)
             for subset, desc in zip(outer, nested)
+        ):
+            return "identity"
+        if all(
+            desc.is_equivalent(state.sdfg.arrays[edge.data.data], symbol_mapping=nsdfg_node.symbol_mapping)
+            for desc, edge in zip(nested, (ins[0], outs[0]))
         ):
             return "identity"
         return None

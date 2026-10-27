@@ -919,8 +919,8 @@ class BranchNormalization(ppl.Pass):
         cond_array_name: str | None,
         cond_producer: dace.nodes.AccessNode | None,
     ) -> None:
-        # Redirect ONE write edge through ``arr = ITE(cond, expr, arr)``.
-        write_subset = in_edge.data.subset
+        # Redirect ONE write edge through ``arr = ITE(cond, expr, arr)``. A copy's memlet may name either end.
+        write_subset = in_edge.data.get_dst_subset(in_edge, state)
 
         # 1-element scratch ``__bn_<arr>_new`` holds this element's value.
         tmp_name, _ = sdfg.add_array(
@@ -950,9 +950,12 @@ class BranchNormalization(ppl.Pass):
         if old_an is None:
             old_an = state.add_access(arr_name)
 
-        # Redirect the existing in-edge to write to the temp instead.
+        # Redirect the existing in-edge to write to the temp instead; a copy keeps the element it reads.
+        redirected = dace.Memlet(expr=f"{tmp_name}[0]")
+        if isinstance(in_edge.src, dace.nodes.AccessNode):
+            redirected.other_subset = copy.deepcopy(in_edge.data.get_src_subset(in_edge, state))
         state.remove_edge(in_edge)
-        state.add_edge(in_edge.src, in_edge.src_conn, tmp_an, None, dace.Memlet(expr=f"{tmp_name}[0]"))
+        state.add_edge(in_edge.src, in_edge.src_conn, tmp_an, None, redirected)
         if cond_array_name is not None:
             # Reuse the producing AN (see ``_resolve_cond_to_array``): a
             # fresh read node disconnects the lift and lets codegen emit

@@ -1310,22 +1310,29 @@ class InsertTileLoadStore(ppl.Pass):
         D = len(consumer_shape)
         if D < K:
             return False
-        # Per-iteration begin for each OUTER (non-tile) consumer dim, taken from
-        # the original write memlet's consumer-side subset. Full-extent only as a
-        # fallback when that subset is missing or rank-mismatched.
+        # Per-iteration begin for each consumer dim, taken from the original write memlet's consumer-side subset: an
+        # OUTER (non-tile) dim's own begin, a tile dim's begin when it is its iterator shifted by a constant
+        # (``acc[i - 1]``). Full extent / the bare iterator only as a fallback when that subset is missing or
+        # rank-mismatched.
         prefix_begins = None
+        tile_begins: list = [iter_vars[k] for k in range(K)]
         if orig_edge is not None:
             try:
                 _sd, _ss, dst_data, dst_subset = infer_edge_endpoints(orig_edge, sdfg, inner_state)
                 if dst_data == consumer_an.data and dst_subset is not None and len(dst_subset.ranges) == D:
                     prefix_begins = [dst_subset.ranges[d][0] for d in range(D - K)]
+                    for k in range(K):
+                        begin = symbolic.pystr_to_symbolic(dst_subset.ranges[D - K + k][0])
+                        named = [s for s in begin.free_symbols if str(s) == iter_vars[k]]
+                        if len(named) == 1 and named[0] not in (begin - named[0]).free_symbols:
+                            tile_begins[k] = begin
             except Exception:  # noqa: BLE001 -- exotic edge; fall back to full extent
                 prefix_begins = None
         if prefix_begins is not None:
             prefix_parts = [f"{b}:{b} + 1" for b in prefix_begins]
         else:
             prefix_parts = [f"0:{consumer_shape[d]}" for d in range(D - K)]
-        tile_parts = [f"{iter_vars[k]}:{iter_vars[k]} + {widths[k]}" for k in range(K)]
+        tile_parts = [f"{tile_begins[k]}:{tile_begins[k]} + {widths[k]}" for k in range(K)]
         dst_subset_str = ", ".join(prefix_parts + tile_parts)
         # Mask the bridge -> output store when an iteration mask is in scope, else the tail lanes write out
         # of bounds. The mask producer may live in another state.
