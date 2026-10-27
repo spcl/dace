@@ -1,6 +1,7 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace.Equiv.Relabel
 import Dace.Equiv.StateLocal
+import Dace.Equiv.RegionRules
 import Dace.SDFG.BEq
 
 /-!
@@ -32,6 +33,10 @@ and interface, so that rule applications chain (`Equiv.trans_of_eq`).
   same nodes and adjacent edges seen the same way, the same components in
   the same order, each up to a permutation of its nodes).  Covers
   reordering the node list of a state.
+* `relabelBlocks p pairs` (`Congr.relabelBlocks`): renumber the blocks of
+  the region at path `p` by `permOfPairs pairs` (side condition: the
+  permutation maps the region's block ids onto themselves, start and edges
+  in range, mention counts kept).
 
 The permutation is built from the id pairs by swaps (`permOfPairs`); its
 correctness is never assumed: the replayed SDFG is compared with the target.
@@ -61,6 +66,8 @@ inductive Step where
   | relabel (path : List PathStep) (idx : BlockId) (pairs : List (NodeId × NodeId))
   /-- Replace the state at path `path`, index `idx` by a state that runs alike. -/
   | replaceState (path : List PathStep) (idx : BlockId) (s' : State)
+  /-- Renumber the blocks of the region at path `path`. -/
+  | relabelBlocks (path : List PathStep) (pairs : List (BlockId × BlockId))
   deriving Inhabited
 
 /-- Apply a rule, if its side condition holds. -/
@@ -73,6 +80,13 @@ def Step.apply? (g : SDFG) : Step → Option SDFG
     match g.top.blockAt? p i with
     | some (.state s) => if stateSame? g s' s then some (g.setBlockAt p i (.state s')) else none
     | _ => none
+  | .relabelBlocks p pairs =>
+    match g.top.regionAt? p with
+    | some c =>
+      if c.blocksPermOk (permOfPairs pairs) && sameRegionMentions? g (c.relabelBlocks (permOfPairs pairs)) c then
+        some (g.setRegionAt p (c.relabelBlocks (permOfPairs pairs)))
+      else none
+    | none => none
 
 /-- What every rule guarantees: an equivalent SDFG with the same facts and
 interface. -/
@@ -112,6 +126,17 @@ theorem Step.apply?_sound {g g' : SDFG} {st : Step} (h : st.apply? g = some g') 
         exact ⟨Congr.replaceState hat hchk hs, rfl, rfl⟩
       · cases h
     · cases h
+  | relabelBlocks p pairs =>
+    simp only [Step.apply?] at h
+    split at h
+    · rename_i c hat
+      split at h
+      · rename_i hchk
+        simp only [Bool.and_eq_true] at hchk
+        cases h
+        exact ⟨Congr.relabelBlocks hat hchk.1 hchk.2 hs, rfl, rfl⟩
+      · cases h
+    · cases h
 
 /-- Apply a list of rules in order. -/
 def replay (g : SDFG) : List Step → Option SDFG
@@ -147,12 +172,28 @@ theorem checkBy_sound {a b : SDFG} {sts : List Step} (h : checkBy a b sts = true
 
 /-! ## Search (untrusted) -/
 
+/-- A block's label (empty for break, continue and return). -/
+def Block.key : Block → String
+  | .state s => "s:" ++ s.label
+  | .region r => "r:" ++ r.label
+  | .loop l => "l:" ++ l.label
+  | .cond lb _ => "c:" ++ lb
+  | .breakBlock => "break"
+  | .continueBlock => "continue"
+  | .returnBlock => "return"
+
 mutual
 
 /-- Rule applications that turn the region `ra` (at path `p`) into `rb`. -/
 partial def findRegion (p : List PathStep) (ra rb : Region) : Except String (List Step) := do
   if ra.blocks.length ≠ rb.blocks.length then
     throw s!"regions with {ra.blocks.length} and {rb.blocks.length} blocks"
+  -- blocks in another order: match them by label
+  let la := ra.blocks.map Block.key
+  let lb := rb.blocks.map Block.key
+  if la ≠ lb && la.isPerm lb && la.Nodup then
+    let pairs := (List.range la.length).map fun i => (i, lb.idxOf la[i]!)
+    return [.relabelBlocks p pairs] ++ (← findRegion p (ra.relabelBlocks (permOfPairs pairs)) rb)
   let mut out := []
   for (j, ba, bb) in (List.range ra.blocks.length).zip (ra.blocks.zip rb.blocks) do
     out := out ++ (← findBlock p j ba bb)
@@ -185,6 +226,6 @@ into `b` (then `checkBy_sound` applies), or a reason. -/
 def sdfgCheck (a b : SDFG) : Except String (List Step) := do
   let sts ← findRegion [] a.top b.top
   if checkBy a b sts then pure sts
-  else throw "the SDFGs differ beyond the rules (node relabeling, state replacement)"
+  else throw "the SDFGs differ beyond the rules (node relabeling, state replacement, block renumbering)"
 
 end Dace

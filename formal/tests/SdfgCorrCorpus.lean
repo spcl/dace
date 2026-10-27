@@ -8,7 +8,8 @@ corpus (`scripts/dump_corpus.py`).
 For every corpus SDFG, a variant with the nodes of every state renumbered
 (reversed ids) must be certified `EQUIVALENT`, a variant
 with the node list of every state reordered (within components) must be
-certified, and a variant with one edge reversed must not be. -/
+certified, so must a variant with the blocks of every region in reverse
+order, and a variant with one edge reversed must not be. -/
 
 open Dace
 
@@ -52,6 +53,20 @@ partial def reorderBlock : Block → Block
   | b => b
 end
 
+/-- Reverse the block order of every region (block `i` of `n` becomes
+`n - 1 - i`). -/
+partial def reverseBlocks (r : Region) : Region :=
+  let n := r.blocks.length
+  let pairs := (List.range n).map fun i => (i, n - 1 - i)
+  let r' := { r with blocks := r.blocks.map reverseBlock }
+  r'.relabelBlocks (permOfPairs pairs)
+where
+  reverseBlock : Block → Block
+    | .region r => .region (reverseBlocks r)
+    | .loop l => .loop { l with body := reverseBlocks l.body }
+    | .cond lb brs => .cond lb (brs.map fun (c, r) => (c, reverseBlocks r))
+    | b => b
+
 /-- Reverse the first edge of the first top-level state with edges (the
 nodes stay the same, the dataflow changes). -/
 partial def flipFirstEdge (r : Region) : Option Region :=
@@ -78,6 +93,7 @@ def main : IO Unit := do
   let mut ok := 0
   let mut steps := 0
   let mut rok := 0
+  let mut bok := 0
   for f in files.qsort (fun a b => a.toString < b.toString) do
     let name := (f.fileName.getD "").replace ".sdfg.json" ""
     match ← SDFG.Json.readSDFG f with
@@ -93,13 +109,16 @@ def main : IO Unit := do
       | .error m =>
         if knownReorder.contains name then IO.println s!"known UNKNOWN {name} (reordered): {m}"
         else IO.println s!"UNKNOWN  {name} (reordered): {m}"; bad := bad + 1
+      match sdfgCheck g { g with top := reverseBlocks g.top } with
+      | .ok _ => bok := bok + 1
+      | .error m => IO.println s!"UNKNOWN  {name} (blocks reversed): {m}"; bad := bad + 1
       match flipFirstEdge g.top with
       | some top =>
         if (sdfgCheck g { g with top }).toBool then
           IO.println s!"WRONGLY EQUIVALENT {name} (flipped edge)"
           bad := bad + 1
       | none => pure ()
-  IO.println s!"{ok} relabeled variants certified ({steps} rule applications), {rok} reordered, {bad} failures"
+  IO.println s!"{ok} relabeled variants certified ({steps} rule applications), {rok} reordered, {bok} with blocks reversed, {bad} failures"
   if bad > 0 then throw <| IO.userError s!"{bad} failures"
 
 #eval main
