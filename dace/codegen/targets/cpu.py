@@ -9,7 +9,7 @@ from dace import Config, data, dtypes, registry, subsets, symbolic
 from dace import memlet as mmlt
 from dace.codegen import compiler_family, cppunparse
 from dace.codegen import exceptions as cgx
-from dace.codegen.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
+from dace.codegen.common import codeblock_to_cpp, sym2cpp, unroll_pragma, update_persistent_desc
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.target import TargetCodeGenerator, make_absolute
@@ -2037,23 +2037,23 @@ class CPUCodeGen(TargetCodeGenerator):
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
                 map_header += "#pragma omp parallel"
 
-            # OpenMP schedule properties
-            if not in_persistent:
-                if node.map.omp_schedule != dtypes.OMPScheduleType.Default:
-                    schedule = " schedule("
-                    if node.map.omp_schedule == dtypes.OMPScheduleType.Static:
-                        schedule += "static"
-                    elif node.map.omp_schedule == dtypes.OMPScheduleType.Dynamic:
-                        schedule += "dynamic"
-                    elif node.map.omp_schedule == dtypes.OMPScheduleType.Guided:
-                        schedule += "guided"
-                    else:
-                        raise ValueError("Unknown OpenMP schedule type")
-                    if node.map.omp_chunk_size > 0:
-                        schedule += f", {node.map.omp_chunk_size}"
-                    schedule += ")"
-                    map_header += schedule
+            # OpenMP schedule properties, also on a worksharing loop inside a persistent team
+            if node.map.omp_schedule != dtypes.OMPScheduleType.Default:
+                schedule = " schedule("
+                if node.map.omp_schedule == dtypes.OMPScheduleType.Static:
+                    schedule += "static"
+                elif node.map.omp_schedule == dtypes.OMPScheduleType.Dynamic:
+                    schedule += "dynamic"
+                elif node.map.omp_schedule == dtypes.OMPScheduleType.Guided:
+                    schedule += "guided"
+                else:
+                    raise ValueError("Unknown OpenMP schedule type")
+                if node.map.omp_chunk_size > 0:
+                    schedule += f", {node.map.omp_chunk_size}"
+                schedule += ")"
+                map_header += schedule
 
+            if not in_persistent:
                 if node.map.omp_num_threads > 0:
                     map_header += f" num_threads({node.map.omp_num_threads})"
 
@@ -2115,15 +2115,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 result.write("auto __omp_num_threads = omp_get_num_threads();", cfg, state_id, node)
         else:
             # Emit nested loops
+            in_gpu_kernel = is_devicelevel_gpu(sdfg, state_dfg, node)
             for i, r in enumerate(node.map.range):
                 var = map_params[i]
                 begin, end, skip = r
 
-                if node.map.unroll:
-                    unroll_pragma = "#pragma unroll"
-                    if node.map.unroll_factor:
-                        unroll_pragma += f" {node.map.unroll_factor}"
-                    result.write(unroll_pragma, cfg, state_id, node)
+                pragma = unroll_pragma(node.map.unroll, node.map.unroll_factor, in_gpu_kernel)
+                if pragma is not None:
+                    result.write(pragma, cfg, state_id, node)
 
                 result.write(
                     f"for ({param_ctype(var)} {var} = {cpp.sym2cpp(begin)}; {var} < {cpp.sym2cpp(end + 1)}; {var} += {cpp.sym2cpp(skip)}) {{\n",

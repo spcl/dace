@@ -114,6 +114,16 @@ def unparse_interstate_edge(code_ast: ast.AST | str, sdfg: SDFG, symbols=None, c
     return strio.getvalue().strip()
 
 
+def unroll_pragma(unroll: bool, unroll_factor: int | None, in_gpu_kernel: bool) -> str | None:
+    """The unroll pragma of a sequential loop, or None: ``#pragma unroll [factor]`` inside GPU kernels, where loops
+    unroll by default, and ``#pragma omp unroll [partial(factor)]`` elsewhere, only when ``unroll`` is set."""
+    if in_gpu_kernel:
+        return f"#pragma unroll {unroll_factor}" if unroll_factor else "#pragma unroll"
+    if not unroll:
+        return None
+    return f"#pragma omp unroll partial({unroll_factor})" if unroll_factor else "#pragma omp unroll"
+
+
 def gpu_stream_expr(stream: int | str) -> str:
     """Renders a ``_cuda_stream`` annotation as the C expression naming that stream.
 

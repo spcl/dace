@@ -13,7 +13,7 @@ import dace
 from dace.libraries.standard.nodes import ComputePersistentKernelRange
 from dace.libraries.standard.nodes.sync import Sync
 from dace.properties import CodeBlock
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.megakernel import MegaKernelOptimization
 from dace.transformation.passes.megakernel.discovery import find_chains
@@ -69,6 +69,29 @@ def add_time_loop(sdfg: dace.SDFG, label: str, condition: str = "t < T") -> Loop
     # Set last: building the body infers the loop symbols from the condition, which may read data
     loop.loop_condition = CodeBlock(condition)
     return loop
+
+
+def test_a_kernel_state_with_a_view_forms_no_chain():
+    """Grid barriers order containers by name, so a view (another name for a container) keeps a state out."""
+    sdfg = gpu_sdfg("megakernel_view")
+    sdfg.add_view("V", [N], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state("kernels", is_start_block=True)
+    add_kernel(state, "k0", "A", "B")
+    view = state.add_access("V")
+    state.add_edge(state.add_read("C"), None, view, "views", dace.Memlet("C[0:N]"))
+    tasklet, entry, exit_ = state.add_mapped_tasklet(
+        "k1",
+        {"i": "0:N"},
+        {"a": dace.Memlet("V[i]")},
+        "b = a",
+        {"b": dace.Memlet("A[i]")},
+        schedule=dace.ScheduleType.GPU_Device,
+        input_nodes={"V": view},
+        external_edges=True,
+    )
+    sdfg.validate()
+
+    assert chains_of(sdfg) == []
 
 
 def test_host_work_between_loops_splits_them_into_two_chains():
@@ -198,11 +221,20 @@ def test_grid_syncs_separate_exactly_the_dependent_stages(build, kernels, expect
     stage, touches what it wrote."""
     sdfg = gpu_sdfg("megakernel_grid_syncs")
     region = build(sdfg, kernels)
-    InsertGridSyncs().apply_pass(sdfg, {})
+    InsertGridSyncs(sync_all=False, ownership=False).apply_pass(sdfg, {})
 
     order = list(region.bfs_nodes(region.start_block))
     assert ["sync" if is_grid_sync(b) else "stage" for b in order] == expected
     assert all(len(top_level_maps(b)) == 1 for b in order if not is_grid_sync(b))
+
+
+def test_sync_all_separates_independent_stages_too():
+    sdfg = gpu_sdfg("megakernel_sync_all")
+    region = straight(sdfg, [("A", "A"), ("B", "B")])
+    assert InsertGridSyncs().apply_pass(sdfg, {}) == 1
+
+    order = list(region.bfs_nodes(region.start_block))
+    assert ["sync" if is_grid_sync(b) else "stage" for b in order] == ["stage", "sync", "stage"]
 
 
 def test_a_small_dimension_stays_a_loop_in_every_thread():
@@ -319,10 +351,144 @@ def test_a_megakernel_per_host_iteration_matches_the_kernels():
         np.testing.assert_array_equal(cupy.asnumpy(got[name]), cupy.asnumpy(want[name]))
 
 
+def add_kernel_from(
+    state: dace.SDFGState, label: str, src: str, dst: str, code: str = "b = a + 1", extra: dict | None = None
+) -> None:
+    """A kernel over ``lo:N`` writing ``dst[i]`` from ``src[i]`` and the ``extra`` inputs."""
+    inputs = {"a": dace.Memlet(f"{src}[i]")} | (extra or {})
+    tasklet, entry, exit_ = state.add_mapped_tasklet(
+        label,
+        {"i": "lo:N"},
+        inputs,
+        code,
+        {"b": dace.Memlet(f"{dst}[i]")},
+        schedule=dace.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
+    entry.map.gpu_block_size = [256, 1, 1]
+
+
+def kernels_split_by_a_reassigned_bound() -> dace.SDFG:
+    """Two kernel states that the edge between them splits: it reassigns their lower bound from a host array, and the
+    second state computes on the host the scalar its kernel takes by value."""
+    sdfg = gpu_sdfg("megakernel_split_by_bound")
+    sdfg.add_array("bounds", [2], dace.int64)
+    sdfg.add_scalar("scale", dace.float64, transient=True)
+    sdfg.add_symbol("lo", dace.int64)
+    init = sdfg.add_state("init", is_start_block=True)
+    first, second = sdfg.add_state("first"), sdfg.add_state("second")
+    sdfg.add_edge(init, first, dace.InterstateEdge(assignments={"lo": "bounds[0]"}))
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"lo": "bounds[1]"}))
+    sdfg.add_state_after(second, "done")
+    add_kernel_from(first, "k_first", "A", "B")
+    add_kernel_from(second, "k_second", "B", "C", "b = a * s", {"s": dace.Memlet("scale[0]")})
+    host = second.add_tasklet("set_scale", {}, {"out"}, "out = 2.0")
+    scale = next(n for n in second.data_nodes() if n.data == "scale")
+    second.add_edge(host, "out", scale, None, dace.Memlet("scale[0]"))
+    return sdfg
+
+
+def test_kernels_split_by_a_reassigned_bound_become_one_state_and_one_megakernel():
+    """Renaming each write of ``lo``, sifting the assignments up and fusing the states leaves both kernels in one
+    state, the host tasklet in a state before it, and one cooperative kernel."""
+    sdfg = kernels_split_by_a_reassigned_bound()
+    sdfg.validate()
+    fused = copy.deepcopy(sdfg)
+    fused.name = "megakernel_split_by_bound_fused"
+    chains = MegaKernelOptimization().apply_pass(fused, {})
+    fused.validate()
+
+    assert len(chains) == 1 and len(chains[0].kernels) == 2
+    kernel_states = {id(s) for s in chains[0].blocks for k in chains[0].kernels if k in s.nodes()}
+    assert len(kernel_states) == 1
+    cooperative = [
+        n for n, _ in fused.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and n.map.cooperative
+    ]
+    assert len(cooperative) == 1
+    kernel_bounds = {
+        str(n.map.range[0][0])
+        for n, _ in fused.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.Sequential
+    }
+    assert "lo" not in kernel_bounds
+
+
+def test_kernels_split_by_a_reassigned_bound_match_as_one_megakernel():
+    import cupy
+
+    sdfg = kernels_split_by_a_reassigned_bound()
+    fused = copy.deepcopy(sdfg)
+    fused.name = "megakernel_split_by_bound_run"
+    MegaKernelOptimization().apply_pass(fused, {})
+    rng = np.random.default_rng(0)
+    init = {name: rng.random(1000) for name in "ABC"}
+    want = {name: cupy.asarray(v) for name, v in init.items()}
+    got = {name: cupy.asarray(v) for name, v in init.items()}
+    bounds = np.array([3, 17], dtype=np.int64)
+    sdfg(N=1000, bounds=bounds, **want)
+    with new_gpu_codegen():
+        fused(N=1000, bounds=bounds, **got)
+    for name in "ABC":
+        np.testing.assert_array_equal(cupy.asnumpy(got[name]), cupy.asnumpy(want[name]))
+
+
+def kernels_after_a_conditional_bound() -> dace.SDFG:
+    """A conditional picks the lower bound ``lo`` of two kernels; host code after them reads ``lo`` too."""
+    sdfg = gpu_sdfg("megakernel_conditional_bound")
+    sdfg.add_symbol("lo", dace.int64)
+    sdfg.add_symbol("flag", dace.int64)
+    sdfg.add_array("out", [1], dace.int64)
+    pick = ConditionalBlock("pick_lo")
+    sdfg.add_node(pick, is_start_block=True)
+    for condition, value in [("flag > 0", 3), (None, 5)]:
+        branch = ControlFlowRegion(f"lo_{value}", sdfg=sdfg)
+        set_lo = branch.add_state(f"set_{value}", is_start_block=True)
+        branch.add_edge(
+            set_lo, branch.add_state(f"set_{value}_done"), dace.InterstateEdge(assignments={"lo": str(value)})
+        )
+        pick.add_branch(CodeBlock(condition) if condition else None, branch)
+    kernels = sdfg.add_state_after(pick, "kernels")
+    add_kernel_from(kernels, "k_first", "A", "B")
+    add_kernel_from(kernels, "k_second", "B", "C")
+    host = sdfg.add_state_after(kernels, "host")
+    tasklet = host.add_tasklet("read_lo", {}, {"o"}, "o = lo")
+    host.add_edge(tasklet, "o", host.add_write("out"), None, dace.Memlet("out[0]"))
+    return sdfg
+
+
+def test_a_bound_the_host_reads_after_the_kernels_stays_on_the_host():
+    """The conditional assigning ``lo`` leaves the chain: a kernel cannot hand ``lo`` to the host code after it."""
+    import cupy
+
+    sdfg = kernels_after_a_conditional_bound()
+    sdfg.validate()
+    fused = copy.deepcopy(sdfg)
+    fused.name = "megakernel_conditional_bound_fused"
+    chains = MegaKernelOptimization().apply_pass(fused, {})
+    fused.validate()
+
+    assert len(chains) == 1 and len(chains[0].kernels) == 2
+    assert not any(isinstance(b, ConditionalBlock) for b in chains[0].blocks)
+    nested = [n for n, _ in fused.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert not any(conn.startswith("__sym_out") for n in nested for conn in n.out_connectors)
+
+    rng = np.random.default_rng(0)
+    init = {name: rng.random(1000) for name in "ABC"}
+    want = {name: cupy.asarray(v) for name, v in init.items()}
+    got = {name: cupy.asarray(v) for name, v in init.items()}
+    out_want, out_got = np.zeros(1, dtype=np.int64), np.zeros(1, dtype=np.int64)
+    sdfg(N=1000, flag=1, out=out_want, **want)
+    with new_gpu_codegen():
+        fused(N=1000, flag=1, out=out_got, **got)
+    assert out_got[0] == out_want[0] == 3
+    for name in "ABC":
+        np.testing.assert_array_equal(cupy.asnumpy(got[name]), cupy.asnumpy(want[name]))
+
+
 @pytest.mark.parametrize("program, dtype, rank, size", STENCILS, ids=STENCIL_IDS)
 def test_a_cpu_stencil_time_loop_is_one_omp_team_with_two_barriers(program, dtype, rank, size):
     """On the CPU, the time loop runs in one ``omp parallel`` team: each stencil is an ``omp for nowait`` and the
-    same two grid barriers become ``omp barrier``s."""
+    same two grid barriers become ``omp barrier``s. Static scheduling gives a thread the same iterations in every stage."""
     sdfg = program.to_sdfg(simplify=True)
     auto_optimize(sdfg, dace.dtypes.DeviceType.CPU)
     fused = copy.deepcopy(sdfg)
@@ -334,7 +500,7 @@ def test_a_cpu_stencil_time_loop_is_one_omp_team_with_two_barriers(program, dtyp
 
     code = fused.generate_code()[0].clean_code
     assert code.count("#pragma omp parallel") == 1
-    assert code.count("#pragma omp for nowait") == 2 and code.count("#pragma omp barrier") == 2
+    assert code.count("#pragma omp for nowait schedule(static)") == 2 and code.count("#pragma omp barrier") == 2
 
     rng = np.random.default_rng(0)
     inputs = {name: rng.random((size,) * rank).astype(dtype) for name in "AB"}
@@ -345,9 +511,149 @@ def test_a_cpu_stencil_time_loop_is_one_omp_team_with_two_barriers(program, dtyp
         np.testing.assert_array_equal(inputs[name], want[name])
 
 
+#: How stage B reads what stage A wrote (memlet, tasklet code), and whether a grid barrier must separate them under
+#: column ownership
+COLUMN_READS = [
+    ("X[k, i]", "y = x + 1", 0),  # Same element, B's levels start one below A's
+    ("X[k - 1, i]", "y = x + 1", 0),  # The level above, in the same column
+    ("X[k, (i + 1) % N]", "y = x + 1", 1),  # The next column: another thread
+    ("X[0:K, 0:N]", "y = x[k, idx] + 1", 1),  # A column through an index array: any thread
+]
+COLUMN_READ_IDS = ["same_element", "level_above", "next_column", "indirect_column"]
+
+
+def two_column_stages(read: str, code: str) -> dace.SDFG:
+    """Stage A writes ``X[k, i]`` on levels ``0:K``; stage B, on levels ``1:K``, writes ``Y[k, i]`` from ``read``."""
+    sdfg = dace.SDFG("megakernel_two_column_stages")
+    sdfg.add_symbol("K", dace.int64)
+    for name in "WXY":
+        sdfg.add_array(name, ["K", N], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("IDX", [N], dace.int64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state("stages", is_start_block=True)
+    stages = [
+        ("A", "0:K", {"w": dace.Memlet("W[k, i]")}, "x = 2 * w", "x", "X"),
+        ("B", "1:K", {"x": dace.Memlet(read), "idx": dace.Memlet("IDX[i]")}, code, "y", "Y"),
+    ]
+    for label, levels, inputs, tasklet_code, out, dst in stages:
+        tasklet, entry, exit_ = state.add_mapped_tasklet(
+            label,
+            {"k": levels, "i": "0:N"},
+            inputs,
+            tasklet_code,
+            {out: dace.Memlet(f"{dst}[k, i]")},
+            schedule=dace.ScheduleType.GPU_Device,
+            external_edges=True,
+        )
+        entry.map.gpu_block_size = [256, 1, 1]
+    return sdfg
+
+
+@pytest.mark.parametrize("read, code, barriers", COLUMN_READS, ids=COLUMN_READ_IDS)
+def test_a_stage_reading_only_its_own_column_needs_no_grid_barrier(read, code, barriers):
+    """With one thread per column ``i`` and the levels ``k`` a loop in that thread, the thread that writes ``X[k, i]``
+    also runs every read of column ``i``, whatever level range each stage covers. Only a read of another column
+    (shifted or through ``IDX``) needs a grid barrier."""
+    sdfg = two_column_stages(read, code)
+    sdfg.validate()
+    assert (InsertGridSyncs(sync_all=False).apply_pass(sdfg, {}) or 0) == barriers
+
+
+def column_stage_in_a_nested_sdfg(read: str) -> dace.SDFG:
+    """Stage A writes ``X[k, i]``; stage B's body is a nested SDFG that gets all of ``X`` and ``Y`` and reads ``read``
+    (in its own symbols ``kk``, ``ii``) for ``Y[kk, ii]``."""
+    sdfg = two_column_stages("X[k, i]", "y = x + 1")
+    state = sdfg.start_block
+    b_entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and n.map.label.startswith("B"))
+    state.remove_nodes_from(state.scope_subgraph(b_entry).nodes())
+    for node in [n for n in state.data_nodes() if state.degree(n) == 0]:
+        state.remove_node(node)
+
+    body = dace.SDFG("column_body")
+    body.add_symbol("kk", dace.int64)
+    body.add_symbol("ii", dace.int64)
+    for name in "XY":
+        body.add_array(name, ["K", N], dace.float64, storage=dace.StorageType.GPU_Global)
+    inner = body.add_state("body", is_start_block=True)
+    tasklet = inner.add_tasklet("B", {"x"}, {"y"}, "y = x + 1")
+    inner.add_edge(inner.add_read("X"), None, tasklet, "x", dace.Memlet(read))
+    inner.add_edge(tasklet, "y", inner.add_write("Y"), None, dace.Memlet("Y[kk, ii]"))
+
+    entry, exit_ = state.add_map("B", {"k": "1:K", "i": "0:N"}, schedule=dace.ScheduleType.GPU_Device)
+    entry.map.gpu_block_size = [256, 1, 1]
+    node = state.add_nested_sdfg(body, {"X"}, {"Y"}, symbol_mapping={"K": "K", "N": "N", "kk": "k", "ii": "i"})
+    x_written = next(n for n in state.data_nodes() if n.data == "X")
+    state.add_memlet_path(x_written, entry, node, dst_conn="X", memlet=dace.Memlet("X[0:K, 0:N]"))
+    state.add_memlet_path(node, exit_, state.add_write("Y"), src_conn="Y", memlet=dace.Memlet("Y[0:K, 0:N]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("read, barriers", [("X[kk - 1, ii]", 0), ("X[kk, (ii + 1) % N]", 1)], ids=["own", "next"])
+def test_a_nested_sdfg_stage_is_keyed_by_the_memlets_inside_it(read, barriers):
+    """The whole-array connectors of a nested SDFG say nothing about which elements one iteration touches; the memlets
+    inside it, in the iteration's symbols, do."""
+    sdfg = column_stage_in_a_nested_sdfg(read)
+    sdfg.validate()
+    assert (InsertGridSyncs(sync_all=False).apply_pass(sdfg, {}) or 0) == barriers
+
+
+def test_a_column_keys_whichever_dimension_it_indexes():
+    """``T`` keeps its levels contiguous (``T[i, k]``, the transpose of the other arrays): stage B still reads the
+    column ``i`` that its own thread wrote in stage A, so no barrier is needed."""
+    sdfg = two_column_stages("X[k, i]", "y = x + 1")
+    sdfg.add_array("T", [N, "K"], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.start_block
+    for node in state.nodes():
+        for edge in state.all_edges(node):
+            if edge.data.data == "X":
+                edge.data = dace.Memlet(str(edge.data).replace("X[", "T[").replace("[k, i]", "[i, k]"))
+        if isinstance(node, dace.nodes.AccessNode) and node.data == "X":
+            node.data = "T"
+    sdfg.validate()
+    assert (InsertGridSyncs(sync_all=False).apply_pass(sdfg, {}) or 0) == 0
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("read, code, barriers", COLUMN_READS, ids=COLUMN_READ_IDS)
+def test_column_owned_stages_match_the_kernels(read, code, barriers):
+    """The megakernel runs both stages by column ownership (a thread loops over the levels of the columns it owns,
+    from the first one it owns in steps of the grid), with a barrier only where B reads another column."""
+    import cupy
+
+    sdfg = two_column_stages(read, code)
+    fused = copy.deepcopy(sdfg)
+    fused.name = "megakernel_two_column_stages_fused"
+    mk = MegaKernelOptimization()
+    mk.sync_all = False
+    assert len(mk.apply_pass(fused, {})) == 1
+    fused.validate()
+    syncs = [n for n, s in fused.all_nodes_recursive() if isinstance(n, Sync)]
+    assert len(syncs) == barriers
+    loops = sorted(
+        (n.map.params[0], str(n.map.range[0][2]))
+        for n, s in fused.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.Sequential
+    )
+    # Owned where that saves the barrier: the columns stride over the grid, the levels loop inside; else flattened
+    owned = [("i", "__mk_nthreads"), ("i", "__mk_nthreads"), ("k", "1"), ("k", "1")]
+    assert loops == (owned if barriers == 0 else [("__mk_g", "__mk_nthreads")] * 2)
+
+    rng = np.random.default_rng(0)
+    size, levels = 70001, 5
+    inputs = {"W": rng.random((levels, size)), "X": np.zeros((levels, size)), "Y": np.zeros((levels, size))}
+    index = rng.integers(0, size, size)
+    want = {name: cupy.asarray(value) for name, value in inputs.items()}
+    got = {name: cupy.asarray(value) for name, value in inputs.items()}
+    sdfg(K=levels, N=size, IDX=cupy.asarray(index), **want)
+    with new_gpu_codegen():
+        fused(K=levels, N=size, IDX=cupy.asarray(index), **got)
+    for name in "XY":
+        np.testing.assert_array_equal(cupy.asnumpy(got[name]), cupy.asnumpy(want[name]))
+
+
 if __name__ == "__main__":
     test_a_time_loop_of_stencil_kernels_is_one_chain(jacobi_2d_test.kernel)
     test_a_time_loop_of_stencil_kernels_is_one_chain(heat_3d_test.heat_3d_kernel)
+    test_a_kernel_state_with_a_view_forms_no_chain()
     test_host_work_between_loops_splits_them_into_two_chains()
     test_a_loop_whose_condition_reads_data_keeps_only_its_body()
     test_the_cooperative_properties_survive_serialization()
@@ -358,6 +664,7 @@ if __name__ == "__main__":
         straight, [("A", "B"), ("B", "C")], ["stage", "sync", "stage"]
     )
     test_grid_syncs_separate_exactly_the_dependent_stages(looped, [("A", "A")], ["stage", "sync"])
+    test_sync_all_separates_independent_stages_too()
     test_a_small_dimension_stays_a_loop_in_every_thread()
     for program in [stencil[0] for stencil in STENCILS]:
         test_a_stencil_time_loop_is_one_cooperative_launch_with_two_grid_syncs(program)
@@ -365,5 +672,15 @@ if __name__ == "__main__":
         test_the_fused_stencil_matches_the_kernel_per_step_version(*stencil)
     test_kernels_in_a_nested_sdfg_under_a_host_loop_form_a_chain()
     test_a_megakernel_per_host_iteration_matches_the_kernels()
+    test_kernels_split_by_a_reassigned_bound_become_one_state_and_one_megakernel()
+    test_kernels_split_by_a_reassigned_bound_match_as_one_megakernel()
+    test_a_bound_the_host_reads_after_the_kernels_stays_on_the_host()
     for stencil in STENCILS:
         test_a_cpu_stencil_time_loop_is_one_omp_team_with_two_barriers(*stencil)
+    for column_read in COLUMN_READS:
+        test_a_stage_reading_only_its_own_column_needs_no_grid_barrier(*column_read)
+    for column_read in COLUMN_READS:
+        test_column_owned_stages_match_the_kernels(*column_read)
+    test_a_nested_sdfg_stage_is_keyed_by_the_memlets_inside_it("X[kk - 1, ii]", 0)
+    test_a_nested_sdfg_stage_is_keyed_by_the_memlets_inside_it("X[kk, (ii + 1) % N]", 1)
+    test_a_column_keys_whichever_dimension_it_indexes()

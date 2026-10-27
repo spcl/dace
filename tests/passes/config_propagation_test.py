@@ -50,7 +50,9 @@ def test_variants_and_dispatcher(tmp_path):
     sdfg = tendencies.to_sdfg(simplify=True)
     assert config_conditions(sdfg), "the unspecialized program must branch on the configuration"
     domains = {"lvn_only": [0, 1], "istep": [1, 2], "ldeep": [0]}
+    arguments = set(sdfg.arglist())
     root = ConfigPropagation(domains, str(tmp_path)).apply_pass(sdfg, {})
+    assert root is sdfg, "the SDFG itself becomes the caller"
 
     generic = f"{sdfg.name}_generic.sdfgz"
     files = sorted(os.listdir(tmp_path))
@@ -64,9 +66,10 @@ def test_variants_and_dispatcher(tmp_path):
         assert "lvn_only" in args, f  # a length-1 array argument stays: callers pass its buffer
         assert "ldeep" not in variant.free_symbols, f
 
-    dispatch = [b for b in root.nodes() if isinstance(b, ConditionalBlock)]
-    assert len(dispatch) == 1 and len(dispatch[0].branches) == 5
-    assert dispatch[0].branches[-1][0] is None, "the last branch is the generic fallback"
+    (dispatch,) = root.nodes()  # if / else if / else, and nothing else
+    assert isinstance(dispatch, ConditionalBlock) and len(dispatch.branches) == 5
+    assert dispatch.branches[-1][0] is None, "the last branch is the generic fallback"
+    assert not [n for n, d in root.arrays.items() if d.transient]
 
     a = np.random.default_rng(0).random(16)
     for lvn_only in (0, 1):
@@ -75,7 +78,7 @@ def test_variants_and_dispatcher(tmp_path):
             root(a=a, b=b, lvn_only=np.array([lvn_only], dtype=np.int32), istep=np.int32(istep), ldeep=0, N=16)
             np.testing.assert_allclose(b, reference(a, lvn_only, istep, 0), rtol=0, atol=0)
     list(root.all_control_flow_regions(recursive=True, load_ext=True))  # signature analysis needs the bodies
-    assert set(root.arglist()) == set(sdfg.arglist())  # the dispatcher reads every configuration value
+    assert set(root.arglist()) == arguments  # the dispatcher reads every configuration value
 
 
 def test_values_outside_the_domains_run_the_generic_sdfg(tmp_path):

@@ -97,15 +97,20 @@ def is_kernel(node: nodes.Node, state: SDFGState, target: Target) -> bool:
 
 
 def device_state(state: SDFGState, target: Target) -> bool:
-    """Whether everything ``state`` does at the top level can run in one kernel: its kernels, and containers the
-    device holds. Other code, or data elsewhere, ends the chain."""
+    """Whether everything ``state`` does at the top level can run in one kernel: its kernels, containers the device
+    holds, and scalars nothing in ``state`` writes (kernels take them by value). Other code, data elsewhere, or a view
+    anywhere in ``state`` ends the chain."""
     sdfg = state.sdfg
+    if any(isinstance(n.desc(sdfg), dt.View) for n in state.data_nodes()):
+        return False  # The grid barriers track containers by name; a view would alias one under another name
     for node in state.nodes():
         if state.entry_node(node) is not None or isinstance(node, nodes.ExitNode) or is_kernel(node, state, target):
             continue
         if not isinstance(node, nodes.AccessNode):
             return False
-        if sdfg.arrays[node.data].storage not in target.top_level_storage:
+        desc = sdfg.arrays[node.data]
+        by_value = isinstance(desc, dt.Scalar) and state.in_degree(node) == 0
+        if desc.storage not in target.top_level_storage and not by_value:
             return False
     return True
 
@@ -120,21 +125,26 @@ def written_in(block: ControlFlowBlock) -> set[str]:
     return {name for state in states_in(block) for name in state.read_and_write_sets()[1]}
 
 
-def uniform(names: set[str], sdfg: SDFG, written: set[str]) -> bool:
-    """Whether code reading ``names`` computes the same value in every thread: it reads symbols, and scalars that
-    nothing in the megakernel writes (they reach the kernel by value)."""
+def uniform(names: set[str], sdfg: SDFG, written: set[str], target: Target) -> bool:
+    """Whether code reading ``names`` computes the same value in every thread: it reads symbols, and data nothing in
+    the megakernel writes that every thread sees: scalars (they reach the kernel by value) and containers in the
+    target's top-level storage."""
     data = names & sdfg.arrays.keys()
-    return all(isinstance(sdfg.arrays[name], dt.Scalar) and name not in written for name in data)
+    return all(
+        name not in written
+        and (isinstance(sdfg.arrays[name], dt.Scalar) or sdfg.arrays[name].storage in target.top_level_storage)
+        for name in data
+    )
 
 
 def code_names(code: CodeBlock) -> set[str]:
     return {str(name) for stmt in code.code for name in symbolic.symbols_in_ast(stmt)}
 
 
-def uniform_edges(region: ControlFlowRegion, sdfg: SDFG, written: set[str]) -> bool:
+def uniform_edges(region: ControlFlowRegion, sdfg: SDFG, written: set[str], target: Target) -> bool:
     """Whether every interstate edge of ``region`` assigns values that are the same in every thread."""
     return all(
-        uniform(symbolic.free_symbols_and_functions(rhs) | symbolic.arrays(rhs), sdfg, written)
+        uniform(symbolic.free_symbols_and_functions(rhs) | symbolic.arrays(rhs), sdfg, written, target)
         for e in region.edges()
         for rhs in e.data.assignments.values()
     )
@@ -150,11 +160,11 @@ def fusable(block: ControlFlowBlock, sdfg: SDFG, target: Target) -> bool:
     written = written_in(block)
     if isinstance(block, LoopRegion):
         loop_code = [block.loop_condition, block.init_statement, block.update_statement]
-        if not all(uniform(code_names(code), sdfg, written) for code in loop_code if code is not None):
+        if not all(uniform(code_names(code), sdfg, written, target) for code in loop_code if code is not None):
             return False
         return fusable_region(block, sdfg, written, target)
     if isinstance(block, ConditionalBlock):
-        if not all(cond is None or uniform(code_names(cond), sdfg, written) for cond, branch in block.branches):
+        if not all(cond is None or uniform(code_names(cond), sdfg, written, target) for cond, branch in block.branches):
             return False
         return all(fusable_region(branch, sdfg, written, target) for cond, branch in block.branches)
     return False
@@ -162,7 +172,11 @@ def fusable(block: ControlFlowBlock, sdfg: SDFG, target: Target) -> bool:
 
 def fusable_region(region: ControlFlowRegion, sdfg: SDFG, written: set[str], target: Target) -> bool:
     blocks = linear_chain(region)
-    return blocks is not None and uniform_edges(region, sdfg, written) and all(fusable(b, sdfg, target) for b in blocks)
+    return (
+        blocks is not None
+        and uniform_edges(region, sdfg, written, target)
+        and all(fusable(b, sdfg, target) for b in blocks)
+    )
 
 
 def kernels_in(block: ControlFlowBlock, target: Target) -> list[nodes.MapEntry]:
@@ -189,7 +203,7 @@ def find_chains(region: ControlFlowRegion, sdfg: SDFG, target: Target = GPU) -> 
     for block, alone in blocks_and_breaks:
         written = set().union(*(written_in(b) for b in current), written_in(block))
         uniform_in = all(
-            uniform(symbolic.free_symbols_and_functions(rhs) | symbolic.arrays(rhs), sdfg, written)
+            uniform(symbolic.free_symbols_and_functions(rhs) | symbolic.arrays(rhs), sdfg, written, target)
             for e in region.in_edges(block)
             for rhs in e.data.assignments.values()
         )
