@@ -436,7 +436,7 @@ def find_fast_library(device: dtypes.DeviceType) -> list[str]:
             # gates whether the library is actually present, except the tensor library's, which is
             # gated here as in the CUDA row.
             tensor = ["hipTENSOR"] if hiptensor.hipTensor.is_installed() else []
-            return ["rocBLAS", "rocSOLVER", "GPUAuto", *tensor, "TTGT", "hipFFT", "CUB", "CUDA", "pure"]
+            return ["hipBLAS", "hipSolverDn", "GPUAuto", *tensor, "TTGT", "hipFFT", "CUB", "CUDA", "pure"]
         else:
             return ["GPUAuto", "pure"]
     elif device == dtypes.DeviceType.CPU:

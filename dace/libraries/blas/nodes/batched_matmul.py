@@ -9,6 +9,7 @@ from dace import data as dt
 from dace import dtypes, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import (
     check_access,
@@ -471,12 +472,11 @@ class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
             factort = "Complex128"
         else:
             raise ValueError("Unsupported type: " + str(dtype))
-        # The dialect spells a complex operand's C type; only rocBLAS differs (see GpuBlasDialect).
         cdtype = cls.dialect.ctype(cdtype)
 
         call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ""
-        # Handle alpha / beta. cuBLAS/rocBLAS read and write C in place through the one pointer this
+        # Handle alpha / beta. cuBLAS reads and write C in place through the one pointer this
         # call already takes, so a nonzero beta needs no separate C connector here -- only the value
         # passed to the call, exactly like the CPU expansions. Both coefficients are evaluated the
         # same way, independently: a 0/1 compile-time value uses the preallocated device constant,
@@ -526,16 +526,6 @@ class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
                 ({opt["dtype"]}*){opt["array_prefix"]}_c, {opt["ldc"]}, {opt["stride_c"]},
                 {opt["BATCH"]}));"""
         else:
-            # The mixed-precision path names cuBLAS COMPUTE and ALGO enums and the CUDA-wide
-            # `cudaDataType`. rocBLAS spells all three differently (`rocblas_datatype_*`), and this
-            # module has no mapping for them, so a rocBLAS build must REFUSE here rather than emit
-            # cuBLAS identifiers that no ROCm toolchain can resolve.
-            if cls.dialect is not gpu_dialect.CUBLAS:
-                raise NotImplementedError(
-                    f"{cls.dialect.name} has no mixed-precision batched GEMM in this expansion: the "
-                    "compute type, the algorithm and the operand data types are all named with cuBLAS "
-                    "enums here. Use a uniform dtype, or the 'pure' expansion."
-                )
             if node.compute_type is not None:
                 acctype = node.compute_type
             elif node.accumulator_type is not None:
@@ -635,10 +625,9 @@ class ExpandBatchedMatMulCuBLAS(ExpandBatchedMatMulGPUBLAS):
     dialect = gpu_dialect.CUBLAS
 
 
-@dace.library.expansion
-class ExpandBatchedMatMulRocBLAS(ExpandBatchedMatMulGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    dialect = gpu_dialect.ROCBLAS
+ExpandBatchedMatMulHipBLAS = hip_dialect.hip_expansion(
+    ExpandBatchedMatMulCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS
+)
 
 
 @dace.library.node
@@ -650,7 +639,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandBatchedMatMulOpenBLAS,
         "LIBXSMM": ExpandBatchedMatMulLIBXSMM,
         "cuBLAS": ExpandBatchedMatMulCuBLAS,
-        "rocBLAS": ExpandBatchedMatMulRocBLAS,
+        "hipBLAS": ExpandBatchedMatMulHipBLAS,
     }
     transA = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose A before multiplying")
     transB = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose B before multiplying")

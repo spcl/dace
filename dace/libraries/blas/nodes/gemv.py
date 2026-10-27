@@ -9,6 +9,7 @@ import dace.sdfg.nodes
 from dace import memlet as mm
 from dace import properties, symbolic
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.libraries.blas.nodes.gemm import _cast_to_dtype_str, _is_complex
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
@@ -192,7 +193,7 @@ class ExpandGemvGPUBLAS(ExpandTransformation):
             warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
         # Use the vendor's type name for both the coefficients and the operands. The connectors are
-        # dace::complex128 pointers, which do not convert to cuDoubleComplex* or rocblas_double_complex*.
+        # dace::complex128 pointers, which do not convert to cuDoubleComplex*.
         ctype = cls.dialect.ctype(ctype)
         scal_func = func + "scal"
         func += "gemv"
@@ -421,10 +422,7 @@ class ExpandGemvCuBLAS(ExpandGemvGPUBLAS):
     dialect = gpu_dialect.CUBLAS
 
 
-@dace.library.expansion
-class ExpandGemvRocBLAS(ExpandGemvGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    dialect = gpu_dialect.ROCBLAS
+ExpandGemvHipBLAS = hip_dialect.hip_expansion(ExpandGemvCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
 
 
 @dace.library.node
@@ -435,7 +433,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGemvOpenBLAS,
         "MKL": ExpandGemvMKL,
         "cuBLAS": ExpandGemvCuBLAS,
-        "rocBLAS": ExpandGemvRocBLAS,
+        "hipBLAS": ExpandGemvHipBLAS,
         "PBLAS": ExpandGemvPBLAS,
     }
     default_implementation = None

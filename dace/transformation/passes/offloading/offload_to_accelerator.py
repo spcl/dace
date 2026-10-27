@@ -7,6 +7,7 @@ graph, and only then materializes copies -- so a copy is emitted where the locat
 changes rather than around every kernel.
 """
 
+from collections import deque
 from collections.abc import MutableSet
 from collections.abc import Set as AbstractSet
 from copy import deepcopy
@@ -146,6 +147,15 @@ class OffloadToAccelerator(ppl.Pass):
         self._read_only_duplicates: OrderedSet = OrderedSet()
         #: Entry states of the empty arms :func:`add_fallthrough_branches` gave conditionals without an ``else``.
         self._fallthrough_entries: OrderedSet[SDFGState] = OrderedSet()
+        self._taskloop_heuristics: bool = False
+        self._taskloops: OrderedSet[nodes.MapEntry] = OrderedSet()
+        #: Signature arrays whose entry value nothing reads, so staging them down is dead work.
+        self._no_copy_in_needed: OrderedSet[str] = OrderedSet()
+        #: States the current analysis round found touching one container from both sides.
+        self._hybrid_states: OrderedSet[SDFGState] = OrderedSet()
+        self._cached_scopes: dict[SDFGState, dict] = {}
+        self._cached_scope_children: dict[SDFGState, dict] = {}
+        self._loop_jump_entries: list[OffloadingIRNode] = []
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -155,15 +165,6 @@ class OffloadToAccelerator(ppl.Pass):
 
     def depends_on(self) -> OrderedSet[type[ppl.Pass]]:
         return OrderedSet([ControlFlowRaising])
-
-    # def report(self, pass_retval: Any) -> Optional[str]:
-    #    """
-    #    Returns a user-readable string report based on the results of this pass.
-    #
-    #    :param pass_retval: The return value from applying this pass.
-    #    :return: A string with the user-readable report, or None if nothing to report.
-    #    """
-    #    return None
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> Any | None:
         """
@@ -179,9 +180,8 @@ class OffloadToAccelerator(ppl.Pass):
         # The copy analysis reads each region as a line of blocks; callers run ControlFlowRaising first (depends_on).
         require_structured_control_flow(sdfg, "OffloadToAccelerator")
 
-        self.taskloop_heuristics = Config.get_bool("optimizer", "gpu_taskloop_heuristics")
+        self._taskloop_heuristics = Config.get_bool("optimizer", "gpu_taskloop_heuristics")
         self.cache_scopes(sdfg)
-        self.hybrid_overlap: dict = {}
 
         # step 1: set schedule of maps and library nodes -> heuristic only!
         self.find_taskloops(sdfg)
@@ -192,7 +192,7 @@ class OffloadToAccelerator(ppl.Pass):
             self.cache_scopes(sdfg)
 
         # Read before any copy is placed: the staging below renames the accesses this looks at.
-        self.no_copy_in_needed = self.overwritten_before_any_read(sdfg)
+        self._no_copy_in_needed = self.overwritten_before_any_read(sdfg)
 
         self.place_single_sided_data(sdfg)
         self.place_and_copy(sdfg)
@@ -591,13 +591,13 @@ class OffloadToAccelerator(ppl.Pass):
 
         for _ in range(3):
             # step 2: copy analysis -> IR stores analysis results
-            self.hybrid_states: OrderedSet[SDFGState] = OrderedSet()
+            self._hybrid_states: OrderedSet[SDFGState] = OrderedSet()
             sdfgIR = self.sdfg_to_IR(sdfg)
 
             # step 3: resolve hybrid states
             new_maps: OrderedSet[tuple[nodes.MapEntry, nodes.MapExit]] = OrderedSet()
-            if self.hybrid_states:
-                for state in self.hybrid_states:
+            if self._hybrid_states:
+                for state in self._hybrid_states:
                     new_maps |= self.make_size1_map_wrappers(sdfg, state)
 
             if new_maps:
@@ -742,7 +742,7 @@ class OffloadToAccelerator(ppl.Pass):
         #: Per table and state, the sides touching it there: True for device code, False for host code.
         sides: dict[str, dict[SDFGState, set[bool]]] = {}
         for state in sdfg.states():
-            scopes = self.cached_scopes[state]
+            scopes = self._cached_scopes[state]
             looped = in_a_loop(state)
             for node in state.data_nodes():
                 desc = sdfg.arrays.get(node.data)
@@ -841,12 +841,14 @@ class OffloadToAccelerator(ppl.Pass):
             for node in self.host_level_nested_sdfgs(state, None):
                 self.stage_device_scalar_bindings(sdfg, state, node)
                 self.inherit_binding_storage(sdfg, state, node)
-                body = type(self)()
-                body.taskloop_heuristics = self.taskloop_heuristics
-                body.taskloops = self.taskloops
+                body = type(self)(self.taskloop_overrides, self._host_maps)
+                body._taskloop_heuristics = self._taskloop_heuristics
+                # Found tree-wide by ``find_taskloops``: a host map or pinned map of the body is one of these.
+                body._taskloops = self._taskloops
+                body._host_map_entries = self._host_map_entries
+                body._host_pinned = self._host_pinned
                 # The body places its own level, so it needs the state ``apply_pass`` seeds.
-                body.hybrid_overlap = {}
-                body.no_copy_in_needed = body.overwritten_before_any_read(node.sdfg)
+                body._no_copy_in_needed = body.overwritten_before_any_read(node.sdfg)
                 body.cache_scopes(node.sdfg)
                 body.place_and_copy(node.sdfg)
                 body.offload_host_level_bodies(node.sdfg)
@@ -922,14 +924,22 @@ class OffloadToAccelerator(ppl.Pass):
             for edge in nested.all_interstate_edges():
                 if name in edge.data.used_arrays(nested.arrays):
                     return True
+            # A branch or loop condition names a scalar bare, so it reaches no memlet (ICON's ``jb == i_startblk``)
+            if any(
+                name in region.used_symbols(all_symbols=False, with_contents=False)
+                for region in nested.all_control_flow_regions()
+            ):
+                return True
         return False
 
     def host_level_nested_sdfgs(self, state: SDFGState, entry: nodes.MapEntry | None):
-        """Nested SDFGs under ``entry`` reached through taskloops only -- one below a kernel is device code."""
-        for node in self.cached_scope_children[state].get(entry, ()):
+        """Nested SDFGs under ``entry`` reached through taskloops and host maps only -- one below a kernel is device
+        code. A host map's body launches the kernels under it, so it is a host level as a taskloop's is (ICON's block
+        loop reads ``i_endidx`` on the host)."""
+        for node in self._cached_scope_children[state].get(entry, ()):
             if isinstance(node, nodes.NestedSDFG):
                 yield node
-            elif isinstance(node, nodes.MapEntry) and node in self.taskloops:
+            elif isinstance(node, nodes.MapEntry) and (node in self._taskloops or node in self._host_map_entries):
                 yield from self.host_level_nested_sdfgs(state, node)
 
     def inherit_binding_storage(self, sdfg: SDFG, state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> None:
@@ -951,12 +961,12 @@ class OffloadToAccelerator(ppl.Pass):
 
     def cache_scopes(self, sdfg):
         # Nested SDFGs too: a taskloop's body is a host level, read by the walk and the analysis.
-        self.cached_scopes = {}
-        self.cached_scope_children = {}
+        self._cached_scopes = {}
+        self._cached_scope_children = {}
         for nested in sdfg.all_sdfgs_recursive():
             for state in nested.states():
-                self.cached_scopes[state] = state.scope_dict()
-                self.cached_scope_children[state] = state.scope_children()
+                self._cached_scopes[state] = state.scope_dict()
+                self._cached_scope_children[state] = state.scope_children()
 
     # STEP 1
     def find_taskloops(self, sdfg: SDFG) -> None:
@@ -965,7 +975,7 @@ class OffloadToAccelerator(ppl.Pass):
         A map enclosing a device-wide library node is recorded whatever the config says: that call is
         issued by host code, so a kernel cannot contain it. The launch-only rule is the optional half.
         """
-        self.taskloops = taskloop_maps(sdfg, launch_only=self.taskloop_heuristics, overrides=self.taskloop_overrides)
+        self._taskloops = taskloop_maps(sdfg, launch_only=self._taskloop_heuristics, overrides=self.taskloop_overrides)
         # Kept apart from ``taskloops``: a host map is only a map that does not become the kernel, so
         # it must not pick up the taskloop-specific handling those carry elsewhere in this pass.
         self._host_map_entries = host_maps(sdfg, self._host_maps)
@@ -977,7 +987,7 @@ class OffloadToAccelerator(ppl.Pass):
         return (
             host_level
             and node not in self._host_pinned
-            and node not in self.taskloops
+            and node not in self._taskloops
             and node not in self._host_map_entries
         )
 
@@ -1002,7 +1012,7 @@ class OffloadToAccelerator(ppl.Pass):
         kernels: list[tuple[SDFGState, nodes.MapEntry]] = []
 
         def walk(state: SDFGState, entry, host_level: bool) -> None:
-            for node in self.cached_scope_children[state].get(entry, ()):
+            for node in self._cached_scope_children[state].get(entry, ()):
                 if isinstance(node, nodes.MapEntry):
                     is_kernel = self.is_kernel(node, host_level)
                     if is_kernel:
@@ -1027,7 +1037,7 @@ class OffloadToAccelerator(ppl.Pass):
         """
 
         def walk(state: SDFGState, entry, host_level: bool) -> None:
-            for node in self.cached_scope_children[state].get(entry, ()):
+            for node in self._cached_scope_children[state].get(entry, ()):
                 if isinstance(node, nodes.MapEntry):
                     if host_level and node.map.schedule == dtypes.ScheduleType.GPU_Device:
                         # Offloaded before (a partial or repeated offload): its interior is resolved already,
@@ -1160,7 +1170,7 @@ class OffloadToAccelerator(ppl.Pass):
         the host cannot reach anyway.
         """
         pinned: OrderedSet[str] = OrderedSet()
-        for node in self.cached_scope_children[state].get(None, ()):
+        for node in self._cached_scope_children[state].get(None, ()):
             if isinstance(node, nodes.LibraryNode):
                 pinned |= self.host_pinned_arrays(sdfg, state, node)
         return pinned
@@ -1235,7 +1245,6 @@ class OffloadToAccelerator(ppl.Pass):
             elif data_name in cpu_set:  # has already been accessed on CPU
                 if is_gpu:  # is now accessed on GPU
                     gpu_set.add(data_name)
-                    # raise RuntimeError("CPU->GPU copy needed within map for " + data_name)
 
             else:
                 assert isinstance(data_name, str), f"{data_name} -> {data_name.__class__.__name__}"
@@ -1252,11 +1261,11 @@ class OffloadToAccelerator(ppl.Pass):
             host_level: bool = True,
         ):
             is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES  # TODO Q: how not to hardcode?
-            is_taskloop = map_entry in self.taskloops
+            is_taskloop = map_entry in self._taskloops
             host_level = host_level and is_taskloop
 
             # get all nodes within this map's scope
-            map_nodes = [n for n, parent in self.cached_scopes[state].items() if parent is map_entry]
+            map_nodes = [n for n, parent in self._cached_scopes[state].items() if parent is map_entry]
 
             # input & output nodes
             input_and_output = get_data_used_by_incoming_access_nodes(
@@ -1339,10 +1348,10 @@ class OffloadToAccelerator(ppl.Pass):
     ) -> tuple[OrderedSet[str], OrderedSet[str]]:
         """Where a nested SDFG wants its bound arrays, in the OUTER SDFG's names."""
         # Its hybrid states are resolved when the body is offloaded; wrapping them needs that SDFG.
-        outer_hybrid = self.hybrid_states
-        self.hybrid_states = OrderedSet()
+        outer_hybrid = self._hybrid_states
+        self._hybrid_states = OrderedSet()
         inner_gpu, inner_cpu = self.get_data_locations_of_cfregion(node.sdfg, node.sdfg)
-        self.hybrid_states = outer_hybrid
+        self._hybrid_states = outer_hybrid
 
         gpu_set: OrderedSet[str] = OrderedSet()
         cpu_set: OrderedSet[str] = OrderedSet()
@@ -1378,7 +1387,7 @@ class OffloadToAccelerator(ppl.Pass):
         cpu_set: OrderedSet[str] = OrderedSet()
 
         # The analysis phase never mutates, so the scope map cached for this round is the current one.
-        top_level_nodes = self.cached_scope_children[state][None]
+        top_level_nodes = self._cached_scope_children[state][None]
         #: What a bare host tasklet touches, which is the one host use a size-1 map can lift.
         free_tasklet_data: OrderedSet[str] = OrderedSet()
 
@@ -1447,8 +1456,7 @@ class OffloadToAccelerator(ppl.Pass):
             )
         overlap = (gpu_set & cpu_set) | (resident - pinned)
         if overlap:
-            self.hybrid_states.add(state)
-            self.hybrid_overlap[state] = OrderedSet(overlap)
+            self._hybrid_states.add(state)
             gpu_set |= cpu_set - pinned
             cpu_set &= pinned
 
@@ -1541,10 +1549,6 @@ class OffloadToAccelerator(ppl.Pass):
             cpu_set |= c
 
         return gpu_set, cpu_set
-
-    # wrapper
-    # def get_data_locations(self, sdfg:SDFG) -> tuple[OrderedSet[str], OrderedSet[str]]:
-    #    return self.get_data_locations_of_cfregion(sdfg, sdfg)
 
     # STEP 3: Intermediate Representation
     def written_arrays(self, sdfg: SDFG) -> OrderedSet[str]:
@@ -1873,7 +1877,7 @@ class OffloadToAccelerator(ppl.Pass):
         """
         state = node.block
         sdfg = required(state).sdfg
-        top = self.cached_scope_children[state][None]
+        top = self._cached_scope_children[state][None]
         for edge in required(state).edges():
             src, dst = edge.src, edge.dst
             if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)) or edge.data.is_empty():
@@ -1976,20 +1980,31 @@ class OffloadToAccelerator(ppl.Pass):
         traverse_IR(IR, _insert_copy_names_in_node)
 
     def _correct_transient_storage_locations(self, sdfg: SDFG, IR: OffloadingIRNode):
+        # A container every access to which sits inside one kernel is thread-private, as a block-wide reduce's
+        # operands must be. One device code uses beyond that -- two kernels, or a kernel and the host -- is a buffer
+        # handed from launch to launch (dace-fortran's loop-local ``Register`` arrays in an ICON block body), so it
+        # lives where the analysis puts it, whatever storage it was given.
+        touched_by: dict[str, OrderedSet[nodes.MapEntry | None]] = {}
+        for state in sdfg.states():
+            scopes = state.scope_dict()
+            for node in state.data_nodes():
+                kernel = enclosing_kernel(scopes, node)
+                while kernel is not None and enclosing_kernel(scopes, kernel) is not None:
+                    kernel = enclosing_kernel(scopes, kernel)
+                touched_by.setdefault(node.data, OrderedSet()).add(kernel)
+        one_kernel = OrderedSet(name for name, by in touched_by.items() if len(by) == 1 and None not in by)
+        on_device: OrderedSet[str] = OrderedSet()
+        traverse_IR(IR, lambda node: on_device.update(node.gpu_set))
         # A register or shared-memory transient keeps the scope-local storage it was given
         seen_transients: OrderedSet[str] = OrderedSet(
-            name for name, desc in sdfg.arrays.items() if desc.storage in SCOPE_LOCAL_STORAGE
+            name
+            for name, desc in sdfg.arrays.items()
+            if desc.storage in SCOPE_LOCAL_STORAGE and (name in one_kernel or name not in on_device)
         )
-        # A ``Default`` transient that lives only inside kernels is thread-private, as a block-wide reduce's operands
-        # must be: ``Register``, what a kernel scope resolves ``Default`` to, not one ``GPU_Global`` buffer
-        kernel_local: dict[str, bool] = {}
-        for state in sdfg.states():
-            for node in state.data_nodes():
-                inside = is_devicelevel_gpu(sdfg, state, node)
-                kernel_local[node.data] = kernel_local.get(node.data, True) and inside
-        for name, inside in kernel_local.items():
+        # ``Register`` is what a kernel scope resolves ``Default`` to
+        for name in one_kernel:
             desc = sdfg.arrays[name]
-            if inside and desc.transient and desc.storage == dtypes.StorageType.Default:
+            if desc.transient and desc.storage == dtypes.StorageType.Default:
                 desc.storage = dtypes.StorageType.Register
                 seen_transients.add(name)
 
@@ -2063,7 +2078,7 @@ class OffloadToAccelerator(ppl.Pass):
             # connector the copy is not merely wasted -- it writes a container the body may only read
             # (npbench scattering_self_energies' ``neigh_idx``).
             cpu_set, gpu_set = self.exit_sets(node)
-            gpu_copies = {name for name in cpu_set & next.gpu_set if name not in self.no_copy_in_needed}
+            gpu_copies = {name for name in cpu_set & next.gpu_set if name not in self._no_copy_in_needed}
             if gpu_copies:
                 place_copy(node_block, next_block, gpu_copies, to_gpu=True)
 
@@ -2145,7 +2160,6 @@ class OffloadToAccelerator(ppl.Pass):
             target_graph = state1.parent_graph or state1
             assert target_graph is not None, "copy insertion requires a parent control-flow graph (s1)"
 
-            # copy_state = self.add_state_after(target_graph, state1, label)
             copy_state = target_graph.add_state_after(state1, label=label)
 
         # 2) create the copy map with correct names
@@ -2244,11 +2258,7 @@ class OffloadToAccelerator(ppl.Pass):
             return f"buffer__return{name[8:]}_gpu"
         return f"{name}_gpu"
 
-    # OPTIMIZATION
-
-    # heuristic: size1 maps are faster than more CPU-GPU copies
-
-    from collections import deque
+    # OPTIMIZATION: a size-1 map is cheaper than the copies around host work beside a kernel
 
     def _get_boundary_in_edges(self, state: SDFGState, node, bounded_set: AbstractSet[nodes.Node]):
         # A list, not a set: the connector numbering below follows this order.
@@ -2367,7 +2377,7 @@ class OffloadToAccelerator(ppl.Pass):
                 continue
 
             comp: OrderedSet[nodes.Node] = OrderedSet()
-            queue = self.deque([start])
+            queue = deque([start])
             visited.add(start)
 
             while queue:
@@ -2482,7 +2492,7 @@ class OffloadToAccelerator(ppl.Pass):
         if not data_names:
             return {}
         last_access: dict[str, nodes.AccessNode] = {}
-        queue = self.deque([map_entry])
+        queue = deque([map_entry])
         visited = {map_entry}
 
         while queue:
@@ -2565,7 +2575,7 @@ class OffloadToAccelerator(ppl.Pass):
         found: list[nodes.MapEntry | None] = [None]
         for entry in found:  # grows as taskloops are met; a taskloop under a kernel is never reached
             found.extend(
-                node for node in scope_children[entry] if isinstance(node, nodes.MapEntry) and node in self.taskloops
+                node for node in scope_children[entry] if isinstance(node, nodes.MapEntry) and node in self._taskloops
             )
         return found
 
@@ -2665,7 +2675,7 @@ class OffloadToAccelerator(ppl.Pass):
             or isinstance(node, nodes.LibraryNode)
             or (
                 isinstance(node, nodes.MapEntry)
-                and (node in self.taskloops or node in self._host_map_entries or node in self._host_pinned)
+                and (node in self._taskloops or node in self._host_map_entries or node in self._host_pinned)
             )
         )
         partition_nodes |= OrderedSet(

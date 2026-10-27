@@ -9,6 +9,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import Memlet, dtypes
 from dace.codegen import common
+from dace.libraries import hip_dialect
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import Potrf, environments
 from dace.libraries.linalg.nodes.solve import restride
@@ -19,12 +20,12 @@ from dace.transformation.transformation import ExpandTransformation
 #: The vendor GPU solvers. The branches below are about whether the factorization runs ON THE
 #: DEVICE -- which decides the column-major transposes and the device-side info code -- and not
 #: about which vendor it is, so a second backend must not need a second branch.
-GPU_SOLVERS = ("cuSolverDn", "rocSOLVER")
+GPU_SOLVERS = tuple(hip_dialect.GPU_SOLVER_BLAS)
 
 #: The vendor BLAS that goes with each, for the transposes staged around the factorization. Naming
-#: a cuBLAS transpose inside a rocSOLVER graph selects an expansion whose environment is not
+#: a cuBLAS transpose inside a hipSOLVER graph selects an expansion whose environment is not
 #: installed, and every one of them silently drops to the serial loop.
-SOLVER_BLAS = {"cuSolverDn": "cuBLAS", "rocSOLVER": "rocBLAS"}
+SOLVER_BLAS = hip_dialect.GPU_SOLVER_BLAS
 
 
 def device_solver_implementation(node, state, connector):
@@ -43,7 +44,7 @@ def device_solver_implementation(node, state, connector):
             isinstance(outer, dace.sdfg.nodes.AccessNode)
             and state.sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global
         ):
-            return "rocSOLVER" if common.get_gpu_backend() == "hip" else "cuSolverDn"
+            return "hipSolverDn" if common.get_gpu_backend() == "hip" else "cuSolverDn"
     return None
 
 
@@ -199,12 +200,12 @@ class ExpandCholeskyCuSolverDn(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandCholeskyRocSolver(ExpandTransformation):
-    environments = [environments.rocsolver.rocSOLVER]
+class ExpandCholeskyHipSolverDn(ExpandTransformation):
+    environments = [environments.hipsolverdn.hipSolverDn]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        return _make_sdfg(node, parent_state, parent_sdfg, "rocSOLVER")
+        return _make_sdfg(node, parent_state, parent_sdfg, "hipSolverDn")
 
 
 @dace.library.node
@@ -215,7 +216,7 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandCholeskyOpenBLAS,
         "MKL": ExpandCholeskyMKL,
         "cuSolverDn": ExpandCholeskyCuSolverDn,
-        "rocSOLVER": ExpandCholeskyRocSolver,
+        "hipSolverDn": ExpandCholeskyHipSolverDn,
     }
     default_implementation = None
 

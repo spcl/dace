@@ -2414,9 +2414,9 @@ def test_in_kernel_copy_does_not_emit_a_grid_barrier():
     assert marker in cuda, cuda
     start = cuda.index(marker)
     end = cuda.index("DACE_DFI", start + len(marker))
-    assert "__gbar.Sync();" not in cuda[start:end], cuda[start:end]
+    assert "cooperative_groups::this_grid().sync();" not in cuda[start:end], cuda[start:end]
     # The kernel's own state machine still gets its barriers.
-    assert "__gbar.Sync();" in cuda[end:]
+    assert "cooperative_groups::this_grid().sync();" in cuda[end:]
 
 
 def test_a_multi_state_nested_sdfg_below_the_kernel_keeps_its_barriers():
@@ -2452,7 +2452,7 @@ def test_a_multi_state_nested_sdfg_below_the_kernel_keeps_its_barriers():
     with dace.config.set_temporary("compiler", "cuda", "implementation", value="legacy"):
         cuda = _device_code(sdfg)
     # One barrier per inner state: the transition between them is a sync point.
-    assert cuda.count("__gbar.Sync();") >= 2, cuda
+    assert cuda.count("cooperative_groups::this_grid().sync();") >= 2, cuda
 
 
 def test_shared_to_global_uses_the_block_collective_helper():

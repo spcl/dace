@@ -6,7 +6,8 @@ from dace import symbolic
 from dace.sdfg import nodes
 from dace.sdfg import state as cf
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation
+from dace.sdfg.graph import SubgraphView
+from dace.transformation import helpers, transformation
 from dace.transformation.passes import move_if_into_loop
 
 
@@ -31,14 +32,42 @@ def carried_across_iterations(loop: cf.LoopRegion, body: sd.SDFG) -> str | None:
     return None
 
 
+def crowded(state: sd.SDFGState, entry: nodes.MapEntry) -> list[nodes.Node]:
+    """The top-level nodes of ``state`` other than ``entry``'s map and access nodes."""
+    exit_node = state.exit_node(entry)
+    return [
+        n
+        for n in state.scope_children()[None]
+        if n is not entry and n is not exit_node and not isinstance(n, nodes.AccessNode)
+    ]
+
+
+def isolate_map(state: sd.SDFGState, entry: nodes.MapEntry) -> sd.SDFGState:
+    """The state holding ``entry``'s map and its access nodes alone: what the map reads from is split off into a state
+    before it and the rest stays in ``state``, after it. ``state`` itself when it holds nothing else."""
+    if not crowded(state, entry):
+        return state
+    reached: set[nodes.Node] = set()
+    sdutil.find_upstream_nodes(node_to_start=entry, state=state, seen=reached)
+    upstream = [n for n in crowded(state, entry) if n in reached]
+    if upstream:
+        helpers.state_fission(SubgraphView(state, upstream))
+    if not crowded(state, entry):
+        return state
+    isolated = helpers.state_fission(SubgraphView(state, [entry]))
+    assert not crowded(isolated, entry), "only access nodes lie between the map and its upstream"
+    return isolated
+
+
 @transformation.explicit_cf_compatible
 class MapLoopInterchange(transformation.SingleStateTransformation):
     """``map i: for t: B`` -> ``for t: map i: B``, for a map whose body is a nested SDFG holding only the loop.
 
     Map iterations are independent, so running every map iteration per loop iteration keeps the order each one
     sees. The move is legal when the loop's trip count is the same for every map iteration, nothing leaves an
-    iteration early, and nothing inside the body carries a value between loop iterations. The map's state must
-    hold nothing but the map, since the loop repeats the whole state.
+    iteration early, and nothing inside the body carries a value between loop iterations. The loop repeats the map's
+    state, so a state holding more than the map is split first: what the map reads from runs in a state before it,
+    the rest in a state after it.
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
@@ -57,12 +86,11 @@ class MapLoopInterchange(transformation.SingleStateTransformation):
         loop = blocks[0]
         if any(e.dst is not body for e in state.out_edges(entry)):
             return "the map holds more than the nested SDFG"
-        if any(
-            not isinstance(n, nodes.AccessNode)
-            for n in state.scope_children()[None]
-            if n is not entry and n is not state.exit_node(entry)
+        exit_node = state.exit_node(entry)
+        if any(not isinstance(e.src, nodes.AccessNode) for e in state.in_edges(entry)) or any(
+            not isinstance(e.dst, nodes.AccessNode) for e in state.out_edges(exit_node)
         ):
-            return "the state holds more than the map; the loop would repeat it"
+            return "the map exchanges data with a node other than an access node; its state cannot be split around it"
         var = loop.loop_variable
         outer = state.sdfg
         if var in entry.map.params or var in outer.symbols or var in outer.arrays:
@@ -86,7 +114,8 @@ class MapLoopInterchange(transformation.SingleStateTransformation):
         return self.refusal(graph) is None
 
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
-        state, body = graph, self.nested_sdfg
+        entry, body = self.map_entry, self.nested_sdfg  # read before the split moves them and stales their ids
+        state = isolate_map(graph, entry)
         loop = body.sdfg.nodes()[0]
         var = loop.loop_variable
         dtype = loop.new_symbols({})[var]

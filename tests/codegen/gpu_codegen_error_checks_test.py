@@ -9,17 +9,23 @@ import re
 import dace
 from dace import dtypes
 from dace.codegen import common
-from dace.libraries import blas
-from dace.libraries.blas.nodes.gemm import ExpandGemmCuBLAS, ExpandGemmRocBLAS
+from dace.libraries import blas, hip_dialect
+from dace.libraries.blas.nodes.gemm import ExpandGemmCuBLAS
 
 BAILOUT = r"if \(__result\)"
 # Matches DACE_GPU_CHECK and its _RETURN/_RETURN_VAL variants, either backend target.
 GPU_CHECK = r"DACE_GPU_CHECK\w*\("
 SYNC_CALL = r"(?:cuda|hip)StreamSynchronize\("
-#: The vendor BLAS expansion of the configured GPU backend, and the call spellings it emits
-GPU_BLAS = ExpandGemmCuBLAS if common.get_gpu_backend() == "cuda" else ExpandGemmRocBLAS
-GPU_BLAS_IMPLEMENTATION = "cuBLAS" if GPU_BLAS is ExpandGemmCuBLAS else "rocBLAS"
-GPU_BLAS_CALL = rf"{GPU_BLAS.backend}blas[A-Z_]\w*\("
+CUDA = common.get_gpu_backend() == "cuda"
+GPU_BLAS_IMPLEMENTATION = "cuBLAS" if CUDA else "hipBLAS"
+
+
+def spelled(cuda_code: str) -> str:
+    """``cuda_code`` as the vendor BLAS expansion of the configured GPU backend emits it."""
+    return cuda_code if CUDA else hip_dialect.to_hip(cuda_code, hip_dialect.BLAS)
+
+
+GPU_BLAS_CALL = spelled("cublas") + r"[A-Z_]\w*\("
 
 
 def generated_code(sdfg: dace.SDFG) -> str:
@@ -180,7 +186,9 @@ def test_gpu_blas_calls_are_checked():
         calls = list(re.finditer(GPU_BLAS_CALL, code))
         assert calls, f"no vendor BLAS call was emitted for alpha={alpha}, so this test is anchored on nothing"
         unchecked = [
-            call.group(0) for call in calls if not code[: call.start()].rstrip().endswith(f"{GPU_BLAS.check_error}(")
+            call.group(0)
+            for call in calls
+            if not code[: call.start()].rstrip().endswith(spelled(f"{ExpandGemmCuBLAS.check_error}("))
         ]
         assert not unchecked, f"vendor BLAS called without checking its status: {unchecked}"
 
@@ -188,9 +196,9 @@ def test_gpu_blas_calls_are_checked():
 def test_the_gpu_blas_gemm_expansion_still_emits_the_pointer_mode_switch():
     """The check has to wrap the pointer mode switch, not replace it."""
     code = generated_code(gpu_blas_gemm(2.0))
-    handle = f"__dace_{GPU_BLAS.backend}blas_handle"
-    assert f"{GPU_BLAS.set_pointer_mode}({handle}, {GPU_BLAS.pointer_host})" in code
-    assert f"{GPU_BLAS.set_pointer_mode}({handle}, {GPU_BLAS.pointer_device})" in code
+    gemm, handle = ExpandGemmCuBLAS, "__dace_cublas_handle"
+    assert spelled(f"{gemm.set_pointer_mode}({handle}, {gemm.pointer_host})") in code
+    assert spelled(f"{gemm.set_pointer_mode}({handle}, {gemm.pointer_device})") in code
 
 
 if __name__ == "__main__":

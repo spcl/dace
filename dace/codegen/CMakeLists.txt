@@ -149,7 +149,7 @@ if(DACE_ENABLE_HIP)
   # ...Then load again to get the macros
   find_package(HIP REQUIRED)
 
-  # Add libraries such as rocBLAS
+  # Add libraries such as hipBLAS
   link_directories(${HIP_PATH}/../lib)
   if(ROCM_PATH)
     find_path(ROCTX_INCLUDE_DIR roctx.h HINTS ${ROCM_PATH}/include/roctracer ${ROCM_PATH}/roctracer/include)

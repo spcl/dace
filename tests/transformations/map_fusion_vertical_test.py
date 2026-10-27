@@ -42,17 +42,6 @@ def count_nodes(
     return len(found_nodes)
 
 
-def safe_view(sdfg: SDFG):
-    """Calls `sdfg.view()` but if it fails does nothing.
-
-    Mostly needed for the CI, for whatever reason.
-    """
-    try:
-        sdfg.view()
-    except Exception:
-        pass
-
-
 def unique_name(name: str) -> str:
     """Adds a unique string to `name`."""
     maximal_length = 200
@@ -137,42 +126,31 @@ def apply_fusion(
     If `strict_dataflow` is set to `True`, the default, then the function will perform
     the fusion in strict dataflow mode.
     """
-    org_sdfg = copy.deepcopy(sdfg)
     num_maps_before = None if unspecific else count_nodes(sdfg, nodes.MapEntry)
 
-    try:
-        with dace.config.temporary_config():
-            dace.Config.set("optimizer", "match_exception", value=True)
-
-            if where is not None:
-                assert apply_once
-                options = {"strict_dataflow": strict_dataflow}
-                if allow_intermediates_with_symbolic_size is not None:
-                    options = options | {
-                        "allow_intermediates_with_symbolic_size": allow_intermediates_with_symbolic_size
-                    }
-                MapFusionVertical.apply_to(
-                    sdfg=sdfg,
-                    options=options | map_fusion_opt,
-                    expr_index=0,
-                    verify=True,
-                    **where,
-                )
-                sdfg.validate()
-
-            else:
-                map_fusion = MapFusionVertical(
-                    strict_dataflow=strict_dataflow,
-                    allow_intermediates_with_symbolic_size=allow_intermediates_with_symbolic_size,
-                    **map_fusion_opt,
-                )
-                apply_function = sdfg.apply_transformations if apply_once else sdfg.apply_transformations_repeated
-                apply_function(map_fusion, validate=True, validate_all=True)
-
-    except:
-        safe_view(org_sdfg)
-        safe_view(sdfg)
-        raise
+    with dace.config.temporary_config():
+        dace.Config.set("optimizer", "match_exception", value=True)
+        if where is not None:
+            assert apply_once
+            options = {"strict_dataflow": strict_dataflow}
+            if allow_intermediates_with_symbolic_size is not None:
+                options = options | {"allow_intermediates_with_symbolic_size": allow_intermediates_with_symbolic_size}
+            MapFusionVertical.apply_to(
+                sdfg=sdfg,
+                options=options | map_fusion_opt,
+                expr_index=0,
+                verify=True,
+                **where,
+            )
+            sdfg.validate()
+        else:
+            map_fusion = MapFusionVertical(
+                strict_dataflow=strict_dataflow,
+                allow_intermediates_with_symbolic_size=allow_intermediates_with_symbolic_size,
+                **map_fusion_opt,
+            )
+            apply_function = sdfg.apply_transformations if apply_once else sdfg.apply_transformations_repeated
+            apply_function(map_fusion, validate=True, validate_all=True)
 
     if unspecific:
         return sdfg
@@ -182,19 +160,13 @@ def apply_fusion(
     if removed_maps is not None:
         has_processed = True
         rm = num_maps_before - num_maps_after
-        if not (rm == removed_maps):
-            safe_view(sdfg)
         assert rm == removed_maps, f"Expected to remove {removed_maps} but removed {rm}"
     if final_maps is not None:
         has_processed = True
-        if not (final_maps == num_maps_after):
-            safe_view(sdfg)
         assert final_maps == num_maps_after, (
             f"Expected that only {final_maps} maps remain, but there are sill {num_maps_after}."
         )
     if not has_processed:
-        if not (num_maps_after < num_maps_before):
-            safe_view(sdfg)
         assert num_maps_after < num_maps_before, f"Maps after: {num_maps_after}; Maps before: {num_maps_before}"
     return sdfg
 

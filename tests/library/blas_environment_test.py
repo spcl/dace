@@ -22,7 +22,7 @@ from dace.libraries.blas.environments import OpenBLAS
 from dace.libraries.blas.environments import openblas as openblas_env
 
 #: Every BLAS-providing environment DaCe ships.
-ALL_BLAS_ENVIRONMENTS = [OpenBLAS, blas_envs.IntelMKL, blas_envs.cuBLAS, blas_envs.rocBLAS]
+ALL_BLAS_ENVIRONMENTS = [OpenBLAS, blas_envs.IntelMKL, blas_envs.cuBLAS, blas_envs.hipBLAS]
 
 
 def _system_has_a_blas():

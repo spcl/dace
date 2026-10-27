@@ -40,7 +40,6 @@ from dace.transformation.passes.canonicalize.loop_iteration_value import (
     Refused,
     Scale,
     Summary,
-    blas_coefficients,
     canonical,
     leaf,
     leaves,
@@ -50,7 +49,7 @@ from dace.transformation.passes.canonicalize.loop_iteration_value import (
     same,
     scale_of,
     shape_is,
-    splice_blas_node,
+    splice_blas_update,
     summarize,
     transients_dead_outside,
 )
@@ -194,11 +193,9 @@ def replace(parent: ControlFlowRegion, loop: LoopRegion, match: RankKMatch) -> N
     from dace.libraries.blas.nodes.syrk import Syrk
 
     node_class, suffix = (Syrk, "_syrk") if match.b is None else (Syr2k, "_syr2k")
-    operands = {"_a": match.a} if match.b is None else {"_a": match.a, "_b": match.b}
-    node = node_class(
-        loop.label + suffix, uplo=match.uplo, trans=match.trans, **blas_coefficients(match.alpha, match.beta)
-    )
-    splice_blas_node(parent, loop, node, operands, match.c, match.alpha, match.beta)
+    operands = {"_A": match.a} if match.b is None else {"_A": match.a, "_B": match.b}
+    node = node_class(loop.label + suffix, uplo=match.uplo == "U", transA=match.trans == "T")
+    splice_blas_update(parent, loop, node, operands, match.c, match.alpha, match.beta)
 
 
 __all__ = ["LoopToRankKUpdate"]

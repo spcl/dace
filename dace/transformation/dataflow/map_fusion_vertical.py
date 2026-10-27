@@ -2565,6 +2565,16 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Undecided counts as carrying: only a claim provably narrower than the array is let through.
         if claimed.dims() != full_range.dims():
             return True
+        # A window of fixed extent that moves with an iteration of the first Map is a different part of the array in
+        # two iterations, so it is never the whole array (and a single iteration was let through above)
+        params = set(first_map_exit.map.params)
+        for cb, ce, _ in claimed:
+            begin = symbolic.pystr_to_symbolic(cb)
+            moves = any(
+                str(p) in params and (slope := begin.diff(p)).is_number and slope != 0 for p in begin.free_symbols
+            )
+            if moves and params.isdisjoint(map(str, symbolic.pystr_to_symbolic(ce - cb).free_symbols)):
+                return False
         facts = sdfg.facts()
         for claimed_range, full_dim in zip(claimed, full_range):
             (cb, ce), (fb, fe) = claimed_range[:2], full_dim[:2]

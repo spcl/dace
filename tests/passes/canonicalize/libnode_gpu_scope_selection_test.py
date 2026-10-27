@@ -89,17 +89,17 @@ def test_a_sequential_node_inside_a_kernel_takes_its_block_collective():
 
 
 def vendor_blas() -> str:
-    """The GPU BLAS this host's backend selects -- ``cuBLAS`` on CUDA, ``rocBLAS`` on HIP.
+    """The GPU BLAS this host's backend selects -- ``cuBLAS`` on CUDA, ``hipBLAS`` on HIP.
 
     Asked rather than assumed: ``canonicalize_fast_library_priority`` takes its GPU row straight
     from ``auto_optimize``, which is keyed on ``get_gpu_backend()``. Hardcoding one vendor makes the
-    test assert the machine it was written on -- it failed here reading ``rocBLAS`` on an AMD node,
+    test assert the machine it was written on -- it failed here reading the HIP BLAS on an AMD node,
     which is the pipeline doing exactly the right thing.
     """
     from dace.codegen.common import get_gpu_backend
 
     try:
-        return "rocBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
+        return "hipBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
     except Exception:  # noqa: BLE001 -- no backend configured; the CUDA row is the historical default
         return "cuBLAS"
 

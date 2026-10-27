@@ -1103,6 +1103,6 @@ def test_an_override_reaches_the_pass_through_its_property():
     with dace.config.set_temporary("optimizer", "gpu_taskloop_heuristics", value=True):
         offloader = OffloadToAccelerator(taskloop_overrides={"outer": True})
         offloader.cache_scopes(sdfg)
-        offloader.taskloop_heuristics = True
+        offloader._taskloop_heuristics = True
         offloader.find_taskloops(sdfg)
-    assert entry in offloader.taskloops, "the pass ignored the override it was constructed with"
+    assert entry in offloader._taskloops, "the pass ignored the override it was constructed with"

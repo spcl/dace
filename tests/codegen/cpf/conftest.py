@@ -230,7 +230,7 @@ def assert_standalone_units(rendering: Rendering, label: str = "cpf") -> None:
     assert rendering.code.count('extern "C" void') == 1, f"{label}: the host unit holds the one entry"
     assert "__global__" not in rendering.code, f"{label}: the host unit only launches"
     launchers = set(re.findall(r"\b(__cpf_runkernel_\w+)\(", rendering.code))
-    # A unit whose device work is all vendor library calls (rocBLAS, rocSOLVER, hipFFT) launches no kernel.
+    # A unit whose device work is all vendor library calls (hipBLAS, hipSolverDn, hipFFT) launches no kernel.
     assert "__global__" in rendering.device_code or not launchers, f"{label}: the kernels live in the device unit"
     defined = set(re.findall(r"^\S.*\b(__cpf_runkernel_\w+)\([^;]*\)\s*$", rendering.device_code, re.MULTILINE))
     assert launchers <= defined, (

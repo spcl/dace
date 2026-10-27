@@ -12,6 +12,7 @@ from dace import SDFG, SDFGState, dtypes, properties
 from dace import data as dt
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
 from dace.libraries.blas.blas_helpers import (
     check_access,
@@ -88,7 +89,7 @@ def _host_coeff(
 
     A wired runtime host scalar is read by value and composed multiplicatively with the compile-time
     ``prop`` (the identity in the usual runtime case); otherwise ``prop`` is inlined (the existing
-    behavior). cuBLAS/rocBLAS always dereference the coefficient through a pointer, so the value is
+    behavior). cuBLAS always dereferences the coefficient through a pointer, so the value is
     materialized into a host local and its address is passed.
 
     :param var: Name of the host local to declare (for example ``__alpha``).
@@ -825,7 +826,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             if device_mode and host_mode:
                 raise NotImplementedError(
                     "Gemm GPU: alpha and beta runtime scalars must share a memory space (both host or "
-                    "both device); the cuBLAS/rocBLAS pointer mode is handle-wide."
+                    "both device); the cuBLAS pointer mode is handle-wide."
                 )
             if device_mode:
                 call_prefix += f"{cls.set_pointer_mode}({handle}, {cls.pointer_device});\n"
@@ -926,7 +927,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
         # header requirement. Tag the tasklet itself.
         tasklet.environments = {env.full_class_path() for env in cls.environments}
 
-        # cuBLAS/rocBLAS read and write C in place through a single pointer, so the expansion is
+        # cuBLAS reads and writes C in place through a single pointer, so the expansion is
         # ALWAYS wrapped in a nested SDFG: a bare tasklet cannot carry `_c` as both an in- and an
         # out-connector (a duplicate-connector error -- which surfaces once the operands are already
         # on the GPU, e.g. after apply_gpu_transformations, so no host staging renames it away).
@@ -1042,36 +1043,7 @@ class ExpandGemmCuBLAS(ExpandGemmGPUBLAS):
         return f"{dtype}gemm"
 
 
-@dace.library.expansion
-class ExpandGemmRocBLAS(ExpandGemmGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    backend = "roc"
-    dtype_backend = "hip"
-
-    @classmethod
-    def complex_ctype(cls, double: bool) -> str:
-        # rocBLAS in C++ declares its complex parameters as rocblas_complex_num<T>. The hip vector
-        # types are a different type there, so rocblas_zgemm rejects a hipDoubleComplex* operand
-        # (measured on ROCm 6.3); every complex GEMM on ROCm failed to compile.
-        return blas_helpers.rocblas_type("cuDoubleComplex" if double else "cuComplex")
-
-    set_pointer_mode = "rocblas_set_pointer_mode"
-    pointer_host = "rocblas_pointer_mode_host"
-    pointer_device = "rocblas_pointer_mode_device"
-    ex_suffix = "_gemm_ex"
-    check_error = "dace::blas::CheckRocblasError"
-
-    @classmethod
-    def backend_op(cls, mode: str) -> str:
-        if mode == "N":
-            return "rocblas_operation_none"
-        elif mode == "T":
-            return "rocblas_operation_transpose"
-        raise ValueError(f"Invalid gemm matrix operation {mode}")
-
-    @classmethod
-    def funcname(cls, dtype: str) -> str:
-        return f"_{dtype.lower()}gemm"
+ExpandGemmHipBLAS = hip_dialect.hip_expansion(ExpandGemmCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
 
 
 @dace.library.expansion
@@ -1131,7 +1103,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "Planned": ExpandGemmPlanned,
         "cuBLAS": ExpandGemmCuBLAS,
         "CUDA (block strided)": ExpandGemmCUDABlock,
-        "rocBLAS": ExpandGemmRocBLAS,
+        "hipBLAS": ExpandGemmHipBLAS,
         "PBLAS": ExpandGemmPBLAS,
     }
     default_implementation = None

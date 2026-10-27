@@ -121,7 +121,7 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> list[str]:
       ``TTGT`` (tensor contraction via transpose+GEMM, no external dependency), ``OpenMP`` (``Reduce``),
       ``CPU`` (OpenMP-5 ``Scan``, radix ``IntegerSort``, ``ska_sort`` ``ScatterConflictCheck``).
     * GPU: taken straight from ``auto_optimize``, so the per-backend rows cannot drift -- cuBLAS /
-      cuSolverDn / cuTENSOR / cuFFT on CUDA, rocBLAS / rocSOLVER / hipTENSOR / hipFFT on HIP, plus ``GPUAuto``,
+      cuSolverDn / cuTENSOR / cuFFT on CUDA, hipBLAS / hipSolverDn / hipTENSOR / hipFFT on HIP, plus ``GPUAuto``,
       ``CUB`` and ``CUDA`` (``gpucub::DeviceScan`` / device sort / ``DeviceReduce::ArgMax`` / the
       bounding-box ``Symmetrize``) on both.
 
@@ -130,7 +130,7 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> list[str]:
     are compared column against column, so a node that lowers to a tuned expansion under one and to
     the serial ``pure`` loop under the other measures the priority list rather than the pipeline.
     Naming the GPU row here a second time is what let it keep the CUDA vendors on a ROCm host, where
-    every rocBLAS-lowered node fell back to ``pure``.
+    every vendor-lowered node fell back to ``pure``.
 
     Only impls whose environment is available on this host are listed, so forcing a pick never selects
     an unbuilt library. ``MatMul``/``Gemm`` still get the tiny-matmul ``rowwise`` override in

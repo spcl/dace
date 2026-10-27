@@ -15,10 +15,10 @@ Expansions:
 - ``pure``: the plain right-looking elimination nest -- per column ``k``, scale the column below the diagonal by
   the pivot, then the rank-1 update of the trailing submatrix -- as sequential loops. Canonicalization expands the
   node on CPU and derives the nest's parallelism itself (the trailing update is a parallel map per ``k``).
-- ``cuSolverDn`` / ``rocSOLVER``: the vendor GPU solver. Both are column-major and the operand is row-major, so a
+- ``cuSolverDn`` / ``hipSolverDn``: the vendor GPU solver. Both are column-major and the operand is row-major, so a
   call on the operand as it lies would factor its TRANSPOSE (``A^T = L' U'`` gives ``A = U'^T L'^T``, a unit UPPER
   factor). The expansion transposes into a column-major scratch with ``geam``, factors that, and transposes back.
-  cuSolverDn takes no pivoting when its pivot pointer is ``NULL``; rocSOLVER has the dedicated ``getrf_npvt``.
+  cuSolverDn takes no pivoting when its pivot pointer is ``NULL``; hipSOLVER is the same call renamed.
 - ``MKL``: ``LAPACKE_mkl_?getrfnp``, MKL's no-pivot LU (no other CPU LAPACK has one).
 """
 
@@ -29,6 +29,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import data as dt
 from dace import dtypes, symbolic
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
@@ -207,33 +208,13 @@ cusolverDn{func}getrf(__dace_cusolverDn_handle, {n}, {n}, __dace_lu, {n}, __dace
 gpuFree(__dace_lu_work);"""
 
 
-@dace.library.expansion
-class ExpandGetrfNoPivotRocSolver(ExpandGetrfNoPivotGPUSolver):
-    environments = [environments.rocsolver.rocSOLVER]
-    blas_handle_field = "rocblas_handle"
-
-    @classmethod
-    def ctype(cls, ctype: str) -> str:
-        return blas_helpers.rocblas_type(ctype)
-
-    @classmethod
-    def setup(cls, node) -> str:
-        # rocSOLVER takes the rocBLAS handle, so the one setup serves the geam calls and the factorization.
-        return environments.rocsolver.rocSOLVER.handle_setup_code(node)
-
-    @classmethod
-    def geam(cls, func, n, one, a, lda, zero, c, ldc) -> str:
-        return (
-            f"dace::blas::CheckRocblasError(rocblas_{func.lower()}geam(__dace_rocblas_handle, rocblas_operation_transpose, "
-            f"rocblas_operation_none, {n}, {n}, {one}, {a}, {lda}, {zero}, {c}, {ldc}, {c}, {ldc}));"
-        )
-
-    @classmethod
-    def factor(cls, func, ctype, n) -> str:
-        return (
-            f"dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}getrf_npvt(__dace_rocblas_handle, "
-            f"{n}, {n}, __dace_lu, {n}, __dace_lu_info));"
-        )
+#: The cuSolverDn expansion stages its operand through cuBLAS ``geam`` transposes, so it is renamed as BLAS code too.
+ExpandGetrfNoPivotHipSolverDn = hip_dialect.hip_expansion(
+    ExpandGetrfNoPivotCuSolverDn,
+    environments.hipsolverdn.hipSolverDn,
+    (("cusolverDn", "hipsolverDn"),) + hip_dialect.BLAS,
+)
+ExpandGetrfNoPivotHipSolverDn.environments = [environments.hipsolverdn.hipSolverDn, blas_environments.hipblas.hipBLAS]
 
 
 @dace.library.node
@@ -244,7 +225,7 @@ class GetrfNoPivot(dace.sdfg.nodes.LibraryNode):
         "pure": ExpandGetrfNoPivotPure,
         "MKL": ExpandGetrfNoPivotMKL,
         "cuSolverDn": ExpandGetrfNoPivotCuSolverDn,
-        "rocSOLVER": ExpandGetrfNoPivotRocSolver,
+        "hipSolverDn": ExpandGetrfNoPivotHipSolverDn,
     }
     default_implementation = "pure"
 

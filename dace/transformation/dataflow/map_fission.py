@@ -74,6 +74,40 @@ class MapFission(transformation.SingleStateTransformation):
         return ns
 
     @staticmethod
+    def reduction_nodes(
+        graph: sd.SDFGState, nsdfg_node: nodes.NestedSDFG, map_exit: nodes.MapExit
+    ) -> list[nodes.AccessNode]:
+        """The per-iteration access nodes a nested-SDFG body writes and only the map exit reads, such as the
+        ``nested SDFG -> access node -wcr-> map exit`` a reduction leaves the body through."""
+        sdfg = graph.sdfg
+        found = []
+        for e in graph.out_edges(nsdfg_node):
+            node = e.dst
+            if not isinstance(node, nodes.AccessNode) or not sdfg.arrays[node.data].transient:
+                continue
+            if graph.in_degree(node) != 1 or any(o.dst is not map_exit for o in graph.out_edges(node)):
+                continue
+            if any(
+                n is not node and isinstance(n, nodes.AccessNode) and n.data == node.data
+                for state in sdfg.states()
+                for n in state.nodes()
+            ):
+                continue
+            found.append(node)
+        return found
+
+    @staticmethod
+    def fold_reduction_nodes(graph: sd.SDFGState, nsdfg_node: nodes.NestedSDFG, map_exit: nodes.MapExit) -> None:
+        """Write the map exit directly from the nested SDFG, with the memlet (and write-conflict resolution) the
+        access node passed on, and drop the access node."""
+        for node in MapFission.reduction_nodes(graph, nsdfg_node, map_exit):
+            (feed,) = graph.in_edges(node)
+            for e in graph.out_edges(node):
+                graph.add_edge(nsdfg_node, feed.src_conn, map_exit, e.dst_conn, dcpy(e.data))
+            graph.remove_node(node)
+            del graph.sdfg.arrays[node.data]
+
+    @staticmethod
     def _border_arrays(sdfg: sd.SDFG, parent, subgraph):
         """Returns a set of array names that are local to the fission
         subgraph."""
@@ -357,8 +391,12 @@ class MapFission(transformation.SingleStateTransformation):
             subgraphs = [graph.scope_subgraph(map_node, include_entry=False, include_exit=False)]
         else:  # Map with nested SDFG
             nsdfg_node = self.nested_sdfg
-            # Make sure there are no other internal nodes in the map
+            # Make sure there are no other internal nodes in the map, but the access nodes it leaves through
             if len({e.dst for e in graph.out_edges(map_node)}) > 1:
+                return False
+            map_exit = graph.exit_node(map_node)
+            body = set(graph.scope_children()[map_node]) - {map_exit, nsdfg_node}
+            if body - set(self.reduction_nodes(graph, nsdfg_node, map_exit)):
                 return False
 
             # Fissioning a component across a conditional needs the branch
@@ -575,6 +613,9 @@ class MapFission(transformation.SingleStateTransformation):
             parent = sdfg
         else:  # Map with nested SDFG
             nsdfg_node = self.nested_sdfg
+            MapFission.fold_reduction_nodes(graph, nsdfg_node, map_exit)
+            # Removing a node renumbers the state: bind the match to the nodes themselves
+            self.subgraph.update({MapFission.map_entry: map_entry, MapFission.nested_sdfg: nsdfg_node})
             helpers.nest_sdfg_control_flow(nsdfg_node.sdfg)
             MapFission.remove_iteration_slice_views(nsdfg_node.sdfg, list(map_entry.map.params))
             subgraphs = [(state, state) for state in nsdfg_node.sdfg.nodes()]
@@ -852,7 +893,11 @@ class MapFission(transformation.SingleStateTransformation):
                         else:
                             state.add_edge(mx, out_conn, outer.dst, outer.dst_conn, dcpy(outer.data))
                     else:
-                        state.add_edge(mx, out_conn, e.dst, e.dst_conn, dcpy(e.data))
+                        written = state.add_edge(mx, out_conn, e.dst, e.dst_conn, dcpy(e.data))
+                        # A reduction the removed map performed is now performed by the new map, inside
+                        if self.expr_index == 1 and e in external_edges_exit and edge_to_outer[e].data.wcr:
+                            for tree_edge in state.memlet_tree(written):
+                                tree_edge.data.wcr = edge_to_outer[e].data.wcr
                     state.remove_edge(e)
                 # Empty memlet edge in nested SDFGs
                 if state.out_degree(component_out) == 0:

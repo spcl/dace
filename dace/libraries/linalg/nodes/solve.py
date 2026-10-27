@@ -8,6 +8,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import SDFG, Memlet, SDFGState, symbolic
+from dace.libraries import hip_dialect
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import Getrf, Getrs, environments
 from dace.libraries.linalg.nodes.transpose import Transpose
@@ -91,12 +92,12 @@ def restride(nsdfg, connectors, dtype):
 #: The vendor GPU solvers. The branches below are about whether the factorization runs ON THE
 #: DEVICE -- which decides the column-major transposes and the device-side info code -- and not
 #: about which vendor it is, so a second backend must not need a second branch.
-GPU_SOLVERS = ("cuSolverDn", "rocSOLVER")
+GPU_SOLVERS = tuple(hip_dialect.GPU_SOLVER_BLAS)
 
 #: The vendor BLAS that goes with each, for the transposes staged around the factorization. Naming
-#: a cuBLAS transpose inside a rocSOLVER graph selects an expansion whose environment is not
+#: a cuBLAS transpose inside a hipSOLVER graph selects an expansion whose environment is not
 #: installed, and every one of them silently drops to the serial loop.
-SOLVER_BLAS = {"cuSolverDn": "cuBLAS", "rocSOLVER": "rocBLAS"}
+SOLVER_BLAS = hip_dialect.GPU_SOLVER_BLAS
 
 
 def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
@@ -278,12 +279,12 @@ class ExpandSolveCuSolverDn(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandSolveRocSolver(ExpandTransformation):
-    environments = [environments.rocsolver.rocSOLVER]
+class ExpandSolveHipSolverDn(ExpandTransformation):
+    environments = [environments.hipsolverdn.hipSolverDn]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        return _make_sdfg_getrs(node, parent_state, parent_sdfg, "rocSOLVER")
+        return _make_sdfg_getrs(node, parent_state, parent_sdfg, "hipSolverDn")
 
 
 @dace.library.node
@@ -294,7 +295,7 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandSolveOpenBLAS,
         "MKL": ExpandSolveMKL,
         "cuSolverDn": ExpandSolveCuSolverDn,
-        "rocSOLVER": ExpandSolveRocSolver,
+        "hipSolverDn": ExpandSolveHipSolverDn,
     }
     default_implementation = None
 

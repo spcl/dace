@@ -74,16 +74,13 @@ def single_threaded_planner():
         _SINGLE_THREADED_PLANNER = previous
 
 
-def threaded(double: bool) -> bool:
-    """Whether the build links the threaded planner of FFTW's double (``fftw3_omp`` / ``fftw3_threads``) or single
-    (``fftw3f_omp`` / ``fftw3f_threads``) precision, outside a :func:`single_threaded_planner`."""
+def threaded() -> bool:
+    """Whether the FFTW3 the build uses carries its threaded planner (``fftw_plan_with_nthreads``), outside a
+    :func:`single_threaded_planner`."""
     if _SINGLE_THREADED_PLANNER:
         return False
-    base = "fftw3" if double else "fftw3f"
     return any(
-        os.path.basename(lib).startswith(f"lib{base}{suffix}.")
-        for suffix in THREADED_SUFFIXES
-        for lib in fftw_install()[1]
+        any(f"fftw3{suffix}" in os.path.basename(lib) for suffix in THREADED_SUFFIXES) for lib in fftw_install()[1]
     )
 
 

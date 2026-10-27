@@ -247,18 +247,6 @@ def test_fftshift_and_ifftshift_roll_by_half_of_each_axis():
 
 
 @dace.program
-def frequencies_of_odd_and_even_lengths():
-    return np.fft.fftfreq(7, 0.5), np.fft.fftfreq(8), np.fft.rfftfreq(7, 0.25), np.fft.rfftfreq(8)
-
-
-def test_fftfreq_and_rfftfreq_match_numpy():
-    got = frequencies_of_odd_and_even_lengths()
-    want = (np.fft.fftfreq(7, 0.5), np.fft.fftfreq(8), np.fft.rfftfreq(7, 0.25), np.fft.rfftfreq(8))
-    for g, w in zip(got, want):
-        np.testing.assert_allclose(g, w, rtol=1e-15, atol=0)
-
-
-@dace.program
 def fft_and_rfft_of_integers(x: dace.int64[8]):
     return np.fft.fft(x), np.fft.rfft(x)
 

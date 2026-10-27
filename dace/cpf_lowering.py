@@ -3775,14 +3775,10 @@ VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
         wrapper=FFT_PLANS_WRAPPER,
         families=("cufft",),
     ),
-    "rocBLAS": VendorLibrary(
-        (), ("-lrocblas",), wrapper="libraries/blas/include/dace_rocblas.h", families=("rocblas",)
-    ),
-    "rocSOLVER": VendorLibrary(
-        (),
-        ("-lrocsolver", "-lrocblas"),
-        wrapper="libraries/lapack/include/dace_rocsolver.h",
-        families=("rocsolver",),
+    # hipBLAS and hipSOLVER take the cuBLAS and cuSOLVER wrappers, which spell their HIP counterparts under WITH_HIP.
+    "hipBLAS": VendorLibrary((), ("-lhipblas",), wrapper="libraries/blas/include/dace_cublas.h", families=("hipblas",)),
+    "hipSolverDn": VendorLibrary(
+        (), ("-lhipsolver",), wrapper="libraries/lapack/include/dace_cusolverdn.h", families=("hipsolver",)
     ),
     "hipFFT": VendorLibrary(
         ("<hipfft/hipfft.h>", "<hipfft/hipfftXt.h>", "<stdexcept>", "<string>"),
@@ -3849,8 +3845,8 @@ VENDOR_FAMILIES: tuple[tuple[str, "re.Pattern"], ...] = (
     ("cublas", re.compile(r"\bcublas\w+\s*\(")),
     ("cusolver", re.compile(r"\bcusolverDn\w+\s*\(")),
     ("cufft", re.compile(r"\bcufft\w+\s*\(")),
-    ("rocblas", re.compile(r"\brocblas_\w+\s*\(")),
-    ("rocsolver", re.compile(r"\brocsolver_\w+\s*\(")),
+    ("hipblas", re.compile(r"\bhipblas\w+\s*\(")),
+    ("hipsolver", re.compile(r"\bhipsolverDn\w+\s*\(")),
     ("hipfft", re.compile(r"\bhipfft\w+\s*\(")),
 )
 
@@ -3865,8 +3861,8 @@ VENDOR_NAMES: dict[str, "re.Pattern"] = {
     "cublas": re.compile(r"\b(?:cublas|CUBLAS_)\w+"),
     "cusolver": re.compile(r"\b(?:cusolver|CUSOLVER_)\w+"),
     "cufft": re.compile(r"\b(?:cufft|CUFFT_)\w+"),
-    "rocblas": re.compile(r"\brocblas_\w+"),
-    "rocsolver": re.compile(r"\brocsolver_\w+"),
+    "hipblas": re.compile(r"\b(?:hipblas|HIPBLAS_)\w+"),
+    "hipsolver": re.compile(r"\b(?:hipsolver|HIPSOLVER_)\w+"),
     "hipfft": re.compile(r"\b(?:hipfft|HIPFFT_)\w+"),
 }
 

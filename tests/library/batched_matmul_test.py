@@ -377,7 +377,7 @@ def test_batchmm_alpha_complex(implementation: str, dtype, rtol: float):
         pytest.param("pure", dace.float64),
         pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
         pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack),
-        pytest.param("rocBLAS", dace.float64, marks=pytest.mark.gpu),
+        pytest.param("hipBLAS", dace.float64, marks=pytest.mark.gpu),
     ],
 )
 @pytest.mark.parametrize("beta", [0.0, 1.0, 0.5])

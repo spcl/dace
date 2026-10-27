@@ -1,8 +1,36 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
-#include <cublas_v2.h>
+#if defined(__HIPCC__) || defined(WITH_HIP)
+// HIP dialect: hipBLAS mirrors cuBLAS, so this header keeps the cuBLAS names (see dace/libraries/hip_dialect.py)
+#include <hip/hip_runtime.h>
+#include <hip/hip_fp16.h>
+#define HIPBLAS_V2  // hipComplex / hipDoubleComplex, the counterparts of cuComplex / cuDoubleComplex
+#if __has_include(<hipblas/hipblas.h>)
+#include <hipblas/hipblas.h>
+#else
+#include <hipblas.h>
+#endif
+#define cublasStatus_t hipblasStatus_t
+#define CUBLAS_STATUS_SUCCESS HIPBLAS_STATUS_SUCCESS
+#define cublasHandle_t hipblasHandle_t
+#define cublasCreate hipblasCreate
+#define cublasDestroy hipblasDestroy
+#define cublasSetPointerMode hipblasSetPointerMode
+#define CUBLAS_POINTER_MODE_DEVICE HIPBLAS_POINTER_MODE_DEVICE
+#define cuComplex hipComplex
+#define cuDoubleComplex hipDoubleComplex
+#define make_cuComplex make_hipFloatComplex
+#define make_cuDoubleComplex make_hipDoubleComplex
+#define cudaMalloc hipMalloc
+#define cudaMemset hipMemset
+#define cudaMemcpy hipMemcpy
+#define cudaMemcpyHostToDevice hipMemcpyHostToDevice
+#define cudaFree hipFree
+#else
 #include <cuda_runtime.h>
+#include <cublas_v2.h>
+#endif
 
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error

@@ -186,7 +186,7 @@ def test_foreign_error_is_not_charged_to_the_next_program():
 # Every GPU library environment that creates a handle, and the accessor each emits.
 _ENVIRONMENTS = [
     ("dace.libraries.blas.environments.cublas", "cuBLAS", "cublas_handle"),
-    ("dace.libraries.blas.environments.rocblas", "rocBLAS", "rocblas_handle"),
+    ("dace.libraries.blas.environments.hipblas", "hipBLAS", "hipblas_handle"),
     ("dace.libraries.lapack.environments.cusolverdn", "cuSolverDn", "cusolverDn_handle"),
     ("dace.libraries.linalg.environments.cutensor", "cuTensor", "cutensor_handle"),
     ("dace.libraries.sparse.environments.cusparse", "cuSPARSE", "cusparse_handle"),

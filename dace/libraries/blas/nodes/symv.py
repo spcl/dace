@@ -1,28 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BLAS Level-2 ``SYMV`` library node — ``y := alpha A x + beta y`` with symmetric ``A``.
-
-Modeled with separate ``_yin`` and ``_yout`` connectors so DaCe codegen
-doesn't generate two declarations for the same name. The expansion
-copies ``_yin`` into ``_yout`` first then calls the in-place cBLAS / cuBLAS
-SYMV on ``_yout``.
-"""
-
-import copy
-from typing import TYPE_CHECKING
-
-import dace.library
-import dace.properties
-import dace.sdfg.nodes
-from dace import SDFG, SDFGState
+import dace
+from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect
 from dace.libraries.blas.blas_helpers import operand
-from dace.ordered import OrderedSet
+from dace.sdfg import nodes
+from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
-
-if TYPE_CHECKING:
-    from dace.frontend.python.newast import ProgramVisitor
 
 
 def symmetric_element(uplo: bool, row: str, col: str) -> str:
@@ -31,7 +16,7 @@ def symmetric_element(uplo: bool, row: str, col: str) -> str:
     return f"{row} <= {col}" if uplo else f"{row} >= {col}"
 
 
-@dace.library.expansion
+@library.expansion
 class ExpandSymvPure(ExpandTransformation):
     environments: list[type] = []
 
@@ -41,11 +26,13 @@ class ExpandSymvPure(ExpandTransformation):
         sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
         n = sdfg.arrays["_x"].shape[0]
         init = sdfg.add_state(f"{node.label}_init")
+        # As in BLAS, beta == 0 does not read y, so NaN there does not reach the result
+        zero = equal_valued(0, node.beta)
         init.add_mapped_tasklet(
             "scale_y",
             {"__i": f"0:{n}"},
-            {"__y": dace.Memlet("_yin[__i]")},
-            f"__out = ({node.beta}) * __y",
+            {} if zero else {"__y": dace.Memlet("_yin[__i]")},
+            "__out = 0" if zero else f"__out = ({node.beta}) * __y",
             {"__out": dace.Memlet("_yout[__i]")},
             external_edges=True,
         )
@@ -61,19 +48,20 @@ class ExpandSymvPure(ExpandTransformation):
         return sdfg
 
 
-def symv_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = None, environment=None) -> SDFG:
-    """``_yout = _yin``, then ``?symv`` updates ``_yout`` in place, through CBLAS or the GPU library of ``dialect``."""
+def symv_call(node, state, sdfg, environment=None) -> SDFG:
+    """``_yout = _yin``, then ``?symv`` updates ``_yout`` in place, through CBLAS or the GPU library of ``environment``."""
     a, x, yout = (operand(node, state, sdfg, c) for c in ("_A", "_x", "_yout"))
     prefix = blas_helpers.blas_prefix(a.desc.dtype)
-    if dialect is not None and prefix is not None:
+    if environment is not None and prefix is not None:
         # A row-major symmetric matrix is its own transpose in column-major order, with the other triangle stored
         layout = gpu_dialect.required_layout(node, a)
-        gpu = gpu_dialect.gpu_call(dialect, a.desc.dtype)
+        gpu = gpu_dialect.gpu_call(a.desc.dtype)
         scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
+        upper = node.uplo != layout.row_major
         call = (
-            f"{gpu.routine('symv')}({dialect.handle}, {dialect.fill(node.uplo != layout.row_major)}, {x.shape[0]}, "
-            f"{arg['alpha']}, {gpu.pointer('__A')}, {layout.leading[0]}, {gpu.pointer('__x')}, {x.strides[0]}, "
-            f"{arg['beta']}, {gpu.pointer('__yout')}, {yout.strides[0]})"
+            f"{gpu.routine('symv')}({gpu_dialect.HANDLE}, {gpu_dialect.fill(upper)}, {x.shape[0]}, {arg['alpha']}, "
+            f"{gpu.pointer('__A')}, {layout.leading[0]}, {gpu.pointer('__x')}, {x.strides[0]}, {arg['beta']}, "
+            f"{gpu.pointer('__yout')}, {yout.strides[0]})"
         )
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
         return blas_helpers.in_place_call(node, state, sdfg, "_yin", "_yout", code)
@@ -91,108 +79,40 @@ def symv_call(node, state, sdfg, dialect: gpu_dialect.GpuBlasDialect | None = No
     return blas_helpers.in_place_call(node, state, sdfg, "_yin", "_yout", scalars + call)
 
 
-@dace.library.expansion
-class ExpandSymvOpenBLAS(ExpandTransformation):
-    environments = [environments.openblas.OpenBLAS]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return symv_call(node, parent_state, parent_sdfg)
-
-
-@dace.library.expansion
-class ExpandSymvMKL(ExpandTransformation):
-    environments = [environments.intel_mkl.IntelMKL]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return symv_call(node, parent_state, parent_sdfg)
-
-
-@dace.library.expansion
-class ExpandSymvGPUBLAS(ExpandTransformation):
-    environments: list[type] = []
-    dialect: gpu_dialect.GpuBlasDialect
-
-    @classmethod
-    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
-        node.validate(parent_sdfg, parent_state)
-        return symv_call(node, parent_state, parent_sdfg, cls.dialect, cls.environments[0])
-
-
-@dace.library.expansion
-class ExpandSymvCuBLAS(ExpandSymvGPUBLAS):
-    environments = [environments.cublas.cuBLAS]
-    dialect = gpu_dialect.CUBLAS
-
-
-@dace.library.expansion
-class ExpandSymvRocBLAS(ExpandSymvGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    dialect = gpu_dialect.ROCBLAS
-
-
-@dace.library.node
-class Symv(dace.sdfg.nodes.LibraryNode):
-    """BLAS ``?SYMV``: symmetric matrix-vector multiply, ``_yout := alpha A _x + beta _yin``."""
+@library.node
+class Symv(nodes.LibraryNode):
+    """BLAS ``?symv``: ``_yout = alpha * _A @ _x + beta * _yin`` for a symmetric ``_A`` of which only the upper
+    (``uplo``) or the lower triangle is read."""
 
     implementations = {
         "pure": ExpandSymvPure,
-        "OpenBLAS": ExpandSymvOpenBLAS,
-        "MKL": ExpandSymvMKL,
-        "cuBLAS": ExpandSymvCuBLAS,
-        "rocBLAS": ExpandSymvRocBLAS,
+        **gpu_dialect.vendor_expansions("Symv", symv_call),
     }
     default_implementation = None
 
-    uplo = dace.properties.Property(dtype=bool, default=False, desc="True if upper triangle of A is referenced")
-    alpha = dace.properties.SymbolicProperty(allow_none=False, default=1)
-
-    def folds_onto_output(self) -> bool:
-        return self.folds_by_beta(self.beta)
-
-    beta = dace.properties.SymbolicProperty(allow_none=False, default=0)
+    uplo = properties.Property(dtype=bool, default=False, desc="Read the upper triangle of _A instead of the lower.")
+    alpha = properties.SymbolicProperty(allow_none=False, default=1)
+    beta = properties.SymbolicProperty(allow_none=False, default=0)
 
     def __init__(self, name, uplo=False, alpha=1, beta=0, **kwargs):
-        super().__init__(name, inputs=OrderedSet(("_A", "_x", "_yin")), outputs={"_yout"}, **kwargs)
+        super().__init__(name, inputs=["_A", "_x", "_yin"], outputs=["_yout"], **kwargs)
         self.uplo, self.alpha, self.beta = uplo, alpha, beta
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_A, lda), (desc_x, sx), (desc_y, syi), syo, n)``."""
-        descs, strides = {}, {}
-        n = syo = None
-        for e in state.in_edges(self):
-            sq = copy.deepcopy(e.data.subset)
-            dims = sq.squeeze()
-            desc = sdfg.arrays[e.data.data]
-            descs[e.dst_conn] = desc
-            strides[e.dst_conn] = desc.strides[dims[0]]
-            if e.dst_conn == "_A":
-                n = sq.size()[0]
-        for e in state.out_edges(self):
-            if e.src_conn == "_yout":
-                sq = copy.deepcopy(e.data.subset)
-                dims = sq.squeeze()
-                syo = sdfg.arrays[e.data.data].strides[dims[0]]
-        for k in ("_A", "_x", "_yin"):
-            if k not in descs:
-                raise ValueError(f"SYMV needs _A, _x and _yin inputs (missing {k})")
-        return ((descs["_A"], strides["_A"]), (descs["_x"], strides["_x"]), (descs["_yin"], strides["_yin"]), syo, n)
+        blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_x", "_yin", "_yout")
+        a, x, yin, yout = (operand(self, state, sdfg, c).shape for c in ("_A", "_x", "_yin", "_yout"))
+        if len(a) != 2 or a[0] != a[1]:
+            raise ValueError(f"{self.label}: _A must be a square matrix")
+        if not x == yin == yout == [a[0]]:
+            raise ValueError(f"{self.label}: _x, _yin and _yout must be vectors of {a[0]} elements")
 
 
 @oprepo.replaces("dace.libraries.blas.symv")
 @oprepo.replaces("dace.libraries.blas.Symv")
-def symv_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, A, x, y, result=None, alpha=1, beta=0, uplo=False):
-    """Build a :class:`Symv` node. ``result`` defaults to ``y`` for in-place semantics."""
+def symv_libnode(pv, sdfg: SDFG, state: SDFGState, A, x, y, result=None, alpha=1, beta=0, uplo=False):
     result = result if result is not None else y
-    A_in, x_in, y_in = (state.add_read(name) for name in (A, x, y))
-    y_out = state.add_write(result)
-    libnode = Symv("symv", uplo=uplo, alpha=alpha, beta=beta)
-    state.add_node(libnode)
-    state.add_edge(A_in, None, libnode, "_A", mm.Memlet(A))
-    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
-    state.add_edge(y_in, None, libnode, "_yin", mm.Memlet(y))
-    state.add_edge(libnode, "_yout", y_out, None, mm.Memlet(result))
+    node = Symv("symv", uplo=uplo, alpha=alpha, beta=beta)
+    for name, connector in ((A, "_A"), (x, "_x"), (y, "_yin")):
+        state.add_edge(state.add_read(name), None, node, connector, mm.Memlet(name))
+    state.add_edge(node, "_yout", state.add_write(result), None, mm.Memlet(result))
     return []

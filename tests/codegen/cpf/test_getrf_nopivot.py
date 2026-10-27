@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """CPF renders the no-pivot LU parallel on every target: C carries the elimination the CPU pipeline mapped (the
-lifted node is expanded in the pipeline, so no node and no serial nest reach the renderer), HIP the rocSOLVER
+lifted node is expanded in the pipeline, so no node and no serial nest reach the renderer), HIP the hipSOLVER
 call the GPU pipeline selected for the node it kept."""
 
 import numpy as np
@@ -47,15 +47,15 @@ def test_the_cpu_rendering_is_the_parallel_elimination_and_factors(language):
     assert np.allclose(arguments["A"], reference(a), rtol=1e-12, atol=1e-12)
 
 
-def test_the_hip_rendering_calls_rocsolver_without_pivoting():
+def test_the_hip_rendering_calls_hipsolver_without_pivoting():
     rendering = render_gpu(lu, "cpf_hip_lu_nopivot")
     assert_standalone_units(rendering, "cpf_hip_lu_nopivot")
-    assert "rocsolver_dgetrf_npvt(" in rendering.code, rendering.code
-    assert rendering.code.count("rocblas_dgeam(") == 2, "the column-major solver needs the transposes around it"
-    assert "rocsolver" in rendering.libraries, rendering.libraries
+    assert "hipsolverDnDgetrf(" in rendering.code and "nullptr" in rendering.code, rendering.code
+    assert rendering.code.count("hipblasDgeam(") == 2, "the column-major solver needs the transposes around it"
+    assert "hipsolver" in rendering.libraries, rendering.libraries
 
 
 if __name__ == "__main__":
     for lang in ("c", "c++"):
         test_the_cpu_rendering_is_the_parallel_elimination_and_factors(lang)
-    test_the_hip_rendering_calls_rocsolver_without_pivoting()
+    test_the_hip_rendering_calls_hipsolver_without_pivoting()

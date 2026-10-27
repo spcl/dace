@@ -5,6 +5,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
@@ -83,8 +84,7 @@ class ExpandGetrfMKL(ExpandTransformation):
 class ExpandGetrfGPUSolver(ExpandTransformation):
     """LU factorization on a vendor GPU solver.
 
-    Emitted per dialect rather than through a format string for the same reason as ``potrf``:
-    cuSolverDn sizes and allocates a workspace first, rocSOLVER takes none.
+    cuSolverDn sizes and allocates a workspace first; hipSOLVER is the same call renamed.
     """
 
     environments = []
@@ -136,19 +136,9 @@ class ExpandGetrfCuSolverDn(ExpandGetrfGPUSolver):
                 """
 
 
-@dace.library.expansion
-class ExpandGetrfRocSolver(ExpandGetrfGPUSolver):
-    environments = [environments.rocsolver.rocSOLVER]
-
-    @classmethod
-    def call(cls, func, ctype, rows, cols, stride) -> str:
-        # rocSOLVER manages its own workspace, so there is nothing to size, allocate or free.
-        ctype = blas_helpers.rocblas_type(ctype)
-        return f"""
-                dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
-                    __dace_rocblas_handle, {rows}, {cols}, ({ctype}*)_xin,
-                    {stride}, _ipiv, _res));
-                """
+ExpandGetrfHipSolverDn = hip_dialect.hip_expansion(
+    ExpandGetrfCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
 
 
 @dace.library.node
@@ -158,7 +148,7 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGetrfOpenBLAS,
         "MKL": ExpandGetrfMKL,
         "cuSolverDn": ExpandGetrfCuSolverDn,
-        "rocSOLVER": ExpandGetrfRocSolver,
+        "hipSolverDn": ExpandGetrfHipSolverDn,
     }
     default_implementation = None
 

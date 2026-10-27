@@ -37,6 +37,7 @@ from dace.codegen.targets.cpu import (
 )
 from dace.config import Config
 from dace.frontend import operations
+from dace.libraries.standard.nodes.sync import SyncScope, sync_code
 from dace.sdfg import (
     SDFG,
     ScopeSubgraphView,
@@ -1580,7 +1581,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # so a block entering late rewinds the head under a block that already pushed -- those
             # slots are handed out twice, while the consumer's count keeps counting every push.
             if streams_to_reset and can_sync:
-                callsite_stream.write("__gbar.Sync();", cfg, state.block_id)
+                callsite_stream.write(sync_code(SyncScope.GRID, self.backend), cfg, state.block_id)
 
             components = dace.sdfg.concurrent_subgraphs(state)
             for c in components:
@@ -1629,7 +1630,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 callsite_stream.write("}  // subgraph end", cfg, state.block_id)
 
             if can_sync:
-                callsite_stream.write("__gbar.Sync();", cfg, state.block_id)
+                callsite_stream.write(sync_code(SyncScope.GRID, self.backend), cfg, state.block_id)
 
             # done here, code is generated
             return
@@ -1849,10 +1850,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         self._dispatcher.defined_vars.exit_scope(scope_entry)
 
-        # Add extra kernel arguments for a grid barrier object
-        if create_grid_barrier:
-            extra_kernel_args_typed.append("dace::GridBarrier __gbar")
-
         node = dfg_scope.source_nodes()[0]
 
         maxnreg_str, launch_bounds = kernel_launch_qualifiers(node, block_dims)
@@ -1899,31 +1896,23 @@ void __dace_runkernel_{fname}({fargs})
         if is_persistent:
             # NOTE: The number of blocks assumes they are all resident at once, which a grid barrier requires. Static
             #       or dynamic shared memory can lower how many blocks fit on a multiprocessor below the configured
-            #       occupancy, and a kernel with a grid barrier would then deadlock.
+            #       occupancy, and the cooperative launch of a kernel with a grid barrier then fails.
             self._localcode.write(
                 """
 int dace_number_SMs;
-DACE_GPU_CHECK({backend}DeviceGetAttribute(&dace_number_SMs, {backend}DevAttrMultiProcessorCount, 0));
+DACE_GPU_CHECK({backend}DeviceGetAttribute(&dace_number_SMs, {sm_count}, 0));
 int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy};
                 """.format(
                     fraction=Config.get("compiler", "cuda", "persistent_map_SM_fraction"),
                     occupancy=Config.get("compiler", "cuda", "persistent_map_occupancy"),
                     backend=self.backend,
+                    sm_count=(
+                        "hipDeviceAttributeMultiprocessorCount"
+                        if self.backend == "hip"
+                        else "cudaDevAttrMultiProcessorCount"
+                    ),
                 )
             )
-
-        if create_grid_barrier:
-            gbar = "__gbar_" + kernel_name
-            self._localcode.write("    dace::GridBarrierLifetime %s;\n" % gbar, cfg, state_id, node)
-            self._localcode.write(
-                "{}.Setup({});".format(
-                    gbar, " * ".join(_topy(grid_dims)) if not is_persistent else "dace_number_blocks"
-                ),
-                cfg,
-                state_id,
-                node,
-            )
-            extra_kernel_args.append("(void *)((dace::GridBarrier *)&%s)" % gbar)
 
         # The bytes of dynamic shared memory the kernel uses (see ``gpu_shared_memory.PlanSharedMemory``)
         dynsmem_size = getattr(scope_entry, "_cuda_dynamic_shared_memory", 0)
@@ -1990,8 +1979,10 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         self._localcode.write(
             """
 void  *{kname}_args[] = {{ {kargs} }};
-gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});""".format(
+gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});""".format(
                 kname=kernel_name,
+                # A grid barrier needs every block resident at once, which only a cooperative launch guarantees
+                launch="LaunchCooperativeKernel" if create_grid_barrier else "LaunchKernel",
                 kargs=", ".join(["(void *)&" + arg for arg in prototype_kernel_args] + extra_kernel_args),
                 gdims=gdims,
                 bdims=bdims,
@@ -2987,7 +2978,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     callsite_stream.write("}", cfg, state_id, scope_entry)
 
                 # Synchronize entire grid
-                callsite_stream.write("__gbar.Sync();", cfg, state_id, scope_entry)
+                callsite_stream.write(sync_code(SyncScope.GRID, self.backend), cfg, state_id, scope_entry)
 
                 # Rewrite grid conditions
                 for cond in self._kernel_grid_conditions:
@@ -3034,8 +3025,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
         result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, cfg, dfg, state, node)
-        if self.create_grid_barrier:
-            result.append(("dace::GridBarrier&", "__gbar", "__gbar"))
 
         # Add data from nested SDFGs to kernel arguments
         result.extend([(atype, aname, aname) for atype, aname, _ in self.extra_nsdfg_args])

@@ -805,6 +805,40 @@ def splice_blas_node(
     state.add_edge(node, "_c", state.add_write(output), None, full_memlet(sdfg, output))
 
 
+def splice_blas_update(
+    parent: ControlFlowRegion,
+    loop: LoopRegion,
+    node: nodes.LibraryNode,
+    operands: dict[str, str],
+    output: str,
+    alpha: Scale,
+    beta: Scale | None,
+) -> None:
+    """Replace ``loop`` by a state holding ``node``, a BLAS update ``_Cout = alpha * op(operands) + beta * _Cin`` whose
+    coefficients are symbols: whole-array ``operands`` (connector to container), ``output`` as ``_Cin`` and as the
+    written ``_Cout``. A coefficient read at run time (polybench's ``alpha[0]``) becomes a symbol the edge into the
+    node's state assigns; ``beta=None`` means the prior ``C`` is dropped."""
+    sdfg = parent.sdfg
+    state = replace_loop_with_state(parent, loop, node.label)
+    assignments: dict[str, str] = {}
+    for prop, scale in (("alpha", alpha), ("beta", beta or Scale(sympy.S.Zero))):
+        value = python_number(scale.value)
+        if scale.name is not None:
+            symbol = sdfg.find_new_symbol(f"__{node.label}_{prop}")
+            sdfg.add_symbol(symbol, sdfg.arrays[scale.name].dtype)
+            assignments[symbol] = f"{scale.name}[0]"
+            value = value * symbolic.symbol(symbol, sdfg.arrays[scale.name].dtype)
+        setattr(node, prop, value)
+    if assignments:
+        parent.add_state_before(
+            state, f"{node.label}_coefficients", is_start_block=parent.start_block is state, assignments=assignments
+        )
+    state.add_node(node)
+    for conn, name in {**operands, "_Cin": output}.items():
+        state.add_edge(state.add_read(name), None, node, conn, full_memlet(sdfg, name))
+    state.add_edge(node, "_Cout", state.add_write(output), None, full_memlet(sdfg, output))
+
+
 def outer_loop_candidates(sdfg: SDFG) -> list[tuple[ControlFlowRegion, LoopRegion]]:
     """Every ``(parent, loop)`` whose ``loop`` directly contains another loop: the outer loop of a nest, nested
     SDFGs included."""

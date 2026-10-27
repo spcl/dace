@@ -114,6 +114,7 @@ def add_elementwise_state(
     dst_index: str,
     code: str,
     language: dace.Language = dace.Language.Python,
+    schedule: dace.ScheduleType = dace.ScheduleType.Default,
 ) -> dace.SDFGState:
     """Append (or start with, for ``after=None``) a state running ``o = <code of i>`` over ``ranges``."""
     state = sdfg.add_state(label) if after is None else sdfg.add_state_after(after, label)
@@ -124,6 +125,7 @@ def add_elementwise_state(
         code,
         {"o": dace.Memlet(data=dst, subset=dst_index)},
         language=language,
+        schedule=schedule,
         external_edges=True,
     )
     return state

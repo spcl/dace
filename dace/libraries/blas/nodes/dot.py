@@ -9,6 +9,7 @@ from dace import SDFG, SDFGState, dtypes, symbolic
 from dace import memlet as mm
 from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
 from dace.libraries.standard.environments.cuda import CUDA
 from dace.ordered import OrderedSet
@@ -305,20 +306,7 @@ class ExpandDotCuBLAS(ExpandDotGPUBLAS):
         return f"cublas{func}"
 
 
-@dace.library.expansion
-class ExpandDotRocBLAS(ExpandDotGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    handle = "__dace_rocblas_handle"
-    check_error = "dace::blas::CheckRocblasError"
-    #: No mixed-precision path: ``rocblas_dot_ex`` takes ``rocblas_datatype_*`` enums, which the
-    #: shared body has no mapping for. Empty makes the base fall back to ``pure`` for that case
-    #: instead of emitting a rocBLAS call carrying CUDA enum names.
-    ex_name = ""
-
-    @classmethod
-    def funcname(cls, func: str) -> str:
-        # ``Ddot`` -> ``rocblas_ddot``: rocBLAS is snake_case with the type letter lowered.
-        return f"rocblas_{func.lower()}"
+ExpandDotHipBLAS = hip_dialect.hip_expansion(ExpandDotCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
 
 
 @dace.library.node
@@ -331,7 +319,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
         "CUDA (block strided)": ExpandDotCUDABlock,
-        "rocBLAS": ExpandDotRocBLAS,
+        "hipBLAS": ExpandDotHipBLAS,
     }
     default_implementation = None
 
