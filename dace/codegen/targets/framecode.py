@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 
 import dace
-from dace import config, cpf_lowering, data, dtypes, symbolic, tile_functions
+from dace import config, cpf_lowering, data, dtypes, graphlib, symbolic, tile_functions
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -29,7 +29,7 @@ from dace.sdfg.state import (
 from dace.sdfg.symbol_repo import assumption_check, program_assumptions
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import validate_declared_symbols
-from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.analysis.scopes import AccessInstances, AllocationScopes, CodegenAnalysisPipeline
 from dace.transformation.passes.canonicalize import supply_num_threads
 
@@ -968,7 +968,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         """
         # Every read-only analysis codegen needs, resolved once through one pipeline.
         analysis_results = CodegenAnalysisPipeline().apply_pass(top_sdfg, {})
-        reachability = analysis_results[StateReachability.__name__]
         alloc_scopes = analysis_results[AllocationScopes.__name__]
         instances = analysis_results[AccessInstances.__name__]
         access_instances = instances["access_instances"]
@@ -977,8 +976,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Symbols-and-constants stays here: it is memoized on this code generator, not on the SDFG.
         fsyms = {sdfg.cfg_id: self.symbols_and_constants(sdfg) for sdfg in top_sdfg.all_sdfgs_recursive()}
-        # Per SDFG, built on its first container that needs a common (post)dominator.
-        dominance: dict[int, tuple[DominatorTree, DominatorTree]] = {}
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             if isinstance(desc, data.DistributedDescriptor):
@@ -1194,8 +1191,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             ):
                 # Allocate in first State, deallocate in last State
                 if first_state_instance != last_state_instance:
-                    # If any state is not reachable from first state, find common denominators in the form of
-                    # dominator and postdominator.
                     instances: list[tuple[SDFGState, nodes.AccessNode]] = access_instances[sdfg.cfg_id][name]
 
                     # A view gets "allocated" everywhere it appears
@@ -1206,27 +1201,22 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self.where_allocated[(sdfg, name)] = cursdfg
                         continue
 
-                    if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
-                        if sdfg.cfg_id not in dominance:
-                            dominance[sdfg.cfg_id] = dominator_trees(sdfg)
-                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(
-                            instances, *dominance[sdfg.cfg_id]
+                    access_states = {state for state, _ in instances}
+                    first_block, last_block = paired_allocation_blocks([state for state, _ in instances])
+                    if first_block is first_state_instance:
+                        self.to_allocate[curscope].append(
+                            (sdfg, first_state_instance, first_node_instance, True, False, False)
                         )
+                    else:
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
                         # instances. This is especially needed for Views which require both the SDFGState and the
                         # AccessNode.
                         self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
-                    else:
-                        self.to_allocate[curscope].append(
-                            (sdfg, first_state_instance, first_node_instance, True, False, False)
-                        )
-
-                    curscope = allocation_block(first_state_instance, desc, {state for state, _ in instances})
-                    self.to_allocate[curscope].append(
-                        (sdfg, first_state_instance, first_node_instance, False, True, False)
-                    )
-                    curscope = last_state_instance
+                    alloc_state = first_block if isinstance(first_block, SDFGState) else first_state_instance
+                    curscope = allocation_block(first_block, desc, access_states)
+                    self.to_allocate[curscope].append((sdfg, alloc_state, first_node_instance, False, True, False))
+                    curscope = last_block
                     # A control flow region has no state to dispatch the deallocation through
                     dealloc_state = curscope if isinstance(curscope, SDFGState) else instances[-1][0]
                     self.to_allocate[curscope].append((sdfg, dealloc_state, last_node_instance, False, False, True))
@@ -1660,79 +1650,71 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     return block
 
 
-class DominatorTree:
-    """The tree of ``immediate`` (a root maps to itself), numbered by a DFS: ``a`` dominates ``b`` iff ``b``'s
-    entry/exit interval lies within ``a``'s. One walk answers every query, where the transitive closure of the tree is
-    quadratic in its depth."""
-
-    def __init__(self, immediate: dict[ControlFlowBlock, ControlFlowBlock]) -> None:
-        self.immediate = immediate
-        children: dict[ControlFlowBlock, list[ControlFlowBlock]] = collections.defaultdict(list)
-        roots = {parent for parent in immediate.values() if immediate.get(parent, parent) is parent}
-        for block, parent in immediate.items():
-            if parent is not block:
-                children[parent].append(block)
-        self.entry: dict[ControlFlowBlock, int] = {}
-        self.exit: dict[ControlFlowBlock, int] = {}
-        clock = 0
-        for root in roots:
-            stack = [(root, iter(children[root]))]
-            self.entry[root] = clock
-            clock += 1
-            while stack:
-                block, pending = stack[-1]
-                child = next(pending, None)
-                if child is None:
-                    self.exit[block] = clock
-                    clock += 1
-                    stack.pop()
-                elif child not in self.entry:
-                    self.entry[child] = clock
-                    clock += 1
-                    stack.append((child, iter(children[child])))
-
-    def dominates(self, a: ControlFlowBlock, b: ControlFlowBlock) -> bool:
-        if a is b:
-            return True
-        if a not in self.entry or b not in self.entry:
-            return False
-        return self.entry[a] <= self.entry[b] and self.exit[b] <= self.exit[a]
+def common_dominator(idom: dict, blocks) -> Any:
+    """The nearest block that dominates every one of ``blocks`` in the tree of ``idom`` (a root maps to itself)."""
+    paths = []
+    for block in blocks:
+        path = [block]
+        while idom[path[-1]] is not path[-1]:
+            path.append(idom[path[-1]])
+        paths.append(path)
+    return next(block for block in paths[0] if all(any(block is other for other in path) for path in paths[1:]))
 
 
-def dominator_trees(sdfg: SDFG) -> tuple[DominatorTree, DominatorTree]:
-    """The dominator and post-dominator trees of the blocks of ``sdfg``, across its control flow regions."""
-    idom: dict[ControlFlowBlock, ControlFlowBlock] = {}
-    ipostdom: dict[ControlFlowBlock, ControlFlowBlock] = {}
-    utils.get_control_flow_block_dominators(sdfg, idom, None, ipostdom, None)
-    return DominatorTree(idom), DominatorTree(ipostdom)
+def paired_blocks_in(region: ControlFlowRegion, blocks: list[ControlFlowBlock]) -> tuple | None:
+    """Blocks ``(first, last)`` of ``region`` where ``first`` dominates and ``last`` post-dominates ``blocks`` and
+    each other in ``region``'s own graph, or ``None`` when no block of ``region`` post-dominates them."""
+    exit_node = object()
+    graph = graphlib.DiGraph()
+    graph.add_nodes_from(region.nodes())
+    graph.add_edges_from((edge.src, edge.dst) for edge in region.edges())
+    graph.add_edges_from((sink, exit_node) for sink in region.sink_nodes())
+    idom = utils.immediate_dominators(graph, region.start_block)
+    ipostdom = utils.immediate_dominators(graph.reverse(), exit_node)
+    if any(block not in idom or block not in ipostdom for block in blocks):
+        return None
+    first, last = common_dominator(idom, blocks), common_dominator(ipostdom, blocks)
+    while True:
+        new_first = common_dominator(idom, [*blocks, last]) if last is not exit_node else first
+        new_last = common_dominator(ipostdom, [*blocks, new_first])
+        if new_first is first and new_last is last:
+            return None if last is exit_node else (first, last)
+        first, last = new_first, new_last
 
 
-def _get_dominator_and_postdominator(
-    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: DominatorTree, postdom: DominatorTree
-):
+def paired_allocation_blocks(states: list[SDFGState]) -> tuple[ControlFlowBlock, ControlFlowBlock]:
+    """The block whose entry allocates and the block whose exit frees a container accessed in ``states``.
+
+    Both are blocks of one control flow region, the first dominating and the second post-dominating every access and
+    each other there, so each allocation is freed exactly once, wherever the accesses sit in branches or loop bodies.
+    The region is the innermost one holding every access; a conditional counts as one block of its parent.
     """
-    Gets the closest common dominator and post-dominator for a list of states.
-    Used for determining allocation of data used in branched states.
-    """
-    states = [a for a, _ in accesses]
-    data_name = accesses[0][1].data
-
-    start_state = states[0]
-    while any(not dom.dominates(start_state, n) for n in states):
-        if dom.immediate[start_state] is start_state:
-            raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
-        start_state = dom.immediate[start_state]
-
-    end_state = states[-1]
-    while any(not postdom.dominates(end_state, n) for n in states):
-        if postdom.immediate[end_state] is end_state:
-            raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
-        end_state = postdom.immediate[end_state]
-
-    # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
-    # raise NotImplementedError
-
-    return start_state, end_state
+    chains = []
+    for state in states:
+        chain = [state]
+        while not isinstance(chain[-1], SDFG):
+            chain.append(chain[-1].parent_graph)
+        chains.append(chain)
+    region = next(
+        r
+        for r in chains[0][1:]
+        if not isinstance(r, ConditionalBlock) and all(any(r is other for other in chain) for chain in chains[1:])
+    )
+    blocks = []
+    for chain in chains:
+        block = chain[next(i for i, r in enumerate(chain) if r is region) - 1]
+        if not any(block is other for other in blocks):
+            blocks.append(block)
+    while True:
+        pair = paired_blocks_in(region, blocks)
+        if pair is not None:
+            return pair
+        if isinstance(region, SDFG):
+            raise NotImplementedError(f"No block pair allocates and frees a container accessed in {states}")
+        blocks = [region]
+        region = region.parent_graph
+        while isinstance(region, ConditionalBlock):
+            blocks, region = [region], region.parent_graph
 
 
 def pad_control_flow_region_boundaries(top_sdfg: SDFG):
