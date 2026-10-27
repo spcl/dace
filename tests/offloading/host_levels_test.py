@@ -11,6 +11,7 @@ import dace
 from dace import dtypes
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
+from dace.transformation.passes.offloading.nested_bodies import stage_device_scalar_bindings
 
 N = dace.symbol("N")
 
@@ -152,11 +153,49 @@ def test_a_device_element_staged_for_a_host_body_computes_what_numpy_computes():
     np.testing.assert_allclose(out.get(), np.full(8, 1.0))
 
 
+def device_scalar_bound_through_a_host_map() -> tuple[dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
+    """``for jb in map[0:2]: B[jb] = body(s=A)`` with the scalar ``A`` in device memory, which the body's host tasklet
+    reads through ``s``."""
+    body = dace.SDFG("read_s")
+    body.add_scalar("s", dace.float64)
+    body.add_symbol("jb", dace.int64)
+    body.add_array("o", [2], dace.float64)
+    inner = body.add_state("host_read")
+    bump = inner.add_tasklet("bump", {"x": None}, {"y": None}, "y = x + 1")
+    inner.add_edge(inner.add_read("s"), None, bump, "x", dace.Memlet("s[0]"))
+    inner.add_edge(bump, "y", inner.add_write("o"), None, dace.Memlet("o[jb]"))
+
+    sdfg = dace.SDFG("device_scalar_bound_through_a_host_map")
+    sdfg.add_scalar("A", dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [2], dace.float64)
+    state = sdfg.add_state("blocks")
+    entry, exit_ = state.add_map("blocks", {"jb": "0:2"})
+    call = state.add_nested_sdfg(body, {"s"}, {"o"})
+    state.add_memlet_path(state.add_read("A"), entry, call, dst_conn="s", memlet=dace.Memlet("A[0]"))
+    state.add_memlet_path(call, exit_, state.add_write("B"), src_conn="o", memlet=dace.Memlet("B[0:2]"))
+    sdfg.validate()
+    return sdfg, state, call
+
+
+def test_a_device_scalar_bound_through_a_host_map_is_staged_inside_the_map():
+    """The staging read the scalar through a new top-level access node with the map's ``OUT_`` connector, outside
+    the scope the binding sits in."""
+    sdfg, state, call = device_scalar_bound_through_a_host_map()
+
+    stage_device_scalar_bindings(sdfg, state, call)
+
+    sdfg.validate()
+    (edge,) = [e for e in state.in_edges(call) if e.dst_conn == "s"]
+    assert sdfg.arrays[edge.data.data].storage == dtypes.StorageType.Default, edge.data
+    assert state.entry_node(edge.src) is not None, "the staged scalar left the host map"
+
+
 if __name__ == "__main__":
     test_a_map_around_a_host_issued_library_call_launches_it_from_the_host()
     test_a_map_around_an_in_kernel_reduce_is_the_kernel()
     test_a_nested_sdfg_at_the_top_level_is_a_host_level_of_its_own()
     test_a_device_element_a_body_reads_on_the_host_is_staged_on_the_host()
+    test_a_device_scalar_bound_through_a_host_map_is_staged_inside_the_map()
     if len(sys.argv) > 1 and sys.argv[1] == "gpu":
         test_a_host_launched_device_reduce_computes_what_numpy_computes()
         test_a_nested_host_level_computes_what_numpy_computes()

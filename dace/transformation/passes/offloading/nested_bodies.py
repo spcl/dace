@@ -52,10 +52,9 @@ def stage_device_scalar_bindings(sdfg: SDFG, state: SDFGState, nsdfg_node: nodes
             find_new_name=True,
         )
         staged = state.add_access(host_scalar)
-        # The edge's own source, so the old one is not left isolated once this edge goes.
-        source = edge.src if isinstance(edge.src, nodes.AccessNode) else state.add_read(edge.data.data)
         state.remove_edge(edge)
-        state.add_edge(source, edge.src_conn, staged, None, deepcopy(edge.data))
+        # From the edge's own source and connector: a binding through a host map stays inside the map.
+        state.add_edge(edge.src, edge.src_conn, staged, None, deepcopy(edge.data))
         state.add_edge(
             staged, None, nsdfg_node, edge.dst_conn, Memlet.from_array(host_scalar, sdfg.arrays[host_scalar])
         )
