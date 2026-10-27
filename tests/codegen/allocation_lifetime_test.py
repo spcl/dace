@@ -9,7 +9,7 @@ import pytest
 import dace
 from dace.codegen.targets import framecode
 from dace.codegen.targets.cpu import use_aligned_operator_new
-from dace.sdfg import infer_types, utils
+from dace.sdfg import infer_types
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 
 
@@ -872,35 +872,37 @@ def test_a_view_does_not_reallocate_the_array_it_views():
     )
 
 
-def test_dominator_tree_matches_the_transitive_closure():
-    sdfg = dace.SDFG("dominator_tree")
+def test_branch_local_transient_is_freed_in_its_branch():
+    """``t``, sized by a symbol set in the SDFG, is used only in a branch, in a state and in a loop after it: it is
+    allocated and freed inside that branch, never freed when the branch is skipped."""
+    sdfg = dace.SDFG("branch_local_transient")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("N", [1], dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("t", ["n"], dace.float64, transient=True)
     first = sdfg.add_state("first", is_start_block=True)
-    loop = LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
-    sdfg.add_node(loop)
-    body = loop.add_state("body", is_start_block=True)
     branches = ConditionalBlock("branches")
-    loop.add_node(branches)
-    loop.add_edge(body, branches, dace.InterstateEdge())
-    for index, condition in enumerate(("i < 5", None)):
-        arm = ControlFlowRegion(f"arm{index}", sdfg=sdfg)
-        branches.add_branch(dace.properties.CodeBlock(condition) if condition else None, arm)
-        arm.add_edge(arm.add_state(f"a{index}", is_start_block=True), arm.add_state(f"b{index}"), dace.InterstateEdge())
-    left, right, last = sdfg.add_state("left"), sdfg.add_state("right"), sdfg.add_state("last")
-    sdfg.add_edge(first, loop, dace.InterstateEdge())
-    sdfg.add_edge(loop, left, dace.InterstateEdge("N > 0"))
-    sdfg.add_edge(loop, right, dace.InterstateEdge("N <= 0"))
-    sdfg.add_edge(left, last, dace.InterstateEdge())
-    sdfg.add_edge(right, last, dace.InterstateEdge())
+    sdfg.add_node(branches)
+    sdfg.add_edge(first, branches, dace.InterstateEdge(assignments={"n": "N[0]"}))
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    branches.add_branch(dace.properties.CodeBlock("A[1] > 0"), arm)
+    write = arm.add_state("write", is_start_block=True)
+    write.add_mapped_tasklet("fill", {"i": "0:n"}, {}, "o = i", {"o": dace.Memlet("t[i]")}, external_edges=True)
+    loop = LoopRegion("loop", "k < 2", "k", "k = 0", "k = k + 1")
+    arm.add_node(loop)
+    arm.add_edge(write, loop, dace.InterstateEdge())
+    read = loop.add_state("read", is_start_block=True)
+    tasklet = read.add_tasklet("acc", {"a", "b"}, {"o"}, "o = a + b")
+    read.add_edge(read.add_read("t"), None, tasklet, "a", dace.Memlet("t[n - 1]"))
+    read.add_edge(read.add_read("A"), None, tasklet, "b", dace.Memlet("A[3]"))
+    read.add_edge(tasklet, "o", read.add_write("A"), None, dace.Memlet("A[3]"))
+    sdfg.add_state_after(branches, "last")
 
-    idom, alldom, ipostdom, allpostdom = {}, {}, {}, {}
-    utils.get_control_flow_block_dominators(sdfg, idom, alldom, ipostdom, allpostdom)
-    dom, postdom = framecode.dominator_trees(sdfg)
-    for tree, closure in ((dom, alldom), (postdom, allpostdom)):
-        blocks = list(closure)
-        for a in blocks:
-            for b in blocks:
-                assert tree.dominates(a, b) == (a is b or a in closure[b]), (a, b)
-    assert dom.dominates(first, last) and postdom.dominates(last, first) and not dom.dominates(left, last)
+    assert framecode.paired_allocation_blocks([write, read]) == (write, loop)
+    for taken in (True, False):
+        A = np.array([0.0, 1.0 if taken else -1.0, 0.0, 0.0])
+        sdfg(A=A, N=np.array([3], dtype=np.int64))
+        assert A[3] == (4.0 if taken else 0.0)
 
 
 def test_container_read_only_from_tasklet_code():
@@ -969,6 +971,6 @@ if __name__ == "__main__":
     test_deferred_scalar_cpp_tasklet_same_scope()
     test_deferred_scalar_still_applies()
     test_a_view_does_not_reallocate_the_array_it_views()
-    test_dominator_tree_matches_the_transitive_closure()
+    test_branch_local_transient_is_freed_in_its_branch()
     test_container_read_only_from_tasklet_code()
     test_view_first_read_by_an_interstate_edge()
