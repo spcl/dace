@@ -53,6 +53,46 @@ def _is_view_of(state: SDFGState, node: nodes.Node, viewed: nodes.AccessNode) ->
     return view_edge is not None and viewed in (view_edge.src, view_edge.dst)
 
 
+def keep_nest_order(state: SDFGState, inlined: set[nodes.Node], successors: set[nodes.Node]) -> None:
+    """
+    Order every inlined node before each successor of the nested node it replaced, where no path does yet.
+
+    The nested node ran as a unit: whatever followed it waited for all of its body. Spliced in, only data dependences
+    remain, so a later write to a container the body read (an anti-dependence) could be sorted before that read and
+    the read would see the new value. An empty memlet from each such body node restores the unit's order.
+
+    :param state: The state the nested SDFG was inlined into.
+    :param inlined: The nodes of the inlined body.
+    :param successors: The nodes the nested SDFG node's out-edges led to, recorded before inlining.
+    """
+    body = [n for n in inlined if n in state.nodes()]
+    for succ in successors:
+        if succ not in state.nodes():
+            continue  # moved to another state by a fission: the state boundary orders it
+        reaches = ancestors(state, succ)
+        for node in body:
+            if node is not succ and node not in reaches and not any(o.dst in body for o in state.out_edges(node)):
+                state.add_nedge(node, succ, Memlet())
+
+
+def ancestors(state: SDFGState, node: nodes.Node) -> set[nodes.Node]:
+    """
+    Every node of ``state`` with a path to ``node``.
+
+    :param state: The state to search.
+    :param node: The node whose ancestors are collected.
+    :return: The ancestors of ``node``, excluding ``node`` itself unless it lies on a cycle.
+    """
+    seen: set[nodes.Node] = set()
+    stack = [node]
+    while stack:
+        for edge in state.in_edges(stack.pop()):
+            if edge.src not in seen:
+                seen.add(edge.src)
+                stack.append(edge.src)
+    return seen
+
+
 @make_properties
 @transformation.explicit_cf_compatible
 class InlineSDFG(transformation.SingleStateTransformation):
@@ -494,6 +534,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # Collect isolated nodes before inlining
         isolated_nodes = {n for n in state.data_nodes() if state.degree(n) == 0}
+        # What ran after the nested node as a whole; its body must still precede them once spliced in
+        successors = {e.dst for e in state.out_edges(nsdfg_node)}
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
@@ -896,6 +938,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 continue
             state.remove_edge(edge)
             state.add_edge(last, None, edge.dst, edge.dst_conn, dc(edge.data))
+
+        keep_nest_order(state, set(subgraph.nodes()), successors)
 
         #######################################################
         # Remove nested SDFG node
