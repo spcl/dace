@@ -701,13 +701,20 @@ class LoopFission(ppl.Pass):
         is_start = parent.start_block is loop
         orig_order = _linear_blocks(loop, allow_assignments=True)
         keep_idx = [sorted(required(orig_order).index(b) for b in g) for g in groups]
+        # The last group keeping a block takes the block itself, as ``loop`` is dropped below; only a block a later
+        # group keeps too is copied.
+        last_group = {required(orig_order)[i]: gi for gi, idxs in enumerate(keep_idx) for i in idxs}
 
         clones: list[LoopRegion] = []
+        moved: list[tuple[ControlFlowBlock, LoopRegion]] = []
         for gi, idxs in enumerate(keep_idx):
-            # Copy only the blocks this group keeps: the others stand in as themselves until the pruning below
-            # drops them, so a body split n ways is not copied n times whole (CloudSC: 51 groups, 3 min).
-            kept = {required(orig_order)[i] for i in idxs}
-            clone = copy.deepcopy(loop, {id(b): b for b in loop.nodes() if b not in kept})
+            # The blocks this group does not copy stand in as themselves until the pruning below drops them, so a
+            # body split n ways is not copied n times whole (CloudSC: 51 groups, 3 min); the body edges are rebuilt
+            # below, so neither is their data.
+            copied = {required(orig_order)[i]: None for i in idxs if last_group[required(orig_order)[i]] != gi}
+            memo = {id(b): b for b in loop.nodes() if b not in copied}
+            memo.update((id(e.data), e.data) for e in loop.edges())
+            clone = copy.deepcopy(loop, memo)
             clone.label = f"{loop.label}_fis{gi}"
             corder = _linear_blocks(clone, allow_assignments=True)
             keep = [required(corder)[i] for i in idxs]
@@ -718,11 +725,19 @@ class LoopFission(ppl.Pass):
             for e in list(clone.edges()):
                 clone.remove_edge(e)
             for a, b in zip(keep, keep[1:]):
-                clone.add_edge(a, b, kept_edges.get((a, b), InterstateEdge()))
+                data = kept_edges.get((a, b))
+                clone.add_edge(a, b, InterstateEdge() if data is None else copy.deepcopy(data))
             clone.start_block = clone.node_id(keep[0])
+            moved += [(b, clone) for b in keep if last_group.get(b) == gi]
+            clones.append(clone)
+
+        # A moved block leaves ``loop``, and the CFG list with it, before its clone claims it.
+        for b, clone in moved:
+            loop.remove_node(b)
+            b.parent_graph = clone
+        for clone in clones:
             # Added once pruned, so the stand-ins never join the tree.
             parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
-            clones.append(clone)
 
         for e in in_edges:
             parent.add_edge(e.src, clones[0], copy.deepcopy(e.data))
