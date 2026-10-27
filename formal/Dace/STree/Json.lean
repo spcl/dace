@@ -242,8 +242,9 @@ partial def fillCopies (containers : List (Name × DataDesc)) (n : SNode) : SNod
     | some cs => n.setChildren (cs.map (fillCopies containers))
     | none => n
 
-/-- The root (`ScheduleTreeRoot`). -/
-def root (j : Json) : P STree := do
+/-- The root (`ScheduleTreeRoot`).  `fill := false` keeps omitted copy sides
+as serialized (`fillCopies`), e.g. to compare with DaCe's `as_string`. -/
+def root (j : Json) (fill : Bool := true) : P STree := do
   if strField? j "type" ≠ some "ScheduleTreeRoot" then throw "expected a ScheduleTreeRoot"
   let name := (strField? j "name").getD "stree"
   let containerEntries ← match field? j "containers" with
@@ -282,21 +283,21 @@ def root (j : Json) : P STree := do
     | some _ => throw "children is not a list"
     | none => pure []
   let containers ← declareConsumeChunks containers.flatten children
-  let children := children.map (fillCopies containers)
+  let children := if fill then children.map (fillCopies containers) else children
   pure { name, containers, symbols, constants, argNames, callbackMapping, children }
 
-/-- Parse a schedule tree from JSON text. -/
-def parseSTree (text : String) : P STree := do
+/-- Parse a schedule tree from JSON text (`root` for `fill`). -/
+def parseSTree (text : String) (fill : Bool := true) : P STree := do
   let j ← Lean.Json.parse text
-  root j
+  root j fill
 
 end Dace.STree.Json
 
 namespace Dace
 
-/-- Read and parse a `.stree.json` file. -/
-def readSTree (path : System.FilePath) : IO (Except String STree) := do
+/-- Read and parse a `.stree.json` file (`STree.Json.root` for `fill`). -/
+def readSTree (path : System.FilePath) (fill : Bool := true) : IO (Except String STree) := do
   let text ← IO.FS.readFile path
-  pure (STree.Json.parseSTree text)
+  pure (STree.Json.parseSTree text fill)
 
 end Dace

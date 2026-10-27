@@ -52,11 +52,15 @@ def main : IO Unit := do
         for e in r.errors do IO.println s!"  ERROR {e}"
         for w in r.warnings do IO.println s!"  warn  {w}"
         if !r.ok then bad := bad + 1
-        -- pretty-printer against DaCe's as_string()
+        -- pretty-printer against DaCe's as_string(), on the tree as serialized
+        -- (copy sides the importer fills are omitted in DaCe's output)
         let base := String.ofList (name.toList.take (name.length - 5))
         -- Tolerate CRLF checkouts/copies of the `.txt` reference.
         let txt := (← IO.FS.readFile (base ++ ".txt")).replace "\r\n" "\n"
-        let got := stripTrailing t.prettyPrint
+        let printed := match ← readSTree f (fill := false) with
+          | .ok raw => raw.prettyPrint
+          | .error e => s!"IMPORT FAIL: {e}"
+        let got := stripTrailing printed
         let exp := stripTrailing txt
         if got = exp then IO.println s!"  as_string: identical"
         else
