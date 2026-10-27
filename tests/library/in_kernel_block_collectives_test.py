@@ -106,6 +106,34 @@ def test_a_node_in_thread_level_code_keeps_its_per_thread_lowering():
     assert node.implementation == "pure"
 
 
+def test_a_kernel_that_accumulates_beside_the_node_keeps_its_per_thread_lowering():
+    """A block collective runs the whole kernel body on every lane: an accumulation beside it would add once per lane."""
+    sdfg, state = argmax_kernel()
+    sdfg.add_array("total", [1], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    rows = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    node = next(n for n in state.nodes() if isinstance(n, ArgReduce))
+    tasklet = state.add_tasklet("count", {"a"}, {"o"}, "o = a")
+    state.add_memlet_path(state.add_read("A"), rows, tasklet, dst_conn="a", memlet=dace.Memlet("A[i, 0]"))
+    state.add_memlet_path(
+        tasklet,
+        state.exit_node(rows),
+        state.add_write("total"),
+        src_conn="o",
+        memlet=dace.Memlet("total[0]", wcr="lambda x, y: x + y"),
+    )
+
+    assert select_implementation_by_schedule(node, state) != "CUDA (block)"
+
+
+def test_a_node_over_small_operands_keeps_its_per_thread_lowering():
+    """A row of ``N`` elements, ``N`` declared ``SMALL``, is one thread's work."""
+    sdfg, state = argmax_kernel()
+    sdfg.set_symbol_scale("N", dace.symbolic.Scale.SMALL)
+    node = next(n for n in state.nodes() if isinstance(n, ArgReduce))
+
+    assert select_implementation_by_schedule(node, state) != "CUDA (block)"
+
+
 def test_asking_which_lowering_an_in_kernel_node_takes_keeps_the_kernel_block_size():
     """Only the expansion that commits to the block collective hands the block size over to its lane map."""
     sdfg, state = argmax_kernel()

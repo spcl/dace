@@ -181,12 +181,55 @@ def in_kernel_block_implementation(node: nodes.LibraryNode, state: SDFGState) ->
     :returns: The implementation key, or ``None`` on the host, in thread-level code, or for a shape the
               node's block lowering refuses.
     """
+    from dace.transformation.passes.offloading.taskloop import small_operands
+
     maps = enclosing_maps(node, state)
     if not any(m.map.schedule == dtypes.ScheduleType.GPU_Device for m in maps):
         return None
     if any(m.map.schedule in THREAD_LEVEL_SCHEDULES for m in maps):
         return None
+    # One thread's work: a block of lanes would idle over a handful of elements
+    if small_operands(node, state):
+        return None
+    if accumulates_beside(node, state):
+        return None
     return gpu_block_implementation(node, state, state.sdfg)
+
+
+def accumulates_beside(node: nodes.LibraryNode, state: SDFGState) -> bool:
+    """Whether the kernel around ``node`` accumulates anywhere but at ``node``: a block collective runs the kernel
+    body on every lane of the block, so each lane would add. A map exit only relays an accumulation made inside it.
+    """
+
+    def accumulates(graph: SDFGState, scope: list[nodes.Node]) -> bool:
+        for inner in scope:
+            if isinstance(inner, nodes.NestedSDFG) and any(
+                accumulates(nested, nested.nodes()) for nested in inner.sdfg.states()
+            ):
+                return True
+            if inner is node or isinstance(inner, nodes.MapExit):
+                continue
+            if any(edge.data.wcr is not None for edge in graph.out_edges(inner)):
+                return True
+        return False
+
+    graph, anchor = state, node
+    while True:
+        scopes = graph.scope_dict()
+        entry = scopes[anchor]
+        while entry is not None and not (
+            isinstance(entry, nodes.MapEntry) and entry.map.schedule == dtypes.ScheduleType.GPU_Device
+        ):
+            entry = scopes[entry]
+        if entry is not None:
+            return accumulates(graph, graph.scope_subgraph(entry).nodes())
+        # No kernel in this SDFG: all of it runs inside the kernel around its nested SDFG node
+        sdfg = graph.sdfg
+        if any(accumulates(other, other.nodes()) for other in sdfg.states()):
+            return True
+        if sdfg.parent_nsdfg_node is None:
+            return False
+        graph, anchor = sdfg.parent, sdfg.parent_nsdfg_node
 
 
 def release_kernel_block_size(node: nodes.Node, state: SDFGState) -> None:
