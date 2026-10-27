@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Fuse a producer map into a consumer map that iterates over a subset of the producer's axes.
+"""Fuse a producer map and a consumer map where one iterates over a subset of the other's axes.
 
 ``for i, k: T[i, k] = f(i, k)`` followed by ``for i: g(T[i, 4], T[i, 7])`` becomes
 ``for i: { for k: t[k] = f(i, k); g(t[4], t[7]) }``: the producer splits into an outer map over the axes the
 consumer shares (equal ranges) and an inner map over the rest, and the outer map fuses vertically with the consumer.
-A split that does not fuse is merged back into the original map.
+Mirrored, ``for i: T[i] = f(i)`` followed by ``for i, k: g(T[i], k)`` splits the consumer instead:
+``for i: { t = f(i); for k: g(t, k) }``. A split that does not fuse is merged back into the original map.
 """
 
 from typing import Any
@@ -42,8 +43,9 @@ def reorder(entry: nodes.MapEntry, params: list[str]) -> None:
     entry.map.params = list(params)
 
 
-def candidates(state: SDFGState) -> list[tuple[nodes.MapEntry, nodes.AccessNode, nodes.MapEntry, list[str]]]:
-    """Top-level ``(producer entry, transient, consumer entry, shared axes)`` triples of ``state``."""
+def candidates(state: SDFGState) -> list[tuple[nodes.MapEntry, nodes.AccessNode, nodes.MapEntry, list[str], bool]]:
+    """Top-level ``(producer entry, transient, consumer entry, shared axes, split consumer)`` tuples of ``state``: the
+    shared axes are parameters of the map with more axes, the consumer when ``split consumer``."""
     sdict = state.scope_dict()
     found = []
     for node in state.data_nodes():
@@ -60,7 +62,12 @@ def candidates(state: SDFGState) -> list[tuple[nodes.MapEntry, nodes.AccessNode,
                     continue
                 axes = shared_axes(producer.map, oe.dst.map)
                 if axes is not None:
-                    found.append((producer, node, oe.dst, axes))
+                    found.append((producer, node, oe.dst, axes, False))
+                    continue
+                # The consumer keeps its loop order: the shared axes are its outermost ones
+                axes = shared_axes(oe.dst.map, producer.map)
+                if axes is not None and set(axes) == set(oe.dst.map.params[: len(axes)]):
+                    found.append((producer, node, oe.dst, axes, True))
     return found
 
 
@@ -89,20 +96,23 @@ class FuseMapsAtSharedAxes(ppl.Pass):
         fused = 0
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():
-                # Keyed by transient and consumer: a merge-back rebuilds the producer's map, never these two
+                # Keyed by transient and the map not split: a merge-back rebuilds the split map, never these two
                 tried: set[tuple[nodes.AccessNode, nodes.MapEntry]] = set()
                 progress = True
                 while progress:
                     progress = False
-                    for producer, node, consumer, axes in candidates(state):
-                        if (node, consumer) in tried:
+                    for producer, node, consumer, axes, split_consumer in candidates(state):
+                        kept = producer if split_consumer else consumer
+                        if (node, kept) in tried:
                             continue
-                        restored = self.try_fuse(sd, state, producer, node, consumer, axes, fusion, pipeline_results)
+                        restored = self.try_fuse(
+                            sd, state, producer, node, consumer, axes, split_consumer, fusion, pipeline_results
+                        )
                         if restored is None:
                             fused += 1
                         else:
-                            tried.add((node, consumer))
-                        # Either way the producer's entry was rebuilt: the remaining candidates name the old one
+                            tried.add((node, kept))
+                        # Either way the split map's entry was rebuilt: the remaining candidates name the old one
                         progress = True
                         break
         return fused or None
@@ -115,18 +125,20 @@ class FuseMapsAtSharedAxes(ppl.Pass):
         node: nodes.AccessNode,
         consumer: nodes.MapEntry,
         axes: list[str],
+        split_consumer: bool,
         fusion: MapFusionVertical,
         pipeline_results: dict[str, Any],
     ) -> nodes.MapEntry | None:
-        """Split ``producer`` at ``axes`` and fuse its outer map with ``consumer`` through ``node``: ``None`` when
-        fused, else the entry of the producer merged back as it was."""
-        original = list(producer.map.params)
-        collapse = producer.map.collapse
+        """Split the producer (the consumer when ``split_consumer``) at ``axes`` and fuse the outer map with the other
+        map through ``node``: ``None`` when fused, else the entry of the split map merged back as it was."""
+        split = consumer if split_consumer else producer
+        original = list(split.map.params)
+        collapse = split.map.collapse
         rest = [p for p in original if p not in axes]
-        reorder(producer, axes + rest)
+        reorder(split, axes + rest)
         expansion = MapExpansion()
         expansion.setup_match(
-            sdfg, state.parent_graph.cfg_id, state.block_id, {MapExpansion.map_entry: producer}, 0, override=True
+            sdfg, state.parent_graph.cfg_id, state.block_id, {MapExpansion.map_entry: split}, 0, override=True
         )
         expansion.expansion_limit = len(axes)
         entries = expansion.apply(state, sdfg)
@@ -134,14 +146,15 @@ class FuseMapsAtSharedAxes(ppl.Pass):
         # Expansion leaves one map per shared axis; they become one outer map again.
         for middle in entries[1 : len(axes)]:
             outer, _ = sdutil.merge_maps(state, outer, state.exit_node(outer), middle, state.exit_node(middle))
+        first, second = (producer, outer) if split_consumer else (outer, consumer)
         fusion.setup_match(
             sdfg,
             state.parent_graph.cfg_id,
             state.block_id,
             {
-                MapFusionVertical.first_map_exit: state.exit_node(outer),
+                MapFusionVertical.first_map_exit: state.exit_node(first),
                 MapFusionVertical.array: node,
-                MapFusionVertical.second_map_entry: consumer,
+                MapFusionVertical.second_map_entry: second,
             },
             0,
             override=True,
