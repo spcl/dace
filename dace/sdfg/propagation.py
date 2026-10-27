@@ -289,12 +289,11 @@ class AffineSMemlet(SeparableMemletPattern):
             rs = 1
             rt = 1
 
-        result_begin = rb.subs(self.param, node_rb).expand()
-        result_end = re.subs(self.param, node_re).expand()
-
-        # Special case: multiplier < 0
-        if self.negative is symbolic.Truth.TRUE:
-            result_begin, result_end = result_end, result_begin
+        # The image runs from the range begin at the parameter that minimizes it to the range end at the one that
+        # maximizes it: the first and last parameter for a positive multiplier, the last and first for a negative one
+        low, high = (node_re, node_rb) if self.negative is symbolic.Truth.TRUE else (node_rb, node_re)
+        result_begin = rb.subs(self.param, low).expand()
+        result_end = re.subs(self.param, high).expand()
 
         # Special case: a point access in a strided map accesses every ``multiplier * stride``-th element
         if node_rs != 1 and rb == re and rs == 1 and rt == 1 and self.multiplier.is_Integer and self.multiplier > 0:
