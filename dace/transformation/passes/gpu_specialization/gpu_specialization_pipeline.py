@@ -39,7 +39,11 @@ class GPUCodegenPreprocessPipeline(Pipeline):
     """One-shot GPU-codegen preparation: every transformation that brings an SDFG to a state the
     experimental CUDA codegen can emit. The constructor documents the sequencing constraints."""
 
-    def __init__(self):
+    def __init__(self, memory_engine_copies: bool | None = None):
+        """
+        :param memory_engine_copies: run ``InsertMemoryEngineBulkCopies``; ``None`` defers to
+                                     ``compiler.cuda.memory_engine_copies``.
+        """
         # Local imports: avoid circular import in ``dace.transformation`` package init.
         from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (
             DemoteKernelInternalArraysToScalars,
@@ -52,6 +56,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             SynchronizeStreamUnawareGPUCallbacks,
         )
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+        from dace.transformation.passes.insert_memory_engine_bulk_copies import InsertMemoryEngineBulkCopies
         from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
         from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
@@ -65,9 +70,15 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #     connectors that re-inference then re-derives as scalar references.
         #   * SynchronizeStreamUnawareGPUCallbacks after wiring -- its fence takes no stream connector.
         #   * ReinferConnectorTypes last -- earlier passes mutate NestedSDFG connector descriptors.
+        #   * InsertMemoryEngineBulkCopies (optional) between InsertExplicitCopies, which creates the copy
+        #     nodes, and ExpandLibraryNodes; before AddThreadBlockMaps, whose thread-block map would enclose
+        #     the copies, which the memory engine rejects.
         strategy = AutoGPUStreamScheduler(synchronize_on_exit=Config.get("compiler", "cuda", "synchronize_on_exit"))
         scalar_promotion = PromoteScalarOutputsToArrays()
         scalar_promotion.gpu = True
+        if memory_engine_copies is None:
+            memory_engine_copies = Config.get_bool("compiler", "cuda", "memory_engine_copies")
+        copy_selection = [InsertMemoryEngineBulkCopies()] if memory_engine_copies else []
         super().__init__(
             [
                 InferDefaultSchedulesAndStorages(),
@@ -75,6 +86,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
                 scalar_promotion,
                 MoveArrayOutOfKernel(),
                 InsertExplicitCopies(),
+                *copy_selection,
                 ExpandLibraryNodes(),
                 strategy,
                 GPUStreamWiring(strategy),

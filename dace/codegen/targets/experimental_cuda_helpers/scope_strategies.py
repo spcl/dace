@@ -180,7 +180,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
 
     def kernel_signature(self, dfg_scope: ScopeSubgraphView) -> str:
         kernel_name = self._current_kernel_spec.kernel_name
-        kernel_args = self._current_kernel_spec.args_typed
+        kernel_args = self._current_kernel_spec.kernel_args_typed
         block_dims = self._current_kernel_spec.block_dims
         node = dfg_scope.source_nodes()[0]
 

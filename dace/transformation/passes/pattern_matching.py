@@ -22,7 +22,9 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 
 
-@dataclass
+# Identity equality and hash: the only dataclass field is ``CATEGORY``, so field-wise equality would make
+# every instance equal, and a ``Pipeline`` needs hashable passes.
+@dataclass(eq=False)
 @properties.make_properties
 class PatternMatchAndApply(ppl.Pass):
     """
@@ -171,7 +173,7 @@ class PatternMatchAndApply(ppl.Pass):
         return applied_transformations
 
 
-@dataclass
+@dataclass(eq=False)
 @properties.make_properties
 class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     """
@@ -331,7 +333,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         return self._apply_pass(sdfg, pipeline_results, apply_once=False)
 
 
-@dataclass
+@dataclass(eq=False)
 @properties.make_properties
 class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
     """

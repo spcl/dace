@@ -19,6 +19,7 @@ from dace.codegen.targets import cpp
 from dace.codegen.targets.cpp import mangle_dace_state_struct_name, ptr, sym2cpp
 from dace.codegen.targets.cuda import (
     _DYNAMIC_SHARED_MEMORY_SYMBOL,
+    STATIC_SHARED_MEMORY_ALIGNMENT,
     chiplet_count,
     compute_pool_release,
     distribute_over_chiplets,
@@ -27,6 +28,7 @@ from dace.codegen.targets.cuda import (
     gpu_cmake_options,
     gpu_runtime_code,
     gpu_scope_maps_recursive,
+    is_grid_constant,
     location_condition,
     location_index_exprs,
     plan_shared_memory,
@@ -892,7 +894,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         array_ctype = f"{nodedesc.dtype.ctype} *"
 
         declaration_stream.write(
-            f"__shared__ {nodedesc.dtype.ctype} {dataname}[{sym2cpp(arrsize)}];\n", cfg, state_id, node
+            f"__shared__ __align__({STATIC_SHARED_MEMORY_ALIGNMENT}) {nodedesc.dtype.ctype} {dataname}[{sym2cpp(arrsize)}];\n",
+            cfg,
+            state_id,
+            node,
         )
 
         self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
@@ -1048,13 +1053,19 @@ class KernelSpec:
         ]
 
         args_typed = []
+        kernel_args_typed = []
         for name, data in self.arglist.items():
             if data.lifetime == dtypes.AllocationLifetime.Persistent:
                 arg_name = ptr(name, data, sdfg, cudaCodeGen._frame)
             else:
                 arg_name = name
-            args_typed.append(("const " if name in self.kernel_constants else "") + data.as_arg(name=arg_name))
+            const = "const " if name in self.kernel_constants else ""
+            args_typed.append(const + data.as_arg(name=arg_name))
+            # Only the ``__global__`` prototype may carry ``__grid_constant__``, not the host launcher
+            grid_constant = "const __grid_constant__ " if is_grid_constant(data) else const
+            kernel_args_typed.append(grid_constant + data.as_arg(name=arg_name))
         self.args_typed: list[str] = args_typed
+        self.kernel_args_typed: list[str] = kernel_args_typed
 
         cudaCodeGen._in_device_code = False
 

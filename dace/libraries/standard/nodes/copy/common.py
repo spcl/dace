@@ -6,8 +6,11 @@ Imported by both the node and its expansions, so it must not import either.
 
 import functools
 import operator
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import sympy
 
 import dace
 from dace import data, dtypes, nodes, subsets, symbolic
@@ -18,13 +21,50 @@ from dace.libraries.standard.helper import (
     GPU_RESIDENT_STORAGES,
     collapse_shape_and_strides,
 )
-from dace.sdfg.scope import devicelevel_block_size, is_devicelevel_gpu
+from dace.sdfg.scope import devicelevel_block_size, is_devicelevel_gpu, is_in_scope
 
 if TYPE_CHECKING:
     from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 
 INPUT_CONNECTOR_NAME = "_cpy_in"
 OUTPUT_CONNECTOR_NAME = "_cpy_out"
+
+MEMORY_ENGINE_DESC_INPUT_NAME = "_tma_desc_in"
+MEMORY_ENGINE_DESC_OUTPUT_NAME = "_tma_desc_out"
+MEMORY_ENGINE_GLOBAL_INPUT_NAME = "_tma_global"
+MEMORY_ENGINE_BARRIER_INPUT_NAME = "_tma_bar"
+MEMORY_ENGINE_BARRIER_OUTPUT_NAME = "_tma_bar_out"
+
+CUtensorMap = dace.dtypes.opaque("CUtensorMap")
+
+# TODO: keep these values up-to-date if support for new memory engines is added
+MEMORY_ENGINE_MAX_RANK = 5
+"""Maximum tensor rank the memory engine supports."""
+MEMORY_ENGINE_MAX_BOX_DIM = 256
+"""Maximum extent of a memory engine box (tile) dimension."""
+MEMORY_ENGINE_STRIDE_ALIGNMENT = 16
+"""Byte alignment of the global strides and of the contiguous box extent."""
+MEMORY_ENGINE_SHARED_ALIGNMENT = 128
+"""Byte alignment of the shared memory side of a copy."""
+
+_TMA_DATA_TYPES = {
+    dtypes.bool_: "CU_TENSOR_MAP_DATA_TYPE_UINT8",
+    dtypes.int8: "CU_TENSOR_MAP_DATA_TYPE_UINT8",
+    dtypes.uint8: "CU_TENSOR_MAP_DATA_TYPE_UINT8",
+    dtypes.int16: "CU_TENSOR_MAP_DATA_TYPE_UINT16",
+    dtypes.uint16: "CU_TENSOR_MAP_DATA_TYPE_UINT16",
+    dtypes.int32: "CU_TENSOR_MAP_DATA_TYPE_INT32",
+    dtypes.uint32: "CU_TENSOR_MAP_DATA_TYPE_UINT32",
+    dtypes.int64: "CU_TENSOR_MAP_DATA_TYPE_INT64",
+    dtypes.uint64: "CU_TENSOR_MAP_DATA_TYPE_UINT64",
+    dtypes.float16: "CU_TENSOR_MAP_DATA_TYPE_FLOAT16",
+    dtypes.bfloat16: "CU_TENSOR_MAP_DATA_TYPE_BFLOAT16",
+    dtypes.float32: "CU_TENSOR_MAP_DATA_TYPE_FLOAT32",
+    dtypes.float64: "CU_TENSOR_MAP_DATA_TYPE_FLOAT64",
+}
+"""``CUtensorMapDataType`` per element type.
+
+The memory engine does not care about signedness, only bits."""
 
 
 @dataclass
@@ -446,3 +486,382 @@ def _build_shmem_collective_copy_code(
         else ""
     )
     return f"{sync_barrier}{copy_tmpl}::{shape_tmpl}::Copy({', '.join(all_args)});\n{sync_barrier}"
+
+
+@dataclass
+class MemoryEngineGeometry:
+    """Everything a ``MemoryEngineBulk`` copy needs, with all per-dimension lists in TMA order
+    (dimension 0 is the contiguous one, i.e. reversed for C-ordered arrays)."""
+
+    is_load: bool
+    """If true the copy is from global to shared memory. Reversed otherwise."""
+    global_name: str
+    """Name of the array in global memory, which is the source if ``is_load`` is true."""
+    global_desc: data.Array
+    """Array in global memory, which is the source if ``is_load`` is true."""
+    global_subset: subsets.Range
+    """Subset of the array in global memory, which is the source if ``is_load`` is true."""
+    shared_name: str
+    """Name of the array in shared memory, which is the source if ``is_load`` is false."""
+    shared_desc: data.Array
+    """Array in shared memory, which is the source if ``is_load`` is false."""
+    shared_subset: subsets.Range
+    """Subset of the array in shared memory, which is the source if ``is_load`` is false."""
+    dims: list[symbolic.SymExpr]
+    """Dimensions (sizes of the axes) of the global array."""
+    strides: list[symbolic.SymExpr]
+    """Strides of the global array."""
+    box: list[symbolic.SymExpr]
+    """Number of elements per axis that are being copied per load/store."""
+    coords: list[symbolic.SymExpr]
+    """Start of copy given in element-coordinates into the global array."""
+    data_type: str
+    """See ``_TMA_DATA_TYPES``"""
+
+    @property
+    def rank(self) -> int:
+        return len(self.dims)
+
+    @property
+    def bytes(self) -> symbolic.SymExpr:
+        """Bytes one copy moves; a load always moves the full box (out-of-bound elements are zero-filled)."""
+        return functools.reduce(operator.mul, self.box, 1) * self.global_desc.dtype.bytes
+
+
+def _memory_engine_edges(node: nodes.Node, state: dace.SDFGState):
+    """The ``_cpy_in`` and ``_cpy_out`` edges of a ``CopyLibraryNode`` or of its expanded tasklet."""
+    in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
+    out_edges = [e for e in state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME]
+    if len(in_edges) != 1 or len(out_edges) != 1:
+        return None, None
+    return in_edges[0], out_edges[0]
+
+
+def _sym_equal(a: symbolic.SymExpr, b: symbolic.SymExpr) -> bool:
+    """True if ``a`` and ``b`` are provably equal."""
+    try:
+        return bool(symbolic.simplify(symbolic.pystr_to_symbolic(a) - symbolic.pystr_to_symbolic(b)) == 0)
+    except TypeError:
+        return False
+
+
+def _tma_order(strides: list[symbolic.SymExpr]) -> list[int] | None:
+    """Dimension order with the contiguous dimension first
+
+    For C-order, the innermost dimension must have stride 1 and the returned order is reversed. For Fortran order
+    the outermost dimension must have stride 1. If the given strides are neither C nor Fortran ordered, ``None``
+    is returned.
+    """
+    if _sym_equal(strides[-1], 1):
+        return list(reversed(range(len(strides))))
+    if _sym_equal(strides[0], 1):
+        return list(range(len(strides)))
+    return None
+
+
+def _unclamp(size: symbolic.SymExpr, extents: list[symbolic.SymExpr]) -> symbolic.SymExpr:
+    """Remove memlet propagation's clamp to the array bounds (``Min(extent - 1, ...)``) from ``size``.
+
+    The memory engine zero-fills out-of-bounds elements. This means, we don't need to clamp the sizes manually.
+    This function removes the ``Min(extent - 1, ...)`` clamps for any of the given ``extents``.
+    """
+    bounds = [symbolic.pystr_to_symbolic(extent) - 1 for extent in extents]
+
+    def drop_bound(*args):
+        # make sure to keep clamps that are not due to array bounds
+        rest = [a for a in args if not any(_sym_equal(a, bound) for bound in bounds)]
+        return sympy.Min(*rest) if rest else bounds[0]
+
+    size = symbolic.pystr_to_symbolic(size)
+    return symbolic.simplify(size.replace(sympy.Min, drop_bound))
+
+
+def _static_int(value: symbolic.SymExpr) -> int | None:
+    """``value`` as an int if it is a constant, else ``None``."""
+    if symbolic.issymbolic(value):
+        return None
+    return int(value)
+
+
+def memory_engine_geometry(node: nodes.Node, state: dace.SDFGState) -> tuple[MemoryEngineGeometry | None, str | None]:
+    """Derive the tensor map geometry of a ``MemoryEngineBulk`` copy.
+
+    Works on the ``CopyLibraryNode`` and on its expanded tasklet (both use the ``_cpy_in``/``_cpy_out``
+    connectors), so that this method can be used in the expansion and its postprocessing.
+
+    :param node: the copy node or expanded tasklet.
+    :param state: state containing ``node``.
+    :returns: ``(geometry, None)`` if the memory engine can perform the copy, ``(None, reason)`` otherwise.
+    """
+    sdfg = state.sdfg
+    in_edge, out_edge = _memory_engine_edges(node, state)
+    if in_edge is None or out_edge is None or in_edge.data.is_empty() or out_edge.data.is_empty():
+        return None, "the copy must have exactly one input and one output edge"
+    inp, out = sdfg.arrays[in_edge.data.data], sdfg.arrays[out_edge.data.data]
+
+    if (inp.storage, out.storage) == (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+        is_load = True
+        (gname, gdesc, gsubset), (sname, sdesc, ssubset) = (
+            (in_edge.data.data, inp, in_edge.data.subset),
+            (out_edge.data.data, out, out_edge.data.subset),
+        )
+    elif (inp.storage, out.storage) == (dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global):
+        is_load = False
+        (gname, gdesc, gsubset), (sname, sdesc, ssubset) = (
+            (out_edge.data.data, out, out_edge.data.subset),
+            (in_edge.data.data, inp, in_edge.data.subset),
+        )
+    else:
+        return None, (
+            f"MemoryEngineBulk only supports GPU_Global <-> GPU_Shared copies (got {inp.storage} -> {out.storage})"
+        )
+
+    if inp.dtype != out.dtype:
+        return None, f"input and output data types must match (got {inp.dtype} vs {out.dtype})"
+    if gdesc.dtype not in _TMA_DATA_TYPES:
+        return None, f"data type {gdesc.dtype} has no memory engine equivalent"
+    for desc in (gdesc, sdesc):
+        if not isinstance(desc, data.Array) or isinstance(desc, data.View):
+            return None, f"both sides must be (non-view) arrays (got {type(desc).__name__})"
+        if not _sym_equal(desc.start_offset, 0):
+            return None, "arrays with a start offset are not supported"
+    if len(gdesc.shape) > MEMORY_ENGINE_MAX_RANK:
+        return (
+            None,
+            f"MemoryEngineBulk only supports up to {MEMORY_ENGINE_MAX_RANK} dimensions (got {len(gdesc.shape)})",
+        )
+    if any(not _sym_equal(step, 1) for subset in (gsubset, ssubset) for _, _, step in subset.ranges):
+        return None, "strided (step != 1) copies are not supported"
+
+    gorder = _tma_order(gdesc.strides)
+    sorder = _tma_order(sdesc.strides)
+    if gorder is None or sorder is None:
+        return None, "both sides need a contiguous (stride 1) first or last dimension"
+
+    elem_bytes = gdesc.dtype.bytes
+    gsizes = [_unclamp(size, [extent]) for size, extent in zip(gsubset.size_exact(), gdesc.shape)]
+    box = [gsizes[d] for d in gorder]
+
+    # The memory engine writes/reads the box densely: the shared region must be the box, packed in TMA order
+    # (a partial tile clamps the shared region to the global bounds as well)
+    ssizes = [_unclamp(size, gdesc.shape) for size in ssubset.size_exact()]
+    sdims = [d for d in sorder if not _sym_equal(ssizes[d], 1)]
+    squeezed_box = [b for b in box if not _sym_equal(b, 1)]
+    if len(sdims) != len(squeezed_box) or any(not _sym_equal(ssizes[d], b) for d, b in zip(sdims, squeezed_box)):
+        return None, (
+            f"the shared region {list(ssizes)} does not match the global box {list(gsizes)} "
+            "(reshapes and transposes are not supported)"
+        )
+    if len(sdims) > 1 and _sym_equal(gdesc.strides[-1], 1) != _sym_equal(sdesc.strides[-1], 1):
+        # The engine stores the box in the global array's order, so a differently ordered shared array would be transposed
+        return None, "the global and shared arrays have different memory orders (transposes are not supported)"
+    packed = 1
+    for d in sdims:
+        if not _sym_equal(sdesc.strides[d], packed):
+            return None, f"the shared region of {sname} is not packed"
+        packed *= ssizes[d]
+
+    for b in box:
+        b_int = _static_int(b)
+        if b_int is not None and b_int > MEMORY_ENGINE_MAX_BOX_DIM:
+            return None, f"box dimensions must be at most {MEMORY_ENGINE_MAX_BOX_DIM} (got {list(gsizes)})"
+    box0 = _static_int(box[0])
+    if box0 is not None and (box0 * elem_bytes) % MEMORY_ENGINE_STRIDE_ALIGNMENT != 0:
+        return None, (
+            f"the contiguous box extent must be a multiple of {MEMORY_ENGINE_STRIDE_ALIGNMENT} bytes "
+            f"(got {box0} Elements x {elem_bytes}B/Element)"
+        )
+    for d in gorder[1:]:
+        stride = _static_int(gdesc.strides[d])
+        if stride is not None and (stride * elem_bytes) % MEMORY_ENGINE_STRIDE_ALIGNMENT != 0:
+            return None, (
+                f"global strides must be multiples of {MEMORY_ENGINE_STRIDE_ALIGNMENT} bytes "
+                f"(got {stride} Elements x {elem_bytes}B/Element in {gname})"
+            )
+    # When offsetting into a shared memory container, the base address must be aligned. For symbolic offsets, this
+    # can't be checked statically and the hardware faults at runtime.
+    soffset = _static_int(sum(m * s for m, s in zip(ssubset.min_element(), sdesc.strides)))
+    if soffset is not None and (soffset * elem_bytes) % MEMORY_ENGINE_SHARED_ALIGNMENT != 0:
+        return None, f"the shared region must start {MEMORY_ENGINE_SHARED_ALIGNMENT} byte aligned"
+
+    gmin = gsubset.min_element()
+    return MemoryEngineGeometry(
+        is_load=is_load,
+        global_name=gname,
+        global_desc=gdesc,
+        global_subset=gsubset,
+        shared_name=sname,
+        shared_desc=sdesc,
+        shared_subset=ssubset,
+        dims=[gdesc.shape[d] for d in gorder],
+        strides=[gdesc.strides[d] for d in gorder],
+        box=box,
+        coords=[gmin[d] for d in gorder],
+        data_type=_TMA_DATA_TYPES[gdesc.dtype],
+    ), None
+
+
+def _memory_engine_transient_container(
+    node: nodes.Node, state: dace.SDFGState, geometry: MemoryEngineGeometry
+) -> tuple[dace.SDFG, str]:
+    """The transient container behind the shared side of a ``MemoryEngineBulk`` copy.
+
+    Inside a NestedSDFG the shared side is an argument; this follows it outward to the transient that the shared
+    memory planner places (see ``gpu_shared_memory.PlanSharedMemory``).
+
+    :param node: the copy node or expanded tasklet.
+    :param state: state containing ``node``.
+    :param geometry: the copy geometry from :func:`memory_engine_geometry`.
+    :returns: the SDFG holding the container and its name.
+    """
+    sdfg = state.sdfg
+    in_edge, out_edge = _memory_engine_edges(node, state)
+    edge = out_edge if geometry.is_load else in_edge
+    while True:
+        path = state.memlet_path(edge)
+        access_node = path[-1].dst if geometry.is_load else path[0].src
+        nsdfg_node = sdfg.parent_nsdfg_node
+        if sdfg.arrays[access_node.data].transient or nsdfg_node is None:
+            return sdfg, access_node.data
+        parent_state = sdfg.parent
+        if geometry.is_load:
+            edge = next(e for e in parent_state.out_edges(nsdfg_node) if e.src_conn == access_node.data)
+        else:
+            edge = next(e for e in parent_state.in_edges(nsdfg_node) if e.dst_conn == access_node.data)
+        state, sdfg = parent_state, sdfg.parent_sdfg
+
+
+def _cuda_archs_support_memory_engine() -> bool:
+    """False if ``compiler.cuda.cuda_arch`` lists an architecture older than Hopper (empty means native)."""
+    archs = dace.Config.get("compiler", "cuda", "cuda_arch").replace(";", ",")
+    archs = archs.split(",")
+    archs = [a.strip() for a in archs if a.strip()]
+    for arch in archs:
+        # check valid architectures ignoring family or arch specific suffix
+        if not all(c.isdigit() for c in arch) and arch[-1] not in ["a", "f"]:
+            warnings.warn(f"compiler.cuda.cuda_arch contains unknown architecture: {arch}")
+
+    numbers = [int("".join(c for c in a if c.isdigit()) or 0) for a in archs]
+    return all(n >= 90 for n in numbers)
+
+
+def _shared_container_reason(node: nodes.Node, state: dace.SDFGState, geometry: MemoryEngineGeometry) -> str | None:
+    """Why the shared side of a ``MemoryEngineBulk`` copy cannot be placed in static shared memory, which is
+    ``MEMORY_ENGINE_SHARED_ALIGNMENT`` aligned (dynamic shared memory is not), or ``None`` if it can."""
+    sdfg, name = _memory_engine_transient_container(node, state, geometry)
+    desc = sdfg.arrays[name]
+    if desc.storage != dtypes.StorageType.GPU_Shared:
+        return f"the transient container {name} being {'loaded from' if geometry.is_load else 'stored to'} is not in shared memory"
+    if dtypes.is_dynamic_shared(desc.storage):
+        # TODO: remove this reason once dynamic shared memory is supported
+        return f"the shared container {name} is placed in dynamic shared memory, which is not 128 byte aligned"
+    if symbolic.issymbolic(desc.total_size_in_bytes, sdfg.constants):
+        # TODO: remove this reason once dynamic shared memory is supported
+        return f"the shared container {name} has a symbolic size, so it cannot be placed in static shared memory"
+    return None
+
+
+def memory_engine_bulk_reason(node: nodes.Node, state: dace.SDFGState) -> str | None:
+    """Why ``MemoryEngineBulk`` cannot expand ``node``, or ``None`` if it can.
+
+    :param node: the ``CopyLibraryNode`` that is being expanded.
+    :param state: state containing ``node``.
+    :returns: a human-readable reason, or ``None``.
+    """
+    geometry, reason = memory_engine_geometry(node, state)
+    if reason is not None:
+        return reason
+    reason = _shared_container_reason(node, state, geometry)
+    if reason is not None:
+        return reason
+    sdfg = state.sdfg
+    if not is_in_scope(sdfg, state, node, [dtypes.ScheduleType.GPU_Device]):
+        return "MemoryEngineBulk must be placed inside a GPU_Device map (kernel)"
+    sub_block_schedules = [
+        dtypes.ScheduleType.GPU_ThreadBlock,
+        dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+        dtypes.ScheduleType.GPU_Warp,
+    ]
+    if is_in_scope(sdfg, state, node, sub_block_schedules):
+        return (
+            "MemoryEngineBulk IS the thread-block-level operation and must not be nested inside a "
+            "GPU_ThreadBlock or GPU_Warp map"
+        )
+    if get_gpu_backend() != "cuda":
+        # TODO: update once HIP is supported
+        return "MemoryEngineBulk requires the CUDA backend"
+    if not _cuda_archs_support_memory_engine():
+        return "MemoryEngineBulk requires compute capability 9.0 or newer (see compiler.cuda.cuda_arch)"
+    return None
+
+
+def mark_memory_engine_shared_static(node: nodes.Node, state: dace.SDFGState, geometry: MemoryEngineGeometry):
+    """Pin the shared side of a ``MemoryEngineBulk`` copy to static shared memory, which is aligned for the memory
+    engine. If the static shared memory of the kernel then overflows, the CUDA compiler rejects the kernel instead of
+    the copy faulting at run time. Other containers left to the planner move to dynamic shared memory first.
+
+    TODO: Implement dynamic memory alignment
+    """
+    sdfg, name = _memory_engine_transient_container(node, state, geometry)
+    desc = sdfg.arrays[name]
+    if desc.storage == dtypes.StorageType.GPU_Shared:
+        desc.storage = dtypes.StorageType.GPU_Shared(dynamic=False)
+
+
+def _build_memory_engine_bulk_copy_code(node: "CopyLibraryNode", geometry: MemoryEngineGeometry) -> str:
+    """Build the C++ code for ``ExpandMemoryEngineBulk``.
+
+    The tasklet runs on every thread of the block. A load issues ``cp.async.bulk.tensor`` from the leader
+    thread and waits on the mbarrier at ``_tma_bar`` until all bytes have arrived. A store fences the shared
+    memory writes, issues the copy and waits for its completion. ``node.sync`` adds a leading
+    ``__syncthreads()`` so the shared buffer is no longer read (load) or written (store) by other threads.
+
+    :param node: the :class:`CopyLibraryNode` being expanded.
+    :param geometry: the copy geometry from :func:`memory_engine_geometry`.
+    :returns: the tasklet body.
+    """
+    coords = ", ".join(f"static_cast<int32_t>({sym2cpp(c)})" for c in geometry.coords)
+    code = "__syncthreads();\n" if node.sync else ""
+    code += f"int32_t const _tma_coords[{geometry.rank}] = {{{coords}}};\n"
+    if geometry.is_load:
+        code += (
+            f"dace::cuda::tma_load<{geometry.rank}>({OUTPUT_CONNECTOR_NAME}, &{MEMORY_ENGINE_DESC_INPUT_NAME}, "
+            f"_tma_coords, {MEMORY_ENGINE_BARRIER_INPUT_NAME}, {sym2cpp(geometry.bytes)});\n"
+        )
+    else:
+        code += (
+            f"dace::cuda::tma_store<{geometry.rank}>(&{MEMORY_ENGINE_DESC_INPUT_NAME}, _tma_coords, "
+            f"{INPUT_CONNECTOR_NAME});\n"
+        )
+    return code
+
+
+def _build_memory_engine_desc_code(
+    geometry: MemoryEngineGeometry,
+    dims: list[symbolic.SymExpr],
+    strides: list[symbolic.SymExpr],
+    offset: symbolic.SymExpr,
+) -> str:
+    """Build the host code encoding the tensor map of a ``MemoryEngineBulk`` copy.
+
+    :param geometry: the copy geometry from :func:`memory_engine_geometry`.
+    :param dims: global extents in TMA order, in host symbols.
+    :param strides: global element strides in TMA order, in host symbols.
+    :param offset: element offset of the kernel-visible global array from ``_tma_global``, in host symbols.
+    :returns: the host tasklet body.
+    """
+    elem_bytes = geometry.global_desc.dtype.bytes
+    dims_str = ", ".join(f"(cuuint64_t)({sym2cpp(d)})" for d in dims)
+    strides_str = ", ".join(f"(cuuint64_t)({sym2cpp(s)}) * {elem_bytes}" for s in strides[1:]) or "0"
+    box_str = ", ".join(f"(cuuint32_t)({sym2cpp(b)})" for b in geometry.box)
+    return (
+        f"const cuuint64_t _tma_dims[{geometry.rank}] = {{{dims_str}}};\n"
+        f"const cuuint64_t _tma_strides[{max(geometry.rank - 1, 1)}] = {{{strides_str}}};\n"
+        f"const cuuint32_t _tma_box[{geometry.rank}] = {{{box_str}}};\n"
+        f"{MEMORY_ENGINE_DESC_OUTPUT_NAME} = dace::cuda::make_tiled_tensor_map(__state, {geometry.data_type}, (void *)({MEMORY_ENGINE_GLOBAL_INPUT_NAME} + {sym2cpp(offset)}), {geometry.rank}, _tma_dims, _tma_strides, _tma_box);\n"
+    )
+
+
+def _build_memory_engine_barrier_init_code() -> str:
+    """Build the device code initializing the mbarrier of a ``MemoryEngineBulk`` load (once per kernel)."""
+    return f"dace::cuda::tma_barrier_init({MEMORY_ENGINE_BARRIER_OUTPUT_NAME});\n"
