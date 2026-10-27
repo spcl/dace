@@ -23,6 +23,21 @@ def is_shared_memory_write(node: Node, state: SDFGState) -> bool:
     )
 
 
+def in_explicitly_synchronized_kernel(state: SDFGState, node: Node) -> bool:
+    """Whether ``node`` runs in a kernel whose producer placed every barrier (``Map.explicit_sync``), across nested
+    SDFGs."""
+    sdfg = state.sdfg
+    while True:
+        scope = state.entry_node(node)
+        while scope is not None:
+            if scope.map.schedule == dtypes.ScheduleType.GPU_Device:
+                return scope.map.explicit_sync
+            scope = state.entry_node(scope)
+        if sdfg.parent_nsdfg_node is None:
+            return False
+        sdfg, state, node = sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DefaultSharedMemorySync(ppl.Pass):
@@ -37,6 +52,8 @@ class DefaultSharedMemorySync(ppl.Pass):
         tb_map_exits: dict[MapExit, SDFGState] = {}
         collaborative_smem_copies: dict[AccessNode, SDFGState] = {}
         for node, parent_state in sdfg.all_nodes_recursive():
+            if isinstance(node, (MapExit, AccessNode)) and in_explicitly_synchronized_kernel(parent_state, node):
+                continue
             if isinstance(node, MapExit) and node.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 tb_map_exits[node] = parent_state
             elif isinstance(node, AccessNode) and self.is_collaborative_smem_write(node, parent_state):

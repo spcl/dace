@@ -1325,6 +1325,43 @@ class Map:
         serialize_if=lambda m: m.schedule == dtypes.ScheduleType.GPU_Persistent,
     )
 
+    omp_nowait = Property(
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="End the map's 'omp for' without its implicit barrier. Applies to a CPU_Multicore map inside a "
+        "CPU_Persistent region; anywhere else the map opens its own parallel region, whose end joins anyway",
+        serialize_if=lambda m: m.omp_nowait,
+    )
+
+    cooperative = Property(
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="Launch the kernel cooperatively, so that every block is resident at once and the kernel may "
+        "synchronize the whole grid (a GRID Sync). The grid must fit the device, see ComputePersistentKernelRange",
+        serialize_if=lambda m: m.cooperative,
+    )
+
+    explicit_sync = Property(
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="Every barrier of the kernel is a Sync node its producer placed, and its grid is final: code generation "
+        "inserts no synchronization of its own and does not restructure the grid",
+        serialize_if=lambda m: m.explicit_sync,
+    )
+
+    kernel_handle = Property(
+        dtype=str,
+        default=None,
+        allow_none=True,
+        category="Code Generation",
+        desc="Names the kernel for host code that must query it before the launch: a cooperative kernel with a "
+        "handle gets a host function __dace_persistent_blocks_<handle> returning how many blocks fit the device",
+        serialize_if=lambda m: m.kernel_handle is not None,
+    )
+
     def __init__(
         self,
         label,

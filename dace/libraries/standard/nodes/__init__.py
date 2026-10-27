@@ -11,3 +11,4 @@ from .merge_node import MergeLibraryNode
 from .norm2 import Norm2
 from .reduce import Reduce
 from .sync import Sync, SyncScope
+from .compute_persistent_kernel_range import ComputePersistentKernelRange

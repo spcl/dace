@@ -202,6 +202,13 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         new_kernel_entry.map.allow_chiplet_threadblock_distribution = (
             kernel_map_entry.map.allow_chiplet_threadblock_distribution
         )
+        # The launch is the kernel's: its launch mode, synchronization owner and handle move to the kernel map
+        new_kernel_entry.map.cooperative = kernel_map_entry.map.cooperative
+        new_kernel_entry.map.explicit_sync = kernel_map_entry.map.explicit_sync
+        new_kernel_entry.map.kernel_handle = kernel_map_entry.map.kernel_handle
+        kernel_map_entry.map.cooperative = False
+        kernel_map_entry.map.explicit_sync = False
+        kernel_map_entry.map.kernel_handle = None
 
     def preprocess_default_dims(self):
         """

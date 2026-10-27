@@ -2029,7 +2029,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 if in_persistent:
                     # If already in a #pragma omp parallel, no need to use it twice
                     map_header += "#pragma omp for"
-                    # TODO(later): barriers and map_header += " nowait"
+                    if node.map.omp_nowait:
+                        map_header += " nowait"
                 else:
                     map_header += "#pragma omp parallel for"
 
