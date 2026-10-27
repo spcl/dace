@@ -1281,6 +1281,14 @@ def _overapproximate(expr):
     if isinstance(expr, (sympy.Number, TypedConstant)):
         return expr
 
+    # A strided extent ``ceiling((Min(...) - i + 1) / k)``: ``ceiling`` is monotonic, so bounding the numerator bounds it
+    if isinstance(expr, sympy.ceiling):
+        numerator, denominator = sympy.fraction(sympy.together(expr.args[0]))
+        if denominator.is_Integer and denominator > 0:
+            bound = _overapproximate(numerator)
+            if bound != numerator:
+                return sympy.ceiling(bound / denominator)
+
     # Unification is MILLISECONDS against a microsecond structural test, so refuse on the head
     # first (measured 4.6x on the miss path). NOT gated on ``is_Add``: the trailing ``+ c`` is a
     # Wild that happily binds 0, so ``Min(4, N)`` matches the first pattern with no Add in sight.

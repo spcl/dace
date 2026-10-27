@@ -148,6 +148,13 @@ def test_a_container_named_like_a_parser_builtin_parses_as_a_subscript(name: str
     assert isinstance(parsed.args[0], sympy.Symbol) and parsed.args[0].name == name
 
 
+def test_a_strided_thread_block_extent_overapproximates_to_its_full_tile() -> None:
+    """examinimd on GPU: a thread-block map of step 4 over a 256-wide tile has 64 threads, partial last tile or not."""
+    g, n = symbol("g"), symbol("n")
+    extent = sympy.ceiling(-g / 4 + Min(g + 255, 4 * n**3 - 1) / 4 + sympy.Rational(1, 4))
+    assert symbolic.overapproximate(extent) == 64
+
+
 if __name__ == "__main__":
     test_simplify_ext_min()
     test_shapes_equal_compares_by_name()
@@ -155,3 +162,4 @@ if __name__ == "__main__":
     test_and_or_of_two_symbolic_booleans_keep_both_operands()
     test_floordiv_on_a_symbol_is_int_floor()
     test_relax_int_floor_hands_the_solver_a_head_it_can_invert()
+    test_a_strided_thread_block_extent_overapproximates_to_its_full_tile()
