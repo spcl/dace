@@ -179,6 +179,30 @@ def test_a_row_length_map_in_a_sequential_loop_goes_sequential():
     assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Sequential
 
 
+@pytest.mark.parametrize("inner_reads_data", [True, False])
+def test_a_counter_of_a_row_segment_goes_sequential(inner_reads_data):
+    """amg_setup's ``csr_matmul`` copy-out: ``ntouch`` is reset every row and counts trips of the row's CSR segment,
+    so ``0:ntouch`` is a row segment too (8.4M regions). A counter of a loop over ``0:M`` is not one."""
+    sdfg = dace.SDFG("row_counter")
+    sdfg.add_array("indptr", [N + 1], dace.int64)
+    sdfg.add_array("a", [M], dace.float64)
+    for name in ("cnt", "lo", "hi"):
+        sdfg.add_symbol(name, dace.int64)
+    rows = loop(sdfg, "rows", "N")
+    read = rows.add_state("read_row", is_start_block=True)
+    segment = LoopRegion("segment", "k < hi" if inner_reads_data else "k < M", "k", "k = lo" if inner_reads_data else "k = 0", "k = k + 1")
+    rows.add_node(segment)
+    rows.add_edge(read, segment, dace.InterstateEdge(assignments={"cnt": "0", "lo": "indptr[it]", "hi": "indptr[it + 1]"}))
+    first = segment.add_state("visit", is_start_block=True)
+    segment.add_edge(first, segment.add_state("counted"), dace.InterstateEdge(assignments={"cnt": "cnt + 1"}))
+    body = map_state(rows, sdfg, "body", ["0:cnt"])
+    rows.add_edge(segment, body, dace.InterstateEdge())
+    sdfg.validate()
+    SequentializeSmallAxes().apply_pass(sdfg, {})
+    expected = dtypes.ScheduleType.Sequential if inner_reads_data else dtypes.ScheduleType.Default
+    assert schedules(sdfg)["body_map"] == expected
+
+
 @pytest.mark.parametrize("order_is_small", [True, False])
 def test_a_stencil_width_map_in_a_sequential_loop_goes_sequential(order_is_small):
     """warpx's per-particle stencil: a map over ``0:order + 2 - cnt``, ``cnt`` read from data every particle and

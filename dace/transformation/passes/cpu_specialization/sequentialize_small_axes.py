@@ -94,7 +94,9 @@ def data_derived(sdfg: SDFG, names: set[str], seen: set[tuple[int, str]] | None 
             return True
         for edge in sdfg.all_interstate_edges():
             value = edge.data.assignments.get(name)
-            if value is not None and data_derived(sdfg, set(map(str, edge.data.read_symbols())), seen):
+            if value is not None and data_derived(
+                sdfg, set(map(str, symbolic.free_symbols_and_functions(value) | symbolic.arrays(value))), seen
+            ):
                 return True
         node = sdfg.parent_nsdfg_node
         if node is not None and name in node.symbol_mapping:
@@ -169,9 +171,44 @@ def data_segment(
             return str(begin), str(end)
         names = set().union(*ends)
         local = assigned_in_enclosing_loop(state, names)
-        if local and names - local <= small and all(data_derived(sdfg, {name}) for name in local):
+        if (
+            local
+            and names - local <= small
+            and all(data_derived(sdfg, {name}) or segment_counter(state, name) for name in local)
+        ):
             return str(begin), str(end)
     return None
+
+
+def segment_counter(state: SDFGState, name: str) -> bool:
+    """Whether ``name`` counts trips of data segments: inside the loop enclosing ``state`` every assignment to it is
+    a literal or ``name + literal``, and each increment lies in a loop whose bounds are read from data (``ntouch``
+    of a CSR row product), so it is no larger than those segments."""
+    loop = innermost_loop(state)
+    if loop is None or loop.sdfg is not state.sdfg:
+        return False
+    symbol = symbolic.symbol(name)
+    increments = 0
+    for region in loop.all_control_flow_regions():
+        for edge in region.edges():
+            value = edge.data.assignments.get(name)
+            if value is None:
+                continue
+            expr = symbolic.pystr_to_symbolic(value)
+            if expr.is_Integer:
+                continue
+            if not (expr - symbol).is_Integer:
+                return False
+            inner = region
+            while not isinstance(inner, LoopRegion):
+                inner = inner.parent_graph
+            bounds = (loop_analysis.get_init_assignment(inner), loop_analysis.get_loop_end(inner))
+            if inner is loop or any(b is None for b in bounds):
+                return False
+            if not all(data_derived(state.sdfg, {str(s) for s in symbolic.free_symbols_and_functions(b)}) for b in bounds):
+                return False
+            increments += 1
+    return increments > 0
 
 
 def small_count(count: Any, facts: symbolic.Facts) -> bool:
