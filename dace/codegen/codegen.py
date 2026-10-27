@@ -236,7 +236,7 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     # code-generation copy of the SDFG. This is a no-op unless a memlet carries a non-default policy. It must
     # follow InsertExplicitCopies (which moves the policy of a lifted copy onto the library node's operand
     # memlet) and precede library-node expansion (whose generated code addresses the rewritten operands).
-    from dace.transformation.passes.memlet_access_policies import LowerMemletAccessPolicies
+    from dace.transformation.passes.memlet_access_policy_lowering import LowerMemletAccessPolicies
 
     LowerMemletAccessPolicies().apply_pass(sdfg, {})
 

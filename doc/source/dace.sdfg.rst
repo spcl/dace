@@ -64,6 +64,22 @@ dace.sdfg.memlet_access_policy module
    :undoc-members:
    :show-inheritance:
 
+dace.sdfg.memlet_access_policies.copy_on_access module
+------------------------------------------------------
+
+.. automodule:: dace.sdfg.memlet_access_policies.copy_on_access
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.sdfg.memlet_access_policies.loop_cursor module
+---------------------------------------------------
+
+.. automodule:: dace.sdfg.memlet_access_policies.loop_cursor
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.sdfg.propagation module
 ----------------------------
 

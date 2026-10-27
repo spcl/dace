@@ -21,7 +21,8 @@ from dace.properties import (
     make_properties,
 )
 from dace.sdfg.graph import generate_element_id
-from dace.sdfg.memlet_access_policy import CopyOnAccess, MemletAccessPolicy
+from dace.sdfg.memlet_access_policies import CopyOnAccess
+from dace.sdfg.memlet_access_policy import MemletAccessPolicy
 
 if TYPE_CHECKING:
     import dace.sdfg.graph

@@ -10,10 +10,12 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.memlet_access_policy import CopyOnAccess, LoopCursor
+from dace.sdfg.memlet_access_policies import CopyOnAccess, LoopCursor
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.memlet_access_policies import AssignLoopCursors, LowerMemletAccessPolicies
+from dace.transformation.passes.memlet_access_policies import AssignLoopCursors
+from dace.transformation.passes.memlet_access_policies.helpers import leaf_edges
+from dace.transformation.passes.memlet_access_policy_lowering import LowerMemletAccessPolicies
 
 N = dace.symbol("N")
 
@@ -483,8 +485,6 @@ def test_lowering_is_idempotent():
 
 def test_manual_policy_lowering_matches_analysis():
     # A hand-written policy (what a tuner would set) is honored as long as it re-derives consistently.
-    from dace.transformation.passes.memlet_access_policies import leaf_edges
-
     sdfg = _strided_concrete.to_sdfg()
     for st in sdfg.states():
         for e in leaf_edges(st):

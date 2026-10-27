@@ -76,7 +76,22 @@ Memlet Consolidation
 Memlet Access Policies (Loop-Carried Address Cursors)
 -----------------------------------------------------
 
-.. automodule:: dace.transformation.passes.memlet_access_policies
+.. automodule:: dace.transformation.passes.memlet_access_policies.assign_loop_cursors
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: dace.transformation.passes.memlet_access_policy_lowering
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: dace.transformation.passes.memlet_access_policies.loop_cursor_lowering
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: dace.transformation.passes.memlet_access_policies.helpers
    :members:
    :undoc-members:
    :show-inheritance:

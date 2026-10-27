@@ -447,21 +447,21 @@ or library node, or a copy between two access nodes) carries an ``access_policy`
 :class:`~dace.sdfg.memlet_access_policy.MemletAccessPolicy`, that describes *how its addressing is realized* in generated code.
 The policy is purely descriptive: it never changes the semantics of the SDFG, and it is lowered to ordinary SDFG
 constructs (symbols, loop statements, reference containers) in the code-generation window by
-:class:`~dace.transformation.passes.memlet_access_policies.LowerMemletAccessPolicies`, so that code generation itself knows
+:class:`~dace.transformation.passes.memlet_access_policy_lowering.LowerMemletAccessPolicies`, so that code generation itself knows
 nothing about policies. Memlet paths are global: nested SDFGs receive whole containers, so a path continues through
 the chain of nested SDFGs down to the leaf memlets inside them, and a policy may place the address computation of
 its leaf memlet anywhere along that path (e.g., relative to a loop of an enclosing SDFG). Two kinds exist today:
 
-  * :class:`~dace.sdfg.memlet_access_policy.CopyOnAccess` (the default): the full offset expression is evaluated at every
+  * :class:`~dace.sdfg.memlet_access_policies.copy_on_access.CopyOnAccess` (the default): the full offset expression is evaluated at every
     access and data moves at the access (or through the copy library node inserted for access-node-to-access-node
     copies). This is the behavior every SDFG had before access policies existed; it is not serialized.
-  * :class:`~dace.sdfg.memlet_access_policy.LoopCursor`: the memlet's element offset is affine in the induction variable of
+  * :class:`~dace.sdfg.memlet_access_policies.loop_cursor.LoopCursor`: the memlet's element offset is affine in the induction variable of
     an enclosing :class:`~dace.sdfg.state.LoopRegion`. The record names the loop and states the number of elements the
     address advances per iteration (``step``), the loop-invariant part of the base offset (``base_invariant``), the
     part that depends on thread/lane map parameters (``lane_part``), and optionally the cursor's integer type
     (``cursor_type``, a DaCe data type; ``None`` picks int32 when the array extent provably fits, else int64).
     Policies of this kind can be attached by hand, by a tuner, or by the
-    :class:`~dace.transformation.passes.memlet_access_policies.AssignLoopCursors` analysis pass:
+    :class:`~dace.transformation.passes.memlet_access_policies.assign_loop_cursors.AssignLoopCursors` analysis pass:
 
 .. code-block:: python
 
