@@ -42,6 +42,7 @@ class StructuralSymbols:
     map_entries: dict[nodes.MapEntry, None] = dataclasses.field(default_factory=dict)
     nested: dict[nodes.NestedSDFG, None] = dataclasses.field(default_factory=dict)
     tasklets: dict[nodes.Tasklet, None] = dataclasses.field(default_factory=dict)
+    library_nodes: dict[nodes.LibraryNode, None] = dataclasses.field(default_factory=dict)
     edges: dict[MultiConnectorEdge[Memlet], None] = dataclasses.field(default_factory=dict)
     interstate: dict[InterstateEdge, None] = dataclasses.field(default_factory=dict)
 
@@ -77,6 +78,9 @@ def extend_structural_symbols(sd: SDFG, found: StructuralSymbols) -> None:
             elif isinstance(node, nodes.NestedSDFG) and node not in found.nested:
                 found.nested[node] = None
                 found.names.update(sdutil.nested_mapping_symbols(node))
+            elif isinstance(node, nodes.LibraryNode) and node not in found.library_nodes:
+                found.library_nodes[node] = None
+                found.names.update(str(s) for s in node.free_symbols)
             elif isinstance(node, nodes.Tasklet) and node not in found.tasklets:
                 found.tasklets[node] = None
                 if node.code.language is dtypes.Language.Python:

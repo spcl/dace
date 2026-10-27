@@ -3288,6 +3288,9 @@ def structural_symbols(sdfg: "dace.SDFG") -> set[str]:
                 structural.update(str(s) for s in node.map.range.free_symbols)
             elif isinstance(node, nd.NestedSDFG):
                 structural.update(nested_mapping_symbols(node))
+            elif isinstance(node, nd.LibraryNode):
+                # A library node reads its properties' symbols (a BLAS alpha), which a demotion cannot rewrite
+                structural.update(str(s) for s in node.free_symbols)
             if isinstance(node, nd.Tasklet) and node.code.language is dtypes.Language.Python:
                 structural.update(
                     subscript_index_symbols(node.code.code, node.in_connectors.keys() | node.out_connectors.keys())
