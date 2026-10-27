@@ -73,6 +73,19 @@ def test_the_two_branch_maps_become_one_selecting_map():
         assert np.allclose(out, expected(a, b, m))
 
 
+def test_a_branch_copying_beside_its_map_stays_a_branch():
+    """cloudsc_monolith's else arm copies ``zvqx[k]`` into a scalar beside its map: merged, the copy is lost."""
+    sdfg = limiter.to_sdfg(simplify=True)
+    sdfg.add_array("c", [1], dace.float64)
+    block = next(b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock))
+    state = next(st for _, region in block.branches for st in region.nodes() if st.number_of_nodes() > 0)
+    state.add_nedge(state.add_read("a"), state.add_write("c"), dace.Memlet("a[0] -> [0]"))
+    sdfg.validate()
+
+    assert SelectBranchMaps().apply_pass(sdfg, {}) is None
+    assert any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks())
+
+
 def test_canonicalization_fuses_the_select_with_its_producers():
     sdfg = limiter.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
@@ -103,5 +116,6 @@ def test_a_condition_on_a_scalar_is_handed_to_the_select():
 if __name__ == "__main__":
     test_branch_maps_without_a_fusion_partner_stay_apart()
     test_the_two_branch_maps_become_one_selecting_map()
+    test_a_branch_copying_beside_its_map_stays_a_branch()
     test_canonicalization_fuses_the_select_with_its_producers()
     test_a_condition_on_a_scalar_is_handed_to_the_select()
