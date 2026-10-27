@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``compiler.build_plugin``: ``SDFG.compile`` hands the SDFG to an installed package's ``dace.build_plugins`` entry
 point instead of building it the DaCe way."""
+
 import pathlib
 import sys
 import tempfile
@@ -10,14 +11,14 @@ import pytest
 import dace
 from dace.config import set_temporary
 
-PLUGIN = '''
+PLUGIN = """
 CALLS = []
 
 
 def build(sdfg, **compile_args):
     CALLS.append((sdfg.name, compile_args))
     return "built by the plugin"
-'''
+"""
 
 
 def installed_plugin(root: pathlib.Path) -> None:
@@ -43,12 +44,11 @@ def test_a_named_build_plugin_builds_the_program_with_the_compile_arguments():
             with set_temporary("compiler", "build_plugin", value="fake"):
                 built = empty_program().compile(validate=False, return_program_handle=False)
             import fake_build_plugin
+
             assert built == "built by the plugin"
-            assert fake_build_plugin.CALLS == [("build_plugin_program", {
-                "output_file": None,
-                "validate": False,
-                "return_program_handle": False
-            })]
+            assert fake_build_plugin.CALLS == [
+                ("build_plugin_program", {"output_file": None, "validate": False, "return_program_handle": False})
+            ]
         finally:
             sys.path.remove(root)
             sys.modules.pop("fake_build_plugin", None)
