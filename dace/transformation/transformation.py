@@ -747,6 +747,9 @@ class ExpandTransformation(PatternTransformation):
             )
         elif isinstance(expansion, nd.CodeNode):
             expansion.debuginfo = node.debuginfo
+            # A node with no edges only enters the state here; the edge moves below add the rest
+            if expansion not in state.nodes():
+                state.add_node(expansion)
             if isinstance(expansion, nd.NestedSDFG):
                 # Fix parent references
                 nsdfg = expansion.sdfg
