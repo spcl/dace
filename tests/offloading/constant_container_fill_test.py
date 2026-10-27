@@ -1,15 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A container nothing writes is filled on the other side once, at the program's entry.
 
-The copy analysis records WHERE a container is needed at each program point, not whether its data
-changed, so a device array the host reads inside a loop is moved to the host and back around every
-iteration: polybench nussinov read ``seq`` on the host inside its ``j`` loop and paid a
-``seq -> seq_host`` fill in the loop body and a ``seq_host -> seq`` copy at the end of each
-iteration, 6.4 million pageable copies per call at N=3591 (400 s against a 22 s kernel). Neither
-side ever writes ``seq``, so every copy after the first carries the bytes already there.
+A device array the host reads inside a loop would otherwise move to the host and back around every iteration,
+though neither side ever writes it and every copy after the first carries the bytes already there.
 """
 
 import collections
+import sys
 
 import numpy as np
 import pytest
@@ -105,3 +102,9 @@ def test_the_offloaded_recurrence_computes_what_numpy_computes():
     sdfg(seq=d_seq, table=d_table, N=40)
     np.testing.assert_array_equal(cupy.asnumpy(d_table), want)
     np.testing.assert_array_equal(cupy.asnumpy(d_seq), seq)
+
+
+if __name__ == "__main__":
+    test_a_container_nothing_writes_is_filled_once_at_the_entry()
+    if len(sys.argv) > 1 and sys.argv[1] == "gpu":
+        test_the_offloaded_recurrence_computes_what_numpy_computes()

@@ -39,6 +39,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import TrivialMapElimination
 from dace.transformation.helpers import isolate_nested_sdfg, isolate_small_map_axes
 from dace.transformation.passes import FuseMaps
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
@@ -98,6 +99,24 @@ def in_sequential_specialization_arm(block) -> bool:
             return True
         current = current.parent_graph
     return False
+
+
+def runs_on_every_path(block) -> bool:
+    """Whether ``block`` runs on every path through its SDFG: no conditional around it, only loops that provably
+    iterate, and no conditional edge, break, continue or return on the way."""
+    region = block.parent_graph
+    while True:
+        if not isinstance(region, SDFG) and (
+            not isinstance(region, LoopRegion) or not loop_analysis.loop_provably_at_least_one_iteration(region)
+        ):
+            return False
+        if any(not edge.data.is_unconditional() for edge in region.edges()):
+            return False
+        if any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in region.all_control_flow_blocks()):
+            return False
+        if isinstance(region, SDFG):
+            return True
+        region = region.parent_graph
 
 
 def in_a_loop(block) -> bool:
@@ -299,6 +318,9 @@ class OffloadToAccelerator(ppl.Pass):
         desc = sdfg.arrays[name]
         whole = subsets.Range.from_array(desc)
         for state in sdfg.states():
+            # A write on only some paths leaves the others to copy out what the allocation held
+            if not runs_on_every_path(state):
+                continue
             for node in state.data_nodes():
                 if node.data != name:
                     continue
