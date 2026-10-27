@@ -15,7 +15,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets import cpp
 from dace.codegen.targets.cpp import mangle_dace_state_struct_name, ptr, sym2cpp
-from dace.codegen.targets.cpu import CPUCodeGen
+from dace.codegen.targets.cpu import CPUCodeGen, hands_on_unchanged
 from dace.codegen.targets.cuda import (
     _DYNAMIC_SHARED_MEMORY_SYMBOL,
     chiplet_count,
@@ -486,14 +486,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ) -> None:
-        # One container handed on through the scope exits with a single subset moves nothing; the
-        # CPU copy would take the exit's slice as the source and the whole container as the target.
-        if (
-            isinstance(src_node, nodes.AccessNode)
-            and isinstance(dst_node, nodes.AccessNode)
-            and src_node.data == dst_node.data
-            and all(e.data.data == src_node.data and e.data.other_subset is None for e in dfg.memlet_path(edge))
-        ):
+        if hands_on_unchanged(dfg, src_node, dst_node, edge):
             return
         # All CPU<->GPU and GPU<->GPU AccessNode->AccessNode edges (host-issued
         # and in-kernel collaborative) are lifted to ``CopyLibraryNode`` by
