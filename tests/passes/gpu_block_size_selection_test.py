@@ -5,6 +5,8 @@ None of these need a GPU: they build SDFGs, run the selection pass, and inspect
 ``map.gpu_block_size`` -- pure SDFG manipulation.
 """
 
+import pytest
+
 import dace
 from dace import dtypes, nodes, subsets
 from dace.transformation.passes.gpu_block_size_selection import (
@@ -211,6 +213,42 @@ def test_pass_does_not_override_user_block_size():
     assert device_maps(sdfg)[0].gpu_block_size == [8, 8, 1]
 
 
+def two_device_maps_sdfg() -> dace.SDFG:
+    """Two 1-D ``GPU_Device`` maps, one per state, in that order."""
+    sdfg = dace.SDFG("two_kernels")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    first = sdfg.add_state("first")
+    second = sdfg.add_state_after(first, "second")
+    for state, label in ((first, "first"), (second, "second")):
+        state.add_mapped_tasklet(
+            label,
+            {"i": "0:N"},
+            {"a": dace.Memlet("A[i]")},
+            "b = a + 1",
+            {"b": dace.Memlet("B[i]")},
+            schedule=dtypes.ScheduleType.GPU_Device,
+            external_edges=True,
+        )
+    return sdfg
+
+
+def test_an_override_gives_the_map_of_its_ordinal_that_block_and_leaves_the_others_to_the_pick():
+    sdfg = two_device_maps_sdfg()
+
+    with dace.config.set_temporary("compiler", "cuda", "block_size_overrides", value="1:32,4,1"):
+        assigned = select_gpu_device_block_size(sdfg)
+
+    assert assigned == {"first_map": BLOCK_1D, "second_map": [32, 4, 1]}
+    assert [m.gpu_block_size for m in device_maps(sdfg)] == [BLOCK_1D, [32, 4, 1]]
+
+
+def test_a_malformed_override_is_refused_by_its_entry():
+    with dace.config.set_temporary("compiler", "cuda", "block_size_overrides", value="0:32,4"):
+        with pytest.raises(ValueError, match="'0:32,4' is not ordinal:x,y,z"):
+            select_gpu_device_block_size(two_device_maps_sdfg())
+
+
 def test_pass_ignores_cpu_map():
     sdfg, _ = build_2d_map_sdfg(dtypes.ScheduleType.CPU_Multicore)
     assert select_gpu_device_block_size(sdfg) == {}
@@ -349,6 +387,8 @@ if __name__ == "__main__":
     test_every_block_stays_in_the_thread_band()
     test_pass_assigns_2d_square()
     test_pass_does_not_override_user_block_size()
+    test_an_override_gives_the_map_of_its_ordinal_that_block_and_leaves_the_others_to_the_pick()
+    test_a_malformed_override_is_refused_by_its_entry()
     test_pass_ignores_cpu_map()
     test_gpu_transform_end_to_end()
     test_gpu_transform_1d_end_to_end()
