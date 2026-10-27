@@ -613,6 +613,7 @@ theorem nestedSetup_shift (s : State) (n : DNode) (inner : SDFG) (mapping : List
     nestedSetup ctx ρ s n inner mapping (st.shift L) =
       (nestedSetup ctx ρ s n inner mapping st).map (shiftNested L) := by
   unfold nestedSetup
+  refine Res.bind_shift' _ fun _ => ?_
   refine Res.bind_shift' _ fun conns => ?_
   simp only [St.shift_mem]
   refine Res.bind_shift' _ fun ρ' => ?_

@@ -2682,6 +2682,10 @@ theorem nestedSetup_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNod
     (h : St.Sim π P L st₂ st₁) :
     ResSim (NestedSim π P L) (nestedSetup ctx₂ ρ s n inner mapping st₂) (nestedSetup ctx₁ ρ s n inner mapping st₁) := by
   unfold nestedSetup
+  rcases nestedCheck inner with u | e
+  swap
+  · exact ResSim.err e
+  simp only [Res.ok_bind]
   rw [nestedBindings_sim hc hS]
   cases hb : nestedBindings ctx₁ s n with
   | err e => exact ResSim.err e
@@ -2936,7 +2940,10 @@ def InvSim (π : Equiv.Perm Name) (P : Name → Prop) (L : Name → Prop) (x₂ 
 theorem nestedSetup_I {ctx ctx' : Ctx} {ρ ρ' : Valuation} {s : State} {n : DNode} {inner : SDFG}
     {mapping : List (Sym × Expr)} {st st' : St} {dropped : List Name}
     (h : nestedSetup ctx ρ s n inner mapping st = .ok (ctx', ρ', st', dropped)) : ctx'.I = ctx.I := by
-  unfold nestedSetup at h
+  unfold nestedSetup nestedCheck at h
+  split at h
+  · cases h
+  simp only [Res.ok_bind] at h
   cases hb : nestedBindings ctx s n with
   | err e => rw [hb] at h; cases h
   | ok conns =>

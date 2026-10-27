@@ -833,6 +833,14 @@ def Ctx.allocate (ctx : Ctx) (ts : List Name) (m : Mem) : Mem :=
     rw [ih]
     split <;> rfl
 
+/-- A nested SDFG may not own a transient that outlives a run
+(`Decisions.md#D63`): canonical SDFGs hoist `Persistent` and `External`
+transients to the top-level SDFG (`HoistOutlivingTransients`). -/
+def nestedCheck (inner : SDFG) : Res Unit :=
+  if inner.ownsOutliving then
+    .err (.malformed s!"nested SDFG '{inner.name}' owns a Persistent or External transient (hoist it to the top level)")
+  else .ok ()
+
 /-- Set-up of a nested invocation: connector bindings, inner context,
 valuation, the per-call transients allocated (fresh containers: uninitialized
 cells and empty queues, like map-private transients), scalar code inputs
@@ -841,6 +849,7 @@ Returns the memory names whose log entries stay inside the call: the
 connectors on code edges and the per-call transients. -/
 def nestedSetup (ctx : Ctx) (ρ : Valuation) (s : State) (n : DNode) (inner : SDFG) (mapping : List (Sym × Expr))
     (st : St) : Res (Ctx × Valuation × St × List Name) := do
+  nestedCheck inner
   let conns ← nestedBindings ctx s n
   let ctx' := ctx.enter inner n.id conns
   let ρ' ← nestedValuation ctx ρ st.mem mapping

@@ -1448,6 +1448,7 @@ theorem nestedSetup_relabel (s : State) (n : DNode) (hn : φ n.id = n.id) (inner
       (nestedSetup ctx ρ s n inner mapping st).map (relabelNested φ) := by
   unfold nestedSetup
   rw [nestedBindings_relabel, DNode.relabel_id, hn]
+  refine Res.bind_shift' _ fun _ => ?_
   refine Res.bind_shift' _ fun conns => ?_
   simp only [St.relabel_mem]
   refine Res.bind_shift' _ fun ρ' => ?_

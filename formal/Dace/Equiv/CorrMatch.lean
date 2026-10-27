@@ -359,6 +359,8 @@ constants. -/
 structure NestedMapOk (ctx : Ctx) (inner : SDFG) (mapping : List (Sym × Expr)) : Prop where
   ident : ∀ p ∈ mapping, p.2 = .sym p.1 ∧ ctx.isScalarName p.1 = false
   consts : ∀ ρ, inner.withConstants ρ = ρ
+  /-- The inner SDFG owns no transient that outlives a run (canonical form). -/
+  check : nestedCheck inner = .ok ()
 
 theorem Mem.allocAll_append (m : Mem) (a b : List Name) : (m.allocAll a).allocAll b = m.allocAll (a ++ b) := by
   simp [Mem.allocAll, List.foldl_append]
@@ -457,14 +459,15 @@ theorem nestedFinish_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode}
   nestedFinish_data' h
 
 theorem nestedSetup_eq {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {inner : SDFG}
-    {mapping : List (Sym × Expr)} {st : St} {conns : List (Name × Name)} (hb : nestedBindings ctx s n = .ok conns)
+    {mapping : List (Sym × Expr)} {st : St} {conns : List (Name × Name)} (hck : nestedCheck inner = .ok ())
+    (hb : nestedBindings ctx s n = .ok conns)
     (hcode : ∀ c ∈ nestedConns n, (nestedEndpoint s n c).isData = true) :
     nestedSetup ctx ρ s n inner mapping st = (nestedValuation ctx ρ st.mem mapping).bind fun ρ' =>
       .ok (ctx.enter inner n.id conns, ρ',
         { st with mem := st.mem.allocAll (inner.callTransients.map (ctx.enter inner n.id conns).cname) },
         inner.callTransients.map (ctx.enter inner n.id conns).cname) := by
   unfold nestedSetup
-  rw [hb]
+  rw [hck, Res.ok_bind, hb]
   simp only [Res.ok_bind]
   cases hv : nestedValuation ctx ρ st.mem mapping with
   | err e => rfl
@@ -1700,7 +1703,7 @@ theorem nested_body (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {n : DNode} 
     | false => exact .inl ⟨_, rfl, .hbRace hto hp hs hf⟩
     | true => exact .inr (.run hto hp hs hf)
   have hset := nestedSetup_eq (ρ := pre.ρ.bindIdx mp.params i) (inner := inner) (mapping := mapping)
-    (st := (iterStart (ctx.privateTransients s n.id) st₁).forNode) hb hcode
+    (st := (iterStart (ctx.privateTransients s n.id) st₁).forNode) hmap.check hb hcode
   rcases nestedValuation_id hmap (pre.ρ.bindIdx mp.params i) (iterStart (ctx.privateTransients s n.id) st₁).forNode.mem with
     hval | ⟨e, hval, hu⟩
   rotate_left
@@ -1795,7 +1798,7 @@ theorem nested_call (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {nd : DNode}
     (∃ e, e.isUB = true ∧ NodeExec ctx ρ s nd st₀ (.err e)) ∨
     (∃ e e', res = .err e ∧ NodeExec ctx ρ s nd st₀ (.err e')) ∨
     ∃ c, res = .ok (.normal, c) ∧ NodeExec ctx ρ s nd st₀ (.ok { mem := c.mem, log := st₀.log.seq c.log, vals := st₀.vals }) := by
-  have hset := nestedSetup_eq (ρ := ρ) (inner := inner) (mapping := mapping) (st := st₀) hb hcode
+  have hset := nestedSetup_eq (ρ := ρ) (inner := inner) (mapping := mapping) (st := st₀) hmap.check hb hcode
   rcases nestedValuation_id hmap ρ st₀.mem with hval | ⟨e, hval, hu⟩
   rotate_left
   · rw [hval] at hset

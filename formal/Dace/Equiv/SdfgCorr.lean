@@ -37,111 +37,9 @@ namespace Dace
 
 /-! ## Interfaces after replacing a block -/
 
-@[simp] theorem Block.outlivingNames_state (pfx : String) (s : State) :
-    Block.outlivingNames pfx (.state s) = DNodes.outlivingNames pfx s.nodes := by
-  cases s; rfl
-
-theorem Blocks.outlivingNames_set (pfx : String) :
-    ∀ {bs : List Block} {j : Nat} {x x' : Block}, bs[j]? = some x →
-      Block.outlivingNames pfx x' = Block.outlivingNames pfx x →
-        Blocks.outlivingNames pfx (bs.set j x') = Blocks.outlivingNames pfx bs
-  | [], _, _, _, h, _ => by simp at h
-  | y :: bs, 0, x, x', h, hx => by
-    simp only [List.getElem?_cons_zero, Option.some.injEq] at h
-    subst h
-    simp [Blocks.outlivingNames, hx]
-  | y :: bs, j + 1, x, x', h, hx => by
-    simp only [List.getElem?_cons_succ] at h
-    simp [Blocks.outlivingNames, Blocks.outlivingNames_set pfx h hx]
-
-theorem Branches.outlivingNames_set (pfx : String) :
-    ∀ {brs : List (Option Expr × Region)} {k : Nat} {e : Option Expr} {c c' : Region}, brs[k]? = some (e, c) →
-      Region.outlivingNames pfx c' = Region.outlivingNames pfx c →
-        Branches.outlivingNames pfx (brs.set k (e, c')) = Branches.outlivingNames pfx brs
-  | [], _, _, _, _, h, _ => by simp at h
-  | y :: brs, 0, e, c, c', h, hx => by
-    simp only [List.getElem?_cons_zero, Option.some.injEq] at h
-    subst h
-    simp [Branches.outlivingNames, hx]
-  | y :: brs, k + 1, e, c, c', h, hx => by
-    obtain ⟨c₀, r₀⟩ := y
-    simp only [List.getElem?_cons_succ] at h
-    simp [Branches.outlivingNames, Branches.outlivingNames_set pfx h hx]
-
-theorem Region.outlivingNames_setBlocks (pfx : String) {r : Region} {j : BlockId} {x x' : Block}
-    (hj : r.block? j = some x) (hx : Block.outlivingNames pfx x' = Block.outlivingNames pfx x) :
-    Region.outlivingNames pfx { r with blocks := r.blocks.set j x' } = Region.outlivingNames pfx r := by
-  obtain ⟨_, _, blocks, _, edges⟩ := r
-  simp only [Region.outlivingNames]
-  rw [Blocks.outlivingNames_set pfx hj hx]
-
-theorem Region.outlivingNames_setChild (pfx : String) {r : Region} {st : PathStep} {c c' : Region}
-    (hc : r.child? st = some c) (h : Region.outlivingNames pfx c' = Region.outlivingNames pfx c) :
-    Region.outlivingNames pfx (r.setChild c' st) = Region.outlivingNames pfx r := by
-  cases st with
-  | sub j =>
-    simp only [Region.child?] at hc
-    split at hc
-    · rename_i c₀ hj
-      cases hc
-      simp only [Region.setChild, hj]
-      exact Region.outlivingNames_setBlocks pfx hj (by simp [Block.outlivingNames, h])
-    · cases hc
-  | body j =>
-    simp only [Region.child?] at hc
-    split at hc
-    · rename_i l hj
-      cases hc
-      simp only [Region.setChild, hj]
-      refine Region.outlivingNames_setBlocks pfx hj ?_
-      obtain ⟨_, _, _, _, _, _, _, _⟩ := l
-      simp only [Block.outlivingNames] at h ⊢
-      rw [h]
-    · cases hc
-  | branch j k =>
-    simp only [Region.child?] at hc
-    split at hc
-    · rename_i lb brs hj
-      obtain ⟨⟨e, c₀⟩, hk, rfl⟩ := Option.map_eq_some_iff.1 hc
-      simp only [Region.setChild, hj, hk]
-      exact Region.outlivingNames_setBlocks pfx hj (by simp [Block.outlivingNames, Branches.outlivingNames_set pfx hk h])
-    · cases hc
-
-theorem Region.outlivingNames_setBlockAt (pfx : String) {i : BlockId} {b b' : Block}
-    (hx : Block.outlivingNames pfx b' = Block.outlivingNames pfx b) :
-    ∀ (p : List PathStep) (r : Region), r.blockAt? p i = some b →
-      Region.outlivingNames pfx (r.setBlockAt p i b') = Region.outlivingNames pfx r
-  | [], r, h => Region.outlivingNames_setBlocks pfx h hx
-  | st :: p, r, h => by
-    simp only [Region.blockAt?] at h
-    split at h
-    · rename_i c hc
-      simp only [Region.setBlockAt, hc]
-      exact Region.outlivingNames_setChild pfx hc (Region.outlivingNames_setBlockAt pfx hx p c h)
-    · cases h
-
-
-theorem SDFG.interface_setBlockAt {g : SDFG} {p : List PathStep} {i : BlockId} {b b' : Block}
-    (hat : g.top.blockAt? p i = some b) (hx : Block.outlivingNames "" b' = Block.outlivingNames "" b) :
-    (g.setBlockAt p i b').interface = g.interface := by
-  simp only [SDFG.interface, SDFG.setBlockAt]
-  rw [Region.outlivingNames_setBlockAt "" hx p g.top hat]
-
-theorem DNodes.outlivingNames_relabel {φ : Equiv.Perm NodeId} (pfx : String) :
-    ∀ ns : List DNode, (∀ n ∈ ns, n.isNested = true → φ n.id = n.id) →
-      DNodes.outlivingNames pfx (ns.map (DNode.relabel φ)) = DNodes.outlivingNames pfx ns
-  | [], _ => rfl
-  | n :: ns, h => by
-    obtain ⟨id, label, ic, oc, se, kind⟩ := n
-    simp only [List.map_cons, DNode.relabel, DNodes.outlivingNames]
-    rw [DNodes.outlivingNames_relabel pfx ns fun n hn => h n (List.mem_cons_of_mem _ hn)]
-    congr 1
-    cases kind with
-    | nested g m ni =>
-      have := h _ List.mem_cons_self (by simp [DNode.isNested])
-      simp only at this
-      rw [this]
-    | _ => rfl
+/-- The interface depends only on the descriptors. -/
+theorem SDFG.interface_setBlockAt (g : SDFG) (p : List PathStep) (i : BlockId) (b' : Block) :
+    (g.setBlockAt p i b').interface = g.interface := rfl
 
 /-! ## Rules -/
 
@@ -205,10 +103,7 @@ theorem Step.apply?_sound {g g' : SDFG} {st : Step} (h : st.apply? g = some g') 
       · rename_i hfix
         cases h
         have hfix := State.fixesNested?_sound hfix
-        refine ⟨Congr.relabelState hat hfix hs, rfl, SDFG.interface_setBlockAt hat ?_⟩
-        obtain ⟨label, nodes, edges, nosync⟩ := s
-        simp only [State.relabel, Block.outlivingNames]
-        exact DNodes.outlivingNames_relabel "" nodes hfix
+        exact ⟨Congr.relabelState hat hfix hs, rfl, rfl⟩
       · cases h
     · cases h
 

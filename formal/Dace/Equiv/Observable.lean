@@ -51,10 +51,10 @@ def interfaceOf (arrays : List (Name × DataDesc)) : List Name :=
   (arrays.filter fun (_, d) => d.isObservable).map Prod.fst
 
 /-- The observable containers of an SDFG (`Decisions.md#D63`): those of its
-descriptor repository and, by memory name (one storage per nested-SDFG node,
-`Decisions.md#D68`), the `Persistent`/`External` transients of the SDFGs
-nested in it. -/
-def SDFG.interface (g : SDFG) : List Name := interfaceOf g.arrays ++ Region.outlivingNames "" g.top
+descriptor repository.  Nested SDFGs own no observable containers: a nested
+SDFG owning a `Persistent` or `External` transient is `malformed`
+(`nestedCheck`; canonical SDFGs hoist them to the top level). -/
+def SDFG.interface (g : SDFG) : List Name := interfaceOf g.arrays
 
 /-- The observable containers of a schedule tree (`Decisions.md#D63`). -/
 def STree.interface (t : STree) : List Name := interfaceOf t.containers

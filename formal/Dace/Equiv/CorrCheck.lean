@@ -146,15 +146,16 @@ theorem sameMembers?_sound {l₁ l₂ : List Name} (h : sameMembers? l₁ l₂ =
 
 /-- Decision procedure for `NestedMapOk`. -/
 def nestedMapOk? (ctx : Ctx) (inner : SDFG) (mapping : List (Sym × Expr)) : Bool :=
-  mapping.all (fun p => p.2 == .sym p.1 && !ctx.isScalarName p.1) && inner.constants.isEmpty
+  mapping.all (fun p => p.2 == .sym p.1 && !ctx.isScalarName p.1) && inner.constants.isEmpty &&
+    !inner.ownsOutliving
 
 theorem nestedMapOk?_sound {ctx : Ctx} {inner : SDFG} {mapping : List (Sym × Expr)}
     (h : nestedMapOk? ctx inner mapping = true) : NestedMapOk ctx inner mapping := by
   simp only [nestedMapOk?, Bool.and_eq_true, List.all_eq_true, beq_iff_eq, Bool.not_eq_true',
     List.isEmpty_iff] at h
-  refine ⟨fun p hp => h.1 p hp, fun ρ => ?_⟩
+  refine ⟨fun p hp => h.1.1 p hp, fun ρ => ?_, by simp [nestedCheck, h.2]⟩
   funext x
-  simp [SDFG.withConstants, h.2]
+  simp [SDFG.withConstants, h.1.2]
 
 /-- A name agrees between `c₂` and `c₁` up to `π` (`Ctx.Good₀`). -/
 def nameOkE (π : Equiv.Perm Name) (c₂ c₁ : Ctx) (x : Name) : Bool :=
@@ -1355,9 +1356,9 @@ theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr ctx tc s 
   | nestedMap hn hk hkeys hok hds hto hdir hxs hnd hkn hb hmap hcode hout hpriv hnames hinner _ ih =>
     exact .nestedMap hn hk hkeys hok hds hto hdir
       (fun x hx => let ⟨xn, h₁, h₂, h₃, h₄⟩ := hxs x hx; ⟨xn, h₁, h₂, CopyShape.withI I₂ h₃, h₄⟩)
-      hnd hkn hb ⟨hmap.ident, hmap.consts⟩ hcode hout hpriv hnames hinner ih
+      hnd hkn hb ⟨hmap.ident, hmap.consts, hmap.check⟩ hcode hout hpriv hnames hinner ih
   | nested hnd hkn hb hmap hcode hout hctr hshape hnames hinner _ ih =>
-    exact .nested hnd hkn hb ⟨hmap.ident, hmap.consts⟩ hcode hout hctr hshape hnames hinner ih
+    exact .nested hnd hkn hb ⟨hmap.ident, hmap.consts, hmap.check⟩ hcode hout hctr hshape hnames hinner ih
 
 theorem StateCorr.withI {cs : List SNode} (h : StateCorr ctx tc s cs) :
     StateCorr { ctx with I := I₂ } (tc.withI I₂) s cs := by
@@ -1660,23 +1661,22 @@ def corrPerm (g : SDFG) : Equiv.Perm Name := swapsPerm (nestedPairs g)
 /-- The SDFG and the tree start from the same memory: compared on every name
 either defines (both are false elsewhere). -/
 def keepEq? (g : SDFG) (t : STree) : Bool :=
-  (t.containers.map Prod.fst ++ g.arrays.map Prod.fst ++ SDFG.externalNames "" g).all fun n =>
+  (t.containers.map Prod.fst ++ g.arrays.map Prod.fst).all fun n =>
     t.keepAtStart n == g.keepAtStart n
 
 theorem keepEq?_sound {g : SDFG} {t : STree} (h : keepEq? g t = true) : t.keepAtStart = g.keepAtStart := by
   funext n
-  by_cases hn : n ∈ t.containers.map Prod.fst ++ g.arrays.map Prod.fst ++ SDFG.externalNames "" g
+  by_cases hn : n ∈ t.containers.map Prod.fst ++ g.arrays.map Prod.fst
   · simpa using List.all_eq_true.1 h n hn
   · simp only [List.mem_append, List.mem_map, not_or, not_exists, not_and] at hn
-    obtain ⟨⟨ht, hg⟩, he⟩ := hn
+    obtain ⟨ht, hg⟩ := hn
     have h1 : t.keepAtStart n = false := by
       simp only [STree.keepAtStart, List.any_eq_false, Bool.and_eq_true, beq_iff_eq, not_and]
       intro x hx hxn
       exact absurd hxn (ht x hx)
     have h2 : g.keepAtStart n = false := by
-      simp only [SDFG.keepAtStart, Bool.or_eq_false_iff, List.any_eq_false, Bool.and_eq_true, beq_iff_eq, not_and]
-      refine ⟨fun x hx hxn => absurd hxn (hg x hx), ?_⟩
-      simpa using he
+      simp only [SDFG.keepAtStart, List.any_eq_false, Bool.and_eq_true, beq_iff_eq, not_and]
+      exact fun x hx hxn => absurd hxn (hg x hx)
     rw [h1, h2]
 
 /-- The names of the SDFG's own states agree with the flattened context up to
@@ -1713,18 +1713,10 @@ def corr? (g : SDFG) (t : STree) : Bool :=
 
 /-! ## Main theorems -/
 
-/-- When every `External` name of the SDFG is one of its own containers
-defined at start, the tree with the same repository keeps the same names. -/
-theorem keepAtStart_eq {g : SDFG} {t : STree} (ha : t.containers = g.arrays)
-    (he : (SDFG.externalNames "" g).all (fun n => g.arrays.any fun (a, d) => a == n && d.definedAtStart) = true) :
-    t.keepAtStart = g.keepAtStart := by
+/-- The tree with the same repository keeps the same names at start. -/
+theorem keepAtStart_eq {g : SDFG} {t : STree} (ha : t.containers = g.arrays) : t.keepAtStart = g.keepAtStart := by
   funext n
   simp only [STree.keepAtStart, SDFG.keepAtStart, ha]
-  cases hx : (SDFG.externalNames "" g).contains n with
-  | false => simp
-  | true =>
-    have := List.all_eq_true.1 he n (List.elem_iff.1 hx)
-    simp [this]
 
 /-- **Soundness of the checker.** -/
 theorem corrCheck_sound {g : SDFG} {t : STree} (h : corrCheck g t = .ok ()) (I : Interp) : ProgCorr I g t := by

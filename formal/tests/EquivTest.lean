@@ -130,14 +130,24 @@ def lifetimes : List (Name × DataDesc) :=
 
 #guard interfaceOf lifetimes == ["A", "P", "X"]
 
-/-- An SDFG nesting `lifetimes` in node 3 of its only state: the inner
-`Persistent`/`External` transients are observed by memory name. -/
+/-- An SDFG nesting `lifetimes` in node 3 of its only state.  Nested SDFGs
+may not own `Persistent`/`External` transients (canonical SDFGs hoist them to
+the top level): the interface is the outer one, and invoking the nested SDFG
+is `malformed`. -/
+def innerSDFG : SDFG := { name := "inner", arrays := lifetimes, top := {} }
+
 def outer : SDFG where
   name := "outer"
   arrays := [("B", arr false)]
-  top := { blocks := [.state { nodes := [{ id := 3, kind := .nested { name := "inner", arrays := lifetimes, top := {} } [] false }] }] }
+  top := { blocks := [.state { nodes := [{ id := 3, kind := .nested innerSDFG [] false }] }] }
 
-#guard outer.interface == ["B", "inner#3/P", "inner#3/X"]
+#guard outer.interface == ["B"]
+#guard match nestedCheck innerSDFG with
+  | .err (.malformed _) => true
+  | _ => false
+#guard match nestedCheck { innerSDFG with arrays := [("G", arr true .global), ("T", arr true)] } with
+  | .ok () => true
+  | _ => false
 
 /-! ## Observable interfaces of the corpus -/
 

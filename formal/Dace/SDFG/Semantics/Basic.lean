@@ -610,90 +610,21 @@ end Ctx
 (an argument) or an `External` transient? -/
 def DataDesc.definedAtStart (d : DataDesc) : Bool := !d.transient || d.lifetime == .external
 
-mutual
-
-/-- Memory names of the `External` transients of an SDFG invoked under the
-memory-name prefix `pfx` (`Ctx.scope` at top level) and of the SDFGs nested in it (`Ctx.enter`). -/
-def SDFG.externalNames (pfx : String) : SDFG → List Name
-  | ⟨_, arrays, _, _, _, top, _⟩ =>
-    (arrays.filter fun (_, d) => d.transient && d.lifetime == .external).map (pfx ++ ·.1) ++
-      Region.externalNames pfx top
-
-def Region.externalNames (pfx : String) : Region → List Name
-  | ⟨_, _, blocks, _, _⟩ => Blocks.externalNames pfx blocks
-
-def Blocks.externalNames (pfx : String) : List Block → List Name
-  | [] => []
-  | b :: bs => Block.externalNames pfx b ++ Blocks.externalNames pfx bs
-
-def Block.externalNames (pfx : String) : Block → List Name
-  | .state ⟨_, nodes, _, _⟩ => DNodes.externalNames pfx nodes
-  | .region r => Region.externalNames pfx r
-  | .loop ⟨_, _, _, _, _, _, _, body⟩ => Region.externalNames pfx body
-  | .cond _ brs => Branches.externalNames pfx brs
-  | .breakBlock | .continueBlock | .returnBlock => []
-
-def Branches.externalNames (pfx : String) : List (Option Expr × Region) → List Name
-  | [] => []
-  | (_, r) :: rest => Region.externalNames pfx r ++ Branches.externalNames pfx rest
-
-def DNodes.externalNames (pfx : String) : List DNode → List Name
-  | [] => []
-  | ⟨id, _, _, _, _, kind⟩ :: ns => NodeKind.externalNames pfx id kind ++ DNodes.externalNames pfx ns
-
-def NodeKind.externalNames (pfx : String) (id : NodeId) : NodeKind → List Name
-  | .nested g _ _ => SDFG.externalNames (pfx ++ g.name ++ "#" ++ toString id ++ "/") g
-  | _ => []
-
-end
-
 /-- A transient that outlives a run of its program (`Decisions.md#D63`):
 `Persistent` (allocated by the init code, kept across calls) or `External`
-(managed by the caller). -/
+(managed by the caller).  Only the top-level SDFG may own one: canonical
+SDFGs hoist them out of nested SDFGs (`HoistOutlivingTransients`), and a
+nested SDFG that still owns one is `malformed` when invoked (`nestedSetup`). -/
 def DataDesc.outlivesRun (d : DataDesc) : Bool :=
   d.transient && (d.lifetime == .persistent || d.lifetime == .external)
 
-mutual
-
-/-- Memory names of the transients that outlive a run (`DataDesc.outlivesRun`)
-of an SDFG invoked under the memory-name prefix `pfx` and of the SDFGs nested
-in it, as `SDFG.externalNames`. -/
-def SDFG.outlivingNames (pfx : String) : SDFG → List Name
-  | ⟨_, arrays, _, _, _, top, _⟩ =>
-    (arrays.filter fun (_, d) => d.outlivesRun).map (pfx ++ ·.1) ++ Region.outlivingNames pfx top
-
-def Region.outlivingNames (pfx : String) : Region → List Name
-  | ⟨_, _, blocks, _, _⟩ => Blocks.outlivingNames pfx blocks
-
-def Blocks.outlivingNames (pfx : String) : List Block → List Name
-  | [] => []
-  | b :: bs => Block.outlivingNames pfx b ++ Blocks.outlivingNames pfx bs
-
-def Block.outlivingNames (pfx : String) : Block → List Name
-  | .state ⟨_, nodes, _, _⟩ => DNodes.outlivingNames pfx nodes
-  | .region r => Region.outlivingNames pfx r
-  | .loop ⟨_, _, _, _, _, _, _, body⟩ => Region.outlivingNames pfx body
-  | .cond _ brs => Branches.outlivingNames pfx brs
-  | .breakBlock | .continueBlock | .returnBlock => []
-
-def Branches.outlivingNames (pfx : String) : List (Option Expr × Region) → List Name
-  | [] => []
-  | (_, r) :: rest => Region.outlivingNames pfx r ++ Branches.outlivingNames pfx rest
-
-def DNodes.outlivingNames (pfx : String) : List DNode → List Name
-  | [] => []
-  | ⟨id, _, _, _, _, kind⟩ :: ns => NodeKind.outlivingNames pfx id kind ++ DNodes.outlivingNames pfx ns
-
-def NodeKind.outlivingNames (pfx : String) (id : NodeId) : NodeKind → List Name
-  | .nested g _ _ => SDFG.outlivingNames (pfx ++ g.name ++ "#" ++ toString id ++ "/") g
-  | _ => []
-
-end
+/-- Does an SDFG own a transient that outlives a run? -/
+def SDFG.ownsOutliving (g : SDFG) : Bool := g.arrays.any fun (_, d) => d.outlivesRun
 
 /-- The memory names defined at the start of a run of `g`: its arguments
-and the `External` transients at any nesting depth. -/
+and its `External` transients. -/
 def SDFG.keepAtStart (g : SDFG) (n : Name) : Bool :=
-  g.arrays.any (fun (a, d) => a == n && d.definedAtStart) || (SDFG.externalNames "" g).contains n
+  g.arrays.any fun (a, d) => a == n && d.definedAtStart
 
 /-- The memory a run of `g` starts from: everything but its arguments and
 `External` transients is uninitialized. -/

@@ -712,7 +712,10 @@ theorem NodeExec.stepTo {ρ : Valuation} {n : DNode} {st a : St} (hk : n.CohIn s
     · rw [hk'] at hm; cases hm
     · rw [hk'] at hkn
       cases hkn
-      unfold nestedSetup at hs
+      unfold nestedSetup nestedCheck at hs
+      split at hs
+      · cases hs
+      simp only [Res.ok_bind] at hs
       cases hb : nestedBindings ctx s n with
       | err _ => rw [hb] at hs; cases hs
       | ok conns =>
