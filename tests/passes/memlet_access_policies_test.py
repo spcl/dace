@@ -81,7 +81,7 @@ def test_default_policy_is_copy_on_access():
     assert isinstance(dace.Memlet.from_memlet(m).access_policy, CopyOnAccess)
     sdfg = _strided_concrete.to_sdfg()
     sdfg2 = dace.SDFG.from_json(json.loads(json.dumps(sdfg.to_json())))
-    assert all(isinstance(e.data.access_policy, CopyOnAccess) for st in sdfg2.all_states() for e in st.edges())
+    assert all(isinstance(e.data.access_policy, CopyOnAccess) for st in sdfg2.states() for e in st.edges())
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -472,11 +472,11 @@ def test_lowering_is_idempotent():
     AssignLoopCursors(scope="all").apply_pass(sdfg, {})
     first = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     code1 = _code(sdfg)
-    nodes1 = sum(st.number_of_nodes() for st in sdfg.all_states())
+    nodes1 = sum(st.number_of_nodes() for st in sdfg.states())
     second = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     code2 = _code(sdfg)
     assert first["memlets"] == second["memlets"] and second["cursors"] == 0
-    assert sum(st.number_of_nodes() for st in sdfg.all_states()) == nodes1
+    assert sum(st.number_of_nodes() for st in sdfg.states()) == nodes1
     assert len(_cursors(_loops(sdfg)[0])) == 3
     assert code1 == code2
 
@@ -486,7 +486,7 @@ def test_manual_policy_lowering_matches_analysis():
     from dace.transformation.passes.memlet_access_policies import leaf_edges
 
     sdfg = _strided_concrete.to_sdfg()
-    for st in sdfg.all_states():
+    for st in sdfg.states():
         for e in leaf_edges(st):
             if e.data.data == "A":
                 e.data.access_policy = LoopCursor(_loops(sdfg)[0].label, "i", 64, cursor_type=dace.int32)
@@ -719,7 +719,7 @@ def test_access_node_inside_map_is_a_leaf():
     low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
     assert low == {"cursors": 2, "memlets": 2, "dropped": 0}
     sdfg.validate()
-    state = next(iter(sdfg.all_states()))
+    state = next(iter(sdfg.states()))
     # The map-entry -> tmp edge now reads the flat reference; the outer edge was re-propagated over the map.
     inner = [
         e

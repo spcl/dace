@@ -229,7 +229,7 @@ def inner_symbols(loop: LoopRegion) -> set[str]:
             result.add(region.loop_variable)
         for edge in region.edges():
             result.update(edge.data.assignments.keys())
-    for state in loop.all_states():
+    for state in loop.states():
         for node in state.nodes():
             if isinstance(node, nodes.EntryNode):
                 result.update(node.map.params if hasattr(node, "map") else [])
