@@ -65,6 +65,7 @@ import Dace.Equiv.CorrCheck
 import Dace.SDFG.Relabel
 import Dace.SDFG.BEq
 import Dace.Equiv.Relabel
+import Dace.Equiv.StateLocal
 import Dace.Equiv.SdfgCorr
 
 /-!

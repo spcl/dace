@@ -83,9 +83,12 @@ representations:
   the second SDFG (`SDFG.beq`, sound); `checkBy_sound`: the SDFGs are
   equivalent when the first is supported.  Rules: node renumbering of a state
   (`Congr.relabelState`, from `SDFG/Relabel.lean`: every state-level relation
-  is invariant under a permutation of node ids fixing nested SDFG nodes).
-  `tests/SdfgCorrCorpus.lean` certifies a renumbered variant of every corpus
-  program.
+  is invariant under a permutation of node ids); state replacement
+  (`Congr.replaceState`, from `Equiv/StateLocal.lean`: two states that agree
+  on their nodes, adjacent edges, components and view bindings, decided by
+  `stateSame?`, run with the same outcomes; covers node-list reordering).
+  `tests/SdfgCorrCorpus.lean` certifies a renumbered and a reordered variant
+  of every corpus program (two reorderings of independent views are not).
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).
 

@@ -1,5 +1,6 @@
 -- Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import Dace.Equiv.Relabel
+import Dace.Equiv.StateLocal
 import Dace.SDFG.BEq
 
 /-!
@@ -26,6 +27,11 @@ and interface, so that rule applications chain (`Equiv.trans_of_eq`).
 * `relabel p i pairs` (`Congr.relabelState`): renumber the nodes of the
   state at path `p`, index `i` by the permutation `permOfPairs pairs`
   (no side condition).
+* `replaceState p i s'` (`Congr.replaceState`): replace the state at path
+  `p`, index `i` by `s'` when the two states run alike (`stateSame?`: the
+  same nodes and adjacent edges seen the same way, the same components in
+  the same order, each up to a permutation of its nodes).  Covers
+  reordering the node list of a state.
 
 The permutation is built from the id pairs by swaps (`permOfPairs`); its
 correctness is never assumed: the replayed SDFG is compared with the target.
@@ -53,13 +59,19 @@ def permOfPairs : List (NodeId × NodeId) → Equiv.Perm NodeId
 inductive Step where
   /-- Relabel the nodes of the state at path `path`, index `idx`. -/
   | relabel (path : List PathStep) (idx : BlockId) (pairs : List (NodeId × NodeId))
-  deriving Repr, Inhabited
+  /-- Replace the state at path `path`, index `idx` by a state that runs alike. -/
+  | replaceState (path : List PathStep) (idx : BlockId) (s' : State)
+  deriving Inhabited
 
 /-- Apply a rule, if its side condition holds. -/
 def Step.apply? (g : SDFG) : Step → Option SDFG
   | .relabel p i pairs =>
     match g.top.blockAt? p i with
     | some (.state s) => some (g.setBlockAt p i (.state (s.relabel (permOfPairs pairs))))
+    | _ => none
+  | .replaceState p i s' =>
+    match g.top.blockAt? p i with
+    | some (.state s) => if stateSame? g s' s then some (g.setBlockAt p i (.state s')) else none
     | _ => none
 
 /-- What every rule guarantees: an equivalent SDFG with the same facts and
@@ -89,6 +101,16 @@ theorem Step.apply?_sound {g g' : SDFG} {st : Step} (h : st.apply? g = some g') 
     · rename_i s hat
       cases h
       exact ⟨Congr.relabelState hat hs, rfl, rfl⟩
+    · cases h
+  | replaceState p i s' =>
+    simp only [Step.apply?] at h
+    split at h
+    · rename_i s hat
+      split at h
+      · rename_i hchk
+        cases h
+        exact ⟨Congr.replaceState hat hchk hs, rfl, rfl⟩
+      · cases h
     · cases h
 
 /-- Apply a list of rules in order. -/
@@ -140,9 +162,12 @@ partial def findRegion (p : List PathStep) (ra rb : Region) : Except String (Lis
 partial def findBlock (p : List PathStep) (j : BlockId) : Block → Block → Except String (List Step)
   | .state sa, .state sb =>
     if State.beq sa sb then pure []
-    else if sa.nodes.length = sb.nodes.length then
-      pure [.relabel p j ((sa.nodes.map (·.id)).zip (sb.nodes.map (·.id)))]
-    else throw s!"state '{sa.label}' has {sa.nodes.length} nodes, '{sb.label}' {sb.nodes.length}"
+    else
+      let pairs := (sa.nodes.map (·.id)).zip (sb.nodes.map (·.id))
+      if sa.nodes.length = sb.nodes.length && State.beq (sa.relabel (permOfPairs pairs)) sb then
+        pure [.relabel p j pairs]
+      else if (sa.nodes.map (·.id)).isPerm (sb.nodes.map (·.id)) then pure [.replaceState p j sb]
+      else throw s!"state '{sa.label}' and '{sb.label}' have different nodes"
   | .region ra, .region rb => findRegion (p ++ [.sub j]) ra rb
   | .loop la, .loop lb => findRegion (p ++ [.body j]) la.body lb.body
   | .cond _ ba, .cond _ bb => do
@@ -160,6 +185,6 @@ into `b` (then `checkBy_sound` applies), or a reason. -/
 def sdfgCheck (a b : SDFG) : Except String (List Step) := do
   let sts ← findRegion [] a.top b.top
   if checkBy a b sts then pure sts
-  else throw "the SDFGs differ beyond the rules (node relabeling)"
+  else throw "the SDFGs differ beyond the rules (node relabeling, state replacement)"
 
 end Dace
