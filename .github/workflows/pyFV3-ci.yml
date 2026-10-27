@@ -52,6 +52,8 @@ jobs:
       uses: actions/checkout@v7
       with:
         repository: 'NOAA-GFDL/pyFV3'
+        # Last develop commit before NDSL 2026.10.00, which needs dace's function-regions branch (#2658)
+        ref: '787aa983b33d557770ce6276f46e920d94d820c7'
         path: 'pyFV3'
 
     - name: Checkout dace

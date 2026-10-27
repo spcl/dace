@@ -878,8 +878,10 @@ class LoopToMap(xf.MultiStateTransformation):
         # Add NestedSDFG node
         cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
         if sdfg.parent:
+            # Only what the loop body uses: a mapped symbol it never reads is an unused mapping
+            used = nsdfg.free_symbols
             for s in sdfg.parent_nsdfg_node.symbol_mapping.keys():
-                if s not in cnode.symbol_mapping:
+                if s in used and s not in cnode.symbol_mapping:
                     cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
                     # Other passes map symbols without declaring them; type it off the symbol.
                     nsdfg.symbols[s] = sdfg.symbols.get(s, symbolic.symbol(s).dtype)
