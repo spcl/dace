@@ -14,7 +14,6 @@ import sympy as sp
 from dace import symbolic
 from dace.optionals import required
 from dace.sdfg.analysis.cfg import collect_enclosing_conditions  # noqa: F401 -- re-exported
-from dace.transformation.passes.analysis import canon_stats
 
 try:
     import z3
@@ -323,8 +322,7 @@ def prove_unsat(antecedent: Any, consequent: Any, rlimit: int = DEFAULT_RLIMIT) 
     s.add(antecedent)
     s.add(required(z3).Not(consequent))
     try:
-        with canon_stats.timed("z3"):
-            r = s.check()
+        r = s.check()
         if r == required(z3).unsat:
             return True
         if r == required(z3).sat:
@@ -743,8 +741,7 @@ def find_conflict_witness(
     solver.add(earlier < later if int(symbolic.evaluate(step, {})) > 0 else earlier > later)
     solver.add(*(required(z3).Int(name) >= 0 for name in sorted(sizes)))
     try:
-        with canon_stats.timed("z3"):
-            verdict = solver.check()
+        verdict = solver.check()
         if verdict != required(z3).sat:
             return None
     except Exception:

@@ -516,7 +516,7 @@ class BreakAntiDependence(ppl.Pass):
         * no container the index reads is written by the loop. The oracle models a container as
           an immutable array, so a loop that writes it is outside what the encoding says.
         """
-        from dace.transformation.passes.analysis import smt_dependence
+        from dace.transformation.passes.analysis import canon_stats, smt_dependence
         from dace.transformation.passes.parallelization.facts import SolverFacts
         from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
 
@@ -545,7 +545,8 @@ class BreakAntiDependence(ppl.Pass):
         if loop not in self._solver_facts:
             self._solver_facts[loop] = SolverFacts(loop, self.offset_facts(loop, sdfg), set(internal_syms))
         facts = self._solver_facts[loop]
-        ahead = smt_dependence.prove_read_ahead(rb, wb, ivar, start, end, stride, read_guard=read_guard, facts=facts)
+        with canon_stats.timed("z3", loop):
+            ahead = smt_dependence.prove_read_ahead(rb, wb, ivar, start, end, stride, read_guard=read_guard, facts=facts)
         if ahead is not True:
             return ("complex", None)
         # Read-ahead only rules out the writes up to and including the reader's own iteration. When
@@ -553,9 +554,10 @@ class BreakAntiDependence(ppl.Pass):
         # ``a[i] -= aa[j, i] * a[j]`` reads a[j] from below an ``i`` range that starts at j + 1. That
         # is 'none', not 'WAR': snapshotting it would pay a copy to break a dependence that is not
         # there, and the copy costs the caller an extra transient and an extra (degenerate) map.
-        late = smt_dependence.prove_no_write_after_read(
-            rb, wb, ivar, start, end, stride, read_guard=read_guard, facts=facts
-        )
+        with canon_stats.timed("z3", loop):
+            late = smt_dependence.prove_no_write_after_read(
+                rb, wb, ivar, start, end, stride, read_guard=read_guard, facts=facts
+            )
         return ("none", None) if late is True else ("WAR", None)
 
     def _walk_back_symbol_def(self, loop: LoopRegion, sym_name: str):

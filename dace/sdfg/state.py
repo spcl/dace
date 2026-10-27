@@ -5,7 +5,6 @@ import abc
 import ast
 import collections
 import collections.abc
-import contextvars
 import copy
 import functools
 import itertools
@@ -136,13 +135,6 @@ def _make_iterators(ndrange: MapRanges):
     map_range = sbs.Range(ranges)
 
     return params, map_range
-
-
-#: Per-state :meth:`~SDFGState.defined_symbols` for the library expansions of one
-#: :meth:`~dace.sdfg.SDFG.expand_library_nodes` sweep; ``None`` outside a sweep.
-EXPANSION_DEFINED_SYMBOLS: contextvars.ContextVar[dict["SDFGState", tuple[int, dict[str, dt.Data]]] | None] = (
-    contextvars.ContextVar("EXPANSION_DEFINED_SYMBOLS", default=None)
-)
 
 
 class BlockGraphView:
@@ -2230,7 +2222,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         """
         if self.sdfg is None:
             return {}
-        memo = EXPANSION_DEFINED_SYMBOLS.get()
+        memo = self.sdfg._expansion_symbols
         if memo is None:
             return self.defined_symbols()
         cached = memo.get(self)

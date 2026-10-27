@@ -127,7 +127,6 @@ def skew_bounds(cons: list[sympy.Expr], tau: tuple[int, int], t_range=None) -> p
         return None
 
 
-@canon_stats.timed("isl")
 def domain_bbox(cons: list[sympy.Expr]) -> list[sympy.Expr] | None:
     """``[u_lo, u_hi, w_lo, w_hi]`` of the integer set ``cons``, or ``None`` when a side is not one bound."""
     try:
@@ -284,7 +283,8 @@ class WavefrontSkew(ppl.Pass):
         """Skew ``outer`` if it is a genuine wavefront; ``True`` iff rewritten."""
         if emitted_here(outer):
             return False
-        plan = self.plan(outer, sdfg, occurrence_index(sdfg) if occurrences is None else occurrences)
+        with canon_stats.timed("isl", sdfg):
+            plan = self.plan(outer, sdfg, occurrence_index(sdfg) if occurrences is None else occurrences)
         if plan is None:
             return False
         self.commit(plan, sdfg)
@@ -525,7 +525,8 @@ class WavefrontSkew(ppl.Pass):
                 st.node.map.schedule = dace.ScheduleType.Sequential
 
         if self.target == "gpu":
-            self.skew_tile_interior(plan, sdfg, i_loop, i_lo, j_lo)
+            with canon_stats.timed("isl", sdfg):
+                self.skew_tile_interior(plan, sdfg, i_loop, i_lo, j_lo)
         self.lift(outer, p_loop, sdfg, WAVEFRONT_TILE_COLUMN.format(tile=tile))
 
     def skew_tile_interior(

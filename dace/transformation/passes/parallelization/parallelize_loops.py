@@ -446,6 +446,8 @@ class ParallelizeLoops(ppl.Pass):
                 used += [f for f in proof if f not in used]
                 xform.contract_arrays = xform.contract_arrays | {name}
                 if xform.probe(self.permissive):
+                    # The contract's disjointness is a Z3 proof
+                    xform.used_solver = True
                     facts.extend(used)
                     if xform.solver_facts is not None:
                         facts.extend(f for f in xform.solver_facts.used if f not in facts)

@@ -45,7 +45,7 @@ from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import LoopRefusal, Refusal
-from dace.transformation.passes.analysis import loop_analysis, smt_dependence
+from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 
 # Three classes, named by the first word of every loop hint: ``parallel`` and ``sequential`` are
 # settled and need no further dependence reasoning, ``unsure`` is the only open one. A role (a
@@ -596,9 +596,10 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
     pairs.sort(key=lambda pair: pair[1].access.write)
     for write, other in pairs:
         for first, second in ((write, other), (other, write)):
-            found = smt_dependence.find_conflict_witness(
-                first.access.index, second.access.index, first.iters, second.iters, sizes, outer=tuple(outer)
-            )
+            with canon_stats.timed("z3", loop):
+                found = smt_dependence.find_conflict_witness(
+                    first.access.index, second.access.index, first.iters, second.iters, sizes, outer=tuple(outer)
+                )
             if found is not None:
                 return conflict_label(first, second, found, counter[0])
     return None

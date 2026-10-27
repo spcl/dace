@@ -1,66 +1,58 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Which stage settled each loop of a canonicalization, and the time spent in the solvers.
 
-``canonicalize(sdfg, stats=...)`` makes a :class:`CanonStats` the active recorder for the run. With none active
-every hook here returns at once, so a run without ``stats`` does the same work as before.
+``canonicalize(sdfg, stats=...)`` attaches a :class:`CanonStats` to the root SDFG (``SDFG._canon_stats``) for the run;
+every hook here takes the SDFG, state or region it acts on and finds the recorder of that root. With none attached
+every hook returns at once, so a run without ``stats`` does the same work as before, and a trial copy (whose
+``_canon_stats`` the deep copy clears) records nothing.
 
 - The stage runner snapshots the loops around every stage (:meth:`CanonStats.stage_done`): a loop that disappears
   in a stage was settled by it.
 - ``LoopToMap`` reports every loop it lifts, at level 1 (subscript and range tests) or level 3 (a Z3 query proved a
-  pair), :func:`solver_proof` marking the latter. A loop gone in ``WavefrontSkew`` is level 2 (isl).
-- :func:`timed` adds the time inside Z3's ``check`` and inside the isl queries.
+  pair). A loop gone in ``WavefrontSkew`` is level 2 (isl).
+- :func:`timed` adds the time of the Z3- and isl-backed analyses, measured where a pass calls them.
 """
 
 import contextlib
-import contextvars
 import json
 import time
 from collections import Counter
 from typing import Any
 
-_ACTIVE: contextvars.ContextVar["CanonStats | None"] = contextvars.ContextVar("canon_stats", default=None)
-
 #: Stage units whose disappearing loops are guarded loops: a parallel version behind a runtime check.
 GUARDED = frozenset({"ScatterToGuardedMaps", "ParallelizeUnderConstraint"})
 
 
-def active() -> "CanonStats | None":
-    return _ACTIVE.get()
+def of(anchor: Any) -> "CanonStats | None":
+    """The recorder of the root SDFG of ``anchor`` (an SDFG, state or control-flow region), or ``None``."""
+    from dace.sdfg import SDFG
+
+    sdfg = anchor if isinstance(anchor, SDFG) else anchor.sdfg
+    while sdfg is not None and sdfg.parent_sdfg is not None:
+        sdfg = sdfg.parent_sdfg
+    return None if sdfg is None else sdfg._canon_stats
 
 
 @contextlib.contextmanager
-def timed(kind: str):
-    """Add the time of the enclosed block to ``kind`` (``'z3'`` or ``'isl'``); nested blocks count once."""
-    stats = _ACTIVE.get()
-    if stats is None or stats._depth[kind]:
+def timed(kind: str, anchor: Any):
+    """Add the time of the enclosed block to ``kind`` (``'z3'`` or ``'isl'``) of ``anchor``'s recorder; nested
+    blocks count once."""
+    stats = of(anchor)
+    if stats is None or stats.depth[kind]:
         yield
         return
-    stats._depth[kind] += 1
+    stats.depth[kind] += 1
     start = time.perf_counter()
     try:
         yield
     finally:
         stats.seconds[kind] += time.perf_counter() - start
-        stats._depth[kind] -= 1
+        stats.depth[kind] -= 1
 
 
-def begin_probe() -> None:
-    """A ``LoopToMap`` probe starts: no solver proof yet."""
-    stats = _ACTIVE.get()
-    if stats is not None:
-        stats._probe_used_solver = False
-
-
-def solver_proof() -> None:
-    """A Z3 query proved a pair independent in the current ``LoopToMap`` probe."""
-    stats = _ACTIVE.get()
-    if stats is not None:
-        stats._probe_used_solver = True
-
-
-def lifted(loop: Any) -> None:
-    """``LoopToMap`` lifts ``loop``, accepted by the probe just before."""
-    stats = _ACTIVE.get()
+def lifted(loop: Any, used_solver: bool) -> None:
+    """``LoopToMap`` lifts ``loop``; ``used_solver`` when a Z3 query proved a pair of its probe."""
+    stats = of(loop)
     if stats is not None:
         # The skew's own lift of the exposed axis is level 2: the isl skew is what made it parallel.
         # A guarding pass's lift is the parallel arm of its guard, not a proof.
@@ -70,15 +62,15 @@ def lifted(loop: Any) -> None:
         elif unit in GUARDED:
             level = "guarded"
         else:
-            level = "level3" if stats._probe_used_solver else "level1"
-        stats._settle(loop, level)
+            level = "level3" if used_solver else "level1"
+        stats.record(loop, level)
 
 
 def settle(loop: Any, outcome: str) -> None:
     """A pass settles ``loop`` whose object it keeps (``LoopToScan`` reuses the loop as its fill loop)."""
-    stats = _ACTIVE.get()
+    stats = of(loop)
     if stats is not None:
-        stats._settle(loop, outcome)
+        stats.record(loop, outcome)
 
 
 def loops_of(sdfg: Any) -> dict[int, Any]:
@@ -124,36 +116,29 @@ class CanonStats:
         self.settled: list[tuple[str, str, str, str]] = []
         self.remaining: list[tuple[str, str]] = []
         self.stage = ("", "")
-        self._depth: Counter = Counter()
-        self._probe_used_solver = False
-        self._seen: set[int] = set()
+        self.depth: Counter = Counter()
+        self.seen: set[int] = set()
         # Keeps every snapshot loop alive, so an ``id`` never names two loops.
-        self._loops: dict[int, Any] = {}
-        self._root: Any = None
+        self.loops: dict[int, Any] = {}
 
-    def _settle(self, loop: Any, outcome: str) -> None:
-        # A trial rewrite on a copy (LoopToEinsum's) settles nothing in the program being canonicalized.
-        sdfg = loop.sdfg
-        while sdfg is not None and sdfg.parent_sdfg is not None:
-            sdfg = sdfg.parent_sdfg
-        if sdfg is not self._root:
-            return
-        if id(loop) not in self._seen:
-            self._seen.add(id(loop))
+    def record(self, loop: Any, outcome: str) -> None:
+        """``loop`` settled with ``outcome`` in the current stage; a loop counts once."""
+        if id(loop) not in self.seen:
+            self.seen.add(id(loop))
             self.settled.append((*self.stage, loop.label, outcome))
 
     @contextlib.contextmanager
     def recording(self, sdfg: Any):
-        token = _ACTIVE.set(self)
+        """Attach this recorder to ``sdfg`` for the enclosed block."""
+        sdfg._canon_stats = self
         start = time.perf_counter()
-        self._root = sdfg
-        self._loops = loops_of(sdfg)
-        self.loops_in = len(self._loops)
+        self.loops = loops_of(sdfg)
+        self.loops_in = len(self.loops)
         try:
             yield self
         finally:
             self.seconds["total"] += time.perf_counter() - start
-            _ACTIVE.reset(token)
+            sdfg._canon_stats = None
 
     def stage_start(self, label: str, unit: Any) -> None:
         self.stage = (label, type(unit).__name__)
@@ -162,23 +147,23 @@ class CanonStats:
         """Attribute the loops gone since the last snapshot to the stage that just ran."""
         now = loops_of(sdfg)
         unit = self.stage[1]
-        for key, loop in self._loops.items():
+        for key, loop in self.loops.items():
             if key in now:
                 continue
             if unit == "WavefrontSkew":
-                self._settle(loop, "level2")
+                self.record(loop, "level2")
             elif unit in GUARDED:
-                self._settle(loop, "guarded")
+                self.record(loop, "guarded")
             elif self.stage[0] == "lift_semantics":
-                self._settle(loop, f"lift:{unit}")
+                self.record(loop, f"lift:{unit}")
             else:
-                self._settle(loop, f"restructured:{unit}")
-        self._loops = now
+                self.record(loop, f"restructured:{unit}")
+        self.loops = now
 
     def finish(self, sdfg: Any) -> None:
         """Classify the loops canonicalization left; not timed, it is the CPF rendering's work."""
         self.remaining = [(loop.label, remaining_outcome(loop)) for loop in loops_of(sdfg).values()]
-        self._loops = {}
+        self.loops = {}
 
     def as_dict(self) -> dict[str, Any]:
         outcomes = Counter(outcome for *_, outcome in self.settled)

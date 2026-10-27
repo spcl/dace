@@ -906,6 +906,10 @@ class SDFG(ControlFlowRegion):
         self._parent = parent
         self._symbol_repo = SymbolRepo()
         self._bound_names: tuple[frozenset[str], frozenset[str]] | None = None
+        #: Per-state ``(len(symbols), defined_symbols())`` of one ``expand_library_nodes`` sweep; ``None`` outside it
+        self._expansion_symbols: dict["SDFGState", tuple[int, dict[str, dt.Data]]] | None = None
+        #: The ``CanonStats`` recording a ``canonicalize(stats=...)`` run of this root SDFG; ``None`` otherwise
+        self._canon_stats = None
         # Symbols ``add_datadesc`` declared because a shape names them; a scope that binds one later takes it over
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
@@ -951,6 +955,9 @@ class SDFG(ControlFlowRegion):
                 "guid",
                 "_symbol_repo",
             ):
+                continue
+            if k in ("_expansion_symbols", "_canon_stats"):
+                setattr(result, k, None)
                 continue
             setattr(result, k, copy_graph_field(self, k, v, memo))
         # Copy edges and nodes
@@ -3858,14 +3865,14 @@ class SDFG(ControlFlowRegion):
                           stage). Nested SDFGs are still descended into either way.
         """
 
-        from dace.sdfg.state import EXPANSION_DEFINED_SYMBOLS
-
-        token = EXPANSION_DEFINED_SYMBOLS.set({}) if EXPANSION_DEFINED_SYMBOLS.get() is None else None
+        outermost = self._expansion_symbols is None
+        if outermost:
+            self._expansion_symbols = {}
         try:
             self._expand_library_nodes(recursive, predicate)
         finally:
-            if token is not None:
-                EXPANSION_DEFINED_SYMBOLS.reset(token)
+            if outermost:
+                self._expansion_symbols = None
 
     def _expand_library_nodes(self, recursive: bool, predicate: Callable[[nd.LibraryNode], bool] | None) -> None:
         states = list(self.states())

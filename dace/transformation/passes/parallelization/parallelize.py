@@ -57,7 +57,7 @@ class Parallelize(ppl.Pipeline):
 
     def apply_subpass(self, sdfg, p, state):
         """Run ``p`` as the stage the canonicalization statistics attribute its loops to."""
-        stats = canon_stats.active()
+        stats = canon_stats.of(sdfg)
         if stats is None:
             return super().apply_subpass(sdfg, p, state)
         stage = stats.stage

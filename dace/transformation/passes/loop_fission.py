@@ -22,7 +22,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.analysis import loop_analysis, smt_dependence
+from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 
 
 def _is_per_iter_subset(subset, loop_var: str | None, extra_index=None) -> bool:
@@ -128,7 +128,8 @@ def _accesses_interfere_across_iterations(loop: LoopRegion, subset_a, subset_b, 
     except Exception:
         return True
     try:
-        disjoint = smt_dependence.prove_disjoint_access_boxes(box_a, box_b, loop.loop_variable, start, end, step)
+        with canon_stats.timed("z3", loop):
+            disjoint = smt_dependence.prove_disjoint_access_boxes(box_a, box_b, loop.loop_variable, start, end, step)
     except Exception:
         return True
     return disjoint is not True

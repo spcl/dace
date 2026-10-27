@@ -1549,7 +1549,7 @@ class CanonicalizationPipeline(ppl.Pass):
         # graph they report no change: skip one unless a unit touched the graph since it last ran. Only
         # non-cleanup units re-dirty it, so a cleanup that tidies something does not earn the next one.
         settled = Settled()
-        recorder = canon_stats.active()
+        recorder = canon_stats.of(sdfg)
         for index, (label, unit) in enumerate(stages, start=1):
             is_cleanup = isinstance(unit, StructuralCleanup)
             if settled.skip(unit):

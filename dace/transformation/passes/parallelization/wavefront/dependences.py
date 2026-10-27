@@ -18,7 +18,6 @@ from dace import symbolic
 from dace.sdfg.analysis.polyhedral_isl import subs_by_name, to_isl
 from dace.sdfg.narrowing import as_expr, ndrange_exprs, simplified
 from dace.symbolic_facts import RelationKind, relation_names
-from dace.transformation.passes.analysis import canon_stats
 from dace.transformation.passes.parallelization.wavefront import polyhedron as poly
 from dace.transformation.passes.parallelization.wavefront.statements import (
     Access,
@@ -33,7 +32,6 @@ from dace.transformation.passes.parallelization.wavefront.statements import (
 AFFINE_RELATIONS = (RelationKind.LT, RelationKind.LE, RelationKind.EQ)
 
 
-@canon_stats.timed("isl")
 def is_empty(text: str) -> bool:
     return isl.Set(text).is_empty()
 

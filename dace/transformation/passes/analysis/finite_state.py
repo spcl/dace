@@ -36,7 +36,7 @@ from dace import SDFG, data, dtypes, symbolic
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation.passes.analysis import loop_analysis, smt_dependence
+from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,7 +281,8 @@ def finite_state(loop: LoopRegion) -> FiniteState | None:
     chain = straight_chain(loop)
     shapes = {name: tuple(desc.shape) for name, desc in loop.sdfg.arrays.items()}
     for step in step_slices(loop):
-        bound = index_bound(loop, required(chain), step.symbol, shapes)
+        with canon_stats.timed("z3", loop):
+            bound = index_bound(loop, required(chain), step.symbol, shapes)
         if bound is not None:
             return FiniteState(step, bound[0], bound[1])
     return None

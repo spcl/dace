@@ -47,10 +47,6 @@ from dace.sdfg.analysis.polyhedral_isl import (
     subs_by_name,
 )
 from dace.sdfg.narrowing import as_expr, simplified
-from dace.transformation.passes.analysis import canon_stats
-
-#: The isl entry points, timed when a canonicalization records its statistics.
-is_domain_empty = canon_stats.timed("isl")(is_domain_empty)
 
 
 def constraints_from_condition(cond: Any) -> list[sp.Expr] | None:
@@ -111,7 +107,6 @@ class SkewBounds:
         self.p_hi_terms = p_hi_terms
 
 
-@canon_stats.timed("isl")
 def skew_bounds(
     dims: tuple[str, str],
     params: Sequence[str],

@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Loop to map transformation"""
 
+import contextlib
 import copy
 import enum
 import warnings
@@ -535,9 +536,10 @@ def write_refusal(
     ctx: Optional["LiftContext"],
     facts: Any = None,
     closed_forms: dict[str, Any] | None = None,
+    lift: Optional["LoopLift"] = None,
 ) -> "tuple[Refusal, str] | None":
     """Why (kind and message) :meth:`LoopToMap.can_be_applied` refuses the loop on the write ``e`` into ``dn``, or
-    ``None``; ``closed_forms`` as :attr:`LoopToMap.closed_forms`."""
+    ``None``; ``closed_forms`` as :attr:`LoopToMap.closed_forms`. A Z3 proof marks ``lift``'s probe."""
     if e.data.dynamic and e.data.wcr is None:
         # Dynamic write (no WCR) is safe across iterations if its dst subset
         # pins an axis to the iter var (same ``a*i+b`` as non-dynamic below):
@@ -569,13 +571,16 @@ def write_refusal(
                 ok = False
         if not ok and not permissive:
             verdicts = None if ctx is None else ctx.invariants.smt_injective
-            if not smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts, facts):
+            with canon_stats.timed("z3", sdfg):
+                injective = smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts, facts)
+            if not injective:
                 return (
                     Refusal.NON_UNIQUE_WRITE,
                     f"write to {dn.data} is not uniquely indexed by the iteration variable "
                     f"(needs an a*i+b subset) - dst_subset={dst_subset}",
                 )
-            canon_stats.solver_proof()
+            if lift is not None:
+                lift.used_solver = True
     return None
 
 
@@ -1060,7 +1065,15 @@ def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset,
 
 
 def _writes_may_overlap(
-    m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, start, end, varying: set[str], facts: Any = None
+    m1: memlet.Memlet,
+    m2: memlet.Memlet,
+    itersym,
+    step,
+    start,
+    end,
+    varying: set[str],
+    facts: Any = None,
+    lift: Optional["LoopLift"] = None,
 ) -> bool:
     """Conservatively decide whether two write memlets to the same container
     can address the same element on different loop iterations. Returns
@@ -1098,8 +1111,11 @@ def _writes_may_overlap(
     # Still undecided, and the certificate above needs POINT subsets. A mirrored triangular write
     # (``cov[i, i:M]`` against ``cov[i:M, i]``) has none, yet the two boxes provably meet only on
     # the diagonal of a single iteration -- which the SMT oracle can show directly.
-    if _smt_proves_disjoint_boxes(m1.subset, m2.subset, itersym, start, end, step, varying, facts=facts):
-        canon_stats.solver_proof()
+    with contextlib.nullcontext() if lift is None else canon_stats.timed("z3", lift.loop):
+        disjoint = _smt_proves_disjoint_boxes(m1.subset, m2.subset, itersym, start, end, step, varying, facts=facts)
+    if disjoint:
+        if lift is not None:
+            lift.used_solver = True
         return False
     return True
 
@@ -1796,6 +1812,8 @@ class LoopLift:
     solver_facts: SolverFacts | None = None
     #: Why the last probe refused, or ``None`` after an accept.
     last_refusal: LoopRefusal | None = None
+    #: Whether a Z3 query proved a pair in the last probe (the canonicalization statistics' level 3).
+    used_solver: bool = False
     #: Leave a loop whose iteration range spans only SMALL symbols (e.g. ``range(n1 + n2)``) sequential.
     keep_small_loops_sequential: bool = True
     #: Propagate each memlet routed through the new map; unset by a caller that propagates the lifted state after.
@@ -1827,7 +1845,7 @@ class LoopLift:
         # dependence from structural/typing inapplicability without re-running
         # the dependence analysis.
         self.last_refusal = None
-        canon_stats.begin_probe()
+        self.used_solver = False
 
         # Optional, set by a pass that probes many loops of this SDFG (see :class:`LiftContext`).
         ctx: LiftContext | None = self.lift_context
@@ -2094,6 +2112,7 @@ class LoopLift:
                             ctx,
                             self.solver_facts,
                             closed_forms,
+                            self,
                         )
                         if reason is not None:
                             if facts is not None:
@@ -2154,7 +2173,7 @@ class LoopLift:
             for x in range(len(reps)):
                 for y in range(x + 1, len(reps)):
                     if _writes_may_overlap(
-                        reps[x], reps[y], itersym, step, start, end, varying, self.solver_facts
+                        reps[x], reps[y], itersym, step, start, end, varying, self.solver_facts, self
                     ) and not self.waives(data, permissive):
                         return refuse(
                             Refusal.OVERLAPPING_WRITES,
@@ -2168,7 +2187,7 @@ class LoopLift:
             for acc in accumulated.values():
                 for plain in reps:
                     if _writes_may_overlap(
-                        acc, plain, itersym, step, start, end, varying, self.solver_facts
+                        acc, plain, itersym, step, start, end, varying, self.solver_facts, self
                     ) and not self.waives(data, permissive):
                         return refuse(
                             Refusal.OVERLAPPING_WRITES,
@@ -2390,6 +2409,7 @@ class LoopLift:
                     self.waives(name, permissive),
                     ctx,
                     self.solver_facts,
+                    lift=self,
                 )
                 if reason is not None:
                     return reason
@@ -2520,8 +2540,12 @@ class LoopLift:
             # propagate+intersect fallback, which widens both to the whole array and always aliases.
             ctx = self.lift_context
             boxes = None if ctx is None else ctx.invariants.smt_disjoint_boxes
-            if _smt_proves_disjoint_boxes(read, write, itersym, start, end, step, varying, boxes, self.solver_facts):
-                canon_stats.solver_proof()
+            with canon_stats.timed("z3", self.loop):
+                disjoint = _smt_proves_disjoint_boxes(
+                    read, write, itersym, start, end, step, varying, boxes, self.solver_facts
+                )
+            if disjoint:
+                self.used_solver = True
                 continue
             # SMT fallback for non-affine read/write pairs. Only a proven 'none' (the accesses
             # never alias across iterations) admits the pair. A 'WAR' verdict is NOT enough:
@@ -2529,11 +2553,12 @@ class LoopLift:
             # anti-dependence still standing here was never snapshot-renamed and lifting it
             # would race. 'WAR' and inconclusive both fall through to the affine checks below.
             if smt_dependence.has_z3():
-                classification = _smt_classify_read_write_pair(
-                    read, write, itervar, start, end, step, state, self.solver_facts
-                )
+                with canon_stats.timed("z3", self.loop):
+                    classification = _smt_classify_read_write_pair(
+                        read, write, itervar, start, end, step, state, self.solver_facts
+                    )
                 if classification == "none":
-                    canon_stats.solver_proof()
+                    self.used_solver = True
                     continue
                 if classification == "RAW":
                     return False
@@ -2609,7 +2634,7 @@ class LoopLift:
         lift_ctx: LiftContext | None = self.lift_context
         from dace.sdfg.propagation import align_memlet
 
-        canon_stats.lifted(self.loop)
+        canon_stats.lifted(self.loop, self.used_solver)
 
         # Obtain loop information
         itervar = self.loop.loop_variable

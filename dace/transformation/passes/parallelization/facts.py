@@ -15,7 +15,7 @@ from dace import symbolic
 from dace.optionals import required
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.symbolic_facts import RelationKind
-from dace.transformation.passes.analysis import array_facts, smt_dependence
+from dace.transformation.passes.analysis import array_facts, canon_stats, smt_dependence
 from dace.transformation.passes.analysis.smt_dependence import z3
 
 #: The relations a query may assume; a ``<<`` order holds only under a recorded runtime check, a divisibility needs
@@ -121,7 +121,8 @@ class SolverFacts:
         found: list[array_facts.ArrayFact] = []
         for name in sorted(names - self.written):
             if name not in self.known:
-                self.known[name] = array_facts.facts_at(self.loop.sdfg, self.loop, [name])
+                with canon_stats.timed("z3", self.loop):
+                    self.known[name] = array_facts.facts_at(self.loop.sdfg, self.loop, [name])
             found.extend(self.known[name])
         return found
 

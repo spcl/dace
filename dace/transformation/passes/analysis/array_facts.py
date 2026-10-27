@@ -720,11 +720,11 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     if not facts:
         return None
     start, end, step = bounds
-    for x, first in enumerate(stores):
-        for second in stores[x:]:
-            if prove_disjoint_under_facts(first, second, loop.loop_variable, start, end, step, facts) is not True:
-                return None
-    canon_stats.solver_proof()
+    with canon_stats.timed("z3", sdfg):
+        for x, first in enumerate(stores):
+            for second in stores[x:]:
+                if prove_disjoint_under_facts(first, second, loop.loop_variable, start, end, step, facts) is not True:
+                    return None
     return facts
 
 
