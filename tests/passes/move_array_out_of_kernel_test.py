@@ -119,13 +119,13 @@ def kernel_with_transient_behind_a_nested_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def buf_scopes(sdfg: dace.SDFG) -> list:
+def buf_scopes(sdfg: dace.SDFG, name: str = "buf") -> list:
     return [
         state.scope_dict()[node]
         for sub in sdfg.all_sdfgs_recursive()
         for state in sub.states()
         for node in state.data_nodes()
-        if node.data == "buf"
+        if node.data == name
     ]
 
 
@@ -886,6 +886,84 @@ def test_code_generation_computes_through_a_symbolic_scratch_below_a_nested_sdfg
     assert np.allclose(cupy.asnumpy(out), host_a[:, ::-1] * 2.0 + 1.0)
 
 
+@pytest.mark.parametrize("schedule", [GPU_DEVICE, dtypes.ScheduleType.GPU_Persistent])
+def test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(schedule):
+    sdfg = kernel_with_internal_transient((NX,), REGISTER)
+    (kernel,) = [n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry)]
+    kernel.map.schedule = schedule
+
+    assert lift(sdfg) == 1
+
+    buf = sdfg.arrays["buf"]
+    assert buf.storage == GLOBAL and [str(d) for d in buf.shape] == ["128", "NX"], buf
+    assert buf_scopes(sdfg).count(None) == 1, "the moved array is allocated outside the kernel"
+    sdfg.validate()
+
+
+def test_code_generation_moves_a_symbolic_per_thread_array_out_of_the_kernel():
+    """C++ has no variable-length arrays: declared inside the kernel, ``buf[NX]`` does not compile."""
+    sdfg = kernel_with_internal_transient((NX,), REGISTER)
+    next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry)).map.gpu_block_size = [32, 1, 1]
+
+    objects = sdfg.generate_code()
+    host = "\n".join(obj.clean_code for obj in objects)
+    (device,) = [obj.clean_code for obj in objects if obj.language == "cu"]
+
+    assert not re.search(r"double\s+buf\s*\[\s*NX", device), "buf is declared per thread with a symbolic size"
+    assert re.search(r"(cudaMalloc|hipMalloc)\(\(void\*\*\)&buf,", host), "buf is not allocated outside the kernel"
+    assert not re.search(r"Copy\w*\([^;]*\bbuf\b", device), "the kernel copies buf onto itself"
+
+
+def kernel_computing_the_size_of_its_scratch() -> dace.SDFG:
+    """The nested body sets ``m = i + 1`` on an interstate edge and sizes its ``Register`` scratch ``buf[m]`` by it, as
+    a CSR row's length is read inside the kernel (npbench spmv)."""
+    sdfg = kernel_with_transient_behind_a_nested_sdfg()
+    inner = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    inner.add_symbol("m", dace.int64)
+    body = inner.start_block
+    size = inner.add_state_before(body, "size", is_start_block=True)
+    inner.edges_between(size, body)[0].data.assignments["m"] = "i + 1"
+    inner.arrays["buf"].set_shape(new_shape=[dace.symbol("m", dace.int64)])
+    inner.arrays["buf"].storage = REGISTER
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_scratch_the_kernel_sizes_stays_where_it_is():
+    """An allocation before the launch cannot use a size the kernel computes."""
+    sdfg = kernel_computing_the_size_of_its_scratch()
+
+    assert lift(sdfg) is None
+
+    inner = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    assert inner.arrays["buf"].storage == REGISTER and [str(d) for d in inner.arrays["buf"].shape] == ["m"]
+    sdfg.validate()
+
+
+def test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is():
+    """``buf[i + 1]`` in kernel ``i`` has no size before the launch."""
+    sdfg = kernel_with_internal_transient()
+    sdfg.arrays["buf"].set_shape(new_shape=[dace.symbol("i", dace.int64) + 1])
+    sdfg.arrays["buf"].storage = REGISTER
+
+    assert lift(sdfg) is None
+
+    assert sdfg.arrays["buf"].storage == REGISTER
+
+
+@pytest.mark.gpu
+def test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values():
+    import cupy  # Only present on GPU runners.
+
+    sdfg = kernel_with_internal_transient((NX,), REGISTER)
+    next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry)).map.gpu_block_size = [32, 1, 1]
+    out = cupy.zeros(128)
+
+    sdfg(A=out, NX=4)
+
+    assert np.array_equal(cupy.asnumpy(out), np.ones(128))
+
+
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)
@@ -934,3 +1012,9 @@ if __name__ == "__main__":
     test_code_generation_moves_a_symbolic_register_scratch_out_of_its_kernel()
     test_code_generation_gives_every_thread_its_own_scratch()
     test_code_generation_computes_through_a_symbolic_scratch_below_a_nested_sdfg()
+    test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(GPU_DEVICE)
+    test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(dtypes.ScheduleType.GPU_Persistent)
+    test_code_generation_moves_a_symbolic_per_thread_array_out_of_the_kernel()
+    test_a_scratch_the_kernel_sizes_stays_where_it_is()
+    test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is()
+    test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values()

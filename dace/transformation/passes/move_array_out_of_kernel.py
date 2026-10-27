@@ -25,6 +25,7 @@ from dace.memlet import Memlet
 from dace.sdfg import dealias, is_devicelevel_gpu, nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.replace import replace_properties_dict
+from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.length_one_array_scalar_conversion import rewrite_code_slots
@@ -314,16 +315,33 @@ def plan_owner_edits(plan: LiftPlan, sdicts: dict[SDFGState, ScopeDict], stop: n
                 plan.tasklets.append((node, single_point(level_prefix(plan.levels, chain), node.label, name)))
 
 
+def assigns_symbol(sdfg: SDFG, name: str) -> bool:
+    """Whether ``sdfg`` gives ``name`` its own value rather than reading one from its caller."""
+    if any(isinstance(cfr, LoopRegion) and cfr.loop_variable == name for cfr in sdfg.all_control_flow_regions()):
+        return True
+    return any(name in edge.data.assignments for edge in sdfg.all_interstate_edges())
+
+
+def size_known_at_launch(desc: dt.Array, kernel: Scope) -> bool:
+    """Whether ``desc``, written in the symbols of the kernel's SDFG, names only symbols defined before the launch:
+    an allocation made there cannot use a size the kernel computes."""
+    entry, state = kernel
+    defined = state.symbols_defined_at(entry)
+    names = {str(s) for s in desc.free_symbols}
+    return all(n in defined for n in names) and not names & set(entry.map.params)
+
+
 def plan_hops(plan: LiftPlan, inner: dt.Array, kernel_sdfg: SDFG) -> bool:
     """Plan the descriptor of every SDFG from the owner's parent up to the kernel's, starting from the lifted
-    ``inner``; ``False`` if a shape names a symbol the parent cannot see."""
+    ``inner``; ``False`` if a shape names a symbol a nest computes or the launch cannot see."""
     kernel = plan.kernel[0]
     sdfg = plan.owner
     while sdfg is not kernel_sdfg:
         node, state = sdfg.parent_nsdfg_node, sdfg.parent
-        unmapped = [str(s) for s in inner.free_symbols if str(s) not in node.symbol_mapping]
-        if unmapped:
-            logger.debug("Not lifting '%s': %s does not map %s", plan.name, node.label, unmapped)
+        names = [str(s) for s in inner.free_symbols]
+        unknown = [n for n in names if n not in node.symbol_mapping or assigns_symbol(sdfg, n)]
+        if unknown:
+            logger.debug("Not lifting '%s': %s computes or does not map %s", plan.name, sdfg.name, unknown)
             return False
         outer = copy.deepcopy(inner)
         symbolic.safe_replace(node.symbol_mapping, lambda repl, desc=outer: replace_properties_dict(desc, repl))
@@ -335,6 +353,9 @@ def plan_hops(plan: LiftPlan, inner: dt.Array, kernel_sdfg: SDFG) -> bool:
         outer.storage = dtypes.StorageType.GPU_Global
         plan.hops.append(Hop(node, state, levels, [state.exit_node(e) for e in entries], outer))
         inner, sdfg = outer, state.sdfg
+    if not size_known_at_launch(inner, plan.kernel):
+        logger.debug("Not lifting '%s': the kernel computes its size", plan.name)
+        return False
     # The outermost descriptor is allocated by codegen instead of expected as a kernel input.
     if plan.hops:
         plan.hops[-1].desc.transient = True
@@ -342,7 +363,7 @@ def plan_hops(plan: LiftPlan, inner: dt.Array, kernel_sdfg: SDFG) -> bool:
 
 
 def plan_lift(name: str, owner: SDFG, kernel: Scope) -> LiftPlan | None:
-    """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if a parent cannot name its shape.
+    """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if its size is only known inside the kernel.
 
     :raises NotImplementedError: The array has no single slice per kernel iteration.
     """
@@ -446,27 +467,32 @@ def move_candidates(sdfg: SDFG, register_limit: int) -> list[tuple[str, dt.Array
     return [(name, owner.arrays[name], owner, found) for (owner, name), found in users.items() if None not in found]
 
 
+def copies_global_transient_in_kernel(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge) -> bool:
+    if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
+        return False
+    if edge.data.is_empty() or edge.data.wcr is not None:
+        return False
+    descs = (sdfg.arrays[edge.src.data], sdfg.arrays[edge.dst.data])
+    # An edge into or out of a view aliases its data; it copies nothing.
+    if any(isinstance(desc, dt.View) for desc in descs):
+        return False
+    return (
+        all(desc.storage is dtypes.StorageType.GPU_Global for desc in descs)
+        and any(desc.transient for desc in descs)
+        and (is_devicelevel_gpu(sdfg, state, edge.src) or is_devicelevel_gpu(sdfg, state, edge.dst))
+    )
+
+
 def check_no_global_copy_in_kernel(sdfg: SDFG) -> None:
     """:raises ValueError: A copy into or out of a transient ``GPU_Global`` array survives inside a kernel, where
     nothing can allocate it."""
-    offenders: list[str] = []
-    for nsdfg in sdfg.all_sdfgs_recursive():
-        for state in nsdfg.states():
-            for edge in state.edges():
-                if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
-                    continue
-                if edge.data.is_empty() or edge.data.wcr is not None:
-                    continue
-                descs = (nsdfg.arrays[edge.src.data], nsdfg.arrays[edge.dst.data])
-                # An edge into or out of a view aliases its data; it copies nothing.
-                if any(isinstance(desc, dt.View) for desc in descs):
-                    continue
-                if (
-                    all(desc.storage is dtypes.StorageType.GPU_Global for desc in descs)
-                    and any(desc.transient for desc in descs)
-                    and (is_devicelevel_gpu(nsdfg, state, edge.src) or is_devicelevel_gpu(nsdfg, state, edge.dst))
-                ):
-                    offenders.append(f"  - {edge.src.data} -> {edge.dst.data} in state '{state.label}' ({nsdfg.name})")
+    offenders = [
+        f"  - {edge.src.data} -> {edge.dst.data} in state '{state.label}' ({nsdfg.name})"
+        for nsdfg in sdfg.all_sdfgs_recursive()
+        for state in nsdfg.states()
+        for edge in state.edges()
+        if copies_global_transient_in_kernel(nsdfg, state, edge)
+    ]
     if offenders:
         raise ValueError(
             "Transient GPU_Global arrays cannot live inside a kernel scope. Offenders:\n" + "\n".join(offenders)
@@ -505,6 +531,18 @@ class MoveArrayOutOfKernel(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
+    def plan_or_refuse(self, name: str, owner: SDFG, kernels: list[Scope]) -> LiftPlan | None:
+        # Planning changes nothing, so a refusal leaves the SDFG as it was.
+        try:
+            if len(kernels) > 1:
+                raise NotImplementedError(f"Transient '{name}' is shared by the kernels {[k for k, _ in kernels]}")
+            return plan_lift(name, owner, kernels[0])
+        except NotImplementedError as ex:
+            if self.raise_on_unsupported:
+                raise
+            warnings.warn(f"Not moving '{name}' out of its GPU kernel: {ex}")
+            return None
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, object]) -> int | None:
         """Demote or move every kernel-local array registers cannot hold.
 
@@ -529,23 +567,13 @@ class MoveArrayOutOfKernel(ppl.Pass):
                 desc.storage = dtypes.StorageType.Register
                 handled += 1
                 continue
-            # Planning changes nothing, so a refusal leaves the SDFG as it was.
-            try:
-                if len(kernels) > 1:
-                    raise NotImplementedError(f"Transient '{name}' is shared by the kernels {[k for k, _ in kernels]}")
-                kernel = kernels[0]
-                plan = plan_lift(name, owner, kernel)
-            except NotImplementedError as ex:
-                if self.raise_on_unsupported:
-                    raise
-                warnings.warn(f"Not moving '{name}' out of its GPU kernel: {ex}")
-                continue
+            plan = self.plan_or_refuse(name, owner, kernels)
             if plan is None:
                 continue
             desc.storage = dtypes.StorageType.GPU_Global
             move_array(plan)
             # Nests now take one slice of the lifted array; restate them as the whole array they are connected to.
-            dealias.convert_legacy_nested_sdfgs(kernel[1].sdfg)
+            dealias.convert_legacy_nested_sdfgs(plan.kernel[1].sdfg)
             handled += 1
         if self.raise_on_unsupported:
             check_no_global_copy_in_kernel(sdfg)
