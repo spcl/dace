@@ -35,13 +35,24 @@ def retype_expression(expr: Any, table: Mapping[str, dtypes.typeclass]) -> Any:
         return expr
     replacements = {}
     for sym in expr.free_symbols:
-        if not symbolic.is_symbol_leaf(sym):
-            continue
-        declared = table.get(sym.name)
-        if declared is None or declared == sym.dtype or not is_scalar_dtype(declared):
-            continue
-        replacements[sym] = symbolic.symbol(sym.name, declared)
-    return expr.xreplace(replacements) if replacements else expr
+        if stale(sym, table):
+            replacements[sym] = symbolic.symbol(sym.name, table[sym.name])
+    if not replacements:
+        return expr
+    retyped = expr.xreplace(replacements)
+    if any(stale(sym, table) for sym in retyped.free_symbols):
+        # A symbol is its name, so SymPy's cache handed back the expression built from the old dtype: rebuild without it
+        sympy.core.cache.clear_cache()
+        retyped = expr.xreplace(replacements)
+    return retyped
+
+
+def stale(sym: Any, table: Mapping[str, dtypes.typeclass]) -> bool:
+    """Whether ``sym`` is a symbol of a declared name at another scalar dtype."""
+    if not symbolic.is_symbol_leaf(sym):
+        return False
+    declared = table.get(sym.name)
+    return declared is not None and declared != sym.dtype and is_scalar_dtype(declared)
 
 
 def retype_subset(subset: subsets.Subset | None, table: Mapping[str, dtypes.typeclass]) -> subsets.Subset | None:
