@@ -44,6 +44,20 @@ def assigned_symbols(chain: MegakernelChain) -> set[str]:
     return assigned.union(*(e.data.assignments.keys() for e in edges))
 
 
+def used_outside_chain(chain: MegakernelChain) -> set[str]:
+    """The names that blocks and interstate edges outside ``chain`` use; a region outside counts only its own
+    conditions."""
+    inside = set(nested_blocks(chain.blocks))
+    names = set()
+    for block in chain.region.sdfg.all_control_flow_blocks():
+        if block not in inside:
+            names |= block.used_symbols(all_symbols=True, with_contents=isinstance(block, SDFGState))
+    for edge in chain.region.sdfg.all_interstate_edges():
+        if edge.src not in inside or edge.dst not in inside:
+            names |= edge.data.read_symbols()
+    return names
+
+
 def keep_global_memory_outside(host: SDFGState, node: nodes.NestedSDFG) -> None:
     """Allocates the global-memory transients of ``node`` in its parent instead: a kernel cannot allocate them."""
     sdfg, body = host.sdfg, node.sdfg
@@ -64,7 +78,7 @@ def nest_chain(chain: MegakernelChain) -> tuple[SDFGState, nodes.NestedSDFG] | N
     """
     region, blocks = chain.region, chain.blocks
     sdfg = region.sdfg
-    if assigned_symbols(chain) & xfh.symbols_read_outside(sdfg, set(nested_blocks(blocks))):
+    if assigned_symbols(chain) & used_outside_chain(chain):
         return None
     if len(blocks) == 1 and isinstance(blocks[0], SDFGState):
         host = blocks[0]
