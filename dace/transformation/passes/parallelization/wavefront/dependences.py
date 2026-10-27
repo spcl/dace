@@ -29,7 +29,6 @@ from dace.transformation.passes.parallelization.wavefront.statements import (
     sequenced,
 )
 
-
 #: The relations a convex constraint states; ``!=`` and divisibility are not convex.
 AFFINE_RELATIONS = (RelationKind.LT, RelationKind.LE, RelationKind.EQ)
 

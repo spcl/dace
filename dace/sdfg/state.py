@@ -3309,7 +3309,7 @@ class SymbolResolver:
             self._per_scope.clear()
             return
         # Up the nesting chain of each resolved SDFG, not down the whole tree below ``sdfg``
-        inside: dict["SDFG", bool] = {}
+        inside: dict[SDFG, bool] = {}
 
         def within(owner: "SDFG") -> bool:
             if owner not in inside:
