@@ -127,6 +127,21 @@ GPU_SCHEDULES_WITHOUT_CODEGEN = [
 
 GPU_SCHEDULES = GPU_KERNEL_SCHEDULES + [ScheduleType.GPU_Chiplet] + GPU_THREAD_SCHEDULES
 
+# Schedules the experimental CUDA code generator emits.
+EXPERIMENTAL_GPU_SCHEDULES = [
+    ScheduleType.GPU_Device,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_Warp,
+]
+
+# Storages a GPU kernel can address. Register is deliberately absent: outside a kernel it is a CPU
+# stack array. A list, like GPU_SCHEDULES above, because the codegen dispatchers register per list.
+GPU_KERNEL_ACCESSIBLE_STORAGES = [
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
+    StorageType.CPU_Pinned,
+]
+
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
     ScheduleType.CPU_Multicore,
@@ -251,6 +266,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
 }
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.
@@ -1636,7 +1652,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
         return True
 
     if schedule in GPU_SCHEDULES:
-        return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
+        return storage in GPU_KERNEL_ACCESSIBLE_STORAGES
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
         return storage in [
             StorageType.Default,
