@@ -166,6 +166,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     #:  `map_fusion_helper.propagate_fused_map_scope()`. `None` propagates everything.
     propagated_nsdfgs: dict[SDFG, None] | None = None
     scope_records: mfhelper.ScopeRecords | None = None
+    #: The resolver the probes share while the SDFG is unchanged, replaced by the driving pass at every rewrite.
+    #:  `None` derives the facts per probe.
+    probe_symbols: SymbolResolver | None = None
 
     def __init__(
         self,
@@ -457,7 +460,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  the data that goes through the scope nodes. `has_inner_read_write_dependency()`
         #  if used to check if there are internal dependencies.
         # Both tests below compare subsets at the facts inside the first Map; one resolver derives them once.
-        symbols = SymbolResolver()
+        symbols = SymbolResolver() if self.probe_symbols is None else self.probe_symbols
         if self.has_read_write_dependency(
             first_map_entry=first_map_entry,
             second_map_entry=second_map_entry,
