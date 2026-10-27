@@ -894,12 +894,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         array_ctype = f"{nodedesc.dtype.ctype} *"
 
         declaration_stream.write(
-            "__shared__ __align__({}) {} {}[{}];\n".format(
-                STATIC_SHARED_MEMORY_ALIGNMENT,
-                nodedesc.dtype.ctype,
-                dataname,
-                sym2cpp(arrsize),
-            ), cfg, state_id, node)
+            f"__shared__ __align__({STATIC_SHARED_MEMORY_ALIGNMENT}) {nodedesc.dtype.ctype} {dataname}[{sym2cpp(arrsize)}];\n",
+            cfg,
+            state_id,
+            node,
+        )
 
         self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
 

@@ -1,21 +1,30 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Memory engine (TMA) bulk copy between global and shared memory.
-"""
-from typing import List, Optional, Set, Tuple
+"""Memory engine (TMA) bulk copy between global and shared memory."""
 
 import dace
-from dace import data, library, nodes, dtypes, symbolic
+from dace import data, dtypes, library, nodes, symbolic
 from dace.libraries.standard.environments.memory_engine import MemoryEngine
+from dace.libraries.standard.nodes.copy.common import (
+    INPUT_CONNECTOR_NAME,
+    MEMORY_ENGINE_BARRIER_INPUT_NAME,
+    MEMORY_ENGINE_BARRIER_OUTPUT_NAME,
+    MEMORY_ENGINE_DESC_INPUT_NAME,
+    MEMORY_ENGINE_DESC_OUTPUT_NAME,
+    MEMORY_ENGINE_GLOBAL_INPUT_NAME,
+    OUTPUT_CONNECTOR_NAME,
+    CUtensorMap,
+    MemoryEngineGeometry,
+    _build_memory_engine_barrier_init_code,
+    _build_memory_engine_bulk_copy_code,
+    _build_memory_engine_desc_code,
+    mark_memory_engine_shared_static,
+    memory_engine_bulk_reason,
+    memory_engine_geometry,
+)
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.standard.nodes.copy.common import (
-    _build_memory_engine_barrier_init_code, _build_memory_engine_bulk_copy_code, _build_memory_engine_desc_code,
-    mark_memory_engine_shared_static, memory_engine_bulk_reason, memory_engine_geometry, MemoryEngineGeometry,
-    CUtensorMap, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, MEMORY_ENGINE_BARRIER_INPUT_NAME,
-    MEMORY_ENGINE_BARRIER_OUTPUT_NAME, MEMORY_ENGINE_DESC_INPUT_NAME, MEMORY_ENGINE_DESC_OUTPUT_NAME,
-    MEMORY_ENGINE_GLOBAL_INPUT_NAME)
 
 _KERNEL_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)
 """Schedules that start a GPU kernel."""
@@ -40,6 +49,7 @@ class ExpandMemoryEngineBulk(ExpandTransformation):
 
     TODO: Add support for dynamic shared memory.
     """
+
     environments = [MemoryEngine]
 
     @staticmethod
@@ -57,11 +67,13 @@ class ExpandMemoryEngineBulk(ExpandTransformation):
         }
         if geometry.is_load:
             inputs[MEMORY_ENGINE_BARRIER_INPUT_NAME] = dtypes.pointer(dtypes.uint64)
-        return nodes.Tasklet(node.name,
-                             inputs=inputs,
-                             outputs={OUTPUT_CONNECTOR_NAME: dtypes.pointer(geometry.global_desc.dtype)},
-                             code=_build_memory_engine_bulk_copy_code(node, geometry),
-                             language=dace.Language.CPP)
+        return nodes.Tasklet(
+            node.name,
+            inputs=inputs,
+            outputs={OUTPUT_CONNECTOR_NAME: dtypes.pointer(geometry.global_desc.dtype)},
+            code=_build_memory_engine_bulk_copy_code(node, geometry),
+            language=dace.Language.CPP,
+        )
 
     @staticmethod
     def postprocessing(sdfg: SDFG, state: SDFGState, expansion: nodes.Tasklet):
@@ -74,7 +86,7 @@ class ExpandMemoryEngineBulk(ExpandTransformation):
             _add_barrier(sdfg, state, expansion)
 
 
-def _scope_chain(state: SDFGState, node: nodes.Node) -> List[nodes.EntryNode]:
+def _scope_chain(state: SDFGState, node: nodes.Node) -> list[nodes.EntryNode]:
     """Entry nodes enclosing ``node``, outermost first."""
     sdict = state.scope_dict()
     chain = []
@@ -85,7 +97,7 @@ def _scope_chain(state: SDFGState, node: nodes.Node) -> List[nodes.EntryNode]:
     return chain
 
 
-def _outermost_kernel_entry(state: SDFGState, node: nodes.Node) -> Optional[nodes.EntryNode]:
+def _outermost_kernel_entry(state: SDFGState, node: nodes.Node) -> nodes.EntryNode | None:
     """The outermost kernel map entry enclosing ``node`` in ``state``, or ``None``."""
     return next((e for e in _scope_chain(state, node) if e.schedule in _KERNEL_SCHEDULES), None)
 
@@ -106,8 +118,17 @@ class _Route:
     neither of which the producer can see.
     """
 
-    def __init__(self, sdfg: SDFG, state: SDFGState, scope: Optional[nodes.EntryNode], entries: List[nodes.EntryNode],
-                 consumer: nodes.Node, conn: str, levels: List[nodes.NestedSDFG], inner_params: Set[str]):
+    def __init__(
+        self,
+        sdfg: SDFG,
+        state: SDFGState,
+        scope: nodes.EntryNode | None,
+        entries: list[nodes.EntryNode],
+        consumer: nodes.Node,
+        conn: str,
+        levels: list[nodes.NestedSDFG],
+        inner_params: set[str],
+    ):
         self.sdfg = sdfg
         self.state = state
         self.scope = scope
@@ -122,14 +143,16 @@ class _Route:
         self.state.add_memlet_path(an, *self.entries, self.consumer, dst_conn=self.conn, memlet=memlet)
 
 
-def _route_input(sdfg: SDFG,
-                 state: SDFGState,
-                 node: nodes.Node,
-                 conn: str,
-                 inner_desc: data.Data,
-                 name: str,
-                 stop: str,
-                 dynamic: bool = False) -> _Route:
+def _route_input(
+    sdfg: SDFG,
+    state: SDFGState,
+    node: nodes.Node,
+    conn: str,
+    inner_desc: data.Data,
+    name: str,
+    stop: str,
+    dynamic: bool = False,
+) -> _Route:
     """Route a new input ``conn`` of ``node`` outward until the scope where its producer belongs.
 
     Crossing a NestedSDFG adds a non-transient copy of ``inner_desc`` to the nested SDFG and an input
@@ -147,8 +170,8 @@ def _route_input(sdfg: SDFG,
         if kernel_entry is not None:
             chain = _scope_chain(state, node)
             k = chain.index(kernel_entry)
-            if stop == 'kernel':
-                scope, entries = kernel_entry, chain[k + 1:]
+            if stop == "kernel":
+                scope, entries = kernel_entry, chain[k + 1 :]
             else:
                 scope, entries = (chain[k - 1] if k > 0 else None), chain[k:]
             inner_params |= {p for e in entries for p in e.map.params}
@@ -169,19 +192,22 @@ def _route_input(sdfg: SDFG,
         state, sdfg = sdfg.parent, sdfg.parent_sdfg
 
 
-def _global_pointer(sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet, geometry: MemoryEngineGeometry,
-                    host_state: SDFGState) -> Tuple[nodes.AccessNode, symbolic.SymExpr]:
+def _global_pointer(
+    sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet, geometry: MemoryEngineGeometry, host_state: SDFGState
+) -> tuple[nodes.AccessNode, symbolic.SymExpr]:
     """Follow the global side of the copy outward to ``host_state``.
 
     :returns: the host-level access node of the global container (only the outermost one; it may sit in
               another scope than the producer), and the element offset of the kernel-visible array from
               its base pointer, in host symbols.
     """
+
     def is_starting_edge(e):
         if geometry.is_load:
             return e.dst_conn == INPUT_CONNECTOR_NAME
         else:
             return e.src_conn == OUTPUT_CONNECTOR_NAME
+
     edge = next(e for e in state.all_edges(tasklet) if is_starting_edge(e))
     offset = symbolic.pystr_to_symbolic(0)
     while True:
@@ -192,8 +218,10 @@ def _global_pointer(sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet, geomet
         desc = sdfg.arrays[an.data]
         nsdfg_node = sdfg.parent_nsdfg_node
         if desc.transient or nsdfg_node is None:
-            raise NotImplementedError(f"MemoryEngineBulk: cannot follow global container {an.data} out of "
-                                      f"{sdfg.name}; it must be passed into the nested SDFG")
+            raise NotImplementedError(
+                f"MemoryEngineBulk: cannot follow global container {an.data} out of "
+                f"{sdfg.name}; it must be passed into the nested SDFG"
+            )
         parent_state = sdfg.parent
         if geometry.is_load:
             outer = next(e for e in parent_state.in_edges(nsdfg_node) if e.dst_conn == an.data)
@@ -208,14 +236,9 @@ def _global_pointer(sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet, geomet
 def _add_tensor_map(sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet, geometry: MemoryEngineGeometry):
     """Add the host tasklet encoding the copy's ``CUtensorMap`` and route it to ``tasklet``."""
     inner_desc = data.Array(CUtensorMap, [1], storage=dtypes.StorageType.Register, transient=False)
-    route = _route_input(sdfg,
-                         state,
-                         tasklet,
-                         MEMORY_ENGINE_DESC_INPUT_NAME,
-                         inner_desc,
-                         "tma_desc",
-                         stop='host',
-                         dynamic=True)
+    route = _route_input(
+        sdfg, state, tasklet, MEMORY_ENGINE_DESC_INPUT_NAME, inner_desc, "tma_desc", stop="host", dynamic=True
+    )
     host_sdfg, host_state = route.sdfg, route.state
 
     dims, strides = geometry.dims, geometry.strides
@@ -225,16 +248,16 @@ def _add_tensor_map(sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet, geomet
     global_an, offset = _global_pointer(sdfg, state, tasklet, geometry, host_state)
     global_desc = host_sdfg.arrays[global_an.data]
 
-    desc_name = host_sdfg.add_scalar("tma_desc",
-                                     CUtensorMap,
-                                     storage=dtypes.StorageType.Register,
-                                     transient=True,
-                                     find_new_name=True)[0]
-    init = host_state.add_tasklet(f"{tasklet.label}_tma_desc_init",
-                                  inputs={MEMORY_ENGINE_GLOBAL_INPUT_NAME: dtypes.pointer(global_desc.dtype)},
-                                  outputs={MEMORY_ENGINE_DESC_OUTPUT_NAME: CUtensorMap},
-                                  code=_build_memory_engine_desc_code(geometry, dims, strides, offset),
-                                  language=dtypes.Language.CPP)
+    desc_name = host_sdfg.add_scalar(
+        "tma_desc", CUtensorMap, storage=dtypes.StorageType.Register, transient=True, find_new_name=True
+    )[0]
+    init = host_state.add_tasklet(
+        f"{tasklet.label}_tma_desc_init",
+        inputs={MEMORY_ENGINE_GLOBAL_INPUT_NAME: dtypes.pointer(global_desc.dtype)},
+        outputs={MEMORY_ENGINE_DESC_OUTPUT_NAME: CUtensorMap},
+        code=_build_memory_engine_desc_code(geometry, dims, strides, offset),
+        language=dtypes.Language.CPP,
+    )
     init.environments = {MemoryEngine.full_class_path()}
     # Place ``init`` in the producer scope through its global pointer input. Only the pointer is read, so
     # a load reuses the access node feeding the kernel when it is in that scope; otherwise a fresh access
@@ -244,11 +267,13 @@ def _add_tensor_map(sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet, geomet
     else:
         src_an = host_state.add_access(global_an.data)
         src_chain = (_scope_chain(host_state, route.scope) + [route.scope]) if route.scope is not None else []
-    host_state.add_memlet_path(src_an,
-                               *src_chain,
-                               init,
-                               dst_conn=MEMORY_ENGINE_GLOBAL_INPUT_NAME,
-                               memlet=Memlet.from_array(global_an.data, global_desc))
+    host_state.add_memlet_path(
+        src_an,
+        *src_chain,
+        init,
+        dst_conn=MEMORY_ENGINE_GLOBAL_INPUT_NAME,
+        memlet=Memlet.from_array(global_an.data, global_desc),
+    )
     desc_an = host_state.add_access(desc_name)
     host_state.add_edge(init, MEMORY_ENGINE_DESC_OUTPUT_NAME, desc_an, None, Memlet(f"{desc_name}[0]"))
     route.connect(desc_an, Memlet(f"{desc_name}[0]", dynamic=True))
@@ -257,30 +282,38 @@ def _add_tensor_map(sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet, geomet
     used = {str(s) for e in dims + strides + [offset] for s in symbolic.pystr_to_symbolic(e).free_symbols}
     missing = (used - defined) | (used & route.inner_params)
     if missing:
-        raise NotImplementedError(f"MemoryEngineBulk: the tensor map of {tasklet} depends on {sorted(missing)}, "
-                                  "which are not known on the host where it is encoded")
+        raise NotImplementedError(
+            f"MemoryEngineBulk: the tensor map of {tasklet} depends on {sorted(missing)}, "
+            "which are not known on the host where it is encoded"
+        )
 
 
 def _add_barrier(sdfg: SDFG, state: SDFGState, tasklet: nodes.Tasklet):
     """Add a ``GPU_Shared`` mbarrier for ``tasklet``, initialized once at the top of its kernel."""
     inner_desc = data.Array(dtypes.uint64, [1], storage=dtypes.StorageType.GPU_Shared, transient=False)
-    route = _route_input(sdfg, state, tasklet, MEMORY_ENGINE_BARRIER_INPUT_NAME, inner_desc, "tma_bar", stop='kernel')
+    route = _route_input(sdfg, state, tasklet, MEMORY_ENGINE_BARRIER_INPUT_NAME, inner_desc, "tma_bar", stop="kernel")
     kernel_sdfg, kernel_state = route.sdfg, route.state
 
     # Static like the copy's shared side, so the barrier never needs the layout of dynamic shared memory
-    bar_name = kernel_sdfg.add_array("tma_bar", [1],
-                                     dtypes.uint64,
-                                     storage=dtypes.StorageType.GPU_Shared(dynamic=False),
-                                     transient=True,
-                                     find_new_name=True)[0]
-    init = kernel_state.add_tasklet(f"{tasklet.label}_tma_barrier_init",
-                                    inputs={},
-                                    outputs={MEMORY_ENGINE_BARRIER_OUTPUT_NAME: dtypes.pointer(dtypes.uint64)},
-                                    code=_build_memory_engine_barrier_init_code(),
-                                    language=dtypes.Language.CPP)
+    bar_name = kernel_sdfg.add_array(
+        "tma_bar",
+        [1],
+        dtypes.uint64,
+        storage=dtypes.StorageType.GPU_Shared(dynamic=False),
+        transient=True,
+        find_new_name=True,
+    )[0]
+    init = kernel_state.add_tasklet(
+        f"{tasklet.label}_tma_barrier_init",
+        inputs={},
+        outputs={MEMORY_ENGINE_BARRIER_OUTPUT_NAME: dtypes.pointer(dtypes.uint64)},
+        code=_build_memory_engine_barrier_init_code(),
+        language=dtypes.Language.CPP,
+    )
     init.environments = {MemoryEngine.full_class_path()}
     kernel_state.add_nedge(route.scope, init, Memlet())
     bar_an = kernel_state.add_access(bar_name)
-    kernel_state.add_edge(init, MEMORY_ENGINE_BARRIER_OUTPUT_NAME, bar_an, None,
-                          Memlet.from_array(bar_name, kernel_sdfg.arrays[bar_name]))
+    kernel_state.add_edge(
+        init, MEMORY_ENGINE_BARRIER_OUTPUT_NAME, bar_an, None, Memlet.from_array(bar_name, kernel_sdfg.arrays[bar_name])
+    )
     route.connect(bar_an, Memlet.from_array(bar_name, kernel_sdfg.arrays[bar_name]))

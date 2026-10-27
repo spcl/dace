@@ -245,8 +245,9 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
 
     # The experimental CUDA code generator selects memory engine copies in its preprocessing, which runs after the
     # expansion below has already given every copy node a default implementation
-    if (config.Config.get("compiler", "cuda", "implementation") == "experimental"
-            and config.Config.get_bool("compiler", "cuda", "memory_engine_copies")):
+    if config.Config.get("compiler", "cuda", "implementation") == "experimental" and config.Config.get_bool(
+        "compiler", "cuda", "memory_engine_copies"
+    ):
         from dace.transformation import pass_pipeline as ppl
         from dace.transformation.passes.insert_memory_engine_bulk_copies import InsertMemoryEngineBulkCopies
 

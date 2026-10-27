@@ -16,7 +16,7 @@ class MemoryEngine:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["dace/cuda/memoryengine.cuh"], 'cuda': ["dace/cuda/memoryengine.cuh"]}
+    headers = {"frame": ["dace/cuda/memoryengine.cuh"], "cuda": ["dace/cuda/memoryengine.cuh"]}
     state_fields = []
     init_code = ""
     finalize_code = ""
