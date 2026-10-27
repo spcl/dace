@@ -256,6 +256,15 @@ def reads_written_element(read, write) -> bool:
     return read.data.data == write.data.data and read.data.subset == write.data.subset
 
 
+def reads_container(sdfg: SDFG, name: str) -> bool:
+    """Whether ``sdfg`` reads ``name``: an access node of it with a successor, or an interstate edge naming it."""
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            if node.data == name and any(not e.data.is_empty() for e in state.out_edges(node)):
+                return True
+    return any(name in edge.data.free_symbols for edge in sdfg.all_interstate_edges())
+
+
 class AugAssignToWCR(transformation.SingleStateTransformation):
     """
     Convert augmented assignment (``a += b``, ``a = a + b``) into a tasklet + WCR.
@@ -566,6 +575,13 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         while not sd.arrays[outedge.data.data].transient and sd.parent_nsdfg_node is not None:
             nsdfg = sd.parent_nsdfg_node
             nstate = sd.parent
+            name = outedge.data.data
+            # The update no longer reads the accumulator; a read connector left for it is a stale read of the
+            # outer array, which keeps a loop around the nest refused on a read-after-write.
+            if name in nsdfg.in_connectors and not reads_container(sd, name):
+                for read in list(nstate.in_edges_by_connector(nsdfg, name)):
+                    nstate.remove_memlet_path(read)
+                nsdfg.remove_in_connector(name)
             sd = sd.parent_sdfg
             outedge = next(iter(nstate.out_edges_by_connector(nsdfg, outedge.data.data)))
             for outedge in nstate.memlet_path(outedge):

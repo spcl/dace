@@ -197,6 +197,39 @@ def test_aug_assign_free_map():
     assert applied == 1
 
 
+def test_aug_assign_in_a_nested_body_drops_the_read_connector_it_no_longer_uses():
+    """``A[0] = A[0] + B[i]`` in a map's nested body: as a WCR the body no longer reads ``A``, so the nested SDFG's
+    ``A`` input goes too -- left behind it is a read of ``A`` that keeps a loop around the map refused."""
+    body = dace.SDFG("rmw_body")
+    body.add_symbol("i", dace.int64)
+    body.add_array("A", [1], dace.float64)
+    body.add_array("b", [32], dace.float64)
+    bstate = body.add_state("rmw")
+    t = bstate.add_tasklet("add", {"x", "y"}, {"z"}, "z = x + y")
+    bstate.add_edge(bstate.add_read("A"), None, t, "x", dace.Memlet("A[0]"))
+    bstate.add_edge(bstate.add_read("b"), None, t, "y", dace.Memlet("b[i]"))
+    bstate.add_edge(t, "z", bstate.add_write("A"), None, dace.Memlet("A[0]"))
+
+    sdfg = dace.SDFG("rmw_nested")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [32], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", {"i": "0:32"})
+    nsdfg = state.add_nested_sdfg(body, {"A", "b"}, {"A"}, symbol_mapping={"i": "i"})
+    state.add_memlet_path(state.add_read("A"), me, nsdfg, dst_conn="A", memlet=dace.Memlet("A[0]"))
+    state.add_memlet_path(state.add_read("B"), me, nsdfg, dst_conn="b", memlet=dace.Memlet("B[i]"))
+    state.add_memlet_path(nsdfg, mx, state.add_write("A"), src_conn="A", memlet=dace.Memlet("A[0]"))
+    sdfg.validate()
+
+    assert body.apply_transformations(AugAssignToWCR) == 1
+    sdfg.validate()
+    assert "A" not in nsdfg.in_connectors
+    assert all(e.data.data != "A" for e in state.in_edges(me))
+    a, b = np.zeros(1), np.arange(32.0)
+    sdfg(A=a, B=b)
+    assert np.isclose(a[0], b.sum())
+
+
 def test_aug_assign_state_fission_map():
 
     @dace.program
