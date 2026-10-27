@@ -27,6 +27,8 @@ Two independent reasons to take the parallelism away, in the order they are chec
    (``0:cnt``), inside a sequential loop runs a handful of iterations per outer one, and nothing bounds
    that handful at compile time. ilu0's elimination forked once per row over a row of about ten: 1.5 s
    against numba's sequential 11 ms; amg_setup's per-row gather, 9.5 s against 0.55 s.
+   A short loop does not count (a level loop of 15 trips, :func:`short_loop`): what each of its trips reads from
+   data is a whole level, not a handful.
 The map's own iteration count, not the work of its whole subtree: a 16-iteration map wrapping a
 1M-element inner map is better served by sequentializing the outer one and letting rule 1 release
 the inner, than by forking 16 ways over 8 threads.
@@ -68,6 +70,7 @@ from dace.sdfg import nodes
 from dace.sdfg.narrowing import config_int
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.analysis import loop_analysis
 
 #: Schedules a CPU map or library node still parallelizes under. ``Default`` is included because
 #: canonicalization leaves the schedule unset: codegen infers it, and a top-level ``Default`` map
@@ -130,18 +133,35 @@ def data_derived(sdfg: SDFG, names: set[str], seen: set[tuple[int, str]] | None 
     return False
 
 
-def in_sequential_loop(state: SDFGState) -> bool:
-    """Whether a ``LoopRegion`` encloses ``state``, crossing nested-SDFG boundaries."""
+def innermost_loop(state: SDFGState) -> LoopRegion | None:
+    """The innermost ``LoopRegion`` enclosing ``state``, crossing nested-SDFG boundaries, or ``None``."""
     region = state.parent_graph
     while region is not None:
         if isinstance(region, LoopRegion):
-            return True
+            return region
         if isinstance(region, SDFG):
             parent = region.parent
             region = parent.parent_graph if parent is not None else None
         else:
             region = region.parent_graph
-    return False
+    return None
+
+
+def in_sequential_loop(state: SDFGState) -> bool:
+    """Whether a ``LoopRegion`` encloses ``state``, crossing nested-SDFG boundaries."""
+    return innermost_loop(state) is not None
+
+
+def short_loop(loop: LoopRegion, facts: symbolic.Facts) -> bool:
+    """Whether ``loop`` provably runs few trips: a ``SMALL`` or short literal count (:func:`symbolic.is_small_extent`)."""
+    start, end, step = (
+        loop_analysis.get_init_assignment(loop),
+        loop_analysis.get_loop_end(loop),
+        loop_analysis.get_loop_stride(loop),
+    )
+    if start is None or end is None or step is None or step != 1:
+        return False
+    return symbolic.is_small_extent(end - start + 1, facts)
 
 
 def assigned_in_enclosing_loop(state: SDFGState, names: set[str]) -> set[str]:
@@ -417,7 +437,11 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
         facts = SymbolResolver().facts_at(state, node)
         if not self.worth_forking(count, facts):
             note_sequential(node, BELOW_BREAK_EVEN_REASON.format(count=count))
-        elif in_sequential_loop(state) and (segment := data_segment(state, node, facts.small)) is not None:
+        elif (
+            (loop := innermost_loop(state)) is not None
+            and not short_loop(loop, facts)
+            and (segment := data_segment(state, node, facts.small)) is not None
+        ):
             note_sequential(node, DATA_SEGMENT_REASON.format(begin=segment[0], end=segment[1]))
         else:
             return True

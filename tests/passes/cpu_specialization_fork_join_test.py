@@ -228,6 +228,22 @@ def test_a_stencil_width_map_in_a_sequential_loop_goes_sequential(order_is_small
     assert schedules(sdfg)["body_map"] == expected
 
 
+def test_a_level_size_read_from_data_in_a_short_loop_stays_parallel():
+    """amg_setup's level loop: 15 trips, each over a level of ``cnt`` rows read from data. Few trips of a data-sized
+    extent are whole levels, not handfuls, so the map keeps its region."""
+    sdfg = dace.SDFG("level_size")
+    sdfg.add_array("indptr", [N + 1], dace.int64)
+    sdfg.add_array("a", [M], dace.float64)
+    sdfg.add_symbol("cnt", dace.int64)
+    levels = loop(sdfg, "levels", "15")
+    read = levels.add_state("read_level", is_start_block=True)
+    body = map_state(levels, sdfg, "body", ["0:cnt"])
+    levels.add_edge(read, body, dace.InterstateEdge(assignments={"cnt": "indptr[it]"}))
+    sdfg.validate()
+    assert SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {}) is None
+    assert schedules(sdfg)["body_map"] == dtypes.ScheduleType.Default
+
+
 def test_an_extent_read_from_data_once_before_the_loop_stays_parallel():
     """The same extent read once, before the loop, is the same size every iteration: the enclosing loop cancels
     out of the fork/join algebra and the map keeps its region."""
