@@ -553,18 +553,67 @@ def map_tasklet_augassign_candidates(
                 )
 
 
-def accumulates(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
-    """Whether the writes of ``tasklet`` repeat on one element across an enclosing loop or map iteration.
+def refused_on(loop: LoopRegion, names: set[str], refusals: dict[LoopRegion, Any]) -> bool:
+    """Whether ``LoopToMap`` refuses ``loop`` on a dependence of one of ``names`` as far as its probe tells: a carried
+    dependence or a non-unique write of that container, which a WCR on it removes. ``refusals`` caches each loop's
+    refusal (``None`` when it maps) for the caller, which drops a loop's entry once it rewrites inside it."""
+    from dace.transformation.interstate.loop_to_map import LoopToMap, Refusal
+    from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+
+    if not names:
+        return False
+    if loop not in refusals:
+        probe = LoopToMap()
+        refusals[loop] = None if ParallelizeLoops().accepts(loop, probe) else probe.last_refusal
+    refusal = refusals[loop]
+    return (
+        refusal is not None
+        and (refusal.kind.carried or refusal.kind is Refusal.NON_UNIQUE_WRITE)
+        and refusal.container in names
+    )
+
+
+def enclosing_loops_across_nesting(state: SDFGState) -> list[LoopRegion]:
+    """The loops around ``state``, through the nested SDFGs it sits in."""
+    loops: list[LoopRegion] = []
+    block = state
+    while block is not None:
+        parent = block.parent_graph
+        if isinstance(parent, LoopRegion):
+            loops.append(parent)
+        if isinstance(parent, SDFG):
+            block = parent.parent
+            continue
+        block = parent
+    return loops
+
+
+def accumulates(state: SDFGState, tasklet: nodes.Tasklet, refusals: dict[LoopRegion, Any]) -> bool:
+    """Whether the writes of ``tasklet`` repeat on one element across an enclosing map iteration, or across the
+    iterations of an enclosing loop the accumulation alone keeps from mapping (:func:`refused_on`).
 
     Only such a read-modify-write is an accumulation worth a WCR. One that runs once (a peeled ``A[N-1] += 1``)
     or whose element every enclosing iterator separates injectively (``zqlhs[jn, jm, jl] /= ...``, but not
     ``b[i // 2] += a[i]``) accumulates nothing; as a WCR it only loses its order against the plain writes beside
-    it and its indexed form in the rendering. Iterators are compared in the tasklet's namespace: an outer one a
-    nested SDFG does not receive cannot index the write, so it repeats it.
+    it and its indexed form in the rendering. Neither does one repeated across a loop refused on something else
+    (bicgstab's ``x[i] += alpha * p[i]`` across the solver iterations): the WCR maps no loop. Iterators are
+    compared in the tasklet's namespace: an outer one a nested SDFG does not receive cannot index the write, so
+    it repeats it.
     """
     from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
 
-    writes = [edge.data.subset for edge in state.out_edges(tasklet) if edge.data.subset is not None]
+    out_edges = [edge for edge in state.out_edges(tasklet) if edge.data.subset is not None]
+    writes = [edge.data.subset for edge in out_edges]
+    # The accumulator, in the namespace of the graph being walked: what the tasklet writes, or what the staging
+    # copy after it writes (the ``copy_out -> arr`` of a copy-wrapped update).
+    targets = {edge.dst.data for edge in out_edges if isinstance(edge.dst, nodes.AccessNode)}
+    targets |= {
+        staged.dst.data
+        for edge in out_edges
+        if isinstance(edge.dst, nodes.AccessNode)
+        for staged in state.out_edges(edge.dst)
+        if isinstance(staged.dst, nodes.AccessNode)
+    }
 
     def separates(name: str | None) -> bool:
         return name is not None and bool(writes) and all(write_subset_is_injective(w, [name]) for w in writes)
@@ -575,13 +624,14 @@ def accumulates(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
         parent = block.parent_graph
         if isinstance(parent, LoopRegion) and parent.loop_variable:
             var = parent.loop_variable
-            if not separates(var if rename is None else rename.get(var)):
+            if not separates(var if rename is None else rename.get(var)) and refused_on(parent, targets, refusals):
                 return True
         if isinstance(parent, SDFG):
             nsdfg = parent.parent_nsdfg_node
             outer = parent.parent
             if nsdfg is None or outer is None:
                 return False
+            targets = {e.data.data for e in outer.out_edges(nsdfg) if e.src_conn in targets and not e.data.is_empty()}
             mapped = {}
             for inner, value in nsdfg.symbol_mapping.items():
                 inner_name = str(inner) if rename is None else rename.get(str(inner))
@@ -601,7 +651,9 @@ def accumulates(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
     return False
 
 
-def augassign_to_wcr_candidates(state: SDFGState) -> Iterator[tuple[int, AugAssignBinding]]:
+def augassign_to_wcr_candidates(
+    state: SDFGState, refusals: dict[LoopRegion, Any] | None = None
+) -> Iterator[tuple[int, AugAssignBinding]]:
     """Enumerate ``(expr_index, binding)`` for every ``AugAssignToWCR`` candidate anchored on
     a combining Tasklet in ``state``.
 
@@ -612,20 +664,24 @@ def augassign_to_wcr_candidates(state: SDFGState) -> Iterator[tuple[int, AugAssi
     transformation.
 
     :param state: The state to scan.
+    :param refusals: The loop refusals :func:`accumulates` reads, cached across the walk (a fresh cache if ``None``).
     :returns: Yields a pattern index and the node binding to match it with.
     """
+    refusals = {} if refusals is None else refusals
     for node in state.nodes():
         if not isinstance(node, nodes.Tasklet):
             continue
         entry = state.entry_node(node)
         if entry is None:
-            if accumulates(state, node):
+            if accumulates(state, node, refusals):
                 yield from free_tasklet_augassign_candidates(state, node)
         elif isinstance(entry, nodes.MapEntry):
             yield from map_tasklet_augassign_candidates(state, entry, node)
 
 
-def augassign_to_wcr_in_state(xform: AugAssignToWCR, sdfg: SDFG, state: SDFGState) -> int:
+def augassign_to_wcr_in_state(
+    xform: AugAssignToWCR, sdfg: SDFG, state: SDFGState, refusals: dict[LoopRegion, Any] | None = None
+) -> int:
     """Apply ``AugAssignToWCR`` at every candidate ``state`` accepts, restarting the scan
     after each rewrite. ``xform`` is reused across candidates and states: ``setup_match``
     with ``override=True`` binds it straight to the node objects the traversal found, no
@@ -636,19 +692,23 @@ def augassign_to_wcr_in_state(xform: AugAssignToWCR, sdfg: SDFG, state: SDFGStat
                  descriptors the top-level SDFG does not carry; passing the wrong one makes
                  ``can_be_applied`` miss every descriptor lookup and refuse a real candidate.
     :param state: The state to rewrite in place.
+    :param refusals: The loop refusals :func:`accumulates` reads; a rewrite drops those of the loops around it.
     :returns: Number of rewrites performed in ``state``.
     """
+    refusals = {} if refusals is None else refusals
     cfg_id = state.parent_graph.cfg_id
     state_id = state.block_id
     applied = 0
     changed = True
     while changed:
         changed = False
-        for expr_index, binding in augassign_to_wcr_candidates(state):
+        for expr_index, binding in augassign_to_wcr_candidates(state, refusals):
             xform.setup_match(sdfg, cfg_id, state_id, binding, expr_index, override=True)
             if not xform.can_be_applied(state, expr_index, sdfg, permissive=False):
                 continue
             xform.apply(state, sdfg)
+            for loop in enclosing_loops_across_nesting(state):
+                refusals.pop(loop, None)
             applied += 1
             changed = True
             break
@@ -678,6 +738,7 @@ def _augassign_to_wcr_per_state(sdfg: SDFG) -> int:
     the descending-recurrence value-preservation test.
     """
     xform = AugAssignToWCR()
+    refusals: dict[LoopRegion, Any] = {}
     count = 0
     for cfr in sdfg.all_control_flow_regions(recursive=True):
         # Re-read ``nodes()`` per step rather than walking a snapshot: ``apply`` may append a
@@ -690,7 +751,7 @@ def _augassign_to_wcr_per_state(sdfg: SDFG) -> int:
             visited.add(block)
             # ``block.sdfg``, not ``sdfg``: a state inside a NestedSDFG carries descriptors the
             # top-level SDFG does not, and ``can_be_applied`` resolves them off the SDFG passed in.
-            count += augassign_to_wcr_in_state(xform, block.sdfg, block)
+            count += augassign_to_wcr_in_state(xform, block.sdfg, block, refusals)
 
     changed = True
     while changed:
@@ -699,7 +760,7 @@ def _augassign_to_wcr_per_state(sdfg: SDFG) -> int:
             for block in list(cfr.nodes()):
                 if not isinstance(block, SDFGState):
                     continue
-                found = augassign_to_wcr_in_state(xform, block.sdfg, block)
+                found = augassign_to_wcr_in_state(xform, block.sdfg, block, refusals)
                 count += found
                 changed = changed or found > 0
     return count
