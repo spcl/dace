@@ -28,8 +28,10 @@ from dace.transformation.passes.length_one_array_scalar_conversion import rewrit
 
 logger = logging.getLogger(__name__)
 
-# Not ``dtypes.GPU_SCHEDULES``: that also holds dynamic and persistent thread-block schedules, which are not lifted.
-GPU_HIERARCHY_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock)
+#: Map schedules that launch a kernel; each of their iterations gets a slice of a moved array.
+KERNEL_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)
+# Not ``dtypes.GPU_SCHEDULES``: that also holds dynamic thread-block schedules, which are not lifted.
+GPU_HIERARCHY_SCHEDULES = (*KERNEL_SCHEDULES, dtypes.ScheduleType.GPU_ThreadBlock)
 # Storage a kernel declares as a plain per-thread local.
 THREAD_LOCAL_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
 
@@ -55,19 +57,32 @@ def tile_extent(max_elem: symbolic.SymbolicType, min_elem: symbolic.SymbolicType
     return max_elem + 1 - min_elem
 
 
+def constant_size(desc: dt.Data) -> int | None:
+    """The element count of ``desc``, or None if it is symbolic."""
+    total = utils.prod(desc.shape)
+    return int(total) if isinstance(total, numbers.Integral) else None
+
+
 def fits_registers(desc: dt.Data, register_limit: int) -> bool:
     """A constant size of at most ``register_limit`` elements; persistent and external arrays outlive a thread."""
     if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
         return False
-    total = utils.prod(desc.shape)
-    return isinstance(total, numbers.Integral) and total <= register_limit
+    size = constant_size(desc)
+    return size is not None and size <= register_limit
 
 
-def is_move_candidate(desc: dt.Data, register_limit: int) -> bool:
+def is_variable_length(desc: dt.Data) -> bool:
+    """A per-thread local whose size is symbolic: C++ has no variable-length arrays, so no kernel can declare it."""
+    return desc.storage in THREAD_LOCAL_STORAGE and constant_size(desc) is None
+
+
+def is_move_candidate(desc: dt.Data, register_limit: int, only_variable_length: bool = False) -> bool:
     """A transient array a kernel cannot declare as is: ``GPU_Global``, or a per-thread local of symbolic size or
-    larger than ``register_limit``."""
+    larger than ``register_limit``; with ``only_variable_length`` just the symbolic-size per-thread local."""
     if not isinstance(desc, dt.Array) or isinstance(desc, dt.View) or not desc.transient:
         return False
+    if only_variable_length:
+        return is_variable_length(desc)
     if desc.storage is dtypes.StorageType.GPU_Global:
         return True
     return desc.storage in THREAD_LOCAL_STORAGE and not fits_registers(desc, register_limit)
@@ -89,7 +104,7 @@ def gpu_levels(state: SDFGState, node: nodes.Node) -> list[Scope] | None:
     for scope in enclosing_maps(state, node):
         if scope[0].map.schedule in GPU_HIERARCHY_SCHEDULES:
             levels.append(scope)
-        if scope[0].map.schedule == dtypes.ScheduleType.GPU_Device:
+        if scope[0].map.schedule in KERNEL_SCHEDULES:
             return levels[::-1]
     return None
 
@@ -370,25 +385,18 @@ def reshape_descendants(
 
 
 def carry_out_of_kernel(plan: LiftPlan, name: str, kernel: nodes.MapEntry, state: SDFGState) -> None:
-    """Route the array from its access nearest the kernel exit out through every map exit, one slice per edge."""
-    desc = plan.desc
+    """Order an access outside the kernel after the access nearest its exit, so the array is allocated outside.
+
+    The route carries no data: through a scope exit a memlet from ``name`` to ``name`` is a copy, which every thread
+    would run onto the first slice.
+    """
     exit_node = state.exit_node(kernel)
     source = nearest_access_node([node for node, _ in plan.accesses], exit_node, state)
     entries = [entry for entry, _ in enclosing_maps(state, source)]
     exits = [state.exit_node(entry) for entry in entries[: entries.index(kernel) + 1]]
-    whole = subsets.Range.from_array(desc).ndrange()
-    for src, dst in zip([source, *exits[:-1]], exits, strict=True):
-        prefix = lift_prefix(plan.levels, state, src)
-        dst.add_in_connector(f"IN_{name}")
-        dst.add_out_connector(f"OUT_{name}")
-        state.add_edge(
-            src,
-            None if src is source else f"OUT_{name}",
-            dst,
-            f"IN_{name}",
-            Memlet(data=name, subset=subsets.Range(prefix + whole[len(prefix) :])),
-        )
-    state.add_edge(exit_node, f"OUT_{name}", state.add_access(name), None, Memlet.from_array(name, desc))
+    route = [source, *exits, state.add_access(name)]
+    for src, dst in itertools.pairwise(route):
+        state.add_nedge(src, dst, Memlet())
 
 
 def lift_through_nested_sdfgs(name: str, kernel: nodes.MapEntry, hierarchy: list[SDFG]) -> None:
@@ -454,8 +462,10 @@ def move_array(plan: LiftPlan, kernel: nodes.MapEntry, kernel_state: SDFGState) 
     lift_through_nested_sdfgs(name, kernel, plan.hierarchy)
 
 
-def move_candidates(sdfg: SDFG, register_limit: int) -> list[tuple[str, dt.Array, SDFG, nodes.MapEntry, SDFGState]]:
-    """Transients that :func:`is_move_candidate`, accessed only inside one ``GPU_Device`` map.
+def move_candidates(
+    sdfg: SDFG, register_limit: int, only_variable_length: bool = False
+) -> list[tuple[str, dt.Array, SDFG, nodes.MapEntry, SDFGState]]:
+    """Transients that :func:`is_move_candidate`, accessed only inside one kernel map.
 
     :raises NotImplementedError: A candidate is accessed by several kernels.
     """
@@ -463,9 +473,9 @@ def move_candidates(sdfg: SDFG, register_limit: int) -> list[tuple[str, dt.Array
     for owner in sdfg.all_sdfgs_recursive():
         for state in owner.states():
             for node in state.data_nodes():
-                if is_move_candidate(owner.arrays[node.data], register_limit):
+                if is_move_candidate(owner.arrays[node.data], register_limit, only_variable_length):
                     kernel = next(
-                        (s for s in enclosing_maps(state, node) if s[0].map.schedule == dtypes.ScheduleType.GPU_Device),
+                        (s for s in enclosing_maps(state, node) if s[0].map.schedule in KERNEL_SCHEDULES),
                         None,
                     )
                     found = users.setdefault((owner, node.data), [])
@@ -528,6 +538,20 @@ class MoveArrayOutOfKernel(ppl.Pass):
         "symbolically-sized ones are moved to GPU_Global memory outside the kernel.",
     )
 
+    only_variable_length = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Move only per-thread (Register or Default) arrays of symbolic size, which no kernel can declare; "
+        "code generation runs the pass this way.",
+    )
+
+    def __init__(self, register_limit: int | None = None, only_variable_length: bool | None = None) -> None:
+        super().__init__()
+        if register_limit is not None:
+            self.register_limit = register_limit
+        if only_variable_length is not None:
+            self.only_variable_length = only_variable_length
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
 
@@ -550,7 +574,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
             if e.data.wcr is not None
         )
         handled = 0
-        for name, desc, owner, kernel, kernel_state in move_candidates(sdfg, self.register_limit):
+        for name, desc, owner, kernel, kernel_state in move_candidates(
+            sdfg, self.register_limit, self.only_variable_length
+        ):
             if name not in accumulated and fits_registers(desc, self.register_limit):
                 desc.storage = dtypes.StorageType.Register
                 handled += 1
@@ -561,5 +587,6 @@ class MoveArrayOutOfKernel(ppl.Pass):
             desc.storage = dtypes.StorageType.GPU_Global
             move_array(plan, kernel, kernel_state)
             handled += 1
-        check_no_global_copy_in_kernel(sdfg)
+        if not self.only_variable_length:
+            check_no_global_copy_in_kernel(sdfg)
         return handled or None
