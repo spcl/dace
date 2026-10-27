@@ -16,7 +16,7 @@ from dace.libraries.tileops.environments import (
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import IsaCall, call_text, element_code, template_flag
 from dace.libraries.tileops.kinds import SYMBOL, TILE
-from dace.libraries.tileops.lanes import half_disambiguated, tile_offset
+from dace.libraries.tileops.lanes import SEQUENTIAL, TileLowering, half_disambiguated, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import (
     Operand,
@@ -184,7 +184,9 @@ class TileUnop(TileOp):
             and operands_share_output_type(self, state, sdfg, operands, "_c")
         )
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         self.validate(sdfg, state)
         operand = self.operands()[0]
         in_edges = connected_edges(state, self)
@@ -212,12 +214,14 @@ class TileUnop(TileOp):
                 # ``dace::float16`` takes the explicit hop through ``float``.
                 reference = half_disambiguated(reference, operand_ctype, "float")
             rhs = UNARY_OPS[self.op].cpp(reference)
-        return elementwise_tasklet(self, state, [operand], "_c", rhs, out_ctype, in_edges)
+        return elementwise_tasklet(self, state, [operand], "_c", rhs, out_ctype, in_edges, lowering=lowering)
 
-    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
+    def isa_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         self.validate(sdfg, state)
         operands = self.operands()
-        call = IsaCall.of(self, state, sdfg, "_c", backend)
+        call = IsaCall.of(self, state, sdfg, "_c", backend, lowering)
         if self.op in CAST_OPS:
             # The operand keeps its element type, which the function converts from.
             broadcast, pointer = call.operand(operands[0], promote_tile=False)

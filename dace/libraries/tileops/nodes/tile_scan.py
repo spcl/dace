@@ -7,6 +7,7 @@ import dace
 from dace import library, properties
 from dace.libraries.tileops.environments import TileOpsCUDABlock
 from dace.libraries.tileops.expansions import THREAD_INDEX, ExpandTilePure
+from dace.libraries.tileops.lanes import SEQUENTIAL, TileLowering
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.nodes.tile_reduce import collective_group, combine_expr, identity_literal
 from dace.libraries.tileops.operands import connected_edges, edge_ctype
@@ -55,7 +56,9 @@ class TileScan(TileOp):
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
         return False
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         ctype = edge_ctype(sdfg, connected_edges(state, self)["_src"])
         width = self.widths[0]
         code = (
@@ -73,7 +76,9 @@ class TileScan(TileOp):
             language=dace.dtypes.Language.CPP,
         )
 
-    def block_collective(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def block_collective(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         """Thread ``t`` loads lanes ``t * items`` to ``(t + 1) * items``, the lanes past the tile being the identity,
         ``cub::BlockScan`` scans them, and the thread stores the ones in the tile."""
         threads = collective_group(self, "TileScan")

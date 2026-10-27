@@ -2,48 +2,34 @@
 """What the ISA expansions of the tile nodes share: staging operands for a call of a per-signature tile function
 (:mod:`dace.tile_functions`)."""
 
-import contextlib
-import contextvars
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import dace
 from dace import tile_functions
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.libraries.tileops.kinds import SYMBOL, TILE
+from dace.libraries.tileops.lanes import SEQUENTIAL, TileLowering
 from dace.libraries.tileops.operands import Operand, connected_edges, edge_ctype, input_connectors, output_edge
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.subsets import Subset
 
-_chunk: contextvars.ContextVar[int | None] = contextvars.ContextVar("tile_isa_chunk", default=None)
-
 #: The first lane of the chunk an ISA call covers within a ``block`` lowering.
 CHUNK_OFFSET = "__c"
 
 
-@contextlib.contextmanager
-def isa_chunk(lanes: int) -> Iterator[None]:
-    """Within the block, an ISA call covers ``lanes`` lanes of its tile, one thread's share of a ``block`` lowering."""
-    token = _chunk.set(lanes)
-    try:
-        yield
-    finally:
-        _chunk.reset(token)
-
-
-def require_k1(node: nodes.LibraryNode) -> int:
-    """The lanes one ISA call of a node whose backend takes one dim covers: its tile width, or the chunk of
-    :func:`isa_chunk`. A node of more dims lowers ``pure``."""
+def require_k1(node: nodes.LibraryNode, lowering: TileLowering = SEQUENTIAL) -> int:
+    """The lanes one ISA call of a node whose backend takes one dim covers: its tile width, or ``lowering``'s chunk.
+    A node of more dims lowers ``pure``."""
     if len(node.widths) != 1:
         raise NotImplementedError(f"{node.label}: ISA tile-op backend is K=1 only; K>=2 lowers to 'pure'")
-    chunk = _chunk.get()
-    return node.widths[0] if chunk is None else chunk
+    return node.widths[0] if lowering.chunk is None else lowering.chunk
 
 
-def lane_start(start: str) -> str:
+def lane_start(start: str, lowering: TileLowering = SEQUENTIAL) -> str:
     """The position of the first lane an ISA call covers, for a tile whose lane 0 sits at ``start``."""
-    return start if _chunk.get() is None else f"({start}) + {CHUNK_OFFSET}"
+    return start if lowering.chunk is None else f"({start}) + {CHUNK_OFFSET}"
 
 
 def broadcast_ref(conn: str, subset: Subset) -> str:
@@ -96,11 +82,17 @@ class IsaCall:
 
     @classmethod
     def of(
-        cls, node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG, out_conn: str, backend: str
+        cls,
+        node: nodes.LibraryNode,
+        state: dace.SDFGState,
+        sdfg: dace.SDFG,
+        out_conn: str,
+        backend: str,
+        lowering: TileLowering = SEQUENTIAL,
     ) -> "IsaCall":
         out_edge = output_edge(state, node, out_conn)
         ctype = edge_ctype(sdfg, out_edge)
-        return cls(sdfg, connected_edges(state, node), out_edge, ctype, require_k1(node), backend)
+        return cls(sdfg, connected_edges(state, node), out_edge, ctype, require_k1(node, lowering), backend)
 
     @property
     def functions(self) -> bool:

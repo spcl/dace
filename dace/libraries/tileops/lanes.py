@@ -6,12 +6,10 @@ decode. Register tiles are contiguous and row-major, so :func:`tile_offset` flat
 the per-lane body to :func:`nested_loops`.
 """
 
-import contextlib
-import contextvars
 import dataclasses
 import math
 import numbers
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 
 import sympy
 
@@ -35,21 +33,6 @@ class LaneDistribution:
     loops: int = 0
 
 
-_distribution: contextvars.ContextVar[LaneDistribution | None] = contextvars.ContextVar(
-    "tile_lane_distribution", default=None
-)
-
-
-@contextlib.contextmanager
-def distributed_lanes(distribution: LaneDistribution | None) -> Iterator[LaneDistribution | None]:
-    """Within the block, :func:`nested_loops` spreads its lanes as ``distribution`` says (``None``: one thread)."""
-    token = _distribution.set(distribution)
-    try:
-        yield distribution
-    finally:
-        _distribution.reset(token)
-
-
 @dataclasses.dataclass(frozen=True, slots=True)
 class LaneBounds:
     """The lanes of a tile of ``widths`` in range: lane ``l`` of dim ``d`` when ``l < bounds[d]``."""
@@ -71,31 +54,36 @@ class LaneBounds:
         return " && ".join(f"__l{d} < ({bound})" for d, bound in enumerate(self.bounds))
 
 
-_bounds: contextvars.ContextVar[LaneBounds | None] = contextvars.ContextVar("tile_lane_bounds", default=None)
+@dataclasses.dataclass(frozen=True, slots=True)
+class TileLowering:
+    """How the expansion of one tile node emits its lanes, passed down to the lane helpers."""
+
+    #: Spread the lanes over a thread group; ``None`` runs them on one thread.
+    distribution: LaneDistribution | None = None
+    #: Skip the lanes out of range of a tile of these widths; ``None``: every lane is in range.
+    bounds: LaneBounds | None = None
+    #: The lanes one ISA call covers, one thread's share of a ``block`` lowering; ``None``: the whole tile.
+    chunk: int | None = None
 
 
-@contextlib.contextmanager
-def bounded_lanes(bounds: LaneBounds | None) -> Iterator[None]:
-    """Within the block, the lane loops over a tile of the ``bounds`` widths skip the lanes out of range (``None``:
-    every lane is in range)."""
-    token = _bounds.set(bounds)
-    try:
-        yield
-    finally:
-        _bounds.reset(token)
+#: One thread, every lane in range, an ISA call per tile.
+SEQUENTIAL = TileLowering()
 
 
-def distributed_element_loop(elements: int, decode: Sequence[str], body: str, indent: str = "    ") -> str | None:
-    """The thread-strided loop over ``elements`` flat elements under the active distribution, or ``None`` without one.
+def distributed_element_loop(
+    elements: int, decode: Sequence[str], body: str, indent: str = "    ", lowering: TileLowering = SEQUENTIAL
+) -> str | None:
+    """The thread-strided loop over ``elements`` flat elements under ``lowering``'s distribution, or ``None`` without
+    one.
 
     :param decode: Statements naming the per-element indices from the flat index ``__e``.
     """
-    distribution = _distribution.get()
+    distribution = lowering.distribution
     if distribution is None:
         return None
     distribution.loops += 1
     lines = [f"for (std::size_t __e = {distribution.thread}; __e < {elements}; __e += {distribution.threads}) {{"]
-    bounds = _bounds.get()
+    bounds = lowering.bounds
     if bounds is not None and math.prod(bounds.widths) == elements:
         lines.append(f"{indent}if (!({bounds.of_element('__e')})) continue;")
     lines.extend(f"{indent}{line}" for line in decode)
@@ -167,13 +155,13 @@ def half_disambiguated(ref: str, own_ctype: str, meets_ctype: str) -> str:
     return ref
 
 
-def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
+def nested_loops(widths: Sequence[int], body: str, indent: str = "    ", lowering: TileLowering = SEQUENTIAL) -> str:
     """Wrap ``body`` in a K-fold nested for-loop iterating per-dim
     lane indices ``__l0, __l1, ...``.
 
-    Under :func:`distributed_lanes` a tile of constant widths is instead one thread-strided loop over its flat
-    elements that decodes the same lane indices, so the body is unchanged. Under :func:`bounded_lanes` a tile of
-    the bounded widths skips the lanes out of range.
+    With a ``lowering`` distribution a tile of constant widths is instead one thread-strided loop over its flat
+    elements that decodes the same lane indices, so the body is unchanged. With ``lowering`` bounds a tile of the
+    bounded widths skips the lanes out of range.
 
     Each fixed-width lane loop is preceded by ``#pragma unroll`` (guarded by
     :func:`constant_trip_count`): the trip count is the compile-time
@@ -190,6 +178,7 @@ def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
     :param body: The per-lane C++ body (already trailing-``;`` if
         needed); may contain newlines (each line is indented).
     :param indent: One indent level (default 4 spaces).
+    :param lowering: How the expansion emits the lanes.
     :returns: A C++ snippet with the nested loops + indented body.
     """
     K = len(widths)
@@ -198,7 +187,7 @@ def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
             f"const std::size_t __l{d} = (__e / {math.prod(int(w) for w in widths[d + 1 :])}) % {int(width)};"
             for d, width in enumerate(widths)
         ]
-        distributed = distributed_element_loop(math.prod(int(w) for w in widths), decode, body, indent)
+        distributed = distributed_element_loop(math.prod(int(w) for w in widths), decode, body, indent, lowering)
         if distributed is not None:
             return distributed
     lines = []
@@ -206,7 +195,7 @@ def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
         if constant_trip_count(w):
             lines.append(f"{indent * d}#pragma unroll")
         lines.append(f"{indent * d}for (std::size_t __l{d} = 0; __l{d} < {w}; ++__l{d}) {{")
-    bounds = _bounds.get()
+    bounds = lowering.bounds
     if bounds is not None and tuple(widths) == bounds.widths:
         lines.append(f"{indent * K}if (!({bounds.of_lanes()})) continue;")
     lines.extend(f"{indent * K}{line}" for line in body.splitlines())
@@ -231,7 +220,12 @@ def tile_offset(widths: Sequence[int], lanes: Sequence[str] | None = None) -> st
 
 
 def lane_invariant_assign(
-    out_conn: str, rhs_expr: str, out_dtype: str, widths: Sequence[int], mask_elements: int | sympy.Basic | None
+    out_conn: str,
+    rhs_expr: str,
+    out_dtype: str,
+    widths: Sequence[int],
+    mask_elements: int | sympy.Basic | None,
+    lowering: TileLowering = SEQUENTIAL,
 ) -> str:
     """Body assigning a lane-invariant ``rhs_expr`` to the one-element output ``out_conn``.
 
@@ -244,6 +238,7 @@ def lane_invariant_assign(
     :param out_dtype: The output element C++ type.
     :param widths: Per-tile-dim widths of ``_mask``.
     :param mask_elements: Element count of the ``_mask`` memlet; ``None`` when unmasked.
+    :param lowering: How the expansion emits the lanes.
     :returns: The C++ body.
     """
     if mask_elements is None:
@@ -251,8 +246,8 @@ def lane_invariant_assign(
     if mask_elements == 1:
         return f"{out_conn} = _mask ? ({rhs_expr}) : {out_dtype}(0);"
     # Every lane is read by the one thread that writes the lane-invariant output
-    with distributed_lanes(None):
-        any_lane = nested_loops(widths, f"__any_lane = __any_lane || _mask[{tile_offset(widths)}];")
+    one_thread = dataclasses.replace(lowering, distribution=None)
+    any_lane = nested_loops(widths, f"__any_lane = __any_lane || _mask[{tile_offset(widths)}];", lowering=one_thread)
     return f"bool __any_lane = false;\n{any_lane}\n{out_conn} = __any_lane ? ({rhs_expr}) : {out_dtype}(0);"
 
 

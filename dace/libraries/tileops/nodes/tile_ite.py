@@ -15,7 +15,7 @@ from dace.libraries.tileops.environments import (
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import IsaCall, broadcast_ref, call_text, element_code, template_flag
 from dace.libraries.tileops.kinds import SYMBOL, TILE
-from dace.libraries.tileops.lanes import nested_loops, tile_offset
+from dace.libraries.tileops.lanes import SEQUENTIAL, TileLowering, nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import (
     Operand,
@@ -173,7 +173,9 @@ class TileITE(TileOp):
         # The condition is not promoted to the output dtype; the arms are.
         validate_elementwise(self, state, sdfg, self.operands(), "_o", False, unpromoted=("_mask",))
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         self.validate(sdfg, state)
         operands = self.operands()
         widths = list(self.widths)
@@ -204,15 +206,17 @@ class TileITE(TileOp):
             label=f"{self.label}_pure",
             inputs=dict.fromkeys(input_connectors(operands, False)),
             outputs={"_o": None},
-            code=nested_loops(widths, body),
+            code=nested_loops(widths, body, lowering=lowering),
             language=dace.dtypes.Language.CPP,
         )
 
-    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
+    def isa_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         self.validate(sdfg, state)
         operands = self.operands()
         condition, then, otherwise = operands
-        call = IsaCall.of(self, state, sdfg, "_o", backend)
+        call = IsaCall.of(self, state, sdfg, "_o", backend, lowering)
         # The function reads the condition per lane, so a loop-invariant one is splatted across the tile.
         if condition.kind == TILE:
             condition_ctype = edge_ctype(sdfg, call.in_edges["_mask"])

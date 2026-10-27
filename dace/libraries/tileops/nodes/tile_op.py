@@ -7,6 +7,7 @@ from typing import ClassVar
 import dace
 from dace import properties
 from dace.libraries.tileops.dispatch import ISA, TileGroup
+from dace.libraries.tileops.lanes import SEQUENTIAL, TileLowering
 from dace.sdfg import nodes
 from dace.sdfg.scope import is_devicelevel_gpu
 
@@ -67,13 +68,19 @@ class TileOp(nodes.LibraryNode):
         """Whether the ISA backends have a lowering for this configuration of the node."""
         return True
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         raise NotImplementedError(f"{type(self).__name__} defines no pure lowering")
 
-    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
+    def isa_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         raise NotImplementedError(f"{type(self).__name__} defines no ISA lowering")
 
-    def block_collective(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet | None:
+    def block_collective(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet | None:
         """The tasklet every thread of the group runs together in a ``block`` lowering, a collective over the lanes
         with the thread index ``__tile_t``; ``None`` spreads the lanes as the ``block_layout`` of the node says."""
         return None

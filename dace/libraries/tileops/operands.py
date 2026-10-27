@@ -7,7 +7,14 @@ from dataclasses import dataclass
 import dace
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
-from dace.libraries.tileops.lanes import half_disambiguated, lane_invariant_assign, nested_loops, tile_offset
+from dace.libraries.tileops.lanes import (
+    SEQUENTIAL,
+    TileLowering,
+    half_disambiguated,
+    lane_invariant_assign,
+    nested_loops,
+    tile_offset,
+)
 from dace.libraries.tileops.validation import edge_moves_a_tile, edge_moves_one_element, is_tile_shape, promotion_ok
 from dace.memlet import Memlet
 from dace.optionals import required
@@ -187,19 +194,20 @@ def elementwise_tasklet(
     rhs: str,
     out_ctype: str,
     in_edges: dict[str, MultiConnectorEdge[Memlet]],
+    lowering: TileLowering = SEQUENTIAL,
 ) -> nodes.Tasklet:
     """The ``pure`` tasklet of an elementwise node: ``out = rhs`` over the lanes, zero where the mask is off."""
     widths = list(node.widths)
     offset = tile_offset(widths)
     if has_lane_invariant_output(operands, output_edge(state, node, out_conn)):
         mask_elements = required(in_edges["_mask"].data.subset).num_elements() if node.has_mask else None
-        code = lane_invariant_assign(out_conn, rhs, out_ctype, widths, mask_elements)
+        code = lane_invariant_assign(out_conn, rhs, out_ctype, widths, mask_elements, lowering=lowering)
     else:
         if node.has_mask:
             body = f"{out_conn}[{offset}] = _mask[{offset}] ? ({rhs}) : {out_ctype}(0);"
         else:
             body = f"{out_conn}[{offset}] = {rhs};"
-        code = nested_loops(widths, body)
+        code = nested_loops(widths, body, lowering=lowering)
     return nodes.Tasklet(
         label=f"{node.label}_pure",
         inputs=dict.fromkeys(input_connectors(operands, node.has_mask)),

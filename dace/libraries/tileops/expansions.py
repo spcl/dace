@@ -6,6 +6,7 @@ lowering itself is the node's ``pure_tasklet`` and ``isa_tasklet``. The ``block`
 node at once (:mod:`dace.libraries.tileops.nodes`).
 """
 
+import dataclasses
 import re
 from copy import deepcopy as dcpy
 from typing import NamedTuple
@@ -13,8 +14,8 @@ from typing import NamedTuple
 import dace
 from dace import data, dtypes
 from dace.libraries.tileops.dispatch import lane_implementation
-from dace.libraries.tileops.isa import CHUNK_OFFSET, isa_chunk
-from dace.libraries.tileops.lanes import LaneBounds, LaneDistribution, bounded_lanes, distributed_lanes
+from dace.libraries.tileops.isa import CHUNK_OFFSET
+from dace.libraries.tileops.lanes import SEQUENTIAL, LaneBounds, LaneDistribution, TileLowering
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -67,17 +68,17 @@ class ExpandTileBlock(ExpandTransformation):
     def expansion(cls, node: nodes.LibraryNode, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
         layout = block_layout(node, parent_state)
         bounds = LaneBounds(tuple(node.widths), tuple(node.lane_bounds)) if node.lane_bounds else None
-        with bounded_lanes(bounds):
-            collective = node.block_collective(parent_state, parent_sdfg)
-            if collective is not None:
-                threads, tasklet = node.group_threads(), renamed_connectors(collective)
-                tasklet.environments = set(collective.environments)
-            elif layout.isa is not None:
-                expansion = node.implementations[layout.isa]
-                tasklet = chunked_isa_tasklet(node, parent_state, parent_sdfg, expansion, layout)
-                threads = layout.threads
-            else:
-                threads, tasklet = distributed_pure_tasklet(node, parent_state, parent_sdfg, layout.threads)
+        lowering = TileLowering(bounds=bounds)
+        collective = node.block_collective(parent_state, parent_sdfg, lowering)
+        if collective is not None:
+            threads, tasklet = node.group_threads(), renamed_connectors(collective)
+            tasklet.environments = set(collective.environments)
+        elif layout.isa is not None:
+            expansion = node.implementations[layout.isa]
+            tasklet = chunked_isa_tasklet(node, parent_state, parent_sdfg, expansion, layout, lowering)
+            threads = layout.threads
+        else:
+            threads, tasklet = distributed_pure_tasklet(node, parent_state, parent_sdfg, layout.threads, lowering)
 
         # An empty memlet only orders the node (a barrier before it), and stays on the expanded node
         edges = [
@@ -134,18 +135,20 @@ class ExpandTileBlock(ExpandTransformation):
 
 
 def distributed_pure_tasklet(
-    node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG, threads: int
+    node: nodes.LibraryNode,
+    state: dace.SDFGState,
+    sdfg: dace.SDFG,
+    threads: int,
+    lowering: TileLowering = SEQUENTIAL,
 ) -> tuple[int, nodes.Tasklet]:
     """The threads and the pure tasklet of ``node`` spread one lane at a time over ``threads`` threads; a node that
     computes nothing per lane runs on one thread."""
     if threads > 1:
         distribution = LaneDistribution(THREAD_INDEX, threads)
-        with distributed_lanes(distribution):
-            tasklet = node.pure_tasklet(state, sdfg)
+        tasklet = node.pure_tasklet(state, sdfg, dataclasses.replace(lowering, distribution=distribution))
         if distribution.loops > 0:
             return threads, renamed_connectors(tasklet)
-    with distributed_lanes(None):
-        return 1, renamed_connectors(node.pure_tasklet(state, sdfg))
+    return 1, renamed_connectors(node.pure_tasklet(state, sdfg, dataclasses.replace(lowering, distribution=None)))
 
 
 class BlockLayout(NamedTuple):
@@ -179,13 +182,17 @@ def block_layout(node: nodes.LibraryNode, state: dace.SDFGState) -> BlockLayout:
 
 
 def chunked_isa_tasklet(
-    node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG, expansion: type[ExpandTileIsa], layout: BlockLayout
+    node: nodes.LibraryNode,
+    state: dace.SDFGState,
+    sdfg: dace.SDFG,
+    expansion: type[ExpandTileIsa],
+    layout: BlockLayout,
+    lowering: TileLowering = SEQUENTIAL,
 ) -> nodes.Tasklet:
     """The ISA call of ``node`` on the chunks of its ``layout``. A tile operand is offset to the chunk; a broadcast
     one is read whole."""
     width, chunk, threads = node.widths[0], layout.chunk, layout.threads
-    with isa_chunk(chunk):
-        call = node.isa_tasklet(state, sdfg, expansion.backend)
+    call = node.isa_tasklet(state, sdfg, expansion.backend, dataclasses.replace(lowering, chunk=chunk))
     edges = {edge.dst_conn: edge for edge in state.in_edges(node)} | {
         edge.src_conn: edge for edge in state.out_edges(node)
     }

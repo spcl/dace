@@ -25,6 +25,8 @@ from dace.libraries.tileops.isa import call_text, element_code, pointer, require
 from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from dace.libraries.tileops.lanes import (
     GATHER_INDEX_DTYPES,
+    SEQUENTIAL,
+    TileLowering,
     gather_lane_offset,
     nested_loops,
     offset_via_strides,
@@ -425,7 +427,9 @@ class TileGather(TileOp):
         # A lane reads the element of ``_src`` its index names
         return connector != "_src"
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         from dace.symbolic import symstr
 
         widths = list(self.widths)
@@ -526,7 +530,7 @@ class TileGather(TileOp):
             body = f"_dst[{dst_off}] = _mask[{dst_off}] ? {src_ref} : {dst_dtype}(0);"
         else:
             body = f"_dst[{dst_off}] = {src_ref};"
-        code = nested_loops(widths, body)
+        code = nested_loops(widths, body, lowering=lowering)
         inputs = (set() if self.src_kind == SYMBOL else {"_src"}) | ({"_mask"} if self.has_mask else set())
         inputs |= {f"_idx_{d}" for d in self.gather_dims}
         tasklet = nodes.Tasklet(
@@ -575,9 +579,11 @@ class TileGather(TileOp):
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
         return self.src_kind == TILE and self.is_unit_stride_gather(state, sdfg)
 
-    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
+    def isa_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         in_edges = connected_edges(state, self)
-        vlen = require_k1(self)
+        vlen = require_k1(self, lowering=lowering)
         destination_ctype = edge_ctype(sdfg, output_edge(state, self, "_dst"))
         index_ctype = edge_ctype(sdfg, in_edges["_idx_0"])
         if backend in tile_functions.ISAS:

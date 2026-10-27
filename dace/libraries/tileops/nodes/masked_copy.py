@@ -20,7 +20,7 @@ from dace.libraries.tileops.environments import (
 )
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import call_text, element_code, pointer, require_k1
-from dace.libraries.tileops.lanes import nested_loops, tile_offset
+from dace.libraries.tileops.lanes import SEQUENTIAL, TileLowering, nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock
 from dace.optionals import required
@@ -235,7 +235,9 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
         out_strides = collapse_shape_and_strides(out_subset, out.strides)[1]
         return Lanes(is_load(inp, out, self.label), inp.dtype.ctype, extents, in_strides, out_strides)
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         lanes = self.lanes(sdfg, state)
         lane_names = [f"__l{dim}" for dim in range(len(lanes.extents))]
         source = (
@@ -263,7 +265,7 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
             label=f"{self.label}_pure",
             inputs=dict.fromkeys(self.input_names()),
             outputs={OUTPUT_CONNECTOR_NAME: None},
-            code=nested_loops(lanes.extents, body),
+            code=nested_loops(lanes.extents, body, lowering=lowering),
             language=dace.dtypes.Language.CPP,
         )
 
@@ -274,9 +276,11 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
         # The headers move one lane dim: a window of several non-singleton dims is the pure loop.
         return len(self.lanes(sdfg, state).extents) == 1
 
-    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
+    def isa_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         lanes = self.lanes(sdfg, state)
-        vlen = require_k1(self)
+        vlen = require_k1(self, lowering=lowering)
         in_edge = next(state.in_edges_by_connector(self, INPUT_CONNECTOR_NAME))
         out_edge = next(state.out_edges_by_connector(self, OUTPUT_CONNECTOR_NAME))
         array_edge = in_edge if lanes.loads else out_edge

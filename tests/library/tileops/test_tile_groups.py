@@ -12,7 +12,7 @@ import pytest
 
 import dace
 from dace.libraries.tileops.dispatch import TileGroup
-from dace.libraries.tileops.lanes import LaneDistribution, distributed_lanes, nested_loops
+from dace.libraries.tileops.lanes import LaneDistribution, TileLowering, nested_loops
 from dace.libraries.tileops.nodes.tile_op import TileOp
 
 M, N, K = (dace.symbol(name) for name in "MNK")
@@ -75,8 +75,8 @@ def test_blocked_gemm_with_mma_on_a_cpu():
 def test_distributed_lanes_are_one_thread_strided_loop():
     body = "_c[(__l0 * 8) + __l1] = 1;"
     assert "for (std::size_t __l0" in nested_loops([4, 8], body)
-    with distributed_lanes(LaneDistribution("__tile_t", 16)) as distribution:
-        code = nested_loops([4, 8], body)
+    distribution = LaneDistribution("__tile_t", 16)
+    code = nested_loops([4, 8], body, lowering=TileLowering(distribution=distribution))
     assert distribution.loops == 1
     assert code.startswith("for (std::size_t __e = __tile_t; __e < 32; __e += 16) {")
     assert "const std::size_t __l0 = (__e / 8) % 4;" in code and "const std::size_t __l1 = (__e / 1) % 8;" in code
