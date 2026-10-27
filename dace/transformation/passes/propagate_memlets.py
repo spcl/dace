@@ -3,7 +3,7 @@
 
 from typing import Any
 
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, nodes
 from dace.sdfg.propagation import propagate_memlets_scope
 from dace.sdfg.sdfg import memoize_facts
 from dace.sdfg.state import SymbolResolver
@@ -54,8 +54,28 @@ class PropagateMemlets(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         # Propagation rewrites derived memlets only: one resolver and one facts memo serve the whole walk
         symbols = SymbolResolver()
+        before = boundary_memlets(sdfg)
         with memoize_facts(sdfg):
             for nested in sdfg.all_sdfgs_recursive():
                 for state in nested.states():
                     propagate_memlets_scope(nested, state, state.scope_leaves(), symbols=symbols)
-        return 1
+        return None if boundary_memlets(sdfg) == before else 1
+
+
+def boundary_memlets(sdfg: SDFG) -> list[tuple[str, str, str, bool]]:
+    """The memlets propagation derives, outside every scope entry and exit of ``sdfg`` and its nested SDFGs, as
+    ``(subset, other subset, volume, dynamic)`` text in graph order."""
+    found = []
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.EntryNode):
+                    edges = state.in_edges(node)
+                elif isinstance(node, nodes.ExitNode):
+                    edges = state.out_edges(node)
+                else:
+                    continue
+                found.extend(
+                    (str(e.data.subset), str(e.data.other_subset), str(e.data.volume), e.data.dynamic) for e in edges
+                )
+    return found
