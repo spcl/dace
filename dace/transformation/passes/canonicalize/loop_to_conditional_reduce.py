@@ -75,7 +75,7 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
-from dace import SDFG, data, dtypes, properties, symbolic
+from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
 from dace.frontend import operations
 from dace.sdfg import nodes
@@ -180,7 +180,7 @@ class LoopToConditionalReduce(ppl.Pass):
                     continue
                 # The rewrite strips the body's interstate assignments, so the hoisted state must not read one
                 assigned = {name for edge in region.all_interstate_edges() for name in edge.data.assignments}
-                if assigned & m.true_state.free_symbols:
+                if assigned & m.true_state.free_symbols or self.read_elsewhere(sd, assigned, m.cond_block):
                     continue
                 if self._rewrite(m, sd):
                     rewritten += 1
@@ -341,6 +341,23 @@ class LoopToConditionalReduce(ppl.Pass):
 
     # match helpers
 
+    @staticmethod
+    def read_elsewhere(sdfg: SDFG, names: set[str], cond_block: ConditionalBlock) -> bool:
+        """Whether any of ``names`` is read outside ``cond_block``'s own conditions: by a state, an interstate edge or
+        another region's condition."""
+        if not names:
+            return False
+        if any(names & edge.data.read_symbols() for edge in sdfg.all_interstate_edges(recursive=True)):
+            return True
+        if any(names & {str(sym) for sym in st.free_symbols} for st in sdfg.states()):
+            return True
+        return any(
+            names & {str(sym) for sym in code.get_free_symbols()}
+            for region in sdfg.all_control_flow_regions(recursive=True)
+            if region is not cond_block
+            for code in region.get_meta_codeblocks()
+        )
+
     def hoist_is_trap_free(self, loop: LoopRegion, state: SDFGState, sdfg: SDFG) -> bool:
         """Whether running ``state`` on every iteration of ``loop`` is safe: the rewrite drops the guard, so a
         computation the guard protected would run where the source never ran it."""
@@ -417,9 +434,13 @@ class LoopToConditionalReduce(ppl.Pass):
         if edge.data.dynamic:
             return False
         subset = edge.data.get_src_subset(edge, state)
-        if subset is None:
+        return subset is not None and self.subset_in_bounds(subset, sdfg.arrays[edge.src.data], sdfg, bounds)
+
+    def subset_in_bounds(self, subset: Subset, desc: data.Data, sdfg: SDFG, bounds: tuple[str, Any, Any]) -> bool:
+        """Whether ``subset`` of ``desc`` stays inside it on every iteration (affine bounds, see :meth:`read_in_bounds`)."""
+        if len(subset) != len(desc.shape):
             return False
-        for (lo, hi, _), extent in zip(subset.ndrange(), sdfg.arrays[edge.src.data].shape):
+        for (lo, hi, _), extent in zip(subset.ndrange(), desc.shape):
             smallest = self.affine_extreme(lo, bounds, True, sdfg.facts())
             largest = self.affine_extreme(hi, bounds, False, sdfg.facts())
             if smallest is None or largest is None:
@@ -528,7 +549,7 @@ class LoopToConditionalReduce(ppl.Pass):
         if m.true_state.in_degree(src) == 1:
             pred = m.true_state.in_edges(src)[0]
             if isinstance(pred.src, nodes.AccessNode) and pred.data is not None:
-                return pred.src.data, pred.data.subset
+                return pred.src.data, pred.data.get_src_subset(pred, m.true_state)
         return src.data, addend_edge.data.subset
 
     # rewrite
@@ -694,10 +715,13 @@ class LoopToConditionalReduce(ppl.Pass):
                     # A fresh copy per use: shared nodes break ``fix_missing_locations``.
                     sub = ast.copy_location(copy.deepcopy(binding_asts[node.id]), node)
                     return self.visit(sub)
+                # A container read by name (a scalar guard, the running sum itself) would reach the mask unwired
+                if node.id in sdfg.arrays:
+                    unwireable.append(node)
                 return node
 
             def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
-                self.generic_visit(node)  # recurse into the subscript value/slice
+                node.slice = self.visit(node.slice)  # the subscripted name itself is no bare read
                 if not isinstance(node.value, ast.Name):
                     unwireable.append(node)  # subscript of a non-name (e.g. a call result)
                     return node
@@ -759,7 +783,26 @@ class LoopToConditionalReduce(ppl.Pass):
             if isinstance(sub, ast.Name) and sub.id not in available:
                 return False  # not a symbol we can put in a subset
         written = (n.data for n in m.true_state.data_nodes() if m.true_state.in_degree(n) > 0)
-        return arr_name not in written
+        if arr_name in written:
+            return False
+        # The mask reads it on every iteration, where the source's ``and`` / ``if`` may have skipped it
+        bounds = self.iterator_bounds(m.loop)
+        try:
+            dims = idx.elts if isinstance(idx, ast.Tuple) else [idx]
+            subset = subsets.Range.from_string(", ".join(ast.unparse(d) for d in dims))
+        except (SyntaxError, TypeError, ValueError):
+            return False
+        # A symbol one interstate edge assigns takes that value at the guard (``off = 1`` on the edge into the loop)
+        assigned: dict[str, list[str]] = {}
+        for edge in sdfg.all_interstate_edges(recursive=True):
+            for lhs, rhs in edge.data.assignments.items():
+                assigned.setdefault(lhs, []).append(rhs)
+        values = {
+            symbolic.symbol(lhs): symbolic.pystr_to_symbolic(rhs[0]) for lhs, rhs in assigned.items() if len(rhs) == 1
+        }
+        if values:
+            subset.replace(values)
+        return bounds is not None and self.subset_in_bounds(subset, desc, sdfg, bounds)
 
     def _available_symbols(self, m: _Match, sdfg: SDFG) -> dict[str, None]:
         """Names usable in a memlet subset at the update tasklet, taken from the

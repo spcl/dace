@@ -563,34 +563,54 @@ def refused_on(loop: LoopRegion, names: set[str], refusals: dict[LoopRegion, Any
     if not names:
         return False
     if loop not in refusals:
-        rmw_only: list[frozenset[str]] = []
+        admitted: dict[str, bool] = {}
 
         def admits(refusal) -> bool:
-            if not rmw_only:
-                rmw_only.append(only_read_modify_written(loop))
-            return refusal.container in rmw_only[0]
+            if refusal.container not in admitted:
+                admitted[refusal.container] = only_read_modify_written(loop, refusal.container)
+            return admitted[refusal.container]
 
         refusals[loop] = ParallelizeLoops().rescuing_wcr(loop, admits)
     rescued = refusals[loop]
     return rescued is not None and not rescued.isdisjoint(names)
 
 
-def only_read_modify_written(loop: LoopRegion) -> frozenset[str]:
-    """The containers every access of which in ``loop`` is a read-modify-write
-    (:func:`~dace.transformation.interstate.loop_to_map.rmw_edges`): the ones a WCR leaves without a conflict."""
+def only_read_modify_written(loop: LoopRegion, name: str) -> bool:
+    """Whether every access of ``name`` in ``loop`` is a read-modify-write
+    (:func:`~dace.transformation.interstate.loop_to_map.rmw_edges`) or already a WCR write, and no condition or
+    interstate edge reads it: a WCR then leaves it without a conflict."""
     from dace.transformation.interstate.loop_to_map import rmw_edges
 
+    if name in loop_analysis.control_reads(loop):
+        return False
     states = loop.states()
-    writes, reads, names = rmw_edges(states)
+    writes, reads, names = rmw_edges(states, frozenset({name}))
+    if name not in names:
+        return False
     for state in states:
         for node in state.data_nodes():
-            if node.data not in names:
+            if node.data != name:
                 continue
-            if any(id(e) not in writes for e in state.in_edges(node) if not e.data.is_empty()) or any(
-                id(e) not in reads for e in state.out_edges(node) if not e.data.is_empty()
-            ):
-                names.discard(node.data)
-    return frozenset(names)
+            if any(
+                id(e) not in writes and e.data.wcr is None for e in state.in_edges(node) if not e.data.is_empty()
+            ) or any(id(e) not in reads for e in state.out_edges(node) if not e.data.is_empty()):
+                return False
+    return True
+
+
+def names_across_nesting(state: SDFGState, name: str) -> dict[SDFG, set[str]]:
+    """The containers a write of ``name`` in ``state`` reaches in each SDFG around it, through the nested SDFGs'
+    output connectors."""
+    names = {state.sdfg: {name}}
+    sdfg = state.sdfg
+    while sdfg.parent_nsdfg_node is not None and sdfg.parent is not None:
+        nsdfg, outer = sdfg.parent_nsdfg_node, sdfg.parent
+        reached = {e.data.data for e in outer.out_edges(nsdfg) if e.src_conn in names[sdfg] and not e.data.is_empty()}
+        if not reached:
+            break
+        sdfg = outer.sdfg
+        names[sdfg] = reached
+    return names
 
 
 def enclosing_loops_across_nesting(state: SDFGState) -> list[LoopRegion]:
@@ -753,11 +773,11 @@ def augassign_to_wcr_in_state(
             xform.setup_match(sdfg, cfg_id, state_id, binding, expr_index, override=True)
             if not xform.can_be_applied(state, expr_index, sdfg, permissive=False):
                 continue
-            written = binding[AugAssignToWCR.output].data
+            names = names_across_nesting(state, binding[AugAssignToWCR.output].data)
             xform.apply(state, sdfg)
             for loop in enclosing_loops_across_nesting(state):
                 # A loop lifting with the container assumed WCR still does now that it is
-                if loop.sdfg is not sdfg or written not in (refusals.get(loop) or ()):
+                if not names.get(loop.sdfg, set()) & set(refusals.get(loop) or ()):
                     refusals.pop(loop, None)
             applied += 1
             changed = True

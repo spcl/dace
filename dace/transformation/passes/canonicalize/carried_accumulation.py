@@ -113,10 +113,10 @@ def convert_updates(loop: LoopRegion, name: str) -> int:
             return converted
 
 
-def read_only_by_updates(sdfg: SDFG, loop: LoopRegion, name: str) -> bool:
-    """Whether every read of ``name`` in ``loop`` is a tasklet that writes ``name`` back: an update's own read. Any
-    other reader (householder's ``V @ Q[k:, :]`` beside ``Q[k:, :] -= ...``) sees the accumulated value, which a WCR
-    does not order."""
+def read_only_by_updates(loop: LoopRegion, name: str) -> bool:
+    """Whether every read of ``name`` in ``loop`` is a tasklet that writes ``name`` back: an update's own
+    read. Any other reader (householder's ``V @ Q[k:, :]`` beside ``Q[k:, :] -= ...``, a branch
+    condition) sees the accumulated value, which a WCR does not order."""
     for block in loop.all_control_flow_blocks():
         if not isinstance(block, SDFGState):
             continue
@@ -185,7 +185,7 @@ class CarriedAccumulationToWCR(ppl.Pass):
                         r.kind is Refusal.NON_UNIQUE_WRITE
                         and r.container in updated
                         and writes_move_with_the_iteration(loop, r.container)
-                        and read_only_by_updates(owner, loop, r.container)
+                        and read_only_by_updates(loop, r.container)
                     ),
                 )
                 if not names or not all_convertible(loop, names):
