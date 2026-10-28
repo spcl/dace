@@ -435,3 +435,40 @@ def test_hoisting_through_every_map_level_keeps_the_cfg_list_of_a_fresh_reset(mo
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_guard_on_a_value_the_map_body_stages_is_not_hoisted():
+    """``map i: c = a[i]; if c > 0: b[i] = 1`` with ``c`` staged into the body by a copy: the connector's memlet
+    ``c[0]`` names no map parameter, but the body writes ``c`` per element, so the guard stays inside."""
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ControlFlowRegion
+
+    body = dace.SDFG("guarded_body")
+    body.add_scalar("c", dace.float64)
+    body.add_array("b", [N], dace.float64)
+    body.add_symbol("i", dace.int64)
+    guard = ConditionalBlock("guard")
+    body.add_node(guard, is_start_block=True)
+    region = ControlFlowRegion("then", sdfg=body)
+    guard.add_branch(CodeBlock("c > 0.0"), region)
+    st = region.add_state("set", is_start_block=True)
+    t = st.add_tasklet("one", {}, {"o"}, "o = 1.0")
+    st.add_edge(t, "o", st.add_write("b"), None, dace.Memlet("b[i]"))
+
+    sdfg = dace.SDFG("guard_on_a_staged_value")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_scalar("c", dace.float64, transient=True)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", dict(i=f"0:{N}"))
+    staged = state.add_access("c")
+    state.add_memlet_path(state.add_read("a"), me, staged, memlet=dace.Memlet("a[i] -> [0]"))
+    node = state.add_nested_sdfg(body, {"c"}, {"b"}, symbol_mapping={"i": "i"})
+    state.add_edge(staged, None, node, "c", dace.Memlet("c[0]"))
+    state.add_memlet_path(node, mx, state.add_write("b"), src_conn="b", memlet=dace.Memlet("b[i]"))
+    sdfg.validate()
+
+    assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None
+    a, b = np.array([1.0, -1.0] * (N // 2)), np.zeros(N)
+    sdfg(a=a, b=b)
+    assert np.array_equal(b, (a > 0).astype(np.float64))

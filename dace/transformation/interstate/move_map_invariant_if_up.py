@@ -212,6 +212,15 @@ def _condition_invariant(
                 return False
         return True
 
+    def written_in_body(conn: str) -> bool:
+        # A container the map body itself writes (a demoted guard staged in from ``cond[i]``) holds a value per
+        # element, however plainly the connector's own memlet reads it.
+        for e in state.in_edges_by_connector(ns, conn):
+            source = state.memlet_path(e)[0].src
+            if isinstance(source, AccessNode) and state.entry_node(source) is not None and state.in_degree(source) > 0:
+                return True
+        return False
+
     def qualifies(name: str, depth: int) -> bool:
         if depth > 8:  # pathological definition chain; refuse rather than recurse
             return False
@@ -231,7 +240,12 @@ def _condition_invariant(
             # A data container read through a connector: invariant exactly when
             # the memlet that brings it in does not index by a map parameter and
             # the body does not write it.
-            return not (reads[name] & map_params) and name not in ns.out_connectors and readable_at_guard(name)
+            return (
+                not (reads[name] & map_params)
+                and name not in ns.out_connectors
+                and not written_in_body(name)
+                and readable_at_guard(name)
+            )
         # Not a map parameter and not defined anywhere we can see: it is an
         # outer-scope symbol, constant for the whole map.
         return name not in map_params
