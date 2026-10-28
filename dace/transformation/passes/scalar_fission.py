@@ -400,6 +400,39 @@ def topological_order(
     return order if len(order) == len(blocks) else None
 
 
+class RegionShapes:
+    """What :class:`MustDefinition` reads of the control-flow structure, whatever the container: per region its blocks,
+    start block, predecessors, topological order and sinks, and per interstate edge the names it reads. Exact while
+    no block or interstate edge is added, removed or rewritten."""
+
+    __slots__ = ("regions", "edges")
+
+    def __init__(self) -> None:
+        self.regions: dict[ControlFlowRegion, tuple] = {}
+        self.edges: dict[Any, set[str]] = {}
+
+    def of(self, region: ControlFlowRegion) -> tuple:
+        """``(blocks, start, incoming, order, sinks)`` of ``region``; ``start`` is ``None`` when it has no blocks."""
+        shape = self.regions.get(region)
+        if shape is None:
+            blocks = list(region.nodes())
+            if not blocks:
+                shape = (blocks, None, {}, blocks, [])
+            else:
+                incoming = {b: [e.src for e in region.in_edges(b)] for b in blocks}
+                sinks = [b for b in blocks if region.out_degree(b) == 0]
+                shape = (blocks, region.start_block, incoming, topological_order(blocks, incoming), sinks)
+            self.regions[region] = shape
+        return shape
+
+    def edge_names(self, edge) -> set[str]:
+        """The names interstate ``edge`` reads (its free symbols)."""
+        names = self.edges.get(edge)
+        if names is None:
+            names = self.edges[edge] = {str(s) for s in edge.data.free_symbols}
+        return names
+
+
 class MustDefinition:
     """Forward must-definition of one container over the control-flow tree, for the question "is every read
     preceded, on every path from the region's entry, by a write that covers it?".
@@ -411,9 +444,11 @@ class MustDefinition:
     they mention. One instance per container and pass run: what a block defines is cached.
     """
 
-    def __init__(self, accesses: Accesses, index: AccessIndex) -> None:
+    def __init__(self, accesses: Accesses, index: AccessIndex, shapes: "RegionShapes | None" = None) -> None:
+        """:param shapes: The region structure, shared by the instances of a span the CFG does not change in."""
         self.accesses = accesses
         self.index = index
+        self.shapes = RegionShapes() if shapes is None else shapes
         self.gen_cache: dict[ControlFlowBlock, dict] = {}
 
     def exposed(self, region: ControlFlowRegion, defined: dict | None = None) -> bool:
@@ -428,15 +463,12 @@ class MustDefinition:
         return self.analyze(region, defined or {})[0]
 
     def analyze(self, region: ControlFlowRegion, entry: dict) -> tuple[dict, bool]:
-        blocks = list(region.nodes())
+        blocks, start, incoming, order, sinks = self.shapes.of(region)
         if not blocks:
             return dict(entry), False
         gen = {b: self.gen(b) for b in blocks}
-        start = region.start_block
         defs: dict[ControlFlowBlock, dict] = {b: {} for b in blocks}
         defs[start] = dict(entry)
-        incoming = {b: [e.src for e in region.in_edges(b)] for b in blocks}
-        order = topological_order(blocks, incoming)
         # Acyclic: one sweep in dependence order is the fixpoint; otherwise sweep in block order until it holds
         for _ in range(1 if order is not None else len(blocks) + 1):
             changed = False
@@ -459,12 +491,11 @@ class MustDefinition:
         exposed = any(self.block_exposed(b, defs[b]) for b in blocks)
         if not exposed:
             for edge in region.edges():
-                reads = self.accesses.read_by({str(s) for s in edge.data.free_symbols})
+                reads = self.accesses.read_by(self.shapes.edge_names(edge))
                 after = list({**defs[edge.src], **gen[edge.src]}.values())
                 if any(not self.accesses.covered(after, r) for r in reads):
                     exposed = True
                     break
-        sinks = [b for b in blocks if region.out_degree(b) == 0]
         exit_defs = self.meet([{**defs[b], **gen[b]} for b in sinks]) if sinks else {}
         return exit_defs, exposed
 

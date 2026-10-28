@@ -42,6 +42,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.scalar_fission import (
     AccessIndex,
     MustDefinition,
+    RegionShapes,
     SubsetAccesses,
     has_wcr_write,
 )
@@ -371,6 +372,7 @@ class BufferExpansion(ppl.Pass):
             loop_states = set(loop.states())
         candidates: list[str] = []
         library_operands: set[str] | None = None
+        shapes = RegionShapes()
         # Nothing changes while the buffers are judged, so every cover test shares the facts of the SDFG.
         with memoize_facts(sdfg):
             for name, desc in sdfg.arrays.items():
@@ -405,7 +407,7 @@ class BufferExpansion(ppl.Pass):
                     library_operands = self._library_node_operands(loop_states)
                 if name in library_operands:
                     continue
-                if self.defined_before_read(loop, name, index, loop_states):
+                if self.defined_before_read(loop, name, index, loop_states, shapes):
                     candidates.append(name)
         return candidates
 
@@ -427,7 +429,13 @@ class BufferExpansion(ppl.Pass):
         return operands
 
     @staticmethod
-    def defined_before_read(loop: LoopRegion, name: str, index: AccessIndex | None = None, loop_states=None) -> bool:
+    def defined_before_read(
+        loop: LoopRegion,
+        name: str,
+        index: AccessIndex | None = None,
+        loop_states=None,
+        shapes: RegionShapes | None = None,
+    ) -> bool:
         """True if every read of ``name`` in the loop body observes a value written in the *same*
         iteration, so a private copy per iteration preserves semantics.
 
@@ -439,11 +447,18 @@ class BufferExpansion(ppl.Pass):
 
         :param index: The SDFG's access index; ``None`` builds one for this call.
         :param loop_states: ``loop.states()``, when the caller already has it.
+        :param shapes: The region structure the queries of one unchanged graph share.
         """
         index = index or AccessIndex(loop.sdfg)
         accesses = SubsetAccesses(name, loop.sdfg.facts())
         saw_read = saw_write = False
-        for state in loop.states() if loop_states is None else loop_states:
+        if loop_states is None:
+            loop_states = loop.states()
+        if index.sdfg is loop.sdfg:
+            # The states that access ``name`` at all, from the index, instead of every state of the loop
+            inside = loop_states if isinstance(loop_states, (set, frozenset)) else set(loop_states)
+            loop_states = [state for state in index.states(name) if state in inside]
+        for state in loop_states:
             for node in index.nodes(state, name):
                 if has_wcr_write(state, node):
                     return False  # reduction edge -> genuine accumulation, not a scratch buffer
@@ -451,7 +466,7 @@ class BufferExpansion(ppl.Pass):
                 saw_read = saw_read or state.out_degree(node) > 0
         if not (saw_read and saw_write):
             return False  # a reused buffer is both written and read inside the loop
-        return not MustDefinition(accesses, index).exposed(loop)
+        return not MustDefinition(accesses, index, shapes).exposed(loop)
 
     # expansion
 
