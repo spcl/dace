@@ -75,6 +75,15 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
+    @staticmethod
+    def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
+        # A connector with an offset of its own (e.g., one-based indices) addresses another index space
+        return (
+            outer_desc.shape == inner_desc.shape
+            and outer_desc.strides == inner_desc.strides
+            and list(outer_desc.offset) == list(inner_desc.offset)
+        )
+
     def can_be_applied(self, state: SDFGState, expr_index, sdfg: SDFG, permissive=False):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
@@ -103,7 +112,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             #  for that. Clone the descriptor because the operation is inplace.
             inner_desc = nested_sdfg.sdfg.arrays[edge.dst_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides:
+            if not self._same_layout(outer_desc, inner_desc):
                 return False
 
         for edge in state.out_edges(nested_sdfg):
@@ -119,7 +128,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
             inner_desc = nested_sdfg.sdfg.arrays[edge.src_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides:
+            if not self._same_layout(outer_desc, inner_desc):
                 return False
 
         if not helpers.isolate_nested_sdfg(state, nsdfg_node=nested_sdfg, test_if_applicable=True):

@@ -1823,6 +1823,39 @@ def test_inline_connector_offset():
     assert np.allclose(B, expected)
 
 
+@pytest.mark.parametrize("offset_connector", ["a", "b"])
+def test_multistate_inline_keeps_the_index_space_of_a_connector_with_its_own_offset(offset_connector: str):
+    """A one-based connector of a multistate nest: ``a[1]``/``b[1]`` must keep naming the first element."""
+    inner = dace.SDFG("inner")
+    for name in "ab":
+        inner.add_array(name, [4], dace.float64, offset=[-1] if name == offset_connector else [0])
+    first = inner.add_state(is_start_block=True)
+    tasklet = first.add_tasklet("inc", {"v"}, {"w"}, "w = v + 1")
+    first.add_edge(first.add_read("a"), None, tasklet, "v", dace.Memlet("a[1]"))
+    first.add_edge(tasklet, "w", first.add_write("b"), None, dace.Memlet("b[1]"))
+    inner.add_state_after(first)
+    sdfg = dace.SDFG(unique_name("multistate_inline_connector_offset"))
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {"a"}, {"b"})
+    state.add_edge(state.add_read("A"), None, node, "a", dace.Memlet("A[0:4]"))
+    state.add_edge(node, "b", state.add_write("B"), None, dace.Memlet("B[0:4]"))
+
+    sdfg.apply_transformations(InlineMultistateSDFG)
+    sdfg.validate()
+
+    A = np.arange(4.0)
+    B = np.zeros(4)
+    sdfg(A=A, B=B)
+    expected = np.zeros(4)
+    if offset_connector == "a":
+        expected[1] = A[0] + 1
+    else:
+        expected[0] = A[1] + 1
+    assert np.array_equal(B, expected), B
+
+
 def _add_increment(region: dace.sdfg.state.ControlFlowRegion, label: str) -> dace.SDFGState:
     state = region.add_state(label)
     tasklet = state.add_tasklet("inc", {"inp"}, {"out"}, "out = inp + 1")
@@ -1963,6 +1996,8 @@ if __name__ == "__main__":
     for inliner in [InlineSDFG, InlineMultistateSDFG]:
         test_inline_restates_nested_connectors(inliner)
     test_inline_connector_offset()
+    for offset_connector in ["a", "b"]:
+        test_multistate_inline_keeps_the_index_space_of_a_connector_with_its_own_offset(offset_connector)
     for shape in ["loop", "conditional", "region"]:
         for dead_successor in [False, True]:
             test_multistate_inline_early_return(shape=shape, dead_successor=dead_successor)
