@@ -70,6 +70,23 @@ def store_is_superseded(
     )
 
 
+def same_connector(in_conn: str | None, out_conn: str | None) -> bool:
+    """Whether the scope connectors ``IN_x`` and ``OUT_x`` pass the same data; an empty memlet has neither, and a
+    dynamic map range connector is not an ``IN_`` connector."""
+    return (
+        bool(in_conn and out_conn)
+        and in_conn.startswith("IN_")
+        and out_conn.startswith("OUT_")
+        and in_conn[3:] == out_conn[4:]
+    )
+
+
+def add_ordering_edge(graph: SDFGState, src: nodes.Node, dst: nodes.Node) -> None:
+    """Orders ``dst`` after ``src`` with an empty memlet, unless one already does."""
+    if not any(e.data.is_empty() for e in graph.edges_between(src, dst)):
+        graph.add_nedge(src, dst, Memlet())
+
+
 @make_properties
 class SubgraphFusion(transformation.SubgraphTransformation):
     """
@@ -187,6 +204,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             return False
         in_nodes, intermediate_nodes, out_nodes = node_config
 
+        # An empty memlet from a map's exit into an intermediate node orders it after the whole map; inside the fused
+        # map nothing could. One from an intermediate node into a map entry is kept per iteration (see ``fuse``).
+        if any(e.data.is_empty() and e.src in map_exits for n in intermediate_nodes for e in graph.in_edges(n)):
+            return False
+
         # A map output that flows straight into an enclosing scope's exit has no container to fuse through.
         if not all(isinstance(n, nodes.AccessNode) for n in out_nodes):
             return False
@@ -231,7 +253,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         return False
                 if in_edge.src in map_exits:
                     for iedge in graph.in_edges(in_edge.src):
-                        if iedge.dst_conn[2:] == in_edge.src_conn[3:]:
+                        if same_connector(iedge.dst_conn, in_edge.src_conn):
                             subset_to_add = dcpy(
                                 iedge.data.subset if iedge.data.data == node.data else iedge.data.other_subset
                             )
@@ -251,7 +273,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             for out_edge in graph.out_edges(node):
                 if out_edge.dst in map_entries:
                     for oedge in graph.out_edges(out_edge.dst):
-                        if oedge.src_conn and oedge.src_conn[3:] == out_edge.dst_conn[2:]:
+                        if same_connector(out_edge.dst_conn, oedge.src_conn):
                             subset_to_add = dcpy(
                                 oedge.data.subset if oedge.data.data == node.data else oedge.data.other_subset
                             )
@@ -383,11 +405,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 if e.dst in map_entries and e.dst_conn is not None:
                                     # get corresponding inner memlet and join its subset to our access set
                                     for oe in graph.out_edges(e.dst):
-                                        # An ordering edge has no connector and accesses no
-                                        # element, so it names no data to add to the access set.
-                                        if oe.src_conn is None:
-                                            continue
-                                        if oe.src_conn[3:] == e.dst_conn[2:]:
+                                        if same_connector(e.dst_conn, oe.src_conn):
                                             current_subset = dcpy(oe.data.subset)
                                             current_subset.pop(invariant_dimensions[node_data])
 
@@ -399,9 +417,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 if e.src in map_exits and e.src_conn is not None:
                                     for ie in graph.in_edges(e.src):
                                         # get corresponding inner memlet and join its subset to our access set
-                                        if ie.dst_conn is None:
-                                            continue
-                                        if ie.dst_conn[2:] == e.src_conn[3:]:
+                                        if same_connector(ie.dst_conn, e.src_conn):
                                             current_subset = dcpy(ie.data.subset)
                                             current_subset.pop(invariant_dimensions[node_data])
 
@@ -589,7 +605,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         for out_edge in graph.out_edges(node):
             if out_edge.dst in map_entries:
                 for other_edge in graph.out_edges(out_edge.dst):
-                    if other_edge.src_conn and other_edge.src_conn[3:] == out_edge.dst_conn[2:]:
+                    if same_connector(out_edge.dst_conn, other_edge.src_conn):
                         other_subset = (
                             other_edge.data.subset
                             if other_edge.data.data == node.data
@@ -1006,18 +1022,16 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             graph.add_edge(edge.src, None, root, None, Memlet())
                     graph.remove_edge(edge)
                 else:
-                    self.copy_edge(graph, edge, new_dst=global_map_entry)
+                    add_ordering_edge(graph, edge.src, global_map_entry)
 
             # handle inputs
             # TODO: dynamic map range -- this is fairly unrealistic in such a setting
             for edge in graph.in_edges(map_entry):
                 src = edge.src
-                # Ordering edges name no connector pair and were re-anchored above.
-                if edge.dst_conn is None:
+                if edge.data.is_empty():
+                    # Re-anchored above
                     continue
-                out_edges = [
-                    e for e in graph.out_edges(map_entry) if (e.src_conn and e.src_conn[3:] == edge.dst_conn[2:])
-                ]
+                out_edges = [e for e in graph.out_edges(map_entry) if same_connector(edge.dst_conn, e.src_conn)]
 
                 if src in in_nodes:
                     in_conn = None
@@ -1052,18 +1066,20 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
             for edge in graph.out_edges(map_entry):
                 # special case: for nodes that have no data connections
-                if not edge.src_conn:
+                if edge.data.is_empty():
                     self.copy_edge(graph, edge, new_src=global_map_entry)
 
             ######################################
 
             for edge in graph.in_edges(map_exit):
-                if not edge.dst_conn:
+                if edge.data.is_empty():
                     # no destination connector, path ends here.
                     self.copy_edge(graph, edge, new_dst=global_map_exit)
                     continue
                 # find corresponding out_edges for current edge
-                out_edges = [oedge for oedge in graph.out_edges(map_exit) if oedge.src_conn[3:] == edge.dst_conn[2:]]
+                out_edges = [
+                    oedge for oedge in graph.out_edges(map_exit) if same_connector(edge.dst_conn, oedge.src_conn)
+                ]
 
                 # Tuple to store in/out connector port that might be created
                 port_created = None
@@ -1132,6 +1148,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                         # map
                         graph.add_edge(global_map_exit, out_conn, dst, out_edge.dst_conn, dcpy(out_edge.data))
+
+            for edge in graph.out_edges(map_exit):
+                if edge.data.is_empty():
+                    # Orders ``edge.dst`` after the whole map, so after the fused map
+                    add_ordering_edge(graph, global_map_exit, edge.dst)
 
             # maps are now ready to be discarded
             # all connected edges will be finally removed as well
