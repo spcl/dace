@@ -5,7 +5,7 @@ import itertools
 from copy import deepcopy as dc
 from typing import Any
 
-from dace import Memlet, data, symbolic, utils
+from dace import Memlet, data, dtypes, symbolic, utils
 from dace.properties import CodeBlock, make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
@@ -124,9 +124,10 @@ def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: set[str]) -> None
             for edge in list(nstate.out_edges(node)):
                 if edge.src_conn in renames:
                     helpers.redirect_edge(nstate, edge, new_src_conn=renames[edge.src_conn])
-            tasklet_replace_code(node, renames)
-            # tasklet_replace_code only rewrites symbols on the right-hand side;
-            # also rename connector names that appear as assignment targets.
+            if node.code.language is dtypes.Language.Python:
+                tasklet_replace_code(node, renames)
+            # tasklet_replace_code only rewrites symbols on the right-hand side of Python code;
+            # the token replacement renames assignment targets and every C++ use.
             node.code = CodeBlock(token_replace_dict(node.code.as_string, renames), language=node.code.language)
 
 

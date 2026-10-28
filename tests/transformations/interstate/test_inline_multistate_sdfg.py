@@ -272,6 +272,32 @@ def test_inline_keeps_library_node_connectors_but_renames_tasklet_ones():
     assert np.allclose(out, expected, atol=1e-12)
 
 
+def test_inline_renames_a_clashing_connector_of_a_cpp_tasklet():
+    """A C++ tasklet connector shadowing an outer array is renamed in its code too."""
+    outer = SDFG("clashing_cpp_connector")
+    outer.add_array("inp", [1], dtypes.float64)
+    outer.add_array("res", [1], dtypes.float64)
+    s = outer.add_state("main", is_start_block=True)
+    inner = SDFG("inner_cpp_clash")
+    inner.add_array("src", [1], dtypes.float64)
+    inner.add_array("dst", [1], dtypes.float64)
+    ist = inner.add_state("inner_main", is_start_block=True)
+    scale = ist.add_tasklet("scale", {"res": None}, {"y": None}, "y = res * 2.0;", language=dtypes.Language.CPP)
+    ist.add_edge(ist.add_read("src"), None, scale, "res", Memlet("src[0]"))
+    ist.add_edge(scale, "y", ist.add_write("dst"), None, Memlet("dst[0]"))
+    nsdfg_node = s.add_nested_sdfg(inner, {"src": None}, {"dst": None})
+    s.add_edge(s.add_read("inp"), None, nsdfg_node, "src", Memlet("inp[0]"))
+    s.add_edge(nsdfg_node, "dst", s.add_write("res"), None, Memlet("res[0]"))
+    outer.validate()
+
+    _apply_inline(outer)
+    assert "res" not in scale.in_connectors
+    assert f"{next(iter(scale.in_connectors))} * 2.0" in scale.code.as_string
+    out = np.zeros(1)
+    outer(inp=np.array([1.5]), res=out)
+    assert out[0] == 3.0
+
+
 def test_inline_refuses_inside_map_scope():
     """An NSDFG nested inside a Map scope must not be inlined."""
 
@@ -475,6 +501,7 @@ if __name__ == "__main__":
     test_inline_lowers_non_identity_symbol_mapping_to_iedge_assignment()
     test_inline_renames_inner_connector_to_outer_array_name()
     test_inline_keeps_library_node_connectors_but_renames_tasklet_ones()
+    test_inline_renames_a_clashing_connector_of_a_cpp_tasklet()
     test_inline_refuses_inside_map_scope()
     test_outer_names_are_what_the_three_walks_collected()
     test_outer_names_of_a_nested_sdfg_stop_at_its_subtree()
