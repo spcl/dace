@@ -1206,6 +1206,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         state: dace.SDFGState,
         new_pre_exit_edge: graph.MultiConnectorEdge[dace.Memlet],
         inter_name: str,
+        inter_desc: data.Data,
         new_inter_name: str,
         new_inter_desc: data.Data,
         producer_offset: subsets.Range,
@@ -1220,6 +1221,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param state: The state being rewritten.
         :param new_pre_exit_edge: The freshly created edge into the reduced intermediate.
         :param inter_name: Name of the original intermediate.
+        :param inter_desc: Descriptor of the original intermediate.
         :param new_inter_name: Name of the reduced intermediate.
         :param new_inter_desc: Descriptor of the reduced intermediate.
         :param producer_offset: Where the writes originally began.
@@ -1251,13 +1253,17 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 producer_edge.data.dst_subset.offset(producer_offset, negative=True)
                 producer_edge.data.dst_subset.pop(squeezed_dims)
 
-            # Modify the strides of the mapped data of the nested SDFG.
+            # A nested SDFG below the MapExit addresses the old intermediate like the one at it: its
+            #  accesses move to the reduced container's origin, not only its strides.
             if isinstance(producer_edge.src, nodes.NestedSDFG):
                 self._updated_inner_strides_of_nested_sdfg(
                     nsdfg=producer_edge.src,
                     reduced_intermediate_desc=new_inter_desc,
                     inner_data=producer_edge.src_conn,
                     outer_edge=producer_edge,
+                    old_intermediate_desc=inter_desc,
+                    offset=producer_offset,
+                    squeezed_dims=squeezed_dims,
                 )
 
     def handle_intermediate_set(
@@ -1432,6 +1438,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     state=state,
                     new_pre_exit_edge=new_pre_exit_edge,
                     inter_name=inter_name,
+                    inter_desc=inter_desc,
                     new_inter_name=new_inter_name,
                     new_inter_desc=new_inter_desc,
                     producer_offset=producer_offset,
