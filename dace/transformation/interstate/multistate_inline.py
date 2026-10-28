@@ -210,19 +210,19 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for e in sdfg.all_interstate_edges():
             outer_assignments |= e.data.assignments.keys()
         for b in sdfg.all_control_flow_blocks():
-            if isinstance(b, LoopRegion):
-                if b.loop_variable is not None:
-                    outer_assignments.add(b.loop_variable)
+            # A while loop's loop variable is the empty string
+            if isinstance(b, LoopRegion) and b.loop_variable:
+                outer_assignments.add(b.loop_variable)
 
         inner_assignments = set()
         for e in nsdfg.all_interstate_edges():
             inner_assignments |= e.data.assignments.keys()
         for b in nsdfg.all_control_flow_blocks():
-            if isinstance(b, LoopRegion):
-                if b.loop_variable is not None:
-                    inner_assignments.add(b.loop_variable)
+            if isinstance(b, LoopRegion) and b.loop_variable:
+                inner_assignments.add(b.loop_variable)
 
-        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
+        # Loop variables are not necessarily declared as symbols
+        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys()) | outer_assignments
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
         sym_replacements: dict[str, str] = {}
         for assign in assignments_to_replace:

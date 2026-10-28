@@ -1856,6 +1856,76 @@ def test_multistate_inline_keeps_the_index_space_of_a_connector_with_its_own_off
     assert np.array_equal(B, expected), B
 
 
+def _add_accumulate(region: dace.sdfg.state.ControlFlowRegion, label: str, name: str) -> dace.SDFGState:
+    state = region.add_state(label, is_start_block=True)
+    tasklet = state.add_tasklet("inc", {"inp"}, {"out"}, "out = inp + 1")
+    state.add_edge(state.add_read(name), None, tasklet, "inp", dace.Memlet(f"{name}[0]"))
+    state.add_edge(tasklet, "out", state.add_write(name), None, dace.Memlet(f"{name}[0]"))
+    return state
+
+
+def _nest_in_state(sdfg: dace.SDFG, state: dace.SDFGState, inner: dace.SDFG, name: str) -> dace.nodes.NestedSDFG:
+    node = state.add_nested_sdfg(inner, {name}, {name}, symbol_mapping={})
+    state.add_edge(state.add_read(name), None, node, name, dace.Memlet(f"{name}[0]"))
+    state.add_edge(node, name, state.add_write(name), None, dace.Memlet(f"{name}[0]"))
+    return node
+
+
+def test_multistate_inline_renames_a_loop_variable_bound_by_an_undeclared_outer_loop():
+    """``for i in range(3): for i' in range(2): acc += 1``: the inner ``i`` must not overwrite the outer one."""
+    inner = dace.SDFG("inner")
+    inner.add_array("acc", [1], dace.float64)
+    loop = dace.sdfg.state.LoopRegion("inner_loop", "i < 2", "i", "i = 0", "i = i + 1")
+    inner.add_node(loop, is_start_block=True)
+    _add_accumulate(loop, "inner_body", "acc")
+    inner.add_state_after(loop)
+    sdfg = dace.SDFG(unique_name("multistate_inline_loop_variable_clash"))
+    sdfg.add_array("acc", [1], dace.float64)
+    outer_loop = dace.sdfg.state.LoopRegion("outer_loop", "i < 3", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(outer_loop, is_start_block=True)
+    _nest_in_state(sdfg, outer_loop.add_state("outer_body", is_start_block=True), inner, "acc")
+    assert "i" not in sdfg.symbols
+
+    assert sdfg.apply_transformations(InlineMultistateSDFG) == 1
+    sdfg.validate()
+
+    acc = np.zeros(1)
+    sdfg(acc=acc)
+    assert acc[0] == 6, acc
+
+
+def _add_while_loop(region: dace.sdfg.state.ControlFlowRegion, label: str, name: str) -> dace.SDFGState:
+    init = region.add_state(label + "_init", is_start_block=True)
+    loop = dace.sdfg.state.LoopRegion(label, "k < 3")
+    region.add_node(loop)
+    region.add_edge(init, loop, dace.InterstateEdge(assignments={"k": "0"}))
+    body = _add_accumulate(loop, label + "_body", name)
+    loop.add_edge(body, loop.add_state(label + "_latch"), dace.InterstateEdge(assignments={"k": "k + 1"}))
+    return loop
+
+
+def test_multistate_inline_does_not_rename_the_empty_loop_variable_of_while_loops():
+    """A while ``LoopRegion`` has the loop variable ``""`` in both SDFGs, which names no symbol."""
+    inner = dace.SDFG("inner")
+    inner.add_array("acc", [1], dace.float64)
+    inner.add_symbol("k", dace.int64)
+    _add_while_loop(inner, "inner_while", "acc")
+    sdfg = dace.SDFG(unique_name("multistate_inline_while_loops"))
+    sdfg.add_array("acc", [1], dace.float64)
+    sdfg.add_array("other", [1], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    outer_loop = _add_while_loop(sdfg, "outer_while", "other")
+    call = sdfg.add_state_after(outer_loop)
+    _nest_in_state(sdfg, call, inner, "acc")
+
+    assert sdfg.apply_transformations(InlineMultistateSDFG) == 1
+    sdfg.validate()
+
+    acc, other = np.zeros(1), np.zeros(1)
+    sdfg(acc=acc, other=other)
+    assert acc[0] == 3 and other[0] == 3, (acc, other)
+
+
 def _add_increment(region: dace.sdfg.state.ControlFlowRegion, label: str) -> dace.SDFGState:
     state = region.add_state(label)
     tasklet = state.add_tasklet("inc", {"inp"}, {"out"}, "out = inp + 1")
@@ -1998,6 +2068,8 @@ if __name__ == "__main__":
     test_inline_connector_offset()
     for offset_connector in ["a", "b"]:
         test_multistate_inline_keeps_the_index_space_of_a_connector_with_its_own_offset(offset_connector)
+    test_multistate_inline_renames_a_loop_variable_bound_by_an_undeclared_outer_loop()
+    test_multistate_inline_does_not_rename_the_empty_loop_variable_of_while_loops()
     for shape in ["loop", "conditional", "region"]:
         for dead_successor in [False, True]:
             test_multistate_inline_early_return(shape=shape, dead_successor=dead_successor)
