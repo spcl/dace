@@ -413,7 +413,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         _disambiguate_code_connectors(
             nsdfg, set(sdfg.arrays) | set(nsdfg.arrays) | set(outer_symbols) | set(sdfg.constants)
         )
-        connectors = tasklet_connector_names(sdfg) | tasklet_connector_names(nsdfg)
+        # Built on the first transient that needs it: the scan covers every state of the parent
+        connectors: set[str] | None = None
 
         # Mapping from nested transient name to top-level name
         transients: dict[str, str] = {}
@@ -427,6 +428,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     datadesc = nsdfg.arrays[node.data]
                     if node.data not in transients and datadesc.transient:
                         new_name = node.data
+                        if connectors is None:
+                            connectors = tasklet_connector_names(sdfg) | tasklet_connector_names(nsdfg)
                         if (
                             new_name in sdfg.arrays
                             or new_name in outer_symbols
