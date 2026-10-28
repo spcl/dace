@@ -369,6 +369,15 @@ class ChunkAntiDependence(ppl.Pass):
         ``hi + 1 + m`` is read by iteration ``hi + 1 + m - offset``, so only the cells of iterations at or past ``lo``
         are copied: a range shorter than ``offset`` (none at all when ``hi < lo``) reads fewer, and the rest lie
         outside the array. A map spells the possibly empty range."""
+        if isinstance(offset, int):
+            # Cells ``hi + 1 .. hi + offset`` are the reads of the last ``offset`` iterations, in bounds whenever the
+            # loop runs: one copy, no map
+            row = [(last_row, last_row, 1)] + ([(0, offset - 1, 1)] if offset != 1 else [])
+            trailing = Memlet(
+                data=arr, subset=subsets.Range([(hi + 1, hi + offset, 1)]), other_subset=subsets.Range(row)
+            )
+            seam.add_nedge(seam.add_read(arr), seam.add_write(buf), trailing)
+            return
         first = symbolic.symstr(sympy.Max(0, as_expr(lo) + offset - as_expr(hi) - 1))
         out = f"{buf}[{symbolic.symstr(last_row)}]" if offset == 1 else f"{buf}[{symbolic.symstr(last_row)}, _seam_m]"
         seam.add_mapped_tasklet(
