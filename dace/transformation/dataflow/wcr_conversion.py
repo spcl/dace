@@ -257,11 +257,15 @@ def reads_written_element(read, write) -> bool:
 
 
 def reads_container(sdfg: SDFG, name: str) -> bool:
-    """Whether ``sdfg`` reads ``name``: an access node of it with a successor, or an interstate edge naming it."""
+    """Whether ``sdfg`` reads ``name``: an access node of it with a successor, or an interstate edge, loop
+    statement or branch condition naming it."""
     for state in sdfg.states():
         for node in state.data_nodes():
             if node.data == name and any(not e.data.is_empty() for e in state.out_edges(node)):
                 return True
+    for region in sdfg.all_control_flow_regions():
+        if any(name in code.get_free_symbols() for code in region.get_meta_codeblocks()):
+            return True
     return any(name in edge.data.free_symbols for edge in sdfg.all_interstate_edges())
 
 

@@ -3,6 +3,8 @@ import pytest
 
 import dace
 from dace.transformation.dataflow import AugAssignToWCR, WCRToAugAssign
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
 
 def test_aug_assign_tasklet_lhs():
@@ -228,6 +230,41 @@ def test_aug_assign_in_a_nested_body_drops_the_read_connector_it_no_longer_uses(
     a, b = np.zeros(1), np.arange(32.0)
     sdfg(A=a, B=b)
     assert np.isclose(a[0], b.sum())
+
+
+def test_aug_assign_in_a_nested_body_keeps_the_read_connector_a_branch_condition_uses():
+    """The nested body updates ``A[0]`` and then branches on ``A[0]``: the condition still reads ``A``, so its
+    connector stays -- dropped, a loop around the nest would map on a carried read."""
+    body = dace.SDFG("rmw_cond_body")
+    body.add_array("A", [1], dace.float64)
+    body.add_array("b", [32], dace.float64)
+    body.add_array("F", [1], dace.float64)
+    bstate = body.add_state("rmw", is_start_block=True)
+    bstate.add_mapped_tasklet("add", {"i": "0:32"}, {"x": dace.Memlet("A[0]"), "y": dace.Memlet("b[i]")}, "z = x + y",
+                              {"z": dace.Memlet("A[0]")}, external_edges=True)
+    check = ConditionalBlock("check")
+    body.add_node(check)
+    body.add_edge(bstate, check, dace.InterstateEdge())
+    branch = ControlFlowRegion("big", sdfg=body)
+    check.add_branch(CodeBlock("A[0] > 20.0"), branch)
+    flag = branch.add_state("flag", is_start_block=True)
+    t = flag.add_tasklet("set", {}, {"o"}, "o = 1.0")
+    flag.add_edge(t, "o", flag.add_write("F"), None, dace.Memlet("F[0]"))
+
+    sdfg = dace.SDFG("rmw_cond_nested")
+    for name, size in (("A", 1), ("B", 32), ("F", 1)):
+        sdfg.add_array(name, [size], dace.float64)
+    state = sdfg.add_state()
+    nsdfg = state.add_nested_sdfg(body, {"A", "b"}, {"A", "F"})
+    state.add_edge(state.add_read("A"), None, nsdfg, "A", dace.Memlet("A[0]"))
+    state.add_edge(state.add_read("B"), None, nsdfg, "b", dace.Memlet("B[0:32]"))
+    state.add_edge(nsdfg, "A", state.add_write("A"), None, dace.Memlet("A[0]"))
+    state.add_edge(nsdfg, "F", state.add_write("F"), None, dace.Memlet("F[0]"))
+    sdfg.validate()
+
+    assert body.apply_transformations(AugAssignToWCR) == 1
+    sdfg.validate()
+    assert "A" in nsdfg.in_connectors
 
 
 def test_aug_assign_state_fission_map():
@@ -879,3 +916,4 @@ if __name__ == "__main__":
     test_aug_assign_python_reads_another_element()
     test_aug_assign_python_reads_another_array()
     test_aug_assign_python_subtraction_keeps_its_operand_order("o = x - acc", lambda b, c: c - b)
+    test_aug_assign_in_a_nested_body_keeps_the_read_connector_a_branch_condition_uses()
