@@ -323,6 +323,39 @@ def create_einsum_sdfg(
 PATH_SMALL_EXTENT, PATH_LARGE_EXTENT = 16, 4096
 
 
+def is_contiguous(desc: dace.data.Data) -> bool:
+    """Whether ``desc`` is laid out in C order: each stride the product of the extents after it (length-1 axes
+    may carry any stride)."""
+    expected = 1
+    for extent, stride in reversed(list(zip(desc.shape, desc.strides))):
+        if not symbolic.equal_valued(1, extent) and not symbolic.equal_valued(expected, stride):
+            return False
+        expected = expected * extent
+    return True
+
+
+def contiguous_operands(
+    sdfg: SDFG, state: SDFGState, arrays: tuple[str, ...], input_nodes: dict[str, AccessNode]
+) -> tuple[tuple[str, ...], dict[str, AccessNode]]:
+    """Copy every non-contiguous operand into a contiguous transient. The GEMM, transpose and dot lowerings below
+    derive an operand's strides from its shape, so a strided view (``w[:, :, ky, kx]`` of a ``[O, C, K, K]``
+    array) would be read as if it were dense: wrong values, silently."""
+    copied: dict[str, str] = {}
+    nodes = dict(input_nodes)
+    for name in dict.fromkeys(arrays):
+        desc = sdfg.arrays[name]
+        if not isinstance(desc, dace.data.Array) or is_contiguous(desc):
+            continue
+        dense, dense_desc = sdfg.add_transient(
+            f"{name}_dense", desc.shape, desc.dtype, storage=desc.storage, find_new_name=True
+        )
+        dense_node = state.add_access(dense)
+        state.add_nedge(input_nodes[name], dense_node, Memlet.from_array(name, desc))
+        copied[name] = dense
+        nodes[dense] = dense_node
+    return tuple(copied.get(name, name) for name in arrays), nodes
+
+
 def _path_extent(extent, facts) -> int:
     """``extent`` as an integer for :func:`opt_einsum.contract_path`: its value, else a stand-in by scale."""
     if not symbolic.issymbolic(extent):
@@ -414,6 +447,8 @@ def _create_einsum_internal(
     # An operand may repeat (``np.einsum('ik,ik->i', a, a)``): read it ONCE, otherwise the extra
     # ``add_read`` the comprehension drops on the floor stays behind as an isolated node.
     input_nodes = nodes or {arr: state.add_read(arr) for arr in dict.fromkeys(arrays)}
+    if len(arrays) == 2:
+        arrays, input_nodes = contiguous_operands(sdfg, state, arrays, input_nodes)
 
     # Get output shape from chardict, or [1] for a scalar output
     output_shape = [chardict[k] for k in einsum.output] or [1]
