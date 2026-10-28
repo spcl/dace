@@ -14,7 +14,6 @@ from dace.memlet import Memlet
 from dace.properties import EnumProperty, ListProperty, Property, make_properties
 from dace.sdfg import SDFG, dealias, nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.propagation import _propagate_node, propagate_subset
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.utils import consolidate_edges_scope
@@ -40,16 +39,11 @@ def add_ordering_edge(graph: SDFGState, src: nodes.Node, dst: nodes.Node) -> Non
         graph.add_nedge(src, dst, Memlet())
 
 
-def dynamic_inputs(graph: SDFGState, entry: nodes.MapEntry) -> dict[str, MultiConnectorEdge]:
-    """The edges into the dynamic map range connectors of ``entry`` (every connector but ``IN_x``), by connector."""
-    return {e.dst_conn: e for e in graph.in_edges(entry) if e.dst_conn is not None and not e.dst_conn.startswith("IN_")}
-
-
 def same_dynamic_inputs(graph: SDFGState, map_entries: list[nodes.MapEntry]) -> bool:
     """Whether every map reads the same dynamic range inputs, with values that cannot differ between the maps: each
     connector reads the same data and subset, either from one access node or from access nodes nothing writes to in
     ``graph`` (so no write can land between two of the reads)."""
-    inputs = [dynamic_inputs(graph, entry) for entry in map_entries]
+    inputs = [{e.dst_conn: e for e in sdutil.dynamic_map_inputs(graph, entry)} for entry in map_entries]
     if any(i.keys() != inputs[0].keys() for i in inputs):
         return False
     written = {n.data for n in graph.data_nodes() if graph.in_degree(n) > 0}
@@ -991,9 +985,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         for map_entry, map_exit in zip(map_entries, map_exits):
             # handle inputs
             # TODO: dynamic map range -- this is fairly unrealistic in such a setting
+            dynamic = sdutil.dynamic_map_inputs(graph, map_entry)
             for edge in graph.in_edges(map_entry):
                 src = edge.src
-                if edge.dst_conn is not None and not edge.dst_conn.startswith("IN_"):
+                if edge in dynamic:
                     # A dynamic map range input: every map reads the same value (``same_dynamic_inputs``), read once
                     if edge.dst_conn not in global_map_entry.in_connectors:
                         global_map_entry.add_in_connector(edge.dst_conn, map_entry.in_connectors[edge.dst_conn])
