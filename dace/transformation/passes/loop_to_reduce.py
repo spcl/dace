@@ -555,7 +555,7 @@ def map_tasklet_augassign_candidates(
 
 def refused_on(loop: LoopRegion, names: set[str], refusals: dict[LoopRegion, Any]) -> bool:
     """Whether ``LoopToMap`` refuses ``loop`` on a dependence of one of ``names`` as far as its probe tells: a carried
-    dependence or a non-unique write of that container, which a WCR on it removes. ``refusals`` caches each loop's
+    dependence, a non-unique write or a dynamic (indirect) write of that container, which a WCR on it removes. ``refusals`` caches each loop's
     refusal (``None`` when it maps) for the caller, which drops a loop's entry once it rewrites inside it."""
     from dace.transformation.interstate.loop_to_map import LoopToMap, Refusal
     from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
@@ -568,7 +568,7 @@ def refused_on(loop: LoopRegion, names: set[str], refusals: dict[LoopRegion, Any
     refusal = refusals[loop]
     return (
         refusal is not None
-        and (refusal.kind.carried or refusal.kind is Refusal.NON_UNIQUE_WRITE)
+        and (refusal.kind.carried or refusal.kind in (Refusal.NON_UNIQUE_WRITE, Refusal.DYNAMIC_WRITE))
         and refusal.container in names
     )
 
