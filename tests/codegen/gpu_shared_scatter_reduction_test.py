@@ -77,6 +77,30 @@ def nested_scatter_of_symbolic_size() -> dace.SDFG:
     return sdfg
 
 
+def tasklet_scatter() -> dace.SDFG:
+    """``h[idx[i]] += w[i]`` with the tasklet subscripting its output pointer: ``o[ix] = v`` into ``h[0:M]``."""
+    sdfg = dace.SDFG("tasklet_scatter")
+    sdfg.add_array("idx", [N], dace.int64)
+    sdfg.add_array("w", [N], dace.float64)
+    sdfg.add_array("h", [M], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("scatter", {"i": "0:N"})
+    t = state.add_tasklet("add", {"ix", "v"}, {"o"}, "o[ix] = v")
+    state.add_memlet_path(state.add_read("idx"), me, t, dst_conn="ix", memlet=dace.Memlet("idx[i]"))
+    state.add_memlet_path(state.add_read("w"), me, t, dst_conn="v", memlet=dace.Memlet("w[i]"))
+    state.add_memlet_path(t, mx, state.add_write("h"), src_conn="o",
+                          memlet=dace.Memlet("h[0:M]", wcr="lambda a, b: a + b", dynamic=True))
+    sdfg.apply_gpu_transformations()
+    return sdfg
+
+
+def test_a_subscripted_scatter_folds_into_the_slot_it_subscripts():
+    """``o[ix] = v`` writes ``ix`` past the start of ``h``: the shared copy is updated there too, not at slot 0."""
+    code = _device_code(tasklet_scatter())
+    folds = [line for line in code.splitlines() if "reduce_atomic(&__bpart_" in line]
+    assert folds and all("idx_gpu[" in line.split("reduce_atomic(&__bpart_")[1].split("]")[0] + "]" for line in folds)
+
+
 def test_a_scatter_target_sized_by_a_symbol_the_kernel_does_not_receive_keeps_global_atomics():
     """``h`` is ``M`` long and nothing in the kernel reads ``M``: the kernel is not passed ``M``, so the run-time
     capacity check ``M <= ...`` of a shared copy could not compile there."""
@@ -102,7 +126,19 @@ def test_a_privatized_scatter_matches_numpy(prog):
             assert np.allclose(s, a.sum(0))
 
 
+@pytest.mark.gpu
+def test_a_subscripted_scatter_matches_numpy():
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        sdfg = tasklet_scatter()
+        rng = np.random.default_rng(0)
+        n, m = 100003, 300
+        idx, w, h = rng.integers(0, m, n), rng.random(n), np.zeros(m)
+        sdfg(idx=idx, w=w, h=h, N=n, M=m)
+        assert np.allclose(h, np.bincount(idx, w, m))
+
+
 if __name__ == "__main__":
     for p in (histogram, column_sums):
         test_a_small_scatter_target_is_privatized_in_shared_memory(p)
     test_a_scatter_target_sized_by_a_symbol_the_kernel_does_not_receive_keeps_global_atomics()
+    test_a_subscripted_scatter_folds_into_the_slot_it_subscripts()

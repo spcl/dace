@@ -400,7 +400,7 @@ def shared_scatter_target(sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEn
     scope = state.scope_subgraph(scope_entry)
     if symbolic.issymbolic(desc.total_size, sdfg.constants):
         # The symbols a kernel receives: a shape symbol nothing in the scope uses is not among them
-        if not {str(sym) for sym in desc.total_size.free_symbols} <= set(scope.used_symbols(all_symbols=False)):
+        if not {str(sym) for sym in desc.total_size.free_symbols} <= set(scope.arglist()):
             return False
     elif int(desc.total_size) > SHARED_SCATTER_ELEMENTS:
         return False
@@ -1962,8 +1962,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # A vector into the shared copy has no atomic fold here: it commits to memory directly instead
             if cover["shared"] and isinstance(dtype, dtypes.vector):
                 slot = None
+            # A subscripted write (``o[ix] = v``) lands ``indices`` past the subset's start, as the direct path's
+            # pointer does; one subscripted otherwise goes to memory, the partial left at the identity
+            if slot is not None and indices is not None and not isinstance(indices, str):
+                slot = None
             if slot is not None:
-                lhs = f"{cover['partial']}[{sym2cpp(slot)}]"
+                lhs = f"{cover['partial']}[{sym2cpp(slot)}{'' if indices is None else f' + {indices}'}]"
                 # Vector value, scalar partial: horizontal fold first, as the atomic path below does.
                 if isinstance(dtype, dtypes.vector):
                     if cpf_lowering.standalone():
