@@ -323,6 +323,70 @@ def create_einsum_sdfg(
 PATH_SMALL_EXTENT, PATH_LARGE_EXTENT = 16, 4096
 
 
+def _column_major_matrix(desc: dace.data.Data) -> bool:
+    """A packed column-major matrix, which BLAS can read in place.
+
+    ``Data.is_packed_fortran_strides`` is that layout: the leading axis has stride 1. Rank 1 is both orders, so it
+    stays on the row-major path. A column-major batch is packed too, but its unit stride is the batch axis, which
+    the GEMM formulas below cannot hand to BLAS.
+    """
+    return (
+        isinstance(desc, dace.data.Array)
+        and len(desc.shape) == 2
+        and desc.is_packed_fortran_strides()
+        and not desc.is_packed_c_strides()
+    )
+
+
+def _lowering_reads_directly(desc: dace.data.Data) -> bool:
+    """Whether the BLAS lowerings can read ``desc`` without a copy.
+
+    Packed row-major matches the strides those lowerings derive from the shape. Packed column-major does not, but a
+    matrix in that layout is still contiguous: BLAS takes it from the unit leading stride (see ``_group_stride``).
+    Anything else, a slice such as ``w[:, :, ky, kx]``, is neither, and reading it with shape-derived strides returns
+    the wrong elements and raises nothing.
+    """
+    if not isinstance(desc, dace.data.Array):
+        return True
+    return desc.is_packed_c_strides() or _column_major_matrix(desc)
+
+
+def _group_stride(desc: dace.data.Data, axes: list[int], shape) -> symbolic.SymbolicType:
+    """Stride of one flattened einsum index group.
+
+    Row-major, that is the product of the extents after the group's last axis. Column-major steps the group's first
+    axis instead, and that is the stride ``get_gemm_opts`` needs in order to call BLAS with a column-major operand.
+    """
+    if not axes:
+        return 1
+    if _column_major_matrix(desc):
+        return desc.strides[axes[0]]
+    return prod(shape[axes[-1] + 1 :])
+
+
+def contiguous_operands(
+    sdfg: SDFG, state: SDFGState, arrays: tuple[str, ...], input_nodes: dict[str, AccessNode]
+) -> tuple[tuple[str, ...], dict[str, AccessNode]]:
+    """Copy every operand the BLAS lowerings cannot read into a packed row-major transient.
+
+    The GEMM path derives an operand's strides from its shape. A packed operand already has those strides, including
+    a column-major matrix, whose real strides are passed through instead. A strided view does not, so it is copied
+    first; the pure map lowering indexes through memlets and would have been correct either way.
+    """
+    copied: dict[str, str] = {}
+    nodes = dict(input_nodes)
+    for name in dict.fromkeys(arrays):
+        desc = sdfg.arrays[name]
+        if _lowering_reads_directly(desc):
+            continue
+        dense, _ = sdfg.add_transient(f"{name}_dense", desc.shape, desc.dtype, storage=desc.storage, find_new_name=True)
+        dense_node = state.add_access(dense)
+        state.add_nedge(input_nodes[name], dense_node, Memlet.from_array(name, desc))
+        copied[name] = dense
+        nodes[dense] = dense_node
+    return tuple(copied.get(name, name) for name in arrays), nodes
+
+
 def _path_extent(extent, facts) -> int:
     """``extent`` as an integer for :func:`opt_einsum.contract_path`: its value, else a stand-in by scale."""
     if not symbolic.issymbolic(extent):
@@ -414,6 +478,8 @@ def _create_einsum_internal(
     # An operand may repeat (``np.einsum('ik,ik->i', a, a)``): read it ONCE, otherwise the extra
     # ``add_read`` the comprehension drops on the floor stays behind as an isolated node.
     input_nodes = nodes or {arr: state.add_read(arr) for arr in dict.fromkeys(arrays)}
+    if len(arrays) == 2:
+        arrays, input_nodes = contiguous_operands(sdfg, state, arrays, input_nodes)
 
     # Get output shape from chardict, or [1] for a scalar output
     output_shape = [chardict[k] for k in einsum.output] or [1]
@@ -636,8 +702,11 @@ def _create_einsum_internal(
         )
     else:
         # Represent einsum as a GEMM or batched GEMM (using library nodes)
-        a_shape = sdfg.arrays[arrays[0]].shape
-        b_shape = sdfg.arrays[arrays[1]].shape
+        a_desc = sdfg.arrays[arrays[0]]
+        b_desc = sdfg.arrays[arrays[1]]
+        c_desc = sdfg.arrays[output]
+        a_shape = a_desc.shape
+        b_shape = b_desc.shape
         c_shape = output_shape
 
         a = input_nodes[arrays[0]]
@@ -703,15 +772,15 @@ def _create_einsum_internal(
             M=prod([a_shape[dim] for dim in einsum.a_only]),
             K=prod([a_shape[dim] for dim in einsum.a_sum]),
             N=prod([b_shape[dim] for dim in einsum.b_only]),
-            sAM=prod(a_shape[einsum.a_only[-1] + 1 :]) if einsum.a_only else 1,
-            sAK=prod(a_shape[einsum.a_sum[-1] + 1 :]) if einsum.a_sum else 1,
-            sAB=prod(a_shape[einsum.a_batch[-1] + 1 :]) if einsum.a_batch else 1,
-            sBK=prod(b_shape[einsum.b_sum[-1] + 1 :]) if einsum.b_sum else 1,
-            sBN=prod(b_shape[einsum.b_only[-1] + 1 :]) if einsum.b_only else 1,
-            sBB=prod(b_shape[einsum.b_batch[-1] + 1 :]) if einsum.b_batch else 1,
-            sCM=prod(c_shape[einsum.c_a_only[-1] + 1 :]) if einsum.c_a_only else 1,
-            sCN=prod(c_shape[einsum.c_b_only[-1] + 1 :]) if einsum.c_b_only else 1,
-            sCB=prod(c_shape[einsum.c_batch[-1] + 1 :]) if einsum.c_batch else 1,
+            sAM=_group_stride(a_desc, einsum.a_only, a_shape),
+            sAK=_group_stride(a_desc, einsum.a_sum, a_shape),
+            sAB=_group_stride(a_desc, einsum.a_batch, a_shape),
+            sBK=_group_stride(b_desc, einsum.b_sum, b_shape),
+            sBN=_group_stride(b_desc, einsum.b_only, b_shape),
+            sBB=_group_stride(b_desc, einsum.b_batch, b_shape),
+            sCM=_group_stride(c_desc, einsum.c_a_only, c_shape),
+            sCN=_group_stride(c_desc, einsum.c_b_only, c_shape),
+            sCB=_group_stride(c_desc, einsum.c_batch, c_shape),
         )
 
         # Complement strides to make matrices as necessary
