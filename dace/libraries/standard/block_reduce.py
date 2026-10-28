@@ -145,6 +145,7 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
     from dace.libraries.standard.nodes.scan import Scan, block_refusal
     from dace.libraries.standard.nodes.state_scan import StateScan, block_chunks
 
+    lane_nodes = lane_map_nodes()
     impls = type(node).implementations
     block = next((impl for impl in GPU_BLOCK_IMPLEMENTATIONS if impl in impls), None)
     if block is None or state is None:
@@ -158,7 +159,35 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
         return None
     if isinstance(node, StateScan) and block_chunks(node) is None:
         return None
+    if isinstance(node, lane_nodes) and holds_thread_block_maps(node, state):
+        return None
     return block
+
+
+def lane_map_nodes() -> tuple[type, ...]:
+    """The library nodes whose block lowering adds its own ``BLOCK_COLLECTIVE_THREADS``-lane map."""
+    from dace.libraries.linalg.nodes.transpose import Transpose
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+    from dace.libraries.standard.nodes.state_scan import StateScan
+
+    return (CopyLibraryNode, FillLibraryNode, StateScan, Transpose)
+
+
+def holds_thread_block_maps(node: nodes.Node, state: SDFGState) -> bool:
+    """Whether the kernel around ``node`` already has thread-block maps of its own: a lane map beside them would
+    give the kernel a second block shape."""
+    from dace.transformation.helpers import gpu_map_has_explicit_threadblocks
+
+    graph, inner = state, node
+    while graph is not None:
+        scope = graph.entry_node(inner)
+        while scope is not None:
+            if isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device:
+                return gpu_map_has_explicit_threadblocks(graph, scope)
+            scope = graph.entry_node(scope)
+        inner, graph = graph.sdfg.parent_nsdfg_node, graph.sdfg.parent
+    return False
 
 
 #: Schedules whose code already runs per thread: a collective there would be entered once per lane.
