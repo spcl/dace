@@ -250,7 +250,10 @@ def test_speed_driven_choices_keep_the_cpp_lowerings(node_type):
     ],
 )
 def test_cpu_names_the_parallel_cpp_lowering_and_pure_only_sdfg_components(node_type, lowerings):
-    assert set(node_type.implementations) == lowerings
+    from dace.libraries.python_expansions import IMPLEMENTATION as PYTHON_BACKEND_IMPLEMENTATION
+
+    # The Python backend registers its own lowering the first time it prepares an SDFG, in whichever test runs first
+    assert set(node_type.implementations) - {PYTHON_BACKEND_IMPLEMENTATION} == lowerings
     assert node_type.default_implementation != "pure"
 
 
