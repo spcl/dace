@@ -500,11 +500,12 @@ def nest_state_subgraph(
     # Reconnect memlets to nested SDFG
     reconnected_in = set()
     reconnected_out = set()
-    empty_input = None
-    empty_output = None
+    # Empty memlets order the subgraph against the rest of the state: every one must survive
+    empty_inputs: dict[tuple[nodes.Node, str | None], None] = {}
+    empty_outputs: dict[tuple[nodes.Node, str | None], None] = {}
     for edge in inputs:
         if edge.data.data is None:
-            empty_input = edge
+            empty_inputs[edge.src, edge.src_conn] = None
             continue
 
         name = input_names[edge]
@@ -516,7 +517,7 @@ def nest_state_subgraph(
 
     for edge in outputs:
         if edge.data.data is None:
-            empty_output = edge
+            empty_outputs[edge.dst, edge.dst_conn] = None
             continue
 
         name = output_names[edge]
@@ -541,11 +542,10 @@ def nest_state_subgraph(
             state.add_nedge(node, exit, Memlet())
         state.add_edge(nested_sdfg, name, node, None, Memlet(data=name, wcr=wcr))
 
-    # Graph was not reconnected, but needs to be
-    if state.in_degree(nested_sdfg) == 0 and empty_input is not None:
-        state.add_edge(empty_input.src, empty_input.src_conn, nested_sdfg, None, empty_input.data)
-    if state.out_degree(nested_sdfg) == 0 and empty_output is not None:
-        state.add_edge(nested_sdfg, None, empty_output.dst, empty_output.dst_conn, empty_output.data)
+    for src, src_conn in empty_inputs:
+        state.add_edge(src, src_conn, nested_sdfg, None, Memlet())
+    for dst, dst_conn in empty_outputs:
+        state.add_edge(nested_sdfg, None, dst, dst_conn, Memlet())
 
     # Remove subgraph nodes from graph
     state.remove_nodes_from(subgraph.nodes())

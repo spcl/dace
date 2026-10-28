@@ -190,6 +190,31 @@ def test_nesting_a_map_body_whose_last_write_feeds_the_exit_adds_no_self_copy():
     assert np.array_equal(A, np.arange(8, dtype=np.float64))
 
 
+def test_nesting_a_map_keeps_the_ordering_edge_that_orders_an_earlier_read_before_it():
+    """``C = A[0]`` must run before a map overwriting ``A``, ordered only by an empty memlet into the map entry."""
+    sdfg = dace.SDFG("nest_keeps_ordering_edge")
+    for name, size in (("A", 4), ("B", 4), ("C", 1)):
+        sdfg.add_array(name, [size], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("overwrite", dict(i="0:4"))
+    t = state.add_tasklet("copy", {"b"}, {"a"}, "a = b")
+    state.add_memlet_path(state.add_read("B"), me, t, dst_conn="b", memlet=dace.Memlet("B[i]"))
+    state.add_memlet_path(t, mx, state.add_write("A"), src_conn="a", memlet=dace.Memlet("A[i]"))
+    read = state.add_tasklet("read", {"a"}, {"c"}, "c = a")
+    state.add_edge(state.add_read("A"), None, read, "a", dace.Memlet("A[0]"))
+    state.add_edge(read, "c", state.add_write("C"), None, dace.Memlet("C[0]"))
+    state.add_nedge(read, me, dace.Memlet())
+    sdfg.validate()
+
+    nested = nest_state_subgraph(sdfg, state, state.scope_subgraph(me))
+    assert any(e.dst is nested for e in state.out_edges(read))
+    sdfg.validate()
+
+    A, B, C = np.full(4, 5.0), np.arange(4.0) + 10, np.zeros(1)
+    sdfg(A=A, B=B, C=C)
+    assert C[0] == 5, C
+
+
 if __name__ == "__main__":
     test_simple_program()
     test_simple_sdfg()
@@ -199,3 +224,4 @@ if __name__ == "__main__":
     test_badscope()
     test_tiled_program()
     test_nesting_a_map_body_whose_last_write_feeds_the_exit_adds_no_self_copy()
+    test_nesting_a_map_keeps_the_ordering_edge_that_orders_an_earlier_read_before_it()
