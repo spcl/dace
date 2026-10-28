@@ -362,7 +362,28 @@ def plan_hops(plan: LiftPlan, inner: dt.Array, kernel_sdfg: SDFG) -> bool:
     return True
 
 
-def plan_lift(name: str, owner: SDFG, kernel: Scope) -> LiftPlan | None:
+def coalesce(plan: LiftPlan, own: dt.Array) -> None:
+    """Reorder the planned lift so the kernel iterations vary fastest, the last map parameter (``threadIdx.x``)
+    innermost, and the own axes keep their C or Fortran order outside them. The outermost array gets packed strides
+    in that order; every nest's descriptor, a view of its trailing dimensions, gets the trailing strides."""
+    outer = plan.hops[-1].desc if plan.hops else None
+    shape = list(outer.shape) if outer is not None else plan.layout.shape
+    prepended = len(shape) - len(own.shape)
+    inner_order = (
+        range(len(own.shape))
+        if own.is_packed_fortran_strides() and not own.is_packed_c_strides()
+        else (reversed(range(len(own.shape))))
+    )
+    full = own.clone()
+    full.set_shape(shape)
+    strides, total_size = full.strides_from_layout(*reversed(range(prepended)), *(d + prepended for d in inner_order))
+    strides = list(strides)
+    plan.layout = plan.layout._replace(strides=strides[len(shape) - len(plan.layout.shape) :], total_size=total_size)
+    for hop in plan.hops:
+        hop.desc.set_shape(hop.desc.shape, strides=strides[len(shape) - len(hop.desc.shape) :], total_size=total_size)
+
+
+def plan_lift(name: str, owner: SDFG, kernel: Scope, coalesced: bool) -> LiftPlan | None:
     """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if its size is only known inside the kernel.
 
     :raises NotImplementedError: The array has no single slice per kernel iteration.
@@ -385,7 +406,12 @@ def plan_lift(name: str, owner: SDFG, kernel: Scope) -> LiftPlan | None:
         raise NotImplementedError(f"A tasklet of {owner.name} names '{name}' in its body")
     lifted = copy.deepcopy(desc)
     apply_layout(lifted, plan.layout)
-    return plan if plan_hops(plan, lifted, kernel_sdfg) else None
+    # Hops lift one packed descriptor into the next, so the coalesced order is applied once all are planned
+    if not plan_hops(plan, lifted, kernel_sdfg):
+        return None
+    if coalesced:
+        coalesce(plan, desc)
+    return plan
 
 
 def carry_out_of_kernel(plan: LiftPlan) -> None:
@@ -417,8 +443,25 @@ def pass_out_through_nests(plan: LiftPlan) -> None:
         inner_name = outer_name
 
 
+def restride_nests(sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new: list[symbolic.SymbolicType]) -> None:
+    """Nests below that describe ``name`` with its own strides ``old`` take ``new``, so their window stays a plain
+    slice of the lifted array that ``dealias`` widens."""
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not isinstance(node, nodes.NestedSDFG):
+                continue
+            edges = [(e.dst_conn, e) for e in state.in_edges(node)] + [(e.src_conn, e) for e in state.out_edges(node)]
+            for conn in dict.fromkeys(c for c, e in edges if c is not None and e.data.data == name):
+                inner = node.sdfg.arrays[conn]
+                if list(inner.strides) == old:
+                    inner.set_shape(inner.shape, strides=new, total_size=inner.total_size)
+                    restride_nests(node.sdfg, conn, old, new)
+
+
 def move_array(plan: LiftPlan) -> None:
     """Give the planned transient one slice per kernel iteration and allocate it outside the kernel."""
+    own_strides = list(plan.desc.strides)
+    restride_nests(plan.owner, plan.name, own_strides, list(plan.layout.strides[-len(own_strides) :]))
     scopes: dict[SDFGState, dict[nodes.EntryNode, None]] = {}
     for state, edge, prefix, scope in plan.edits:
         prefix_memlet(edge, plan.name, prefix)
@@ -518,6 +561,13 @@ class MoveArrayOutOfKernel(ppl.Pass):
         desc="Largest element count of a constant-size kernel-local array kept in per-thread registers; larger and "
         "symbolically-sized ones are moved to GPU_Global memory outside the kernel.",
     )
+    layout = properties.Property(
+        dtype=str,
+        default="coalesced",
+        choices=["coalesced", "contiguous"],
+        desc="Order of a moved array: ``coalesced`` puts the kernel iterations fastest, so neighboring GPU threads "
+        "access neighboring elements; ``contiguous`` keeps the slice of one iteration consecutive.",
+    )
     raise_on_unsupported = properties.Property(
         dtype=bool,
         default=True,
@@ -536,7 +586,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         try:
             if len(kernels) > 1:
                 raise NotImplementedError(f"Transient '{name}' is shared by the kernels {[k for k, _ in kernels]}")
-            return plan_lift(name, owner, kernels[0])
+            return plan_lift(name, owner, kernels[0], self.layout == "coalesced")
         except NotImplementedError as ex:
             if self.raise_on_unsupported:
                 raise

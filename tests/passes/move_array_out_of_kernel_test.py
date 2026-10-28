@@ -25,6 +25,7 @@ REGISTER = dtypes.StorageType.Register
 GPU_DEVICE = dtypes.ScheduleType.GPU_Device
 SEQUENTIAL = dtypes.ScheduleType.Sequential
 LIMIT = MoveArrayOutOfKernel().register_limit
+LAYOUTS = ["coalesced", "contiguous"]
 ROWS, COLS = 8, 8
 
 B_I, N = sympy.symbols("b_i N")
@@ -129,23 +130,31 @@ def buf_scopes(sdfg: dace.SDFG, name: str = "buf") -> list:
     ]
 
 
-def lift(sdfg: dace.SDFG) -> int | None:
-    return MoveArrayOutOfKernel().apply_pass(sdfg, {})
+def move_arrays(layout: str) -> MoveArrayOutOfKernel:
+    sut = MoveArrayOutOfKernel()
+    sut.layout = layout
+    return sut
+
+
+def lift(sdfg: dace.SDFG, layout: str) -> int | None:
+    return move_arrays(layout).apply_pass(sdfg, {})
 
 
 @pytest.mark.parametrize("storage", [REGISTER, dtypes.StorageType.Default])
-def test_a_constant_size_per_thread_array_within_the_limit_stays_in_place(storage):
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_constant_size_per_thread_array_within_the_limit_stays_in_place(storage, layout):
     sdfg = kernel_with_internal_transient((LIMIT,), storage)
 
-    assert lift(sdfg) is None
+    assert lift(sdfg, layout) is None
 
     assert sdfg.arrays["buf"].storage == storage and tuple(sdfg.arrays["buf"].shape) == (LIMIT,)
 
 
-def test_a_constant_size_register_array_over_the_limit_is_moved_out():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_constant_size_register_array_over_the_limit_is_moved_out(layout):
     sdfg = kernel_with_internal_transient((LIMIT + 1,), REGISTER)
 
-    assert lift(sdfg) == 1
+    assert lift(sdfg, layout) == 1
 
     desc = sdfg.arrays["buf"]
     assert desc.storage == GLOBAL and desc.transient and tuple(desc.shape) == (128, LIMIT + 1), desc
@@ -153,9 +162,10 @@ def test_a_constant_size_register_array_over_the_limit_is_moved_out():
     sdfg.validate()
 
 
-def test_the_register_limit_is_configurable():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_the_register_limit_is_configurable(layout):
     sdfg = kernel_with_internal_transient((LIMIT + 1,), REGISTER)
-    sut = MoveArrayOutOfKernel()
+    sut = move_arrays(layout)
     sut.register_limit = LIMIT + 1
 
     assert sut.apply_pass(sdfg, {}) is None
@@ -163,54 +173,59 @@ def test_the_register_limit_is_configurable():
     assert sdfg.arrays["buf"].storage == REGISTER and tuple(sdfg.arrays["buf"].shape) == (LIMIT + 1,)
 
 
-def test_a_small_global_array_is_demoted_to_registers():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_small_global_array_is_demoted_to_registers(layout):
     sdfg = kernel_with_internal_transient((8,))
 
-    assert lift(sdfg) == 1
+    assert lift(sdfg, layout) == 1
 
     assert sdfg.arrays["buf"].storage == REGISTER and tuple(sdfg.arrays["buf"].shape) == (8,)
 
 
 @pytest.mark.parametrize("lifetime", [dace.AllocationLifetime.Persistent, dace.AllocationLifetime.External])
-def test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(lifetime):
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(lifetime, layout):
     """A register cannot outlive the invocation a persistent or external array is kept across."""
     sdfg = kernel_with_internal_transient((8,))
     sdfg.arrays["buf"].lifetime = lifetime
 
-    assert lift(sdfg) == 1
+    assert lift(sdfg, layout) == 1
 
     assert sdfg.arrays["buf"].storage == GLOBAL and tuple(sdfg.arrays["buf"].shape) == (128, 8)
     assert sdfg.arrays["buf"].lifetime == lifetime
     sdfg.validate()
 
 
-def test_a_symbolically_sized_register_array_is_moved_to_global_memory():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_symbolically_sized_register_array_is_moved_to_global_memory(layout):
     """GPUs cannot hold a variable-length array in registers."""
     sdfg = wrap_kernel_around_a_body_it_never_reaches()
     body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
     body.arrays["tmp"].storage = REGISTER
 
-    assert lift(sdfg) == 1
+    assert lift(sdfg, layout) == 1
 
     assert sdfg.arrays["tmp"].storage == GLOBAL and len(sdfg.arrays["tmp"].shape) == 2, sdfg.arrays["tmp"]
     assert body.arrays["tmp"].storage == GLOBAL and not body.arrays["tmp"].transient
     sdfg.validate()
 
 
-def test_a_default_storage_array_is_left_to_storage_inference():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_default_storage_array_is_left_to_storage_inference(layout):
     """``Default`` is not known to be per-thread; code generation resolves it before the pass runs."""
     sdfg = wrap_kernel_around_a_body_it_never_reaches()
     body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
     body.arrays["tmp"].storage = dtypes.StorageType.Default
 
-    assert lift(sdfg) is None
+    assert lift(sdfg, layout) is None
 
     assert "tmp" not in sdfg.arrays and body.arrays["tmp"].transient
 
 
-def test_transient_behind_a_nested_sdfg_is_lifted_through_the_boundary():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_transient_behind_a_nested_sdfg_is_lifted_through_the_boundary(layout):
     sdfg = kernel_with_transient_behind_a_nested_sdfg()
-    assert lift(sdfg) == 1
+    assert lift(sdfg, layout) == 1
 
     assert tuple(sdfg.arrays["buf"].shape) == (128, 1024), sdfg.arrays["buf"].shape
     assert sdfg.arrays["buf"].transient
@@ -234,19 +249,21 @@ def kernel_with_a_tasklet_naming_the_buffer(language: dtypes.Language) -> dace.S
     return sdfg
 
 
-def test_a_tasklet_body_naming_a_lifted_buffer_gains_the_kernel_index():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_tasklet_body_naming_a_lifted_buffer_gains_the_kernel_index(layout):
     sdfg = kernel_with_a_tasklet_naming_the_buffer(dtypes.Language.Python)
-    lift(sdfg)
+    lift(sdfg, layout)
 
     peek = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label == "peek")
     assert peek.code.as_string == "o = buf[i, 1]", peek.code.as_string
 
 
-def test_a_cpp_tasklet_subscripting_a_lifted_buffer_is_refused():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_cpp_tasklet_subscripting_a_lifted_buffer_is_refused(layout):
     sdfg = kernel_with_a_tasklet_naming_the_buffer(dtypes.Language.CPP)
 
     with pytest.raises(NotImplementedError, match="subscripts 'buf'"):
-        lift(sdfg)
+        lift(sdfg, layout)
 
 
 def flat_offsets(desc: dace.data.Array, subset: dace.subsets.Range, values: dict) -> tuple[int, int]:
@@ -257,12 +274,13 @@ def flat_offsets(desc: dace.data.Array, subset: dace.subsets.Range, values: dict
     )
 
 
-def test_a_kernel_starting_above_zero_indexes_its_slice_from_the_first_iteration():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_kernel_starting_above_zero_indexes_its_slice_from_the_first_iteration(layout):
     """The lifted dimension holds the trip count, so iteration ``i`` of ``1:127`` owns row ``i - 1``."""
     sdfg = kernel_with_internal_transient()
     kernel = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry))
     kernel.map.range = dace.subsets.Range([(1, 126, 1)])
-    lift(sdfg)
+    lift(sdfg, layout)
 
     desc = sdfg.arrays["buf"]
     assert tuple(desc.shape) == (126, 1024), desc.shape
@@ -299,14 +317,21 @@ def kernel_with_a_thread_block_around_its_scratch() -> dace.SDFG:
     return sdfg
 
 
-def test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel(layout):
     """Shape gains ``[KERNEL, BLOCK]`` outermost first; every access leads with ``[i, t]`` and no map exit carries data
     (an edge between two accesses of one array is a copy into the whole array, which races)."""
     sdfg = kernel_with_a_thread_block_around_its_scratch()
-    lift(sdfg)
+    lift(sdfg, layout)
 
     desc = sdfg.arrays["tmp"]
     assert [int(s) for s in desc.shape] == [KERNEL_EXTENT, BLOCK_EXTENT, SCRATCH_EXTENT], desc.shape
+    # Coalesced: neighboring threads ``t`` touch neighboring elements; contiguous: one thread's slice is consecutive
+    expected = {
+        "coalesced": [BLOCK_EXTENT, 1, KERNEL_EXTENT * BLOCK_EXTENT],
+        "contiguous": [BLOCK_EXTENT * SCRATCH_EXTENT, SCRATCH_EXTENT, 1],
+    }[layout]
+    assert [int(s) for s in desc.strides] == expected, desc.strides
     accesses = [
         e
         for e in sdfg.start_state.edges()
@@ -364,10 +389,11 @@ def kernel_with_a_locally_named_scratch_extent() -> dace.SDFG:
     return sdfg
 
 
-def test_lift_translates_a_locally_named_shape_symbol_through_symbol_mapping():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_lift_translates_a_locally_named_shape_symbol_through_symbol_mapping(layout):
     """The lifted descriptor must say ``NZ - 1``, not the inner-only ``M``."""
     sdfg = kernel_with_a_locally_named_scratch_extent()
-    lift(sdfg)
+    lift(sdfg, layout)
 
     desc = sdfg.arrays["tmp"]
     assert sympy.simplify(desc.shape[-1] - (NZ - 1)) == 0, desc.shape
@@ -419,11 +445,12 @@ def kernel_with_scratch_below_a_nested_sdfg(storage=GLOBAL) -> dace.SDFG:
     return sdfg
 
 
-def test_lift_gives_descendant_nested_sdfgs_the_lifted_descriptor():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_lift_gives_descendant_nested_sdfgs_the_lifted_descriptor(layout):
     """A nested SDFG's data has the shape of the data connected to it (No-View nested SDFGs), so every nest below
     the definition takes the lifted descriptor and its memlets the slice index."""
     sdfg = kernel_with_scratch_below_a_nested_sdfg()
-    lift(sdfg)
+    lift(sdfg, layout)
 
     ranks = {}
     for nested in sdfg.all_sdfgs_recursive():
@@ -438,11 +465,12 @@ def test_lift_gives_descendant_nested_sdfgs_the_lifted_descriptor():
     sdfg.validate()
 
 
-def test_a_renamed_lift_gives_a_descendant_the_lifted_descriptor():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_renamed_lift_gives_a_descendant_the_lifted_descriptor(layout):
     """The owner is renamed around an unrelated outer ``tmp``; the nests below take the lifted rank-2 descriptor."""
     sdfg = kernel_with_scratch_below_a_nested_sdfg()
     sdfg.add_array("tmp", [4], dace.float64, storage=GLOBAL)
-    lift(sdfg)
+    lift(sdfg, layout)
 
     assert tuple(sdfg.arrays["tmp"].shape) == (4,), "the colliding outer descriptor was overwritten"
     lifted = [name for name, desc in sdfg.arrays.items() if name != "tmp" and len(desc.shape) == 2 and desc.transient]
@@ -475,17 +503,19 @@ def wrap_kernel_around_a_body_it_never_reaches() -> dace.SDFG:
     return sdfg
 
 
-def test_a_lift_binds_the_kernel_parameter_it_indexes_by():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_lift_binds_the_kernel_parameter_it_indexes_by(layout):
     """The new slice index is ``w``, which the body never used, so the nest must be bound to it."""
     sdfg = wrap_kernel_around_a_body_it_never_reaches()
-    lift(sdfg)
+    lift(sdfg, layout)
 
     nest = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
     assert str(nest.symbol_mapping.get("w")) == "w", nest.symbol_mapping
     sdfg.validate()
 
 
-def test_a_nest_looping_over_the_kernel_parameter_name_is_lifted_with_its_loop_renamed():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_nest_looping_over_the_kernel_parameter_name_is_lifted_with_its_loop_renamed(layout):
     """Inside a loop over ``w`` the lifted index would name the loop counter, so the loop is renamed instead."""
     sdfg = wrap_kernel_around_a_body_it_never_reaches()
     body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
@@ -498,7 +528,7 @@ def test_a_nest_looping_over_the_kernel_parameter_name_is_lifted_with_its_loop_r
     body.add_node(loop, is_start_block=True)
     sdfg.validate()
 
-    assert lift(sdfg) == 1
+    assert lift(sdfg, layout) == 1
 
     assert loop.loop_variable != "w", loop.loop_variable
     assert len(body.arrays["tmp"].shape) == 2 and not body.arrays["tmp"].transient
@@ -507,7 +537,8 @@ def test_a_nest_looping_over_the_kernel_parameter_name_is_lifted_with_its_loop_r
     sdfg.validate()
 
 
-def test_a_nest_below_a_body_that_never_named_the_kernel_parameter_is_indexed_by_it():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_nest_below_a_body_that_never_named_the_kernel_parameter_is_indexed_by_it(layout):
     """The owner gains ``w`` only through the lift, and the nest reading its buffer must see it too."""
     sdfg = wrap_kernel_around_a_body_it_never_reaches()
     body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
@@ -515,7 +546,7 @@ def test_a_nest_below_a_body_that_never_named_the_kernel_parameter_is_indexed_by
     nest = nest_state_subgraph(body, drain, dace.sdfg.graph.SubgraphView(drain, list(drain.nodes())))
     sdfg.validate()
 
-    assert lift(sdfg) == 1
+    assert lift(sdfg, layout) == 1
 
     assert str(nest.symbol_mapping.get("w")) == "w", nest.symbol_mapping
     assert len(nest.sdfg.arrays["tmp"].shape) == 2, nest.sdfg.arrays["tmp"].shape
@@ -574,10 +605,11 @@ def kernel_over_k_beside_a_nested_k_loop() -> dace.SDFG:
     return sdfg
 
 
-def test_lift_does_not_bind_a_name_the_nest_assigns_itself():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_lift_does_not_bind_a_name_the_nest_assigns_itself(layout):
     """A nest owning a ``k`` loop must not be bound to the kernel's ``k``: codegen then declares neither."""
     sdfg = kernel_over_k_beside_a_nested_k_loop()
-    lift(sdfg)
+    lift(sdfg, layout)
 
     sweep = next(
         n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG) and n.sdfg.name == "sweep"
@@ -624,10 +656,11 @@ def kernel_with_interstate_buffer_read() -> dace.SDFG:
     return sdfg
 
 
-def test_an_interstate_read_of_a_lifted_buffer_gains_the_kernel_index():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_an_interstate_read_of_a_lifted_buffer_gains_the_kernel_index(layout):
     """``order[0]`` on an interstate edge must keep naming one element of the now rank-2 buffer."""
     sdfg = kernel_with_interstate_buffer_read()
-    lift(sdfg)
+    lift(sdfg, layout)
 
     body = next(s for s in sdfg.all_sdfgs_recursive() if s.name == "pick_body")
     assert len(body.arrays["order"].shape) == 2, body.arrays["order"].shape
@@ -642,7 +675,8 @@ def test_an_interstate_read_of_a_lifted_buffer_gains_the_kernel_index():
     sdfg.generate_code()
 
 
-def test_a_symbol_mapping_read_of_a_lifted_buffer_gains_the_kernel_index():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_symbol_mapping_read_of_a_lifted_buffer_gains_the_kernel_index(layout):
     """A nest bound to ``order[1]`` must keep reading one element of the now rank-2 buffer."""
     sdfg = kernel_with_interstate_buffer_read()
     body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
@@ -657,13 +691,14 @@ def test_a_symbol_mapping_read_of_a_lifted_buffer_gains_the_kernel_index():
     nest = use.add_nested_sdfg(leaf, {}, {"o": None}, symbol_mapping={"s": "order[1]"})
     use.add_edge(nest, "o", use.add_write("picked"), None, dace.Memlet("picked[0]"))
 
-    lift(sdfg)
+    lift(sdfg, layout)
 
     assert str(nest.symbol_mapping["s"]) == "order[i, 1]", nest.symbol_mapping
     sdfg.validate()
 
 
-def test_control_flow_reading_a_per_thread_buffer_is_refused():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_control_flow_reading_a_per_thread_buffer_is_refused(layout):
     """Written inside a thread-block map of its own SDFG, the buffer has no one element for an interstate edge."""
     sdfg = kernel_with_interstate_buffer_read()
     body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
@@ -678,10 +713,11 @@ def test_control_flow_reading_a_per_thread_buffer_is_refused():
     sdfg.validate()
 
     with pytest.raises(NotImplementedError, match="varies per GPU thread"):
-        lift(sdfg)
+        lift(sdfg, layout)
 
 
-def test_two_nests_defining_the_same_name_are_each_lifted_once():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_two_nests_defining_the_same_name_are_each_lifted_once(layout):
     """Two sibling definitions of ``buf`` in one kernel are two arrays, each gaining one kernel dimension."""
     sdfg = kernel_with_transient_behind_a_nested_sdfg()
     state = sdfg.start_state
@@ -695,14 +731,15 @@ def test_two_nests_defining_the_same_name_are_each_lifted_once():
     )
     sdfg.validate()
 
-    lift(sdfg)
+    lift(sdfg, layout)
 
     lifted = sorted(tuple(desc.shape) for name, desc in sdfg.arrays.items() if name not in ("A", "B"))
     assert lifted == [(128, 1024), (128, 1024)], {n: d.shape for n, d in sdfg.arrays.items()}
     sdfg.validate()
 
 
-def test_a_transient_inside_a_loop_of_the_nested_body_is_lifted():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_transient_inside_a_loop_of_the_nested_body_is_lifted(layout):
     sdfg = kernel_with_transient_behind_a_nested_sdfg()
     inner = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
     body = inner.start_block
@@ -712,13 +749,14 @@ def test_a_transient_inside_a_loop_of_the_nested_body_is_lifted():
     inner.add_node(loop, is_start_block=True)
     sdfg.validate()
 
-    assert lift(sdfg) == 1
+    assert lift(sdfg, layout) == 1
 
     assert tuple(sdfg.arrays["buf"].shape) == (128, 1024), sdfg.arrays["buf"].shape
     sdfg.validate()
 
 
-def test_a_transient_shared_by_two_kernels_is_refused():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_transient_shared_by_two_kernels_is_refused(layout):
     """One allocation used by two kernels has no single per-iteration slicing."""
     sdfg = kernel_with_internal_transient()
     second = sdfg.add_state_after(sdfg.start_state, "again")
@@ -731,7 +769,7 @@ def test_a_transient_shared_by_two_kernels_is_refused():
     sdfg.validate()
 
     with pytest.raises(NotImplementedError, match="shared by the kernels"):
-        lift(sdfg)
+        lift(sdfg, layout)
 
 
 def test_code_mentioning_the_name_without_subscripting_it_is_returned_verbatim():
@@ -772,11 +810,12 @@ def kernel_with_accumulator(rows: int = ROWS) -> dace.SDFG:
     return sdfg
 
 
-def test_a_small_accumulator_is_lifted_not_demoted():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_small_accumulator_is_lifted_not_demoted(layout):
     """One element is within the register limit, yet the WCR keeps it in memory: it is lifted instead."""
     sdfg = kernel_with_accumulator()
 
-    assert lift(sdfg) == 1
+    assert lift(sdfg, layout) == 1
 
     desc = sdfg.arrays["acc"]
     assert desc.storage == GLOBAL and desc.transient and tuple(desc.shape) == (ROWS, 1), desc
@@ -785,11 +824,12 @@ def test_a_small_accumulator_is_lifted_not_demoted():
 
 
 @pytest.mark.gpu
-def test_the_lifted_accumulator_sums_each_row():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_the_lifted_accumulator_sums_each_row(layout):
     import cupy  # Only present on GPU runners.
 
     sdfg = kernel_with_accumulator()
-    lift(sdfg)
+    lift(sdfg, layout)
     A = cupy.arange(ROWS * COLS, dtype=cupy.float64).reshape(ROWS, COLS)
     out = cupy.zeros(ROWS, dtype=cupy.float64)
 
@@ -799,13 +839,14 @@ def test_the_lifted_accumulator_sums_each_row():
 
 
 @pytest.mark.gpu
-def test_a_moved_symbolic_register_scratch_below_a_nested_sdfg_computes_the_right_values():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_moved_symbolic_register_scratch_below_a_nested_sdfg_computes_the_right_values(layout):
     import cupy  # Only present on GPU runners.
 
     nx, nz = 5, 7
     host_a = np.random.default_rng(0).random((nx, nz))
     sdfg = kernel_with_scratch_below_a_nested_sdfg(REGISTER)
-    lift(sdfg)
+    lift(sdfg, layout)
     out = cupy.zeros((nx, nz))
 
     sdfg(a=cupy.asarray(host_a), out=out, NX=nx, NZ=nz)
@@ -813,12 +854,13 @@ def test_a_moved_symbolic_register_scratch_below_a_nested_sdfg_computes_the_righ
     assert np.allclose(cupy.asnumpy(out), host_a[:, ::-1] * 2.0 + 1.0)
 
 
-def test_a_persistent_kernel_gives_each_iteration_a_slice():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_persistent_kernel_gives_each_iteration_a_slice(layout):
     sdfg = kernel_with_internal_transient()
     kernel = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry))
     kernel.map.schedule = dtypes.ScheduleType.GPU_Persistent
 
-    assert lift(sdfg) == 1
+    assert lift(sdfg, layout) == 1
 
     desc = sdfg.arrays["buf"]
     assert desc.storage == GLOBAL and desc.transient and tuple(desc.shape) == (128, 1024), desc
@@ -827,7 +869,8 @@ def test_a_persistent_kernel_gives_each_iteration_a_slice():
     sdfg.validate()
 
 
-def test_a_transient_shared_by_two_kernels_is_left_in_place_by_code_generation():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_transient_shared_by_two_kernels_is_left_in_place_by_code_generation(layout):
     """Code generation runs the pass without raising: what it cannot slice keeps its current lowering."""
     sdfg = kernel_with_internal_transient()
     second = sdfg.add_state_after(sdfg.start_state, "again")
@@ -837,7 +880,7 @@ def test_a_transient_shared_by_two_kernels_is_left_in_place_by_code_generation()
     buf = second.add_access("buf")
     second.add_edge(produce, "o", buf, None, dace.Memlet("buf[1]"))
     second.add_edge(buf, None, mx, None, dace.Memlet())
-    sut = MoveArrayOutOfKernel()
+    sut = move_arrays(layout)
     sut.raise_on_unsupported = False
 
     with pytest.warns(UserWarning, match="shared by the kernels"):
@@ -887,12 +930,13 @@ def test_code_generation_computes_through_a_symbolic_scratch_below_a_nested_sdfg
 
 
 @pytest.mark.parametrize("schedule", [GPU_DEVICE, dtypes.ScheduleType.GPU_Persistent])
-def test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(schedule):
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(schedule, layout):
     sdfg = kernel_with_internal_transient((NX,), REGISTER)
     (kernel,) = [n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry)]
     kernel.map.schedule = schedule
 
-    assert lift(sdfg) == 1
+    assert lift(sdfg, layout) == 1
 
     buf = sdfg.arrays["buf"]
     assert buf.storage == GLOBAL and [str(d) for d in buf.shape] == ["128", "NX"], buf
@@ -929,24 +973,26 @@ def kernel_computing_the_size_of_its_scratch() -> dace.SDFG:
     return sdfg
 
 
-def test_a_scratch_the_kernel_sizes_stays_where_it_is():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_scratch_the_kernel_sizes_stays_where_it_is(layout):
     """An allocation before the launch cannot use a size the kernel computes."""
     sdfg = kernel_computing_the_size_of_its_scratch()
 
-    assert lift(sdfg) is None
+    assert lift(sdfg, layout) is None
 
     inner = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
     assert inner.arrays["buf"].storage == REGISTER and [str(d) for d in inner.arrays["buf"].shape] == ["m"]
     sdfg.validate()
 
 
-def test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is():
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is(layout):
     """``buf[i + 1]`` in kernel ``i`` has no size before the launch."""
     sdfg = kernel_with_internal_transient()
     sdfg.arrays["buf"].set_shape(new_shape=[dace.symbol("i", dace.int64) + 1])
     sdfg.arrays["buf"].storage = REGISTER
 
-    assert lift(sdfg) is None
+    assert lift(sdfg, layout) is None
 
     assert sdfg.arrays["buf"].storage == REGISTER
 
@@ -976,45 +1022,48 @@ if __name__ == "__main__":
     test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
         dict(i="0:8"), [4, 16], [32, 2], None, None
     )
-    test_a_constant_size_per_thread_array_within_the_limit_stays_in_place(REGISTER)
-    test_a_constant_size_per_thread_array_within_the_limit_stays_in_place(dtypes.StorageType.Default)
-    test_a_constant_size_register_array_over_the_limit_is_moved_out()
-    test_the_register_limit_is_configurable()
-    test_a_small_global_array_is_demoted_to_registers()
-    test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(dace.AllocationLifetime.Persistent)
-    test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(dace.AllocationLifetime.External)
-    test_a_symbolically_sized_register_array_is_moved_to_global_memory()
-    test_a_default_storage_array_is_left_to_storage_inference()
-    test_transient_behind_a_nested_sdfg_is_lifted_through_the_boundary()
-    test_a_tasklet_body_naming_a_lifted_buffer_gains_the_kernel_index()
-    test_a_cpp_tasklet_subscripting_a_lifted_buffer_is_refused()
-    test_a_kernel_starting_above_zero_indexes_its_slice_from_the_first_iteration()
-    test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel()
-    test_lift_translates_a_locally_named_shape_symbol_through_symbol_mapping()
-    test_lift_gives_descendant_nested_sdfgs_the_lifted_descriptor()
-    test_a_renamed_lift_gives_a_descendant_the_lifted_descriptor()
-    test_a_lift_binds_the_kernel_parameter_it_indexes_by()
-    test_a_nest_looping_over_the_kernel_parameter_name_is_lifted_with_its_loop_renamed()
-    test_a_nest_below_a_body_that_never_named_the_kernel_parameter_is_indexed_by_it()
-    test_lift_does_not_bind_a_name_the_nest_assigns_itself()
-    test_an_interstate_read_of_a_lifted_buffer_gains_the_kernel_index()
-    test_a_symbol_mapping_read_of_a_lifted_buffer_gains_the_kernel_index()
-    test_control_flow_reading_a_per_thread_buffer_is_refused()
-    test_two_nests_defining_the_same_name_are_each_lifted_once()
-    test_a_transient_inside_a_loop_of_the_nested_body_is_lifted()
-    test_a_transient_shared_by_two_kernels_is_refused()
     test_code_mentioning_the_name_without_subscripting_it_is_returned_verbatim()
-    test_a_small_accumulator_is_lifted_not_demoted()
-    test_the_lifted_accumulator_sums_each_row()
-    test_a_moved_symbolic_register_scratch_below_a_nested_sdfg_computes_the_right_values()
-    test_a_persistent_kernel_gives_each_iteration_a_slice()
-    test_a_transient_shared_by_two_kernels_is_left_in_place_by_code_generation()
     test_code_generation_moves_a_symbolic_register_scratch_out_of_its_kernel()
     test_code_generation_gives_every_thread_its_own_scratch()
     test_code_generation_computes_through_a_symbolic_scratch_below_a_nested_sdfg()
-    test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(GPU_DEVICE)
-    test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(dtypes.ScheduleType.GPU_Persistent)
     test_code_generation_moves_a_symbolic_per_thread_array_out_of_the_kernel()
-    test_a_scratch_the_kernel_sizes_stays_where_it_is()
-    test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is()
     test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values()
+    for layout in LAYOUTS:
+        test_a_constant_size_per_thread_array_within_the_limit_stays_in_place(REGISTER, layout)
+        test_a_constant_size_per_thread_array_within_the_limit_stays_in_place(dtypes.StorageType.Default, layout)
+        test_a_constant_size_register_array_over_the_limit_is_moved_out(layout)
+        test_the_register_limit_is_configurable(layout)
+        test_a_small_global_array_is_demoted_to_registers(layout)
+        test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(
+            dace.AllocationLifetime.Persistent, layout
+        )
+        test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(dace.AllocationLifetime.External, layout)
+        test_a_symbolically_sized_register_array_is_moved_to_global_memory(layout)
+        test_a_default_storage_array_is_left_to_storage_inference(layout)
+        test_transient_behind_a_nested_sdfg_is_lifted_through_the_boundary(layout)
+        test_a_tasklet_body_naming_a_lifted_buffer_gains_the_kernel_index(layout)
+        test_a_cpp_tasklet_subscripting_a_lifted_buffer_is_refused(layout)
+        test_a_kernel_starting_above_zero_indexes_its_slice_from_the_first_iteration(layout)
+        test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel(layout)
+        test_lift_translates_a_locally_named_shape_symbol_through_symbol_mapping(layout)
+        test_lift_gives_descendant_nested_sdfgs_the_lifted_descriptor(layout)
+        test_a_renamed_lift_gives_a_descendant_the_lifted_descriptor(layout)
+        test_a_lift_binds_the_kernel_parameter_it_indexes_by(layout)
+        test_a_nest_looping_over_the_kernel_parameter_name_is_lifted_with_its_loop_renamed(layout)
+        test_a_nest_below_a_body_that_never_named_the_kernel_parameter_is_indexed_by_it(layout)
+        test_lift_does_not_bind_a_name_the_nest_assigns_itself(layout)
+        test_an_interstate_read_of_a_lifted_buffer_gains_the_kernel_index(layout)
+        test_a_symbol_mapping_read_of_a_lifted_buffer_gains_the_kernel_index(layout)
+        test_control_flow_reading_a_per_thread_buffer_is_refused(layout)
+        test_two_nests_defining_the_same_name_are_each_lifted_once(layout)
+        test_a_transient_inside_a_loop_of_the_nested_body_is_lifted(layout)
+        test_a_transient_shared_by_two_kernels_is_refused(layout)
+        test_a_small_accumulator_is_lifted_not_demoted(layout)
+        test_the_lifted_accumulator_sums_each_row(layout)
+        test_a_moved_symbolic_register_scratch_below_a_nested_sdfg_computes_the_right_values(layout)
+        test_a_persistent_kernel_gives_each_iteration_a_slice(layout)
+        test_a_transient_shared_by_two_kernels_is_left_in_place_by_code_generation(layout)
+        test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(GPU_DEVICE, layout)
+        test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(dtypes.ScheduleType.GPU_Persistent, layout)
+        test_a_scratch_the_kernel_sizes_stays_where_it_is(layout)
+        test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is(layout)
