@@ -659,3 +659,11 @@ def detect_induction_variables(loop: LoopRegion) -> dict[str, InductionVariable]
             changed = True
 
     return ivs
+
+
+def control_reads(loop: LoopRegion) -> set[str]:
+    """The names the loop's interstate edges and its own and nested regions' conditions read."""
+    names = {read for edge in loop.all_interstate_edges() for read in edge.data.free_symbols}
+    for region in [loop, *loop.all_control_flow_regions()]:
+        names |= region.used_symbols(all_symbols=True, with_contents=False)
+    return names

@@ -91,7 +91,25 @@ def test_an_update_of_a_loop_a_recurrence_keeps_sequential_stays_plain():
     assert CarriedAccumulationToWCR().apply_pass(update_loop(recurrence=False), {}) == 1
 
 
+def test_a_loop_rescued_only_by_an_update_that_stays_plain_converts_nothing():
+    """``out[b // 2] += v[b]`` beside ``c[b // 2] = c[b // 2] * c[b // 2]``: the loop maps only with both as WCR, and
+    the squaring is no WCR, so neither converts."""
+    sdfg = update_loop(recurrence=False)
+    loop = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
+    square = loop.add_state_after(loop.start_block, "square")
+    tasklet = square.add_tasklet("sq", {"__in1": None, "__in2": None}, {"__out": None}, "__out = __in1 * __in2")
+    read = square.add_read("c")
+    square.add_edge(read, None, tasklet, "__in1", mm.Memlet("c[b // 2]"))
+    square.add_edge(read, None, tasklet, "__in2", mm.Memlet("c[b // 2]"))
+    square.add_edge(tasklet, "__out", square.add_write("c"), None, mm.Memlet("c[b // 2]"))
+    sdfg.reset_cfg_list()
+
+    assert CarriedAccumulationToWCR().apply_pass(sdfg, {}) is None
+    assert not [e for st in sdfg.states() for e in st.edges() if e.data.wcr]
+
+
 if __name__ == "__main__":
     test_a_box_loop_accumulating_at_data_offsets_maps_and_matches()
     test_a_scatter_of_one_element_per_iteration_maps_and_matches()
     test_an_update_of_a_loop_a_recurrence_keeps_sequential_stays_plain()
+    test_a_loop_rescued_only_by_an_update_that_stays_plain_converts_nothing()
