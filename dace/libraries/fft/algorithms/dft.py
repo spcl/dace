@@ -7,7 +7,6 @@ import math
 from collections.abc import Sequence
 
 import numpy as np
-import sympy
 
 import dace
 from dace.libraries.fft.nodes.fft import normalize_fft_axes
@@ -54,30 +53,12 @@ def idft_explicit(_inp, _out, N: dace.compiletime, factor: dace.compiletime):
 # N-dimensional native DFT (separable, rank-generic)
 
 
-class FloatingPrinter(sympy.printing.str.StrPrinter):
-    """Prints a factor so C evaluates it in floating point: every symbol and every number is a double.
-
-    ``1/(M*N)`` and ``sqrt(M)`` over integer symbols are integer division and an integer root in C.
-    """
-
-    def _print_Symbol(self, expr):
-        return f"(1.0 * {expr.name})"
-
-    def _print_Rational(self, expr):
-        return f"({expr.p}.0 / {expr.q}.0)"
-
-    def _print_Integer(self, expr):
-        # The node's factor property keeps ``1/14`` unevaluated, a ``Pow`` of an integer
-        return f"{expr.p}.0"
-
-    def _print_Pow(self, expr, rational=False):
-        # ``pow``, not ``**``: the text lands in Python and C++ tasklets alike
-        return f"pow({self._print(expr.base)}, {self._print(expr.exp)})"
-
-
-def floating_text(factor: dace.symbolic.SymbolicType) -> str:
-    """``factor`` as tasklet text C evaluates in floating point."""
-    return FloatingPrinter().doprint(dace.symbolic.pystr_to_symbolic(factor))
+def floating_text(factor: dace.symbolic.SymbolicType, cpp_mode: bool) -> str:
+    """``factor`` as tasklet text that evaluates in floating point: every symbol is cast to double and every number
+    is a float, so ``1/(M*N)`` and ``sqrt(M)`` over integer symbols are not integer division or an integer root."""
+    value = dace.symbolic.pystr_to_symbolic(factor)
+    value = value.xreplace({s: dace.symbolic.float64(s) for s in value.free_symbols}).evalf()
+    return dace.symbolic.DaceSympyPrinter(None, cpp_mode).doprint(value)
 
 
 def is_unit(factor: dace.symbolic.SymbolicType) -> bool:
@@ -179,7 +160,7 @@ def add_dft_axis_state(
     line[axis] = f"0:{dace.symbolic.symstr(shape[axis])}"
     # Divide by a FLOATING denominator: ``1/(M*N)`` over integer symbols is C integer division, i.e. zero. In the
     # element's own precision: ``complex64 * double`` multiplies to zero.
-    scale = "" if is_unit(factor) else f"o *= {real}({floating_text(factor)});"
+    scale = "" if is_unit(factor) else f"o *= {real}({floating_text(factor, True)});"
     twiddles, after = add_twiddle_state(sdfg, after, shape[axis], axis, element, inverse, sdfg.arrays[dst].storage)
     # The exponent is reduced modulo the length, as an FFT's twiddle factors are: one table entry per residue
     code = f"""

@@ -224,7 +224,7 @@ def vendor_fft_sdfg(
     scale = (
         ""
         if is_unit(node.factor)
-        else f" * dace.{'float64' if complex_type == dtypes.complex128 else 'float32'}({floating_text(node.factor)})"
+        else f" * dace.{'float64' if complex_type == dtypes.complex128 else 'float32'}({floating_text(node.factor, False)})"
     )
 
     from dace.libraries.fft.algorithms.dft import add_elementwise_state, index_ranges  # avoid loop
@@ -259,7 +259,9 @@ def dense_block_order(
     steps by that stride times the extents of every later axis. The order is shared, since a plan's
     dimension list maps the same logical axis in the input and the output.
     """
-    for order in itertools.permutations(axes):
+    # Every order up to rank 3 (the GPU plans' limit); past it, C and Fortran order only, not ``r!`` orders.
+    orders = itertools.permutations(axes) if len(axes) <= 3 else (tuple(axes), tuple(reversed(axes)))
+    for order in orders:
         steps = []
         for desc in descs:
             step = span = desc.strides[order[-1]]

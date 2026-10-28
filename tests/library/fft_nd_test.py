@@ -15,44 +15,6 @@ from dace.libraries.fft.nodes import FFT, IFFT
 IMPLEMENTATIONS = ["pure", pytest.param("FFTW3", marks=pytest.mark.fftw)]
 
 
-# Full N-D (axis=None) via the numpy frontend (fftn / ifftn)
-
-
-# Batched 1-D (axis=k) via the numpy frontend (fft(x, axis=k))
-@pytest.mark.parametrize(
-    "shape,axis",
-    [
-        ((8, 12), 0),
-        ((8, 12), -1),
-        ((4, 6, 5), 1),
-        ((4, 6, 5), -1),
-    ],
-)
-def test_pure_fft_axis(shape, axis):
-
-    @dace.program
-    def tester_pure_fft_axis(x: dace.complex128[tuple(shape)]):
-        return np.fft.fft(x, axis=axis)
-
-    rng = np.random.default_rng(2)
-    x = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
-    y = tester_pure_fft_axis(x.copy())
-    np.testing.assert_allclose(y, np.fft.fft(x, axis=axis), rtol=1e-10, atol=1e-10)
-
-
-def test_pure_ifft_axis_inverse():
-    shape, axis = (4, 6, 5), 0
-
-    @dace.program
-    def tester_pure_ifft_axis_inverse(x: dace.complex128[4, 6, 5]):
-        return np.fft.ifft(x, axis=axis)
-
-    rng = np.random.default_rng(3)
-    x = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex128)
-    y = tester_pure_ifft_axis_inverse(x.copy())
-    np.testing.assert_allclose(y, np.fft.ifft(x, axis=axis), rtol=1e-10, atol=1e-10)
-
-
 # In-place (input array IS the output array) -- the Quantum ESPRESSO pattern
 # where ``invfft(f, dfft)`` transforms ``f`` in place.  The frontend always
 # allocates a fresh output, so drive the lib node directly to exercise the
@@ -125,7 +87,7 @@ def test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(norm):
     codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
     scaled = [code for code in codes if "o *=" in code]
     assert scaled, f"no DFT tasklet carries the {norm} factor: {codes}"
-    assert all("(1.0 * M)" in code and "(1.0 * N)" in code for code in scaled), scaled
+    assert all("dace::float64(M)" in code and "dace::float64(N)" in code for code in scaled), scaled
     assert not any("1/(M*N)" in code.replace(" ", "") for code in scaled), scaled
 
 
@@ -234,7 +196,7 @@ def test_fftn_and_back(implementation, shape):
 
 
 @pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
-@pytest.mark.parametrize("shape,axis", [((8, 12), 0), ((4, 6, 5), 1), ((4, 6, 5), -1)])
+@pytest.mark.parametrize("shape,axis", [((8, 12), 0), ((8, 12), -1), ((4, 6, 5), 1), ((4, 6, 5), -1)])
 def test_fft_along_an_axis(implementation, shape, axis):
     @dace.program
     def fft_along_axis(x: dace.complex128[shape]):
@@ -261,11 +223,6 @@ def test_fft_of_a_fortran_ordered_array(implementation):
 
 
 if __name__ == "__main__":
-    test_pure_fft_axis((8, 12), 0)
-    test_pure_fft_axis((8, 12), -1)
-    test_pure_fft_axis((4, 6, 5), 1)
-    test_pure_fft_axis((4, 6, 5), -1)
-    test_pure_ifft_axis_inverse()
     test_pure_fftn_inplace()
     test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point("backward")
     test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point("ortho")
@@ -284,9 +241,11 @@ if __name__ == "__main__":
     test_fftn_and_back("FFTW3", (8, 12))
     test_fftn_and_back("FFTW3", (4, 6, 5))
     test_fft_along_an_axis("pure", (8, 12), 0)
+    test_fft_along_an_axis("pure", (8, 12), -1)
     test_fft_along_an_axis("pure", (4, 6, 5), 1)
     test_fft_along_an_axis("pure", (4, 6, 5), -1)
     test_fft_along_an_axis("FFTW3", (8, 12), 0)
+    test_fft_along_an_axis("FFTW3", (8, 12), -1)
     test_fft_along_an_axis("FFTW3", (4, 6, 5), 1)
     test_fft_along_an_axis("FFTW3", (4, 6, 5), -1)
     test_fft_of_a_fortran_ordered_array("pure")
