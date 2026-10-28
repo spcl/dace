@@ -189,11 +189,6 @@ def needs_prefix(tasklet: nodes.Tasklet, name: str) -> bool:
     return True
 
 
-def prefix_tasklet(tasklet: nodes.Tasklet, name: str, point: list[str]) -> None:
-    code = prepend_subscript_indices(tasklet.code.as_string, name, point)
-    tasklet.code = properties.CodeBlock(code, tasklet.language)
-
-
 def prefix_memlet(edge: MultiConnectorEdge, name: str, prefix: Prefix) -> None:
     memlet = edge.data
     if memlet.data == name:
@@ -233,42 +228,49 @@ def refuse_control_flow_reads(sdfg: SDFG, name: str) -> None:
     rewrite_code_slots(sdfg, check)
 
 
-def lifted_layout(desc: dt.Array, levels: list[nodes.MapEntry]) -> LiftedLayout:
-    """``desc`` with one leading, slowest-varying dimension per GPU map parameter.
-
-    ``gpu_A[64]`` under ``map[0:128, 0:32]`` becomes ``[128, 32, 64]`` indexed ``gpu_A[x, y, :]``; the own axes keep
-    their C or Fortran layout, so the slice of one iteration stays contiguous.
-
-    :param levels: GPU map entries between the array and the kernel exit, innermost first.
-    :raises NotImplementedError: The array is neither packed-C nor packed-Fortran.
-    """
-    if desc.is_packed_c_strides():
-        inner_order = list(reversed(range(len(desc.shape))))
-    elif desc.is_packed_fortran_strides():
-        inner_order = list(range(len(desc.shape)))
-    else:
-        raise NotImplementedError(f"Cannot lift {desc}: only packed C or Fortran strides are supported.")
-
-    extended_size: list[symbolic.SymbolicType] = []
-    offset = list(desc.offset)
+def prepend_levels(desc: dt.Array, levels: list[nodes.MapEntry]) -> tuple[list[symbolic.SymbolicType], list[int]]:
+    """Shape and offset of ``desc`` with one leading dimension per parameter of ``levels`` (innermost first)."""
+    shape, offset = list(desc.shape), list(desc.offset)
     for level in levels:
         rng = level.map.range
-        extended_size = [
-            tile_extent(mx, mn) for mx, mn in zip(rng.max_element(), rng.min_element(), strict=True)
-        ] + extended_size
+        shape = [tile_extent(mx, mn) for mx, mn in zip(rng.max_element(), rng.min_element(), strict=True)] + shape
         offset = [0] * len(level.map.params) + offset
-
-    prepended = len(extended_size)
-    # ``strides_from_layout`` takes dimensions innermost-first: the own axes, then the prepended ones.
-    layout = [d + prepended for d in inner_order] + list(reversed(range(prepended)))
-    lifted = desc.clone()
-    lifted.set_shape(extended_size + list(desc.shape))
-    strides, total_size = lifted.strides_from_layout(*layout)
-    return LiftedLayout(list(lifted.shape), list(strides), total_size, offset)
+    return shape, offset
 
 
-def levels_layout(desc: dt.Array, levels: list[Level]) -> LiftedLayout:
-    return lifted_layout(desc, [level.entry for level in reversed(levels)])
+def lifted_strides(
+    shape: list[symbolic.SymbolicType], own: dt.Array, coalesced: bool
+) -> tuple[list[symbolic.SymbolicType], symbolic.SymbolicType]:
+    """Packed strides and size of ``shape``, ``own``'s shape with leading map dimensions. Coalesced, the map
+    dimensions vary fastest, the last (``threadIdx.x``) innermost; contiguous, slowest, so one iteration's slice is
+    consecutive. The own axes keep their C or Fortran order.
+
+    :raises NotImplementedError: ``own`` is neither packed-C nor packed-Fortran.
+    """
+    if own.is_packed_c_strides():
+        own_order = list(reversed(range(len(own.shape))))
+    elif own.is_packed_fortran_strides():
+        own_order = list(range(len(own.shape)))
+    else:
+        raise NotImplementedError(f"Cannot lift {own}: only packed C or Fortran strides are supported.")
+    prepended = len(shape) - len(own.shape)
+    # ``strides_from_layout`` takes dimensions innermost-first
+    own_dims, mapped = [d + prepended for d in own_order], list(reversed(range(prepended)))
+    full = own.clone()
+    full.set_shape(shape)
+    strides, total_size = full.strides_from_layout(*(mapped + own_dims if coalesced else own_dims + mapped))
+    return list(strides), total_size
+
+
+def lifted_layout(desc: dt.Array, levels: list[nodes.MapEntry], coalesced: bool = False) -> LiftedLayout:
+    """``desc`` with one leading dimension per GPU map parameter: ``gpu_A[64]`` under ``map[0:128, 0:32]`` becomes
+    ``[128, 32, 64]`` indexed ``gpu_A[x, y, :]``, strides ``[32, 1, 4096]`` coalesced or ``[2048, 64, 1]`` contiguous.
+
+    :param levels: GPU map entries between the array and the kernel exit, innermost first.
+    """
+    shape, offset = prepend_levels(desc, levels)
+    strides, total_size = lifted_strides(shape, desc, coalesced)
+    return LiftedLayout(shape, strides, total_size, offset)
 
 
 def apply_layout(desc: dt.Array, layout: LiftedLayout) -> None:
@@ -349,7 +351,8 @@ def plan_hops(plan: LiftPlan, inner: dt.Array, kernel_sdfg: SDFG) -> bool:
         sdict = state.scope_dict()
         entries = enclosing_entries(sdict, sdict[node], kernel if state.sdfg is kernel_sdfg else None)
         levels = make_levels(state.sdfg, state, slicing(entries))
-        apply_layout(outer, levels_layout(outer, levels))
+        shape, offset = prepend_levels(outer, [level.entry for level in reversed(levels)])
+        outer.set_shape(shape, offset=offset)
         outer.transient = False
         outer.storage = dtypes.StorageType.GPU_Global
         plan.hops.append(Hop(node, state, levels, [state.exit_node(e) for e in entries], outer))
@@ -363,22 +366,11 @@ def plan_hops(plan: LiftPlan, inner: dt.Array, kernel_sdfg: SDFG) -> bool:
     return True
 
 
-def coalesce(plan: LiftPlan, own: dt.Array) -> None:
-    """Reorder the planned lift so the kernel iterations vary fastest, the last map parameter (``threadIdx.x``)
-    innermost, and the own axes keep their C or Fortran order outside them. The outermost array gets packed strides
-    in that order; every nest's descriptor, a view of its trailing dimensions, gets the trailing strides."""
-    outer = plan.hops[-1].desc if plan.hops else None
-    shape = list(outer.shape) if outer is not None else plan.layout.shape
-    prepended = len(shape) - len(own.shape)
-    inner_order = (
-        range(len(own.shape))
-        if own.is_packed_fortran_strides() and not own.is_packed_c_strides()
-        else (reversed(range(len(own.shape))))
-    )
-    full = own.clone()
-    full.set_shape(shape)
-    strides, total_size = full.strides_from_layout(*reversed(range(prepended)), *(d + prepended for d in inner_order))
-    strides = list(strides)
+def assign_strides(plan: LiftPlan, own: dt.Array, coalesced: bool) -> None:
+    """Give the outermost lifted array packed strides; every nest's descriptor, a view of its trailing dimensions,
+    takes the trailing strides."""
+    shape = list(plan.hops[-1].desc.shape) if plan.hops else plan.layout.shape
+    strides, total_size = lifted_strides(shape, own, coalesced)
     plan.layout = plan.layout._replace(strides=strides[len(shape) - len(plan.layout.shape) :], total_size=total_size)
     for hop in plan.hops:
         hop.desc.set_shape(hop.desc.shape, strides=strides[len(shape) - len(hop.desc.shape) :], total_size=total_size)
@@ -397,7 +389,9 @@ def plan_lift(name: str, owner: SDFG, kernel: Scope, coalesced: bool) -> LiftPla
     deepest = deepest_chain(name, chains)
     desc = owner.arrays[name]
     levels = make_levels(owner, accesses[deepest][1], chains[deepest])
-    plan = LiftPlan(name, owner, desc, kernel, levels, levels_layout(desc, levels), [], [], [])
+    plan = LiftPlan(
+        name, owner, desc, kernel, levels, lifted_layout(desc, [level.entry for level in reversed(levels)]), [], [], []
+    )
     if levels:
         plan_owner_edits(plan, sdicts, stop)
         if stop is None:
@@ -407,11 +401,9 @@ def plan_lift(name: str, owner: SDFG, kernel: Scope, coalesced: bool) -> LiftPla
         raise NotImplementedError(f"A tasklet of {owner.name} names '{name}' in its body")
     lifted = copy.deepcopy(desc)
     apply_layout(lifted, plan.layout)
-    # Hops lift one packed descriptor into the next, so the coalesced order is applied once all are planned
     if not plan_hops(plan, lifted, kernel_sdfg):
         return None
-    if coalesced:
-        coalesce(plan, desc)
+    assign_strides(plan, desc, coalesced)
     return plan
 
 
@@ -469,7 +461,8 @@ def move_array(plan: LiftPlan) -> None:
         if scope is not None:
             scopes.setdefault(state, {})[scope] = None
     for tasklet, point in plan.tasklets:
-        prefix_tasklet(tasklet, plan.name, point)
+        code = prepend_subscript_indices(tasklet.code.as_string, plan.name, point)
+        tasklet.code = properties.CodeBlock(code, tasklet.language)
     apply_layout(plan.desc, plan.layout)
     for state, entries in scopes.items():
         tree = state.scope_tree()

@@ -44,17 +44,18 @@ def test_tile_extent(max_elem, min_elem, expected):
 
 
 @pytest.mark.parametrize(
-    "ranges, shape, strides, expected_shape, expected_strides",
+    "ranges, shape, strides, expected_shape, coalesced_strides, contiguous_strides",
     [
-        (dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [2048, 64, 1]),
-        (dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [64, 1, 4]),
-        (dict(i="0:8"), [4, 16], [32, 2], None, None),
+        (dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [32, 1, 4096], [2048, 64, 1]),
+        (dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [1, 8, 32], [64, 1, 4]),
+        (dict(i="0:8"), [4, 16], [32, 2], None, None, None),
     ],
 )
-def test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
-    ranges, shape, strides, expected_shape, expected_strides
+def test_lifted_dimensions_are_prepended_keeping_the_own_layout(
+    ranges, shape, strides, expected_shape, coalesced_strides, contiguous_strides
 ):
-    """Map dimensions lead as the slowest axes; C or Fortran keep their own axes, any other layout is refused."""
+    """Map dimensions vary fastest when coalesced, the last (``threadIdx.x``) innermost, and slowest when contiguous;
+    C or Fortran keep the order of their own axes, any other layout is refused."""
     state = dace.SDFG("move_array_strides").add_state("s")
     me, _ = state.add_map("kernel", ranges, schedule=GPU_DEVICE)
     arr = dace.data.Array(dace.float64, shape, strides=strides)
@@ -63,11 +64,12 @@ def test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
             lifted_layout(arr, [me])
         return
 
-    layout = lifted_layout(arr, [me])
+    for coalesced, expected_strides in ((True, coalesced_strides), (False, contiguous_strides)):
+        layout = lifted_layout(arr, [me], coalesced)
 
-    assert [int(s) for s in layout.shape] == expected_shape, layout.shape
-    assert [int(s) for s in layout.strides] == expected_strides, layout.strides
-    assert int(layout.total_size) == int(np.prod(expected_shape)), layout.total_size
+        assert [int(s) for s in layout.shape] == expected_shape, layout.shape
+        assert [int(s) for s in layout.strides] == expected_strides, layout.strides
+        assert int(layout.total_size) == int(np.prod(expected_shape)), layout.total_size
 
 
 def kernel_with_internal_transient(shape=(1024,), storage=GLOBAL) -> dace.SDFG:
@@ -1025,15 +1027,13 @@ def test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)
-    test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
-        dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [2048, 64, 1]
+    test_lifted_dimensions_are_prepended_keeping_the_own_layout(
+        dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [32, 1, 4096], [2048, 64, 1]
     )
-    test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
-        dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [64, 1, 4]
+    test_lifted_dimensions_are_prepended_keeping_the_own_layout(
+        dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [1, 8, 32], [64, 1, 4]
     )
-    test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
-        dict(i="0:8"), [4, 16], [32, 2], None, None
-    )
+    test_lifted_dimensions_are_prepended_keeping_the_own_layout(dict(i="0:8"), [4, 16], [32, 2], None, None, None)
     test_code_mentioning_the_name_without_subscripting_it_is_returned_verbatim()
     test_code_generation_moves_a_symbolic_register_scratch_out_of_its_kernel()
     test_code_generation_gives_every_thread_its_own_scratch()
