@@ -2,6 +2,7 @@
 """MKL's FFTW3 interface: the FFTW3 C API, declared by MKL's ``fftw/fftw3.h`` and served by ``libmkl_rt``."""
 
 import dace.library
+from dace.libraries.fft.environments.plans import FFTPlans
 
 
 @dace.library.environment
@@ -18,7 +19,7 @@ class MKLFFTW3:
     cmake_files: list[str] = []
 
     headers = ["fftw/fftw3.h", "omp.h"]
-    state_fields: list[str] = []
+    state_fields = ["dace::fft::PlanCache<fftw_plan> fftw_plans;", "dace::fft::PlanCache<fftwf_plan> fftwf_plans;"]
     init_code = ""
     finalize_code = ""
-    dependencies: list[str] = []
+    dependencies = [FFTPlans]

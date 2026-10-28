@@ -10,6 +10,7 @@ import numpy as np
 import sympy
 
 import dace
+from dace.codegen.common import sym2cpp
 from dace.libraries.fft.nodes.fft import normalize_fft_axes
 
 
@@ -54,48 +55,44 @@ def idft_explicit(_inp, _out, N: dace.compiletime, factor: dace.compiletime):
 # N-dimensional native DFT (separable, rank-generic)
 
 
-class FloatingPrinter(sympy.printing.str.StrPrinter):
-    """Prints a factor so C evaluates it in floating point: every symbol and every number is a double.
+def in_floating_point(factor: dace.symbolic.SymbolicType) -> sympy.Basic:
+    """``factor`` with every symbol cast to ``float64`` and every number a float, so ``1/(M*N)`` and
+    ``sqrt(M)`` over integer symbols print as floating-point operations.
 
-    ``1/(M*N)`` and ``sqrt(M)`` over integer symbols are integer division and an integer root in C.
+    :param factor: The factor.
+    :return: The floating-point expression.
     """
-
-    def _print_Symbol(self, expr):
-        return f"(1.0 * {expr.name})"
-
-    def _print_Rational(self, expr):
-        return f"({expr.p}.0 / {expr.q}.0)"
-
-    def _print_Integer(self, expr):
-        # The node's factor property keeps ``1/14`` unevaluated, a ``Pow`` of an integer
-        return f"{expr.p}.0"
-
-    def _print_Pow(self, expr, rational=False):
-        # ``pow``, not ``**``: the text lands in Python and C++ tasklets alike
-        return f"pow({self._print(expr.base)}, {self._print(expr.exp)})"
-
-
-def floating_text(factor: dace.symbolic.SymbolicType) -> str:
-    """``factor`` as tasklet text C evaluates in floating point."""
-    return FloatingPrinter().doprint(dace.symbolic.pystr_to_symbolic(factor))
+    value = dace.symbolic.pystr_to_symbolic(factor)
+    return value.xreplace({s: dace.symbolic.float64(s) for s in value.free_symbols}).evalf()
 
 
 def is_unit(factor: dace.symbolic.SymbolicType) -> bool:
-    """Whether ``factor`` is the number one, as ``1`` or ``1.0``."""
+    """Whether ``factor`` is one, as ``1`` or ``1.0``.
+
+    :param factor: The factor.
+    :return: True if the factor is one.
+    """
     value = dace.symbolic.pystr_to_symbolic(factor)
     return bool(value.is_Number) and float(value) == 1.0
 
 
 def complex_of(element: dace.typeclass) -> dace.typeclass:
-    """The complex type numpy's FFTs compute ``element`` in: ``complex64`` for half and single precision, its own
-    type for a complex one, ``complex128`` otherwise (double precision, integers and booleans)."""
+    """The complex type numpy's FFTs compute ``element`` in.
+
+    :param element: The input element type.
+    :return: ``complex64`` for half and single precision, the type itself if complex, else ``complex128``.
+    """
     if element in (dace.complex64, dace.complex128):
         return element
     return dace.complex64 if element in (dace.float16, dace.float32) else dace.complex128
 
 
 def real_of(complex_type: dace.typeclass) -> dace.typeclass:
-    """The real type with ``complex_type``'s precision; a real type is its own."""
+    """The real type of ``complex_type``'s precision; a real type is its own.
+
+    :param complex_type: The complex type.
+    :return: The real type.
+    """
     return {dace.complex64: dace.float32, dace.complex128: dace.float64}.get(complex_type, complex_type)
 
 
@@ -116,7 +113,17 @@ def add_elementwise_state(
     language: dace.Language = dace.Language.Python,
     schedule: dace.ScheduleType = dace.ScheduleType.Default,
 ) -> dace.SDFGState:
-    """Append (or start with, for ``after=None``) a state running ``o = <code of i>`` over ``ranges``."""
+    """Appends a state running ``code`` (``o`` of ``i``) over ``ranges``.
+
+    :param after: The state to append after, ``None`` to start the SDFG.
+    :param src: The input array (connector ``i``).
+    :param dst: The output array (connector ``o``).
+    :param ranges: The map ranges.
+    :param src_index: The input subset.
+    :param dst_index: The output subset.
+    :param code: The tasklet code.
+    :return: The new state.
+    """
     state = sdfg.add_state(label) if after is None else sdfg.add_state_after(after, label)
     state.add_mapped_tasklet(
         label,
@@ -131,15 +138,56 @@ def add_elementwise_state(
     return state
 
 
+def add_twiddle_state(
+    sdfg: dace.SDFG,
+    after: dace.SDFGState,
+    length,
+    axis: int,
+    element: dace.typeclass,
+    inverse: bool,
+    storage: dace.StorageType,
+) -> tuple[str, dace.SDFGState]:
+    """Appends a state filling the ``length`` twiddle factors ``exp(-+2 pi i m / length)``, so a DFT
+    pass evaluates ``length`` sines and cosines, not two per term.
+
+    :param length: The transform length.
+    :param axis: The transformed axis, which names the table.
+    :param element: The complex element type.
+    :param inverse: The sign of the exponent.
+    :param storage: The storage of the table.
+    :return: The table's name and the new state.
+    """
+
+    name = sdfg.add_transient(f"__twiddle{axis}", [length], element, storage=storage, find_new_name=True)[0]
+    real = "float" if element == dace.complex64 else "double"
+    text = sym2cpp(length)
+    state = sdfg.add_state_after(after, f"twiddle_axis{axis}")
+    state.add_mapped_tasklet(
+        "twiddle",
+        {"__m": f"0:{dace.symbolic.symstr(length)}"},
+        {},
+        f"const double angle = {2.0 * math.pi!r} * double(__m) / double({text});\n"
+        f"o = {element.ctype}({real}(cos(angle)), {real}({'' if inverse else '-'}sin(angle)));",
+        {"o": dace.Memlet(data=name, subset="__m")},
+        language=dace.Language.CPP,
+        external_edges=True,
+    )
+    return name, state
+
+
 def add_dft_axis_state(
     sdfg: dace.SDFG, after: dace.SDFGState, src: str, dst: str, shape: Sequence, axis: int, inverse: bool, factor
 ) -> dace.SDFGState:
-    """Append a state doing a batched 1-D DFT of ``src`` along ``axis`` into ``dst``, scaled by ``factor``.
+    """Appends a batched 1-D DFT of ``src`` along ``axis`` into ``dst``, scaled by ``factor``.
 
-    Each output element sums its whole input line in its own tasklet: no accumulation across threads, so no complex
-    atomics, which the GPU backends do not provide. All other axes are batch dimensions.
+    Each output element sums its input line in its own tasklet, so no complex atomics are needed.
+
+    :param shape: The shape of both arrays.
+    :param axis: The transformed axis; the others are batch dimensions.
+    :param inverse: Whether the transform is the inverse one.
+    :param factor: The scaling factor.
+    :return: The new state.
     """
-    from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
 
     ndim = len(shape)
     length = sym2cpp(shape[axis])
@@ -149,13 +197,13 @@ def add_dft_axis_state(
     line[axis] = f"0:{dace.symbolic.symstr(shape[axis])}"
     # Divide by a FLOATING denominator: ``1/(M*N)`` over integer symbols is C integer division, i.e. zero. In the
     # element's own precision: ``complex64 * double`` multiplies to zero.
-    scale = "" if is_unit(factor) else f"o *= {real}({floating_text(factor)});"
-    # The angle's integer part is reduced modulo the length first, as an FFT's twiddle factors are
+    scale = "" if is_unit(factor) else f"o *= {real}({sym2cpp(in_floating_point(factor))});"
+    twiddles, after = add_twiddle_state(sdfg, after, shape[axis], axis, element, inverse, sdfg.arrays[dst].storage)
+    # The exponent is reduced modulo the length, as an FFT's twiddle factors are: one table entry per residue
     code = f"""
 {element.ctype} sum({real}(0), {real}(0));
 for (long long __n = 0; __n < {length}; ++__n) {{
-    const {real} angle = {real}(2.0 * {math.pi!r}) * {real}((__i{axis} * __n) % {length}) / {real}({length});
-    sum += {element.ctype}(cos(angle), {"" if inverse else "-"}sin(angle)) * inp[__n * ({sym2cpp(sdfg.arrays[src].strides[axis])})];
+    sum += tw[(__i{axis} * __n) % {length}] * inp[__n * ({sym2cpp(sdfg.arrays[src].strides[axis])})];
 }}
 o = sum;
 {scale}
@@ -164,7 +212,10 @@ o = sum;
     state.add_mapped_tasklet(
         "dft",
         index_ranges(shape, "__i"),
-        {"inp": dace.Memlet(data=src, subset=", ".join(line))},
+        {
+            "inp": dace.Memlet(data=src, subset=", ".join(line)),
+            "tw": dace.Memlet.from_array(twiddles, sdfg.arrays[twiddles]),
+        },
         code,
         {"o": dace.Memlet(data=dst, subset=", ".join(f"__i{d}" for d in range(ndim)))},
         language=dace.Language.CPP,
@@ -176,8 +227,12 @@ o = sum;
 def add_dft_passes(
     sdfg: dace.SDFG, state: dace.SDFGState, src: str, dst: str, shape: Sequence, axes: list[int], inverse: bool, factor
 ) -> dace.SDFGState:
-    """One batched 1-D DFT per entry of ``axes``, from ``src`` into ``dst``; passes between them alternate
-    between ``__ping`` and ``__pong``, and ``factor`` scales the last one."""
+    """Appends one batched 1-D DFT per axis, alternating between ``__ping`` and ``__pong``.
+
+    :param axes: The transformed axes, in order.
+    :param factor: The scaling factor, applied by the last pass.
+    :return: The last state.
+    """
     current = src
     for position, axis in enumerate(axes):
         last = position == len(axes) - 1
@@ -190,14 +245,19 @@ def add_dft_passes(
 
 
 def dft_nd_sdfg(indesc, outdesc, factor, inverse, axes, half_spectrum=False, name="dft_nd"):
-    """Build a native (library-free) N-D / axis-batched DFT as a nested SDFG.
+    """A library-free N-D DFT: one batched 1-D DFT per transformed axis; the other axes are batch dimensions.
 
-    Separable: a sequence of batched 1-D DFTs, one per entry of ``axes`` (every axis when ``None``); unlisted axes
-    are batch dimensions. The input is cast to the complex type on the way in, so real inputs work. With
-    ``half_spectrum`` the complex side keeps only the non-negative frequencies of the last transformed axis:
-    the forward transform computes the full spectrum and keeps its first half, the inverse one restores the
-    negative frequencies as the conjugates of the positive ones (numpy's ``irfftn``) and keeps the real part.
-    ``factor`` carries any normalization.
+    A real input is cast to complex. With ``half_spectrum`` the forward transform keeps the first half of the spectrum,
+    and the inverse one restores the negative frequencies as conjugates and keeps the real part (``irfftn``).
+
+    :param indesc: The input descriptor.
+    :param outdesc: The output descriptor.
+    :param factor: The scaling factor.
+    :param inverse: Whether the transform is the inverse one.
+    :param axes: The transformed axes, ``None`` for all.
+    :param half_spectrum: Keep only the non-negative frequencies of the last axis.
+    :param name: The SDFG name.
+    :return: The SDFG.
     """
     ndim = len(indesc.shape)
     axes = normalize_fft_axes(ndim, axes)

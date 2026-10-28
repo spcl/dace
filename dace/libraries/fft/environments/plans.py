@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The plan cache every vendor FFT expansion keeps its plans in."""
+"""The plan cache type of the vendor FFT environments, whose program state holds one cache per plan type."""
 
 import dace.library
 
