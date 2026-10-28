@@ -1000,6 +1000,35 @@ def test_map_tiled_3level_untiles_on_the_pass_defaults():
     assert np.allclose(b, ref)
 
 
+def test_a_map_tiling_with_a_partial_last_tile_untiles_back_to_one_map():
+    """``MapTiling`` with ``divides_evenly=False`` writes the point Map's end as a ``SymExpr`` (``min(N, i0 + 8) - 1``
+    approximated by ``i0 + 7``); the matcher reads its exact expression instead of failing to sympify it."""
+    from dace.transformation.dataflow.tiling import MapTiling
+
+    @dace.program
+    def scaled(a: dace.float64[N], b: dace.float64[N]):
+        for i in dace.map[0:N]:
+            b[i] = 2.0 * a[i] + 1.0
+
+    n = 20  # not a multiple of the tile, so the last tile is partial
+    sdfg = scaled.to_sdfg(simplify=True)
+    sdfg.apply_transformations(MapTiling, options={"tile_sizes": (8,), "divides_evenly": False})
+    ends = [
+        rng[1]
+        for node, parent in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.MapEntry)
+        for rng in node.map.range
+    ]
+    assert _count_maps(sdfg) == 2 and any(isinstance(end, symbolic.SymExpr) for end in ends), "precondition"
+
+    assert UntileLoops().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert _count_maps(sdfg) == 1, "the tile and point Maps must become one"
+    a, b = np.arange(n, dtype=np.float64), np.zeros(n)
+    sdfg(a=a, b=b, N=n)
+    assert np.array_equal(b, 2.0 * a + 1.0)
+
+
 def test_a_scatter_map_beside_a_tiled_map_stays_a_map():
     """A scatter Map beside the tiled nest stays a Map although ``LoopToMap`` could not prove its index array a
     permutation: Map tiles collapse without lowering any Map."""
@@ -1137,6 +1166,7 @@ def test_a_four_level_cascade_of_nested_clamps_collapses_completely():
 
 
 if __name__ == "__main__":
+    test_a_map_tiling_with_a_partial_last_tile_untiles_back_to_one_map()
     test_case_a_combined_access_K4_collapses_to_single_loop()
     test_case_a_with_arithmetic_combination_collapses()
     test_case_b_absolute_inner_collapses_to_single_loop()

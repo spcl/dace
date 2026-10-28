@@ -275,6 +275,14 @@ def count_loops(sdfg: SDFG) -> int:
     )
 
 
+def plus_one(end: symbolic.SymbolicType) -> symbolic.SymbolicType:
+    """``end + 1``, pushed into a ``Min`` (``Min(N - 1, i + K - 1) + 1`` is ``Min(N, i + K)``): sympy keeps the sum
+    of a ``Min`` and a constant unevaluated, which no ``Min`` test then recognizes."""
+    if isinstance(end, sympy.Min):
+        return sympy.Min(*(symbolic.simplify(arg + 1) for arg in end.args))
+    return symbolic.simplify(end + 1)
+
+
 def clamp_is_the_parent_limit(
     end_plus_one: symbolic.SymbolicType,
     outer_sym: symbolic.SymbolicType,
@@ -392,9 +400,7 @@ def classify_inner_range(
     if _diff_is_zero(s_sym, outer_sym):
         if _diff_is_zero(e_sym, outer_sym + K_expr - 1):
             return ("B", inner_stride, needs_div_assumption, False)
-        if outer_limit is not None and clamp_is_the_parent_limit(
-            symbolic.simplify(e_sym + 1), outer_sym, K_expr, outer_limit
-        ):
+        if outer_limit is not None and clamp_is_the_parent_limit(plus_one(e_sym), outer_sym, K_expr, outer_limit):
             return ("B", inner_stride, needs_div_assumption, True)
     return None
 
@@ -526,19 +532,27 @@ def map_body_reads_only(state: SDFGState, inner: nodes.MapEntry, outer_var: str,
     return all(reads_only_through_sum(text, outer_var, inner_var) for text in texts)
 
 
+def exact_bounds(rng: tuple) -> tuple:
+    """A range's ``(begin, end, step)`` as exact expressions: a :class:`~dace.symbolic.SymExpr` bound (``MapTiling``
+    writes one for a partial last tile, ``min(N, i + K) - 1`` approximated by ``i + K - 1``) by its main expression."""
+    return tuple(bound.expr if isinstance(bound, symbolic.SymExpr) else bound for bound in rng)
+
+
 def match_map_pair(
     state: SDFGState, outer: nodes.MapEntry, inner: nodes.MapEntry, between: list[nodes.MapEntry]
 ) -> MapTilePair | None:
     """The first tile pair between a dimension of ``outer`` and one of ``inner``, ``between`` the Maps that nest
     between them, or ``None``."""
-    for dim, (outer_var, (begin, end, step)) in enumerate(zip(outer.map.params, outer.map.range.ranges)):
+    for dim, (outer_var, rng) in enumerate(zip(outer.map.params, outer.map.range.ranges)):
+        begin, end, step = exact_bounds(rng)
         tile = _tile_size(step)
         if tile is None:
             continue
         K_expr, K_const = tile
         if any(outer_var in free_symbol_names(str(bound)) for m in between for rng in m.map.range for bound in rng):
             continue
-        for inner_dim, (inner_var, (low, high, stride)) in enumerate(zip(inner.map.params, inner.map.range.ranges)):
+        for inner_dim, (inner_var, inner_rng) in enumerate(zip(inner.map.params, inner.map.range.ranges)):
+            low, high, stride = exact_bounds(inner_rng)
             match = classify_inner_range(
                 low, high, stride, outer_var, K_expr, K_const, outer_limit=symbolic.simplify(end + 1)
             )
