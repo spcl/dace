@@ -264,6 +264,53 @@ def test_a_per_thread_buffer_filled_outside_the_inner_map_keeps_one_thread_per_i
     assert not maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
 
 
+@dace.program
+def shuffled_rows(A: dace.float64[K, 512], P: dace.int64[512], B: dace.float64[K, 512]):
+    for k in dace.map[0:K]:
+        row = np.empty(512, dace.float64)
+        for j in dace.map[0:512]:
+            row[j] = 2 * A[k, j]
+        for j in range(1, 512):
+            row[j] = row[j] + row[P[j]]
+        for j in dace.map[0:512]:
+            B[k, j] = row[j]
+
+
+def test_a_row_the_lanes_fill_and_a_sequential_loop_updates_is_the_blocks_and_the_loop_runs_on_lane_zero():
+    """One CTA per row: the lanes fill one copy of ``row``, lane 0 walks the data-dependent loop over it."""
+    sdfg = canonical_gpu(shuffled_rows)
+
+    assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)) == 1
+    rows = [desc for nested in sdfg.all_sdfgs_recursive() for name, desc in nested.arrays.items() if name == "row"]
+    assert rows and all(len(desc.shape) == 2 and desc.storage == dtypes.StorageType.GPU_Global for desc in rows)
+    guards = [
+        block
+        for nested in sdfg.all_sdfgs_recursive()
+        for block in nested.all_control_flow_blocks()
+        if isinstance(block, dace.sdfg.state.ConditionalBlock) and block.label.endswith("_lane_zero")
+    ]
+    assert any(isinstance(guard.branches[0][1].start_block, dace.sdfg.state.LoopRegion) for guard in guards)
+
+
+@pytest.mark.gpu
+def test_a_row_the_lanes_fill_and_lane_zero_updates_matches_numpy():
+    cupy = pytest.importorskip("cupy")
+    rng = np.random.default_rng(11)
+    A, P = rng.random((40, 512)), rng.integers(0, 512, 512)
+    expected = np.empty_like(A)
+    for k in range(40):
+        row = 2 * A[k]
+        for j in range(1, 512):
+            row[j] = row[j] + row[P[j]]
+        expected[k] = row
+    sdfg = canonical_gpu(shuffled_rows)
+    B = cupy.zeros((40, 512))
+
+    sdfg(A=cupy.asarray(A), P=cupy.asarray(P), B=B, K=40)
+
+    np.testing.assert_allclose(cupy.asnumpy(B), expected)
+
+
 def test_a_small_block_axis_is_not_strided_across_the_lanes():
     """The offload keeps a SMALL ``nblks`` axis out of the grid as a sequential map inside the kernel. Striding it
     across 256 lanes would make every grid point a block of which only ``nblks`` lanes work."""
