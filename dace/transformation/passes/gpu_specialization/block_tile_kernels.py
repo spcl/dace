@@ -152,6 +152,34 @@ def reads_outside(sdfg: SDFG, name: str, inner: set[nodes.Node]) -> bool:
     )
 
 
+def give_blocks_their_containers(state: SDFGState, kernel: nodes.MapEntry, strided) -> None:
+    """Make a lane-private array a strided map fills and other code reads one per block: lifted out of the kernel,
+    one slice per kernel iteration (:class:`MoveArrayOutOfKernel`), so the lanes fill the block's copy together and
+    the code after them reads it whole. An array the lift refuses stays lane-private, and the kernel untiled."""
+    from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel, needs_global_memory
+
+    mover = MoveArrayOutOfKernel()
+    private = lane_private_containers(state, kernel)
+    for inner_state, entry in strided:
+        inner = set(inner_state.scope_subgraph(entry).nodes())
+        owner = inner_state.sdfg
+        for edge in inner_state.out_edges(inner_state.exit_node(entry)):
+            name = edge.data.data
+            if edge.data.is_empty() or edge.data.wcr is not None or (owner, name) not in private:
+                continue
+            desc = owner.arrays[name]
+            if not needs_global_memory(desc, mover.register_demotion_max_elements):
+                continue
+            if not reads_outside(owner, name, inner):
+                continue
+            plan = mover.plan_lift(name, owner, kernel, state)
+            if plan is None:
+                continue
+            desc.storage = dtypes.StorageType.GPU_Global
+            mover.move_array(plan, kernel, state)
+            private.discard((owner, name))
+
+
 def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry, private: LanePrivate) -> bool:
     """A strided map's outputs survive lane splitting: a lane-private output is one element reduced
     with a known identity (folded across the lanes), or nothing outside the map reads it."""
@@ -308,6 +336,7 @@ class BlockTileKernels(ppl.Pass):
             if xfh.gpu_map_has_explicit_threadblocks(state, kernel):
                 continue
             strided = strided_maps(state, kernel)
+            give_blocks_their_containers(state, kernel, strided)
             if fills_per_lane_buffer(state, kernel, strided):
                 continue
             lanes = single_lane_nodes(state, kernel, strided)
