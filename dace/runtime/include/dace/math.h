@@ -36,6 +36,26 @@ using std::abs;
 //     return (a > b) ? a : b;
 // }
 
+// min/max/Min/Max operand kinds: 1 floating-point (half included), 2 signed integer, 3 unsigned integer, 0 any
+// other type (vectors, complex), which is not checked. Operands of one kind mix (float with double upcasts,
+// int with int64 widens); floating-point with integer, or signed with unsigned, is rejected at compile time.
+template <typename T>
+struct _dace_minmax_kind
+    : std::integral_constant<int, (std::is_floating_point<T>::value || std::is_same<T, dace::float16>::value) ? 1
+                                  : !std::is_integral<T>::value                                                 ? 0
+                                  : std::is_signed<T>::value                                                    ? 2
+                                                                                                                : 3> {};
+template <typename... Ts>
+struct _dace_minmax_same_kind : std::true_type {};
+template <typename T0, typename T1, typename... Ts>
+struct _dace_minmax_same_kind<T0, T1, Ts...>
+    : std::integral_constant<bool, (_dace_minmax_kind<T0>::value == 0 || _dace_minmax_kind<T1>::value == 0 ||
+                                    _dace_minmax_kind<T0>::value == _dace_minmax_kind<T1>::value) &&
+                                       _dace_minmax_same_kind<T1, Ts...>::value> {};
+#define _DACE_MINMAX_MIXED_MSG                                                                         \
+  "DaCe min/max: mixing floating-point with integer, or signed with unsigned integer arguments is not " \
+  "allowed. Cast the operands to a common type (e.g. write min(x, 1.0) instead of min(x, 1))."
+
 // A later argument wins only by comparing strictly better, so a tie (or a NaN operand)
 // keeps the earlier one, matching Python's and std::max/min's behavior.
 template <typename T>
@@ -44,6 +64,7 @@ DACE_CONSTEXPR DACE_HDFI T min(const T& val) {
 }
 template <typename T, typename... Ts>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type min(const T& a, const Ts&... ts) {
+  static_assert(_dace_minmax_same_kind<std::decay_t<T>, std::decay_t<Ts>...>::value, _DACE_MINMAX_MIXED_MSG);
   return (min(ts...) < a) ? min(ts...) : a;
 }
 
@@ -53,6 +74,7 @@ DACE_CONSTEXPR DACE_HDFI T max(const T& val) {
 }
 template <typename T, typename... Ts>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(const T& a, const Ts&... ts) {
+  static_assert(_dace_minmax_same_kind<std::decay_t<T>, std::decay_t<Ts>...>::value, _DACE_MINMAX_MIXED_MSG);
   return (a < max(ts...)) ? max(ts...) : a;
 }
 
@@ -184,6 +206,7 @@ DACE_CONSTEXPR DACE_HDFI auto min(const dace::float16& a, const T& b, const Ts&.
   if constexpr (std::is_floating_point<T>::value) {
     return min(T(a), b, c...);
   } else {
+    static_assert(_dace_minmax_same_kind<dace::float16, T, Ts...>::value, _DACE_MINMAX_MIXED_MSG);
     return dace::float16((dace::float16(b) < a) ? min(dace::float16(b), c...) : min(a, c...));
   }
 }
@@ -192,6 +215,7 @@ DACE_CONSTEXPR DACE_HDFI auto min(const T& a, const dace::float16& b, const Ts&.
   if constexpr (std::is_floating_point<T>::value) {
     return min(a, T(b), c...);
   } else {
+    static_assert(_dace_minmax_same_kind<dace::float16, T, Ts...>::value, _DACE_MINMAX_MIXED_MSG);
     return dace::float16((b < dace::float16(a)) ? min(b, c...) : min(dace::float16(a), c...));
   }
 }
@@ -204,6 +228,7 @@ DACE_CONSTEXPR DACE_HDFI auto max(const dace::float16& a, const T& b, const Ts&.
   if constexpr (std::is_floating_point<T>::value) {
     return max(T(a), b, c...);
   } else {
+    static_assert(_dace_minmax_same_kind<dace::float16, T, Ts...>::value, _DACE_MINMAX_MIXED_MSG);
     return dace::float16((a < dace::float16(b)) ? max(dace::float16(b), c...) : max(a, c...));
   }
 }
@@ -212,6 +237,7 @@ DACE_CONSTEXPR DACE_HDFI auto max(const T& a, const dace::float16& b, const Ts&.
   if constexpr (std::is_floating_point<T>::value) {
     return max(a, T(b), c...);
   } else {
+    static_assert(_dace_minmax_same_kind<dace::float16, T, Ts...>::value, _DACE_MINMAX_MIXED_MSG);
     return dace::float16((dace::float16(a) < b) ? max(b, c...) : max(dace::float16(a), c...));
   }
 }
