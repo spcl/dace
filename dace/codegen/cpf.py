@@ -608,7 +608,10 @@ def force_renderable_expansions(sdfg: SDFG, provenance: dict[str, tuple[str, str
         described: dict[int, tuple[nodes.LibraryNode, str, set]] = {}
         for node, state in chosen:
             available = type(node).implementations
-            selected = next((c for c in renderable_implementations(node, state) if c in available), None)
+            renderable = renderable_implementations(node, state)
+            # A node whose implementation was chosen deliberately keeps it, when the unit can render it
+            pinned = not node.auto_select_implementation and node.implementation in renderable
+            selected = node.implementation if pinned else next((c for c in renderable if c in available), None)
             if selected is not None:
                 node.implementation = selected
                 # A device expansion (``CUDA``) is a host call that launches its own kernel. Every

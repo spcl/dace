@@ -83,5 +83,37 @@ def test_implementations_that_lower_onto_a_runtime_are_not_selectable(implementa
     assert implementation not in RENDERABLE_IMPLEMENTATIONS
 
 
+M = dace.symbol("M")
+
+
+@dace.program
+def product(a: dace.float64[M, M], b: dace.float64[M, M], c: dace.float64[M, M]):
+    c[:] = a @ b
+
+
+def product_sdfg(pinned: str | None) -> dace.SDFG:
+    """``product`` with its matmul specialized into a GEMM node, pinned to ``pinned`` when given."""
+    sdfg = product.to_sdfg(simplify=True)
+    sdfg.expand_library_nodes(recursive=False)
+    (gemm,) = [n for n, owner in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.LibraryNode)]
+    if pinned is not None:
+        gemm.implementation = pinned
+        gemm.auto_select_implementation = False
+    return sdfg
+
+
+def test_an_unpinned_product_renders_as_the_host_blas_call():
+    assert "cblas_dgemm" in render(product_sdfg(None)).code
+
+
+def test_a_product_pinned_to_its_pure_expansion_keeps_it_and_renders_as_loops():
+    code = render(product_sdfg("pure")).code
+
+    assert "cblas_dgemm" not in code
+    assert "for (" in code
+
+
 if __name__ == "__main__":
     test_a_small_constant_copy_renders_as_one_memcpy()
+    test_an_unpinned_product_renders_as_the_host_blas_call()
+    test_a_product_pinned_to_its_pure_expansion_keeps_it_and_renders_as_loops()
