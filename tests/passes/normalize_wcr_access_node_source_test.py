@@ -15,6 +15,7 @@ import pytest
 import dace
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
 
@@ -670,7 +671,38 @@ def test_skips_rewrite_when_nsdfg_wcr_accumulates_into_its_output_connector():
     assert np.array_equal(out, exp), f"refused shape must stay value-preserving; got\n{out}\nwant\n{exp}"
 
 
+def test_a_seed_inside_a_loop_indexing_the_accumulator_resets_only_its_column():
+    """``for j: map i: acc[i, j] += x[i, j]``: the seed runs every ``j``, so it resets column ``j`` alone."""
+    sdfg = dace.SDFG("column_seed")
+    sdfg.add_array("x", [4, 4], dace.float64)
+    sdfg.add_array("out", [4, 4], dace.float64)
+    sdfg.add_transient("acc", [4, 4], dace.float64)
+    loop = LoopRegion("L", "j < 4", "j", "j = 0", "j = j + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state(is_start_block=True)
+    state.add_mapped_tasklet(
+        "m",
+        {"i": "0:4"},
+        {"v": dace.Memlet("x[i, j]")},
+        "o = v",
+        {"o": dace.Memlet("acc[i, j]", wcr="lambda a, b: a + b")},
+        external_edges=True,
+    )
+    after = sdfg.add_state_after(loop)
+    after.add_nedge(after.add_read("acc"), after.add_write("out"), dace.Memlet("acc[0:4, 0:4]"))
+    x = np.arange(16, dtype=np.float64).reshape(4, 4)
+    out = np.zeros((4, 4))
+    normalize = NormalizeWCR()
+    normalize.validate = False
+
+    normalize.source_from_access_nodes(sdfg)
+    sdfg(x=x, out=out)
+
+    assert np.array_equal(out, x)
+
+
 if __name__ == "__main__":
     import sys
 
     sys.exit(pytest.main([__file__, "-v"]))
+    test_a_seed_inside_a_loop_indexing_the_accumulator_resets_only_its_column()

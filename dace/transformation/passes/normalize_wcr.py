@@ -55,7 +55,6 @@ The same rewrite identity-seeds a fresh accumulator that is only ever WCR-writte
 (:meth:`NormalizeWCR.seed_accumulator`).
 """
 
-import ast
 import copy
 from typing import Any
 
@@ -69,6 +68,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.symbolic import symbol
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.dataflow.wcr_conversion import wcr_operator
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.privatize_scatter_reduction import is_data_dependent_scatter_sink
 
@@ -77,47 +77,16 @@ _WCR_OP = {"+": "+", "-": "+", "*": "*", "min": "min", "max": "max"}
 
 
 def _op_from_wcr(wcr: str) -> str | None:
-    """Return the reduction op (``+``/``*``/``min``/``max``) for a WCR lambda string.
-
-    The WCR body is either a binary op (``x + y``) or a call (``min(x, y)``); anything
-    else (a non-associative or unrecognized reducer) yields ``None`` so the edge is
-    left untouched.
-    """
-    try:
-        tree = ast.parse(wcr.strip(), mode="eval").body
-    except SyntaxError:
-        return None
-    if not isinstance(tree, ast.Lambda):
-        return None
-    body = tree.body
-    if isinstance(body, ast.BinOp):
-        opmap = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*"}
-        return _WCR_OP.get(opmap.get(type(body.op)))
-    if isinstance(body, ast.Call) and isinstance(body.func, ast.Name) and body.func.id in ("min", "max"):
-        return _WCR_OP.get(body.func.id)
-    return None
+    """The accumulation the WCR lambda performs (``+``/``*``/``min``/``max``; ``-`` accumulates like ``+``), or
+    ``None`` for any other reducer."""
+    return _WCR_OP.get(wcr_operator(wcr))
 
 
 def _binop_expr_from_wcr(wcr: str) -> str | None:
-    """Return the original infix operator / function name in a WCR lambda.
-
-    Unlike :func:`_op_from_wcr`, this keeps ``-`` as subtraction (it is the aug-
-    assign operator, not the accumulation view). Non-associative ops such as ``/``
-    return ``None`` so the read-write rewrite refuses them.
-    """
-    try:
-        tree = ast.parse(wcr.strip(), mode="eval").body
-    except SyntaxError:
-        return None
-    if not isinstance(tree, ast.Lambda):
-        return None
-    body = tree.body
-    if isinstance(body, ast.BinOp):
-        opmap = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*"}
-        return opmap.get(type(body.op))
-    if isinstance(body, ast.Call) and isinstance(body.func, ast.Name) and body.func.id in ("min", "max"):
-        return body.func.id
-    return None
+    """The WCR lambda's operator, keeping ``-`` as subtraction (the aug-assign operator); ``None`` for any other
+    reducer than ``+ - * min max``."""
+    op = wcr_operator(wcr)
+    return op if op in _WCR_OP else None
 
 
 def _rmw_tasklet_code(op: str) -> str:
@@ -365,12 +334,17 @@ class NormalizeWCR(ppl.Pass):
             priv_desc = self._seed_desc(oc_desc)
             priv = inner.add_datadesc(f"_nnr_priv_{oc}", priv_desc, find_new_name=True)
             priv_node = wcr_state.add_access(priv)
+            # ``_nnr_priv`` sums the addends a subtraction takes away: the boundary's ``a - b`` subtracts that sum once.
+            inner_wcr = "lambda a, b: a + b" if _binop_expr_from_wcr(wcr_str) == "-" else wcr_str
             # The whole memlet path into the accumulator names it, through every scope the write leaves.
             for edge in wcr_state.memlet_path(wcr_edge):
                 if edge is not wcr_edge and edge.data.data == oc:
                     edge.data.data = priv
+                    if edge.data.wcr is not None:
+                        edge.data.wcr = inner_wcr
             new_data = copy.deepcopy(wcr_edge.data)
             new_data.data = priv
+            new_data.wcr = inner_wcr
             wcr_state.add_edge(wcr_edge.src, wcr_edge.src_conn, priv_node, None, new_data)
             old_sink = wcr_edge.dst
             wcr_state.remove_edge(wcr_edge)
@@ -991,20 +965,21 @@ class NormalizeWCR(ppl.Pass):
         return repr(float(val))
 
     @staticmethod
-    def written_window(sd: SDFG, name: str, state: SDFGState, desc: data.Data) -> subsets.Range:
-        """The bounding box of the reduction's WCR writes into ``name`` in ``state``; the whole array when a write has
-        no subset or a bound names a symbol ``sd`` does not define."""
-        whole = subsets.Range([(0, extent - 1, 1) for extent in desc.shape])
+    def written_window(
+        sd: SDFG, name: str, state: SDFGState, desc: data.Data, defined: set[str]
+    ) -> subsets.Range | None:
+        """The bounding box of the reduction's WCR writes into ``name`` in ``state``; ``None`` when a write has no
+        subset or a bound names a symbol neither ``sd`` nor ``defined`` defines."""
         window = None
         for e in state.edges():
             if not (isinstance(e.dst, nodes.AccessNode) and e.dst.data == name and e.data.wcr is not None):
                 continue
             sub = e.data.get_dst_subset(e, state) or e.data.subset
             if sub is None or len(sub) != len(desc.shape):
-                return whole
+                return None
             window = copy.deepcopy(sub) if window is None else subsets.bounding_box_union(window, sub, sd.facts())
-        if window is None or {str(sym) for sym in window.free_symbols} - set(sd.symbols.keys()):
-            return whole
+        if window is None or {str(sym) for sym in window.free_symbols} - set(sd.symbols.keys()) - defined:
+            return None
         return window
 
     def seed_accumulator(self, sd: SDFG, name: str, wcr: str, states: set[SDFGState]) -> bool:
@@ -1028,6 +1003,15 @@ class NormalizeWCR(ppl.Pass):
         before = self.seed_placement(name, states)
         if before is None:
             return False
+        window = None
+        if not (isinstance(desc, data.Scalar) or tuple(desc.shape) == (1,)):
+            # A seed inside loops runs every iteration: it may only reset the window those iterations write.
+            loop_vars = {str(loop.loop_variable) for loop in self.enclosing_loops(before) if loop.loop_variable}
+            window = self.written_window(sd, name, next(iter(states)), desc, loop_vars)
+            if window is None:
+                if loop_vars:
+                    return False
+                window = subsets.Range([(0, extent - 1, 1) for extent in desc.shape])
         parent: ControlFlowRegion = before.parent_graph
         seed = parent.add_state_before(before, label=name + "_wcr_seed", is_start_block=parent.start_block is before)
         lit = self.identity_literal(val, desc.dtype)
@@ -1037,7 +1021,7 @@ class NormalizeWCR(ppl.Pass):
             seed.add_edge(t, "__out", w, None, Memlet(data=name, subset="0"))
         else:
             me, mx = seed.add_map(name + "_wcr_seed", {f"_wcrseed_i{d}": f"0:{s}" for d, s in enumerate(desc.shape)})
-            me.map.range = self.written_window(sd, name, next(iter(states)), desc)
+            me.map.range = window
             t = seed.add_tasklet(name + "_wcr_seed", {}, {"__out"}, f"__out = {lit}")
             idx = ", ".join(f"_wcrseed_i{d}" for d in range(len(desc.shape)))
             seed.add_edge(me, None, t, None, Memlet())

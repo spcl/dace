@@ -28,6 +28,7 @@ import pytest
 
 import dace
 from dace.config import set_temporary
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
@@ -649,8 +650,41 @@ def test_a_masked_count_two_map_levels_deep_keeps_its_accumulator_path_named():
     assert out[0] == hits, (out, hits)
 
 
+def test_a_masked_subtraction_in_a_nested_body_keeps_its_sign():
+    """``o[0] (a - b)= xv[j]`` under ``if xv[j] > 0``: the seeded private sums the addends, the boundary subtracts."""
+    inner = dace.SDFG("inner")
+    inner.add_array("o", [1], dace.float64)
+    inner.add_array("xv", [8], dace.float64)
+    inner.add_symbol("j", dace.int64)
+    branch = ConditionalBlock("masked")
+    inner.add_node(branch, is_start_block=True)
+    body = ControlFlowRegion("body", sdfg=inner)
+    branch.add_branch(CodeBlock("xv[j] > 0"), body)
+    state = body.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("t", {"v"}, {"r"}, "r = v")
+    state.add_edge(state.add_read("xv"), None, tasklet, "v", dace.Memlet("xv[j]"))
+    state.add_edge(tasklet, "r", state.add_write("o"), None, dace.Memlet("o[0]", wcr="lambda a, b: a - b"))
+    outer = dace.SDFG("outer")
+    outer.add_array("acc", [1], dace.float64)
+    outer.add_array("x", [8], dace.float64)
+    ostate = outer.add_state()
+    entry, exit_ = ostate.add_map("m", {"i": "0:8"})
+    nested = ostate.add_nested_sdfg(inner, {"xv"}, {"o"}, symbol_mapping={"j": "i"})
+    ostate.add_memlet_path(ostate.add_read("x"), entry, nested, dst_conn="xv", memlet=dace.Memlet("x[0:8]"))
+    ostate.add_memlet_path(nested, exit_, ostate.add_write("acc"), src_conn="o", memlet=dace.Memlet("acc[0]"))
+    acc = np.full(1, 100.0)
+    normalize = NormalizeWCR()
+    normalize.validate = False
+
+    assert normalize.normalize_nested_reductions(outer)
+    outer(acc=acc, x=np.ones(8))
+
+    assert acc[0] == 92.0
+
+
 if __name__ == "__main__":
     import sys
 
     sys.exit(pytest.main([__file__, "-v"]))
     test_a_masked_count_two_map_levels_deep_keeps_its_accumulator_path_named()
+    test_a_masked_subtraction_in_a_nested_body_keeps_its_sign()
