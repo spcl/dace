@@ -19,7 +19,7 @@ from dace.sdfg import SDFG, InterstateEdge
 
 # Substring of the static_assert message emitted by the C++ templates; used to
 # confirm the compile error came from our guard and not some unrelated failure.
-_MIXED_TYPE_ERROR_FRAGMENT = "mixing floating-point and integer arguments"
+_MIXED_TYPE_ERROR_FRAGMENT = "mixing floating-point with integer, or signed with unsigned"
 
 
 def _build_minmax_interstate_sdfg(rhs: str) -> SDFG:
@@ -102,6 +102,45 @@ def test_min_all_integer_range_compiles_and_runs():
     # Only the first 4 elements (range 0:Min(10, 4)) are doubled.
     assert np.allclose(data[:4], 2.0)
     assert np.allclose(data[4:], 1.0)
+
+
+def _minmax_tasklet_sdfg(code: str, a_type, b_type, out_type) -> SDFG:
+    """``out[0] = <code>`` in one C++ tasklet over the scalars ``a`` and ``b``."""
+    sdfg = SDFG("minmax_tasklet")
+    sdfg.add_scalar("a", a_type)
+    sdfg.add_scalar("b", b_type)
+    sdfg.add_array("out", [1], out_type)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("pick", {"x", "y"}, {"o"}, f"o = {code};", language=dace.Language.CPP)
+    state.add_edge(state.add_read("a"), None, tasklet, "x", dace.Memlet("a[0]"))
+    state.add_edge(state.add_read("b"), None, tasklet, "y", dace.Memlet("b[0]"))
+    state.add_edge(tasklet, "o", state.add_write("out"), None, dace.Memlet("out[0]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("call", ["min(x, y)", "max(x, y)", "Min(x, y)", "Max(x, y)"])
+@pytest.mark.parametrize(
+    "a_type, b_type", [(dace.int32, dace.float64), (dace.float32, dace.int64), (dace.int64, dace.uint64)]
+)
+def test_a_min_or_max_mixing_integer_with_floating_point_or_signed_with_unsigned_does_not_compile(
+    call, a_type, b_type
+):
+    sdfg = _minmax_tasklet_sdfg(call, a_type, b_type, dace.float64)
+    with pytest.raises(CompilationError) as excinfo:
+        sdfg.compile()
+    assert _MIXED_TYPE_ERROR_FRAGMENT in str(excinfo.value)
+
+
+@pytest.mark.parametrize("call", ["min(x, y)", "max(x, y)", "Min(x, y)", "Max(x, y)"])
+@pytest.mark.parametrize(
+    "a_type, b_type, a, b, expected",
+    [(dace.float32, dace.float64, 0.5, 0.25, (0.25, 0.5)), (dace.int32, dace.int64, 3, -(2**40), (-(2**40), 3))],
+)
+def test_a_min_or_max_of_one_kind_widens_to_the_wider_type(call, a_type, b_type, a, b, expected):
+    sdfg = _minmax_tasklet_sdfg(call, a_type, b_type, b_type)
+    out = np.zeros(1, dtype=b_type.type)
+    sdfg(a=a_type.type(a), b=b_type.type(b), out=out)
+    assert out[0] == expected[call.lower().startswith("max")]
 
 
 if __name__ == "__main__":
