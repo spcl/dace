@@ -1176,6 +1176,37 @@ def test_a_consumer_reading_a_window_through_a_nested_body_recomputes_each_eleme
     assert np.allclose(B, expected)
 
 
+def test_the_producer_copy_follows_graph_order():
+    """The copied producer body and its new ``__tmp`` transients come in graph order, not object-address order."""
+    sdfg = dace.SDFG("otf_copy_order")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_scalar("i_tmp", dace.int64, transient=True)
+    sdfg.add_scalar("f_tmp", dace.float64, transient=True)
+    sdfg.add_scalar("b_tmp", dace.bool, transient=True)
+    sdfg.add_array("T", [8], dace.float64, transient=True)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("producer", dict(i="0:8"))
+    first = state.add_tasklet("first", {"a"}, {"o"}, "o = int(a)")
+    to_float = state.add_tasklet("to_float", {"a"}, {"o"}, "o = a")
+    to_bool = state.add_tasklet("to_bool", {"a"}, {"o"}, "o = a > 0")
+    last = state.add_tasklet("last", {"a"}, {"o"}, "o = 1.0 if a else 0.0")
+    accesses = [state.add_access(name) for name in ("i_tmp", "f_tmp", "b_tmp")]
+    state.add_memlet_path(state.add_read("A"), entry, first, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    for src, access, dst in zip((first, to_float, to_bool), accesses, (to_float, to_bool, last)):
+        state.add_edge(src, "o", access, None, dace.Memlet(access.data))
+        state.add_edge(access, None, dst, "a", dace.Memlet(access.data))
+    state.add_memlet_path(last, exit_node, state.add_write("T"), src_conn="o", memlet=dace.Memlet("T[i]"))
+    inside = [n for n in state.nodes() if n is not entry and n in state.all_nodes_between(entry, exit_node)]
+    before = set(sdfg.arrays)
+
+    copies = OTFMapFusion()._copy_first_map_contents(sdfg, state, entry, exit_node)
+
+    assert [type(n) for n in copies] == [type(n) for n in inside]
+    new_names = [name for name in sdfg.arrays if name not in before]
+    assert [n.data for n in copies if isinstance(n, dace.nodes.AccessNode)] == new_names
+    assert [sdfg.arrays[name].dtype for name in new_names] == [dace.int64, dace.float64, dace.bool]
+
+
 if __name__ == "__main__":
     # Solver
     test_solve()
@@ -1224,3 +1255,4 @@ if __name__ == "__main__":
     test_advanced_replace_nested_sdfg_symbol_mapping()
     test_a_producer_reading_the_intermediate_is_not_fused()
     test_a_consumer_reading_a_window_through_a_nested_body_recomputes_each_element()
+    test_the_producer_copy_follows_graph_order()
