@@ -6,6 +6,10 @@ compares against numpy's reference. The marker ``fftw`` opts the test
 into the CI step that installs ``libfftw3-dev``.
 """
 
+import ctypes
+import gc
+import os
+
 import numpy as np
 import pytest
 
@@ -68,6 +72,36 @@ def test_a_threaded_fftw_plans_for_the_team(monkeypatch, threaded):
     code = fftw3_call(Transform(desc, desc, [0], inverse=False, half_spectrum=False)).code.as_string
     assert ("fftw_plan_with_nthreads(__threads)" in code) == threaded
     assert ("__threads = omp_in_parallel() ? 1 : omp_get_max_threads()" in code) == threaded
+
+
+@pytest.mark.fftw
+def test_a_program_plans_after_a_threaded_one_was_unloaded():
+    """Unloading a program unmapped ``libfftw3_omp`` while ``libfftw3`` stayed loaded with the threaded solvers its
+    ``init_threads`` registered, and the next plan of any program segfaulted (CI's complex fft and ifftn tests)."""
+    from dace.libraries.fft.environments import fftw3
+
+    if not fftw3.threaded(True):
+        pytest.skip("no threaded FFTW planner")
+    core = next(lib for lib in fftw3.fftw_install()[1] if os.path.basename(lib).startswith("libfftw3."))
+    holder = ctypes.CDLL(core)
+    rng = np.random.default_rng(3)
+    for n in (30, 31):
+
+        @dace.program
+        def transform(x: dace.complex128[n]):
+            return np.fft.fft(x)
+
+        sdfg = transform.to_sdfg(simplify=True)
+        sdfg.name = f"fft_after_unload_{n}"
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, fftlib.FFT):
+                node.implementation = "FFTW3"
+        compiled = sdfg.compile()
+        x = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+        np.testing.assert_allclose(compiled(x=x.copy()), np.fft.fft(x), rtol=1e-12, atol=1e-12)
+        del compiled, sdfg
+        gc.collect()
+    del holder
 
 
 if __name__ == "__main__":

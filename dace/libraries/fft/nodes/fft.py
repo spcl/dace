@@ -341,11 +341,19 @@ def fftw3_call(transform: Transform, threaded: bool | None = None) -> nodes.Task
         else "(long long)(reinterpret_cast<uintptr_t>(__in) % 64), (long long)(reinterpret_cast<uintptr_t>(__out) % 64)"
     )
     sign = f"{'FFTW_BACKWARD' if transform.inverse else 'FFTW_FORWARD'}, " if kind == "dft" else ""
+    # FFTW's threads library is a companion a program may unload under the planner it registered into; MKL's
+    # interface threads inside MKL
+    pin = (
+        f"static const int __threads_pinned = dace::fft::PinLibraryOf(reinterpret_cast<void *>(&{prefix}_init_threads));"
+        " (void)__threads_pinned;\n"
+        if threaded is None
+        else ""
+    )
     threaded = fftw3.threaded(transform.double) if threaded is None else threaded
     # A threaded FFTW plans for the program's OpenMP team, or for one thread inside a parallel region
     team = (
         f"static const int __threads_ready = {prefix}_init_threads(); (void)__threads_ready;\n"
-        f"{prefix}_plan_with_nthreads(__threads);"
+        f"{pin}{prefix}_plan_with_nthreads(__threads);"
         if threaded
         else ""
     )

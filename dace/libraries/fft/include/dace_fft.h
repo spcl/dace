@@ -6,6 +6,10 @@
 #include <utility>
 #include <vector>
 
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
+
 namespace dace {
 
 namespace fft {
@@ -14,6 +18,17 @@ namespace fft {
 static inline std::mutex& PlannerMutex() {
   static std::mutex mutex;
   return mutex;
+}
+
+// Keeps the library defining `symbol` loaded for the rest of the process. FFTW's init_threads registers solvers of its
+// threads library in the core library's process-wide planner; unloading the program that loaded the threads library
+// would leave them dangling for the next plan of any program while the core library stays loaded.
+inline int PinLibraryOf(void* symbol) {
+#ifndef _WIN32
+  Dl_info owner;
+  if (dladdr(symbol, &owner) && owner.dli_fname) dlopen(owner.dli_fname, RTLD_NOW | RTLD_NODELETE);
+#endif
+  return 0;
 }
 
 // Vendor plans keyed by everything a plan depends on: made once, destroyed when the program unloads.
