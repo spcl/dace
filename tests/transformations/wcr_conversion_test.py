@@ -887,6 +887,49 @@ def test_aug_assign_python_subtraction_keeps_its_operand_order(code, expected):
     assert np.allclose(b, reference)
 
 
+def _update_of_a(code: str, language: dace.Language) -> tuple[dace.SDFG, dace.nodes.Tasklet]:
+    """``A[0] = <code>`` over connectors ``a`` (``A[0]``) and ``b`` (``B[0]``)."""
+    sdfg = dace.SDFG("update_of_a")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("t", {"a", "b"}, {"o"}, code, language=language)
+    state.add_edge(state.add_read("A"), None, tasklet, "a", dace.Memlet("A[0]"))
+    state.add_edge(state.add_read("B"), None, tasklet, "b", dace.Memlet("B[0]"))
+    state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
+    return sdfg, tasklet
+
+
+@pytest.mark.parametrize(
+    "code, language",
+    [
+        ("o = a * b + 1.0;", dace.Language.CPP),
+        ("o = a - b + 1.0;", dace.Language.CPP),
+        ("o = b - a;", dace.Language.CPP),
+        ("o = a + a * b", dace.Language.Python),
+    ],
+)
+def test_aug_assign_refuses_what_is_no_update_of_the_accumulator(code, language):
+    sdfg, _ = _update_of_a(code, language)
+
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
+
+
+@pytest.mark.parametrize(
+    "code, reference",
+    [("o = a - (b + 1.0);", lambda a, b: a - (b + 1.0)), ("o = (b * 2.0) + a;", lambda a, b: a + b * 2.0)],
+)
+def test_aug_assign_cpp_keeps_the_increment_as_written(code, reference):
+    sdfg, tasklet = _update_of_a(code, dace.Language.CPP)
+    A, B = np.array([5.0]), np.array([3.0])
+    expected = reference(A[0], B[0])
+
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    assert list(tasklet.in_connectors) == ["b"]
+    sdfg(A=A, B=B)
+    assert A[0] == expected
+
+
 if __name__ == "__main__":
     test_aug_assign_python_logical_or()
     test_aug_assign_tasklet_lhs()

@@ -84,14 +84,13 @@ for the rest, so Strategy B is documented but intentionally not built here (YAGN
 the refuse path keeps the non-reducible cases correct.
 """
 
-import ast
-
 from dace import SDFG, data, dtypes, properties
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.dataflow.wcr_conversion import wcr_operator
 
 #: Reduction operators OpenMP's ``reduction`` clause supports (Strategy A). ``-`` /
 #: ``/`` and custom lambdas are refused (left as the correct contended atomic).
@@ -99,40 +98,10 @@ SCATTER_REDUCIBLE_OPS = frozenset({"+", "*", "min", "max"})
 
 
 def scatter_wcr_op(wcr: str) -> str | None:
-    """The reduction operator (``+`` / ``*`` / ``min`` / ``max``) of a WCR lambda
-    string, or ``None`` when the reducer is not exactly one of those over its two
-    arguments.
-
-    Strict: the body must be ``p0 (+|*) p1`` or ``min|max(p0, p1)`` where ``p0`` /
-    ``p1`` are the lambda's two parameters -- an associative, commutative fold. Anything
-    else (``p0 - p1``, ``2*p0 + p1``, a custom lambda) returns ``None`` so the scatter is
-    left as the correct, contended atomic rather than mis-privatised (a whole-buffer
-    reduction reassociates the fold, which is only value-preserving for such an op).
-    """
-    try:
-        tree = ast.parse(wcr.strip(), mode="eval").body
-    except (SyntaxError, ValueError, TypeError):
-        return None
-    if not isinstance(tree, ast.Lambda) or len(tree.args.args) != 2:
-        return None
-    params = {a.arg for a in tree.args.args}
-    body = tree.body
-
-    def _is_two_params(*operands) -> bool:
-        names = [o.id for o in operands if isinstance(o, ast.Name)]
-        return len(names) == 2 and set(names) == params
-
-    if isinstance(body, ast.BinOp) and _is_two_params(body.left, body.right):
-        return {ast.Add: "+", ast.Mult: "*"}.get(type(body.op))
-    if (
-        isinstance(body, ast.Call)
-        and isinstance(body.func, ast.Name)
-        and body.func.id in ("min", "max")
-        and len(body.args) == 2
-        and _is_two_params(*body.args)
-    ):
-        return body.func.id
-    return None
+    """The reduction operator of a WCR lambda when it is one of :data:`SCATTER_REDUCIBLE_OPS` over its two parameters
+    (an associative, commutative fold a whole-buffer reduction may reassociate); ``None`` otherwise."""
+    op = wcr_operator(wcr)
+    return op if op in SCATTER_REDUCIBLE_OPS else None
 
 
 def _is_single_element(desc: data.Data) -> bool:
