@@ -3773,6 +3773,18 @@ class CPUCodeGen(TargetCodeGenerator):
             if len(out_edges) != 1:
                 continue
             oedge = out_edges[0]
+            # Through the exits of enclosing sequential maps: a loop over a SMALL axis around this map
+            # (``SequentializeReductionAxes``) re-enters it per trip, and each trip is one reduction
+            while (
+                isinstance(oedge.dst, nodes.MapExit)
+                and oedge.dst.map.schedule == dtypes.ScheduleType.Sequential
+                and oedge.data.wcr is not None
+            ):
+                outer_conn = "OUT_" + oedge.dst_conn[3:]
+                outer_edges = [e for e in state.out_edges(oedge.dst) if e.src_conn == outer_conn]
+                if len(outer_edges) != 1:
+                    break
+                oedge = outer_edges[0]
             if not isinstance(oedge.dst, nodes.AccessNode):
                 continue
             desc = sdfg.arrays.get(oedge.dst.data)
