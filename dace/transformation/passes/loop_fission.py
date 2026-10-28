@@ -733,7 +733,11 @@ class LoopFission(ppl.Pass):
                 clone.add_node(claimed[b])
             for a, b in zip(originals, originals[1:]):
                 data = kept_edges.get((a, b))
-                clone.add_edge(claimed[a], claimed[b], InterstateEdge() if data is None else copy.deepcopy(data))
+                if data is None:
+                    data = InterstateEdge()
+                elif claimed[a] is not a or claimed[b] is not b:
+                    data = copy.deepcopy(data)
+                clone.add_edge(claimed[a], claimed[b], data)
             clone.start_block = clone.node_id(claimed[originals[0]])
             clones.append(clone)
 
