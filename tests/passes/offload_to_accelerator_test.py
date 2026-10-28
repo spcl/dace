@@ -215,17 +215,19 @@ def test_an_offloaded_scan_gets_its_device_lowering():
     set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
     sdfg.validate()
 
-    offloaded = [
-        n
-        for n, _ in sdfg.all_nodes_recursive()
-        if type(n).__name__ == "Scan" and n.schedule == dtypes.ScheduleType.GPU_Device
+    from dace.libraries.standard.block_reduce import in_kernel_block_implementation
+
+    # Device-wide, or inside the kernel the map around it became, on that kernel's thread block
+    lowerings = [
+        node.implementation
+        if node.schedule == dtypes.ScheduleType.GPU_Device
+        else in_kernel_block_implementation(node, state)
+        for node, state in sdfg.all_nodes_recursive()
+        if type(node).__name__ == "Scan"
     ]
-    assert offloaded, "the Scan was not offloaded, so its lowering says nothing"
-    for node in offloaded:
-        assert node.implementation in ("CUDA", "GPUAuto"), (
-            f"the Scan runs on the device with implementation {node.implementation!r}; that is a "
-            "host lowering, so the kernel would carry a serial sweep"
-        )
+    assert lowerings and all(lowering in ("CUDA", "GPUAuto", "CUDA (block)") for lowering in lowerings), (
+        f"a Scan lowers to {lowerings}; a host lowering on the device would carry a serial sweep"
+    )
 
 
 def test_a_host_pinned_library_node_keeps_its_operands_on_the_host():
