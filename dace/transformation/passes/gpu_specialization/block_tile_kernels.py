@@ -152,15 +152,20 @@ def reads_outside(sdfg: SDFG, name: str, inner: set[nodes.Node]) -> bool:
     )
 
 
-def give_blocks_their_containers(state: SDFGState, kernel: nodes.MapEntry, strided) -> None:
-    """Make a lane-private array a strided map fills and other code reads one per block: lifted out of the kernel,
+def give_blocks_their_containers(state: SDFGState, kernel: nodes.MapEntry, strided) -> list[SDFGState]:
+    """Make a lane-private array a strided map fills and later code reads one per block: lifted out of the kernel,
     one slice per kernel iteration (:class:`MoveArrayOutOfKernel`), so the lanes fill the block's copy together and
-    the code after them reads it whole. An array the lift refuses stays lane-private, and the kernel untiled."""
+    the code after them reads it whole. Only a fill in a state of a nested SDFG that nothing else in the state
+    touches is lifted; the returned states are the fills, which :func:`fence_with_barriers` fences once the kernel
+    is tiled. An array the lift refuses stays lane-private, and the kernel untiled."""
     from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel, needs_global_memory
 
     mover = MoveArrayOutOfKernel()
     private = lane_private_containers(state, kernel)
+    fills: list[SDFGState] = []
     for inner_state, entry in strided:
+        if inner_state.sdfg is state.sdfg:
+            continue
         inner = set(inner_state.scope_subgraph(entry).nodes())
         owner = inner_state.sdfg
         for edge in inner_state.out_edges(inner_state.exit_node(entry)):
@@ -172,12 +177,27 @@ def give_blocks_their_containers(state: SDFGState, kernel: nodes.MapEntry, strid
                 continue
             if not reads_outside(owner, name, inner):
                 continue
+            touched = [node for node in inner_state.data_nodes() if node.data == name and node not in inner]
+            if any(inner_state.out_degree(node) > 0 or inner_state.in_degree(node) > 1 for node in touched):
+                continue
             plan = mover.plan_lift(name, owner, kernel, state)
             if plan is None:
                 continue
             desc.storage = dtypes.StorageType.GPU_Global
             mover.move_array(plan, kernel, state)
             private.discard((owner, name))
+            if inner_state not in fills:
+                fills.append(inner_state)
+    return fills
+
+
+def fence_with_barriers(fill: SDFGState) -> None:
+    """Barrier states before and after ``fill``: every lane's share is written before any lane reads the block's
+    copy, and the reads of a previous trip finish before it is overwritten."""
+    parent = fill.parent_graph
+    start = parent.start_block is fill
+    barrier(parent.add_state_before(fill, f"{fill.label}_lanes_enter", is_start_block=start))
+    barrier(parent.add_state_after(fill, f"{fill.label}_lanes_leave"))
 
 
 def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry, private: LanePrivate) -> bool:
@@ -430,7 +450,7 @@ class BlockTileKernels(ppl.Pass):
             if xfh.gpu_map_has_explicit_threadblocks(state, kernel):
                 continue
             strided = strided_maps(state, kernel)
-            give_blocks_their_containers(state, kernel, strided)
+            fills = give_blocks_their_containers(state, kernel, strided)
             if fills_per_lane_buffer(state, kernel, strided):
                 continue
             lanes = single_lane_nodes(state, kernel, strided)
@@ -455,6 +475,8 @@ class BlockTileKernels(ppl.Pass):
                 run_after_barrier(node, owners[node])
             for block in blocks:
                 run_block_on_lane_zero(block)
+            for fill in fills:
+                fence_with_barriers(fill)
             for lane_map in state.scope_children()[kernel]:
                 if (
                     isinstance(lane_map, nodes.MapEntry)
