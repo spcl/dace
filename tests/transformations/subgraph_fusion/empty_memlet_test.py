@@ -2,6 +2,7 @@
 """``SubgraphFusion`` with empty memlets (ordering edges, no connectors) on the maps it fuses."""
 
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg import nodes
@@ -157,15 +158,75 @@ def test_tasklets_without_inputs_fuse():
     np.testing.assert_allclose(c, 2 * np.arange(17))
 
 
-def test_a_dynamic_map_range_input_is_not_fused():
-    """A dynamic map range connector names no data the fused map would carry: the fusion declines."""
-    chain = Chain("empty_memlet_dynamic_range")
-    chain.sdfg.add_scalar("lim", dace.int64)
-    entry = chain.second[1]
-    entry.add_in_connector("lim")
-    chain.state.add_edge(chain.state.add_read("lim"), None, entry, "lim", dace.Memlet("lim[0]"))
-    fusion = chain.fuse()
-    assert not fusion.can_be_applied(chain.sdfg, fusion.subgraph_view(chain.sdfg))
+def dynamic_range_chain(case: str) -> tuple[dace.SDFG, dace.SDFGState, list[nodes.Node]]:
+    """``B[i] = A[i] + 1`` then ``C[i] = 2 * B[i]`` for ``i`` in ``0:lim``, both maps reading ``lim`` through a
+    dynamic map range connector.
+
+    :param case: ``"one_node"``: both read one access node of ``LIM``. ``"two_nodes"``: each reads its own.
+                 ``"written"``: like ``two_nodes``, but a tasklet writes ``LIM`` into the second map's node.
+                 ``"other_element"``: the second map reads ``LIM[1]`` instead of ``LIM[0]``.
+    :return: The SDFG, its state, and the nodes to fuse.
+    """
+    sdfg = dace.SDFG(f"dynamic_range_{case}")
+    for name in "AC":
+        sdfg.add_array(name, [N], dace.float64)
+    sdfg.add_array("LIM", [2], dace.int64)
+    sdfg.add_transient("B", [N], dace.float64)
+    state = sdfg.add_state("chain")
+    first_lim = state.add_read("LIM")
+    second_lim = first_lim if case == "one_node" else state.add_access("LIM")
+    if case == "written":
+        writer = state.add_tasklet("set_lim", {}, {"l"}, "l = 10")
+        state.add_edge(writer, "l", second_lim, None, dace.Memlet("LIM[0]"))
+    b = state.add_access("B")
+    fused = [b]
+    for label, src, code, dst, lim, element in [
+        ("first", state.add_read("A"), "o = a + 1", b, first_lim, 0),
+        ("second", b, "o = 2 * a", state.add_write("C"), second_lim, 1 if case == "other_element" else 0),
+    ]:
+        entry, exit_ = state.add_map(label, {"i": "0:lim"})
+        entry.add_in_connector("lim")
+        state.add_edge(lim, None, entry, "lim", dace.Memlet(f"LIM[{element}]"))
+        tasklet = state.add_tasklet(label, {"a"}, {"o"}, code)
+        state.add_memlet_path(src, entry, tasklet, dst_conn="a", memlet=dace.Memlet(f"{src.data}[i]"))
+        state.add_memlet_path(tasklet, exit_, dst, src_conn="o", memlet=dace.Memlet(f"{dst.data}[i]"))
+        fused += [entry, tasklet, exit_]
+    sdfg.validate()
+    return sdfg, state, fused
+
+
+def fuse_dynamic_range_chain(case: str) -> tuple[dace.SDFG, dace.SDFGState, bool]:
+    sdfg, state, fused = dynamic_range_chain(case)
+    fusion = SubgraphFusion()
+    fusion.setup_match(SubgraphView(state, fused), sdfg.cfg_id, sdfg.node_id(state))
+    applicable = fusion.can_be_applied(sdfg, fusion.subgraph_view(sdfg))
+    if applicable:
+        fusion.apply(sdfg)
+        sdfg.validate()
+    return sdfg, state, applicable
+
+
+@pytest.mark.parametrize("case", ["one_node", "two_nodes"])
+def test_maps_reading_the_same_dynamic_range_input_fuse(case):
+    """Both maps read ``LIM[0]``, which nothing in the state writes: the fused map reads it once."""
+    sdfg, state, applicable = fuse_dynamic_range_chain(case)
+    assert applicable
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and state.entry_node(n) is None)
+    assert [e.dst_conn for e in state.in_edges(entry) if e.dst_conn == "lim"] == ["lim"]
+
+    size, lim = 17, 10
+    a = np.random.default_rng(0).random(size)
+    c = np.zeros(size)
+    sdfg(A=a, C=c, LIM=np.array([lim, 0], dtype=np.int64), N=size)
+    np.testing.assert_allclose(c[:lim], 2 * (a[:lim] + 1))
+    assert not c[lim:].any()
+
+
+@pytest.mark.parametrize("case", ["written", "other_element"])
+def test_maps_that_may_read_different_dynamic_range_values_are_not_fused(case):
+    """A write into ``LIM`` in the state, or a different element, may give the maps different ranges."""
+    sdfg, state, applicable = fuse_dynamic_range_chain(case)
+    assert not applicable
 
 
 if __name__ == "__main__":
@@ -173,4 +234,7 @@ if __name__ == "__main__":
     test_an_ordering_edge_out_of_a_map_follows_the_fused_map()
     test_an_ordering_edge_into_the_intermediate_is_not_fused()
     test_tasklets_without_inputs_fuse()
-    test_a_dynamic_map_range_input_is_not_fused()
+    for case in ["one_node", "two_nodes"]:
+        test_maps_reading_the_same_dynamic_range_input_fuse(case)
+    for case in ["written", "other_element"]:
+        test_maps_that_may_read_different_dynamic_range_values_are_not_fused(case)
