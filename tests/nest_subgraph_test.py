@@ -239,6 +239,35 @@ def test_a_view_on_the_nesting_boundary_is_an_array_inside_the_nested_sdfg():
     assert np.array_equal(B, A[1] * 2), B
 
 
+def test_a_boundary_copy_named_by_a_moved_transient_is_restated_on_the_outer_container():
+    """A map body copies ``A[i, :]`` into its local ``tmp``, the copy named by ``tmp`` with ``A``'s subset as its
+    other subset; the body (and ``tmp``) is nested."""
+    sdfg = dace.SDFG("nest_copy_named_by_moved_transient")
+    sdfg.add_array("A", [4, 8], dace.float64)
+    sdfg.add_array("B", [4, 8], dace.float64)
+    sdfg.add_transient("tmp", [8], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("rows", {"i": "0:4"})
+    tmp = state.add_access("tmp")
+    entry.add_in_connector("IN_A")
+    entry.add_out_connector("OUT_A")
+    state.add_edge(state.add_read("A"), None, entry, "IN_A", dace.Memlet("A[0:4, 0:8]"))
+    state.add_edge(entry, "OUT_A", tmp, None, dace.Memlet(data="tmp", subset="0:8", other_subset="i, 0:8"))
+    inner_entry, inner_exit = state.add_map("cols", {"j": "0:8"})
+    t = state.add_tasklet("double", {"t"}, {"o"}, "o = 2.0 * t")
+    state.add_memlet_path(tmp, inner_entry, t, dst_conn="t", memlet=dace.Memlet("tmp[j]"))
+    state.add_memlet_path(t, inner_exit, exit_node, state.add_write("B"), src_conn="o", memlet=dace.Memlet("B[i, j]"))
+    sdfg.validate()
+
+    nest_state_subgraph(sdfg, state, state.scope_subgraph(entry, include_entry=False, include_exit=False))
+    sdfg.validate()
+
+    A = np.arange(32.0).reshape(4, 8).copy()
+    B = np.zeros((4, 8))
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, 2 * A), B
+
+
 if __name__ == "__main__":
     test_simple_program()
     test_simple_sdfg()
@@ -250,3 +279,4 @@ if __name__ == "__main__":
     test_nesting_a_map_body_whose_last_write_feeds_the_exit_adds_no_self_copy()
     test_nesting_a_map_keeps_the_ordering_edge_that_orders_an_earlier_read_before_it()
     test_a_view_on_the_nesting_boundary_is_an_array_inside_the_nested_sdfg()
+    test_a_boundary_copy_named_by_a_moved_transient_is_restated_on_the_outer_container()

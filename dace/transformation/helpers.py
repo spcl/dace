@@ -379,6 +379,21 @@ def nest_state_subgraph(
         if datadesc.transient and dname not in other_nodes:
             subgraph_transients.add(dname)
 
+    # A boundary copy may be named after a transient that moves into the nest, with the outer container's subset as
+    # its other subset: restate its outer path in the outer container, which stays in the parent
+    for edge, is_input in itertools.chain(((e, True) for e in inputs), ((e, False) for e in outputs)):
+        inner_name = edge.data.data
+        if inner_name not in subgraph_transients or edge.data.other_subset is None:
+            continue
+        path = state.memlet_path(edge)
+        outer_node = path[0].src if is_input else path[-1].dst
+        if not isinstance(outer_node, nodes.AccessNode):
+            continue
+        for e in path[: path.index(edge) + 1] if is_input else path[path.index(edge) :]:
+            if e.data.data == inner_name and e.data.other_subset is not None:
+                e.data.data, e.data.subset, e.data.other_subset = outer_node.data, e.data.other_subset, e.data.subset
+                e.data.try_initialize(sdfg, state, e)
+
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
     input_arrays = set()
