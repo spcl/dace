@@ -299,6 +299,44 @@ def test_a_transient_an_outside_interstate_edge_reads_stays_in_the_parent():
     assert out[0] == 7, out
 
 
+def test_an_undeclared_symbol_the_subgraph_assigns_is_exported():
+    """``m = 3`` on an edge of the nested ``s0 -> s1``, declared nowhere, and read by ``s2`` after the nest."""
+    sdfg = dace.SDFG("nest_undeclared_assigned_symbol")
+    sdfg.add_array("out", [1], dace.float64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state_after(s0, "s1", assignments={"m": "3"})
+    s2 = sdfg.add_state_after(s1, "s2")
+    tasklet = s2.add_tasklet("inc", {}, {"o"}, "o = m + 1")
+    s2.add_edge(tasklet, "o", s2.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg.validate()
+
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [s0, s1]))
+    sdfg.validate()
+
+    out = np.zeros(1)
+    sdfg(out=out)
+    assert out[0] == 4, out
+
+
+def test_an_undeclared_loop_variable_of_a_nested_loop_is_exported():
+    """``for i in range(4): out[i] = i`` as a ``LoopRegion`` whose ``i`` is declared nowhere."""
+    sdfg = dace.SDFG("nest_undeclared_loop_variable")
+    sdfg.add_array("out", [4], dace.float64)
+    loop = LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("write", {}, {"o"}, "o = i")
+    body.add_edge(tasklet, "o", body.add_write("out"), None, dace.Memlet("out[i]"))
+    sdfg.validate()
+
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
+    sdfg.validate()
+
+    out = np.zeros(4)
+    sdfg(out=out)
+    assert np.array_equal(out, np.arange(4.0)), out
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -312,3 +350,5 @@ if __name__ == "__main__":
     test_nest_two_loops_with_same_variable()
     test_a_container_moved_across_the_boundary_gets_one_connector()
     test_a_transient_an_outside_interstate_edge_reads_stays_in_the_parent()
+    test_an_undeclared_symbol_the_subgraph_assigns_is_exported()
+    test_an_undeclared_loop_variable_of_a_nested_loop_is_exported()

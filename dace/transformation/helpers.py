@@ -232,13 +232,16 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
             if isinstance(b, LoopRegion) and b.loop_variable is not None and b.loop_variable != "" and b.init_statement:
                 ndefined_symbols.add(b.loop_variable)
         if ndefined_symbols:
+            # A loop variable or an edge-assigned symbol may be declared nowhere: type it as code generation does
+            types = {**sdfg.symbols, **nsdfg.symbols}
+            for region in nsdfg.all_control_flow_regions():
+                types.update({k: v for k, v in region.new_symbols(types).items() if k not in types})
+            for e in nsdfg.all_interstate_edges():
+                types.update({k: v for k, v in e.data.new_symbols(nsdfg, types).items() if k not in types})
             out_state = nsdfg.add_state("symbolic_output")
             nsdfg.add_edge(sink_node, out_state, InterstateEdge())
             for s in ndefined_symbols:
-                if s in nsdfg.symbols:
-                    dtype = nsdfg.symbols[s]
-                else:
-                    dtype = sdfg.symbols[s]
+                dtype = types[s]
                 # The connector connects the two scalars by name, so it must be free in both SDFGs
                 name = sdfg._find_new_name(f"__sym_out_{s}")
                 suffix = 0
