@@ -1950,6 +1950,31 @@ def test_multistate_inline_keeps_the_declared_type_of_a_symbol_the_nest_assigns(
     assert out[0] == 1.5, out
 
 
+@pytest.mark.parametrize("value", [5, "M"])
+def test_multistate_inline_seeds_a_mapped_symbol_the_nest_reassigns(value):
+    """``k = k + 1; out = k`` in a multistate nest called with ``k`` mapped to ``5`` or to ``M = 5``."""
+    inner = dace.SDFG("inner")
+    inner.add_symbol("k", dace.int64)
+    inner.add_array("out", [1], dace.float64)
+    first = inner.add_state(is_start_block=True)
+    second = inner.add_state_after(first, assignments={"k": "k + 1"})
+    tasklet = second.add_tasklet("write", {}, {"o"}, "o = k")
+    second.add_edge(tasklet, "o", second.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg = dace.SDFG(unique_name("multistate_inline_mapped_reassigned_symbol"))
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("out", [1], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {}, {"out"}, symbol_mapping={"k": value})
+    state.add_edge(node, "out", state.add_write("out"), None, dace.Memlet("out[0]"))
+
+    assert sdfg.apply_transformations(InlineMultistateSDFG) == 1
+    sdfg.validate()
+
+    out = np.zeros(1)
+    sdfg(out=out, M=5)
+    assert out[0] == 6, out
+
+
 def _add_increment(region: dace.sdfg.state.ControlFlowRegion, label: str) -> dace.SDFGState:
     state = region.add_state(label)
     tasklet = state.add_tasklet("inc", {"inp"}, {"out"}, "out = inp + 1")
@@ -2095,6 +2120,8 @@ if __name__ == "__main__":
     test_multistate_inline_renames_a_loop_variable_bound_by_an_undeclared_outer_loop()
     test_multistate_inline_does_not_rename_the_empty_loop_variable_of_while_loops()
     test_multistate_inline_keeps_the_declared_type_of_a_symbol_the_nest_assigns()
+    for value in [5, "M"]:
+        test_multistate_inline_seeds_a_mapped_symbol_the_nest_reassigns(value)
     for shape in ["loop", "conditional", "region"]:
         for dead_successor in [False, True]:
             test_multistate_inline_early_return(shape=shape, dead_successor=dead_successor)

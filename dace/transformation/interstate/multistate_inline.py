@@ -193,9 +193,23 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
 
+        inner_assignments = set()
+        for e in nsdfg.all_interstate_edges():
+            inner_assignments |= e.data.assignments.keys()
+        edge_assigned = set(inner_assignments)
+        for b in nsdfg.all_control_flow_blocks():
+            if isinstance(b, LoopRegion) and b.loop_variable:
+                inner_assignments.add(b.loop_variable)
+                edge_assigned.discard(b.loop_variable)
+
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+        # A symbol the nested SDFG assigns is not substituted but assigned its mapped value on entry
+        entry_assignments = {
+            str(k): symbolic.symstr(v) for k, v in nsdfg_node.symbol_mapping.items() if str(k) in inner_assignments
+        }
+        symbol_mapping = {k: v for k, v in nsdfg_node.symbol_mapping.items() if str(k) not in entry_assignments}
+        symbolic.safe_replace(symbol_mapping, nsdfg.replace_dict)
 
         # The replacement restates the descriptors of this SDFG and the symbol mappings of the nested SDFGs within,
         # but not the connector descriptors inside those. Symbol mapping entries that are not plain symbols (e.g.,
@@ -213,15 +227,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             # A while loop's loop variable is the empty string
             if isinstance(b, LoopRegion) and b.loop_variable:
                 outer_assignments.add(b.loop_variable)
-
-        inner_assignments = set()
-        for e in nsdfg.all_interstate_edges():
-            inner_assignments |= e.data.assignments.keys()
-        edge_assigned = set(inner_assignments)
-        for b in nsdfg.all_control_flow_blocks():
-            if isinstance(b, LoopRegion) and b.loop_variable:
-                inner_assignments.add(b.loop_variable)
-                edge_assigned.discard(b.loop_variable)
 
         # Loop variables are not necessarily declared as symbols
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys()) | outer_assignments
@@ -313,6 +318,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Reconnect state machine
         for e in outer_state.parent_graph.in_edges(nsdfg_state):
+            e.data.assignments.update({sym_replacements.get(k, k): v for k, v in entry_assignments.items()})
             outer_state.parent_graph.add_edge(e.src, source, e.data)
         for e in outer_state.parent_graph.out_edges(nsdfg_state):
             for sink in sinks:
