@@ -368,7 +368,8 @@ SciPy call is encountered.
 
 * :mod:`dace.libraries.blas` - Basic Linear Algebra Subprograms (GEMM, GEMV,
   AXPY, DOT, GER, ...) with reference, OpenBLAS, Intel MKL, cuBLAS, and
-  hipBLAS expansions. See :ref:`blas`.
+  hipBLAS expansions (``rocBLAS`` names the hipBLAS one; ROCm 6 or newer).
+  See :ref:`blas`.
 * :mod:`dace.libraries.lapack` - Dense linear algebra solvers (Cholesky, LU,
   triangular solves) backed by LAPACK and cuSOLVER.
 * :mod:`dace.libraries.linalg` - Higher-level linear algebra routines

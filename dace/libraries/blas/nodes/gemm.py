@@ -537,6 +537,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGemmOpenBLAS,
         "cuBLAS": ExpandGemmCuBLAS,
         "hipBLAS": ExpandGemmHipBLAS,
+        "rocBLAS": ExpandGemmHipBLAS,
         "PBLAS": ExpandGemmPBLAS,
     }
     default_implementation = None
