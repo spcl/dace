@@ -549,7 +549,12 @@ def match_map_pair(
         if tile is None:
             continue
         K_expr, K_const = tile
-        if any(outer_var in free_symbol_names(str(bound)) for m in between for rng in m.map.range for bound in rng):
+        if any(
+            outer_var in free_symbol_names(str(bound))
+            for m in between
+            for rng in m.map.range
+            for bound in exact_bounds(rng)
+        ):
             continue
         for inner_dim, (inner_var, inner_rng) in enumerate(zip(inner.map.params, inner.map.range.ranges)):
             low, high, stride = exact_bounds(inner_rng)
@@ -558,7 +563,12 @@ def match_map_pair(
             )
             if match is None:
                 continue
-            others = (str(bound) for j, rng in enumerate(inner.map.range.ranges) if j != inner_dim for bound in rng)
+            others = (
+                str(bound)
+                for j, rng in enumerate(inner.map.range.ranges)
+                if j != inner_dim
+                for bound in exact_bounds(rng)
+            )
             if any(free_symbol_names(text) & {outer_var, inner_var} for text in others):
                 continue
             if not map_body_reads_only(state, inner, outer_var, inner_var, match[0]):

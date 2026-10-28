@@ -1006,13 +1006,13 @@ def test_a_map_tiling_with_a_partial_last_tile_untiles_back_to_one_map():
     from dace.transformation.dataflow.tiling import MapTiling
 
     @dace.program
-    def scaled(a: dace.float64[N], b: dace.float64[N]):
-        for i in dace.map[0:N]:
-            b[i] = 2.0 * a[i] + 1.0
+    def scaled(a: dace.float64[N, N], b: dace.float64[N, N]):
+        for i, j in dace.map[0:N, 0:N]:
+            b[i, j] = 2.0 * a[i, j] + 1.0
 
-    n = 20  # not a multiple of the tile, so the last tile is partial
+    n = 20  # not a multiple of either tile, so the last tiles are partial
     sdfg = scaled.to_sdfg(simplify=True)
-    sdfg.apply_transformations(MapTiling, options={"tile_sizes": (8,), "divides_evenly": False})
+    sdfg.apply_transformations(MapTiling, options={"tile_sizes": (8, 6), "divides_evenly": False})
     ends = [
         rng[1]
         for node, parent in sdfg.all_nodes_recursive()
@@ -1021,10 +1021,10 @@ def test_a_map_tiling_with_a_partial_last_tile_untiles_back_to_one_map():
     ]
     assert _count_maps(sdfg) == 2 and any(isinstance(end, symbolic.SymExpr) for end in ends), "precondition"
 
-    assert UntileLoops().apply_pass(sdfg, {}) == 1
+    assert UntileLoops().apply_pass(sdfg, {}) == 2, "both axes untile"
     sdfg.validate()
     assert _count_maps(sdfg) == 1, "the tile and point Maps must become one"
-    a, b = np.arange(n, dtype=np.float64), np.zeros(n)
+    a, b = np.arange(n * n, dtype=np.float64).reshape(n, n).copy(), np.zeros((n, n))
     sdfg(a=a, b=b, N=n)
     assert np.array_equal(b, 2.0 * a + 1.0)
 
