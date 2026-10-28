@@ -2204,6 +2204,27 @@ def test_a_read_modify_write_that_runs_once_stays_plain():
     assert not any(e.data.wcr for e in state.edges())
 
 
+@dace.program
+def scale_owned_rows(x: dace.complex128[M, N], v: dace.complex128[N], out: dace.complex128[M, N]):
+    for b in dace.map[0:M]:
+        row = np.empty(N, dtype=np.complex128)
+        for j in dace.map[0:N]:
+            row[j] = x[b, j]
+        for j in dace.map[0:N]:
+            if v[j].real > 0:
+                row[j] = row[j] * v[j]
+        out[b, :] = row
+
+
+def test_an_update_of_a_row_each_map_iteration_owns_stays_plain():
+    """``row[j] *= v[j]`` in a branch nest: the nest hands out ``row[j]``, one slot per ``j``, and ``row`` is
+    accessed only inside the ``b`` map, one copy per ``b``; nothing repeats the write. As a WCR it was a complex
+    product, which no GPU atomic does (QE's vloc_psi_k ``psic[j] = psic[j] * v[j]``)."""
+    sdfg = scale_owned_rows.to_sdfg(simplify=True)
+    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
+    assert not [e.data for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges() if e.data.wcr]
+
+
 @pytest.mark.parametrize("build", (build_free_tasklet_rmw, build_free_map_rmw, build_copy_wrapped_rmw))
 def test_augassign_traversal_matches_old_generic_driver(build):
     """The direct walk must apply exactly what ``PatternMatchAndApplyRepeated([AugAssignToWCR()])``

@@ -598,7 +598,8 @@ def accumulates(state: SDFGState, tasklet: nodes.Tasklet, refusals: dict[LoopReg
     it and its indexed form in the rendering. Neither does one repeated across a loop refused on something else
     (bicgstab's ``x[i] += alpha * p[i]`` across the solver iterations): the WCR maps no loop. Iterators are
     compared in the tasklet's namespace: an outer one a nested SDFG does not receive cannot index the write, so
-    it repeats it.
+    it repeats it -- unless the write the nest hands out separates it: a nest given ``A[i]`` writes ``A[0]``. Nor
+    does one into a container each iteration owns: a nest's own transient, or one only that map scope accesses.
     """
     from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
 
@@ -615,8 +616,13 @@ def accumulates(state: SDFGState, tasklet: nodes.Tasklet, refusals: dict[LoopReg
         if isinstance(staged.dst, nodes.AccessNode)
     }
 
-    def separates(name: str | None) -> bool:
-        return name is not None and bool(writes) and all(write_subset_is_injective(w, [name]) for w in writes)
+    # What the innermost nest crossed so far writes of the accumulator, in the namespace being walked
+    handed: list = []
+
+    def separates(name: str | None, outer_name: str | None = None) -> bool:
+        if name is not None and writes and all(write_subset_is_injective(w, [name]) for w in writes):
+            return True
+        return outer_name is not None and bool(handed) and all(write_subset_is_injective(w, [outer_name]) for w in handed)
 
     rename: dict[str, str] | None = None  # outer name -> the tasklet's name; None while still in its SDFG
     block = state
@@ -624,14 +630,19 @@ def accumulates(state: SDFGState, tasklet: nodes.Tasklet, refusals: dict[LoopReg
         parent = block.parent_graph
         if isinstance(parent, LoopRegion) and parent.loop_variable:
             var = parent.loop_variable
-            if not separates(var if rename is None else rename.get(var)) and refused_on(parent, targets, refusals):
+            if not separates(var if rename is None else rename.get(var), var) and refused_on(parent, targets, refusals):
                 return True
         if isinstance(parent, SDFG):
             nsdfg = parent.parent_nsdfg_node
             outer = parent.parent
             if nsdfg is None or outer is None:
                 return False
-            targets = {e.data.data for e in outer.out_edges(nsdfg) if e.src_conn in targets and not e.data.is_empty()}
+            out = [e for e in outer.out_edges(nsdfg) if e.src_conn in targets and not e.data.is_empty()]
+            targets = {e.data.data for e in out}
+            handed = [e.data.subset for e in out if e.data.subset is not None]
+            # A container the nest owns is private to each of its calls: nothing outside repeats the write
+            if not targets:
+                return False
             mapped = {}
             for inner, value in nsdfg.symbol_mapping.items():
                 inner_name = str(inner) if rename is None else rename.get(str(inner))
@@ -642,13 +653,27 @@ def accumulates(state: SDFGState, tasklet: nodes.Tasklet, refusals: dict[LoopReg
             rename = mapped
             scope = outer.entry_node(nsdfg)
             while scope is not None:
-                if not all(separates(rename.get(param)) for param in scope.map.params):
-                    return True
+                if not all(separates(rename.get(param), param) for param in scope.map.params):
+                    return not private_to_scope(outer, scope, targets)
                 scope = outer.entry_node(scope)
             block = outer
             continue
         block = parent
     return False
+
+
+def private_to_scope(state: SDFGState, entry: nodes.MapEntry, names: set[str]) -> bool:
+    """Whether each of ``names`` is a transient every access of which lies in the scope of ``entry``: each
+    iteration then works on its own copy."""
+    sdfg = state.sdfg
+    if not all(name in sdfg.arrays and sdfg.arrays[name].transient for name in names):
+        return False
+    inside = set(state.scope_subgraph(entry).nodes())
+    for st in sdfg.states():
+        for node in st.data_nodes():
+            if node.data in names and (st is not state or node not in inside):
+                return False
+    return True
 
 
 def augassign_to_wcr_candidates(
