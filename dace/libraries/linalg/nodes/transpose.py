@@ -335,6 +335,50 @@ ExpandTransposeHipBLAS = hip_dialect.hip_expansion(
 
 
 @dace.library.expansion
+class ExpandTransposeCUDABlock(ExpandTransformation):
+    """Inside a GPU kernel: the block's lanes split the elements, the innermost input axis strided across them so
+    adjacent lanes read adjacent elements, and a barrier at the lane map's exit publishes the result."""
+
+    environments = []
+    runs_inside_kernel = True
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
+        from dace.sdfg.propagation import propagate_memlets_state
+
+        node.validate(sdfg, state)
+        _, in_outer, in_shape, in_strides = _get_transpose_input(node, state, sdfg)
+        _, out_outer, out_shape, out_strides = _get_transpose_output(node, state, sdfg)
+        nsdfg = dace.SDFG(node.label + "_sdfg")
+        nstate = nsdfg.add_state(node.label + "_state")
+        nsdfg.add_array("_inp", in_shape, node.dtype, strides=in_strides, storage=in_outer.storage)
+        nsdfg.add_array("_out", out_shape, node.dtype, strides=out_strides, storage=out_outer.storage)
+        params = [f"__i{i}" for i in range(len(in_shape))]
+        ranges = {param: (0, extent - 1, 1) for param, extent in zip(params, in_shape)}
+        ranges[params[-1]] = ("__lane", in_shape[-1] - 1, BLOCK_COLLECTIVE_THREADS)
+        lanes, lanes_exit = nstate.add_map(
+            node.label + "_lanes", {"__lane": f"0:{BLOCK_COLLECTIVE_THREADS}"}, dace.ScheduleType.GPU_ThreadBlock
+        )
+        lanes.map.gpu_force_syncthreads = True
+        entry, leave = nstate.add_map(node.label + "_elements", ranges, dace.ScheduleType.Sequential)
+        tasklet = nstate.add_tasklet("transpose", {"__inp"}, {"__out"}, "__out = __inp")
+        nstate.add_memlet_path(
+            nstate.add_read("_inp"), lanes, entry, tasklet, dst_conn="__inp", memlet=dace.Memlet(f"_inp[{', '.join(params)}]")
+        )
+        nstate.add_memlet_path(
+            tasklet,
+            leave,
+            lanes_exit,
+            nstate.add_write("_out"),
+            src_conn="__out",
+            memlet=dace.Memlet(f"_out[{', '.join(reversed(params))}]"),
+        )
+        propagate_memlets_state(nsdfg, nstate)
+        return nsdfg
+
+
+@dace.library.expansion
 class ExpandTransposeCUDA(ExpandTransformation):
     """Our own tiled kernel: ``dace::cuda_transpose::transpose``.
 
@@ -406,6 +450,7 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         "cuBLAS": ExpandTransposeCuBLAS,
         "hipBLAS": ExpandTransposeHipBLAS,
         "CUDA": ExpandTransposeCUDA,
+        "CUDA (block)": ExpandTransposeCUDABlock,
     }
     default_implementation = "pure"
 

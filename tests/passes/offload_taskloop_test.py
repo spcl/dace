@@ -63,6 +63,7 @@ def map_over_reduce() -> dace.SDFG:
     state = sdfg.add_state("body")
     entry, exit_node = state.add_map("rows", dict(i="0:8"))
     reduce_node = state.add_reduce("lambda a, b: a + b", None, 0.0)
+    reduce_node.implementation = "CUDA (device)"  # a device-wide call the host issues
     row = state.add_access("row")
     state.add_memlet_path(state.add_read("A"), entry, row, memlet=dace.Memlet("A[i, 0:16]", other_subset="0:16"))
     state.add_edge(row, None, reduce_node, "_in", dace.Memlet("row[0:16]"))
@@ -101,6 +102,7 @@ def map_over_reduce_beside_a_tasklet() -> dace.SDFG:
     )
     entry, exit_node = state.add_map("rows", dict(i="0:8"))
     reduce_node = state.add_reduce("lambda a, b: a + b", None, 0.0)
+    reduce_node.implementation = "CUDA (device)"  # a device-wide call the host issues
     row = state.add_access("row")
     state.add_memlet_path(scratch, entry, row, memlet=dace.Memlet("T[i, 0:16]", other_subset="0:16"))
     state.add_edge(row, None, reduce_node, "_in", dace.Memlet("row[0:16]"))
@@ -231,6 +233,7 @@ def rows_over_a_reducing_body(side_tasklet: bool) -> dace.SDFG:
     zeroed = compute.add_access("res")
     row = compute.add_read("a")
     reduce_node = compute.add_reduce("lambda a, b: a + b", None, None)
+    reduce_node.implementation = "CUDA (device)"  # a device-wide call the host issues
     compute.add_edge(zero, "o", zeroed, None, dace.Memlet("res[0]"))
     compute.add_nedge(zeroed, row, dace.Memlet())
     compute.add_edge(row, None, reduce_node, "_in", dace.Memlet("a[0:16]"))
@@ -308,6 +311,7 @@ def rows_over_a_scalar_body_with_inner_reduces() -> dace.SDFG:
     cell.add_array("r", [1], dace.float64)
     reduce_state = cell.add_state("reduce")
     reduce_node = reduce_state.add_reduce("lambda a, b: a + b", None, 0.0)
+    reduce_node.implementation = "CUDA (device)"  # a device-wide call the host issues
     reduce_state.add_edge(reduce_state.add_read("a"), None, reduce_node, "_in", dace.Memlet("a[0:4]"))
     reduce_state.add_edge(reduce_node, "_out", reduce_state.add_write("r"), None, dace.Memlet("r[0]"))
 
@@ -457,6 +461,18 @@ def test_a_map_around_a_library_node_launches_from_the_host_without_the_heuristi
     assert libnode_schedule(sdfg) == dtypes.ScheduleType.GPU_Device
 
 
+def test_a_map_around_a_library_node_left_to_selection_with_a_block_lowering_is_the_kernel():
+    """A map around a library node is a parallel region: the node runs on the block of the kernel the map becomes."""
+    sdfg = map_over_reduce()
+    state = next(iter(sdfg.states()))
+    reduce_node = next(node for node in state.nodes() if isinstance(node, nodes.LibraryNode))
+    reduce_node.implementation = None
+    entry = next(node for node in state.nodes() if isinstance(node, nodes.MapEntry))
+
+    assert not is_taskloop_map(state, entry, state.scope_children())
+    assert map_schedule(offloaded(sdfg, heuristics=False), "rows") == dtypes.ScheduleType.GPU_Device
+
+
 def test_a_map_around_an_in_kernel_library_node_is_still_the_kernel():
     """A cub block reduce emits device code and refuses to expand outside a kernel, so the map
     around it is that kernel -- unlike the device-wide reduce, which host code issues."""
@@ -484,6 +500,7 @@ def test_a_map_around_a_library_node_over_small_operands_is_the_kernel(small):
     state = sdfg.add_state("body")
     entry, exit_node = state.add_map("rows", dict(i="0:8"))
     reduce_node = state.add_reduce("lambda a, b: a + b", None, 0.0)
+    reduce_node.implementation = "CUDA (device)"  # a device-wide call the host issues
     row = state.add_access("row")
     state.add_memlet_path(state.add_read("A"), entry, row, memlet=dace.Memlet("A[i, 0:K]", other_subset="0:K"))
     state.add_edge(row, None, reduce_node, "_in", dace.Memlet("row[0:K]"))
@@ -785,6 +802,7 @@ def rows_over_a_libnode_body() -> tuple:
     compute = inner.add_state("compute")
     inner.add_edge(pick, compute, dace.InterstateEdge(assignments=dict(stop="bounds[1]")))
     reduce_node = compute.add_reduce("lambda a, b: a + b", None, 0.0)
+    reduce_node.implementation = "CUDA (device)"  # a device-wide call the host issues
     compute.add_edge(compute.add_read("a"), None, reduce_node, "_in", dace.Memlet("a[0:stop]"))
     compute.add_edge(reduce_node, "_out", compute.add_write("res"), None, dace.Memlet("res[0]"))
 

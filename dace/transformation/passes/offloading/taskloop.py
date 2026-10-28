@@ -33,14 +33,21 @@ def is_device_wide_libnode(node: nodes.Node, state: SDFGState | None = None) -> 
 
     Copies and fills move data rather than compute it. The rest are host-issued -- a cuBLAS gemm is
     a call -- EXCEPT the expansions that say otherwise: a cub block reduce emits device code and
-    refuses to expand outside a kernel, so a map around one is that kernel, not a host loop. Given its
-    ``state``, a node whose operands are all ``SMALL`` (:func:`small_operands`) is per-iteration work too:
-    a thread runs it whole, as the in-kernel lowering selection gives it.
+    refuses to expand outside a kernel, so a map around one is that kernel, not a host loop. A node left
+    to selection with a thread-block lowering that takes its shape is the same: in the kernel it runs on
+    the block.
+    Given its ``state``, a node whose operands are all ``SMALL`` (:func:`small_operands`) is
+    per-iteration work too: a thread runs it whole, as the in-kernel lowering selection gives it.
     """
+    from dace.libraries.standard.block_reduce import gpu_block_implementation
+
     if not isinstance(node, nodes.LibraryNode) or is_copy_or_fill_libnode(node):
         return False
     expansion = type(node).implementations.get(node.implementation or type(node).default_implementation)
     if expansion is not None and expansion.runs_inside_kernel:
+        return False
+    chosen = node.implementation not in (None, "Auto")
+    if not chosen and state is not None and gpu_block_implementation(node, state, state.sdfg) is not None:
         return False
     return state is None or not small_operands(node, state)
 
