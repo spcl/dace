@@ -178,6 +178,26 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
     return {"sa": stride_a, "sb": stride_b, "sc": stride_c, "b": batch_size, "batch_dims": result_batch_dims}
 
 
+def densify_matrix_operands(node, state, sdfg) -> None:
+    """Copy every input whose matrix view has no unit stride into a dense transient read by ``node`` instead. BLAS
+    needs one unit stride, and a copy made before lowering does not survive: simplify turns a copy of a slice such as
+    ``w[:, :, 1, 2]`` back into a view of it."""
+    lhs, rhs, _ = _get_matmul_operands(node, state, sdfg)
+    for operand in (lhs, rhs):
+        edge, desc, shape, strides = _matrix_operand(operand)
+        if any((stride == 1) == True for stride in strides[-2:]):
+            continue
+        name, dense = sdfg.add_transient(
+            f"{edge.data.data}_dense", shape, desc.dtype, storage=desc.storage, find_new_name=True
+        )
+        copy = state.add_access(name)
+        whole = dace.subsets.Range.from_array(dense)
+        into = dace.Memlet(data=edge.data.data, subset=dc(edge.data.subset), other_subset=whole)
+        state.add_edge(edge.src, edge.src_conn, copy, None, into)
+        state.add_edge(copy, None, node, edge.dst_conn, dace.Memlet.from_array(name, dense))
+        state.remove_edge(edge)
+
+
 def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func) -> dict[str, Any]:
     """Get option map for GEMM code generation (with column-major order)."""
     # Avoid import loops
@@ -189,6 +209,8 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     # product keeps its batch dimensions, which that view's squeeze would fold into rows: the
     # (A, 1, B) row block an ``abij,ab->aij`` einsum lowers to became an (A, B) matrix, and every batch
     # multiplied the same rows. The pure expansion already reads the raw operands.
+    if not isinstance(node, BatchedMatMul):
+        densify_matrix_operands(node, state, sdfg)
     adata, bdata, cdata = _get_matmul_operands(node, state, sdfg)
     view = (lambda operand: operand[:4]) if isinstance(node, BatchedMatMul) else _matrix_operand
     _, _, ashape, astride = view(adata)
