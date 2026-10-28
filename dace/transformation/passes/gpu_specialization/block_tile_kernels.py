@@ -36,7 +36,7 @@ from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SymbolResolver
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.warp_tiling import WarpTiling
@@ -218,12 +218,98 @@ def accumulates_outside(state: SDFGState, edges, skipped: set[nodes.Node]) -> bo
     )
 
 
+def block_states(block) -> list[SDFGState]:
+    return [block] if isinstance(block, SDFGState) else list(block.states())
+
+
+def lane_zero_blocks(sdfg: SDFG, skipped: set[nodes.Node], private: LanePrivate) -> list | None:
+    """The largest control-flow blocks of ``sdfg`` that hold no strided-map node and write shared data: each runs
+    whole on lane 0, so a sequential loop over a block's container is one guarded region, not a guard per tasklet.
+    ``None`` if code every lane runs reads a symbol or a lane-private container such a block assigns."""
+    found = []
+
+    def updates(block) -> bool:
+        # A read in one state and the write in a later one is a read-modify-write too: any shared write counts.
+        return any(
+            isinstance(edge.dst, nodes.AccessNode) and (st.sdfg, edge.dst.data) not in private
+            for st in block_states(block)
+            for edge in st.edges()
+            if not edge.data.is_empty()
+        )
+
+    def walk(region) -> None:
+        for block in region.nodes():
+            if not any(node in skipped for st in block_states(block) for node in st.nodes()):
+                if updates(block):
+                    found.append(block)
+            elif isinstance(block, ConditionalBlock):
+                for _, branch in block.branches:
+                    walk(branch)
+            elif not isinstance(block, SDFGState):
+                walk(block)
+
+    walk(sdfg)
+    if not found:
+        return found
+    inside = {st for block in found for st in block_states(block)}
+    regions = [block for block in found if not isinstance(block, SDFGState)]
+    assigned = {lhs for block in regions for edge in block.all_interstate_edges() for lhs in edge.data.assignments}
+    assigned |= {
+        region.loop_variable
+        for block in regions
+        for region in block.all_control_flow_regions()
+        if isinstance(region, LoopRegion) and region.loop_variable
+    }
+    written = {
+        edge.data.data for st in inside for edge in st.edges() if not edge.data.is_empty() and isinstance(edge.dst, nodes.AccessNode)
+    }
+    written = {name for name in written if (sdfg, name) in private}
+    for st in sdfg.states():
+        if st in inside:
+            continue
+        if st.free_symbols & assigned:
+            return None
+        if any(isinstance(node, nodes.AccessNode) and node.data in written for node in st.nodes()):
+            return None
+    found_edges = {edge for block in regions for edge in block.all_interstate_edges()}
+    if any(edge.data.free_symbols & assigned for edge in sdfg.all_interstate_edges() if edge not in found_edges):
+        return None
+    return found
+
+
+def run_block_on_lane_zero(block) -> None:
+    """Nest ``block`` under ``if (__tid == 0)`` in its region, fenced by barriers every lane reaches."""
+    parent = block.parent_graph
+    sdfg = block.sdfg
+    start = parent.start_block is block
+    ins, outs = list(parent.in_edges(block)), list(parent.out_edges(block))
+    parent.remove_node(block)
+    guard = ConditionalBlock(f"{block.label}_lane_zero", sdfg=sdfg, parent=parent)
+    branch = ControlFlowRegion(f"{block.label}_lane_zero_body", sdfg=sdfg)
+    branch.add_node(block, is_start_block=True)
+    guard.add_branch("__tid == 0", branch)
+    parent.add_node(guard, is_start_block=start)
+    for edge in ins:
+        parent.add_edge(edge.src, guard, edge.data)
+    for edge in outs:
+        parent.add_edge(guard, edge.dst, edge.data)
+    barrier(parent.add_state_before(guard, f"{block.label}_lane_zero_enter", is_start_block=start))
+    barrier(parent.add_state_after(guard, f"{block.label}_lane_zero_leave"))
+    nested = sdfg
+    while nested.parent_nsdfg_node is not None and "__tid" not in nested.symbols:
+        nested.add_symbol("__tid", dtypes.int32)
+        nested.parent_nsdfg_node.symbol_mapping["__tid"] = "__tid"
+        nested = nested.parent_sdfg
+    sdfg.reset_cfg_list()
+
+
 def single_lane_nodes(
     state: SDFGState, kernel: nodes.MapEntry, strided: list[tuple[SDFGState, nodes.MapEntry]]
-) -> tuple[list[nodes.Tasklet], list[nodes.Tasklet]] | None:
+) -> tuple[list[nodes.Tasklet], list[nodes.Tasklet], list] | None:
     """The tasklets that must run on lane 0 alone for the kernel body to run once per lane, with ``strided``
-    split across the lanes, and the other tasklets that read what the strided maps wrote, which must wait at a
-    barrier for every lane's share; ``None`` if no such split is sound."""
+    split across the lanes, the other tasklets that read what the strided maps wrote, which must wait at a
+    barrier for every lane's share, and the control-flow blocks that run whole on lane 0
+    (:func:`lane_zero_blocks`); ``None`` if no such split is sound."""
     private = lane_private_containers(state, kernel)
     if not strided or not all(strided_map_is_safe(s, entry, private) for s, entry in strided):
         return None
@@ -245,6 +331,7 @@ def single_lane_nodes(
     }
     single: list[nodes.Tasklet] = []
     waiting: list[nodes.Tasklet] = []
+    blocks: list = []
     pending = [(state, scope.nodes())]
     while pending:
         current, nodes_in_scope = pending.pop()
@@ -252,7 +339,14 @@ def single_lane_nodes(
             if node in skipped:
                 continue
             if isinstance(node, nodes.NestedSDFG):
+                found = lane_zero_blocks(node.sdfg, skipped, private)
+                if found is None:
+                    return None
+                blocks += found
+                on_lane_zero = {st for block in found for st in block_states(block)}
                 for inner in node.sdfg.states():
+                    if inner in on_lane_zero:
+                        continue
                     if accumulates_outside(inner, inner.edges(), skipped):
                         return None
                     pending.append((inner, inner.nodes()))
@@ -268,7 +362,7 @@ def single_lane_nodes(
                 if not edge.data.is_empty()
             ):
                 waiting.append(node)
-    return single, waiting
+    return single, waiting, blocks
 
 
 def barrier(state: SDFGState) -> nodes.Tasklet:
@@ -342,7 +436,7 @@ class BlockTileKernels(ppl.Pass):
             lanes = single_lane_nodes(state, kernel, strided)
             if lanes is None:
                 continue
-            single, waiting = lanes
+            single, waiting, blocks = lanes
             # WarpTiling strides the non-serial maps; the serial pinning re-applies to each lane's loop.
             for inner in [entry for owner, entry in strided]:
                 inner.map.schedule = dtypes.ScheduleType.Default
@@ -359,6 +453,8 @@ class BlockTileKernels(ppl.Pass):
                 run_on_lane_zero(node, owners[node])
             for node in waiting:
                 run_after_barrier(node, owners[node])
+            for block in blocks:
+                run_block_on_lane_zero(block)
             for lane_map in state.scope_children()[kernel]:
                 if (
                     isinstance(lane_map, nodes.MapEntry)
