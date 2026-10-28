@@ -6,6 +6,7 @@ import numpy as np
 
 import dace
 from dace import data, dtypes
+from dace.codegen.common import sym2cpp
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 
@@ -251,7 +252,9 @@ def blas_prefix(dtype: dtypes.typeclass) -> str | None:
 def scalar_arguments(dtype: dtypes.typeclass, **values: Any) -> tuple[str, dict[str, str]]:
     """Declares each of ``values`` as a scalar of ``dtype``; returns the declarations and, per name, the argument
     passing it to CBLAS: the value itself to a real routine, its address to a complex one."""
-    declarations = "".join(f"{dtype.ctype} __{name} = {dtype.ctype}({value});\n" for name, value in values.items())
+    declarations = "".join(
+        f"{dtype.ctype} __{name} = {dtype.ctype}({sym2cpp(value)});\n" for name, value in values.items()
+    )
     if dtype in (dtypes.complex64, dtypes.complex128):
         return declarations, {name: f"&__{name}" for name in values}
     return declarations, {name: f"__{name}" for name in values}

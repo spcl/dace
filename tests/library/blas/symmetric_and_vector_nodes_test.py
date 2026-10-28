@@ -306,6 +306,25 @@ def test_vendor_expansion_calls_the_library(implementation, name):
     assert not any(isinstance(n, dace.nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
 
 
+@pytest.mark.parametrize("implementation", list(VENDOR_ROUTINES))
+def test_vendor_call_prints_a_symbolic_extent_as_cpp(implementation):
+    """The routine call is C++: an ``N**2`` extent prints as ``(N * N)``, not as the Python power."""
+    n = dace.symbol("N")
+    sdfg = dace.SDFG(f"scal_symbolic_{implementation}")
+    storage = dace.StorageType.GPU_Global if implementation in GPU_IMPLEMENTATIONS else dace.StorageType.Default
+    sdfg.add_array("x", [n**2], dace.float64, storage)
+    sdfg.add_array("res", [n**2], dace.float64, storage)
+    state = sdfg.add_state()
+    node = Scal("scal", a=2.0)
+    node.implementation = implementation
+    state.add_edge(state.add_read("x"), None, node, "_x", dace.Memlet("x"))
+    state.add_edge(node, "_res", state.add_write("res"), None, dace.Memlet("res"))
+    sdfg.expand_library_nodes()
+    code = "".join(t.code.as_string for t, _ in sdfg.all_nodes_recursive() if isinstance(t, dace.nodes.Tasklet))
+    call = code[code.index(VENDOR_ROUTINES[implementation].format("scal")) :]
+    assert "(N * N), " in call and "**" not in call, call
+
+
 def copy_states(sdfg: dace.SDFG) -> list[str]:
     return [
         n.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.SDFGState) and n.label.endswith("_copy")
@@ -385,5 +404,6 @@ if __name__ == "__main__":
     for implementation in VENDOR_ROUTINES:
         for name in VENDOR_NODES:
             test_vendor_expansion_calls_the_library(implementation, name)
+        test_vendor_call_prints_a_symbolic_extent_as_cpp(implementation)
     for implementation in GPU_IMPLEMENTATIONS:
         test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension(implementation)
