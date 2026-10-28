@@ -1015,6 +1015,25 @@ def test_a_declared_body_symbol_has_the_type_the_parent_walk_gives(monkeypatch) 
     assert not mismatches, mismatches
 
 
+def test_a_lifted_body_declares_a_symbol_with_the_type_the_parent_declares() -> None:
+    """An array extent's symbol carries its own type (``int32`` by default); the parent's declared ``int64`` wins."""
+    n = dace.symbol("N")
+    sdfg = dace.SDFG("declared_extent_type")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [n], dace.float64)
+    loop = LoopRegion("l", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("s", is_start_block=True)
+    tasklet = state.add_tasklet("t", {}, {"o"}, "o = N")
+    state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[i]"))
+    assert n.dtype != dace.int64
+
+    ParallelizeLoops().apply_pass(sdfg, {})
+
+    body = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG))
+    assert body.sdfg.symbols["N"] == dace.int64
+
+
 NBLK = dace.symbol("NBLK", dace.int64, positive=True)
 
 

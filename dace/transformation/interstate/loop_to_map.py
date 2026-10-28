@@ -1597,9 +1597,11 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: LiftC
     # Every assigned name, and every iterator some loop other than ``loop`` binds.
     rebound: set[str] = {name for name, count in edge_assignments.items() if count > 0}
     rebound.update(name for name, count in loop_variables.items() if count > (name == loop.loop_variable))
-    table: dict[str, dtypes.typeclass] = dict(sdfg.symbols)
+    # A declared symbol type wins over the type an array extent's symbol carries.
+    table: dict[str, dtypes.typeclass] = {}
     for desc in sdfg.arrays.values():
         table.update({s.name: s.dtype for s in desc.free_symbols if s.dtype is not None})
+    table.update(sdfg.symbols)
     itervar = loop.loop_variable
     for name in sorted(free - rebound - {itervar}):
         if name in table:
