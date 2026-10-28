@@ -10,6 +10,7 @@ import dace
 from dace.codegen.codegen import generate_code
 
 N = dace.symbol("N")
+M = dace.symbol("M")
 K = 256
 
 
@@ -46,6 +47,44 @@ def test_a_small_scatter_target_is_privatized_in_shared_memory(prog):
     assert "__syncthreads();" in code
 
 
+def nested_scatter_of_symbolic_size() -> dace.SDFG:
+    """``h[idx[i]] += w[i]`` in a nested body that reads the slot into a symbol, on arrays already in device memory:
+    nothing in the kernel uses the length ``M`` of ``h``."""
+    body = dace.SDFG("scatter_body")
+    body.add_symbol("i", dace.int64)
+    body.add_array("idx", [N], dace.int64)
+    body.add_array("w", [N], dace.float64)
+    body.add_array("h", [M], dace.float64)
+    load = body.add_state("load", is_start_block=True)
+    add = body.add_state("add")
+    body.add_edge(load, add, dace.InterstateEdge(assignments={"j": "idx[i]"}))
+    t = add.add_tasklet("add", {"v"}, {"o"}, "o = v")
+    add.add_edge(add.add_read("w"), None, t, "v", dace.Memlet("w[i]"))
+    add.add_edge(t, "o", add.add_write("h"), None, dace.Memlet("h[j]", wcr="lambda a, b: a + b"))
+
+    sdfg = dace.SDFG("nested_scatter_of_symbolic_size")
+    gpu = dace.StorageType.GPU_Global
+    sdfg.add_array("idx", [N], dace.int64, storage=gpu)
+    sdfg.add_array("w", [N], dace.float64, storage=gpu)
+    sdfg.add_array("h", [M], dace.float64, storage=gpu)
+    state = sdfg.add_state()
+    me, mx = state.add_map("scatter", {"i": "0:N"}, schedule=dace.ScheduleType.GPU_Device)
+    nsdfg = state.add_nested_sdfg(body, {"idx", "w"}, {"h"}, symbol_mapping={"i": "i", "M": "M", "N": "N"})
+    state.add_memlet_path(state.add_read("idx"), me, nsdfg, dst_conn="idx", memlet=dace.Memlet("idx[0:N]"))
+    state.add_memlet_path(state.add_read("w"), me, nsdfg, dst_conn="w", memlet=dace.Memlet("w[0:N]"))
+    state.add_memlet_path(nsdfg, mx, state.add_write("h"), src_conn="h",
+                          memlet=dace.Memlet("h[0:M]", wcr="lambda a, b: a + b", dynamic=True))
+    return sdfg
+
+
+def test_a_scatter_target_sized_by_a_symbol_the_kernel_does_not_receive_keeps_global_atomics():
+    """``h`` is ``M`` long and nothing in the kernel reads ``M``: the kernel is not passed ``M``, so the run-time
+    capacity check ``M <= ...`` of a shared copy could not compile there."""
+    code = _device_code(nested_scatter_of_symbolic_size())
+    kernel = next(line for line in code.splitlines() if "__global__" in line)
+    assert "M" in kernel.replace("(", " ").replace(",", " ").split() or "__bpart_" not in code
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("prog", [histogram, column_sums], ids=["scatter", "column"])
 def test_a_privatized_scatter_matches_numpy(prog):
@@ -66,3 +105,4 @@ def test_a_privatized_scatter_matches_numpy(prog):
 if __name__ == "__main__":
     for p in (histogram, column_sums):
         test_a_small_scatter_target_is_privatized_in_shared_memory(p)
+    test_a_scatter_target_sized_by_a_symbol_the_kernel_does_not_receive_keeps_global_atomics()

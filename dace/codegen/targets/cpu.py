@@ -399,7 +399,8 @@ def shared_scatter_target(sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEn
         return False
     scope = state.scope_subgraph(scope_entry)
     if symbolic.issymbolic(desc.total_size, sdfg.constants):
-        if not {str(sym) for sym in desc.total_size.free_symbols} <= set(map(str, scope.free_symbols)):
+        # The symbols a kernel receives: a shape symbol nothing in the scope uses is not among them
+        if not {str(sym) for sym in desc.total_size.free_symbols} <= set(scope.used_symbols(all_symbols=False)):
             return False
     elif int(desc.total_size) > SHARED_SCATTER_ELEMENTS:
         return False
