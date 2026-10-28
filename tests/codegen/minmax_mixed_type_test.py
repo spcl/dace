@@ -122,9 +122,7 @@ def _minmax_tasklet_sdfg(code: str, a_type, b_type, out_type) -> SDFG:
 @pytest.mark.parametrize(
     "a_type, b_type", [(dace.int32, dace.float64), (dace.float32, dace.int64), (dace.int64, dace.uint64)]
 )
-def test_a_min_or_max_mixing_integer_with_floating_point_or_signed_with_unsigned_does_not_compile(
-    call, a_type, b_type
-):
+def test_a_min_or_max_mixing_integer_with_floating_point_or_signed_with_unsigned_does_not_compile(call, a_type, b_type):
     sdfg = _minmax_tasklet_sdfg(call, a_type, b_type, dace.float64)
     with pytest.raises(CompilationError) as excinfo:
         sdfg.compile()

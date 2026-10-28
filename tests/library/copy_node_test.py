@@ -3181,9 +3181,15 @@ def block_copy_in_kernel_sdfg(name: str) -> dace.SDFG:
     state = sdfg.add_state("s")
     me, mx = state.add_map("kernel", dict(i="0:8"), schedule=dace.dtypes.ScheduleType.GPU_Device)
     copy = CopyLibraryNode(name="copy_row")
-    state.add_memlet_path(state.add_read("A"), me, copy, dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME, memlet=dace.Memlet("A[i, 0:1000]"))
     state.add_memlet_path(
-        copy, mx, state.add_write("B"), src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME, memlet=dace.Memlet("B[i, 0:1000]")
+        state.add_read("A"), me, copy, dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME, memlet=dace.Memlet("A[i, 0:1000]")
+    )
+    state.add_memlet_path(
+        copy,
+        mx,
+        state.add_write("B"),
+        src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
+        memlet=dace.Memlet("B[i, 0:1000]"),
     )
     return sdfg
 

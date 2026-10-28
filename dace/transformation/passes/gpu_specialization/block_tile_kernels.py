@@ -281,7 +281,10 @@ def lane_zero_blocks(sdfg: SDFG, skipped: set[nodes.Node], private: LanePrivate)
         if isinstance(region, LoopRegion) and region.loop_variable
     }
     written = {
-        edge.data.data for st in inside for edge in st.edges() if not edge.data.is_empty() and isinstance(edge.dst, nodes.AccessNode)
+        edge.data.data
+        for st in inside
+        for edge in st.edges()
+        if not edge.data.is_empty() and isinstance(edge.dst, nodes.AccessNode)
     }
     written = {name for name in written if (sdfg, name) in private}
     for st in sdfg.states():
