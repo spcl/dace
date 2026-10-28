@@ -794,11 +794,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
             elif edge.data.data in repldict:
                 orig_data[edge] = edge.data.data
                 edge.data.data = repldict[edge.data.data]
-        # A tasklet may name a container in its code rather than through a connector (the readable generator's
-        # ``InlineTaskletConnectors``); it reads the container under its new name too.
+        # A Python tasklet may name a container in its code rather than through a connector (the readable generator's
+        # ``InlineTaskletConnectors``); it reads the container under its new name too. C++ code names its own locals,
+        # which a container's name may match.
         renamed = {old: new for old, new in repldict.items() if old != new}
         for node in nstate.nodes():
-            if isinstance(node, nodes.Tasklet) and renamed:
+            if isinstance(node, nodes.Tasklet) and node.language == dtypes.Language.Python and renamed:
                 names = renamed.keys() - node.in_connectors.keys() - node.out_connectors.keys()
                 code_repl = {name: renamed[name] for name in names if name in node.code.as_string}
                 if code_repl:

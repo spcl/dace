@@ -130,12 +130,6 @@ def test_an_inlined_connector_moves_aside_for_a_parent_transient():
     assert np.allclose(b, a) and np.allclose(d, c)
 
 
-if __name__ == "__main__":
-    test_an_inlined_transient_is_named_apart_from_a_connector()
-    test_a_multistate_inlined_transient_is_named_apart_from_a_connector()
-    test_an_inlined_connector_moves_aside_for_a_parent_transient()
-
-
 def test_a_tasklet_naming_its_container_in_code_reads_it_under_the_outer_name():
     """CloudSC's flux nest binds connector ``zlneg_0`` to the outer ``zlneg``, and the readable generator's
     ``InlineTaskletConnectors`` wrote ``zlneg_0[1, ...]`` into the tasklet's code; inlined, the code reads ``zlneg``."""
@@ -165,3 +159,38 @@ def test_a_tasklet_naming_its_container_in_code_reads_it_under_the_outer_name():
     a, b = np.arange(8.0).reshape(2, 4), np.zeros(4)
     sdfg(A=a, B=b)
     assert np.allclose(b, 2.0 * a[1])
+
+
+def test_a_cpp_tasklet_local_named_like_a_renamed_container_stays_a_local():
+    """ONNX Dropout's C++ tasklet declares a local ``ratio`` beside the container ``ratio`` it reads through
+    ``__ratio``; inlining renames the container, and the local must not be shadowed by a second declaration."""
+    nest = dace.SDFG("nest_cpp_local")
+    nest.add_array("ratio", [1], dace.float64)
+    nest.add_array("y", [1], dace.float64)
+    ns = nest.add_state("s")
+    t = ns.add_tasklet(
+        "scale", {"__ratio"}, {"__out"}, "double ratio = __ratio;\n__out = 2.0 * ratio;", language=dace.Language.CPP
+    )
+    ns.add_edge(ns.add_read("ratio"), None, t, "__ratio", dace.Memlet("ratio[0]"))
+    ns.add_edge(t, "__out", ns.add_write("y"), None, dace.Memlet("y[0]"))
+
+    sdfg = dace.SDFG("inline_cpp_local")
+    sdfg.add_array("R", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state("s")
+    node = state.add_nested_sdfg(nest, {"ratio"}, {"y"})
+    state.add_edge(state.add_read("R"), None, node, "ratio", dace.Memlet("R[0]"))
+    state.add_edge(node, "y", state.add_write("B"), None, dace.Memlet("B[0]"))
+
+    assert sdfg.apply_transformations(InlineSDFG) == 1
+    b = np.zeros(1)
+    sdfg(R=np.array([0.25]), B=b)
+    assert b[0] == 0.5
+
+
+if __name__ == "__main__":
+    test_an_inlined_transient_is_named_apart_from_a_connector()
+    test_a_multistate_inlined_transient_is_named_apart_from_a_connector()
+    test_an_inlined_connector_moves_aside_for_a_parent_transient()
+    test_a_tasklet_naming_its_container_in_code_reads_it_under_the_outer_name()
+    test_a_cpp_tasklet_local_named_like_a_renamed_container_stays_a_local()
