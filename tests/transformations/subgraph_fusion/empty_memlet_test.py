@@ -126,7 +126,51 @@ def test_an_ordering_edge_into_the_intermediate_is_not_fused():
     assert not fusion.can_be_applied(chain.sdfg, fusion.subgraph_view(chain.sdfg))
 
 
+def test_tasklets_without_inputs_fuse():
+    """Inner empty memlets (an entry into a tasklet that reads nothing) keep their place inside the fused map."""
+    sdfg = dace.SDFG("empty_memlet_inner")
+    sdfg.add_array("C", [N], dace.float64)
+    sdfg.add_transient("B", [N], dace.float64)
+    state = sdfg.add_state("chain")
+    b = state.add_access("B")
+    first = state.add_mapped_tasklet(
+        "first", {"i": "0:N"}, {}, "b = i", {"b": dace.Memlet("B[i]")}, external_edges=True, output_nodes={"B": b}
+    )
+    second = state.add_mapped_tasklet(
+        "second",
+        {"i": "0:N"},
+        {"b": dace.Memlet("B[i]")},
+        "c = 2 * b",
+        {"c": dace.Memlet("C[i]")},
+        external_edges=True,
+        input_nodes={"B": b},
+    )
+    sdfg.validate()
+    fusion = SubgraphFusion()
+    fusion.setup_match(SubgraphView(state, [*Chain.scope(first), b, *Chain.scope(second)]), sdfg.cfg_id, 0)
+    assert fusion.can_be_applied(sdfg, fusion.subgraph_view(sdfg))
+    fusion.apply(sdfg)
+    sdfg.validate()
+
+    c = np.zeros(17)
+    sdfg(C=c, N=17)
+    np.testing.assert_allclose(c, 2 * np.arange(17))
+
+
+def test_a_dynamic_map_range_input_is_not_fused():
+    """A dynamic map range connector names no data the fused map would carry: the fusion declines."""
+    chain = Chain("empty_memlet_dynamic_range")
+    chain.sdfg.add_scalar("lim", dace.int64)
+    entry = chain.second[1]
+    entry.add_in_connector("lim")
+    chain.state.add_edge(chain.state.add_read("lim"), None, entry, "lim", dace.Memlet("lim[0]"))
+    fusion = chain.fuse()
+    assert not fusion.can_be_applied(chain.sdfg, fusion.subgraph_view(chain.sdfg))
+
+
 if __name__ == "__main__":
     test_an_ordering_edge_into_both_maps_orders_the_fused_map_once()
     test_an_ordering_edge_out_of_a_map_follows_the_fused_map()
     test_an_ordering_edge_into_the_intermediate_is_not_fused()
+    test_tasklets_without_inputs_fuse()
+    test_a_dynamic_map_range_input_is_not_fused()

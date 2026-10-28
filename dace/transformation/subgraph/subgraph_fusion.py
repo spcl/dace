@@ -82,9 +82,17 @@ def same_connector(in_conn: str | None, out_conn: str | None) -> bool:
 
 
 def add_ordering_edge(graph: SDFGState, src: nodes.Node, dst: nodes.Node) -> None:
-    """Orders ``dst`` after ``src`` with an empty memlet, unless one already does."""
-    if not any(e.data.is_empty() for e in graph.edges_between(src, dst)):
+    """Orders ``dst`` after ``src`` with an empty memlet, unless an edge already does."""
+    if not graph.edges_between(src, dst):
         graph.add_nedge(src, dst, Memlet())
+
+
+def orders_an_intermediate(
+    graph: SDFGState, map_entries: list[nodes.MapEntry], map_exits: list[nodes.MapExit], intermediate_nodes
+) -> bool:
+    """Whether an empty memlet from a fused map's exit orders an intermediate node after the whole map; inside the
+    fused map nothing could. One from an intermediate node into a map entry is kept per iteration (see ``fuse``)."""
+    return any(e.data.is_empty() and e.src in map_exits for n in intermediate_nodes for e in graph.in_edges(n))
 
 
 @make_properties
@@ -192,6 +200,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         if not all(entry.schedule == schedule for entry in map_entries):
             return False
 
+        # 1.4 a dynamic map range input (a connector other than IN_x) has no counterpart the fused map would keep
+        if any(
+            e.dst_conn is not None and not e.dst_conn.startswith("IN_")
+            for entry in map_entries
+            for e in graph.in_edges(entry)
+        ):
+            return False
+
         # 2. check intermediate feasiblility
         # see map_fusion.py for similar checks
         # with the restrictions below being more relaxed
@@ -204,9 +220,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             return False
         in_nodes, intermediate_nodes, out_nodes = node_config
 
-        # An empty memlet from a map's exit into an intermediate node orders it after the whole map; inside the fused
-        # map nothing could. One from an intermediate node into a map entry is kept per iteration (see ``fuse``).
-        if any(e.data.is_empty() and e.src in map_exits for n in intermediate_nodes for e in graph.in_edges(n)):
+        if orders_an_intermediate(graph, map_entries, map_exits, intermediate_nodes):
             return False
 
         # A map output that flows straight into an enclosing scope's exit has no container to fuse through.
@@ -959,6 +973,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # See function documentation for an explanation of these variables
         node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph, map_entries)
         (in_nodes, intermediate_nodes, out_nodes) = node_config
+        # Callers that skip ``can_be_applied`` (``CompositeFusion`` after ``StencilTiling``) leave the graph unchanged
+        if orders_an_intermediate(graph, map_entries, map_exits, intermediate_nodes):
+            return
 
         if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
             # Fusion would leave ordering edges that re-enter the fused maps and
@@ -1066,13 +1083,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
             for edge in graph.out_edges(map_entry):
                 # special case: for nodes that have no data connections
-                if edge.data.is_empty():
+                if not edge.src_conn:
                     self.copy_edge(graph, edge, new_src=global_map_entry)
 
             ######################################
 
             for edge in graph.in_edges(map_exit):
-                if edge.data.is_empty():
+                if not edge.dst_conn:
                     # no destination connector, path ends here.
                     self.copy_edge(graph, edge, new_dst=global_map_exit)
                     continue
@@ -1378,11 +1395,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 # Find existing outer access nodes
                 inode, onode = None, None
                 for e in graph.in_edges(global_map_entry):
-                    if isinstance(e.src, nodes.AccessNode) and dname == e.src.data:
+                    if not e.data.is_empty() and isinstance(e.src, nodes.AccessNode) and dname == e.src.data:
                         inode = e.src
                         break
                 for e in graph.out_edges(global_map_exit):
-                    if isinstance(e.dst, nodes.AccessNode) and dname == e.dst.data:
+                    if not e.data.is_empty() and isinstance(e.dst, nodes.AccessNode) and dname == e.dst.data:
                         onode = e.dst
                         break
 
