@@ -154,6 +154,38 @@ def test_removing_a_trivial_map_keeps_the_order_its_empty_edges_held():
     assert networkx.has_path(state._nx, read, last), "the read of A[0] no longer precedes its overwrite"
 
 
+def data_ordered_trivial_map_sdfg():
+    """``t = 2 * u`` (``first``), then a one-iteration map whose ``use`` reads ``t`` and whose ``bump`` updates ``u``
+    in place. Only the map entry orders ``bump`` after ``first``'s read of ``u``: ``bump`` takes no input from ``t``
+    (warpx_boris_push on GPU, whose ``uz_p`` read the updated ``uz``)."""
+    sdfg = dace.SDFG("trivial_map_data_ordering")
+    for name in ("u", "t", "b"):
+        sdfg.add_array(name, [1], dace.float64)
+    state = sdfg.add_state()
+    u_in = state.add_read("u")
+    first = state.add_tasklet("first", {"x"}, {"y"}, "y = 2 * x")
+    t = state.add_access("t")
+    state.add_edge(u_in, None, first, "x", dace.Memlet("u[0]"))
+    state.add_edge(first, "y", t, None, dace.Memlet("t[0]"))
+    entry, exit_ = state.add_map("map", dict(i="0:1"))
+    use = state.add_tasklet("use", {"x"}, {"y"}, "y = x + 1")
+    state.add_memlet_path(t, entry, use, dst_conn="x", memlet=dace.Memlet("t[0]"))
+    state.add_memlet_path(use, exit_, state.add_write("b"), src_conn="y", memlet=dace.Memlet("b[0]"))
+    bump = state.add_tasklet("bump", {"x"}, {"y"}, "y = x + 1")
+    state.add_memlet_path(u_in, entry, bump, dst_conn="x", memlet=dace.Memlet("u[0]"))
+    state.add_memlet_path(bump, exit_, state.add_write("u"), src_conn="y", memlet=dace.Memlet("u[0]"))
+    sdfg.validate()
+    return sdfg, state, first, bump
+
+
+def test_removing_a_trivial_map_keeps_the_order_its_data_inputs_held():
+    sdfg, state, first, bump = data_ordered_trivial_map_sdfg()
+    assert networkx.has_path(state._nx, first, bump)
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    sdfg.validate()
+    assert networkx.has_path(state._nx, first, bump), "the read of u no longer precedes its in-place update"
+
+
 class TrivialMapEliminationTest(unittest.TestCase):
     """
     Tests the case where the map has an empty input edge

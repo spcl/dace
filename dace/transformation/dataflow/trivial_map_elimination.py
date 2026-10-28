@@ -80,6 +80,7 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
         ordering = self.ordering_pairs(graph, map_entry, map_exit)
+        conflicts = scope_conflicts(graph, map_entry, map_exit)
 
         # Redirect map entry's out edges
         write_only_map = True
@@ -112,6 +113,11 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
 
         # Remove map
         graph.remove_nodes_from([map_entry, map_exit])
+        # The scope ordered its whole body after every input and before every output; where a body node conflicts
+        # with what precedes an input (or follows an output), that order now needs an edge of its own
+        for src, dst in conflicts:
+            if not dace.graphlib.has_path(graph._nx, src, dst):
+                graph.add_edge(src, None, dst, None, Memlet())
 
     @staticmethod
     def ordering_pairs(graph, map_entry, map_exit):
@@ -139,3 +145,53 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
         return [
             (src, dst) for src, dst in pairs if src not in (map_entry, map_exit) and dst not in (map_entry, map_exit)
         ]
+
+
+def accessed(graph, node) -> tuple[set[str], set[str]]:
+    """The containers ``node`` reads and writes through its edges."""
+    if isinstance(node, nodes.AccessNode):
+        return ({node.data} if graph.out_degree(node) else set()), ({node.data} if graph.in_degree(node) else set())
+    reads = {e.data.data for e in graph.in_edges(node) if e.data.data is not None}
+    writes = {e.data.data for e in graph.out_edges(node) if e.data.data is not None}
+    return reads, writes
+
+
+def reach(graph, node, forward: bool) -> set:
+    """``node`` and every node it reaches (``forward``) or that reaches it."""
+    seen = {node}
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        edges = graph.out_edges(current) if forward else graph.in_edges(current)
+        for edge in edges:
+            other = edge.dst if forward else edge.src
+            if other not in seen:
+                seen.add(other)
+                stack.append(other)
+    return seen
+
+
+def scope_conflicts(graph, map_entry, map_exit) -> list:
+    """``(src, dst)`` orders the scope imposes through its data edges that touch a conflicting container: an input's
+    producer before a body node that writes what the producer's ancestors read (or touches what they write), and a
+    body node before an output's consumer that touches what it writes (or writes what it reads)."""
+    body = [n for n in graph.scope_subgraph(map_entry).nodes() if n is not map_entry and n is not map_exit]
+    body_access = {n: accessed(graph, n) for n in body}
+    pairs = []
+    for src in dict.fromkeys(e.src for e in graph.in_edges(map_entry) if not e.data.is_empty()):
+        reads, writes = touched(graph, src, forward=False)
+        pairs += [(src, n) for n, (r, w) in body_access.items() if w & (reads | writes) or r & writes]
+    for dst in dict.fromkeys(e.dst for e in graph.out_edges(map_exit) if not e.data.is_empty()):
+        reads, writes = touched(graph, dst, forward=True)
+        pairs += [(n, dst) for n, (r, w) in body_access.items() if w & (reads | writes) or r & writes]
+    return list(dict.fromkeys(pairs))
+
+
+def touched(graph, node, forward: bool) -> tuple[set[str], set[str]]:
+    """The containers read and written by ``node`` and what it reaches (``forward``) or what reaches it."""
+    reads, writes = set(), set()
+    for other in reach(graph, node, forward):
+        r, w = accessed(graph, other)
+        reads |= r
+        writes |= w
+    return reads, writes
