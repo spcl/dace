@@ -917,7 +917,11 @@ namespace dace
         {
             return std::hypot(a, b);
         }
-
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T rand(const T& min, const T& max)
+        {
+            return static_cast<T>(min + (max - min) * (static_cast<double>(std::rand()) / RAND_MAX));
+        }
 #ifdef __CUDACC__
         // The templates above call ``std::NAME`` directly, whose float/double/long double overloads
         // tie for a half -- and codegen spells ``x ** 0.5`` as ``dace::math::sqrt``. These exact
