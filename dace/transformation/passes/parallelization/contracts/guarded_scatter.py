@@ -286,6 +286,9 @@ class ScatterToGuardedMaps(ppl.Pass):
                 # to the sequential branch.
                 loop_idx = _scatter_idx_arrays_for_loop(loop, owner_sdfg)
                 loop_idx_syms = [dup_count_syms[i] for i in loop_idx if i in dup_count_syms]
+                # A hoisted guard binds its count in the root; a dispatcher in a nested owner reads it passed down
+                for sym in loop_idx_syms:
+                    pass_symbol_down_to(owner_sdfg, sdfg, sym)
                 loop_idx_syms += [sliced_dup_syms[(id(loop), i)] for i in loop_idx if (id(loop), i) in sliced_dup_syms]
                 if loop_idx_syms:
                     cond = " + ".join(loop_idx_syms) + " > 0"
@@ -485,6 +488,17 @@ def nested_write_is_accumulation(nsdfg_node: nodes.NestedSDFG, out_conn: str) ->
     return bool(writes) and all(not indirect_write_needs_injectivity(m) for m in writes)
 
 
+def used_outside(sdfg: SDFG, region: LoopRegion) -> set[str]:
+    """The containers ``sdfg``'s states outside ``region`` access, and its interstate edges outside it read."""
+    inside = set(region.all_control_flow_blocks())
+    names = {n.data for st in sdfg.states() if st not in inside for n in st.data_nodes()}
+    inner = set(region.all_interstate_edges())
+    names |= {
+        m.data for e in sdfg.all_interstate_edges() if e not in inner for m in e.data.get_read_memlets(sdfg.arrays)
+    }
+    return names
+
+
 def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> set[str]:
     """Return the scatter index-array names driving an indirect WRITE in ``region``.
 
@@ -528,25 +542,39 @@ def _scatter_idx_targets_for_loop(
     """
     loop_var = region.loop_variable
     bindings = _collect_indirect_bindings(region, sdfg)
+    chained = chained_bindings(region, sdfg, bindings)
     loop_arrays: dict[str, set[str]] = {}
     dim_nodes_by_arr: dict[str, list[ast.AST]] = {}
+    outside: set[str] | None = None
     for state in region.states():
         for node in state.data_nodes():
             if state.in_degree(node) == 0:
                 continue
             desc = sdfg.arrays.get(node.data)
-            if desc is None or desc.transient:
+            if desc is None:
                 continue
+            if desc.transient:
+                # A transient the loop alone uses is iteration scratch; one used outside it is a scatter target
+                if outside is None:
+                    outside = used_outside(sdfg, region)
+                if node.data not in outside:
+                    continue
             for e in state.in_edges(node):
                 if e.data is None or e.data.subset is None or not indirect_write_needs_injectivity(e.data):
                     continue
                 # Form 1: interstate-bound index symbol referenced in the write subset.
                 for sym in e.data.subset.free_symbols:
-                    binding = bindings.get(str(sym))
-                    if binding is not None:
-                        arr, dim_nodes = binding
-                        loop_arrays.setdefault(arr, set()).add(node.data)
-                        dim_nodes_by_arr.setdefault(arr, dim_nodes)
+                    chain = [str(sym)]
+                    if str(sym) not in bindings and str(sym) in chained:
+                        outer, inner = chained[str(sym)]
+                        loop_arrays.setdefault(outer, set()).add(node.data)
+                        chain = [inner]
+                    for name in chain:
+                        binding = bindings.get(name)
+                        if binding is not None:
+                            arr, dim_nodes = binding
+                            loop_arrays.setdefault(arr, set()).add(node.data)
+                            dim_nodes_by_arr.setdefault(arr, dim_nodes)
                 # Form 2: index array inline-subscripted inside the write subset.
                 for arr, dim_nodes in _inline_indirect_idx_arrays(e.data.subset, loop_var, sdfg).items():
                     loop_arrays.setdefault(arr, set()).add(node.data)
@@ -1112,6 +1140,33 @@ def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> dict[str, tupl
                 if resolved is not None:
                     bindings[node.data] = resolved
     return bindings
+
+
+def chained_bindings(
+    region: LoopRegion, sdfg: SDFG, bindings: dict[str, tuple[str, list[ast.AST]]]
+) -> dict[str, tuple[str, str]]:
+    """``sym -> (outer, inner)`` for each ``sym := outer[inner]`` of ``region``'s interstate edges where ``outer`` is a
+    1-D array and ``inner`` a symbol ``bindings`` binds to ``idx[f(loop_var)]`` (vloc_psi_k_acc's
+    ``psic[nl[igk[i]]]``): the slot is injective when ``idx`` is over the loop and ``outer`` is over all of it."""
+    chained: dict[str, tuple[str, str]] = {}
+    for e in region.all_interstate_edges():
+        for lhs, rhs in (e.data.assignments or {}).items():
+            if lhs in bindings:
+                continue
+            try:
+                tree = ast.parse(str(rhs), mode="eval").body
+            except (SyntaxError, ValueError, TypeError):
+                continue
+            while isinstance(tree, ast.Call) and not tree.keywords and len(tree.args) == 1:
+                tree = tree.args[0]  # a cast around the read
+            if not (isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name)):
+                continue
+            desc = sdfg.arrays.get(tree.value.id)
+            if not isinstance(desc, data.Array) or len(desc.shape) != 1:
+                continue
+            if isinstance(tree.slice, ast.Name) and tree.slice.id in bindings:
+                chained[lhs] = (tree.value.id, tree.slice.id)
+    return chained
 
 
 def resolve_staged_scalar_source(rhs: str, region: LoopRegion, sdfg: SDFG) -> tuple[str, list[ast.AST]] | None:

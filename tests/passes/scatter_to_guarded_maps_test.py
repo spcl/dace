@@ -847,3 +847,29 @@ if __name__ == "__main__":
     test_the_contract_waives_only_the_scatter_and_a_carried_counter_stays_sequential()
     with pytest.MonkeyPatch.context() as mp:
         test_the_contract_probes_read_each_sdfgs_facts_once(mp)
+
+
+@dace.program
+def chained_scatter_into_a_transient(c: dace.float64[N], nl: dace.int64[N], igk: dace.int64[N], out: dace.float64[N]):
+    buf = np.zeros(N, dtype=np.float64)
+    for i in range(N):
+        buf[nl[igk[i]]] = c[i]
+    out[:] = 2.0 * buf
+
+
+def test_a_transient_scattered_through_an_index_of_an_index_is_guarded_on_both():
+    """vloc_psi_k_acc's ``psic[nl[igk[i]]] = c[i]``: the target is a transient read after the loop, not loop scratch,
+    and the slot is injective when ``igk`` and ``nl`` both are. The parallel branch matches the loop on permutations,
+    the sequential one on a repeated slot."""
+    sdfg = chained_scatter_into_a_transient.to_sdfg(simplify=True)
+    assert {"nl", "igk"} <= set(detect_scatter_idx_arrays(sdfg))
+    canonicalize(sdfg)
+    n = 16
+    c = np.random.default_rng(0).random(n)
+    for nl, igk in ((_make_permutation(n, 1), _make_permutation(n, 2)), (np.zeros(n, np.int64), np.arange(n))):
+        expected = np.zeros(n)
+        for i in range(n):
+            expected[nl[igk[i]]] = c[i]
+        out = np.zeros(n)
+        sdfg(c=c, nl=nl.astype(np.int64), igk=igk.astype(np.int64), out=out, N=n)
+        assert np.allclose(out, 2.0 * expected)
