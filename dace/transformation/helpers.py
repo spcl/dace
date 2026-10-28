@@ -1093,7 +1093,12 @@ def state_fission(
         # Only DATA in-edges must be gone: everything producing into a boundary node moved to the
         # first state. An empty memlet carries no data, it orders one node after another, and two
         # boundary nodes ordered that way both stay in the second state -- so their ordering edge
-        # legitimately survives here (``__return`` before the arrays it aliases, in spmv).
+        # legitimately survives here (``__return`` before the arrays it aliases, in spmv). A copy from
+        # another boundary node (``offsets -> offsets_index`` with both read on) ran in the first
+        # state already, so the second state's copy of it is dropped.
+        for iedge in list(second_state.in_edges(second_state_boundary_node)):
+            if not iedge.data.is_empty() and iedge.src in boundary_nodes:
+                second_state.remove_edge(iedge)
         assert all(iedge.data.is_empty() for iedge in second_state.in_edges(second_state_boundary_node))
         first_state_boundary_node._out_connectors.clear()
         second_state_boundary_node._in_connectors.clear()

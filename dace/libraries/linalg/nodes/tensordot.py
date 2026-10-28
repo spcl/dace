@@ -211,6 +211,15 @@ class ExpandTTGT(ExpandTransformation):
         state.add_edge(right_anode, None, right_vnode, "views", dace.Memlet.from_array(right_tt, right_tt_arr))
 
         tasklet = Gemm("_GEMM_", cin=False, transA=transA, transB=transB)
+        # Created at expansion, past implementation selection: on device operands from host code it is a vendor GEMM,
+        # not the pure expansion, whose host maps cannot touch device memory
+        from dace.codegen.common import get_gpu_backend
+        from dace.sdfg.scope import is_devicelevel_gpu
+
+        if not is_devicelevel_gpu(parent_sdfg, parent_state, node) and any(
+            arr.storage is dace.dtypes.StorageType.GPU_Global for arr in (left_arr, right_arr, out_arr)
+        ):
+            tasklet.implementation = "hipBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
         state.add_edge(left_vnode, None, tasklet, "_a", dace.Memlet.from_array(left_vname, left_view))
         state.add_edge(right_vnode, None, tasklet, "_b", dace.Memlet.from_array(right_vname, right_view))
 

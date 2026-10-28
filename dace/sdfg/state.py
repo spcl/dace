@@ -1125,11 +1125,14 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Add scalar arguments from free symbols
         defined_syms = defined_syms or self.defined_symbols()
+        # A container a tasklet names in its code is a used symbol too; one with an access node here was decided above
         scalar_args.update(
             {
                 k: dt.Scalar(defined_syms[k]) if k in defined_syms else sdfg.arrays[k]
                 for k in self.used_symbols(all_symbols=False)
-                if not k.startswith("__dace") and k not in sdfg.constants and (k in defined_syms or k in sdfg.arrays)
+                if not k.startswith("__dace")
+                and k not in sdfg.constants
+                and (k in defined_syms or (k in sdfg.arrays and k not in descs_with_nodes))
             }
         )
 

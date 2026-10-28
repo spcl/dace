@@ -270,6 +270,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 if sdfg.arrays[edge.src.data].storage != sdfg.arrays[candidate].storage:
                     candidates.remove(candidate)
                     continue
+                # The promoted symbol is read on host interstate edges, which cannot read device memory
+                if not dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, sdfg.arrays[edge.src.data].storage):
+                    candidates.remove(candidate)
+                    continue
                 # If input is array, ensure it is not a stream
                 if isinstance(sdfg.arrays[edge.src.data], dt.Stream):
                     candidates.remove(candidate)
