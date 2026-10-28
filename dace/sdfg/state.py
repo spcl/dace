@@ -3371,7 +3371,7 @@ class AbstractControlFlowRegion(
                         yield item.sdfg
                         stack.append((iter(item.sdfg.nodes()), None))
             elif isinstance(item, SDFGState):
-                if recursive:
+                if recursive and item.number_of_nodes() > 0:
                     stack.append((iter(item.nodes()), item))
             elif isinstance(item, AbstractControlFlowRegion):
                 yield item
