@@ -895,6 +895,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 )
                 return
 
+            # The count of a non-blocking pop is written by the pop itself (see ``_stream_try_pop``)
+            if (
+                isinstance(src_node, nodes.AccessNode)
+                and isinstance(src_nodedesc, data.Stream)
+                and uconn == data.Stream.NUM_POPPED_CONNECTOR
+            ):
+                return
+
             # Writing from/to a stream
             if isinstance(sdfg.arrays[memlet.data], data.Stream) or (
                 isinstance(src_node, nodes.AccessNode) and isinstance(src_nodedesc, data.Stream)
@@ -919,6 +927,16 @@ class CPUCodeGen(TargetCodeGenerator):
                     stream_expr = cpp.cpp_offset_expr(src_nodedesc, stream_subset)
                     array_expr = cpp.cpp_offset_expr(dst_nodedesc, array_subset)
                     assert functools.reduce(lambda a, b: a * b, src_nodedesc.shape, 1) == 1
+                    if memlet.dynamic:
+                        stream.write(
+                            self._stream_try_pop(
+                                sdfg, dfg, src_node, src_nodedesc, dst_node, dst_nodedesc, array_subset
+                            ),
+                            cfg,
+                            state_id,
+                            [src_node, dst_node],
+                        )
+                        return
                     stream.write(
                         f"{self.ptr(src_node.data, src_nodedesc, sdfg)}.pop(&{self.ptr(dst_node.data, dst_nodedesc, sdfg)}[{array_expr}], {cpp.sym2cpp(array_subset.num_elements())});",
                         cfg,
@@ -1480,6 +1498,42 @@ class CPUCodeGen(TargetCodeGenerator):
 
         return result
 
+    def _stream_try_pop(
+        self,
+        sdfg: SDFG,
+        dfg: StateSubgraphView,
+        src_node: nodes.AccessNode,
+        src_desc: data.Stream,
+        dst_node: nodes.AccessNode,
+        dst_desc: data.Data,
+        array_subset: subsets.Subset,
+    ) -> str:
+        """The code of a dynamic (non-blocking) copy from a stream into ``dst_node``.
+
+        It pops up to ``array_subset`` elements and leaves them pending in the stream until
+        ``task_done``, the protocol consume termination relies on. The count is assigned to the
+        target of the ``num_popped`` edge out of ``src_node``, if there is one.
+        """
+        stream_ptr = self.ptr(src_node.data, src_desc, sdfg)
+        dst_ptr = self.ptr(dst_node.data, dst_desc, sdfg)
+        num_elements = array_subset.num_elements()
+        if isinstance(dst_desc, data.Scalar):
+            target = dst_ptr
+        else:
+            target = f"{dst_ptr}[{cpp.cpp_offset_expr(dst_desc, array_subset)}]"
+        if num_elements == 1:
+            pop = f"{stream_ptr}.pop_try({target}, true)"
+        else:
+            pop = f"{stream_ptr}.pop_try(&{target}, {cpp.sym2cpp(num_elements)}, true)"
+        count_edge = next((e for e in dfg.out_edges(src_node) if e.src_conn == data.Stream.NUM_POPPED_CONNECTOR), None)
+        if count_edge is None:
+            return f"{pop};"
+        count_desc = sdfg.arrays[count_edge.data.data]
+        count_ptr = self.ptr(count_edge.data.data, count_desc, sdfg)
+        if not isinstance(count_desc, data.Scalar):
+            count_ptr = f"{count_ptr}[{cpp.cpp_offset_expr(count_desc, count_edge.data.subset)}]"
+        return f"{count_ptr} = {pop};"
+
     def memlet_stream_ctor(self, sdfg: SDFG, memlet: mmlt.Memlet) -> str:
         stream = sdfg.arrays[memlet.data]
         return memlet.data + (
@@ -1668,7 +1722,16 @@ class CPUCodeGen(TargetCodeGenerator):
     ) -> None:
         cdtype = src_node.out_connectors[edge.src_conn]
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
-            pass
+            # A dynamic memlet hands the connector the stream object. Python tasklets do not need it,
+            # since their writes become pushes on the stream itself.
+            if (
+                edge.data.dynamic
+                and isinstance(src_node, nodes.Tasklet)
+                and src_node.language != dtypes.Language.Python
+            ):
+                callsite_stream.write(
+                    f"auto &{edge.src_conn} = {self.memlet_stream_ctor(sdfg, edge.data)};", cfg, state_id, src_node
+                )
         elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]
 
@@ -2256,7 +2319,7 @@ class CPUCodeGen(TargetCodeGenerator):
         )
 
         result.write(
-            "dace::Consume<{chunksz}>::template consume{cond}({stream_in}, "
+            "dace::Consume<{chunksz}>::consume{cond}({stream_in}, "
             "{num_pes}, {condition}"
             "[&]({pe_type} {pe_index}, {element_or_chunk}) {{".format(
                 chunksz=node.consume.chunksize,

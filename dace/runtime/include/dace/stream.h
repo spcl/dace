@@ -69,14 +69,26 @@ namespace dace {
     template <typename T, bool ALIGNED = false>
     class Stream;
 
-    // Performance can be increased by removing qsize, but this is necessary for
-    // consume to work for now.
+    // ``m_elements`` counts elements pushed and not yet retired, for consume termination. A push counts
+    // before it enqueues, and a pop with ``noupdate`` leaves its elements counted until ``task_done``,
+    // so the count reaches zero only once nothing is queued and no consumer task is running, and then
+    // stays there: only a running task pushes.
     template <typename T, bool ALIGNED>
     class Stream {
     protected:
         BlockingConcurrentQueue<T> m_queue;
     public:
         std::atomic<unsigned int> m_elements;
+
+        // Consume protocol: the number of elements queued or still being processed
+        inline unsigned int pending() const {
+            return m_elements.load(std::memory_order_acquire);
+        }
+        // Consume protocol: retires ``count`` elements popped with ``noupdate``
+        inline void task_done(size_t count) {
+            if (count > 0)
+                m_elements.fetch_sub(count, std::memory_order_release);
+        }
 
         Stream(size_t capacity = 6 * ConcurrentQueueDefaultTraits::BLOCK_SIZE) :
             m_queue(BlockingConcurrentQueue<T>(capacity)), m_elements(0) {}
@@ -111,46 +123,49 @@ namespace dace {
         }
 
         inline void push(T const& val) {
-            m_queue.enqueue(val);
             m_elements++;
+            m_queue.enqueue(val);
         }
         inline void push(T&& val) {
-            m_queue.enqueue(val);
             m_elements++;
+            m_queue.enqueue(val);
         }
         inline void push(const T* valarr, int size) {
-            m_queue.enqueue_bulk(valarr, size);
             m_elements += size;
+            m_queue.enqueue_bulk(valarr, size);
         }
 
         template <bool A>
         void push(const ArrayStreamView<T, A>& s) {
-            m_queue.enqueue_bulk(s.m_array, s.m_elements);
             m_elements += s.m_elements;
+            m_queue.enqueue_bulk(s.m_array, s.m_elements);
         }
 
         template <bool A>
         void push(const ArrayStreamViewThreadlocal<T, A>& s) {
-            m_queue.enqueue_bulk(s.m_array, s.m_elements);
             m_elements += s.m_elements;
+            m_queue.enqueue_bulk(s.m_array, s.m_elements);
         }
 
         inline bool push_try(T const& val) {
+            m_elements++;
             bool result = m_queue.try_enqueue(val);
-            if (result)
-                m_elements++;
+            if (!result)
+                m_elements--;
             return result;
         }
         inline bool push_try(T&& val) {
+            m_elements++;
             bool result = m_queue.try_enqueue(val);
-            if (result)
-                m_elements++;
+            if (!result)
+                m_elements--;
             return result;
         }
         inline bool push_try(const T* valarr, int size) {
+            m_elements += size;
             bool result = m_queue.try_enqueue_bulk(valarr, size);
-            if (result)
-                m_elements += size;
+            if (!result)
+                m_elements -= size;
             return result;
         }
 

@@ -142,6 +142,17 @@ required:
                 title: Library extension
                 description: File extension of shared libraries.
 
+            lower_consume:
+                type: bool
+                default: true
+                title: Lower consume scopes to maps
+                description: >
+                    If set to true, codegen rewrites every consume scope into a map over its
+                    processing elements, each of which loops popping chunks from the stream
+                    until the quiescence condition holds. The scope then follows map code
+                    generation on every target. If false, CPU consume scopes use the dedicated
+                    ``dace::Consume`` runtime path.
+
             indentation_spaces:
                 type: int
                 default: 4

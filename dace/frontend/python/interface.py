@@ -283,22 +283,34 @@ class consume:
         of processing elements, who will try to pop elements from the input
         stream until a given quiescence condition is reached.
 
+        Without a condition, consumption ends when nothing is queued and no
+        task is running (a running task may still push). A condition is a stop
+        condition: each processing element stops as soon as it holds and keeps
+        waiting for elements otherwise. Data the condition reads may be written
+        by other processing elements at the same time; that read is relaxed (it
+        may see an older value) and only decides when an element stops.
+
         :param stream: The stream to pop from.
         :param processing_elements: The number of processing elements to use.
         :param condition: A custom condition for stopping to consume. If None,
-                          loops until ``stream`` is empty.
+                          consumes until ``stream`` is empty and no task runs.
         """
         self.stream = stream
         self.pes = processing_elements  # Ignored in Python mode
-        self.condition = condition or (lambda: len(stream) > 0)
+        self.condition = condition
 
     def __iter__(self) -> Generator[T, None, None]:
         """
-        Consume stream (pop elements) until condition is met, or until the
+        Consume stream (pop elements) until the condition holds, or until the
         stream is empty, if no condition is given.
         """
-        while self.condition():
-            yield self.stream.pop()
+        if self.condition is None:
+            while len(self.stream) > 0:
+                yield self.stream.pop()
+            return
+        while not self.condition():
+            if len(self.stream) > 0:
+                yield self.stream.pop()
 
 
 class TaskletMetaclass(type):
