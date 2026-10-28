@@ -11,13 +11,13 @@ a stage runs each iteration in the thread that owns the elements it writes inste
 
 import copy
 
-from dace import SDFG, SDFGState, dtypes, properties
+from dace import SDFG, SDFGState, dtypes, properties, symbolic
 from dace.libraries.standard.nodes import ComputePersistentKernelRange
 from dace.libraries.standard.nodes.compute_persistent_kernel_range import NBLK_CONNECTOR
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -25,6 +25,7 @@ from dace.transformation.passes.megakernel.discovery import (
     TARGETS,
     MegakernelChain,
     Target,
+    bound_symbols,
     find_chains,
     is_kernel,
     kernels_in,
@@ -51,13 +52,16 @@ def nested_blocks(blocks: list[ControlFlowBlock]) -> list[ControlFlowBlock]:
 
 
 def assigned_symbols(chain: MegakernelChain) -> set[str]:
-    """The symbols ``chain`` assigns: its loop variables and the assignments on its interstate edges."""
-    blocks = chain.blocks
-    edges = [e for b in blocks[:-1] for e in chain.region.out_edges(b)]
-    regions = [b for b in nested_blocks(blocks) if isinstance(b, ControlFlowRegion)]
-    edges += [e for region in regions for e in region.edges()]
-    assigned = {r.loop_variable for r in regions if isinstance(r, LoopRegion) and r.loop_variable}
-    return assigned.union(*(e.data.assignments.keys() for e in edges))
+    """The symbols ``chain`` assigns: on the edges between its blocks, and the loop variables and assignments inside
+    them (conditional branches included)."""
+    between = [e for b in chain.blocks[:-1] for e in chain.region.out_edges(b)]
+    names = set().union(*(e.data.assignments.keys() for e in between))
+    for block in chain.blocks:
+        if isinstance(block, ControlFlowRegion):
+            names |= bound_symbols(block)
+        elif isinstance(block, ConditionalBlock):
+            names = names.union(*(bound_symbols(branch) for cond, branch in block.branches))
+    return names
 
 
 def used_outside_chain(chain: MegakernelChain) -> set[str]:
@@ -81,7 +85,7 @@ def keep_shared_memory_outside(host: SDFGState, node: nodes.NestedSDFG, target: 
     sdfg, body = host.sdfg, node.sdfg
     between_stages = {n.data for state in body.states() for n in state.data_nodes() if state.entry_node(n) is None}
     for name, desc in list(body.arrays.items()):
-        stage_shared = name in between_stages and target.shares(desc)
+        stage_shared = name in between_stages and target.shares(desc, scoped=False)
         if desc.transient and (stage_shared or desc.storage == dtypes.StorageType.GPU_Global):
             sdfg.add_datadesc(name, copy.deepcopy(desc))
             desc.transient = False
@@ -142,9 +146,28 @@ def launch_cooperatively(host: SDFGState, node: nodes.NestedSDFG, handle: str, b
 
 def launch_team(host: SDFGState, node: nodes.NestedSDFG, handle: str, num_threads: int) -> None:
     """Wraps ``node`` into a ``CPU_Persistent`` map: one OpenMP team (``omp parallel``) runs every stage. The map's
-    range is not read; the team has ``num_threads`` threads, or OpenMP's default for 0."""
+    parameter is the thread index; its range is not read. The team has ``num_threads`` threads, or OpenMP's default
+    for 0; every thread reads the team size into ``THREAD_COUNT`` when the body starts."""
     entry, exit_ = host.add_map(handle, {THREAD_INDEX: "0:1"}, schedule=dtypes.ScheduleType.CPU_Persistent)
     entry.map.omp_num_threads = num_threads
+    body = node.sdfg
+    body.add_symbol(THREAD_INDEX, dtypes.int64)
+    node.symbol_mapping[THREAD_INDEX] = THREAD_INDEX
+    # Every thread reads its own copy: no barrier orders it
+    size = body.add_scalar(
+        "__mk_team_size", dtypes.int64, transient=True, storage=dtypes.StorageType.CPU_ThreadLocal, find_new_name=True
+    )[0]
+    state = body.add_state_before(body.start_block, f"{handle}_team_size", is_start_block=True)
+    tasklet = state.add_tasklet(
+        "team_size",
+        {},
+        {"size"},
+        "size = omp_get_num_threads();",
+        language=dtypes.Language.CPP,
+        code_global="#include <omp.h>",
+    )
+    state.add_edge(tasklet, "size", state.add_write(size), None, Memlet(f"{size}[0]"))
+    body.out_edges(state)[0].data.assignments[THREAD_COUNT] = size
     wrap(host, node, entry, exit_)
 
 
@@ -225,14 +248,18 @@ class MegaKernelOptimization(ppl.Pass):
     def lower_body(self, body: SDFG, target: Target) -> None:
         syncs = InsertGridSyncs(self.device, self.sync_all, small_symbols=self.small_symbols)
         syncs.apply_pass(body, {})
-        owners = syncs.plan.owners if syncs.plan is not None else {}
+        plan = syncs.plan
+        gpu = self.device == dtypes.DeviceType.GPU
+        if plan is not None and plan.owners:
+            # GPU: neighboring threads take neighboring iterations (coalesced). CPU: every thread one contiguous block
+            # of the fastest key dimension (no false sharing)
+            block = 1 if gpu else symbolic.int_ceil(plan.extent(), symbolic.pystr_to_symbolic(THREAD_COUNT))
         for state in body.states():
             for entry in [n for n in state.nodes() if is_kernel(n, state, target)]:
-                if state in owners:
-                    own_stride(body, state, entry, owners[state], syncs.plan, THREAD_INDEX, THREAD_COUNT)
-                elif self.device == dtypes.DeviceType.GPU:
+                if plan is not None and state in plan.owners:
+                    own_stride(body, state, entry, plan.owners[state], plan, THREAD_INDEX, THREAD_COUNT, block)
+                elif gpu:
                     grid_stride(body, state, entry, THREAD_INDEX, THREAD_COUNT, self.small_symbols)
-                else:  # Work-shared by the team, which the stage's barrier (if any) waits for. Static, so that every
-                    # stage over the same range gives a thread the same iterations
+                else:  # Work-shared by the team, which the stage's barrier (if any) waits for
                     entry.map.omp_nowait = True
                     entry.map.omp_schedule = dtypes.OMPScheduleType.Static

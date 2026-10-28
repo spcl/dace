@@ -10,10 +10,10 @@ conditions read only symbols.
 
 from dataclasses import dataclass, field
 
-from dace import SDFG, dtypes, symbolic
+from dace import SDFG, dtypes
 from dace import data as dt
-from dace.properties import CodeBlock
 from dace.sdfg import nodes
+from dace.sdfg.scope import is_in_scope
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -29,16 +29,24 @@ from dace.sdfg.state import (
 @dataclass(frozen=True, slots=True)
 class Target:
     """What one device fuses: the schedule of its kernels, the schedules that put code inside a kernel, the storage
-    a container between kernels may have, and the storage only one thread sees."""
+    a container between kernels may have, the storage only one thread sees, and the storage one thread sees inside
+    a map scope."""
 
     kernel_schedule: dtypes.ScheduleType
     kernel_scopes: frozenset[dtypes.ScheduleType]
     top_level_storage: frozenset[dtypes.StorageType]
     private_storage: frozenset[dtypes.StorageType]
+    scoped_private_storage: frozenset[dtypes.StorageType]
 
-    def shares(self, desc: dt.Data) -> bool:
-        """Whether every thread of the megakernel sees the container ``desc``."""
-        return desc.storage not in self.private_storage
+    def shares(self, desc: dt.Data, scoped: bool) -> bool:
+        """Whether every thread of the megakernel sees the container ``desc``, which only map scopes access if
+        ``scoped``."""
+        return desc.storage not in self.private_storage and not (scoped and desc.storage in self.scoped_private_storage)
+
+    def shared_containers(self, sdfg: SDFG) -> set[str]:
+        """The containers of ``sdfg`` every thread of the megakernel sees."""
+        unscoped = {n.data for state in sdfg.states() for n in state.data_nodes() if state.entry_node(n) is None}
+        return {name for name, desc in sdfg.arrays.items() if self.shares(desc, name not in unscoped)}
 
 
 GPU = Target(
@@ -46,12 +54,15 @@ GPU = Target(
     frozenset(dtypes.GPU_SCHEDULES),
     frozenset({dtypes.StorageType.GPU_Global}),
     frozenset({dtypes.StorageType.Register, dtypes.StorageType.GPU_Shared}),
+    frozenset(),
 )
 CPU = Target(
     dtypes.ScheduleType.CPU_Multicore,
     frozenset(dtypes.CPU_SCHEDULES),
     frozenset(dtypes.StorageType) - {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared},
     frozenset({dtypes.StorageType.CPU_ThreadLocal}),
+    # Declared per iteration of the ``omp for`` it is in; outside every map, once for the team
+    frozenset({dtypes.StorageType.Register}),
 )
 TARGETS = {dtypes.DeviceType.GPU: GPU, dtypes.DeviceType.CPU: CPU}
 
@@ -137,17 +148,22 @@ def uniform(names: set[str], sdfg: SDFG, written: set[str], target: Target) -> b
     )
 
 
-def code_names(code: CodeBlock) -> set[str]:
-    return {str(name) for stmt in code.code for name in symbolic.symbols_in_ast(stmt)}
+def uniform_edges(edges, sdfg: SDFG, written: set[str], target: Target) -> bool:
+    """Whether the interstate ``edges`` read only values that are the same in every thread."""
+    return all(uniform(e.data.read_symbols(), sdfg, written, target) for e in edges)
 
 
-def uniform_edges(region: ControlFlowRegion, sdfg: SDFG, written: set[str], target: Target) -> bool:
-    """Whether every interstate edge of ``region`` assigns values that are the same in every thread."""
-    return all(
-        uniform(symbolic.free_symbols_and_functions(rhs) | symbolic.arrays(rhs), sdfg, written, target)
-        for e in region.edges()
-        for rhs in e.data.assignments.values()
-    )
+def bound_symbols(root: ControlFlowRegion, nested: bool = False) -> set[str]:
+    """The symbols ``root`` binds: loop variables and interstate assignments; with ``nested``, also those of the SDFGs
+    nested in it and their map parameters."""
+    names = set()
+    for region in [root, *root.all_control_flow_regions(recursive=nested)]:
+        if isinstance(region, LoopRegion) and region.loop_variable:
+            names.add(region.loop_variable)
+    names = names.union(*(e.data.assignments.keys() for e in root.all_interstate_edges(recursive=nested)))
+    if nested:
+        names |= {p for n, parent in root.all_nodes_recursive() if isinstance(n, nodes.MapEntry) for p in n.map.params}
+    return names
 
 
 def fusable(block: ControlFlowBlock, sdfg: SDFG, target: Target) -> bool:
@@ -160,11 +176,13 @@ def fusable(block: ControlFlowBlock, sdfg: SDFG, target: Target) -> bool:
     written = written_in(block)
     if isinstance(block, LoopRegion):
         loop_code = [block.loop_condition, block.init_statement, block.update_statement]
-        if not all(uniform(code_names(code), sdfg, written, target) for code in loop_code if code is not None):
+        if not all(uniform(code.get_free_symbols(), sdfg, written, target) for code in loop_code if code is not None):
             return False
         return fusable_region(block, sdfg, written, target)
     if isinstance(block, ConditionalBlock):
-        if not all(cond is None or uniform(code_names(cond), sdfg, written, target) for cond, branch in block.branches):
+        if not all(
+            cond is None or uniform(cond.get_free_symbols(), sdfg, written, target) for cond, b in block.branches
+        ):
             return False
         return all(fusable_region(branch, sdfg, written, target) for cond, branch in block.branches)
     return False
@@ -174,7 +192,7 @@ def fusable_region(region: ControlFlowRegion, sdfg: SDFG, written: set[str], tar
     blocks = linear_chain(region)
     return (
         blocks is not None
-        and uniform_edges(region, sdfg, written, target)
+        and uniform_edges(region.edges(), sdfg, written, target)
         and all(fusable(b, sdfg, target) for b in blocks)
     )
 
@@ -202,12 +220,7 @@ def find_chains(region: ControlFlowRegion, sdfg: SDFG, target: Target = GPU) -> 
 
     for block, alone in blocks_and_breaks:
         written = set().union(*(written_in(b) for b in current), written_in(block))
-        uniform_in = all(
-            uniform(symbolic.free_symbols_and_functions(rhs) | symbolic.arrays(rhs), sdfg, written, target)
-            for e in region.in_edges(block)
-            for rhs in e.data.assignments.values()
-        )
-        if current and (alone or not uniform_in):
+        if current and (alone or not uniform_edges(region.in_edges(block), sdfg, written, target)):
             close()
         if fusable(block, sdfg, target):
             current.append(block)
@@ -222,13 +235,8 @@ def find_chains(region: ControlFlowRegion, sdfg: SDFG, target: Target = GPU) -> 
 
 
 def outside_kernels(node: nodes.Node, state: SDFGState, target: Target) -> bool:
-    """Whether no ``target`` kernel scope encloses ``node`` in ``state``."""
-    scope = state.entry_node(node)
-    while scope is not None:
-        if scope.map.schedule in target.kernel_scopes:
-            return False
-        scope = state.entry_node(scope)
-    return True
+    """Whether no ``target`` kernel scope encloses ``node``."""
+    return not is_in_scope(state.sdfg, state, node, list(target.kernel_scopes))
 
 
 def child_regions(block: ControlFlowBlock, sdfg: SDFG, target: Target) -> list[tuple[ControlFlowRegion, SDFG]]:

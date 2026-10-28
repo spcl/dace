@@ -42,12 +42,9 @@ def host_map_over_kernels(sdfg: SDFG, target: Target) -> tuple[SDFGState, nodes.
 
 
 def inline(state: SDFGState, node: nodes.NestedSDFG) -> bool:
-    inliner = InlineMultistateSDFG()
-    match = {InlineMultistateSDFG.nested_sdfg: node}
-    inliner.setup_match(state.sdfg, state.parent_graph.cfg_id, state.block_id, match, 0, override=True)
-    if not inliner.can_be_applied(state, 0, state.sdfg):
+    if not InlineMultistateSDFG.can_be_applied_to(state.sdfg, nested_sdfg=node):
         return False
-    inliner.apply(state, state.sdfg)
+    InlineMultistateSDFG.apply_to(state.sdfg, verify=False, save=False, nested_sdfg=node)
     return True
 
 
@@ -58,11 +55,7 @@ def lower_host_maps(sdfg: SDFG, target: Target) -> int:
     while (found := host_map_over_kernels(sdfg, target)) is not None:
         state, entry = found
         body = next(n for n in state.scope_children()[entry] if isinstance(n, nodes.NestedSDFG))
-        to_loop = MapToForLoop()
-        to_loop.setup_match(
-            sdfg, state.parent_graph.cfg_id, state.block_id, {MapToForLoop.map_entry: entry}, 0, override=True
-        )
-        loop_node, loop_state = to_loop.apply(state, sdfg)
+        loop_node, loop_state = MapToForLoop.apply_to(sdfg, verify=False, save=False, map_entry=entry)
         if inline(loop_state, body):
             inline(state, loop_node)
         lowered += 1
@@ -102,7 +95,7 @@ def promote_host_scalars(sdfg: SDFG, target: Target) -> None:
     promotion.apply_pass(sdfg, {})
 
 
-def prologue(state: SDFGState, target: Target) -> list[nodes.Tasklet]:
+def prologue(state: SDFGState) -> list[nodes.Tasklet]:
     """The top-level tasklets of ``state`` that compute scalars only from data no kernel of ``state`` writes, in
     dataflow order."""
     found: list[nodes.Tasklet] = []
@@ -114,17 +107,17 @@ def prologue(state: SDFGState, target: Target) -> list[nodes.Tasklet]:
             isinstance(src, nodes.AccessNode) and all(e.src in found for e in state.in_edges(src)) for src in sources
         )
         outputs = [e.dst for e in state.out_edges(node)]
-        host_scalars = all(
+        writes_scalars = all(
             isinstance(dst, nodes.AccessNode) and isinstance(state.sdfg.arrays[dst.data], dt.Scalar) for dst in outputs
         )
-        if inputs_ready and host_scalars:
+        if inputs_ready and writes_scalars:
             found.append(node)
     return found
 
 
 def gatherable(state: SDFGState, target: Target) -> bool:
     """Whether ``state`` holds only kernels, access nodes and its prologue at the top level."""
-    tasklets = set(prologue(state, target))
+    tasklets = set(prologue(state))
     return all(
         state.entry_node(n) is not None
         or isinstance(n, (nodes.AccessNode, nodes.ExitNode))
@@ -140,8 +133,8 @@ def host_scalar_state(state: SDFGState, target: Target) -> bool:
     return (
         bool(tasklets)
         and not has_kernel(state, target)
-        and len(prologue(state, target)) == len(tasklets)
-        and (gatherable(state, target))
+        and len(prologue(state)) == len(tasklets)
+        and gatherable(state, target)
     )
 
 
@@ -217,19 +210,17 @@ def fuse(region: ControlFlowRegion, run: list[SDFGState]) -> list[SDFGState]:
     left."""
     left = [run[0]]
     for state in run[1:]:
-        fusion = StateFusionExtended()
-        match = {StateFusionExtended.first_state: left[-1], StateFusionExtended.second_state: state}
-        fusion.setup_match(region, region.cfg_id, -1, match, 0, override=True)
-        if fusion.can_be_applied(region, 0, region.sdfg):
-            fusion.apply(region, region.sdfg)
+        pair = {"first_state": left[-1], "second_state": state}
+        if StateFusionExtended.can_be_applied_to(region.sdfg, **pair):
+            StateFusionExtended.apply_to(region.sdfg, verify=False, save=False, **pair)
             left[-1] = left[-1] if left[-1] in region.nodes() else state
         else:
             left.append(state)
     return left
 
 
-def move_prologue_before(state: SDFGState, target: Target) -> None:
-    tasklets = prologue(state, target)
+def move_prologue_before(state: SDFGState) -> None:
+    tasklets = prologue(state)
     if tasklets:
         moved = {n for t in tasklets for n in [t, *state.predecessors(t), *state.successors(t)]}
         xfh.state_fission(SubgraphView(state, moved), label=f"{state.label}_prologue")
@@ -292,7 +283,7 @@ class GatherKernelStates(ppl.Pass):
         for region, run in self.runs(sdfg, target):
             fuse(region, run)
         for state in [s for s in sdfg.states() if has_kernel(s, target) and gatherable(s, target)]:
-            move_prologue_before(state, target)
+            move_prologue_before(state)
             move_epilogue_after(state, target)
         removed = before - sum(1 for state in sdfg.states())
         return removed or None

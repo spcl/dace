@@ -19,7 +19,14 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegio
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.megakernel.discovery import TARGETS, Target, is_kernel, linear_chain, states_in
+from dace.transformation.passes.megakernel.discovery import (
+    TARGETS,
+    Target,
+    bound_symbols,
+    is_kernel,
+    linear_chain,
+    states_in,
+)
 from dace.transformation.passes.megakernel.ownership import OwnershipPlan, Signature, plan_ownership
 
 #: Containers a stage reads and writes, those of them it touches off key, and the offsets of those it touches keyed
@@ -44,18 +51,12 @@ def stage_kernels(sdfg: SDFG, target: Target) -> list[tuple[SDFGState, nodes.Map
     return [(s, n) for s in sdfg.states() for n in s.nodes() if is_kernel(n, s, target)]
 
 
-def assigned_in(sdfg: SDFG) -> set[str]:
-    """The symbols ``sdfg`` assigns: loop variables and interstate assignments."""
-    names = {b.loop_variable for b in sdfg.all_control_flow_blocks() if isinstance(b, LoopRegion) and b.loop_variable}
-    return names.union(*(e.data.assignments.keys() for e in sdfg.all_interstate_edges()))
-
-
 def shared_accesses(block: ControlFlowBlock, target: Target, plan: OwnershipPlan | None = None) -> Accesses:
     """The containers that every thread sees which ``block`` reads and writes, those it touches off key (all of them
     outside owned stages), and the signatures of those it touches keyed."""
     reads, writes, off, keyed = set(), set(), set(), set()
     sdfg = block.sdfg
-    shared_names = {name for name, desc in sdfg.arrays.items() if target.shares(desc)}
+    shared_names = target.shared_containers(sdfg)
     for state in states_in(block):
         state_reads, state_writes = state.read_and_write_sets()
         touched = (state_reads | state_writes) & shared_names
@@ -179,8 +180,8 @@ def best_plan(sdfg: SDFG, target: Target, small: set[str]) -> tuple[OwnershipPla
     """The ownership plan with the fewest grid barriers, and its placer: no plan (every stage spread over the whole
     grid), then key dimensions from the most to one; a plan must save a barrier to win."""
     stages = stage_kernels(sdfg, target)
-    shared = {name for name, desc in sdfg.arrays.items() if target.shares(desc)}
-    frozen = assigned_in(sdfg)
+    shared = target.shared_containers(sdfg)
+    frozen = bound_symbols(sdfg)
     rank = max((len(e.map.params) for s, e in stages), default=0)
     best = None
     for plan in [None] + [plan_ownership(stages, k, shared, small, frozen) for k in range(rank, 0, -1)]:
@@ -206,7 +207,7 @@ class InsertGridSyncs(ppl.Pass):
     )
     sync_all = properties.Property(dtype=bool, default=True, desc="Separate every two stages, dependent or not")
     ownership = properties.Property(
-        dtype=bool, default=True, desc="Schedule stages by thread ownership where that saves barriers (GPU only)"
+        dtype=bool, default=True, desc="Schedule stages by thread ownership where that saves barriers"
     )
     small_symbols = properties.SetProperty(
         element_type=str, default=set(), desc="Symbols whose extents stay a loop in every thread"
@@ -242,7 +243,7 @@ class InsertGridSyncs(ppl.Pass):
         for state in list(sdfg.states()):
             if sum(is_kernel(n, state, target) for n in state.nodes()) > 1:
                 split_into_stages(state, target)
-        if self.ownership and not self.sync_all and self.device == dtypes.DeviceType.GPU:
+        if self.ownership and not self.sync_all:
             self._plan, placer = best_plan(sdfg, target, self.small_symbols)
         else:
             placer = GridSyncPlacer(target, self.sync_all)

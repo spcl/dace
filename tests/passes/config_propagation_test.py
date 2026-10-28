@@ -4,10 +4,11 @@
 import os
 
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg.state import ConditionalBlock
-from dace.transformation.passes.config_propagation import ConfigPropagation
+from dace.transformation.passes.config_propagation import ConfigPropagation, apply_invariants, resolve_invariants
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 
 N = dace.symbol("N")
@@ -127,3 +128,61 @@ def test_staged_argument_takes_the_value(tmp_path):
         b = np.zeros_like(a)
         root(a=a, b=b, lvn_only=np.array([lvn_only], dtype=np.int32), istep=np.int32(1), ldeep=0, N=16)
         np.testing.assert_allclose(b, reference(a, lvn_only, 1, 0), rtol=0, atol=0)
+
+
+def test_invariants_resolve_through_chains_and_identities():
+    """A chain resolves to the root symbol; a symbol equal to itself is no cycle, two symbols equal to each other are."""
+    resolved = resolve_invariants({"w_d1": "nlevp1", "nlevp1": "nlev + 1", "nlev": "nlev"})
+    want = {"w_d1": "nlev + 1", "nlevp1": "nlev + 1", "nlev": "nlev"}
+    assert {name: dace.symbolic.pystr_to_symbolic(expr) for name, expr in resolved.items()} == {
+        name: dace.symbolic.pystr_to_symbolic(expr) for name, expr in want.items()
+    }
+    with pytest.raises(ValueError, match="Cyclic"):
+        resolve_invariants({"a": "b + 1", "b": "a + 1"})
+
+
+def nested_fill(depth: int) -> dace.SDFG:
+    """``A[i] = i`` over ``A[w_d1]``, the map ``depth`` nested SDFGs below the returned root."""
+    sdfg = dace.SDFG(f"fill_{depth}")
+    sdfg.add_symbol("w_d1", dace.int32)
+    sdfg.add_array("A", ["w_d1"], dace.float64)
+    state = sdfg.add_state()
+    if depth == 0:
+        state.add_mapped_tasklet("fill", {"i": "0:w_d1"}, {}, "a = i", {"a": dace.Memlet("A[i]")}, external_edges=True)
+        return sdfg
+    node = state.add_nested_sdfg(nested_fill(depth - 1), {}, {"A"}, {"w_d1": "w_d1"})
+    state.add_edge(node, "A", state.add_write("A"), None, dace.Memlet("A[0:w_d1]"))
+    return sdfg
+
+
+def test_a_symbol_two_nested_sdfgs_down_reads_the_root_symbol_of_its_invariant():
+    """``w_d1`` becomes ``nlev + 1`` at every level, and each nested SDFG maps and declares ``nlev``."""
+    sdfg = nested_fill(2)
+    sdfg.add_symbol("nlev", dace.int32)
+    apply_invariants(sdfg, {"w_d1": "nlev + 1"})
+    sdfg.validate()
+    calls = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert len(calls) == 2
+    for node in calls:
+        assert node.symbol_mapping["nlev"] == "nlev" and "w_d1" not in node.symbol_mapping
+        assert node.sdfg.symbols["nlev"] == dace.int32 and "w_d1" not in node.sdfg.symbols
+
+    a = np.zeros(5)
+    sdfg(A=a, nlev=4)
+    np.testing.assert_array_equal(a, np.arange(5.0))
+
+
+if __name__ == "__main__":
+    import tempfile
+    from pathlib import Path
+
+    for test in (
+        test_variants_and_dispatcher,
+        test_values_outside_the_domains_run_the_generic_sdfg,
+        test_singleton_domains_call_one_variant,
+        test_staged_argument_takes_the_value,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            test(Path(tmp))
+    test_invariants_resolve_through_chains_and_identities()
+    test_a_symbol_two_nested_sdfgs_down_reads_the_root_symbol_of_its_invariant()
