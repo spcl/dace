@@ -664,6 +664,49 @@ def test_inlining_view_input():
     np.testing.assert_allclose(expected, actual)
 
 
+def test_inline_binds_a_rebuilt_output_view_through_its_views_connector():
+    """``B_v = B[0]`` bound to an output connector that the nest also reads through an interior access node."""
+    inner = dace.SDFG("inner_double")
+    inner.add_array("_ain", [3, 3], dace.float64)
+    inner.add_array("_aout", [3, 3], dace.float64)
+    istate = inner.add_state("inner_state", is_start_block=True)
+    mid = istate.add_access("_aout")
+    istate.add_nedge(istate.add_access("_ain"), mid, dace.Memlet("_ain[0:3, 0:3]"))
+    istate.add_mapped_tasklet(
+        "double",
+        map_ranges={"i": "0:3", "j": "0:3"},
+        inputs={"inp": dace.Memlet("_aout[i, j]")},
+        code="out = 2 * inp",
+        outputs={"out": dace.Memlet("_aout[i, j]")},
+        input_nodes={"_aout": mid},
+        output_nodes={"_aout": istate.add_access("_aout")},
+        external_edges=True,
+    )
+    sdfg = dace.SDFG(unique_name("inline_output_view_binding"))
+    sdfg.add_array("A", [2, 3, 3], dace.float64)
+    sdfg.add_array("B", [2, 3, 3], dace.float64)
+    sdfg.add_view("A_v", [3, 3], dace.float64)
+    sdfg.add_view("B_v", [3, 3], dace.float64)
+    state = sdfg.add_state("outer_state", is_start_block=True)
+    a_v, b_v = state.add_access("A_v"), state.add_access("B_v")
+    nested = state.add_nested_sdfg(inner, inputs={"_ain": None}, outputs={"_aout": None})
+    state.add_edge(state.add_access("A"), None, a_v, "views", dace.Memlet("A[0, 0:3, 0:3] -> [0:3, 0:3]"))
+    state.add_edge(a_v, None, nested, "_ain", dace.Memlet("A_v[0:3, 0:3]"))
+    state.add_edge(nested, "_aout", b_v, None, dace.Memlet("B_v[0:3, 0:3]"))
+    state.add_edge(b_v, "views", state.add_access("B"), None, dace.Memlet("B_v[0:3, 0:3] -> B[0, 0:3, 0:3]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(InlineSDFG) == 1
+    sdfg.validate()
+
+    A = np.random.default_rng(7).random((2, 3, 3))
+    B = np.zeros((2, 3, 3))
+    sdfg(A=A, B=B)
+    expected = np.zeros((2, 3, 3))
+    expected[0] = 2 * A[0]
+    assert np.array_equal(B, expected), B
+
+
 def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
     outside_uses_symbol: bool,
     outside_uses_different_symbol: bool,
@@ -1922,6 +1965,7 @@ if __name__ == "__main__":
     test_inline_symbol_assignment()
     test_regression_inline_subset()
     test_inlining_view_input()
+    test_inline_binds_a_rebuilt_output_view_through_its_views_connector()
     test_chain_reduction_1()
     test_chain_reduction_2()
     test_chain_reduction_all()

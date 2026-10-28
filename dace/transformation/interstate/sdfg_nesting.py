@@ -700,8 +700,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                             helpers.redirect_edge(state, e, nview)
                         arr, mem = views[node.data]
                         narr = state.add_access(arr)
-                        state.add_nedge(node, narr, dc(mem))
-                        state.add_nedge(narr, nview, dc(mem))
+                        # Through ``views`` connectors: an unbound view access node rebinds the whole container
+                        state.add_edge(node, "views", narr, None, dc(mem))
+                        state.add_edge(narr, None, nview, "views", dc(mem))
 
         # If source/sink node is not connected to a source/destination access
         # node, and the nested SDFG is in a scope, connect to scope with empty
