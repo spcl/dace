@@ -11,6 +11,7 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, StateSubgraphView
 from dace.transformation.helpers import nest_sdfg_control_flow, nest_sdfg_subgraph, nest_state_subgraph
+from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 
 
 @dace.program
@@ -481,6 +482,16 @@ def test_a_symbol_the_subgraph_assigns_keeps_its_declared_type():
         assert data[index] == index and np.count_nonzero(data) == 1
 
 
+def test_inlining_the_nest_back_keeps_the_declared_type():
+    sdfg, blocks = branch_assigned_symbol()
+    state = nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, blocks))
+    nested = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+
+    InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nested)
+
+    assert sdfg.symbols["i"] == dace.int32
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -501,3 +512,4 @@ if __name__ == "__main__":
     test_a_symbol_the_start_block_resets_is_mapped_only_when_read_first(True)
     test_an_sdfg_nested_in_a_moved_state_gets_the_new_sdfg_as_parent()
     test_a_symbol_the_subgraph_assigns_keeps_its_declared_type()
+    test_inlining_the_nest_back_keeps_the_declared_type()
