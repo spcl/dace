@@ -63,6 +63,7 @@ from dace.transformation.passes.canonicalize.fuse_elementwise_into_gemv import F
 from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 from dace.transformation.passes.canonicalize.fuse_maps_at_shared_axes import FuseMapsAtSharedAxes
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
+from dace.transformation.passes.canonicalize.in_bounds_facts import declare_in_bounds_extents
 from dace.transformation.passes.canonicalize.induction_variable_substitution import (
     InductionVariableSubstitution,
     LoopCarriedRotationSubstitution,
@@ -1727,6 +1728,7 @@ def canonicalize_recorded(sdfg: SDFG, nonnegative_symbols: Iterable[str] | None,
     if nonnegative_symbols is not None:
         declare_nonnegative_symbols(sdfg, nonnegative_symbols)
     set_symbol_nonnegative_assumptions(sdfg)
+    declare_in_bounds_extents(sdfg)
     # Every stage below recovers loop bounds from STRING-backed properties, which means re-parsing
     # them -- and an unscoped parse mints ``DEFAULT_SYMBOL_TYPE``. Declaring the SDFG's own symbol
     # table as the authority for the whole run is what keeps one name spelled as ONE symbol, so a
