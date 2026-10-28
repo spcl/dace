@@ -27,6 +27,17 @@ CPU_RESIDENT_STORAGES = frozenset(
 )
 
 
+def host_storages(node: nodes.Node, state: "dace.SDFGState") -> frozenset[dtypes.StorageType]:
+    """The storages host code at ``node`` reads and writes directly: the CPU-resident ones, plus ``Default`` and
+    ``Register`` outside device code. Both resolve by the enclosing scope, so inside a GPU kernel they are device
+    memory and outside it host memory."""
+    from dace.sdfg.scope import is_devicelevel_gpu
+
+    if is_devicelevel_gpu(state.sdfg, state, node):
+        return CPU_RESIDENT_STORAGES
+    return CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, dtypes.StorageType.Register}
+
+
 def collapse_shape_and_strides(
     subset: dace.subsets.Range, strides: list[dace.symbolic.SymExpr]
 ) -> tuple[list[dace.symbolic.SymExpr], list[dace.symbolic.SymExpr]]:

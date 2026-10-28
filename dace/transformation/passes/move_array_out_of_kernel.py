@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import NamedTuple
 
+import numpy as np
 import sympy
 from ordered_set import OrderedSet
 
@@ -200,6 +201,156 @@ def prefix_control_flow(sdfg: SDFG, name: str, point: list[str] | None) -> None:
     rewrite_code_slots(sdfg, rewrite)
 
 
+@dataclass(slots=True)
+class ExtentBound:
+    """A host symbol bounding an extent symbol assigned inside the kernel: ``max(0, container[index])`` over the
+    kernel's iterations, ``container`` and ``index`` in the kernel SDFG's names."""
+
+    symbol: str
+    bound: str
+    container: str
+    index: list[symbolic.SymbolicType]
+    dtype: dtypes.typeclass
+    on_device: bool
+    folded: bool = False
+
+
+def kernel_assigned_read(hierarchy: list[SDFG], name: str) -> tuple[SDFG, str, str] | None:
+    """The one element read ``name`` is assigned inside the kernel, as ``(sdfg, container, index)``; ``None`` if a
+    nest assigns it anything else, or several values."""
+    found: set[tuple[int, str]] = set()
+    for depth, sdfg in enumerate(hierarchy[:-1]):
+        if any(isinstance(cfr, LoopRegion) and cfr.loop_variable == name for cfr in sdfg.all_control_flow_regions()):
+            return None
+        found |= {
+            (depth, edge.data.assignments[name])
+            for edge in sdfg.all_interstate_edges()
+            if name in edge.data.assignments
+        }
+    if len(found) != 1:
+        return None
+    depth, value = next(iter(found))
+    expr = ast.parse(value.strip(), mode="eval").body
+    if not isinstance(expr, ast.Subscript) or not isinstance(expr.value, ast.Name):
+        return None
+    return hierarchy[depth], expr.value.id, ast.unparse(expr.slice)
+
+
+def read_in_kernel_sdfg(
+    hierarchy: list[SDFG], sdfg: SDFG, container: str, index: str
+) -> tuple[str, list[symbolic.SymbolicType]] | None:
+    """``container[index]`` read in ``sdfg`` (a nest of ``hierarchy``) in the names of ``hierarchy[-1]``: through
+    every nest's input binding and symbol mapping; ``None`` when a nest is handed something other than an array
+    window of the outer one."""
+    idx = [symbolic.pystr_to_symbolic(part) for part in index.split(",")] if index else []
+    for inner in hierarchy[hierarchy.index(sdfg) : -1]:
+        node, state = inner.parent_nsdfg_node, inner.parent
+        bound = [e for e in state.in_edges(node) if e.dst_conn == container and not e.data.is_empty()]
+        if len(bound) != 1 or not isinstance(bound[0].data.subset, subsets.Range):
+            return None
+        window = bound[0].data.subset
+        outer_desc = state.sdfg.arrays.get(bound[0].data.data)
+        if outer_desc is None or isinstance(outer_desc, dt.View) or len(window) != len(idx):
+            return None
+        mapping = {
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(str(v)) for k, v in node.symbol_mapping.items()
+        }
+        idx = [begin + symbolic.pystr_to_symbolic(i).subs(mapping) for (begin, _, _), i in zip(window, idx)]
+        container = bound[0].data.data
+    return container, idx
+
+
+def extent_bounds(
+    desc: dt.Array, hierarchy: list[SDFG], kernel: nodes.MapEntry, kernel_state: SDFGState
+) -> list[ExtentBound] | None:
+    """A host bound for every shape symbol of ``desc`` the kernel assigns, or ``None`` if one has none: each must be
+    assigned one integer element read of data the kernel's SDFG holds in device memory or in memory the host code
+    before the kernel reads (``count = counts[b]``)."""
+    from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, host_storages
+
+    kernel_sdfg = kernel_state.sdfg
+    result = []
+    taken = OrderedSet((*kernel_sdfg.arrays, *kernel_sdfg.symbols))
+    for sym in sorted({str(s) for d in desc.shape for s in symbolic.pystr_to_symbolic(d).free_symbols}):
+        if not any(assigns_symbol(sdfg, sym) for sdfg in hierarchy[:-1]):
+            continue
+        read = kernel_assigned_read(hierarchy, sym)
+        located = read and read_in_kernel_sdfg(hierarchy, *read)
+        if not located:
+            return None
+        container, index = located
+        ctype = kernel_sdfg.arrays[container].dtype
+        storage = kernel_sdfg.arrays[container].storage
+        on_device = storage in GPU_RESIDENT_STORAGES
+        if not np.issubdtype(ctype.type, np.integer) or not (
+            on_device or storage in host_storages(kernel, kernel_state)
+        ):
+            return None
+        bound = f"{sym}_max"
+        if bound in kernel_sdfg.symbols:
+            # Already folded for an array this kernel lifted before
+            result.append(ExtentBound(sym, bound, container, index, ctype, on_device, folded=True))
+            continue
+        bound = utils.find_new_name(bound, taken)
+        taken.add(bound)
+        result.append(ExtentBound(sym, bound, container, index, ctype, on_device))
+    return result
+
+
+def compute_bound(extent: ExtentBound, kernel: nodes.MapEntry, kernel_state: SDFGState) -> None:
+    """Assign ``extent.bound`` before ``kernel_state``: the maximum, and at least 0, of the element read over the
+    kernel's iterations, folded where the data lives (a device map for device data)."""
+    sdfg = kernel_state.sdfg
+    storage = dtypes.StorageType.GPU_Global if extent.on_device else dtypes.StorageType.CPU_Heap
+    schedule = dtypes.ScheduleType.GPU_Device if extent.on_device else dtypes.ScheduleType.Sequential
+    fold, _ = sdfg.add_array(
+        f"{extent.bound}_fold", [1], extent.dtype, storage=storage, transient=True, find_new_name=True
+    )
+    region = kernel_state.parent_graph
+    seed = region.add_state_before(
+        kernel_state, f"bound_{extent.bound}", is_start_block=region.start_block is kernel_state
+    )
+    seed.add_mapped_tasklet(
+        f"seed_{extent.bound}",
+        {"__s": "0:1"},
+        {},
+        "o = 0",
+        {"o": Memlet(f"{fold}[0]")},
+        schedule=schedule,
+        external_edges=True,
+    )
+    fold_state = region.add_state_after(seed, f"fold_{extent.bound}")
+    params = dict(zip(kernel.map.params, (f"{b}:{e}+1:{st}" for b, e, st in kernel.map.range), strict=True))
+    index = ", ".join(symbolic.symstr(i) for i in extent.index)
+    _, _, fold_exit = fold_state.add_mapped_tasklet(
+        f"fold_{extent.bound}",
+        params,
+        {"v": Memlet(f"{extent.container}[{index}]")},
+        "o = v",
+        {"o": Memlet(f"{fold}[0]", wcr="lambda a, b: max(a, b)")},
+        schedule=schedule,
+        external_edges=True,
+    )
+    source = fold
+    if extent.on_device:
+        host, _ = sdfg.add_array(
+            f"{extent.bound}_host",
+            [1],
+            extent.dtype,
+            storage=dtypes.StorageType.CPU_Heap,
+            transient=True,
+            find_new_name=True,
+        )
+        written = next(e.dst for e in fold_state.out_edges(fold_exit))
+        fold_state.add_nedge(written, fold_state.add_write(host), Memlet(f"{host}[0]"))
+        source = host
+    if extent.bound not in sdfg.symbols:
+        sdfg.add_symbol(extent.bound, extent.dtype)
+    for edge in region.in_edges(kernel_state):
+        if edge.src is fold_state:
+            edge.data.assignments[extent.bound] = f"{source}[0]"
+
+
 def sdfg_chain(inner: SDFG, outer: SDFG) -> list[SDFG]:
     """``inner`` and its ancestors up to and including ``outer``, innermost first."""
     chain = [inner]
@@ -304,9 +455,10 @@ class LiftPlan:
     layout: LiftedLayout
     hierarchy: list[SDFG]
     needed: list[str]
+    bounds: list[ExtentBound]
 
 
-def plan_lift(name: str, owner: SDFG, kernel_state: SDFGState) -> LiftPlan | None:
+def plan_lift(name: str, owner: SDFG, kernel: nodes.MapEntry, kernel_state: SDFGState) -> LiftPlan | None:
     """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if a nest would misread its index."""
     accesses = [(node, state) for state in owner.states() for node in state.data_nodes() if node.data == name]
     levels = slice_levels(name, accesses)
@@ -318,16 +470,30 @@ def plan_lift(name: str, owner: SDFG, kernel_state: SDFGState) -> LiftPlan | Non
         or any(isinstance(node, nodes.AccessNode) and node.data == name for node in (edge.src, edge.dst))
     ]
     desc = owner.arrays[name]
-    layout = lifted_layout(desc, [entry for entry, _ in reversed(levels)])
+    hierarchy = sdfg_chain(owner, kernel_state.sdfg)
+    bounded = extent_bounds(desc, hierarchy, kernel, kernel_state)
+    if bounded is None:
+        logger.debug("Not lifting '%s': its extent varies per GPU thread with no bound outside the kernel", name)
+        return None
+    sized = desc.clone()
+    sized.set_shape(
+        [
+            symbolic.pystr_to_symbolic(symbolic.symstr(d)).subs(
+                {symbolic.symbol(b.symbol): symbolic.symbol(b.bound) for b in bounded}
+            )
+            for d in desc.shape
+        ]
+    )
+    layout = lifted_layout(sized, [entry for entry, _ in reversed(levels)])
     bounds = [bound for _, prefix in prefixes for dim in prefix for bound in dim]
     bounds += layout.shape[: len(layout.shape) - len(desc.shape)]
     needed = sorted({str(sym) for bound in bounds for sym in symbolic.pystr_to_symbolic(bound).free_symbols})
-    hierarchy = sdfg_chain(owner, kernel_state.sdfg)
+    needed += [b.bound for b in bounded]
     conflict = binding_conflict(hierarchy, needed)
     if conflict is not None:
         logger.debug("Not lifting '%s': %s gives '%s' its own meaning", name, conflict[0].name, conflict[1])
         return None
-    return LiftPlan(name, owner, desc, levels, accesses, prefixes, layout, hierarchy, needed)
+    return LiftPlan(name, owner, desc, levels, accesses, prefixes, layout, hierarchy, needed, bounded)
 
 
 def reshape_descendants(
@@ -419,6 +585,9 @@ def lift_through_nested_sdfgs(name: str, kernel: nodes.MapEntry, hierarchy: list
 
 def move_array(plan: LiftPlan, kernel: nodes.MapEntry, kernel_state: SDFGState) -> None:
     """Give the planned transient one slice per kernel iteration and allocate it outside the kernel."""
+    for extent in plan.bounds:
+        if not extent.folded:
+            compute_bound(extent, kernel, kernel_state)
     name = plan.name
     taken = OrderedSet(n for sdfg in plan.hierarchy[1:] for n in (*sdfg.arrays, *sdfg.symbols))
     if name in taken:
@@ -555,7 +724,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
                 desc.storage = dtypes.StorageType.Register
                 handled += 1
                 continue
-            plan = plan_lift(name, owner, kernel_state)
+            plan = plan_lift(name, owner, kernel, kernel_state)
             if plan is None:
                 continue
             desc.storage = dtypes.StorageType.GPU_Global
