@@ -14,6 +14,14 @@ from dace.transformation.transformation import ExpandTransformation
 from dace.utils import prod as _prod
 
 
+def device_implementation(libnode: nodes.LibraryNode) -> str | None:
+    """The first implementation of ``libnode`` in the GPU fast-library priority other than ``pure``, if any."""
+    from dace.transformation.auto.auto_optimize import find_fast_library  # Avoid import loop
+
+    priority = find_fast_library(dace.dtypes.DeviceType.GPU)
+    return next((impl for impl in priority if impl != "pure" and impl in libnode.implementations), None)
+
+
 @library.expansion
 class ExpandPure(ExpandTransformation):
     """Implements the pure expansion of TensorDot library node."""
@@ -134,6 +142,12 @@ class ExpandTTGT(ExpandTransformation):
 
         from dace.frontend.python.replacements.array_manipulation import _transpose
 
+        # The nodes created here are past implementation selection: on device operands from host code each takes the
+        # first device implementation of the GPU priority, never the pure expansion
+        on_device = not is_devicelevel_gpu(parent_sdfg, parent_state, node) and any(
+            arr.storage is dace.dtypes.StorageType.GPU_Global for arr in (left_arr, right_arr, out_arr)
+        )
+
         # NOTE: We use the numpy.transpose replacement because:
         # (1) It will return the tensor itself if transposition is uncessary.
         # (2) It will use matrix transpose operation for 2-mode tensors.
@@ -168,6 +182,10 @@ class ExpandTTGT(ExpandTransformation):
 
         from dace.libraries.blas import Gemm  # Avoid import loop
 
+        if on_device:
+            for transpose in state.nodes():
+                if isinstance(transpose, nodes.LibraryNode):
+                    transpose.implementation = device_implementation(transpose)
         prv_state = state
         state = sdfg.add_state(f"{node.label}_gemm_state")
         sdfg.add_edge(prv_state, state, dace.InterstateEdge())
@@ -211,15 +229,8 @@ class ExpandTTGT(ExpandTransformation):
         state.add_edge(right_anode, None, right_vnode, "views", dace.Memlet.from_array(right_tt, right_tt_arr))
 
         tasklet = Gemm("_GEMM_", cin=False, transA=transA, transB=transB)
-        # Created at expansion, past implementation selection: on device operands from host code it is a vendor GEMM,
-        # not the pure expansion, whose host maps cannot touch device memory
-        from dace.codegen.common import get_gpu_backend
-        from dace.sdfg.scope import is_devicelevel_gpu
-
-        if not is_devicelevel_gpu(parent_sdfg, parent_state, node) and any(
-            arr.storage is dace.dtypes.StorageType.GPU_Global for arr in (left_arr, right_arr, out_arr)
-        ):
-            tasklet.implementation = "hipBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
+        if on_device:
+            tasklet.implementation = device_implementation(tasklet)
         state.add_edge(left_vnode, None, tasklet, "_a", dace.Memlet.from_array(left_vname, left_view))
         state.add_edge(right_vnode, None, tasklet, "_b", dace.Memlet.from_array(right_vname, right_view))
 
@@ -250,6 +261,8 @@ class ExpandTTGT(ExpandTransformation):
             from dace.libraries.linalg import TensorTranspose
 
             tasklet = TensorTranspose("_TensorTranspose", node.permutation)
+            if on_device:
+                tasklet.implementation = device_implementation(tasklet)
             state.add_edge(dot_anode, None, tasklet, "_inp_tensor", dace.Memlet.from_array(dot_name, dot_arr))
             state.add_edge(tasklet, "_out_tensor", out_node, None, dace.Memlet.from_array("_out_tensor", out_arr))
         else:

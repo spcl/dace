@@ -3,7 +3,9 @@
 
 import dace
 from dace import dtypes, nodes
+from dace.libraries.linalg.environments import hiptensor
 from dace.libraries.linalg.nodes.tensordot import TensorDot
+from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import helpers as xfh
 from dace.transformation.passes.scalar_to_symbol import find_promotable_scalars
@@ -64,6 +66,28 @@ def test_ttgt_on_device_operands_calls_the_vendor_gemm():
     assert gemms and all(g.implementation == "hipBLAS" for g in gemms)
 
 
+def test_ttgt_on_device_operands_transposes_with_a_device_library():
+    """The transposes TTGT creates for inner contraction axes and an output permutation are past implementation
+    selection too: on device operands they take the device implementation, not ``pure``."""
+    sdfg = dace.SDFG("ttgt_device_transposes")
+    gpu = dtypes.StorageType.GPU_Global
+    sdfg.add_array("A", [4, 3, 5], dace.float64, storage=gpu)
+    sdfg.add_array("B", [4, 6, 5], dace.float64, storage=gpu)
+    sdfg.add_array("C", [6, 3], dace.float64, storage=gpu)
+    state = sdfg.add_state()
+    node = TensorDot("tdot", left_axes=[0, 2], right_axes=[0, 2], permutation=[1, 0])
+    node.implementation = "TTGT"
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_left_tensor", dace.Memlet("A[0:4, 0:3, 0:5]"))
+    state.add_edge(state.add_read("B"), None, node, "_right_tensor", dace.Memlet("B[0:4, 0:6, 0:5]"))
+    state.add_edge(node, "_out_tensor", state.add_write("C"), None, dace.Memlet("C[0:6, 0:3]"))
+    with dace.config.set_temporary("compiler", "cuda", "backend", value="hip"):
+        node.expand(state)
+        tensor = "hipTENSOR" if hiptensor.hipTensor.is_installed() else "CUDA"
+    transposes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TensorTranspose)]
+    assert len(transposes) == 3 and all(t.implementation == tensor for t in transposes)
+
+
 def test_a_container_named_in_tasklet_code_inside_the_subgraph_is_no_argument():
     """A tasklet that names its container in code (``InlineTaskletConnectors``) makes it a used symbol; when the
     container has its access node inside the subgraph, its allocation is the subgraph's, not the caller's."""
@@ -104,3 +128,12 @@ def test_a_gpu_dot_over_a_symbolic_power_length_is_cpp():
         node.expand(state)
     code = " ".join(n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet))
     assert "**" not in code and "Ddot" in code, code
+
+
+if __name__ == "__main__":
+    test_state_fission_drops_a_copy_between_two_boundary_nodes()
+    test_a_scalar_copied_from_device_memory_is_not_promoted()
+    test_ttgt_on_device_operands_calls_the_vendor_gemm()
+    test_ttgt_on_device_operands_transposes_with_a_device_library()
+    test_a_container_named_in_tasklet_code_inside_the_subgraph_is_no_argument()
+    test_a_gpu_dot_over_a_symbolic_power_length_is_cpp()
