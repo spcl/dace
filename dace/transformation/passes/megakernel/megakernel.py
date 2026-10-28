@@ -85,6 +85,10 @@ def keep_shared_memory_outside(host: SDFGState, node: nodes.NestedSDFG, target: 
     sdfg, body = host.sdfg, node.sdfg
     between_stages = {n.data for state in body.states() for n in state.data_nodes() if state.entry_node(n) is None}
     for name, desc in list(body.arrays.items()):
+        if desc.transient and desc.storage == dtypes.StorageType.GPU_Global and name not in between_stages:
+            # Only map scopes touch it: data of one iteration, which hoisted would be one buffer all threads race on
+            desc.storage = dtypes.StorageType.Register
+            continue
         stage_shared = name in between_stages and target.shares(desc, scoped=False)
         if desc.transient and (stage_shared or desc.storage == dtypes.StorageType.GPU_Global):
             sdfg.add_datadesc(name, copy.deepcopy(desc))

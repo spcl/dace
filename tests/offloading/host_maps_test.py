@@ -311,6 +311,33 @@ def test_a_named_host_map_hands_its_kernels_device_memory():
     assert bound and all(nested.sdfg.arrays[name].storage == dace.StorageType.GPU_Global for name in bound)
 
 
+@dace.program
+def column_block(a: dace.float64[NLEV, NPROMA], out: dace.float64[NLEV, NPROMA]):
+    for jc in dace.map[0:NPROMA]:
+        col = np.empty([NLEV], dtype=np.float64)
+        for jk in dace.map[0:NLEV]:
+            col[jk] = 2.0 * a[jk, jc]
+        for jk in dace.map[0:NLEV]:
+            out[jk, jc] = col[jk] + 1.0
+
+
+@dace.program
+def column_scratch(a: dace.float64[NB, NLEV, NPROMA], out: dace.float64[NB, NLEV, NPROMA]):
+    for jb in dace.map[0:NB]:
+        column_block(a[jb], out[jb])
+
+
+def test_a_column_only_one_kernel_of_a_nested_body_touches_is_a_register():
+    """A transient of the nested body of a host map that only one kernel touches is per thread, not one device
+    buffer every thread of the kernel shares."""
+    sdfg = column_scratch.to_sdfg(simplify=False)
+    ppl.Pipeline([OffloadToAccelerator(host_maps=[outer_map_label(sdfg)])]).apply_pass(sdfg, {})
+    body = next(
+        n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG) and "col" in n.sdfg.arrays
+    )
+    assert body.arrays["col"].storage == dace.StorageType.Register
+
+
 @pytest.mark.gpu
 def test_a_named_host_map_computes_what_numpy_computes():
     sdfg = zekinh_sdfg()
@@ -343,5 +370,6 @@ if __name__ == "__main__":
         test_a_map_is_pinned_only_on_provably_smaller_traffic(traffic, size, moves_less)
     test_a_loop_whose_map_shares_nothing_with_host_code_keeps_it_a_kernel()
     test_a_named_host_map_hands_its_kernels_device_memory()
+    test_a_column_only_one_kernel_of_a_nested_body_touches_is_a_register()
     if len(sys.argv) > 1 and sys.argv[1] == "gpu":
         test_a_named_host_map_computes_what_numpy_computes()

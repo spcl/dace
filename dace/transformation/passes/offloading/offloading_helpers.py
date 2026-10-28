@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Facts about containers and nodes shared by the offloading phases."""
 
-from collections.abc import Callable, Container, Iterable
+from collections.abc import Callable, Container, Iterable, Mapping
 
 from ordered_set import OrderedSet
 
@@ -323,8 +323,9 @@ def kernels_touching(sdfg: SDFG) -> dict[str, OrderedSet[nodes.MapEntry | None]]
     return touching
 
 
-def register_kernel_local_transients(sdfg: SDFG, placed_on_gpu: Container[str]) -> None:
-    """Make a register of every transient (Default, or put on the device by this pass) that only one kernel accesses."""
+def register_kernel_local_transients(sdfg: SDFG, placed_on_gpu: Mapping[SDFG, Container[str]]) -> None:
+    """Make a register of every transient (Default, or put on the device by this pass at its own level, see
+    ``placed_on_gpu``) that only one kernel accesses."""
     for nested in sdfg.all_sdfgs_recursive():
         for name, owners in kernels_touching(nested).items():
             desc = nested.arrays.get(name)
@@ -332,7 +333,7 @@ def register_kernel_local_transients(sdfg: SDFG, placed_on_gpu: Container[str]) 
                 desc is None
                 or not desc.transient
                 or isinstance(desc, (data.View, data.Stream))
-                or not (desc.storage == dtypes.StorageType.Default or (nested is sdfg and name in placed_on_gpu))
+                or not (desc.storage == dtypes.StorageType.Default or name in placed_on_gpu.get(nested, ()))
             ):
                 continue
             if len(owners) == 1 and owners[0] is not None:
