@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.dataflow import AugAssignToWCR, WCRToAugAssign
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.transformation.dataflow import AugAssignToWCR, WCRToAugAssign
 
 
 def test_aug_assign_tasklet_lhs():
@@ -240,8 +240,14 @@ def test_aug_assign_in_a_nested_body_keeps_the_read_connector_a_branch_condition
     body.add_array("b", [32], dace.float64)
     body.add_array("F", [1], dace.float64)
     bstate = body.add_state("rmw", is_start_block=True)
-    bstate.add_mapped_tasklet("add", {"i": "0:32"}, {"x": dace.Memlet("A[0]"), "y": dace.Memlet("b[i]")}, "z = x + y",
-                              {"z": dace.Memlet("A[0]")}, external_edges=True)
+    bstate.add_mapped_tasklet(
+        "add",
+        {"i": "0:32"},
+        {"x": dace.Memlet("A[0]"), "y": dace.Memlet("b[i]")},
+        "z = x + y",
+        {"z": dace.Memlet("A[0]")},
+        external_edges=True,
+    )
     check = ConditionalBlock("check")
     body.add_node(check)
     body.add_edge(bstate, check, dace.InterstateEdge())

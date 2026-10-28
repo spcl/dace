@@ -189,8 +189,11 @@ def kernel_assigned_read(hierarchy: list[SDFG], name: str) -> tuple[SDFG, str, s
     for depth, sdfg in enumerate(hierarchy[:-1]):
         if any(isinstance(cfr, LoopRegion) and cfr.loop_variable == name for cfr in sdfg.all_control_flow_regions()):
             return None
-        found |= {(depth, edge.data.assignments[name]) for edge in sdfg.all_interstate_edges()
-                  if name in edge.data.assignments}
+        found |= {
+            (depth, edge.data.assignments[name])
+            for edge in sdfg.all_interstate_edges()
+            if name in edge.data.assignments
+        }
     if len(found) != 1:
         return None
     depth, value = next(iter(found))
@@ -217,8 +220,9 @@ def read_in_kernel_sdfg(
         outer_desc = state.sdfg.arrays.get(bound[0].data.data)
         if outer_desc is None or isinstance(outer_desc, dt.View) or len(window) != len(idx):
             return None
-        mapping = {symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(str(v))
-                   for k, v in node.symbol_mapping.items()}
+        mapping = {
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(str(v)) for k, v in node.symbol_mapping.items()
+        }
         idx = [begin + symbolic.pystr_to_symbolic(i).subs(mapping) for (begin, _, _), i in zip(window, idx)]
         container = bound[0].data.data
     return container, idx
@@ -399,9 +403,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
                 "Transient GPU_Global arrays cannot live inside a kernel scope. Offenders:\n" + "\n".join(offenders)
             )
 
-    def plan_lift(
-        self, name: str, owner: SDFG, kernel: nodes.MapEntry, kernel_state: SDFGState
-    ) -> LiftPlan | None:
+    def plan_lift(self, name: str, owner: SDFG, kernel: nodes.MapEntry, kernel_state: SDFGState) -> LiftPlan | None:
         """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if a nest would misread its index."""
         accesses = [(node, state) for state in owner.states() for node in state.data_nodes() if node.data == name]
         levels = self.slice_levels(name, accesses)
@@ -419,8 +421,14 @@ class MoveArrayOutOfKernel(ppl.Pass):
             logger.debug("Not lifting '%s': its extent varies per GPU thread with no bound outside the kernel", name)
             return None
         sized = desc.clone()
-        sized.set_shape([symbolic.pystr_to_symbolic(symbolic.symstr(d)).subs(
-            {symbolic.symbol(b.symbol): symbolic.symbol(b.bound) for b in extent_bounds}) for d in desc.shape])
+        sized.set_shape(
+            [
+                symbolic.pystr_to_symbolic(symbolic.symstr(d)).subs(
+                    {symbolic.symbol(b.symbol): symbolic.symbol(b.bound) for b in extent_bounds}
+                )
+                for d in desc.shape
+            ]
+        )
         shape_info = self.get_new_shape_info(sized, [entry for entry, _ in reversed(levels)])
         bounds = [bound for _, prefix in prefixes for dim in prefix for bound in dim]
         bounds += shape_info[0][: len(shape_info[0]) - len(desc.shape)]
@@ -455,7 +463,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
             ctype = kernel_sdfg.arrays[container].dtype
             storage = kernel_sdfg.arrays[container].storage
             on_device = storage in GPU_RESIDENT_STORAGES
-            if not np.issubdtype(ctype.type, np.integer) or not (on_device or storage in host_storages(kernel, kernel_state)):
+            if not np.issubdtype(ctype.type, np.integer) or not (
+                on_device or storage in host_storages(kernel, kernel_state)
+            ):
                 return None
             bound = f"{sym}_max"
             if bound in kernel_sdfg.symbols and not any(b.bound == bound for b in result):
@@ -511,23 +521,44 @@ class MoveArrayOutOfKernel(ppl.Pass):
         on_device = extent.on_device
         storage = dtypes.StorageType.GPU_Global if on_device else dtypes.StorageType.CPU_Heap
         schedule = dtypes.ScheduleType.GPU_Device if on_device else dtypes.ScheduleType.Sequential
-        fold, _ = sdfg.add_array(f"{extent.bound}_fold", [1], extent.dtype, storage=storage, transient=True,
-                                 find_new_name=True)
+        fold, _ = sdfg.add_array(
+            f"{extent.bound}_fold", [1], extent.dtype, storage=storage, transient=True, find_new_name=True
+        )
         region = kernel_state.parent_graph
-        state = region.add_state_before(kernel_state, f"bound_{extent.bound}",
-                                        is_start_block=region.start_block is kernel_state)
-        state.add_mapped_tasklet(f"seed_{extent.bound}", {"__s": "0:1"}, {}, "o = 0", {"o": Memlet(f"{fold}[0]")},
-                                 schedule=schedule, external_edges=True)
+        state = region.add_state_before(
+            kernel_state, f"bound_{extent.bound}", is_start_block=region.start_block is kernel_state
+        )
+        state.add_mapped_tasklet(
+            f"seed_{extent.bound}",
+            {"__s": "0:1"},
+            {},
+            "o = 0",
+            {"o": Memlet(f"{fold}[0]")},
+            schedule=schedule,
+            external_edges=True,
+        )
         fold_state = region.add_state_after(state, f"fold_{extent.bound}")
         params = dict(zip(kernel.map.params, (f"{b}:{e}+1:{st}" for b, e, st in kernel.map.range), strict=True))
         index = ", ".join(symbolic.symstr(i) for i in extent.index)
         _, _, fold_exit = fold_state.add_mapped_tasklet(
-            f"fold_{extent.bound}", params, {"v": Memlet(f"{extent.container}[{index}]")}, "o = v",
-            {"o": Memlet(f"{fold}[0]", wcr="lambda a, b: max(a, b)")}, schedule=schedule, external_edges=True)
+            f"fold_{extent.bound}",
+            params,
+            {"v": Memlet(f"{extent.container}[{index}]")},
+            "o = v",
+            {"o": Memlet(f"{fold}[0]", wcr="lambda a, b: max(a, b)")},
+            schedule=schedule,
+            external_edges=True,
+        )
         source = fold
         if on_device:
-            host, _ = sdfg.add_array(f"{extent.bound}_host", [1], extent.dtype, storage=dtypes.StorageType.CPU_Heap,
-                                     transient=True, find_new_name=True)
+            host, _ = sdfg.add_array(
+                f"{extent.bound}_host",
+                [1],
+                extent.dtype,
+                storage=dtypes.StorageType.CPU_Heap,
+                transient=True,
+                find_new_name=True,
+            )
             written = next(e.dst for e in fold_state.out_edges(fold_exit))
             fold_state.add_nedge(written, fold_state.add_write(host), Memlet(f"{host}[0]"))
             source = host

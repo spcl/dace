@@ -327,9 +327,11 @@ def test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel():
     assigned inside the kernel, so no host allocation can name it."""
     sdfg = kernel_with_a_per_thread_count()
     assert lift(sdfg) == 1
-    shape_symbols = {str(sym) for dim in sdfg.arrays["buf"].shape for sym in dace.symbolic.pystr_to_symbolic(dim).free_symbols}
+    shape_symbols = {
+        str(sym) for dim in sdfg.arrays["buf"].shape for sym in dace.symbolic.pystr_to_symbolic(dim).free_symbols
+    }
     assert "n" not in shape_symbols and "n_max" in shape_symbols, sdfg.arrays["buf"].shape
-    into_kernel = [e for e in sdfg.in_edges(next(s for s in sdfg.states() if s.label == "kernel"))]
+    into_kernel = list(sdfg.in_edges(next(s for s in sdfg.states() if s.label == "kernel")))
     assert [e.data.assignments.get("n_max") for e in into_kernel] == ["n_max_host[0]"]
     sdfg.validate()
 

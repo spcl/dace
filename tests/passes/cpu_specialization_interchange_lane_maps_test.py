@@ -110,7 +110,11 @@ def test_a_loop_whose_iterator_bounds_an_inner_loop_indexes_its_cells():
     outer.add_node(inner, is_start_block=True)
     body = inner.add_state("bump", is_start_block=True)
     body.add_mapped_tasklet(
-        "bump", {"b": "0:NB"}, {"x": dace.Memlet("q[b, j]")}, "y = x + 1", {"y": dace.Memlet("q[b, j]")},
+        "bump",
+        {"b": "0:NB"},
+        {"x": dace.Memlet("q[b, j]")},
+        "y = x + 1",
+        {"y": dace.Memlet("q[b, j]")},
         external_edges=True,
     )
     assert iterator_indexes(outer)

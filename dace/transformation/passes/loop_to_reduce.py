@@ -622,7 +622,9 @@ def accumulates(state: SDFGState, tasklet: nodes.Tasklet, refusals: dict[LoopReg
     def separates(name: str | None, outer_name: str | None = None) -> bool:
         if name is not None and writes and all(write_subset_is_injective(w, [name]) for w in writes):
             return True
-        return outer_name is not None and bool(handed) and all(write_subset_is_injective(w, [outer_name]) for w in handed)
+        return (
+            outer_name is not None and bool(handed) and all(write_subset_is_injective(w, [outer_name]) for w in handed)
+        )
 
     rename: dict[str, str] | None = None  # outer name -> the tasklet's name; None while still in its SDFG
     block = state

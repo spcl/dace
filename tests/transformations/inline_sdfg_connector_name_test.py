@@ -197,8 +197,9 @@ def nest_with_a_tasklet_connector_named(clash: str, side: str, language: dace.La
     inner.add_array("out", [1], dace.float64)
     body = inner.add_state("body", is_start_block=True)
     i, o = (clash, "o") if side == "in" else ("i", clash)
-    t = body.add_tasklet("t", {i}, {o}, f"{o} = {i} * 2" + (";" if language is dace.Language.CPP else ""),
-                         language=language)
+    t = body.add_tasklet(
+        "t", {i}, {o}, f"{o} = {i} * 2" + (";" if language is dace.Language.CPP else ""), language=language
+    )
     body.add_edge(body.add_read("inp"), None, t, i, dace.Memlet("inp[0]"))
     body.add_edge(t, o, body.add_write("out"), None, dace.Memlet("out[0]"))
 

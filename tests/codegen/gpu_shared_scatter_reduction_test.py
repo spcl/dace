@@ -72,8 +72,13 @@ def nested_scatter_of_symbolic_size() -> dace.SDFG:
     nsdfg = state.add_nested_sdfg(body, {"idx", "w"}, {"h"}, symbol_mapping={"i": "i", "M": "M", "N": "N"})
     state.add_memlet_path(state.add_read("idx"), me, nsdfg, dst_conn="idx", memlet=dace.Memlet("idx[0:N]"))
     state.add_memlet_path(state.add_read("w"), me, nsdfg, dst_conn="w", memlet=dace.Memlet("w[0:N]"))
-    state.add_memlet_path(nsdfg, mx, state.add_write("h"), src_conn="h",
-                          memlet=dace.Memlet("h[0:M]", wcr="lambda a, b: a + b", dynamic=True))
+    state.add_memlet_path(
+        nsdfg,
+        mx,
+        state.add_write("h"),
+        src_conn="h",
+        memlet=dace.Memlet("h[0:M]", wcr="lambda a, b: a + b", dynamic=True),
+    )
     return sdfg
 
 
@@ -88,8 +93,9 @@ def tasklet_scatter() -> dace.SDFG:
     t = state.add_tasklet("add", {"ix", "v"}, {"o"}, "o[ix] = v")
     state.add_memlet_path(state.add_read("idx"), me, t, dst_conn="ix", memlet=dace.Memlet("idx[i]"))
     state.add_memlet_path(state.add_read("w"), me, t, dst_conn="v", memlet=dace.Memlet("w[i]"))
-    state.add_memlet_path(t, mx, state.add_write("h"), src_conn="o",
-                          memlet=dace.Memlet("h[0:M]", wcr="lambda a, b: a + b", dynamic=True))
+    state.add_memlet_path(
+        t, mx, state.add_write("h"), src_conn="o", memlet=dace.Memlet("h[0:M]", wcr="lambda a, b: a + b", dynamic=True)
+    )
     sdfg.apply_gpu_transformations()
     return sdfg
 
