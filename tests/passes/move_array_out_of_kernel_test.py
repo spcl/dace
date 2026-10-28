@@ -292,9 +292,10 @@ def lift(sdfg: dace.SDFG) -> int:
         return sut.apply_pass(sdfg, {})
 
 
-def kernel_with_a_per_thread_count() -> dace.SDFG:
+def kernel_with_a_per_thread_count(indirect: bool = False) -> dace.SDFG:
     """``for b: n = counts[b]; buf = empty(n + 1); buf[n] = 2; out[b] = buf[n]``: the extent of ``buf`` is a
-    count each thread reads (lavamd's ``pointers = np.empty(1 + neighbor_counts[l])``)."""
+    count each thread reads (lavamd's ``pointers = np.empty(1 + neighbor_counts[l])``). ``indirect`` reads it
+    through ``r = rows[b]; n = counts[r]`` (spgemm_hash's ``row_bin[rows_in_bins[b]]``)."""
     body = dace.SDFG("count_body")
     body.add_symbol("b", dace.int64)
     body.add_array("counts", [NX], dace.int32, storage=GLOBAL)
@@ -302,7 +303,13 @@ def kernel_with_a_per_thread_count() -> dace.SDFG:
     body.add_transient("buf", ["n + 1"], dace.float64, storage=dtypes.StorageType.Register)
     load = body.add_state("load", is_start_block=True)
     use = body.add_state("use")
-    body.add_edge(load, use, dace.InterstateEdge(assignments={"n": "counts[b]"}))
+    index = "b"
+    if indirect:
+        body.add_array("rows", [NX], dace.int32, storage=GLOBAL)
+        pick = body.add_state("pick")
+        body.add_edge(load, pick, dace.InterstateEdge(assignments={"r": "rows[b]"}))
+        load, index = pick, "r"
+    body.add_edge(load, use, dace.InterstateEdge(assignments={"n": f"counts[{index}]"}))
     buf = use.add_access("buf")
     fill = use.add_tasklet("fill", {}, {"v"}, "v = 2.0")
     use.add_edge(fill, "v", buf, None, dace.Memlet("buf[n]"))
@@ -310,13 +317,15 @@ def kernel_with_a_per_thread_count() -> dace.SDFG:
     use.add_edge(buf, None, take, "x", dace.Memlet("buf[n]"))
     use.add_edge(take, "y", use.add_write("o"), None, dace.Memlet("o[b]"))
 
-    sdfg = dace.SDFG("per_thread_count")
-    sdfg.add_array("counts", [NX], dace.int32, storage=GLOBAL)
+    sdfg = dace.SDFG("per_thread_indirect_count" if indirect else "per_thread_count")
     sdfg.add_array("out", [NX], dace.float64, storage=GLOBAL)
     state = sdfg.add_state("kernel")
     me, mx = state.add_map("kernel", {"b": "0:NX"}, schedule=GPU_DEVICE)
-    nsdfg = state.add_nested_sdfg(body, {"counts"}, {"o"}, symbol_mapping={"b": "b", "NX": "NX"})
-    state.add_memlet_path(state.add_read("counts"), me, nsdfg, dst_conn="counts", memlet=dace.Memlet("counts[0:NX]"))
+    inputs = ("counts", "rows") if indirect else ("counts",)
+    nsdfg = state.add_nested_sdfg(body, dict.fromkeys(inputs), {"o": None}, symbol_mapping={"b": "b", "NX": "NX"})
+    for name in inputs:
+        sdfg.add_array(name, [NX], dace.int32, storage=GLOBAL)
+        state.add_memlet_path(state.add_read(name), me, nsdfg, dst_conn=name, memlet=dace.Memlet(f"{name}[0:NX]"))
     state.add_memlet_path(nsdfg, mx, state.add_write("out"), src_conn="o", memlet=dace.Memlet("out[b]"))
     sdfg.validate()
     return sdfg
@@ -344,6 +353,34 @@ def test_an_extent_a_thread_reads_runs_on_the_device():
     out = cp.zeros(5)
     with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
         sdfg(counts=counts, out=out, NX=5)
+    assert np.allclose(cp.asnumpy(out), 2.0)
+
+
+def test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads():
+    """``n = counts[rows[b]]``: the fold before the kernel reads ``counts`` at ``rows[b]``, not at the nest-local ``r``,
+    which no host code defines."""
+    sdfg = kernel_with_a_per_thread_count(indirect=True)
+    assert lift(sdfg) == 1
+    folds = [
+        node
+        for state in sdfg.states()
+        for node in state.nodes()
+        if isinstance(node, dace.nodes.Tasklet) and node.label == "fold_n_max"
+    ]
+    assert [node.code.as_string.strip() for node in folds] == ["o = __read_counts[__read_rows[b]]"]
+    assert "r" not in sdfg.free_symbols and "n" not in sdfg.free_symbols, sdfg.free_symbols
+    sdfg.validate()
+
+
+@pytest.mark.gpu
+def test_an_extent_a_thread_reads_through_an_index_runs_on_the_device():
+    cp = pytest.importorskip("cupy")
+    sdfg = kernel_with_a_per_thread_count(indirect=True)
+    counts = cp.asarray(np.array([3, 0, 7, 1, 5], dtype=np.int32))
+    rows = cp.asarray(np.array([4, 2, 0, 3, 1], dtype=np.int32))
+    out = cp.zeros(5)
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        sdfg(counts=counts, rows=rows, out=out, NX=5)
     assert np.allclose(cp.asnumpy(out), 2.0)
 
 
@@ -1056,6 +1093,7 @@ def test_wcr_np_sum_small_n_auto_staging():
 
 if __name__ == "__main__":
     test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel()
+    test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads()
     for max_elem, min_elem, expected in [(sympy.Min(N - 1, B_I + 31), B_I, 32), (N - 1, sympy.Integer(0), N)]:
         test_tile_extent(max_elem, min_elem, expected)
     for ranges, shape, strides, expected_shape, expected_strides in [

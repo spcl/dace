@@ -177,15 +177,21 @@ def prepend_subscript_indices(code: str, array_name: str, prefix: list[str]) -> 
 @dataclass(slots=True)
 class ExtentBound:
     """A host symbol bounding an extent symbol assigned inside the kernel: ``max(0, container[index])`` over the
-    kernel's iterations, ``container`` and ``index`` in the kernel SDFG's names."""
+    kernel's iterations, ``container`` and ``index`` in the kernel SDFG's names. ``index`` reads the containers in
+    ``reads`` (``row_bin[rows[b]]``) through their connectors, :func:`read_connector`."""
 
     symbol: str
     bound: str
     container: str
-    index: list[symbolic.SymbolicType]
+    index: list[str]
     dtype: dtypes.typeclass
     on_device: bool
+    reads: list[str]
     folded: bool = False
+
+
+def read_connector(container: str) -> str:
+    return f"__read_{container}"
 
 
 def kernel_assigned_read(hierarchy: list[SDFG], name: str) -> tuple[SDFG, str, str] | None:
@@ -232,6 +238,32 @@ def read_in_kernel_sdfg(
         idx = [begin + symbolic.pystr_to_symbolic(i).subs(mapping) for (begin, _, _), i in zip(window, idx)]
         container = bound[0].data.data
     return container, idx
+
+
+def inline_kernel_reads(
+    hierarchy: list[SDFG], index: list[symbolic.SymbolicType], seen: tuple[str, ...] = ()
+) -> tuple[list[str], OrderedSet[str]] | None:
+    """``index`` as text in the names of ``hierarchy[-1]``, each symbol a nest assigns replaced by the one element
+    read it is assigned (:func:`kernel_assigned_read`) through :func:`read_connector`, and the containers read;
+    ``None`` if a nest assigns one anything else."""
+    reads = OrderedSet()
+    replacements = {}
+    names = sorted({str(s) for i in index for s in symbolic.pystr_to_symbolic(i).free_symbols})
+    for name in names:
+        if not any(assigns_symbol(sdfg, name) for sdfg in hierarchy[:-1]):
+            continue
+        read = kernel_assigned_read(hierarchy, name) if name not in seen else None
+        located = read and read_in_kernel_sdfg(hierarchy, *read)
+        inner = located and inline_kernel_reads(hierarchy, located[1], (*seen, name))
+        if not inner:
+            return None
+        reads.add(located[0])
+        reads.update(inner[1])
+        replacements[name] = f"{read_connector(located[0])}[{', '.join(inner[0])}]"
+    text = [symbolic.symstr(i) for i in index]
+    for name, value in replacements.items():
+        text = [re.sub(rf"\b{re.escape(name)}\b", value, part) for part in text]
+    return text, reads
 
 
 def sdfg_chain(inner: SDFG, outer: SDFG) -> list[SDFG]:
@@ -466,21 +498,26 @@ class MoveArrayOutOfKernel(ppl.Pass):
             if not located:
                 return None
             container, index = located
+            inlined = inline_kernel_reads(hierarchy, index)
+            if inlined is None:
+                return None
+            index, reads = inlined
             ctype = kernel_sdfg.arrays[container].dtype
-            storage = kernel_sdfg.arrays[container].storage
-            on_device = storage in GPU_RESIDENT_STORAGES
-            if not np.issubdtype(ctype.type, np.integer) or not (
-                on_device or storage in host_storages(kernel, kernel_state)
+            on_device = kernel_sdfg.arrays[container].storage in GPU_RESIDENT_STORAGES
+            readable = GPU_RESIDENT_STORAGES if on_device else host_storages(kernel, kernel_state)
+            if not np.issubdtype(ctype.type, np.integer) or any(
+                kernel_sdfg.arrays[name].storage not in readable for name in (container, *reads)
             ):
                 return None
+            reads = list(reads)
             bound = f"{sym}_max"
             if bound in kernel_sdfg.symbols and not any(b.bound == bound for b in result):
                 # Already folded for an array this kernel lifted before
-                result.append(ExtentBound(sym, bound, container, index, ctype, on_device, folded=True))
+                result.append(ExtentBound(sym, bound, container, index, ctype, on_device, reads, folded=True))
                 continue
             bound = utils.find_new_name(bound, taken)
             taken.add(bound)
-            result.append(ExtentBound(sym, bound, container, index, ctype, on_device))
+            result.append(ExtentBound(sym, bound, container, index, ctype, on_device, reads))
         return result
 
     def move_array(self, plan: LiftPlan, kernel: nodes.MapEntry, kernel_state: SDFGState) -> None:
@@ -545,12 +582,20 @@ class MoveArrayOutOfKernel(ppl.Pass):
         )
         fold_state = region.add_state_after(state, f"fold_{extent.bound}")
         params = dict(zip(kernel.map.params, (f"{b}:{e}+1:{st}" for b, e, st in kernel.map.range), strict=True))
-        index = ", ".join(symbolic.symstr(i) for i in extent.index)
+        index = ", ".join(extent.index)
+        if extent.reads:
+            inputs = {
+                read_connector(name): Memlet.from_array(name, sdfg.arrays[name])
+                for name in OrderedSet((extent.container, *extent.reads))
+            }
+            code = f"o = {read_connector(extent.container)}[{index}]"
+        else:
+            inputs, code = {"v": Memlet(f"{extent.container}[{index}]")}, "o = v"
         _, _, fold_exit = fold_state.add_mapped_tasklet(
             f"fold_{extent.bound}",
             params,
-            {"v": Memlet(f"{extent.container}[{index}]")},
-            "o = v",
+            inputs,
+            code,
             {"o": Memlet(f"{fold}[0]", wcr="lambda a, b: max(a, b)")},
             schedule=schedule,
             external_edges=True,
