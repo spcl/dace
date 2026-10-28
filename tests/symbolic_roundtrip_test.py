@@ -222,8 +222,40 @@ def test_infinity_cpp_lowering():
 def test_fractional_power_cpp_lowering():
     # ``1/2`` and ``1/3`` are integer division in C++: ``pow(M, 1/2)`` would be ``pow(M, 0)``
     assert symstr(pystr_to_symbolic("sqrt(M)"), cpp_mode=True) == "(dace::math::sqrt(M))"
-    assert symstr(pystr_to_symbolic("M**(1/3)"), cpp_mode=True) == "(dace::math::pow<1, 3>(M))"
-    assert symstr(pystr_to_symbolic("M**(-2/3)"), cpp_mode=True) == "(dace::math::pow<-2, 3>(M))"
+    assert symstr(pystr_to_symbolic("M**(1/3)"), cpp_mode=True) == "(dace::math::pow(M, 1, 3))"
+    assert symstr(pystr_to_symbolic("M**(-2/3)"), cpp_mode=True) == "(dace::math::pow(M, -2, 3))"
+
+
+def test_symbolic_fractional_power_cpp_lowering():
+    # ``N/3`` in the exponent is integer division in C++ as well
+    assert symstr(pystr_to_symbolic("M**(N/3)"), cpp_mode=True) == "(dace::math::pow(M, N, 3))"
+    assert symstr(pystr_to_symbolic("M**(2*N/3)"), cpp_mode=True) == "(dace::math::pow(M, 2*N, 3))"
+    assert symstr(pystr_to_symbolic("M**(1/N)"), cpp_mode=True) == "(dace::math::pow(M, 1, N))"
+
+
+def test_interstate_fractional_power_is_a_real_power():
+    # Interstate assignments lower through ``cppunparse``, not ``symstr``
+    sdfg = dace.SDFG("interstate_fractional_power")
+    for name in "MN":
+        sdfg.add_symbol(name, dace.int64)
+    for name in "rstu":
+        sdfg.add_symbol(name, dace.float64)
+    sdfg.add_array("out", [4], dace.float64)
+    first, second = sdfg.add_state(), sdfg.add_state()
+    assignments = {"r": "M**(1/3)", "s": "M**(N/3)", "t": "M**(-2/3)", "u": "M**-(N/3)"}
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments=assignments))
+    tasklet = second.add_tasklet("w", {}, {"a": None, "b": None, "c": None, "d": None}, "a = r; b = s; c = t; d = u")
+    out = second.add_access("out")
+    for i, conn in enumerate("abcd"):
+        second.add_edge(tasklet, conn, out, None, dace.Memlet(f"out[{i}]"))
+
+    code = sdfg.generate_code()[0].clean_code
+    for lowered in ("pow(M, 1, 3)", "pow(M, N, 3)", "pow(M, -2, 3)", "pow(M, -(N), 3)"):
+        assert f"dace::math::{lowered}" in code
+
+    result = numpy.zeros(4)
+    sdfg(out=result, M=27, N=2)
+    assert numpy.allclose(result, [3.0, 9.0, 1 / 9, 1 / 9])
 
 
 def test_integer_power_in_a_denominator_stays_one_operand():
@@ -391,6 +423,8 @@ if __name__ == "__main__":
     test_infinity_roundtrip()
     test_infinity_cpp_lowering()
     test_fractional_power_cpp_lowering()
+    test_symbolic_fractional_power_cpp_lowering()
+    test_interstate_fractional_power_is_a_real_power()
     test_integer_power_in_a_denominator_stays_one_operand()
     test_nan_roundtrip()
     test_boolean_preserved_and_distinct_from_int()

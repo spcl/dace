@@ -759,13 +759,15 @@ namespace dace
         {
             return dace::float16(std::pow(float(a), float(b)));
         }
-        // ``a ** (P / Q)``. The exponent takes the base's floating type (float for a half), double for an integral
-        // base as ``int ** float`` in NumPy.
-        template<long long P, long long Q, typename T>
-        DACE_HDFI auto pow(const T& a)
+        // ``a ** (p / q)`` in the base's floating type R, double for an integral base as ``int ** float`` in NumPy.
+        // ``p`` and ``q`` may be symbols: the quotient is in R, never integer division. A half powers in float.
+        template<typename T, typename P, typename Q>
+        DACE_HDFI auto pow(const T& a, const P& p, const Q& q)
         {
+            using R = typename std::conditional<std::is_integral<T>::value, double, T>::type;
             using F = typename std::conditional<std::is_integral<T>::value, double, decltype(a + 0.0f)>::type;
-            return pow(a, F(P) / F(Q));
+            const R e = R(p) / R(q);
+            return R(pow(F(a), F(e)));
         }
 
         template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>

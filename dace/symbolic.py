@@ -1608,11 +1608,16 @@ def sympy_divide_fix(expr):
         return expr
 
     int_floor = sympy.Function("int_floor")
+    # ``M**(N/3)`` is a real power: the printer lowers the exponent's quotient itself
+    exponents = [p.exp for p in nexpr.find(sympy.Pow) if not p.exp.is_integer]
+    in_exponents = set().union(*(e.find(sympy.Mul) for e in exponents))
 
     processed = 1
     while processed > 0:
         processed = 0
         for candidate in nexpr.find(sympy.Mul):
+            if candidate in in_exponents:
+                continue
             for i, arg in enumerate(candidate.args):
                 if isinstance(arg, sympy.Number) and abs(arg) >= 1:
                     continue
@@ -2795,9 +2800,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             # Decided on the exponent, not its text: ``Rational(1, 2)`` prints ``1/2``, which ``float()`` rejects
             if expr.args[1] == sympy.Rational(1, 2) or (expr.args[1].is_Float and float(expr.args[1]) == 0.5):
                 return f"dace::math::sqrt({base})"
-            # A bare ``p/q`` exponent is C++ integer division: ``pow(x, 1/3)`` is ``pow(x, 0)``
-            if expr.args[1].is_Rational and not expr.args[1].is_Integer:
-                return f"dace::math::pow<{expr.args[1].p}, {expr.args[1].q}>({base})"
+            # A bare ``p/q`` exponent is C++ integer division: ``pow(x, 1/3)`` is ``pow(x, 0)``, ``pow(x, N/3)`` too
+            if not expr.args[1].is_integer:
+                num, den = sympy.fraction(sympy.together(expr.args[1]))
+                if den != 1:
+                    return f"dace::math::pow({base}, {self._print(num)}, {self._print(den)})"
 
         # Special case for integer powers
         try:
