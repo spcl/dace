@@ -3,6 +3,7 @@
 forbids data to share (an expanded copy's tasklet reads ``_cpy_in``, and so is named every copy nest's local view)."""
 
 import numpy as np
+import pytest
 
 import dace
 from dace.libraries.standard.nodes import CopyLibraryNode
@@ -188,9 +189,54 @@ def test_a_cpp_tasklet_local_named_like_a_renamed_container_stays_a_local():
     assert b[0] == 0.5
 
 
+def nest_with_a_tasklet_connector_named(clash: str, side: str, language: dace.Language) -> dace.SDFG:
+    """``out = inp * 2`` in a single-state nest whose tasklet names its ``side`` connector ``clash``: the parent
+    owns an array ``B`` and a symbol ``N``."""
+    inner = dace.SDFG("clash_inner")
+    inner.add_array("inp", [1], dace.float64)
+    inner.add_array("out", [1], dace.float64)
+    body = inner.add_state("body", is_start_block=True)
+    i, o = (clash, "o") if side == "in" else ("i", clash)
+    t = body.add_tasklet("t", {i}, {o}, f"{o} = {i} * 2" + (";" if language is dace.Language.CPP else ""),
+                         language=language)
+    body.add_edge(body.add_read("inp"), None, t, i, dace.Memlet("inp[0]"))
+    body.add_edge(t, o, body.add_write("out"), None, dace.Memlet("out[0]"))
+
+    sdfg = dace.SDFG("clash_outer")
+    for name in "XYB":
+        sdfg.add_array(name, [1], dace.float64)
+    sdfg.add_symbol("N", dace.int64)
+    state = sdfg.add_state("main", is_start_block=True)
+    nest = state.add_nested_sdfg(inner, {"inp"}, {"out"})
+    state.add_edge(state.add_read("X"), None, nest, "inp", dace.Memlet("X[0]"))
+    state.add_edge(nest, "out", state.add_write("Y"), None, dace.Memlet("Y[0]"))
+    use = sdfg.add_state_after(state, "use")
+    u = use.add_tasklet("u", {}, {"o"}, "o = N")
+    use.add_edge(u, "o", use.add_write("B"), None, dace.Memlet("B[0]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("language", [dace.Language.Python, dace.Language.CPP])
+@pytest.mark.parametrize("side", ["in", "out"])
+@pytest.mark.parametrize("clash", ["B", "N"])
+def test_a_single_state_inlined_tasklet_connector_named_like_a_parent_name_is_renamed(clash, side, language):
+    """A connector named like the parent's array ``B`` or symbol ``N`` fails validation once inlined, unless it is
+    renamed in its edges and code (as InlineMultistateSDFG does)."""
+    sdfg = nest_with_a_tasklet_connector_named(clash, side, language)
+    assert sdfg.apply_transformations(InlineSDFG) == 1
+    sdfg.validate()
+    x, y, b = np.array([3.0]), np.zeros(1), np.zeros(1)
+    sdfg(X=x, Y=y, B=b, N=7)
+    assert y[0] == 6.0 and b[0] == 7.0
+
+
 if __name__ == "__main__":
     test_an_inlined_transient_is_named_apart_from_a_connector()
     test_a_multistate_inlined_transient_is_named_apart_from_a_connector()
     test_an_inlined_connector_moves_aside_for_a_parent_transient()
     test_a_tasklet_naming_its_container_in_code_reads_it_under_the_outer_name()
     test_a_cpp_tasklet_local_named_like_a_renamed_container_stays_a_local()
+    for clash in "BN":
+        for side in ("in", "out"):
+            for language in (dace.Language.Python, dace.Language.CPP):
+                test_a_single_state_inlined_tasklet_connector_named_like_a_parent_name_is_renamed(clash, side, language)
