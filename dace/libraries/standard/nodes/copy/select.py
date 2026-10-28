@@ -96,6 +96,14 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
                 f"'{parent_state.label}'). Device code cannot address host memory and "
                 f"cannot issue a Memcpy; place the copy outside the kernel."
             )
+        from dace.libraries.standard.block_reduce import in_kernel_block_implementation, release_kernel_block_size
+
+        # Lanes split the elements only of data the block shares, not of a thread's own copy
+        shared = not out.transient or out.storage == dtypes.StorageType.GPU_Shared
+        block = in_kernel_block_implementation(node, parent_state) if shared else None
+        if block is not None:
+            release_kernel_block_size(node, parent_state)
+            return block
         return "MappedTasklet"
 
     # Host CPU-resident: same-shape/contiguous/same-layout below the parallel-transfer threshold

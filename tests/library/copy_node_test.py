@@ -2630,9 +2630,9 @@ def test_in_kernel_cross_boundary_copy_is_refused_by_selection():
 
 
 def test_in_kernel_device_to_device_copy_still_maps():
-    """The refusal is only for the boundary -- an in-kernel device copy has nothing else to be."""
+    """The refusal is only for the boundary -- an in-kernel device copy maps, across the block's lanes."""
     sdfg, libnode = _make_in_kernel_copy_sdfg(dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Global)
-    assert select_copy_implementation(libnode, sdfg.start_state) == "MappedTasklet"
+    assert select_copy_implementation(libnode, sdfg.start_state) == "CUDA (block)"
 
 
 def test_a_host_level_cross_boundary_copy_never_falls_back_to_a_mapped_tasklet():
@@ -3171,3 +3171,42 @@ if __name__ == "__main__":
     test_shared_collective_refuses_conflicting_thread_block_sizes()
     test_shared_collective_in_a_thread_block_kernel_moves_the_whole_tile()
     test_shared_collective_lane_axis_follows_the_global_side_both_directions()
+
+
+def block_copy_in_kernel_sdfg(name: str) -> dace.SDFG:
+    """``map i (GPU_Device) { B[i, 0:1000] = A[i, 0:1000] }`` through a CopyLibraryNode left to ``Auto``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [8, 1000], dace.float64, dace.StorageType.GPU_Global)
+    sdfg.add_array("B", [8, 1000], dace.float64, dace.StorageType.GPU_Global)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("kernel", dict(i="0:8"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    copy = CopyLibraryNode(name="copy_row")
+    state.add_memlet_path(state.add_read("A"), me, copy, dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME, memlet=dace.Memlet("A[i, 0:1000]"))
+    state.add_memlet_path(
+        copy, mx, state.add_write("B"), src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME, memlet=dace.Memlet("B[i, 0:1000]")
+    )
+    return sdfg
+
+
+def test_a_copy_into_shared_data_inside_a_kernel_runs_on_the_block():
+    """One CTA per kernel iteration: the block's lanes split the row, not one thread walking all of it."""
+    sdfg = block_copy_in_kernel_sdfg("copy_block_in_kernel_schedule")
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    lanes = [
+        n.map
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock
+    ]
+    assert len(lanes) == 1 and lanes[0].gpu_force_syncthreads
+
+
+@pytest.mark.gpu
+def test_a_copy_on_the_block_inside_a_kernel_moves_every_row():
+    import cupy  # Only present on GPU runners.
+
+    sdfg = block_copy_in_kernel_sdfg("copy_block_in_kernel_run")
+    a = cupy.arange(8000, dtype=cupy.float64).reshape(8, 1000)
+    b = cupy.zeros((8, 1000), dtype=cupy.float64)
+    sdfg(A=a, B=b)
+    np.testing.assert_array_equal(cupy.asnumpy(b), cupy.asnumpy(a))

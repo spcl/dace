@@ -280,7 +280,7 @@ def _make_expansion_sdfg(
 
 
 def _make_mapped_tasklet_expansion(
-    node: "CopyLibraryNode", parent_state: dace.SDFGState, allow_cross_storage: bool = False
+    node: "CopyLibraryNode", parent_state: dace.SDFGState, allow_cross_storage: bool = False, lanes: int = 0
 ) -> dace.SDFG:
     """Element-wise mapped tasklet expansion. Raises if the copy crosses the CPU/GPU boundary.
 
@@ -291,6 +291,9 @@ def _make_mapped_tasklet_expansion(
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node``.
     :param allow_cross_storage: permit differing src/dst storages.
+    :param lanes: when nonzero, the copy is a block collective inside a kernel: a ``GPU_ThreadBlock`` map of
+                  ``lanes`` lanes splits the elements, the innermost axis strided across them, and a barrier at its
+                  exit publishes the copy.
     :returns: the wrapper SDFG holding the mapped tasklet.
     :raises ValueError: the copy crosses the CPU/GPU boundary.
     """
@@ -393,11 +396,33 @@ def _make_mapped_tasklet_expansion(
         inputs = {inner_in: _side_access(ctx.inp_name, in_shape)}
         outputs = {inner_out: _side_access(ctx.out_name, out_shape)}
 
+    code = copy_assignment_code(inp, out, inner_in, inner_out)
+    if lanes:
+        from dace.sdfg.propagation import propagate_memlets_state
+
+        innermost = list(map_rng)[-1]
+        map_rng[innermost] = ("__lane", map_rng[innermost][1], lanes)
+        state = ctx.state
+        lane_entry, lane_exit = state.add_map(
+            f"{node.label}_lanes", {"__lane": f"0:{lanes}"}, dtypes.ScheduleType.GPU_ThreadBlock
+        )
+        lane_entry.map.gpu_force_syncthreads = True
+        entry, leave = state.add_map(f"{node.label}_elements", map_rng, dtypes.ScheduleType.Sequential)
+        tasklet = state.add_tasklet(f"{node.label}_tasklet", {inner_in}, {inner_out}, code)
+        state.add_memlet_path(
+            state.add_read(ctx.inp_name), lane_entry, entry, tasklet, dst_conn=inner_in, memlet=inputs[inner_in]
+        )
+        state.add_memlet_path(
+            tasklet, leave, lane_exit, state.add_write(ctx.out_name), src_conn=inner_out, memlet=outputs[inner_out]
+        )
+        propagate_memlets_state(ctx.sdfg, state)
+        return ctx.sdfg
+
     _, map_entry, _ = ctx.state.add_mapped_tasklet(
         f"{node.label}_tasklet",
         map_rng,
         inputs,
-        copy_assignment_code(inp, out, inner_in, inner_out),
+        code,
         outputs,
         schedule=schedule,
         external_edges=True,
