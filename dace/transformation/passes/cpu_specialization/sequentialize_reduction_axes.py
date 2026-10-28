@@ -30,14 +30,20 @@ def reduction_output_params(state: SDFGState, entry: nodes.MapEntry) -> set[str]
     """The parameters of ``entry`` that index its write-conflict-resolved outputs.
 
     ``None`` when there is nothing to split: no such output, outputs indexed by DIFFERENT parameters
-    (no one order serves them all), or every parameter indexes them (no axis is reduced) or none does
-    (a reduction to one element, which OpenMP's ``reduction`` clause already serves).
+    (no one order serves them all), every parameter indexes them (no axis is reduced) or none does
+    (a reduction to one element, which OpenMP's ``reduction`` clause already serves), or a data-dependent
+    scatter of rows (a dynamic write whose first dimension no parameter indexes, cp2k_trs4's
+    ``sink[x0[i0], t0, t1]``): its parallel axis is the one that scatters, which
+    :class:`RangePrivatizeScatterReductions` serves by rows.
     """
     params = set(entry.map.params)
     indexing: set[str] | None = None
     for edge in state.in_edges(state.exit_node(entry)):
         if edge.data.is_empty() or edge.data.wcr is None:
             continue
+        begin, end, _ = edge.data.subset.ndrange()[0]
+        if edge.data.dynamic and begin != end and not ({str(s) for s in edge.data.subset[0][0].free_symbols} & params):
+            return None
         used = {str(symbol) for symbol in edge.data.subset.free_symbols} & params
         if indexing is not None and used != indexing:
             return None

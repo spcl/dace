@@ -640,8 +640,10 @@ class ScatterAnalysis:
         exits = [e for e in state.in_edges(state.exit_node(self.map_entry)) if e.data.data == self.name]
         if len(exits) != 1:
             raise Refuse(self.name)
-        # A region that moves with the map's own variables is written per iteration, not reduced over.
-        if {str(s) for s in exits[0].data.subset.free_symbols} & set(self.map_entry.map.params):
+        # Rows that move with the map's own variables are written per iteration, not reduced over; the map's
+        # variables may index within a row (cp2k_trs4's sink[x0[i0], t0, t1]): a private row holds all of it.
+        rows = exits[0].data.subset[0]
+        if {str(s) for x in rows for s in symbolic.pystr_to_symbolic(x).free_symbols} & set(self.map_entry.map.params):
             raise Refuse(self.name)
         entries, first = self.wcr_path(state, exits[0], state.exit_node(self.map_entry))
         if not isinstance(first.src, nodes.NestedSDFG):
