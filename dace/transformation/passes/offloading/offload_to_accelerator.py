@@ -1447,7 +1447,17 @@ class OffloadToAccelerator(ppl.Pass):
                 free_tasklet_data |= c
 
             elif isinstance(node, nodes.AccessNode):
-                pass  # nothing to do; cannot be classified without context
+                # A copy inside a serial host loop is host code like the loop's tasklets: its containers are
+                # copied once at the loop's boundary, not one element per iteration (vloc_psi_k_acc's
+                # ``psic[nl[igk[ig]]] = psi1[ig]``). Elsewhere a copy says nothing about where either side lives.
+                if self.in_host_only_loop(state):
+                    c = OrderedSet(
+                        name
+                        for edge in state.all_edges(node)
+                        if isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)
+                        for name in (edge.src.data, edge.dst.data)
+                        if not is_scalar(name, sdfg)
+                    )
 
             else:
                 raise RuntimeError(f"unhandled node {node} of type {node.__class__.__name__} in state {state}")

@@ -172,13 +172,55 @@ def map_containers_and_traffic(
     """The containers a top-level map reads or writes, and the elements it moves (dynamic memlets count 0)."""
     names: OrderedSet[str] = OrderedSet()
     traffic: symbolic.SymbolicType | int = 0
-    for edge in itertools.chain(state.in_edges(entry), state.out_edges(state.exit_node(entry))):
+    exit_node = state.exit_node(entry)
+    for edge in itertools.chain(state.in_edges(entry), state.out_edges(exit_node)):
         if edge.data.data is None:
             continue
         names.add(edge.data.data)
         if not edge.data.dynamic:
-            traffic = traffic + moved_elements(edge.data)
+            inner = (
+                state.out_edges_by_connector(entry, "OUT_" + edge.dst_conn[3:])
+                if edge.dst is entry and edge.dst_conn
+                else state.in_edges_by_connector(exit_node, "IN_" + edge.src_conn[4:])
+                if edge.src is exit_node and edge.src_conn
+                else []
+            )
+            per_iteration = nest_accesses(list(inner))
+            if per_iteration is None:
+                traffic = traffic + moved_elements(edge.data)
+            else:
+                traffic = traffic + entry.map.range.num_elements() * per_iteration
     return names, traffic
+
+
+def nest_accesses(inner_edges: list) -> symbolic.SymbolicType | int | None:
+    """Elements one map iteration moves through ``inner_edges`` when each ends at a loop-free nested SDFG: the
+    accesses its states and interstate edges make to the connector, which the memlet into the nest overstates
+    when an interstate edge reads it (amg_setup's ``c = touched[t]`` widens to all of ``touched``). None otherwise."""
+    if not inner_edges:
+        return None
+    count: symbolic.SymbolicType | int = 0
+    for edge in inner_edges:
+        nsdfg = edge.dst if isinstance(edge.dst, nodes.NestedSDFG) else edge.src
+        conn = edge.dst_conn if nsdfg is edge.dst else edge.src_conn
+        if not isinstance(nsdfg, nodes.NestedSDFG) or conn is None:
+            return None
+        inner = nsdfg.sdfg
+        if any(isinstance(block, LoopRegion) for block in inner.all_control_flow_blocks(recursive=True)):
+            return None
+        for body in inner.states():
+            for node in body.data_nodes():
+                if node.data != conn:
+                    continue
+                for e in body.all_edges(node):
+                    if e.data.data != conn:
+                        continue
+                    if e.data.dynamic:
+                        return None
+                    count = count + e.data.volume
+        for ise in inner.all_interstate_edges(recursive=True):
+            count = count + sum(m.volume for m in ise.data.get_read_memlets(inner.arrays) if m.data == conn)
+    return count
 
 
 def moved_elements(memlet) -> symbolic.SymbolicType | int:
@@ -195,19 +237,12 @@ def moved_elements(memlet) -> symbolic.SymbolicType | int:
     return memlet.volume
 
 
-def provably_moves_less(
+def provably_moves_at_least(
     traffic: symbolic.SymbolicType | int, size: symbolic.SymbolicType | int, facts: symbolic.Facts
 ) -> bool:
-    """Whether ``traffic`` is provably below ``size`` under ``facts`` (at the map); undecidable answers False, keeping
-    the map a kernel.
-
-    A symbolic extent is taken as big enough, so a constant count is below any symbolic ``size``.
-    """
-    if not symbolic.issymbolic(traffic):
-        return symbolic.issymbolic(size) or symbolic.provably_nonnegative(size - traffic - 1, symbolic.Facts.none())
-    return symbolic.provably_nonnegative(size - traffic, facts) and not symbolic.provably_nonnegative(
-        traffic - size, facts
-    )
+    """Whether ``traffic`` is provably at least ``size`` under ``facts``: only then does a kernel in a serial host loop
+    move as much as the per-iteration copies of the containers it shares cost. Undecidable answers False."""
+    return symbolic.provably_nonnegative(traffic - size, facts)
 
 
 def is_fallback_loop(loop: LoopRegion) -> bool:
@@ -225,7 +260,7 @@ def in_fallback_loop(loop: LoopRegion) -> bool:
     """Whether ``loop`` is, or lies inside, a loop pinned sequential as a specialization's fallback."""
     region = loop
     while region is not None and not isinstance(region, SDFG):
-        if isinstance(region, LoopRegion) and region.pinned_sequential:
+        if isinstance(region, LoopRegion) and is_fallback_loop(region):
             return True
         region = region.parent_graph
     return False
@@ -238,7 +273,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
     every map in it is pinned, except in a state that also calls a library (a state has one
     location), so the arm copies only at its own boundary. In any other loop, offloading a map
     copies each non-scalar container it shares with the loop's host code once per iteration, and
-    when the map provably moves less than those hold the copies dominate (amg_setup: 344 s on GPU
+    unless the map provably moves at least what those hold the copies dominate (amg_setup: 344 s on GPU
     against 0.8 s on CPU). Such a loop is pinned all or nothing: any other device work in it (a map
     not provably smaller, a library call, a second map in a state) keeps every kernel on the device,
     since the offload gives a state one location. Loops of nested SDFGs are kernel code.
@@ -267,7 +302,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
                 names, traffic = map_containers_and_traffic(state, node)
                 shared = [n for n in names & host if n in sdfg.arrays and sdfg.arrays[n].total_size != 1]
                 total = sum(sdfg.arrays[n].total_size for n in shared)
-                if shared and provably_moves_less(traffic, total, SymbolResolver().facts_at(state, node)):
+                if shared and not provably_moves_at_least(traffic, total, SymbolResolver().facts_at(state, node)):
                     candidates.add(node)
                 else:
                     device_loop = True

@@ -2,7 +2,8 @@
 """A loop leaves its data where its head wants it: the loop's tail copies it back, so an enclosing loop must not copy
 it a second time.
 
-The shape is seidel's before the wavefront: per row a device map, then a host recurrence over the row. The row loop
+The shape is seidel's before the wavefront: per row a device map over the whole array (one moving no less than the
+row loop's copies of ``A``, so it stays a kernel), then a host recurrence over the row. The row loop
 copies ``A`` back to the device at its tail; the time loop around it used to read the row loop's last use (``A`` on the
 host) and copy the whole of ``A`` to the device once more per step."""
 
@@ -19,7 +20,7 @@ N = dace.symbol("N")
 def rows(A: dace.float64[N, N], T: dace.int64):
     for t in range(T):
         for i in range(1, N):
-            A[i, :] = A[i, :] + A[i - 1, :]
+            A[:, :] = 0.5 * A[:, :]
             for j in range(1, N):
                 A[i, j] = A[i, j] + A[i, j - 1]
 
@@ -51,7 +52,7 @@ def test_the_nest_still_computes_the_reference():
     expected = a.copy()
     for step in range(steps):  # noqa: B007 -- each step repeats the same sweep
         for i in range(1, n):
-            expected[i, :] = expected[i, :] + expected[i - 1, :]
+            expected[:, :] = 0.5 * expected[:, :]
             for j in range(1, n):
                 expected[i, j] = expected[i, j] + expected[i, j - 1]
     got = a.copy()
