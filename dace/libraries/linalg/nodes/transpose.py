@@ -364,7 +364,12 @@ class ExpandTransposeCUDABlock(ExpandTransformation):
         entry, leave = nstate.add_map(node.label + "_elements", ranges, dace.ScheduleType.Sequential)
         tasklet = nstate.add_tasklet("transpose", {"__inp"}, {"__out"}, "__out = __inp")
         nstate.add_memlet_path(
-            nstate.add_read("_inp"), lanes, entry, tasklet, dst_conn="__inp", memlet=dace.Memlet(f"_inp[{', '.join(params)}]")
+            nstate.add_read("_inp"),
+            lanes,
+            entry,
+            tasklet,
+            dst_conn="__inp",
+            memlet=dace.Memlet(f"_inp[{', '.join(params)}]"),
         )
         nstate.add_memlet_path(
             tasklet,

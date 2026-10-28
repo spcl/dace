@@ -167,11 +167,12 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
 def lane_map_nodes() -> tuple[type, ...]:
     """The library nodes whose block lowering adds its own ``BLOCK_COLLECTIVE_THREADS``-lane map."""
     from dace.libraries.linalg.nodes.transpose import Transpose
+    from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
     from dace.libraries.standard.nodes.copy import CopyLibraryNode
     from dace.libraries.standard.nodes.fill import FillLibraryNode
     from dace.libraries.standard.nodes.state_scan import StateScan
 
-    return (CopyLibraryNode, FillLibraryNode, StateScan, Transpose)
+    return (CopyLibraryNode, FillLibraryNode, StateScan, TensorTranspose, Transpose)
 
 
 def holds_thread_block_maps(node: nodes.Node, state: SDFGState) -> bool:
