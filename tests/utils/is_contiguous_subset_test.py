@@ -249,6 +249,49 @@ def test_1d_slice():
         assert result is res
 
 
+def test_padded_single_element_and_padded_rows():
+    """A padded (non-packed) array: one element is contiguous, so are runs that do not cross the padding."""
+    array = create_array((10, 20), (24, 1))
+    assert create_subset([(3, 3, 1), (7, 7, 1)]).is_contiguous_subset(array) is True
+    assert create_subset([(3, 3, 1), (0, 19, 1)]).is_contiguous_subset(array) is True
+    assert create_subset([(3, 4, 1), (0, 19, 1)]).is_contiguous_subset(array) is False
+    # The full row pitch of a padded array is one run again.
+    assert create_subset([(3, 4, 1), (0, 23, 1)]).is_contiguous_subset(create_array((10, 24), (24, 1))) is True
+
+
+def test_permuted_layout():
+    """Contiguity does not depend on the order of the dimensions in memory."""
+    array = create_array((10, 20, 30), (30, 300, 1))  # dimension 2 fastest, then 0, then 1
+    assert create_subset([(0, 9, 1), (4, 6, 1), (0, 29, 1)]).is_contiguous_subset(array) is True
+    assert create_subset([(0, 8, 1), (4, 6, 1), (0, 29, 1)]).is_contiguous_subset(array) is False
+
+
+def test_steps():
+    """A step on a dimension with one element does not matter; a step on a wider one breaks the run, unless the
+    stride is chained to it."""
+    array = create_array((10, 20), (20, 1))
+    assert create_subset([(3, 3, 2), (0, 19, 1)]).is_contiguous_subset(array) is True
+    assert create_subset([(0, 9, 1), (0, 19, 2)]).is_contiguous_subset(array) is False
+    assert dace.subsets.contiguous_run_length([10, 20], [40, 2]) is None
+    assert dace.subsets.contiguous_run_length([10, 20], [20, 1]) == 200
+
+
+def test_overlapping_strides_are_not_contiguous():
+    """The span of these strides equals the volume (8), but addresses 3 and 4 are missing and 1 repeats."""
+    assert dace.subsets.contiguous_run_length([2, 2, 2], [1, 1, 5]) is None
+    assert dace.subsets.contiguous_run_length([2, 2, 2], [1, 2, 4]) == 8
+
+
+def test_symbolic_strides_and_tiles():
+    """Symbolic layouts are contiguous when the strides chain provably; tiled ranges never are."""
+    N, M = dace.symbol("N"), dace.symbol("M")
+    array = create_array((N, M), (M, 1))
+    assert create_subset([(0, 1, 1), (0, M - 1, 1)]).is_contiguous_subset(array) is True
+    assert create_subset([(0, 1, 1), (1, M - 1, 1)]).is_contiguous_subset(array) is False
+    assert create_subset([(0, 1, 1), (0, M - 1, 1)]).contiguous_length(array.strides) == 2 * M
+    assert create_subset([(5, 5, 1), (0, 1, 1, 2)]).is_contiguous_subset(array) is False
+
+
 if __name__ == "__main__":
     tests = [obj for name, obj in globals().items() if callable(obj) and name.startswith("test_")]
     for test_function in tests:
