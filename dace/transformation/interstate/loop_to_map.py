@@ -584,15 +584,17 @@ def write_refusal(
     return None
 
 
-def rmw_edges(states: Iterable[SDFGState], names: frozenset[str]) -> tuple[set[int], set[int]]:
-    """The ``id`` of every write edge of ``names`` in ``states`` that a read of the same container and subset in its
-    state feeds, and of those reads: the read-modify-writes ``AugAssignToWCR`` turns into WCR writes."""
+def rmw_edges(states: Iterable[SDFGState], names: frozenset[str] | None = None) -> tuple[set[int], set[int], set[str]]:
+    """The ``id`` of every write edge of ``names`` (any container if ``None``) in ``states`` that a read of the same
+    container and subset in its state feeds, of those reads, and their containers: the read-modify-writes
+    ``AugAssignToWCR`` turns into WCR writes."""
     writes: set[int] = set()
     reads: set[int] = set()
-    if not names:
-        return writes, reads
+    containers: set[str] = set()
+    if names is not None and not names:
+        return writes, reads, containers
     for state in states:
-        nodes_of = [n for n in state.data_nodes() if n.data in names]
+        nodes_of = [n for n in state.data_nodes() if names is None or n.data in names]
         stores = [(e, str(e.data.get_dst_subset(e, state))) for n in nodes_of for e in state.in_edges(n)]
         if not stores:
             continue
@@ -609,7 +611,8 @@ def rmw_edges(states: Iterable[SDFGState], names: frozenset[str]) -> tuple[set[i
                 if fed:
                     reads.add(id(read))
                     writes.update(id(w) for w in fed)
-    return writes, reads
+                    containers.add(node.data)
+    return writes, reads, containers
 
 
 def counted_write(sdfg: SDFG, state: SDFGState, dn: nodes.AccessNode, e: gr.MultiConnectorEdge[memlet.Memlet]) -> bool:
@@ -2099,7 +2102,7 @@ class LoopLift:
             _, write_set = facts.read_write
 
         write_memlets: dict[str, list[memlet.Memlet]] = defaultdict(list)
-        rmw_writes, rmw_reads = rmw_edges(loop_states, self.assume_wcr & other_access_nodes)
+        rmw_writes, rmw_reads, _ = rmw_edges(loop_states, self.assume_wcr & other_access_nodes)
 
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild("a", exclude=[itersym])

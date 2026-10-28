@@ -553,23 +553,44 @@ def map_tasklet_augassign_candidates(
 
 
 def refused_on(loop: LoopRegion, names: set[str], refusals: dict[LoopRegion, Any]) -> bool:
-    """Whether ``LoopToMap`` refuses ``loop`` as the graph stands and accepts it once the read-modify-writes of one of
-    ``names``, and of each other container it refuses on that the loop read-modify-writes, are WCR writes
-    (:attr:`~dace.transformation.interstate.loop_to_map.LoopLift.assume_wcr`). ``refusals`` caches each loop's
-    verdicts for the caller, which drops a loop's entry once it rewrites inside it."""
-    from dace.transformation.interstate.loop_to_map import rmw_edges
+    """Whether ``LoopToMap`` refuses ``loop`` as the graph stands and accepts it once the read-modify-writes of the
+    containers it refuses on, each only read-modify-written in it (:func:`only_read_modify_written`), are WCR writes
+    (:attr:`~dace.transformation.interstate.loop_to_map.LoopLift.assume_wcr`), one of them in ``names``. ``refusals``
+    caches each loop's containers (``None`` when none such) for the caller, which drops a loop's entry once it rewrites
+    inside it, unless the rewrite made one of those containers WCR."""
     from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
     if not names:
         return False
-    verdicts = refusals.setdefault(loop, {})
-    key = frozenset(names)
-    if key not in verdicts:
-        rescued = ParallelizeLoops().rescuing_wcr(
-            loop, lambda r: r.container in key or bool(rmw_edges(loop.states(), frozenset([r.container]))[0])
-        )
-        verdicts[key] = rescued is not None and bool(rescued & key)
-    return verdicts[key]
+    if loop not in refusals:
+        rmw_only: list[frozenset[str]] = []
+
+        def admits(refusal) -> bool:
+            if not rmw_only:
+                rmw_only.append(only_read_modify_written(loop))
+            return refusal.container in rmw_only[0]
+
+        refusals[loop] = ParallelizeLoops().rescuing_wcr(loop, admits)
+    rescued = refusals[loop]
+    return rescued is not None and not rescued.isdisjoint(names)
+
+
+def only_read_modify_written(loop: LoopRegion) -> frozenset[str]:
+    """The containers every access of which in ``loop`` is a read-modify-write
+    (:func:`~dace.transformation.interstate.loop_to_map.rmw_edges`): the ones a WCR leaves without a conflict."""
+    from dace.transformation.interstate.loop_to_map import rmw_edges
+
+    states = loop.states()
+    writes, reads, names = rmw_edges(states)
+    for state in states:
+        for node in state.data_nodes():
+            if node.data not in names:
+                continue
+            if any(id(e) not in writes for e in state.in_edges(node) if not e.data.is_empty()) or any(
+                id(e) not in reads for e in state.out_edges(node) if not e.data.is_empty()
+            ):
+                names.discard(node.data)
+    return frozenset(names)
 
 
 def enclosing_loops_across_nesting(state: SDFGState) -> list[LoopRegion]:
@@ -732,9 +753,12 @@ def augassign_to_wcr_in_state(
             xform.setup_match(sdfg, cfg_id, state_id, binding, expr_index, override=True)
             if not xform.can_be_applied(state, expr_index, sdfg, permissive=False):
                 continue
+            written = binding[AugAssignToWCR.output].data
             xform.apply(state, sdfg)
             for loop in enclosing_loops_across_nesting(state):
-                refusals.pop(loop, None)
+                # A loop lifting with the container assumed WCR still does now that it is
+                if loop.sdfg is not sdfg or written not in (refusals.get(loop) or ()):
+                    refusals.pop(loop, None)
             applied += 1
             changed = True
             break
