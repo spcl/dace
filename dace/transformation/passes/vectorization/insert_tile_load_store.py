@@ -1275,12 +1275,14 @@ class InsertTileLoadStore(ppl.Pass):
             # Scalar bridge (CONSTANT staging output). For Array tile bridges the
             # consumer reads the FULL tile -- bridge_memlet_template encodes that and
             # ``other_subset`` would carry a stale value (``[0]`` from a former Scalar).
+            # The copy's memlet may name either end; the source side is read off the edge.
             if (
                 isinstance(old_edge.src, AccessNode)
                 and old_edge.data.other_subset is not None
                 and isinstance(inner_state.sdfg.arrays.get(old_edge.src.data), data.Scalar)
             ):
-                new_memlet.other_subset = subsets.Range(list(as_range(old_edge.data.other_subset).ranges))
+                source = old_edge.data.get_src_subset(old_edge, inner_state)
+                new_memlet.other_subset = subsets.Range(list(as_range(source).ranges))
             inner_state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 
@@ -1461,12 +1463,14 @@ class InsertTileLoadStore(ppl.Pass):
             # Scalar bridge (CONSTANT staging output). For Array tile bridges the
             # consumer reads the FULL tile -- bridge_memlet_template encodes that and
             # ``other_subset`` would carry a stale value (``[0]`` from a former Scalar).
+            # The copy's memlet may name either end; the destination side is read off the edge.
             if (
                 isinstance(old_edge.dst, AccessNode)
                 and old_edge.data.other_subset is not None
                 and isinstance(inner_state.sdfg.arrays.get(old_edge.dst.data), data.Scalar)
             ):
-                new_memlet.other_subset = subsets.Range(list(as_range(old_edge.data.other_subset).ranges))
+                target = old_edge.data.get_dst_subset(old_edge, inner_state)
+                new_memlet.other_subset = subsets.Range(list(as_range(target).ranges))
             inner_state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 
