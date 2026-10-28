@@ -1207,6 +1207,108 @@ def test_the_producer_copy_follows_graph_order():
     assert [sdfg.arrays[name].dtype for name in new_names] == [dace.int64, dace.float64, dace.bool]
 
 
+def scaled_through_a_body_transient(name: str, offsets: tuple[int, ...], lut_transient: bool = True) -> dace.SDFG:
+    """``T[i] = 2 (A[i] + lut[i])`` through a body scalar ``s``, read by ``C[j] = sum(T[j + o] for o in offsets)``.
+
+    ``lut`` is read inside the producer body behind an empty memlet from its entry; as a transient, an earlier
+    state fills it with ``3 A``.
+    """
+    sdfg = dace.SDFG(name)
+    for array in ("A", "C"):
+        sdfg.add_array(array, [8], dace.float64)
+    sdfg.add_array("lut", [8], dace.float64, transient=lut_transient)
+    sdfg.add_array("T", [8], dace.float64, transient=True)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    init = sdfg.add_state("init")
+    if lut_transient:
+        init.add_mapped_tasklet(
+            "fill",
+            dict(k="0:8"),
+            {"a": dace.Memlet("A[k]")},
+            "l = 3.0 * a",
+            {"l": dace.Memlet("lut[k]")},
+            external_edges=True,
+        )
+    state = sdfg.add_state_after(init, "fuse")
+    entry, exit_node = state.add_map("producer", dict(i="0:8"))
+    add = state.add_tasklet("add", {"a": None, "l": None}, {"o": None}, "o = a + l")
+    scale = state.add_tasklet("scale", {"x": None}, {"o": None}, "o = 2.0 * x")
+    lut, body_scalar, t = state.add_access("lut"), state.add_access("s"), state.add_access("T")
+    state.add_memlet_path(state.add_read("A"), entry, add, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_nedge(entry, lut, dace.Memlet())
+    state.add_edge(lut, None, add, "l", dace.Memlet("lut[i]"))
+    state.add_edge(add, "o", body_scalar, None, dace.Memlet("s[0]"))
+    state.add_edge(body_scalar, None, scale, "x", dace.Memlet("s[0]"))
+    state.add_memlet_path(scale, exit_node, t, src_conn="o", memlet=dace.Memlet("T[i]"))
+    consumer_entry, consumer_exit = state.add_map("consumer", dict(j=f"0:{8 - max(offsets)}"))
+    inputs = {f"x{o}": None for o in offsets}
+    consume = state.add_tasklet("consume", inputs, {"y": None}, "y = " + " + ".join(inputs))
+    for o in offsets:
+        state.add_memlet_path(t, consumer_entry, consume, dst_conn=f"x{o}", memlet=dace.Memlet(f"T[j + {o}]"))
+    state.add_memlet_path(consume, consumer_exit, state.add_write("C"), src_conn="y", memlet=dace.Memlet("C[j]"))
+    sdfg.validate()
+    return sdfg
+
+
+def fuse_the_only_chain(sdfg: dace.SDFG) -> tuple[OTFMapFusion, dace.SDFGState]:
+    state = next(s for s in sdfg.states() if s.label == "fuse")
+    t = next(n for n in state.data_nodes() if n.data == "T")
+    consumer = state.out_edges(t)[0].dst
+    xform = OTFMapFusion()
+    xform.setup_match(
+        sdfg,
+        sdfg.cfg_id,
+        sdfg.node_id(state),
+        {
+            OTFMapFusion.first_map_exit: state.in_edges(t)[0].src,
+            OTFMapFusion.array: t,
+            OTFMapFusion.second_map_entry: consumer,
+        },
+        0,
+        override=True,
+    )
+    return xform, state
+
+
+def run_scaled(sdfg: dace.SDFG, offsets: tuple[int, ...], lut: np.ndarray | None = None) -> None:
+    a = np.random.rand(8)
+    c = np.zeros(8)
+    if lut is None:
+        sdfg(A=a, C=c)
+        lut = 3.0 * a
+    else:
+        sdfg(A=a, C=c, lut=lut)
+    t = 2.0 * (a + lut)
+    n = 8 - max(offsets)
+    assert np.allclose(c[:n], sum(t[o : o + n] for o in offsets))
+
+
+def test_a_copy_reads_a_transient_the_producer_only_reads_under_its_own_name():
+    """The copy for ``T[j]`` renamed ``lut`` too, and read a fresh, never-written transient instead of ``3 A``."""
+    sdfg = scaled_through_a_body_transient("otf_copy_keeps_read_transient", (0, 1))
+    xform, state = fuse_the_only_chain(sdfg)
+    assert xform.can_be_applied(state, 0, sdfg)
+    xform.apply(state, sdfg)
+
+    assert [n.data for n in state.data_nodes()].count("lut") == 2
+    sdfg.validate()
+    run_scaled(sdfg, (0, 1))
+
+
+def test_a_copy_adds_no_argument_for_a_global_the_producer_reads():
+    """A global read in the producer body is refused; applied anyway, its copy kept the global's name instead of
+    minting a non-transient ``__tmp`` that became a new SDFG argument."""
+    sdfg = scaled_through_a_body_transient("otf_copy_keeps_global", (0, 1), lut_transient=False)
+    xform, state = fuse_the_only_chain(sdfg)
+    assert not xform.can_be_applied(state, 0, sdfg)
+    arguments = list(sdfg.arglist())
+    xform.apply(state, sdfg)
+
+    assert list(sdfg.arglist()) == arguments
+    sdfg.validate()
+    run_scaled(sdfg, (0, 1), lut=np.random.rand(8))
+
+
 if __name__ == "__main__":
     # Solver
     test_solve()
@@ -1256,3 +1358,5 @@ if __name__ == "__main__":
     test_a_producer_reading_the_intermediate_is_not_fused()
     test_a_consumer_reading_a_window_through_a_nested_body_recomputes_each_element()
     test_the_producer_copy_follows_graph_order()
+    test_a_copy_reads_a_transient_the_producer_only_reads_under_its_own_name()
+    test_a_copy_adds_no_argument_for_a_global_the_producer_reads()

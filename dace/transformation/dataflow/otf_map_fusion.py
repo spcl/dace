@@ -485,10 +485,18 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
         id_map = {graph.node_id(old): graph.node_id(new) for old, new in zip(inter_nodes, new_inter_nodes)}
 
-        # Rename transients
+        # Rename the transients the body writes: they are per-copy state. What the body only reads (behind an
+        # empty ordering memlet from the entry) is defined outside it and keeps its name, as does every global.
+        written = {
+            node.data: None
+            for node in inter_nodes
+            if isinstance(node, nodes.AccessNode)
+            and sdfg.arrays[node.data].transient
+            and any(not edge.data.is_empty() for edge in graph.in_edges(node))
+        }
         tmp_map = {}
         for node in new_inter_nodes:
-            if not isinstance(node, nodes.AccessNode) or node.data in tmp_map:
+            if not isinstance(node, nodes.AccessNode) or node.data in tmp_map or node.data not in written:
                 continue
 
             new_name = sdfg.temp_data_name()
