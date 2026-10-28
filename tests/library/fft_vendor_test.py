@@ -466,13 +466,14 @@ def test_a_threaded_fftw_plans_for_the_team(monkeypatch, threaded):
 
 
 def test_an_fftw3_plan_is_cached_by_the_library():
-    """The plan comes from the library's plan cache, keyed by layout, aliasing, threads and alignment; the SDFG state
-    holds none."""
+    """The plan comes from the program state's FFTW3 plan cache, keyed by layout, aliasing, threads and alignment;
+    the tasklet holds none."""
     desc = dace.data.Array(dace.complex128, [64])
     tasklet = fftw3_call(Transform(desc, desc, [0], inverse=False, half_spectrum=False))
     assert not tasklet.state_fields and not tasklet.code_init.as_string and not tasklet.code_exit.as_string
     code = tasklet.code.as_string
-    assert "dace::fft::Plans<fftw_plan>(fftw_destroy_plan).Get(" in code
+    assert "__state->fftw_plans.Get(" in code and "fftw_destroy_plan" in code
+    assert "dace::fft::PlanCache<fftw_plan> fftw_plans;" in fft_environments.FFTW3.state_fields
     assert code.count("fftw_plan_guru64_dft(") == 1
 
 

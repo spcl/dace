@@ -11,6 +11,7 @@ import glob
 import os
 
 import dace.library
+from dace.libraries.fft.environments.plans import FFTPlans
 
 #: Each precision's OpenMP planner links ahead of its base library, so it shares the program's team.
 LIBRARIES = ("fftw3_omp", "fftw3", "fftw3f_omp", "fftw3f")
@@ -50,10 +51,10 @@ class FFTW3:
     cmake_files: list[str] = []
 
     headers = ["fftw3.h", "omp.h"]
-    state_fields: list[str] = []
+    state_fields = ["dace::fft::PlanCache<fftw_plan> fftw_plans;", "dace::fft::PlanCache<fftwf_plan> fftwf_plans;"]
     init_code = ""
     finalize_code = ""
-    dependencies: list[str] = []
+    dependencies = [FFTPlans]
 
     @staticmethod
     def cmake_includes():

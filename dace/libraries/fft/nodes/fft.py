@@ -352,8 +352,9 @@ def fftw3_call(transform: Transform, threaded: bool | None = None) -> nodes.Task
     {iodims("__dims", dims)}
     {iodims("__howmany", howmany)}
     const int __threads = {threads};
-    {prefix}_plan __plan = dace::fft::Plans<{prefix}_plan>({prefix}_destroy_plan).Get(
-        {{{key}, (long long)((const void *)__in == (const void *)__out), (long long)__threads, {alignment}}}, [&] {{
+    {prefix}_plan __plan = __state->{prefix}_plans.Get(
+        {{{key}, (long long)((const void *)__in == (const void *)__out), (long long)__threads, {alignment}}},
+        {prefix}_destroy_plan, [&] {{
             {team}
             {prefix}_plan __made = {prefix}_plan_guru64_{kind}({len(dims)}, __dims, {len(howmany)},
                 {"__howmany" if howmany else "NULL"}, ({in_t} *)__in, ({out_t} *)__out, {sign}{flags});
@@ -480,9 +481,9 @@ def cufft_call(transform: Transform) -> nodes.Tasklet | None:
     for (int __k = 0; __k < {rank}; ++__k)
         __empty = __empty || __key[__k] == 0;
     if (!__empty) {{
-    cufftHandle __plan = dace::fft::Plans<cufftHandle>([](cufftHandle plan) {{
+    cufftHandle __plan = __state->cufft_plans.Get({{std::begin(__key), std::end(__key)}}, [](cufftHandle plan) {{
         cufftDestroy(plan);
-    }}).Get({{std::begin(__key), std::end(__key)}}, [&] {{
+    }}, [&] {{
         cufftHandle __made;
         __check("cufftCreate", cufftCreate(&__made));
         size_t __work_size = 0;
@@ -506,7 +507,7 @@ def cufft_call(transform: Transform) -> nodes.Tasklet | None:
 class ExpandFFTW3(xf.ExpandTransformation):
     """CPU FFTW3 backend: any rank, axes, strides, real or complex input, any ``norm``."""
 
-    environments = [env.FFTW3, env.FFTPlans]
+    environments = [env.FFTW3]
 
     @staticmethod
     def expansion(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
@@ -526,7 +527,7 @@ class FFTW3IFFTExpansion(ExpandFFTW3):
 class ExpandCuFFT(xf.ExpandTransformation):
     """GPU cuFFT backend; the hipFFT one is its code renamed."""
 
-    environments = [env.cuFFT, env.FFTPlans]
+    environments = [env.cuFFT]
 
     @staticmethod
     def expansion(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
@@ -552,7 +553,7 @@ for node_type, cuda_expansion in ((FFT, cuFFTFFTExpansion), (IFFT, cuFFTIFFTExpa
 class ExpandMKL(xf.ExpandTransformation):
     """MKL backend: the FFTW3 expansion's code against MKL's FFTW3 interface, whose planner always threads."""
 
-    environments = [IntelMKL, env.MKLFFTW3, env.FFTPlans]
+    environments = [IntelMKL, env.MKLFFTW3]
 
     @staticmethod
     def expansion(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:

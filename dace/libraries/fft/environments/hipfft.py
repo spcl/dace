@@ -18,10 +18,9 @@ class hipFFT:
     cmake_files: list[str] = []
 
     headers = {"frame": ["hipfft/hipfft.h", "hipfft/hipfftXt.h"], "cuda": ["hipfft/hipfft.h", "hipfft/hipfftXt.h"]}
-    state_fields: list[str] = []
+    state_fields = ["dace::fft::PlanCache<hipfftHandle> hipfft_plans;"]
     init_code = ""
     finalize_code = ""
-    # The plan cache the renamed cuFFT code keeps its plans in
     dependencies = [FFTPlans]
 
     cmake_includes: list[str] = []
