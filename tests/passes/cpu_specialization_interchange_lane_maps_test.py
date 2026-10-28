@@ -5,7 +5,10 @@ import numpy as np
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.cpu_specialization.interchange_loops_into_lane_maps import InterchangeLoopsIntoLaneMaps
+from dace.transformation.passes.cpu_specialization.interchange_loops_into_lane_maps import (
+    InterchangeLoopsIntoLaneMaps,
+    iterator_indexes,
+)
 
 NB, NK, NL = (dace.symbol(name) for name in ("NB", "NK", "NL"))
 
@@ -96,5 +99,24 @@ def test_a_time_step_loop_stays_outside():
     assert InterchangeLoopsIntoLaneMaps().apply_pass(sdfg, {}) is None
 
 
+def test_a_loop_whose_iterator_bounds_an_inner_loop_indexes_its_cells():
+    """``for k: for j in range(k): q[b, j] += 1``: ``k`` reaches the cells only through the inner bound, a
+    triangular level sweep, not a time step."""
+    sdfg = dace.SDFG("triangular")
+    sdfg.add_array("q", [NB, NK], dace.float64)
+    outer = LoopRegion("levels", "k < NK", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(outer, is_start_block=True)
+    inner = LoopRegion("below", "j < k", "j", "j = 0", "j = j + 1")
+    outer.add_node(inner, is_start_block=True)
+    body = inner.add_state("bump", is_start_block=True)
+    body.add_mapped_tasklet(
+        "bump", {"b": "0:NB"}, {"x": dace.Memlet("q[b, j]")}, "y = x + 1", {"y": dace.Memlet("q[b, j]")},
+        external_edges=True,
+    )
+    assert iterator_indexes(outer)
+
+
 if __name__ == "__main__":
     test_level_loop_moves_into_one_block_map()
+    test_a_time_step_loop_stays_outside()
+    test_a_loop_whose_iterator_bounds_an_inner_loop_indexes_its_cells()

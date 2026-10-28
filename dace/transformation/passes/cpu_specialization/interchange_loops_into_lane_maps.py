@@ -98,12 +98,15 @@ def loop_strides_no_wider(loop: LoopRegion, facts: mlim.LaneFacts) -> bool:
 
 
 def iterator_indexes(loop: LoopRegion) -> bool:
-    """Whether ``loop``'s variable appears in its body: a memlet, a map range, a nested SDFG's symbol mapping or an
-    interstate edge."""
+    """Whether ``loop``'s variable appears in its body: a memlet, a map range, an inner loop's bounds, a nested
+    SDFG's symbol mapping or an interstate edge. A value or a branch the cells do not follow does not count."""
     name = loop.loop_variable
     for region in loop.all_control_flow_regions():
         if any(name in edge.data.read_symbols() for edge in region.edges()):
             return True
+        if isinstance(region, LoopRegion) and region is not loop:
+            if any(name in code.get_free_symbols() for code in region.get_meta_codeblocks()):
+                return True
     for state in [b for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState)]:
         for node in state.nodes():
             if isinstance(node, nodes.MapEntry) and name in {str(s) for s in node.map.range.free_symbols}:
