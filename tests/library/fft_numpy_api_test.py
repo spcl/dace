@@ -279,5 +279,18 @@ def test_non_floating_inputs_promote_as_numpy_does(implementation):
     np.testing.assert_allclose(got, np.fft.rfft(halves), rtol=1e-5, atol=1e-5)
 
 
+def test_sample_frequencies_over_a_symbolic_extent():
+    """``fftfreq`` and ``rfftfreq`` of a symbolic ``N // 2``-point transform, against numpy."""
+    N = dace.symbol("N")
+
+    @dace.program
+    def sample_frequencies(x: dace.float64[N]):
+        return np.fft.fftfreq(N // 2, 0.5), np.fft.rfftfreq(N // 2, 0.5)
+
+    full, half = sample_frequencies(x=np.zeros(18), N=18)
+    np.testing.assert_allclose(full, np.fft.fftfreq(9, 0.5))
+    np.testing.assert_allclose(half, np.fft.rfftfreq(9, 0.5))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

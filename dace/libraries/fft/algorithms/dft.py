@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import numpy as np
 
 import dace
+from dace.codegen.common import sym2cpp
 from dace.libraries.fft.nodes.fft import normalize_fft_axes
 
 
@@ -58,7 +59,7 @@ def floating_text(factor: dace.symbolic.SymbolicType, cpp_mode: bool) -> str:
     is a float, so ``1/(M*N)`` and ``sqrt(M)`` over integer symbols are not integer division or an integer root."""
     value = dace.symbolic.pystr_to_symbolic(factor)
     value = value.xreplace({s: dace.symbolic.float64(s) for s in value.free_symbols}).evalf()
-    return dace.symbolic.DaceSympyPrinter(None, cpp_mode).doprint(value)
+    return sym2cpp(value) if cpp_mode else dace.symbolic.symstr(value)
 
 
 def is_unit(factor: dace.symbolic.SymbolicType) -> bool:
@@ -123,7 +124,6 @@ def add_twiddle_state(
 ) -> tuple[str, dace.SDFGState]:
     """Append a state filling ``exp(-+2 pi i m / length)`` for ``m < length`` into a new transient, so a DFT pass
     evaluates ``length`` sines and cosines instead of two per term. The angle is in double, then rounded."""
-    from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
 
     name = sdfg.add_transient(f"__twiddle{axis}", [length], element, storage=storage, find_new_name=True)[0]
     real = "float" if element == dace.complex64 else "double"
@@ -150,7 +150,6 @@ def add_dft_axis_state(
     Each output element sums its whole input line in its own tasklet: no accumulation across threads, so no complex
     atomics, which the GPU backends do not provide. All other axes are batch dimensions.
     """
-    from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
 
     ndim = len(shape)
     length = sym2cpp(shape[axis])

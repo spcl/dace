@@ -12,6 +12,7 @@ from typing import NamedTuple
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, library, nodes, properties, symbolic
 from dace import transformation as xf
+from dace.codegen.common import sym2cpp
 from dace.frontend.python.replacements.utils import normalize_axes
 from dace.libraries import hip_dialect
 from dace.libraries.blas.environments.intel_mkl import IntelMKL
@@ -288,7 +289,6 @@ def fftw3_call(transform: Transform, threaded: bool | None = None) -> nodes.Task
     alignment, the conditions under which FFTW's new-array execute may reuse a plan. ``threaded`` says whether the
     planner threads; ``None`` asks the FFTW3 install whether it links the threaded planner of this precision.
     """
-    from dace.codegen.targets import cpp  # avoid import loop
     from dace.libraries.fft.environments import fftw3
 
     src, out, axes = transform.src, transform.out, transform.axes
@@ -305,7 +305,7 @@ def fftw3_call(transform: Transform, threaded: bool | None = None) -> nodes.Task
     def iodim(
         extent: symbolic.SymbolicType, istride: symbolic.SymbolicType, ostride: symbolic.SymbolicType
     ) -> list[str]:
-        return [cpp.sym2cpp(extent), cpp.sym2cpp(istride), cpp.sym2cpp(ostride)]
+        return [sym2cpp(extent), sym2cpp(istride), sym2cpp(ostride)]
 
     dims = [iodim(n, src.strides[d], out.strides[d]) for n, d in zip(transform.lengths, axes)]
     # MKL's FFTW3 interface plans at most one batch dimension and returns no plan otherwise, so a batch that is one
@@ -323,9 +323,9 @@ def fftw3_call(transform: Transform, threaded: bool | None = None) -> nodes.Task
         values = ", ".join(f"{{{', '.join(entry)}}}" for entry in entries)
         return f"{prefix}_iodim64 {name}[{len(entries)}] = {{{values}}};" if entries else ""
 
-    loop_open = "".join(f"for (long long __b{d} = 0; __b{d} < {cpp.sym2cpp(src.shape[d])}; ++__b{d}) " for d in looped)
-    in_offset = "".join(f" + __b{d} * ({cpp.sym2cpp(src.strides[d])})" for d in looped)
-    out_offset = "".join(f" + __b{d} * ({cpp.sym2cpp(out.strides[d])})" for d in looped)
+    loop_open = "".join(f"for (long long __b{d} = 0; __b{d} < {sym2cpp(src.shape[d])}; ++__b{d}) " for d in looped)
+    in_offset = "".join(f" + __b{d} * ({sym2cpp(src.strides[d])})" for d in looped)
+    out_offset = "".join(f" + __b{d} * ({sym2cpp(out.strides[d])})" for d in looped)
     # Slices of the planned arrays have any alignment; a whole array keeps the planned one, part of the key.
     flags = "FFTW_ESTIMATE | FFTW_UNALIGNED" if looped else "FFTW_ESTIMATE"
     alignment = (
@@ -430,14 +430,13 @@ def cufft_call(transform: Transform) -> nodes.Tasklet | None:
     """The cuFFT call: a ``MakePlanMany64`` plan from the library's plan cache, run on the SDFG's stream, so a
     transform inside a loop plans once. One buffer on both connectors is the vendor's in-place transform.
     """
-    from dace.codegen.targets import cpp  # avoid import loop
 
     layout = gpu_fft_layout(transform)
     if layout is None:
         return None
     rank = len(layout.lengths)
     key = [
-        cpp.sym2cpp(e)
+        sym2cpp(e)
         for e in (
             *layout.lengths,
             *layout.in_embed,
