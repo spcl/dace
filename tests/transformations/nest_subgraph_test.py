@@ -274,6 +274,31 @@ def test_a_container_moved_across_the_boundary_gets_one_connector():
     assert np.allclose(a, (np.arange(8.0) + 1) * 2)
 
 
+def test_a_transient_an_outside_interstate_edge_reads_stays_in_the_parent():
+    """``s1`` writes the scalar ``tmp`` that only the edge ``s1 -> s2`` (``k = tmp``) reads; ``s0, s1`` are nested."""
+    sdfg = dace.SDFG("nest_transient_read_on_an_outside_edge")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_scalar("tmp", dace.float64, transient=True)
+    sdfg.add_symbol("k", dace.float64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state_after(s0, "s1")
+    tasklet = s1.add_tasklet("double", {"a"}, {"o"}, "o = a * 2")
+    s1.add_edge(s1.add_read("A"), None, tasklet, "a", dace.Memlet("A[0]"))
+    s1.add_edge(tasklet, "o", s1.add_write("tmp"), None, dace.Memlet("tmp[0]"))
+    s2 = sdfg.add_state_after(s1, "s2", assignments={"k": "tmp"})
+    tasklet = s2.add_tasklet("inc", {}, {"o"}, "o = k + 1")
+    s2.add_edge(tasklet, "o", s2.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg.validate()
+
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [s0, s1]))
+    sdfg.validate()
+
+    A, out = np.full(1, 3.0), np.zeros(1)
+    sdfg(A=A, out=out)
+    assert out[0] == 7, out
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -286,3 +311,4 @@ if __name__ == "__main__":
     test_nest_cf_simple_if_chain()
     test_nest_two_loops_with_same_variable()
     test_a_container_moved_across_the_boundary_gets_one_connector()
+    test_a_transient_an_outside_interstate_edge_reads_stays_in_the_parent()

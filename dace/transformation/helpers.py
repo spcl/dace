@@ -116,22 +116,24 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
                     if s in sdfg.arrays:
                         read_set.add(s)
 
-        # Find NestedSDFG's unique data
+        # Find NestedSDFG's unique data: transients nothing outside the subgraph accesses, through an access node
+        # or by name (interstate edges and conditions)
         rw_set = read_set | write_set
-        unique_set = set()
-        for name in rw_set:
-            if not sdfg.arrays[name].transient:
+        inside = set(all_blocks)
+        outside_names = set()
+        for block in sdfg.all_control_flow_blocks():
+            if block in inside:
                 continue
-            found = False
-            for state in sdfg.states():
-                if state in blocks:
-                    continue
-                for node in state.nodes():
-                    if isinstance(node, nodes.AccessNode) and node.data == name:
-                        found = True
-                        break
-            if not found:
-                unique_set.add(name)
+            if isinstance(block, SDFGState):
+                outside_names.update(n.data for n in block.data_nodes())
+            elif isinstance(block, ConditionalBlock):
+                outside_names.update(s for c, _ in block.branches if c is not None for s in c.get_free_symbols())
+            elif isinstance(block, LoopRegion):
+                outside_names.update(block.loop_condition.get_free_symbols())
+        for edge in sdfg.all_interstate_edges():
+            if edge.src not in inside or edge.dst not in inside:
+                outside_names.update(edge.data.free_symbols)
+        unique_set = {name for name in rw_set if sdfg.arrays[name].transient and name not in outside_names}
 
         # Find NestedSDFG's connectors
         read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
