@@ -192,6 +192,18 @@ def test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(lifeti
     sdfg.validate()
 
 
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_reference_is_not_moved(layout):
+    """A reference names memory its ``set`` connector gives it (e.g. a memlet access policy's cursor), so it owns
+    nothing to move."""
+    sdfg = kernel_with_internal_transient((NX,), REGISTER)
+    sdfg.arrays["buf"] = dace.data.ArrayReference(dace.float64, (NX,), storage=REGISTER, transient=True)
+
+    assert lift(sdfg, layout) is None
+
+    assert isinstance(sdfg.arrays["buf"], dace.data.ArrayReference) and sdfg.arrays["buf"].storage == REGISTER
+
+
 @pytest.mark.parametrize("storage", [REGISTER, dtypes.StorageType.Default])
 @pytest.mark.parametrize("layout", LAYOUTS)
 def test_a_symbolically_sized_per_thread_array_is_moved_to_global_memory(storage, layout):
@@ -941,6 +953,7 @@ if __name__ == "__main__":
             dace.AllocationLifetime.Persistent, layout
         )
         test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(dace.AllocationLifetime.External, layout)
+        test_a_reference_is_not_moved(layout)
         test_a_symbolically_sized_per_thread_array_is_moved_to_global_memory(REGISTER, layout)
         test_a_symbolically_sized_per_thread_array_is_moved_to_global_memory(dtypes.StorageType.Default, layout)
         test_transient_behind_a_nested_sdfg_is_lifted_through_the_boundary(layout)

@@ -44,7 +44,7 @@ from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (
 )
 from dace.config import Config
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.libraries.standard.nodes.sync import Sync, SyncScope, sync_code
+from dace.libraries.standard.nodes.sync import SyncScope, sync_code
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
@@ -152,10 +152,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         if Config.get("compiler", "cuda", "auto_syncthreads_insertion"):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
-            # Library nodes are already expanded here, so the inserted barriers are expanded in place
-            for node, state in list(sdfg.all_nodes_recursive()):
-                if isinstance(node, Sync):
-                    node.expand(state)
+            # Library nodes are already expanded here; the inserted barriers are the only ones left
+            sdfg.expand_library_nodes()
 
         if compute_pool_release(sdfg, self.pool_release):
             self.has_pool = True

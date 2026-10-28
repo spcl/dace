@@ -83,24 +83,21 @@ class OffloadToAccelerator(ppl.Pass):
         pinned = maps_pinned_by_host_loops(sdfg) if self.pin_host_loop_maps else OrderedSet()
         assign_schedules(sdfg, host_map_entries, pinned)
 
-        placed_on_gpu: dict[SDFG, OrderedSet[str]] = {}
-        self.offload_level(sdfg, host_map_entries, placed_on_gpu)
+        placed_on_gpu = self.offload_level(sdfg, host_map_entries)
         helpers.register_kernel_local_transients(sdfg, placed_on_gpu)
         helpers.refuse_by_value_scalars_the_device_writes(sdfg)
         return helpers.device_resident(sdfg) or None
 
-    def offload_level(
-        self, sdfg: SDFG, host_map_entries: OrderedSet[nodes.MapEntry], placed_on_gpu: dict[SDFG, OrderedSet[str]]
-    ) -> None:
-        """Place the data of one host level, then of every nested SDFG at it; record the transients each level put
-        on the device in ``placed_on_gpu`` (names are unique only within their SDFG)."""
+    def offload_level(self, sdfg: SDFG, host_map_entries: OrderedSet[nodes.MapEntry]) -> dict[SDFG, OrderedSet[str]]:
+        """Place the data of one host level, then of every nested SDFG at it; return the transients each level put
+        on the device, per level (names are unique only within their SDFG)."""
         FoldConstantTables().apply_pass(sdfg, {})
         # Host code and each kernel declare a constant locally, so it is a register on either side.
         for name in sdfg.constants:
             if name in sdfg.arrays:
                 sdfg.arrays[name].storage = dtypes.StorageType.Register
         wants, wrapped = self.settle(sdfg, host_map_entries)
-        placed_on_gpu[sdfg] = Placement(sdfg, wants).apply()
+        placed_on_gpu = {sdfg: Placement(sdfg, wants).apply()}
         if wrapped:
             ppl.Pipeline(
                 [
@@ -114,7 +111,8 @@ class OffloadToAccelerator(ppl.Pass):
         for state in sdfg.states():
             for node in list(host_level_nested_sdfgs(state, host_map_entries)):
                 prepare_body(sdfg, state, node)
-                self.offload_level(node.sdfg, host_map_entries, placed_on_gpu)
+                placed_on_gpu |= self.offload_level(node.sdfg, host_map_entries)
+        return placed_on_gpu
 
     def settle(self, sdfg: SDFG, host_map_entries: OrderedSet[nodes.MapEntry]) -> tuple[dict[SDFGState, Wants], bool]:
         """Re-type single elements and wrap the host code of hybrid states until no state wants a container on

@@ -79,7 +79,8 @@ def is_variable_length(desc: dt.Data) -> bool:
 def is_move_candidate(desc: dt.Data, register_limit: int, only_variable_length: bool = False) -> bool:
     """A transient array a kernel cannot declare as is: ``GPU_Global``, or a per-thread local of symbolic size or
     larger than ``register_limit``; with ``only_variable_length`` just the symbolic-size per-thread local."""
-    if not isinstance(desc, dt.Array) or isinstance(desc, dt.View) or not desc.transient:
+    # A view or reference names other memory, set by its connector, rather than owning any
+    if not isinstance(desc, dt.Array) or isinstance(desc, (dt.View, dt.Reference)) or not desc.transient:
         return False
     if only_variable_length:
         return is_variable_length(desc)
