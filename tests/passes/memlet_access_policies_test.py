@@ -451,8 +451,14 @@ def test_policy_survives_serialization():
     assert _code(sdfg3) == _code(sdfg2)
 
 
+@dace.program
+def _strided_concrete_tall(A: dace.float32[128, 16], B: dace.float32[64]):
+    for i in range(0, 64, 4):
+        B[i] = A[i, 5]
+
+
 def test_stale_policy_is_dropped_not_miscompiled():
-    sdfg = _strided_concrete.to_sdfg()
+    sdfg = _strided_concrete_tall.to_sdfg()
     AssignLoopCursors(scope="all").apply_pass(sdfg, {})
     # Simulate a transformation that changed the subset after policy assignment (step would now be 2*64).
     for m in _policy_memlets(sdfg):
@@ -464,10 +470,10 @@ def test_stale_policy_is_dropped_not_miscompiled():
     assert low["dropped"] == 1
     assert any("stale" in str(x.message) for x in w)
     assert all(m.data != "A" for m in _policy_memlets(sdfg))
-    A = np.random.default_rng(3).random((64, 16)).astype(np.float32)
+    A = np.random.default_rng(3).random((128, 16)).astype(np.float32)
     B = np.zeros(64, np.float32)
     sdfg(A=A, B=B)
-    np.testing.assert_allclose(B[::4][:8], A[::8, 5][:8])
+    np.testing.assert_allclose(B[::4], A[::8, 5])
 
 
 def test_lowering_is_idempotent():

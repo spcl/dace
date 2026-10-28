@@ -352,7 +352,8 @@ def test_multistate_inline():
 
     @dace.program
     def nested(A: dace.float64[20]):
-        for i in range(5):
+        # From 1: A[i - 1] at i = 0 wraps to A[19] in Python, but reads before the array in the generated code
+        for i in range(1, 5):
             A[i] += A[i - 1]
 
     @dace.program

@@ -13,8 +13,8 @@ def subgraph_fusion_parallel(
     A: dace.float64[N],
     B: dace.float64[M],
     C: dace.float64[O],
-    D: dace.float64[M],
-    E: dace.float64[N],
+    D: dace.float64[N],
+    E: dace.float64[M],
     F: dace.float64[P],
     G: dace.float64[M],
     H: dace.float64[P],
@@ -82,8 +82,8 @@ def test_p1():
     A = np.random.rand(N).astype(np.float64)
     B = np.random.rand(M).astype(np.float64)
     C = np.random.rand(O).astype(np.float64)
-    D = np.random.rand(M).astype(np.float64)
-    E = np.random.rand(N).astype(np.float64)
+    D = np.random.rand(N).astype(np.float64)
+    E = np.random.rand(M).astype(np.float64)
     F = np.random.rand(P).astype(np.float64)
     G = np.random.rand(M).astype(np.float64)
     H = np.random.rand(P).astype(np.float64)
