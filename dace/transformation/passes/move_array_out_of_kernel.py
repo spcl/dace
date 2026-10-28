@@ -122,6 +122,12 @@ def lift_prefix(levels: list[Scope], state: SDFGState, src: nodes.Node) -> Prefi
     return prefix
 
 
+def path_ends(state: SDFGState, edge: MultiConnectorEdge) -> tuple[nodes.Node, nodes.Node]:
+    """The first source and last destination of ``edge``'s memlet path."""
+    path = state.memlet_path(edge)
+    return path[0].src, path[-1].dst
+
+
 def slot(offset: symbolic.SymbolicType, step: symbolic.SymbolicType) -> symbolic.SymbolicType:
     """The slot of the iteration ``offset`` past a level's first one: one slot per iteration, also for a strided level
     (a tile grid), whose slots would otherwise leave ``step - 1`` unused between two."""
@@ -269,7 +275,7 @@ class LiftPlan:
     desc: dt.Array
     levels: list[Scope]
     accesses: list[tuple[nodes.AccessNode, SDFGState]]
-    prefixes: list[tuple[MultiConnectorEdge, Prefix]]
+    prefixes: list[tuple[MultiConnectorEdge, Prefix, SDFGState]]
     shape_info: tuple[list[symbolic.SymbolicType], list[symbolic.SymbolicType], symbolic.SymbolicType, list[int]]
     hierarchy: list[SDFG]
     needed: list[str]
@@ -408,11 +414,11 @@ class MoveArrayOutOfKernel(ppl.Pass):
         accesses = [(node, state) for state in owner.states() for node in state.data_nodes() if node.data == name]
         levels = self.slice_levels(name, accesses)
         prefixes = [
-            (edge, lift_prefix(levels, state, edge.src))
+            (edge, lift_prefix(levels, state, edge.src), state)
             for state in owner.states()
             for edge in state.edges()
             if edge.data.data == name
-            or any(isinstance(node, nodes.AccessNode) and node.data == name for node in (edge.src, edge.dst))
+            or any(isinstance(node, nodes.AccessNode) and node.data == name for node in path_ends(state, edge))
         ]
         desc = owner.arrays[name]
         hierarchy = sdfg_chain(owner, kernel_state.sdfg)
@@ -430,7 +436,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
             ]
         )
         shape_info = self.get_new_shape_info(sized, [entry for entry, _ in reversed(levels)])
-        bounds = [bound for _, prefix in prefixes for dim in prefix for bound in dim]
+        bounds = [bound for _, prefix, _ in prefixes for dim in prefix for bound in dim]
         bounds += shape_info[0][: len(shape_info[0]) - len(desc.shape)]
         needed = sorted({str(sym) for bound in bounds for sym in symbolic.pystr_to_symbolic(bound).free_symbols})
         needed += [b.bound for b in extent_bounds]
@@ -487,8 +493,8 @@ class MoveArrayOutOfKernel(ppl.Pass):
         if name in taken:
             name = utils.find_new_name(name, taken | OrderedSet(plan.owner.arrays) | OrderedSet(plan.owner.symbols))
             plan.owner.replace(plan.name, name)
-        for edge, prefix in plan.prefixes:
-            self.prefix_memlet(edge, name, prefix)
+        for edge, prefix, state in plan.prefixes:
+            self.prefix_memlet(edge, name, prefix, state)
         # A tasklet with inlined connectors names the array in its body and gains the same leading index.
         for state in plan.owner.states():
             for node in state.nodes():
@@ -607,7 +613,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
                     inner.arrays[conn].transient = False
                     for inner_state in inner.states():
                         for edge in inner_state.edges():
-                            self.prefix_memlet(edge, conn, prefix)
+                            self.prefix_memlet(edge, conn, prefix, inner_state)
                         for tasklet in (n for n in inner_state.nodes() if isinstance(n, nodes.Tasklet)):
                             code = tasklet.code.as_string
                             if tasklet.language is not dtypes.Language.Python:
@@ -633,13 +639,16 @@ class MoveArrayOutOfKernel(ppl.Pass):
         return deepest
 
     @staticmethod
-    def prefix_memlet(edge: MultiConnectorEdge, name: str, prefix: Prefix) -> None:
+    def prefix_memlet(edge: MultiConnectorEdge, name: str, prefix: Prefix, state: SDFGState) -> None:
+        """Prepend ``prefix`` to the subset of ``edge`` that indexes ``name``: its own, or the side of its memlet
+        path that ends in an access node of ``name`` (a copy through a scope names its source only so)."""
         memlet = edge.data
+        src, dst = path_ends(state, edge)
         if memlet.data == name:
             memlet.subset = subsets.Range(prefix + memlet.subset.ndrange())
-        elif isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name and memlet.dst_subset is not None:
+        elif isinstance(dst, nodes.AccessNode) and dst.data == name and memlet.dst_subset is not None:
             memlet.dst_subset = subsets.Range(prefix + memlet.dst_subset.ndrange())
-        elif isinstance(edge.src, nodes.AccessNode) and edge.src.data == name and memlet.src_subset is not None:
+        elif isinstance(src, nodes.AccessNode) and src.data == name and memlet.src_subset is not None:
             memlet.src_subset = subsets.Range(prefix + memlet.src_subset.ndrange())
 
     @staticmethod
