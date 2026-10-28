@@ -77,12 +77,20 @@ def test_a_time_step_loop_stays_outside():
     sdfg.add_node(loop, is_start_block=True)
     first = loop.add_state("twice", is_start_block=True)
     first.add_mapped_tasklet(
-        "twice", {"b": "0:NB", "l": "0:NL"}, {"x": dace.Memlet("q[b, l]")}, "y = 2 * x", {"y": dace.Memlet("r[b, l]")},
+        "twice",
+        {"b": "0:NB", "l": "0:NL"},
+        {"x": dace.Memlet("q[b, l]")},
+        "y = 2 * x",
+        {"y": dace.Memlet("r[b, l]")},
         external_edges=True,
     )
     second = loop.add_state_after(first, "back")
     second.add_mapped_tasklet(
-        "back", {"b": "0:NB", "l": "0:NL"}, {"x": dace.Memlet("r[b, l]")}, "y = x - 1", {"y": dace.Memlet("q[b, l]")},
+        "back",
+        {"b": "0:NB", "l": "0:NL"},
+        {"x": dace.Memlet("r[b, l]")},
+        "y = x - 1",
+        {"y": dace.Memlet("q[b, l]")},
         external_edges=True,
     )
     assert InterchangeLoopsIntoLaneMaps().apply_pass(sdfg, {}) is None

@@ -91,7 +91,9 @@ def test_a_reduction_indexed_by_a_small_axis_loops_over_it_outside_one_parallel_
     )
     assert SequentializeReductionAxes().apply_pass(sdfg, {}) == 1
     maps = sorted(
-        (node.map.params, node.map.schedule) for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.MapEntry)
+        (node.map.params, node.map.schedule)
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.MapEntry)
     )
     assert maps == [(["b"], dtypes.ScheduleType.Sequential), (["k", "i"], dtypes.ScheduleType.CPU_Multicore)], maps
     sdfg.openmp_array_reductions = True

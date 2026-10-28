@@ -47,6 +47,7 @@ bit-identical.
 
 import copy
 from typing import Any
+
 import sympy
 
 from dace import Memlet, data, dtypes, properties, subsets, symbolic
