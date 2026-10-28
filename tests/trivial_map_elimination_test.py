@@ -262,10 +262,6 @@ class TrivialMapEliminationWithDynamicMapRangesTest(unittest.TestCase):
         self.assertEqual(count2, 0)
 
 
-def ordered(state: dace.SDFGState, src, dst) -> bool:
-    return nx.has_path(state.nx, src, dst)
-
-
 def test_an_ordering_edge_into_the_removed_map_still_orders_its_body():
     """``t0 -> A -(empty)-> map[i=0] { t1 -> A }``: the empty edge is all that orders the two writes of ``A``."""
     sdfg = dace.SDFG("ordering_into_entry")
@@ -283,7 +279,7 @@ def test_an_ordering_edge_into_the_removed_map_still_orders_its_body():
 
     assert sdfg.apply_transformations(TrivialMapElimination) == 1
     sdfg.validate()
-    assert ordered(state, first, t1)
+    assert nx.has_path(state.nx, first, t1)
 
 
 def test_a_body_node_the_entry_reaches_only_by_an_ordering_edge_stays_after_the_inputs():
@@ -309,7 +305,7 @@ def test_a_body_node_the_entry_reaches_only_by_an_ordering_edge_stays_after_the_
 
     assert sdfg.apply_transformations(TrivialMapElimination) == 1
     sdfg.validate()
-    assert ordered(state, c_first, t2)
+    assert nx.has_path(state.nx, c_first, t2)
 
 
 def test_an_ordering_edge_out_of_the_removed_map_still_orders_its_body():
@@ -329,7 +325,7 @@ def test_an_ordering_edge_out_of_the_removed_map_still_orders_its_body():
 
     assert sdfg.apply_transformations(TrivialMapElimination) == 1
     sdfg.validate()
-    assert ordered(state, t1, t3)
+    assert nx.has_path(state.nx, t1, t3)
 
 
 def test_the_order_reaches_a_nested_scope_at_its_entry():
@@ -351,10 +347,14 @@ def test_the_order_reaches_a_nested_scope_at_its_entry():
 
     assert sdfg.apply_transformations(TrivialMapElimination) == 1
     sdfg.validate()
-    assert ordered(state, first, t1)
+    assert nx.has_path(state.nx, first, t1)
     assert state.scope_dict()[t1] is ie
     assert all(e.src is ie for e in state.in_edges(t1))
 
 
 if __name__ == "__main__":
+    test_an_ordering_edge_into_the_removed_map_still_orders_its_body()
+    test_a_body_node_the_entry_reaches_only_by_an_ordering_edge_stays_after_the_inputs()
+    test_an_ordering_edge_out_of_the_removed_map_still_orders_its_body()
+    test_the_order_reaches_a_nested_scope_at_its_entry()
     unittest.main()
