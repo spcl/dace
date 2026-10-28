@@ -44,7 +44,7 @@ from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (
 )
 from dace.config import Config
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.libraries.standard.nodes.sync import SyncScope, sync_code
+from dace.libraries.standard.nodes.sync import Sync, SyncScope, sync_code
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
@@ -152,6 +152,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         if Config.get("compiler", "cuda", "auto_syncthreads_insertion"):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
+            # Library nodes are already expanded here, so the inserted barriers are expanded in place
+            for node, state in list(sdfg.all_nodes_recursive()):
+                if isinstance(node, Sync):
+                    node.expand(state)
 
         if compute_pool_release(sdfg, self.pool_release):
             self.has_pool = True
@@ -1035,7 +1039,12 @@ class KernelSpec:
         self.kernel_map: nodes.Map = kernel_map_entry.map
         self.kernel_name: str = f"{kernel_map_entry.map.label}_{cfg.cfg_id}_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}"
 
-        self.arglist: dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
+        # A constant array is declared inside the kernel (``generate_constants``), so it is no argument
+        self.arglist: dict[str, dt.Data] = {
+            name: desc
+            for name, desc in cudaCodeGen._kernel_arglists[kernel_map_entry].items()
+            if name not in sdfg.constants
+        }
 
         kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
