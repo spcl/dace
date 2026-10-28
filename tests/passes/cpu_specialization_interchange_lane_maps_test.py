@@ -67,5 +67,26 @@ def test_level_loop_moves_into_one_block_map():
     assert np.allclose(q, ref_q) and np.allclose(s, ref_s)
 
 
+def test_a_time_step_loop_stays_outside():
+    """A loop whose iterator indexes nothing re-applies the same statements to the same cells: inside the lanes it only
+    grows each lane's working set (fv3_xppm), so it is left alone."""
+    sdfg = dace.SDFG("time_steps")
+    sdfg.add_array("q", [NB, NL], dace.float64)
+    sdfg.add_array("r", [NB, NL], dace.float64)
+    loop = LoopRegion("steps", "k < NK", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state("twice", is_start_block=True)
+    first.add_mapped_tasklet(
+        "twice", {"b": "0:NB", "l": "0:NL"}, {"x": dace.Memlet("q[b, l]")}, "y = 2 * x", {"y": dace.Memlet("r[b, l]")},
+        external_edges=True,
+    )
+    second = loop.add_state_after(first, "back")
+    second.add_mapped_tasklet(
+        "back", {"b": "0:NB", "l": "0:NL"}, {"x": dace.Memlet("r[b, l]")}, "y = x - 1", {"y": dace.Memlet("q[b, l]")},
+        external_edges=True,
+    )
+    assert InterchangeLoopsIntoLaneMaps().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_level_loop_moves_into_one_block_map()

@@ -10,8 +10,10 @@ physics sweep over levels ``k`` of independent blocks ``b`` runs a block at a ti
 A map without the lane axis that holds lane maps (a short species loop lifted to a map) runs whole on each lane:
 when it is small it becomes a loop first, its nest inlined, so the lane analysis sees the maps it holds.
 
-The CPU gate: the lane axis is not small, and the loop variable strides no wider than the lane parameter, so the
-innermost axis of every map stays innermost. Runs while schedules are still ``Default``, so inference makes the
+The CPU gate: the loop's iterator indexes something (a time-step loop re-applies the same statements to the same
+cells, so moving it into the lanes only grows each lane's working set: fv3_xppm 2.1 s -> 3.4 s), the lane axis is not
+small, and the loop variable strides no wider than the lane parameter, so the innermost axis of every map stays
+innermost. Runs while schedules are still ``Default``, so inference makes the
 lane map the parallel one and every map inside it sequential.
 """
 
@@ -95,6 +97,27 @@ def loop_strides_no_wider(loop: LoopRegion, facts: mlim.LaneFacts) -> bool:
     return all(loop_cost <= (score_to_float(scores[p][0]), score_to_float(scores[p][1])) for p in dict.fromkeys(lanes))
 
 
+def iterator_indexes(loop: LoopRegion) -> bool:
+    """Whether ``loop``'s variable appears in its body: a memlet, a map range, a nested SDFG's symbol mapping or an
+    interstate edge."""
+    name = loop.loop_variable
+    for region in loop.all_control_flow_regions():
+        if any(name in edge.data.read_symbols() for edge in region.edges()):
+            return True
+    for state in [b for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState)]:
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry) and name in {str(s) for s in node.map.range.free_symbols}:
+                return True
+            if isinstance(node, nodes.NestedSDFG) and any(
+                name in {str(s) for s in symbolic.pystr_to_symbolic(value).free_symbols}
+                for value in node.symbol_mapping.values()
+            ):
+                return True
+        if any(not edge.data.is_empty() and name in edge.data.free_symbols for edge in state.edges()):
+            return True
+    return False
+
+
 def inside_a_map(loop: LoopRegion) -> bool:
     sdfg = loop.sdfg
     while sdfg.parent_nsdfg_node is not None:
@@ -120,7 +143,7 @@ class InterchangeLoopsIntoLaneMaps(ppl.Pass):
         return []
 
     def try_loop(self, loop: LoopRegion) -> bool:
-        if loop.loop_variable is None or inside_a_map(loop):
+        if loop.loop_variable is None or inside_a_map(loop) or not iterator_indexes(loop):
             return False
         axis = lane_axis_of(loop)
         if axis is None:
