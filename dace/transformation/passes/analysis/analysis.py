@@ -1,5 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
+import itertools
 from collections import defaultdict, deque
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -692,6 +693,12 @@ class StateFlow:
         self.index: dict[tuple[str, int], int] = {}
         self.succ_ids: list[list[int]] = []
         self.pred_ids: list[list[int]] = []
+        #: Per chain of consecutive node numbers: its first number, one past its last, the chains it leads to.
+        self.chain_start: list[int] = []
+        self.chain_end: list[int] = []
+        self.chain_next: list[list[int]] = []
+        #: The chain of each node number.
+        self.chain_of: list[int] = []
         #: Per (source, avoided) node pair, the nodes reached from the source without entering the avoided one.
         self.reached: dict[tuple[int, int], bytearray] = {}
         self.add_region(sdfg)
@@ -755,11 +762,36 @@ class StateFlow:
         return root in blocked or any(reached[parent] for parent in self.pred_ids[target])
 
     def numbered(self) -> dict[tuple[str, int], int]:
+        """Number the flow nodes so that every chain (a node whose only predecessor has it as only successor
+        continues its predecessor's chain) is a contiguous range: a search then marks a chain in one slice."""
         if not self.index:
-            for node, targets in list(self.succ.items()):
-                for key in (node, *targets):
-                    if key not in self.index:
-                        self.index[key] = len(self.index)
+            keys: dict[tuple[str, int], None] = {}
+            for node, targets in self.succ.items():
+                keys[node] = None
+                keys.update(dict.fromkeys(targets))
+            preds: dict[tuple[str, int], list[tuple[str, int]]] = defaultdict(list)
+            for node, targets in self.succ.items():
+                for key in targets:
+                    preds[key].append(node)
+
+            def continues(key: tuple[str, int]) -> bool:
+                parents = preds.get(key, ())
+                return len(parents) == 1 and parents[0] != key and len(self.succ.get(parents[0], ())) == 1
+
+            heads = [key for key in keys if not continues(key)]
+            # A cycle of continuing nodes has no head: its first node starts it
+            for key in itertools.chain(heads, keys):
+                if key in self.index:
+                    continue
+                self.chain_start.append(len(self.index))
+                while True:
+                    self.chain_of.append(len(self.chain_start) - 1)
+                    self.index[key] = len(self.index)
+                    targets = self.succ.get(key, ())
+                    if len(targets) != 1 or targets[0] in self.index or not continues(targets[0]):
+                        break
+                    key = targets[0]
+                self.chain_end.append(len(self.index))
             self.succ_ids = [[] for _ in self.index]
             self.pred_ids = [[] for _ in self.index]
             for node, targets in self.succ.items():
@@ -767,6 +799,8 @@ class StateFlow:
                 for key in targets:
                     self.succ_ids[number].append(self.index[key])
                     self.pred_ids[self.index[key]].append(number)
+            # A chain's successors are chain heads.
+            self.chain_next = [[self.chain_of[n] for n in self.succ_ids[end - 1]] for end in self.chain_end]
         return self.index
 
     def reach_avoiding(self, root: int, blocked: tuple[int, ...]) -> bytearray:
@@ -775,15 +809,32 @@ class StateFlow:
         known = self.reached.get((root, blocked))
         if known is not None:
             return known
-        succ = self.succ_ids
-        reached = bytearray(len(succ))
+        chain_of, chain_start, chain_end, chain_next = self.chain_of, self.chain_start, self.chain_end, self.chain_next
+        cuts: dict[int, list[int]] = defaultdict(list)
+        for node in blocked:
+            cuts[chain_of[node]].append(node)
+        ones = b"\x01" * len(chain_of)
+        reached = bytearray(len(chain_of))
         reached[root] = 1
-        stack = [root]
+        seen = bytearray(len(chain_start))
+        stack: list[int] = []
+
+        def walk(chain: int, first: int) -> None:
+            """Mark ``chain`` from ``first`` up to its first blocked node; past its end if none."""
+            end = chain_end[chain]
+            cut = min((node for node in cuts.get(chain, ()) if node >= first), default=None)
+            if cut is None:
+                reached[first:end] = ones[: end - first]
+                stack.extend(chain_next[chain])
+            else:
+                reached[first:cut] = ones[: cut - first]
+
+        walk(chain_of[root], root + 1)
         while stack:
-            for child in succ[stack.pop()]:
-                if not reached[child] and child not in blocked:
-                    reached[child] = 1
-                    stack.append(child)
+            chain = stack.pop()
+            if not seen[chain]:
+                seen[chain] = 1
+                walk(chain, chain_start[chain])
         if len(self.reached) >= REACH_MEMO:
             del self.reached[next(iter(self.reached))]
         self.reached[(root, blocked)] = reached
@@ -1045,6 +1096,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
         no_self_shadowing: bool = False,
         must_write_cache: dict[tuple[str, ControlFlowBlock], SDFGState | None] | None = None,
         reach_cache: dict[tuple[int, str], dict[nd.AccessNode, set[nd.Node]]] | None = None,
+        walk_cache: dict[tuple[str, ControlFlowBlock], tuple[bool, Any] | None] | None = None,
     ) -> tuple[SDFGState, nd.AccessNode] | None:
         if isinstance(read, nd.AccessNode):
             state: SDFGState = block
@@ -1087,6 +1139,10 @@ class ScalarWriteShadowScopes(ppl.Pass):
         # a container falls into the undominated (``None``) scope, the producing write included.
         if must_write_cache is None:
             must_write_cache = {}
+        # Per (container, block): what the walk up the idom chain from that block finds, ``(True, write)`` for a
+        # conditional's final write, ``(False, state)`` for a must-write state, ``None`` for nothing.
+        if walk_cache is None:
+            walk_cache = {}
         write_state = None
         pivot_block = block
         region = block.parent_graph
@@ -1095,13 +1151,29 @@ class ScalarWriteShadowScopes(ppl.Pass):
             # Compare against ``pivot_block``, not ``block``: above the first level ``pivot_block``
             # is the region CONTAINING the read, and a write inside it need not precede the read.
             nblock = idom[pivot_block] if idom[pivot_block] != pivot_block else None
-            while nblock is not None and write_state is None:
+            walked: list[ControlFlowBlock] = []
+            found: tuple[bool, Any] | None = None
+            while nblock is not None:
+                if (desc, nblock) in walk_cache:
+                    found = walk_cache[(desc, nblock)]
+                    break
+                walked.append(nblock)
                 if isinstance(nblock, ConditionalBlock) and desc in access_sets[nblock][1]:
                     finals = self._branch_final_writes(desc, nblock, access_nodes, idom_dict, access_sets)
                     if finals:
-                        return finals[0]
-                write_state = must_write_state(desc, nblock, access_sets, idom_dict, must_write_cache)
+                        found = (True, finals[0])
+                        break
+                state_found = must_write_state(desc, nblock, access_sets, idom_dict, must_write_cache)
+                if state_found is not None:
+                    found = (False, state_found)
+                    break
                 nblock = idom[nblock] if idom[nblock] != nblock else None
+            for visited in walked:
+                walk_cache[(desc, visited)] = found
+            if found is not None:
+                if found[0]:
+                    return found[1]
+                write_state = found[1]
             # No dominating write found in the current control flow graph, check one further up.
             if write_state is None:
                 pivot_block = region
@@ -1184,6 +1256,13 @@ class ScalarWriteShadowScopes(ppl.Pass):
         #: Per (container, scope key write), the writes that end that scope's value: its conditional's final writes.
         self._scope_kills: dict[tuple[str, tuple[SDFGState, nd.AccessNode]], tuple] = {}
 
+        # The blocks of ``access_sets``, which spans the whole SDFG tree, per owning SDFG, in its order.
+        blocks_of: dict[SDFG, list[tuple[ControlFlowBlock, tuple[OrderedSet[str], OrderedSet[str]]]]] = defaultdict(
+            list
+        )
+        for block, accesses in access_sets.items():
+            blocks_of[block.sdfg].append((block, accesses))
+
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: WriteScopeDict = defaultdict(lambda: defaultdict(lambda: OrderedSet()))
             idom_dict: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]] = {}
@@ -1218,6 +1297,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
             must_write_cache: dict[tuple[str, ControlFlowBlock], SDFGState | None] = {}
             # Same span, same argument: nothing below mutates the graph.
             reach_cache: dict[tuple[int, str], dict[nd.AccessNode, set[nd.Node]]] = {}
+            walk_cache: dict[tuple[str, ControlFlowBlock], tuple[bool, Any] | None] = {}
             # Built on the first merge candidate: most SDFGs never need it.
             flow: StateFlow | None = None
 
@@ -1229,10 +1309,10 @@ class ScalarWriteShadowScopes(ppl.Pass):
             # whole SDFG tree and was re-walked (and re-parsed) once per candidate. Appended in that
             # same order, so each list is a subsequence of what the per-candidate scan visited.
             iedge_reads: dict[str, list[tuple[ControlFlowBlock, Edge[InterstateEdge]]]] = defaultdict(list)
-            for block, accesses in access_sets.items():
-                # Foreign blocks are skipped: ``idom_dict`` covers only this SDFG, and a clone of it
-                # declares the same array names (see the ``desc_states_with_nodes`` note below).
-                if block.sdfg is not sdfg or not accesses[0]:
+            # Foreign blocks are skipped: ``idom_dict`` covers only this SDFG, and a clone of it
+            # declares the same array names (see the ``desc_states_with_nodes`` note below).
+            for block, accesses in blocks_of.get(sdfg, ()):
+                if not accesses[0]:
                     continue
                 for oedge in block.parent_graph.out_edges(block):
                     for name in oedge.data.free_symbols & anames:
@@ -1272,6 +1352,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                             access_sets,
                             must_write_cache=must_write_cache,
                             reach_cache=reach_cache,
+                            walk_cache=walk_cache,
                         )
                         result[desc][write].add((state, read_node))
                 # Ensure accesses to interstate edges are also considered.
@@ -1285,6 +1366,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         access_sets,
                         must_write_cache=must_write_cache,
                         reach_cache=reach_cache,
+                        walk_cache=walk_cache,
                     )
                     result[desc][write].add((block, oedge.data))
                 for block in condition_reads.get(desc, ()):
@@ -1297,6 +1379,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         access_sets,
                         must_write_cache=must_write_cache,
                         reach_cache=reach_cache,
+                        walk_cache=walk_cache,
                     )
                     result[desc][write].add((block, block))
                 # Take care of any write nodes that have not been assigned to a scope yet, i.e., writes that are not
@@ -1314,6 +1397,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                 no_self_shadowing=True,
                                 must_write_cache=must_write_cache,
                                 reach_cache=reach_cache,
+                                walk_cache=walk_cache,
                             )
                             result[desc][write].add((state, write_node))
 
