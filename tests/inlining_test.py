@@ -1776,6 +1776,22 @@ def test_inline_shared_inout_connector(kind: str, in_map: bool):
     _check_shared_inout_inlining(sdfg, nested)
 
 
+def test_inline_shared_inout_connector_in_a_map_writes_through_the_map_exit():
+    """``write_then_read`` in a map: the nest has no sink node of ``A``, whose write must still leave the map."""
+    sdfg, nested = _make_shared_inout_sdfg("write_then_read", in_map=True)
+    InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
+    sdfg.validate()
+
+    (state,) = sdfg.states()
+    (map_exit,) = [node for node in state.nodes() if isinstance(node, dace_nodes.MapExit)]
+    writes = [
+        e
+        for e in state.in_edges(map_exit)
+        if isinstance(e.src, dace_nodes.AccessNode) and e.src.data == "A" and state.in_degree(e.src) > 0
+    ]
+    assert len(writes) == 1, state.in_edges(map_exit)
+
+
 @pytest.mark.parametrize("in_map", [False, True])
 def test_inline_shared_inout_connector_shared_outer_input(in_map: bool):
     """
@@ -2068,6 +2084,7 @@ if __name__ == "__main__":
     for kind in ["write_then_read", "overlapping_subsets", "read_then_write"]:
         for in_map in [False, True]:
             test_inline_shared_inout_connector(kind=kind, in_map=in_map)
+    test_inline_shared_inout_connector_in_a_map_writes_through_the_map_exit()
     for in_map in [False, True]:
         test_inline_shared_inout_connector_shared_outer_input(in_map=in_map)
     for in_map in [False, True]:
