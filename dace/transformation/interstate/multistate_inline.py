@@ -217,9 +217,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         inner_assignments = set()
         for e in nsdfg.all_interstate_edges():
             inner_assignments |= e.data.assignments.keys()
+        edge_assigned = set(inner_assignments)
         for b in nsdfg.all_control_flow_blocks():
             if isinstance(b, LoopRegion) and b.loop_variable:
                 inner_assignments.add(b.loop_variable)
+                edge_assigned.discard(b.loop_variable)
 
         # Loop variables are not necessarily declared as symbols
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys()) | outer_assignments
@@ -231,6 +233,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             outer_symbols[newname] = nsdfg.symbols.get(assign, None)
             sym_replacements[assign] = newname
         nsdfg.replace_dict(sym_replacements)
+        # An assigned symbol keeps its declared type; undeclared, codegen would infer one from the assigned value
+        for name in sorted(edge_assigned):
+            name = sym_replacements.get(name, name)
+            if name in nsdfg.symbols and name not in sdfg.symbols:
+                sdfg.add_symbol(name, nsdfg.symbols[name])
 
         #######################################################
         # Collect and modify access nodes as necessary

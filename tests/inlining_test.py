@@ -1926,6 +1926,30 @@ def test_multistate_inline_does_not_rename_the_empty_loop_variable_of_while_loop
     assert acc[0] == 3 and other[0] == 3, (acc, other)
 
 
+def test_multistate_inline_keeps_the_declared_type_of_a_symbol_the_nest_assigns():
+    """``s: float64 = 3; s = s / 2; out = s`` in a multistate nest: inlined, ``s`` must not become an integer."""
+    inner = dace.SDFG("inner")
+    inner.add_symbol("s", dace.float64)
+    inner.add_array("out", [1], dace.float64)
+    first = inner.add_state(is_start_block=True)
+    second = inner.add_state_after(first, assignments={"s": "3"})
+    third = inner.add_state_after(second, assignments={"s": "s / 2"})
+    tasklet = third.add_tasklet("write", {}, {"o"}, "o = s")
+    third.add_edge(tasklet, "o", third.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg = dace.SDFG(unique_name("multistate_inline_assigned_symbol_type"))
+    sdfg.add_array("out", [1], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {}, {"out"})
+    state.add_edge(node, "out", state.add_write("out"), None, dace.Memlet("out[0]"))
+
+    assert sdfg.apply_transformations(InlineMultistateSDFG) == 1
+    sdfg.validate()
+
+    out = np.zeros(1)
+    sdfg(out=out)
+    assert out[0] == 1.5, out
+
+
 def _add_increment(region: dace.sdfg.state.ControlFlowRegion, label: str) -> dace.SDFGState:
     state = region.add_state(label)
     tasklet = state.add_tasklet("inc", {"inp"}, {"out"}, "out = inp + 1")
@@ -2070,6 +2094,7 @@ if __name__ == "__main__":
         test_multistate_inline_keeps_the_index_space_of_a_connector_with_its_own_offset(offset_connector)
     test_multistate_inline_renames_a_loop_variable_bound_by_an_undeclared_outer_loop()
     test_multistate_inline_does_not_rename_the_empty_loop_variable_of_while_loops()
+    test_multistate_inline_keeps_the_declared_type_of_a_symbol_the_nest_assigns()
     for shape in ["loop", "conditional", "region"]:
         for dead_successor in [False, True]:
             test_multistate_inline_early_return(shape=shape, dead_successor=dead_successor)
