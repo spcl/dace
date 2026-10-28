@@ -14,8 +14,8 @@ import pytest
 
 import dace
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
-from dace.transformation.passes.cpu_specialization import strip_mine_interchange as smi
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.cpu_specialization import strip_mine_interchange as smi
 
 N = dace.symbol("N")
 
