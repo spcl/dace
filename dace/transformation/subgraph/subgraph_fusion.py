@@ -112,12 +112,14 @@ def same_dynamic_inputs(graph: SDFGState, map_entries: list[nodes.MapEntry]) -> 
     return True
 
 
-def orders_an_intermediate(
+def orders_after_a_whole_map(
     graph: SDFGState, map_entries: list[nodes.MapEntry], map_exits: list[nodes.MapExit], intermediate_nodes
 ) -> bool:
-    """Whether an empty memlet from a fused map's exit orders an intermediate node after the whole map; inside the
-    fused map nothing could. One from an intermediate node into a map entry is kept per iteration (see ``fuse``)."""
-    return any(e.data.is_empty() and e.src in map_exits for n in intermediate_nodes for e in graph.in_edges(n))
+    """Whether an empty memlet from a fused map's exit orders an intermediate node or another fused map after the
+    whole map; inside the fused map nothing could. One from an intermediate node into a map entry is kept per
+    iteration (see ``fuse``)."""
+    inside = OrderedSet(intermediate_nodes) | OrderedSet(map_entries)
+    return any(e.data.is_empty() and e.dst in inside for exit_ in map_exits for e in graph.out_edges(exit_))
 
 
 @make_properties
@@ -241,7 +243,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             return False
         in_nodes, intermediate_nodes, out_nodes = node_config
 
-        if orders_an_intermediate(graph, map_entries, map_exits, intermediate_nodes):
+        if orders_after_a_whole_map(graph, map_entries, map_exits, intermediate_nodes):
             return False
 
         # A map output that flows straight into an enclosing scope's exit has no container to fuse through.
@@ -995,7 +997,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph, map_entries)
         (in_nodes, intermediate_nodes, out_nodes) = node_config
         # Callers that skip ``can_be_applied`` (``CompositeFusion`` after ``StencilTiling``) leave the graph unchanged
-        if orders_an_intermediate(graph, map_entries, map_exits, intermediate_nodes):
+        if not same_dynamic_inputs(graph, map_entries) or orders_after_a_whole_map(
+            graph, map_entries, map_exits, intermediate_nodes
+        ):
             return
 
         if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
@@ -1050,14 +1054,18 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # it on the entry would close a cycle and make the entry its own scope ancestor; what
             # survives fusion there is the per-iteration order, carried on the body the original
             # entry guarded. Runs before the connector rewiring, which consumes the entry's out
-            # edges and would leave no body to attach to.
+            # edges and would leave no body to attach to. An empty memlet on an ``IN_x`` connector orders the same
+            # way, and so does its inner ``OUT_x`` path.
+            ordering_conns = OrderedSet()
+            ordered_roots = []
             for edge in list(graph.in_edges(map_entry)):
-                if edge.dst_conn:
+                if not edge.data.is_empty():
                     continue
+                if edge.dst_conn:
+                    ordering_conns.add("OUT_" + edge.dst_conn[3:])
                 if edge.src in intermediate_nodes:
-                    for root in dict.fromkeys(e.dst for e in graph.out_edges(map_entry)):
-                        if root is not map_exit:
-                            graph.add_edge(edge.src, None, root, None, Memlet())
+                    roots = dict.fromkeys(e.dst for e in graph.out_edges(map_entry))
+                    ordered_roots.extend((edge.src, root) for root in roots if root is not map_exit)
                     graph.remove_edge(edge)
                 else:
                     add_ordering_edge(graph, edge.src, global_map_entry)
@@ -1108,9 +1116,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         mm = dcpy(out_edge.data)
                         self.copy_edge(graph, out_edge, new_src=src, new_src_conn=None, new_data=mm)
 
+            # After the direct connections, so an order a data edge already gives adds no empty memlet beside it
+            for src, root in ordered_roots:
+                add_ordering_edge(graph, src, root)
+
             for edge in graph.out_edges(map_entry):
                 # special case: for nodes that have no data connections
-                if not edge.src_conn:
+                if not edge.src_conn or edge.src_conn in ordering_conns:
                     self.copy_edge(graph, edge, new_src=global_map_entry)
 
             ######################################

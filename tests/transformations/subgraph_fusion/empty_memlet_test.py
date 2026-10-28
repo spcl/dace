@@ -229,6 +229,67 @@ def test_maps_that_may_read_different_dynamic_range_values_are_not_fused(case):
     assert not applicable
 
 
+def test_an_ordering_edge_on_a_scope_connector_still_orders_the_body():
+    """``F -> IN_x -> OUT_x -> tasklet`` with empty memlets orders the second map's body after ``F``; fusion dropped
+    both edges."""
+    chain = Chain("empty_memlet_on_scope_connector")
+    flag = chain.flag()
+    tasklet, entry, _ = chain.second
+    entry.add_in_connector("IN_order")
+    entry.add_out_connector("OUT_order")
+    chain.state.add_edge(flag, None, entry, "IN_order", dace.Memlet())
+    chain.state.add_edge(entry, "OUT_order", tasklet, None, dace.Memlet())
+    fusion = chain.fuse()
+    assert fusion.can_be_applied(chain.sdfg, fusion.subgraph_view(chain.sdfg))
+    fusion.apply(chain.sdfg)
+    chain.sdfg.validate()
+
+    assert tasklet in set(chain.state.bfs_nodes(flag))
+    arrays = run(chain.sdfg)
+    np.testing.assert_allclose(arrays["C"], 2 * (arrays["A"] + 1))
+
+
+def test_fuse_leaves_a_dynamic_map_range_input_unfused():
+    """``fuse`` called without ``can_be_applied`` leaves the maps as they are rather than drop the range input."""
+    chain = Chain("empty_memlet_fuse_dynamic_range")
+    chain.sdfg.add_scalar("lim", dace.int64)
+    entry = chain.second[1]
+    entry.add_in_connector("lim")
+    chain.state.add_edge(chain.state.add_read("lim"), None, entry, "lim", dace.Memlet("lim[0]"))
+
+    SubgraphFusion().fuse(chain.sdfg, chain.state, [chain.first[1], entry])
+
+    chain.sdfg.validate()
+    assert {chain.first[1], entry} <= set(chain.state.nodes())
+
+
+def test_fuse_leaves_a_map_ordered_after_another_unfused():
+    """An empty memlet from the first map's exit into the second map's entry orders the maps whole; ``fuse`` called
+    without ``can_be_applied`` leaves them as they are."""
+    chain = Chain("empty_memlet_fuse_exit_to_entry")
+    chain.state.add_nedge(chain.first[2], chain.second[1], dace.Memlet())
+
+    SubgraphFusion().fuse(chain.sdfg, chain.state, [chain.first[1], chain.second[1]])
+
+    chain.sdfg.validate()
+    assert {chain.first[1], chain.second[1]} <= set(chain.state.nodes())
+
+
+def test_an_ordering_edge_beside_a_data_edge_adds_no_empty_memlet():
+    """``B`` feeds the second map and also orders its entry: after fusion only the data edge connects ``B`` and the
+    body."""
+    chain = Chain("empty_memlet_beside_data_edge")
+    chain.state.add_nedge(chain.b, chain.second[1], dace.Memlet())
+    fusion = chain.fuse()
+    assert fusion.can_be_applied(chain.sdfg, fusion.subgraph_view(chain.sdfg))
+    fusion.apply(chain.sdfg)
+    chain.sdfg.validate()
+
+    assert [e.data.is_empty() for e in chain.state.out_edges(chain.b)] == [False]
+    arrays = run(chain.sdfg)
+    np.testing.assert_allclose(arrays["C"], 2 * (arrays["A"] + 1))
+
+
 if __name__ == "__main__":
     test_an_ordering_edge_into_both_maps_orders_the_fused_map_once()
     test_an_ordering_edge_out_of_a_map_follows_the_fused_map()
@@ -238,3 +299,7 @@ if __name__ == "__main__":
         test_maps_reading_the_same_dynamic_range_input_fuse(case)
     for case in ["written", "other_element"]:
         test_maps_that_may_read_different_dynamic_range_values_are_not_fused(case)
+    test_an_ordering_edge_on_a_scope_connector_still_orders_the_body()
+    test_fuse_leaves_a_dynamic_map_range_input_unfused()
+    test_fuse_leaves_a_map_ordered_after_another_unfused()
+    test_an_ordering_edge_beside_a_data_edge_adds_no_empty_memlet()
