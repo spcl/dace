@@ -728,6 +728,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     pass
 
         # All constants (and associated transients) become constants of the parent
+        renamed_constants: dict[str, str] = {}
         for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
             # The parent's own constant of the same name, type and value is this one: nesting copied it down
             if cstname not in transients and sdfg.holds_constant(cstname, csttype, cstval):
@@ -738,9 +739,13 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 else:
                     newname = sdfg.find_new_constant(cstname)
                     transients[cstname] = newname
+                    renamed_constants[cstname] = newname
                 sdfg.constants_prop[newname] = (csttype, cstval)
             else:
                 sdfg.constants_prop[cstname] = (csttype, cstval)
+        # Code and memlets read a constant by name, too
+        if renamed_constants:
+            nsdfg.replace_dict(renamed_constants)
 
         #######################################################
         # Replace data on inlined SDFG nodes/edges
