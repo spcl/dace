@@ -424,6 +424,27 @@ class ParallelizeLoops(ppl.Pass):
         finally:
             xform.assume_private = assumed
 
+    def rescuing_wcr(self, loop: LoopRegion, admits: Callable[[LoopRefusal], bool]) -> frozenset[str] | None:
+        """The containers whose read-modify-writes, as WCR writes (:attr:`LoopLift.assume_wcr`), make :meth:`accepts`
+        take ``loop``: each one a refusal on a dependence a WCR removes, that ``admits``. ``None`` when ``loop`` lifts as
+        it stands or no such set lifts it. Changes nothing."""
+        probe = LoopLift()
+        if self.accepts(loop, probe):
+            return None
+        while True:
+            refusal = probe.last_refusal
+            if (
+                refusal is None
+                or refusal.container is None
+                or refusal.container in probe.assume_wcr
+                or not (refusal.kind.carried or refusal.kind in (Refusal.NON_UNIQUE_WRITE, Refusal.DYNAMIC_WRITE))
+                or not admits(refusal)
+            ):
+                return None
+            probe.assume_wcr = probe.assume_wcr | {refusal.container}
+            if self.accepts(loop, probe):
+                return probe.assume_wcr
+
     def probe(self, xform: LoopLift, loop: LoopRegion, facts: list[array_facts.ArrayFact]) -> bool:
         """``LoopToMap``'s probe of the matched ``loop``, retried with each container it refuses on for non-unique
         stores that the array facts prove conflict-free (:func:`array_facts.conflict_free_under_facts`) vouched

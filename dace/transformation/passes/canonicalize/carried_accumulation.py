@@ -12,9 +12,9 @@ loop whose only conflicting writes are WCR ones is a map (the WCR stays atomic a
 leaves such an update alone inside its own map -- every map index addresses one element, so the map has no conflict
 of its own -- which is right until an enclosing loop is to be lifted.
 
-Only the container a refused loop names is rewritten, and only its in-place updates by a free tasklet or one in a
-top-level map; a WCR
-that does not let the loop map after all is conflict-free and ``RevertNonReductionWCR`` restores it.
+Only the containers a refused loop names are rewritten, only when their updates as WCR let it map
+(:meth:`~dace.transformation.passes.parallelization.parallelize_loops.ParallelizeLoops.rescuing_wcr`), and only their
+in-place updates by a free tasklet or one in a top-level map.
 """
 
 from typing import Any
@@ -24,7 +24,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
-from dace.transformation.interstate.loop_to_map import LoopToMap, Refusal
+from dace.transformation.interstate.loop_to_map import Refusal
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
@@ -48,15 +48,6 @@ def updated_containers(loop: LoopRegion, per_state: dict[SDFGState, set[str]]) -
             per_state[state] = updated_in_state(state)
         names |= per_state[state]
     return names
-
-
-def refused_container(sdfg: SDFG, loop: LoopRegion) -> str | None:
-    """The container whose non-affine write keeps ``loop`` from mapping, or ``None`` if it maps or refuses else."""
-    probe = LoopToMap()
-    if ParallelizeLoops().accepts(loop, probe):
-        return None
-    refusal = probe.last_refusal
-    return refusal.container if refusal is not None and refusal.kind is Refusal.NON_UNIQUE_WRITE else None
 
 
 def in_place_update(sdfg: SDFG, state: SDFGState, name: str) -> AugAssignToWCR | None:
@@ -166,18 +157,21 @@ class CarriedAccumulationToWCR(ppl.Pass):
                 updated = updated_containers(loop, per_state)
                 if not updated:
                     continue
-                # Until the loop maps or nothing is left to rewrite: one probe per refused container.
-                while (name := refused_container(owner, loop)) is not None and name in updated:
-                    if not writes_move_with_the_iteration(loop, name) or not read_only_by_updates(owner, loop, name):
-                        break
-                    applied = False
+                # The refused containers whose updates, as WCR, let the loop map; none when the loop maps without
+                names = ParallelizeLoops().rescuing_wcr(
+                    loop,
+                    lambda r: (
+                        r.kind is Refusal.NON_UNIQUE_WRITE
+                        and r.container in updated
+                        and writes_move_with_the_iteration(loop, r.container)
+                        and read_only_by_updates(owner, loop, r.container)
+                    ),
+                )
+                for name in sorted(names or ()):
                     for state in [b for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState)]:
                         # An applied rewrite renumbers the state, so each next update is matched afresh.
                         while (xform := in_place_update(owner, state, name)) is not None:
                             xform.apply(state, owner)
                             per_state.pop(state, None)
                             converted += 1
-                            applied = True
-                    if not applied:
-                        break
         return converted or None

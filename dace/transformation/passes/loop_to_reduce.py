@@ -252,13 +252,13 @@ class RetargetWCRAccumulator(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> int | None:
         """:returns: The number of loops retargeted, or ``None`` if none was."""
         count = 0
+        # A pinned loop stays a loop: its accumulation needs no reduction
         for node, parent in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, LoopRegion):
+            if not isinstance(node, LoopRegion) or node.pinned_sequential:
                 continue
             wcr_info = _extract_wcr_body(node, _owner_sdfg(parent))
             if wcr_info is None:
                 continue
-            # Retarget reuses ``node`` in place, so a pinned loop keeps its flag.
             _lift_wcr_scalar_retarget(parent, node, *wcr_info)
             count += 1
 
@@ -270,11 +270,10 @@ class RetargetWCRAccumulator(ppl.Pass):
         # Every chain of the loop, one at a time: an unrolled sum keeps one accumulator per lane
         # (``s0 += a[i]; s1 += a[i + 1]; ...``), and one left behind keeps the loop sequential.
         for node, parent in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, LoopRegion):
+            if not isinstance(node, LoopRegion) or node.pinned_sequential:
                 continue
             owner = _owner_sdfg(parent)
             while (chain_info := _extract_multi_state_chain(node, owner)) is not None:
-                # Reuses ``node`` in place, so a pinned loop keeps its flag.
                 _lift_multi_state_chain(parent, node, chain_info)
                 count += 1
 
@@ -554,23 +553,23 @@ def map_tasklet_augassign_candidates(
 
 
 def refused_on(loop: LoopRegion, names: set[str], refusals: dict[LoopRegion, Any]) -> bool:
-    """Whether ``LoopToMap`` refuses ``loop`` on a dependence of one of ``names`` as far as its probe tells: a carried
-    dependence, a non-unique write or a dynamic (indirect) write of that container, which a WCR on it removes. ``refusals`` caches each loop's
-    refusal (``None`` when it maps) for the caller, which drops a loop's entry once it rewrites inside it."""
-    from dace.transformation.interstate.loop_to_map import LoopToMap, Refusal
+    """Whether ``LoopToMap`` refuses ``loop`` as the graph stands and accepts it once the read-modify-writes of one of
+    ``names``, and of each other container it refuses on that the loop read-modify-writes, are WCR writes
+    (:attr:`~dace.transformation.interstate.loop_to_map.LoopLift.assume_wcr`). ``refusals`` caches each loop's
+    verdicts for the caller, which drops a loop's entry once it rewrites inside it."""
+    from dace.transformation.interstate.loop_to_map import rmw_edges
     from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
     if not names:
         return False
-    if loop not in refusals:
-        probe = LoopToMap()
-        refusals[loop] = None if ParallelizeLoops().accepts(loop, probe) else probe.last_refusal
-    refusal = refusals[loop]
-    return (
-        refusal is not None
-        and (refusal.kind.carried or refusal.kind in (Refusal.NON_UNIQUE_WRITE, Refusal.DYNAMIC_WRITE))
-        and refusal.container in names
-    )
+    verdicts = refusals.setdefault(loop, {})
+    key = frozenset(names)
+    if key not in verdicts:
+        rescued = ParallelizeLoops().rescuing_wcr(
+            loop, lambda r: r.container in key or bool(rmw_edges(loop.states(), frozenset([r.container]))[0])
+        )
+        verdicts[key] = rescued is not None and bool(rescued & key)
+    return verdicts[key]
 
 
 def enclosing_loops_across_nesting(state: SDFGState) -> list[LoopRegion]:

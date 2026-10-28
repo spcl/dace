@@ -1948,6 +1948,14 @@ def test_accumulator_initialized_before_the_loop_is_still_retargeted():
     assert np.allclose(out[0], src.sum()), "retargeting changed the carried sum"
 
 
+def test_an_accumulator_of_a_pinned_loop_is_not_retargeted():
+    """A pinned loop stays a loop: its accumulator gains nothing as a ``wcr-scalar`` (cp2k_density_matrix_trs4's scan
+    sums; RevertNonReductionWCR undid them)."""
+    sdfg = _carried_accumulator_loop(terms=1)
+    next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)).pinned_sequential = True
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None
+
+
 def wcr_write_beside_plain_chain_loop() -> dace.SDFG:
     """``for jl: acc[0] = acc[0] + src[0, jl]; acc[0] += src[1, jl] (WCR)`` on a non-transient ``acc``.
 
@@ -2202,6 +2210,21 @@ def test_a_read_modify_write_that_runs_once_stays_plain():
     state.add_edge(tasklet, "__out", state.add_write("A"), None, mm.Memlet("A[0]"))
     assert augassign_to_wcr_in_state(AugAssignToWCR(), sdfg, state) == 0
     assert not any(e.data.wcr for e in state.edges())
+
+
+def test_an_accumulation_the_loop_reads_back_stays_plain():
+    """``A[0] += B[r]; C[r] = A[0]`` is a scan: as a WCR the read of ``A[0]`` still keeps the loop sequential, so the
+    update stays plain (spgemm_hash's running offset; RevertNonReductionWCR undid it)."""
+    sdfg = build_free_tasklet_rmw()
+    sdfg.add_array("C", [4], dace.float64)
+    body = next(iter(sdfg.states()))
+    scan = body.parent_graph.add_state_after(body, "scan")
+    copy_out = scan.add_tasklet("copy", {"__in": None}, {"__out": None}, "__out = __in")
+    scan.add_edge(scan.add_read("A"), None, copy_out, "__in", mm.Memlet("A[0]"))
+    scan.add_edge(copy_out, "__out", scan.add_write("C"), None, mm.Memlet("C[r]"))
+    sdfg.reset_cfg_list()
+    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
+    assert not [e for st in sdfg.states() for e in st.edges() if e.data.wcr]
 
 
 @dace.program

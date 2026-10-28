@@ -584,6 +584,34 @@ def write_refusal(
     return None
 
 
+def rmw_edges(states: Iterable[SDFGState], names: frozenset[str]) -> tuple[set[int], set[int]]:
+    """The ``id`` of every write edge of ``names`` in ``states`` that a read of the same container and subset in its
+    state feeds, and of those reads: the read-modify-writes ``AugAssignToWCR`` turns into WCR writes."""
+    writes: set[int] = set()
+    reads: set[int] = set()
+    if not names:
+        return writes, reads
+    for state in states:
+        nodes_of = [n for n in state.data_nodes() if n.data in names]
+        stores = [(e, str(e.data.get_dst_subset(e, state))) for n in nodes_of for e in state.in_edges(n)]
+        if not stores:
+            continue
+        for node in nodes_of:
+            for read in state.out_edges(node):
+                if read.data.is_empty():
+                    continue
+                subset = str(read.data.get_src_subset(read, state))
+                matched = [w for w, s in stores if s == subset and w.dst is not node and w.dst.data == node.data]
+                if not matched:
+                    continue
+                reached = set(state.bfs_nodes(read.dst))
+                fed = [w for w in matched if w.dst in reached]
+                if fed:
+                    reads.add(id(read))
+                    writes.update(id(w) for w in fed)
+    return writes, reads
+
+
 def counted_write(sdfg: SDFG, state: SDFGState, dn: nodes.AccessNode, e: gr.MultiConnectorEdge[memlet.Memlet]) -> bool:
     """Whether the probe's write analysis looks at ``e`` at all: an empty memlet orders, a view's defining edge
     binds, neither moves data."""
@@ -1807,6 +1835,9 @@ class LoopLift:
     #: Containers the caller makes iteration-private before lifting (a per-iteration slot or scalar each); the
     #: dependence analysis leaves them out, as it does a loop-local transient.
     assume_private: frozenset = frozenset()
+    #: Containers whose read-modify-writes (:func:`rmw_edges`) the caller turns into WCR writes before lifting: each
+    #: such write counts as a WCR and the read feeding it is dropped; their other accesses are analyzed as usual.
+    assume_wcr: frozenset = frozenset()
     #: Symbols the caller rewrites into a closed form of the iteration, ``{name: expression}``: every check reads them
     #: through it and ignores their assignments in the body.
     closed_forms: dict[str, Any] | None = None
@@ -1980,7 +2011,7 @@ class LoopLift:
         if (
             facts is not None
             and facts.refusal_witness is not None
-            and facts.refusal_witness[1] not in self.assume_private
+            and facts.refusal_witness[1] not in self.assume_private | self.assume_wcr
         ):
             witnessed = self.witnessed_refusal(sdfg, facts, loop_states, ctx, itervar, start, end, step, permissive)
             if witnessed is not None:
@@ -2068,6 +2099,7 @@ class LoopLift:
             _, write_set = facts.read_write
 
         write_memlets: dict[str, list[memlet.Memlet]] = defaultdict(list)
+        rmw_writes, rmw_reads = rmw_edges(loop_states, self.assume_wcr & other_access_nodes)
 
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild("a", exclude=[itersym])
@@ -2098,6 +2130,11 @@ class LoopLift:
                         # a write-through view's defining edge is its OUT edge, which never appears
                         # here, and a store into the view node is a separate in-edge.
                         if not counted_write(sdfg, state, dn, e):
+                            continue
+                        if id(e) in rmw_writes:
+                            accumulated = copy.copy(memlet_in_closed_form(e.data, closed_forms))
+                            accumulated.wcr = "lambda a, b: a + b"
+                            write_memlets[dn.data].append(accumulated)
                             continue
                         reason = write_refusal(
                             sdfg,
@@ -2134,7 +2171,7 @@ class LoopLift:
                 if data not in write_memlets:
                     continue
                 for e in state.out_edges(dn):
-                    if e.data is None:
+                    if e.data is None or id(e) in rmw_reads:
                         continue
                     src_subset = in_closed_form(e.data.get_src_subset(e, state), closed_forms)
                     if src_subset is None:
@@ -2210,7 +2247,7 @@ class LoopLift:
                         # Mirror of the write scan above: an empty memlet is a happens-before
                         # edge, not a read, and its missing subset would be taken for a
                         # whole-array read.
-                        if e.data is None or e.data.is_empty():
+                        if e.data is None or e.data.is_empty() or id(e) in rmw_reads:
                             continue
 
                         # Container read AND written: match only if the locations can't race.
