@@ -15,6 +15,7 @@ from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, dealias, nodes, propagation, utils
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
+from dace.sdfg.replace import rename_clashing_tasklet_connectors
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, transformation
 
@@ -522,6 +523,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         # A connector of a code node may not share a name with data either (see validation), and the code nodes of
         # the nested state join the parent too.
         taken = set(sdfg.arrays) | set(sdfg.symbols) | set(sdfg.constants)
+        rename_clashing_tasklet_connectors(nsdfg, taken)
         for block in (*sdfg.states(), nstate):
             for node in block.nodes():
                 if isinstance(node, nodes.CodeNode) and not isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)):

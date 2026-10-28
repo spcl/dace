@@ -9,7 +9,7 @@ from dace.properties import make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
+from dace.sdfg.replace import rename_clashing_tasklet_connectors, replace_datadesc_names, replace_properties_dict
 from dace.sdfg.state import LoopRegion, ReturnBlock
 from dace.transformation import helpers, transformation
 
@@ -225,6 +225,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         #######################################################
         # Collect and modify access nodes as necessary
+
+        rename_clashing_tasklet_connectors(nsdfg, set(sdfg.arrays) | set(outer_symbols) | set(sdfg.constants))
 
         # Mapping from nested transient name to top-level name
         transients: dict[str, str] = {}
