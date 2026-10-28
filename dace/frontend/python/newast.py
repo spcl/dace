@@ -5466,11 +5466,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # Squeeze only scalar-index dims; a length-1 slice keeps its axis. Shift slice_dims past inserted new axes.
         keep = set(new_axes)
         for dim in expr.slice_dims or []:
-            shifted = dim
             for inserted in sorted(new_axes):
-                if inserted <= shifted:
-                    shifted += 1
-            keep.add(shifted)
+                dim += inserted <= dim
+            keep.add(dim)
         nsqz = other_subset.squeeze(ignore_indices=sorted(keep))
         sqz = [i for i in range(length) if i not in nsqz]
         for i in reversed(sqz):
@@ -5589,16 +5587,10 @@ class ProgramVisitor(ExtNodeVisitor):
         # A computed index follows No-View nested SDFGs: one symbol per scalar, re-assigned at every promotion.
         sym = None if version else (self.indirections.get(key) or self.promoted_scalars.get(scalar))
         if sym is None:
-            if version:
-                # A minted shape symbol never takes the bare name the computed-index promotion reuses
+            # A shape symbol never takes the bare name a computed index reuses; neither shadows an existing symbol.
+            name = base
+            if version or base in self.sdfg.symbols:
                 name = find_new_name(base, self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base})
-            else:
-                # A name that already means something else here would shadow it
-                name = (
-                    base
-                    if base not in self.sdfg.symbols
-                    else find_new_name(base, set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys()))
-                )
             self.sdfg.add_symbol(name, desc.dtype)
             sym = dace.symbol(name, dtype=desc.dtype)
             if not version:
