@@ -3,11 +3,27 @@
 
 from dace import sdfg as sd
 from dace import symbolic
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import helpers, transformation
 from dace.transformation.passes.analysis import loop_analysis
+
+
+def binds_elsewhere(sdfg: sd.SDFG, name: str) -> bool:
+    """Whether a loop, a map or an interstate assignment of ``sdfg`` itself (nested SDFGs excluded) binds ``name``."""
+    for region in sdfg.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region.loop_variable == name:
+            return True
+    if any(name in e.data.assignments for e in sdfg.all_interstate_edges()):
+        return True
+    return any(
+        isinstance(node, nodes.MapEntry) and name in node.map.params
+        for state in sdfg.states()
+        for node in state.nodes()
+    )
 
 
 @transformation.explicit_cf_compatible
@@ -129,6 +145,12 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
 
         # Remove loop and if necessary also the loop variable.
         graph.remove_node(loop)
+        # ``loop.replace_dict`` reaches the body, not ``sdfg.arrays``: a transient sized by the iterator
+        # (``__tmp0[C*(g + 1) - C*g]``, a conv2d's one-group loop) would keep naming it, a free symbol nothing
+        # binds once the loop is gone. Substitute there too, unless another scope of this SDFG still binds the name.
+        if not binds_elsewhere(sdfg, itervar):
+            for desc in sdfg.arrays.values():
+                replace_properties_dict(desc, {itervar: str(start)}, {symbolic.symbol(itervar): start})
         if itervar in sdfg.symbols and helpers.is_symbol_unused(sdfg, itervar):
             sdfg.remove_symbol(itervar)
 
