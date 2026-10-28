@@ -15,7 +15,9 @@ if TYPE_CHECKING:
 def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGState) -> str:
     """Resolve an ``'Auto'`` ``FillLibraryNode`` implementation to a concrete one.
 
-    ``'pure'``: device scope (no ``gpuMemsetAsync`` from a kernel), non-contiguous subsets, a GPU
+    ``'CUDA (block)'``: inside a kernel whose block can run it collectively
+    (:func:`~dace.libraries.standard.block_reduce.in_kernel_block_implementation`).
+    ``'pure'``: other device scope (no ``gpuMemsetAsync`` from a kernel), non-contiguous subsets, a GPU
     destination whose value is not a byte-splat constant (any dynamic value), a dynamic value wider
     than 32 bits, or a contiguous CPU fill that is not provably sub-threshold. ``'CUDA'``: host-issued
     byte-splat fill of GPU memory. ``'CPU'``: a single ``memset``/``std::fill_n``. ``'tasklet'``: a
@@ -23,7 +25,7 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
 
     :param node: The fill library node being expanded.
     :param parent_state: The state containing ``node``.
-    :returns: One of ``'pure'``, ``'CUDA'``, ``'CPU'``, or ``'tasklet'``.
+    :returns: One of ``'CUDA (block)'``, ``'pure'``, ``'CUDA'``, ``'CPU'``, or ``'tasklet'``.
     """
     _out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
     value_info = node.value_descriptor(parent_state)
@@ -32,6 +34,14 @@ def select_fill_implementation(node: "FillLibraryNode", parent_state: dace.SDFGS
     if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
         if out_subset.num_elements_exact() == 1:
             return "tasklet"
+        from dace.libraries.standard.block_reduce import in_kernel_block_implementation, release_kernel_block_size
+
+        # Lanes split the elements only of data the block shares, not of a thread's own copy
+        shared = not out.transient or out.storage == dace.dtypes.StorageType.GPU_Shared
+        block = in_kernel_block_implementation(node, parent_state) if shared else None
+        if block is not None:
+            release_kernel_block_size(node, parent_state)
+            return block
         return "pure"
 
     if out_subset.num_elements_exact() == 1 and out.storage in host_storages(node, parent_state) - {
