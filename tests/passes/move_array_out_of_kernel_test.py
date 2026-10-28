@@ -292,6 +292,59 @@ def lift(sdfg: dace.SDFG) -> int:
         return sut.apply_pass(sdfg, {})
 
 
+def kernel_with_a_per_thread_count() -> dace.SDFG:
+    """``for b: n = counts[b]; buf = empty(n + 1); buf[n] = 2; out[b] = buf[n]``: the extent of ``buf`` is a
+    count each thread reads (lavamd's ``pointers = np.empty(1 + neighbor_counts[l])``)."""
+    body = dace.SDFG("count_body")
+    body.add_symbol("b", dace.int64)
+    body.add_array("counts", [NX], dace.int32, storage=GLOBAL)
+    body.add_array("o", [NX], dace.float64, storage=GLOBAL)
+    body.add_transient("buf", ["n + 1"], dace.float64, storage=dtypes.StorageType.Register)
+    load = body.add_state("load", is_start_block=True)
+    use = body.add_state("use")
+    body.add_edge(load, use, dace.InterstateEdge(assignments={"n": "counts[b]"}))
+    buf = use.add_access("buf")
+    fill = use.add_tasklet("fill", {}, {"v"}, "v = 2.0")
+    use.add_edge(fill, "v", buf, None, dace.Memlet("buf[n]"))
+    take = use.add_tasklet("take", {"x"}, {"y"}, "y = x")
+    use.add_edge(buf, None, take, "x", dace.Memlet("buf[n]"))
+    use.add_edge(take, "y", use.add_write("o"), None, dace.Memlet("o[b]"))
+
+    sdfg = dace.SDFG("per_thread_count")
+    sdfg.add_array("counts", [NX], dace.int32, storage=GLOBAL)
+    sdfg.add_array("out", [NX], dace.float64, storage=GLOBAL)
+    state = sdfg.add_state("kernel")
+    me, mx = state.add_map("kernel", {"b": "0:NX"}, schedule=GPU_DEVICE)
+    nsdfg = state.add_nested_sdfg(body, {"counts"}, {"o"}, symbol_mapping={"b": "b", "NX": "NX"})
+    state.add_memlet_path(state.add_read("counts"), me, nsdfg, dst_conn="counts", memlet=dace.Memlet("counts[0:NX]"))
+    state.add_memlet_path(nsdfg, mx, state.add_write("out"), src_conn="o", memlet=dace.Memlet("out[b]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel():
+    """The lifted ``buf`` is sized by ``n_max``, the largest ``counts[b]``, folded before the kernel: ``n`` is
+    assigned inside the kernel, so no host allocation can name it."""
+    sdfg = kernel_with_a_per_thread_count()
+    assert lift(sdfg) == 1
+    shape_symbols = {str(sym) for dim in sdfg.arrays["buf"].shape for sym in dace.symbolic.pystr_to_symbolic(dim).free_symbols}
+    assert "n" not in shape_symbols and "n_max" in shape_symbols, sdfg.arrays["buf"].shape
+    into_kernel = [e for e in sdfg.in_edges(next(s for s in sdfg.states() if s.label == "kernel"))]
+    assert [e.data.assignments.get("n_max") for e in into_kernel] == ["n_max_host[0]"]
+    sdfg.validate()
+
+
+@pytest.mark.gpu
+def test_an_extent_a_thread_reads_runs_on_the_device():
+    cp = pytest.importorskip("cupy")
+    sdfg = kernel_with_a_per_thread_count()
+    counts = cp.asarray(np.array([3, 0, 7, 1, 5], dtype=np.int32))
+    out = cp.zeros(5)
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        sdfg(counts=counts, out=out, NX=5)
+    assert np.allclose(cp.asnumpy(out), 2.0)
+
+
 def flat_offsets(desc: dace.data.Array, subset: dace.subsets.Range, values: dict) -> tuple[int, int]:
     strides = [int(dace.symbolic.evaluate(s, values)) for s in desc.strides]
     corners = (subset.min_element(), subset.max_element())
@@ -1000,6 +1053,7 @@ def test_wcr_np_sum_small_n_auto_staging():
 
 
 if __name__ == "__main__":
+    test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel()
     for max_elem, min_elem, expected in [(sympy.Min(N - 1, B_I + 31), B_I, 32), (N - 1, sympy.Integer(0), N)]:
         test_tile_extent(max_elem, min_elem, expected)
     for ranges, shape, strides, expected_shape, expected_strides in [
