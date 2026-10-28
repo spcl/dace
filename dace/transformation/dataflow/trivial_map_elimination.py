@@ -79,6 +79,13 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
     def remove_empty_map(self, graph, sdfg):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
+        # The scope orders its whole body after every input and before every output, also where only an empty edge
+        # (or none at all) carries that order; it goes with the scope nodes, so the body's ends keep it themselves.
+        # A nested scope is ordered at its entry and exit.
+        inputs = list(dict.fromkeys(e.src for e in graph.in_edges(map_entry)))
+        outputs = list(dict.fromkeys(e.dst for e in graph.out_edges(map_exit)))
+        heads = list(dict.fromkeys(e.dst for e in graph.out_edges(map_entry) if e.dst is not map_exit))
+        tails = list(dict.fromkeys(e.src for e in graph.in_edges(map_exit) if e.src is not map_entry))
 
         # Redirect map entry's out edges
         write_only_map = True
@@ -107,3 +114,6 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
 
         # Remove map
         graph.remove_nodes_from([map_entry, map_exit])
+        for src, dst in [(i, h) for i in inputs for h in heads] + [(t, o) for t in tails for o in outputs]:
+            if not graph.edges_between(src, dst):
+                graph.add_edge(src, None, dst, None, Memlet())
