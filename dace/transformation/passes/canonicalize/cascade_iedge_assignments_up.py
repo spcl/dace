@@ -489,14 +489,16 @@ def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key:
     :param rhs: The assignment's right-hand-side expression.
     """
     in_edges = list(dest.in_edges(child))
+    # One suffix: a hoist state fused into ``child`` comes back as its label, which would grow by one each round
+    label = f"{child.label.split('_iedge_hoist')[0]}_iedge_hoist"
     if not in_edges:
-        pre = dest.add_state(f"{child.label}_iedge_hoist", is_start_block=dest.start_block is child)
+        pre = dest.add_state(label, is_start_block=dest.start_block is child)
         dest.add_edge(pre, child, InterstateEdge(assignments={key: rhs}))
         return
     rhs_syms = names_read_by(rhs)
     needs_split = any(_edge_landing_order(e.data.assignments, key, rhs_syms) == "after" for e in in_edges)
     if needs_split:
-        dest.add_state_before(child, f"{child.label}_iedge_hoist", assignments={key: rhs})
+        dest.add_state_before(child, label, assignments={key: rhs})
         return
     for e in in_edges:
         e.data.assignments[key] = rhs
