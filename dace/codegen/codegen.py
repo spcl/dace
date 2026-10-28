@@ -12,7 +12,7 @@ from dace.config import Config
 from dace.sdfg import SDFG, infer_types
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
-from dace.transformation.passes.move_array_out_of_kernel import KERNEL_SCHEDULES, MoveArrayOutOfKernel
+from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
@@ -263,13 +263,15 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
 
-    # A kernel cannot declare a per-thread array of symbolic size: it becomes a GPU-global array outside the kernel,
-    # one slice per kernel iteration.
+    # A kernel allocates neither GPU_Global memory nor dynamically sized registers: such an array becomes a GPU-global
+    # array outside the kernel, one slice per kernel iteration.
     if any(
-        isinstance(node, dace.nodes.MapEntry) and node.map.schedule in KERNEL_SCHEDULES
+        isinstance(node, dace.nodes.MapEntry) and node.map.schedule in dace.dtypes.GPU_KERNEL_SCHEDULES
         for node, _ in sdfg.all_nodes_recursive()
     ):
-        MoveArrayOutOfKernel(only_variable_length=True).apply_pass(sdfg, {})
+        move_arrays = MoveArrayOutOfKernel()
+        move_arrays.raise_on_unsupported = False
+        move_arrays.apply_pass(sdfg, {})
 
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
