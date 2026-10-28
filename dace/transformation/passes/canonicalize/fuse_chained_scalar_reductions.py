@@ -56,6 +56,7 @@ from dace.sdfg import SDFGState
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import _copy_input_connector
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.transformation import explicit_cf_compatible
@@ -221,6 +222,11 @@ class FuseChainedScalarReductions(ppl.Pass):
             inc_edge = inc_edges[0]
             # The increment must not read the accumulator (else it is a recurrence).
             if isinstance(inc_edge.src, nodes.AccessNode) and inc_edge.src.data == acc_name:
+                continue
+            # The step is ``acc OP inc`` on the two connectors themselves: the fold rewires the raw increment input,
+            # so ``acc + 3.0 * v`` would lose its ``3.0 *``.
+            update = AugAssignToWCR.name_increment(tasklet, out_edges[0].src_conn, acc_edge.dst_conn)
+            if update is None or update[0] != FOLDABLE_OPS[op_type] or update[1].id != inc_edge.dst_conn:
                 continue
             # Single-element, scalar slot.
             desc = sdfg.arrays.get(acc_name)
