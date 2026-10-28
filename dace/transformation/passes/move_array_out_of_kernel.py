@@ -84,7 +84,8 @@ def fits_registers(desc: dt.Data, register_limit: int) -> bool:
 def is_move_candidate(desc: dt.Data, register_limit: int) -> bool:
     """A transient array a kernel cannot declare as is: ``GPU_Global``, or a ``Register`` array of symbolic size or
     larger than ``register_limit``."""
-    if not isinstance(desc, dt.Array) or isinstance(desc, dt.View) or not desc.transient:
+    # A view or reference names other memory, set by its connector, rather than owning any
+    if not isinstance(desc, dt.Array) or isinstance(desc, (dt.View, dt.Reference)) or not desc.transient:
         return False
     if desc.storage is dtypes.StorageType.GPU_Global:
         return True

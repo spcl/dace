@@ -197,6 +197,18 @@ def test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(lifeti
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_reference_is_not_moved(layout):
+    """A reference names memory its ``set`` connector gives it (e.g. a memlet access policy's cursor), so it owns
+    nothing to move."""
+    sdfg = kernel_with_internal_transient((NX,), REGISTER)
+    sdfg.arrays["buf"] = dace.data.ArrayReference(dace.float64, (NX,), storage=REGISTER, transient=True)
+
+    assert lift(sdfg, layout) is None
+
+    assert isinstance(sdfg.arrays["buf"], dace.data.ArrayReference) and sdfg.arrays["buf"].storage == REGISTER
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
 def test_a_symbolically_sized_register_array_is_moved_to_global_memory(layout):
     """GPUs cannot hold a variable-length array in registers."""
     sdfg = wrap_kernel_around_a_body_it_never_reaches()
@@ -1038,6 +1050,7 @@ if __name__ == "__main__":
             dace.AllocationLifetime.Persistent, layout
         )
         test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(dace.AllocationLifetime.External, layout)
+        test_a_reference_is_not_moved(layout)
         test_a_symbolically_sized_register_array_is_moved_to_global_memory(layout)
         test_a_default_storage_array_is_left_to_storage_inference(layout)
         test_transient_behind_a_nested_sdfg_is_lifted_through_the_boundary(layout)
