@@ -268,10 +268,10 @@ def bind_symbols(hierarchy: list[SDFG], needed: list[str]) -> None:
 
 
 def lifted_layout(desc: dt.Array, levels: list[nodes.MapEntry]) -> LiftedLayout:
-    """``desc`` with one leading, slowest-varying dimension per GPU map parameter.
+    """``desc`` with one leading, fastest-varying dimension per GPU map parameter.
 
-    ``gpu_A[64]`` under ``map[0:128, 0:32]`` becomes ``[128, 32, 64]`` indexed ``gpu_A[x, y, :]``; the own axes keep
-    their C or Fortran layout.
+    ``gpu_A[64]`` under ``map[0:128, 0:32]`` becomes ``[128, 32, 64]`` indexed ``gpu_A[x, y, :]`` with strides
+    ``[32, 1, 4096]``: the map parameters vary fastest, the own axes keep their C or Fortran order outside them.
 
     :param levels: GPU map entries between the array and the kernel exit, innermost first.
     :raises NotImplementedError: The array is neither packed-C nor packed-Fortran.
@@ -293,8 +293,9 @@ def lifted_layout(desc: dt.Array, levels: list[nodes.MapEntry]) -> LiftedLayout:
         offset = [0] * len(level.map.params) + offset
 
     prepended = len(extended_size)
-    # ``strides_from_layout`` takes dimensions innermost-first: the own axes, then the prepended ones.
-    layout = [d + prepended for d in inner_order] + list(reversed(range(prepended)))
+    # ``strides_from_layout`` takes dimensions innermost-first: the prepended ones, then the own axes, so neighboring
+    # threads touch neighboring elements and their accesses coalesce.
+    layout = list(reversed(range(prepended))) + [d + prepended for d in inner_order]
     lifted = desc.clone()
     lifted.set_shape(extended_size + list(desc.shape))
     strides, total_size = lifted.strides_from_layout(*layout)

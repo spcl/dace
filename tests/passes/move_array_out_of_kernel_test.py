@@ -45,15 +45,16 @@ def test_tile_extent(max_elem, min_elem, expected):
 @pytest.mark.parametrize(
     "ranges, shape, strides, expected_shape, expected_strides",
     [
-        (dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [2048, 64, 1]),
-        (dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [64, 1, 4]),
+        (dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [32, 1, 4096]),
+        (dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [1, 8, 32]),
         (dict(i="0:8"), [4, 16], [32, 2], None, None),
     ],
 )
-def test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
+def test_lifted_dimensions_are_prepended_fastest_varying_keeping_the_own_layout(
     ranges, shape, strides, expected_shape, expected_strides
 ):
-    """Map dimensions lead as the slowest axes; C or Fortran keep their own axes, any other layout is refused."""
+    """Map dimensions vary fastest, the last (``threadIdx.x``) innermost, so a warp coalesces; C or Fortran keep
+    their own axes outside them, any other layout is refused."""
     state = dace.SDFG("move_array_strides").add_state("s")
     me, _ = state.add_map("kernel", ranges, schedule=GPU_DEVICE)
     arr = dace.data.Array(dace.float64, shape, strides=strides)
@@ -888,13 +889,13 @@ def test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)
-    test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
-        dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [2048, 64, 1]
+    test_lifted_dimensions_are_prepended_fastest_varying_keeping_the_own_layout(
+        dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [32, 1, 4096]
     )
-    test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
-        dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [64, 1, 4]
+    test_lifted_dimensions_are_prepended_fastest_varying_keeping_the_own_layout(
+        dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [1, 8, 32]
     )
-    test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
+    test_lifted_dimensions_are_prepended_fastest_varying_keeping_the_own_layout(
         dict(i="0:8"), [4, 16], [32, 2], None, None
     )
     test_a_constant_size_per_thread_array_within_the_limit_stays_in_place(REGISTER)
