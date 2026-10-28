@@ -650,6 +650,64 @@ def test_column_owned_stages_match_the_kernels(read, code, barriers):
         np.testing.assert_array_equal(cupy.asnumpy(got[name]), cupy.asnumpy(want[name]))
 
 
+COLUMN_LEVELS = 4
+
+
+def stage_with_a_column_scratch() -> dace.SDFG:
+    """Stage A writes ``X[i] = W[i] + 1``; stage B keeps a column ``C[k] = X[i] + k`` that only its map scope touches
+    and writes ``Y[k, i] = 2 * C[k]``. Offloading places such a column in global memory (``GPU_Global``)."""
+    sdfg = dace.SDFG("megakernel_column_scratch")
+    for name in "WX":
+        sdfg.add_array(name, [N], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("Y", [COLUMN_LEVELS, N], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_transient("C", [COLUMN_LEVELS], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state("stages", is_start_block=True)
+    add_kernel(state, "A", "W", "X")
+    entry, exit_ = state.add_map("B", {"i": "0:N"}, schedule=dace.ScheduleType.GPU_Device)
+    entry.map.gpu_block_size = [256, 1, 1]
+    fill_entry, fill_exit = state.add_map("fill", {"k": f"0:{COLUMN_LEVELS}"}, schedule=dace.ScheduleType.Sequential)
+    use_entry, use_exit = state.add_map("use", {"k": f"0:{COLUMN_LEVELS}"}, schedule=dace.ScheduleType.Sequential)
+    fill = state.add_tasklet("fill", {"x"}, {"c"}, "c = x + k")
+    use = state.add_tasklet("use", {"c"}, {"y"}, "y = 2 * c")
+    column = state.add_access("C")
+    state.add_memlet_path(state.add_read("X"), entry, fill_entry, fill, dst_conn="x", memlet=dace.Memlet("X[i]"))
+    state.add_memlet_path(fill, fill_exit, column, src_conn="c", memlet=dace.Memlet("C[k]"))
+    state.add_memlet_path(column, use_entry, use, dst_conn="c", memlet=dace.Memlet("C[k]"))
+    state.add_memlet_path(use, use_exit, exit_, state.add_write("Y"), src_conn="y", memlet=dace.Memlet("Y[k, i]"))
+    return sdfg
+
+
+def test_a_column_only_one_stage_scope_touches_stays_per_thread():
+    """A global-memory transient only a stage's map scope touches holds one iteration's data: the megakernel keeps it
+    per thread instead of hoisting it into one buffer every thread races on."""
+    sdfg = stage_with_a_column_scratch()
+    sdfg.validate()
+    assert len(MegaKernelOptimization().apply_pass(sdfg, {})) == 1
+    sdfg.validate()
+    body = next(n for n, s in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    assert "C" not in sdfg.arrays
+    assert body.arrays["C"].transient and body.arrays["C"].storage == dace.StorageType.Register
+
+
+@pytest.mark.gpu
+def test_a_per_thread_column_matches_the_kernels():
+    import cupy
+
+    sdfg = stage_with_a_column_scratch()
+    fused = copy.deepcopy(sdfg)
+    fused.name = "megakernel_column_scratch_fused"
+    assert len(MegaKernelOptimization().apply_pass(fused, {})) == 1
+    size = 70001
+    w = np.random.default_rng(0).random(size)
+    want = {"W": cupy.asarray(w), "X": cupy.zeros(size), "Y": cupy.zeros((COLUMN_LEVELS, size))}
+    got = {"W": cupy.asarray(w), "X": cupy.zeros(size), "Y": cupy.zeros((COLUMN_LEVELS, size))}
+    sdfg(N=size, **want)
+    with new_gpu_codegen():
+        fused(N=size, **got)
+    for name in "XY":
+        np.testing.assert_array_equal(cupy.asnumpy(got[name]), cupy.asnumpy(want[name]))
+
+
 if __name__ == "__main__":
     test_a_time_loop_of_stencil_kernels_is_one_chain(jacobi_2d_test.kernel)
     test_a_time_loop_of_stencil_kernels_is_one_chain(heat_3d_test.heat_3d_kernel)
@@ -684,3 +742,5 @@ if __name__ == "__main__":
     test_a_nested_sdfg_stage_is_keyed_by_the_memlets_inside_it("X[kk - 1, ii]", 0)
     test_a_nested_sdfg_stage_is_keyed_by_the_memlets_inside_it("X[kk, (ii + 1) % N]", 1)
     test_a_column_keys_whichever_dimension_it_indexes()
+    test_a_column_only_one_stage_scope_touches_stays_per_thread()
+    test_a_per_thread_column_matches_the_kernels()
