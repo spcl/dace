@@ -641,6 +641,83 @@ def enclosing_blocks(block: ControlFlowBlock) -> Iterable[ControlFlowBlock]:
         block = block.parent_graph
 
 
+def dominator_intervals(
+    region: ControlFlowRegion,
+    idom_dict: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]],
+    intervals: dict[ControlFlowRegion, dict[ControlFlowBlock, tuple[int, int]]],
+) -> dict[ControlFlowBlock, tuple[int, int]]:
+    """Preorder and postorder number of every block of ``region``'s dominator tree, memoized in ``intervals``:
+    ``a`` strictly dominates ``b`` iff ``a``'s interval strictly encloses ``b``'s."""
+    known = intervals.get(region)
+    if known is not None:
+        return known
+    idom = idom_dict[region]
+    children: dict[ControlFlowBlock, list[ControlFlowBlock]] = defaultdict(list)
+    roots = []
+    for node, parent in idom.items():
+        if parent is node:
+            roots.append(node)
+        else:
+            children[parent].append(node)
+    # A dominator that is not itself a key is a root, too
+    roots.extend(parent for parent in children if parent not in idom)
+    pre: dict[ControlFlowBlock, int] = {}
+    numbers: dict[ControlFlowBlock, tuple[int, int]] = {}
+    counter = 0
+    for root in roots:
+        stack = [(root, False)]
+        while stack:
+            node, done = stack.pop()
+            if done:
+                numbers[node] = (pre[node], counter)
+                counter += 1
+                continue
+            pre[node] = counter
+            counter += 1
+            stack.append((node, True))
+            stack.extend((child, False) for child in children.get(node, ()))
+    intervals[region] = numbers
+    return numbers
+
+
+class LevelDominators:
+    """The blocks dominating ``block`` across nesting levels, as a membership test: in each enclosing region the
+    blocks strictly dominating the ancestor of ``block`` there (a branch of a conditional instead counts itself),
+    and every enclosing region, up to ``sdfg``. Strict dominance is two comparisons of dominator-tree intervals."""
+
+    def __init__(
+        self,
+        sdfg: SDFG,
+        block: ControlFlowBlock,
+        idom_dict: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]],
+        intervals: dict[ControlFlowRegion, dict[ControlFlowBlock, tuple[int, int]]],
+    ) -> None:
+        self.idom_dict = idom_dict
+        self.intervals = intervals
+        self.ancestors: list[ControlFlowBlock] = []
+        while block is not sdfg and block is not None:
+            self.ancestors.append(block)
+            block = block.parent_graph
+
+    def __contains__(self, other: ControlFlowBlock) -> bool:
+        for ancestor in self.ancestors:
+            region = ancestor.parent_graph
+            if other is region:
+                return True
+            if isinstance(region, ConditionalBlock):
+                if other is ancestor:
+                    return True
+                continue
+            if other is ancestor or other.parent_graph is not region:
+                continue
+            numbers = dominator_intervals(region, self.idom_dict, self.intervals)
+            if other in numbers and ancestor in numbers:
+                (opre, opost), (apre, apost) = numbers[other], numbers[ancestor]
+                if opre < apre and apost < opost:
+                    return True
+        return False
+
+
 def dominated_through_region(
     block: ControlFlowBlock, other: ControlFlowBlock, dominators: set[ControlFlowBlock]
 ) -> bool:
@@ -1085,6 +1162,21 @@ class ScalarWriteShadowScopes(ppl.Pass):
         self._conditional_writes[key] = finals
         return finals
 
+    @staticmethod
+    def _region_writers(
+        region: ControlFlowRegion,
+        access_sets: dict[ControlFlowBlock, tuple[set[str], set[str]]],
+        writers: dict[ControlFlowRegion, dict[str, list[ControlFlowBlock]]],
+    ) -> dict[str, list[ControlFlowBlock]]:
+        """The blocks of ``region`` writing each container (nested writes included), memoized in ``writers``."""
+        known = writers.get(region)
+        if known is None:
+            known = writers[region] = defaultdict(list)
+            for child in region.nodes():
+                for name in access_sets.get(child, ((), ()))[1]:
+                    known[name].append(child)
+        return known
+
     def _find_dominating_write(
         self,
         desc: str,
@@ -1096,7 +1188,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
         no_self_shadowing: bool = False,
         must_write_cache: dict[tuple[str, ControlFlowBlock], SDFGState | None] | None = None,
         reach_cache: dict[tuple[int, str], dict[nd.AccessNode, set[nd.Node]]] | None = None,
-        walk_cache: dict[tuple[str, ControlFlowBlock], tuple[bool, Any] | None] | None = None,
+        intervals: dict[ControlFlowRegion, dict[ControlFlowBlock, tuple[int, int]]] | None = None,
+        writers: dict[ControlFlowRegion, dict[str, list[ControlFlowBlock]]] | None = None,
     ) -> tuple[SDFGState, nd.AccessNode] | None:
         if isinstance(read, nd.AccessNode):
             state: SDFGState = block
@@ -1139,41 +1232,34 @@ class ScalarWriteShadowScopes(ppl.Pass):
         # a container falls into the undominated (``None``) scope, the producing write included.
         if must_write_cache is None:
             must_write_cache = {}
-        # Per (container, block): what the walk up the idom chain from that block finds, ``(True, write)`` for a
-        # conditional's final write, ``(False, state)`` for a must-write state, ``None`` for nothing.
-        if walk_cache is None:
-            walk_cache = {}
+        if intervals is None:
+            intervals = {}
+        if writers is None:
+            writers = {}
         write_state = None
         pivot_block = block
         region = block.parent_graph
         while region is not None and write_state is None:
-            idom = idom_dict[region]
             # Compare against ``pivot_block``, not ``block``: above the first level ``pivot_block``
             # is the region CONTAINING the read, and a write inside it need not precede the read.
-            nblock = idom[pivot_block] if idom[pivot_block] != pivot_block else None
-            walked: list[ControlFlowBlock] = []
-            found: tuple[bool, Any] | None = None
-            while nblock is not None:
-                if (desc, nblock) in walk_cache:
-                    found = walk_cache[(desc, nblock)]
-                    break
-                walked.append(nblock)
-                if isinstance(nblock, ConditionalBlock) and desc in access_sets[nblock][1]:
+            # Only a block writing ``desc`` can qualify, so the strict dominators of ``pivot_block`` that do are
+            # tried, nearest (largest preorder number) first: the order of a walk up the idom chain.
+            numbers = dominator_intervals(region, idom_dict, intervals)
+            pivot_pre, pivot_post = numbers[pivot_block]
+            candidates = [
+                w
+                for w in self._region_writers(region, access_sets, writers).get(desc, ())
+                if w in numbers and numbers[w][0] < pivot_pre and pivot_post < numbers[w][1]
+            ]
+            candidates.sort(key=lambda w: numbers[w][0], reverse=True)
+            for nblock in candidates:
+                if isinstance(nblock, ConditionalBlock):
                     finals = self._branch_final_writes(desc, nblock, access_nodes, idom_dict, access_sets)
                     if finals:
-                        found = (True, finals[0])
-                        break
-                state_found = must_write_state(desc, nblock, access_sets, idom_dict, must_write_cache)
-                if state_found is not None:
-                    found = (False, state_found)
+                        return finals[0]
+                write_state = must_write_state(desc, nblock, access_sets, idom_dict, must_write_cache)
+                if write_state is not None:
                     break
-                nblock = idom[nblock] if idom[nblock] != nblock else None
-            for visited in walked:
-                walk_cache[(desc, visited)] = found
-            if found is not None:
-                if found[0]:
-                    return found[1]
-                write_state = found[1]
             # No dominating write found in the current control flow graph, check one further up.
             if write_state is None:
                 pivot_block = region
@@ -1266,23 +1352,13 @@ class ScalarWriteShadowScopes(ppl.Pass):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: WriteScopeDict = defaultdict(lambda: defaultdict(lambda: OrderedSet()))
             idom_dict: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]] = {}
-            all_doms_transitive: dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]] = defaultdict(
-                lambda: OrderedSet()
-            )
             for cfg in sdfg.all_control_flow_regions():
                 if isinstance(cfg, ConditionalBlock):
                     idom_dict[cfg] = {b: b for _, b in cfg.branches}
-                    all_doms = {b: OrderedSet([b]) for _, b in cfg.branches}
                 else:
                     idom_dict[cfg] = sdutil.immediate_dominators(cfg.nx, cfg.start_block)
-                    all_doms = cfg_analysis.all_dominators(cfg, idom_dict[cfg])
-
-                # Since all_control_flow_regions goes top-down in the graph hierarchy, we can build a transitive
-                # closure of all dominators her.
-                for k in all_doms.keys():
-                    all_doms_transitive[k].update(all_doms[k])
-                    all_doms_transitive[k].add(cfg)
-                    all_doms_transitive[k].update(all_doms_transitive[cfg])
+            # Dominator-tree intervals per region, numbered on demand: only merge candidates ask.
+            intervals: dict[ControlFlowRegion, dict[ControlFlowBlock, tuple[int, int]]] = {}
 
             access_nodes: dict[str, dict[SDFGState, tuple[OrderedSet[nd.AccessNode], OrderedSet[nd.AccessNode]]]] = (
                 pipeline_results[FindAccessNodes.__name__][sdfg.cfg_id]
@@ -1297,7 +1373,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
             must_write_cache: dict[tuple[str, ControlFlowBlock], SDFGState | None] = {}
             # Same span, same argument: nothing below mutates the graph.
             reach_cache: dict[tuple[int, str], dict[nd.AccessNode, set[nd.Node]]] = {}
-            walk_cache: dict[tuple[str, ControlFlowBlock], tuple[bool, Any] | None] = {}
+            # Per region, the blocks writing each container, in region order.
+            writers: dict[ControlFlowRegion, dict[str, list[ControlFlowBlock]]] = {}
             # Built on the first merge candidate: most SDFGs never need it.
             flow: StateFlow | None = None
 
@@ -1352,7 +1429,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
                             access_sets,
                             must_write_cache=must_write_cache,
                             reach_cache=reach_cache,
-                            walk_cache=walk_cache,
+                            intervals=intervals,
+                            writers=writers,
                         )
                         result[desc][write].add((state, read_node))
                 # Ensure accesses to interstate edges are also considered.
@@ -1366,7 +1444,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         access_sets,
                         must_write_cache=must_write_cache,
                         reach_cache=reach_cache,
-                        walk_cache=walk_cache,
+                        intervals=intervals,
+                        writers=writers,
                     )
                     result[desc][write].add((block, oedge.data))
                 for block in condition_reads.get(desc, ()):
@@ -1379,7 +1458,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         access_sets,
                         must_write_cache=must_write_cache,
                         reach_cache=reach_cache,
-                        walk_cache=walk_cache,
+                        intervals=intervals,
+                        writers=writers,
                     )
                     result[desc][write].add((block, block))
                 # Take care of any write nodes that have not been assigned to a scope yet, i.e., writes that are not
@@ -1397,7 +1477,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                 no_self_shadowing=True,
                                 must_write_cache=must_write_cache,
                                 reach_cache=reach_cache,
-                                walk_cache=walk_cache,
+                                intervals=intervals,
+                                writers=writers,
                             )
                             result[desc][write].add((state, write_node))
 
@@ -1423,7 +1504,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                     if write is None:
                         continue
                     write_state, write_node = write
-                    dominators = all_doms_transitive[write_state]
+                    dominators = LevelDominators(sdfg, write_state, idom_dict, intervals)
                     reach = block_reach[write_state.parent_graph.cfg_id][write_state]
                     for other_write, other_accesses in result[desc].items():
                         if other_write is not None and other_write[1] is write_node and other_write[0] is write_state:
