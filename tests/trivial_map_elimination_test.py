@@ -186,6 +186,32 @@ def test_removing_a_trivial_map_keeps_the_order_its_data_inputs_held():
     assert networkx.has_path(state._nx, first, bump), "the read of u no longer precedes its in-place update"
 
 
+def test_removing_a_trivial_map_orders_a_nested_scope_by_its_entry():
+    """The in-place update of ``u`` sits in a nested map; its order after ``first`` must attach to the nested entry."""
+    sdfg = dace.SDFG("trivial_map_nested_data_ordering")
+    for name, size in (("u", 2), ("t", 1), ("b", 1)):
+        sdfg.add_array(name, [size], dace.float64)
+    state = sdfg.add_state()
+    u_in = state.add_read("u")
+    first = state.add_tasklet("first", {"x"}, {"y"}, "y = 2 * x")
+    t = state.add_access("t")
+    state.add_edge(u_in, None, first, "x", dace.Memlet("u[0]"))
+    state.add_edge(first, "y", t, None, dace.Memlet("t[0]"))
+    entry, exit_ = state.add_map("map", dict(i="0:1"))
+    use = state.add_tasklet("use", {"x"}, {"y"}, "y = x + 1")
+    state.add_memlet_path(t, entry, use, dst_conn="x", memlet=dace.Memlet("t[0]"))
+    state.add_memlet_path(use, exit_, state.add_write("b"), src_conn="y", memlet=dace.Memlet("b[0]"))
+    bump = state.add_tasklet("bump", {"x"}, {"y"}, "y = x + 1")
+    inner_entry, inner_exit = state.add_map("inner", dict(j="0:2"))
+    state.add_memlet_path(u_in, entry, inner_entry, bump, dst_conn="x", memlet=dace.Memlet("u[j]"))
+    state.add_memlet_path(bump, inner_exit, exit_, state.add_write("u"), src_conn="y", memlet=dace.Memlet("u[j]"))
+    sdfg.validate()
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    sdfg.validate()
+    assert state.scope_dict()[bump] is inner_entry
+    assert networkx.has_path(state._nx, first, inner_entry), "the read of u no longer precedes its in-place update"
+
+
 class TrivialMapEliminationTest(unittest.TestCase):
     """
     Tests the case where the map has an empty input edge
@@ -327,4 +353,7 @@ class TrivialMapEliminationWithDynamicMapRangesTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    test_removing_a_trivial_map_keeps_the_order_its_empty_edges_held()
+    test_removing_a_trivial_map_keeps_the_order_its_data_inputs_held()
+    test_removing_a_trivial_map_orders_a_nested_scope_by_its_entry()
     unittest.main()

@@ -171,19 +171,43 @@ def reach(graph, node, forward: bool) -> set:
     return seen
 
 
+def scope_level_groups(graph, map_entry, map_exit) -> list:
+    """``(head, tail, reads, writes)`` per node at ``map_entry``'s own scope level: a nested scope is one group headed
+    by its entry and tailed by its exit, reading and writing what any node inside it does."""
+    children = graph.scope_children()
+    groups = []
+    for child in children[map_entry]:
+        if child is map_exit:
+            continue
+        reads, writes = accessed(graph, child)
+        tail = child
+        if isinstance(child, nodes.EntryNode):
+            tail = graph.exit_node(child)
+            stack = [child]
+            while stack:
+                for inner in children[stack.pop()]:
+                    r, w = accessed(graph, inner)
+                    reads |= r
+                    writes |= w
+                    if isinstance(inner, nodes.EntryNode):
+                        stack.append(inner)
+        groups.append((child, tail, reads, writes))
+    return groups
+
+
 def scope_conflicts(graph, map_entry, map_exit) -> list:
     """``(src, dst)`` orders the scope imposes through its data edges that touch a conflicting container: an input's
-    producer before a body node that writes what the producer's ancestors read (or touches what they write), and a
-    body node before an output's consumer that touches what it writes (or writes what it reads)."""
-    body = [n for n in graph.scope_subgraph(map_entry).nodes() if n is not map_entry and n is not map_exit]
-    body_access = {n: accessed(graph, n) for n in body}
+    producer before a body group that writes what the producer's ancestors read (or touches what they write), and a
+    body group before an output's consumer that touches what it writes (or writes what it reads). Body nodes are
+    taken at the scope's own level, so no order crosses into a nested scope."""
+    groups = scope_level_groups(graph, map_entry, map_exit)
     pairs = []
     for src in dict.fromkeys(e.src for e in graph.in_edges(map_entry) if not e.data.is_empty()):
         reads, writes = touched(graph, src, forward=False)
-        pairs += [(src, n) for n, (r, w) in body_access.items() if w & (reads | writes) or r & writes]
+        pairs += [(src, head) for head, _, r, w in groups if w & (reads | writes) or r & writes]
     for dst in dict.fromkeys(e.dst for e in graph.out_edges(map_exit) if not e.data.is_empty()):
         reads, writes = touched(graph, dst, forward=True)
-        pairs += [(n, dst) for n, (r, w) in body_access.items() if w & (reads | writes) or r & writes]
+        pairs += [(tail, dst) for _, tail, r, w in groups if w & (reads | writes) or r & writes]
     return list(dict.fromkeys(pairs))
 
 
