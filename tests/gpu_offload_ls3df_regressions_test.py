@@ -81,3 +81,26 @@ def test_a_container_named_in_tasklet_code_inside_the_subgraph_is_no_argument():
     state.add_memlet_path(read_t, exit_, state.add_write("out"), src_conn="o", memlet=dace.Memlet("out[i]"))
     assert "t" in {str(s) for s in state.scope_subgraph(entry).used_symbols(all_symbols=False)}
     assert "t" not in state.scope_subgraph(entry).arglist()
+
+
+def test_a_gpu_dot_over_a_symbolic_power_length_is_cpp():
+    """The vendor dot's length went into C++ as Python text (``Lb**3``)."""
+    from dace.libraries.blas.nodes.dot import Dot
+
+    lb = dace.symbol("Lb")
+    sdfg = dace.SDFG("gpu_dot_power_length")
+    gpu = dtypes.StorageType.GPU_Global
+    sdfg.add_array("x", [lb**3], dace.float64, storage=gpu)
+    sdfg.add_array("y", [lb**3], dace.float64, storage=gpu)
+    sdfg.add_array("r", [1], dace.float64, storage=gpu)
+    state = sdfg.add_state()
+    node = Dot("dot")
+    node.implementation = "hipBLAS"
+    state.add_node(node)
+    state.add_edge(state.add_read("x"), None, node, "_x", dace.Memlet.from_array("x", sdfg.arrays["x"]))
+    state.add_edge(state.add_read("y"), None, node, "_y", dace.Memlet.from_array("y", sdfg.arrays["y"]))
+    state.add_edge(node, "_result", state.add_write("r"), None, dace.Memlet("r[0]"))
+    with dace.config.set_temporary("compiler", "cuda", "backend", value="hip"):
+        node.expand(state)
+    code = " ".join(n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet))
+    assert "**" not in code and "Ddot" in code, code

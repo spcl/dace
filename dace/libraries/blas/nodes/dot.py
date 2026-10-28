@@ -266,6 +266,8 @@ class ExpandDotGPUBLAS(ExpandTransformation):
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
+        # C++ text: a symbolic length or stride prints ``Lb**3`` otherwise
+        n, stride_x, stride_y = sym2cpp(n), sym2cpp(stride_x), sym2cpp(stride_y)
 
         code = cls.environments[0].handle_setup_code(node)
         if node.accumulator_type is None:
