@@ -470,7 +470,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
     def _copy_first_map_contents(
         self, sdfg: SDFG, graph: SDFGState, first_map_entry: nodes.MapEntry, first_map_exit: nodes.MapExit
     ):
-        inter_nodes = list(graph.all_nodes_between(first_map_entry, first_map_exit) - {first_map_entry})
+        # In graph order, not set order: the copies and their ``__tmp`` names must not depend on object addresses
+        between = graph.all_nodes_between(first_map_entry, first_map_exit)
+        inter_nodes = [node for node in graph.nodes() if node in between and node is not first_map_entry]
 
         # Add new nodes
         # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
@@ -507,10 +509,11 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             memlet.data = tmp_map.get(memlet.data, memlet.data)
             return memlet
 
+        inside = set(inter_nodes)
         for edge in graph.edges():
-            if edge.src in inter_nodes or edge.dst in inter_nodes:
-                src = map_node(edge.src) if edge.src in inter_nodes else edge.src
-                dst = map_node(edge.dst) if edge.dst in inter_nodes else edge.dst
+            if edge.src in inside or edge.dst in inside:
+                src = map_node(edge.src) if edge.src in inside else edge.src
+                dst = map_node(edge.dst) if edge.dst in inside else edge.dst
                 edge_data = map_memlet(edge.data)
                 graph.add_edge(src, edge.src_conn, dst, edge.dst_conn, edge_data)
 
