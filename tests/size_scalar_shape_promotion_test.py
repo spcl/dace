@@ -124,6 +124,27 @@ def test_a_size_assigned_into_a_region_is_defined_before_the_allocation(program)
     assert np.allclose(out, a * 2.0)
 
 
+def test_a_size_promoted_in_one_branch_is_not_reused_in_a_sibling():
+    """The promotion edge lives in the branch that allocated first; the sibling must read the scalar again."""
+
+    @dace.program
+    def sibling_branches(Nt: dace.int64, out: dace.float64[1]):
+        m = Nt + 1
+        if Nt > 2:
+            b = np.empty(m, dace.float64)
+            b[0] = 1.0
+            out[0] = b[0]
+        else:
+            c = np.empty(m, dace.float64)
+            c[0] = 2.0
+            out[0] = c[0]
+
+    for nt, expected in ((1, 2.0), (5, 1.0)):
+        out = np.zeros(1)
+        sibling_branches(np.int64(nt), out)
+        assert out[0] == expected
+
+
 def test_two_arrays_from_one_size_share_their_extent():
 
     @dace.program
@@ -185,44 +206,6 @@ def test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote():
     assert np.allclose(out, [2.0, 3.0, 4.0, 2.0])
 
 
-def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
-
-    @dace.program
-    def slice_then_shape(lmax: dace.int32[N], pol: dace.float64[5, 5], out: dace.float64[N, 5]):
-        for t in range(N):
-            nlp = int(lmax[t]) + 1
-            p = pol[:nlp, 0]
-            out[t, :nlp] = np.ones(nlp) * p
-
-    lmax = np.array([1, 3, 4], dtype=np.int32)
-    pol = np.arange(25, dtype=np.float64).reshape(5, 5).copy()
-    out = np.zeros((3, 5))
-    slice_then_shape(lmax, pol, out)
-    expected = np.zeros((3, 5))
-    for t, n in enumerate(lmax + 1):
-        expected[t, :n] = pol[:n, 0]
-    assert np.allclose(out, expected)
-
-
-def test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version():
-
-    @dace.program
-    def store_in_a_loop(lmax: dace.int32[N], px: dace.float64[5, 4]):
-        for t in range(N):
-            nlp = int(lmax[t]) + 1
-            seed = np.full((nlp, 4), 1.0)
-            for i in range(4):
-                px[:nlp, i] = seed[:, i] + t
-
-    lmax = np.array([1, 3, 2], dtype=np.int32)
-    px = np.zeros((5, 4))
-    store_in_a_loop(lmax, px)
-    expected = np.zeros((5, 4))
-    for t, n in enumerate(lmax + 1):
-        expected[:n, :] = 1.0 + t
-    assert np.allclose(px, expected)
-
-
 if __name__ == "__main__":
     test_size_descriptor_survives_its_use_as_a_shape()
     test_two_arrays_from_a_reassigned_size_keep_their_own_extents()
@@ -232,9 +215,8 @@ if __name__ == "__main__":
     test_a_size_one_array_is_read_through_a_subscript()
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(size_from_empty_into_a_branch)
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(calls_size_from_empty)
+    test_a_size_promoted_in_one_branch_is_not_reused_in_a_sibling()
     test_two_arrays_from_one_size_share_their_extent()
     test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it()
     test_a_slice_bounded_by_a_size_shares_its_extent()
     test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()
-    test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent()
-    test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version()

@@ -50,6 +50,21 @@ def test_a_length1_slice_keeps_its_axis():
     assert np.allclose(dx, pos[:, 0:1].T - pos[:, 0:1])
 
 
+def test_an_all_slice_unit_subscript_stays_2d():
+    """``a[1:2, 1:2]`` is 2-D in numpy; its ranges look like scalar indices, so it is the case where tracking which
+    dims came from a slice (``slice_dims``) is the only thing keeping it off the index path."""
+
+    @dace.program
+    def all_slice(a: dace.float64[3, 3], out: dace.float64[1, 1]):
+        out[:] = a[1:2, 1:2]
+
+    a = np.arange(9.0).reshape(3, 3).copy()
+    out = np.zeros((1, 1))
+    all_slice(a, out)
+    assert np.allclose(out, a[1:2, 1:2])
+
+
 if __name__ == "__main__":
     test_unit_dim_transposes()
     test_a_length1_slice_keeps_its_axis()
+    test_an_all_slice_unit_subscript_stays_2d()
