@@ -16,3 +16,7 @@ def test_remove_node_with_a_stale_start_block_index():
 
     assert sdfg.start_block is first
     sdfg.validate()
+
+
+if __name__ == "__main__":
+    test_remove_node_with_a_stale_start_block_index()

@@ -6,11 +6,9 @@ import ast
 import collections
 import copy
 import functools
-import inspect
 import itertools
 import re
 import sys
-import types
 import warnings
 from collections.abc import Callable, Iterable, Iterator
 from typing import (
@@ -51,7 +49,6 @@ from dace.sdfg.graph import (
     OrderedDiGraph,
     OrderedMultiDiConnectorGraph,
     SubgraphView,
-    frozen_node_ids,
     generate_element_id,
 )
 from dace.sdfg.replace import replace_in_codeblock
@@ -82,24 +79,10 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return explicit_lineinfo
 
     if dace.Config.get("compiler", "lineinfo") == "inspect":
-        lineno, filename = caller_position(sys._getframe(2))
-        return dtypes.DebugInfo(lineno, 0, lineno, 0, filename)
+        caller = sys._getframe(2)
+        return dtypes.DebugInfo(caller.f_lineno, 0, caller.f_lineno, 0, caller.f_code.co_filename)
 
     return None
-
-
-#: ``(code, instruction offset) -> (line, file)`` per resolved call site; ``getframeinfo`` stats the file each call.
-CALLER_POSITIONS: dict[tuple[types.CodeType, int], tuple[int, str]] = {}
-
-
-def caller_position(frame: types.FrameType) -> tuple[int, str]:
-    """``(lineno, filename)`` as ``inspect.getframeinfo(frame, context=0)`` reports them, once per call site."""
-    key = (frame.f_code, frame.f_lasti)
-    position = CALLER_POSITIONS.get(key)
-    if position is None:
-        info = inspect.getframeinfo(frame, context=0)
-        position = CALLER_POSITIONS[key] = (info.lineno, info.filename)
-    return position
 
 
 @functools.lru_cache(maxsize=None, typed=True)
@@ -3389,7 +3372,7 @@ class AbstractControlFlowRegion(
                         yield item.sdfg
                         stack.append((iter(item.sdfg.nodes()), None))
             elif isinstance(item, SDFGState):
-                if recursive:
+                if recursive and item.number_of_nodes() > 0:
                     stack.append((iter(item.nodes()), item))
             elif isinstance(item, AbstractControlFlowRegion):
                 yield item
@@ -3507,8 +3490,7 @@ class AbstractControlFlowRegion(
         return free_syms, defined_syms, used_before_assignment
 
     def to_json(self, parent=None):
-        with frozen_node_ids():
-            graph_json = OrderedDiGraph.to_json(self)
+        graph_json = OrderedDiGraph.to_json(self)
         block_json = ControlFlowBlock.to_json(self, parent)
         graph_json.update(block_json)
 
