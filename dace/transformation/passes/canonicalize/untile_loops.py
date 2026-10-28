@@ -719,7 +719,7 @@ class UntileLoops(ppl.Pass):
             # from the body, each level meets a nest that has already been flattened beneath
             # it, so the next pair to collapse is the only pair left.
             for cfg in reversed(list(sd.all_control_flow_regions())):
-                if isinstance(cfg, LoopRegion) and cfg.loop_variable and self._try_untile(cfg, sd):
+                if isinstance(cfg, LoopRegion) and cfg.loop_variable and self.untile_loop(cfg, sd):
                     rewritten += 1
         return rewritten
 
@@ -790,7 +790,9 @@ class UntileLoops(ppl.Pass):
         SDFG untouched, refuses the candidate. The base pass has nothing to prepare."""
         return True
 
-    def _try_untile(self, outer: LoopRegion, sdfg: SDFG) -> bool:
+    def untile_loop(self, outer: LoopRegion, sdfg: SDFG) -> bool:
+        """Collapse ``outer``, a loop over tiles, with the loop over one tile's points inside it; ``False``, with
+        ``sdfg`` untouched, when ``outer`` is no such pair."""
         # The outer must be ``for i in range(0, N, K)`` with a positive tile
         # ``K`` -- a concrete literal ``> 1`` or a positive symbol.
         outer_stride = loop_analysis.get_loop_stride(outer)
