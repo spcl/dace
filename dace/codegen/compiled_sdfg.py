@@ -131,13 +131,11 @@ class ReloadableDLL:
                 #  and then try to load that. We only do the copy if the new new name is
                 #  free. It seems that at least on LINUX there is some issue if we
                 #  overwrite a file that already exists.
-                #  An existing copy is skipped even when it is not loaded: it may hold an older build.
                 lib_filename = self._library_filename + f"_{counter}"
                 counter += 1
-                while pathlib.Path(lib_filename).exists():
+                if pathlib.Path(lib_filename).exists():
                     assert pathlib.Path(lib_filename).is_file()
-                    lib_filename = self._library_filename + f"_{counter}"
-                    counter += 1
+                    continue
 
                 # The file name is not taken, so make a copy. There might be a race condition
                 #  here in the presence of multiple processes.

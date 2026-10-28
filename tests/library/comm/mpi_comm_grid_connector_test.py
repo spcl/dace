@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Every MPI library node resolves its communicator via ``resolve_comm``: an
+"""Every MPI library node resolves its communicator via ``mpi_communicator``: an
 optional ``_comm`` connector, else an optional ``_grid`` connector, else
 ``MPI_COMM_WORLD``.  These tests expand each node's tasklet and check the
 emitted C uses the resolved connector, not a hardcoded ``MPI_COMM_WORLD``
@@ -169,7 +169,7 @@ def test_grid_connector_is_honored(name):
 
 @pytest.mark.parametrize("name", list(_BUILDERS))
 def test_comm_takes_priority_over_grid(name):
-    """When both are wired, ``_comm`` wins (matches ``resolve_comm`` ordering):
+    """When both are wired, ``_comm`` wins (matches ``mpi_communicator`` ordering):
     every emitted MPI call uses ``_comm``, never the grid."""
     sdfg, state, node = _BUILDERS[name]()
     _wire_grid(sdfg, state, node)
