@@ -52,6 +52,10 @@ def test_reduction_into_element_3_is_written_back_to_element_3() -> None:
 def test_reduction_seeded_at_another_element_is_not_lifted() -> None:
     sdfg = rmw_map(seed="0", slot="3")
     assert LiftMapReductionToReduce(rmw_only=True).apply_pass(sdfg, {}) is None
+    # Not lifted, the update stays a plain read-modify-write of x[3]: run in parallel it races
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry):
+            node.map.schedule = dace.ScheduleType.Sequential
     a, x = np.arange(16.0), np.ones(16)
     sdfg(a=a, x=x)
     assert np.allclose(x, np.r_[0.0, 1.0, 1.0, 121.0, np.ones(12)])
