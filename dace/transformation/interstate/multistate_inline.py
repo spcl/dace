@@ -358,6 +358,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         inner_assignments = set()
         for e in nsdfg.all_interstate_edges():
             inner_assignments |= e.data.assignments.keys()
+        edge_assigned = set(inner_assignments)
         loop_variables = {
             b.loop_variable for b in nsdfg.all_control_flow_blocks() if isinstance(b, LoopRegion) and b.loop_variable
         }
@@ -393,6 +394,13 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if assign in identity_names:
                 non_identity_mapping[assign] = assign
         nsdfg.replace_dict(sym_replacements)
+        # A symbol the inlined region assigns keeps the type the nested SDFG declares for it; undeclared in the
+        # parent, codegen would infer one from the assigned value (a float set to ``3`` became an int64_t)
+        for inner in edge_assigned - loop_variables:
+            name = sym_replacements.get(inner, inner)
+            dtype = nsdfg.symbols.get(name, nsdfg.symbols.get(inner))
+            if dtype is not None and name not in sdfg.symbols:
+                sdfg.add_symbol(name, dtype)
 
         #######################################################
         # Collect and modify access nodes as necessary

@@ -899,6 +899,27 @@ def test_a_transient_moves_into_the_nest_only_if_nothing_else_uses_it(read_after
         assert np.allclose(a, x * 2.0 + 1.0)
 
 
+def test_a_symbol_the_subgraph_owns_keeps_its_declared_type():
+    """``x: float64`` is set to ``3`` and read only inside the nested region: nested, and inlined again at
+    compilation, it stays a double (an inferred ``int64_t`` made ``x / 2`` give 1)."""
+    sdfg = dace.SDFG("nest_float_symbol")
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_symbol("x", dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    use = sdfg.add_state("use")
+    sdfg.add_edge(first, use, dace.InterstateEdge(assignments={"x": "3"}))
+    sdfg.add_edge(use, sdfg.add_state("last"), dace.InterstateEdge())
+    t = use.add_tasklet("w", {}, {"o"}, "o = x / 2")
+    use.add_edge(t, "o", use.add_write("B"), None, dace.Memlet("B[0]"))
+
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [first, use]))
+    (nsdfg,) = [n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)]
+    assert nsdfg.symbols["x"] == dace.float64
+    B = np.zeros(1)
+    sdfg(B=B)
+    assert B[0] == 1.5
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -930,3 +951,4 @@ if __name__ == "__main__":
     test_a_symbol_the_start_block_reads_before_the_reset_stays_mapped()
     test_a_transient_moves_into_the_nest_only_if_nothing_else_uses_it(False)
     test_a_transient_moves_into_the_nest_only_if_nothing_else_uses_it(True)
+    test_a_symbol_the_subgraph_owns_keeps_its_declared_type()

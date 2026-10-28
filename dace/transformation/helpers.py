@@ -375,6 +375,10 @@ def nest_sdfg_subgraph(
         )
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
+                # The subgraph owns the symbol now: it keeps its declared type there, or codegen infers one from
+                # the assigned value (a float symbol set to ``3`` became an int64_t)
+                if s not in nsdfg.symbols:
+                    nsdfg.add_symbol(s, sdfg.symbols[s])
                 sdfg.remove_symbol(s)
 
         # Connect input/output data of the subgraph to the NestedSDFG node.
