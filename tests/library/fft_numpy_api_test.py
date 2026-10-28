@@ -279,18 +279,31 @@ def test_non_floating_inputs_promote_as_numpy_does(implementation):
     np.testing.assert_allclose(got, np.fft.rfft(halves), rtol=1e-5, atol=1e-5)
 
 
-def test_sample_frequencies_over_a_symbolic_extent():
-    """``fftfreq`` and ``rfftfreq`` of a symbolic ``N // 2``-point transform, against numpy."""
+def test_a_computed_length_reaches_fft_and_fftfreq():
+    """A length the program computes (``N % 16``) reaches the replacements as a one-element list, and the C++ tasklet of
+    ``fftfreq`` prints its ``Mod`` as ``py_mod``."""
     N = dace.symbol("N")
 
     @dace.program
-    def sample_frequencies(x: dace.float64[N]):
-        return np.fft.fftfreq(N // 2, 0.5), np.fft.rfftfreq(N // 2, 0.5)
+    def computed_length(x: dace.complex128[N]):
+        return np.fft.fft(x, n=N % 16), np.fft.fftfreq(N % 16, 0.5), np.fft.rfftfreq(N % 16, 0.5)
 
-    full, half = sample_frequencies(x=np.zeros(18), N=18)
+    x = np.arange(25) + 1j
+    spectrum, full, half = computed_length(x=x, N=25)
+    np.testing.assert_allclose(spectrum, np.fft.fft(x, n=9))
     np.testing.assert_allclose(full, np.fft.fftfreq(9, 0.5))
     np.testing.assert_allclose(half, np.fft.rfftfreq(9, 0.5))
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    for implementation in ("pure", "FFTW3"):
+        test_the_real_input_family_keeps_half_the_spectrum(implementation)
+        test_n_and_s_crop_or_zero_pad_the_input(implementation)
+        test_a_filter_between_a_transform_and_its_inverse(implementation)
+        test_non_floating_inputs_promote_as_numpy_does(implementation)
+    test_the_real_input_family_keeps_half_the_spectrum_on_the_gpu(True)
+    test_the_real_input_family_keeps_half_the_spectrum_on_the_gpu(False)
+    test_a_real_transform_outputs_the_halved_shape_and_real_type()
+    test_rfft_refuses_a_complex_input()
+    test_fftshift_and_ifftshift_roll_by_half_of_each_axis()
+    test_a_computed_length_reaches_fft_and_fftfreq()

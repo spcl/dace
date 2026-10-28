@@ -19,7 +19,11 @@ LIBRARIES = ("fftw3_omp", "fftw3", "fftw3f_omp", "fftw3f")
 
 @functools.lru_cache(maxsize=None, typed=True)
 def installed(root: str | None) -> tuple[str, ...]:
-    """The :data:`LIBRARIES` found under ``root``, or by the loader for ``None``."""
+    """The :data:`LIBRARIES` found under ``root``.
+
+    :param root: The FFTW root, ``None`` for the loader's search.
+    :return: The library paths.
+    """
 
     def find(lib: str) -> str | None:
         if root is None:
@@ -36,7 +40,11 @@ def libraries() -> tuple[str, ...]:
 
 
 def threaded(double: bool) -> bool:
-    """Whether the build links FFTW's OpenMP planner of double (``fftw3_omp``) or single (``fftw3f_omp``) precision."""
+    """Whether the build links FFTW's OpenMP planner of a precision.
+
+    :param double: Double (``fftw3_omp``) or single (``fftw3f_omp``) precision.
+    :return: True if the planner is linked.
+    """
     name = "libfftw3_omp." if double else "libfftw3f_omp."
     return any(os.path.basename(lib).startswith(name) for lib in libraries())
 

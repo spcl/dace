@@ -21,7 +21,12 @@ from dace.sdfg import utils as sdutil
 
 
 def normalize_fft_axes(ndim: int, axes: Sequence[int] | None) -> list[int]:
-    """The axes an FFT over ``axes`` transforms, in order, as indices in ``0..ndim-1``; ``None`` means every axis."""
+    """The transformed axes as indices in ``0..ndim-1``, in order.
+
+    :param ndim: The rank of the input.
+    :param axes: The axes, possibly negative; ``None`` for all.
+    :return: The normalized axes.
+    """
     result = list(range(ndim)) if axes is None else normalize_axes([int(axis) for axis in axes], ndim)
     if any(not 0 <= axis < ndim for axis in result):
         raise ValueError(f"FFT axes {axes} out of range for rank-{ndim} input")
@@ -32,11 +37,8 @@ def normalize_fft_axes(ndim: int, axes: Sequence[int] | None) -> list[int]:
 class FourierTransform(nodes.LibraryNode):
     """``_out`` is the discrete Fourier transform of ``_inp`` over ``axes``, scaled by ``factor``.
 
-    With ``axes is None`` (default) every axis is transformed (``np.fft.fftn``). With ``axes`` set the listed axes
-    are transformed in order and the others are batch dimensions, matching ``np.fft.fftn(x, axes=...)`` and
-    ``np.fft.fft(x, axis=k)`` (``axes=[k]``). With ``half_spectrum`` the complex side holds only the non-negative
-    frequencies of the last transformed axis (``np.fft.rfftn`` / ``np.fft.irfftn``): :class:`FFT` reads a real
-    input and :class:`IFFT` writes a real output, whose extents are the transform lengths.
+    ``axes=None`` transforms every axis (``np.fft.fftn``); otherwise the listed axes, in order, and the rest are batch
+    dimensions. ``half_spectrum`` keeps only the non-negative frequencies of the last axis (``rfftn`` / ``irfftn``).
     """
 
     factor = properties.SymbolicProperty(
@@ -132,7 +134,7 @@ COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
 MAX_GPU_FFT_RANK = 3
 
 
-class Transform(NamedTuple):
+class FFTTransform(NamedTuple):
     """One vendor call: ``out`` is the transform of ``src`` over ``axes``."""
 
     src: data.Data
@@ -151,7 +153,7 @@ class Transform(NamedTuple):
 
     @property
     def lengths(self) -> list[symbolic.SymbolicType]:
-        """The transform lengths: the extents of the transformed axes on the real (or the only) side."""
+        """The transform lengths: the transformed extents on the real (or the only) side."""
         signal = self.out if self.real_output else self.src
         return [signal.shape[a] for a in self.axes]
 
@@ -161,27 +163,28 @@ class Transform(NamedTuple):
 
 
 #: Builds the vendor call for a :class:`Transform`, or returns ``None`` when the library cannot address its layout.
-VendorCall = Callable[[Transform], nodes.Tasklet | None]
+VendorCall = Callable[[FFTTransform], nodes.Tasklet | None]
 
 
 def vendor_fft_sdfg(
     node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG, call: VendorCall, backend: str
 ) -> SDFG:
-    """Wrap one vendor FFT call in the numpy semantics the library node carries.
+    """Wraps one vendor FFT call in the semantics of the library node.
 
-    The vendor transforms are unnormalized and read the complex type, or the real one for a half-spectrum forward
-    transform. An input of another type, or one the vendor cannot address, is staged into a copy of the right type
-    and layout first; a half-spectrum inverse is always staged, because the vendor overwrites its input. The
-    ``factor`` scales that staging copy when there is one (the transform is linear), and the output otherwise. A
-    layout the vendor cannot address even staged falls back to the ``pure`` expansion, with a warning naming the
-    backend.
+    Vendors are unnormalized and read one type and layout: another input is staged into a copy, which ``factor``
+    scales (else the output is scaled). A layout no vendor plan covers falls back to ``pure``, with a warning.
+
+    :param node: The FFT or IFFT node.
+    :param call: Builds the vendor tasklet, ``None`` if the vendor cannot address the layout.
+    :param backend: The backend name for the warning.
+    :return: The expanded SDFG.
     """
-    from dace.libraries.fft.algorithms.dft import complex_of, floating_text, is_unit, real_of  # avoid loop
+    from dace.libraries.fft.algorithms.dft import complex_of, in_floating_point, is_unit, real_of  # avoid loop
 
     inverse = isinstance(node, IFFT)
     indesc, outdesc = input_and_output(parent_state, parent_sdfg, node)
     axes = normalize_fft_axes(len(indesc.shape), node.axes)
-    transform = Transform(indesc, outdesc, axes, inverse, node.half_spectrum)
+    transform = FFTTransform(indesc, outdesc, axes, inverse, node.half_spectrum)
     complex_type = complex_of(outdesc.dtype)
     read_type = real_of(complex_type) if transform.real_input else complex_type
     # The staged copy takes the output's layout where the shapes agree: the relayout a source the vendor cannot
@@ -225,7 +228,7 @@ def vendor_fft_sdfg(
     scale = (
         ""
         if is_unit(node.factor)
-        else f" * dace.{'float64' if complex_type == dtypes.complex128 else 'float32'}({floating_text(node.factor, False)})"
+        else f" * dace.{'float64' if complex_type == dtypes.complex128 else 'float32'}({symbolic.symstr(in_floating_point(node.factor))})"
     )
 
     from dace.libraries.fft.algorithms.dft import add_elementwise_state, index_ranges  # avoid loop
@@ -254,11 +257,11 @@ def vendor_fft_sdfg(
 def dense_block_order(
     descs: Sequence[data.Data], axes: Sequence[int]
 ) -> tuple[list[int], list[symbolic.SymbolicType]] | None:
-    """An order of ``axes``, slowest first, in which every descriptor lays them out as ONE dense block.
+    """An order of ``axes``, slowest first, in which every descriptor lays them out as one dense block.
 
-    Returned with each descriptor's element stride (its fastest axis's stride): axis ``order[k]``
-    steps by that stride times the extents of every later axis. The order is shared, since a plan's
-    dimension list maps the same logical axis in the input and the output.
+    :param descs: The descriptors, all sharing the order (a plan maps one logical axis on both sides).
+    :param axes: The axes.
+    :return: The order and each descriptor's element stride, or ``None``.
     """
     # Every order up to rank 3 (the GPU plans' limit); past it, C and Fortran order only, not ``r!`` orders.
     orders = itertools.permutations(axes) if len(axes) <= 3 else (tuple(axes), tuple(reversed(axes)))
@@ -279,15 +282,14 @@ def dense_block_order(
     return None
 
 
-def fftw3_call(transform: Transform, threaded: bool | None = None) -> nodes.Tasklet | None:
-    """One ``fftw_plan_guru64_dft`` (``_r2c``, ``_c2r``) over the transformed axes, every other axis a ``howmany``
-    batch dimension, planned once and kept in the library's plan cache.
+def fftw3_call(transform: FFTTransform, threaded: bool | None = None) -> nodes.Tasklet | None:
+    """One FFTW guru64 plan over the transformed axes, the others its ``howmany`` batch, cached per program.
 
-    Both dimension lists step by the descriptors' own strides, so any rank, any axis set and any strided view is
-    one plan, and one buffer on both connectors is FFTW's in-place transform. A plan is keyed by the transform
-    kind, the extents and strides, whether the transform is in place, the planner's thread count and the arrays'
-    alignment, the conditions under which FFTW's new-array execute may reuse a plan. ``threaded`` says whether the
-    planner threads; ``None`` asks the FFTW3 install whether it links the threaded planner of this precision.
+    Any rank, axis set and strided view is one plan; one buffer on both connectors is FFTW's in-place transform.
+
+    :param transform: The transform.
+    :param threaded: Whether the planner threads; ``None`` asks the FFTW3 install.
+    :return: The tasklet, or ``None`` if FFTW cannot plan the layout.
     """
     from dace.libraries.fft.environments import fftw3
 
@@ -335,13 +337,9 @@ def fftw3_call(transform: Transform, threaded: bool | None = None) -> nodes.Task
     )
     sign = f"{'FFTW_BACKWARD' if transform.inverse else 'FFTW_FORWARD'}, " if kind == "dft" else ""
     threaded = fftw3.threaded(transform.double) if threaded is None else threaded
-    # A threaded FFTW plans for the program's OpenMP team, or for one thread inside a parallel region
-    team = (
-        f"static const int __threads_ready = {prefix}_init_threads(); (void)__threads_ready;\n"
-        f"{prefix}_plan_with_nthreads(__threads);"
-        if threaded
-        else ""
-    )
+    # A threaded FFTW plans for the program's OpenMP team, or for one thread inside a parallel region. Only a new
+    # plan, under the cache's lock, initializes the threads, which FFTW allows repeatedly.
+    team = f"{prefix}_init_threads();\n{prefix}_plan_with_nthreads(__threads);" if threaded else ""
     threads = "omp_in_parallel() ? 1 : omp_get_max_threads()" if threaded else "1"
     # The cache is shared by every transform of this precision, so the key names the transform kind too.
     kind_key = (
@@ -370,8 +368,9 @@ def fftw3_call(transform: Transform, threaded: bool | None = None) -> nodes.Task
 
 
 class GpuFftLayout(NamedTuple):
-    """One ``MakePlanMany`` plan: ``lengths`` in plan order, each side's embed (its own extents in that order),
-    element stride and batch distance, and the batch count."""
+    """One ``MakePlanMany`` plan: the lengths in plan order, each side's embed, element stride and batch
+    distance, and the batch count.
+    """
 
     lengths: list[symbolic.SymbolicType]
     in_embed: list[symbolic.SymbolicType]
@@ -383,16 +382,14 @@ class GpuFftLayout(NamedTuple):
     batch: symbolic.SymbolicType
 
 
-def gpu_fft_layout(transform: Transform) -> GpuFftLayout | None:
-    """``transform`` as ONE ``MakePlanMany`` plan, else ``None``.
+def gpu_fft_layout(transform: FFTTransform) -> GpuFftLayout | None:
+    """``transform`` as one ``MakePlanMany`` plan.
 
-    A plan reads element ``(p, q, r)`` of batch ``b`` at ``stride * (p*n1*n2 + q*n2 + r) + dist * b``, separately
-    for input and output with each side's embed. So each side's transformed axes must be one dense block under a
-    single element stride, and its other axes one dense block under a single batch distance, in an axis order both
-    sides share. That covers the C-order trailing and leading runs, a Fortran-order batch (the C-order batch of its
-    reversed axes), and a batch-innermost view of an ``order='F'`` reshape. numpy's result does not depend on the
-    axis order, so the order is free to choose -- except for a half-spectrum transform, whose halved axis must stay
-    the last.
+    Each side's transformed axes must be one dense block under one element stride and its other axes one block under
+    one batch distance, in an axis order both sides share; a half-spectrum axis must stay last.
+
+    :param transform: The transform.
+    :return: The layout, or ``None``.
     """
     src, out, axes = transform.src, transform.out, transform.axes
     if len(set(axes)) != len(axes) or len(axes) > MAX_GPU_FFT_RANK:
@@ -427,9 +424,11 @@ def gpu_fft_layout(transform: Transform) -> GpuFftLayout | None:
     )
 
 
-def cufft_call(transform: Transform) -> nodes.Tasklet | None:
-    """The cuFFT call: a ``MakePlanMany64`` plan from the library's plan cache, run on the SDFG's stream, so a
-    transform inside a loop plans once. One buffer on both connectors is the vendor's in-place transform.
+def cufft_call(transform: FFTTransform) -> nodes.Tasklet | None:
+    """The cuFFT call: a ``MakePlanMany64`` plan, cached per program and run on the SDFG's stream.
+
+    :param transform: The transform.
+    :return: The tasklet, or ``None`` if one plan cannot cover the layout.
     """
 
     layout = gpu_fft_layout(transform)

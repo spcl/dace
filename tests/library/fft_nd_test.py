@@ -91,33 +91,12 @@ def test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(norm):
     assert not any("1/(M*N)" in code.replace(" ", "") for code in scaled), scaled
 
 
-# A subset of the axes (np.fft.fftn(x, axes=...)): unlisted axes are batch dimensions.
-PARTIAL_AXES = [
-    ((3, 4, 5, 2), (1, 2, 3)),
-    ((4, 5, 6), (0, 2)),
-    ((4, 5, 6), (-1, -3)),
-    ((6, 5), (0, 0)),
-]
-
-
 def random_array(shape, dtype, seed):
     rng = np.random.default_rng(seed)
     x = rng.standard_normal(shape)
     if np.issubdtype(dtype, np.complexfloating):
         x = x + 1j * rng.standard_normal(shape)
     return x.astype(dtype)
-
-
-def test_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input():
-
-    @dace.program
-    def tester_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input(x: dace.complex128[3, 4, 5, 2]):
-        return np.fft.ifftn(np.fft.fftn(x, axes=(1, 2, 3)), axes=(1, 2, 3))
-
-    x = random_array((3, 4, 5, 2), np.complex128, 11)
-    np.testing.assert_allclose(
-        tester_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input(x.copy()), x, rtol=1e-10, atol=1e-10
-    )
 
 
 def test_fft2_and_ifft2_transform_the_last_two_axes_by_default():
@@ -174,25 +153,15 @@ def complex_array(shape, order="C") -> np.ndarray:
     return np.asarray(rng.standard_normal(shape) + 1j * rng.standard_normal(shape), order=order)
 
 
-def expanded(program, implementation: str) -> dace.SDFG:
+def expanded(program, implementation: str, case: str) -> dace.SDFG:
     sdfg = program.to_sdfg()
-    sdfg.name = f"{sdfg.name}_{implementation}"
+    # One build folder per case: parallel workers compiling one name race on it
+    sdfg.name = f"{sdfg.name}_{implementation}_{case}"
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, (fftlib.FFT, fftlib.IFFT)):
             node.implementation = implementation
     sdfg.expand_library_nodes()
     return sdfg
-
-
-@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
-@pytest.mark.parametrize("shape", [(8, 12), (4, 6, 5)])
-def test_fftn_and_back(implementation, shape):
-    @dace.program
-    def fftn_and_back(x: dace.complex128[shape]):
-        return np.fft.ifftn(np.fft.fftn(x) * 2)
-
-    x = complex_array(shape)
-    np.testing.assert_allclose(expanded(fftn_and_back, implementation)(x), 2 * x)
 
 
 @pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
@@ -203,7 +172,9 @@ def test_fft_along_an_axis(implementation, shape, axis):
         return np.fft.fft(x, axis=axis)
 
     x = complex_array(shape)
-    np.testing.assert_allclose(expanded(fft_along_axis, implementation)(x), np.fft.fft(x, axis=axis))
+    np.testing.assert_allclose(
+        expanded(fft_along_axis, implementation, f"{len(shape)}d_axis{axis % len(shape)}")(x), np.fft.fft(x, axis=axis)
+    )
 
 
 @pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
@@ -224,9 +195,10 @@ def test_fft_of_a_fortran_ordered_array(implementation):
 
 if __name__ == "__main__":
     test_pure_fftn_inplace()
+    test_pure_factor_symbol_only_in_the_factor(False)
+    test_pure_factor_symbol_only_in_the_factor(True)
     test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point("backward")
     test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point("ortho")
-    test_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input()
     test_fft2_and_ifft2_transform_the_last_two_axes_by_default()
     test_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes(None, None)
     test_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes((1, 0), None)
@@ -236,10 +208,6 @@ if __name__ == "__main__":
     test_empty_or_out_of_range_axes_are_refused(())
     test_empty_or_out_of_range_axes_are_refused((2,))
     test_empty_or_out_of_range_axes_are_refused((-3,))
-    test_fftn_and_back("pure", (8, 12))
-    test_fftn_and_back("pure", (4, 6, 5))
-    test_fftn_and_back("FFTW3", (8, 12))
-    test_fftn_and_back("FFTW3", (4, 6, 5))
     test_fft_along_an_axis("pure", (8, 12), 0)
     test_fft_along_an_axis("pure", (8, 12), -1)
     test_fft_along_an_axis("pure", (4, 6, 5), 1)

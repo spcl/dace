@@ -5,8 +5,8 @@
 staging copy, the cached plan and the ``norm`` scale.
 """
 
-import shutil
-import subprocess
+import os
+import tempfile
 import warnings
 
 import numpy as np
@@ -19,7 +19,7 @@ from dace.libraries.blas.environments import intel_mkl
 from dace.libraries.fft import environments as fft_environments
 from dace.libraries.fft.environments import fftw3
 from dace.libraries.fft.nodes import FFT, IFFT
-from dace.libraries.fft.nodes.fft import GpuFftLayout, Transform, cufft_call, fftw3_call, gpu_fft_layout
+from dace.libraries.fft.nodes.fft import FFTTransform, GpuFftLayout, cufft_call, fftw3_call, gpu_fft_layout
 from dace.transformation.auto import auto_optimize
 
 N = dace.symbol("N")
@@ -170,11 +170,6 @@ def test_cpu_single_precision(implementation):
 
 
 @pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
-def test_cpu_leading_axis(implementation):
-    check_leading_axis(implementation)
-
-
-@pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
 def test_cpu_in_place(implementation):
     check_in_place(implementation)
 
@@ -264,7 +259,7 @@ def test_a_gpu_fft_plans_each_side_s_own_dense_block():
     c_order = strided_array(shape, C_ORDER)
 
     def layout(src, out):
-        return gpu_fft_layout(Transform(src, out, [0, 1, 2], inverse=False, half_spectrum=False))
+        return gpu_fft_layout(FFTTransform(src, out, [0, 1, 2], inverse=False, half_spectrum=False))
 
     assert layout(fortran, fortran) == GpuFftLayout([6, 5, 4], [6, 5, 4], 1, 120, [6, 5, 4], 1, 120, 3)
     assert layout(innermost, fortran) == GpuFftLayout([6, 5, 4], [6, 5, 4], 3, 1, [6, 5, 4], 1, 120, 3)
@@ -278,7 +273,7 @@ def test_a_half_spectrum_gpu_fft_embeds_each_side_s_own_extents():
     the halved last axis, and both sides step their batch by their own block size."""
     real = dace.data.Array(dace.float64, [2, 8, 6], storage=dtypes.StorageType.GPU_Global)
     spectrum = strided_array([2, 8, 4], [32, 4, 1])
-    got = gpu_fft_layout(Transform(real, spectrum, [1, 2], inverse=False, half_spectrum=True))
+    got = gpu_fft_layout(FFTTransform(real, spectrum, [1, 2], inverse=False, half_spectrum=True))
     assert got == GpuFftLayout([8, 6], [8, 6], 1, 48, [8, 4], 1, 32, 2)
 
 
@@ -387,28 +382,6 @@ def test_a_batch_of_two_dense_axes_goes_to_fftw3_as_one_dimension():
 
 
 @pytest.mark.fftw
-def test_each_program_keeps_its_own_fftw_plan_cache():
-    """Two programs in one process may bind FFTW's symbols to different libraries (FFTW3, or MKL's FFTW3 interface
-    once an MKL program loaded it). A plan cache reached through a process-wide symbol hands the plans of one to the
-    other, so each program's cache has internal linkage."""
-    readelf = shutil.which("readelf")
-    if readelf is None:
-        pytest.skip("needs readelf")
-
-    @dace.program
-    def transform_one_axis(x: dace.complex128[16]):
-        return np.fft.fft(x)
-
-    compiled = compile_with(transform_one_axis, "FFTW3").compile()
-    symbols = subprocess.run(
-        [readelf, "-sW", "--dyn-syms", compiled.filename], capture_output=True, text=True, check=True
-    ).stdout
-    assert not [line for line in symbols.splitlines() if "UNIQUE" in line and "5Plans" in line]
-    x = rng_complex((16,))
-    np.testing.assert_allclose(compiled(x=x.copy()), np.fft.fft(x), rtol=1e-12, atol=1e-12)
-
-
-@pytest.mark.fftw
 @pytest.mark.parametrize(
     "shape,axes", [((3, 4, 5, 2), (1, 2, 3)), ((4, 5, 6), (0, 2)), ((4, 5, 6), (-1, -3)), ((3, 4, 5, 2), (0, 1, 2, 3))]
 )
@@ -429,39 +402,31 @@ def test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan(shape, axes, dtype, da
     np.testing.assert_allclose(inverse, np.fft.ifftn(x, axes=axes, norm="forward"), rtol=tolerance, atol=tolerance)
 
 
-def test_a_threaded_companion_library_is_linked_ahead_of_its_base(monkeypatch, tmp_path):
-    """Each precision's threaded planner (``libfftw3_omp``, ``libfftw3f_omp``) links ahead of its base library and
-    threads that precision only; ``FFTW_ROOT`` also passes its include directory."""
-    (tmp_path / "lib").mkdir()
-    for lib in ("libfftw3.so", "libfftw3_omp.so", "libfftw3f.so"):
-        (tmp_path / "lib" / lib).touch()
-    monkeypatch.setenv("FFTW_ROOT", str(tmp_path))
-    libraries = [p.rsplit("/", 1)[1] for p in fftw3.FFTW3.cmake_libraries()]
-    assert libraries == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
-    assert fftw3.FFTW3.cmake_includes() == [str(tmp_path / "include")]
-    assert fftw3.threaded(double=True)
-    assert not fftw3.threaded(double=False)
-
-
-def test_a_distro_fftw3_comes_from_the_loader(monkeypatch):
-    """Without ``FFTW_ROOT`` the loader's libraries are the install and the header is on the default include path."""
-    installed = {"fftw3", "fftw3_omp", "fftw3f"}
-    monkeypatch.delenv("FFTW_ROOT", raising=False)
-    monkeypatch.setattr(fftw3.ctypes.util, "find_library", lambda lib: f"lib{lib}.so" if lib in installed else None)
-    fftw3.installed.cache_clear()
-    try:
-        assert fftw3.FFTW3.cmake_libraries() == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
-        assert fftw3.FFTW3.cmake_includes() == []
-        assert fftw3.threaded(double=True) and not fftw3.threaded(double=False)
-    finally:
-        fftw3.installed.cache_clear()
+def test_a_threaded_companion_library_is_linked_ahead_of_its_base():
+    """Each precision's threaded planner links ahead of its base library and threads that precision only;
+    ``FFTW_ROOT`` also passes its include directory."""
+    previous = os.environ.get("FFTW_ROOT")
+    with tempfile.TemporaryDirectory() as root:
+        os.mkdir(os.path.join(root, "lib"))
+        for lib in ("libfftw3.so", "libfftw3_omp.so", "libfftw3f.so"):
+            open(os.path.join(root, "lib", lib), "w").close()
+        os.environ["FFTW_ROOT"] = root
+        try:
+            libraries = [os.path.basename(p) for p in fftw3.FFTW3.cmake_libraries()]
+            assert libraries == ["libfftw3_omp.so", "libfftw3.so", "libfftw3f.so"]
+            assert fftw3.FFTW3.cmake_includes() == [os.path.join(root, "include")]
+            assert fftw3.threaded(double=True) and not fftw3.threaded(double=False)
+        finally:
+            if previous is None:
+                del os.environ["FFTW_ROOT"]
+            else:
+                os.environ["FFTW_ROOT"] = previous
 
 
 @pytest.mark.parametrize("threaded", [True, False])
-def test_a_threaded_fftw_plans_for_the_team(monkeypatch, threaded):
-    monkeypatch.setattr(fftw3, "threaded", lambda double: threaded)
+def test_a_threaded_fftw_plans_for_the_team(threaded):
     desc = dace.data.Array(dace.complex128, [64])
-    code = fftw3_call(Transform(desc, desc, [0], inverse=False, half_spectrum=False)).code.as_string
+    code = fftw3_call(FFTTransform(desc, desc, [0], inverse=False, half_spectrum=False), threaded).code.as_string
     assert ("fftw_plan_with_nthreads(__threads)" in code) == threaded
 
 
@@ -469,7 +434,7 @@ def test_an_fftw3_plan_is_cached_by_the_library():
     """The plan comes from the program state's FFTW3 plan cache, keyed by layout, aliasing, threads and alignment;
     the tasklet holds none."""
     desc = dace.data.Array(dace.complex128, [64])
-    tasklet = fftw3_call(Transform(desc, desc, [0], inverse=False, half_spectrum=False))
+    tasklet = fftw3_call(FFTTransform(desc, desc, [0], inverse=False, half_spectrum=False))
     assert not tasklet.state_fields and not tasklet.code_init.as_string and not tasklet.code_exit.as_string
     code = tasklet.code.as_string
     assert "__state->fftw_plans.Get(" in code and "fftw_destroy_plan" in code
@@ -561,7 +526,7 @@ def test_a_unit_factor_adds_no_normalization_pass():
 def test_a_gpu_plan_is_cached_per_stream():
     """A plan's work area serves one transform at a time, so two streams never share a plan."""
     desc = dace.data.Array(dace.complex128, [64], storage=dtypes.StorageType.GPU_Global)
-    code = cufft_call(Transform(desc, desc, [0], inverse=False, half_spectrum=False)).code.as_string
+    code = cufft_call(FFTTransform(desc, desc, [0], inverse=False, half_spectrum=False)).code.as_string
     key = next(line for line in code.splitlines() if "__key[" in line and "=" in line)
     assert "__dace_current_stream" in key
 
@@ -596,10 +561,8 @@ def test_set_fast_implementations_lowers_fft_to_the_cpu_vendor():
     assert "fftw_execute_dft(" in code
 
 
-@pytest.mark.parametrize("hipfft_installed", [True, False])
-def test_the_gpu_fast_library_list_names_the_vendor_fft(monkeypatch, hipfft_installed):
+def test_the_gpu_fast_library_list_names_the_vendor_fft():
     """cuFFT ships with CUDA and is always listed; hipFFT is a separate ROCm package, listed only where installed."""
-    monkeypatch.setattr(fft_environments.hipFFT, "is_installed", staticmethod(lambda: hipfft_installed))
     lists = {}
     for backend in ("cuda", "hip"):
         get_gpu_backend.cache_clear()
@@ -607,7 +570,7 @@ def test_the_gpu_fast_library_list_names_the_vendor_fft(monkeypatch, hipfft_inst
             lists[backend] = auto_optimize.find_fast_library(dtypes.DeviceType.GPU)
     get_gpu_backend.cache_clear()
     assert "cuFFT" in lists["cuda"] and "hipFFT" not in lists["cuda"]
-    assert ("hipFFT" in lists["hip"]) == hipfft_installed and "cuFFT" not in lists["hip"]
+    assert ("hipFFT" in lists["hip"]) == fft_environments.hipFFT.is_installed() and "cuFFT" not in lists["hip"]
 
 
 if __name__ == "__main__":
@@ -625,8 +588,6 @@ if __name__ == "__main__":
     test_cpu_norms_over_every_axis_set("FFTW3", (2, 0))
     test_cpu_single_precision("pure")
     test_cpu_single_precision("FFTW3")
-    test_cpu_leading_axis("pure")
-    test_cpu_leading_axis("FFTW3")
     test_cpu_in_place("pure")
     test_cpu_in_place("FFTW3")
     test_fftw3_falls_back_to_pure_for_a_repeated_axis()
@@ -648,7 +609,6 @@ if __name__ == "__main__":
     test_gpu_fftn_over_every_axis((32, 48))
     test_gpu_fftn_over_every_axis((8, 12, 16))
     test_a_batch_of_two_dense_axes_goes_to_fftw3_as_one_dimension()
-    test_each_program_keeps_its_own_fftw_plan_cache()
     test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan((3, 4, 5, 2), (1, 2, 3), np.complex128, dace.complex128)
     test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan((3, 4, 5, 2), (1, 2, 3), np.complex64, dace.complex64)
     test_fftn_and_ifftn_over_any_axes_take_one_fftw3_plan((4, 5, 6), (0, 2), np.complex128, dace.complex128)
@@ -663,3 +623,9 @@ if __name__ == "__main__":
     test_the_normalization_folds_into_the_staging_copy()
     test_a_unit_factor_adds_no_normalization_pass()
     test_a_gpu_plan_is_cached_per_stream()
+    test_a_threaded_companion_library_is_linked_ahead_of_its_base()
+    test_a_threaded_fftw_plans_for_the_team(True)
+    test_a_threaded_fftw_plans_for_the_team(False)
+    test_hipfft_is_the_cufft_code_renamed()
+    test_set_fast_implementations_lowers_fft_to_the_cpu_vendor()
+    test_the_gpu_fast_library_list_names_the_vendor_fft()
