@@ -143,6 +143,7 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
     """
     from dace.libraries.standard.nodes.reduce import Reduce, block_strided_refusal
     from dace.libraries.standard.nodes.scan import Scan, block_refusal
+    from dace.libraries.standard.nodes.state_scan import StateScan, block_chunks
 
     impls = type(node).implementations
     block = next((impl for impl in GPU_BLOCK_IMPLEMENTATIONS if impl in impls), None)
@@ -154,6 +155,8 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
     ):
         return None
     if isinstance(node, Scan) and block_refusal(node, state, sdfg if sdfg is not None else state.sdfg) is not None:
+        return None
+    if isinstance(node, StateScan) and block_chunks(node) is None:
         return None
     return block
 
