@@ -251,6 +251,7 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandTransposeOpenBLAS,
         "cuBLAS": ExpandTransposeCuBLAS,
         "hipBLAS": ExpandTransposeHipBLAS,
+        "rocBLAS": ExpandTransposeHipBLAS,
     }
     default_implementation = "pure"
 

@@ -2,8 +2,9 @@
 import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
 from dace.sdfg import nodes
@@ -74,8 +75,8 @@ def syrk_call(node, state, sdfg, environment=None) -> SDFG:
         scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
         upper, trans = node.uplo != layout.row_major, node.transA != layout.row_major
         call = (
-            f"{gpu.routine('syrk')}({gpu_dialect.HANDLE}, {gpu_dialect.fill(upper)}, {gpu_dialect.op(trans)}, {c.shape[0]}, {k}, "
-            f"{arg['alpha']}, {gpu.pointer('__A')}, {lda}, {arg['beta']}, {gpu.pointer('__Cout')}, {ldc})"
+            f"{gpu.routine('syrk')}({gpu_dialect.HANDLE}, {gpu_dialect.fill(upper)}, {gpu_dialect.op(trans)}, {sym2cpp(c.shape[0])}, {sym2cpp(k)}, "
+            f"{arg['alpha']}, {gpu.pointer('__A')}, {sym2cpp(lda)}, {arg['beta']}, {gpu.pointer('__Cout')}, {sym2cpp(ldc)})"
         )
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
         return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", code)
@@ -84,8 +85,8 @@ def syrk_call(node, state, sdfg, environment=None) -> SDFG:
     uplo = "CblasUpper" if node.uplo else "CblasLower"
     trans = "CblasTrans" if node.transA else "CblasNoTrans"
     call = (
-        f"cblas_{prefix.lower()}syrk({order}, {uplo}, {trans}, {c.shape[0]}, {a.shape[0 if node.transA else 1]}, "
-        f"{arg['alpha']}, __A, {lda}, {arg['beta']}, __Cout, {ldc});"
+        f"cblas_{prefix.lower()}syrk({order}, {uplo}, {trans}, {sym2cpp(c.shape[0])}, {sym2cpp(a.shape[0 if node.transA else 1])}, "
+        f"{arg['alpha']}, __A, {sym2cpp(lda)}, {arg['beta']}, __Cout, {sym2cpp(ldc)});"
     )
     return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", scalars + call)
 
@@ -97,7 +98,7 @@ class Syrk(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandSyrkPure,
-        **gpu_dialect.vendor_expansions("Syrk", syrk_call),
+        **vendor.vendor_expansions("Syrk", syrk_call),
     }
     default_implementation = None
 

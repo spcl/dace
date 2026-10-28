@@ -34,4 +34,8 @@ class OpenBLAS:
 
     @staticmethod
     def is_installed():
-        return len(OpenBLAS.cmake_libraries()) > 0
+        # Every expansion includes lapacke.h, so a BLAS without LAPACKE cannot build even a BLAS-only node. LAPACKE is
+        # its own library on most Linux distributions and part of libopenblas elsewhere (Homebrew, source builds).
+        find = ctypes.util.find_library
+        lapacke = find("lapacke") or find("openblas")
+        return lapacke is not None and (find("cblas") or find("blas") or find("openblas")) is not None

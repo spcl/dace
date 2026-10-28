@@ -174,6 +174,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
         "hipBLAS": ExpandDotHipBLAS,
+        "rocBLAS": ExpandDotHipBLAS,
     }
     default_implementation = None
 

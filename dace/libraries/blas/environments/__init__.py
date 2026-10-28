@@ -4,3 +4,4 @@ from .openblas import *
 from .intel_mkl import *
 from .cublas import *
 from .hipblas import *
+from .rocblas import *

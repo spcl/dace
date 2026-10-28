@@ -9,8 +9,9 @@ from dace import data as dt
 from dace import library
 from dace import memlet as mm
 from dace import subsets as sbs
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.properties import SymbolicProperty
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -87,8 +88,8 @@ def ger_call(node, state, sdfg, environment=None) -> SDFG:
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
     (m, n), (lda,) = res.shape, layout.leading
     call = (
-        f"cblas_{routine.lower()}({order}, {m}, {n}, {arg['alpha']}, __x, {x.strides[0]}, __y, {y.strides[0]}, "
-        f"__res, {lda});"
+        f"cblas_{routine.lower()}({order}, {sym2cpp(m)}, {sym2cpp(n)}, {arg['alpha']}, __x, {sym2cpp(x.strides[0])}, __y, {sym2cpp(y.strides[0])}, "
+        f"__res, {sym2cpp(lda)});"
     )
     return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", scalars + call)
 
@@ -103,8 +104,8 @@ def ger_gpu_call(node, state, sdfg, environment, layout, res, x, y) -> SDFG:
     first, second = (("__y", y), ("__x", x)) if layout.row_major else (("__x", x), ("__y", y))
     rows, cols = (n, m) if layout.row_major else (m, n)
     call = (
-        f"{routine}({gpu_dialect.HANDLE}, {rows}, {cols}, {arg['alpha']}, {gpu.pointer(first[0])}, {first[1].strides[0]}, "
-        f"{gpu.pointer(second[0])}, {second[1].strides[0]}, {gpu.pointer('__res')}, {lda})"
+        f"{routine}({gpu_dialect.HANDLE}, {sym2cpp(rows)}, {sym2cpp(cols)}, {arg['alpha']}, {gpu.pointer(first[0])}, {sym2cpp(first[1].strides[0])}, "
+        f"{gpu.pointer(second[0])}, {sym2cpp(second[1].strides[0])}, {gpu.pointer('__res')}, {sym2cpp(lda)})"
     )
     code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
     return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", code)
@@ -123,7 +124,7 @@ class Ger(LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandGerPure,
-        **gpu_dialect.vendor_expansions("Ger", ger_call),
+        **vendor.vendor_expansions("Ger", ger_call),
     }
     default_implementation = None
 

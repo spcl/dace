@@ -205,7 +205,7 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
 @click.option("-N", type=int, default=64)
 @click.option(
     "--version",
-    type=click.Choice(("unoptimized", "optimize_cpu", "optimize_gpu", "mkl", "cublas", "rocblas")),
+    type=click.Choice(("unoptimized", "optimize_cpu", "optimize_gpu", "mkl", "cublas", "hipblas")),
     default="unoptimized",
 )
 @click.option("--verify/--no-verify", default=True)
@@ -251,9 +251,9 @@ def cli(m, k, n, version, verify):
         dace.libraries.blas.default_implementation = "cuBLAS"
         # Call program
         C = matmul_lib(A, B)
-    elif version == "rocblas":
-        # Set default implementation to rocBLAS
-        dace.libraries.blas.default_implementation = "rocBLAS"
+    elif version == "hipblas":
+        # Set default implementation to hipBLAS
+        dace.libraries.blas.default_implementation = "hipBLAS"
         # Call program
         C = matmul_lib(A, B)
     else:

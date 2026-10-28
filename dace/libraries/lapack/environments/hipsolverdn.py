@@ -26,3 +26,7 @@ class hipSolverDn:
     @staticmethod
     def handle_setup_code(node):
         return hip_dialect.to_hip(cuSolverDn.handle_setup_code(node), hip_dialect.SOLVER)
+
+    @staticmethod
+    def is_installed():
+        return hip_dialect.find_rocm_library("hipsolver") is not None

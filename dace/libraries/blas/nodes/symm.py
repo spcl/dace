@@ -2,8 +2,9 @@
 import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect
+from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
 from dace.sdfg import nodes
@@ -69,21 +70,25 @@ def symm_call(node, state, sdfg, environment=None) -> SDFG:
         right, upper = node.side != layout.row_major, node.uplo != layout.row_major
         rows, cols = (n, m) if layout.row_major else (m, n)
         call = (
-            f"{gpu.routine('symm')}({gpu_dialect.HANDLE}, {gpu_dialect.side(right)}, {gpu_dialect.fill(upper)}, {rows}, {cols}, "
-            f"{arg['alpha']}, {gpu.pointer('__A')}, {lda}, {gpu.pointer('__B')}, {ldb}, {arg['beta']}, "
-            f"{gpu.pointer('__Cout')}, {ldc})"
+            f"{gpu.routine('symm')}({gpu_dialect.HANDLE}, {gpu_dialect.side(right)}, {gpu_dialect.fill(upper)}, {sym2cpp(rows)}, {sym2cpp(cols)}, "
+            f"{arg['alpha']}, {gpu.pointer('__A')}, {sym2cpp(lda)}, {gpu.pointer('__B')}, {sym2cpp(ldb)}, {arg['beta']}, "
+            f"{gpu.pointer('__Cout')}, {sym2cpp(ldc)})"
         )
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
-        return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", code)
+        return blas_helpers.in_place_call(
+            node, state, sdfg, "_Cin", "_Cout", code, overwrites=equal_valued(0, node.beta)
+        )
     scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
     side = "CblasRight" if node.side else "CblasLeft"
     uplo = "CblasUpper" if node.uplo else "CblasLower"
     call = (
-        f"cblas_{prefix.lower()}symm({order}, {side}, {uplo}, {m}, {n}, {arg['alpha']}, __A, {lda}, __B, {ldb}, "
-        f"{arg['beta']}, __Cout, {ldc});"
+        f"cblas_{prefix.lower()}symm({order}, {side}, {uplo}, {sym2cpp(m)}, {sym2cpp(n)}, {arg['alpha']}, __A, {sym2cpp(lda)}, __B, {sym2cpp(ldb)}, "
+        f"{arg['beta']}, __Cout, {sym2cpp(ldc)});"
     )
-    return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", scalars + call)
+    return blas_helpers.in_place_call(
+        node, state, sdfg, "_Cin", "_Cout", scalars + call, overwrites=equal_valued(0, node.beta)
+    )
 
 
 @library.node
@@ -93,7 +98,7 @@ class Symm(nodes.LibraryNode):
 
     implementations = {
         "pure": ExpandSymmPure,
-        **gpu_dialect.vendor_expansions("Symm", symm_call),
+        **vendor.vendor_expansions("Symm", symm_call),
     }
     default_implementation = None
 
