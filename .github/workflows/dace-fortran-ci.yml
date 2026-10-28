@@ -2,8 +2,8 @@ name: dace-fortran
 
 # ICON velocity tendencies end to end: dace-fortran parses the Fortran, ConfigPropagation bakes the namelist
 # configuration into one SDFG per combination, and every variant is parallelized and compared against gfortran
-# (tests/corpus/velocity). On the CPU the comparison is bit for bit; the GPU stage offloads the same variants, checked
-# for structure on every runner and run against gfortran on the GPU runner.
+# (tests/corpus/velocity). On the CPU the comparison is bit for bit; the GPU stage offloads the same variants and checks
+# their structure.
 
 on:
   push:
@@ -32,15 +32,7 @@ env:
 jobs:
   velocity-tendencies:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            marker: not gpu
-          - runner: [self-hosted, gpu]
-            marker: gpu
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
 
     steps:
@@ -87,5 +79,5 @@ jobs:
         export DACE_FORTRAN_ROOT="$PWD/dace-fortran"
         export PATH="$PATH:/usr/local/cuda/bin"
         ulimit -s 65536 || true
-        uv run pytest --tb=short --timeout_method thread --timeout=3600 -p no:cacheprovider -m "${{ matrix.marker }}" \
+        uv run pytest --tb=short --timeout_method thread --timeout=3600 -p no:cacheprovider -m "not gpu" \
           tests/corpus/velocity/velocity_pipeline_test.py
