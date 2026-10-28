@@ -294,6 +294,49 @@ def test_empty_memlets():
     sdfg.simplify()
 
 
+def _nested_maps_around_an_empty_body(outer_content: bool):
+    body = dace.SDFG("empty_body")
+    body.add_state("body", is_start_block=True)
+    sdfg = dace.SDFG(unique_name("nested_maps_around_an_empty_body"))
+    sdfg.add_symbol("n", dace.int64)
+    state = sdfg.add_state("state", is_start_block=True)
+    outer_entry, outer_exit = state.add_map("outer_map", dict(i="0:n"))
+    inner_entry, inner_exit = state.add_map("inner_map", dict(j="0:n"))
+    nsdfg = state.add_nested_sdfg(body, {}, {})
+    state.add_edge(outer_entry, None, inner_entry, None, dace.Memlet())
+    state.add_edge(inner_entry, None, nsdfg, None, dace.Memlet())
+    state.add_edge(nsdfg, None, inner_exit, None, dace.Memlet())
+    state.add_edge(inner_exit, None, outer_exit, None, dace.Memlet())
+    if outer_content:
+        sdfg.add_array("A", ["n"], dace.float64)
+        tasklet = state.add_tasklet("one", {}, {"out": dace.float64}, "out = 1.0")
+        state.add_edge(outer_entry, None, tasklet, None, dace.Memlet())
+        state.add_memlet_path(tasklet, outer_exit, state.add_write("A"), src_conn="out", memlet=dace.Memlet("A[i]"))
+    sdfg.validate()
+    return sdfg, state, nsdfg
+
+
+def test_inline_removes_the_nested_maps_an_empty_nested_sdfg_leaves_empty():
+    """``outer_map -> inner_map -> NestedSDFG`` with a node-less nested state, joined by empty memlets."""
+    sdfg, state, nsdfg = _nested_maps_around_an_empty_body(outer_content=False)
+    InlineSDFG.apply_to(sdfg, nested_sdfg=nsdfg)
+    maps = [node for node in state.nodes() if isinstance(node, (dace_nodes.MapEntry, dace_nodes.MapExit))]
+    assert not maps, maps
+    sdfg.validate()
+
+
+def test_inline_of_an_empty_nested_sdfg_keeps_an_enclosing_map_with_content():
+    """As above, with a tasklet ``A[i] = 1`` in the outer map beside the inner one."""
+    sdfg, state, nsdfg = _nested_maps_around_an_empty_body(outer_content=True)
+    InlineSDFG.apply_to(sdfg, nested_sdfg=nsdfg)
+    maps = [node.map.label for node in state.nodes() if isinstance(node, dace_nodes.MapEntry)]
+    assert maps == ["outer_map"], maps
+    sdfg.validate()
+    A = np.zeros(4)
+    sdfg(A=A, n=4)
+    assert np.array_equal(A, np.ones(4)), A
+
+
 def test_multistate_inline():
 
     @dace.program
@@ -1977,6 +2020,8 @@ if __name__ == "__main__":
     # Skipped due to bug that cannot be reproduced outside CI
     # test_regression_reshape_unsqueeze()
     test_empty_memlets()
+    test_inline_removes_the_nested_maps_an_empty_nested_sdfg_leaves_empty()
+    test_inline_of_an_empty_nested_sdfg_keeps_an_enclosing_map_with_content()
     test_multistate_inline()
     test_multistate_inline_outer_dependencies()
     test_multistate_inline_concurrent_subgraphs()

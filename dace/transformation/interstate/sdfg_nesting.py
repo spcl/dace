@@ -398,6 +398,11 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None
+        enclosing_scopes: list[tuple[nodes.EntryNode, nodes.ExitNode]] = []
+        entry = nsdfg_scope_entry
+        while entry is not None:
+            enclosing_scopes.append((entry, state.exit_node(entry)))
+            entry = state.entry_node(entry)
 
         #######################################################
         # Collect and update top-level SDFG metadata
@@ -789,6 +794,13 @@ class InlineSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Remove nested SDFG node
         state.remove_node(nsdfg_node)
+        # A node-less nested SDFG leaves the scopes around it with nothing between entry and exit
+        for entry, exit_node in enclosing_scopes:
+            if entry in state.nodes():
+                if state.out_degree(entry) > 0 or state.in_degree(exit_node) > 0:
+                    break
+                state.remove_node(entry)
+                state.remove_node(exit_node)
 
         # Remove newly-generated isolated nodes if exist
         for dnode in state.data_nodes():
