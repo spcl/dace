@@ -1799,6 +1799,25 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         return False
 
+    @staticmethod
+    def written_disjointly(
+        name: str,
+        first_map_exit: nodes.MapExit,
+        second_map_exit: nodes.MapExit,
+        state: SDFGState,
+        facts: symbolic.Facts,
+    ) -> bool:
+        """Whether everything ``first_map_exit`` writes to ``name`` provably misses everything ``second_map_exit`` writes."""
+        first, second = (
+            [e.data.dst_subset or e.data.subset for e in state.out_edges(exit_node) if e.data.data == name]
+            for exit_node in (first_map_exit, second_map_exit)
+        )
+        return all(
+            a is not None and b is not None and subsets.intersects(a, b, facts) is symbolic.Truth.FALSE
+            for a in first
+            for b in second
+        )
+
     def has_read_write_dependency(
         self,
         first_map_entry: nodes.MapEntry,
@@ -1879,8 +1898,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  This essentially ensures that an intermediate can not be used as output of
         #  the second Map at the same time. It is actually stronger as it does not
         #  take their role into account.
-        if not real_write_map_1.isdisjoint(real_write_map_2):
-            return True
+        # Relaxed for data neither Map reads and whose written regions are disjoint: every element of it then has
+        # one writer, so the fused Map writes the same values in any order (bout_elm_pb's ``ddt_P``, one z plane
+        # from the first Map and the others from the second).
+        for name in real_write_map_1 & real_write_map_2:
+            if name in real_read_map_1 or name in real_read_map_2:
+                return True
+            if not self.written_disjointly(name, first_map_exit, second_map_exit, state, facts):
+                return True
 
         # These are the names (unresolved) and the access nodes of the data that is used
         #  to transmit information between the maps. The partition function ensures that

@@ -4342,3 +4342,51 @@ if __name__ == "__main__":
     test_ordering_edge_beside_an_inout_read()
     test_ordering_edge_beside_an_inout_read_computes_the_fused_values()
     test_fusion_rebases_a_nested_producer_below_an_inner_map()
+
+
+def _two_maps_writing_out(second_column: int) -> tuple[SDFG, SDFGState]:
+    """``for i: T[i] = 2 * A[i]; B[i, 0] = A[i]`` then ``for i: B[i, c] = T[i] + 1`` (bout_elm_pb's ``ddt_P`` planes)."""
+    sdfg = SDFG(f"two_maps_writing_out_{second_column}")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    sdfg.add_array("B", ["N", 2], dace.float64)
+    sdfg.add_transient("T", ["N"], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    a, t, b = state.add_read("A"), state.add_access("T"), state.add_write("B")
+    _, first_entry, first_exit = state.add_mapped_tasklet(
+        "first",
+        {"i": "0:N"},
+        {"x": dace.Memlet("A[i]")},
+        "t = 2 * x\nb = x",
+        {"t": dace.Memlet("T[i]"), "b": dace.Memlet("B[i, 0]")},
+        input_nodes={"A": a},
+        output_nodes={"T": t, "B": b},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "second",
+        {"j": "0:N"},
+        {"y": dace.Memlet("T[j]")},
+        "b = y + 1",
+        {"b": dace.Memlet(f"B[j, {second_column}]")},
+        input_nodes={"T": t},
+        output_nodes={"B": b},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg, state
+
+
+@pytest.mark.parametrize("second_column, fuses", [(1, True), (0, False)])
+def test_maps_writing_one_output_fuse_only_where_their_writes_are_disjoint(second_column: int, fuses: bool):
+    """Each element of ``B`` has one writer when the columns differ, so the fused map writes the same values; the
+    same column is a write-write conflict the program order decides, and stays two maps."""
+    sdfg, _ = _two_maps_writing_out(second_column)
+    applied = sdfg.apply_transformations_repeated(MapFusionVertical(), validate=True)
+    assert (applied == 1) == fuses
+    if fuses:
+        n = 5
+        a = np.random.default_rng(0).random(n)
+        b = np.zeros((n, 2))
+        sdfg(A=a, B=b, N=n)
+        assert np.allclose(b[:, 0], a) and np.allclose(b[:, 1], 2 * a + 1)
