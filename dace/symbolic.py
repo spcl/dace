@@ -2791,13 +2791,13 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         base = self._print(expr.args[0])
         exponent = self._print(expr.args[1])
 
-        # Special case for square root
         if self.cpp_mode:
-            try:
-                if float(exponent) == 0.5:
-                    return f"dace::math::sqrt({base})"
-            except ValueError:
-                pass
+            # Decided on the exponent, not its text: ``Rational(1, 2)`` prints ``1/2``, which ``float()`` rejects
+            if expr.args[1] == sympy.Rational(1, 2) or (expr.args[1].is_Float and float(expr.args[1]) == 0.5):
+                return f"dace::math::sqrt({base})"
+            # A bare ``p/q`` exponent is C++ integer division: ``pow(x, 1/3)`` is ``pow(x, 0)``
+            if expr.args[1].is_Rational and not expr.args[1].is_Integer:
+                exponent = f"(double({expr.args[1].p}) / double({expr.args[1].q}))"
 
         # Special case for integer powers
         try:
@@ -2810,13 +2810,16 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             res = f"({base})"
             for _ in range(1, int_exp):
                 res += f" * ({base})"
+            if int_exp > 1:
+                # One operand: bare, ``x / N**2`` prints ``x/(N) * (N)``, which is ``x``
+                res = f"({res})"
 
             if negative:
                 res = f"reciprocal({res})"
             return res
         except ValueError:
             if self.cpp_mode:
-                return f"dace::math::pow({self._print(expr.args[0])}, {self._print(expr.args[1])})"
+                return f"dace::math::pow({base}, {exponent})"
             else:
                 return f"({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})"
 
