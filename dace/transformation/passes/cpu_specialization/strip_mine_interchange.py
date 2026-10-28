@@ -263,7 +263,9 @@ def resolved(name: str, indices: list[Any], bindings: dict[str, ViewBinding], sd
 
 
 def copy_edges(state: SDFGState, nodes_of: Iterable[nodes.Node]) -> list:
-    """The access-node-to-access-node copies out of ``nodes_of``; a view's defining edge moves no data."""
+    """The access-node-to-access-node copies out of ``nodes_of``; a view's defining edge moves no data, any other
+    edge into or out of a view copies through it."""
+    sdfg = state.sdfg
     return [
         e
         for node in nodes_of
@@ -271,8 +273,17 @@ def copy_edges(state: SDFGState, nodes_of: Iterable[nodes.Node]) -> list:
         for e in state.out_edges(node)
         if isinstance(e.dst, nodes.AccessNode)
         and not e.data.is_empty()
-        and not any(isinstance(n.desc(state.sdfg), data.View) for n in (e.src, e.dst))
+        and not any(isinstance(n.desc(sdfg), data.View) and sdutil.get_view_edge(state, n) is e for n in (e.src, e.dst))
     ]
+
+
+def writes_into(state: SDFGState, node: nodes.AccessNode, names: set[str]) -> bool:
+    """Whether writing ``node`` writes one of ``names``: a view writes the data it views, and one that cannot be
+    resolved counts as writing them."""
+    if isinstance(node.desc(state.sdfg), data.View):
+        viewed = sdutil.get_last_view_node(state, node)
+        return viewed is None or viewed.data in names
+    return node.data in names
 
 
 def copy_sides(state: SDFGState, edge) -> tuple[tuple[str, list[Any]], tuple[str, list[Any]]]:
@@ -698,12 +709,18 @@ def inner_nests(state: SDFGState, entry: nodes.MapEntry) -> list[InnerNest] | No
                 if isinstance(inner, (nodes.NestedSDFG, nodes.LibraryNode)):
                     return None
                 if isinstance(inner, nodes.Tasklet) and any(
-                    not e.data.is_empty() and e.data.data in outside for e in inner_state.out_edges(inner)
+                    not e.data.is_empty()
+                    and (
+                        e.data.data in outside
+                        or isinstance(e.dst, nodes.AccessNode)
+                        and writes_into(inner_state, e.dst, outside)
+                    )
+                    for e in inner_state.out_edges(inner)
                 ):
                     return None
                 if isinstance(inner, nodes.MapEntry):
                     nests.append(InnerNest(node, inner_state, inner, nest_axes(map_nest(inner, children))))
-            if any(e.dst.data in outside for e in copy_edges(inner_state, children[None])):
+            if any(writes_into(inner_state, e.dst, outside) for e in copy_edges(inner_state, children[None])):
                 return None
     return nests
 

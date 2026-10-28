@@ -14,6 +14,7 @@ import pytest
 
 import dace
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+from dace.transformation.passes.cpu_specialization import strip_mine_interchange as smi
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N = dace.symbol("N")
@@ -327,6 +328,50 @@ def test_a_short_constant_loop_over_a_cube_moves_into_the_map():
     assert np.allclose(out, expected)
 
 
+def write_through_view(state, writer):
+    """``state`` writes ``A[0]`` through the view ``V`` of it: a tasklet writes ``V`` (``writer="tasklet"``) or
+    copies the transient ``tmp`` into ``V`` (``writer="copy"``)."""
+    sdfg = state.sdfg
+    sdfg.add_scalar("tmp", dace.float64, transient=True)
+    sdfg.add_view("V", [1], dace.float64)
+    view = state.add_access("V")
+    state.add_edge(view, None, state.add_write("A"), None, dace.Memlet("A[0]"))
+    tasklet = state.add_tasklet("set", {}, {"o"}, "o = 1.0")
+    if writer == "tasklet":
+        state.add_edge(tasklet, "o", view, None, dace.Memlet("V[0]"))
+        return
+    tmp = state.add_access("tmp")
+    state.add_edge(tasklet, "o", tmp, None, dace.Memlet("tmp[0]"))
+    state.add_edge(tmp, None, view, None, dace.Memlet("V[0]"))
+
+
+@pytest.mark.parametrize("writer", ["copy", "tasklet"])
+def test_a_nested_statement_writing_outside_data_through_a_view_is_refused(writer):
+    """Every tile would repeat the write of the outside ``A[0]``."""
+    inner = dace.SDFG(f"smi_view_write_inner_{writer}")
+    inner.add_array("A", [1], dace.float64)
+    write_through_view(inner.add_state(), writer)
+    sdfg = dace.SDFG(f"smi_view_write_{writer}")
+    sdfg.add_array("A", [1], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("tiles", dict(i="0:N"))
+    nested = state.add_nested_sdfg(inner, {}, {"A": None})
+    state.add_nedge(entry, nested, dace.Memlet())
+    state.add_memlet_path(nested, exit_, state.add_write("A"), src_conn="A", memlet=dace.Memlet("A[0]"))
+    sdfg.validate()
+    assert smi.inner_nests(state, entry) is None
+
+
+def test_a_copy_beside_the_maps_into_a_view_of_shared_data_is_not_replicated():
+    """A view of shared ``A`` is no tile-private scalar."""
+    sdfg = dace.SDFG("smi_view_replicated")
+    sdfg.add_array("A", [1], dace.float64)
+    state = sdfg.add_state()
+    write_through_view(state, "copy")
+    sdfg.validate()
+    assert not smi.collect_replicated_reads(state, state.scope_children()[None], {"tmp"}, {})
+
+
 if __name__ == "__main__":
     test_a_distance_zero_carry_is_tiled()
     test_the_tiles_cover_the_axis_exactly_once()
@@ -340,3 +385,6 @@ if __name__ == "__main__":
     test_a_gather_on_the_carried_array_is_refused()
     test_a_gather_on_a_read_only_operand_still_tiles()
     test_a_short_constant_loop_over_a_cube_moves_into_the_map()
+    test_a_nested_statement_writing_outside_data_through_a_view_is_refused("copy")
+    test_a_nested_statement_writing_outside_data_through_a_view_is_refused("tasklet")
+    test_a_copy_beside_the_maps_into_a_view_of_shared_data_is_not_replicated()
