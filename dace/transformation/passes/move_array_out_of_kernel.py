@@ -267,13 +267,16 @@ def bind_symbols(hierarchy: list[SDFG], needed: list[str]) -> None:
             nsdfg_node.symbol_mapping[name] = name
 
 
-def lifted_layout(desc: dt.Array, levels: list[nodes.MapEntry]) -> LiftedLayout:
-    """``desc`` with one leading, fastest-varying dimension per GPU map parameter.
+def lifted_layout(desc: dt.Array, levels: list[nodes.MapEntry], coalesced: bool = True) -> LiftedLayout:
+    """``desc`` with one leading dimension per GPU map parameter.
 
-    ``gpu_A[64]`` under ``map[0:128, 0:32]`` becomes ``[128, 32, 64]`` indexed ``gpu_A[x, y, :]`` with strides
-    ``[32, 1, 4096]``: the map parameters vary fastest, the own axes keep their C or Fortran order outside them.
+    ``gpu_A[64]`` under ``map[0:128, 0:32]`` becomes ``[128, 32, 64]`` indexed ``gpu_A[x, y, :]``. Coalesced, the map
+    parameters vary fastest (strides ``[32, 1, 4096]``), so neighboring threads touch neighboring elements; contiguous,
+    they vary slowest (``[2048, 64, 1]``), so the slice of one iteration is consecutive. Either way the own axes keep
+    their C or Fortran order.
 
     :param levels: GPU map entries between the array and the kernel exit, innermost first.
+    :param coalesced: Map parameters vary fastest instead of slowest.
     :raises NotImplementedError: The array is neither packed-C nor packed-Fortran.
     """
     if desc.is_packed_c_strides():
@@ -293,9 +296,9 @@ def lifted_layout(desc: dt.Array, levels: list[nodes.MapEntry]) -> LiftedLayout:
         offset = [0] * len(level.map.params) + offset
 
     prepended = len(extended_size)
-    # ``strides_from_layout`` takes dimensions innermost-first: the prepended ones, then the own axes, so neighboring
-    # threads touch neighboring elements and their accesses coalesce.
-    layout = list(reversed(range(prepended))) + [d + prepended for d in inner_order]
+    # ``strides_from_layout`` takes dimensions innermost-first
+    own, mapped = [d + prepended for d in inner_order], list(reversed(range(prepended)))
+    layout = mapped + own if coalesced else own + mapped
     lifted = desc.clone()
     lifted.set_shape(extended_size + list(desc.shape))
     strides, total_size = lifted.strides_from_layout(*layout)
@@ -342,7 +345,9 @@ class LiftPlan:
     needed: list[str]
 
 
-def plan_lift(name: str, owner: SDFG, kernel: nodes.MapEntry, kernel_state: SDFGState) -> LiftPlan | None:
+def plan_lift(
+    name: str, owner: SDFG, kernel: nodes.MapEntry, kernel_state: SDFGState, coalesced: bool
+) -> LiftPlan | None:
     """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if its size is only known inside the kernel
     or a nest would misread its index."""
     hierarchy = sdfg_chain(owner, kernel_state.sdfg)
@@ -359,7 +364,7 @@ def plan_lift(name: str, owner: SDFG, kernel: nodes.MapEntry, kernel_state: SDFG
         or any(isinstance(node, nodes.AccessNode) and node.data == name for node in (edge.src, edge.dst))
     ]
     desc = owner.arrays[name]
-    layout = lifted_layout(desc, [entry for entry, _ in reversed(levels)])
+    layout = lifted_layout(desc, [entry for entry, _ in reversed(levels)], coalesced)
     bounds = [bound for _, prefix in prefixes for dim in prefix for bound in dim]
     bounds += layout.shape[: len(layout.shape) - len(desc.shape)]
     needed = sorted({str(sym) for bound in bounds for sym in symbolic.pystr_to_symbolic(bound).free_symbols})
@@ -570,8 +575,20 @@ class MoveArrayOutOfKernel(ppl.Pass):
         "code generation runs the pass this way.",
     )
 
-    def __init__(self, register_limit: int | None = None, only_variable_length: bool | None = None) -> None:
+    layout = properties.Property(
+        dtype=str,
+        default="coalesced",
+        choices=["coalesced", "contiguous"],
+        desc="Order of a moved array: ``coalesced`` puts the kernel iterations fastest, so neighboring GPU threads "
+        "access neighboring elements; ``contiguous`` keeps the slice of one iteration consecutive.",
+    )
+
+    def __init__(
+        self, register_limit: int | None = None, only_variable_length: bool | None = None, layout: str | None = None
+    ) -> None:
         super().__init__()
+        if layout is not None:
+            self.layout = layout
         if register_limit is not None:
             self.register_limit = register_limit
         if only_variable_length is not None:
@@ -606,7 +623,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
                 desc.storage = dtypes.StorageType.Register
                 handled += 1
                 continue
-            plan = plan_lift(name, owner, kernel, kernel_state)
+            plan = plan_lift(name, owner, kernel, kernel_state, self.layout == "coalesced")
             if plan is None:
                 continue
             desc.storage = dtypes.StorageType.GPU_Global
