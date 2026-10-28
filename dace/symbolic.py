@@ -2795,9 +2795,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             # Decided on the exponent, not its text: ``Rational(1, 2)`` prints ``1/2``, which ``float()`` rejects
             if expr.args[1] == sympy.Rational(1, 2) or (expr.args[1].is_Float and float(expr.args[1]) == 0.5):
                 return f"dace::math::sqrt({base})"
-            # A bare ``p/q`` exponent is C++ integer division: ``pow(x, 1/3)`` is ``pow(x, 0)``
+            # A bare ``p/q`` exponent is C++ integer division: ``pow(x, 1/3)`` is ``pow(x, 0)``. The quotient takes the
+            # base's floating type (float for an integer or half base), so a float ``pow`` stays float.
             if expr.args[1].is_Rational and not expr.args[1].is_Integer:
-                exponent = f"(double({expr.args[1].p}) / double({expr.args[1].q}))"
+                exponent = f"(decltype(({base}) + 0.0f)({expr.args[1].p}) / {expr.args[1].q})"
 
         # Special case for integer powers
         try:

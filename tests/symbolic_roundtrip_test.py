@@ -222,7 +222,7 @@ def test_infinity_cpp_lowering():
 def test_fractional_power_cpp_lowering():
     # ``1/2`` and ``1/3`` are integer division in C++: ``pow(M, 1/2)`` would be ``pow(M, 0)``
     assert symstr(pystr_to_symbolic("sqrt(M)"), cpp_mode=True) == "(dace::math::sqrt(M))"
-    assert symstr(pystr_to_symbolic("M**(1/3)"), cpp_mode=True) == "(dace::math::pow(M, (double(1) / double(3))))"
+    assert symstr(pystr_to_symbolic("M**(1/3)"), cpp_mode=True) == "(dace::math::pow(M, (decltype((M) + 0.0f)(1) / 3)))"
 
 
 def test_integer_power_in_a_denominator_stays_one_operand():
