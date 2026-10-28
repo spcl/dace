@@ -148,8 +148,9 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         # ``loop.replace_dict`` reaches the body, not ``sdfg.arrays``: a transient sized by the iterator
         # (``__tmp0[C*(g + 1) - C*g]``, a conv2d's one-group loop) would keep naming it, a free symbol nothing
         # binds once the loop is gone. Substitute there too, unless another scope of this SDFG still binds the name.
-        if not binds_elsewhere(sdfg, itervar):
-            for desc in sdfg.arrays.values():
+        sized = [desc for desc in sdfg.arrays.values() if any(str(s) == itervar for s in desc.free_symbols)]
+        if sized and not binds_elsewhere(sdfg, itervar):
+            for desc in sized:
                 replace_properties_dict(desc, {itervar: str(start)}, {symbolic.symbol(itervar): start})
         if itervar in sdfg.symbols and helpers.is_symbol_unused(sdfg, itervar):
             sdfg.remove_symbol(itervar)
