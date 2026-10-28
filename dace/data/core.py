@@ -900,7 +900,16 @@ class ContainerArray(Array):
 
 @make_properties
 class Stream(Data):
-    """Stream (or stream array) data descriptor."""
+    """Stream (or stream array) data descriptor.
+
+    A copy out of a stream pops elements in FIFO order. A non-dynamic copy blocks until it has popped
+    the whole destination subset. A dynamic copy does not block: it pops up to that many elements, as
+    many as are queued, possibly none. Its count goes to the edge leaving the stream access node
+    through the out-connector :attr:`NUM_POPPED_CONNECTOR`, if there is one.
+    """
+
+    #: Out-connector of a stream access node that carries the element count of a dynamic copy out of it.
+    NUM_POPPED_CONNECTOR = "num_popped"
 
     # Properties
     offset = ListProperty(element_type=sp.Basic, category="Memory")
