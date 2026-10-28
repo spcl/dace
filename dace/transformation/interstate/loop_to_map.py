@@ -859,8 +859,11 @@ class LoopToMap(xf.MultiStateTransformation):
                 continue
             nsdfg.add_node(block)
         for e in self.loop.edges():
-            nsymbols.update({s: sdfg.symbols[s] for s in e.data.assignments.keys() if s in sdfg.symbols})
             nsdfg.add_edge(e.src, e.dst, e.data)
+        # Every symbol the body assigns, also inside its branches, keeps the type the parent declares; inferring it
+        # from the assigned expression widens ``i = c ? 1 : i_in`` from ``int`` to ``int64_t``.
+        for e in self.loop.all_interstate_edges():
+            nsymbols.update({s: sdfg.symbols[s] for s in e.data.assignments.keys() if s in sdfg.symbols})
 
         # Add NestedSDFG arrays
         for name in read_set | write_set:

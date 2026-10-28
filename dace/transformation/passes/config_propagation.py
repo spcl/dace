@@ -12,7 +12,7 @@ import os
 from collections.abc import Sequence
 from typing import Any
 
-from dace import SDFG, data, nodes, properties
+from dace import SDFG, data, nodes, properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.sdfg.utils import specialize_scalars, specialize_symbols
@@ -64,8 +64,50 @@ def specialize_config(sdfg: SDFG, values: dict[str, Value]) -> None:
     specialize_scalars(sdfg, scalars)
 
 
-def specialize_variant(sdfg: SDFG, values: dict[str, Value]) -> None:
-    """Bake ``values`` into ``sdfg`` in place and drop the branches they decide."""
+def resolve_invariants(invariants: dict[str, str]) -> dict[str, str]:
+    """``invariants`` with every right-hand side rewritten in symbols no invariant defines, e.g.
+    ``{"w_d1": "nlevp1", "nlevp1": "nlev + 1"}`` becomes ``{"w_d1": "nlev + 1", "nlevp1": "nlev + 1"}``."""
+    exprs = {name: symbolic.pystr_to_symbolic(expr) for name, expr in invariants.items()}
+    for _ in range(len(exprs) + 1):
+        changed = False
+        for name, expr in exprs.items():
+            subs = {s: exprs[s.name] for s in expr.free_symbols if s.name in exprs and s.name != name}
+            resolved = expr.subs(subs)
+            if resolved != expr:
+                exprs[name], changed = resolved, True
+        if not changed:
+            return {name: symbolic.symstr(expr) for name, expr in exprs.items()}
+    raise ValueError(f"Cyclic symbol invariants: {invariants}")
+
+
+def apply_invariants(sdfg: SDFG, invariants: dict[str, str]) -> None:
+    """Rewrite each symbol of ``invariants`` as the expression of other symbols the caller guarantees it equals.
+
+    A frontend gives every alias of one extent its own symbol (``nlevp1`` beside ``nlev``, ``w_d1`` for the second
+    extent of an assumed-shape ``w``); after this, one root symbol stands for all of them, so folding, comparisons and
+    the vertical-extent hints of later passes see it. A nested SDFG that newly reads a root symbol maps it from its
+    parent. A symbol is rewritten by name at every nesting level, so a nested SDFG must not reuse the name of an
+    invariant for another value.
+    """
+    if not invariants:
+        return
+    specialize_symbols(sdfg, resolve_invariants(invariants))
+    calls = [node for node, state in sdfg.all_nodes_recursive() if isinstance(node, nodes.NestedSDFG)]
+    # Innermost first: a parent maps the symbols its children newly read
+    for node in reversed(calls):
+        inner = node.sdfg
+        connectors = node.in_connectors.keys() | node.out_connectors.keys()
+        for name in sorted({str(s) for s in inner.free_symbols} - node.symbol_mapping.keys() - connectors):
+            node.symbol_mapping[name] = name
+            # The root declares every symbol an invariant resolves to
+            if name not in inner.symbols and name in sdfg.symbols:
+                inner.add_symbol(name, sdfg.symbols[name])
+
+
+def specialize_variant(sdfg: SDFG, values: dict[str, Value], invariants: dict[str, str] | None = None) -> None:
+    """Bake ``values`` into ``sdfg`` in place, rewrite the symbols ``invariants`` relate (:func:`apply_invariants`),
+    and drop the branches the values decide."""
+    apply_invariants(sdfg, invariants or {})
     specialize_config(sdfg, values)
     DeadStateElimination().apply_pass(sdfg, {})
     sdfg.simplify()

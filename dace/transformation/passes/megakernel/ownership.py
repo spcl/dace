@@ -18,12 +18,16 @@ import copy
 import itertools
 from dataclasses import dataclass, field
 
+import sympy
+
 from dace import SDFG, SDFGState, data, dtypes, subsets, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers as xfh
+from dace.transformation.passes.megakernel.discovery import bound_symbols
 from dace.transformation.passes.megakernel.grid_stride import is_small
 
+#: The index of a block of iterations a thread owns (see :func:`own_stride`)
+BLOCK_INDEX = "__mk_q"
 #: A container a stage accesses, at which elements (``None``: unknown), and whether it writes them
 Access = tuple[str, subsets.Subset | None, bool]
 #: The dimension and offset each key parameter indexes in a keyed access
@@ -43,11 +47,16 @@ class Owner:
 
 @dataclass(slots=True)
 class OwnershipPlan:
-    """Which stages are owned, with ``k`` key parameters and the chain-wide key ``multipliers``."""
+    """Which stages are owned, with ``k`` key parameters and the chain-wide key ``multipliers``: the extents of the
+    first owner's anchor along all key dimensions but the slowest."""
 
     k: int
     multipliers: list[symbolic.SymbolicType] = field(default_factory=list)
     owners: dict[SDFGState, Owner] = field(default_factory=dict)
+
+    def extent(self) -> symbolic.SymbolicType:
+        """The first owner's anchor extent along the fastest key dimension."""
+        return next(iter(self.owners.values())).extents[0]
 
 
 def unit_stride(sdfg: SDFG, name: str, dim: int) -> bool:
@@ -75,18 +84,6 @@ def edge_accesses(edge) -> list[Access]:
     return [(edge.data.data, edge.data.subset, isinstance(edge.dst, (nodes.ExitNode, nodes.AccessNode)))]
 
 
-def bound_in(sdfg: SDFG) -> set[str]:
-    """The symbols ``sdfg`` and the SDFGs in it bind: map parameters, loop variables and interstate assignments."""
-    names = set()
-    for node, parent in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.MapEntry):
-            names |= set(node.map.params)
-    for nested in sdfg.all_sdfgs_recursive():
-        names |= {b.loop_variable for b in nested.all_control_flow_blocks() if isinstance(b, LoopRegion)}
-        names = names.union(*(e.data.assignments.keys() for e in nested.all_interstate_edges()))
-    return names - {""}
-
-
 def whole_connectors(state: SDFGState, node: nodes.NestedSDFG, outer: dict) -> set[str]:
     """The connectors of ``node`` that pass a whole container of ``state``, of the same rank inside."""
     return {
@@ -106,7 +103,7 @@ def nested_accesses(state: SDFGState, node: nodes.NestedSDFG) -> tuple[list[Acce
     whole = whole_connectors(state, node, outer)
     accesses = [(m.data, m.subset, conn in node.out_connectors) for conn, m in outer.items() if conn not in whole]
     mapping = {symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) for k, v in node.symbol_mapping.items()}
-    bound = bound_in(node.sdfg)
+    bound = bound_symbols(node.sdfg, nested=True)
     for inner in node.sdfg.states():
         inner_accesses, inner_bound = scope_accesses(inner, inner.nodes())
         bound |= inner_bound
@@ -140,8 +137,7 @@ def names_in(expr) -> set[str]:
 def offset_of(index, param: str, frozen: set[str], params: list[str]) -> str | None:
     """The offset of ``index`` from ``param`` when ``index`` is ``param + offset`` with an offset free of parameters
     and ``frozen`` symbols, as a string (symbols of one name but other assumptions compare equal)."""
-    index = symbolic.pystr_to_symbolic(index)
-    symbol = next(sym for sym in index.free_symbols if str(sym) == param)
+    index, symbol = symbolic.equalize_symbols(symbolic.pystr_to_symbolic(index), symbolic.pystr_to_symbolic(param))
     offset = symbolic.simplify(index - symbol)
     if names_in(offset) & (set(params) | frozen):
         return None
@@ -208,11 +204,20 @@ def score(sdfg: SDFG, owner: Owner, seen: dict[str, Signature]) -> tuple[int, in
 
 
 def own_stride(
-    sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, owner: Owner, plan: OwnershipPlan, tid: str, nthreads: str
+    sdfg: SDFG,
+    state: SDFGState,
+    entry: nodes.MapEntry,
+    owner: Owner,
+    plan: OwnershipPlan,
+    tid: str,
+    nthreads: str,
+    block: symbolic.SymbolicType = 1,
 ) -> nodes.MapEntry:
-    """Lowers the owned stage ``entry`` so that thread ``tid`` of ``nthreads`` runs exactly the iterations it owns:
-    sequential loops over the slower key parameters, then the fastest one from the first value the thread owns in
-    steps of ``nthreads``, then the remaining parameters.
+    """Lowers the owned stage ``entry`` so that thread ``tid`` of ``nthreads`` runs exactly the iterations it owns.
+    With ``lin = p1 + M1 * p2 + ...`` (the plan's multipliers), the iteration belongs to thread
+    ``floor(lin / block) % nthreads``: blocks of ``block`` consecutive ``lin`` dealt out round robin. The stage becomes
+    sequential loops over the slower key parameters, then the blocks the thread owns (from the first one, in steps of
+    ``nthreads`` blocks) and the fastest key parameter inside each, then the remaining parameters.
 
     :return: The loop over the fastest key parameter.
     """
@@ -230,13 +235,26 @@ def own_stride(
         entry = inner
     entry.map.schedule = dtypes.ScheduleType.Sequential
     thread, count = symbolic.pystr_to_symbolic(tid), symbolic.pystr_to_symbolic(nthreads)
-    linear_rest, scale = 0, 1
+    rest, scale = 0, 1  # ``lin = fastest + rest``
     for multiplier, param in zip(plan.multipliers, owner.params[1:]):
         scale = scale * multiplier
-        linear_rest = linear_rest + scale * symbolic.pystr_to_symbolic(param)
+        rest = rest + scale * symbolic.pystr_to_symbolic(param)
     begin, end, _ = entry.map.range[0]
-    first = begin + (thread - begin - linear_rest) % count
-    entry.map.range = subsets.Range([(first, end, count)])
+    if block == 1:
+        entry.map.range = subsets.Range([(begin + (thread - begin - rest) % count, end, count)])
+        return entry
+    # The blocks ``q`` of the thread that overlap ``begin:end``, and the part of each inside it
+    first, last = symbolic.int_floor(begin + rest, block), symbolic.int_floor(end + rest, block)
+    q = symbolic.pystr_to_symbolic(BLOCK_INDEX)
+    entry.map.params = [BLOCK_INDEX, fastest]
+    entry.map.range = subsets.Range(
+        [
+            (first + (thread - first) % count, last, count),
+            (sympy.Max(begin, q * block - rest), sympy.Min(end, q * block - rest + block - 1), 1),
+        ]
+    )
+    blocks, entry = xfh.extract_map_dims(sdfg, entry, [0])
+    blocks.map.schedule = entry.map.schedule = dtypes.ScheduleType.Sequential
     return entry
 
 

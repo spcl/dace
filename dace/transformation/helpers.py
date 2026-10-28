@@ -214,6 +214,10 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
         # longer declared outside if nothing else uses it.
         incoming = nsdfg.free_symbols
         mapping = {s: s for s in (sdfg.symbols.keys() - assigned) | incoming}
+        # The subgraph's assignments keep the declared type; inferred, ``i = c ? 1 : i_in`` widens to ``int64_t``.
+        for s in sorted(assigned):
+            if s in sdfg.symbols and s not in nsdfg.symbols:
+                nsdfg.add_symbol(s, sdfg.symbols[s])
         cnode = new_state.add_nested_sdfg(nsdfg, read_set, write_set, mapping)
         for s in assigned - used_elsewhere - incoming:
             if s in sdfg.symbols:
