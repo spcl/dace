@@ -14,6 +14,7 @@ from dace.memlet import Memlet
 from dace.properties import EnumProperty, ListProperty, Property, make_properties
 from dace.sdfg import SDFG, dealias, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.propagation import _propagate_node, propagate_subset
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.utils import consolidate_edges_scope
@@ -37,6 +38,30 @@ def add_ordering_edge(graph: SDFGState, src: nodes.Node, dst: nodes.Node) -> Non
     """Orders ``dst`` after ``src`` with an empty memlet, unless an edge already does."""
     if not graph.edges_between(src, dst):
         graph.add_nedge(src, dst, Memlet())
+
+
+def dynamic_inputs(graph: SDFGState, entry: nodes.MapEntry) -> dict[str, MultiConnectorEdge]:
+    """The edges into the dynamic map range connectors of ``entry`` (every connector but ``IN_x``), by connector."""
+    return {e.dst_conn: e for e in graph.in_edges(entry) if e.dst_conn is not None and not e.dst_conn.startswith("IN_")}
+
+
+def same_dynamic_inputs(graph: SDFGState, map_entries: list[nodes.MapEntry]) -> bool:
+    """Whether every map reads the same dynamic range inputs, with values that cannot differ between the maps: each
+    connector reads the same data and subset, either from one access node or from access nodes nothing writes to in
+    ``graph`` (so no write can land between two of the reads)."""
+    inputs = [dynamic_inputs(graph, entry) for entry in map_entries]
+    if any(i.keys() != inputs[0].keys() for i in inputs):
+        return False
+    written = {n.data for n in graph.data_nodes() if graph.in_degree(n) > 0}
+    for conn, first in inputs[0].items():
+        edges = [i[conn] for i in inputs]
+        if any(e.data.data != first.data.data or e.data.subset != first.data.subset for e in edges):
+            return False
+        if len({e.src for e in edges}) > 1 and (
+            not isinstance(first.src, nodes.AccessNode) or first.data.data in written
+        ):
+            return False
+    return True
 
 
 def orders_an_intermediate(
@@ -157,12 +182,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         if not all(entry.schedule == schedule for entry in map_entries):
             return False
 
-        # 1.4 a dynamic map range input (a connector other than IN_x) has no counterpart the fused map would keep
-        if any(
-            e.dst_conn is not None and not e.dst_conn.startswith("IN_")
-            for entry in map_entries
-            for e in graph.in_edges(entry)
-        ):
+        # 1.4 the fused map keeps one read of each dynamic map range input, so every map must read the same value
+        if not same_dynamic_inputs(graph, map_entries):
             return False
 
         # 2. check intermediate feasiblility
@@ -972,6 +993,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # TODO: dynamic map range -- this is fairly unrealistic in such a setting
             for edge in graph.in_edges(map_entry):
                 src = edge.src
+                if edge.dst_conn is not None and not edge.dst_conn.startswith("IN_"):
+                    # A dynamic map range input: every map reads the same value (``same_dynamic_inputs``), read once
+                    if edge.dst_conn not in global_map_entry.in_connectors:
+                        global_map_entry.add_in_connector(edge.dst_conn, map_entry.in_connectors[edge.dst_conn])
+                        self.copy_edge(graph, edge, new_dst=global_map_entry, new_dst_conn=edge.dst_conn)
+                    continue
                 if edge.data.is_empty():
                     # Orders the whole map after ``src``, so it orders the fused map after ``src``
                     add_ordering_edge(graph, src, global_map_entry)
@@ -1103,6 +1130,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # all connected edges will be finally removed as well
             graph.remove_node(map_entry)
             graph.remove_node(map_exit)
+
+        # A second read node of a dynamic map range input the fused map reads once is left without edges
+        for node in list(in_nodes):
+            if isinstance(node, nodes.AccessNode) and node in graph.nodes() and graph.degree(node) == 0:
+                graph.remove_node(node)
 
         # create a mapping from data arrays to offsets
         # for later memlet adjustments later
