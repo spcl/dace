@@ -215,6 +215,30 @@ def test_nesting_a_map_keeps_the_ordering_edge_that_orders_an_earlier_read_befor
     assert C[0] == 5, C
 
 
+def test_a_view_on_the_nesting_boundary_is_an_array_inside_the_nested_sdfg():
+    """``V = A[1, :]`` feeds a map that is nested; the parent keeps the ``views`` edge ``A -> V``."""
+    sdfg = dace.SDFG("nest_boundary_view")
+    sdfg.add_array("A", [4, 4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    sdfg.add_view("V", [4], dace.float64)
+    state = sdfg.add_state()
+    view = state.add_access("V")
+    state.add_edge(state.add_read("A"), None, view, "views", dace.Memlet("A[1, 0:4]"))
+    me, mx = state.add_map("m", dict(i="0:4"))
+    t = state.add_tasklet("double", {"x"}, {"y"}, "y = x * 2")
+    state.add_memlet_path(view, me, t, dst_conn="x", memlet=dace.Memlet("V[i]"))
+    state.add_memlet_path(t, mx, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+    sdfg.validate()
+
+    nest_state_subgraph(sdfg, state, state.scope_subgraph(me))
+    sdfg.validate()
+
+    A = np.arange(16.0).reshape(4, 4).copy()
+    B = np.zeros(4)
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, A[1] * 2), B
+
+
 if __name__ == "__main__":
     test_simple_program()
     test_simple_sdfg()
@@ -225,3 +249,4 @@ if __name__ == "__main__":
     test_tiled_program()
     test_nesting_a_map_body_whose_last_write_feeds_the_exit_adds_no_self_copy()
     test_nesting_a_map_keeps_the_ordering_edge_that_orders_an_earlier_read_before_it()
+    test_a_view_on_the_nesting_boundary_is_an_array_inside_the_nested_sdfg()

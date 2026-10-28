@@ -413,7 +413,7 @@ def nest_state_subgraph(
         nsdfg.add_datadesc(name, datadesc)
 
     # Connected source/sink nodes outside subgraph become global data
-    # descriptors in nested SDFG
+    # descriptors in nested SDFG. The parent keeps the ``views`` edge of a View, which is a plain array inside.
     input_names = {}
     output_names = {}
     nested_names: dict[str, str] = {name: name for name in input_arrays | output_arrays.keys()}
@@ -422,7 +422,8 @@ def nest_state_subgraph(
             continue
         name = edge.data.data
         if name not in nested_names:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+            desc = sdfg.arrays[name]
+            datadesc = desc.as_array() if isinstance(desc, data.ArrayView) else copy.deepcopy(desc)
             datadesc.transient = False
             nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
         new_name = nested_names[name]
@@ -432,7 +433,8 @@ def nest_state_subgraph(
             continue
         name = edge.data.data
         if name not in nested_names:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+            desc = sdfg.arrays[name]
+            datadesc = desc.as_array() if isinstance(desc, data.ArrayView) else copy.deepcopy(desc)
             datadesc.transient = False
             nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
         new_name = nested_names[name]
@@ -511,8 +513,8 @@ def nest_state_subgraph(
         name = input_names[edge]
         if name in reconnected_in:
             continue
-        data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
-        state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, data)
+        memlet = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
+        state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, memlet)
         reconnected_in.add(name)
 
     for edge in outputs:
@@ -523,9 +525,9 @@ def nest_state_subgraph(
         name = output_names[edge]
         if name in reconnected_out:
             continue
-        data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
-        data.wcr = edge.data.wcr
-        state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
+        memlet = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
+        memlet.wcr = edge.data.wcr
+        state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, memlet)
         reconnected_out.add(name)
 
     # Connect access nodes to internal input/output data as necessary
