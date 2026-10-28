@@ -223,8 +223,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             sym_replacements[assign] = newname
         # The parent declares every symbol the body assigns with the body's type; left undeclared, codegen infers it
         # from the assigned expression and widens ``i = c ? 1 : i_in`` from ``int`` to ``int64_t``.
-        body_assigned = {k for e in nsdfg.all_interstate_edges() for k in e.data.assignments}
-        for assign in sorted(body_assigned):
+        for assign in sorted(inner_assignments):
             name = sym_replacements.get(assign, assign)
             if assign in nsdfg.symbols and name not in sdfg.symbols and name not in sdfg.arrays:
                 sdfg.add_symbol(name, nsdfg.symbols[assign])
