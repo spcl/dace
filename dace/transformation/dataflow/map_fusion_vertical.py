@@ -1808,10 +1808,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         facts: symbolic.Facts,
     ) -> bool:
         """Whether everything ``first_map_exit`` writes to ``name`` provably misses everything ``second_map_exit`` writes."""
-        first, second = (
-            [e.data.dst_subset or e.data.subset for e in state.out_edges(exit_node) if e.data.data == name]
+        sides = [
+            [e for e in state.out_edges(exit_node) if e.data.data == name]
             for exit_node in (first_map_exit, second_map_exit)
-        )
+        ]
+        # Plain stores only: maps accumulating into one container are each a reduction, and fused they stop being
+        # one (nbody's per-component gemv maps, a Gemv each)
+        if any(e.data.wcr is not None for side in sides for e in side):
+            return False
+        first, second = ([e.data.dst_subset or e.data.subset for e in side] for side in sides)
         return all(
             a is not None and b is not None and subsets.intersects(a, b, facts) is symbolic.Truth.FALSE
             for a in first

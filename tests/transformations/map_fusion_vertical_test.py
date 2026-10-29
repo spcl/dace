@@ -4390,3 +4390,12 @@ def test_maps_writing_one_output_fuse_only_where_their_writes_are_disjoint(secon
         b = np.zeros((n, 2))
         sdfg(A=a, B=b, N=n)
         assert np.allclose(b[:, 0], a) and np.allclose(b[:, 1], 2 * a + 1)
+
+
+def test_maps_accumulating_into_one_output_stay_apart():
+    """Two reductions into disjoint columns of ``B`` are a reduction each (a Gemv each, for nbody); fused they are not."""
+    sdfg, state = _two_maps_writing_out(1)
+    for edge in state.edges():
+        if edge.data.data == "B":
+            edge.data.wcr = "lambda a, b: a + b"
+    assert sdfg.apply_transformations_repeated(MapFusionVertical(), validate=True) == 0
