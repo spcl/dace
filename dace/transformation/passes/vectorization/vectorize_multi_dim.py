@@ -49,6 +49,7 @@ from dace.libraries.tileops.nodes import (
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg.nodes import LibraryNode
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import helpers
 from dace.transformation import pass_pipeline as ppl
@@ -77,6 +78,7 @@ from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.pattern_matching import collapse_multigraph_to_nx
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
+from dace.transformation.passes.unique_names import rename_scope_params, sdfg_names
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -751,6 +753,22 @@ def _resolve_body_nsdfg_symbol_aliases(sdfg: dace.SDFG) -> None:
             renames[inner_sym] = str(mapped_expr)
         if not renames:
             continue
+        # A target an inner map binds would capture the renamed accesses: give that map parameter a fresh name first.
+        # A target an inner loop binds keeps its alias.
+        captured = set(renames.values()) & scope_bound_names(inner)
+        if captured:
+            taken = (
+                captured
+                | sdfg_names(inner)
+                | set(node.symbol_mapping)
+                | set(symbolic.symlist(node.symbol_mapping.values()))
+            )
+            for state in inner.states():
+                rename_scope_params(state, taken)
+            bound = scope_bound_names(inner)
+            renames = {inner_sym: outer_sym for inner_sym, outer_sym in renames.items() if outer_sym not in bound}
+            if not renames:
+                continue
         # Replace in nodes / edges only (``replace_keys=False``): the target already exists
         # in the table (its own identity mapping), so renaming the KEY would collide; the
         # stale source symbol is dropped explicitly below.
