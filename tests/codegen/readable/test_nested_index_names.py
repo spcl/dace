@@ -138,7 +138,7 @@ def test_uninlined_kernel_no_duplicate_idx(kernel):
             assert not dups, f"{kernel}/{co.name}: duplicate index helpers in one TU: {dups}"
 
 
-def _helper_named_container_sdfg() -> dace.SDFG:
+def helper_named_container_sdfg() -> dace.SDFG:
     """``B = (A + A_idx) * 2`` through a transient ``T``, beside a ``T_size`` input: ``A_idx`` and ``T_size`` are the
     names the readable generator would give the index helper of ``A`` and the size helper of ``T``."""
     sdfg = dace.SDFG("helper_named_container")
@@ -171,7 +171,7 @@ def _helper_named_container_sdfg() -> dace.SDFG:
 
 def test_helper_is_named_apart_from_a_container():
     """A helper is a file-scope function, so a container named like it would shadow it at every call."""
-    sdfg = _helper_named_container_sdfg()
+    sdfg = helper_named_container_sdfg()
     with use_implementation(EXPERIMENTAL):
         code = "\n".join(co.code for co in sdfg.generate_code() if co.language == "cpp")
         helpers = set(re.findall(r"(?:constexpr|consteval)\s+\w+\s+(\w+_(?:idx|size)\w*)\s*\(", code))

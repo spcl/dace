@@ -1372,7 +1372,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # x[...]; any other Scalar is allocated by value (see CPUCodeGen.allocate_array).
         return isinstance(desc, dt.Scalar) and desc.storage != dtypes.StorageType.GPU_Global
 
-    def _unshadowed_helper_name(self, fnname: str, registry: dict[str, str]) -> str:
+    def unshadowed_helper_name(self, fnname: str, registry: dict[str, str]) -> str:
         """``fnname``, or a fresh name when a container, symbol or constant of the program is called ``fnname``:
         helpers are file-scope functions, so a parameter or local of the same name shadows them at every call."""
         if self._program_names is None:
@@ -1411,7 +1411,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # name is already an emitted definition, so disambiguate.
         if fnname in self._index_functions:
             fnname = "%s_%dd_%d_idx" % (base, ndim, len(self._index_sig_to_name))
-        fnname = self._unshadowed_helper_name(fnname, self._index_functions)
+        fnname = self.unshadowed_helper_name(fnname, self._index_functions)
         self._index_sig_to_name[key] = fnname
 
         ctype = index_ctype()
@@ -1470,7 +1470,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # already an emitted definition, so disambiguate.
         if fnname in self._size_functions:
             fnname = "%s_%d_size" % (base, len(self._size_sig_to_name))
-        fnname = self._unshadowed_helper_name(fnname, self._size_functions)
+        fnname = self.unshadowed_helper_name(fnname, self._size_functions)
         self._size_sig_to_name[key] = fnname
 
         qualifier = size_qualifier(is_constant)
