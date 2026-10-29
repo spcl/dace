@@ -719,6 +719,74 @@ def test_inlining_view_input():
     np.testing.assert_allclose(expected, actual)
 
 
+def test_inline_binds_a_rebuilt_output_view_through_its_views_connector():
+    """``B_v = B[0]`` bound to an output connector that the nest also reads through an interior access node."""
+    inner = dace.SDFG("inner_double")
+    inner.add_array("_ain", [3, 3], dace.float64)
+    inner.add_array("_aout", [3, 3], dace.float64)
+    istate = inner.add_state("inner_state", is_start_block=True)
+    mid = istate.add_access("_aout")
+    istate.add_nedge(istate.add_access("_ain"), mid, dace.Memlet("_ain[0:3, 0:3]"))
+    istate.add_mapped_tasklet(
+        "double",
+        map_ranges={"i": "0:3", "j": "0:3"},
+        inputs={"inp": dace.Memlet("_aout[i, j]")},
+        code="out = 2 * inp",
+        outputs={"out": dace.Memlet("_aout[i, j]")},
+        input_nodes={"_aout": mid},
+        output_nodes={"_aout": istate.add_access("_aout")},
+        external_edges=True,
+    )
+    sdfg = dace.SDFG(unique_name("inline_output_view_binding"))
+    sdfg.add_array("A", [2, 3, 3], dace.float64)
+    sdfg.add_array("B", [2, 3, 3], dace.float64)
+    sdfg.add_view("A_v", [3, 3], dace.float64)
+    sdfg.add_view("B_v", [3, 3], dace.float64)
+    state = sdfg.add_state("outer_state", is_start_block=True)
+    a_v, b_v = state.add_access("A_v"), state.add_access("B_v")
+    nested = state.add_nested_sdfg(inner, inputs={"_ain": None}, outputs={"_aout": None})
+    state.add_edge(state.add_access("A"), None, a_v, "views", dace.Memlet("A[0, 0:3, 0:3] -> [0:3, 0:3]"))
+    state.add_edge(a_v, None, nested, "_ain", dace.Memlet("A_v[0:3, 0:3]"))
+    state.add_edge(nested, "_aout", b_v, None, dace.Memlet("B_v[0:3, 0:3]"))
+    state.add_edge(b_v, "views", state.add_access("B"), None, dace.Memlet("B_v[0:3, 0:3] -> B[0, 0:3, 0:3]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(InlineSDFG) == 1
+    sdfg.validate()
+
+    A = np.random.default_rng(7).random((2, 3, 3))
+    B = np.zeros((2, 3, 3))
+    sdfg(A=A, B=B)
+    expected = np.zeros((2, 3, 3))
+    expected[0] = 2 * A[0]
+    assert np.array_equal(B, expected), B
+
+
+@pytest.mark.parametrize("language", [dace.Language.Python, dace.Language.CPP])
+def test_inline_keeps_a_nested_constant_apart_from_the_parent_constant_it_shadows(language):
+    """A nest writes its constant ``C = 2`` from a tasklet and into ``out[C]``; the parent declares ``C = 1``."""
+    inner = dace.SDFG("inner")
+    inner.add_constant("C", 2)
+    inner.add_array("out", [3], dace.float64)
+    istate = inner.add_state(is_start_block=True)
+    code = "o = C" if language == dace.Language.Python else "o = C;"
+    tasklet = istate.add_tasklet("write", {}, {"o"}, code, language=language)
+    istate.add_edge(tasklet, "o", istate.add_write("out"), None, dace.Memlet("out[C]"))
+    sdfg = dace.SDFG(unique_name("inline_shadowed_constant"))
+    sdfg.add_constant("C", 1)
+    sdfg.add_array("out", [3], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {}, {"out"})
+    state.add_edge(node, "out", state.add_write("out"), None, dace.Memlet("out[0:3]"))
+
+    assert sdfg.apply_transformations(InlineSDFG) == 1
+    sdfg.validate()
+
+    out = np.zeros(3)
+    sdfg(out=out)
+    assert np.array_equal(out, [0, 0, 2]), out
+
+
 def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
     outside_uses_symbol: bool,
     outside_uses_different_symbol: bool,
@@ -2244,55 +2312,6 @@ def test_multistate_inline_early_return(shape: str, dead_successor: bool):
         assert np.isclose(B[0], expected[0] + 10)
 
 
-@pytest.mark.parametrize("language", [dace.Language.Python, dace.Language.CPP])
-def test_multistate_inline_keeps_a_nested_constant_apart_from_the_parent_constant_it_shadows(language):
-    """A multistate nest writes its constant ``C = 2`` from a tasklet into ``out[C]``; the parent declares ``C = 1``."""
-    inner = dace.SDFG("inner")
-    inner.add_constant("C", 2)
-    inner.add_array("out", [3], dace.float64)
-    first = inner.add_state(is_start_block=True)
-    code = "o = C" if language == dace.Language.Python else "o = C;"
-    tasklet = first.add_tasklet("write", {}, {"o"}, code, language=language)
-    first.add_edge(tasklet, "o", first.add_write("out"), None, dace.Memlet("out[C]"))
-    inner.add_state_after(first)
-    sdfg = dace.SDFG(unique_name("multistate_inline_shadowed_constant"))
-    sdfg.add_constant("C", 1)
-    sdfg.add_array("out", [3], dace.float64)
-    state = sdfg.add_state()
-    node = state.add_nested_sdfg(inner, {}, {"out"})
-    state.add_edge(node, "out", state.add_write("out"), None, dace.Memlet("out[0:3]"))
-
-    assert sdfg.apply_transformations(InlineMultistateSDFG) == 1
-    sdfg.validate()
-
-    out = np.zeros(3)
-    sdfg(out=out)
-    assert np.array_equal(out, [0, 0, 2]), out
-
-
-@pytest.mark.parametrize("language", [dace.Language.Python, dace.Language.CPP])
-def test_inline_keeps_a_nested_constant_apart_from_the_parent_constant_it_shadows(language):
-    """A nest writes its constant ``C = 2`` from a tasklet and into ``out[C]``; the parent declares ``C = 1``."""
-    inner = dace.SDFG("inner")
-    inner.add_constant("C", 2)
-    inner.add_array("out", [3], dace.float64)
-    istate = inner.add_state(is_start_block=True)
-    code = "o = C" if language == dace.Language.Python else "o = C;"
-    tasklet = istate.add_tasklet("write", {}, {"o"}, code, language=language)
-    istate.add_edge(tasklet, "o", istate.add_write("out"), None, dace.Memlet("out[C]"))
-    sdfg = dace.SDFG(unique_name("inline_shadowed_constant"))
-    sdfg.add_constant("C", 1)
-    sdfg.add_array("out", [3], dace.float64)
-    state = sdfg.add_state()
-    node = state.add_nested_sdfg(inner, {}, {"out"})
-    state.add_edge(node, "out", state.add_write("out"), None, dace.Memlet("out[0:3]"))
-
-    assert sdfg.apply_transformations(InlineSDFG) == 1
-    sdfg.validate()
-
-    out = np.zeros(3)
-    sdfg(out=out)
-    assert np.array_equal(out, [0, 0, 2]), out
 
 
 if __name__ == "__main__":
@@ -2315,6 +2334,9 @@ if __name__ == "__main__":
     test_inline_symbol_assignment()
     test_regression_inline_subset()
     test_inlining_view_input()
+    test_inline_binds_a_rebuilt_output_view_through_its_views_connector()
+    for language in [dace.Language.Python, dace.Language.CPP]:
+        test_inline_keeps_a_nested_constant_apart_from_the_parent_constant_it_shadows(language)
     test_chain_reduction_1()
     test_chain_reduction_2()
     test_chain_reduction_all()
