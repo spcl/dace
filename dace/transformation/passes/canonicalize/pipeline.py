@@ -712,18 +712,12 @@ def dead_dataflow_units() -> list[ppl.Pass]:
     ]
 
 
-def loop_to_map_units(hold_sibling_chains: bool = False) -> list[ppl.Pass]:
-    """LoopToMap on every loop it accepts, the scope summaries it reads rebuilt first.
-
-    :param hold_sibling_chains: Leave a sibling-loop chain with a refused sibling whole, for ``WavefrontSkew``.
-    """
-    lift = ParallelizeLoops(propagate=False, hold_sibling_chains=hold_sibling_chains)
+def first_lift() -> ParallelizeLoops:
+    """LoopToMap on every loop it accepts, sibling chains held for ``WavefrontSkew``."""
+    lift = ParallelizeLoops(propagate=False, hold_sibling_chains=True)
     # A loop refused on a scratch buffer only lifts with the buffer expanded per iteration
     lift.expand_buffers = True
-    return [
-        lift,
-        PatternApplyOnceEverywhere([PruneConnectors()]),
-    ]
+    return lift
 
 
 def statement_round() -> list[ppl.Pass]:
@@ -906,7 +900,7 @@ def derive_parallelism(
     # Before the lift: a workspace whose pre-loop fill no iteration observes is then the loop's own, privatized per
     # iteration
     s += [(label, DeadLoopInitialization())]
-    s += [(label, unit) for unit in loop_to_map_units(hold_sibling_chains=True)]
+    s += [(label, first_lift())]
     # Rescue: each rewrite acts only on a loop LoopToMap refuses.
     segments: list = []
     if peel_limit > 0:
@@ -920,7 +914,6 @@ def derive_parallelism(
     # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted copy's
     # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
     s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, unique_iterators()), (label, SymbolSSA())]
-    s += [(label, unit) for unit in loop_to_map_units(hold_sibling_chains=True)]
     # A split or peel can leave a plain recurrence the lifting segment never saw (``y[i] = s[i] + y[i - 1]`` on the
     # ``[K:N)`` half of an ``if i < K`` body); lift it, on the split's segments only, before the levels below
     # settle it as sequential.
@@ -981,7 +974,6 @@ def derive_parallelism(
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
     s += [(label, FuseLoops())]
     s += [(label, Parallelize(target=target, hold_sibling_chains=False))]
-    s += [(label, PatternApplyOnceEverywhere([PruneConnectors()]))]
     return s
 
 
@@ -1069,9 +1061,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
         (label, PatternApplyOnceEverywhere([RedundantArray()])),
         (label, RematerializeDerivedTemporaries()),
     ]
-    # Fusion frees loops the pre-fusion sweep had to keep: a level loop whose body was a fill, a map and a copy of one
-    # scratch plane is a single map after it (velocity_tendencies' nine level loops), so sweep once more and collapse.
-    s += [(label, ParallelizeLoops(hold_sibling_chains=True)), (label, PatternApplyOnceEverywhere([MapCollapse()]))]
+    s += [(label, PatternApplyOnceEverywhere([MapCollapse()]))]
     return s
 
 
