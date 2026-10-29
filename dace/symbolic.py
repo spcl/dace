@@ -1608,31 +1608,30 @@ def sympy_divide_fix(expr):
         return expr
 
     int_floor = sympy.Function("int_floor")
-    # ``M**(N/3)`` is a real power: the printer lowers the exponent's quotient itself
-    exponents = [p.exp for p in nexpr.find(sympy.Pow) if not p.exp.is_integer]
-    in_exponents = set().union(*(e.find(sympy.Mul) for e in exponents))
 
-    processed = 1
-    while processed > 0:
-        processed = 0
-        for candidate in nexpr.find(sympy.Mul):
-            if candidate in in_exponents:
-                continue
-            for i, arg in enumerate(candidate.args):
-                if isinstance(arg, sympy.Number) and abs(arg) >= 1:
-                    continue
-                if isinstance(arg, sympy.Number) and (1 / arg) == int(1 / arg):
-                    ri = i
-                    break
-            else:
-                continue
-            nexpr = nexpr.subs(
-                candidate,
-                int_floor(sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1 :])), int(1 / candidate.args[ri])),
-            )
-            processed += 1
+    def rewrite(node):
+        if not isinstance(node, sympy.Basic):
+            return node
+        if isinstance(node, sympy.Pow) and not node.exp.is_integer:
+            # The printer lowers a non-integer exponent's exact quotient itself.
+            base = rewrite(node.base)
+            return node if base == node.base else node.func(base, node.exp)
 
-    return nexpr
+        args = tuple(rewrite(arg) for arg in node.args)
+        candidate = node if args == node.args else node.func(*args)
+        if not isinstance(candidate, sympy.Mul):
+            return candidate
+        for i, arg in enumerate(candidate.args):
+            if isinstance(arg, sympy.Number) and abs(arg) >= 1:
+                continue
+            if isinstance(arg, sympy.Number) and (1 / arg) == int(1 / arg):
+                ri = i
+                break
+        else:
+            return candidate
+        return int_floor(sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1 :])), int(1 / candidate.args[ri]))
+
+    return rewrite(nexpr)
 
 
 @cache
