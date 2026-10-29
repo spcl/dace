@@ -155,6 +155,16 @@ class AddThreadBlockMaps(ppl.Pass):
         else:
             apply_thread_block_maps(sdfg, AddThreadBlockMap())
         new_nodes = {node for node, _ in sdfg.all_nodes_recursive()} - old_nodes
+        # The tiling's new node is the GPU_Device map; the thread-block map is the one it wraps
+        blocks = [
+            (child, st)
+            for n, st in sdfg.all_nodes_recursive()
+            if n in new_nodes and isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device
+            for child in st.scope_children()[n]
+            if isinstance(child, nodes.MapEntry)
+        ]
+        for node, state in blocks:
+            hoist_block_uniform_reduction_loop(state, node)
         tb_inserted_kernels = {
             n for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
         }
@@ -163,6 +173,42 @@ class AddThreadBlockMaps(ppl.Pass):
             "kernel_dimensions_map": kernel_dimensions_map,
             "tb_inserted_kernels": tb_inserted_kernels,
         }
+
+
+def hoist_block_uniform_reduction_loop(state, block_entry: nodes.MapEntry) -> bool:
+    """Move a ``Sequential`` map that is the whole body of the thread-block map ``block_entry`` outside it, when the
+    sequential map reduces into an element every thread of the block shares.
+
+    A ``SMALL`` axis the offload keeps out of the grid (velocity_tendencies' ``max(axis=(1, 2))`` per cell block)
+    becomes a loop in each thread; its write-conflict-resolved target, indexed by that loop alone, was then one global
+    atomic per thread and iteration. Outside the thread-block map the loop runs in every thread alike, so the target
+    is block-invariant per iteration and folds once per block (``collect_gpu_block_reductions``).
+
+    :return: whether the maps were interchanged.
+    """
+    from dace.transformation.dataflow.map_interchange import MapInterchange
+
+    if block_entry.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
+        return False
+    body = state.scope_children()[block_entry]
+    inner = next((n for n in body if isinstance(n, nodes.MapEntry)), None)
+    if (
+        inner is None
+        or inner.map.schedule != dtypes.ScheduleType.Sequential
+        or set(body) != {inner, state.exit_node(block_entry)}
+    ):
+        return False
+    block_params = set(block_entry.map.params)
+    shared = any(
+        edge.data.wcr is not None and not edge.data.is_empty() and not {str(s) for s in edge.data.subset.free_symbols} & block_params
+        for edge in state.out_edges(state.exit_node(inner))
+    )
+    if not shared or not MapInterchange.can_be_applied_to(
+        state.sdfg, outer_map_entry=block_entry, inner_map_entry=inner
+    ):
+        return False
+    MapInterchange.apply_to(state.sdfg, outer_map_entry=block_entry, inner_map_entry=inner, verify=False, save=False)
+    return True
 
 
 @properties.make_properties

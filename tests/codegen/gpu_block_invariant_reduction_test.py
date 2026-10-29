@@ -51,6 +51,24 @@ def row_forces(block: list[int]) -> dace.SDFG:
     return sdfg
 
 
+def per_block_maxima() -> dace.SDFG:
+    """``out[k] = max(out[k], A[k, i])`` over a ``GPU_Device`` map ``i`` whose body is a ``Sequential`` map ``k``:
+    the shape the offload leaves when ``k`` is ``SMALL`` and stays out of the grid."""
+    sdfg = dace.SDFG("per_block_maxima")
+    sdfg.add_array("A", ["K", "N"], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("out", ["K"], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    a, o = state.add_read("A"), state.add_write("out")
+    outer_entry, outer_exit = state.add_map("cells", {"i": "0:N"}, schedule=dace.ScheduleType.GPU_Device)
+    inner_entry, inner_exit = state.add_map("blocks", {"k": "0:K"}, schedule=dace.ScheduleType.Sequential)
+    tasklet = state.add_tasklet("take", {"a"}, {"o"}, "o = a")
+    wcr = "lambda x, y: max(x, y)"
+    state.add_memlet_path(a, outer_entry, inner_entry, tasklet, dst_conn="a", memlet=dace.Memlet("A[k, i]"))
+    state.add_memlet_path(tasklet, inner_exit, outer_exit, o, src_conn="o", memlet=dace.Memlet("out[k]", wcr=wcr))
+    outer_entry.map.gpu_block_size = [256, 1, 1]
+    return sdfg
+
+
 def kernel_code(sdfg: dace.SDFG) -> str:
     return "\n".join(obj.clean_code for obj in sdfg.generate_code() if "__global__" in obj.clean_code)
 
@@ -75,6 +93,13 @@ def test_the_components_of_a_shared_row_fold_as_one_span():
     assert code.count("reduce_atomic(f + ") == 1, "every component drains through the one block fold"
 
 
+def test_a_loop_over_the_blocks_target_leaves_the_threads_and_folds_once_per_block():
+    """The ``Sequential`` map ``k`` moves outside the thread-block map: per ``k`` every thread of the block shares
+    ``out[k]``, so it folds through ``BlockReduce`` instead of one atomic per thread."""
+    code = kernel_code(per_block_maxima())
+    assert "BlockReduce" in code, code
+
+
 @pytest.mark.gpu
 def test_a_row_shared_by_the_block_sums_as_numpy():
     import cupy as cp
@@ -86,7 +111,19 @@ def test_a_row_shared_by_the_block_sums_as_numpy():
     assert np.allclose(cp.asnumpy(out), A.sum(axis=1), rtol=1e-12)
 
 
+@pytest.mark.gpu
+def test_a_loop_over_the_blocks_target_maxes_as_numpy():
+    import cupy as cp
+
+    sdfg = per_block_maxima()
+    A = np.random.default_rng(4).standard_normal((3, 5000))
+    out = cp.full(3, -np.inf)
+    sdfg(A=cp.asarray(A), out=out, K=3, N=5000)
+    assert np.array_equal(cp.asnumpy(out), A.max(axis=1))
+
+
 if __name__ == "__main__":
     test_a_row_shared_by_the_block_folds_once_per_block()
     test_a_row_the_block_spans_is_a_scatter()
     test_the_components_of_a_shared_row_fold_as_one_span()
+    test_a_loop_over_the_blocks_target_leaves_the_threads_and_folds_once_per_block()
