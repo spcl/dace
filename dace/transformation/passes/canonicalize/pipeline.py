@@ -105,12 +105,6 @@ from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNum
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.while_to_for import WhileToFor
-from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-    CleanAccessNodeToScalarSliceToTaskletPattern,
-)
-from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
-    CleanTaskletToScalarSliceToAccessNodePattern,
-)
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_fill_elimination import DeadFillElimination
@@ -351,19 +345,6 @@ def _inline_single_state(label: str) -> list[tuple[str, ppl.Pass]]:
     :returns: ``(stage_label, pass)`` pairs, in order.
     """
     return [(label, RouteOrderingThroughData()), (label, PruneAndInlineNestedSDFGs())]
-
-
-def _fold_scalar_slices(label: str) -> list[tuple[str, ppl.Pass]]:
-    """Fold the frontend scalar-slice bridge; behind the transient a matcher has no index to shift,
-    which costs tsvc s252 its ``_remat`` clone and its map.
-
-    :param label: The owning stage label.
-    :returns: ``(stage_label, pass)`` pairs, in order.
-    """
-    return [
-        (label, CleanAccessNodeToScalarSliceToTaskletPattern()),
-        (label, CleanTaskletToScalarSliceToAccessNodePattern()),
-    ]
 
 
 #: Cap on the IV-substitution / statement-fission alternation.
@@ -815,7 +796,6 @@ def normalize_statements(
         (label, PatternApplyOnceEverywhere([PruneConnectors()])),
         (label, InlineSDFGs()),
     ]
-    s += _fold_scalar_slices(label)
     s += [(label, NormalizeNegativeStride()), (label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
     s += [(label, RerollUnrolledLoops()), (label, UntileLoops()), (label, FuseConsecutiveLoops())]
     if unroll_limit > 0:
@@ -849,7 +829,7 @@ def normalize_statements(
 def lift_semantics(lift: bool, lift_copy: bool, interchange_carry_with_map: bool, target: str) -> Stages:
     """Recognize library operators on the normalized loop nests."""
     label = LIFT_SEMANTICS
-    s: Stages = _fold_scalar_slices(label)
+    s: Stages = []
     # Before LoopToEinsum, which would take the inner product out of the nest.
     if lift:
         s += [(label, LoopToGetrfNoPivot(target=target)), (label, LoopToSymm()), (label, LoopToRankKUpdate())]

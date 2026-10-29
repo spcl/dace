@@ -2707,11 +2707,9 @@ def dace_s1161(
 
 def test_s1161():
     sdfg = parsed_simplified(dace_s1161)
-    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-        CleanAccessNodeToScalarSliceToTaskletPattern,
-    )
+    from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 
-    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
+    FoldScalarReadCopies().apply_pass(sdfg, {})
     be = branch_elimination.BranchElimination()
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     for cblock in cblocks:
