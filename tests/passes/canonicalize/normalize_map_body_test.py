@@ -175,6 +175,37 @@ def test_merge_siblings_data_vs_connector_name_collision():
     assert np.allclose(A, X + 2.0) and np.allclose(B, X + 1.0)
 
 
+def test_siblings_joined_through_a_tasklet_stay_apart():
+    """``A`` feeds a tasklet that feeds ``B``: merged, the node would write the tasklet's input and read its output,
+    a cycle (warpx_esirkepov_deposition on GPU: ``State should be acyclic``)."""
+    sdfg = dace.SDFG("merge_through_tasklet")
+    for arr in ("X", "B"):
+        sdfg.add_array(arr, [N], dace.float64)
+    sdfg.add_array("t", [N], dace.float64, transient=True)
+    sdfg.add_array("u", [N], dace.float64, transient=True)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", {"i": "0:N"})
+    first = state.add_nested_sdfg(_sibling_nsdfg("first", False, False), {"x"}, {"o"})
+    second = state.add_nested_sdfg(_sibling_nsdfg("second", False, False), {"x"}, {"o"})
+    triple = state.add_tasklet("triple", {"a"}, {"b"}, "b = 3 * a")
+    t, u = state.add_access("t"), state.add_access("u")
+    state.add_memlet_path(state.add_read("X"), me, first, dst_conn="x", memlet=dace.Memlet("X[i]"))
+    state.add_edge(first, "o", t, None, dace.Memlet("t[i]"))
+    state.add_edge(t, None, triple, "a", dace.Memlet("t[i]"))
+    state.add_edge(triple, "b", u, None, dace.Memlet("u[i]"))
+    state.add_edge(u, None, second, "x", dace.Memlet("u[i]"))
+    state.add_memlet_path(second, mx, state.add_write("B"), src_conn="o", memlet=dace.Memlet("B[i]"))
+    convert_legacy_nested_sdfgs(sdfg)
+    sdfg.validate()
+
+    NormalizeMapBody().apply_pass(sdfg, {})
+    sdfg.validate()
+    X = np.random.default_rng(1).random(8)
+    B = np.zeros(8)
+    sdfg(X=X.copy(), B=B, N=8)
+    assert np.allclose(B, 3 * (X + 2.0) + 2.0)
+
+
 @dace.program
 def two_level_siblings(a: dace.float64[N, M], b: dace.float64[N, M], c: dace.float64[N, M]):
     for i in range(N):

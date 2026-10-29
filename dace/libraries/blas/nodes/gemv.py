@@ -200,36 +200,28 @@ class ExpandGemvGPUBLAS(ExpandTransformation):
         call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ""
 
-        # Handle alpha / beta
-        constants = {
-            1.0: f"__state->{cls.dialect.handle_field}.Constants().{runtimetype}Pone()",
-            0.0: f"__state->{cls.dialect.handle_field}.Constants().{runtimetype}Zero()",
-        }
-        if node.alpha not in constants or node.beta not in constants:
-            # Deal with complex input constants
-            if isinstance(node.alpha, complex):
-                alpha = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
-            else:
-                alpha = f"{dtype.ctype}({node.alpha})"
-            if isinstance(node.beta, complex):
-                beta = f"{dtype.ctype}({node.beta.real}, {node.beta.imag})"
-            else:
-                beta = f"{dtype.ctype}({node.beta})"
-
-            # Set pointer mode to host
-            call_prefix += f"""{cls.dialect.check_error}(
-            {cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_host}));
-            {dtype.ctype} alpha = {alpha};
-            {dtype.ctype} beta = {beta};
-            """
-            call_suffix += f"""
-{cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
-            """
-            alpha = f"({ctype} *)&alpha"
-            beta = f"({ctype} *)&beta"
+        # Alpha and beta go in as host values, under host pointer mode for this call: under device mode rocBLAS
+        # copies both back to the host (a synchronizing copy each) to test for a quick return.
+        if isinstance(node.alpha, complex):
+            alpha = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
         else:
-            alpha = constants[node.alpha]
-            beta = constants[node.beta]
+            alpha = f"{dtype.ctype}({node.alpha})"
+        if isinstance(node.beta, complex):
+            beta = f"{dtype.ctype}({node.beta.real}, {node.beta.imag})"
+        else:
+            beta = f"{dtype.ctype}({node.beta})"
+
+        # Set pointer mode to host
+        call_prefix += f"""{cls.dialect.check_error}(
+        {cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_host}));
+        {dtype.ctype} alpha = {alpha};
+        {dtype.ctype} beta = {beta};
+        """
+        call_suffix += f"""
+{cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
+        """
+        alpha = f"({ctype} *)&alpha"
+        beta = f"({ctype} *)&beta"
 
         call = f"""
 {cls.dialect.check_error}({cls.dialect.routine(func)}({cls.dialect.handle}, {trans}, {symbolic.symstr(m)}, {symbolic.symstr(n)}, {alpha}, ({ctype} *)_A, {symbolic.symstr(lda)},

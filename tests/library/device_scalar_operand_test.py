@@ -40,6 +40,22 @@ def gemm_with_runtime_alpha(storage: dtypes.StorageType) -> tuple:
     return sdfg, state, node
 
 
+def gemm_with_constant_coefficients() -> dace.SDFG:
+    """A ``Gemm`` with compile-time alpha 1 and beta 0 over device operands."""
+    sdfg = dace.SDFG("gemm_constant")
+    for name in "ABC":
+        sdfg.add_array(name, [N, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = Gemm("gemm", alpha=1, beta=0)
+    node.implementation = "cuBLAS"
+    state.add_node(node)
+    for name, conn in (("A", "_a"), ("B", "_b")):
+        state.add_edge(state.add_read(name), None, node, conn, dace.Memlet(f"{name}[0:{N}, 0:{N}]"))
+    state.add_edge(node, "_c", state.add_write("C"), None, dace.Memlet(f"C[0:{N}, 0:{N}]"))
+    sdfg.validate()
+    return sdfg
+
+
 def scan_with_seed(storage: dtypes.StorageType) -> tuple:
     """An inclusive ``Scan`` whose seed is backed by ``storage``."""
     sdfg = dace.SDFG(f"scan_seed_{storage.name}")
@@ -80,6 +96,14 @@ def test_a_host_coefficient_is_read_by_value():
     code = expanded_code(sdfg)
     assert "CUBLAS_POINTER_MODE_HOST" in code
     assert "&__alpha" in code, "the host path should point at its own local"
+
+
+def test_gemm_constant_coefficients_are_host_values():
+    """A compile-time 0 or 1 goes in as a host value: in device pointer mode rocBLAS copies each coefficient back to
+    the host, with a synchronization, to test for a quick return."""
+    code = expanded_code(gemm_with_constant_coefficients())
+    assert "CUBLAS_POINTER_MODE_HOST" in code
+    assert "Constants()" not in code, "a compile-time coefficient must not be a device constant"
 
 
 def test_a_device_coefficient_is_read_where_it_lies():

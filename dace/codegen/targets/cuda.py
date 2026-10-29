@@ -120,6 +120,8 @@ class CUDACodeGen(TargetCodeGenerator):
         self._kernel_chiplet_count = 1
         # Number of thread-blocks of the first grid dimension every chiplet owns (same module)
         self._kernel_chiplet_chunk = 1
+        # Whether the first grid dimension of the kernel being generated is folded into the second (``fold_grid_x``)
+        self._kernel_grid_fold = False
         self._kernel_map = None
         self._kernel_state = None
         self._kernel_grid_conditions: list[str] = []
@@ -2281,6 +2283,8 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         grid_size, self._kernel_chiplet_chunk = distribute_over_chiplets(
             kernelmap_entry, grid_size, self._kernel_chiplet_count
         )
+        fold_ok = not (is_persistent or has_dtbmap or extra_grid_dims) and self._kernel_chiplet_count == 1
+        grid_size, self._kernel_grid_fold = fold_grid_x(self.backend, grid_size, block_size, fold_ok)
 
         return grid_size, block_size, dims.has_tbmap, has_dtbmap, extra_dim_offsets
 
@@ -2334,9 +2338,10 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         # do not generate an index if the kernel map is persistent
         chiplet_count = self._kernel_chiplet_count
         chiplet_chunk = self._kernel_chiplet_chunk
+        folded = self._kernel_grid_fold
         if node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
             for varname, expr in kernel_index_definitions(
-                kernel_map, block_dims, not has_tbmap or has_dtbmap, chiplet_count, chiplet_chunk, index_types
+                kernel_map, block_dims, not has_tbmap or has_dtbmap, chiplet_count, chiplet_chunk, index_types, folded
             ):
                 kernel_stream.write(f"{index_types[varname].ctype} {varname} = {expr};", cfg, state_id, node)
                 self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, index_types[varname].ctype)
@@ -2379,7 +2384,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         # element, e.g., skipping out-of-bounds threads in trailing block
         # unless this is handled by another map down the line
         if (not has_tbmap or has_dtbmap) and node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
-            for condition in kernel_grid_conditions(kernel_map, self._block_dims, chiplet_count):
+            for condition in kernel_grid_conditions(kernel_map, self._block_dims, chiplet_count, folded):
                 block_open = f"if ({condition}) {{" if condition else "{"
                 self._kernel_grid_conditions.append(block_open)
                 if not has_dtbmap:
@@ -2390,7 +2395,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         # It is not added to ``_kernel_grid_conditions`` because those are only re-emitted around grid
         # synchronization, which requires nested device maps, and those disable the distribution.
         emit_chiplet_condition = (
-            chiplet_count > 1
+            (chiplet_count > 1 or folded)
             and has_tbmap
             and not has_dtbmap
             and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
@@ -2425,6 +2430,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         self._grid_dims = None
         self._kernel_chiplet_count = 1
         self._kernel_chiplet_chunk = 1
+        self._kernel_grid_fold = False
 
     def get_next_scope_entries(self, dfg, scope_entry):
         parent_scope_entry = dfg.entry_node(scope_entry)
@@ -3885,6 +3891,29 @@ def distribute_over_chiplets(kernelmap_entry: nodes.MapEntry, grid_size: list, c
     return padded, chunk
 
 
+#: HIP bounds a grid dimension by its thread count, ``gridDim.x * blockDim.x``, which is a 32-bit unsigned value
+HIP_GRID_THREADS_LIMIT = 2**32 - 1
+
+
+def fold_grid_x(backend: str, grid_size: list, block_size: list, allowed: bool) -> tuple[list, bool]:
+    """
+    On HIP, folds a one-dimensional grid whose threads may exceed :data:`HIP_GRID_THREADS_LIMIT` into rows of as many
+    blocks as the limit admits: ``[min(g, cap), ceil(g / cap), 1]``. The first dimension's block index is then
+    ``blockIdx.x + blockIdx.y * gridDim.x`` (see ``kernel_block_index``), and the trailing blocks of the last row are
+    masked like a chiplet padding. CUDA bounds ``gridDim.x`` by ``2**31 - 1`` blocks instead, so it is left alone.
+
+    :returns: the grid and whether it was folded.
+    """
+    if backend != "hip" or not allowed or grid_size[1] != 1 or grid_size[2] != 1:
+        return grid_size, False
+    if symbolic.issymbolic(block_size[0]):
+        return grid_size, False
+    cap = HIP_GRID_THREADS_LIMIT // int(block_size[0])
+    if (grid_size[0] > cap) == False:
+        return grid_size, False
+    return [sympy.Min(grid_size[0], cap), symbolic.int_ceil(grid_size[0], cap), 1], True
+
+
 def default_block_size(kernelmap_entry: nodes.MapEntry, grid_size: list, has_dtbmap: bool) -> list:
     """The block size of a kernel without thread-block maps and without ``gpu_block_size``: the configured
     dynamic or default block size, the latter linearized onto the dimensions the grid has."""
@@ -3918,10 +3947,16 @@ def default_block_size(kernelmap_entry: nodes.MapEntry, grid_size: list, has_dtb
 
 
 def kernel_block_index(
-    i: int, block_dims: list, per_thread: bool, chiplets: int, chunk, index_type: dtypes.typeclass
+    i: int, block_dims: list, per_thread: bool, chiplets: int, chunk, index_type: dtypes.typeclass, folded: bool = False
 ) -> str:
     """The block (and, ``per_thread``, thread) index a kernel map's dimension ``i < 3`` is computed from."""
-    if chiplets > 1 and i == 0:
+    if folded and i == 0:
+        block_expr = "(%s + %s * %s)" % (
+            _widen_register("blockIdx.x", index_type),
+            _widen_register("blockIdx.y", index_type),
+            _widen_register("gridDim.x", index_type),
+        )
+    elif chiplets > 1 and i == 0:
         # Contiguous partitioning: the chiplet of a block is ``blockIdx.x % chiplets`` and its slot within that
         # chiplet is ``blockIdx.x / chiplets``, so chiplet k owns the blocks [k * chunk .. (k + 1) * chunk - 1]
         bidx_x = _widen_register("blockIdx.x", index_type)
@@ -3941,6 +3976,7 @@ def kernel_index_definitions(
     chiplets: int,
     chunk,
     index_types: dict[str, dtypes.typeclass],
+    folded: bool = False,
 ) -> list[tuple[str, str]]:
     """``(parameter, expression)`` for every parameter of a kernel map, from the block and thread indices.
 
@@ -3954,7 +3990,7 @@ def kernel_index_definitions(
     # First three dimensions are evaluated directly
     for i in range(min(len(krange), 3)):
         block_expr = kernel_block_index(
-            i, block_dims, per_thread, chiplets, chunk, index_types[kernel_map.params[-i - 1]]
+            i, block_dims, per_thread, chiplets, chunk, index_types[kernel_map.params[-i - 1]], folded
         )
         # Delinearize third dimension if necessary
         if i == 2 and len(krange) > 3:
@@ -3974,7 +4010,7 @@ def kernel_index_definitions(
     return result
 
 
-def kernel_grid_conditions(kernel_map: nodes.Map, block_dims: list, chiplets: int) -> list[str]:
+def kernel_grid_conditions(kernel_map: nodes.Map, block_dims: list, chiplets: int, folded: bool = False) -> list[str]:
     """One condition per parameter (empty if always true) that masks the out-of-range threads of the trailing
     blocks of a kernel without a thread-block map, e.g. ``i >= 0 && i < N``."""
     krange = subsets.Range(kernel_map.range[::-1])
@@ -3990,7 +4026,7 @@ def kernel_grid_conditions(kernel_map: nodes.Map, block_dims: list, chiplets: in
         # trailing blocks always have to be masked out
         if (
             i >= 3
-            or (chiplets > 1 and i == 0)
+            or ((chiplets > 1 or folded) and i == 0)
             or ((dsym_end[i] < maxel) != False and not symbolic.is_multiple(dsym_end[i], block_dims[i]))
             or (block_dims[i] > maxel) == True
         ):

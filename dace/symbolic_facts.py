@@ -707,9 +707,14 @@ def divides(query: Relation, facts: Facts) -> Truth:
     return Truth.FALSE if divisor.is_number and multiple.is_number else Truth.UNKNOWN
 
 
+def _main_expr(expr: sympy.Expr) -> sympy.Expr:
+    """The exact form of a ``SymExpr``. ``sympy.sympify`` rejects the pair."""
+    return expr.expr if isinstance(expr, symbolic.SymExpr) else expr
+
+
 def is_small(expr: sympy.Expr, facts: Facts) -> bool:
     """Whether every symbol of ``expr`` is ``SMALL``; an expression of literals only has the default scale."""
-    names = {str(free) for free in sympy.sympify(expr).free_symbols}
+    names = {str(free) for free in sympy.sympify(_main_expr(expr)).free_symbols}
     return bool(names) and names <= facts.small
 
 
@@ -720,7 +725,7 @@ SMALL_CONSTANT_EXTENT = 64
 def is_small_extent(expr: sympy.Expr, facts: Facts) -> bool:
     """Whether a scheduled extent is too small to share out: ``SMALL`` (:func:`is_small`), or a literal below
     :data:`SMALL_CONSTANT_EXTENT`. For schedules only: the canonical form stays parallel over literals."""
-    expr = sympy.sympify(expr)
+    expr = sympy.sympify(_main_expr(expr))
     if expr.is_number:
         return bool(expr < SMALL_CONSTANT_EXTENT)
     return is_small(expr, facts)

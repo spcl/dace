@@ -265,19 +265,60 @@ def map_schedule_is_sequential(node: nodes.MapEntry) -> bool:
     return node.map.schedule not in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
 
 
-def gpu_block_reduction_write_slot(subset, base, length):
-    """Register-partial slot for a write to a GPU thread-block tree-reduction accumulator.
-
-    The function considers the selected C++ standard and the `alignment` property
-    of the data descriptor.
-    """
-    if subset is None or len(subset.ranges) != 1:
+def contiguous_span(subset, strides):
+    """``(start, length)`` of ``subset`` in the flat element order of an array of ``strides``, when it is one
+    contiguous run: a single index on every dimension but the last, a unit-step range on the last at unit stride;
+    else ``None``. ``length`` is symbolic where the range is."""
+    if subset is None or len(subset.ranges) != len(strides) or subset.ranges[-1][2] != 1:
         return None
-    offset = subset.ranges[0][0] - base
+    if len(subset.ranges) > 1 and (strides[-1] != 1 or any(r[0] != r[1] for r in subset.ranges[:-1])):
+        return None
+    start = sum(r[0] * stride for r, stride in zip(subset.ranges, strides))
+    return start, subset.ranges[-1][1] - subset.ranges[-1][0] + 1
+
+
+def gpu_block_reduction_write_slot(subset, base, length, strides=(1,)):
+    """Register-partial slot for a write to a GPU thread-block tree-reduction accumulator of ``strides``: its flat
+    offset from the accumulator's ``base``, or ``None`` when it is not one element of the ``length`` slots."""
+    span = contiguous_span(subset, strides)
+    if span is None:
+        return None
+    offset = span[0] - base
     if not symbolic.issymbolic(offset):
         if int(offset) < 0 or int(offset) >= length:
             return None
     return offset
+
+
+def block_invariant_params(scope_entry: nodes.MapEntry, block_dims: tuple[int, int, int]) -> set[str]:
+    """The parameters of a kernel map every thread of one block shares: those whose thread-block extent is 1 (the
+    last parameter runs along ``x``, the one before along ``y``, then ``z``), each the block's base. A map of more
+    parameters, folded onto the three axes, has none."""
+    params = scope_entry.map.params
+    if len(params) > 3:
+        return set()
+    return {param for param, extent in zip(reversed(params), block_dims) if extent == 1}
+
+
+def union_of_spans(edges: list, strides, base, redtype, invariant: set[str]) -> tuple | None:
+    """``(start, length)`` of the run covering every span ``edges`` write, each a contiguous, block-invariant run of
+    ``redtype`` a constant number of elements from ``base``; ``None`` if any is not."""
+    low = high = None
+    for edge in edges:
+        span = contiguous_span(edge.data.subset, strides)
+        if (
+            span is None
+            or edge.data.dynamic
+            or operations.detect_reduction_type(edge.data.wcr) != redtype
+            or any(str(sym) not in invariant for sym in edge.data.subset.free_symbols)
+        ):
+            return None
+        offset = symbolic.simplify(span[0] - base)
+        if symbolic.issymbolic(offset) or symbolic.issymbolic(span[1]):
+            return None
+        low = int(offset) if low is None else min(low, int(offset))
+        high = int(offset + span[1]) if high is None else max(high, int(offset + span[1]))
+    return base + low, high - low
 
 
 def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEntry, block_dims, frame) -> list:
@@ -289,8 +330,8 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
     commits a single atomic (versus one contended atomic per thread). A scalar accumulator is one slot
     (``m == 1``); a length-``m`` reduced subset is folded element-wise by the drain loop.
 
-    The guard is deliberately narrow: a single, loop-invariant, compile-time-length 1-D span (a
-    param-dependent subset is a scatter, not a reduction), a scalar (non-vector) built-in op with a
+    The guard is deliberately narrow: a single, block-invariant, compile-time-length 1-D span (one indexed by a
+    parameter the threads of a block vary is a scatter, not a reduction), a scalar (non-vector) built-in op with a
     known identity element, and compile-time-constant block dimensions (cub templates on them). Anything
     else keeps the per-thread atomic fallback.
 
@@ -311,6 +352,12 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
     map_params = set(scope_entry.map.params)
     outer_symbols: set[str] | None = None
     seen_targets: set[str] = set()
+    # Every WCR edge into one accumulator: the components of one row (``f[i, 0]``, ``f[i, 1]``, ``f[i, 2]``) are one
+    # register partial spanning them all
+    wcr_edges: dict[str, list] = {}
+    for iedge in state.in_edges(map_exit):
+        if iedge.data is not None and iedge.data.wcr is not None:
+            wcr_edges.setdefault(iedge.data.data, []).append(iedge)
     for i, iedge in enumerate(state.in_edges(map_exit)):
         if iedge.data is None or iedge.data.wcr is None:
             continue
@@ -321,20 +368,24 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
         # cub, the identity literal and ``_wcr_fixed::reduce_atomic`` all want a scalar ctype.
         if isinstance(acc_desc.dtype, dtypes.vector):
             continue
-        if len(subset) != 1 or subset.ranges[0][2] != 1:
+        # One contiguous run of the accumulator: a 1-D span, or a row of a multi-dimensional one
+        span = contiguous_span(subset, acc_desc.strides)
+        if span is None:
             continue
         redtype = operations.detect_reduction_type(iedge.data.wcr)
         identity = dtypes.reduction_identity(acc_desc.dtype, redtype)
         if redtype == dtypes.ReductionType.Custom or identity is None:
             continue  # only built-in ops with a known identity element
-        base, end, _ = subset.ranges[0]
-        # Loop-invariant target: indexed by nothing this scope defines (its parameters, a value read inside it)
+        base, length = span
+        # Block-invariant target: indexed by nothing this scope defines (its parameters, a value read inside it)
+        # but the parameters every thread of one block shares
         if outer_symbols is None:
             outer_symbols = set(map(str, frame.symbols_defined_at(state, scope_entry))) - map_params
+            outer_symbols |= block_invariant_params(scope_entry, (block_x, block_y, block_z))
         shared = iedge.data.dynamic or any(str(s) not in outer_symbols for s in subset.free_symbols)
         if shared:
             # A scatter into a small array: privatized per block in shared memory instead (``shared_scatter_target``)
-            if not shared_scatter_target(sdfg, state, scope_entry, iedge.data.data, acc_desc):
+            if len(subset) != 1 or not shared_scatter_target(sdfg, state, scope_entry, iedge.data.data, acc_desc):
                 continue
             base = 0
             size = acc_desc.total_size
@@ -342,9 +393,12 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
             extent = sym2cpp(size)
         else:
             try:
-                m = int(end - base) + 1
+                m = int(length)
             except (TypeError, ValueError):
                 continue  # symbolic length: cannot size the register partial / drain loop
+            union = union_of_spans(wcr_edges[iedge.data.data], acc_desc.strides, base, redtype, outer_symbols)
+            if union is not None:
+                base, m = union
             extent = str(m)
         seen_targets.add(iedge.data.data)
         ctype = acc_desc.dtype.ctype
@@ -1958,7 +2012,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # accumulator (``base``-offset 0, one slot) and a length-``m`` subset reduction share a path.
         cover = self._gpu_block_reduction_covered.get(memlet.data)
         if cover is not None and cover["sdfg"] is sdfg:
-            slot = gpu_block_reduction_write_slot(memlet.subset, cover["base"], cover["m"])
+            slot = gpu_block_reduction_write_slot(
+                memlet.subset, cover["base"], cover["m"], sdfg.arrays[memlet.data].strides
+            )
             # A vector into the shared copy has no atomic fold here: it commits to memory directly instead
             if cover["shared"] and isinstance(dtype, dtypes.vector):
                 slot = None
@@ -4053,7 +4109,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     f"bool {flag};",
                     f"{ctype}* {ptr} = {prefix}_{ptr}.open({prefix}_t, {prefix}_shared_{ptr}, "
                     f"{order}.lo({prefix}_t, {i}), {order}.hi({prefix}_t, {i}), {order}.updates({prefix}_t, {i}), "
-                    f"{flag});",
+                    f"{order}.owned({prefix}_t, {i}), {flag});",
                 ]
         result.write("\n".join(lines), cfg, state_id, node)
         return plan

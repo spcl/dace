@@ -912,7 +912,9 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 bdecl, beta = _host_coeff("__beta", "_beta", node.beta, beta_desc, arr_prefix, dtype, cdtype)
                 call_prefix += adecl + bdecl
                 call_suffix += f"{cls.set_pointer_mode}({handle}, {cls.pointer_device});"
-        elif node.alpha not in constants or node.beta not in constants:
+        else:
+            # Compile-time coefficients go in as host values, under host pointer mode for this call: under device
+            # mode rocBLAS copies both back to the host (a synchronizing copy each) to test for a quick return.
             # Deal with complex input constants
             if isinstance(node.alpha, complex):
                 alpha = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
@@ -933,9 +935,6 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             {cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_device}));"""
             alpha = f"({cdtype} *)&__alpha"
             beta = f"({cdtype} *)&__beta"
-        else:
-            alpha = constants[node.alpha]
-            beta = constants[node.beta]
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)

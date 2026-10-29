@@ -4812,8 +4812,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 if lowered is not None:
                     return lowered
                 return f"dace::math::pow({base}, {exponent})"
-            else:
-                return f"({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})"
+            # A non-integer Rational exponent prints as its integer quotient, which parses back to the same Rational
+            # (a floating one parses to a Float); the C++ unparser lowers ``a ** (p / q)`` itself
+            if isinstance(expr.args[1], sympy.Rational):
+                return f"({base}) ** ({expr.args[1].p} / {expr.args[1].q})"
+            return f"({base}) ** ({exponent})"
 
 
 #: Node types an index expression is built from. A whitelist, not a list of floating functions to

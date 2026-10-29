@@ -436,3 +436,131 @@ def test_a_symbolic_stride_survives_a_json_round_trip_of_the_scan(implementation
     loaded(arr_in=arr_in, arr_out=arr_out, K=3)
     expected = _residue_class_scan_oracle(arr_in, 3, ScanOp.SUM)
     assert np.allclose(arr_out, expected), arr_out - expected
+
+
+SN = dace.symbol("SN", dtype=dace.int64)
+SS = dace.symbol("SS", dtype=dace.int64)
+
+#: ``(stride, rows, tail)`` hitting each CPU plan for any team of 2..256 threads (``choose_strided_plan``).
+CPU_PLAN_SHAPES = {"SEQUENTIAL": (5, 300, 2), "ROWS": (33, 2000, 5), "CLASSES": (16384, 5, 3)}
+#: ``(stride, rows, tail)`` hitting each device plan; TILED both with one row chunk and with several.
+GPU_PLAN_SHAPES = {
+    "BLOCKED": (7, 3 * 4096, 4),
+    "TILED_ONE_CHUNK": (100, 300, 7),
+    "TILED_CHUNKED": (100, 5000, 7),
+    "TILED_WIDE": (8192, 600, 11),
+    "PER_CLASS": (65536 + 3, 3, 5),
+}
+
+
+def symbolic_strided_scan(name: str, op: ScanOp, dtype, implementation: str, storage=dace.StorageType.Default):
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol("SS", dace.int64)
+    for array in ("x", "y"):
+        sdfg.add_array(array, [SN], dtype, storage=storage)
+    state = sdfg.add_state()
+    node = Scan("scan", op=op, exclusive=False)
+    node.stride = SS
+    node.implementation = implementation
+    state.add_node(node)
+    state.add_edge(state.add_read("x"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet("x[0:SN]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("y"), None, dace.Memlet("y[0:SN]"))
+    sdfg.validate()
+    return sdfg
+
+
+def plan_operand(op: ScanOp, dtype, n: int, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    if dtype == dace.float64:
+        return rng.uniform(0.999, 1.001, n) if op is ScanOp.PRODUCT else rng.uniform(-1.0, 1.0, n)
+    return rng.choice([1, -1], n).astype(np.int64) if op is ScanOp.PRODUCT else rng.integers(-1000, 1000, n)
+
+
+def class_scan_oracle(values: np.ndarray, stride: int, op: ScanOp) -> np.ndarray:
+    combine = {ScanOp.SUM: np.add, ScanOp.PRODUCT: np.multiply, ScanOp.MIN: np.minimum, ScanOp.MAX: np.maximum}[op]
+    rows = -(-len(values) // stride)
+    padded = np.full(rows * stride, values[0], dtype=values.dtype)
+    padded[: len(values)] = values
+    return combine.accumulate(padded.reshape(rows, stride), axis=0).ravel()[: len(values)]
+
+
+def compile_probe(source: str, *includes: str) -> str:
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with tempfile.TemporaryDirectory() as tmp:
+        cpp, exe = os.path.join(tmp, "p.cpp"), os.path.join(tmp, "p")
+        with open(cpp, "w") as fh:
+            fh.write("".join(f"#include <{h}>\n" for h in ("cstdio", *includes)) + source)
+        include = os.path.join(root, "dace", "runtime", "include")
+        build = subprocess.run(
+            [os.environ.get("CXX", "g++"), "-std=c++20", "-fopenmp", "-I", include, "-o", exe, cpp],
+            capture_output=True,
+            text=True,
+        )
+        assert build.returncode == 0, f"probe did not build: {build.stderr[-400:]}"
+        return subprocess.run([exe], capture_output=True, text=True, timeout=120).stdout.split()
+
+
+def test_cpu_strided_plan_splits_the_wide_axis_and_never_a_small_one():
+    """Wide rows split across classes, narrow rows across rows; a SMALL stride is never CLASSES, a SMALL chain
+    never ROWS, and a short scan or a one-thread team is SEQUENTIAL."""
+    cases = {
+        (4 * 65536, 4, 8, 24): "2 24",  # small stride, long chains: ROWS
+        (128 * 4096, 128, 8, 24): "2 24",
+        (40 * 100000, 40, 8, 256): "2 256",  # SMALL stride on any team: ROWS
+        (1024 * 4096, 1024, 8, 24): "1 24",  # wide rows: CLASSES
+        (8192 * 16, 8192, 8, 24): "1 24",
+        (4096 * 20, 4096, 8, 24): "1 24",  # SMALL chains: CLASSES
+        (4000 * 100, 4000, 8, 256): "1 125",  # neither fills the team: the wider axis, on a team its size
+        (60 * 2000, 60, 8, 2048): "2 1000",
+        (4 * 1000, 4, 8, 24): "0 1",  # short: SEQUENTIAL
+        (128 * 65536, 128, 8, 1): "0 1",  # one thread: SEQUENTIAL
+    }
+    calls = "".join(
+        f"{{ auto c = dace::scan::detail::choose_strided_plan({n}L, {s}L, {b}L, {t}L);"
+        f' std::printf("%d %ld\\n", (int)c.plan, c.team); }}'
+        for n, s, b, t in cases
+    )
+    got = compile_probe(f"int main() {{ {calls} return 0; }}\n", "dace/scan.hpp")
+    assert [" ".join(got[i : i + 2]) for i in range(0, len(got), 2)] == list(cases.values()), got
+
+
+def test_gpu_strided_plan_tiles_a_warp_of_classes_and_blocks_fewer():
+    """Below two warps of classes (a SMALL stride) a block scans each class; from there class tiles by row chunks;
+    from half a device of classes one thread each."""
+    cases = {4: "0", 63: "0", 64: "1", 128: "1", 8192: "1", 65535: "1", 65536: "2", 1 << 20: "2"}
+    calls = "".join(f'std::printf("%d\\n", (int)dace::cuda_scan::plan::choose_strided_plan({s}L));' for s in cases)
+    got = compile_probe(f"int main() {{ {calls} return 0; }}\n", "dace/cuda/scan_plan.h")
+    assert got == list(cases.values()), dict(zip(cases, got))
+
+
+@pytest.mark.parametrize("dtype", [dace.float64, dace.int64], ids=["f64", "i64"])
+@pytest.mark.parametrize("op", [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
+def test_every_cpu_strided_plan_matches_the_residue_class_oracle(op: ScanOp, dtype):
+    """One symbolic-stride CPU scan run at a shape per plan, ragged last row included."""
+    sdfg = symbolic_strided_scan(f"cpu_plans_{op.value}_{dtype.to_string()}", op, dtype, "CPU")
+    csdfg = sdfg.compile()
+    for plan, (stride, rows, tail) in CPU_PLAN_SHAPES.items():
+        n = stride * rows + tail
+        values = plan_operand(op, dtype, n, stride + rows)
+        out = np.zeros_like(values)
+        csdfg(x=values, y=out, SN=n, SS=stride)
+        np.testing.assert_allclose(out, class_scan_oracle(values, stride, op), rtol=1e-9, err_msg=plan)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("dtype", [dace.float64, dace.int64], ids=["f64", "i64"])
+@pytest.mark.parametrize("op", [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
+def test_every_gpu_strided_plan_matches_the_residue_class_oracle(op: ScanOp, dtype):
+    """One symbolic-stride device scan run at a shape per plan, ragged last row included."""
+    import cupy
+
+    sdfg = symbolic_strided_scan(
+        f"gpu_plans_{op.value}_{dtype.to_string()}", op, dtype, "CUDA", dace.StorageType.GPU_Global
+    )
+    csdfg = sdfg.compile()
+    for plan, (stride, rows, tail) in GPU_PLAN_SHAPES.items():
+        n = stride * rows + tail
+        values = plan_operand(op, dtype, n, stride + rows)
+        out = cupy.zeros(n, dtype=values.dtype)
+        csdfg(x=cupy.asarray(values), y=out, SN=n, SS=stride)
+        np.testing.assert_allclose(cupy.asnumpy(out), class_scan_oracle(values, stride, op), rtol=1e-9, err_msg=plan)

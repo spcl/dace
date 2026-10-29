@@ -114,6 +114,37 @@ def test_experimental_codegen_gets_deep_block_with_the_flag_off():
     assert m.gpu_block_size == [512, 1, 1]
 
 
+def make_row_reduction_sdfg(target: str):
+    """A 2-D ``GPU_Device`` map over ``(i, j)`` accumulating ``a[i, j]`` into ``target`` via a WCR."""
+    sdfg = dace.SDFG("rowred")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_array("s", [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("kernel", {"i": "0:N", "j": "0:N"}, schedule=dtypes.ScheduleType.GPU_Device)
+    t = state.add_tasklet("acc", {"inp"}, {"out"}, "out = inp")
+    state.add_memlet_path(state.add_access("a"), me, t, dst_conn="inp", memlet=dace.Memlet("a[i, j]"))
+    state.add_memlet_path(
+        t, mx, state.add_access("s"), src_conn="out", memlet=dace.Memlet(target, wcr="lambda x, y: x + y")
+    )
+    return sdfg, me.map
+
+
+def test_a_row_reduction_gets_a_one_row_block():
+    """``s[i] += a[i, j]``: a 512 x 1 block holds ``i`` fixed, so the row is one accumulator of the block."""
+    sdfg, m = make_row_reduction_sdfg("s[i]")
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        select_gpu_device_block_size(sdfg)
+    assert m.gpu_block_size == [512, 1, 1]
+
+
+def test_a_column_reduction_keeps_the_domain_block():
+    """``s[j] += a[i, j]``: ``j`` runs along the block's lanes, so no block shares one target."""
+    sdfg, m = make_row_reduction_sdfg("s[j]")
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        select_gpu_device_block_size(sdfg)
+    assert m.gpu_block_size != [512, 1, 1]
+
+
 def test_pick_block_size_2d_mild_ratio_leans_toward_the_wider_axis():
     with without_lane_floor():
         m = make_device_map(["i", "j"], [(0, 599, 1), (0, 1023, 1)])

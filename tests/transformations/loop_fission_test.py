@@ -976,6 +976,7 @@ def loop_carried_transient_chain(A: dace.float64[N], B: dace.float64[N]):
     produced and ``tmp[i - 1]`` is consumed in the same iteration. The two
     statements must stay in one loop."""
     tmp = dace.define_local([N], dtype=dace.float64)
+    tmp[0] = A[0]
     for i in range(1, N):
         tmp[i] = A[i] + 1.0
         B[i] = tmp[i - 1] * 2.0

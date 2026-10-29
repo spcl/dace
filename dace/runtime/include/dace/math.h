@@ -432,6 +432,15 @@ static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator, const T& deno
   } else if (numerator == std::numeric_limits<T>::min() && denominator == static_cast<T>(-1)) {
     quotient = numerator;
     remainder = 0;
+  } else if (denominator > 0 && (denominator & (denominator - 1)) == 0) {
+    // A power of two: the arithmetic shift and the two's-complement mask round toward minus infinity, as // and %
+#if defined(__CUDA_ARCH__)
+    const int shift = __ffsll(static_cast<long long>(denominator)) - 1;
+#else
+    const int shift = __builtin_ctzll(static_cast<unsigned long long>(denominator));
+#endif
+    quotient = static_cast<T>(numerator >> shift);
+    remainder = static_cast<T>(numerator & (denominator - 1));
   } else {
     quotient = static_cast<T>(numerator / denominator);
     remainder = static_cast<T>(numerator % denominator);

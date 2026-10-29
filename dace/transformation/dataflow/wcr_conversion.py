@@ -397,6 +397,15 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         return None
 
     @staticmethod
+    def python_update(
+        tasklet: nodes.Tasklet, inedges: Sequence[MultiConnectorEdge], outedge: MultiConnectorEdge
+    ) -> tuple[str, MultiConnectorEdge, ast.expr] | None:
+        """``update`` of a Python tasklet (main's name); ``None`` for any other language."""
+        if tasklet.language is not dtypes.Language.Python:
+            return None
+        return AugAssignToWCR.update(tasklet, inedges, outedge)
+
+    @staticmethod
     def write_increment(tasklet: nodes.Tasklet, target: str, op: str, inc: ast.expr) -> str:
         """Make the update ``target = acc <op> inc`` write ``inc`` alone; returns the WCR of ``op``. ``acc - inc`` is
         ``acc + (-inc)`` exactly, a sum, which atomics and privatization know."""

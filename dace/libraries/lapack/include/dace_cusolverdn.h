@@ -20,9 +20,11 @@
 #endif
 
 #include <cstddef>    // size_t
+#include <map>
 #include <stdexcept>  // std::runtime_error
 #include <string>     // std::to_string
 #include <optional>
+#include <utility>
 
 namespace dace {
 
@@ -59,13 +61,62 @@ class CusolverDnHandle {
     return *handle_;
   }
 
+#if defined(__HIPCC__) || defined(WITH_HIP)
+  using Stream = hipStream_t;
+#else
+  using Stream = cudaStream_t;
+#endif
+
+  // A device buffer of at least ``bytes`` bytes for buffer ``slot`` of the calls on ``stream``, kept across calls:
+  // grown on demand (the synchronizing free waits for the calls still using it), freed with the handle. Calls on
+  // one stream share it, which the stream serializes; distinct streams and slots never do.
+  void* Workspace(int slot, size_t bytes, Stream stream) {
+    Buffer& buffer = workspaces_[{stream, slot}];
+    if (bytes > buffer.bytes || buffer.data == nullptr) {
+      Release(buffer);
+      void* data = nullptr;
+#if defined(__HIPCC__) || defined(WITH_HIP)
+      const bool failed = hipMalloc(&data, bytes ? bytes : 1) != hipSuccess;
+#else
+      const bool failed = cudaMalloc(&data, bytes ? bytes : 1) != cudaSuccess;
+#endif
+      if (failed) {
+        throw std::runtime_error("cuSOLVER workspace allocation of " + std::to_string(bytes) + " bytes failed");
+      }
+      buffer.data = data;
+      buffer.bytes = bytes;
+    }
+    return buffer.data;
+  }
+
   ~CusolverDnHandle() {
+    for (std::map<std::pair<Stream, int>, Buffer>::iterator it = workspaces_.begin(); it != workspaces_.end(); ++it) {
+      Release(it->second);
+    }
     if (handle_) CheckCusolverDnError(cusolverDnDestroy(*handle_));
   }
 
   CusolverDnHandle& operator=(CusolverDnHandle const&) = delete;
 
   std::optional<cusolverDnHandle_t> handle_;
+
+ private:
+  struct Buffer {
+    void* data = nullptr;
+    size_t bytes = 0;
+  };
+
+  static void Release(Buffer& buffer) {
+    if (buffer.data == nullptr) return;
+#if defined(__HIPCC__) || defined(WITH_HIP)
+    (void)hipFree(buffer.data);
+#else
+    (void)cudaFree(buffer.data);
+#endif
+    buffer = Buffer{};
+  }
+
+  std::map<std::pair<Stream, int>, Buffer> workspaces_;
 };
 
 }  // namespace lapack

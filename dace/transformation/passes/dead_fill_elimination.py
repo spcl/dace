@@ -27,6 +27,10 @@ which must overwrite all of it first:
   anywhere in it, whose body chain holds a state that writes the slice ``array[..., v, ...]`` whole;
 * a conditional with an ``else`` whose every branch does, its conditions not reading the array.
 
+A top-level map writing a transient element for element (``np.zeros`` lowered as a map) shrinks to what a copy in
+its state leaves when the copy overwrites all of it but a prefix or suffix of one axis before anything reads it
+(``sink = np.zeros(n + 1); sink[0:n] = c`` zeroes row ``n`` only); it goes when the copy leaves nothing.
+
 Anything else (a partial or indirect write, a conditional one without ``else``, a read in between, a
 nested SDFG writing it) keeps the memset.
 """
@@ -151,6 +155,78 @@ def dead_fill(state: SDFGState, fill: FillLibraryNode) -> nodes.AccessNode | Non
     if not others and overwritten_after(state, zeroed.data, desc):
         return zeroed
     return None
+
+
+def copy_leaves(state: SDFGState, written: nodes.AccessNode, desc: data.Array) -> tuple[int, tuple] | None:
+    """What a copy into ``written`` leaves of ``desc``: ``(axis, (begin, end, 1))`` when it writes the whole array but a
+    prefix or suffix of one axis, ``(-1, ())`` when it writes all of it; ``None`` for anything else."""
+    in_edges = state.in_edges(written)
+    if len(in_edges) != 1 or not isinstance(in_edges[0].src, nodes.AccessNode):
+        return None
+    edge = in_edges[0]
+    if edge.data.dynamic or edge.data.wcr is not None or edge.src.data == written.data:
+        return None
+    subset = edge.data.get_dst_subset(edge, state)
+    if subset is None or len(subset.ranges) != len(desc.shape):
+        return None
+    left: tuple[int, tuple] = (-1, ())
+    for axis, ((begin, end, step), extent) in enumerate(zip(subset.ranges, desc.shape)):
+        low, high = symbolic.simplify(begin) == 0, symbolic.simplify(end + 1 - extent) == 0
+        if low and high and step == 1:
+            continue
+        if left[0] != -1 or step != 1 or low == high:
+            return None
+        left = (axis, (end + 1, extent - 1, 1)) if low else (axis, (0, begin - 1, 1))
+    return left
+
+
+def dead_part_of_fill_map(state: SDFGState, entry: nodes.MapEntry) -> tuple[nodes.AccessNode, tuple] | None:
+    """The array a top-level map writes element for element, and what of it a copy in the same state overwrites before
+    anything reads it: the :func:`copy_leaves` of that copy; ``None`` when nothing of the map's work is dead."""
+    exit_node = state.exit_node(entry)
+    out_edges = state.out_edges(exit_node)
+    if len(out_edges) != 1 or not isinstance(out_edges[0].dst, nodes.AccessNode):
+        return None
+    zeroed = out_edges[0].dst
+    desc = state.sdfg.arrays[zeroed.data]
+    if not desc.transient or not isinstance(desc, data.Array) or isinstance(desc, data.View):
+        return None
+    if any(not e.data.is_empty() for e in state.out_edges(zeroed)) or len(state.in_edges(zeroed)) != 1:
+        return None
+    if not covers_every_element(state, zeroed, desc):
+        return None
+    scope = state.scope_subgraph(entry).nodes()
+    if any(isinstance(n, nodes.CodeNode) and n.has_side_effects(state.sdfg) for n in scope):
+        return None
+    others = [n for n in state.data_nodes() if n.data == zeroed.data and n is not zeroed]
+    reachable = set(state.bfs_nodes(zeroed))
+    for written in others:
+        if written not in reachable:
+            continue
+        left = copy_leaves(state, written, desc)
+        if left is None:
+            continue
+        downstream = set(state.bfs_nodes(written))
+        if all(n is written or n in downstream for n in others):
+            return zeroed, left
+    return None
+
+
+def narrow_fill_map(state: SDFGState, entry: nodes.MapEntry, zeroed: nodes.AccessNode, left: tuple) -> None:
+    """Restrict the map writing ``zeroed`` to the ``left`` part of one axis, or drop the map when nothing is left."""
+    axis, kept = left
+    if axis == -1:
+        scope = state.scope_subgraph(entry).nodes()
+        sources = {e.src for e in state.in_edges(entry)}
+        state.remove_nodes_from([*scope, zeroed])
+        state.remove_nodes_from([n for n in sources if isinstance(n, nodes.AccessNode) and state.degree(n) == 0])
+        return
+    exit_node = state.exit_node(entry)
+    inner = next(iter(state.in_edges(exit_node)))
+    param = str(inner.data.subset.ranges[axis][0])
+    entry.map.range.ranges[entry.map.params.index(param)] = kept
+    outer = state.out_edges(exit_node)[0]
+    outer.data.subset.ranges[axis] = kept
 
 
 def blocks_within(block: ControlFlowBlock) -> Iterator[ControlFlowBlock]:
@@ -309,4 +385,11 @@ class DeadFillElimination(ppl.Pass):
                     state.remove_node(fill)
                     state.remove_node(zeroed)
                     removed += 1
+                for entry in [
+                    n for n, scope in state.scope_dict().items() if isinstance(n, nodes.MapEntry) and scope is None
+                ]:
+                    dead = dead_part_of_fill_map(state, entry)
+                    if dead is not None:
+                        narrow_fill_map(state, entry, *dead)
+                        removed += 1
         return removed or None

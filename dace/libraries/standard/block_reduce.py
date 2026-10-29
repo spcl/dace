@@ -13,7 +13,7 @@ loop, the shared-memory declaration and the broadcast is how two copies drift ap
 placement, which is the part that goes silently wrong rather than loudly broken.
 """
 
-from dace import SDFG, dtypes, nodes
+from dace import SDFG, dtypes, nodes, subsets, symbolic
 from dace.sdfg.state import SDFGState
 
 #: Threads per block for the in-kernel collectives. Four wavefronts on CDNA (64 wide), eight warps
@@ -232,17 +232,23 @@ def in_kernel_block_implementation(node: nodes.LibraryNode, state: SDFGState) ->
 def accumulates_beside(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether the kernel around ``node`` accumulates anywhere but at ``node``: a block collective runs the kernel
     body on every lane of the block, so each lane would add. A map exit only relays an accumulation made inside it.
-    A plain update of what the body reads (``o[b] = o[b] + 1``) accumulates as surely as a WCR does.
+    A plain update of what the body reads (``o[b] = o[b] + 1``) accumulates as surely as a WCR does; a write
+    the body's reads provably miss only repeats the same values on every lane.
     """
 
+    def widest(graph: SDFGState, edge, inside: set[nodes.Node], reading: bool):
+        """The subset ``edge`` moves at the outermost scope inside ``inside``."""
+        path = [e for e in graph.memlet_path(edge) if e.src in inside and e.dst in inside]
+        return (path[0] if reading else path[-1]).data.subset
+
     def accumulates(graph: SDFGState, scope: list[nodes.Node]) -> bool:
-        read = {
-            edge.data.data
-            for inner in scope
-            if inner is not node and isinstance(inner, nodes.CodeNode)
-            for edge in graph.in_edges(inner)
-            if not edge.data.is_empty()
-        }
+        inside, facts = set(scope), graph.sdfg.facts()
+        read: dict[str, list] = {}
+        for inner in scope:
+            if inner is not node and isinstance(inner, nodes.CodeNode):
+                for edge in graph.in_edges(inner):
+                    if not edge.data.is_empty():
+                        read.setdefault(edge.data.data, []).append(widest(graph, edge, inside, True))
         for inner in scope:
             if isinstance(inner, nodes.NestedSDFG) and any(
                 accumulates(nested, nested.nodes()) for nested in inner.sdfg.states()
@@ -253,7 +259,10 @@ def accumulates_beside(node: nodes.LibraryNode, state: SDFGState) -> bool:
             if any(edge.data.wcr is not None for edge in graph.out_edges(inner)):
                 return True
             if isinstance(inner, nodes.Tasklet) and any(
-                edge.data.data in read for edge in graph.out_edges(inner) if not edge.data.is_empty()
+                subsets.intersects(widest(graph, edge, inside, False), other, facts) is not symbolic.Truth.FALSE
+                for edge in graph.out_edges(inner)
+                if not edge.data.is_empty()
+                for other in read.get(edge.data.data, ())
             ):
                 return True
         return False

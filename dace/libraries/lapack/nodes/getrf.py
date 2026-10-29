@@ -122,17 +122,14 @@ class ExpandGetrfCuSolverDn(ExpandGetrfGPUSolver):
     def call(cls, func, ctype, rows, cols, stride) -> str:
         return f"""
                 int __dace_workspace_size = 0;
-                {ctype}* __dace_workspace;
                 cusolverDn{func}_bufferSize(
                     __dace_cusolverDn_handle, {rows}, {cols}, ({ctype}*)_xin,
                     {stride}, &__dace_workspace_size);
-                gpuMalloc<{ctype}>(
-                    &__dace_workspace,
-                    sizeof({ctype}) * __dace_workspace_size);
+                {ctype}* __dace_workspace = static_cast<{ctype}*>(
+                    __state->cusolverDn_handle.Workspace(0, sizeof({ctype}) * __dace_workspace_size, __dace_current_stream));
                 cusolverDn{func}(
                     __dace_cusolverDn_handle, {rows}, {cols}, ({ctype}*)_xin,
                     {stride}, __dace_workspace, _ipiv, _res);
-                gpuFree(__dace_workspace);
                 """
 
 

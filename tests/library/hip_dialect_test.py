@@ -80,7 +80,7 @@ CASES = [
         {"_xin": ("A", [4, 4], F64)},
         {"_xout": ("A", [4, 4], F64), "_res": ("info", [1], dace.int32)},
         "hipSolverDn",
-        ["hipsolverDnDpotrf(", "HIPSOLVER_FILL_MODE_", "gpuMalloc"],
+        ["hipsolverDnDpotrf(", "HIPSOLVER_FILL_MODE_", "__state->hipsolverDn_handle.Workspace("],
     ),
     # A complex operand is handed over as the solver's own complex type
     (

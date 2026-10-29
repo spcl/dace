@@ -584,6 +584,29 @@ def test_a_call_in_a_subscript_indexes_with_its_result():
     assert out[0] == 7
 
 
+@pytest.mark.parametrize("ctype,nptype", [d[1:] for d in INTEGER_DTYPES], ids=[d[0] for d in INTEGER_DTYPES])
+def test_floor_division_and_modulo_by_a_power_of_two_floor(ctype, nptype):
+    """A power-of-two divisor takes a shift and a mask; both must round toward minus infinity as ``//`` and ``%`` do,
+    for a literal divisor and for one only known at run time."""
+
+    @dace.program
+    def by_powers_of_two(a: ctype[64], d: ctype[1], q: ctype[64], r: ctype[64], qd: ctype[64], rd: ctype[64]):
+        for i in dace.map[0:64]:
+            q[i] = a[i] // 8
+            r[i] = a[i] % 8
+            qd[i] = a[i] // d[0]
+            rd[i] = a[i] % d[0]
+
+    a = np.arange(-32, 32, dtype=nptype) * 3
+    outs = [np.zeros(64, dtype=nptype) for _ in range(4)]
+    for divisor in (1, 4, 16, 3, -8):
+        by_powers_of_two(a, np.array([divisor], dtype=nptype), *outs)
+        np.testing.assert_array_equal(outs[0], np.floor_divide(a, 8))
+        np.testing.assert_array_equal(outs[1], np.mod(a, 8))
+        np.testing.assert_array_equal(outs[2], np.floor_divide(a, divisor))
+        np.testing.assert_array_equal(outs[3], np.mod(a, divisor))
+
+
 if __name__ == "__main__":
     for whole_arrays in (True, False):
         for op, reference, label in OPERATORS:

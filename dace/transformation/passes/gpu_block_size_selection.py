@@ -188,6 +188,15 @@ def scope_contains_block_reduce(state: SDFGState, map_entry: nodes.MapEntry) -> 
     return False
 
 
+def row_block_fits(map_entry: nodes.MapEntry) -> bool:
+    """Whether a one-row block can run ``map_entry``: at most three parameters, so each has an axis of its own, and a
+    last one not of a constant extent smaller than a block's lanes."""
+    if len(map_entry.map.params) > 3:
+        return False
+    extent = constant_extent(map_entry.map.range.size()[-1])
+    return extent is None or extent >= TREE_REDUCTION_BLOCK_SIZE[0]
+
+
 def map_is_tree_reduction(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     """True iff this device map's reduction is lowered as an in-block tree-reduce whose depth
     is this map's thread-block size -- either a WCR accumulator write out of the map exit (where the
@@ -198,12 +207,15 @@ def map_is_tree_reduction(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     if cuda_emits_tree_reductions():
         map_exit = state.exit_node(map_entry)
         params = set(map_entry.map.params)
+        # The leading parameters a one-row block (``[512, 1, 1]``) holds fixed: with them, a row of a target
+        # (``out[i] += A[i, j]``) is shared by every thread of the block, as the last parameter alone runs along it
+        leading = set(map_entry.map.params[:-1]) if row_block_fits(map_entry) else set()
         # The block folds a target every thread shares; a scatter (data-indexed, or indexed by the map's own
-        # parameters) has no block-wide fold and keeps the domain-matched block
+        # varying parameters) has no block-wide fold and keeps the domain-matched block
         for edge in state.in_edges(map_exit):
             if edge.data is None or edge.data.wcr is None or edge.data.dynamic or edge.data.subset is None:
                 continue
-            if not {str(sym) for sym in edge.data.subset.free_symbols} & params:
+            if not ({str(sym) for sym in edge.data.subset.free_symbols} & params) - leading:
                 return True
     return scope_contains_block_reduce(state, map_entry)
 

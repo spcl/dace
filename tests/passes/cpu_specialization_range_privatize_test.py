@@ -179,6 +179,14 @@ def elementwise_add(val: dace.float64[N], out: dace.float64[N]):
 
 
 @dace.program
+def scatter_block_loop(idx: dace.int64[N], val: dace.float64[N, K, K], out: dace.float64[M, K, K]):
+    for k in range(N):
+        for a in range(K):
+            for b in range(K):
+                out[idx[k], a, b] += val[k, a, b]
+
+
+@dace.program
 def gather_sum(idx: dace.int64[N], val: dace.float64[M], out: dace.float64[N]):
     for i in dace.map[0:N]:
         out[i] += val[idx[i]]
@@ -275,6 +283,22 @@ def test_iterations_sorted_by_row_match_add_at_and_repeat_bitwise():
     _run(sdfg, idx=idx, val=val, out=second, N=n, M=m)
     assert np.allclose(first, ref, rtol=1e-12, atol=1e-12)
     assert np.array_equal(first, second)
+
+
+def test_block_rows_split_by_no_chunk_are_written_in_place_bitwise():
+    """A blocked-CSR scatter: block row ``r``'s nine products land on ``3r .. 3r + 2`` in any order, and the even
+    chunk boundaries cut block rows. Each boundary moves to the next block row, so every thread alone writes its
+    rows, in iteration order, straight into the shared array: bitwise ``np.add.at``."""
+    sdfg, code = _specialize(scatter_sum, "sum_owned", threads=8)
+    _assert_range_privatized(sdfg, code)
+    rows = NV // 9
+    idx = np.repeat(np.arange(rows), 9) * 3 + np.random.default_rng(9).integers(0, 3, 9 * rows)
+    val = np.random.default_rng(7).random(idx.size)
+    out = np.random.default_rng(8).random(3 * rows)
+    ref = out.copy()
+    np.add.at(ref, idx, val)
+    _run(sdfg, idx=idx, val=val, out=out, N=idx.size, M=3 * rows)
+    assert np.array_equal(out, ref)
 
 
 @pytest.mark.parametrize("n", [0, 1, 3])
@@ -414,6 +438,23 @@ def test_element_corners_lulesh_shape():
     ref = out.copy()
     np.add.at(ref, nodelist.ravel(), val.ravel())
     _run(sdfg, nodelist=nodelist, val=val, out=out, N=NV, M=MV)
+    assert np.allclose(out, ref, rtol=1e-12, atol=1e-12)
+
+
+def test_a_block_row_read_inside_the_block_loops_is_noted_once():
+    """The row ``idx[k]`` is bound inside the ``a, b`` block loops, but reads neither and the loops run (``K`` is
+    positive): the pre-pass reads it once per ``k`` and counts the ``K * K`` writes, with no loop of its own."""
+    sdfg, code = _specialize(scatter_block_loop, "block_loop")
+    _assert_range_privatized(sdfg, code)
+    prepass = code[code.index("__rp0_lo[0] = std") : code.index("__rp0_order.note(")]
+    assert "for (" not in prepass, prepass
+    k = 3
+    idx = _indices("sorted", NV, MV)
+    val = np.random.default_rng(11).random((NV, k, k))
+    out = np.random.default_rng(12).random((MV, k, k))
+    ref = out.copy()
+    np.add.at(ref, idx, val)
+    _run(sdfg, idx=idx, val=val, out=out, N=NV, M=MV, K=k)
     assert np.allclose(out, ref, rtol=1e-12, atol=1e-12)
 
 
@@ -590,6 +631,7 @@ def test_a_row_stride_spelled_as_a_power_is_contiguous():
 if __name__ == "__main__":
     for p, m in [("sorted", MV), ("random", MV), ("reversed", MV), ("equal", MV), ("extremes", MV), ("random", 100003)]:
         test_float_sum_matches_add_at(p, m)
+    test_block_rows_split_by_no_chunk_are_written_in_place_bitwise()
     for n in (0, 1, 3):
         test_fewer_iterations_than_threads(n)
     test_complex_sum_matches_add_at()
@@ -604,6 +646,7 @@ if __name__ == "__main__":
     test_multidimensional_rows_match_add_at("sorted")
     test_multidimensional_rows_match_add_at("random")
     test_element_corners_lulesh_shape()
+    test_a_block_row_read_inside_the_block_loops_is_noted_once()
     test_scatter_under_a_sequential_loop()
     test_clamped_computed_index_is_re_evaluated()
     test_arithmetic_index_of_an_index_array()

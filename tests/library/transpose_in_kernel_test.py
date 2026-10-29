@@ -82,7 +82,11 @@ def _fill_beside(update_reads_output: bool) -> tuple[dace.SDFG, dace.SDFGState, 
     state.add_node(fill)
     state.add_nedge(entry, fill, dace.Memlet())
     state.add_memlet_path(
-        fill, exit_, state.add_write("buf"), src_conn="_fill_out", memlet=dace.Memlet("buf[b, 0:512]")
+        fill,
+        exit_,
+        state.add_write("buf"),
+        src_conn=FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+        memlet=dace.Memlet("buf[b, 0:512]"),
     )
     return sdfg, state, fill
 

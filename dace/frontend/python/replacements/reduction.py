@@ -13,6 +13,7 @@ from dace import data, dtypes, nodes, subsets, symbolic, Memlet, SDFG, SDFGState
 import copy
 import functools
 import numpy
+import operator
 from numbers import Integral, Number
 from typing import Any
 from collections.abc import Callable
@@ -553,6 +554,16 @@ def cumulative_dtype(dtype: dtypes.typeclass) -> dtypes.typeclass:
     return dtype
 
 
+def contiguous_from(desc: data.Array, axis: int) -> bool:
+    """Whether ``desc``'s axes from ``axis`` on are laid out as one contiguous row-major block."""
+    expected = 1
+    for size, stride in zip(reversed(desc.shape[axis:]), reversed(desc.strides[axis:])):
+        if symbolic.simplify(symbolic.pystr_to_symbolic(stride) - expected) != 0:
+            return False
+        expected = expected * size
+    return True
+
+
 def cumulative(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, dtype, op, funcname: str) -> str:
     """``numpy.cumsum``/``numpy.cumprod`` lowered onto the ``Scan`` library node.
 
@@ -562,11 +573,11 @@ def cumulative(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, d
     name the op and wire the memlets. Lowering the recurrence into an explicit loop here would hand
     every backend the shape only one of them wants.
 
-    Only the LAST axis is lowered, which is the one the operand's layout makes contiguous. A scan
-    along an inner axis is a strided chain per outer index; the libnode's ``stride`` property
-    expresses one such chain, not a batch of them. Over a rank > 1 operand the lowering is a Map
-    across the leading axes with the scan inside, which is also where the parallelism is -- the
-    recurrence itself is sequential.
+    Over a rank > 1 operand the lowering is a Map across the axes before ``axis`` with the scan
+    inside, which is also where the parallelism is -- the recurrence itself is sequential. The scan
+    runs over the contiguous block of ``axis`` and every axis after it, with ``stride`` the extent
+    of the trailing axes: each trailing index is its own chain, so an inner-axis scan needs no
+    transpose.
     """
     from dace.libraries.standard.nodes.scan import Scan  # Avoid import loop
 
@@ -588,11 +599,6 @@ def cumulative(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, d
         axis = 0
     else:
         axis = normalize_axes((axis,), rank)[0]
-    if axis != rank - 1:
-        raise NotImplementedError(
-            f"{funcname} is lowered along the last axis only; axis={axis} of a "
-            f"{rank}-D operand is a strided chain per outer index"
-        )
     if dtype is None:
         out_dtype = cumulative_dtype(desc.dtype)
     elif isinstance(dtype, dtypes.typeclass):
@@ -602,11 +608,13 @@ def cumulative(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, d
 
     indices = ", ".join(f"__i{d}" for d in range(rank))
     source, read = a, None
-    if out_dtype != desc.dtype:
+    trailing = desc.shape[axis + 1 :]
+    if out_dtype != desc.dtype or (trailing and not contiguous_from(desc, axis)):
         # The libnode scans in ONE dtype and numpy's rule can widen it, so cast first: the
-        # accumulation then happens at the output width, which is what numpy does. The cast's WRITE
-        # node is reused as the scan's read node -- a second access node for the same array would
-        # leave the two unordered inside one state, which is a race, not a copy.
+        # accumulation then happens at the output width, which is what numpy does. An inner-axis
+        # scan reads its block as one contiguous buffer, so a strided operand is copied the same
+        # way. The cast's WRITE node is reused as the scan's read node -- a second access node for
+        # the same array would leave the two unordered inside one state, which is a race, not a copy.
         source, _ = pv.add_temp_transient(desc.shape, out_dtype, storage=desc.storage)
         _tasklet, _entry, cast_exit = state.add_mapped_tasklet(
             f"{funcname}_cast",
@@ -622,15 +630,17 @@ def cumulative(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, d
 
     out, _out_desc = pv.add_temp_transient(desc.shape, out_dtype, storage=desc.storage)
     scan = Scan(funcname, op=op)
-    length = desc.shape[axis]
+    if trailing:
+        scan.stride = functools.reduce(operator.mul, trailing, 1)
+    block = ", ".join(f"0:{s}" for s in desc.shape[axis:])
     write = state.add_write(out)
-    if rank == 1:
-        state.add_edge(read, None, scan, Scan.INPUT_CONNECTOR_NAME, Memlet.simple(source, f"0:{length}"))
-        state.add_edge(scan, Scan.OUTPUT_CONNECTOR_NAME, write, None, Memlet.simple(out, f"0:{length}"))
+    if axis == 0:
+        state.add_edge(read, None, scan, Scan.INPUT_CONNECTOR_NAME, Memlet.simple(source, block))
+        state.add_edge(scan, Scan.OUTPUT_CONNECTOR_NAME, write, None, Memlet.simple(out, block))
         return out
-    outer = {f"__s{d}": f"0:{s}" for d, s in enumerate(desc.shape[:-1])}
+    outer = {f"__s{d}": f"0:{s}" for d, s in enumerate(desc.shape[:axis])}
     entry, exit_node = state.add_map(f"{funcname}_batch", outer)
-    row = ", ".join([*outer, f"0:{length}"])
+    row = ", ".join([*outer, block])
     state.add_memlet_path(read, entry, scan, dst_conn=Scan.INPUT_CONNECTOR_NAME, memlet=Memlet.simple(source, row))
     state.add_memlet_path(scan, exit_node, write, src_conn=Scan.OUTPUT_CONNECTOR_NAME, memlet=Memlet.simple(out, row))
     return out
