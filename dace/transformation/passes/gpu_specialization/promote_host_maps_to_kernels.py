@@ -11,13 +11,13 @@ The map is parallel by definition, so it becomes the ``GPU_Device`` map: one ker
 scopes nested in it (serial per thread, or a block collective where the node has one).
 
 Only a body the device can run is promoted: data in device-accessible storage (or transients the body
-owns), Python tasklets (a native tasklet may call the host runtime, a copy among them), nested SDFGs of
+owns, or scalars it only reads), Python tasklets (a native tasklet may call the host runtime, a copy among them), nested SDFGs of
 the same kind, and library nodes that have an in-kernel block lowering for their shape.
 """
 
 from typing import Any
 
-from dace import SDFG, SDFGState, dtypes, properties
+from dace import SDFG, SDFGState, data, dtypes, properties
 from dace.libraries.standard.block_reduce import gpu_block_implementation
 from dace.sdfg import nodes
 from dace.transformation import helpers as xfh
@@ -34,6 +34,9 @@ def device_capable(node: nodes.Node, state: SDFGState, owned: bool) -> bool:
     """Whether a kernel can run ``node``; ``owned`` says a transient here belongs to the body."""
     if isinstance(node, nodes.AccessNode):
         desc = node.desc(state.sdfg)
+        if isinstance(desc, data.Scalar) and state.in_degree(node) == 0:
+            # A kernel takes a scalar it only reads by value, wherever it lives
+            return True
         if owned and not desc.transient and desc.storage == dtypes.StorageType.Default:
             # A nested SDFG's argument has no storage of its own: it is the caller's array, checked out there.
             return True
