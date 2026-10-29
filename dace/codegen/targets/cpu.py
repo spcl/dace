@@ -280,6 +280,16 @@ def gpu_block_reduction_write_slot(subset, base, length):
     return offset
 
 
+def block_invariant_params(scope_entry: nodes.MapEntry, block_dims: tuple[int, int, int]) -> set[str]:
+    """The parameters of a kernel map every thread of one block shares: those whose thread-block extent is 1 (the
+    last parameter runs along ``x``, the one before along ``y``, then ``z``), each the block's base. A map of more
+    parameters, folded onto the three axes, has none."""
+    params = scope_entry.map.params
+    if len(params) > 3:
+        return set()
+    return {param for param, extent in zip(reversed(params), block_dims) if extent == 1}
+
+
 def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEntry, block_dims, frame) -> list:
     """Scalar/array map-exit WCR accumulators under ``scope_entry`` that fold via ``gpucub::BlockReduce``
     + one atomic per block -- the GPU mirror of an OpenMP ``reduction(op:var)`` clause. Shared by both
@@ -289,8 +299,8 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
     commits a single atomic (versus one contended atomic per thread). A scalar accumulator is one slot
     (``m == 1``); a length-``m`` reduced subset is folded element-wise by the drain loop.
 
-    The guard is deliberately narrow: a single, loop-invariant, compile-time-length 1-D span (a
-    param-dependent subset is a scatter, not a reduction), a scalar (non-vector) built-in op with a
+    The guard is deliberately narrow: a single, block-invariant, compile-time-length 1-D span (one indexed by a
+    parameter the threads of a block vary is a scatter, not a reduction), a scalar (non-vector) built-in op with a
     known identity element, and compile-time-constant block dimensions (cub templates on them). Anything
     else keeps the per-thread atomic fallback.
 
@@ -328,9 +338,11 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
         if redtype == dtypes.ReductionType.Custom or identity is None:
             continue  # only built-in ops with a known identity element
         base, end, _ = subset.ranges[0]
-        # Loop-invariant target: indexed by nothing this scope defines (its parameters, a value read inside it)
+        # Block-invariant target: indexed by nothing this scope defines (its parameters, a value read inside it)
+        # but the parameters every thread of one block shares
         if outer_symbols is None:
             outer_symbols = set(map(str, frame.symbols_defined_at(state, scope_entry))) - map_params
+            outer_symbols |= block_invariant_params(scope_entry, (block_x, block_y, block_z))
         shared = iedge.data.dynamic or any(str(s) not in outer_symbols for s in subset.free_symbols)
         if shared:
             # A scatter into a small array: privatized per block in shared memory instead (``shared_scatter_target``)
