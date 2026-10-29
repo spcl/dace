@@ -10,8 +10,9 @@ from dace.codegen.instrumentation import InstrumentationProvider
 from dace.codegen.targets import framecode
 from dace.config import Config
 from dace.sdfg import SDFG, infer_types
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.multiple_buffering import LowerMultipleBuffering
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
@@ -294,6 +295,12 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # It is being done here to ensure that for now the semantics of the setting are preserved and legacy tests,
         # where explicit control flow was not used, continue to work as expected.
         FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+
+    # Lower multiple buffering into plain loops, before anything below reads or copies the loop bodies
+    if any(
+        isinstance(cfg, LoopRegion) and cfg.pipeline_depth >= 2 for cfg in sdfg.all_control_flow_regions(recursive=True)
+    ):
+        LowerMultipleBuffering().apply_pass(sdfg, {})
 
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)
