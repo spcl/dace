@@ -12,7 +12,7 @@ from dace.libraries import hip_dialect
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import Getrf, Getrs, environments
 from dace.libraries.linalg.nodes.transpose import Transpose
-from dace.libraries.standard.helper import call_scratch_lifetime, host_accessible_info_storage
+from dace.libraries.standard.helper import call_scratch_lifetime, host_accessible_info_storage, scratch_storage
 from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
@@ -127,7 +127,14 @@ def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
 
     ain_arr = sdfg.add_array("_ain", ain_shape, dtype=ain_dtype, strides=ain_strides)
     lifetime = call_scratch_lifetime(node, parent_state, parent_sdfg, n, rhs)
-    ainout_arr = sdfg.add_array("_ainout", [n, n], dtype=ain_dtype, transient=True, storage=storage, lifetime=lifetime)
+    ainout_arr = sdfg.add_array(
+        "_ainout",
+        [n, n],
+        dtype=ain_dtype,
+        transient=True,
+        storage=scratch_storage(storage, lifetime),
+        lifetime=lifetime,
+    )
     bin_arr = sdfg.add_array("_bin", bin_shape, dtype=bin_dtype, strides=bin_strides)
     if single_rhs:
         binout_shape = [n]
@@ -136,14 +143,26 @@ def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
     else:
         binout_shape = [n, rhs]
     binout_arr = sdfg.add_array(
-        "_binout", binout_shape, dtype=out_dtype, transient=True, storage=storage, lifetime=lifetime
+        "_binout",
+        binout_shape,
+        dtype=out_dtype,
+        transient=True,
+        storage=scratch_storage(storage, lifetime),
+        lifetime=lifetime,
     )
     bout_arr = sdfg.add_array("_bout", out_shape, dtype=out_dtype, strides=out_strides)
-    ipiv_arr = sdfg.add_array("_pivots", [n], dtype=dace.int32, transient=True, storage=storage, lifetime=lifetime)
+    ipiv_arr = sdfg.add_array(
+        "_pivots", [n], dtype=dace.int32, transient=True, storage=scratch_storage(storage, lifetime), lifetime=lifetime
+    )
     # cuSOLVER writes ``devInfo`` through a raw pointer; the status scalar is host-checkable, so it
     # must live in host-accessible (pinned) memory instead of the input's GPU_Global storage.
     info_arr = sdfg.add_array(
-        "_info", [1], dtype=dace.int32, transient=True, storage=host_accessible_info_storage(storage), lifetime=lifetime
+        "_info",
+        [1],
+        dtype=dace.int32,
+        transient=True,
+        storage=scratch_storage(host_accessible_info_storage(storage), lifetime),
+        lifetime=lifetime,
     )
 
     state = sdfg.add_state(f"{node.label}_state")

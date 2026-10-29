@@ -16,6 +16,7 @@ from dace.libraries.standard.helper import (
     GPU_RESIDENT_STORAGES,
     call_scratch_lifetime,
     host_accessible_info_storage,
+    scratch_storage,
 )
 from dace.transformation.transformation import ExpandTransformation
 
@@ -47,8 +48,22 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         ain_arr = a_arr
         a_arr = sdfg.add_array("_aout", out_shape, dtype=out_dtype, strides=out_strides)
     lifetime = call_scratch_lifetime(node, parent_state, parent_sdfg, n)
-    ipiv_arr = sdfg.add_array("_pivots", [n], dtype=dace.int32, transient=True, lifetime=lifetime)
-    info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True, storage=info_storage, lifetime=lifetime)
+    ipiv_arr = sdfg.add_array(
+        "_pivots",
+        [n],
+        dtype=dace.int32,
+        transient=True,
+        storage=scratch_storage(dace.StorageType.Default, lifetime),
+        lifetime=lifetime,
+    )
+    info_arr = sdfg.add_array(
+        "_info",
+        [1],
+        dtype=dace.int32,
+        transient=True,
+        storage=scratch_storage(info_storage, lifetime),
+        lifetime=lifetime,
+    )
 
     state = sdfg.add_state(f"{node.label}_state")
 
@@ -104,15 +119,39 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     if not node.overwrite:
         ain_arr = a_arr
         a_arr = sdfg.add_array(
-            "_ainout", [n, n], dtype=in_dtype, transient=True, storage=operand_storage, lifetime=lifetime
+            "_ainout",
+            [n, n],
+            dtype=in_dtype,
+            transient=True,
+            storage=scratch_storage(operand_storage, lifetime),
+            lifetime=lifetime,
         )
         b_arr = sdfg.add_array("_aout", out_shape, dtype=out_dtype, strides=out_strides)
     else:
-        b_arr = sdfg.add_array("_b", [n, n], dtype=dtype, transient=True, storage=operand_storage, lifetime=lifetime)
+        b_arr = sdfg.add_array(
+            "_b",
+            [n, n],
+            dtype=dtype,
+            transient=True,
+            storage=scratch_storage(operand_storage, lifetime),
+            lifetime=lifetime,
+        )
     ipiv_arr = sdfg.add_array(
-        "_pivots", [n], dtype=dace.int32, transient=True, storage=operand_storage, lifetime=lifetime
+        "_pivots",
+        [n],
+        dtype=dace.int32,
+        transient=True,
+        storage=scratch_storage(operand_storage, lifetime),
+        lifetime=lifetime,
     )
-    info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True, storage=info_storage, lifetime=lifetime)
+    info_arr = sdfg.add_array(
+        "_info",
+        [1],
+        dtype=dace.int32,
+        transient=True,
+        storage=scratch_storage(info_storage, lifetime),
+        lifetime=lifetime,
+    )
 
     state = sdfg.add_state(f"{node.label}_state")
 

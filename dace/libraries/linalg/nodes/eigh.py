@@ -22,7 +22,7 @@ from dace.libraries.lapack.nodes.syevd import Syevd
 from dace.libraries.linalg.nodes.cholesky import GPU_SOLVERS, SOLVER_BLAS, device_solver_implementation
 from dace.libraries.linalg.nodes.solve import restride
 from dace.libraries.linalg.nodes.transpose import Transpose
-from dace.libraries.standard.helper import call_scratch_lifetime, host_accessible_info_storage
+from dace.libraries.standard.helper import call_scratch_lifetime, host_accessible_info_storage, scratch_storage
 from dace.optionals import required
 from dace.sdfg.narrowing import as_range, as_typeclass
 from dace.transformation.transformation import ExpandTransformation
@@ -88,7 +88,12 @@ def make_vendor_sdfg(node: "Eigh", parent_state: SDFGState, parent_sdfg: SDFG, i
     v_arr = sdfg.add_array("_v", v_op.shape, dtype, strides=v_op.strides, storage=v_op.storage)
     lifetime = call_scratch_lifetime(node, parent_state, parent_sdfg, *a_op.shape)
     info_arr = sdfg.add_array(
-        "_info", [1], dace.int32, transient=True, storage=host_accessible_info_storage(storage), lifetime=lifetime
+        "_info",
+        [1],
+        dace.int32,
+        transient=True,
+        storage=scratch_storage(host_accessible_info_storage(storage), lifetime),
+        lifetime=lifetime,
     )
     drop_unused_outputs(node, parent_state, sdfg)
     state = sdfg.add_state(f"{node.label}_state")
@@ -97,7 +102,9 @@ def make_vendor_sdfg(node: "Eigh", parent_state: SDFGState, parent_sdfg: SDFG, i
     syevd.implementation = implementation
     a, v = state.add_read("_a"), state.add_write("_v")
     if implementation in GPU_SOLVERS:
-        work_arr = sdfg.add_array("_vt", a_op.shape, dtype, transient=True, storage=storage, lifetime=lifetime)
+        work_arr = sdfg.add_array(
+            "_vt", a_op.shape, dtype, transient=True, storage=scratch_storage(storage, lifetime), lifetime=lifetime
+        )
         work_in, work_out = state.add_access("_vt"), state.add_access("_vt")
         add_transpose(state, "AT", a, work_in, implementation)
         add_transpose(state, "VT", work_out, v, implementation)

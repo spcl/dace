@@ -107,6 +107,17 @@ def call_scratch_lifetime(
     return dtypes.AllocationLifetime.Persistent
 
 
+def scratch_storage(storage: dtypes.StorageType, lifetime: dtypes.AllocationLifetime) -> dtypes.StorageType:
+    """``storage`` for scratch of ``lifetime``: a ``Persistent`` one left to storage inference (``Default``, or a
+    ``Register`` operand's) is placed on the heap, the only host storage a persistent allocation may take."""
+    if lifetime == dtypes.AllocationLifetime.Persistent and storage in (
+        dtypes.StorageType.Default,
+        dtypes.StorageType.Register,
+    ):
+        return dtypes.StorageType.CPU_Heap
+    return storage
+
+
 def collapse_shape_and_strides(
     subset: dace.subsets.Range, strides: list[dace.symbolic.SymExpr]
 ) -> tuple[list[dace.symbolic.SymExpr], list[dace.symbolic.SymExpr]]:
