@@ -294,15 +294,20 @@ class ExpandTransposeGPUBLAS(ExpandTransformation):
         func = func + "geam"
         cdtype = cls.cast_ctype(cdtype)
 
-        alpha = f"__state->{cls.handle_field}.Constants().{factort}Pone()"
-        beta = f"__state->{cls.handle_field}.Constants().{factort}Zero()"
+        # Host coefficients under host pointer mode: under device mode rocBLAS copies both back to the host (a
+        # synchronizing copy each) to test for a quick return.
+        one, zero = ("{1, 0}", "{0, 0}") if factort.startswith("Complex") else ("1", "0")
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
 
         code = (
             cls.environments[0].handle_setup_code(node)
-            + f"""{cls.check_error}({cls.funcname(func)}(
+            + f"""{cls.check_error}(cublasSetPointerMode({cls.handle}, CUBLAS_POINTER_MODE_HOST));
+                const {cdtype} __one = {one};
+                const {cdtype} __zero = {zero};
+                {cls.check_error}({cls.funcname(func)}(
                     {cls.handle}, {cls.op("T")}, {cls.op("N")},
-                    {sym2cpp(m)}, {sym2cpp(n)}, {alpha}, ({cdtype}*)_inp, {lda}, {beta}, ({cdtype}*)_inp, {sym2cpp(m)}, ({cdtype}*)_out, {ldb}));
+                    {sym2cpp(m)}, {sym2cpp(n)}, &__one, ({cdtype}*)_inp, {lda}, &__zero, ({cdtype}*)_inp, {sym2cpp(m)}, ({cdtype}*)_out, {ldb}));
+                {cls.check_error}(cublasSetPointerMode({cls.handle}, CUBLAS_POINTER_MODE_DEVICE));
                 """
         )
 

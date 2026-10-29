@@ -476,39 +476,30 @@ class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
 
         call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ""
-        # Handle alpha / beta. cuBLAS reads and write C in place through the one pointer this
-        # call already takes, so a nonzero beta needs no separate C connector here -- only the value
-        # passed to the call, exactly like the CPU expansions. Both coefficients are evaluated the
-        # same way, independently: a 0/1 compile-time value uses the preallocated device constant,
-        # anything else switches the handle to host pointer mode for this call.
-        constants = {
-            1.0: f"__state->{cls.dialect.handle_field}.Constants().{factort}Pone()",
-            0.0: f"__state->{cls.dialect.handle_field}.Constants().{factort}Zero()",
-        }
-        if node.alpha not in constants or node.beta not in constants:
-            if isinstance(node.alpha, complex):
-                alpha_lit = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
-            else:
-                alpha_lit = f"{dtype.ctype}({node.alpha})"
-            if isinstance(node.beta, complex):
-                beta_lit = f"{dtype.ctype}({node.beta.real}, {node.beta.imag})"
-            else:
-                beta_lit = f"{dtype.ctype}({node.beta})"
-
-            # Set pointer mode to host
-            call_prefix += f"""{cls.dialect.check_error}(
-                {cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_host}));
-                {dtype.ctype} alpha = {alpha_lit};
-                {dtype.ctype} beta = {beta_lit};
-                """
-            call_suffix += f"""
-    {cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
-                """
-            beta = f"({cdtype} *)&beta"
-            alpha = f"({cdtype} *)&alpha"
+        # Alpha and beta go in as host values, under host pointer mode for this call: under device mode rocBLAS
+        # copies both back to the host (a synchronizing copy each) to test for a quick return. cuBLAS reads and
+        # writes C in place through the one pointer this call already takes, so a nonzero beta needs no separate C
+        # connector here.
+        if isinstance(node.alpha, complex):
+            alpha_lit = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
         else:
-            alpha = constants[node.alpha]
-            beta = constants[node.beta]
+            alpha_lit = f"{dtype.ctype}({node.alpha})"
+        if isinstance(node.beta, complex):
+            beta_lit = f"{dtype.ctype}({node.beta.real}, {node.beta.imag})"
+        else:
+            beta_lit = f"{dtype.ctype}({node.beta})"
+
+        # Set pointer mode to host
+        call_prefix += f"""{cls.dialect.check_error}(
+            {cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_host}));
+            {dtype.ctype} alpha = {alpha_lit};
+            {dtype.ctype} beta = {beta_lit};
+            """
+        call_suffix += f"""
+    {cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
+            """
+        beta = f"({cdtype} *)&beta"
+        alpha = f"({cdtype} *)&alpha"
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
