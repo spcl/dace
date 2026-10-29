@@ -4,7 +4,6 @@
 import pytest
 
 import dace
-from dace.codegen import common
 from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -72,11 +71,7 @@ def test_the_queue_follows_the_warp_size(backend: str, warp_size: int, state: in
     with dace.config.temporary_config():
         dace.config.Config.set("compiler", "cuda", "backend", value=backend)
         dace.config.Config.set("compiler", "cuda", "dynamic_map_block_size", value="128,1,1")
-        common.get_gpu_backend.cache_clear()
-        try:
-            code = "\n".join(c.code for c in sdfg.generate_code())
-        finally:
-            common.get_gpu_backend.cache_clear()
+        code = "\n".join(c.code for c in sdfg.generate_code())
     assert f"dace::DynamicMap<true, 128, {warp_size}, int>::block_claim(" in code
     assert f"__shared__ int __dace_dynmap_state[{state}];" in code
     # A warp barrier publishes the lists of the warps on CUDA
