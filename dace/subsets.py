@@ -180,6 +180,42 @@ def symbolic_range_tuple(value):
     return tuple(tuple_to_symexpr(v) for v in value)
 
 
+def contiguous_run_length(
+    sizes: Sequence[symbolic.SymbolicType], strides: Sequence[symbolic.SymbolicType]
+) -> symbolic.SymbolicType | None:
+    """
+    The number of elements of a box with the given sizes, addressed with the given element strides (including any
+    step), if the box covers one uninterrupted run of memory, otherwise ``None``.
+
+    The run is contiguous exactly if the dimensions with more than one element can be ordered so that the first has
+    stride 1 and each next one has the stride of the extent the previous ones cover (``stride_k == size_{k-1} *
+    stride_{k-1}``), i.e., the box enumerates every address of its span once. This holds for any layout (C, Fortran,
+    permuted or padded) and ignores dimensions with one element. Comparing the span ``last - first + 1`` with the
+    volume alone is not enough: overlapping strides (e.g., sizes ``[2, 2, 2]`` and strides ``[1, 1, 5]``) match the
+    volume without being contiguous. Symbolic sizes and strides are compared structurally, so the result is ``None``
+    whenever contiguity cannot be shown that way.
+
+    :param sizes: The number of elements in each dimension.
+    :param strides: The distance in elements between consecutive elements of each dimension.
+    :return: The number of elements of the run, or ``None`` if the box is not (provably) contiguous.
+    """
+    wide = []
+    for size, stride in zip(sizes, strides):
+        if (size == 1) == True:
+            continue
+        if (size == 0) == True:
+            return None
+        wide.append((size, stride))
+    extent = sp.Integer(1)
+    while wide:
+        idx = next((i for i, (_, stride) in enumerate(wide) if (stride == extent) == True), None)
+        if idx is None:
+            return None
+        size, _ = wide.pop(idx)
+        extent = extent * size
+    return extent
+
+
 @dace.serialize.serializable
 class Range(Subset):
     """Subset defined in terms of a fixed range."""
@@ -827,13 +863,14 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
     def replace(self, repl_dict):
+        keys_by_name = symbolic.keys_by_free_name(repl_dict)
         for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges, self.tile_sizes)):
             self.ranges[i] = (
-                rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
-                re.subs(repl_dict) if symbolic.issymbolic(re) else re,
-                rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs,
+                symbolic.subs_reachable(rb, repl_dict, keys_by_name),
+                symbolic.subs_reachable(re, repl_dict, keys_by_name),
+                symbolic.subs_reachable(rs, repl_dict, keys_by_name),
             )
-            self.tile_sizes[i] = ts.subs(repl_dict) if symbolic.issymbolic(ts) else ts
+            self.tile_sizes[i] = symbolic.subs_reachable(ts, repl_dict, keys_by_name)
 
     def intersects(self, other: "Range", facts: symbolic.Facts) -> symbolic.Truth:
         """Whether this range and ``other`` overlap under ``facts``."""
@@ -857,73 +894,28 @@ class Range(Subset):
             unknown = unknown or symbolic.Truth.UNKNOWN in truths
         return symbolic.Truth.UNKNOWN if unknown else symbolic.Truth.TRUE
 
+    def contiguous_length(self, strides: Sequence[symbolic.SymbolicType]) -> symbolic.SymbolicType | None:
+        """
+        The number of elements of this subset if it addresses one uninterrupted run of memory of an array with the
+        given strides, otherwise ``None`` (see :func:`contiguous_run_length`; steps are taken into account, tiled
+        ranges are never contiguous).
+
+        :param strides: The element strides of the array.
+        :return: The number of elements of the run, or ``None`` if the subset is not (provably) contiguous.
+        """
+        if any((ts == 1) != True for ts in self.tile_sizes):
+            return None
+        return contiguous_run_length(self.size(), [step * stride for (_, _, step), stride in zip(self.ranges, strides)])
+
     def is_contiguous_subset(self, array: "dace.data.Array") -> bool:
         """
-        Check if this subset represents a contiguous subset of the array descriptor provided.
+        Check if this subset addresses one uninterrupted run of memory of the array descriptor provided, in any
+        layout (see :meth:`contiguous_length`).
 
-        For a subset to be contiguous:
-        - In Fortran layout: once a dimension is partial, all subsequent dimensions must have length 1
-        - In C layout: same rule applies after reversing dimensions
-
-        Args:
-            array: array descriptor to check against
-
-        Returns:
-            True if the subset addresses one uninterrupted run of memory: the whole array has a
-            packed layout, or -- even on a non-packed (padded) descriptor -- the subset is a 1D
-            slice (at most one dimension has size > 1, and that dimension has stride 1).
+        :param array: The array descriptor to check against.
+        :return: True if the subset is (provably) contiguous in the array.
         """
-        # Any step size != 1 -> not contiguous
-        if any(s != 1 for (_, _, s) in self):
-            return False
-
-        # Special case for 1D subsets.
-        if self.dims() == 1:
-            return (array.strides[0] == 1) == True
-
-        # Special case for 1D slicing, e.g. `a[idx0, b:e, idx2]`, i.e. there is only one dimensions
-        #  in which the size of the subset is larger than 1 and in all others it is 1. The subset
-        #  is continuous if that dimension has stride 1.
-        is_1d_slice = False
-        for copy_elem, stride in zip(self.size(), array.strides):
-            if (copy_elem == 1) == True:
-                continue
-            if (copy_elem == 0) == True:
-                return False  # Strange case, does it happen?
-            if is_1d_slice:
-                is_1d_slice = False  # There are multiple >1 size dimensions.
-                break
-            if (stride == 1) == False:
-                break  # The >1 size dimension is not associated to stride 1.
-            is_1d_slice = True
-        else:
-            if is_1d_slice:
-                return True
-
-        # Determine array layout and calculate expression lengths accordingly
-        if array.is_packed_fortran_strides():
-            # Fortran layout: first dimension varies fastest
-            expr_lens = [((e + 1) - b) for (b, e, s) in self]
-            shape_dims = array.shape
-        elif array.is_packed_c_strides():
-            # C layout: last dimension varies fastest, so reverse the order
-            expr_lens = list(reversed([((e + 1) - b) for (b, e, s) in self]))
-            shape_dims = list(reversed(array.shape))
-        else:
-            return False
-
-        # Check contiguity: once we find a partial dimension, all remaining must be length 1
-        for i, (expr_len, dim) in enumerate(zip(expr_lens, shape_dims)):
-            # Check if this dimension is partial (less than full shape)
-            if expr_len != dim:
-                # This dimension is partial - all remaining dimensions must be length 1
-                if any(expr_len != 1 for expr_len in expr_lens[i + 1 :]):
-                    return False
-                # All remaining dimensions are 1, so this is contiguous
-                return True
-
-        # All dimensions are full size - this is contiguous
-        return True
+        return self.contiguous_length(array.strides) is not None
 
 
 class SubsetUnion(Subset):

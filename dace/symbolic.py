@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import math
 import pickle
 import re
 from collections import Counter
@@ -559,7 +560,11 @@ def _typed_constant_suffix(dtype: dtypes.typeclass) -> str:
 
 def _format_float(value: float) -> str:
     # Shortest round-trip form, keeping one fractional digit (5.0, not 5 or 5.000...).
-    s = f"{float(value):.15g}"
+    f = float(value)
+    s = f"{f:.15g}"
+    if float(s) != f:
+        # 15 significant digits do not round-trip every double (``0.1 + 0.2``)
+        s = repr(f)
     if "e" in s or "E" in s:
         return s
     if "." not in s:
@@ -995,6 +1000,39 @@ def scalars(expr: SymbolicType | str, descriptors: dict[str, Any]) -> set[str]:
     return {str(s) for s in expr.free_symbols if isinstance(descriptors.get(str(s)), data.Scalar)}
 
 
+def substitutable_names(expr: SymbolicType | SymExpr | str) -> set[str]:
+    """Names a ``subs`` key can match in ``expr``: free symbols, functions and subscripted containers."""
+    if isinstance(expr, SymExpr):
+        return substitutable_names(expr.expr) | substitutable_names(expr.approx)
+    return free_symbols_and_functions(expr) | arrays(expr)
+
+
+def keys_by_free_name(repl_dict: dict) -> dict[str, list]:
+    """Groups the keys of ``repl_dict`` under every name they mention, for :func:`subs_reachable`."""
+    keys_by_name: dict[str, list] = {}
+    for key in repl_dict:
+        for name in substitutable_names(key):
+            keys_by_name.setdefault(name, []).append(key)
+    return keys_by_name
+
+
+def subs_reachable(expr, repl_dict: dict, keys_by_name: dict[str, list]):
+    """``expr.subs(repl_dict)`` with only the entries that can reach ``expr``, directly or through the value of another
+    entry: SymPy walks ``expr`` once per entry it is given. ``keys_by_name`` is ``keys_by_free_name(repl_dict)``."""
+    if not issymbolic(expr):
+        return expr
+    reachable: dict = {}
+    pending = list(substitutable_names(expr))
+    while pending:
+        for key in keys_by_name.get(pending.pop(), ()):
+            if key not in reachable:
+                reachable[key] = None
+                pending.extend(substitutable_names(repl_dict[key]))
+    if not reachable:
+        return expr
+    return expr.subs({key: value for key, value in repl_dict.items() if key in reachable})
+
+
 def is_undefined(expr: SymbolicType | str) -> bool:
     """
     Checks if a symbolic expression contains any UndefinedSymbol atoms.
@@ -1023,6 +1061,9 @@ def sympy_numeric_fix(expr):
     """Fix for printing out integers as floats with ".00000000".
     Converts the float constants in a given expression to integers."""
     if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
+        # A finite float stays a float: ``1.0`` collapsed to ``1`` turns ``min(x, 1.0)`` into a mixed int/double Min
+        if isinstance(expr, (sympy.Float, float, numpy.floating)) and math.isfinite(float(expr)):
+            return expr if isinstance(expr, sympy.Float) else sympy.Float(expr)
         try:
             # NOTE: If expr is ~ 1.8e308, i.e. infinity, `numpy.int64(expr)`
             # will throw OverflowError (which we want).
@@ -2586,9 +2627,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
     def _print_Float(self, expr):
         nf = sympy_numeric_fix(expr)
-        if isinstance(nf, int) or nf != expr:
-            return self._print(nf)
-        return super()._print_Float(expr)
+        if not math.isfinite(float(nf)):
+            # Beyond a double (Fortran ``HUGE``): sympy's own decimal, not ``inf``
+            return super()._print_Float(expr)
+        return _format_float(float(nf))
 
     def _print_TypedConstant(self, expr):
         value = self._print(expr.value)

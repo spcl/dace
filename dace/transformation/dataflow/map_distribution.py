@@ -126,7 +126,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
         root_tasklet = graph.add_tasklet("_set_root_", {}, {"__out"}, "__out = 0")
         graph.add_edge(root_tasklet, "__out", root_node, None, dace.Memlet.simple(root_name, "0"))
 
-        from dace.libraries.mpi import Bcast, Gather, Scatter
+        from dace.libraries.comm import Bcast, Gather, Scatter
 
         inputs = set()
         for src, _, _, _, m in graph.in_edges(map_entry):
@@ -344,7 +344,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
         root_tasklet = graph.add_tasklet("_set_root_", {}, {"__out"}, "__out = 0")
         graph.add_edge(root_tasklet, "__out", root_node, None, dace.Memlet.simple(root_name, "0"))
 
-        from dace.libraries.mpi import Bcast
+        from dace.libraries.comm import Bcast
         from dace.libraries.pblas import BlockCyclicGather, BlockCyclicScatter
 
         inputs = set()

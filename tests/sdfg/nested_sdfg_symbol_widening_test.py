@@ -1,4 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+import pathlib
+import tempfile
+
 import numpy as np
 
 import dace
@@ -117,6 +121,28 @@ def test_unsigned_value_keeps_a_signed_declaration_signed():
     assert np.array_equal(A, np.full(8, -5.0)), A
 
 
+def test_a_nested_sdfg_declares_a_parent_symbol_with_the_parent_type(tmp_path):
+    """The nested SDFG took the type of the symbol object in the parent's descriptor (``int``) over the parent's
+    declaration (``int64``). Both levels agree in memory, where the objects are shared, but a saved SDFG re-types each
+    descriptor from its own level's declaration, and the reloaded connector no longer matched (ICON velocity
+    tendencies after LoopToMap)."""
+    sdfg = dace.SDFG("parent_declares_n")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("A", ["n"], dace.float64)  # the shape holds an untyped symbol object
+    inner = dace.SDFG("body")
+    inner.arrays["A"] = copy.deepcopy(sdfg.arrays["A"])  # as LoopToMap nests a loop body
+    body = inner.add_state()
+    one = body.add_tasklet("one", {}, {"o"}, "o = 1")
+    body.add_edge(one, "o", body.add_write("A"), None, dace.Memlet("A[0]"))
+    state = sdfg.add_state()
+    nsdfg = state.add_nested_sdfg(inner, {}, {"A"})
+    state.add_edge(nsdfg, "A", state.add_write("A"), None, dace.Memlet("A[0:n]"))
+
+    assert inner.symbols["n"] == dace.int64, inner.symbols["n"]
+    sdfg.save(str(tmp_path / "parent_declares_n.sdfg"))
+    dace.SDFG.from_file(str(tmp_path / "parent_declares_n.sdfg")).validate()
+
+
 if __name__ == "__main__":
     test_symbol_mapped_to_a_wider_map_parameter_is_widened()
     test_value_beyond_32_bits_reaches_the_nested_sdfg()
@@ -124,3 +150,4 @@ if __name__ == "__main__":
     test_explicitly_narrow_declaration_is_widened_within_its_kind()
     test_integer_symbol_mapped_to_a_float_stays_integer()
     test_unsigned_value_keeps_a_signed_declaration_signed()
+    test_a_nested_sdfg_declares_a_parent_symbol_with_the_parent_type(pathlib.Path(tempfile.mkdtemp()))
