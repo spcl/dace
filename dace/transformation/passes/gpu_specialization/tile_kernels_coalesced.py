@@ -27,7 +27,7 @@ Re-blocking any of these after the block selection conflicts with what was sized
 
 from typing import Any
 
-from dace import SDFG, SDFGState, dtypes, properties, subsets
+from dace import SDFG, SDFGState, dtypes, properties, subsets, symbolic
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import helpers as xfh
@@ -112,6 +112,15 @@ class TileKernelsCoalesced(ppl.Pass):
             sizes[rest[-1]] = bz
         else:
             bz = 1
+        # A tile wider than a constant extent would carry its overhang into the memlets around the grid
+        for param, extent in zip(kernel.map.params, kernel.map.range.size()):
+            extent = symbolic.simplify(extent)
+            if param in sizes and not symbolic.issymbolic(extent) and int(extent) < sizes[param]:
+                sizes[param] = int(extent)
+        bx, by = sizes[coalesced], -(-sizes[outer] // factor)
+        factor = min(factor, sizes[outer])
+        if bz > 1:
+            bz = sizes[rest[-1]]
         MapTiling.apply_to(
             state.sdfg,
             options={
