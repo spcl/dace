@@ -49,6 +49,7 @@ from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import MAP_DIMENSIONS, PARALLEL
+from dace.utils import find_new_name
 
 #: C++ integer type for computed flat indices, per ``codegen_params.index_ctype`` (exact-width types).
 INDEX_CTYPES = {"int64": "int64_t", "int32": "int32_t"}
@@ -311,6 +312,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # (base name, signature) -> helper name, so same-named arrays of different shape get distinct helpers.
         self._index_sig_to_name: dict[tuple, str] = {}
         self._size_sig_to_name: dict[tuple, str] = {}
+        # Container, symbol and constant names of the whole program, built on the first helper registration.
+        self._program_sdfg = sdfg
+        self._program_names: set[str] | None = None
         # id(tasklet) -> identifiers in its body / identifiers its C++ body declares.
         self._body_identifiers: dict[int, set[str]] = {}
         self._body_declarations: dict[int, set[str]] = {}
@@ -1278,6 +1282,20 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 return defined_type == DefinedType.Scalar
         return isinstance(desc, dt.Scalar) and desc.storage != dtypes.StorageType.GPU_Global
 
+    def unshadowed_helper_name(self, fnname: str, registry: dict[str, str]) -> str:
+        """``fnname``, or a fresh name when a container, symbol or constant of the program is called ``fnname``:
+        helpers are file-scope functions, so a parameter or local of the same name shadows them at every call."""
+        if self._program_names is None:
+            self._program_names = {
+                name
+                for sd in self._program_sdfg.all_sdfgs_recursive()
+                for names in (sd.arrays, sd.symbols, sd.constants)
+                for name in names
+            }
+        if fnname not in self._program_names:
+            return fnname
+        return find_new_name(fnname, self._program_names | registry.keys())
+
     def _register_index_function(self, data_name: str, desc):
         # Register the ``<name>_idx`` helper once per signature; return (name, extra symbol names).
         ndim = len(desc.shape)
@@ -1295,6 +1313,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         fnname = base + "_idx"
         if fnname in self._index_functions:  # same name, different signature
             fnname = "%s_%dd_%d_idx" % (base, ndim, len(self._index_sig_to_name))
+        fnname = self.unshadowed_helper_name(fnname, self._index_functions)
         self._index_sig_to_name[key] = fnname
 
         ctype = index_ctype()
@@ -1326,6 +1345,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         fnname = base + "_size"
         if fnname in self._size_functions:  # same name, different signature
             fnname = "%s_%d_size" % (base, len(self._size_sig_to_name))
+        fnname = self.unshadowed_helper_name(fnname, self._size_functions)
         self._size_sig_to_name[key] = fnname
 
         self._size_functions[fnname] = format_index_helper(
