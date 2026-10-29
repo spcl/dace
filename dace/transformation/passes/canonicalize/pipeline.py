@@ -118,6 +118,7 @@ from dace.transformation.passes.dead_state_elimination import DeadStateEliminati
 from dace.transformation.passes.demote_non_structural_symbols import DemoteNonStructuralSymbols
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.transformation.passes.equalize_symbol_dtypes import EqualizeSymbolDtypes, equalize
+from dace.transformation.passes.fold_constant_tables import FoldConstantTables
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions, InlineSDFGs
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
@@ -762,6 +763,9 @@ def ingest(target: str) -> Stages:
         # and not an opaque library node; the SimplifyPass right after inlines their nested SDFGs
         (CLEANUP, ExpandIndexRemaps()),
         (CLEANUP, SimplifyPass(pass_options=CANON_SIMPLIFY_OPTIONS)),
+        # A table filled once with literals (CloudSC's ``iphase``) is a constant host code and every kernel read alike,
+        # before a fusion moves its fill into a loop
+        (CLEANUP, FoldConstantTables()),
         # A while loop that counts gets its counter here, so every later pass sees a counted loop.
         (CLEANUP, WhileToFor()),
         # After simplification: the raised guard of a break still reads its condition through a separate
