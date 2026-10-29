@@ -768,7 +768,7 @@ def ingest(target: str) -> Stages:
         # preparation region before it, which the matcher does not see through.
         (CLEANUP, LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
     ]
-    return s + rail()
+    return s + [(CLEANUP, StructuralCleanup())]
 
 
 def normalize_statements(
@@ -1015,7 +1015,6 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
             SelectBranchMaps(),
             LiftTrivialIf(),
             NormalizeMapBody(),
-            *(unit for stage_label, unit in _inline_single_state(RECOMPOSE)),
         ]
 
     return PhaseFixpoint("maximal_fusion", outer_round, FUSION_OUTER_ROUNDS)
@@ -1052,11 +1051,10 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     # Out of phase: these matchers need the fused map form (contractions split over maps, durbin's unary copy).
     if lift_copy:
         s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
-        s += _inline_single_state(label)
     if lift:
         s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
     s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True)]))]
-    s += [*_inline_single_state(label), (label, PruneEmptyConditionalBranches())]
+    s += [(label, PruneEmptyConditionalBranches())]
     s += [
         (label, PatternApplyOnceEverywhere([RedundantArray()])),
         (label, RematerializeDerivedTemporaries()),
@@ -1067,7 +1065,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
 
 def finish() -> Stages:
     """The terminal bookkeeping: symbols, derived annotations, assumption guard, hints; the views inlining minted."""
-    s: Stages = rail(FINISH)
+    s: Stages = [(FINISH, StructuralCleanup())]
     # On the settled form: a loop over the segments of a pointer array is lifted behind the entry guard that checks
     # the data facts its segment confinement rests on (nfa_frontier's components).
     s += [(FINISH, SegmentConfinedLoops())]
@@ -1129,7 +1127,7 @@ def build_stages(
         target,
         validate,
     )
-    s += rail()
+    s += [(CLEANUP, StructuralCleanup())]
     s += recompose(lift, lift_copy, target)
     # Once more after the lifts recompose ends with: what they exposed fuses too
     s += [(FUSE, maximal_fusion(target))]
