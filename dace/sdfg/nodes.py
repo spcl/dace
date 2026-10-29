@@ -1307,6 +1307,15 @@ class Map:
         serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock),
     )
 
+    gpu_grid_syncs_lowered = Property(
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="The grid barriers between the states of this persistent kernel are Sync nodes (see "
+        "``NestedGPUDeviceMapLowering``), so code generation adds none of its own",
+        serialize_if=lambda m: m.schedule == dtypes.ScheduleType.GPU_Persistent,
+    )
+
     def __init__(
         self,
         label,
