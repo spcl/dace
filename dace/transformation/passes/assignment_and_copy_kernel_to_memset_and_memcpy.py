@@ -828,7 +828,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         self.remove_orphans(state)
 
     @staticmethod
-    def remove_orphans(state: dace.SDFGState) -> None:
+    def remove_orphans(state: dace.SDFGState) -> int:
+        """:returns: The number of nodes removed."""
+        removed = 0
         for n in state.nodes():
             if state.degree(n) == 0:
                 # A connector-less side-effect tasklet (e.g. BreakAntiDependence's
@@ -839,6 +841,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 if isinstance(n, dace.nodes.Tasklet) and n.side_effects:
                     continue
                 state.remove_node(n)
+                removed += 1
+        return removed
 
     @staticmethod
     def _is_single_element_copy(copy_length) -> bool:
@@ -1087,12 +1091,12 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                         break
         return count
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_res: dict) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_res: dict) -> int | None:
         """Walk every map in ``sdfg`` and lift its element-wise-copy / constant-zero paths.
 
         :param sdfg: SDFG to mutate in place.
         :param pipeline_res: Unused; provided by the pass-pipeline contract.
-        :returns: Total number of memcpy + memset paths lifted across the SDFG.
+        :returns: Total number of memcpy + memset paths lifted and orphans removed, or ``None`` if none was.
         """
         # Graph order, not address order: a lift decides whether a later map still has another writer.
         map_entries = OrderedSet()
@@ -1132,7 +1136,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             ):
                 subgraph = state.scope_subgraph(node, include_entry=True, include_exit=True)
                 nsdfg_node = helpers.nest_state_subgraph(state.sdfg, state, subgraph)
-                rmed_memcpies[node] = self.apply_pass(nsdfg_node.sdfg, {})
+                # The nesting alone is a change
+                rmed_memcpies[node] = self.apply_pass(nsdfg_node.sdfg, {}) or 1
                 rmed_memsets[node] = 0
                 continue
 
@@ -1151,8 +1156,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             rmed_memsets[node] = rmed_memset
 
         # One orphan sweep per state whose maps were scanned, instead of one per scanned map.
-        for state in visited_states:
-            self.remove_orphans(state)
+        orphans = sum(self.remove_orphans(state) for state in visited_states)
 
         num_rmed_memcpies = sum(rmed_memcpies.values())
         num_rmed_memsets = sum(rmed_memsets.values())
@@ -1162,4 +1166,4 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         # Copy / Fill library node instead of surviving as a naive loop.
         num_lifted_loops = self._lift_loops(sdfg)
 
-        return num_rmed_memcpies + num_rmed_memsets + num_lifted_loops
+        return num_rmed_memcpies + num_rmed_memsets + num_lifted_loops + orphans or None

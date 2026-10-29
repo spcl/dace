@@ -102,6 +102,8 @@ def test_copy_loop_lifts_to_copy_libnode():
     assert _count(sdfg, CopyLibraryNode) == 1
     assert _count(sdfg, FillLibraryNode) == 0
     assert not _has_loop(sdfg)
+    # Nothing left to lift: no change reported
+    assert AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {}) is None
 
     sdfg.expand_library_nodes(recursive=True)
     sdfg.validate()
