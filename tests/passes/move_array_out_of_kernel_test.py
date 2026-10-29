@@ -926,7 +926,10 @@ def test_code_generation_moves_a_symbolic_scratch_out_of_the_kernel(case):
     (device,) = [obj.clean_code for obj in objects if obj.language == "cu"]
 
     assert not re.search(rf"double\s+{name}\s*\[\s*{extent}", device), f"{name} is declared per thread"
-    assert re.search(rf"(cuda|hip)Malloc\(\(void\*\*\)&{name}\b", host), f"{name} is not allocated on the device"
+    # A persistent allocation is a state field, ``&__state->__0_buf``
+    assert re.search(rf"(cuda|hip)Malloc\(\(void\*\*\)&(__state->__\d+_)?{name}\b", host), (
+        f"{name} is not allocated on the device"
+    )
     assert "aligned_new_array" not in host
     assert not re.search(rf"Copy\w*\([^;]*\b{name}\b", device), f"the kernel copies {name} onto itself"
 
