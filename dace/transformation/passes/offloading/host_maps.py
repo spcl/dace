@@ -237,12 +237,36 @@ def moved_elements(memlet) -> symbolic.SymbolicType | int:
     return memlet.volume
 
 
-def provably_moves_at_least(
+def provably_moves_less(
     traffic: symbolic.SymbolicType | int, size: symbolic.SymbolicType | int, facts: symbolic.Facts
 ) -> bool:
-    """Whether ``traffic`` is provably at least ``size`` under ``facts``: only then does a kernel in a serial host loop
-    move as much as the per-iteration copies of the containers it shares cost. Undecidable answers False."""
-    return symbolic.provably_nonnegative(traffic - size, facts)
+    """Whether ``traffic`` is provably below ``size`` under ``facts`` (at the map); undecidable answers False, keeping
+    the map a kernel.
+
+    A symbolic extent is taken as big enough, so a constant count is below any symbolic ``size``.
+    """
+    if not symbolic.issymbolic(traffic):
+        return symbolic.issymbolic(size) or symbolic.provably_nonnegative(size - traffic - 1, symbolic.Facts.none())
+    return symbolic.provably_nonnegative(size - traffic, facts) and not symbolic.provably_nonnegative(
+        traffic - size, facts
+    )
+
+
+def stays_with_the_loop(
+    traffic: symbolic.SymbolicType | int, size: symbolic.SymbolicType | int, facts: symbolic.Facts, assigned: set[str]
+) -> bool:
+    """Whether a map moving ``traffic`` beside host code sharing ``size`` elements stays on the host: provably less,
+    or not provably at least and sized by a symbol the loop assigns. A per-iteration extent is the row a serial
+    algorithm works on (amg_setup's ``ntouch`` touched columns), small beside the arrays it copies; a program-wide
+    one no rule ranks is taken as big."""
+    if provably_moves_less(traffic, size, facts):
+        return True
+    named = (
+        {str(sym) for sym in symbolic.pystr_to_symbolic(traffic).free_symbols}
+        if symbolic.issymbolic(traffic)
+        else set()
+    )
+    return bool(named & assigned) and not symbolic.provably_nonnegative(traffic - size, facts)
 
 
 def is_fallback_loop(loop: LoopRegion) -> bool:
@@ -273,7 +297,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
     every map in it is pinned, except in a state that also calls a library (a state has one
     location), so the arm copies only at its own boundary. In any other loop, offloading a map
     copies each non-scalar container it shares with the loop's host code once per iteration, and
-    unless the map provably moves at least what those hold the copies dominate (amg_setup: 344 s on GPU
+    when the map moves less than those hold the copies dominate (:func:`stays_with_the_loop`) (amg_setup: 344 s on GPU
     against 0.8 s on CPU). Such a loop is pinned all or nothing: any other device work in it (a map
     not provably smaller, a library call, a second map in a state) keeps every kernel on the device,
     since the offload gives a state one location. Loops of nested SDFGs are kernel code.
@@ -291,6 +315,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
         if in_fallback_loop(loop):
             continue
         host = host_code_containers(sdfg, loop)
+        assigned = {lhs for edge in loop.all_interstate_edges(recursive=True) for lhs in edge.data.assignments}
         candidates: OrderedSet = OrderedSet()
         device_loop = False
         for state in loop.states():
@@ -302,7 +327,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
                 names, traffic = map_containers_and_traffic(state, node)
                 shared = [n for n in names & host if n in sdfg.arrays and sdfg.arrays[n].total_size != 1]
                 total = sum(sdfg.arrays[n].total_size for n in shared)
-                if shared and not provably_moves_at_least(traffic, total, SymbolResolver().facts_at(state, node)):
+                if shared and stays_with_the_loop(traffic, total, SymbolResolver().facts_at(state, node), assigned):
                     candidates.add(node)
                 else:
                     device_loop = True

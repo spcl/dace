@@ -475,16 +475,20 @@ def test_a_bound_a_host_maps_body_reads_on_the_host_computes_what_the_host_compu
 
 def test_a_map_in_a_row_loop_under_a_carried_pin_stays_on_the_host():
     """amg_setup's shape: a carried-pinned level loop around a row loop whose host code touches ``A`` beside a map over
-    an unknown ``K`` elements. Offloading the map copies ``A`` once per row, and ``K`` is not provably at least ``N``,
-    so the map stays on the host; the outer pin is a dependence fact, not a fallback arm, and does not exempt it."""
+    the ``K`` elements of the row, a length the row loop assigns. Offloading the map copies ``A`` once per row for a
+    row's work, so it stays on the host; the outer pin is a dependence fact, not a fallback arm, and does not exempt
+    it."""
     sdfg = sdfg_with_two_arrays("row_loop_under_pin")
     sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("lengths", ["N"], dace.int64)
     levels = LoopRegion("levels", "t < 4", "t", "t = 0", "t = t + 1")
     levels.pinned_sequential = True
     sdfg.add_node(levels, is_start_block=True)
     rows = LoopRegion("rows", "i < N", "i", "i = 0", "i = i + 1")
     levels.add_node(rows, is_start_block=True)
-    body = rows.add_state("body", is_start_block=True)
+    head = rows.add_state("head", is_start_block=True)
+    body = rows.add_state("body")
+    rows.add_edge(head, body, dace.InterstateEdge(assignments={"K": "lengths[i]"}))
     host = body.add_tasklet("host", {}, {"a"}, "a = i")
     body.add_edge(host, "a", body.add_write("A"), None, dace.Memlet("A[i]"))
     _, entry, _ = body.add_mapped_tasklet(
@@ -492,6 +496,22 @@ def test_a_map_in_a_row_loop_under_a_carried_pin_stays_on_the_host():
     )
 
     assert list(maps_pinned_by_host_loops(sdfg)) == [entry]
+
+
+def test_a_map_in_a_row_loop_over_a_program_size_stays_a_kernel():
+    """The same loop with ``K`` a program size: no rule ranks it against ``N``, and it is taken as big."""
+    sdfg = sdfg_with_two_arrays("row_loop_program_size")
+    sdfg.add_symbol("K", dace.int64)
+    rows = LoopRegion("rows", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(rows, is_start_block=True)
+    body = rows.add_state("body", is_start_block=True)
+    host = body.add_tasklet("host", {}, {"a"}, "a = i")
+    body.add_edge(host, "a", body.add_write("A"), None, dace.Memlet("A[i]"))
+    body.add_mapped_tasklet(
+        "copy_out", {"j": "0:K"}, {"a": dace.Memlet("A[j]")}, "b = a", {"b": dace.Memlet("B[j]")}, external_edges=True
+    )
+
+    assert list(maps_pinned_by_host_loops(sdfg)) == []
 
 
 def test_a_nested_index_read_on_an_interstate_edge_moves_one_element_per_iteration():
