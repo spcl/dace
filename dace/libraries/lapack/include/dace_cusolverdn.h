@@ -90,7 +90,9 @@ class CusolverDnHandle {
   }
 
   ~CusolverDnHandle() {
-    for (auto& entry : workspaces_) Release(entry.second);
+    for (std::map<std::pair<Stream, int>, Buffer>::iterator it = workspaces_.begin(); it != workspaces_.end(); ++it) {
+      Release(it->second);
+    }
     if (handle_) CheckCusolverDnError(cusolverDnDestroy(*handle_));
   }
 
