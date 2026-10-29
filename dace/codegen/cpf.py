@@ -48,7 +48,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from typing import NamedTuple
 
-from dace import cpf_lowering, dtypes, symbolic, tile_functions
+from dace import cpf_lowering, dtypes, subsets, symbolic, tile_functions
 from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
@@ -62,11 +62,11 @@ from dace.library import get_environment
 from dace.memlet import Memlet
 from dace.optionals import required
 from dace.ordered import OrderedSet
-from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import SDFG, SDFGState, memlet_utils, nodes
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
-from dace.transformation.passes.canonicalize.finalize import blas_addresses, explicit_accumulating_copies
+from dace.transformation.passes.canonicalize.finalize import blas_addresses
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
 #: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory, plain locals and Arm SVE
@@ -798,12 +798,49 @@ def widen_narrow_scalar_arguments(sdfg: SDFG) -> list[str]:
     return widened
 
 
+def explicit_accumulating_copies(sdfg: SDFG) -> None:
+    """Turn every accumulating access-node-to-access-node copy into a tasklet or a map, in place.
+
+    ``InsertExplicitCopies`` leaves an accumulating copy implicit, since it is a reduction rather than a copy,
+    and the generator then emits ``dace::CopyND::Accumulate``, which a standalone unit cannot name (icon_scatter,
+    seissol_tensor_contraction, spmm). One element becomes one accumulating tasklet; more become a map over the
+    copied elements, each iteration accumulating into its own element, which the generator lowers like any WCR.
+    An omitted side of the memlet is the whole array on that side, as in copy-edge codegen.
+
+    :param sdfg: the SDFG to rewrite, nested SDFGs included.
+    """
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.states():
+            for edge in list(state.edges()):
+                wcr = edge.data.wcr
+                if (
+                    wcr is None
+                    or not isinstance(edge.src, nodes.AccessNode)
+                    or not isinstance(edge.dst, nodes.AccessNode)
+                ):
+                    continue
+                source = edge.data.get_src_subset(edge, state) or subsets.Range.from_array(edge.src.desc(nested))
+                target = edge.data.get_dst_subset(edge, state) or subsets.Range.from_array(edge.dst.desc(nested))
+                if source.num_elements_exact() == 1 and target.num_elements_exact() == 1:
+                    # A Scalar end has no index a map could use.
+                    tasklet = state.add_tasklet("accumulate", {"__inp": None}, {"__out": None}, "__out = __inp")
+                    state.add_edge(edge.src, edge.src_conn, tasklet, "__inp", Memlet(data=edge.src.data, subset=source))
+                    state.add_edge(
+                        tasklet, "__out", edge.dst, edge.dst_conn, Memlet(data=edge.dst.data, subset=target, wcr=wcr)
+                    )
+                    state.remove_edge(edge)
+                elif memlet_utils.can_memlet_be_turned_into_a_map(edge, state, nested):
+                    _, map_exit = memlet_utils.memlet_to_map(edge, state, nested)
+                    for written in state.in_edges(map_exit) + state.out_edges(map_exit):
+                        written.data.wcr = wcr
+
+
 def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) -> tuple[str, ...]:
     """Make ``sdfg`` renderable as one host translation unit, in place.
 
     Six things happen: every library node is pointed at the best implementation a standalone unit
     can compile and expanded (:func:`force_renderable_expansions`), every accumulating copy becomes a
-    tasklet or a map (:func:`~dace.transformation.passes.canonicalize.finalize.explicit_accumulating_copies`), every written signature scalar,
+    tasklet or a map (:func:`explicit_accumulating_copies`), every written signature scalar,
     the expansions' included, is promoted to a length-1 array so it is addressable
     (:class:`~dace.transformation.passes.scalar_promotion.PromoteScalarOutputsToArrays`), what that
     could not make renderable is refused (:func:`refuse_by_value_returns`), every loop still
