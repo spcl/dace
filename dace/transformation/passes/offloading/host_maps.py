@@ -316,6 +316,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
             continue
         host = host_code_containers(sdfg, loop)
         assigned = {lhs for edge in loop.all_interstate_edges(recursive=True) for lhs in edge.data.assignments}
+        written = {node.data for state in loop.states() for node in state.data_nodes() if state.in_degree(node) > 0}
         candidates: OrderedSet = OrderedSet()
         device_loop = False
         for state in loop.states():
@@ -325,7 +326,8 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
                     device_loop = True
                     continue
                 names, traffic = map_containers_and_traffic(state, node)
-                shared = [n for n in names & host if n in sdfg.arrays and sdfg.arrays[n].total_size != 1]
+                # Read on both sides only, a container is copied once at the entry, not per iteration
+                shared = [n for n in names & host & written if n in sdfg.arrays and sdfg.arrays[n].total_size != 1]
                 total = sum(sdfg.arrays[n].total_size for n in shared)
                 if shared and stays_with_the_loop(traffic, total, SymbolResolver().facts_at(state, node), assigned):
                     candidates.add(node)

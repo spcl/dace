@@ -544,3 +544,23 @@ def test_a_nested_index_read_on_an_interstate_edge_moves_one_element_per_iterati
 
     assert set(names) == {"idx", "A", "B"}
     assert dace.symbolic.simplify(traffic - 3 * dace.symbol("K")) == 0
+
+
+def test_a_map_sharing_only_what_both_sides_read_stays_a_kernel():
+    """nussinov's wavefront: the loop's host code reads ``A`` and the map reads it too, so no copy runs per
+    iteration and the map keeps its kernel even under a carried pin."""
+    sdfg = sdfg_with_two_arrays("read_only_share")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    levels = LoopRegion("diagonals", "t < N", "t", "t = 0", "t = t + 1")
+    levels.pinned_sequential = True
+    sdfg.add_node(levels, is_start_block=True)
+    body = levels.add_state("body", is_start_block=True)
+    host = body.add_tasklet("host", {"a"}, {"o"}, "o = a")
+    body.add_edge(body.add_read("A"), None, host, "a", dace.Memlet("A[t]"))
+    body.add_edge(host, "o", body.add_write("s"), None, dace.Memlet("s[0]"))
+    body.add_mapped_tasklet(
+        "sweep", {"j": "0:K"}, {"a": dace.Memlet("A[j]")}, "b = a", {"b": dace.Memlet("B[j]")}, external_edges=True
+    )
+
+    assert list(maps_pinned_by_host_loops(sdfg)) == []
