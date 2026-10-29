@@ -445,7 +445,7 @@ required:
                             language, from ``CMAKE_POSITION_INDEPENDENT_CODE``).
                             ``default_<family>`` applies for that host compiler, since nvc++
                             rejects several switches below.
-                        default: '-Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
+                        default: '-Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -fcx-limited-range -Wno-unused-parameter -Wno-unused-label'
                         default_nvhpc: '-Wall -Wextra -march=native -fno-signed-zeros -Mfprelaxed=recip -Wno-unused-parameter'
                         default_Windows: '/fp:precise /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
