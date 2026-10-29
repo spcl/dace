@@ -161,15 +161,12 @@ class ExpandGetrfNoPivotGPUSolver(ExpandTransformation):
         code = (
             cls.setup(node)
             + f"""
-{ctype}* __dace_lu;
-int* __dace_lu_info;
-gpuMalloc<{ctype}>(&__dace_lu, sizeof({ctype}) * ({n}) * ({n}));
-gpuMalloc<int>(&__dace_lu_info, sizeof(int));
+{ctype}* __dace_lu = static_cast<{ctype}*>(
+    __state->cusolverDn_handle.Workspace(1, sizeof({ctype}) * ({n}) * ({n}), __dace_current_stream));
+int* __dace_lu_info = static_cast<int*>(__state->cusolverDn_handle.Workspace(2, sizeof(int), __dace_current_stream));
 {to_scratch}
 {cls.factor(func, ctype, n)}
 {back}
-gpuFree(__dace_lu_info);
-gpuFree(__dace_lu);
 """
         )
         return _wrap_call(node, parent_state, parent_sdfg, code, cls.environments)
@@ -201,11 +198,10 @@ class ExpandGetrfNoPivotCuSolverDn(ExpandGetrfNoPivotGPUSolver):
     def factor(cls, func, ctype, n) -> str:
         return f"""int __dace_lu_lwork = 0;
 cusolverDn{func}getrf_bufferSize(__dace_cusolverDn_handle, {n}, {n}, __dace_lu, {n}, &__dace_lu_lwork);
-{ctype}* __dace_lu_work;
-gpuMalloc<{ctype}>(&__dace_lu_work, sizeof({ctype}) * __dace_lu_lwork);
+{ctype}* __dace_lu_work = static_cast<{ctype}*>(
+    __state->cusolverDn_handle.Workspace(0, sizeof({ctype}) * __dace_lu_lwork, __dace_current_stream));
 // A NULL pivot array is cuSolverDn's no-pivoting mode.
-cusolverDn{func}getrf(__dace_cusolverDn_handle, {n}, {n}, __dace_lu, {n}, __dace_lu_work, nullptr, __dace_lu_info);
-gpuFree(__dace_lu_work);"""
+cusolverDn{func}getrf(__dace_cusolverDn_handle, {n}, {n}, __dace_lu, {n}, __dace_lu_work, nullptr, __dace_lu_info);"""
 
 
 #: The cuSolverDn expansion stages its operand through cuBLAS ``geam`` transposes, so it is renamed as BLAS code too.

@@ -133,12 +133,11 @@ class ExpandSyevdCuSolverDn(ExpandSyevdGPUSolver):
         args = f"__dace_cusolverDn_handle, CUSOLVER_EIG_MODE_VECTOR, {matrix}, ({REAL_CTYPE.get(ctype, ctype)}*)_evals"
         return f"""
             int __dace_workspace_size = 0;
-            {ctype}* __dace_workspace;
             dace::lapack::CheckCusolverDnError(cusolverDn{func}_bufferSize({args}, &__dace_workspace_size));
-            gpuMalloc<{ctype}>(&__dace_workspace, sizeof({ctype}) * __dace_workspace_size);
+            {ctype}* __dace_workspace = static_cast<{ctype}*>(
+                __state->cusolverDn_handle.Workspace(0, sizeof({ctype}) * __dace_workspace_size, __dace_current_stream));
             dace::lapack::CheckCusolverDnError(
                 cusolverDn{func}({args}, __dace_workspace, __dace_workspace_size, _res));
-            gpuFree(__dace_workspace);
             """
 
 

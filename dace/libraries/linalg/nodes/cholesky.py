@@ -14,7 +14,7 @@ from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import Potrf, environments
 from dace.libraries.linalg.nodes.solve import restride
 from dace.libraries.linalg.nodes.transpose import Transpose
-from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, call_scratch_lifetime
 from dace.transformation.transformation import ExpandTransformation
 
 #: The vendor GPU solvers. The branches below are about whether the factorization runs ON THE
@@ -58,12 +58,13 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     ain_arr = sdfg.add_array("_a", inp_shape, dtype=dtype, strides=inp_desc.strides)
     bout_arr = sdfg.add_array("_b", out_shape, dtype=dtype, strides=out_desc.strides)
-    info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True, storage=storage)
+    lifetime = call_scratch_lifetime(node, parent_state, parent_sdfg, *inp_shape)
+    info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True, storage=storage, lifetime=lifetime)
     if implementation in GPU_SOLVERS:
         info_host_arr = sdfg.add_array(
-            "_info_host", [1], dtype=dace.int32, transient=True, storage=dtypes.StorageType.CPU_Heap
+            "_info_host", [1], dtype=dace.int32, transient=True, storage=dtypes.StorageType.CPU_Heap, lifetime=lifetime
         )
-        binout_arr = sdfg.add_array("_bt", inp_shape, dtype=dtype, transient=True, storage=storage)
+        binout_arr = sdfg.add_array("_bt", inp_shape, dtype=dtype, transient=True, storage=storage, lifetime=lifetime)
     else:
         binout_arr = bout_arr
 
