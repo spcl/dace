@@ -267,13 +267,18 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
 
                 # Remove access nodes left without data after elimination: an isolated one, or a sink whose only
                 # in-edges are empty memlets, which order nothing once the node is neither read nor written.
+                # Sinks first: removing one can leave its ordering predecessor such a node too.
                 access_nodes = set(state.data_nodes())
-                for node in access_nodes:
-                    if state.out_degree(node) == 0 and all(e.data.is_empty() for e in state.in_edges(node)):
+                stack = [n for n in state.data_nodes() if state.out_degree(n) == 0]
+                while stack:
+                    node = stack.pop()
+                    if node not in result[state] and all(e.data.is_empty() for e in state.in_edges(node)):
+                        preds = [e.src for e in state.in_edges(node)]
                         for edge in list(state.in_edges(node)):
                             state.remove_edge(edge)
                         state.remove_node(node)
                         result[state].add(node)
+                        stack += [p for p in preds if isinstance(p, nodes.AccessNode) and state.out_degree(p) == 0]
 
                 # Prune now-dead connectors
                 for node, dead_conns in predecessor_nsdfgs.items():
@@ -310,14 +315,14 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
     def _keep_order_through(state: SDFGState, dead_nodes: list[nodes.Node]) -> None:
         dead = set(dead_nodes)
         scope = state.scope_dict()
-        # Nothing has to follow an access node no one writes
+        # Nothing has to follow an access node no live node writes or orders
         sources = OrderedSet(
             e.src
             for d in dead_nodes
             for e in state.in_edges(d)
             if e.src not in dead
             and scope[e.src] is None
-            and not (isinstance(e.src, nodes.AccessNode) and state.in_degree(e.src) == 0)
+            and not (isinstance(e.src, nodes.AccessNode) and all(p.src in dead for p in state.in_edges(e.src)))
         )
         for src in sources:
             reached, seen = OrderedSet(), set()
