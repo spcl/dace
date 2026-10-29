@@ -55,59 +55,6 @@ _CALL_TO_WCR: dict[str, str] = {
 _CMP_GT = (ast.Gt, ast.GtE)
 _CMP_LT = (ast.Lt, ast.LtE)
 
-#: The one map schedule that opens no parallel region. Everything else -- including ``Default``,
-#: which codegen turns into ``CPU_Multicore`` at the top level -- counts as an enclosing parallel
-#: scope, so a loop under it is the CPU cost model's nested-parallelism case, not this pass's.
-_SEQUENTIAL_SCHEDULES = (dtypes.ScheduleType.Sequential,)
-
-
-def _nested_in_sequential_loop(loop: LoopRegion) -> bool:
-    """True iff ``loop`` is lexically nested inside another (sequential) ``LoopRegion``,
-    crossing NestedSDFG boundaries, and no parallel map opens a scope on the way out.
-
-    Used to keep :class:`PinCarriedTopLevelLoops` to top-level loops. It is NOT a reason to
-    serialize: a region entered ``E`` times costs ``E * (fork + work / P)`` against ``E *
-    work`` sequential, so ``E`` cancels and only the region's own work decides. That decision
-    is the CPU cost model's, in
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`.
-
-    A PARALLEL map found on the way out ends the walk with ``False``. Such a loop is already
-    covered, and better, by the CPU cost model's nested-parallelism rule
-    (:mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`),
-    which sequentializes it at specialization time and leaves the canonical form parallel. Pinning
-    it here instead would bake a CPU decision into the device-neutral graph for no gain -- measured
-    on nussinov, whose ``(i, j)`` nest ``WavefrontSkew`` now turns into a parallel diagonal map:
-    with and without the pin the generated C++ is BYTE-IDENTICAL, so the flag buys nothing there.
-    """
-    g = loop.parent_graph
-    while g is not None:
-        if isinstance(g, LoopRegion):
-            return True
-        if isinstance(g, SDFG):
-            # Cross the NestedSDFG boundary: continue from the state that holds this
-            # SDFG's NestedSDFG node (``None`` at the top-level SDFG -> not nested).
-            pstate = g.parent
-            if pstate is None:
-                return False
-            if _inside_parallel_map(pstate, g.parent_nsdfg_node):
-                return False
-            g = pstate.parent_graph
-            continue
-        g = g.parent_graph
-    return False
-
-
-def _inside_parallel_map(state: SDFGState, node) -> bool:
-    """``node`` sits in a map scope of ``state`` that opens a parallel region."""
-    if node is None or node not in state.nodes():
-        return False
-    scope = state.entry_node(node)
-    while scope is not None:
-        if isinstance(scope, nodes.MapEntry) and scope.map.schedule not in _SEQUENTIAL_SCHEDULES:
-            return True
-        scope = state.entry_node(scope)
-    return False
-
 
 def _owner_sdfg(region: ControlFlowRegion) -> SDFG:
     """The SDFG whose ``arrays``/``symbols`` the blocks inside ``region`` name.
@@ -282,52 +229,6 @@ class RetargetWCRAccumulator(ppl.Pass):
 
             propagate_memlets_sdfg(sdfg)
         return count or None
-
-
-@xf.explicit_cf_compatible
-class PinCarriedTopLevelLoops(ppl.Pass):
-    """Mark top-level loops ``pinned_sequential`` when ``LoopToMap`` refuses them for a
-    loop-carried dependence.
-
-    The pin is a dependence fact, not a schedule preference: this pass re-uses
-    ``LoopToMap.can_be_applied`` as the oracle, leaves an applicable loop alone, and marks one
-    refused for a carried dependency so the downstream ``LoopToMap`` stage and the WCR-scalar
-    reduction path keep it sequential.
-
-    Scope is top-level only -- a loop nested in another loop is skipped. Nesting on its own is
-    not a reason to serialize anything; whether a parallel scope earns its OpenMP region is a
-    CPU question and belongs to
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`.
-    """
-
-    CATEGORY: str = "Optimization Preparation"
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.CFG
-
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
-        return False
-
-    def apply_pass(self, sdfg: SDFG, _) -> int | None:
-        """:returns: The number of loops newly pinned, or ``None`` if none was."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap
-        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops, ProbeSession
-
-        pinned = 0
-        # A pin is read only by the pinned loop's own probe
-        session = ProbeSession()
-        for node, parent in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, LoopRegion) or not node.loop_variable:
-                continue
-            if node.pinned_sequential or _nested_in_sequential_loop(node):
-                continue
-            owner = _owner_sdfg(node)
-            probe = LoopToMap()
-            applicable = ParallelizeLoops().accepts(node, probe, session=session)
-            if not applicable and probe.last_refusal is not None and probe.last_refusal.kind.carried:
-                node.pinned_sequential = True
-                pinned += 1
-        return pinned or None
 
 
 @xf.explicit_cf_compatible

@@ -19,9 +19,8 @@ So it is written down, as a ``specialization_hint`` comment, in four kinds:
 
 One pass, run last, rather than a label at each site that could have set one: a loop that a pass
 forgot would then carry no comment and read as "nobody looked", which is a claim in its own right.
-Here every loop is visited, and the classifier is ``LoopToMap.can_be_applied`` -- the same oracle
-:class:`~dace.transformation.passes.loop_to_reduce.PinCarriedTopLevelLoops` uses, so the comment
-and the pipeline's own decision cannot disagree.
+Here every loop is visited, and the classifier is ``LoopToMap.can_be_applied`` -- the pipeline's own oracle, so
+the comment and the pipeline's decision cannot disagree.
 
 A hint is a NOTE. Nothing in the pipeline dispatches on these strings, ``hint_comment`` drops them
 outside a standalone rendering, and this pass changes no graph.
