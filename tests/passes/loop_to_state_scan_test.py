@@ -537,6 +537,7 @@ def test_a_map_around_a_state_scan_is_the_kernel_it_runs_in():
     assert scan.schedule == dace.ScheduleType.Sequential
 
 
+@pytest.mark.gpu
 def test_a_state_scan_in_a_kernel_runs_on_the_block_and_matches_each_row():
     import cupy  # Only present on GPU runners.
 
