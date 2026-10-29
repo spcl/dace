@@ -2,9 +2,10 @@
 //
 // CUDA batches of independent inclusive scans over one buffer: the residue classes mod ``s`` of a strided
 // scan (``strided_inclusive_<op>``, the device side of ``dace::scan::strided_inclusive_<op>``) and the
-// equal consecutive rows of a segmented one (``segmented_inclusive_<op>``). Many interleaved classes take
-// one thread each; otherwise every scan is cut into chunks and scanned in three phases -- chunk totals,
-// a scan of the totals, and a rescan of every chunk entered with its carry -- so a long scan still
+// equal consecutive rows of a segmented one (``segmented_inclusive_<op>``). A strided scan with at least a
+// warp of classes is cut into class tiles by row chunks, loads coalesced across classes; one with very many
+// classes takes one thread each. Every other scan is cut into chunks and scanned in three phases -- chunk
+// totals, a scan of the totals, and a rescan of every chunk entered with its carry -- so a long scan still
 // fills the device.
 
 #ifndef __DACE_CUDA_SCAN_CUH
@@ -13,6 +14,7 @@
 #include "cudacommon.cuh"  // the backend runtime header, plus the gpu* aliases used below
 #include "gpucub.cuh"      // gpucub:: -> hipcub on AMD, cub on NVIDIA
 #include "../cub_scratch.cuh"  // the per-stream scratch the chunked path keeps its chunk totals in
+#include "scan_plan.h"         // which strided path runs, host-only so it is testable without a device
 #include <algorithm>
 #include <limits>
 
@@ -20,6 +22,8 @@ namespace dace {
 namespace cuda_scan {
 
 namespace detail {
+
+using namespace ::dace::cuda_scan::plan;
 
 //: Many residue classes: one thread per class walks it, seeded from its first element so every
 //: operator needs no identity. Neighbouring threads read neighbouring classes, so each step of
@@ -236,6 +240,152 @@ inline Segments rows_of(long n, long rows) {
   return Segments{n, rows, length, 1, length};
 }
 
+//: The tiled path's grid: ``tiles`` class tiles by ``chunks`` row chunks of ``chunk_rows`` rows each.
+struct TilePlan {
+  long rows;
+  long tiles;
+  long chunks;
+  long chunk_rows;
+};
+
+inline TilePlan tile_plan(long n, long s) {
+  const long rows = (n + s - 1) / s;
+  const long tiles = (s + kTileClasses - 1) / kTileClasses;
+  const long by_rows = (rows + kTileMinRowsPerThread * kTileRowGroups - 1) / (kTileMinRowsPerThread * kTileRowGroups);
+  const long by_device = (kTileTargetBlocks + tiles - 1) / tiles;
+  long chunks = by_rows < by_device ? by_rows : by_device;
+  if (chunks < 1 || rows < kTileOneChunkBelow) chunks = 1;
+  const long chunk_rows = (rows + chunks - 1) / chunks;
+  return TilePlan{rows, tiles, (rows + chunk_rows - 1) / chunk_rows, chunk_rows};
+}
+
+//: This thread's class and row range in the tiled grid: block ``b`` is tile ``b % tiles`` of chunk ``b / tiles``,
+//: and row group ``g`` takes the ``g``-th slice of the chunk's rows.
+struct TileSlot {
+  long cls;
+  long chunk;
+  long lo;
+  long hi;
+};
+
+//: ``hi`` stops at the class's last element, so the row loops are countable; a lane past the classes has none.
+__device__ __forceinline__ TileSlot tile_slot(const TilePlan& plan, long n, long s) {
+  const long tile = (long)blockIdx.x % plan.tiles;
+  const long chunk = (long)blockIdx.x / plan.tiles;
+  const long group = (long)threadIdx.x / kTileClasses;
+  const long cls = tile * kTileClasses + (long)threadIdx.x % kTileClasses;
+  const long begin = chunk * plan.chunk_rows;
+  const long end = (begin + plan.chunk_rows < plan.rows) ? begin + plan.chunk_rows : plan.rows;
+  const long per = (end - begin + kTileRowGroups - 1) / kTileRowGroups;
+  const long lo = (begin + group * per < end) ? begin + group * per : end;
+  long hi = (lo + per < end) ? lo + per : end;
+  const long own_rows = (cls < s) ? (n - cls + s - 1) / s : 0;
+  if (hi > own_rows) hi = own_rows;
+  return TileSlot{cls, chunk, lo, hi};
+}
+
+template <typename T, typename Op>
+__device__ __forceinline__ T tile_fold(const T* __restrict__ in, long s, const TileSlot& at, Op op, T identity) {
+  T acc = identity;
+#pragma unroll 4
+  for (long r = at.lo; r < at.hi; ++r) acc = op(acc, in[r * s + at.cls]);
+  return acc;
+}
+
+//: Phase 1 of the tiled path: the fold of every (class, chunk), into ``totals[chunk * s + class]``.
+template <typename T, typename Op>
+__global__ void __launch_bounds__(kTileThreads)
+    tile_totals_kernel(const T* __restrict__ in, T* __restrict__ totals, long n, long s, TilePlan plan, Op op,
+                       T identity) {
+  alignas(T) __shared__ unsigned char partial_bytes[kTileRowGroups * kTileClasses * sizeof(T)];
+  T* partial = reinterpret_cast<T*>(partial_bytes);  // raw: a class element type need not be trivially constructible
+  const TileSlot at = tile_slot(plan, n, s);
+  const int lane = (int)threadIdx.x % kTileClasses;
+  partial[threadIdx.x] = tile_fold(in, s, at, op, identity);
+  __syncthreads();
+  if ((int)threadIdx.x < kTileClasses && at.cls < s) {
+    T total = partial[lane];
+    for (int g = 1; g < kTileRowGroups; ++g) total = op(total, partial[g * kTileClasses + lane]);
+    totals[at.chunk * s + at.cls] = total;
+  }
+}
+
+//: Phase 2: the exclusive scan of every class's chunk totals, one thread per class, in place.
+template <typename T, typename Op>
+__global__ void tile_carry_kernel(T* __restrict__ totals, long s, long chunks, Op op, T identity) {
+  const long k = (long)blockIdx.x * (long)blockDim.x + (long)threadIdx.x;
+  if (k >= s) return;
+  T carry = identity;
+  for (long q = 0; q < chunks; ++q) {
+    const T t = totals[q * s + k];
+    totals[q * s + k] = carry;
+    carry = op(carry, t);
+  }
+}
+
+//: Phase 3: every row group walks its slice entered with the chunk's carry and the folds of the groups above it.
+template <typename T, typename Op>
+__global__ void __launch_bounds__(kTileThreads)
+    tile_scan_kernel(const T* __restrict__ in, T* __restrict__ out, const T* __restrict__ carries, long n, long s,
+                     TilePlan plan, Op op, T identity) {
+  alignas(T) __shared__ unsigned char partial_bytes[kTileRowGroups * kTileClasses * sizeof(T)];
+  T* partial = reinterpret_cast<T*>(partial_bytes);  // raw: a class element type need not be trivially constructible
+  const TileSlot at = tile_slot(plan, n, s);
+  const int lane = (int)threadIdx.x % kTileClasses;
+  const int group = (int)threadIdx.x / kTileClasses;
+  partial[threadIdx.x] = tile_fold(in, s, at, op, identity);
+  __syncthreads();
+  if (at.cls >= s) return;
+  T acc = (carries != nullptr) ? carries[at.chunk * s + at.cls] : identity;
+  for (int g = 0; g < group; ++g) acc = op(acc, partial[g * kTileClasses + lane]);
+#pragma unroll 4
+  for (long r = at.lo; r < at.hi; ++r) {
+    acc = op(acc, in[r * s + at.cls]);
+    out[r * s + at.cls] = acc;
+  }
+}
+
+//: The residue classes of ``in[0:n]`` mod ``s`` as a matrix of rows by ``s`` classes, cut into class tiles by row
+//: chunks so loads stay coalesced across classes and the chunks fill the device.
+template <typename T, typename Op>
+inline gpuError_t tiled_inclusive(const T* in, T* out, long n, long s, Op op, T identity, gpuStream_t stream) {
+  const TilePlan plan = tile_plan(n, s);
+  const dim3 grid((unsigned)(plan.tiles * plan.chunks));
+  if (plan.chunks <= 1) {
+    tile_scan_kernel<T, Op><<<grid, dim3(kTileThreads), 0, stream>>>(in, out, nullptr, n, s, plan, op, identity);
+    return gpuGetLastError();
+  }
+  gpuError_t status = gpuSuccess;
+  T* totals = static_cast<T*>(
+      ::dace::cub::get_scratch<::dace::cub::ScanTag>((std::size_t)(plan.chunks * s) * sizeof(T), stream, &status));
+  if (totals == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
+  tile_totals_kernel<T, Op><<<grid, dim3(kTileThreads), 0, stream>>>(in, totals, n, s, plan, op, identity);
+  tile_carry_kernel<T, Op><<<dim3((unsigned)((s + kBlockThreads - 1) / kBlockThreads)), dim3(kBlockThreads), 0,
+                             stream>>>(totals, s, plan.chunks, op, identity);
+  tile_scan_kernel<T, Op><<<grid, dim3(kTileThreads), 0, stream>>>(in, out, totals, n, s, plan, op, identity);
+  return gpuGetLastError();
+}
+
+//: The strided scan of ``in[0:n]`` at stride ``s`` under ``op`` (``identity`` its identity), per
+//: :func:`choose_strided_plan`.
+template <typename T, typename Op>
+inline gpuError_t strided_inclusive(const T* in, T* out, long n, long s, Op op, T identity, gpuStream_t stream) {
+  if (n <= 0 || s <= 0) return gpuSuccess;
+  switch (choose_strided_plan(s)) {
+    case StridedPlan::PER_CLASS: {
+      const long classes = s < n ? s : n;
+      const long blocks = (classes + kBlockThreads - 1) / kBlockThreads;
+      strided_per_class_kernel<T, Op><<<dim3((unsigned)blocks), dim3(kBlockThreads), 0, stream>>>(in, out, n, s, op);
+      return gpuGetLastError();
+    }
+    case StridedPlan::TILED:
+      return tiled_inclusive(in, out, n, s, op, identity, stream);
+    case StridedPlan::BLOCKED:
+      break;
+  }
+  return segments_inclusive(in, out, residue_classes(n, s), op, identity, stream);
+}
+
 //: The identity of ``min``: infinity where the type has one, so an infinite element is not
 //: replaced by the largest finite value it is compared against.
 template <typename T>
@@ -253,7 +403,7 @@ constexpr T max_identity() {
 
 template <typename T>
 inline gpuError_t strided_inclusive_sum(const T* in, T* out, long n, long s, gpuStream_t stream) {
-  return detail::segments_inclusive(in, out, detail::residue_classes(n, s), detail::ScanSum<T>(), T(0), stream);
+  return detail::strided_inclusive(in, out, n, s, detail::ScanSum<T>(), T(0), stream);
 }
 
 template <typename T>
@@ -263,7 +413,7 @@ inline gpuError_t segmented_inclusive_sum(const T* in, T* out, long n, long rows
 
 template <typename T>
 inline gpuError_t strided_inclusive_product(const T* in, T* out, long n, long s, gpuStream_t stream) {
-  return detail::segments_inclusive(in, out, detail::residue_classes(n, s), detail::ScanProduct<T>(), T(1), stream);
+  return detail::strided_inclusive(in, out, n, s, detail::ScanProduct<T>(), T(1), stream);
 }
 
 template <typename T>
@@ -273,7 +423,7 @@ inline gpuError_t segmented_inclusive_product(const T* in, T* out, long n, long 
 
 template <typename T>
 inline gpuError_t strided_inclusive_min(const T* in, T* out, long n, long s, gpuStream_t stream) {
-  return detail::segments_inclusive(in, out, detail::residue_classes(n, s), detail::ScanMin<T>(), detail::min_identity<T>(), stream);
+  return detail::strided_inclusive(in, out, n, s, detail::ScanMin<T>(), detail::min_identity<T>(), stream);
 }
 
 template <typename T>
@@ -283,7 +433,7 @@ inline gpuError_t segmented_inclusive_min(const T* in, T* out, long n, long rows
 
 template <typename T>
 inline gpuError_t strided_inclusive_max(const T* in, T* out, long n, long s, gpuStream_t stream) {
-  return detail::segments_inclusive(in, out, detail::residue_classes(n, s), detail::ScanMax<T>(), detail::max_identity<T>(), stream);
+  return detail::strided_inclusive(in, out, n, s, detail::ScanMax<T>(), detail::max_identity<T>(), stream);
 }
 
 template <typename T>
