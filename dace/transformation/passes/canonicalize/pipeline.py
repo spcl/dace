@@ -141,7 +141,6 @@ from dace.transformation.passes.parallelization.contracts.guarded_scatter import
 from dace.transformation.passes.parallelization.contracts.under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.parallelization.parallelize import Parallelize
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
-from dace.transformation.passes.parallelization.sibling_chains import ParallelizeLoopsHoldingSiblingChains
 from dace.transformation.passes.parallelization_prep import (
     DEFAULT_PEEL_LIMIT,
     DEFAULT_UNROLL_LIMIT,
@@ -719,8 +718,7 @@ def loop_to_map_units(hold_sibling_chains: bool = False) -> list[ppl.Pass]:
 
     :param hold_sibling_chains: Leave a sibling-loop chain with a refused sibling whole, for ``WavefrontSkew``.
     """
-    parallelize = ParallelizeLoopsHoldingSiblingChains if hold_sibling_chains else ParallelizeLoops
-    lift = parallelize(propagate=False)
+    lift = ParallelizeLoops(propagate=False, hold_sibling_chains=hold_sibling_chains)
     # A loop refused on a scratch buffer only lifts with the buffer expanded per iteration
     lift.expand_buffers = True
     return [
@@ -947,7 +945,7 @@ def derive_parallelism(
         (label, RetargetWCRAccumulator()),
         (label, PropagateMemlets()),
         (label, SetSymbolNonnegativeAssumptions()),
-        (label, ParallelizeLoopsHoldingSiblingChains(propagate=False)),
+        (label, ParallelizeLoops(propagate=False, hold_sibling_chains=True)),
         (label, PrivatizeScalars()),
         (label, PrivatizeArrays()),
     ]
@@ -967,7 +965,7 @@ def derive_parallelism(
                 ],
                 [
                     PropagateMemlets(),
-                    ParallelizeLoopsHoldingSiblingChains(propagate=False),
+                    ParallelizeLoops(propagate=False, hold_sibling_chains=True),
                     PrivatizeScalars(),
                     PrivatizeArrays(),
                 ],
@@ -1080,7 +1078,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     ]
     # Fusion frees loops the pre-fusion sweep had to keep: a level loop whose body was a fill, a map and a copy of one
     # scratch plane is a single map after it (velocity_tendencies' nine level loops), so sweep once more and collapse.
-    s += [(label, ParallelizeLoopsHoldingSiblingChains()), (label, PatternApplyOnceEverywhere([MapCollapse()]))]
+    s += [(label, ParallelizeLoops(hold_sibling_chains=True)), (label, PatternApplyOnceEverywhere([MapCollapse()]))]
     return s
 
 
