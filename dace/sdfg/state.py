@@ -4108,10 +4108,9 @@ class AbstractControlFlowRegion(
             yield self
 
     def control_flow_regions_preorder(self, recursive: bool, load_ext: bool) -> Iterator["AbstractControlFlowRegion"]:
-        """``all_control_flow_regions(parent_first=True)`` with an explicit stack: a generator per nesting level costs
-        every region its depth in resumes. Each ``nodes()`` list is taken when its owner is reached."""
+        """``all_control_flow_regions(parent_first=True)`` with an explicit stack instead of one generator per level."""
         yield self
-        # (remaining items, the state they belong to or None for a region's blocks)
+        # (remaining items, their state, or None for a region's blocks)
         stack: list[tuple[Iterator[Any], SDFGState | None]] = [(iter(self.nodes()), None)]
         while stack:
             items, owner = stack[-1]
@@ -4126,7 +4125,7 @@ class AbstractControlFlowRegion(
                         yield item.sdfg
                         stack.append((iter(item.sdfg.nodes()), None))
             elif isinstance(item, SDFGState):
-                if recursive:
+                if recursive and item.number_of_nodes() > 0:
                     stack.append((iter(item.nodes()), item))
             elif isinstance(item, AbstractControlFlowRegion):
                 yield item
