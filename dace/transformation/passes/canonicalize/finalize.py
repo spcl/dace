@@ -22,6 +22,8 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 
 import os
 
+import sympy
+
 from dace import SDFG, Memlet, dtypes, subsets, symbolic
 from dace import data as dt
 from dace.config import Config
@@ -489,16 +491,14 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
             if device == dtypes.DeviceType.CPU and map_reduces_into(sd, name):
                 desc.lifetime = dtypes.AllocationLifetime.State
                 continue
-            # Hoisting into ``__dace_init`` is sound only where the program would have made the
-            # allocation anyway, or where the extent holds for every value the boundary admits: a
-            # buffer sized by the very quantity its guard tests (LoopToScan's carry distance) is
-            # positive inside the branch and negative outside it, and ``new T[negative]`` aborts.
+            # A buffer sized by the very quantity its guard tests (LoopToScan's carry distance) is positive inside the
+            # branch and not outside it, and ``new T[negative]`` aborts. Its size symbols hold one value for the run,
+            # so a non-positive size at init means the branch never runs: allocate nothing then.
             if not (
                 allocated_unconditionally(sd, name)
                 or all(symbolic.provably_nonnegative(dim, sd.facts()) for dim in desc.shape)
             ):
-                desc.lifetime = dtypes.AllocationLifetime.State
-                continue
+                desc.total_size = sympy.Max(0, desc.total_size)
             # A shape naming a RUNTIME-SUPPLIED symbol cannot be allocated in ``__dace_init``:
             # that runs before any state, and ``__dace_num_threads`` is defined by a graph tasklet
             # once the program is running. Promoting such a buffer emits an init that references an

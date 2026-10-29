@@ -428,6 +428,36 @@ def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
     finalize_for_target(sdfg, "gpu", validate=True)
 
 
+def test_a_buffer_only_a_guard_admits_is_persistent_and_sized_at_least_zero():
+    """``tmp`` (``N - 4`` elements) exists only under ``N > 4``: it is Persistent, allocated with ``Max(0, N - 4)``
+    elements, so an ``N`` the guard rejects allocates nothing and an ``N`` it admits computes."""
+    from dace.transformation.passes.canonicalize.finalize import finalize_transient_storage
+
+    N = dace.symbol("N")
+
+    @dace.program
+    def guarded(A: dace.float64[N], B: dace.float64[N]):
+        if N > 4:
+            tmp = np.ndarray([N - 4], dtype=np.float64)
+            for i in dace.map[0 : N - 4]:
+                tmp[i] = A[i + 4] * 2.0
+            for i in dace.map[0 : N - 4]:
+                B[i + 4] = tmp[N - 5 - i] + 1.0
+
+    sdfg = guarded.to_sdfg(simplify=True)
+    finalize_transient_storage(sdfg, dace.dtypes.DeviceType.CPU)
+    (tmp,) = [d for sd in sdfg.all_sdfgs_recursive() for n, d in sd.arrays.items() if n == "tmp"]
+    assert tmp.lifetime == dace.dtypes.AllocationLifetime.Persistent
+    assert "Max" in str(tmp.total_size)
+    for n in (2, 9):
+        A, B = np.arange(n, dtype=np.float64), np.zeros(n)
+        sdfg(A=A, B=B, N=n)
+        expected = np.zeros(n)
+        if n > 4:
+            expected[4:] = (A[4:] * 2.0)[::-1] + 1.0
+        assert np.array_equal(B, expected)
+
+
 def test_finalize_transient_storage_converts_len1_transient_array_to_scalar():
     """``finalize_transient_storage`` converts every length-1 *transient* array to a Scalar
     (a single internal value belongs in a scalar, not a heap array), while leaving a
