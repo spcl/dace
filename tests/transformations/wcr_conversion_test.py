@@ -930,6 +930,23 @@ def test_aug_assign_cpp_keeps_the_increment_as_written(code, reference):
     assert A[0] == expected
 
 
+def test_python_update_reads_the_update_of_a_python_tasklet_only():
+    """``out = acc + inc`` reading the element it writes is ``("+", acc edge, inc)``; a C++ tasklet is None."""
+    sdfg = dace.SDFG("python_update")
+    sdfg.add_array("A", [4], dace.float64)
+    state = sdfg.add_state()
+    updates = {}
+    for language, code in ((dace.Language.Python, "b = a + 2.0"), (dace.Language.CPP, "b = a + 2.0;")):
+        tasklet = state.add_tasklet("t", {"a"}, {"b"}, code, language=language)
+        read = state.add_edge(state.add_read("A"), None, tasklet, "a", dace.Memlet("A[1]"))
+        write = state.add_edge(tasklet, "b", state.add_write("A"), None, dace.Memlet("A[1]"))
+        updates[language] = (AugAssignToWCR.python_update(tasklet, [read], write), read)
+
+    (op, edge, inc), read = updates[dace.Language.Python]
+    assert (op, edge, dace.frontend.python.astutils.unparse(inc)) == ("+", read, "2.0")
+    assert updates[dace.Language.CPP][0] is None
+
+
 if __name__ == "__main__":
     test_aug_assign_python_logical_or()
     test_aug_assign_tasklet_lhs()
