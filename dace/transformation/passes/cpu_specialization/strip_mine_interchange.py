@@ -117,6 +117,7 @@ from dace.transformation.passes.cpu_specialization.hoist_parallel_region import 
     outline,
     top_level_loop_locals,
 )
+from dace.transformation.passes.cpu_specialization.interchange_loops_into_lane_maps import iterator_indexes
 from dace.transformation.passes.cpu_specialization.machine import topology
 
 #: Parameter name of the tile loop. One name, so the reshape can find the map it just made.
@@ -1284,6 +1285,11 @@ class StripMineInterchange(HoistParallelRegion):
         :param sdfg: the SDFG owning ``loop``.
         :returns: ``True`` if the loop may be tiled.
         """
+        # A time-step loop pays one barrier per step, few against its steps' work, and a tile running every step
+        # alone only grows its working set: bout_elm_pb's y planes, each walked at stride NY * NZ, ran 2.1x numba's
+        if loop.loop_variable is None or not iterator_indexes(loop):
+            self._approved = None
+            return False
         targets = tileable_maps(loop, sdfg)
         self._approved = (loop, targets) if targets is not None else None
         return targets is not None

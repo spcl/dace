@@ -388,3 +388,21 @@ if __name__ == "__main__":
     test_a_nested_statement_writing_outside_data_through_a_view_is_refused("copy")
     test_a_nested_statement_writing_outside_data_through_a_view_is_refused("tasklet")
     test_a_copy_beside_the_maps_into_a_view_of_shared_data_is_not_replicated()
+
+
+M = dace.symbol("M")
+
+
+@dace.program
+def stencil_steps(u: dace.float64[N, M, M], T: dace.int64):
+    for _ in range(T):
+        u[1 : N - 1, :, 1 : M - 1] = u[1 : N - 1, :, 1 : M - 1] + 0.1 * (
+            u[2:N, :, 1 : M - 1] - u[0 : N - 2, :, 1 : M - 1]
+        )
+
+
+def test_a_time_step_loop_is_not_tiled():
+    """bout_elm_pb's shape: a step loop whose iterator indexes nothing over a stencil with an x-neighbour carry. The
+    middle axis would tile, running every step per plane at stride ``M * M``; a step costs one barrier instead."""
+    sdfg = finalized(stencil_steps, "stencil_steps")
+    assert not is_tiled(sdfg), "a time-step loop must keep its per-step team, not tile a strided axis"
