@@ -759,8 +759,9 @@ namespace dace
         {
             return dace::float16(std::pow(float(a), float(b)));
         }
-        // ``a ** (p / q)`` in the base's floating type R, double for an integral base as ``int ** float`` in NumPy.
-        // ``p`` and ``q`` may be symbols: the quotient is computed in F, never integer division or half precision.
+        // ``a ** (p / q)`` computed in F (float for a half, double for an integral base) and returned as R (the base's
+        // type, double for an integral base as ``int ** float`` in NumPy). Dividing in F avoids integer division and
+        // half overflow.
         template<typename T, typename P, typename Q>
         DACE_HDFI auto pow(const T& a, const P& p, const Q& q)
         {

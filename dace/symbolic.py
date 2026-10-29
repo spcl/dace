@@ -1609,27 +1609,28 @@ def sympy_divide_fix(expr):
 
     int_floor = sympy.Function("int_floor")
 
+    # Rewrites each occurrence in place: ``subs`` would also rewrite an equal quotient inside an exponent
     def rewrite(node):
-        if not isinstance(node, sympy.Basic):
-            return node
         if isinstance(node, sympy.Pow) and not node.exp.is_integer:
-            # The printer lowers a non-integer exponent's exact quotient itself.
+            # The printer lowers a non-integer exponent's exact quotient itself
             base = rewrite(node.base)
             return node if base == node.base else node.func(base, node.exp)
-
         args = tuple(rewrite(arg) for arg in node.args)
-        candidate = node if args == node.args else node.func(*args)
-        if not isinstance(candidate, sympy.Mul):
-            return candidate
-        for i, arg in enumerate(candidate.args):
-            if isinstance(arg, sympy.Number) and abs(arg) >= 1:
-                continue
-            if isinstance(arg, sympy.Number) and (1 / arg) == int(1 / arg):
-                ri = i
-                break
-        else:
-            return candidate
-        return int_floor(sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1 :])), int(1 / candidate.args[ri]))
+        node = node if args == node.args else node.func(*args)
+        if not isinstance(node, sympy.Mul):
+            return node
+        # ``rest * (1/k)`` is the integer division ``rest / k``
+        ri = next(
+            (
+                i
+                for i, arg in enumerate(node.args)
+                if isinstance(arg, sympy.Number) and abs(arg) < 1 and 1 / arg == int(1 / arg)
+            ),
+            None,
+        )
+        if ri is None:
+            return node
+        return int_floor(sympy.Mul(*node.args[:ri], *node.args[ri + 1 :]), int(1 / node.args[ri]))
 
     return rewrite(nexpr)
 

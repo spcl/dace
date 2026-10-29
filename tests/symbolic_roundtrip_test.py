@@ -233,7 +233,7 @@ def test_symbolic_fractional_power_cpp_lowering():
     assert symstr(pystr_to_symbolic("M**(1/N)"), cpp_mode=True) == "(dace::math::pow(M, 1, N))"
 
 
-def test_fractional_power_does_not_protect_equal_quotient_elsewhere():
+def test_equal_quotient_outside_an_exponent_stays_floored():
     expr = pystr_to_symbolic("M**(N/3) + N/3")
     assert symstr(expr) == "((M) ** (N/3) + int_floor(N, 3))"
     assert symstr(expr, cpp_mode=True) == "(dace::math::pow(M, N, 3) + ((N) / (3)))"
@@ -430,7 +430,7 @@ if __name__ == "__main__":
     test_infinity_cpp_lowering()
     test_fractional_power_cpp_lowering()
     test_symbolic_fractional_power_cpp_lowering()
-    test_fractional_power_does_not_protect_equal_quotient_elsewhere()
+    test_equal_quotient_outside_an_exponent_stays_floored()
     test_interstate_fractional_power_is_a_real_power()
     test_integer_power_in_a_denominator_stays_one_operand()
     test_nan_roundtrip()
