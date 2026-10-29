@@ -14,8 +14,13 @@ import re
 import warnings
 
 import numpy as np
+import pytest
 
 import dace
+
+# Asserts the legacy CUDA codegen's per-state stream synchronization; the experimental stream model is tested in
+# experimental_cuda_stream_model_test.py
+pytestmark = pytest.mark.old_gpu_codegen_only
 
 
 def dace_inhibitor(f):

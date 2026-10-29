@@ -6,6 +6,8 @@ These assert on emitted code, so they need a GPU for neither compilation nor a r
 
 import re
 
+import pytest
+
 import dace
 from dace import dtypes
 from dace.codegen import common
@@ -145,6 +147,7 @@ def test_the_init_function_still_checks_what_runs_after_the_allocations():
     )
 
 
+@pytest.mark.old_gpu_codegen_only  # the legacy codegen's cross-stream events
 def test_cross_stream_event_synchronization_is_checked():
     """The producers have to be ordered against their consumer, and the ordering has to be checked.
 
