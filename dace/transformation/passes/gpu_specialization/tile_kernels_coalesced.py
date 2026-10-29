@@ -91,21 +91,18 @@ class TileKernelsCoalesced(ppl.Pass):
                 continue
             coalesced = coalesced_param(state, kernel, state.sdfg)
             outer = next(p for p in params if p != coalesced)
-            self.tile(state, kernel, coalesced, outer)
-            tiled[kernel.map.label] = (coalesced, outer, self.factor)
+            if self.tile(state, kernel, coalesced, outer):
+                tiled[kernel.map.label] = (coalesced, outer, self.factor)
         return tiled or None
 
-    def tile(self, state: SDFGState, kernel: nodes.MapEntry, coalesced: str, outer: str) -> None:
+    def tile(self, state: SDFGState, kernel: nodes.MapEntry, coalesced: str, outer: str) -> bool:
         """Grid over tiles, an explicit thread-block map (``coalesced`` is ``threadIdx.x``, ``outer`` ``.y``) and a
-        sequential loop of ``factor`` points of ``outer`` per thread."""
+        sequential loop of ``factor`` points of ``outer`` per thread; False, and the kernel untouched, if it is one tile."""
         # threadIdx.x is the last parameter of the thread-block map, .y the one before it.
         rest = [p for p in kernel.map.params if p not in (coalesced, outer)]
         lanes = Config.get("compiler", "cuda", "block_min_lanes")
         bx, by, bz = [int(b) for b in (kernel.map.gpu_block_size or [lanes, max(1, self.block_threads // lanes), 1])]
         perm = [kernel.map.params.index(p) for p in rest + [outer, coalesced]]
-        ranges = kernel.map.range.ranges
-        kernel.map.params = [kernel.map.params[i] for i in perm]
-        kernel.map.range = subsets.Range([ranges[i] for i in perm])
         factor = max(1, self.factor)
         sizes = {coalesced: bx, outer: by * factor}
         if rest and bz > 1:
@@ -113,10 +110,16 @@ class TileKernelsCoalesced(ppl.Pass):
         else:
             bz = 1
         # A tile wider than a constant extent would carry its overhang into the memlets around the grid
-        for param, extent in zip(kernel.map.params, kernel.map.range.size()):
-            extent = symbolic.simplify(extent)
-            if param in sizes and not symbolic.issymbolic(extent) and int(extent) < sizes[param]:
-                sizes[param] = int(extent)
+        extents = {p: symbolic.simplify(e) for p, e in zip(kernel.map.params, kernel.map.range.size())}
+        for param in sizes:
+            if not symbolic.issymbolic(extents[param]) and int(extents[param]) < sizes[param]:
+                sizes[param] = int(extents[param])
+        # MapTiling splits no axis whose tile is one point or the whole axis: then the kernel is one tile already
+        if all(size == 1 or symbolic.equal(size, extents[p]) is True for p, size in sizes.items()):
+            return False
+        ranges = kernel.map.range.ranges
+        kernel.map.params = [kernel.map.params[i] for i in perm]
+        kernel.map.range = subsets.Range([ranges[i] for i in perm])
         bx, by = sizes[coalesced], -(-sizes[outer] // factor)
         factor = min(factor, sizes[outer])
         if bz > 1:
@@ -155,3 +158,4 @@ class TileKernelsCoalesced(ppl.Pass):
         kernel.map.schedule = dtypes.ScheduleType.Sequential
         kernel.map.gpu_block_size = None
         kernel.map.instrument = dtypes.InstrumentationType.No_Instrumentation
+        return True
