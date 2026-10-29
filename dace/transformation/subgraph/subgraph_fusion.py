@@ -109,11 +109,18 @@ def same_dynamic_inputs(graph: SDFGState, map_entries: list[nodes.MapEntry]) -> 
 def orders_after_a_whole_map(
     graph: SDFGState, map_entries: list[nodes.MapEntry], map_exits: list[nodes.MapExit], intermediate_nodes
 ) -> bool:
-    """Whether an empty memlet from a fused map's exit orders an intermediate node or another fused map after the
-    whole map; inside the fused map nothing could. One from an intermediate node into a map entry is kept per
-    iteration (see ``fuse``)."""
+    """Whether an empty memlet orders a whole fused map: from a map's exit to an intermediate node or another fused
+    map, or from an intermediate node into a map that never accesses its data. Inside the fused map either could only
+    order one iteration; one into a map accessing that data orders its per-iteration accesses (see ``fuse``)."""
     inside = OrderedSet(intermediate_nodes) | OrderedSet(map_entries)
-    return any(e.data.is_empty() and e.dst in inside for exit_ in map_exits for e in graph.out_edges(exit_))
+    entries = set(map_entries)
+    return any(e.data.is_empty() and e.dst in inside for exit_ in map_exits for e in graph.out_edges(exit_)) or any(
+        e.data.is_empty()
+        and e.dst in entries
+        and not any(inner.data.data == n.data for inner in graph.scope_subgraph(e.dst).edges())
+        for n in intermediate_nodes
+        for e in graph.out_edges(n)
+    )
 
 
 @make_properties

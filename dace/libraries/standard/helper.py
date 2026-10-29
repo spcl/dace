@@ -95,7 +95,10 @@ def call_scratch_lifetime(
     from dace.transformation import helpers as xfh
     from dace.transformation.passes.persistent_transients import persistent_size_symbols, size_symbols_at_root
 
-    if any(entry.schedule != dtypes.ScheduleType.Sequential for entry, _ in xfh.get_parent_maps(parent_state, node)):
+    if any(
+        entry.schedule != dtypes.ScheduleType.Sequential
+        for entry, entry_state in xfh.get_parent_maps(parent_state, node)
+    ):
         return dtypes.AllocationLifetime.Scope
     names = {str(free) for size in sizes for free in dace.symbolic.pystr_to_symbolic(size).free_symbols}
     root = parent_sdfg

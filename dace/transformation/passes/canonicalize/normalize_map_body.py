@@ -315,7 +315,7 @@ class NormalizeMapBody(ppl.Pass):
             carried = shared_carrier_connectors(state, keep, drop)
             if carried is None:
                 break
-            if linked_through_other_nodes(state, keep, drop, {carrier for _, carrier in carried.values()}):
+            if linked_through_other_nodes(state, keep, drop, {carrier for connector, carrier in carried.values()}):
                 # The merged node would feed the nodes between and read them back: a cycle
                 continue
             merged = True

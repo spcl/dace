@@ -471,6 +471,12 @@ def test_max_roundtrip_is_lossless():
     assert rt == expr
 
 
+def test_integer_power_in_a_denominator_stays_one_operand():
+    expr = pystr_to_symbolic("x / N**2")
+    assert symstr(expr, cpp_mode=True) == "(x/((N) * (N)))"
+    assert eval(symstr(expr), {"x": 36.0, "N": 3.0}) == 4.0
+
+
 if __name__ == "__main__":
     test_operator_roundtrip_renders_operator()
     test_ternary_roundtrip()
@@ -506,3 +512,4 @@ if __name__ == "__main__":
     test_symbolic_expression_serialization_preserves_integerness()
     test_symbolic_roundtrip_preserves_integerness()
     test_max_roundtrip_is_lossless()
+    test_integer_power_in_a_denominator_stays_one_operand()

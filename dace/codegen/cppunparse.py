@@ -1455,6 +1455,19 @@ class CPPUnparser:
                 self.write(runtime_call("dace::math::pow", [self.render(t.left), exponent], types))
                 return
 
+            # A ``p/q`` exponent is C++ integer division: ``pow(x, 1/3)`` is ``pow(x, 0)``
+            negated = isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub)
+            quotient = t.right.operand if negated else t.right
+            if isinstance(quotient, ast.BinOp) and isinstance(quotient.op, ast.Div):
+                self.write("dace::math::pow(")
+                self.dispatch(t.left)
+                self.write(", -(" if negated else ", ")
+                self.dispatch(quotient.left)
+                self.write("), " if negated else ", ")
+                self.dispatch(quotient.right)
+                self.write(")")
+                return
+
             # General pow operator
             self.emit_call("dace::math::pow", [t.left, t.right])
         else:

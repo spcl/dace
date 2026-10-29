@@ -345,6 +345,27 @@ def test_a_size_symbol_another_program_declared_as_a_float_still_sizes_an_array(
     test_two_arrays_from_one_size_share_their_extent()
 
 
+def test_a_size_promoted_in_one_branch_is_not_reused_in_a_sibling():
+    """The promotion edge lives in the branch that allocated first; the sibling must read the scalar again."""
+
+    @dace.program
+    def sibling_branches(Nt: dace.int64, out: dace.float64[1]):
+        m = Nt + 1
+        if Nt > 2:
+            b = np.empty(m, dace.float64)
+            b[0] = 1.0
+            out[0] = b[0]
+        else:
+            c = np.empty(m, dace.float64)
+            c[0] = 2.0
+            out[0] = c[0]
+
+    for nt, expected in ((1, 2.0), (5, 1.0)):
+        out = np.zeros(1)
+        sibling_branches(np.int64(nt), out)
+        assert out[0] == expected
+
+
 if __name__ == "__main__":
     test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version()
     test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx()
@@ -367,3 +388,4 @@ if __name__ == "__main__":
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(calls_size_from_empty)
 
     test_a_size_symbol_another_program_declared_as_a_float_still_sizes_an_array()
+    test_a_size_promoted_in_one_branch_is_not_reused_in_a_sibling()

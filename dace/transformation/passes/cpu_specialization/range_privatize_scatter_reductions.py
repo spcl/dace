@@ -523,7 +523,7 @@ class SiteSlicer:
 
         def runs(f: Frame, k: int) -> bool:
             """Whether map dimension ``k`` of ``f`` provably runs at least once."""
-            begin, end, _ = f.payload[2][k]
+            begin, end, step = f.payload[2][k]
             if id(f.nest) not in facts:
                 facts[id(f.nest)] = f.nest.sdfg.facts()
             return symbolic.provably_le(begin, end, facts[id(f.nest)])

@@ -290,6 +290,23 @@ def test_an_ordering_edge_beside_a_data_edge_adds_no_empty_memlet():
     np.testing.assert_allclose(arrays["C"], 2 * (arrays["A"] + 1))
 
 
+def test_an_ordering_edge_from_the_intermediate_is_not_fused():
+    """``B`` orders a third map ``D[i] = A[i]`` after it. Inside one fused map that would order it after one
+    element of ``B`` only: the fusion declines."""
+    chain = Chain("empty_memlet_from_intermediate")
+    third = chain.mapped("third", "a", "A", "d = a", "d", "D")
+    chain.state.add_nedge(chain.b, third[1], dace.Memlet())
+    chain.fused += chain.scope(third)
+    fusion = chain.fuse()
+    assert not fusion.can_be_applied(chain.sdfg, fusion.subgraph_view(chain.sdfg))
+
+    # ``CompositeFusion`` applies after ``StencilTiling`` without asking: the graph stays as it was
+    before = len(chain.state.nodes()), len(chain.state.edges())
+    fusion.apply(chain.sdfg)
+    assert (len(chain.state.nodes()), len(chain.state.edges())) == before
+    chain.sdfg.validate()
+
+
 if __name__ == "__main__":
     test_an_ordering_edge_into_both_maps_orders_the_fused_map_once()
     test_an_ordering_edge_out_of_a_map_follows_the_fused_map()
@@ -303,3 +320,4 @@ if __name__ == "__main__":
     test_fuse_leaves_a_dynamic_map_range_input_unfused()
     test_fuse_leaves_a_map_ordered_after_another_unfused()
     test_an_ordering_edge_beside_a_data_edge_adds_no_empty_memlet()
+    test_an_ordering_edge_from_the_intermediate_is_not_fused()

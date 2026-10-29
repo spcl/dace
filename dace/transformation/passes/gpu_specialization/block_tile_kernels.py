@@ -158,7 +158,13 @@ def give_blocks_their_containers(state: SDFGState, kernel: nodes.MapEntry, strid
     the code after them reads it whole. Only a fill in a state of a nested SDFG that nothing else in the state
     touches is lifted; the returned states are the fills, which :func:`fence_with_barriers` fences once the kernel
     is tiled. An array the lift refuses stays lane-private, and the kernel untiled."""
-    from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel, needs_global_memory
+    from dace.sdfg import dealias
+    from dace.transformation.passes.move_array_out_of_kernel import (
+        MoveArrayOutOfKernel,
+        is_move_candidate,
+        move_array,
+        plan_lift,
+    )
 
     mover = MoveArrayOutOfKernel()
     private = lane_private_containers(state, kernel)
@@ -173,18 +179,22 @@ def give_blocks_their_containers(state: SDFGState, kernel: nodes.MapEntry, strid
             if edge.data.is_empty() or edge.data.wcr is not None or (owner, name) not in private:
                 continue
             desc = owner.arrays[name]
-            if not needs_global_memory(desc, mover.register_demotion_max_elements):
+            if not is_move_candidate(desc, mover.register_limit):
                 continue
             if not reads_outside(owner, name, inner):
                 continue
             touched = [node for node in inner_state.data_nodes() if node.data == name and node not in inner]
             if any(inner_state.out_degree(node) > 0 or inner_state.in_degree(node) > 1 for node in touched):
                 continue
-            plan = mover.plan_lift(name, owner, kernel, state)
+            try:
+                plan = plan_lift(name, owner, (kernel, state), mover.layout == "coalesced")
+            except NotImplementedError:
+                continue
             if plan is None:
                 continue
             desc.storage = dtypes.StorageType.GPU_Global
-            mover.move_array(plan, kernel, state)
+            move_array(plan)
+            dealias.convert_legacy_nested_sdfgs(state.sdfg)
             private.discard((owner, name))
             if inner_state not in fills:
                 fills.append(inner_state)
