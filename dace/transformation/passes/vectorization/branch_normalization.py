@@ -376,15 +376,8 @@ class BranchNormalization(ppl.Pass):
                         code.as_string if isinstance(code, CodeBlock) else str(code), potential_symbols=only
                     ):
                         return True
-        for state in sdfg.states():
-            if state in inside_states:
-                continue
-            for n in state.nodes():
-                if isinstance(n, dace.nodes.Tasklet):
-                    code = n.code.as_string if isinstance(n.code, CodeBlock) else str(n.code)
-                    if symbolic.symbols_in_code(code, potential_symbols=only):
-                        return True
-        return False
+        # A state reads a symbol in a tasklet, a memlet, a map range or a nested SDFG's symbol mapping.
+        return any(sym in state.used_symbols(all_symbols=True) for state in sdfg.states() if state not in inside_states)
 
     @staticmethod
     def _substantive_states(body: ControlFlowRegion) -> list[dace.SDFGState]:
@@ -635,6 +628,12 @@ class BranchNormalization(ppl.Pass):
         :returns: ``True`` if serialized, ``False`` if the guard is not snapshottable.
         """
         parent = cb.parent_graph
+        # A symbol an arm binds and a block outside it reads: after the split each binding sits under its own
+        # conditional, so the reader sees the symbol as possibly undefined (triangle_count).
+        for _cond, body in cb.branches:
+            for edge in body.all_interstate_edges():
+                if any(self._symbol_read_outside_arm(sym, body) for sym in edge.data.assignments):
+                    return False
         cond_text = cond0.as_string if isinstance(cond0, CodeBlock) else str(cond0)
         frozen = self.freeze_guard_for_serialization(cb, cond_text)
         if frozen is None:
