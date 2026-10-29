@@ -88,7 +88,8 @@ class TransientReuse(ppl.Pass):
     not ``may_alias``; one used inside a map scope only if it is allocated outside it (SDFG or Persistent lifetime, or
     also accessed outside every map in each state using it), and never ordered within a state. A shared buffer has the
     same dtype, storage, pooling and strides as its members, is provably at least as large in every dimension, and is
-    allocated once: Persistent if any member is, else SDFG lifetime. GPU arrays share only when all device work runs
+    allocated once: Persistent if any member is, else SDFG lifetime. At the root SDFG every candidate sized only by
+    symbols bound on entry becomes Persistent, shared or not. GPU arrays share only when all device work runs
     on one stream (``compiler.cuda.max_concurrent_streams == -1``), so device accesses run in program order.
     """
 
@@ -165,34 +166,50 @@ class BufferSharing:
     locals: dict[tuple[SDFGState, str], bool] = field(default_factory=dict)
     hoistable_names: OrderedSet | None = None
     #: Candidates a nested SDFG's connector is bound to: its descriptor must keep matching the array's.
-    nested: set[str] = field(default_factory=set)
+    nested: OrderedSet = field(default_factory=OrderedSet)
     #: The SDFG's facts, derived once: nothing changes until the renaming at the end.
     facts: symbolic.Facts | None = None
 
     def run(self) -> dict[str, str]:
         self.facts = self.sdfg.facts()
         self.collect()
-        if len(self.uses) < 2:
-            return {}
         groups: list[Group] = []
         for name in sorted(self.uses, key=lambda n: min(self.rank[s] for s in self.uses[n])):
             group = self.place(name, groups)
             if group is None:
                 groups.append(Group(name, [name]))
+        persistent = dtypes.AllocationLifetime.Persistent
+        root = self.sdfg.parent_nsdfg_node is None
+        for group in groups:
+            desc = self.sdfg.arrays[group.rep]
+            # At the root, symbols bound on entry are known at init: a buffer sized by them alone is allocated there.
+            if desc.lifetime != persistent and root and self.hoistable(desc):
+                desc.lifetime = persistent
+            elif len(group.members) > 1 and desc.lifetime != persistent:
+                desc.lifetime = dtypes.AllocationLifetime.SDFG
         renamed = {m: g.rep for g in groups for m in g.members if m != g.rep}
         if not renamed:
             return {}
-        for group in groups:
-            desc = self.sdfg.arrays[group.rep]
-            if len(group.members) > 1 and desc.lifetime != dtypes.AllocationLifetime.Persistent:
-                desc.lifetime = dtypes.AllocationLifetime.SDFG
         for state in self.sdfg.states():
             for node in state.data_nodes():
                 if node.data in renamed:
                     node.data = renamed[node.data]
+            # Scope connectors passing a renamed array through are named after it.
+            moved: dict[tuple[nodes.Node, str], str] = {}
             for edge in state.edges():
-                if edge.data.data in renamed:
-                    edge.data.data = renamed[edge.data.data]
+                old = edge.data.data
+                if old not in renamed:
+                    continue
+                edge.data.data = renamed[old]
+                if isinstance(edge.src, (nodes.EntryNode, nodes.ExitNode)) and edge.src_conn == f"OUT_{old}":
+                    moved[(edge.src, edge.src_conn)] = edge.src_conn = f"OUT_{renamed[old]}"
+                if isinstance(edge.dst, (nodes.EntryNode, nodes.ExitNode)) and edge.dst_conn == f"IN_{old}":
+                    moved[(edge.dst, edge.dst_conn)] = edge.dst_conn = f"IN_{renamed[old]}"
+            for (node, old), new in moved.items():
+                if old.startswith("IN_"):
+                    node.add_in_connector(new, node.in_connectors.pop(old), force=True)
+                else:
+                    node.add_out_connector(new, node.out_connectors.pop(old), force=True)
         for name in renamed:
             self.sdfg.remove_data(name, validate=False)
         return renamed
@@ -430,16 +447,14 @@ class BufferSharing:
             return None
         # A renamed member a nested SDFG is bound to would hand that connector a differently shaped array.
         shape = arrays[chosen].shape
-        if any(
-            m != chosen
-            and m in self.nested
-            and not (
+        for m in [*group.members, name]:
+            if m == chosen or m not in self.nested:
+                continue
+            if not (
                 len(arrays[m].shape) == len(shape)
                 and all(symbolic.equal(x, y) is True for x, y in zip(arrays[m].shape, shape))
-            )
-            for m in [*group.members, name]
-        ):
-            return None
+            ):
+                return None
         if arrays[chosen].lifetime == persistent:
             return chosen
         if any(arrays[m].lifetime == persistent for m in [*group.members, name]) or not self.hoistable(arrays[chosen]):

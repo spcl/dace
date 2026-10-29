@@ -70,6 +70,8 @@ def test_sequential_states_share_one_buffer():
 
     assert renamed == {sdfg.cfg_id: {"T2": "T1"}}
     assert buffers(sdfg) == ["T1"]
+    connectors = [c for state in sdfg.states() for n in state.nodes() for c in (*n.in_connectors, *n.out_connectors)]
+    assert "IN_T1" in connectors and not any("T2" in c for c in connectors)
     A = np.random.rand(N_VALUE)
     B, C = np.zeros(N_VALUE), np.zeros(N_VALUE)
     run(sdfg, A=A, B=B, C=C)
@@ -141,7 +143,7 @@ def test_larger_buffer_is_reused_only_when_provably_large_enough():
 
     assert renamed == {sdfg.cfg_id: {"Small": "Big"}}
     assert buffers(sdfg) == ["Big", "Other"]
-    assert sdfg.arrays["Big"].lifetime == dtypes.AllocationLifetime.SDFG
+    assert sdfg.arrays["Big"].lifetime == dtypes.AllocationLifetime.Persistent
     A, D = np.random.rand(N_VALUE), np.random.rand(N_VALUE + 5)
     B, C, E = np.zeros(N_VALUE), np.zeros(N_VALUE), np.zeros(N_VALUE + 5)
     run(sdfg, A=A, B=B, C=C, D=D, E=E, M=N_VALUE + 5)
