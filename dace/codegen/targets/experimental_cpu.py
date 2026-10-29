@@ -44,6 +44,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
+from dace.utils import find_new_name
 
 #: C++ integer type for computed flat indices, per ``codegen_params.index_ctype``. Exact-width
 #: ``<cstdint>`` types: ``long long`` is only guaranteed to be AT LEAST 64 bits, so it does not say
@@ -283,6 +284,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # _size_functions (the emitted-name sets), so no separate name->sig maps are kept.
         self._index_sig_to_name: dict[tuple, str] = {}
         self._size_sig_to_name: dict[tuple, str] = {}
+        # Container, symbol and constant names of the whole program, built on the first helper registration.
+        self._program_sdfg = sdfg
+        self._program_names: set[str] | None = None
         # Per-tasklet cache of identifiers appearing in the (rewritten) body.
         self._body_identifiers: dict[int, set[str]] = {}
         # Per-native-tasklet cache of identifiers the C++ body DECLARES (see _declared_identifiers).
@@ -1368,6 +1372,20 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # x[...]; any other Scalar is allocated by value (see CPUCodeGen.allocate_array).
         return isinstance(desc, dt.Scalar) and desc.storage != dtypes.StorageType.GPU_Global
 
+    def _unshadowed_helper_name(self, fnname: str, registry: dict[str, str]) -> str:
+        """``fnname``, or a fresh name when a container, symbol or constant of the program is called ``fnname``:
+        helpers are file-scope functions, so a parameter or local of the same name shadows them at every call."""
+        if self._program_names is None:
+            self._program_names = {
+                name
+                for sd in self._program_sdfg.all_sdfgs_recursive()
+                for names in (sd.arrays, sd.symbols, sd.constants)
+                for name in names
+            }
+        if fnname not in self._program_names:
+            return fnname
+        return find_new_name(fnname, self._program_names | registry.keys())
+
     def _register_index_function(self, data_name: str, desc):
         """Registers (once per distinct descriptor signature) the ``<name>_idx`` index function for
         ``data_name`` and returns ``(function_name, extra_symbol_names)``; a same-named array of
@@ -1393,6 +1411,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # name is already an emitted definition, so disambiguate.
         if fnname in self._index_functions:
             fnname = "%s_%dd_%d_idx" % (base, ndim, len(self._index_sig_to_name))
+        fnname = self._unshadowed_helper_name(fnname, self._index_functions)
         self._index_sig_to_name[key] = fnname
 
         ctype = index_ctype()
@@ -1451,6 +1470,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # already an emitted definition, so disambiguate.
         if fnname in self._size_functions:
             fnname = "%s_%d_size" % (base, len(self._size_sig_to_name))
+        fnname = self._unshadowed_helper_name(fnname, self._size_functions)
         self._size_sig_to_name[key] = fnname
 
         qualifier = size_qualifier(is_constant)

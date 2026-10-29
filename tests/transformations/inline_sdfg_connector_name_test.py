@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``InlineSDFG`` names an inlined transient apart from the connectors of the parent's code nodes, which validation
+"""``InlineSDFG`` and ``InlineMultistateSDFG`` name an inlined transient apart from the connectors of the parent's code nodes, which validation
 forbids data to share (an expanded copy's tasklet reads ``_cpy_in``, and so is named every copy nest's local view)."""
 
 import numpy as np
@@ -7,6 +7,7 @@ import numpy as np
 import dace
 from dace.libraries.standard.nodes import CopyLibraryNode
 from dace.transformation.interstate import InlineSDFG
+from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 
 #: The connector names of an expanded copy's tasklet, which every copy nest also gives its local views.
 CPY_IN, CPY_OUT = CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME
@@ -71,5 +72,19 @@ def test_an_inlined_transient_is_named_apart_from_a_connector():
     assert np.allclose(b, 2 * a) and np.allclose(d, c)
 
 
+def test_a_multistate_inlined_transient_is_named_apart_from_a_connector():
+    sdfg = parent_with_a_cpy_in_connector_and_a_nest()
+
+    assert sdfg.apply_transformations_repeated(InlineMultistateSDFG) == 1
+    sdfg.validate()
+    assert CPY_IN not in sdfg.arrays
+
+    a, c = np.arange(4.0), np.arange(4.0) + 10
+    b, d = np.zeros(4), np.zeros(4)
+    sdfg(A=a, B=b, C=c, D=d)
+    assert np.allclose(b, 2 * a) and np.allclose(d, c)
+
+
 if __name__ == "__main__":
     test_an_inlined_transient_is_named_apart_from_a_connector()
+    test_a_multistate_inlined_transient_is_named_apart_from_a_connector()

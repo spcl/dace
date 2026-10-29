@@ -11,6 +11,7 @@ so an un-inlined nested-SDFG function does not re-emit an identical helper into 
 
 import re
 
+import numpy as np
 import pytest
 
 import dace
@@ -137,6 +138,52 @@ def test_uninlined_kernel_no_duplicate_idx(kernel):
             assert not dups, f"{kernel}/{co.name}: duplicate index helpers in one TU: {dups}"
 
 
+def _helper_named_container_sdfg() -> dace.SDFG:
+    """``B = (A + A_idx) * 2`` through a transient ``T``, beside a ``T_size`` input: ``A_idx`` and ``T_size`` are the
+    names the readable generator would give the index helper of ``A`` and the size helper of ``T``."""
+    sdfg = dace.SDFG("helper_named_container")
+    for name in ("A", "A_idx", "B", "T_size"):
+        sdfg.add_array(name, [4, 3], dace.float64)
+    sdfg.add_transient("T", [4, 3], dace.float64)
+    state = sdfg.add_state("s")
+    t = state.add_access("T")
+    state.add_mapped_tasklet(
+        "add",
+        dict(i="0:4", j="0:3"),
+        {"a": dace.Memlet("A[i, j]"), "b": dace.Memlet("A_idx[i, j]"), "c": dace.Memlet("T_size[i, j]")},
+        "o = a + b + c",
+        {"o": dace.Memlet("T[i, j]")},
+        external_edges=True,
+        output_nodes={"T": t},
+    )
+    state.add_mapped_tasklet(
+        "scale",
+        dict(i="0:4", j="0:3"),
+        {"x": dace.Memlet("T[i, j]")},
+        "o = x * 2.0",
+        {"o": dace.Memlet("B[i, j]")},
+        external_edges=True,
+        input_nodes={"T": t},
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_helper_is_named_apart_from_a_container():
+    """A helper is a file-scope function, so a container named like it would shadow it at every call."""
+    sdfg = _helper_named_container_sdfg()
+    with use_implementation(EXPERIMENTAL):
+        code = "\n".join(co.code for co in sdfg.generate_code() if co.language == "cpp")
+        helpers = set(re.findall(r"(?:constexpr|consteval)\s+\w+\s+(\w+_(?:idx|size)\w*)\s*\(", code))
+        assert {"A_idx", "T_size"}.isdisjoint(helpers), helpers
+        assert {"A_idx_0", "T_size_0"} <= helpers, helpers
+
+        a, a_idx, t_size = (np.random.default_rng(seed).random((4, 3)) for seed in range(3))
+        b = np.zeros((4, 3))
+        sdfg(A=a, A_idx=a_idx, B=b, T_size=t_size)
+    assert np.allclose(b, (a + a_idx + t_size) * 2.0)
+
+
 if __name__ == "__main__":
     test_full_subset_same_name_not_renamed()
     test_identical_signature_kept()
@@ -144,4 +191,5 @@ if __name__ == "__main__":
     test_root_argument_never_renamed()
     for k in ("trisolv", "lu", "ludcmp"):
         test_uninlined_kernel_no_duplicate_idx(k)
+    test_helper_is_named_apart_from_a_container()
     print("ok")
