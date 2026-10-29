@@ -142,6 +142,42 @@ def test_stronger_lifetimes_are_not_demoted():
         assert sdfg.arrays["buf"].lifetime == lifetime
 
 
+def map_with_transient(name: str, schedule: dace.ScheduleType) -> dace.SDFG:
+    """``map i in 0:M: buf[0] = a[i] + 1; out[i] = buf[0]`` with the heap buffer ``buf[N]`` inside the map."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", ["M"], dace.float64)
+    sdfg.add_array("out", ["M"], dace.float64)
+    sdfg.add_transient("buf", [N], dace.float64, storage=dace.StorageType.CPU_Heap)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("rows", {"i": "0:M"}, schedule=schedule)
+    put = state.add_tasklet("put", {"v"}, {"b"}, "b = v + 1")
+    take = state.add_tasklet("take", {"b"}, {"o"}, "o = b")
+    buf = state.add_access("buf")
+    state.add_memlet_path(state.add_read("a"), entry, put, dst_conn="v", memlet=dace.Memlet("a[i]"))
+    state.add_edge(put, "b", buf, None, dace.Memlet("buf[0]"))
+    state.add_edge(buf, None, take, "b", dace.Memlet("buf[0]"))
+    state.add_memlet_path(take, exit_node, state.add_write("out"), src_conn="o", memlet=dace.Memlet("out[i]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_buffer_under_sequential_maps_only_is_promoted():
+    """One iteration at a time: a single buffer serves them all, instead of a malloc and a free per iteration."""
+    sdfg = map_with_transient("persist_under_sequential_map", dace.ScheduleType.Sequential)
+    assert MakeTransientsPersistent().apply_pass(sdfg, {})[sdfg.cfg_id] == {"buf"}
+    assert allocates_in_init(sdfg, "buf")
+    a = np.arange(5.0)
+    out = np.zeros(5)
+    sdfg(a=a, out=out, M=5, N=7)
+    assert np.allclose(out, a + 1)
+
+
+def test_a_buffer_under_a_parallel_map_is_not_promoted():
+    """Iterations of a parallel map run at once, each with its own buffer."""
+    sdfg = map_with_transient("persist_under_parallel_map", dace.ScheduleType.CPU_Multicore)
+    assert MakeTransientsPersistent().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_free_symbol_sized_transient_is_promoted()
     test_the_auto_optimize_helper_delegates()
@@ -150,3 +186,5 @@ if __name__ == "__main__":
     test_reassigned_size_symbol_is_not_promoted()
     test_loop_variable_sized_nested_transient_is_not_promoted()
     test_stronger_lifetimes_are_not_demoted()
+    test_a_buffer_under_sequential_maps_only_is_promoted()
+    test_a_buffer_under_a_parallel_map_is_not_promoted()
