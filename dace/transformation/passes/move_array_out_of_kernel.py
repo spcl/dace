@@ -452,6 +452,15 @@ class MoveArrayOutOfKernel(ppl.Pass):
             if edge.data.data == name
             or any(isinstance(node, nodes.AccessNode) and node.data == name for node in path_ends(state, edge))
         ]
+        # An access that neither enters nor leaves a scope names one slice; above a slicing level it would span all
+        for edge, prefix, state in prefixes:
+            crosses = (
+                edge.data.is_empty() or isinstance(edge.dst, nodes.EntryNode) or isinstance(edge.src, nodes.ExitNode)
+            )
+            if not crosses and any(dim[0] != dim[1] for dim in prefix):
+                raise NotImplementedError(
+                    f"Memlet {edge.data} in {state.label} reads '{name}' outside the kernel levels it is lifted by"
+                )
         desc = owner.arrays[name]
         hierarchy = sdfg_chain(owner, kernel_state.sdfg)
         extent_bounds = self.extent_bounds(desc, hierarchy, kernel, kernel_state)
