@@ -1,0 +1,222 @@
+# DaCe formal semantics (Lean 4)
+
+This directory holds a Lean 4 formalization of DaCe's intermediate
+representations:
+
+- `Dace/Core`: shared data model (symbolic expressions, subsets, data
+  descriptors, memlets, memory, access logs and their parallel merge, tasklets).
+- `Dace/SDFG`: syntax, well-formedness, semantics, interpreter and JSON import
+  of stateful dataflow multigraphs.
+- `Dace/STree`: the same for schedule trees (`Syntax` with DaCe's
+  `as_string` pretty-printer, `Json` importer for `.stree.json`, `WF`,
+  relational `Semantics`, the executable `Interp` and its `Soundness`
+  proof); `tests/ImportStreeCorpus.lean` imports the
+  corpus trees, checks them and compares the pretty-printer with DaCe.
+- `Dace/Equiv`: observational equivalence, refinement and congruence, and
+  verified checks (`lake exe dace-equiv`): `dace-equiv racefree <sdfg.json>...`
+  runs the static race check `raceFree?`, proven sound (`raceFree?_sound`);
+  `tests/RaceFreeCorpus.lean` pins its corpus verdicts. Congruence:
+  replacing a control-flow block (`Congr.block`) or the body of a map
+  (`Congr.scopeBody`, `Congr.mapBody`; decidable side condition
+  `sameOutside?`, exercised on every corpus map by
+  `tests/ScopeBodyCheck.lean`) by one whose runs it matches refines the SDFG.
+  Determinism (`Equiv/Det`): on the fragment `seqPure?` with convex map
+  scopes (`scopesOk?`), one normal run of a state makes every run normal
+  with the same memory, whatever topological orders the scopes take
+  (`StateExec.det`).  Control flow is deterministic (several true interstate
+  edges are undefined behavior), so this lifts to programs (`Equiv/DetProg`):
+  for a lawful WCR semantics, a program passing `SDFG.det?` (every state in
+  the fragment) with a normal outcome has no other outcome, in particular no
+  race (`SDFG.Exec.det`, `SDFG.Exec.no_err`); `tests/DetCheck.lean` checks
+  the hypotheses on the corpus.
+  SDFG / schedule-tree pairs (`Equiv/Corr*`, `lake exe dace-equiv stree
+  <sdfg.json> <stree.json>`): the checker `Corr.corr?` is proven sound
+  (`Corr.corr?_exec`: every run of the tree matches a run of the SDFG, with
+  observationally equal final memory, or the SDFG may be undefined;
+  `Corr.corr?_refines`: `Refines t g` for a supported SDFG).
+  Structured control flow (`Equiv/CorrCtl`): chains of blocks joined by
+  unconditional edges whose assignments become `AssignNode`s, a single
+  conditional out-edge (an `IfScope` holding the edge's assignments and the
+  rest of the chain, `RegCorr.condStep`), loop regions, conditional blocks
+  (`if`/`elif`/`else`), break, continue and return.  A region with branching
+  edges is a `GBlock` (`RegCorr.gblock`): each block's position after its
+  label holds its segment and one item per out-edge (a `stateif` with the
+  edge's assignments and a goto, or an inline goto for an unconditional
+  edge); several true edges and failing conditions are undefined behavior,
+  so the tree's first-true order is matched.  Every goto must jump forward
+  (`GPos`, well-founded by construction); loops built from backward gotos are
+  not certified yet.
+  States need no fragment beyond the absence of views inside scope bodies:
+  every sequential run is coherent (its memory is its log applied,
+  `SDFG/Coherence.lean`), streams and references included; a state's views
+  are the tree's `ViewNode`s at the head of its segment (`ViewsCorr`).
+  Nested SDFGs (`SegCorr.nestedMap`): a map scope whose body is one nested
+  SDFG matches the tree's inlined inner region; the per-call transients are
+  related to the tree's names by renaming (`SDFG/Sim.lean`, the simulation
+  theorem `SDFGExec.sim` over a name permutation, `Corr.flatCtx`).
+  Connectors may name their containers differently from the outer edges:
+  the tree body is renamed to the connector names (`STree/Rename.lean`,
+  `STree.ListExec.ren`, `Corr.connPerm`).  The inner top region may hold
+  any structured control flow without a `break`/`continue` leaving it
+  (`Region.escapes`); returns end the call, and the tree's gotos to the label
+  its returns were rebound to are matched as returns (`STree/Retarget.lean`,
+  `STree.ListExec.unlabel`, `Corr.innerCheck`).  A nested SDFG outside map scopes
+  (`SegCorr.nested`) matches its inlined region in the sibling list when the
+  call allocates no transients and the inlined tree nodes are dataflow nodes
+  (`SNode.isFlatT`) or end in the rebound return label without symbol
+  assignments or loops before it (`NestedShape`, `ListExec.split_label`);
+  such a call steps the state by its inner log (`NodeExec.steps`,
+  `DNode.FlatIn`).
+  Consume scopes without dynamic inputs (`SegCorr.consume`): the tree's
+  `IN_stream` copy names the stream of the entry's `IN_stream` edge, and the
+  body is matched in the consuming context (`TCtx.consuming`: memlets on the
+  stream read the chunk), task by task (`Corr.tasks_matched`); nested SDFGs
+  inside consume bodies are not matched yet.
+  Reference sets (`SegCorr.refSet`, `SegCorr.refSetCode`): a reference access
+  node set from a container is the tree's `RefSetNode` (the same `aliasTo`);
+  one set from a code node fails in both IRs (`unsupported`, D55).  Tree
+  memlets may omit a subset that the SDFG gives as the full range (`SubCorr`).
+  `tests/EquivCorpus.lean` prints the corpus verdicts.
+  SDFG–SDFG equivalence (`Equiv/SdfgCorr`, `lake exe dace-equiv sdfg
+  <a.sdfg.json> <b.sdfg.json>`): an untrusted search proposes rule
+  applications, a verified replay applies them and compares the result with
+  the second SDFG (`SDFG.beq`, sound); `checkBy_sound`: the SDFGs are
+  equivalent when the first is supported.  Rules: node renumbering of a state
+  (`Congr.relabelState`, from `SDFG/Relabel.lean`: every state-level relation
+  is invariant under a permutation of node ids); state replacement
+  (`Congr.replaceState`, from `Equiv/StateLocal.lean`: two states that agree
+  on their nodes, adjacent edges, components and view bindings, decided by
+  `stateSame?`, run with the same outcomes; covers node-list reordering);
+  block renumbering of a region (`Congr.relabelBlocks`, from
+  `Equiv/RegionRules.lean`, which also provides region-level congruence,
+  `Congr.regionEquiv`); inserting or removing an empty state after a block
+  (`Congr.insertEmpty`, `Congr.removeEmpty`).
+  `tests/SdfgCorrCorpus.lean` certifies a renumbered, a reordered, a
+  block-reversed and an empty-state variant of every corpus program (two reorderings of independent views are not).
+- `Dace/Decisions.md`: the semantic decision register (every ambiguity between
+  documentation, code generator and model, with the chosen resolution).
+
+## Building
+
+Install [elan](https://github.com/leanprover/elan); the toolchain is pinned in
+`lean-toolchain`. Then:
+
+```bash
+lake exe cache get   # prebuilt Mathlib, once per toolchain bump
+lake build
+scripts/check_axioms.sh   # build + sorry/axiom/import-isolation checks
+```
+
+## Differential testing
+
+`scripts/difftest.py` cross-checks the Lean interpreter against DaCe on the
+corpus under `tests/corpus`.
+
+The corpus is generated, not committed (`tests/corpus/` is git-ignored); CI
+regenerates it on every run with a fixed seed. To (re)generate it locally, with
+DaCe importable, from the repository root:
+
+```bash
+python formal/scripts/dump_corpus.py               # <name>.sdfg.json, .stree.json, .stree.txt
+python formal/scripts/difftest.py --record --seed 0  # compiles with DaCe: .inputs.json, .expected.json
+cd formal
+for t in tests/*.lean; do lake env lean "$t"; done  # Lean corpus tests (fail on any problem)
+python scripts/difftest.py --check --ir sdfg
+python scripts/difftest.py --check --ir stree
+```
+
+Besides the programs of `scripts/corpus_programs.py`, `dump_corpus.py` also
+writes the SDFGs of `tests/schedule_tree/roundtrip_test.py` as `rt.<test>[.<params>]`
+(`scripts/roundtrip_corpus.py` runs every test case until its first
+`as_schedule_tree` call and records that SDFG; `--no-roundtrip` skips them).
+They have no argument factory, so `difftest.py` skips them; the Lean corpus
+tests (import, structure, tasklet parsing, determinism, pair checker) cover them.
+
+The Lean corpus tests read `tests/corpus` relative to `formal/`; set
+`DACE_FORMAL_CORPUS=<dir>` to point them elsewhere (`--corpus`/`--out` do the
+same for the Python scripts).
+
+- `--record` loads each `<base>[.variant].sdfg.json` with `dace.SDFG.from_file`,
+  takes inputs from the base program's factory in `scripts/corpus_programs.py`,
+  compiles and runs the SDFG, and writes `<name>.inputs.json` and
+  `<name>.expected.json`. Inputs are drawn from NumPy generators seeded per
+  program; `--seed S` (default 0) is combined with that per-program seed, and
+  seed 0 gives the per-program streams alone, so the same seed always
+  reproduces the same inputs. A few programs (axpy, matmul, reduce_rows) are
+  also cross-checked against a NumPy reference.
+- `--check` (alias `--lean`) runs `lake exe dace-interp sdfg <sdfg.json>
+  <inputs.json>` per file, parses its stdout (`{"containers": …}` on success,
+  `{"error": …}` on a semantic error) and compares to `<name>.expected.json`
+  with dtype-aware tolerances (float32 rtol 1e-5, float64 1e-9, exact for
+  int/bool). Exit 2 from the tool means "not implemented" → SKIP, as does an
+  `unsupported library node` error (a library node without a model, e.g.
+  `matmul_lib`'s `MatMul`); a missing `lake` skips everything. The run exits
+  non-zero if any file FAILs.
+- Expected errors: a program whose formal semantics is an error although DaCe
+  runs it (e.g. `unordered_writes`, a happens-before race, `Decisions.md#D61`)
+  is listed in `EXPECTED_ERRORS` of `scripts/corpus_programs.py` as
+  `{"<ir>": "<reason>"}`. `--record` copies the entry into
+  `<name>.expected.json` as `"expect_error"`; `--check --ir <ir>` then passes
+  exactly when `dace-interp` reports an error with that `reason` (the tool
+  prints `{"error": …, "kind": …, "reason": …}`, `reason` = `ErrReason.tag`),
+  while IRs not listed are compared by value as usual.
+
+With no mode flag it records when any expected file is missing, else checks.
+Options: `--only name…`, `--corpus DIR`, `--seed S` (record), `--tol-scale` (check).
+
+The input/expected JSON format (the Lean reader is written against it):
+
+```json
+{
+  "program": "matmul",
+  "sdfg": "matmul.tiled.sdfg.json",
+  "symbols": {"M": 4, "K": 6, "N": 5},
+  "containers": {
+    "A": {"dtype": "float64", "shape": [4, 6], "data": [ "…row-major flat…" ]},
+    "a": {"dtype": "float64", "shape": [], "data": [2.0]}
+  }
+}
+```
+
+`containers` holds every non-transient container (return values included). DaCe `Scalar`
+descriptors use `shape: []` with a one-element `data`; dtype strings are NumPy
+names. `symbols` is the SDFG's free symbols plus explicit symbol args.
+`expected.json` has the same shape but only `program`/`sdfg`/`containers` (and
+`expect_error` for the programs listed in `EXPECTED_ERRORS`).
+
+## Schedule tree JSON
+
+Alongside each `<name>.sdfg.json`, `scripts/dump_corpus.py` writes the schedule
+tree of the same SDFG as `<name>.stree.json` (machine-readable) and
+`<name>.stree.txt` (`as_string()`, for human review and Lean pretty-printer
+checks). The JSON is produced by `dace.sdfg.analysis.schedule_tree.serialize`
+(`to_json`/`from_json`/`save`/`load`).
+
+Every node is `{"type": "<ClassName>", …fields…}`; scopes carry a `"children"`
+list. Dataclass fields are serialized by name, and embedded DaCe objects
+(memlets, data descriptors, `Map`/`Consume`/`Tasklet`/`LibraryNode`, `CodeBlock`,
+loop metadata, symbolic expressions and dtypes) use the same encodings as
+`.sdfg` files, so the Lean importer can reuse its parsers. The root
+(`ScheduleTreeRoot`) additionally carries `name`, `containers` (`{name:
+descriptor}`), `symbols` (`{name: dtype}`), `constants`, `arg_names`,
+`callback_mapping` and `global`/`init`/`exit_code`. Parent pointers are not
+stored; they are restored on load. Files are written with sorted keys, two-space
+indentation and a trailing newline. (As with `.sdfg.json`, the per-element
+`guid`s are random, so the regenerated SDFG and tree files are not
+byte-reproducible; the recorded inputs and expected outputs are.)
+
+`difftest.py --check --ir stree` runs `lake exe dace-interp stree
+<name>.stree.json <inputs.json>` and compares against the same
+`<name>.expected.json` (the schedule tree of an SDFG must compute the same
+outputs); `--ir sdfg` (the default) is unchanged. The schedule-tree
+interpreter (`Dace/STree/Interp.lean`, `STree.run`) mirrors the relational
+semantics function by function and is proven sound against it
+(`Dace/STree/Soundness.lean`, `STree.run_sound`); the containers are laid out
+over the tree's own descriptor repository (`TCtx.ofTree`).
+
+## Conventions
+
+- Only `Dace/Prelude.lean` imports Mathlib.
+- No `sorry` in committed code; `scripts/check_axioms.sh` is run in CI.
+- Every modeling choice that is not forced by DaCe's documentation is recorded
+  in `Dace/Decisions.md` and referenced from the source as `Decisions.md#Dn`.

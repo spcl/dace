@@ -2,6 +2,8 @@
 import itertools
 
 import numpy as np
+import pytest
+import sympy as sp
 
 import dace
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_subset
@@ -270,6 +272,60 @@ def test_nested_sdfg_connector_offset():
         assert edge.data.subset == dace.subsets.Range([(1, 2, 1)]), edge.data.subset
 
 
+@pytest.mark.parametrize("use_exact", (False, True))
+def test_propagate_tile_through_symexpr(use_exact: bool):
+    """
+    Tests propagating through (1) bounded symbolic expressions; and (2) tiling expressions.
+
+    A ``SymExpr(exact, approx)`` range bound propagates the subset through its exact part, so the clipped tiles
+    of ``MapTiling`` stay in bounds, and the volume through its approximation, which makes the memlet dynamic
+    ("up to" the full tile).
+    """
+    TS = 128
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+    tile_i = dace.symbol("tile_i")
+    tile_j = dace.symbol("tile_j")
+
+    if not use_exact:
+        re_expr = lambda s, n: dace.symbolic.SymExpr(sp.Min(n - 1, s + TS - 1), s + TS - 1)
+    else:
+        re_expr = lambda s, n: sp.Min(n - 1, s + TS - 1)
+
+    arr = dace.float64[N, M]
+    result = propagate_subset(
+        [dace.Memlet("A[i, j]")],
+        arr,
+        ["i", "j"],
+        dace.subsets.Range([(tile_i, re_expr(tile_i, N), 1), (tile_j, re_expr(tile_j, M), 1)]),
+        defined_variables=[tile_i, tile_j, N, M],
+    )
+    expected = dace.subsets.Range(
+        [(tile_i, sp.Min(N - 1, tile_i + TS - 1), 1), (tile_j, sp.Min(M - 1, tile_j + TS - 1), 1)]
+    )
+    assert result.subset == expected, result.subset
+    if use_exact:
+        assert not result.dynamic
+        assert dace.symbolic.simplify(result.volume - expected.num_elements()) == 0, result.volume
+    else:
+        assert result.dynamic
+        assert result.volume == TS * TS, result.volume
+
+    # Through the tile map: the clipped tiles cover exactly the array
+    outer = propagate_subset(
+        [result],
+        arr,
+        ["tile_i", "tile_j"],
+        dace.subsets.Range([(0, N - 1, TS), (0, M - 1, TS)]),
+        defined_variables=[N, M],
+    )
+    assert outer.subset == dace.subsets.Range.from_array(arr), outer.subset
+    assert outer.dynamic
+    if not use_exact:
+        # A bounded volume: up to the full tiles (an exact clipped volume depends on the tile parameters)
+        assert outer.volume == TS * TS * sp.ceiling(N / TS) * sp.ceiling(M / TS), outer.volume
+
+
 if __name__ == "__main__":
     test_conditional()
     test_conditional_nested()
@@ -280,3 +336,5 @@ if __name__ == "__main__":
     test_typed_parameter_symbol()
     test_nested_sdfg_connector_in_mapped_symbols()
     test_nested_sdfg_connector_offset()
+    test_propagate_tile_through_symexpr(False)
+    test_propagate_tile_through_symexpr(True)

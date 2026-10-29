@@ -12,6 +12,7 @@ from dace.config import Config
 from dace.sdfg import SDFG, infer_types
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.canonicalize import CanonicalizationPipeline
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
@@ -256,6 +257,12 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     # Right before codegen, not in simplify: until here SymPy's power laws can still fold ``Pow``
     # (``R**i * R**(K-i-1) -> R**(K-1)``), which the opaque ``ipow`` would freeze.
     RelaxIntegerPowers().apply_pass(sdfg, {})
+
+    # Safety net: code generation assumes the canonical form (e.g., Persistent transients only at the top level). The
+    # frontend and library expansion already canonicalize, so this is usually a quick no-op.
+    if CanonicalizationPipeline().apply_pass(sdfg, {}) is not None:
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
