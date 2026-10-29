@@ -1004,6 +1004,19 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         first_state, second_state, match_nodes, nodes_first, nodes_second, False, False
                     ):
                         return False
+                # A second-state read of a first-state output orders only the writers downstream of it: refuse when
+                # another writer in this component overwrites what the first state wrote.
+                for cand in sorted((fused_cc.first_outputs & fused_cc.second_outputs) & fused_cc.second_inputs):
+                    reads = [m for m in match_nodes.values() if m.data == cand]
+                    loose = [
+                        n
+                        for n in fused_cc.second_output_nodes
+                        if n.data == cand and not any(nx.has_path(second_state._nx, m, n) for m in reads)
+                    ]
+                    if loose and StateFusionExtended.memlets_intersect(
+                        first_state, first_output_by_data.get(cand, []), False, second_state, loose, False, facts
+                    ):
+                        return False
                 # End of write-write hazard check
 
                 first_inout = fused_cc.first_inputs | fused_cc.first_outputs

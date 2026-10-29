@@ -55,59 +55,6 @@ _CALL_TO_WCR: dict[str, str] = {
 _CMP_GT = (ast.Gt, ast.GtE)
 _CMP_LT = (ast.Lt, ast.LtE)
 
-#: The one map schedule that opens no parallel region. Everything else -- including ``Default``,
-#: which codegen turns into ``CPU_Multicore`` at the top level -- counts as an enclosing parallel
-#: scope, so a loop under it is the CPU cost model's nested-parallelism case, not this pass's.
-_SEQUENTIAL_SCHEDULES = (dtypes.ScheduleType.Sequential,)
-
-
-def _nested_in_sequential_loop(loop: LoopRegion) -> bool:
-    """True iff ``loop`` is lexically nested inside another (sequential) ``LoopRegion``,
-    crossing NestedSDFG boundaries, and no parallel map opens a scope on the way out.
-
-    Used to keep :class:`PinCarriedTopLevelLoops` to top-level loops. It is NOT a reason to
-    serialize: a region entered ``E`` times costs ``E * (fork + work / P)`` against ``E *
-    work`` sequential, so ``E`` cancels and only the region's own work decides. That decision
-    is the CPU cost model's, in
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`.
-
-    A PARALLEL map found on the way out ends the walk with ``False``. Such a loop is already
-    covered, and better, by the CPU cost model's nested-parallelism rule
-    (:mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`),
-    which sequentializes it at specialization time and leaves the canonical form parallel. Pinning
-    it here instead would bake a CPU decision into the device-neutral graph for no gain -- measured
-    on nussinov, whose ``(i, j)`` nest ``WavefrontSkew`` now turns into a parallel diagonal map:
-    with and without the pin the generated C++ is BYTE-IDENTICAL, so the flag buys nothing there.
-    """
-    g = loop.parent_graph
-    while g is not None:
-        if isinstance(g, LoopRegion):
-            return True
-        if isinstance(g, SDFG):
-            # Cross the NestedSDFG boundary: continue from the state that holds this
-            # SDFG's NestedSDFG node (``None`` at the top-level SDFG -> not nested).
-            pstate = g.parent
-            if pstate is None:
-                return False
-            if _inside_parallel_map(pstate, g.parent_nsdfg_node):
-                return False
-            g = pstate.parent_graph
-            continue
-        g = g.parent_graph
-    return False
-
-
-def _inside_parallel_map(state: SDFGState, node) -> bool:
-    """``node`` sits in a map scope of ``state`` that opens a parallel region."""
-    if node is None or node not in state.nodes():
-        return False
-    scope = state.entry_node(node)
-    while scope is not None:
-        if isinstance(scope, nodes.MapEntry) and scope.map.schedule not in _SEQUENTIAL_SCHEDULES:
-            return True
-        scope = state.entry_node(scope)
-    return False
-
 
 def _owner_sdfg(region: ControlFlowRegion) -> SDFG:
     """The SDFG whose ``arrays``/``symbols`` the blocks inside ``region`` name.
@@ -223,22 +170,13 @@ class LoopToReduce(ppl.Pass):
 
 
 @xf.explicit_cf_compatible
-class RetargetWCRAccumulator(ppl.Pass):
-    """Privatize a loop's in-body WCR accumulator write into a transient scalar.
+class AccumulatorCopyChainToWCR(ppl.Pass):
+    """Collapse each frontend accumulator copy chain into a single WCR write
+    (:func:`collapse_accumulator_chains`), then privatize the loop accumulators those writes leave into
+    transient scalars (:func:`retarget_wcr_accumulators`).
 
-    Multi-tasklet ``compute then accumulate`` shapes (TSVC s313/vdotr ``dot[0] += a[i]*b[i]``,
-    s4115 gather+sum) don't match ``LoopToReduce``'s ``_extract``: the single-tasklet matcher
-    refuses multi-tasklet bodies by design (relaxing it would silently lift GEMM contractions
-    to a ``Reduce`` libnode, bypassing ``LiftEinsum`` BLAS lowering), and the ``Reduce``
-    libnode cannot express the in-body compute chain either. This pass claims them instead,
-    emitting the ``wcr-scalar`` shape downstream ``LoopToMap`` lowers to an OpenMP
-    ``reduction(op:scalar)`` clause.
-
-    Run it AFTER ``LoopToReduce(prefer='wcr-scalar')`` and :class:`AccumulatorCopyChainToWCR`:
-    it needs the copy chain already collapsed to a clean ``WCR-on-accum[c]`` write, and that
-    collapse destroys the augassign shape ``LoopToReduce`` claims. Never re-run
-    ``LoopToReduce`` after the collapse -- its single-tasklet matcher then mis-claims the
-    interleaved two-accumulator shape and drops one accumulator's result.
+    Run it after ``LoopToReduce(prefer='wcr-scalar')``, never before: the collapse destroys the augassign tasklet
+    shape that matcher claims, and a ``LoopToReduce`` after it mis-claims the interleaved two-accumulator shape.
     """
 
     CATEGORY: str = "Optimization Preparation"
@@ -246,119 +184,69 @@ class RetargetWCRAccumulator(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets
 
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return bool(modified & ppl.Modifies.CFG)
-
-    def apply_pass(self, sdfg: SDFG, _) -> int | None:
-        """:returns: The number of loops retargeted, or ``None`` if none was."""
-        count = 0
-        # A pinned loop stays a loop: its accumulation needs no reduction
-        for node, parent in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, LoopRegion) or node.pinned_sequential:
-                continue
-            wcr_info = _extract_wcr_body(node, _owner_sdfg(parent))
-            if wcr_info is None:
-                continue
-            _lift_wcr_scalar_retarget(parent, node, *wcr_info)
-            count += 1
-
-        # Dedicated matcher for the gather+sum shape (TSVC s4115 ``s += a[i] * b[ip[i]]``):
-        # transient scalar accumulator, body split into pre-load + compute states joined by a
-        # gather-index iedge, final write through an extra transient AccessNode -> past every
-        # ``AugAssignToWCR`` shape. In place: drop the tasklet's carry input, add WCR to the
-        # final write, wrap with init + writeback.
-        # Every chain of the loop, one at a time: an unrolled sum keeps one accumulator per lane
-        # (``s0 += a[i]; s1 += a[i + 1]; ...``), and one left behind keeps the loop sequential.
-        for node, parent in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, LoopRegion) or node.pinned_sequential:
-                continue
-            owner = _owner_sdfg(parent)
-            while (chain_info := _extract_multi_state_chain(node, owner)) is not None:
-                _lift_multi_state_chain(parent, node, chain_info)
-                count += 1
-
-        if count > 0:
-            from dace.sdfg.propagation import propagate_memlets_sdfg
-
-            propagate_memlets_sdfg(sdfg)
-        return count or None
-
-
-@xf.explicit_cf_compatible
-class PinCarriedTopLevelLoops(ppl.Pass):
-    """Mark top-level loops ``pinned_sequential`` when ``LoopToMap`` refuses them for a
-    loop-carried dependence.
-
-    The pin is a dependence fact, not a schedule preference: this pass re-uses
-    ``LoopToMap.can_be_applied`` as the oracle, leaves an applicable loop alone, and marks one
-    refused for a carried dependency so the downstream ``LoopToMap`` stage and the WCR-scalar
-    reduction path keep it sequential.
-
-    Scope is top-level only -- a loop nested in another loop is skipped. Nesting on its own is
-    not a reason to serialize anything; whether a parallel scope earns its OpenMP region is a
-    CPU question and belongs to
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`.
-    """
-
-    CATEGORY: str = "Optimization Preparation"
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.CFG
-
-    def should_reapply(self, _modified: ppl.Modifies) -> bool:
-        return False
-
-    def apply_pass(self, sdfg: SDFG, _) -> int | None:
-        """:returns: The number of loops newly pinned, or ``None`` if none was."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap
-        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops, ProbeSession
-
-        pinned = 0
-        # A pin is read only by the pinned loop's own probe
-        session = ProbeSession()
-        for node, parent in list(sdfg.all_nodes_recursive()):
-            if not isinstance(node, LoopRegion) or not node.loop_variable:
-                continue
-            if node.pinned_sequential or _nested_in_sequential_loop(node):
-                continue
-            owner = _owner_sdfg(node)
-            probe = LoopToMap()
-            applicable = ParallelizeLoops().accepts(node, probe, session=session)
-            if not applicable and probe.last_refusal is not None and probe.last_refusal.kind.carried:
-                node.pinned_sequential = True
-                pinned += 1
-        return pinned or None
-
-
-@xf.explicit_cf_compatible
-class AccumulatorCopyChainToWCR(ppl.Pass):
-    """Collapse a frontend accumulator copy chain into a single WCR write.
-
-    ``TrivialTaskletElimination`` first folds the trivial ``out = in`` passthrough tasklets
-    around the accumulator load/store, so ``AugAssignToWCR`` (which matches the 5-node
-    ``arr -> copy_in -> tasklet -> copy_out -> arr`` shape) sees a clean pattern. The result
-    is the ``WCR-on-accum[c]`` write that ``LoopToReduce(prefer='wcr-scalar')``'s retarget and
-    multi-state-chain matchers privatise -- run this between two ``wcr-scalar`` invocations,
-    never before the first: ``AugAssignToWCR`` destroys the augassign tasklet shape the
-    single-tasklet matcher claims.
-    """
-
-    CATEGORY: str = "Optimization Preparation"
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Nodes | ppl.Modifies.Memlets
-
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
 
     def apply_pass(self, sdfg: SDFG, _) -> int | None:
         """:returns: The number of rewrites, or ``None`` if the SDFG was left untouched."""
-        from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
-
-        count = EliminateTrivialTasklets().apply_pass(sdfg, {}) or 0
-        count += forward_element_loads(sdfg)
-        count += _augassign_to_wcr_per_state(sdfg)
+        count = collapse_accumulator_chains(sdfg) + (retarget_wcr_accumulators(sdfg) or 0)
         return count or None
+
+
+def collapse_accumulator_chains(sdfg: SDFG) -> int:
+    """Fold the trivial ``out = in`` tasklets around each accumulator load/store, so ``AugAssignToWCR`` (the 5-node
+    ``arr -> copy_in -> tasklet -> copy_out -> arr`` shape) sees a clean pattern, and rewrite it to the
+    ``WCR-on-accum[c]`` write.
+
+    :returns: The number of rewrites.
+    """
+    from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
+
+    count = EliminateTrivialTasklets().apply_pass(sdfg, {}) or 0
+    count += forward_element_loads(sdfg)
+    count += _augassign_to_wcr_per_state(sdfg)
+    return count
+
+
+def retarget_wcr_accumulators(sdfg: SDFG) -> int | None:
+    """Privatize each loop's in-body WCR accumulator write into a transient scalar.
+
+    Multi-tasklet ``compute then accumulate`` shapes (TSVC s313/vdotr ``dot[0] += a[i]*b[i]``, s4115 gather+sum)
+    do not match ``LoopToReduce``'s single-tasklet matcher, which refuses them by design (relaxing it would lift GEMM
+    contractions to a ``Reduce`` libnode, bypassing ``LiftEinsum``); this claims them, emitting the ``wcr-scalar``
+    shape ``LoopToMap`` lowers to an OpenMP ``reduction(op:scalar)`` clause. It needs the copy chains collapsed
+    (:func:`collapse_accumulator_chains`).
+
+    :returns: The number of loops retargeted, or ``None`` if none was.
+    """
+    count = 0
+    # A pinned loop stays a loop: its accumulation needs no reduction
+    for node, parent in list(sdfg.all_nodes_recursive()):
+        if not isinstance(node, LoopRegion) or node.pinned_sequential:
+            continue
+        wcr_info = _extract_wcr_body(node, _owner_sdfg(parent))
+        if wcr_info is None:
+            continue
+        _lift_wcr_scalar_retarget(parent, node, *wcr_info)
+        count += 1
+
+    # The gather+sum shape (TSVC s4115 ``s += a[i] * b[ip[i]]``): transient scalar accumulator, body split into
+    # pre-load + compute states joined by a gather-index iedge, final write through an extra transient AccessNode.
+    # Every chain of the loop, one at a time: an unrolled sum keeps one accumulator per lane
+    # (``s0 += a[i]; s1 += a[i + 1]; ...``), and one left behind keeps the loop sequential.
+    for node, parent in list(sdfg.all_nodes_recursive()):
+        if not isinstance(node, LoopRegion) or node.pinned_sequential:
+            continue
+        owner = _owner_sdfg(parent)
+        while (chain_info := _extract_multi_state_chain(node, owner)) is not None:
+            _lift_multi_state_chain(parent, node, chain_info)
+            count += 1
+
+    if count > 0:
+        from dace.sdfg.propagation import propagate_memlets_sdfg
+
+        propagate_memlets_sdfg(sdfg)
+    return count or None
 
 
 def forward_element_loads(sdfg: SDFG) -> int:

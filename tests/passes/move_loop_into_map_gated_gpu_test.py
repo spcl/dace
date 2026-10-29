@@ -263,6 +263,21 @@ def test_a_nested_argument_without_storage_of_its_own_does_not_block_the_kernel(
     assert lane_maps(sdfg)[0].map.schedule == dace.ScheduleType.GPU_Device
 
 
+def test_a_host_scalar_the_body_only_reads_does_not_block_the_kernel():
+    """A kernel takes a scalar it only reads by value: one in host memory does not keep the lane map off the device
+    (cloudsc's ``zqtmst``)."""
+    sdfg = offloaded_loop_over_maps("lanes_host_scalar")
+    assert MoveLoopIntoMapGated(target="gpu").apply_pass(sdfg, {})
+    nested = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    nested.sdfg.add_scalar("s", dace.float64, storage=dace.StorageType.CPU_Heap)
+    state = next(st for st in nested.sdfg.states() if any(isinstance(n, dace.nodes.Tasklet) for n in st.nodes()))
+    tasklet = next(n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet))
+    tasklet.add_in_connector("_s")
+    state.add_edge(state.add_read("s"), None, tasklet, "_s", dace.Memlet("s[0]"))
+    assert PromoteHostMapsToKernels().apply_pass(sdfg, {}) == 1
+    assert lane_maps(sdfg)[0].map.schedule == dace.ScheduleType.GPU_Device
+
+
 @pytest.mark.gpu
 def test_the_carry_in_a_single_iteration_kernel_matches_numpy():
     import cupy  # Only present on GPU runners.

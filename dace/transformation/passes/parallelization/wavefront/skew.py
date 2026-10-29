@@ -611,7 +611,7 @@ class WavefrontSkew(ppl.Pass):
 
 def skewable_refusal(refusals: dict, loop: LoopRegion) -> bool:
     """Whether :class:`ParallelizeLoops` kept ``loop`` for a reason a skew can lift: a dependence between iterations,
-    a pin (``PinCarriedTopLevelLoops`` pins carried loops), or none (held back for a sibling chain)."""
+    a pin, or none (held back for a sibling chain)."""
     from dace.transformation.interstate.loop_to_map import Refusal
 
     if loop not in refusals:

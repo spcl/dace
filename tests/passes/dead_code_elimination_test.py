@@ -1054,6 +1054,25 @@ def test_dde_removes_a_dead_transient_whose_ordering_edge_ends_in_an_unused_glob
     assert np.allclose(B, 2 * np.arange(8))
 
 
+def test_dde_leaves_no_access_node_isolated_by_an_ordering_edge_it_removes():
+    """``X -> (empty) -> Y``, both reads whose consumers die: removing ``Y`` leaves ``X`` with nothing, whichever of the
+    two the cleanup looks at first (fresh graphs, so a hash order over the nodes differs between them)."""
+    for k in range(20):
+        sdfg = dace.SDFG(f"dde_isolated_by_ordering_{k}")
+        sdfg.add_array("X", [4], dace.float64)
+        sdfg.add_array("Y", [4], dace.float64)
+        sdfg.add_array("T", [4], dace.float64, transient=True)
+        state = sdfg.add_state()
+        x, y = state.add_read("X"), state.add_read("Y")
+        state.add_nedge(x, y, dace.Memlet())
+        for src in (x, y):
+            t = state.add_tasklet("t", {"i"}, {"o"}, "o = i")
+            state.add_edge(src, None, t, "i", dace.Memlet(f"{src.data}[0]"))
+            state.add_edge(t, "o", state.add_write("T"), None, dace.Memlet("T[0]"))
+        Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+        assert all(state.degree(n) > 0 for n in state.nodes()), [n.label for n in state.nodes()]
+
+
 def test_dde_keeps_the_order_a_removed_copy_carried_between_a_read_and_an_overwrite():
     """``X = Y + 1`` reads ``Y``, a dead copy into ``T`` follows it, and ``Y = 5`` follows the copy: the copy is all
     that orders the read before the overwrite, so removing it must leave that order behind."""

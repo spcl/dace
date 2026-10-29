@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A hand-unrolled sum keeps one accumulator per lane; every one of them is a reduction.
 
-``RetargetWCRAccumulator`` privatized only the first chain of a loop (``s0``), so ``s1 .. s3`` kept the loop
+``retarget_wcr_accumulators`` privatized only the first chain of a loop (``s0``), so ``s1 .. s3`` kept the loop
 sequential and the ``s0`` reduction was reverted again. Every chain is retargeted now and the loop maps.
 """
 
