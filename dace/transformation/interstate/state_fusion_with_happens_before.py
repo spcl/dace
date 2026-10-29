@@ -621,13 +621,24 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 desc = sdfg.arrays.get(dname)
                 if desc is None or not desc.transient or isinstance(desc, dt.View):
                     continue
-                if first_producers.get(dname, 0) >= 2 and not (
-                    self.aggressive_merges
-                    # A read in the second state would bind to one producer only
-                    and not any(second_state.out_degree(n) > 0 for n in second_state.data_nodes() if n.data == dname)
-                    and producers_disjoint(first_state, first_scope, dname, sdfg.facts())
-                ):
+                if first_producers.get(dname, 0) < 2:
+                    continue
+                if not self.aggressive_merges or not producers_disjoint(first_state, first_scope, dname, sdfg.facts()):
                     return False
+                if not any(second_state.out_degree(n) > 0 for n in second_state.data_nodes() if n.data == dname):
+                    continue
+                # A read in the second state binds to one node, which has to come after every producer: the producers
+                # that are sinks of the first state become one node, and every other producer already reaches one
+                producers = [
+                    n
+                    for n in first_state.data_nodes()
+                    if n.data == dname and first_scope[n] is None and first_state.in_degree(n) > 0
+                ]
+                sinks = [n for n in producers if first_state.out_degree(n) == 0]
+                if not sinks or not all(any(nx.has_path(first_state._nx, n, t) for t in sinks) for n in producers):
+                    return False
+                if len(sinks) > 1:
+                    self.connections_to_make.append(("unify", sinks, []))
 
             # If second state has other input edges, there might be issues
             # Exceptions are when none of the states contain dataflow, unless
@@ -1067,8 +1078,16 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 second_inout = (fused_cc.first_inputs | fused_cc.first_outputs) & fused_cc.second_outputs
                 for inout in sorted(second_inout):
                     nodes_first = [n for n in match_nodes if n.data == inout]
-                    if any(first_state.out_degree(n) > 0 for n in nodes_first):
-                        return False
+                    read_first = [n for n in nodes_first if first_state.out_degree(n) > 0]
+                    if read_first:
+                        # The second state rewrites a container the first state writes and then reads. The second
+                        # state binds to that same node; its writers are ordered after every first-state read of it.
+                        writers = second_output_by_data.get(inout, [])
+                        endpoints = ordering_endpoints(read_first) if self.aggressive_merges else None
+                        if not endpoints or not writers:
+                            return False
+                        self.connections_to_make.append(("read_before", endpoints, writers))
+                        continue
 
                     # If we have potential candidates, check if there is a
                     # path from the first read to the second write (in that
@@ -1178,6 +1197,15 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         preexisting = {(e.src, e.dst, name) for _, e, _, _, name in mismatched_data_edges(first_state, sdfg)}
         preexisting |= {(e.src, e.dst, name) for _, e, _, _, name in mismatched_data_edges(second_state, sdfg)}
 
+        # Disjoint producers of one container the second state reads become one access node
+        for kind, producers, _ in self.connections_to_make:
+            if kind != "unify":
+                continue
+            keep = producers[0]
+            for other in producers[1:]:
+                sdutil.change_edge_dest(first_state, other, keep)
+                first_state.remove_node(other)
+
         # Find source/sink (data) nodes
         first_input = [node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)]
         first_output = [node for node in first_state.sink_nodes() if isinstance(node, nodes.AccessNode)]
@@ -1232,7 +1260,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     for i in top2:
                         if i not in second_state.source_nodes():
                             continue
-                        if kind == "seed" and isinstance(i, nodes.AccessNode):
+                        if kind in ("seed", "read_before") and isinstance(i, nodes.AccessNode):
                             # A source AccessNode may merge into a first-state node upstream of the seed
                             # writer, closing a cycle (ludcmp ``w = y[i]; w(+)= ...``); its consumers never merge.
                             # A library node takes no ordering edge (it counts its inputs); it is ordered through ``i``.

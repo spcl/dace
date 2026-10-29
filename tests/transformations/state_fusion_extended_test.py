@@ -1673,6 +1673,90 @@ def test_extended_fusion_keeps_a_sliced_transient_the_second_state_reads():
     np.testing.assert_array_equal(_run(fused, "fused", B=B, C=np.zeros(8))["C"], ref["C"])
 
 
+def _aggressive_fusion_matches(sdfg: SDFG, **arrays):
+    """Canon's options fuse ``sdfg`` into one state that computes what the two states compute."""
+    ref = _run(sdfg, "ref", **arrays)
+    fused = copy.deepcopy(sdfg)
+    fused.apply_transformations_repeated(
+        StateFusionExtended, options={"aggressive_merges": True, "order_array_seeds": True}
+    )
+    assert fused.number_of_nodes() == 1
+    fused.validate()
+    out = _run(fused, "fused", **arrays)
+    for name in arrays:
+        np.testing.assert_array_equal(out[name], ref[name])
+
+
+def test_disjoint_producers_a_scatter_reads_back_become_one_access_node():
+    """``s1: T[0:8] = A; T[8] = 0`` (two producers), ``s2: T[P[i]] (+)= A[i]; B = T[0:8]``."""
+    sdfg = SDFG("sfx_disjoint_producers_scatter")
+    sdfg.add_array("A", [8], dtypes.float64)
+    sdfg.add_array("B", [8], dtypes.float64)
+    sdfg.add_array("P", [8], dtypes.int64)
+    sdfg.add_transient("T", [9], dtypes.float64)
+    sdfg.add_symbol("k", dtypes.int64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s1.add_mapped_tasklet(
+        "cp", {"i": "0:8"}, {"a": Memlet("A[i]")}, "t = a", {"t": Memlet("T[i]")}, external_edges=True
+    )
+    zero = s1.add_tasklet("zero", {}, {"o"}, "o = 0.0")
+    s1.add_edge(zero, "o", s1.add_write("T"), None, Memlet("T[8]"))
+    s2 = sdfg.add_state_after(s1, "s2")
+    t = s2.add_access("T")
+    entry, exit_ = s2.add_map("scatter", {"i": "0:8"})
+    add = s2.add_tasklet("add", {"a", "p"}, {"o"}, "o[p] = a")
+    s2.add_memlet_path(s2.add_read("A"), entry, add, dst_conn="a", memlet=Memlet("A[i]"))
+    s2.add_memlet_path(s2.add_read("P"), entry, add, dst_conn="p", memlet=Memlet("P[i]"))
+    s2.add_memlet_path(add, exit_, t, src_conn="o", memlet=Memlet("T[0:9]", wcr="lambda a, b: a + b", dynamic=True))
+    s2.add_nedge(t, s2.add_write("B"), Memlet("T[0:8] -> [0:8]"))
+
+    A = np.random.default_rng(3).random(8)
+    _aggressive_fusion_matches(sdfg, A=A, B=np.zeros(8), P=np.array([0, 0, 2, 8, 4, 8, 6, 7], dtype=np.int64))
+
+
+def test_a_container_written_then_read_is_rewritten_after_its_reads():
+    """``s1: C = T; R = 2 * C``, ``s2: C = C + R``: the in-place rewrite is ordered after the read of ``C``."""
+    sdfg = SDFG("sfx_written_read_rewritten")
+    sdfg.add_array("A", [8], dtypes.float64)
+    sdfg.add_array("C", [8], dtypes.float64)
+    sdfg.add_transient("T", [8], dtypes.float64)
+    sdfg.add_transient("R", [8], dtypes.float64)
+    sdfg.add_symbol("k", dtypes.int64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    t = s1.add_access("T")
+    s1.add_mapped_tasklet(
+        "inc",
+        {"i": "0:8"},
+        {"a": Memlet("A[i]")},
+        "t = a + 1",
+        {"t": Memlet("T[i]")},
+        external_edges=True,
+        output_nodes={"T": t},
+    )
+    c = s1.add_access("C")
+    s1.add_nedge(t, c, Memlet("T[0:8] -> [0:8]"))
+    s1.add_mapped_tasklet(
+        "dbl",
+        {"i": "0:8"},
+        {"c": Memlet("C[i]")},
+        "r = 2 * c",
+        {"r": Memlet("R[i]")},
+        external_edges=True,
+        input_nodes={"C": c},
+    )
+    s2 = sdfg.add_state_after(s1, "s2")
+    s2.add_mapped_tasklet(
+        "acc",
+        {"i": "0:8"},
+        {"c": Memlet("C[i]"), "r": Memlet("R[i]")},
+        "o = c + r",
+        {"o": Memlet("C[i]")},
+        external_edges=True,
+    )
+
+    _aggressive_fusion_matches(sdfg, A=np.random.default_rng(4).random(8), C=np.zeros(8))
+
+
 if __name__ == "__main__":
     test_extended_fusion()
     test_ordering_is_proven_by_any_candidate_not_just_the_first()
