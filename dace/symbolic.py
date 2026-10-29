@@ -4567,7 +4567,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         floating quotient (see :meth:`_print_Pow`), not as the integer fraction its sympy atom is."""
         types = self.c_argument_types(expr.args)
         if types is not None and not expr.args[1].is_integer:
-            _, den = sympy.fraction(sympy.together(expr.args[1]))
+            den = sympy.denom(sympy.together(expr.args[1]))
             if den != 1:
                 types = (types[0], self.c_power_exponent_type(types[0]))
         return types
