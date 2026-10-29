@@ -95,6 +95,19 @@ def test_ordering_edge_guarding_a_write_after_read_is_kept_in_order():
     assert np.allclose(b, np.arange(5.0) + 1.0) and np.allclose(a, 2.0 * np.arange(5.0))
 
 
+def test_parallel_copies_of_an_ordering_edge_guarding_a_write_after_read_keep_one():
+    """Three copies of the nest's edge to the overwrite of ``a``: each guards nothing while the others stay, so
+    deciding all against one graph dropped every copy and let the doubling run before the nest's read."""
+    sdfg, state = nest_with_ordering_edge("ordering_war_parallel", conflicting=True)
+    nest = nests(sdfg)[0]
+    read = next(e.dst for e in state.out_edges(nest) if e.data.is_empty())
+    state.add_nedge(nest, read, dace.Memlet())
+    state.add_nedge(nest, read, dace.Memlet())
+    RouteOrderingThroughData().apply_pass(sdfg, {})
+    writer = next(n for n in state.nodes() if isinstance(n, nodes.MapExit))
+    assert dace.graphlib.has_path(state._nx, nest, writer), "the overwrite of a must stay after the nest's read"
+
+
 def test_ordering_edge_that_anchors_an_access_node_in_its_map_is_kept():
     """Inside a map, an access node read from outside data and reached only by the nest's ordering edge
     belongs to the map through that edge alone (velocity_tendencies after the GPU offload). Dropping it
@@ -188,3 +201,4 @@ if __name__ == "__main__":
     test_ordering_edge_guarding_a_write_after_read_is_kept_in_order()
     test_ordering_edge_that_anchors_an_access_node_in_its_map_is_kept()
     test_nest_sharing_a_sink_gets_its_own_access_node_and_inlines()
+    test_parallel_copies_of_an_ordering_edge_guarding_a_write_after_read_keep_one()

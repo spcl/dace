@@ -161,9 +161,12 @@ def route_through_data(state: SDFGState, node: nodes.NestedSDFG, facts: StateFac
     :returns: Whether anything was dropped or rerouted.
     """
     ins, outs = blocking_ordering_edges(state, node)
-    dropped = [edge for edge in [*ins, *outs] if guards_nothing(state, edge, facts)]
-    for edge in dropped:
-        state.remove_edge(edge)
+    # One at a time against the current graph: parallel copies of one edge each guard nothing while the others stay
+    dropped = []
+    for edge in [*ins, *outs]:
+        if guards_nothing(state, edge, facts):
+            state.remove_edge(edge)
+            dropped.append(edge)
     ins, outs = blocking_ordering_edges(state, node)
     if not ins and not outs:
         return bool(dropped)
