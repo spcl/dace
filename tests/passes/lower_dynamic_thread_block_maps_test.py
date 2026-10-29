@@ -64,6 +64,7 @@ def test_the_kernel_gets_a_thread_block_map_and_the_dynamic_map_a_queue():
     assert any("i <= (H - 1)" in condition.as_string for g in guards for condition, _ in g.branches if condition)
 
 
+@pytest.mark.old_gpu_codegen_only  # GPU_ThreadBlock_Dynamic maps: not supported by the experimental CUDA codegen
 @pytest.mark.parametrize("backend,warp_size,state", [("cuda", 32, 8192), ("hip", 64, 4)])
 def test_the_queue_follows_the_warp_size(backend: str, warp_size: int, state: int):
     """Fine-grained, CUDA lists the items of each warp in shared memory; HIP's 64-wide warps shuffle instead."""
@@ -82,6 +83,7 @@ def test_the_queue_follows_the_warp_size(backend: str, warp_size: int, state: in
     assert ("__syncwarp();" in code) == (backend == "cuda")
 
 
+@pytest.mark.old_gpu_codegen_only  # GPU_ThreadBlock_Dynamic maps: not supported by the experimental CUDA codegen
 def test_the_dynamic_maps_of_a_kernel_share_one_queue_state():
     """Two dynamic maps of a kernel take turns on one shared state, so the kernel does not need twice the memory."""
 

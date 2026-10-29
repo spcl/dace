@@ -6,6 +6,8 @@ These assert on emitted code, so they need a GPU for neither compilation nor a r
 
 import re
 
+import pytest
+
 import dace
 from dace import dtypes
 from dace.codegen import common
@@ -116,7 +118,7 @@ def gpu_blas_gemm(alpha: float = 1.0) -> dace.SDFG:
 def test_a_failed_target_initializer_stops_before_the_state_it_left_unset():
     """``__dace_init_cuda`` returns early without a gpu_context when no device is present."""
     init = init_function(generated_code(persistent_gpu_transient()), "persistent_gpu_transient")
-    initializer = re.search(r"__result \|= __dace_init_cuda\(", init)
+    initializer = re.search(r"__result \|= __dace_init_(experimental_)?cuda\(", init)
     assert initializer, "the CUDA target initializer is not called, so this test is anchored on nothing"
     allocation = re.search(r"DACE_GPU_CHECK\(", init)
     assert allocation, "the persistent GPU allocation was not hoisted into the init function"
@@ -137,6 +139,7 @@ def test_the_init_function_still_checks_what_runs_after_the_allocations():
     )
 
 
+@pytest.mark.old_gpu_codegen_only  # the legacy codegen's cross-stream events
 def test_cross_stream_event_synchronization_is_checked():
     """A silent EventRecord failure loses the ordering it was supposed to establish."""
     code = generated_code(cross_stream_consumer())

@@ -13,9 +13,14 @@ These assert on emitted code, so they need a GPU for neither compilation nor a r
 
 import re
 
+import pytest
+
 import dace
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import GPUPersistentKernel
+
+# GPU_Persistent kernels are not supported by the experimental CUDA codegen
+pytestmark = pytest.mark.old_gpu_codegen_only
 
 N = dace.symbol("N")
 

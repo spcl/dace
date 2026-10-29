@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 from ordered_set import OrderedSet
 
 import dace
-from dace import Memlet, dtypes, registry
+from dace import Memlet, dtypes, registry, symbolic
 from dace import data as dt
 from dace.codegen import common
 from dace.codegen.codeobject import CodeObject
@@ -42,12 +42,13 @@ from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (
     num_gpu_streams,
 )
 from dace.config import Config
+from dace.frontend import operations
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.libraries.standard.nodes.sync import SyncScope, sync_code
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.scope import get_node_schedule
+from dace.sdfg.scope import get_node_schedule, is_in_scope
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.transformation.passes import gpu_shared_memory
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
@@ -99,9 +100,16 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Every pooled array released early, which the end of its lifetime must not free again
         self.pool_released_early: set[tuple[SDFG, str]] = OrderedSet()
         self.has_pool = False
+        # Read by the CPU codegen of a calling codegen; this one passes no extra nested-SDFG arguments
+        self.extra_nsdfg_args: list[tuple[str, str, str]] = []
 
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
-        self._dispatcher.register_map_dispatcher(dtypes.EXPERIMENTAL_GPU_SCHEDULES, self)
+        # The GPU schedules it does not emit are dispatched here too, to be refused by name
+        self._dispatcher.register_map_dispatcher(
+            dtypes.EXPERIMENTAL_GPU_SCHEDULES
+            + [s for s in dtypes.GPU_SCHEDULES_WITHOUT_CODEGEN if s not in dtypes.EXPERIMENTAL_GPU_SCHEDULES],
+            self,
+        )
         self._dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
         self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
 
@@ -151,6 +159,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         if Config.get("compiler", "cuda", "auto_syncthreads_insertion"):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
+            # Its barriers come after the pipeline expanded the library nodes
+            sdfg.expand_library_nodes(recursive=True)
 
         if compute_pool_release(sdfg, self.pool_release):
             self.has_pool = True
@@ -192,6 +202,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         )
 
         scope_entry = dfg_scope.source_nodes()[0]
+        if scope_entry.map.schedule not in dtypes.EXPERIMENTAL_GPU_SCHEDULES:
+            raise NotImplementedError(f"GPU code generation does not implement {scope_entry.map.schedule} maps yet")
 
         if not self._in_device_code:
             state = cfg.state(state_id)
@@ -462,7 +474,53 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 "CopyLibraryNode by InsertExplicitCopies; the CPU fallback would access device "
                 "memory from the host."
             )
+        if (
+            self._in_device_code
+            and edge.data.wcr is not None
+            and isinstance(src_node, nodes.AccessNode)
+            and isinstance(dst_node, nodes.AccessNode)
+            and not is_in_scope(sdfg, cfg.state(state_id), dst_node, [dtypes.ScheduleType.GPU_ThreadBlock])
+        ):
+            # Every thread of the block runs block-level code, so the reduction is split across the block
+            code = self.block_accumulate_code(sdfg, cfg.state(state_id), edge, src_node, dst_node)
+            callsite_stream.write(code, cfg, state_id, [src_node, dst_node])
+            return
         self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+
+    def block_accumulate_code(
+        self,
+        sdfg: SDFG,
+        state: SDFGState,
+        edge: MultiConnectorEdge[Memlet],
+        src_node: nodes.AccessNode,
+        dst_node: nodes.AccessNode,
+    ) -> str:
+        """A block-level reduction copy through ``dace::SharedToGlobal1D``, as the legacy codegen emits it.
+
+        :raises NotImplementedError: The copy is not a static 1-D shared-to-global one.
+        """
+        src, dst = src_node.desc(sdfg), dst_node.desc(sdfg)
+        copy_shape, src_strides, dst_strides, src_expr, dst_expr = cpp.memlet_copy_to_absolute_strides(
+            self._dispatcher, sdfg, state, edge, src_node, dst_node
+        )
+        if (
+            src.storage != dtypes.StorageType.GPU_Shared
+            or dst.storage != dtypes.StorageType.GPU_Global
+            or len(copy_shape) != 1
+            or symbolic.issymbolic(copy_shape[0], sdfg.constants)
+        ):
+            raise NotImplementedError(
+                f"Block-level reduction copy {src_node.data} -> {dst_node.data} ({src.storage} -> {dst.storage}, "
+                f"shape {copy_shape}): only a static 1-D GPU_Shared -> GPU_Global one is implemented"
+            )
+        redtype = operations.detect_reduction_type(edge.data.wcr)
+        if redtype == dtypes.ReductionType.Custom:
+            accum, custom = "::template Accum", [cpp.unparse_cr(sdfg, edge.data.wcr, dst.dtype)]
+        else:
+            accum, custom = f"::template Accum<dace::ReductionType::{redtype.name}>", []
+        bdims = ", ".join(sym2cpp(b) for b in self._current_kernel_spec.block_dims)
+        args = ", ".join([src_expr, sym2cpp(src_strides[0]), dst_expr, sym2cpp(dst_strides[0])] + custom)
+        return f"dace::SharedToGlobal1D<{dst.dtype.ctype}, {bdims}, {sym2cpp(copy_shape[0])}, false>{accum}({args});"
 
     def synchronize_host_reads(
         self,

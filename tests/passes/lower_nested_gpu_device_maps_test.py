@@ -606,6 +606,7 @@ def test_a_persistent_kernel_writes_global_memory_outside_its_maps_from_one_thre
     assert [dace.symbolic.pystr_to_symbolic(g) for g in guards] == [expected], guards
 
 
+@pytest.mark.old_gpu_codegen_only  # GPU_Persistent kernels: not supported by the experimental CUDA codegen
 @pytest.mark.gpu
 @pytest.mark.parametrize("tiled", [False, True])
 def test_the_lowered_persistent_kernel_computes_each_element_once(tiled: bool):

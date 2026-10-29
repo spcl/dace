@@ -578,20 +578,22 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 # Store in/out edges in lists so that they don't get corrupted when they are removed from the graph.
                 in_edges = list(state.in_edges(gcode))
                 out_edges = list(state.out_edges(gcode))
-                me.in_connectors = {("IN_" + e.dst_conn): None for e in in_edges}
-                me.out_connectors = {("OUT_" + e.dst_conn): None for e in in_edges}
-                mx.in_connectors = {("IN_" + e.src_conn): None for e in out_edges}
-                mx.out_connectors = {("OUT_" + e.src_conn): None for e in out_edges}
+                me.in_connectors = {("IN_" + e.dst_conn): None for e in in_edges if e.dst_conn is not None}
+                me.out_connectors = {("OUT_" + e.dst_conn): None for e in in_edges if e.dst_conn is not None}
+                mx.in_connectors = {("IN_" + e.src_conn): None for e in out_edges if e.src_conn is not None}
+                mx.out_connectors = {("OUT_" + e.src_conn): None for e in out_edges if e.src_conn is not None}
 
-                # Create memlets through map
+                # Create memlets through map; an ordering edge (empty memlet) passes without connectors
                 for e in in_edges:
                     state.remove_edge(e)
-                    state.add_edge(e.src, e.src_conn, me, "IN_" + e.dst_conn, e.data)
-                    state.add_edge(me, "OUT_" + e.dst_conn, e.dst, e.dst_conn, dc(e.data))
+                    outer, inner = (None, None) if e.dst_conn is None else ("IN_" + e.dst_conn, "OUT_" + e.dst_conn)
+                    state.add_edge(e.src, e.src_conn, me, outer, e.data)
+                    state.add_edge(me, inner, e.dst, e.dst_conn, dc(e.data))
                 for e in out_edges:
                     state.remove_edge(e)
-                    state.add_edge(e.src, e.src_conn, mx, "IN_" + e.src_conn, e.data)
-                    state.add_edge(mx, "OUT_" + e.src_conn, e.dst, e.dst_conn, dc(e.data))
+                    inner, outer = (None, None) if e.src_conn is None else ("IN_" + e.src_conn, "OUT_" + e.src_conn)
+                    state.add_edge(e.src, e.src_conn, mx, inner, e.data)
+                    state.add_edge(mx, outer, e.dst, e.dst_conn, dc(e.data))
 
                 # Map without inputs
                 if len(in_edges) == 0:

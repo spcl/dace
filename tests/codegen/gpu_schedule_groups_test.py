@@ -38,7 +38,15 @@ def kernel_with_inner_map(inner: dtypes.ScheduleType) -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.parametrize("schedule", NEW_SCHEDULES, ids=lambda s: s.name)
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        # The experimental CUDA codegen emits GPU_Warp maps
+        pytest.param(s, marks=pytest.mark.old_gpu_codegen_only) if s == dtypes.ScheduleType.GPU_Warp else s
+        for s in NEW_SCHEDULES
+    ],
+    ids=lambda s: s.name,
+)
 def test_a_schedule_without_code_generation_is_refused_by_name(schedule):
     """Generating code for one of them fails loudly, naming the schedule, instead of emitting something else."""
     sdfg = kernel_with_inner_map(schedule)
