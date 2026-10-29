@@ -16,6 +16,9 @@ real reader, and ``volume`` is a separate symbolic property rather than the subs
 the test is ``is_empty()`` and never ``volume``. Deleting a load-bearing ordering edge does
 not fail validation and does not fail to compile -- it silently makes the result depend on
 iteration order -- so every rule here errs towards keeping the edge.
+
+A nested SDFG's ordering edges that ``InlineSDFG`` refuses are also dropped when none orders two conflicting
+accesses (:func:`~dace.transformation.passes.canonicalize.route_ordering_through_data.guards_nothing`).
 """
 
 import collections
@@ -30,6 +33,11 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.canonicalize.route_ordering_through_data import (
+    StateFacts,
+    blocking_ordering_edges,
+    guards_nothing,
+)
 
 #: One state edge, as the tuple needed to re-add it unchanged.
 EdgeTuple = tuple[nodes.Node, str | None, nodes.Node, str | None, Memlet]
@@ -157,6 +165,32 @@ def dissolve_hubs(state: SDFGState) -> int:
     return removed
 
 
+def drop_unguarded_nest_edges(state: SDFGState) -> int:
+    """Remove the ordering edges of each nested SDFG in ``state`` that ``InlineSDFG`` refuses, when none of them
+    guards anything: the nest becomes inlinable. A nest that keeps one is left whole, for
+    ``RouteOrderingThroughData`` to reroute. :returns: the number of edges removed."""
+    blocked = [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and any(blocking_ordering_edges(state, n))]
+    if not blocked:
+        return 0
+    facts = StateFacts(state)
+    removed = 0
+    for node in blocked:
+        edges = [e for side in blocking_ordering_edges(state, node) for e in side]
+        snapshot: list[EdgeTuple] | None = None
+        # One at a time against the current graph: parallel copies of one edge each guard nothing while the others stay
+        for edge in edges:
+            if not guards_nothing(state, edge, facts):
+                if snapshot is not None:
+                    restore_edges(state, snapshot)
+                break
+            if snapshot is None:
+                snapshot = [(e.src, e.src_conn, e.dst, e.dst_conn, e.data) for e in state.edges()]
+            state.remove_edge(edge)
+        else:
+            removed += len(edges)
+    return removed
+
+
 def reduce_state(state: SDFGState) -> int:
     """Remove every redundant ordering edge of one state.
 
@@ -210,7 +244,8 @@ def reduce_state(state: SDFGState) -> int:
 
 @transformation.explicit_cf_compatible
 class RedundantOrderingEdgeElimination(ppl.Pass):
-    """Remove ordering (empty-memlet) edges implied by another path in the same state."""
+    """Remove ordering (empty-memlet) edges implied by another path in the same state, and nested SDFGs' ordering
+    edges that guard nothing."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -238,5 +273,5 @@ class RedundantOrderingEdgeElimination(ppl.Pass):
         count = 0
         for nested in sdfg.all_sdfgs_recursive():
             for state in nested.states():
-                count += dissolve_hubs(state) + reduce_state(state)
+                count += dissolve_hubs(state) + drop_unguarded_nest_edges(state) + reduce_state(state)
         return count or None

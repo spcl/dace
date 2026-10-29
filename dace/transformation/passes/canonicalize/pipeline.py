@@ -1093,7 +1093,6 @@ def build_stages(
     s += normalize_statements(
         lift, privatize_scatter_reductions, unroll_limit, perfect_loop_nesting, target, normalize_loop_and_map_origin
     )
-    s += rail()
     s += lift_semantics(lift, lift_copy, interchange_carry_with_map, target)
     s += rail()
     s += derive_parallelism(
