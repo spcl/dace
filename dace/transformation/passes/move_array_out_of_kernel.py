@@ -69,7 +69,7 @@ def tile_extent(max_elem: symbolic.SymbolicType, min_elem: symbolic.SymbolicType
     """Per-iteration extent of an inner-map range; a ``Min``-bounded tile yields its static width."""
     if isinstance(max_elem, sympy.Min):
         for arg in max_elem.args:
-            diff = symbolic.simplify(arg - min_elem)
+            diff = symbolic.simplify(arg - min_elem, symbolic.Facts.none())
             if diff.is_Integer and diff >= 0:
                 return diff + 1
     return max_elem + 1 - min_elem

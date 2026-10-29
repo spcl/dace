@@ -986,6 +986,31 @@ def test_an_sdfg_nested_in_a_moved_state_gets_the_new_sdfg_as_parent():
     assert np.allclose(a, x * 2.0 + 1.0)
 
 
+def test_inlining_keeps_the_declared_type_of_a_loop_variable():
+    inner = dace.SDFG("inner_loop")
+    inner.add_array("A", [10], dace.float64)
+    loop = LoopRegion("fill", "i < 10", "i", "i = 0", "i = i + 1")
+    inner.add_node(loop, is_start_block=True)
+    inner.symbol_repo.add("i", dace.int32, at=loop)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("store", {}, {"out"}, "out = i")
+    body.add_edge(tasklet, "out", body.add_write("A"), None, dace.Memlet("A[i]"))
+    sdfg = dace.SDFG("loop_variable_inline")
+    sdfg.add_array("A", [10], dace.float64)
+    state = sdfg.add_state()
+    nested = state.add_nested_sdfg(inner, {}, {"A"})
+    state.add_edge(nested, "A", state.add_write("A"), None, dace.Memlet("A[0:10]"))
+
+    InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nested)
+
+    assert sdfg.symbol_repo.scope(loop).types["i"] == dace.int32
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "int64_t i;" not in code
+    data = np.zeros(10)
+    sdfg(A=data)
+    np.testing.assert_array_equal(data, np.arange(10.0))
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -1021,3 +1046,6 @@ if __name__ == "__main__":
     test_a_symbol_the_subgraph_assigns_keeps_its_declared_type()
     test_inlining_the_nest_back_keeps_the_declared_type()
     test_an_sdfg_nested_in_a_moved_state_gets_the_new_sdfg_as_parent()
+    test_a_symbol_the_subgraph_assigns_keeps_its_declared_type()
+    test_inlining_the_nest_back_keeps_the_declared_type()
+    test_inlining_keeps_the_declared_type_of_a_loop_variable()

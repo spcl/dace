@@ -1433,7 +1433,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         for cfr in sdfg.all_control_flow_regions():
             if isinstance(cfr, LoopRegion) and cfr.loop_variable is not None and cfr.init_statement is not None:
                 if not cfr.loop_variable in interstate_symbols:
-                    if cfr.loop_variable in global_symbols:
+                    declared = sdfg.symbol_repo.declared(cfr).types.get(cfr.loop_variable)
+                    if declared is not None:
+                        interstate_symbols[cfr.loop_variable] = declared
+                    elif cfr.loop_variable in global_symbols:
                         interstate_symbols[cfr.loop_variable] = global_symbols[cfr.loop_variable]
                     else:
                         l_end = loop_analysis.get_loop_end(cfr)
