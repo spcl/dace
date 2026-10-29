@@ -380,15 +380,6 @@ def _fold_scalar_slices(label: str) -> list[tuple[str, ppl.Pass]]:
 #: it is not a reason to stop confirming it. The cost is one no-op round on 23% of compiles.
 IV_SPLIT_MAX_ROUNDS = 2
 
-#: Rounds of the terminal ``end`` symbol cleanup (``SymbolDedup`` -> ``SymbolPropagation`` ->
-#: ``ConstantPropagation``). Two, so a merge that only the folded spelling exposes is still caught
-#: -- ``end`` has no later boundary to catch it. The second round is a guard, NOT a measured
-#: reduction: on the two graphs probed for it (canonicalize's own CloudSC output, and the
-#: ``scatter_accum_dup`` canary where round 1 merges 2 symbols) round 2 found nothing left to do.
-#: It costs three no-op whole-graph walks per compile. Raise the pin only against a case that
-#: shows a second round doing work.
-TERMINAL_SYMBOL_ROUNDS = 2
-
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -748,7 +739,6 @@ def statement_round() -> list[ppl.Pass]:
     units += [ForwardStoreToLoad(), SplitStatements()]
     units += clean_anti_dependency_units()
     units += [LoopInvariantCodeMotion()]
-    units += [RevertNonReductionWCR()]
     units += dead_dataflow_units()
     return units
 
@@ -803,6 +793,7 @@ def normalize_statements(
     s += [
         (label, PatternApplyOnceEverywhere([MoveIfIntoMap()])),
         (label, ConvertLengthOneArraysToScalars()),
+        # The frontend writes every ``+=`` in a map body as WCR; one that conflicts with nothing is a plain update
         (label, RevertNonReductionWCR()),
     ]
     lower_maps = MapToForLoop()
@@ -816,7 +807,7 @@ def normalize_statements(
         (label, InlineSDFGs()),
     ]
     s += _fold_scalar_slices(label)
-    s += [(label, NormalizeNegativeStride()), (label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
+    s += [(label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
     s += [(label, RerollUnrolledLoops()), (label, UntileLoops()), (label, FuseConsecutiveLoops())]
     if unroll_limit > 0:
         s += [(label, ShortLoopUnroll(unroll_limit)), (label, unique_iterators()), (label, SymbolSSA())]
@@ -833,7 +824,6 @@ def normalize_statements(
     s += [
         (label, DistributeProducerConsumerLoop()),
         (label, MoveIfIntoLoop()),
-        (label, CascadeInterstateEdgeAssignmentsUp()),
     ]
     if perfect_loop_nesting:
         s += [(label, PerfectLoopNesting(target=target))]
@@ -861,7 +851,6 @@ def lift_semantics(lift: bool, lift_copy: bool, interchange_carry_with_map: bool
     s += [
         (label, LoopToEinsum()),
         (label, NestToContraction()),
-        (label, RevertNonReductionWCR()),
         (label, SinkLastOnlyScanStore()),
         (label, LoopToReduce()),
         (label, LiftPreprocess()),
@@ -900,7 +889,7 @@ def derive_parallelism(
     :param validate: Whether the pipeline validates its result; best-effort peeling then validates its own once.
     """
     label = DERIVE_PARALLELISM
-    s: Stages = [(label, CascadeInterstateEdgeAssignmentsUp()), (label, unique_iterators()), (label, SymbolSSA())]
+    s: Stages = [(label, SymbolSSA())]
     # SSA leaves one definition per name, which is when propagation can substitute it (``j = j_0 + 1`` into
     # ``b[j]``); demoted first, its operand is a scalar read and the symbol stays.
     s += [(label, SymbolPropagation()), (label, ConstantPropagation())]
@@ -941,7 +930,6 @@ def derive_parallelism(
     # Accumulators become reduction loops, then derive again.
     s += [
         (label, FuseChainedScalarReductions()),
-        (label, RevertNonReductionWCR()),
         (label, PinCarriedTopLevelLoops()),
         (label, AccumulatorCopyChainToWCR()),
         (label, RetargetWCRAccumulator()),
@@ -985,7 +973,7 @@ def derive_parallelism(
             )
         ]
     # Wavefront: map what now maps, then skew the nests left sequential on a carried dependence.
-    s += [(label, RevertNonReductionWCR()), *_inline_single_state(label)]
+    s += _inline_single_state(label)
     if target == "gpu":
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
     s += [(label, FuseLoops()), (label, PropagateMemlets()), (label, SetSymbolNonnegativeAssumptions())]
@@ -1043,7 +1031,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     fuses conditions; lift what fusion exposed; the final tidy. Invariant guards stay pushed in: hoisting them is
     the specialization step ``hoist_invariant_guards``."""
     label = RECOMPOSE
-    s: Stages = [(label, RevertNonReductionWCR())]
+    s: Stages = []
     # Before fusion: the WCR map it leaves fuses with the matrix's producer
     s += [(label, FuseElementwiseIntoGemv())]
     s += [
@@ -1055,10 +1043,6 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
         (label, EmptyLoopElimination()),
         (label, PatternApplyOnceEverywhere([MoveIfIntoMap()])),
     ]
-    # Index remaps (np.roll, broadcast_to, np.where) as gather maps, so fusion inlines them instead of keeping a full-size
-    # transient per call (laplacian_stencil_3d's 24 rolls); ingest expands them already, this catches the ones the
-    # lifting phases made since. The inlining below dissolves their nested SDFGs.
-    s += [(label, ExpandIndexRemaps())]
     s += [*_inline_single_state(label), (label, StructuralCleanup())]
     # A memset the control flow after it overwrites unread (velocity's zeta_value, swept level by level) goes before
     # fusion, so its state does not stand between the maps; the finish runs it again for the fills lifted after.
@@ -1090,13 +1074,11 @@ def finish() -> Stages:
     # On the settled form: a loop over the segments of a pointer array is lifted behind the entry guard that checks
     # the data facts its segment confinement rests on (nfa_frontier's components).
     s += [(FINISH, SegmentConfinedLoops())]
-    for _ in range(TERMINAL_SYMBOL_ROUNDS):
-        s += [(FINISH, SymbolDedup()), (FINISH, SymbolPropagation()), (FINISH, ConstantPropagation())]
+    s += [(FINISH, SymbolDedup()), (FINISH, SymbolPropagation()), (FINISH, ConstantPropagation())]
     s += [
         (FINISH, RemoveUnusedSymbols()),
         (FINISH, OptionalArrayInference()),
         (FINISH, ConvertLengthOneArraysToScalars()),
-        (FINISH, RevertNonReductionWCR()),
         (FINISH, DeadFillElimination()),
         (FINISH, PruneUnreferencedTransients()),
         (FINISH, InlineControlFlowRegions()),
