@@ -200,7 +200,9 @@ def hoist_block_uniform_reduction_loop(state, block_entry: nodes.MapEntry) -> bo
         return False
     block_params = set(block_entry.map.params)
     shared = any(
-        edge.data.wcr is not None and not edge.data.is_empty() and not {str(s) for s in edge.data.subset.free_symbols} & block_params
+        edge.data.wcr is not None
+        and not edge.data.is_empty()
+        and not {str(s) for s in edge.data.subset.free_symbols} & block_params
         for edge in state.out_edges(state.exit_node(inner))
     )
     if not shared or not MapInterchange.can_be_applied_to(
