@@ -755,8 +755,8 @@ def copies_global_transient_in_kernel(sdfg: SDFG, state: SDFGState, edge: MultiC
     if edge.data.is_empty() or edge.data.wcr is not None:
         return False
     descs = (sdfg.arrays[edge.src.data], sdfg.arrays[edge.dst.data])
-    # An edge into or out of a view aliases its data; it copies nothing.
-    if any(isinstance(desc, dt.View) for desc in descs):
+    # An edge into or out of a view, or setting a reference, aliases its data; it copies nothing.
+    if any(isinstance(desc, (dt.View, dt.Reference)) for desc in descs):
         return False
     return (
         all(desc.storage is dtypes.StorageType.GPU_Global for desc in descs)
