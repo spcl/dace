@@ -2312,8 +2312,6 @@ def test_multistate_inline_early_return(shape: str, dead_successor: bool):
         assert np.isclose(B[0], expected[0] + 10)
 
 
-
-
 if __name__ == "__main__":
     test()
     # Skipped due to bug that cannot be reproduced outside CI
