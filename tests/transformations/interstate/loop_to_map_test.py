@@ -1486,6 +1486,7 @@ if __name__ == "__main__":
     test_dynamic_write_slab_separated_by_iteration_var()
     test_refuse_when_body_assigns_loop_range_symbol()
     test_symbolic_step_of_unknown_sign_stays_a_loop()
+    test_a_symbol_the_body_assigns_in_a_branch_keeps_its_declared_type()
 
 
 def branchy_symbol_loop() -> dace.SDFG:

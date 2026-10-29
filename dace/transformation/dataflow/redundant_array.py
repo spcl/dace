@@ -1563,7 +1563,9 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             graph.remove_node(in_array)
 
 
-def _connector_describes_view(connector_desc: data.Data, view_desc: data.Data, viewed_desc: data.Data) -> bool:
+def _connector_describes_view(
+    connector_desc: data.Data, view_desc: data.Data, viewed_desc: data.Data, symbol_mapping: dict
+) -> bool:
     """
     Checks whether a nested SDFG connector describes a view but not the container behind it.
 
@@ -1573,9 +1575,12 @@ def _connector_describes_view(connector_desc: data.Data, view_desc: data.Data, v
     :param connector_desc: The descriptor of the connector inside the nested SDFG.
     :param view_desc: The descriptor of the view.
     :param viewed_desc: The descriptor of the container it views.
+    :param symbol_mapping: The nested SDFG's symbol mapping, which binds the connector's symbols to the outer ones.
     :return: True if removing the view would leave the connector describing the wrong container.
     """
-    return connector_desc.is_equivalent(view_desc) and not connector_desc.is_equivalent(viewed_desc)
+    return connector_desc.is_equivalent(view_desc, symbol_mapping=symbol_mapping) and not connector_desc.is_equivalent(
+        viewed_desc, symbol_mapping=symbol_mapping
+    )
 
 
 def _view_carries_a_connector(
@@ -1602,7 +1607,7 @@ def _view_carries_a_connector(
             connector = leaf.src_conn if from_source else leaf.dst_conn
             if not isinstance(node, nodes.NestedSDFG) or connector not in node.sdfg.arrays:
                 continue
-            if _connector_describes_view(node.sdfg.arrays[connector], view_desc, viewed_desc):
+            if _connector_describes_view(node.sdfg.arrays[connector], view_desc, viewed_desc, node.symbol_mapping):
                 return True
     return False
 
@@ -1897,7 +1902,7 @@ class RedundantReadSlice(pm.SingleStateTransformation):
                             ndesc = sink_node.sdfg.arrays[sink_conn]
                             if ndesc.strides != out_desc.strides or ndesc.dtype != out_desc.dtype:
                                 return False
-                            if _connector_describes_view(ndesc, out_desc, in_desc):
+                            if _connector_describes_view(ndesc, out_desc, in_desc, sink_node.symbol_mapping):
                                 return False
 
         return True
@@ -2053,7 +2058,7 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
                             ndesc = source_node.sdfg.arrays[source_conn]
                             if ndesc.strides != in_desc.strides or ndesc.dtype != in_desc.dtype:
                                 return False
-                            if _connector_describes_view(ndesc, in_desc, out_desc):
+                            if _connector_describes_view(ndesc, in_desc, out_desc, source_node.symbol_mapping):
                                 return False
 
         return True
@@ -2205,7 +2210,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
                             ndesc = sink_node.sdfg.arrays[sink_conn]
                             if ndesc.strides != desc.strides or ndesc.dtype != desc.dtype:
                                 return False
-                            if _connector_describes_view(ndesc, desc, viewed.desc(sdfg)):
+                            if _connector_describes_view(ndesc, desc, viewed.desc(sdfg), sink_node.symbol_mapping):
                                 return False
 
         ########################################################

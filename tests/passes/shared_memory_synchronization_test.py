@@ -2,6 +2,7 @@
 """Shared-memory write detection of :class:`DefaultSharedMemorySync`."""
 
 import dace
+from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync, is_shared_memory_write
 
@@ -51,7 +52,31 @@ def test_is_shared_memory_write_predicate():
     assert is_shared_memory_write(t, state) is False  # not an AccessNode
 
 
+def test_a_thread_block_map_writing_shared_memory_is_followed_by_a_block_sync():
+    sdfg = dace.SDFG("smem_tb_write")
+    sdfg.add_array("s", [32], dace.float64, dace.StorageType.GPU_Shared, transient=True)
+    sdfg.add_array("g", [32], dace.float64, dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    kentry, kexit = state.add_map("kernel", {"b": "0:1"}, schedule=dace.ScheduleType.GPU_Device)
+    tentry, texit = state.add_map("block", {"t": "0:32"}, schedule=dace.ScheduleType.GPU_ThreadBlock)
+    w = state.add_tasklet("w", {}, {"_o"}, "_o = t")
+    s, c = state.add_access("s"), state.add_tasklet("c", {"_i"}, {"_o"}, "_o = _i")
+    g = state.add_write("g")
+    state.add_nedge(kentry, tentry, dace.Memlet())
+    state.add_nedge(tentry, w, dace.Memlet())
+    state.add_memlet_path(w, texit, s, src_conn="_o", memlet=dace.Memlet("s[t]"))
+    state.add_edge(s, None, c, "_i", dace.Memlet("s[0]"))
+    state.add_memlet_path(c, kexit, g, src_conn="_o", memlet=dace.Memlet("g[0]"))
+    DefaultSharedMemorySync().apply_pass(sdfg, {})
+
+    syncs = [n for n in state.nodes() if isinstance(n, Sync)]
+    assert len(syncs) == 1 and syncs[0].scope == SyncScope.BLOCK
+    assert [e.src for e in state.in_edges(syncs[0])] == [texit]
+    assert s in state.successors(syncs[0])
+
+
 if __name__ == "__main__":
     test_writes_to_smem_inside_loopregion_detects_write()
     test_writes_to_smem_inside_loopregion_absent()
     test_is_shared_memory_write_predicate()
+    test_a_thread_block_map_writing_shared_memory_is_followed_by_a_block_sync()

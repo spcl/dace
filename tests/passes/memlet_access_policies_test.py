@@ -646,6 +646,7 @@ def _window_sdfg(write: bool) -> dace.SDFG:
     sdfg.add_array("A", [N, M], dace.float32)
     loop = LoopRegion("loop", "i < N - 1", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
+    sdfg.symbol_repo.add("i", dace.int64, at=loop)
     state = loop.add_state("body", is_start_block=True)
     block = dace.Memlet(data="A", subset="i:i + 2, 0:2", other_subset="0:2, 0:2")
     if write:
@@ -706,6 +707,7 @@ def _access_map_access_sdfg() -> dace.SDFG:
     sdfg.add_scalar("tmp", dace.float32, transient=True)
     loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
+    sdfg.symbol_repo.add("i", dace.int64, at=loop)
     state = loop.add_state("body", is_start_block=True)
     entry, exit_ = state.add_map("cols", {"j": "0:M"})
     a, b, tmp = state.add_read("A"), state.add_write("B"), state.add_access("tmp")

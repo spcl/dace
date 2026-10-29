@@ -66,8 +66,8 @@ class Sync(nodes.LibraryNode):
     """A barrier among the threads of a warp, a thread block or the grid of a GPU kernel, or a host wait for a GPU
     stream or the whole device.
 
-    The node orders what runs before and after it in the control flow, so it is the only node of its state; inside a
-    kernel's dataflow, empty memlets order it instead (see ``InsertTileSync``). Only a
+    The node orders what runs before and after it: through the (empty) edges of its state, or, as the only node of
+    its state, through the control flow. Only a
     stream barrier takes a connector: :data:`STREAM_CONNECTOR`, typed :data:`GPU_STREAM`, which the pass wiring the
     streams adds; without it, the barrier waits for the default stream.
     """

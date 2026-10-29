@@ -23,8 +23,6 @@ from dace.sdfg import nodes
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 
-#: Storage a kernel can address directly.
-DEVICE_ACCESSIBLE = (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned)
 #: Storage a transient the body owns can take inside a kernel (a per-thread value, or lifted out of it).
 BODY_LOCAL = (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.GPU_Global)
 HOST_MAP_SCHEDULES = (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_Multicore)
@@ -40,7 +38,9 @@ def device_capable(node: nodes.Node, state: SDFGState, owned: bool) -> bool:
         if owned and not desc.transient and desc.storage == dtypes.StorageType.Default:
             # A nested SDFG's argument has no storage of its own: it is the caller's array, checked out there.
             return True
-        return desc.storage in DEVICE_ACCESSIBLE or (owned and desc.transient and desc.storage in BODY_LOCAL)
+        return desc.storage in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES or (
+            owned and desc.transient and desc.storage in BODY_LOCAL
+        )
     if isinstance(node, nodes.Tasklet):
         return node.language is dtypes.Language.Python
     if isinstance(node, nodes.LibraryNode):

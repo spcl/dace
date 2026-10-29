@@ -15,7 +15,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets import cpp
 from dace.codegen.targets.cpp import mangle_dace_state_struct_name, ptr, sym2cpp
-from dace.codegen.targets.cpu import CPUCodeGen
+from dace.codegen.targets.cpu import CPUCodeGen, hands_on_unchanged
 from dace.codegen.targets.cuda import (
     _DYNAMIC_SHARED_MEMORY_SYMBOL,
     chiplet_count,
@@ -40,12 +40,15 @@ from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (
     num_gpu_streams,
 )
 from dace.config import Config
+from dace.frontend import operations
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+from dace.libraries.standard.nodes.sync import SyncScope, sync_code
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_access, as_range, config_int, config_str
+from dace.sdfg.scope import is_in_scope
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView, SymbolResolver
 from dace.transformation.passes import gpu_shared_memory
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
@@ -176,6 +179,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         if Config.get("compiler", "cuda", "auto_syncthreads_insertion"):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
+            # Its barriers come after the pipeline expanded the library nodes
+            sdfg.expand_library_nodes(recursive=True)
 
         if compute_pool_release(sdfg, self.pool_release):
             self.has_pool = True
@@ -219,6 +224,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         )
 
         scope_entry = scope_map_entry(dfg_scope)
+        if scope_entry.map.schedule not in dtypes.EXPERIMENTAL_GPU_SCHEDULES:
+            raise NotImplementedError(f"GPU code generation does not implement {scope_entry.map.schedule} maps yet")
 
         if not self._in_device_code:
             state = cfg.state(state_id)
@@ -485,14 +492,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ) -> None:
-        # One container handed on through the scope exits with a single subset moves nothing; the
-        # CPU copy would take the exit's slice as the source and the whole container as the target.
-        if (
-            isinstance(src_node, nodes.AccessNode)
-            and isinstance(dst_node, nodes.AccessNode)
-            and src_node.data == dst_node.data
-            and all(e.data.data == src_node.data and e.data.other_subset is None for e in dfg.memlet_path(edge))
-        ):
+        if hands_on_unchanged(dfg, src_node, dst_node, edge):
             return
         # All CPU<->GPU and GPU<->GPU AccessNode->AccessNode edges (host-issued
         # and in-kernel collaborative) are lifted to ``CopyLibraryNode`` by
@@ -512,6 +512,17 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 "CopyLibraryNode by InsertExplicitCopies; the CPU fallback would access device "
                 "memory from the host."
             )
+        if (
+            self._in_device_code
+            and edge.data.wcr is not None
+            and isinstance(src_node, nodes.AccessNode)
+            and isinstance(dst_node, nodes.AccessNode)
+            and not is_in_scope(sdfg, cfg.state(state_id), dst_node, [dtypes.ScheduleType.GPU_ThreadBlock])
+        ):
+            # Every thread of the block runs block-level code, so the reduction is split across the block
+            code = self.block_accumulate_code(sdfg, cfg.state(state_id), edge, src_node, dst_node)
+            callsite_stream.write(code, cfg, state_id, [src_node, dst_node])
+            return
         if not isinstance(src_node, (nodes.Tasklet, nodes.AccessNode)) or not isinstance(
             dst_node, (nodes.Tasklet, nodes.AccessNode)
         ):
@@ -519,6 +530,41 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._cpu_codegen.copy_memory(
             sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream
         )
+
+    def block_accumulate_code(
+        self,
+        sdfg: SDFG,
+        state: SDFGState,
+        edge: MultiConnectorEdge[Memlet],
+        src_node: nodes.AccessNode,
+        dst_node: nodes.AccessNode,
+    ) -> str:
+        """A block-level reduction copy through ``dace::SharedToGlobal1D``, as the legacy codegen emits it.
+
+        :raises NotImplementedError: The copy is not a static 1-D shared-to-global one.
+        """
+        src, dst = src_node.desc(sdfg), dst_node.desc(sdfg)
+        copy_shape, src_strides, dst_strides, src_expr, dst_expr = cpp.memlet_copy_to_absolute_strides(
+            self._dispatcher, sdfg, state, edge, src_node, dst_node
+        )
+        if (
+            src.storage != dtypes.StorageType.GPU_Shared
+            or dst.storage != dtypes.StorageType.GPU_Global
+            or len(copy_shape) != 1
+            or symbolic.issymbolic(copy_shape[0], sdfg.constants)
+        ):
+            raise NotImplementedError(
+                f"Block-level reduction copy {src_node.data} -> {dst_node.data} ({src.storage} -> {dst.storage}, "
+                f"shape {copy_shape}): only a static 1-D GPU_Shared -> GPU_Global one is implemented"
+            )
+        redtype = operations.detect_reduction_type(edge.data.wcr)
+        if redtype == dtypes.ReductionType.Custom:
+            accum, custom = "::template Accum", [cpp.unparse_cr(sdfg, edge.data.wcr, dst.dtype)]
+        else:
+            accum, custom = f"::template Accum<dace::ReductionType::{redtype.name}>", []
+        bdims = ", ".join(sym2cpp(b) for b in self._current_kernel_spec.block_dims)
+        args = ", ".join([src_expr, sym2cpp(src_strides[0]), dst_expr, sym2cpp(dst_strides[0])] + custom)
+        return f"dace::SharedToGlobal1D<{dst.dtype.ctype}, {bdims}, {sym2cpp(copy_shape[0])}, false>{accum}({args});"
 
     def synchronize_host_reads(
         self,
@@ -549,7 +595,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             self._synchronized_d2h.add(key)
             gpu_stream = self.issued_stream_expression(state, producer)
             callsite_stream.write(
-                f"DACE_GPU_CHECK({self.backend}StreamSynchronize({gpu_stream}));\n", cfg, state_id, consumer
+                sync_code(SyncScope.STREAM, self.backend, stream=gpu_stream) + "\n", cfg, state_id, consumer
             )
 
     def issued_stream_expression(self, state: SDFGState, producer: nodes.Node) -> str:
@@ -1133,13 +1179,9 @@ class KernelSpec:
 
         kernel_const_data = kernel_read_only_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
-        # A pointer (Array/View) arg may be ``const`` ONLY when it is read-only in this kernel, i.e. in
-        # ``kernel_const_data`` (read-set minus write-set). ``get_constant_symbols`` can surface a WRITTEN
-        # data container's name as a "constant symbol" -- its MapEntry branch returns
-        # ``used_symbols_within_scope`` (which includes data names used in subset/offset expressions) and,
-        # unlike the CFG branches, never subtracts writes. Letting such a name into ``kernel_constants``
-        # const-qualifies a written output pointer -> ``expression must be a modifiable lvalue``. Drop any
-        # pointer arg that is not genuinely read-only; scalar-symbol args are unaffected.
+        # get_constant_symbols on a MapEntry also returns data names used in subset expressions, written
+        # ones included. A pointer argument is const only when it is read-only (in kernel_const_data);
+        # otherwise a written output pointer is declared const and the kernel does not compile.
         written_pointers = {
             name
             for name, data in self.arglist.items()

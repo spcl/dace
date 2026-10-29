@@ -60,6 +60,7 @@ def _build_level1() -> dace.SDFG:
         "sweep", condition_expr="s < n", loop_var="s", initialize_expr="s = 0", update_expr="s = s + tile"
     )
     sdfg.add_node(loop, is_start_block=True)
+    sdfg.symbol_repo.add("s", dace.int64, at=loop)
 
     body = loop.add_state("sweep_body", is_start_block=True)
     nested = body.add_nested_sdfg(_build_level2(), {"a2"}, {"b2"}, symbol_mapping={"m": "n", "k": "tile", "off": "s"})

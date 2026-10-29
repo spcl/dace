@@ -401,6 +401,11 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
 
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    # Dynamic thread-block maps not lowered before code generation become thread-block maps that drive a work queue
+    from dace.transformation.passes.lower_dynamic_thread_block_maps import LowerDynamicThreadBlockMaps
+
+    LowerDynamicThreadBlockMaps().apply_pass(sdfg, {})
+
     # Give every implicit copy a node of its own, before the expansion below lowers it. An implicit
     # copy is a write no node performs, so an empty memlet ordering that write has nothing to point
     # at and the copy is free to move ahead of a write it must follow.
@@ -435,6 +440,11 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     from dace.transformation.passes.memlet_access_policy_lowering import LowerMemletAccessPolicies
 
     LowerMemletAccessPolicies().apply_pass(sdfg, {})
+
+    # GPU device maps nested in kernels become guarded or grid-strided parts of their kernel
+    from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
+
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
 
     kernels = tile_kernels(sdfg)
     check_tile_toolchain(bool(kernels))

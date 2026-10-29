@@ -58,7 +58,7 @@ from dace.sdfg.state import (
 )
 from dace.sdfg.type_inference import infer_iteration_symbol_type
 from dace.symbolic import inequal_symbols, pystr_to_symbolic
-from dace.utils import find_new_name, until
+from dace.utils import until
 
 numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
 
@@ -6304,17 +6304,11 @@ class ProgramVisitor(ExtNodeVisitor):
         # A computed index follows No-View nested SDFGs: one symbol per scalar, re-assigned at every promotion.
         sym = None if version else (self.indirections.get(key) or self.promoted_scalars.get(scalar))
         if sym is None:
-            if version:
-                # A minted shape symbol never takes the bare name the computed-index promotion reuses
-                name = find_new_name(base, self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base})
-            else:
-                # A name that already means something else here would shadow it
-                name = (
-                    base
-                    if base not in self.sdfg.symbols
-                    else find_new_name(base, set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys()))
-                )
-            self.sdfg.add_symbol(name, desc.dtype)
+            # A shape symbol never takes the bare name a computed index reuses; neither shadows an existing symbol.
+            # The edge assignment binds the name, so it is not declared; ``is_name_free`` sees every bound name.
+            name = base
+            if version or not self.sdfg.is_name_free(base):
+                name = next(f"{base}_{i}" for i in itertools.count() if self.sdfg.is_name_free(f"{base}_{i}"))
             sym = dace.symbol(name, dtype=desc.dtype)
             if not version:
                 self.promoted_scalars[scalar] = sym

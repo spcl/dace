@@ -1111,11 +1111,12 @@ def make_sync_tasklet(state: SDFGState, name: str, stream_ids) -> nodes.Tasklet:
     ``cudaStreamSynchronize`` per connector. Caller wires each connector to
     the matching ``gpu_streams[<id>]`` AccessNode after construction.
     """
+    from dace.libraries.standard.nodes.sync import SyncScope, sync_code
+
     backend: str = common.get_gpu_backend()
-    sync_lines = [f"DACE_GPU_CHECK({backend}StreamSynchronize({stream_connector_name(sid)}));" for sid in stream_ids]
-    sync_code = "\n".join(sync_lines)
+    code = "\n".join(sync_code(SyncScope.STREAM, backend, stream=stream_connector_name(sid)) for sid in stream_ids)
     tasklet = state.add_tasklet(
-        name=name, inputs={}, outputs={}, code=sync_code, language=dtypes.Language.CPP, side_effects=True
+        name=name, inputs={}, outputs={}, code=code, language=dtypes.Language.CPP, side_effects=True
     )
     for sid in stream_ids:
         tasklet.add_in_connector(stream_connector_name(sid), dtypes.gpuStream_t)

@@ -1,24 +1,23 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A kernel whose body is a nested SDFG with consecutive device maps has to synchronize its grid.
+"""Consecutive device maps in a kernel, also in a nested SDFG of its body, become one kernel if each iteration of the
+second reads only what the same iteration of the first wrote, and consecutive kernels otherwise, which order them
+without a grid barrier.
 
 These assert on emitted code, so they need a GPU for neither compilation nor a run.
 """
-
-import re
 
 import pytest
 
 import dace
 
-# The grid barrier is emitted by the legacy CUDA code generator only.
-pytestmark = pytest.mark.old_gpu_codegen_only
-
 N = 32
 W = 4
 
 
-def kernel_with_consecutive_maps(nested: bool) -> dace.SDFG:
-    sdfg = dace.SDFG("grid_barrier_nested" if nested else "grid_barrier_flat")
+def _kernel_with_consecutive_maps(nested: bool, read: str = "T[i, j]") -> dace.SDFG:
+    """A kernel over ``i`` whose two device maps over ``j`` write ``T[i, j]`` and then read ``read``."""
+    name = f"grid_barrier_{'nested' if nested else 'flat'}_{'same' if read == 'T[i, j]' else 'other'}"
+    sdfg = dace.SDFG(name)
     for name in ("A", "T", "B"):
         sdfg.add_array(name, [W, N], dace.float64, storage=dace.StorageType.GPU_Global)
     state = sdfg.add_state()
@@ -41,7 +40,7 @@ def kernel_with_consecutive_maps(nested: bool) -> dace.SDFG:
     if nested:
         body.add_memlet_path(body.add_read("A"), first_entry, first, dst_conn="a", memlet=dace.Memlet("A[i, j]"))
         body.add_memlet_path(first, first_exit, tmp, src_conn="t", memlet=dace.Memlet("T[i, j]"))
-        body.add_memlet_path(tmp, second_entry, second, dst_conn="t", memlet=dace.Memlet("T[i, j]"))
+        body.add_memlet_path(tmp, second_entry, second, dst_conn="t", memlet=dace.Memlet(read))
         body.add_memlet_path(second, second_exit, body.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i, j]"))
         node = state.add_nested_sdfg(inner, {"A"}, {"T", "B"}, {"i": "i"})
         state.add_memlet_path(
@@ -58,7 +57,7 @@ def kernel_with_consecutive_maps(nested: bool) -> dace.SDFG:
             state.add_read("A"), kernel_entry, first_entry, first, dst_conn="a", memlet=dace.Memlet("A[i, j]")
         )
         state.add_memlet_path(first, first_exit, tmp, src_conn="t", memlet=dace.Memlet("T[i, j]"))
-        state.add_memlet_path(tmp, second_entry, second, dst_conn="t", memlet=dace.Memlet("T[i, j]"))
+        state.add_memlet_path(tmp, second_entry, second, dst_conn="t", memlet=dace.Memlet(read))
         state.add_memlet_path(
             second, second_exit, kernel_exit, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i, j]")
         )
@@ -66,23 +65,27 @@ def kernel_with_consecutive_maps(nested: bool) -> dace.SDFG:
     return sdfg
 
 
-def check_barrier(nested: bool):
-    sdfg = kernel_with_consecutive_maps(nested)
+def _cuda_code(sdfg: dace.SDFG) -> str:
     with dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"):
-        code = next(obj.clean_code for obj in sdfg.generate_code() if obj.title == "CUDA")
-    assert "cooperative_groups::this_grid().sync();" in code
-    # Only a cooperative launch keeps every block resident for the grid barrier
-    assert re.search(r"(cuda|hip)LaunchCooperativeKernel\(", code)
+        return next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
 
 
-def test_grid_barrier_in_kernel():
-    check_barrier(nested=False)
+@pytest.mark.parametrize("nested", [False, True])
+def test_maps_sharing_their_iterations_become_one_kernel(nested: bool):
+    code = _cuda_code(_kernel_with_consecutive_maps(nested))
+    assert code.count("__global__") == 1
+    assert "this_grid().sync();" not in code
 
 
-def test_grid_barrier_in_nested_sdfg():
-    check_barrier(nested=True)
+@pytest.mark.parametrize("nested", [False, True])
+def test_maps_depending_across_iterations_become_consecutive_kernels(nested: bool):
+    code = _cuda_code(_kernel_with_consecutive_maps(nested, read=f"T[i, {N} - 1 - j]"))
+    assert code.count("__global__") == 2
+    assert "this_grid().sync();" not in code
 
 
 if __name__ == "__main__":
-    test_grid_barrier_in_kernel()
-    test_grid_barrier_in_nested_sdfg()
+    test_maps_sharing_their_iterations_become_one_kernel(False)
+    test_maps_sharing_their_iterations_become_one_kernel(True)
+    test_maps_depending_across_iterations_become_consecutive_kernels(False)
+    test_maps_depending_across_iterations_become_consecutive_kernels(True)

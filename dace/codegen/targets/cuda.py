@@ -1640,7 +1640,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 callsite_stream.write("}  // subgraph end", cfg, state.block_id)
 
-            if can_sync:
+            # A lowered kernel synchronizes through its own Sync nodes
+            if can_sync and not self._kernel_map.map.gpu_grid_syncs_lowered:
                 callsite_stream.write(sync_code(SyncScope.GRID, self.backend), cfg, state.block_id)
 
             # done here, code is generated
@@ -1707,7 +1708,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         kernel_name = "%s_%d_%d_%d" % (scope_entry.map.label, cfg.cfg_id, state.block_id, state.node_id(scope_entry))
 
         # Comprehend grid/block dimensions from scopes
-        grid_dims, block_dims, tbmap, dtbmap, _ = self.get_kernel_dimensions(dfg_scope)
+        grid_dims, block_dims, tbmap, _ = self.get_kernel_dimensions(dfg_scope)
         is_persistent = dfg_scope.source_nodes()[0].map.schedule == dtypes.ScheduleType.GPU_Persistent
 
         # Get parameters of subgraph. A constant array is declared inside the kernel (see generate_constants
@@ -1853,7 +1854,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             grid_dims,
             block_dims,
             tbmap,
-            dtbmap,
             kernel_args_typed,
             self._globalcode,
             kernel_stream,
@@ -2100,7 +2100,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         self,
         kernelmap_entry: nodes.MapEntry,
         is_persistent: bool,
-        has_dtbmap: bool,
         extra_grid_dims: list[symbolic.SymbolicType],
     ) -> int:
         """
@@ -2118,7 +2117,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
 
         :param kernelmap_entry: Entry node of the kernel map.
         :param is_persistent: Whether the kernel uses a persistent grid.
-        :param has_dtbmap: Whether the kernel contains a dynamic thread-block map.
         :param extra_grid_dims: Grid dimensions contributed by nested device maps, if any.
         """
         chiplets = int(Config.get("compiler", "cuda", "chiplet_number"))
@@ -2150,8 +2148,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         skip_reason = None
         if is_persistent:
             skip_reason = "it uses a persistent grid"
-        elif has_dtbmap:
-            skip_reason = "it contains a dynamic thread-block map"
         elif extra_grid_dims:
             skip_reason = "it contains nested device maps"
 
@@ -2246,10 +2242,11 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                 "If this was not the intent, try tiling one of the thread-block maps to match."
             )
 
-        # both thread-block map and dynamic thread-block map exist at the same time
-        if dims.has_tbmap and has_dtbmap:
-            raise NotImplementedError(
-                "GPU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently not supported in the same scope"
+        # Dynamic thread-block maps are lowered before code generation
+        if has_dtbmap:
+            raise ValueError(
+                f'Kernel "{kernelmap_entry.map.label}" has a dynamic thread-block map, which '
+                "LowerDynamicThreadBlockMaps lowers before code generation"
             )
 
         if is_persistent:
@@ -2286,7 +2283,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         fold_ok = not (is_persistent or has_dtbmap or extra_grid_dims) and self._kernel_chiplet_count == 1
         grid_size, self._kernel_grid_fold = fold_grid_x(self.backend, grid_size, block_size, fold_ok)
 
-        return grid_size, block_size, dims.has_tbmap, has_dtbmap, extra_dim_offsets
+        return grid_size, block_size, dims.has_tbmap, extra_dim_offsets
 
     def generate_kernel_scope(
         self,
@@ -2299,7 +2296,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         grid_dims: list,
         block_dims: list,
         has_tbmap: bool,
-        has_dtbmap: bool,
         kernel_params: list,
         function_stream: CodeIOStream,
         kernel_stream: CodeIOStream,
@@ -2341,7 +2337,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         folded = self._kernel_grid_fold
         if node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
             for varname, expr in kernel_index_definitions(
-                kernel_map, block_dims, not has_tbmap or has_dtbmap, chiplet_count, chiplet_chunk, index_types, folded
+                kernel_map, block_dims, not has_tbmap, chiplet_count, chiplet_chunk, index_types, folded
             ):
                 kernel_stream.write(f"{index_types[varname].ctype} {varname} = {expr};", cfg, state_id, node)
                 self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, index_types[varname].ctype)
@@ -2369,7 +2365,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         self._gpu_block_reductions = []
         if (
             not has_tbmap
-            and not has_dtbmap
             and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
             and Config.get_bool("compiler", "emit_tree_reductions")
         ):
@@ -2383,22 +2378,18 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
         # unless this is handled by another map down the line
-        if (not has_tbmap or has_dtbmap) and node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
+        if not has_tbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
             for condition in kernel_grid_conditions(kernel_map, self._block_dims, chiplet_count, folded):
                 block_open = f"if ({condition}) {{" if condition else "{"
                 self._kernel_grid_conditions.append(block_open)
-                if not has_dtbmap:
-                    kernel_stream.write(block_open, cfg, state_id, scope_entry)
+                kernel_stream.write(block_open, cfg, state_id, scope_entry)
 
         # The conditions above are only generated when no inner thread-block map handles them. The padding
         # of the distributed dimension is introduced at grid level, so its condition is needed either way.
         # It is not added to ``_kernel_grid_conditions`` because those are only re-emitted around grid
         # synchronization, which requires nested device maps, and those disable the distribution.
         emit_chiplet_condition = (
-            (chiplet_count > 1 or folded)
-            and has_tbmap
-            and not has_dtbmap
-            and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
+            (chiplet_count > 1 or folded) and has_tbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
         )
         if emit_chiplet_condition:
             kernel_stream.write(f"if ({chiplet_padding_condition(kernel_map)}) {{", cfg, state_id, scope_entry)
@@ -2410,7 +2401,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         if emit_chiplet_condition:
             kernel_stream.write("}", cfg, state_id, node)
 
-        if not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
+        if not has_tbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
             for _ in kernel_map.params:
                 kernel_stream.write("}", cfg, state_id, node)
 
@@ -2492,7 +2483,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
 
         dfg = cfg.state(state_id)
         scope_entry = dfg_scope.source_nodes()[0]
-        scope_exit = dfg_scope.sink_nodes()[0]
         scope_map = scope_entry.map
         index_types = common.gpu_map_index_types(
             sdfg, dfg, scope_entry, self._frame.symbols_defined_at(dfg, scope_entry)
@@ -2502,158 +2492,9 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         # generator)
         callsite_stream.write("{", cfg, state_id, scope_entry)
 
-        if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
-            if self.backend == "hip":
-                raise NotImplementedError("Dynamic thread-block maps on HIP are currently unsupported")
-            if len(scope_map.params) > 1:
-                raise ValueError(
-                    "Only one-dimensional maps are supported for dynamic block map schedule (got %d)"
-                    % len(scope_map.params)
-                )
-            total_block_size = 1
-            for bdim in self._block_dims:
-                if symbolic.issymbolic(bdim, sdfg.constants):
-                    raise ValueError(
-                        f"Block size has to be constant for block-wide dynamic map schedule (got {str(bdim)})"
-                    )
-                total_block_size *= bdim
-
-            ##### TODO (later): Generalize
-            # Find thread-block param map and its name
-            if self._block_dims[1] != 1 or self._block_dims[2] != 1:
-                raise NotImplementedError("Dynamic block map schedule only implemented for 1D blocks currently")
-
-            # The shared scheduling state, placed with the rest of shared memory (see ``LowerDynamicMapState``). Its
-            # data type is the index type of the scheduler.
-            dynmap_state = scope_entry._cuda_dynmap_state
-            dynmap_state_desc = sdfg.arrays[dynmap_state]
-            index_type = dynmap_state_desc.dtype
-            is_wide = index_type.bytes > 4
-            template_args = f"{'true' if Config.get_bool('compiler', 'cuda', 'dynamic_map_fine_grained') else 'false'}"
-            template_args += f", {total_block_size}"
-            # The warp size and the index type default to 32 and 32 bits (see ``dynmap.cuh``)
-            warp_size = common.gpu_warp_size()
-            if is_wide or warp_size != 32:
-                template_args += f", {warp_size}"
-            if is_wide:
-                template_args += f", {index_type.ctype}"
-            dynmap_class = f"dace::DynamicMap<{template_args}>"
-            dynmap_state_bytes = sym2cpp(dynmap_state_desc.total_size_in_bytes)
-            callsite_stream.write(
-                f"static_assert(sizeof({dynmap_class}::shared_type) <= {dynmap_state_bytes}, "
-                f'"The scheduling state of dynamic map {scope_map.label} exceeds its shared memory");',
-                cfg,
-                state_id,
-                scope_entry,
-            )
-
-            # Define all input connectors of this map entry
-            # Note: no need for a C scope around these, as there will not be
-            #       more than one dynamic thread-block map in a GPU device map
-            dynmap_ctype = index_type.ctype if is_wide else "unsigned int"
-            callsite_stream.write(
-                f"{dynmap_ctype} __dace_dynmap_begin = 0, __dace_dynmap_end = 0;", cfg, state_id, scope_entry
-            )
-
-            outer_scope = dfg.entry_node(scope_entry)
-            current_sdfg = sdfg
-            while not outer_scope and current_sdfg:
-                current_state = current_sdfg.parent
-                nsdfg_node = current_sdfg.parent_nsdfg_node
-                outer_scope = current_state.entry_node(nsdfg_node)
-                current_sdfg = current_state.parent
-            if not outer_scope:
-                raise ValueError(f"Failed to find the outer scope of {scope_entry}")
-            for cond in self._kernel_grid_conditions:
-                callsite_stream.write(cond, cfg, state_id, scope_entry)
-
-            # NOTE: Dynamic map inputs must be defined both outside and inside the dynamic Map schedule.
-            # They define inside the schedule the bounds of the any nested Maps.
-            # They define outside the schedule the bounds of the dynamic Map's for-loop invocation.
-            # NOTE: The value of the dynamic Map's variable may differ inside and outside the schedule.
-            for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
-                if e.data is not None and e.data.data == e.dst_conn:
-                    warnings.warn(
-                        f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
-                    )
-                    comment_out_str = "// Omitted name clash on dynamic map input\n//"
-                else:
-                    comment_out_str = ""
-                callsite_stream.write(
-                    comment_out_str
-                    + self._cpu_codegen.memlet_definition(
-                        sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]
-                    ),
-                    cfg,
-                    state_id,
-                    scope_entry,
-                )
-
-            dynmap_var = scope_map.params[0]
-            dynmap_begin = scope_map.range[0][0]
-            dynmap_end = scope_map.range[0][1] + 1
-            dynmap_step = scope_map.range[0][2]
-            if dynmap_step != 1:
-                dynmap_var = f"{dynmap_var}_idx"
-                dynmap_begin = 0
-                dynmap_end = f"int_ceil({dynmap_end - dynmap_begin}, {dynmap_step})"
-            callsite_stream.write(
-                f"__dace_dynmap_begin = {dynmap_begin};\n__dace_dynmap_end = {dynmap_end};",
-                cfg,
-                state_id,
-                scope_entry,
-            )
-
-            # Close kernel grid conditions
-            for _ in self._kernel_grid_conditions:
-                callsite_stream.write("}", cfg, state_id, scope_entry)
-
-            dynmap_state_ptr = self.ptr(dynmap_state, dynmap_state_desc, sdfg)
-            callsite_stream.write(
-                f"{dynmap_class}::"
-                f"schedule(*reinterpret_cast<{dynmap_class}::shared_type *>({dynmap_state_ptr}), __dace_dynmap_begin, "
-                f"__dace_dynmap_end, {outer_scope.map.params[-1]}, [&](auto {outer_scope.map.params[-1]}, "
-                f"auto {dynmap_var}) {{",
-                cfg,
-                state_id,
-                scope_entry,
-            )
-
-            for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
-                if e.data is not None and e.data.data == e.dst_conn:
-                    warnings.warn(
-                        f"Dynamic map input name {e.data.data} is same as the dst connector. Will result in a name clash, omitting of code for this assignment is skipped."
-                    )
-                    comment_out_str = "// Omitted name clash on dynamic map input\n//"
-                else:
-                    comment_out_str = ""
-                callsite_stream.write(
-                    comment_out_str
-                    + self._cpu_codegen.memlet_definition(
-                        sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]
-                    ),
-                    cfg,
-                    state_id,
-                    scope_entry,
-                )
-
-            if dynmap_step != 1:
-                # Up to 32 bits, the parameter takes the type of its range, as the lambda's parameters do
-                dynmap_param_ctype = index_type.ctype if is_wide else "auto"
-                callsite_stream.write(
-                    f"{dynmap_param_ctype} {scope_map.params[0]} = "
-                    f"{scope_map.range[0][0]} + {dynmap_step} * {dynmap_var};",
-                    cfg,
-                    state_id,
-                    scope_entry,
-                )
-
-            # Emit internal array allocation (deallocation handled at MapExit)
-            self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
-
-        elif scope_map.schedule == dtypes.ScheduleType.GPU_Device:
+        if scope_map.schedule == dtypes.ScheduleType.GPU_Device:
             dfg_kernel = self._kernel_state.scope_subgraph(self._kernel_map)
-            grid_dims, block_dims, has_tbmap, has_dtbmap, extra_gdim_offsets = self.get_kernel_dimensions(dfg_kernel)
+            grid_dims, block_dims, has_tbmap, extra_gdim_offsets = self.get_kernel_dimensions(dfg_kernel)
 
             if self._kernel_map.map == dtypes.ScheduleType.GPU_Persistent and len(scope_map.params) > 1:
                 raise ValueError(
@@ -2704,7 +2545,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                     else:
                         block_expr = _widen_register(f"blockIdx.{_named_idx(i)}", index_types[varname])
                         # If we defaulted to 32 threads per block, offset by thread ID
-                        if not has_tbmap or has_dtbmap:
+                        if not has_tbmap:
                             block_expr = f"({block_expr} * {_topy(block_dims[i])} + threadIdx.{_named_idx(i)})"
 
                     expr = _topy(bidx[i]).replace("__DAPB%d" % i, block_expr)
@@ -2733,7 +2574,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                 kmap_min = subsets.Range(self._kernel_map.range[::-1]).min_element()
                 kmap_max = subsets.Range(self._kernel_map.range[::-1]).max_element()
 
-                # if has_tbmap == False and has_dtbmap == False:
                 dsym_end = [d + bs - 1 for d, bs in zip(dsym, self._block_dims)]
                 minels = device_map_range.min_element()
                 maxels = device_map_range.max_element()
@@ -2753,14 +2593,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                     ):
                         if len(condition) > 0:
                             condition += " && "
-                        if has_dtbmap:
-                            condition += "{mapIdx} < int_ceil({max}, {bs}) * {bs}".format(
-                                mapIdx=v,
-                                max=_topy(maxel + 1),
-                                bs=_topy(block_dims[i]),
-                            )
-                        else:
-                            condition += f"{v} < {_topy(maxel + 1)}"
+                        condition += f"{v} < {_topy(maxel + 1)}"
 
                     if is_persistent and not has_tbmap:
                         stride = "{} * {}".format(_widen_register("gridDim.x", index_types[v]), _topy(block_dims[i]))
@@ -2953,49 +2786,9 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
 
         ##########################################################
 
-        # need to handle subgraphs appropriately if they contain
-        # dynamic thread block maps
-        if any(
-            (
-                isinstance(node, dace.nodes.MapEntry)
-                and node != scope_entry
-                and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
-            )
-            for node in dfg_scope.nodes()
-        ):
-            subgraphs = dace.sdfg.concurrent_subgraphs(dfg_scope)
-            for subdfg in subgraphs:
-                components = dace.sdfg.utils.separate_maps(
-                    cfg.state(state_id),
-                    subdfg,
-                    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
-                )
-
-                for c in components:
-                    if not isinstance(c, dace.sdfg.scope.ScopeSubgraphView):
-                        callsite_stream.write(
-                            f"if ({scope_map.params[0]} < {_topy(subsets.Range(scope_map.range[::-1]).max_element()[0] + 1)}) {{",
-                            cfg,
-                            state_id,
-                            scope_entry,
-                        )
-
-                    self._dispatcher.dispatch_subgraph(
-                        sdfg, cfg, c, state_id, function_stream, callsite_stream, skip_entry_node=False
-                    )
-
-                    if not isinstance(c, dace.sdfg.scope.ScopeSubgraphView):
-                        callsite_stream.write("}")
-
-            # exit node gets lost in the process, thus needs to be
-            # dispatched manually
-            self._dispatcher.dispatch_node(sdfg, cfg, dfg_scope, state_id, scope_exit, function_stream, callsite_stream)
-
-        else:
-            # Generate contents normally
-            self._dispatcher.dispatch_subgraph(
-                sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream, skip_entry_node=True
-            )
+        self._dispatcher.dispatch_subgraph(
+            sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream, skip_entry_node=True
+        )
 
         # If there are any other threadblock maps down the road,
         # synchronize the thread-block / grid
@@ -3129,13 +2922,6 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                     drain_gpu_block_reduction(red, "%s_%d" % (node.map.label, i), covered), cfg, state_id, node
                 )
             self._gpu_block_reductions = []
-
-        elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
-            # Close lambda function
-            callsite_stream.write("});", cfg, state_id, node)
-            # Close block invocation
-            callsite_stream.write("}", cfg, state_id, node)
-            return
 
         self._cpu_codegen._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
