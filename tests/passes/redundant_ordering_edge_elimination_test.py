@@ -225,6 +225,26 @@ def test_pipeline_kernel_is_still_correct():
     assert np.allclose(out, a * 3.0)
 
 
+def test_removed_node_leaves_one_order_hub_that_dissolves_once_implied():
+    """Removing a node between two producers and two consumers orders them through one hub; once direct edges imply
+    every pair, the pass removes the hub."""
+    sdfg = dace.SDFG("order_hub_dissolves")
+    state = sdfg.add_state("main", is_start_block=True)
+    a1, a2, c1, c2, mid = (state.add_tasklet(n, {}, {}, "") for n in ("a1", "a2", "c1", "c2", "mid"))
+    for src, dst in ((a1, mid), (a2, mid), (mid, c1), (mid, c2)):
+        state.add_nedge(src, dst, dace.Memlet())
+    state.remove_node(mid)
+    hub = tasklet_named(state, "order_hub")
+    assert {e.src for e in state.in_edges(hub)} == {a1, a2} and {e.dst for e in state.out_edges(hub)} == {c1, c2}
+    RedundantOrderingEdgeElimination().apply_pass(sdfg, {})
+    assert hub in state.nodes()
+    for src in (a1, a2):
+        for dst in (c1, c2):
+            state.add_nedge(src, dst, dace.Memlet())
+    RedundantOrderingEdgeElimination().apply_pass(sdfg, {})
+    assert hub not in state.nodes() and state.number_of_edges() == 4
+
+
 if __name__ == "__main__":
     test_redundant_ordering_edge_is_removed()
     test_only_path_ordering_edge_is_kept()
@@ -237,3 +257,4 @@ if __name__ == "__main__":
     test_nested_sdfg_states_are_reduced()
     test_end_to_end_numbers_are_unchanged()
     test_pipeline_kernel_is_still_correct()
+    test_removed_node_leaves_one_order_hub_that_dissolves_once_implied()

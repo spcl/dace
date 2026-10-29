@@ -129,6 +129,34 @@ def restore_edges(state: SDFGState, snapshot: list[EdgeTuple]) -> None:
         state.add_edge(src, src_conn, dst, dst_conn, memlet)
 
 
+def is_order_hub(node: nodes.Node) -> bool:
+    """Whether ``node`` is an ``order_hub`` tasklet :meth:`SDFGState.keep_order_through` inserted."""
+    return (
+        isinstance(node, nodes.Tasklet)
+        and node.label == "order_hub"
+        and not node.in_connectors
+        and not node.out_connectors
+        and not node.code.as_string.strip()
+    )
+
+
+def dissolve_hubs(state: SDFGState) -> int:
+    """Remove every order hub of ``state`` that orders nothing another path does not; one with a single predecessor or
+    successor becomes direct edges. :returns: the number of hubs removed."""
+    removed = 0
+    for hub in [n for n in state.nodes() if is_order_hub(n)]:
+        ins, outs = state.in_edges(hub), state.out_edges(hub)
+        ignored = OrderedSet(id(e) for e in [*ins, *outs])
+        if all(reaches(state, i.src, o.dst, ignored) for i in ins for o in outs):
+            state.detach_node(hub)
+        elif len(ins) == 1 or len(outs) == 1:
+            state.remove_node(hub)
+        else:
+            continue
+        removed += 1
+    return removed
+
+
 def reduce_state(state: SDFGState) -> int:
     """Remove every redundant ordering edge of one state.
 
@@ -210,5 +238,5 @@ class RedundantOrderingEdgeElimination(ppl.Pass):
         count = 0
         for nested in sdfg.all_sdfgs_recursive():
             for state in nested.states():
-                count += reduce_state(state)
+                count += dissolve_hubs(state) + reduce_state(state)
         return count or None
