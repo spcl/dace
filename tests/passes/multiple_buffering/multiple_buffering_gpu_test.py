@@ -166,6 +166,101 @@ def test_blocked_gemm_pipelined_n_tiles(n_depth: int, n: int):
     assert np.allclose(C.get(), A.get() @ B.get() + D.get())
 
 
+@pytest.mark.parametrize("depth", [4, 5, 8])
+def test_shared_tiles_depth_beyond_trip_count_code_structure(depth: int):
+    """Depths up to and beyond the BLOCK / TILE = 4 iterations of the loop still allocate a ring of ``depth`` tiles."""
+    sdfg = pipelined(tiled_add, depth)
+    (code,) = [obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu"]
+    assert f"__shared__ double buf[{depth * TILE}];" in code
+    assert f"% {depth})" in code
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("depth", [4, 5, 8])
+def test_tiled_add_depth_beyond_trip_count(depth: int):
+    """The prologue wants more tiles than the loop has, so it is clamped and the main loop never runs."""
+    import cupy as cp
+
+    sdfg = pipelined(tiled_add, depth)
+    n = 3 * BLOCK
+    A = cp.random.rand(n)
+    B = cp.zeros(n)
+    sdfg(A=A, B=B, N=n)
+    assert np.allclose(B.get(), 2 * A.get() + 1)
+
+
+@pytest.mark.gpu
+def test_tiled_add_single_block():
+    import cupy as cp
+
+    sdfg = pipelined(tiled_add, 2)
+    A = cp.random.rand(BLOCK)
+    B = cp.zeros(BLOCK)
+    sdfg(A=A, B=B, N=BLOCK)
+    assert np.allclose(B.get(), 2 * A.get() + 1)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("depth", [4, 5])
+def test_tiled_gemm_depth_beyond_trip_count(depth: int):
+    """A single K tile and depths beyond the number of K tiles."""
+    import cupy as cp
+
+    sdfg = pipelined(tiled_gemm, depth)
+    m, n, k = 2 * BM, 2 * BN, 2 * BK
+    A = cp.random.rand(m, k)
+    B = cp.random.rand(k, n)
+    C = cp.zeros((m, n))
+    sdfg(A=A, B=B, C=C, M=m, N=n, K=k)
+    assert np.allclose(C.get(), A.get() @ B.get())
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("n_depth", [4, 6])
+def test_blocked_gemm_n_depth_beyond_trip_count(n_depth: int):
+    """The pipelined N loop has 2 iterations but a depth of 4 or 6."""
+    import cupy as cp
+
+    sdfg = pipelined(blocked_gemm, 3, n_depth)
+    m, n, k = 2 * BM, 2 * BN, 3 * BK
+    A = cp.random.rand(m, k)
+    B = cp.random.rand(k, n)
+    C = cp.zeros((m, n))
+    D = cp.random.rand(m, n)
+    sdfg(A=A, B=B, C=C, D=D, M=m, N=n, K=k)
+    assert np.allclose(C.get(), A.get() @ B.get() + D.get())
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("depth", [2, 3])
+def test_large_tiled_add(depth: int):
+    """2**26 doubles (512 MiB per array) over 2**20 thread blocks."""
+    import cupy as cp
+
+    sdfg = pipelined(tiled_add, depth)
+    n = 2**26
+    A = cp.random.rand(n)
+    B = cp.zeros(n)
+    sdfg(A=A, B=B, N=n)
+    assert cp.allclose(B, 2 * A + 1)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("depth", [2, 3])
+def test_large_blocked_gemm(depth: int):
+    """A 1024 x 1024 x 2048 GEMM with 256 iterations in the pipelined K loop and N loop staging ``D``."""
+    import cupy as cp
+
+    sdfg = pipelined(blocked_gemm, depth, 2)
+    m, n, k = 1024, 1024, 2048
+    A = cp.random.rand(m, k)
+    B = cp.random.rand(k, n)
+    C = cp.zeros((m, n))
+    D = cp.random.rand(m, n)
+    sdfg(A=A, B=B, C=C, D=D, M=m, N=n, K=k)
+    assert cp.allclose(C, A @ B + D, rtol=1e-8, atol=1e-8)
+
+
 if __name__ == "__main__":
     test_shared_tiles_code_structure()
     for d in (2, 3):
@@ -177,3 +272,14 @@ if __name__ == "__main__":
         test_blocked_gemm_code_structure(d)
         for nn in (BN, 2 * BN, 5 * BN):
             test_blocked_gemm_pipelined_n_tiles(d, nn)
+    for d in (4, 5, 8):
+        test_shared_tiles_depth_beyond_trip_count_code_structure(d)
+        test_tiled_add_depth_beyond_trip_count(d)
+    test_tiled_add_single_block()
+    for d in (4, 5):
+        test_tiled_gemm_depth_beyond_trip_count(d)
+    for d in (4, 6):
+        test_blocked_gemm_n_depth_beyond_trip_count(d)
+    for d in (2, 3):
+        test_large_tiled_add(d)
+        test_large_blocked_gemm(d)

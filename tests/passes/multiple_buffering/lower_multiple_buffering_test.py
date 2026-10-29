@@ -380,6 +380,294 @@ def test_blocked_gemm_pipelined_n_tiles(n_depth: int, n: int):
     assert np.allclose(C, A @ B + D)
 
 
+@pytest.mark.parametrize("depth", [2, 3])
+@pytest.mark.parametrize("n", [0, 1, TILE - 1])
+def test_zero_trip_loop(depth: int, n: int):
+    """A loop that never runs stays a no-op: neither the prologue nor the epilogue may touch the data."""
+    sdfg = tiled_add(f"mb_zero_trip_{depth}_{n}", depth, "N")
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"tiles": depth}
+    sdfg.validate()
+    A = np.random.rand(max(n, 1))
+    B = np.zeros(max(n, 1))
+    sdfg(A=A, B=B, N=n)
+    assert np.all(B == 0)
+
+
+@pytest.mark.parametrize("depth", [2, 3, 5])
+def test_trip_count_around_depth(depth: int):
+    """Trip counts of depth - 2 up to depth + 1, where the prologue, main loop and epilogue each become empty."""
+    sdfg = tiled_add(f"mb_trips_{depth}", depth, "N")
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"tiles": depth}
+    for tiles in range(max(depth - 2, 1), depth + 2):
+        n = tiles * TILE
+        A = np.random.rand(n)
+        B = np.zeros(n)
+        sdfg(A=A, B=B, N=n)
+        assert np.allclose(B, expected_add(A, 0, TILE)), tiles
+
+
+@pytest.mark.parametrize("stride", [1, 2, TILE, TILE + 3])
+def test_strides(stride: int):
+    """Stride 1 skips the division in the iteration index; overlapping tiles rewrite the same values."""
+    sdfg = tiled_add(f"mb_stride_{stride}", 3, "N", stride=stride)
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"tiles": 3}
+    sdfg.validate()
+    for n in (TILE, 13, 29):
+        A = np.random.rand(n)
+        B = np.zeros(n)
+        sdfg(A=A, B=B, N=n)
+        assert np.allclose(B, expected_add(A, 0, stride)), n
+
+
+def test_inclusive_loop_condition():
+    """A loop written with ``<=`` has the same trip count as the equivalent ``<``."""
+    n = 5 * TILE
+    sdfg = tiled_add("mb_inclusive", 3, n)
+    (loop,) = loops(sdfg)
+    loop.loop_condition = dace.properties.CodeBlock(f"t <= {n - TILE}")
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"tiles": 3}
+    A = np.random.rand(n)
+    B = np.zeros(n)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, expected_add(A, 0, TILE))
+
+
+def test_loop_between_other_blocks():
+    """The prologue and epilogue are spliced in between the loop's neighbors, keeping their interstate edges."""
+    n = 6 * TILE
+    sdfg = tiled_add("mb_neighbors", 3, n)
+    (loop,) = loops(sdfg)
+    sdfg.add_symbol("off", dace.int64)
+    before = sdfg.add_state_before(loop, "before", is_start_block=True)
+    sdfg.edges_between(before, loop)[0].data.assignments["off"] = "1"
+    after = sdfg.add_state_after(loop, "after")
+    tasklet = after.add_tasklet("fix", {}, {"o"}, "o = 7")
+    after.add_edge(tasklet, "o", after.add_write("B"), None, dace.Memlet("B[0]"))
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"tiles": 3}
+    sdfg.validate()
+    assert sdfg.start_block is before
+    assert len(sdfg.nodes()) == 5
+    A = np.random.rand(n)
+    B = np.zeros(n)
+    sdfg(A=A, B=B)
+    expected = expected_add(A, 0, TILE)
+    expected[0] = 7
+    assert np.allclose(B, expected)
+
+
+def test_two_loops_in_sequence():
+    """Two pipelined loops of one SDFG, with different depths, each get their own slot symbols and prologue."""
+    n = 5 * TILE
+    sdfg = tiled_add("mb_two_loops", 2, n)
+    (first,) = loops(sdfg)
+    sdfg.add_array("A2", [n], dace.float64)
+    sdfg.add_array("B2", [n], dace.float64)
+    sdfg.add_transient("buf2", [TILE], dace.float64)
+    second = LoopRegion("tiles2", f"t < {n - TILE + 1}", "t", "t = 0", f"t = t + {TILE}", pipeline_depth=4)
+    sdfg.add_node(second)
+    sdfg.add_edge(first, second, dace.InterstateEdge())
+    state = second.add_state("load", is_start_block=True)
+    buf = state.add_access("buf2")
+    state.add_nedge(state.add_read("A2"), buf, dace.Memlet(f"A2[t:t+{TILE}]", other_subset=f"0:{TILE}"))
+    state.add_mapped_tasklet(
+        "compute",
+        {"j": f"0:{TILE}"},
+        {"x": dace.Memlet("buf2[j]")},
+        "y = 3 * x",
+        {"y": dace.Memlet("B2[t + j]")},
+        input_nodes={"buf2": buf},
+        external_edges=True,
+    )
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"tiles": 2, "tiles2": 4}
+    sdfg.validate()
+    assert sdfg.arrays["buf"].shape[0] == 2 and sdfg.arrays["buf2"].shape[0] == 4
+    A, A2 = np.random.rand(n), np.random.rand(n)
+    B, B2 = np.zeros(n), np.zeros(n)
+    sdfg(A=A, B=B, A2=A2, B2=B2)
+    assert np.allclose(B, expected_add(A, 0, TILE))
+    assert np.allclose(B2, 3 * A2)
+
+
+def test_apply_twice_is_noop():
+    """Lowering resets ``pipeline_depth``, so a second application finds nothing to do."""
+    sdfg = tiled_add("mb_twice", 3)
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"tiles": 3}
+    before = copy.deepcopy(sdfg.to_json())
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) is None
+    assert sdfg.to_json() == before
+
+
+def test_two_copies_into_one_buffer():
+    """Two copies filling disjoint halves of one buffer in the same state are moved together."""
+    n = 5 * TILE
+    sdfg = tiled_add("mb_two_copies", 3, n)
+    (loop,) = loops(sdfg)
+    state = loop.start_block
+    half = TILE // 2
+    (copy_edge,) = state.edges()[:1]
+    state.remove_node(copy_edge.src)
+    buf = [nd for nd in state.data_nodes() if nd.data == "buf"][0]
+    for i in range(2):
+        state.add_nedge(
+            state.add_read("A"),
+            buf,
+            dace.Memlet(f"A[t + {i * half}:t + {(i + 1) * half}]", other_subset=f"{i * half}:{(i + 1) * half}"),
+        )
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"tiles": 3}
+    sdfg.validate()
+    A = np.random.rand(n)
+    B = np.zeros(n)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, expected_add(A, 0, TILE))
+
+
+def test_buffer_read_in_conditional_branch():
+    """A buffer read only in a branch is still dominated by its copy: every tile is loaded, but only some are used."""
+    n = 7 * TILE
+    sdfg = tiled_add("mb_branch", 3, n, two_states=True)
+    (loop,) = loops(sdfg)
+    load, compute = loop.start_block, [s for s in loop.states() if s.label == "compute"][0]
+    loop.edges_between(load, compute)[0].data.condition = dace.properties.CodeBlock(f"(t // {TILE}) % 2 == 0")
+    skip = loop.add_state("skip")
+    loop.add_edge(load, skip, dace.InterstateEdge(f"(t // {TILE}) % 2 != 0"))
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"tiles": 3}
+    sdfg.validate()
+    A = np.random.rand(n)
+    B = np.zeros(n)
+    sdfg(A=A, B=B)
+    expected = expected_add(A, 0, TILE)
+    for tile in range(1, n // TILE, 2):
+        expected[tile * TILE : (tile + 1) * TILE] = 0
+    assert np.allclose(B, expected)
+
+
+def test_nested_pipelined_loops_inner_first():
+    """A pipelined loop inside another pipelined loop is lowered first, so the outer copies hold the inner loops."""
+    m, n, k, bm, bn, bk = 6, 8, 8, 3, 4, 4
+    sdfg = blocked_gemm("mb_nested_order", 3, m, n, k, bm, bn, bk, 3)
+    result = LowerMultipleBuffering().apply_pass(sdfg, {})
+    assert result == {"ktiles": 3, "ntiles": 3}
+    assert not [loop for loop in loops(sdfg) if loop.pipeline_depth]
+
+
+def test_reject_continue():
+    sdfg = tiled_add("mb_continue", 2)
+    (loop,) = loops(sdfg)
+    loop.add_edge(loop.start_block, loop.add_continue("skip"), dace.InterstateEdge("t > 100"))
+    _assert_skipped(sdfg)
+
+
+def test_reject_return():
+    sdfg = tiled_add("mb_return", 2)
+    (loop,) = loops(sdfg)
+    loop.add_edge(loop.start_block, loop.add_return("ret"), dace.InterstateEdge("t > 100"))
+    _assert_skipped(sdfg)
+
+
+@pytest.mark.parametrize("stride", [-TILE, 0])
+def test_reject_non_positive_stride(stride: int):
+    sdfg = tiled_add(f"mb_stride_{abs(stride)}_{stride < 0}", 2, stride=stride)
+    _assert_skipped(sdfg)
+
+
+def test_reject_no_staged_buffer():
+    """A pipelined loop without any copy into a transient has nothing to buffer."""
+    sdfg = dace.SDFG("mb_nothing_to_stage")
+    sdfg.add_array("A", [16], dace.float64)
+    loop = LoopRegion("tiles", "t < 16", "t", "t = 0", "t = t + 1", pipeline_depth=2)
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    tasklet = state.add_tasklet("w", {}, {"o"}, "o = t")
+    state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[t]"))
+    with pytest.warns(UserWarning, match="no staged buffer"):
+        assert LowerMultipleBuffering().apply_pass(sdfg, {}) is None
+    assert loop.pipeline_depth == 0
+    assert len(sdfg.nodes()) == 1
+
+
+def test_skipped_loop_does_not_block_others():
+    """A loop that cannot be lowered is skipped with a warning while another loop of the SDFG is still lowered."""
+    sdfg = tiled_add("mb_partial", 2)
+    (first,) = loops(sdfg)
+    first.add_edge(first.start_block, first.add_break("stop"), dace.InterstateEdge("t > 100"))
+    sdfg.add_transient("buf2", [TILE], dace.float64)
+    second = LoopRegion("tiles2", "t < 13", "t", "t = 0", f"t = t + {TILE}", pipeline_depth=2)
+    sdfg.add_node(second)
+    sdfg.add_edge(first, second, dace.InterstateEdge())
+    state = second.add_state("load", is_start_block=True)
+    buf = state.add_access("buf2")
+    state.add_nedge(state.add_read("A"), buf, dace.Memlet(f"A[t:t+{TILE}]", other_subset=f"0:{TILE}"))
+    state.add_mapped_tasklet(
+        "compute",
+        {"j": f"0:{TILE}"},
+        {"x": dace.Memlet("buf2[j]")},
+        "y = x",
+        {"y": dace.Memlet("B[t + j]")},
+        input_nodes={"buf2": buf},
+        external_edges=True,
+    )
+    with pytest.warns(UserWarning, match="Multiple buffering of loop tiles skipped"):
+        assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"tiles2": 2}
+    assert sdfg.arrays["buf"].shape == (TILE,)
+    assert sdfg.arrays["buf2"].shape == (2, TILE)
+
+
+def test_reject_copy_inside_scope():
+    sdfg = tiled_add("mb_scoped_copy", 2)
+    (loop,) = loops(sdfg)
+    state = loop.start_block
+    for edge in state.edges():
+        if edge.data.data == "A":
+            state.remove_node(edge.src)
+            break
+    buf = [nd for nd in state.data_nodes() if nd.data == "buf" and state.in_degree(nd) == 0][0]
+    entry, exit_ = state.add_map("copy", {"j": f"0:{TILE}"})
+    src = state.add_read("A")
+    state.add_memlet_path(src, entry, exit_, buf, memlet=dace.Memlet("A[t + j]"), dst_conn=None)
+    with pytest.warns(UserWarning):
+        assert LowerMultipleBuffering().apply_pass(sdfg, {}) is None
+
+
+def test_reject_non_transient_destination():
+    sdfg = tiled_add("mb_global_dst", 2)
+    sdfg.arrays["buf"].transient = False
+    with pytest.warns(UserWarning):
+        assert LowerMultipleBuffering().apply_pass(sdfg, {}) is None
+    assert sdfg.arrays["buf"].shape == (TILE,)
+
+
+def test_reject_buffer_read_on_interstate_edge():
+    sdfg = tiled_add("mb_interstate_read", 2)
+    (loop,) = loops(sdfg)
+    nxt = loop.add_state_after(loop.start_block, "next")
+    loop.edges_between(loop.start_block, nxt)[0].data.condition = dace.properties.CodeBlock("buf[0] > -1")
+    _assert_skipped(sdfg)
+
+
+@pytest.mark.parametrize("depth", [2, 4])
+def test_large_tiled_add(depth: int):
+    """A million elements in 2**18 tiles of 4, to check the slot arithmetic over many iterations."""
+    n = 2**20
+    sdfg = tiled_add(f"mb_large_add_{depth}", depth, "N")
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"tiles": depth}
+    A = np.random.rand(n)
+    B = np.zeros(n)
+    sdfg(A=A, B=B, N=n)
+    assert np.allclose(B, expected_add(A, 0, TILE))
+
+
+def test_large_blocked_gemm():
+    """A 96 x 128 x 256 GEMM, blocked 16 x 16 x 8, so the pipelined K loop runs 32 iterations per block."""
+    m, n, k, bm, bn, bk = 96, 128, 256, 16, 16, 8
+    sdfg = blocked_gemm("mb_large_blocked_gemm", 3, m, n, k, bm, bn, bk)
+    assert LowerMultipleBuffering().apply_pass(sdfg, {}) == {"ktiles": 3}
+    A = np.random.rand(m, k)
+    B = np.random.rand(k, n)
+    C = np.zeros((m, n))
+    sdfg(A=A, B=B, C=C)
+    assert np.allclose(C, A @ B)
+
+
 if __name__ == "__main__":
     for d in (2, 3, 4):
         for t in (1, 2, 3, 4, 7):
@@ -406,3 +694,29 @@ if __name__ == "__main__":
     for d in (2, 3):
         for nn in (4, 8, 12):
             test_blocked_gemm_pipelined_n_tiles(d, nn)
+    for d in (2, 3):
+        for n in (0, 1, TILE - 1):
+            test_zero_trip_loop(d, n)
+    for d in (2, 3, 5):
+        test_trip_count_around_depth(d)
+    for st in (1, 2, TILE, TILE + 3):
+        test_strides(st)
+    test_inclusive_loop_condition()
+    test_loop_between_other_blocks()
+    test_two_loops_in_sequence()
+    test_apply_twice_is_noop()
+    test_two_copies_into_one_buffer()
+    test_buffer_read_in_conditional_branch()
+    test_nested_pipelined_loops_inner_first()
+    test_reject_continue()
+    test_reject_return()
+    for st in (-TILE, 0):
+        test_reject_non_positive_stride(st)
+    test_reject_no_staged_buffer()
+    test_skipped_loop_does_not_block_others()
+    test_reject_copy_inside_scope()
+    test_reject_non_transient_destination()
+    test_reject_buffer_read_on_interstate_edge()
+    for d in (2, 4):
+        test_large_tiled_add(d)
+    test_large_blocked_gemm()
