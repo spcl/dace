@@ -9,7 +9,7 @@ from dace import graphlib as nx
 from dace.config import Config
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowBlock, LoopRegion
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -78,16 +78,18 @@ class TransientReuse(ppl.Pass):
     """
     Lets transient arrays whose uses never overlap share one buffer, the largest of the group, by renaming them to it.
 
-    Two transients overlap unless the top-level control flow blocks using them (a loop or a conditional counts as one
-    block, throughout which its arrays are live) occupy disjoint ranges of the SDFG's block order, or both are used in
-    one state only and every reader of the first precedes every writer of the second there. In a state inside a loop
-    the latter also requires each to be fully written before it is read, so neither carries a value across iterations.
+    Two transients overlap unless, in the lowest control flow region holding the uses of both, they sit in different
+    branches of a conditional or in disjoint ranges of the region's block order, or both are used in one state only
+    and every reader of the first precedes every writer of the second there. In a region that may run more than once
+    (inside a loop) each must also be fully written before it is read in every run, so neither is live across the back
+    edge.
 
-    Only plain heap / GPU global arrays outside every map qualify, not read by control flow, not viewed or referenced,
-    no WCR target and not ``may_alias``. A shared buffer has the same dtype, storage and strides as its members, is
-    provably at least as large in every dimension, and is allocated once: Persistent if any member is, else SDFG
-    lifetime. GPU arrays share only when all device work runs on one stream
-    (``compiler.cuda.max_concurrent_streams == -1``), so device accesses run in program order.
+    Only plain heap / GPU global arrays qualify, not read by control flow, not viewed or referenced, no WCR target and
+    not ``may_alias``; one used inside a map scope only if it is allocated outside it (SDFG or Persistent lifetime, or
+    also accessed outside every map in each state using it), and never ordered within a state. A shared buffer has the
+    same dtype, storage, pooling and strides as its members, is provably at least as large in every dimension, and is
+    allocated once: Persistent if any member is, else SDFG lifetime. GPU arrays share only when all device work runs
+    on one stream (``compiler.cuda.max_concurrent_streams == -1``), so device accesses run in program order.
     """
 
     CATEGORY: str = "Memory Footprint Reduction"
@@ -136,24 +138,6 @@ def inside_map(sdfg: SDFG) -> bool:
     return False
 
 
-def in_loop(state: SDFGState) -> bool:
-    """Whether ``state`` is inside a loop region of its SDFG."""
-    block = state.parent_graph
-    while not isinstance(block, SDFG):
-        if isinstance(block, LoopRegion):
-            return True
-        block = block.parent_graph
-    return False
-
-
-def top_block(state: SDFGState) -> ControlFlowBlock:
-    """The block of the SDFG's root region that contains ``state``."""
-    block = state
-    while not isinstance(block.parent_graph, SDFG):
-        block = block.parent_graph
-    return block
-
-
 @dataclass(slots=True)
 class Group:
     rep: str
@@ -162,12 +146,21 @@ class Group:
 
 @dataclass(slots=True)
 class BufferSharing:
-    """One SDFG's candidates, their uses, and the greedy grouping into shared buffers."""
+    """One SDFG's candidates, their uses, and the greedy grouping into shared buffers. A state's path is the chain of
+    blocks from the SDFG's root region down to it; a cyclic region counts as a loop and orders nothing."""
 
     sdfg: SDFG
     storages: tuple
     uses: dict[str, dict[SDFGState, list[nodes.AccessNode]]] = field(default_factory=dict)
-    span: dict[str, tuple[int, int]] = field(default_factory=dict)
+    #: Candidates with an access node inside a map scope: their order within a state is not tracked.
+    scoped: OrderedSet = field(default_factory=OrderedSet)
+    paths: dict[SDFGState, tuple] = field(default_factory=dict)
+    prefix: dict[str, tuple] = field(default_factory=dict)
+    rank: dict[ControlFlowBlock, int] = field(default_factory=dict)
+    #: Block positions in topological order per acyclic region; cyclic regions are in ``cyclic`` instead.
+    positions: dict[ControlFlowRegion, dict[ControlFlowBlock, int]] = field(default_factory=dict)
+    cyclic: OrderedSet = field(default_factory=OrderedSet)
+    idoms: dict[ControlFlowRegion, dict] = field(default_factory=dict)
     orders: dict[SDFGState, StateOrder] = field(default_factory=dict)
     locals: dict[tuple[SDFGState, str], bool] = field(default_factory=dict)
     hoistable_names: OrderedSet | None = None
@@ -182,7 +175,7 @@ class BufferSharing:
         if len(self.uses) < 2:
             return {}
         groups: list[Group] = []
-        for name in sorted(self.uses, key=lambda n: self.span.get(n, (0, 0))[0]):
+        for name in sorted(self.uses, key=lambda n: min(self.rank[s] for s in self.uses[n])):
             group = self.place(name, groups)
             if group is None:
                 groups.append(Group(name, [name]))
@@ -212,15 +205,20 @@ class BufferSharing:
                 excluded.update(code.get_free_symbols())
             for edge in region.edges():
                 excluded.update(edge.data.read_symbols())
+        # Per scoped candidate, whether every state using it also holds it outside every map (allocated there).
+        state_level: dict[str, bool] = {}
         for state in sd.states():
             scope = None
+            outside, seen = OrderedSet(), OrderedSet()
             for node in state.data_nodes():
                 desc = sd.arrays[node.data]
                 if not self.candidate(desc):
                     continue
                 scope = scope or state.scope_dict()
-                if scope[node] is not None:
-                    excluded.add(node.data)
+                if scope[node] is None:
+                    outside.add(node.data)
+                else:
+                    self.scoped.add(node.data)
                 for edge in state.all_edges(node):
                     other = edge.dst if edge.src is node else edge.src
                     if isinstance(other, nodes.AccessNode) and isinstance(other.desc(sd), (dt.View, dt.Reference)):
@@ -231,24 +229,61 @@ class BufferSharing:
                     ):
                         self.nested.add(node.data)
                 self.uses.setdefault(node.data, {}).setdefault(state, []).append(node)
+                seen.add(node.data)
+            for name in seen:
+                state_level[name] = state_level.get(name, True) and name in outside
             for edge in state.edges():
                 if edge.data.wcr is not None and edge.data.data is not None:
                     excluded.add(edge.data.data)
+        # An array used only inside maps may be allocated per scope, privately per map iteration.
+        once = (dtypes.AllocationLifetime.SDFG, dtypes.AllocationLifetime.Persistent)
+        excluded.update(n for n in self.scoped if not state_level[n] and sd.arrays[n].lifetime not in once)
         for name in excluded:
             self.uses.pop(name, None)
-        if not nx.is_directed_acyclic_graph(sd.nx):
-            return
-        index = {block: i for i, block in enumerate(nx.topological_sort(sd.nx))}
+        self.order_blocks(sd, ())
         for name, states in self.uses.items():
-            positions = [index[top_block(state)] for state in states]
-            self.span[name] = (min(positions), max(positions))
+            paths = [self.paths[s] for s in states]
+            depth = 0
+            while all(len(p) > depth and p[depth] is paths[0][depth] for p in paths):
+                depth += 1
+            self.prefix[name] = paths[0][:depth]
+
+    def order_blocks(self, region: ControlFlowRegion, path: tuple) -> None:
+        """Record every state's path and rank below ``region``, and each region's topological positions."""
+        if isinstance(region, ConditionalBlock):
+            blocks = region.nodes()
+        elif nx.is_directed_acyclic_graph(region.nx):
+            blocks = list(nx.topological_sort(region.nx))
+            self.positions[region] = {block: i for i, block in enumerate(blocks)}
+        else:
+            blocks = region.nodes()
+            self.cyclic.add(region)
+        for block in blocks:
+            self.rank[block] = len(self.rank)
+            if isinstance(block, SDFGState):
+                self.paths[block] = (*path, block)
+            elif isinstance(block, AbstractControlFlowRegion):
+                self.order_blocks(block, (*path, block))
+
+    def region_at(self, path: tuple, depth: int) -> ControlFlowRegion:
+        return path[depth - 1] if depth else self.sdfg
+
+    def children(self, states, depth: int) -> dict[ControlFlowBlock, list[SDFGState]]:
+        """``states`` grouped by the block at ``depth`` of their paths."""
+        groups: dict[ControlFlowBlock, list[SDFGState]] = {}
+        for state in states:
+            groups.setdefault(self.paths[state][depth], []).append(state)
+        return groups
+
+    def looped(self, path: tuple, depth: int) -> bool:
+        """Whether the region at ``depth`` of ``path`` may run more than once per run of the SDFG."""
+        return any(isinstance(b, LoopRegion) or b in self.cyclic for b in (self.sdfg, *path[:depth]))
 
     def candidate(self, desc: dt.Data) -> bool:
         return (
             desc.transient
             and type(desc) is dt.Array
             and not desc.may_alias
-            and not desc.pool
             and desc.storage in self.storages
             and desc.lifetime in REUSABLE_LIFETIMES
             and desc.total_size != 1
@@ -269,28 +304,80 @@ class BufferSharing:
         return None
 
     def disjoint(self, a: str, b: str) -> bool:
-        if a in self.span and b in self.span:
-            (lo_a, hi_a), (lo_b, hi_b) = self.span[a], self.span[b]
-            if hi_a < lo_b or hi_b < lo_a:
+        path_a, path_b = self.prefix[a], self.prefix[b]
+        depth = 0
+        while depth < min(len(path_a), len(path_b)) and path_a[depth] is path_b[depth]:
+            depth += 1
+        looped = self.looped(path_a, depth)
+        if depth == len(path_a) == len(path_b) and depth and isinstance(path_a[-1], SDFGState):
+            state = path_a[-1]
+            if a in self.scoped or b in self.scoped:
+                return False
+            if looped and not (self.state_local(state, a) and self.state_local(state, b)):
+                return False
+            order = self.order(state)
+            return order.before(self.uses[a][state], self.uses[b][state]) or order.before(
+                self.uses[b][state], self.uses[a][state]
+            )
+        region = self.region_at(path_a, depth)
+        blocks_a, blocks_b = self.children(self.uses[a], depth), self.children(self.uses[b], depth)
+        if isinstance(region, ConditionalBlock):
+            if any(block in blocks_b for block in blocks_a):
+                return False
+        else:
+            if region in self.cyclic:
+                return False
+            index = self.positions[region]
+            pos_a, pos_b = [index[x] for x in blocks_a], [index[x] for x in blocks_b]
+            if not (max(pos_a) < min(pos_b) or max(pos_b) < min(pos_a)):
+                return False
+        return not looped or (self.covered(a, list(self.uses[a]), depth) and self.covered(b, list(self.uses[b]), depth))
+
+    def covered(self, name: str, states: list[SDFGState], depth: int) -> bool:
+        """Whether every run of the region at ``depth`` holding ``states`` writes all of ``name`` before reading it."""
+        groups = self.children(states, depth)
+        region = self.region_at(self.paths[states[0]], depth)
+        if isinstance(region, ConditionalBlock):
+            return all(self.covered(name, sub, depth + 1) for sub in groups.values())
+        if len(groups) == 1:
+            block, sub = next(iter(groups.items()))
+            if isinstance(block, SDFGState):
+                return self.state_local(block, name)
+            return self.covered(name, sub, depth + 1)
+        if region in self.cyclic:
+            return False
+        first = min(groups, key=self.positions[region].__getitem__)
+        return (
+            isinstance(first, SDFGState)
+            and self.state_local(first, name)
+            and self.kills(first, name)
+            and all(self.dominates(region, first, block) for block in groups if block is not first)
+        )
+
+    def dominates(self, region: ControlFlowRegion, first: ControlFlowBlock, block: ControlFlowBlock) -> bool:
+        if region not in self.idoms:
+            self.idoms[region] = nx.immediate_dominators(region.nx, region.start_block)
+        idom = self.idoms[region]
+        while block in idom and idom[block] is not block:
+            block = idom[block]
+            if block is first:
                 return True
-        uses_a, uses_b = self.uses[a], self.uses[b]
-        if len(uses_a) != 1 or len(uses_b) != 1:
-            return False
-        state = next(iter(uses_a))
-        if state not in uses_b:
-            return False
-        if in_loop(state) and not (self.state_local(state, a) and self.state_local(state, b)):
-            return False
-        order = self.order(state)
-        return order.before(uses_a[state], uses_b[state]) or order.before(uses_b[state], uses_a[state])
+        return False
 
     def order(self, state: SDFGState) -> StateOrder:
         if state not in self.orders:
             self.orders[state] = StateOrder.of(state)
         return self.orders[state]
 
+    def kills(self, state: SDFGState, name: str) -> bool:
+        """Whether ``state`` writes all of ``name``."""
+        full = subsets.Range.from_array(self.sdfg.arrays[name])
+        return any(self.full_write(state, e, full) for node in self.uses[name][state] for e in state.in_edges(node))
+
     def state_local(self, state: SDFGState, name: str) -> bool:
         """Whether every read of ``name`` in ``state`` follows a write of the whole array in ``state``."""
+        if name in self.scoped:
+            return False
         key = (state, name)
         if key not in self.locals:
             order = self.order(state)
@@ -328,6 +415,7 @@ class BufferSharing:
             and rep.location == new.location
             and len(rep.shape) == len(new.shape)
             and rep.alignment == new.alignment
+            and rep.pool == new.pool
             and all(symbolic.equal(x, y) is True for x, y in zip(rep.strides, new.strides))
             and all(symbolic.equal(x, y) is True for x, y in zip(rep.offset, new.offset))
             and symbolic.equal(rep.start_offset, new.start_offset) is True

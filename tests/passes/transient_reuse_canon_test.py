@@ -6,8 +6,9 @@ import dace
 from dace import Memlet, dtypes
 from dace import data as dt
 from dace.config import Config
+from dace.properties import CodeBlock
 from dace.sdfg import infer_types
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.transient_reuse import TransientReuse
 
 N_VALUE = 37
@@ -253,6 +254,149 @@ def test_wcr_accumulator_is_not_shared():
     assert np.allclose(D, 4 * A)
 
 
+def add_loop(sdfg, after=None):
+    loop = LoopRegion("loop", "k < K", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(loop, is_start_block=after is None)
+    if after is not None:
+        sdfg.add_edge(after, loop, dace.InterstateEdge())
+    return loop
+
+
+def test_states_of_one_loop_body_share_one_buffer():
+    sdfg = new_sdfg("reuse_loop_body_states", ["A", "B", "C"], ["T1", "T2"])
+    sdfg.add_symbol("K", dace.int64)
+    loop = add_loop(sdfg)
+    first = loop.add_state("first", is_start_block=True)
+    chain(first, "A", "2 * x", "T1", "x + 1", "B")
+    chain(loop.add_state_after(first, "second"), "B", "3 * x", "T2", "x - 1", "C")
+
+    renamed = reuse(sdfg)
+
+    assert renamed == {sdfg.cfg_id: {"T2": "T1"}}
+    assert buffers(sdfg) == ["T1"]
+    A = np.random.rand(N_VALUE)
+    B, C = np.zeros(N_VALUE), np.zeros(N_VALUE)
+    run(sdfg, A=A, B=B, C=C, K=K_VALUE)
+    assert np.allclose(C, 3 * (2 * A + 1) - 1)
+
+
+def test_branches_of_a_conditional_share_one_buffer():
+    sdfg = new_sdfg("reuse_conditional_branches", ["A", "B"], ["T1", "T2"])
+    sdfg.add_symbol("c", dace.int64)
+    cond = ConditionalBlock("cond")
+    sdfg.add_node(cond, is_start_block=True)
+    for i, (condition, name, expr) in enumerate((("c > 0", "T1", "2 * x"), (None, "T2", "3 * x"))):
+        branch = ControlFlowRegion(f"branch{i}", sdfg=sdfg)
+        cond.add_branch(CodeBlock(condition) if condition else None, branch)
+        chain(branch.add_state(f"body{i}", is_start_block=True), "A", expr, name, "x + 1", "B")
+
+    renamed = reuse(sdfg)
+
+    assert renamed == {sdfg.cfg_id: {"T2": "T1"}}
+    assert buffers(sdfg) == ["T1"]
+    A = np.random.rand(N_VALUE)
+    for c, factor in ((1, 2), (0, 3)):
+        B = np.zeros(N_VALUE)
+        run(sdfg, A=A, B=B, c=c)
+        assert np.allclose(B, factor * A + 1)
+
+
+def test_transient_live_across_loop_is_not_shared_with_the_loop_body():
+    sdfg = new_sdfg("reuse_live_across_loop", ["A", "B", "C"], ["T1", "T2"])
+    sdfg.add_symbol("K", dace.int64)
+    init = sdfg.add_state("init", is_start_block=True)
+    chain(init, "A", "2 * x", "T1")
+    loop = add_loop(sdfg, init)
+    chain(loop.add_state("body", is_start_block=True), "A", "3 * x", "T2", "x + 1", "B")
+    chain(sdfg.add_state_after(loop, "after"), "T1", "x - 1", "C")
+
+    assert reuse(sdfg) is None
+    assert buffers(sdfg) == ["T1", "T2"]
+    A = np.random.rand(N_VALUE)
+    B, C = np.zeros(N_VALUE), np.zeros(N_VALUE)
+    run(sdfg, A=A, B=B, C=C, K=K_VALUE)
+    assert np.allclose(B, 3 * A + 1)
+    assert np.allclose(C, 2 * A - 1)
+
+
+def test_value_carried_across_back_edge_is_not_shared():
+    """``T1`` is read in ``first`` before ``second`` writes it: the previous iteration's value, live across ``third``."""
+    sdfg = new_sdfg("reuse_back_edge_carried", ["A", "C", "D"], ["T1", "T2"])
+    sdfg.add_symbol("K", dace.int64)
+    loop = add_loop(sdfg)
+    first = loop.add_state("first", is_start_block=True)
+    chain(first, "T1", "x", "C")
+    second = loop.add_state_after(first, "second")
+    chain(second, "A", "2 * x", "T1")
+    chain(loop.add_state_after(second, "third"), "A", "3 * x", "T2", "x", "D")
+
+    assert reuse(sdfg) is None
+    assert buffers(sdfg) == ["T1", "T2"]
+    A = np.random.rand(N_VALUE)
+    C, D = np.zeros(N_VALUE), np.zeros(N_VALUE)
+    run(sdfg, A=A, C=C, D=D, K=K_VALUE)
+    assert np.allclose(C, 2 * A)
+    assert np.allclose(D, 3 * A)
+
+
+def test_transient_read_on_interstate_edge_is_not_shared():
+    sdfg = new_sdfg("reuse_interstate_read", ["A", "B", "C"], ["T1", "T2"])
+    sdfg.add_symbol("m", dace.float64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    chain(s0, "A", "x", "T1")
+    s1 = sdfg.add_state_after(s0, "s1")
+    chain(s1, "A", "2 * x", "T2", "x", "B")
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"m": "T1[1]"}))
+    chain(s2, "A", "x + m", "C")
+
+    assert reuse(sdfg) is None
+    assert buffers(sdfg) == ["T1", "T2"]
+    A = np.random.rand(N_VALUE)
+    B, C = np.zeros(N_VALUE), np.zeros(N_VALUE)
+    run(sdfg, A=A, B=B, C=C)
+    assert np.allclose(C, A + A[1])
+
+
+def in_map_temporary(state, src, tmp, dst, expr):
+    """``dst[i] = f(src[i])`` through ``tmp[i]``, whose access node is inside the map."""
+    entry, exit_ = state.add_map(f"{tmp}_map", {"i": "0:N"})
+    write = state.add_tasklet(f"{tmp}_write", {"x": None}, {"y": None}, f"y = {expr}")
+    read = state.add_tasklet(f"{tmp}_read", {"x": None}, {"y": None}, "y = x + 1")
+    node = state.add_access(tmp)
+    state.add_memlet_path(state.add_access(src), entry, write, dst_conn="x", memlet=Memlet(f"{src}[i]"))
+    state.add_edge(write, "y", node, None, Memlet(f"{tmp}[i]"))
+    state.add_edge(node, None, read, "x", Memlet(f"{tmp}[i]"))
+    state.add_memlet_path(read, exit_, state.add_access(dst), src_conn="y", memlet=Memlet(f"{dst}[i]"))
+
+
+def test_in_map_transients_share_only_when_allocated_outside_the_map():
+    """SDFG-lifetime ``T1``/``T2`` are one buffer for all iterations already; Scope-lifetime ``P1``/``P2`` may be
+    allocated privately per iteration and stay apart."""
+    sdfg = new_sdfg("reuse_in_map", ["A", "B", "C", "D", "E"], ["T1", "T2", "P1", "P2"])
+    for name in ("T1", "T2", "P1", "P2"):
+        sdfg.arrays[name].storage = dtypes.StorageType.CPU_Heap
+    for name in ("T1", "T2"):
+        sdfg.arrays[name].lifetime = dtypes.AllocationLifetime.SDFG
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    in_map_temporary(s0, "A", "T1", "B", "2 * x")
+    s1 = sdfg.add_state_after(s0, "s1")
+    in_map_temporary(s1, "A", "T2", "C", "3 * x")
+    s2 = sdfg.add_state_after(s1, "s2")
+    in_map_temporary(s2, "A", "P1", "D", "4 * x")
+    in_map_temporary(sdfg.add_state_after(s2, "s3"), "A", "P2", "E", "5 * x")
+
+    renamed = reuse(sdfg)
+
+    assert renamed == {sdfg.cfg_id: {"T2": "T1"}}
+    assert buffers(sdfg) == ["P1", "P2", "T1"]
+    A = np.random.rand(N_VALUE)
+    B, C, D, E = (np.zeros(N_VALUE) for _ in range(4))
+    run(sdfg, A=A, B=B, C=C, D=D, E=E)
+    for out, factor in ((B, 2), (C, 3), (D, 4), (E, 5)):
+        assert np.allclose(out, factor * A + 1)
+
+
 def gpu_sequential_states(name: str) -> dace.SDFG:
     sdfg = new_sdfg(name, ["A", "B", "C"], ["T1", "T2"])
     chain(sdfg.add_state("s0", is_start_block=True), "A", "2 * x", "T1", "x + 1", "B")
@@ -285,5 +429,11 @@ if __name__ == "__main__":
     test_transient_read_by_later_nested_sdfg_is_not_shared()
     test_viewed_transient_is_not_shared()
     test_wcr_accumulator_is_not_shared()
+    test_states_of_one_loop_body_share_one_buffer()
+    test_branches_of_a_conditional_share_one_buffer()
+    test_transient_live_across_loop_is_not_shared_with_the_loop_body()
+    test_value_carried_across_back_edge_is_not_shared()
+    test_transient_read_on_interstate_edge_is_not_shared()
+    test_in_map_transients_share_only_when_allocated_outside_the_map()
     test_gpu_transients_shared_only_on_one_stream(-1)
     test_gpu_transients_shared_only_on_one_stream(0)

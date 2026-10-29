@@ -103,6 +103,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
         from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
+        from dace.transformation.passes.transient_reuse import TransientReuse
 
         # Order constraints:
         #   * NestedGPUDeviceMapLowering first -- everything downstream assumes one-level kernels.
@@ -110,6 +111,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #   * PromoteWarpTiles before AddThreadBlockMaps -- canonicalize promotes a pending ``is_warp_tile``
         #     before choosing a block size; a graph that reaches codegen with one still pending gets its
         #     thread-block level from the tile, not a second one on top of it.
+        #   * TransientReuse right after MoveArrayOutOfKernel -- the arrays it hoists out of kernels share buffers.
         #   * AddThreadBlockMaps after the MoveArrayOutOfKernel hoist -- tiling first leaks the
         #     inner-map outer-loop symbol into host-side cudaMalloc sizes.
         #   * GridStrideKernels right after AddThreadBlockMaps -- it folds the (GPU_Device, GPU_ThreadBlock)
@@ -130,6 +132,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
                 lower_nested_maps,
                 scalar_promotion,
                 MoveArrayOutOfKernel(),
+                TransientReuse(),
                 InsertExplicitCopies(),
                 ExpandLibraryNodes(),
                 strategy,
