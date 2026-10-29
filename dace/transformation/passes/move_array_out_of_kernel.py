@@ -554,9 +554,10 @@ class MoveArrayOutOfKernel(ppl.Pass):
         for edge, prefix, state in plan.prefixes:
             self.prefix_memlet(edge, name, prefix, state)
         # A tasklet with inlined connectors names the array in its body and gains the same leading index.
+        named = re.compile(rf"\b{re.escape(name)}\b")
         for state in plan.owner.states():
             for node in state.nodes():
-                if isinstance(node, nodes.Tasklet) and name in node.code.as_string:
+                if isinstance(node, nodes.Tasklet) and named.search(node.code.as_string):
                     self.prefix_tasklet(node, state, name, plan.levels)
         new_shape, new_strides, new_total_size, new_offsets = plan.shape_info
         plan.desc.set_shape(new_shape=new_shape, strides=new_strides, total_size=new_total_size, offset=new_offsets)

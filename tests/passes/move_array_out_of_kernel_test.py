@@ -270,6 +270,21 @@ def test_a_cpp_tasklet_subscripting_a_lifted_buffer_is_refused():
         sut.apply_pass(sdfg, {})
 
 
+def test_a_tasklet_naming_an_array_the_lifted_name_prefixes_is_left_alone():
+    """``buf_0`` contains ``buf`` but is another array: a host tasklet reading it after the kernel is no reader of the
+    lifted buffer, so it neither gains an index nor stops the lift."""
+    sdfg = kernel_with_internal_transient()
+    sdfg.add_array("buf_0", [4], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
+    after = sdfg.add_state_after(sdfg.start_state, "after")
+    peek = after.add_tasklet("peek", {}, {"o": None}, "o = buf_0[1]")
+    after.add_edge(peek, "o", after.add_write("C"), None, dace.Memlet("C[0]"))
+
+    assert lift(sdfg) == 1
+    assert peek.code.as_string == "o = buf_0[1]", peek.code.as_string
+    sdfg.validate()
+
+
 def test_lifted_transient_is_renamed_around_a_colliding_descriptor():
     """An unrelated outer descriptor already holds the name, so the lifted one takes a fresh one."""
     sdfg = kernel_with_transient_behind_a_nested_sdfg()
