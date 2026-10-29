@@ -277,6 +277,22 @@ def test_iterations_sorted_by_row_match_add_at_and_repeat_bitwise():
     assert np.array_equal(first, second)
 
 
+def test_block_rows_split_by_no_chunk_are_written_in_place_bitwise():
+    """A blocked-CSR scatter: block row ``r``'s nine products land on ``3r .. 3r + 2`` in any order, and the even
+    chunk boundaries cut block rows. Each boundary moves to the next block row, so every thread alone writes its
+    rows, in iteration order, straight into the shared array: bitwise ``np.add.at``."""
+    sdfg, code = _specialize(scatter_sum, "sum_owned", threads=8)
+    _assert_range_privatized(sdfg, code)
+    rows = NV // 9
+    idx = np.repeat(np.arange(rows), 9) * 3 + np.random.default_rng(9).integers(0, 3, 9 * rows)
+    val = np.random.default_rng(7).random(idx.size)
+    out = np.random.default_rng(8).random(3 * rows)
+    ref = out.copy()
+    np.add.at(ref, idx, val)
+    _run(sdfg, idx=idx, val=val, out=out, N=idx.size, M=3 * rows)
+    assert np.array_equal(out, ref)
+
+
 @pytest.mark.parametrize("n", [0, 1, 3])
 def test_fewer_iterations_than_threads(n):
     """Threads with an empty chunk hold no span and take no part in the combine."""
@@ -590,6 +606,7 @@ def test_a_row_stride_spelled_as_a_power_is_contiguous():
 if __name__ == "__main__":
     for p, m in [("sorted", MV), ("random", MV), ("reversed", MV), ("equal", MV), ("extremes", MV), ("random", 100003)]:
         test_float_sum_matches_add_at(p, m)
+    test_block_rows_split_by_no_chunk_are_written_in_place_bitwise()
     for n in (0, 1, 3):
         test_fewer_iterations_than_threads(n)
     test_complex_sum_matches_add_at()

@@ -51,6 +51,8 @@ constexpr int64_t kSortBytesPerThread = int64_t(1) << 20;
 constexpr int64_t kSortGain = 2;
 // Most buckets the iterations are counting-sorted into.
 constexpr int64_t kSortBuckets = 4096;
+// Most iterations a chunk's start moves forward to the first one writing no row of the chunk before it.
+constexpr int64_t kCutSearch = 4096;
 
 // One accumulator of ``rows`` rows of ``row`` elements, shared by a team of at most ``nthreads`` threads.
 // ``kAtomic``: the body can update the shared rows atomically instead, which a thread does when its span is long.
@@ -60,13 +62,14 @@ class Accumulator {
   Accumulator(int nthreads, int64_t rows, int64_t row) : spans_(nthreads), rows_(rows), row_(row) {}
 
   // Thread ``t``, which writes rows ``[lo, hi]`` with ``updates`` updates: returns the base its body accumulates
-  // through, ``shared`` itself when ``atomic`` is set, else a private copy of those rows filled with the identity.
-  T* open(int t, T* shared, int64_t lo, int64_t hi, int64_t updates, bool& atomic) {
+  // through, ``shared`` itself when ``atomic`` is set or no other thread writes those rows (``owned``), else a
+  // private copy of those rows filled with the identity.
+  T* open(int t, T* shared, int64_t lo, int64_t hi, int64_t updates, bool owned, bool& atomic) {
     lo = std::max<int64_t>(lo, 0);
     hi = std::min<int64_t>(hi, rows_ - 1);
-    atomic = kAtomic && (hi < lo || hi - lo + 1 > kRowsPerUpdate * updates);
+    atomic = kAtomic && !owned && (hi < lo || hi - lo + 1 > kRowsPerUpdate * updates);
     Span& span = spans_[t];
-    if (atomic || hi < lo) {
+    if (owned || atomic || hi < lo) {
       span.lo = 1;
       span.hi = 0;
       return shared;
@@ -138,11 +141,12 @@ class Order {
       s.updates.assign(groups, 0);
       s.dlo.assign(groups, kNone);
       s.dhi.assign(groups, std::numeric_limits<int64_t>::min());
+      s.owned.assign(groups, 0);
     }
   }
 
-  // The first iteration of chunk ``t`` of ``nthreads``.
-  int64_t first(int t, int nthreads) const { return n_ * t / nthreads; }
+  // The first iteration of chunk ``t`` of ``nthreads``: the even split until ``arrange`` moves it.
+  int64_t first(int t, int nthreads) const { return bounds_.empty() ? n_ * t / nthreads : bounds_[t]; }
 
   // The iteration at position ``k`` of the chosen order.
   int64_t operator[](int64_t k) const { return perm_ ? perm_[k] : k; }
@@ -190,21 +194,28 @@ class Order {
         }
       }
     }
-    if (kmax < kmin || unsorted <= kSortBytesPerThread * nthreads) {
-      return;
-    }
-    const int64_t keys = kmax - kmin + 1;
     std::vector<int64_t> dlo(groups_, kNone), dhi(groups_, std::numeric_limits<int64_t>::min());
     for (int g = 0; g < groups_; ++g) {
       for (int s = 0; s < nthreads; ++s) {
         dlo[g] = std::min(dlo[g], stats_[s].dlo[g]);
         dhi[g] = std::max(dhi[g], stats_[s].dhi[g]);
       }
+    }
+    if (kmax < kmin) {
+      return;
+    }
+    if (unsorted <= kSortBytesPerThread * nthreads) {
+      own(t, nthreads, dlo, dhi);
+      return;
+    }
+    const int64_t keys = kmax - kmin + 1;
+    for (int g = 0; g < groups_; ++g) {
       if (dhi[g] >= dlo[g]) {
         sorted += nthreads * ((keys + nthreads - 1) / nthreads + dhi[g] - dlo[g] + 1) * row_bytes[g];
       }
     }
     if (unsorted <= kSortGain * sorted) {
+      own(t, nthreads, dlo, dhi);
       return;
     }
     sort(t, nthreads, kmin, keys);
@@ -230,14 +241,110 @@ class Order {
     mine.lo.swap(mine.sorted_lo);
     mine.hi.swap(mine.sorted_hi);
     mine.updates.swap(mine.sorted_updates);
+    own(t, nthreads, dlo, dhi);
   }
 
   // Thread ``t``'s rows and updates of group ``g`` in the chosen order, once ``arrange``d.
   int64_t lo(int t, int g) const { return stats_[t].lo[g]; }
   int64_t hi(int t, int g) const { return stats_[t].hi[g]; }
   int64_t updates(int t, int g) const { return stats_[t].updates[g]; }
+  // Whether no other thread's chunk writes a row of group ``g`` thread ``t``'s chunk writes, once ``arrange``d.
+  bool owned(int t, int g) const { return stats_[t].owned[g] != 0; }
 
  private:
+  // The key of the iteration at position ``k`` of the chosen order.
+  int64_t key(int64_t k) const { return keys_[(*this)[k]]; }
+
+  // Every thread, once the order is chosen: moves the start of each chunk forward, by at most ``kCutSearch``
+  // iterations and half the chunk, to the first iteration from which on the chunk writes no row the chunk before
+  // it writes (rows bound by ``[key + dlo, key + dhi]``), so the iterations writing one row stay on one thread; a
+  // chunk with no such cut in reach keeps its start. Then marks the groups whose rows, bound by ``[first key + dlo,
+  // last key + dhi]`` of each chunk, no other chunk reaches. A thread owning them writes the shared rows in
+  // iteration order, with neither a private copy nor a fold.
+  void own(int t, int nthreads, const std::vector<int64_t>& dlo, const std::vector<int64_t>& dhi) {
+    Stats& mine = stats_[t];
+    int64_t dl = kNone, dh = std::numeric_limits<int64_t>::min();
+    for (int g = 0; g < groups_; ++g) {
+      if (dhi[g] >= dlo[g]) {
+        dl = std::min(dl, dlo[g]);
+        dh = std::max(dh, dhi[g]);
+      }
+    }
+    if (nthreads < 2 || dh < dl) {
+      return;
+    }
+    const int64_t start = n_ * t / nthreads, end = n_ * (t + 1) / nthreads;
+    mine.dkmax = std::numeric_limits<int64_t>::min();
+    for (int64_t k = start; k < end; ++k) {
+      if (key(k) != kNone) {
+        mine.dkmax = std::max(mine.dkmax, key(k));
+      }
+    }
+#pragma omp barrier
+    mine.cut = start;
+    const int64_t below = t > 0 ? stats_[t - 1].dkmax : std::numeric_limits<int64_t>::min();
+    if (below != std::numeric_limits<int64_t>::min()) {
+      // ``after[k - start]``: the least key from ``k`` to the end of the chunk.
+      const int64_t limit = start + std::min<int64_t>((end - start) / 2, kCutSearch);
+      std::vector<int64_t> after(limit - start + 1, kNone);
+      for (int64_t k = limit; k < end; ++k) {
+        after.back() = std::min(after.back(), key(k));
+      }
+      for (int64_t k = limit - 1; k >= start; --k) {
+        after[k - start] = std::min(after[k - start + 1], key(k));
+      }
+      int64_t top = below;
+      for (int64_t k = start; k < limit; ++k) {
+        if (after[k - start] != kNone && top + dh < after[k - start] + dl) {
+          mine.cut = k;
+          break;
+        }
+        if (key(k) != kNone) {
+          top = std::max(top, key(k));
+        }
+      }
+    }
+#pragma omp barrier
+#pragma omp single
+    {
+      std::vector<int64_t> bounds(nthreads + 1, n_);
+      for (int s = 0; s < nthreads; ++s) {
+        bounds[s] = s == 0 ? 0 : stats_[s].cut;
+      }
+      bounds_.swap(bounds);
+    }
+    mine.moved = first(t, nthreads) != start || first(t + 1, nthreads) != end;
+    mine.ckmin = kNone;
+    mine.ckmax = std::numeric_limits<int64_t>::min();
+    for (int64_t k = first(t, nthreads); k < first(t + 1, nthreads); ++k) {
+      const int64_t c = key(k);
+      if (c != kNone) {
+        mine.ckmin = std::min(mine.ckmin, c);
+        mine.ckmax = std::max(mine.ckmax, c);
+      }
+    }
+#pragma omp barrier
+    for (int g = 0; g < groups_; ++g) {
+      if (dhi[g] < dlo[g]) {
+        continue;
+      }
+      if (mine.moved) {
+        mine.lo[g] = mine.ckmax < mine.ckmin ? 1 : mine.ckmin + dlo[g];
+        mine.hi[g] = mine.ckmax < mine.ckmin ? 0 : mine.ckmax + dhi[g];
+      }
+      if (mine.ckmax < mine.ckmin) {
+        continue;
+      }
+      bool alone = true;
+      for (int s = 0; s < nthreads && alone; ++s) {
+        const Stats& other = stats_[s];
+        alone = s == t || other.ckmax < other.ckmin || other.ckmax + dhi[g] < mine.ckmin + dlo[g] ||
+                mine.ckmax + dhi[g] < other.ckmin + dlo[g];
+      }
+      mine.owned[g] = alone;
+    }
+  }
+
   // Stable counting sort of the iterations by key into at most ``kSortBuckets`` buckets, the keyless ones last.
   void sort(int t, int nthreads, int64_t kmin, int64_t keys) {
     const int64_t buckets = std::min(keys, kSortBuckets);
@@ -270,12 +377,19 @@ class Order {
 
   struct alignas(64) Stats {
     int64_t kmin = kNone, kmax = std::numeric_limits<int64_t>::min();
+    // The keys of the chunk ``own`` settles, and whether that chunk differs from the even split.
+    int64_t ckmin = kNone, ckmax = std::numeric_limits<int64_t>::min();
+    // The last key of the even chunk, and the start ``own`` moves it to.
+    int64_t dkmax = std::numeric_limits<int64_t>::min(), cut = 0;
+    bool moved = false;
     std::vector<int64_t> lo, hi, updates, dlo, dhi, count, sorted_lo, sorted_hi, sorted_updates;
+    std::vector<char> owned;
   };
   const int64_t n_;
   const int groups_;
   std::vector<Stats> stats_;
   std::unique_ptr<int64_t[]> keys_, perm_;
+  std::vector<int64_t> bounds_;
 };
 
 }  // namespace range_private

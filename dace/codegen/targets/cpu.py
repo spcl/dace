@@ -4053,7 +4053,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     f"bool {flag};",
                     f"{ctype}* {ptr} = {prefix}_{ptr}.open({prefix}_t, {prefix}_shared_{ptr}, "
                     f"{order}.lo({prefix}_t, {i}), {order}.hi({prefix}_t, {i}), {order}.updates({prefix}_t, {i}), "
-                    f"{flag});",
+                    f"{order}.owned({prefix}_t, {i}), {flag});",
                 ]
         result.write("\n".join(lines), cfg, state_id, node)
         return plan
