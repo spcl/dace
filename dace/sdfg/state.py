@@ -1731,6 +1731,85 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         return result
 
     def remove_node(self, node):
+        """Remove ``node`` and its edges, keeping the order it carried between live nodes (:meth:`keep_order_through`)."""
+        if node in self._nodes and self.in_degree(node) and self.out_degree(node):
+            self.keep_order_through([node])
+        self.detach_node(node)
+
+    def remove_nodes_from(self, node_list):
+        removed = list(node_list)
+        self.keep_order_through([node for node in removed if node in self._nodes])
+        for node in removed:
+            self.detach_node(node)
+
+    def keep_order_through(self, removed: Sequence[nd.Node]) -> None:
+        """Before ``removed`` leave the state: order each live node before the live nodes it reached only through
+        them, by empty edges (one predecessor or successor) or through one empty ``order_hub`` tasklet. Skips
+        predecessors that are access nodes nothing live writes, successors that are access nodes nothing live reads, pairs
+        another path already orders, and pairs that would cross a scope boundary.
+        """
+        gone = set(removed)
+        reached: dict[nd.Node, OrderedSet] = {}
+        for dead in removed:
+            for edge in self.in_edges(dead):
+                src = edge.src
+                if src in gone or src in reached or self.unordered_access(src, gone, incoming=True):
+                    continue
+                found, seen = OrderedSet(), set()
+                stack = [(e.dst, 0) for e in self.out_edges(src) if e.dst in gone]
+                while stack:
+                    node, level = stack.pop()
+                    if (node, level) in seen:
+                        continue
+                    seen.add((node, level))
+                    level += isinstance(node, nd.EntryNode) - isinstance(node, nd.ExitNode)
+                    for e in self.out_edges(node):
+                        if e.dst in gone:
+                            stack.append((e.dst, level))
+                        elif level == 0 and e.dst is not src and not self.unordered_access(e.dst, gone, incoming=False):
+                            found.add(e.dst)
+                found = self.not_reached_without(src, found, gone)
+                if found:
+                    reached[src] = found
+        groups: dict[tuple, list[nd.Node]] = {}
+        for src, found in reached.items():
+            groups.setdefault(tuple(found), []).append(src)
+        for found, sources in groups.items():
+            if len(sources) == 1 or len(found) == 1:
+                for src in sources:
+                    for dst in found:
+                        self.add_nedge(src, dst, mm.Memlet())
+                continue
+            hub = self.add_tasklet("order_hub", {}, {}, "")
+            for src in sources:
+                self.add_nedge(src, hub, mm.Memlet())
+            for dst in found:
+                self.add_nedge(hub, dst, mm.Memlet())
+
+    def unordered_access(self, node: nd.Node, gone: set, incoming: bool) -> bool:
+        """Whether ``node`` is an access node that, once ``gone`` leaves, nothing writes (``incoming``) or reads."""
+        if not isinstance(node, nd.AccessNode):
+            return False
+        edges = self.in_edges(node) if incoming else self.out_edges(node)
+        return all((e.src if incoming else e.dst) in gone for e in edges)
+
+    def not_reached_without(self, src: nd.Node, targets: OrderedSet, gone: set) -> OrderedSet:
+        """The ``targets`` no path from ``src`` that avoids the ``gone`` nodes reaches."""
+        left = OrderedSet(targets)
+        seen = {src}
+        stack = [src]
+        while stack and left:
+            for edge in self.out_edges(stack.pop()):
+                dst = edge.dst
+                if dst in gone or dst in seen:
+                    continue
+                seen.add(dst)
+                left.discard(dst)
+                stack.append(dst)
+        return left
+
+    def detach_node(self, node):
+        """Remove ``node`` and its edges, without keeping the order it carried (see :meth:`remove_node`)."""
         self._clear_scopedict_cache()
         self.forget_bound_names()
         # A node already added to another state (and so re-parented) moved: nothing leaves the tree.

@@ -39,6 +39,7 @@ from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
 )
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption, tracked_assumptions
+from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 
@@ -369,6 +370,22 @@ def test_back_compat_aliases():
     assert insert_symbol_nonnegative_guard is insert_assumption_guards
 
 
+def test_a_declared_scalar_argument_promoted_to_a_symbol_is_assumed_nonnegative():
+    """A scalar argument the caller declared nonnegative carries the assumption once promoted to a symbol."""
+
+    @dace.program
+    def strided(n: dace.int64, x: dace.float64[N]):
+        for i in range(0, N, n):
+            x[i] = 1.0
+
+    sdfg = strided.to_sdfg(simplify=False)
+    declare_nonnegative_symbols(sdfg, {"N", "n"})
+    promote = ScalarToSymbolPromotion()
+    promote.transients_only = False
+    assert "n" in promote.apply_pass(sdfg, {})
+    assert dace.symbolic.Predicate.NONNEGATIVE in sdfg.symbol_repo.params.predicates.get("n", frozenset())
+
+
 if __name__ == "__main__":
     test_emits_guard_as_first_state()
     test_idempotent()
@@ -387,4 +404,5 @@ if __name__ == "__main__":
     test_tracked_assumption_deduped_and_true_dropped()
     test_tracked_assumption_out_of_scope_skipped()
     test_back_compat_aliases()
+    test_a_declared_scalar_argument_promoted_to_a_symbol_is_assumed_nonnegative()
     print("OK")

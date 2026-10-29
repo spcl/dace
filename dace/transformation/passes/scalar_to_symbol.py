@@ -1018,6 +1018,13 @@ class ScalarToSymbolPromotion(passes.Pass):
                 sdfg.add_symbol(scalar, desc.dtype, scope_bound=scope_bound)
                 if desc.transient:
                     new_local_symbols.add(scalar)
+        # A scalar argument its caller declared nonnegative carries that contract on as a symbol
+        if sdfg.parent_sdfg is None and to_promote:
+            # avoid an import cycle
+            from dace.transformation.passes.canonicalize import assume_symbols_nonnegative as nonneg
+
+            if not to_promote.isdisjoint(nonneg.declared_nonnegative_symbols(sdfg)):
+                nonneg.set_symbol_nonnegative_assumptions(sdfg)
 
         # Step 6: Inter-state edge cleanup
         cleanup_re = {s: re.compile(rf"\b{re.escape(s)}\[.*?\]") for s in to_promote}

@@ -224,6 +224,12 @@ class ParallelizeLoops(ppl.Pass):
         desc="Lift a refused loop whose refusal an expansion of its scratch buffers by one iteration-indexed "
         "dimension removes (BufferExpansion), expanding them",
     )
+    hold_sibling_chains = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Leave every sibling of a loop chain that also holds a refused loop a loop, for WavefrontSkew "
+        "(lu's column recurrence and DOALL row update spell one (i, j) wavefront only together).",
+    )
     propagate = properties.Property(
         dtype=bool,
         default=True,
@@ -231,9 +237,10 @@ class ParallelizeLoops(ppl.Pass):
         "Set False only if the caller propagates itself.",
     )
 
-    def __init__(self, permissive: bool = False, propagate: bool = True):
+    def __init__(self, permissive: bool = False, propagate: bool = True, hold_sibling_chains: bool = False):
         self.permissive = permissive
         self.propagate = propagate
+        self.hold_sibling_chains = hold_sibling_chains
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -515,7 +522,7 @@ class ParallelizeLoops(ppl.Pass):
 
         :param xform: the probe that accepted ``loop``, with the shared analysis it was given.
         """
-        return False
+        return self.hold_sibling_chains and held_sibling(loop, self.permissive, xform)
 
     def finish(self, sdfg: SDFG) -> None:
         """The post-lift steps: drop stale nested-SDFG symbol mappings, then propagate memlets if asked."""
@@ -635,6 +642,31 @@ class ParallelizeLoops(ppl.Pass):
                     propagate_lifted(unpropagated, xform.symbol_resolver, within=sd)
                 applied += lift_and_note(loop)
         return applied
+
+
+def liftable(loop: LoopRegion, permissive: bool, like: LoopLift) -> bool:
+    """Whether LoopToMap accepts ``loop`` as the graph stands, its scale aside (a SMALL loop is no wavefront half);
+    the probe shares ``like``'s analysis."""
+    probe = LoopLift()
+    probe.keep_small_loops_sequential = False
+    probe.lift_context = like.lift_context
+    probe.symbol_resolver = like.symbol_resolver
+    probe.loop = loop
+    return ParallelizeLoops(permissive=permissive).probe(probe, loop, [])
+
+
+def held_sibling(loop: LoopRegion, permissive: bool, like: LoopLift) -> bool:
+    """Whether ``loop`` is a sibling of a chain that also holds a loop LoopToMap refuses (see :func:`liftable`)."""
+    # avoid an import cycle
+    from dace.transformation.passes.canonicalize.fuse_consecutive_loops import plan_guarded_fusion
+
+    parent = loop.parent_graph
+    if not isinstance(parent, LoopRegion):
+        return False
+    plan = plan_guarded_fusion(parent)
+    if plan is None or loop not in plan.loops:
+        return False
+    return any(not liftable(other, permissive, like) for other in plan.loops if other is not loop)
 
 
 def propagate_lifted(states: list[SDFGState], resolver: SymbolResolver, within: SDFG | None = None) -> None:

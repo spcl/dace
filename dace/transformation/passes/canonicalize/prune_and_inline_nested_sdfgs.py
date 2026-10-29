@@ -20,6 +20,7 @@ from typing import Any
 from dace import SDFG
 from dace.config import Config
 from dace.sdfg import nodes
+from dace.sdfg.propagation import propagate_memlets_state
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -130,7 +131,8 @@ class PruneAndInlineNestedSDFGs(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
-        """Prune and inline until neither transformation accepts a nested SDFG of ``sdfg``.
+        """Prune and inline until neither transformation accepts a nested SDFG of ``sdfg``; a state that inlined a body
+        inside a scope has its memlets propagated (the scope's outer memlets summarized the nested SDFG).
 
         :param sdfg: The SDFG to transform in place.
         :param pipeline_results: Unused; neither transformation reads pipeline results.
@@ -138,16 +140,22 @@ class PruneAndInlineNestedSDFGs(ppl.Pass):
         """
         walk = Walk([(PruneConnectors(), PruneConnectors.nsdfg), (InlineSDFG(), InlineSDFG.nested_sdfg)])
         applied = 0
+        scoped: dict[SDFGState, None] = {}
         candidate = walk.first_accepted(sdfg)
         while candidate is not None:
             xform, state, node = candidate
             dirty = ancestor_blocks(state)
             dirty.append(state)
+            if isinstance(xform, InlineSDFG) and state.entry_node(node) is not None:
+                scoped[state] = None
             xform.permissive = False
             xform.apply(state, state.sdfg)
             applied += 1
             walk.forget(dirty)
             candidate = walk.first_accepted(sdfg)
+        for state in scoped:
+            if state.sdfg is not None and state in state.parent_graph.nodes():
+                propagate_memlets_state(state.sdfg, state)
         # No validation here: the pipeline's ``validate`` / ``validate_all`` own it, as they did for the wrapper, and
         # validation is not read-only (``Fill.validate`` drops an unwired value connector).
         return applied or None

@@ -140,7 +140,6 @@ from dace.transformation.passes.parallelization.contracts.guarded_scatter import
 from dace.transformation.passes.parallelization.contracts.under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.parallelization.parallelize import Parallelize
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
-from dace.transformation.passes.parallelization.sibling_chains import ParallelizeLoopsHoldingSiblingChains
 from dace.transformation.passes.parallelization_prep import (
     DEFAULT_PEEL_LIMIT,
     DEFAULT_UNROLL_LIMIT,
@@ -154,7 +153,6 @@ from dace.transformation.passes.pattern_matching import (
 )
 from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScatterReduction
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
-from dace.transformation.passes.propagate_memlets import PropagateMemlets
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
@@ -704,22 +702,12 @@ def dead_dataflow_units() -> list[ppl.Pass]:
     ]
 
 
-def loop_to_map_units(hold_sibling_chains: bool = False) -> list[ppl.Pass]:
-    """LoopToMap on every loop it accepts, the scope summaries it reads rebuilt first.
-
-    :param hold_sibling_chains: Leave a sibling-loop chain with a refused sibling whole, for ``WavefrontSkew``.
-    """
-    parallelize = ParallelizeLoopsHoldingSiblingChains if hold_sibling_chains else ParallelizeLoops
-    lift = parallelize(propagate=False)
+def first_lift() -> ParallelizeLoops:
+    """LoopToMap on every loop it accepts, sibling chains held for ``WavefrontSkew``."""
+    lift = ParallelizeLoops(propagate=False, hold_sibling_chains=True)
     # A loop refused on a scratch buffer only lifts with the buffer expanded per iteration
     lift.expand_buffers = True
-    return [
-        PropagateMemlets(),
-        # A scalar argument promoted to a symbol since ingestion is under the contract too (its step orients a map)
-        SetSymbolNonnegativeAssumptions(),
-        lift,
-        PatternApplyOnceEverywhere([PruneConnectors()]),
-    ]
+    return lift
 
 
 def statement_round() -> list[ppl.Pass]:
@@ -772,7 +760,7 @@ def ingest(target: str) -> Stages:
         # preparation region before it, which the matcher does not see through.
         (CLEANUP, LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
     ]
-    return s + rail()
+    return s + [(CLEANUP, StructuralCleanup())]
 
 
 def normalize_statements(
@@ -903,7 +891,7 @@ def derive_parallelism(
     # Before the lift: a workspace whose pre-loop fill no iteration observes is then the loop's own, privatized per
     # iteration
     s += [(label, DeadLoopInitialization())]
-    s += [(label, unit) for unit in loop_to_map_units(hold_sibling_chains=True)]
+    s += [(label, first_lift())]
     # Rescue: each rewrite acts only on a loop LoopToMap refuses.
     segments: list = []
     if peel_limit > 0:
@@ -917,7 +905,6 @@ def derive_parallelism(
     # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted copy's
     # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
     s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, unique_iterators()), (label, SymbolSSA())]
-    s += [(label, unit) for unit in loop_to_map_units(hold_sibling_chains=True)]
     # A split or peel can leave a plain recurrence the lifting segment never saw (``y[i] = s[i] + y[i - 1]`` on the
     # ``[K:N)`` half of an ``if i < K`` body); lift it, on the split's segments only, before the levels below
     # settle it as sequential.
@@ -933,9 +920,7 @@ def derive_parallelism(
     s += [
         (label, FuseChainedScalarReductions()),
         (label, AccumulatorCopyChainToWCR()),
-        (label, PropagateMemlets()),
-        (label, SetSymbolNonnegativeAssumptions()),
-        (label, ParallelizeLoopsHoldingSiblingChains(propagate=False)),
+        (label, ParallelizeLoops(propagate=False, hold_sibling_chains=True)),
         (label, PrivatizeScalars()),
         (label, PrivatizeArrays()),
     ]
@@ -954,8 +939,7 @@ def derive_parallelism(
                     (CarriedAccumulationToWCR(), True),
                 ],
                 [
-                    PropagateMemlets(),
-                    ParallelizeLoopsHoldingSiblingChains(propagate=False),
+                    ParallelizeLoops(propagate=False, hold_sibling_chains=True),
                     PrivatizeScalars(),
                     PrivatizeArrays(),
                 ],
@@ -976,9 +960,8 @@ def derive_parallelism(
     s += _inline_single_state(label)
     if target == "gpu":
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
-    s += [(label, FuseLoops()), (label, PropagateMemlets()), (label, SetSymbolNonnegativeAssumptions())]
+    s += [(label, FuseLoops())]
     s += [(label, Parallelize(target=target, hold_sibling_chains=False))]
-    s += [(label, PatternApplyOnceEverywhere([PruneConnectors()]))]
     return s
 
 
@@ -1020,7 +1003,6 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
             SelectBranchMaps(),
             LiftTrivialIf(),
             NormalizeMapBody(),
-            *(unit for stage_label, unit in _inline_single_state(RECOMPOSE)),
         ]
 
     return PhaseFixpoint("maximal_fusion", outer_round, FUSION_OUTER_ROUNDS)
@@ -1053,24 +1035,21 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     # Out of phase: these matchers need the fused map form (contractions split over maps, durbin's unary copy).
     if lift_copy:
         s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
-        s += _inline_single_state(label)
     if lift:
         s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
     s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True)]))]
-    s += [*_inline_single_state(label), (label, PruneEmptyConditionalBranches())]
+    s += [(label, PruneEmptyConditionalBranches())]
     s += [
         (label, PatternApplyOnceEverywhere([RedundantArray()])),
         (label, RematerializeDerivedTemporaries()),
     ]
-    # Fusion frees loops the pre-fusion sweep had to keep: a level loop whose body was a fill, a map and a copy of one
-    # scratch plane is a single map after it (velocity_tendencies' nine level loops), so sweep once more and collapse.
-    s += [(label, ParallelizeLoopsHoldingSiblingChains()), (label, PatternApplyOnceEverywhere([MapCollapse()]))]
+    s += [(label, PatternApplyOnceEverywhere([MapCollapse()]))]
     return s
 
 
 def finish() -> Stages:
     """The terminal bookkeeping: symbols, derived annotations, assumption guard, hints; the views inlining minted."""
-    s: Stages = rail(FINISH)
+    s: Stages = [(FINISH, StructuralCleanup())]
     # On the settled form: a loop over the segments of a pointer array is lifted behind the entry guard that checks
     # the data facts its segment confinement rests on (nfa_frontier's components).
     s += [(FINISH, SegmentConfinedLoops())]
@@ -1118,7 +1097,6 @@ def build_stages(
     s += normalize_statements(
         lift, privatize_scatter_reductions, unroll_limit, perfect_loop_nesting, target, normalize_loop_and_map_origin
     )
-    s += rail()
     s += lift_semantics(lift, lift_copy, interchange_carry_with_map, target)
     s += rail()
     s += derive_parallelism(
@@ -1130,7 +1108,7 @@ def build_stages(
         target,
         validate,
     )
-    s += rail()
+    s += [(CLEANUP, StructuralCleanup())]
     s += recompose(lift, lift_copy, target)
     # Once more after the lifts recompose ends with: what they exposed fuses too
     s += [(FUSE, maximal_fusion(target))]

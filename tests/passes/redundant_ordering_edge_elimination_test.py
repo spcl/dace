@@ -225,6 +225,57 @@ def test_pipeline_kernel_is_still_correct():
     assert np.allclose(out, a * 3.0)
 
 
+def test_removed_node_leaves_one_order_hub_that_dissolves_once_implied():
+    """Removing a node between two producers and two consumers orders them through one hub; once direct edges imply
+    every pair, the pass removes the hub."""
+    sdfg = dace.SDFG("order_hub_dissolves")
+    state = sdfg.add_state("main", is_start_block=True)
+    a1, a2, c1, c2, mid = (state.add_tasklet(n, {}, {}, "") for n in ("a1", "a2", "c1", "c2", "mid"))
+    for src, dst in ((a1, mid), (a2, mid), (mid, c1), (mid, c2)):
+        state.add_nedge(src, dst, dace.Memlet())
+    state.remove_node(mid)
+    hub = tasklet_named(state, "order_hub")
+    assert {e.src for e in state.in_edges(hub)} == {a1, a2} and {e.dst for e in state.out_edges(hub)} == {c1, c2}
+    RedundantOrderingEdgeElimination().apply_pass(sdfg, {})
+    assert hub in state.nodes()
+    for src in (a1, a2):
+        for dst in (c1, c2):
+            state.add_nedge(src, dst, dace.Memlet())
+    RedundantOrderingEdgeElimination().apply_pass(sdfg, {})
+    assert hub not in state.nodes() and state.number_of_edges() == 4
+
+
+def build_ordered_nest(guarding: bool) -> tuple[dace.SDFG, SDFGState, nodes.NestedSDFG]:
+    """A nest ``a -> b`` ordered before a tasklet ``x -> y`` and, if ``guarding``, before one ``x -> b``."""
+    inner = dace.SDFG("inner")
+    inner.add_array("a", [1], dace.float64)
+    inner.add_array("b", [1], dace.float64)
+    inner.add_state("body", is_start_block=True)
+    sdfg = dace.SDFG("nest_order_guards_nothing")
+    for name in "abxy":
+        sdfg.add_array(name, [1], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    nest = state.add_nested_sdfg(inner, {"a"}, {"b"})
+    state.add_edge(state.add_read("a"), None, nest, "a", dace.Memlet("a[0]"))
+    state.add_edge(nest, "b", state.add_write("b"), None, dace.Memlet("b[0]"))
+    for label, out in (("other", "y"), ("overwrite", "b"))[: 1 + guarding]:
+        tasklet = state.add_tasklet(label, {"i"}, {"o"}, "o = i")
+        state.add_edge(state.add_read("x"), None, tasklet, "i", dace.Memlet("x[0]"))
+        state.add_edge(tasklet, "o", state.add_write(out), None, dace.Memlet(f"{out}[0]"))
+        state.add_nedge(nest, tasklet, dace.Memlet())
+    return sdfg, state, nest
+
+
+def test_nested_sdfg_ordering_edges_that_guard_nothing_are_removed():
+    """A nest whose ordering edges all guard nothing loses them; one that keeps a guarding edge keeps both."""
+    sdfg, state, nest = build_ordered_nest(guarding=False)
+    RedundantOrderingEdgeElimination().apply_pass(sdfg, {})
+    assert not any(e.data.is_empty() for e in state.out_edges(nest))
+    sdfg, state, nest = build_ordered_nest(guarding=True)
+    RedundantOrderingEdgeElimination().apply_pass(sdfg, {})
+    assert sorted(e.dst.label for e in state.out_edges(nest) if e.data.is_empty()) == ["other", "overwrite"]
+
+
 if __name__ == "__main__":
     test_redundant_ordering_edge_is_removed()
     test_only_path_ordering_edge_is_kept()
@@ -237,3 +288,5 @@ if __name__ == "__main__":
     test_nested_sdfg_states_are_reduced()
     test_end_to_end_numbers_are_unchanged()
     test_pipeline_kernel_is_still_correct()
+    test_removed_node_leaves_one_order_hub_that_dissolves_once_implied()
+    test_nested_sdfg_ordering_edges_that_guard_nothing_are_removed()
