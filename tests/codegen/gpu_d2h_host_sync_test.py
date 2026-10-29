@@ -12,7 +12,6 @@ These assert on emitted code, so they need a GPU for neither compilation nor a r
 
 import re
 
-
 import dace
 from dace import dtypes
 

@@ -2389,9 +2389,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         # It is not added to ``_kernel_grid_conditions`` because those are only re-emitted around grid
         # synchronization, which requires nested device maps, and those disable the distribution.
         emit_chiplet_condition = (
-            (chiplet_count > 1 or folded)
-            and has_tbmap
-            and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
+            (chiplet_count > 1 or folded) and has_tbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
         )
         if emit_chiplet_condition:
             kernel_stream.write(f"if ({chiplet_padding_condition(kernel_map)}) {{", cfg, state_id, scope_entry)
