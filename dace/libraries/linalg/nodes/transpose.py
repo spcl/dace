@@ -7,6 +7,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.codegen.common import sym2cpp
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.transformation.transformation import ExpandTransformation
@@ -241,6 +242,11 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
         return tasklet
 
 
+ExpandTransposeHipBLAS = hip_dialect.hip_expansion(
+    ExpandTransposeCuBLAS, blas_environments.hipblas.hipBLAS, hip_dialect.BLAS
+)
+
+
 @dace.library.node
 class Transpose(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -249,6 +255,8 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandTransposeMKL,
         "OpenBLAS": ExpandTransposeOpenBLAS,
         "cuBLAS": ExpandTransposeCuBLAS,
+        "hipBLAS": ExpandTransposeHipBLAS,
+        "rocBLAS": ExpandTransposeHipBLAS,
     }
     default_implementation = "pure"
 

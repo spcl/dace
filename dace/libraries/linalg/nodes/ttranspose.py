@@ -7,6 +7,7 @@ from numbers import Number
 
 import dace
 from dace import library, nodes, properties
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.linalg import environments
 from dace.transformation.transformation import ExpandTransformation
@@ -205,6 +206,9 @@ class ExpandCuTensor(ExpandTransformation):
         return tasklet
 
 
+ExpandHipTensor = hip_dialect.hip_expansion(ExpandCuTensor, environments.hipTensor, hip_dialect.TENSOR)
+
+
 @library.node
 class TensorTranspose(nodes.LibraryNode):
     """Implements out-of-place tensor transpositions."""
@@ -213,6 +217,7 @@ class TensorTranspose(nodes.LibraryNode):
         "pure": ExpandPure,
         "HPTT": ExpandHPTT,
         "cuTENSOR": ExpandCuTensor,
+        "hipTensor": ExpandHipTensor,
     }
     default_implementation = "pure"
 

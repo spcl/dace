@@ -8,6 +8,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import SDFG, Memlet, SDFGState, symbolic
+from dace.libraries import hip_dialect
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import Getrf, Getrs, environments
 from dace.libraries.linalg.nodes.transpose import Transpose
@@ -38,7 +39,7 @@ def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
     ainout_arr = sdfg.add_array("_ainout", [n, n], dtype=ain_dtype, transient=True, storage=storage)
     bin_arr = sdfg.add_array("_bin", bin_shape, dtype=bin_dtype, strides=bin_strides)
     binout_shape = [n, rhs]
-    if implementation == "cuSolverDn":
+    if implementation in hip_dialect.GPU_SOLVER_BLAS:
         binout_shape = [rhs, n]
     binout_arr = sdfg.add_array("_binout", binout_shape, dtype=out_dtype, transient=True, storage=storage)
     bout_arr = sdfg.add_array("_bout", out_shape, dtype=out_dtype, strides=out_strides)
@@ -59,17 +60,17 @@ def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
     binout1 = state.add_read("_binout")
     binout2 = state.add_read("_binout")
     bout = state.add_access("_bout")
-    if implementation == "cuSolverDn":
+    if implementation in hip_dialect.GPU_SOLVER_BLAS:
         transpose_ain = Transpose("AT", dtype=ain_dtype)
-        transpose_ain.implementation = "cuBLAS"
+        transpose_ain.implementation = hip_dialect.GPU_SOLVER_BLAS[implementation]
         state.add_edge(ain, None, transpose_ain, "_inp", Memlet.from_array(*ain_arr))
         state.add_edge(transpose_ain, "_out", ainout1, None, Memlet.from_array(*ainout_arr))
         transpose_bin = Transpose("bT", dtype=bin_dtype)
-        transpose_bin.implementation = "cuBLAS"
+        transpose_bin.implementation = hip_dialect.GPU_SOLVER_BLAS[implementation]
         state.add_edge(bin, None, transpose_bin, "_inp", Memlet.from_array(*bin_arr))
         state.add_edge(transpose_bin, "_out", binout1, None, Memlet.from_array(*binout_arr))
         transpose_out = Transpose("XT", dtype=bin_dtype)
-        transpose_out.implementation = "cuBLAS"
+        transpose_out.implementation = hip_dialect.GPU_SOLVER_BLAS[implementation]
         state.add_edge(binout2, None, transpose_out, "_inp", Memlet.from_array(*binout_arr))
         state.add_edge(transpose_out, "_out", bout, None, Memlet.from_array(*bout_arr))
     else:
@@ -137,10 +138,24 @@ class ExpandSolveCuSolverDn(ExpandTransformation):
         return _make_sdfg_getrs(node, parent_state, parent_sdfg, "cuSolverDn")
 
 
+@dace.library.expansion
+class ExpandSolveHipSolverDn(ExpandTransformation):
+    environments = [environments.hipsolverdn.hipSolverDn]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return _make_sdfg_getrs(node, parent_state, parent_sdfg, "hipSolverDn")
+
+
 @dace.library.node
 class Solve(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {"OpenBLAS": ExpandSolveOpenBLAS, "MKL": ExpandSolveMKL, "cuSolverDn": ExpandSolveCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandSolveOpenBLAS,
+        "MKL": ExpandSolveMKL,
+        "cuSolverDn": ExpandSolveCuSolverDn,
+        "hipSolverDn": ExpandSolveHipSolverDn,
+    }
     default_implementation = None
 
     overwrite = dace.properties.Property(dtype=bool, default=False, category="Semantics")

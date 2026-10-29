@@ -60,6 +60,20 @@ static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
   return exponent;
 }
 
+// Fortran SCALE(x, n): x * 2^n.
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T ldexp(const T& x, int n) {
+    return std::ldexp(x, n);
+}
+
+// Fortran EXPONENT(x): e with x = m * 2^e and 0.5 <= |m| < 1 (frexp's exponent).
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI int ilogb(const T& x) {
+    int e = 0;
+    std::frexp(x, &e);
+    return e;
+}
+
 // Implement to support Fortran's intrinsic NINT - round, but return an integer
 template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int iround(const T& a) {
@@ -374,6 +388,7 @@ template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_flo
 static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
     return (T)std::floor(numerator / denominator);
 }
+// Mixed operand types promote to their common type.
 template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI auto py_floor(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
     using T = decltype(numerator + denominator);
@@ -438,6 +453,16 @@ static DACE_CONSTEXPR DACE_HDFI auto ftn_mod(const T1& numerator, const T2& deno
 template<typename T1, typename T2>
 static DACE_CONSTEXPR DACE_HDFI auto ftn_modulo(const T1& numerator, const T2& denominator) -> decltype(py_mod(numerator, denominator)) {
     return py_mod(numerator, denominator);
+}
+
+// Fortran ISHFT: shifts on the unsigned bit pattern, so the right shift zero-fills (C++ >> sign-extends).
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T logical_left_shift(const T& x, const T& n) {
+    return (T)(((typename std::make_unsigned<T>::type)x) << n);
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T logical_right_shift(const T& x, const T& n) {
+    return (T)(((typename std::make_unsigned<T>::type)x) >> n);
 }
 
 // Computes C/C++ divmod (std::div)
@@ -678,6 +703,19 @@ namespace dace
         static DACE_CONSTEXPR_HOSTDEV typeless_pi pi{};
         static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
+
+        // Real and imaginary part of a std::complex or thrust::complex (tasklet re(z) / im(z)).
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI auto re(const T& z) -> decltype(z.real())
+        {
+            return z.real();
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI auto im(const T& z) -> decltype(z.imag())
+        {
+            return z.imag();
+        }
+
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T exp(const T& a)
         {

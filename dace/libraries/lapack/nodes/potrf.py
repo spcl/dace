@@ -5,6 +5,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
@@ -100,10 +101,20 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+ExpandPotrfHipSolverDn = hip_dialect.hip_expansion(
+    ExpandPotrfCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
+
+
 @dace.library.node
 class Potrf(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {"OpenBLAS": ExpandPotrfOpenBLAS, "MKL": ExpandPotrfMKL, "cuSolverDn": ExpandPotrfCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandPotrfOpenBLAS,
+        "MKL": ExpandPotrfMKL,
+        "cuSolverDn": ExpandPotrfCuSolverDn,
+        "hipSolverDn": ExpandPotrfHipSolverDn,
+    }
     default_implementation = None
 
     # Object fields

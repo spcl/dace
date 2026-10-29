@@ -8,6 +8,7 @@ import dace.sdfg.nodes
 from dace import SDFG, SDFGState, dtypes
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
 from dace.transformation.transformation import ExpandTransformation
 
@@ -161,6 +162,9 @@ class ExpandDotCuBLAS(ExpandTransformation):
         return tasklet
 
 
+ExpandDotHipBLAS = hip_dialect.hip_expansion(ExpandDotCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
+
+
 @dace.library.node
 class Dot(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -169,6 +173,8 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
+        "hipBLAS": ExpandDotHipBLAS,
+        "rocBLAS": ExpandDotHipBLAS,
     }
     default_implementation = None
 

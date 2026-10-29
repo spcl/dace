@@ -194,3 +194,9 @@ _all_tests/
 # Ignore downloaded ONNX models
 /*.onnx
 /*.bin
+
+# Fortran build artifacts (gfortran/flang modules and objects)
+*.mod
+*.smod
+*.hlfir
+*.o

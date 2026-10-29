@@ -1,10 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
+import dace
 from dace import data, dtypes
+from dace.codegen.common import sym2cpp
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 
 
 def matrix_view(subset) -> tuple[list[Any], list[int]]:
@@ -192,3 +196,123 @@ def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
     for desc in descs:
         if not dtypes.can_access(schedule, desc.storage):
             raise ValueError(f"Schedule mismatch: {schedule} cannot access {desc.storage}")
+
+
+class Operand(NamedTuple):
+    """The data on a BLAS connector, with its unit dimensions squeezed out."""
+
+    desc: data.Data
+    shape: list
+    strides: list
+
+
+def operand(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", connector: str) -> Operand:
+    if connector in node.in_connectors:
+        edge = sdutil.in_edge_with_name(node, state, connector)
+    else:
+        edge = sdutil.out_edge_with_name(node, state, connector)
+    desc = sdfg.arrays[edge.data.data]
+    subset = dc(edge.data.subset)
+    dims = subset.squeeze()
+    return Operand(desc, subset.size(), [desc.strides[d] * edge.data.subset[d][2] for d in dims])
+
+
+def require_one_dtype(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", *connectors: str) -> None:
+    """Raise unless the data on every one of ``connectors`` has one element type: one BLAS routine reads them all."""
+    types = {connector: operand(node, state, sdfg, connector).desc.dtype for connector in connectors}
+    if len(set(types.values())) > 1:
+        raise ValueError(f"{node.label}: every operand needs one element type, got {types}")
+
+
+class MatrixLayout(NamedTuple):
+    """How BLAS reads matrices: all in row-major or all in column-major order, each with its leading dimension."""
+
+    row_major: bool
+    leading: list
+
+
+def matrix_layout(*matrices: Operand) -> MatrixLayout | None:
+    """The common layout of ``matrices``, or ``None`` if one has no contiguous dimension or they differ."""
+    if all(m.strides[1] == 1 for m in matrices):
+        return MatrixLayout(True, [m.strides[0] for m in matrices])
+    if all(m.strides[0] == 1 for m in matrices):
+        return MatrixLayout(False, [m.strides[1] for m in matrices])
+    return None
+
+
+def blas_prefix(dtype: dtypes.typeclass) -> str | None:
+    """The BLAS letter of ``dtype`` (``D`` for ``double``), or ``None`` if BLAS has no routines for it."""
+    try:
+        func, _, _ = cublas_type_metadata(dtype)
+    except TypeError:
+        return None
+    return None if func == "H" else func
+
+
+def scalar_arguments(dtype: dtypes.typeclass, **values: Any) -> tuple[str, dict[str, str]]:
+    """Declares each of ``values`` as a scalar of ``dtype``; returns the declarations and, per name, the argument
+    passing it to CBLAS: the value itself to a real routine, its address to a complex one."""
+    declarations = "".join(
+        f"{dtype.ctype} __{name} = {dtype.ctype}({sym2cpp(value)});\n" for name, value in values.items()
+    )
+    if dtype in (dtypes.complex64, dtypes.complex128):
+        return declarations, {name: f"&__{name}" for name in values}
+    return declarations, {name: f"__{name}" for name in values}
+
+
+def connector_sdfg(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG") -> "dace.SDFG":
+    """A nested SDFG with one array per connector of ``node``, in the squeezed shape and strides of its data."""
+    nsdfg = dace.SDFG(f"{node.label}_sdfg")
+    for connector in list(node.in_connectors) + list(node.out_connectors):
+        desc, shape, strides = operand(node, state, sdfg, connector)
+        nsdfg.add_array(connector, shape, desc.dtype, desc.storage, strides=strides)
+    return nsdfg
+
+
+def same_memory(node: nodes.LibraryNode, state: "dace.SDFGState", source: str, target: str) -> bool:
+    """Whether connectors ``source`` and ``target`` of ``node`` carry the same data and subset."""
+    read = sdutil.in_edge_with_name(node, state, source).data
+    write = sdutil.out_edge_with_name(node, state, target).data
+    return read.data == write.data and read.subset == write.subset
+
+
+def in_place_call(
+    node: nodes.LibraryNode,
+    state: "dace.SDFGState",
+    sdfg: "dace.SDFG",
+    source: str,
+    target: str,
+    code: str,
+    overwrites: bool = False,
+) -> "dace.SDFG":
+    """A nested SDFG for a BLAS routine that updates an operand in place: copies connector ``source`` to ``target``,
+    then runs ``code``, which reads the other inputs and updates ``target``, each by its connector's name with one
+    more leading underscore (``__A`` for ``_A``): a tasklet connector named as the array would shadow it.
+
+    The copy is skipped when ``source`` and ``target`` already share memory, or when the routine ``overwrites``
+    ``target`` without reading it (``beta == 0``).
+    """
+    nsdfg = connector_sdfg(node, state, sdfg)
+    # The source stays a tasklet input even when unused, so the outer graph keeps its read
+    reads = {f"_{c}": c for c in node.in_connectors}
+    if overwrites or same_memory(node, state, source, target):
+        call_state = nsdfg.add_state(f"{node.label}_call")
+    else:
+        copy_state = nsdfg.add_state(f"{node.label}_copy")
+        copy_state.add_nedge(
+            copy_state.add_read(source),
+            copy_state.add_write(target),
+            dace.Memlet.from_array(source, nsdfg.arrays[source]),
+        )
+        call_state = nsdfg.add_state_after(copy_state, f"{node.label}_call")
+        # The call reads ``target`` too, so the copy into it is not dead
+        reads[f"_{target}_before"] = target
+    tasklet = call_state.add_tasklet(node.label, list(reads), [f"_{target}"], code, language=dtypes.Language.CPP)
+    for connector, name in reads.items():
+        call_state.add_edge(
+            call_state.add_read(name), None, tasklet, connector, dace.Memlet.from_array(name, nsdfg.arrays[name])
+        )
+    call_state.add_edge(
+        tasklet, f"_{target}", call_state.add_write(target), None, dace.Memlet.from_array(target, nsdfg.arrays[target])
+    )
+    return nsdfg
