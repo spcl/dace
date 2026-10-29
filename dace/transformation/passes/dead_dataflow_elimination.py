@@ -203,6 +203,10 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                             if all(succ in dead_nodes for succ in state.successors(node)):
                                 state.add_nedge(node, exit_node, Memlet())
 
+                # A dead node may carry the only order between two live ones (a dead copy between a read and an
+                # overwrite): each top-level live node gets an empty edge to every one it reached only through them
+                self._keep_order_through(state, dead_nodes)
+
                 # Removal
                 predecessor_nsdfgs: dict[nodes.NestedSDFG, set[str]] = defaultdict(set)
                 for node in dead_nodes:
@@ -301,6 +305,35 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                 refresh_enclosing_reads(sdfg, state, access_sets)
 
         return result or None
+
+    @staticmethod
+    def _keep_order_through(state: SDFGState, dead_nodes: list[nodes.Node]) -> None:
+        dead = set(dead_nodes)
+        scope = state.scope_dict()
+        # Nothing has to follow an access node no one writes
+        sources = OrderedSet(
+            e.src
+            for d in dead_nodes
+            for e in state.in_edges(d)
+            if e.src not in dead
+            and scope[e.src] is None
+            and not (isinstance(e.src, nodes.AccessNode) and state.in_degree(e.src) == 0)
+        )
+        for src in sources:
+            reached, seen = OrderedSet(), set()
+            stack = [e.dst for e in state.out_edges(src) if e.dst in dead]
+            while stack:
+                node = stack.pop()
+                if node in seen:
+                    continue
+                seen.add(node)
+                for e in state.out_edges(node):
+                    if e.dst in dead:
+                        stack.append(e.dst)
+                    elif scope[e.dst] is None:
+                        reached.add(e.dst)
+            for dst in reached:
+                state.add_nedge(src, dst, Memlet())
 
     def report(self, pass_retval: dict[SDFGState, set[str]]) -> str:
         n = sum(len(v) for v in pass_retval.values())

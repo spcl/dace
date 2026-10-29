@@ -1054,6 +1054,34 @@ def test_dde_removes_a_dead_transient_whose_ordering_edge_ends_in_an_unused_glob
     assert np.allclose(B, 2 * np.arange(8))
 
 
+def test_dde_keeps_the_order_a_removed_copy_carried_between_a_read_and_an_overwrite():
+    """``X = Y + 1`` reads ``Y``, a dead copy into ``T`` follows it, and ``Y = 5`` follows the copy: the copy is all
+    that orders the read before the overwrite, so removing it must leave that order behind."""
+    sdfg = dace.SDFG("dde_order_through_dead_copy")
+    sdfg.add_array("X", [1], dace.float64)
+    sdfg.add_array("Y", [1], dace.float64)
+    sdfg.add_transient("T", [1], dace.float64)
+    state = sdfg.add_state()
+    read = state.add_tasklet("read", {"y"}, {"x"}, "x = y + 1")
+    state.add_edge(state.add_read("Y"), None, read, "y", dace.Memlet("Y[0]"))
+    state.add_edge(read, "x", state.add_write("X"), None, dace.Memlet("X[0]"))
+    dead = state.add_tasklet("dead", {}, {"t"}, "t = 1")
+    state.add_nedge(read, dead, dace.Memlet())
+    t = state.add_write("T")
+    state.add_edge(dead, "t", t, None, dace.Memlet("T[0]"))
+    overwrite = state.add_tasklet("overwrite", {}, {"y"}, "y = 5")
+    state.add_nedge(t, overwrite, dace.Memlet())
+    state.add_edge(overwrite, "y", state.add_write("Y"), None, dace.Memlet("Y[0]"))
+    sdfg.validate()
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    assert dead not in state.nodes()
+    assert dace.graphlib.has_path(state._nx, read, overwrite), "the overwrite of Y must stay after its read"
+    X, Y = np.zeros(1), np.full(1, 2.0)
+    sdfg(X=X, Y=Y)
+    assert X[0] == 3.0 and Y[0] == 5.0
+
+
 if __name__ == "__main__":
     test_dse_simple()
     test_dse_unconditional()
@@ -1094,3 +1122,4 @@ if __name__ == "__main__":
     test_dde_removes_a_copy_that_a_write_through_a_view_fully_covers()
     test_dde_keeps_a_loop_write_after_removing_a_dead_nested_sdfg()
     test_dde_keeps_a_nested_write_when_simplify_reapplies_it_per_nested_sdfg()
+    test_dde_keeps_the_order_a_removed_copy_carried_between_a_read_and_an_overwrite()
