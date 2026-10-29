@@ -404,7 +404,8 @@ class SiteSlicer:
         if key in self.memo:
             return self.memo[key]
         desc = nest.sdfg.arrays.get(name)
-        if not isinstance(desc, data.Array) or isinstance(desc, data.View):
+        # A view the map's own state defines is declared before the map, so its pre-pass reads it as is
+        if not isinstance(desc, data.Array) or isinstance(desc, data.View) and nest.node is not None:
             raise Refuse(name)
         if nest.node is None:
             if name in self.written:
@@ -840,10 +841,7 @@ def range_private_accumulators(state: SDFGState, map_entry: nodes.MapEntry) -> d
         if edge.data.wcr is None or name is None or name in out or name in read:
             continue
         desc = state.sdfg.arrays[name]
-        if desc.may_alias or desc.lifetime in (
-            dtypes.AllocationLifetime.Persistent,
-            dtypes.AllocationLifetime.External,
-        ):
+        if desc.may_alias or desc.lifetime == dtypes.AllocationLifetime.External:
             continue
         redtype = operations.detect_reduction_type(edge.data.wcr)
         if redtype not in RANGE_PRIVATIZABLE_OPS:

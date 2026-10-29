@@ -3976,7 +3976,7 @@ class CPUCodeGen(TargetCodeGenerator):
         return {
             name: plan
             for name, plan in rpsr.range_private_accumulators(state, map_entry).items()
-            if self.ptr(name, sdfg.arrays[name], sdfg).isidentifier()
+            if (reduction_alias(sdfg, name) or self.ptr(name, sdfg.arrays[name], sdfg)).isidentifier()
         }
 
     #: ``(operator, element types)`` whose update ``wcr_fixed`` emits as an ``omp atomic`` on the host.
@@ -4079,7 +4079,11 @@ class CPUCodeGen(TargetCodeGenerator):
             f"std::max<int64_t>(0, {cpp.sym2cpp(size)})" for size in node.map.range.size(for_codegen=True)
         )
         order = f"{prefix}_order"
-        lines = [f"const int {prefix}_nt = {nthreads};"]
+        # A persistent accumulator is named by a local pointer, which its private rows then shadow
+        lines = [
+            *self._bind_reduction_aliases(sdfg, list(targets)).splitlines(),
+            f"const int {prefix}_nt = {nthreads};",
+        ]
         plan = {"prefix": prefix, "accumulators": [], "flags": {}}
         for name, (redtype, _sources) in targets.items():
             desc = sdfg.arrays[name]

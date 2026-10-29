@@ -196,6 +196,17 @@ def scatter_and_total(idx: dace.int64[N], val: dace.float64[N], out: dace.float6
 
 
 @dace.program
+def scatter_through_a_reshape(
+    idx: dace.int64[K, 3], keep: dace.bool_[K, 3], val: dace.float64[3 * K], out: dace.float64[M + 1]
+):
+    flat = np.reshape(idx, [3 * K])
+    ok = np.reshape(keep, [3 * K])
+    pos = np.where(ok, flat, M)
+    for i in dace.map[0 : 3 * K]:
+        out[pos[i]] += val[i]
+
+
+@dace.program
 def gather_sum(idx: dace.int64[N], val: dace.float64[M], out: dace.float64[N]):
     for i in dace.map[0:N]:
         out[i] += val[idx[i]]
@@ -626,12 +637,12 @@ def test_pass_marks_once():
     assert RangePrivatizeScatterReductions().apply_pass(sdfg, {}) is None, "a marked map is not marked again"
 
 
-def test_a_persistent_accumulator_beside_a_range_privatized_scatter_is_named_directly():
-    """A range-privatized map writes no pragma, so a persistent accumulator it also reduces into is updated through
-    the state struct, never through a reduction alias the map would have declared."""
+def test_a_persistent_accumulator_of_a_range_privatized_map_is_privatized_through_a_local_alias():
+    """``acc`` lives in the state struct, whose member is no name to shadow: a local pointer bound ahead of the
+    region names it, and its private rows shadow that pointer as they do an argument's."""
     sdfg, code = _specialize(scatter_and_total, "persistent_total")
     assert len(_marked_maps(sdfg)) == 1
-    assert "__rd_" not in code, code
+    assert "__rp0___rd_0_acc" in code, code
     rng = np.random.default_rng(1)
     idx, val = rng.integers(0, MV, NV), rng.random(NV)
     out, tot = np.zeros(MV), np.zeros(4)
@@ -639,6 +650,21 @@ def test_a_persistent_accumulator_beside_a_range_privatized_scatter_is_named_dir
     ref = np.zeros(MV)
     np.add.at(ref, idx, val)
     assert np.allclose(out, ref) and np.allclose(tot, 2.0 * val.sum())
+
+
+def test_an_index_read_through_a_view_of_the_map_state_is_sliced():
+    """cp2k trs4: fusion moves ``where(ok, flat, M)`` into the scatter, which then reads its index through the
+    reshaped views ``flat`` and ``ok`` the map's own state defines, so the pre-pass reads them there."""
+    sdfg, code = _specialize(scatter_through_a_reshape, "through_view")
+    _assert_range_privatized(sdfg, code)
+    rng = np.random.default_rng(3)
+    k = 1500
+    idx, keep, val = rng.integers(0, MV, (k, 3)), rng.random((k, 3)) < 0.8, rng.random(3 * k)
+    out = np.zeros(MV + 1)
+    _run(sdfg, idx=idx, keep=keep, val=val, out=out, K=k, M=MV)
+    ref = np.zeros(MV + 1)
+    np.add.at(ref, np.where(keep.ravel(), idx.ravel(), MV), val)
+    assert np.allclose(out, ref)
 
 
 def test_a_row_stride_spelled_as_a_power_is_contiguous():
@@ -683,5 +709,6 @@ if __name__ == "__main__":
     test_a_map_that_does_not_scatter_is_left_alone(elementwise_add)
     test_a_map_that_does_not_scatter_is_left_alone(gather_sum)
     test_pass_marks_once()
-    test_a_persistent_accumulator_beside_a_range_privatized_scatter_is_named_directly()
+    test_a_persistent_accumulator_of_a_range_privatized_map_is_privatized_through_a_local_alias()
+    test_an_index_read_through_a_view_of_the_map_state_is_sliced()
     test_a_row_stride_spelled_as_a_power_is_contiguous()
