@@ -236,6 +236,84 @@ def test_nesting_a_map_body_whose_last_write_feeds_the_exit_adds_no_self_copy():
     assert np.array_equal(A, np.arange(8, dtype=np.float64))
 
 
+def test_nesting_a_map_keeps_the_ordering_edge_that_orders_an_earlier_read_before_it():
+    """``C = A[0]`` must run before a map overwriting ``A``, ordered only by an empty memlet into the map entry."""
+    sdfg = dace.SDFG("nest_keeps_ordering_edge")
+    for name, size in (("A", 4), ("B", 4), ("C", 1)):
+        sdfg.add_array(name, [size], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("overwrite", dict(i="0:4"))
+    t = state.add_tasklet("copy", {"b"}, {"a"}, "a = b")
+    state.add_memlet_path(state.add_read("B"), me, t, dst_conn="b", memlet=dace.Memlet("B[i]"))
+    state.add_memlet_path(t, mx, state.add_write("A"), src_conn="a", memlet=dace.Memlet("A[i]"))
+    read = state.add_tasklet("read", {"a"}, {"c"}, "c = a")
+    state.add_edge(state.add_read("A"), None, read, "a", dace.Memlet("A[0]"))
+    state.add_edge(read, "c", state.add_write("C"), None, dace.Memlet("C[0]"))
+    state.add_nedge(read, me, dace.Memlet())
+    sdfg.validate()
+
+    nested = nest_state_subgraph(sdfg, state, state.scope_subgraph(me))
+    assert any(e.dst is nested for e in state.out_edges(read))
+    sdfg.validate()
+
+    A, B, C = np.full(4, 5.0), np.arange(4.0) + 10, np.zeros(1)
+    sdfg(A=A, B=B, C=C)
+    assert C[0] == 5, C
+
+
+def test_a_view_on_the_nesting_boundary_is_an_array_inside_the_nested_sdfg():
+    """``V = A[1, :]`` feeds a map that is nested; the parent keeps the ``views`` edge ``A -> V``."""
+    sdfg = dace.SDFG("nest_boundary_view")
+    sdfg.add_array("A", [4, 4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    sdfg.add_view("V", [4], dace.float64)
+    state = sdfg.add_state()
+    view = state.add_access("V")
+    state.add_edge(state.add_read("A"), None, view, "views", dace.Memlet("A[1, 0:4]"))
+    me, mx = state.add_map("m", dict(i="0:4"))
+    t = state.add_tasklet("double", {"x"}, {"y"}, "y = x * 2")
+    state.add_memlet_path(view, me, t, dst_conn="x", memlet=dace.Memlet("V[i]"))
+    state.add_memlet_path(t, mx, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[i]"))
+    sdfg.validate()
+
+    nest_state_subgraph(sdfg, state, state.scope_subgraph(me))
+    sdfg.validate()
+
+    A = np.arange(16.0).reshape(4, 4).copy()
+    B = np.zeros(4)
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, A[1] * 2), B
+
+
+def test_a_boundary_copy_named_by_a_moved_transient_is_restated_on_the_outer_container():
+    """A map body copies ``A[i, :]`` into its local ``tmp``, the copy named by ``tmp`` with ``A``'s subset as its
+    other subset; the body (and ``tmp``) is nested."""
+    sdfg = dace.SDFG("nest_copy_named_by_moved_transient")
+    sdfg.add_array("A", [4, 8], dace.float64)
+    sdfg.add_array("B", [4, 8], dace.float64)
+    sdfg.add_transient("tmp", [8], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("rows", {"i": "0:4"})
+    tmp = state.add_access("tmp")
+    entry.add_in_connector("IN_A")
+    entry.add_out_connector("OUT_A")
+    state.add_edge(state.add_read("A"), None, entry, "IN_A", dace.Memlet("A[0:4, 0:8]"))
+    state.add_edge(entry, "OUT_A", tmp, None, dace.Memlet(data="tmp", subset="0:8", other_subset="i, 0:8"))
+    inner_entry, inner_exit = state.add_map("cols", {"j": "0:8"})
+    t = state.add_tasklet("double", {"t"}, {"o"}, "o = 2.0 * t")
+    state.add_memlet_path(tmp, inner_entry, t, dst_conn="t", memlet=dace.Memlet("tmp[j]"))
+    state.add_memlet_path(t, inner_exit, exit_node, state.add_write("B"), src_conn="o", memlet=dace.Memlet("B[i, j]"))
+    sdfg.validate()
+
+    nest_state_subgraph(sdfg, state, state.scope_subgraph(entry, include_entry=False, include_exit=False))
+    sdfg.validate()
+
+    A = np.arange(32.0).reshape(4, 8).copy()
+    B = np.zeros((4, 8))
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, 2 * A), B
+
+
 if __name__ == "__main__":
     test_simple_program()
     test_simple_sdfg()
