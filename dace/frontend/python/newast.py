@@ -56,7 +56,7 @@ from dace.sdfg.state import (
 )
 from dace.sdfg.type_inference import infer_iteration_symbol_type
 from dace.symbolic import inequal_symbols, pystr_to_symbolic
-from dace.utils import find_new_name, until
+from dace.utils import until
 
 numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
 
