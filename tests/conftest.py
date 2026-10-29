@@ -28,3 +28,19 @@ def pytest_generate_tests(metafunc):
                 pytest.param(False, id="no_use_cpp_dispatcher"),
             ],
         )
+
+
+@pytest.fixture(autouse=True)
+def pinned_cuda_implementation(request):
+    """Run a test marked for one CUDA implementation under that implementation, whatever the default is."""
+    from dace.config import set_temporary  # Imported late: collection must not depend on importing dace.
+
+    if request.node.get_closest_marker("old_gpu_codegen_only"):
+        impl = "legacy"
+    elif request.node.get_closest_marker("new_gpu_codegen_only"):
+        impl = "experimental"
+    else:
+        yield
+        return
+    with set_temporary("compiler", "cuda", "implementation", value=impl):
+        yield

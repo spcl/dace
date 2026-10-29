@@ -169,6 +169,17 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
+def unselected_cuda_target() -> str:
+    """The CUDA target not chosen in ``compiler.cuda.implementation``. Both share the GPU schedule types,
+    so instantiating both would register duplicate dispatchers."""
+    cuda_impl = config.Config.get("compiler", "cuda", "implementation")
+    if cuda_impl not in ("legacy", "experimental"):
+        raise ValueError(
+            f"Invalid compiler.cuda.implementation: {cuda_impl!r}. Please select one of 'legacy' or 'experimental'."
+        )
+    return "experimental_cuda" if cuda_impl == "legacy" else "cuda"
+
+
 def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
@@ -227,6 +238,11 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     # Set default storage/schedule types in SDFG
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    # Dynamic thread-block maps not lowered before code generation become thread-block maps that drive a work queue
+    from dace.transformation.passes.lower_dynamic_thread_block_maps import LowerDynamicThreadBlockMaps
+
+    LowerDynamicThreadBlockMaps().apply_pass(sdfg, {})
+
     # Give every implicit copy a node of its own, before the expansion below lowers it. An implicit
     # copy is a write no node performs, so an empty memlet ordering that write has nothing to point
     # at and the copy is free to move ahead of a write it must follow.
@@ -237,6 +253,11 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # The nodes just inserted carry no inferred connector types, and the expansion below reads
         # them to decide pointer vs. value. Storage defaults above already hold.
         infer_types.infer_connector_types(sdfg)
+
+    # GPU device maps nested in kernels become guarded or grid-strided parts of their kernel
+    from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
+
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
 
     # Lower memlet access policies (e.g. loop-carried address cursors) to ordinary SDFG constructs on this
     # code-generation copy of the SDFG. This is a no-op unless a memlet carries a non-default policy. It must
@@ -277,9 +298,15 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
             default_target = k
     targets = {"cpu": default_target(frame, sdfg)}
 
+    disabled_cuda_target = unselected_cuda_target()
+
     # Instantiate the rest of the targets
     targets.update(
-        {v["name"]: k(frame, sdfg) for k, v in TargetCodeGenerator.extensions().items() if v["name"] not in targets}
+        {
+            v["name"]: k(frame, sdfg)
+            for k, v in TargetCodeGenerator.extensions().items()
+            if v["name"] not in (*targets, disabled_cuda_target)
+        }
     )
 
     # Query all code generation targets and instrumentation providers in SDFG
