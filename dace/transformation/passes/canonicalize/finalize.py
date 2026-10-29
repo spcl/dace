@@ -486,11 +486,6 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                 desc.lifetime = dtypes.AllocationLifetime.State
                 desc.storage = dtypes.StorageType.Register(force=True)
                 continue
-            # The same holds for an array a map accumulates into: ``__state->histw`` is no ``reduction(+:histw[0:n])``
-            # target, so every write falls back to an atomic (azimint_hist: 10^8 contended adds on 1000 bins).
-            if device == dtypes.DeviceType.CPU and map_reduces_into(sd, name):
-                desc.lifetime = dtypes.AllocationLifetime.State
-                continue
             # A buffer sized by the very quantity its guard tests (LoopToScan's carry distance) is positive inside the
             # branch and not outside it, and ``new T[negative]`` aborts. Its size symbols hold one value for the run,
             # so a non-positive size at init means the branch never runs: allocate nothing then.
@@ -534,15 +529,6 @@ def pool_gpu_transients(sdfg: SDFG) -> int:
                 desc.pool = True
                 marked += 1
     return marked
-
-
-def map_reduces_into(sdfg: SDFG, name: str) -> bool:
-    """Whether a map of ``sdfg`` writes ``name`` through a WCR memlet leaving its scope."""
-    return any(
-        isinstance(edge.src, nodes.MapExit) and edge.data.wcr is not None and edge.data.data == name
-        for state in sdfg.states()
-        for edge in state.edges()
-    )
 
 
 def outermost_map(state: SDFGState, node: nodes.Node) -> nodes.EntryNode | None:

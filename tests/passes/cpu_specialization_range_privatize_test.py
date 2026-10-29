@@ -187,6 +187,15 @@ def scatter_block_loop(idx: dace.int64[N], val: dace.float64[N, K, K], out: dace
 
 
 @dace.program
+def scatter_and_total(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[M], tot: dace.float64[4]):
+    acc = np.zeros(4)
+    for i in dace.map[0:N]:
+        out[idx[i]] += val[i]
+        acc[:] += val[i]
+    tot[:] = acc * 2.0
+
+
+@dace.program
 def gather_sum(idx: dace.int64[N], val: dace.float64[M], out: dace.float64[N]):
     for i in dace.map[0:N]:
         out[i] += val[idx[i]]
@@ -617,6 +626,21 @@ def test_pass_marks_once():
     assert RangePrivatizeScatterReductions().apply_pass(sdfg, {}) is None, "a marked map is not marked again"
 
 
+def test_a_persistent_accumulator_beside_a_range_privatized_scatter_is_named_directly():
+    """A range-privatized map writes no pragma, so a persistent accumulator it also reduces into is updated through
+    the state struct, never through a reduction alias the map would have declared."""
+    sdfg, code = _specialize(scatter_and_total, "persistent_total")
+    assert len(_marked_maps(sdfg)) == 1
+    assert "__rd_" not in code, code
+    rng = np.random.default_rng(1)
+    idx, val = rng.integers(0, MV, NV), rng.random(NV)
+    out, tot = np.zeros(MV), np.zeros(4)
+    _run(sdfg, idx=idx, val=val, out=out, tot=tot, N=NV, M=MV)
+    ref = np.zeros(MV)
+    np.add.at(ref, idx, val)
+    assert np.allclose(out, ref) and np.allclose(tot, 2.0 * val.sum())
+
+
 def test_a_row_stride_spelled_as_a_power_is_contiguous():
     """cp2k_trs4's ``sink[3 * n + 1, b, b]`` reaches the check with the row stride ``ipow(b, 2)``: the same
     ``b * b`` as the extents, so the scatter into it is range-privatized, not left to an atomic per element."""
@@ -659,4 +683,5 @@ if __name__ == "__main__":
     test_a_map_that_does_not_scatter_is_left_alone(elementwise_add)
     test_a_map_that_does_not_scatter_is_left_alone(gather_sum)
     test_pass_marks_once()
+    test_a_persistent_accumulator_beside_a_range_privatized_scatter_is_named_directly()
     test_a_row_stride_spelled_as_a_power_is_contiguous()

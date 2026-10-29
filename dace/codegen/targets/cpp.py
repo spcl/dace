@@ -318,6 +318,8 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: "DaCeCodeGener
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
     if desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+        if framecode is not None and sdfg is not None and (sdfg.cfg_id, name) in framecode.reduction_aliases:
+            return framecode.reduction_aliases[(sdfg.cfg_id, name)]
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f"__{sdfg.cfg_id}_{name}"
         elif not is_cuda_codegen_in_device(framecode):  # GPU kernels cannot access state

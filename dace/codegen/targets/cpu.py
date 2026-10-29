@@ -741,6 +741,16 @@ def one_section_per_array(clauses: list[tuple], whole_targets: dict[str, str]) -
     return out
 
 
+def reduction_alias(sdfg: SDFG, name: str) -> str | None:
+    """The local pointer a persistent reduction accumulator is named by inside its map, or ``None`` if it needs none."""
+    desc = sdfg.arrays[name]
+    return (
+        f"__rd_{sdfg.cfg_id}_{name}"
+        if desc.transient and desc.lifetime == dtypes.AllocationLifetime.Persistent
+        else None
+    )
+
+
 def _complex_declare_reduction(op_str: str, ctype: str) -> tuple[str, str] | None:
     """``(identifier, declare line)`` of the OpenMP reduction for a complex element type, or ``None``.
 
@@ -3792,6 +3802,22 @@ class CPUCodeGen(TargetCodeGenerator):
             out.append((iedge.data.data, iedge.data.subset, op_str, desc.dtype.ctype, target, var))
         return out
 
+    def _bind_reduction_aliases(self, sdfg: SDFG, names: list[str]) -> str:
+        """Bind each persistent accumulator in ``names`` to its local alias for the map about to open; returns the
+        alias declarations, which precede the map's pragma."""
+        lines = ""
+        for name in dict.fromkeys(names):
+            alias = reduction_alias(sdfg, name)
+            if alias is None:
+                continue
+            desc = sdfg.arrays[name]
+            lines += f"{desc.dtype.ctype}* {alias} = {self.ptr(name, desc, sdfg)};\n"
+            self._frame.reduction_aliases[(sdfg.cfg_id, name)] = alias
+            self._dispatcher.defined_vars.add(
+                alias, DefinedType.Pointer, dtypes.pointer(desc.dtype).ctype, allow_shadowing=True
+            )
+        return lines
+
     def _collect_omp_reductions(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
         """Walk the map's WCR-write edges that target an accumulator outside the scope and
         return ``(op_str, clause_target, data_name, declare_line)`` tuples for OpenMP
@@ -3851,11 +3877,12 @@ class CPUCodeGen(TargetCodeGenerator):
             desc = sdfg.arrays.get(oedge.dst.data)
             if desc is None:
                 continue
-            # A persistent / external accumulator is emitted as a state-struct member
-            # (``__state->x``), which is not a valid ``reduction(...)`` lvalue. Only a
-            # non-persistent (locally-declared) target can be privatized by the OMP
-            # runtime; persistent targets fall through to the atomic path.
-            if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+            # A persistent accumulator is a state-struct member (``__state->x``), which is no ``reduction(...)``
+            # lvalue: an array is named by a local pointer bound around the map (:meth:`_bind_reduction_aliases`) in
+            # the clause and the body. A persistent scalar, and an External accumulator (the caller's), stay atomic.
+            if desc.lifetime == dtypes.AllocationLifetime.External or (
+                desc.lifetime == dtypes.AllocationLifetime.Persistent and not isinstance(desc, data.Array)
+            ):
                 continue
             # Loop-invariant subset (independent of THIS map's iter variables): the WCR
             # accumulates into the same region every iteration -- a genuine reduction over
@@ -3868,7 +3895,7 @@ class CPUCodeGen(TargetCodeGenerator):
             op_str = _REDUCTION_TO_OMP_OP.get(redtype)
             if op_str is None:
                 continue
-            var_name = self.ptr(oedge.dst.data, desc, sdfg)
+            var_name = reduction_alias(sdfg, oedge.dst.data) or self.ptr(oedge.dst.data, desc, sdfg)
 
             # A reduction clause privatizes the target per thread, identity-initialized, for
             # the whole region. If the map body also READS the accumulator, those reads see
@@ -4304,6 +4331,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # the now-redundant ``reduce_atomic``.
             if omp_reductions:
                 declares = []
+                aliases = (
+                    "" if range_private else self._bind_reduction_aliases(sdfg, [d for _o, _c, d, _x in omp_reductions])
+                )
                 for op_str, clause_target, _dname, declare in omp_reductions:
                     if _dname in range_private:
                         continue
@@ -4314,6 +4344,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 # each unique one on its own line ahead of the ``parallel for``.
                 for declare in declares:
                     map_header = declare + "\n" + map_header
+                if aliases:
+                    map_header = aliases + map_header
 
             # ``MarkSIMDMaps`` decided this map vectorizes -- it owns the analysis (leaf body, no
             # directive-carrying tasklet, no min/max WCR) and expands a multidimensional map so the
@@ -4510,7 +4542,10 @@ class CPUCodeGen(TargetCodeGenerator):
         # Pop the OMP-reduction scope frame the matching MapEntry pushed -- only a parallel one does: a sequential
         # map inside a range-private nested SDFG would otherwise pop the nest's frame.
         if map_node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
-            self._omp_reduction_scope_stack.pop()
+            for name in self._omp_reduction_scope_stack.pop():
+                alias = self._frame.reduction_aliases.pop((sdfg.cfg_id, name), None)
+                if alias is not None:
+                    self._dispatcher.defined_vars.remove(alias)
 
     def _generate_ConsumeEntry(
         self,
