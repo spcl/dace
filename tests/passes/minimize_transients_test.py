@@ -79,7 +79,31 @@ def test_snapshot_of_a_region_written_concurrently_stays():
     assert "t" in sdfg.arrays
 
 
+def test_transient_copied_to_two_regions_of_one_node_stays():
+    sdfg = scaled_rows_sdfg("minimize_transients_two_rows", copy_out=True)
+    state = sdfg.start_state
+    t = next(n for n in state.data_nodes() if n.data == "t")
+    b = next(n for n in state.data_nodes() if n.data == "b")
+    state.add_nedge(t, b, dace.Memlet("t[0:8] -> [2, 0:8]"))
+    assert MinimizeTransients().apply_pass(sdfg, {}) is None
+    sdfg.validate()
+
+
+def test_copy_out_next_to_another_write_of_the_target_stays():
+    sdfg = scaled_rows_sdfg("minimize_transients_second_write", copy_out=True)
+    state = sdfg.start_state
+    t = next(n for n in state.data_nodes() if n.data == "t")
+    fill = state.add_write("b")
+    state.add_mapped_tasklet(
+        "zero", {"i": "0:8"}, {}, "y = 0", {"y": dace.Memlet("b[0, i]")}, external_edges=True, output_nodes={"b": fill}
+    )
+    state.add_nedge(fill, t, dace.Memlet())
+    assert MinimizeTransients().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_copied_out_transient_is_its_target_region()
     test_copied_in_transient_reads_its_source_region()
     test_snapshot_of_a_region_written_concurrently_stays()
+    test_transient_copied_to_two_regions_of_one_node_stays()
+    test_copy_out_next_to_another_write_of_the_target_stays()

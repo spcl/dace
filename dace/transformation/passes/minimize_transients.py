@@ -144,10 +144,18 @@ class Coalescing:
         if into:
             if any(n is not transient and n not in before for n in mine):
                 return False
+            # Copying out a transient this state never writes copies what an earlier run or the allocation left.
+            if not any(not e.data.is_empty() for n in mine for e in state.in_edges(n)):
+                return False
+            # The copy is the container's only write here: another one is ordered against the copy, not the producers.
+            if any(n is not other and n.data == other.data and state.in_degree(n) > 0 for n in state.data_nodes()):
+                return False
         else:
             if any(not e.data.is_empty() for n in mine for e in state.in_edges(n) if e.src is not other):
                 return False
-        # The transient's edges move onto the container's node: none may close a cycle through it.
+        # The transient's edges move onto the container's node: none may join the two or close a cycle through it.
+        if len(state.edges_between(transient, other)) + len(state.edges_between(other, transient)) != 1:
+            return False
         after_other = state_downstream(state, other)
         if any(e.src is not other and e.src in after_other for e in state.in_edges(transient)):
             return False
