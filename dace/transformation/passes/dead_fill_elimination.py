@@ -385,7 +385,9 @@ class DeadFillElimination(ppl.Pass):
                     state.remove_node(fill)
                     state.remove_node(zeroed)
                     removed += 1
-                for entry in [n for n, scope in state.scope_dict().items() if isinstance(n, nodes.MapEntry) and scope is None]:
+                for entry in [
+                    n for n, scope in state.scope_dict().items() if isinstance(n, nodes.MapEntry) and scope is None
+                ]:
                     dead = dead_part_of_fill_map(state, entry)
                     if dead is not None:
                         narrow_fill_map(state, entry, *dead)

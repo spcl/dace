@@ -222,8 +222,13 @@ def zeros_then_prefix_copy(prefix: str) -> dace.SDFG:
     state = sdfg.add_state()
     zeroed = state.add_access("sink")
     state.add_mapped_tasklet(
-        "zeros", {"i": "0:N + 1", "j": "0:4"}, {}, "__o = 0.0", {"__o": dace.Memlet("sink[i, j]")},
-        output_nodes={"sink": zeroed}, external_edges=True,
+        "zeros",
+        {"i": "0:N + 1", "j": "0:4"},
+        {},
+        "__o = 0.0",
+        {"__o": dace.Memlet("sink[i, j]")},
+        output_nodes={"sink": zeroed},
+        external_edges=True,
     )
     c = state.add_read("c")
     state.add_nedge(zeroed, c, dace.Memlet())
