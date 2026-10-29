@@ -257,8 +257,8 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                                         )
                                 state.remove_memlet_path(leaf)
 
-                        # Remove the node itself as necessary
-                        state.remove_node(node)
+                        # Remove the node itself as necessary; the order through the dead set is kept above
+                        state.detach_node(node)
                     except KeyError:  # Node already removed
                         continue
 

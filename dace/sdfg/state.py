@@ -1745,15 +1745,15 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def keep_order_through(self, removed: Sequence[nd.Node]) -> None:
         """Before ``removed`` leave the state: order each live node before the live nodes it reached only through
         them, by empty edges (one predecessor or successor) or through one empty ``order_hub`` tasklet. Skips
-        predecessors that are access nodes nothing writes, pairs another path already orders, and pairs that would
-        cross a scope boundary.
+        predecessors that are access nodes nothing live writes, successors that are access nodes nothing live reads, pairs
+        another path already orders, and pairs that would cross a scope boundary.
         """
         gone = set(removed)
         reached: dict[nd.Node, OrderedSet] = {}
         for dead in removed:
             for edge in self.in_edges(dead):
                 src = edge.src
-                if src in gone or src in reached or (isinstance(src, nd.AccessNode) and self.in_degree(src) == 0):
+                if src in gone or src in reached or self.unordered_access(src, gone, incoming=True):
                     continue
                 found, seen = OrderedSet(), set()
                 stack = [(e.dst, 0) for e in self.out_edges(src) if e.dst in gone]
@@ -1766,7 +1766,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     for e in self.out_edges(node):
                         if e.dst in gone:
                             stack.append((e.dst, level))
-                        elif level == 0 and e.dst is not src:
+                        elif level == 0 and e.dst is not src and not self.unordered_access(e.dst, gone, incoming=False):
                             found.add(e.dst)
                 found = self.not_reached_without(src, found, gone)
                 if found:
@@ -1785,6 +1785,13 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 self.add_nedge(src, hub, mm.Memlet())
             for dst in found:
                 self.add_nedge(hub, dst, mm.Memlet())
+
+    def unordered_access(self, node: nd.Node, gone: set, incoming: bool) -> bool:
+        """Whether ``node`` is an access node that, once ``gone`` leaves, nothing writes (``incoming``) or reads."""
+        if not isinstance(node, nd.AccessNode):
+            return False
+        edges = self.in_edges(node) if incoming else self.out_edges(node)
+        return all((e.src if incoming else e.dst) in gone for e in edges)
 
     def not_reached_without(self, src: nd.Node, targets: OrderedSet, gone: set) -> OrderedSet:
         """The ``targets`` no path from ``src`` that avoids the ``gone`` nodes reaches."""
