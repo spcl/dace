@@ -30,13 +30,17 @@ def pytest_generate_tests(metafunc):
         )
 
 
-def pytest_collection_modifyitems(config, items):
-    """Skip tests marked for one CUDA implementation when ``compiler.cuda.implementation`` selects the other."""
-    from dace.config import Config  # Imported late: collection must not depend on importing dace.
+@pytest.fixture(autouse=True)
+def pinned_cuda_implementation(request):
+    """Run a test marked for one CUDA implementation under that implementation, whatever the default is."""
+    from dace.config import set_temporary  # Imported late: collection must not depend on importing dace.
 
-    impl = Config.get("compiler", "cuda", "implementation")
-    for item in items:
-        if "old_gpu_codegen_only" in item.keywords and impl != "legacy":
-            item.add_marker(pytest.mark.skip(reason="Requires the legacy CUDA codegen"))
-        if "new_gpu_codegen_only" in item.keywords and impl != "experimental":
-            item.add_marker(pytest.mark.skip(reason="Requires the experimental CUDA codegen"))
+    if request.node.get_closest_marker("old_gpu_codegen_only"):
+        impl = "legacy"
+    elif request.node.get_closest_marker("new_gpu_codegen_only"):
+        impl = "experimental"
+    else:
+        yield
+        return
+    with set_temporary("compiler", "cuda", "implementation", value=impl):
+        yield
