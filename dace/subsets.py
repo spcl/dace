@@ -345,6 +345,8 @@ def equalize_range_entry(
     if isinstance(bounds, tuple):
         return tuple(symbolic.equalize_symbol(entry) for entry in bounds)
     return symbolic.equalize_symbol(bounds)
+
+
 def contiguous_run_length(
     sizes: Sequence[symbolic.SymbolicType], strides: Sequence[symbolic.SymbolicType]
 ) -> symbolic.SymbolicType | None:

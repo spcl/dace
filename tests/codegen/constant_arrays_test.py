@@ -52,6 +52,8 @@ def test_constant_array_elements_are_cpp_literals(value, expected):
     assert "True" not in decl and "False" not in decl and "j)" not in decl, decl
     for literal in expected:
         assert literal in decl, (literal, decl)
+
+
 def test_a_column_major_constant_is_read_by_index():
     """A constant is written in its descriptor's memory order: written in index order, a column-major table was read
     as its transpose."""
