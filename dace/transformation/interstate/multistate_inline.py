@@ -290,6 +290,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         outer_state.parent_graph.add_nodes_from(nsdfg.nodes())
         for ise in nsdfg.edges():
             outer_state.parent_graph.add_edge(ise.src, ise.dst, ise.data)
+        # The loops, scope entries and interstate edges move as they are, so their declarations move with them
+        sdfg.symbol_repo.scopes.update(nsdfg.symbol_repo.scopes)
 
         #######################################################
         # Reconnect inlined SDFG

@@ -533,9 +533,9 @@ def _nested_return_sdfg(in_map: bool, in_loop: bool) -> dace.SDFG:
     increment = dace.SDFGState("increment")
     if in_loop:
         # for j in range(3): if j >= N: return; X[0] += 1
-        inner.add_symbol("j", dace.int64)
         loop = LoopRegion("loop", "j < 3", "j", "j = 0", "j = j + 1")
         inner.add_node(loop, is_start_block=True)
+        inner.symbol_repo.add("j", dace.int64, at=loop)
         loop.add_node(increment)
         _add_conditional_return(loop, "j >= N", increment)
     else:
