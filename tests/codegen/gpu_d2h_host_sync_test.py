@@ -12,7 +12,6 @@ These assert on emitted code, so they need a GPU for neither compilation nor a r
 
 import re
 
-import pytest
 
 import dace
 from dace import dtypes
@@ -103,7 +102,6 @@ def test_a_device_to_host_copy_is_synchronized_before_its_host_reader():
     )
 
 
-@pytest.mark.old_gpu_codegen_only  # the legacy codegen's per-copy stream
 def test_the_synchronization_names_the_stream_the_copy_was_issued_on():
     """Waiting on some other stream orders nothing."""
     code = generated_code(scalar_through_host(dtypes.StorageType.CPU_Heap))
