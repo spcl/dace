@@ -54,7 +54,6 @@ from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import E
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.expand_index_remaps import ExpandIndexRemaps
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
-from dace.transformation.passes.canonicalize.forward_iota_reads import ForwardIotaReads
 from dace.transformation.passes.canonicalize.forward_offset_copies import ForwardOffsetCopies
 from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
 from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
@@ -105,12 +104,6 @@ from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNum
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.while_to_for import WhileToFor
-from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-    CleanAccessNodeToScalarSliceToTaskletPattern,
-)
-from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
-    CleanTaskletToScalarSliceToAccessNodePattern,
-)
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_fill_elimination import DeadFillElimination
@@ -348,19 +341,6 @@ def _inline_single_state(label: str) -> list[tuple[str, ppl.Pass]]:
     :returns: ``(stage_label, pass)`` pairs, in order.
     """
     return [(label, RouteOrderingThroughData()), (label, PruneAndInlineNestedSDFGs())]
-
-
-def _fold_scalar_slices(label: str) -> list[tuple[str, ppl.Pass]]:
-    """Fold the frontend scalar-slice bridge; behind the transient a matcher has no index to shift,
-    which costs tsvc s252 its ``_remat`` clone and its map.
-
-    :param label: The owning stage label.
-    :returns: ``(stage_label, pass)`` pairs, in order.
-    """
-    return [
-        (label, CleanAccessNodeToScalarSliceToTaskletPattern()),
-        (label, CleanTaskletToScalarSliceToAccessNodePattern()),
-    ]
 
 
 #: Cap on the IV-substitution / statement-fission alternation.
@@ -796,8 +776,7 @@ def normalize_statements(
         (label, PatternApplyOnceEverywhere([PruneConnectors()])),
         (label, InlineSDFGs()),
     ]
-    s += _fold_scalar_slices(label)
-    s += [(label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
+    s += [(label, NormalizeNegativeStride()), (label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
     s += [(label, RerollUnrolledLoops()), (label, UntileLoops()), (label, FuseConsecutiveLoops())]
     if unroll_limit > 0:
         s += [(label, ShortLoopUnroll(unroll_limit)), (label, unique_iterators()), (label, SymbolSSA())]
@@ -829,7 +808,7 @@ def normalize_statements(
 def lift_semantics(lift: bool, lift_copy: bool, interchange_carry_with_map: bool, target: str) -> Stages:
     """Recognize library operators on the normalized loop nests."""
     label = LIFT_SEMANTICS
-    s: Stages = _fold_scalar_slices(label)
+    s: Stages = []
     # Before LoopToEinsum, which would take the inner product out of the nest.
     if lift:
         s += [(label, LoopToGetrfNoPivot(target=target)), (label, LoopToSymm()), (label, LoopToRankKUpdate())]
@@ -947,9 +926,7 @@ def derive_parallelism(
         )
     ]
     if scatter_to_guarded_maps:
-        # An ``arange`` fill is an inlined map by now: its interstate reads become their index, so a scatter keyed
-        # through it shows the loop variable as its slot and needs no conflict check.
-        s += [(label, ForwardIotaReads()), (label, SymbolPropagation())]
+        s += [(label, SymbolPropagation())]
         s += [
             (
                 label,

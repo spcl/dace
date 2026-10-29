@@ -18,6 +18,7 @@ from dace.libraries.standard.nodes.copy.common import (
     _both_packed_same_layout,
     _is_cross_cpu_gpu,
     cuda2d_pitch_params,
+    hull_copy_is_safe,
     strided_copy_calls,
 )
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
@@ -195,9 +196,10 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
     if get_gpu_backend() == "hip" and not _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
         return "MappedTasklet"
 
-    # ``MemcpyCUDAHull`` is never chosen here: it is correct only where nothing reads the destination between the rows,
-    # which canonicalization proves and pins (``pin_span_copies``).
     crosses_boundary = _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state)
+    # One flat copy of the span, where nothing reads the destination between the rows of the region.
+    if crosses_boundary and hull_copy_is_safe(node, parent_state):
+        return "MemcpyCUDAHull"
 
     in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)

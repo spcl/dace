@@ -739,39 +739,14 @@ def _mirror_interior_sdfg(read_halo: bool) -> tuple[dace.SDFG, CopyLibraryNode]:
 
 
 @pytest.mark.parametrize("backend", ["cuda", "hip"])
-def test_interior_copy_with_unread_halo_is_pinned_to_one_flat_copy(backend):
-    """The interior of a host array copied into the same slots of a device transient whose halo nothing reads may move
-    as one ``gpuMemcpyAsync`` of the whole span: the halo it overwrites is never observed. The selector never picks
-    that on its own; canonicalization proves it and pins it. A transient whose halo is read is not pinned."""
-    from dace.transformation.passes.canonicalize.finalize import pin_span_copies
-
+def test_interior_copy_with_unread_halo_selects_one_flat_copy(backend):
+    """A host interior copied into the same slots of a device transient whose halo nothing reads moves as one span
+    copy; with the halo read it stays pitched."""
     with dace.config.set_temporary("compiler", "cuda", "backend", value=backend):
         sdfg, node = _mirror_interior_sdfg(read_halo=False)
-        assert select_copy_implementation(node, sdfg.start_state) == "MemcpyCUDANDStrided"
-        assert pin_span_copies(sdfg) == 1 and node.implementation == "MemcpyCUDAHull"
+        assert select_copy_implementation(node, sdfg.start_state) == "MemcpyCUDAHull"
         read, read_node = _mirror_interior_sdfg(read_halo=True)
-        assert pin_span_copies(read) == 0 and read_node.implementation in (None, "Auto")
-
-
-def test_implicit_interior_copy_with_unread_halo_is_lifted_and_pinned():
-    """A strided host-to-device copy edge is lifted to a copy node and pinned; a contiguous one stays an edge."""
-    from dace.libraries.standard.nodes.copy import CopyLibraryNode as Copy
-    from dace.transformation.passes.canonicalize.finalize import pin_span_copies
-
-    n = 12
-    sdfg = dace.SDFG("copy_mirror_implicit")
-    sdfg.add_array("H", (n, n, n), dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
-    sdfg.add_array("D", (n, n, n), dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=True)
-    sdfg.add_array("E", (n, n, n), dace.float64, storage=dace.dtypes.StorageType.GPU_Global, transient=True)
-    state = sdfg.add_state(is_start_block=True)
-    interior = f"1:{n - 1}, 1:{n - 1}, 1:{n - 1}"
-    h = state.add_read("H")
-    state.add_nedge(h, state.add_write("D"), dace.Memlet(f"H[{interior}] -> [{interior}]"))
-    state.add_nedge(h, state.add_write("E"), dace.Memlet("H[0:12, 0:12, 0:12]"))
-    assert pin_span_copies(sdfg) == 1
-    copies = [n for n in state.nodes() if isinstance(n, Copy)]
-    assert [c.implementation for c in copies] == ["MemcpyCUDAHull"]
-    assert any(isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == "E" and e.src is h for e in state.edges())
+        assert select_copy_implementation(read_node, read.start_state) == "MemcpyCUDANDStrided"
 
 
 def test_interior_copy_with_halo_and_without_facts_is_not_flat():
@@ -821,11 +796,8 @@ def test_interior_4d_copy_across_the_boundary_is_staged():
 @pytest.mark.gpu
 @pytest.mark.parametrize("read_halo", [False, True])
 def test_interior_copy_with_unread_halo_gpu(read_halo):
-    """The pinned flat span copy moves the interior into its own slots; what is read of the transient is right."""
-    from dace.transformation.passes.canonicalize.finalize import pin_span_copies
-
+    """The selected copy moves the interior into its own slots; what is read of the transient is right."""
     sdfg, _ = _mirror_interior_sdfg(read_halo)
-    pin_span_copies(sdfg)
     sdfg.expand_library_nodes()
     exe = _compile_no_copynd(sdfg)
     full = np.arange(12**3, dtype=np.float64).reshape(12, 12, 12)
@@ -3130,9 +3102,8 @@ if __name__ == "__main__":
     test_interior_copy_across_the_boundary_is_one_pitched_copy("hip")
     test_interior_copy_across_the_boundary_gpu(True)
     test_interior_copy_across_the_boundary_gpu(False)
-    test_interior_copy_with_unread_halo_is_pinned_to_one_flat_copy("cuda")
-    test_interior_copy_with_unread_halo_is_pinned_to_one_flat_copy("hip")
-    test_implicit_interior_copy_with_unread_halo_is_lifted_and_pinned()
+    test_interior_copy_with_unread_halo_selects_one_flat_copy("cuda")
+    test_interior_copy_with_unread_halo_selects_one_flat_copy("hip")
     test_interior_copy_with_halo_and_without_facts_is_not_flat()
     test_interior_4d_copy_across_the_boundary_is_staged()
     test_interior_copy_with_unread_halo_gpu(False)
