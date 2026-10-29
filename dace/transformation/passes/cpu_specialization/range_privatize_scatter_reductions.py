@@ -518,17 +518,27 @@ class SiteSlicer:
         return len(self.frames) - 1
 
     def build(self) -> tuple:
+        facts: dict[int, Any] = {}
+
+        def runs(f: Frame, k: int) -> bool:
+            """Whether map dimension ``k`` of ``f`` provably runs at least once."""
+            begin, end, _ = f.payload[2][k]
+            if id(f.nest) not in facts:
+                facts[id(f.nest)] = f.nest.sdfg.facts()
+            return symbolic.provably_le(begin, end, facts[id(f.nest)])
+
         def tree(i: int, weight) -> tuple:
             if i == len(self.frames):
                 return ()
             f = self.frames[i]
             below = self.frames[i:]
-            # Without a guard or value below, a loop variable no row reads only multiplies the rows' writes.
+            # Without a guard or value below, a loop variable no row reads only multiplies the rows' writes; with
+            # one, only a dimension that runs: a value or guard read below may be valid only inside a trip.
             free = not any(g.kind == "guard" or any(isinstance(s, Let) for s in g.stmts) for g in below)
             kept = []
             if f.kind == "map":
                 read = {f.vars[n] for n in f.used}
-                kept = [k for k, v in enumerate(f.payload[0]) if v in read or not free]
+                kept = [k for k, v in enumerate(f.payload[0]) if v in read or not (free or runs(f, k))]
                 for k, (begin, end, step) in enumerate(f.payload[2]):
                     if k not in kept:
                         weight = weight * symbolic.sympy.Max(0, symbolic.int_floor(end - begin, step) + 1)
