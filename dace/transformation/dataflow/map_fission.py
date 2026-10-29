@@ -14,7 +14,7 @@ from dace.sdfg import graph as gr
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SymbolResolver
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import helpers, transformation
 
@@ -547,16 +547,27 @@ class MapFission(transformation.SingleStateTransformation):
                     continue
                 if symname not in nsdfg_node.symbol_mapping.keys():
                     nsdfg_node.symbol_mapping[symname] = sym
-                    nsdfg_node.sdfg.symbols[symname] = graph.symbols_defined_at(nsdfg_node)[symname]
+                    dtype = graph.symbols_defined_at(nsdfg_node)[symname]
+                    repo = nsdfg_node.sdfg.symbol_repo
+                    if symname in repo.params.types:
+                        repo.set_type(symname, dtype)
+                    else:
+                        repo.add(symname, dtype)
 
             # Remove map symbols from nested mapping
             for name in outer_map.params:
                 if str(name) in nsdfg_node.symbol_mapping:
                     del nsdfg_node.symbol_mapping[str(name)]
                 if str(name) in nsdfg_node.sdfg.symbols:
-                    del nsdfg_node.sdfg.symbols[str(name)]
+                    nsdfg_node.sdfg.symbol_repo.remove(str(name))
 
         for state, subgraph in subgraphs:
+            # Where the edges are propagated out of the map: around it, or inside the nested SDFG
+            facts = (
+                SymbolResolver().facts_at(graph, map_entry)
+                if self.expr_index == 0
+                else SymbolResolver().facts_at(state)
+            )
             components = MapFission._components(subgraph)
             # A border container may also feed a component, so it need not be a source or sink of the subgraph
             top_access = [n for n in subgraph.scope_children()[None] if isinstance(n, nodes.AccessNode)]
@@ -865,7 +876,7 @@ class MapFission(transformation.SingleStateTransformation):
                                     # Propagate only the subset of `node.data`; the other side of a copy is kept
                                     other_subset = e.data.other_subset
                                     e.data.other_subset = None
-                                    e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
+                                    e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range, facts)
                                     e.data.other_subset = other_subset
 
                         # Only after offsetting memlets we can modify the
@@ -896,7 +907,7 @@ class MapFission(transformation.SingleStateTransformation):
                                     and set(outer_map.params) & set(map(str, e.data.subset.free_symbols))
                                 ):
                                     e.data.subset = propagate_subset(
-                                        [e.data], parent.arrays[e.data.data], outer_map.params, outer_map.range
+                                        [e.data], parent.arrays[e.data.data], outer_map.params, outer_map.range, facts
                                     ).subset
                             else:
                                 map_ranges = [(idx, idx, 1) for idx in squeezed_idx]

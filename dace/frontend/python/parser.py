@@ -119,7 +119,7 @@ def infer_symbols_from_datadescriptor(
             if hasattr(arg_val, "strides"):
                 # NumPy arrays use bytes in strides
                 factor = getattr(arg_val, "itemsize", 1)
-                given_strides = [s // factor for s in arg_val.strides]
+                given_strides = [symbolic.int_floor(s, factor) for s in arg_val.strides]
             given_offset = list(arg_val.offset) if hasattr(arg_val, "offset") else []
             given_values += given_strides + given_offset
 
@@ -691,7 +691,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
                 types.update({f"__arg{j}": create_datadescriptor(varg) for j, varg in enumerate(vargs)})
                 arg_mapping.update({f"__arg{j}": varg for j, varg in enumerate(vargs)})
-                gvar_mapping[aname] = tuple(ast.Name(id=f"__arg{j}") for j in range(len(vargs)))
+                gvar_mapping[aname] = tuple(ast.Name(id=f"__arg{j}", ctx=ast.Load()) for j in range(len(vargs)))
                 specified_args.update(set(gvar_mapping[aname]))
                 # Shift arg_ind to the end
                 arg_ind = len(given_args)
@@ -708,7 +708,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                     )
                 types.update({f"__kwarg_{k}": v for k, v in vargs.items()})
                 arg_mapping.update({f"__kwarg_{k}": given_kwargs[k] for k in vargs.keys()})
-                gvar_mapping[aname] = {k: ast.Name(id=f"__kwarg_{k}") for k in vargs.keys()}
+                gvar_mapping[aname] = {k: ast.Name(id=f"__kwarg_{k}", ctx=ast.Load()) for k in vargs.keys()}
                 specified_args.update({f"__kwarg_{k}" for k in vargs.keys()})
             # END OF VARIABLE-LENGTH ARGUMENTS
             else:
@@ -990,8 +990,11 @@ class DaceProgram(pycommon.SDFGConvertible):
         global_vars.update(gvars)
 
         argtypes = {k: v for k, v in argtypes.items() if k not in removed_args}
+        # A symbol is its name: an annotation's free symbol may be a same-named object built elsewhere (SymPy's cache
+        # hands it back), so it names a symbol the program does not declare itself and never replaces its global
         for argtype in argtypes.values():
-            global_vars.update({v.name: v for v in argtype.free_symbols})
+            for v in argtype.free_symbols:
+                global_vars.setdefault(v.name, v)
 
         # Parse AST to create the SDFG
         parsed_ast, closure = preprocessing.preprocess_dace_program(

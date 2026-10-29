@@ -8,8 +8,9 @@ from dace import memlet, properties, sdfg, subsets
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, SDFGState
+from dace.sdfg.state import ControlFlowRegion, SDFGState, SymbolResolver
 from dace.sdfg.validation import InvalidSDFGEdgeError, validate_state
+from dace.symbolic import Truth
 from dace.transformation import transformation
 from dace.transformation.interstate.state_fusion import StateFusion
 
@@ -278,6 +279,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
             # Find source/sink (data) nodes
             top1, top2 = top_level_nodes(first_state), top_level_nodes(second_state)
+            # The states are consecutive, so what holds in the first holds in the second
+            facts = SymbolResolver().facts_at(first_state)
             first_input = in_state_order(
                 [n for n in first_state.source_nodes() if isinstance(n, nodes.AccessNode)], first_order
             )
@@ -322,7 +325,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 if e.data.wcr is None or e.data.data not in first_written:
                     continue
                 wsub = e.data.get_dst_subset(e, second_state) or e.data.subset
-                if wsub is not None and all(subsets.intersects(wsub, fs) is False for fs in first_written[e.data.data]):
+                if wsub is not None and all(
+                    subsets.intersects(wsub, fs, facts) is Truth.FALSE for fs in first_written[e.data.data]
+                ):
                     continue
                 seed = sdfg.arrays[e.data.data]
                 accumulated = second_state.memlet_path(e)[-1].dst
@@ -405,7 +410,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                             return False
                     if ordered_by_existing_dataflow(consumers, we):
                         continue
-                    if any(subsets.intersects(wsub, rs) is not False for rs in first_read_subsets[wnode.data]):
+                    if any(
+                        subsets.intersects(wsub, rs, facts) is not Truth.FALSE for rs in first_read_subsets[wnode.data]
+                    ):
                         if consumers:
                             self._connections_to_make.append(("war", consumers, [wnode]))
                         break

@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains replacements for array-filling methods (zeros, ones, etc.)
 """
@@ -7,6 +7,7 @@ import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type, broadcast_together
+from dace.frontend.python.replacements.array_creation_dace import promote_size_scalars_in_shape
 from dace.frontend.python.replacements.operators import result_type
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
@@ -59,7 +60,7 @@ def _numpy_full(
     if isinstance(fill_value, (Number, np.bool_)):
         vtype = dtypes.dtype_to_typeclass(type(fill_value))
     elif isinstance(fill_value, sp.Expr):
-        vtype = sym_type(fill_value)
+        vtype = sym_type(fill_value, pv.symbol_types())
     else:
         is_data = True
         vtype = sdfg.arrays[fill_value].dtype
@@ -69,6 +70,10 @@ def _numpy_full(
     if isinstance(shape, (Number, str)) or symbolic.issymbolic(shape):
         shape = [shape]
 
+    shape, promoted = promote_size_scalars_in_shape(pv, sdfg, shape)
+    if promoted:
+        # Promotion opens a state to carry the symbol assignment; the fill has to follow it.
+        state = pv.last_block
     if any(isinstance(s, str) for s in shape):
         raise DaceSyntaxError(
             pv,
@@ -269,7 +274,7 @@ def _arange(
 
     # Infer dtype from input arguments
     if dtype is None:
-        dtype, _ = result_type(args)
+        dtype, _ = result_type(args, symbols=pv.symbol_types())
 
     # TODO: Unclear what 'like' does
     # if 'like' is not None:
@@ -358,7 +363,7 @@ def _linspace(
         start_type = sdfg.arrays[start] if (isinstance(start, str) and start in sdfg.arrays) else start
         stop_type = sdfg.arrays[stop] if (isinstance(stop, str) and stop in sdfg.arrays) else stop
 
-        dtype, _ = result_type((start_type, stop_type), "Add")
+        dtype, _ = result_type((start_type, stop_type), "Add", symbols=pv.symbol_types())
 
         # From the NumPy documentation: The inferred dtype will never be an integer; float is chosen even if the
         # arguments would produce an array of integers.

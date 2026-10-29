@@ -8,7 +8,8 @@ from dace import sdfg, subsets
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, SymbolResolver
+from dace.symbolic import Truth
 from dace.transformation import transformation
 
 
@@ -33,6 +34,17 @@ class CCDesc:
 
 def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
+
+
+def endpoint_subset(edge, state: SDFGState, source: bool) -> subsets.Subset | None:
+    """The subset ``edge`` accesses at its source (or destination) node. A copy whose memlet names only the other
+    container leaves this side's ``other_subset`` unset, which means the same shape based at index zero; that is
+    the subset returned, never the other container's. ``None`` when the edge carries no subset at all.
+    """
+    subset = edge.data.get_src_subset(edge, state) if source else edge.data.get_dst_subset(edge, state)
+    if subset is None and edge.data.subset is not None and edge.data.data is not None:
+        subset = subsets.Range([(0, size - 1, 1) for size in edge.data.subset.size()])
+    return subset
 
 
 def read_only_data_nodes(state: SDFGState) -> set[nodes.AccessNode]:
@@ -115,16 +127,10 @@ class StateFusion(transformation.MultiStateTransformation):
         :param inputs_b: If True, checks inputs of the second group.
         :return: True if subsets intersect or result is indeterminate.
         """
-
-        def endpoint_subset(e, graph, source: bool):
-            # A copy without ``other_subset`` accesses the same shape at index zero, not the other container's indices
-            subset = e.data.get_src_subset(e, graph) if source else e.data.get_dst_subset(e, graph)
-            if subset is None and e.data.subset is not None:
-                subset = subsets.Range([(0, size - 1, 1) for size in e.data.subset.size()])
-            return subset
-
-        src_subset = lambda e, graph: endpoint_subset(e, graph, True)
-        dst_subset = lambda e, graph: endpoint_subset(e, graph, False)
+        # Set traversal functions: the subset an edge accesses on the side of the group's node, never the other
+        #  container's (see ``endpoint_subset``).
+        src_subset = lambda e, graph: endpoint_subset(e, graph, source=True)
+        dst_subset = lambda e, graph: endpoint_subset(e, graph, source=False)
         if inputs_a:
             edges_a = [e for n in group_a for e in graph_a.out_edges(n)]
             subset_a = src_subset
@@ -138,15 +144,18 @@ class StateFusion(transformation.MultiStateTransformation):
             edges_b = [e for n in group_b for e in graph_b.in_edges(n)]
             subset_b = dst_subset
 
-        # Simple all-pairs check
+        # Simple all-pairs check. The states are consecutive, so what holds in the first holds in the second.
+        facts = SymbolResolver().facts_at(graph_a)
+        # An empty Memlet only orders, it accesses no data
+        edges_a = [e for e in edges_a if not e.data.is_empty()]
+        edges_b = [e for e in edges_b if not e.data.is_empty()]
         for ea in edges_a:
             for eb in edges_b:
                 sa, sb = subset_a(ea, graph_a), subset_b(eb, graph_b)
                 # ``intersects`` does not decide a SubsetUnion: indeterminate
                 if isinstance(sa, subsets.SubsetUnion) or isinstance(sb, subsets.SubsetUnion):
                     return True
-                result = subsets.intersects(sa, sb)
-                if result is True or result is None:
+                if sa is None or sb is None or subsets.intersects(sa, sb, facts) is not Truth.FALSE:
                     return True
         return False
 
