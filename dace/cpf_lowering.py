@@ -2372,6 +2372,13 @@ def c_math_result_type(name: str, types: tuple[str | None, ...] | None) -> str:
     return "float32" if picking == "float32" else "float64"
 
 
+def pow_exponent_type(base_type: str | None, default: str) -> str:
+    """The floating type a ``p/q`` exponent divides in: ``float32`` for a single-precision power, else ``float64``."""
+    if base_type is None:
+        return default
+    return "float32" if c_math_result_type("pow", (base_type, base_type)) in ("float32", "complex64") else "float64"
+
+
 #: ``Max``/``Min`` in C. Not the ``<stdlib.h>`` integer ``max``, which does not exist: CPF emits its
 #: own typed pair (see :data:`C_TYPED_MINMAX_DEFINITIONS`).
 C_VARIADIC_MINMAX: dict[str, str] = {"Max": "cpf_max", "Min": "cpf_min", "max": "cpf_max", "min": "cpf_min"}
