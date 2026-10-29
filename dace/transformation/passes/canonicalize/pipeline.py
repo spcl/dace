@@ -154,7 +154,6 @@ from dace.transformation.passes.pattern_matching import (
 )
 from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScatterReduction
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
-from dace.transformation.passes.propagate_memlets import PropagateMemlets
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
@@ -722,7 +721,6 @@ def loop_to_map_units(hold_sibling_chains: bool = False) -> list[ppl.Pass]:
     # A loop refused on a scratch buffer only lifts with the buffer expanded per iteration
     lift.expand_buffers = True
     return [
-        PropagateMemlets(),
         lift,
         PatternApplyOnceEverywhere([PruneConnectors()]),
     ]
@@ -941,7 +939,6 @@ def derive_parallelism(
         (label, PinCarriedTopLevelLoops()),
         (label, AccumulatorCopyChainToWCR()),
         (label, RetargetWCRAccumulator()),
-        (label, PropagateMemlets()),
         (label, ParallelizeLoops(propagate=False, hold_sibling_chains=True)),
         (label, PrivatizeScalars()),
         (label, PrivatizeArrays()),
@@ -961,7 +958,6 @@ def derive_parallelism(
                     (CarriedAccumulationToWCR(), True),
                 ],
                 [
-                    PropagateMemlets(),
                     ParallelizeLoops(propagate=False, hold_sibling_chains=True),
                     PrivatizeScalars(),
                     PrivatizeArrays(),
@@ -983,7 +979,7 @@ def derive_parallelism(
     s += [(label, RevertNonReductionWCR()), *_inline_single_state(label)]
     if target == "gpu":
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
-    s += [(label, FuseLoops()), (label, PropagateMemlets())]
+    s += [(label, FuseLoops())]
     s += [(label, Parallelize(target=target, hold_sibling_chains=False))]
     s += [(label, PatternApplyOnceEverywhere([PruneConnectors()]))]
     return s
