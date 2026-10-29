@@ -105,11 +105,19 @@ def lift_prefix(levels: list[Scope], state: SDFGState, src: nodes.Node) -> Prefi
             entry.map.params, entry.map.range, entry.map.range.min_element(), strict=True
         ):
             if inside:
-                index = symbolic.symbol(param) - origin
+                index = slot(symbolic.symbol(param) - origin, step)
                 prefix.append((index, index, sympy.S.One))
-            else:
+            elif step == 1:
                 prefix.append((start - origin, end - origin, step))
+            else:
+                prefix.append((slot(start - origin, step), slot(end - origin, step), sympy.S.One))
     return prefix
+
+
+def slot(offset: symbolic.SymbolicType, step: symbolic.SymbolicType) -> symbolic.SymbolicType:
+    """The slot of the iteration ``offset`` past a level's first one: one slot per iteration, also for a strided level
+    (a tile grid), whose slots would otherwise leave ``step - 1`` unused between two."""
+    return offset if step == 1 else symbolic.int_floor(offset, step)
 
 
 def single_point(prefix: Prefix, label: str, name: str) -> list[str]:
@@ -253,7 +261,8 @@ def lifted_layout(desc: dt.Array, levels: list[nodes.MapEntry]) -> LiftedLayout:
     for level in levels:
         rng = level.map.range
         extended_size = [
-            tile_extent(mx, mn) for mx, mn in zip(rng.max_element(), rng.min_element(), strict=True)
+            tile_extent(mx, mn) if step == 1 else symbolic.int_ceil(tile_extent(mx, mn), step)
+            for mx, mn, (_, _, step) in zip(rng.max_element(), rng.min_element(), rng, strict=True)
         ] + extended_size
         offset = [0] * len(level.map.params) + offset
 
@@ -317,6 +326,10 @@ def plan_lift(name: str, owner: SDFG, kernel_state: SDFGState) -> LiftPlan | Non
         if edge.data.data == name
         or any(isinstance(node, nodes.AccessNode) and node.data == name for node in (edge.src, edge.dst))
     ]
+    # An access that neither enters nor leaves a scope names one slice; above a slicing level it would span all
+    for edge, prefix in prefixes:
+        if not (edge.data.is_empty() or isinstance(edge.dst, nodes.EntryNode) or isinstance(edge.src, nodes.ExitNode)):
+            single_point(prefix, f"Memlet {edge.data}", name)
     desc = owner.arrays[name]
     layout = lifted_layout(desc, [entry for entry, _ in reversed(levels)])
     bounds = [bound for _, prefix in prefixes for dim in prefix for bound in dim]
