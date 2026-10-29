@@ -980,6 +980,115 @@ def test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right
     assert np.array_equal(cupy.asnumpy(out), np.ones(128))
 
 
+def test_a_kernel_level_access_above_a_per_thread_scratch_is_refused():
+    """A kernel-level write of ``tmp`` would span every thread's slice, yet the tasklet produces one value."""
+    sdfg = kernel_with_a_thread_block_around_its_scratch()
+    state = sdfg.start_state
+    entries = {n.map.schedule: n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)}
+    init = state.add_tasklet("init", {}, {"__out": None}, "__out = 0.0")
+    state.add_nedge(entries[GPU_DEVICE], init, dace.Memlet())
+    zeroed = state.add_access("tmp")
+    state.add_edge(init, "__out", zeroed, None, dace.Memlet("tmp[0]"))
+    state.add_nedge(zeroed, entries[dtypes.ScheduleType.GPU_ThreadBlock], dace.Memlet())
+    sdfg.validate()
+
+    with pytest.raises(NotImplementedError, match="outside the kernel levels"):
+        lift(sdfg)
+
+
+def kernel_with_a_per_thread_count(indirect: bool = False) -> dace.SDFG:
+    """``for b: n = counts[b]; buf = empty(n + 1); buf[n] = 2; out[b] = buf[n]``: the extent of ``buf`` is a
+    count each thread reads (lavamd's ``pointers = np.empty(1 + neighbor_counts[l])``). ``indirect`` reads it
+    through ``r = rows[b]; n = counts[r]`` (spgemm_hash's ``row_bin[rows_in_bins[b]]``)."""
+    body = dace.SDFG("count_body")
+    body.add_symbol("b", dace.int64)
+    body.add_array("counts", [NX], dace.int32, storage=GLOBAL)
+    body.add_array("o", [NX], dace.float64, storage=GLOBAL)
+    body.add_transient("buf", ["n + 1"], dace.float64, storage=dtypes.StorageType.Register)
+    load = body.add_state("load", is_start_block=True)
+    use = body.add_state("use")
+    index = "b"
+    if indirect:
+        body.add_array("rows", [NX], dace.int32, storage=GLOBAL)
+        pick = body.add_state("pick")
+        body.add_edge(load, pick, dace.InterstateEdge(assignments={"r": "rows[b]"}))
+        load, index = pick, "r"
+    body.add_edge(load, use, dace.InterstateEdge(assignments={"n": f"counts[{index}]"}))
+    buf = use.add_access("buf")
+    fill = use.add_tasklet("fill", {}, {"v"}, "v = 2.0")
+    use.add_edge(fill, "v", buf, None, dace.Memlet("buf[n]"))
+    take = use.add_tasklet("take", {"x"}, {"y"}, "y = x")
+    use.add_edge(buf, None, take, "x", dace.Memlet("buf[n]"))
+    use.add_edge(take, "y", use.add_write("o"), None, dace.Memlet("o[b]"))
+
+    sdfg = dace.SDFG("per_thread_indirect_count" if indirect else "per_thread_count")
+    sdfg.add_array("out", [NX], dace.float64, storage=GLOBAL)
+    state = sdfg.add_state("kernel")
+    me, mx = state.add_map("kernel", {"b": "0:NX"}, schedule=GPU_DEVICE)
+    me.map.gpu_block_size = [32, 1, 1]
+    inputs = ("counts", "rows") if indirect else ("counts",)
+    nsdfg = state.add_nested_sdfg(body, dict.fromkeys(inputs), {"o": None}, symbol_mapping={"b": "b", "NX": "NX"})
+    for name in inputs:
+        sdfg.add_array(name, [NX], dace.int32, storage=GLOBAL)
+        state.add_memlet_path(state.add_read(name), me, nsdfg, dst_conn=name, memlet=dace.Memlet(f"{name}[0:NX]"))
+    state.add_memlet_path(nsdfg, mx, state.add_write("out"), src_conn="o", memlet=dace.Memlet("out[b]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel():
+    """The lifted ``buf`` is sized by ``n_max``, the largest ``counts[b]``, folded before the kernel: ``n`` is
+    assigned inside the kernel, so no host allocation can name it."""
+    sdfg = kernel_with_a_per_thread_count()
+    assert lift(sdfg) == 1
+    shape_symbols = {
+        str(sym) for dim in sdfg.arrays["buf"].shape for sym in dace.symbolic.pystr_to_symbolic(dim).free_symbols
+    }
+    assert "n" not in shape_symbols and "n_max" in shape_symbols, sdfg.arrays["buf"].shape
+    into_kernel = list(sdfg.in_edges(next(s for s in sdfg.states() if s.label == "kernel")))
+    assert [e.data.assignments.get("n_max") for e in into_kernel] == ["n_max_host[0]"]
+    sdfg.validate()
+
+
+@pytest.mark.gpu
+def test_an_extent_a_thread_reads_runs_on_the_device():
+    cp = pytest.importorskip("cupy")
+    sdfg = kernel_with_a_per_thread_count()
+    counts = cp.asarray(np.array([3, 0, 7, 1, 5], dtype=np.int32))
+    out = cp.zeros(5)
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        sdfg(counts=counts, out=out, NX=5)
+    assert np.allclose(cp.asnumpy(out), 2.0)
+
+
+def test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads():
+    """``n = counts[rows[b]]``: the fold before the kernel reads ``counts`` at ``rows[b]``, not at the nest-local ``r``,
+    which no host code defines."""
+    sdfg = kernel_with_a_per_thread_count(indirect=True)
+    assert lift(sdfg) == 1
+    folds = [
+        node
+        for state in sdfg.states()
+        for node in state.nodes()
+        if isinstance(node, dace.nodes.Tasklet) and node.label == "fold_n_max"
+    ]
+    assert [node.code.as_string.strip() for node in folds] == ["o = __read_counts[__read_rows[b]]"]
+    assert "r" not in sdfg.free_symbols and "n" not in sdfg.free_symbols, sdfg.free_symbols
+    sdfg.validate()
+
+
+@pytest.mark.gpu
+def test_an_extent_a_thread_reads_through_an_index_runs_on_the_device():
+    cp = pytest.importorskip("cupy")
+    sdfg = kernel_with_a_per_thread_count(indirect=True)
+    counts = cp.asarray(np.array([3, 0, 7, 1, 5], dtype=np.int32))
+    rows = cp.asarray(np.array([4, 2, 0, 3, 1], dtype=np.int32))
+    out = cp.zeros(5)
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        sdfg(counts=counts, rows=rows, out=out, NX=5)
+    assert np.allclose(cp.asnumpy(out), 2.0)
+
+
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)
@@ -1033,3 +1142,8 @@ if __name__ == "__main__":
     test_a_scratch_the_kernel_sizes_stays_where_it_is()
     test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is()
     test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values()
+    test_a_kernel_level_access_above_a_per_thread_scratch_is_refused()
+    test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel()
+    test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads()
+    test_an_extent_a_thread_reads_runs_on_the_device()
+    test_an_extent_a_thread_reads_through_an_index_runs_on_the_device()
