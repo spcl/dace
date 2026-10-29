@@ -1288,6 +1288,14 @@ def _hoist_slice_region(sdfg: SDFG, owner_sdfg: SDFG, index_slice: ScatterIndexS
         free |= {str(s) for s in symbolic.pystr_to_symbolic(expr).free_symbols}
     if not free:
         return owner_sdfg
+    # A slice of program symbols alone holds everywhere: its guard runs once at the entry, not once per iteration
+    # of whatever map encloses the scatter (vloc_psi_k_acc's igk_k[current_k - 1, :n] per band)
+    window = set(free)
+    for expr in (index_slice.offset, index_slice.extent):
+        window |= {str(s) for s in symbolic.pystr_to_symbolic(expr).free_symbols}
+    assigned = {lhs for edge in sdfg.all_interstate_edges() for lhs in edge.data.assignments}
+    if window <= set(sdfg.symbols) - assigned:
+        return sdfg
     for sd in sdfg.all_sdfgs_recursive():
         for region in sd.all_control_flow_regions():
             if isinstance(region, LoopRegion) and region.loop_variable in free:
