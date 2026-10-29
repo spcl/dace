@@ -144,12 +144,15 @@ class Coalescing:
         if into:
             if any(n is not transient and n not in before for n in mine):
                 return False
-            # Its readers move onto the container's node: none may lead back to it.
-            if any(e.dst is not other and other in state_downstream(state, e.dst) for e in state.out_edges(transient)):
-                return False
         else:
             if any(not e.data.is_empty() for n in mine for e in state.in_edges(n) if e.src is not other):
                 return False
+        # The transient's edges move onto the container's node: none may close a cycle through it.
+        after_other = state_downstream(state, other)
+        if any(e.src is not other and e.src in after_other for e in state.in_edges(transient)):
+            return False
+        if any(e.dst is not other and other in state_downstream(state, e.dst) for e in state.out_edges(transient)):
+            return False
         group = [*mine, other]
         upstream = [state_upstream(state, n) for n in group]
         downstream = [state_downstream(state, n) for n in group]
@@ -174,6 +177,8 @@ class Coalescing:
                         continue
                     done.add(tree_edge)
                     memlet = tree_edge.data
+                    if memlet.is_empty():
+                        continue
                     if memlet.data == old:
                         copy_to = tree_edge.dst if tree_edge.src is node else tree_edge.src
                         if memlet.other_subset is None and isinstance(copy_to, nodes.AccessNode):
@@ -236,12 +241,13 @@ def walk(state: SDFGState, start: nodes.Node, forward: bool) -> set:
 @properties.make_properties
 @explicit_cf_compatible
 class MinimizeTransients(ppl.Pass):
-    """Fewer, smaller and longer-lived transients, per SDFG outside every map scope.
+    """Fewer, smaller and longer-lived transients.
 
-    1. Coalesce: a transient living in one state and copied whole to or from a region of another container is that
-       region (:class:`Coalescing`).
-    2. Share and lift: transients whose uses never overlap share one buffer, and every buffer sized by symbols bound
-       on entry is ``Persistent`` (:class:`~dace.transformation.passes.transient_reuse.BufferSharing`).
+    1. Coalesce, in every SDFG: a transient living in one state and copied whole to or from a region of another
+       container is that region (:class:`Coalescing`).
+    2. Share and lift, in SDFGs outside every map scope: transients whose uses never overlap share one buffer, and
+       every buffer sized by symbols bound on entry is ``Persistent``
+       (:class:`~dace.transformation.passes.transient_reuse.BufferSharing`).
 
     Contracting a scope-local transient to its footprint is :class:`ShrinkMapLocalTransients`, which storage
     finalization runs earlier; what remains is left to the allocator.
@@ -262,8 +268,8 @@ class MinimizeTransients(ppl.Pass):
             storages.append(dtypes.StorageType.GPU_Global)
         changed = 0
         for sd in sdfg.all_sdfgs_recursive():
-            if inside_map(sd):
-                continue
             changed += Coalescing(sd).run()
-            changed += len(BufferSharing(sd, tuple(storages)).run())
+            # A buffer inside a map scope is per iteration: sharing it would share it between iterations.
+            if not inside_map(sd):
+                changed += len(BufferSharing(sd, tuple(storages)).run())
         return changed or None
