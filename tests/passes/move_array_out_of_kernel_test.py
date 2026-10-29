@@ -247,19 +247,20 @@ def flat_offsets(desc: dace.data.Array, subset: dace.subsets.Range, values: dict
     )
 
 
-def test_a_kernel_starting_above_zero_indexes_its_slice_from_the_first_iteration():
-    """The lifted dimension holds the trip count, so iteration ``i`` of ``1:127`` owns row ``i - 1``."""
+@pytest.mark.parametrize("start, end, step, trips", [(1, 126, 1, 126), (0, 127, 2, 64)])
+def test_the_lifted_dimension_holds_one_row_per_kernel_iteration(start, end, step, trips):
+    """Iteration ``i`` of ``start:end+1:step`` owns row ``(i - start) // step``: no row is skipped or shared."""
     sdfg = kernel_with_internal_transient()
     kernel = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry))
-    kernel.map.range = dace.subsets.Range([(1, 126, 1)])
+    kernel.map.range = dace.subsets.Range([(start, end, step)])
     lift(sdfg)
 
     desc = sdfg.arrays["buf"]
-    assert tuple(desc.shape) == (126, 1024), desc.shape
+    assert tuple(desc.shape) == (trips, 1024), desc.shape
     total = int(desc.total_size)
     inner = [e for e in sdfg.start_state.edges() if e.data.data == "buf" and isinstance(e.src, dace.nodes.Tasklet)]
-    firsts = {flat_offsets(desc, inner[0].data.subset, {"i": i})[0] for i in range(1, 127)}
-    assert min(firsts) == 0 and max(firsts) < total, (min(firsts), max(firsts), total)
+    firsts = {flat_offsets(desc, inner[0].data.subset, {"i": i})[0] for i in range(start, end + 1, step)}
+    assert len(firsts) == trips and min(firsts) == 0 and max(firsts) < total, (len(firsts), max(firsts), total)
 
 
 KERNEL_EXTENT, BLOCK_EXTENT, SCRATCH_EXTENT = 3, 5, LIMIT + 1
@@ -858,6 +859,22 @@ def test_an_extent_a_thread_reads_runs_on_the_device():
     assert np.allclose(cp.asnumpy(out), 2.0)
 
 
+def test_a_kernel_level_access_above_a_per_thread_scratch_is_refused():
+    """A kernel-level write of ``tmp`` would span every thread's slice, yet the tasklet produces one value."""
+    sdfg = kernel_with_a_thread_block_around_its_scratch()
+    state = sdfg.start_state
+    entries = {n.map.schedule: n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)}
+    init = state.add_tasklet("init", {}, {"__out": None}, "__out = 0.0")
+    state.add_nedge(entries[GPU_DEVICE], init, dace.Memlet())
+    zeroed = state.add_access("tmp")
+    state.add_edge(init, "__out", zeroed, None, dace.Memlet("tmp[0]"))
+    state.add_nedge(zeroed, entries[dtypes.ScheduleType.GPU_ThreadBlock], dace.Memlet())
+    sdfg.validate()
+
+    with pytest.raises(NotImplementedError, match="outside the kernel levels"):
+        lift(sdfg)
+
+
 if __name__ == "__main__":
     test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel()
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
@@ -883,7 +900,8 @@ if __name__ == "__main__":
     test_transient_behind_a_nested_sdfg_is_lifted_through_the_boundary()
     test_a_tasklet_body_naming_a_lifted_buffer_gains_the_kernel_index()
     test_a_cpp_tasklet_subscripting_a_lifted_buffer_is_refused()
-    test_a_kernel_starting_above_zero_indexes_its_slice_from_the_first_iteration()
+    test_the_lifted_dimension_holds_one_row_per_kernel_iteration(1, 126, 1, 126)
+    test_the_lifted_dimension_holds_one_row_per_kernel_iteration(0, 127, 2, 64)
     test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel()
     test_lift_translates_a_locally_named_shape_symbol_through_symbol_mapping()
     test_lift_gives_descendant_nested_sdfgs_the_lifted_descriptor()
@@ -902,3 +920,4 @@ if __name__ == "__main__":
     test_a_small_accumulator_is_lifted_not_demoted()
     test_the_lifted_accumulator_sums_each_row()
     test_a_moved_symbolic_register_scratch_below_a_nested_sdfg_computes_the_right_values()
+    test_a_kernel_level_access_above_a_per_thread_scratch_is_refused()
