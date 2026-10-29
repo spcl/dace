@@ -167,6 +167,24 @@ def bound_apart(keep: nodes.NestedSDFG, drop: nodes.NestedSDFG) -> dict[str, str
     return repl
 
 
+def linked_through_other_nodes(
+    state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.NestedSDFG, carriers: set[nodes.Node]
+) -> bool:
+    """Whether a path inside their map scope leads from ``keep`` to ``drop`` other than through ``carriers``."""
+    scope_exit = state.exit_node(state.entry_node(keep))
+    stack = [e.dst for e in state.out_edges(keep) if e.dst not in carriers]
+    seen: set[nodes.Node] = set()
+    while stack:
+        node = stack.pop()
+        if node is drop:
+            return True
+        if node in seen or node is scope_exit:
+            continue
+        seen.add(node)
+        stack.extend(e.dst for e in state.out_edges(node))
+    return False
+
+
 def _append_cfg(base: SDFG, tail: SDFG) -> None:
     """Splice ``tail``'s control-flow graph after ``base``'s sink, in place.
 
@@ -289,13 +307,18 @@ class NormalizeMapBody(ppl.Pass):
 
     def _merge_siblings(self, state: SDFGState, siblings: list[nodes.NestedSDFG]) -> bool:
         """Merge sibling NestedSDFGs in ``state`` into ``siblings[0]`` by
-        sequencing their control-flow graphs. Returns True on success."""
+        sequencing their control-flow graphs. Returns whether any sibling was merged."""
         keep = siblings[0]
         base = keep.sdfg
+        merged = False
         for drop in siblings[1:]:
             carried = shared_carrier_connectors(state, keep, drop)
             if carried is None:
-                return False
+                break
+            if linked_through_other_nodes(state, keep, drop, {carrier for _, carrier in carried.values()}):
+                # The merged node would feed the nodes between and read them back: a cycle
+                continue
+            merged = True
             tail = copy.deepcopy(drop.sdfg)
             # Same-named symbols are shared, unless the siblings bind them to different values (``OTFMapFusion``
             # replicates a producer per element it recomputes, each with its own ``_i0``): those are renamed apart
@@ -407,4 +430,4 @@ class NormalizeMapBody(ppl.Pass):
         # would get ``base`` as its owner and later miss that SDFG's own arrays.
         for blk in base.all_control_flow_blocks():
             blk.sdfg = base
-        return True
+        return merged
