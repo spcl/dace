@@ -546,6 +546,7 @@ def _scatter_idx_targets_for_loop(
     loop_arrays: dict[str, set[str]] = {}
     dim_nodes_by_arr: dict[str, list[ast.AST]] = {}
     outside: set[str] | None = None
+    read: set[str] = set()
     for state in region.states():
         for node in state.data_nodes():
             if state.in_degree(node) == 0:
@@ -554,31 +555,41 @@ def _scatter_idx_targets_for_loop(
             if desc is None:
                 continue
             if desc.transient:
-                # A transient the loop alone uses is iteration scratch; one used outside it is a scatter target
+                # A transient the loop alone uses is iteration scratch, one it reads is state it consults
+                # (nfa_frontier's ``enabled[s]``); only one the loop writes for later is a scatter target
                 if outside is None:
                     outside = used_outside(sdfg, region)
-                if node.data not in outside:
+                    read = {n.data for st in region.states() for n in st.data_nodes() if st.out_degree(n) > 0} | {
+                        m.data for e in region.all_interstate_edges() for m in e.data.get_read_memlets(sdfg.arrays)
+                    }
+                if node.data not in outside or node.data in read:
                     continue
             for e in state.in_edges(node):
                 if e.data is None or e.data.subset is None or not indirect_write_needs_injectivity(e.data):
                     continue
+                found: dict[str, list[ast.AST] | None] = {}
                 # Form 1: interstate-bound index symbol referenced in the write subset.
                 for sym in e.data.subset.free_symbols:
                     chain = [str(sym)]
                     if str(sym) not in bindings and str(sym) in chained:
                         outer, inner = chained[str(sym)]
-                        loop_arrays.setdefault(outer, set()).add(node.data)
+                        found.setdefault(outer, None)
                         chain = [inner]
                     for name in chain:
                         binding = bindings.get(name)
                         if binding is not None:
-                            arr, dim_nodes = binding
-                            loop_arrays.setdefault(arr, set()).add(node.data)
-                            dim_nodes_by_arr.setdefault(arr, dim_nodes)
+                            found.setdefault(binding[0], binding[1])
                 # Form 2: index array inline-subscripted inside the write subset.
                 for arr, dim_nodes in _inline_indirect_idx_arrays(e.data.subset, loop_var, sdfg).items():
+                    found.setdefault(arr, dim_nodes)
+                # A transient target is guarded through arguments only: a transient index array is filled by the
+                # program, and a guard hoisted to the entry would read it before it is (nfa_frontier's frontier)
+                if desc.transient and any(sdfg.arrays[arr].transient for arr in found):
+                    continue
+                for arr, dim_nodes in found.items():
                     loop_arrays.setdefault(arr, set()).add(node.data)
-                    dim_nodes_by_arr.setdefault(arr, dim_nodes)
+                    if dim_nodes is not None:
+                        dim_nodes_by_arr.setdefault(arr, dim_nodes)
         # Form 3: nested-SDFG data-dependent write.
         for arr, tgts in _nested_dynamic_scatter_idx_arrays(state, sdfg, loop_var).items():
             loop_arrays.setdefault(arr, set()).update(tgts)
