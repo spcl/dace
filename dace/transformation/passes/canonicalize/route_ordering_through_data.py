@@ -78,13 +78,17 @@ def viewed_data(state: SDFGState) -> dict[str, str | None]:
 
 def accesses(state: SDFGState, node: nodes.Node, roots: dict[str, str | None]) -> tuple[set[str], set[str]] | None:
     """``(touched, written)`` data of ``node``, views resolved to what they alias; ``None`` where a view
-    does not resolve. An access node touches its own data and writes it where a data edge other than a
-    view's binding comes in; a map entry only reads (its out-edges carry its inputs into the scope); any
+    does not resolve. An access node touches its own data and the source of a copy into it, and writes its
+    data where a data edge other than a view's binding comes in; a map entry only reads (its out-edges carry its inputs into the scope); any
     other node writes along its out-edges."""
     if isinstance(node, nodes.AccessNode):
         binding = sdutil.get_view_edge(state, node) if node.data in roots else None
         carrying = [e for e in state.all_edges(node) if not e.data.is_empty()]
         names = [node.data] if carrying else []
+        # A copy into the node runs there: the node reads the copy's source too
+        names += [
+            e.src.data for e in carrying if e.dst is node and e is not binding and isinstance(e.src, nodes.AccessNode)
+        ]
         written = [node.data] if any(e.dst is node and e is not binding for e in carrying) else []
     else:
         names = [e.data.data for e in state.all_edges(node) if not e.data.is_empty()]

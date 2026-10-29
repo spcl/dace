@@ -108,6 +108,27 @@ def test_parallel_copies_of_an_ordering_edge_guarding_a_write_after_read_keep_on
     assert dace.graphlib.has_path(state._nx, nest, writer), "the overwrite of a must stay after the nest's read"
 
 
+def test_ordering_edge_after_a_copy_reading_what_the_nest_updates_is_kept_in_order():
+    """``c = a`` is a copy into ``c``'s access node, then the nest updates ``a = a + 1`` from the same read of ``a``:
+    the copy reads ``a`` at ``c``'s node, so the edge from it to the nest guards a write after read even though
+    ``c`` itself is not ``a``."""
+    sdfg = dace.SDFG("ordering_war_copy")
+    for array in ("a", "c"):
+        sdfg.add_array(array, [N], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    nest = add_one_nest(state, "ordering_war_copy_nest", "a", "a")
+    read = next(e.src for e in state.in_edges(nest) if not e.data.is_empty())
+    copy_target = state.add_write("c")
+    state.add_nedge(read, copy_target, dace.Memlet("a[0:N] -> [0:N]"))
+    state.add_nedge(copy_target, nest, dace.Memlet())
+    sdfg.validate()
+    RouteOrderingThroughData().apply_pass(sdfg, {})
+    assert dace.graphlib.has_path(state._nx, copy_target, nest), "the update of a must stay after the copy"
+    a, c = np.arange(5.0), np.zeros(5)
+    sdfg(a=a, c=c, N=5)
+    assert np.allclose(c, np.arange(5.0)) and np.allclose(a, np.arange(5.0) + 1.0)
+
+
 def test_ordering_edge_that_anchors_an_access_node_in_its_map_is_kept():
     """Inside a map, an access node read from outside data and reached only by the nest's ordering edge
     belongs to the map through that edge alone (velocity_tendencies after the GPU offload). Dropping it
@@ -202,3 +223,4 @@ if __name__ == "__main__":
     test_ordering_edge_that_anchors_an_access_node_in_its_map_is_kept()
     test_nest_sharing_a_sink_gets_its_own_access_node_and_inlines()
     test_parallel_copies_of_an_ordering_edge_guarding_a_write_after_read_keep_one()
+    test_ordering_edge_after_a_copy_reading_what_the_nest_updates_is_kept_in_order()
