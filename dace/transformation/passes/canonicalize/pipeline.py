@@ -723,8 +723,6 @@ def loop_to_map_units(hold_sibling_chains: bool = False) -> list[ppl.Pass]:
     lift.expand_buffers = True
     return [
         PropagateMemlets(),
-        # A scalar argument promoted to a symbol since ingestion is under the contract too (its step orients a map)
-        SetSymbolNonnegativeAssumptions(),
         lift,
         PatternApplyOnceEverywhere([PruneConnectors()]),
     ]
@@ -944,7 +942,6 @@ def derive_parallelism(
         (label, AccumulatorCopyChainToWCR()),
         (label, RetargetWCRAccumulator()),
         (label, PropagateMemlets()),
-        (label, SetSymbolNonnegativeAssumptions()),
         (label, ParallelizeLoops(propagate=False, hold_sibling_chains=True)),
         (label, PrivatizeScalars()),
         (label, PrivatizeArrays()),
@@ -986,7 +983,7 @@ def derive_parallelism(
     s += [(label, RevertNonReductionWCR()), *_inline_single_state(label)]
     if target == "gpu":
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
-    s += [(label, FuseLoops()), (label, PropagateMemlets()), (label, SetSymbolNonnegativeAssumptions())]
+    s += [(label, FuseLoops()), (label, PropagateMemlets())]
     s += [(label, Parallelize(target=target, hold_sibling_chains=False))]
     s += [(label, PatternApplyOnceEverywhere([PruneConnectors()]))]
     return s
