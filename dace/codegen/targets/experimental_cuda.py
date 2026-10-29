@@ -21,6 +21,7 @@ from dace.codegen.targets.cuda import (
     chiplet_count,
     compute_pool_release,
     distribute_over_chiplets,
+    fold_grid_x,
     dynamic_map_input_args,
     dynamic_shared_memory_request,
     gpu_cmake_options,
@@ -1213,6 +1214,9 @@ class KernelSpec:
         self.chiplets: int = chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, False, [])
         self.grid_dims, self.chiplet_chunk = distribute_over_chiplets(
             kernel_map_entry, list(self.grid_dims), self.chiplets
+        )
+        self.grid_dims, self.grid_folded = fold_grid_x(
+            cudaCodeGen.backend, list(self.grid_dims), list(self.block_dims), self.chiplets == 1
         )
         self.index_types: dict[str, dtypes.typeclass] = common.gpu_map_index_types(
             sdfg,
