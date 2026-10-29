@@ -899,7 +899,7 @@ class CPPUnparser:
                         self.write(f", {power})")
                     self.write(")")
                     return
-                elif power is not None and float(power) == 0.5 or float(power) == -0.5:  # Square root
+                elif power is not None and float(power) in (0.5, -0.5):  # Square root
                     if float(power) == -0.5:
                         # rsqrt
                         self.write("reciprocal(")
@@ -909,6 +909,19 @@ class CPPUnparser:
                     if float(power) == -0.5:
                         self.write(")")
                     return
+
+            # A ``p/q`` exponent is C++ integer division: ``pow(x, 1/3)`` is ``pow(x, 0)``
+            negated = isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub)
+            quotient = t.right.operand if negated else t.right
+            if isinstance(quotient, ast.BinOp) and isinstance(quotient.op, ast.Div):
+                self.write("dace::math::pow(")
+                self.dispatch(t.left)
+                self.write(", -(" if negated else ", ")
+                self.dispatch(quotient.left)
+                self.write("), " if negated else ", ")
+                self.dispatch(quotient.right)
+                self.write(")")
+                return
 
             # General pow operator
             self.write("dace::math::pow(")
