@@ -682,9 +682,40 @@ def test_a_masked_subtraction_in_a_nested_body_keeps_its_sign():
     assert acc[0] == 92.0
 
 
+def test_a_tasklet_subscripting_its_wcr_output_keeps_its_index():
+    """``o[p] = a`` writes one element of the whole-array ``X[0:9]`` memlet the tasklet indexes itself: a scalar
+    partial between it and the map exit would drop ``p`` and fold every update into ``X[0]``."""
+    sdfg = dace.SDFG("wcr_subscripted_tasklet_output")
+    for name in ("IN", "X"):
+        sdfg.add_array(name, [9], dace.float64)
+    sdfg.add_array("P", [8], dace.int64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", {"i": "0:8"})
+    tasklet = state.add_tasklet("t", {"a", "p"}, {"o"}, "o[p] = a")
+    state.add_memlet_path(state.add_read("IN"), entry, tasklet, dst_conn="a", memlet=dace.Memlet("IN[i]"))
+    state.add_memlet_path(state.add_read("P"), entry, tasklet, dst_conn="p", memlet=dace.Memlet("P[i]"))
+    state.add_memlet_path(
+        tasklet,
+        exit_,
+        state.add_write("X"),
+        src_conn="o",
+        memlet=dace.Memlet("X[0:9]", wcr="lambda x, y: x + y", dynamic=True),
+    )
+    NormalizeWCR().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    rng = np.random.default_rng(0)
+    IN, P, X = rng.random(9), rng.integers(0, 9, 8), np.zeros(9)
+    sdfg(IN=IN, P=P, X=X)
+    ref = np.zeros(9)
+    np.add.at(ref, P, IN[:8])
+    assert np.allclose(X, ref)
+
+
 if __name__ == "__main__":
     import sys
 
     sys.exit(pytest.main([__file__, "-v"]))
     test_a_masked_count_two_map_levels_deep_keeps_its_accumulator_path_named()
     test_a_masked_subtraction_in_a_nested_body_keeps_its_sign()
+    test_a_tasklet_subscripting_its_wcr_output_keeps_its_index()

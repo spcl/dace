@@ -837,6 +837,9 @@ class NormalizeWCR(ppl.Pass):
             # elements the iteration never wrote (``PrivatizeScatterReduction`` owns the reducible ones).
             if isinstance(src, nodes.NestedSDFG) and is_data_dependent_scatter_sink(src, src_conn):
                 continue
+            # A tasklet writing more than one element subscripts its connector (``o[p] = ...``): no scalar holds that
+            if isinstance(src, nodes.Tasklet) and e.data.subset.num_elements() != 1:
+                continue
             target_desc = sdfg.arrays.get(e.data.data) if e.data.data else None
             inner = self.partial_source_descriptor(src, src_conn, target_desc)
             if inner is None:
