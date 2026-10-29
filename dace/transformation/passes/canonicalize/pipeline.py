@@ -128,7 +128,6 @@ from dace.transformation.passes.loop_stride_permutation import LoopStridePermuta
 from dace.transformation.passes.loop_to_reduce import (
     AccumulatorCopyChainToWCR,
     LoopToReduce,
-    RetargetWCRAccumulator,
 )
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.loop_to_state_scan import LoopToStateScan
@@ -930,7 +929,6 @@ def derive_parallelism(
     s += [
         (label, FuseChainedScalarReductions()),
         (label, AccumulatorCopyChainToWCR()),
-        (label, RetargetWCRAccumulator()),
         (label, PropagateMemlets()),
         (label, SetSymbolNonnegativeAssumptions()),
         (label, ParallelizeLoopsHoldingSiblingChains(propagate=False)),
