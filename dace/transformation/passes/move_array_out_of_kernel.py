@@ -128,10 +128,19 @@ def level_prefix(levels: list[Level], chain: list[nodes.MapEntry]) -> Prefix:
         inside = level.entry in chain
         for param, (start, end, step), origin in zip(level.params, rng, rng.min_element(), strict=True):
             if inside:
-                prefix.append((param - origin, param - origin, sympy.S.One))
-            else:
+                index = slot(param - origin, step)
+                prefix.append((index, index, sympy.S.One))
+            elif step == 1:
                 prefix.append((start - origin, end - origin, step))
+            else:
+                prefix.append((slot(start - origin, step), slot(end - origin, step), sympy.S.One))
     return prefix
+
+
+def slot(offset: symbolic.SymbolicType, step: symbolic.SymbolicType) -> symbolic.SymbolicType:
+    """The slot of the iteration ``offset`` past a level's first one: one slot per iteration, also for a strided level
+    (a tile grid), whose slots would otherwise leave ``step - 1`` unused between two."""
+    return offset if step == 1 else symbolic.int_floor(offset, step)
 
 
 def single_point(prefix: Prefix, label: str, name: str) -> list[str]:
@@ -235,7 +244,10 @@ def prepend_levels(desc: dt.Array, levels: list[nodes.MapEntry]) -> tuple[list[s
     shape, offset = list(desc.shape), list(desc.offset)
     for level in levels:
         rng = level.map.range
-        shape = [tile_extent(mx, mn) for mx, mn in zip(rng.max_element(), rng.min_element(), strict=True)] + shape
+        shape = [
+            tile_extent(mx, mn) if step == 1 else symbolic.int_ceil(tile_extent(mx, mn), step)
+            for mx, mn, (_, _, step) in zip(rng.max_element(), rng.min_element(), rng, strict=True)
+        ] + shape
         offset = [0] * len(level.map.params) + offset
     return shape, offset
 

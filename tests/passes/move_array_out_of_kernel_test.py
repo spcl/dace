@@ -274,19 +274,20 @@ def flat_offsets(desc: dace.data.Array, subset: dace.subsets.Range, values: dict
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
-def test_a_kernel_starting_above_zero_indexes_its_slice_from_the_first_iteration(layout):
-    """The lifted dimension holds the trip count, so iteration ``i`` of ``1:127`` owns row ``i - 1``."""
+@pytest.mark.parametrize("start, end, step, trips", [(1, 126, 1, 126), (0, 127, 2, 64)])
+def test_the_lifted_dimension_holds_one_row_per_kernel_iteration(start, end, step, trips, layout):
+    """Iteration ``i`` of ``start:end+1:step`` owns row ``(i - start) // step``: no row is skipped or shared."""
     sdfg = kernel_with_internal_transient()
     kernel = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry))
-    kernel.map.range = dace.subsets.Range([(1, 126, 1)])
+    kernel.map.range = dace.subsets.Range([(start, end, step)])
     lift(sdfg, layout)
 
     desc = sdfg.arrays["buf"]
-    assert tuple(desc.shape) == (126, 1024), desc.shape
+    assert tuple(desc.shape) == (trips, 1024), desc.shape
     total = int(desc.total_size)
     inner = [e for e in sdfg.start_state.edges() if e.data.data == "buf" and isinstance(e.src, dace.nodes.Tasklet)]
-    firsts = {flat_offsets(desc, inner[0].data.subset, {"i": i})[0] for i in range(1, 127)}
-    assert min(firsts) == 0 and max(firsts) < total, (min(firsts), max(firsts), total)
+    firsts = {flat_offsets(desc, inner[0].data.subset, {"i": i})[0] for i in range(start, end + 1, step)}
+    assert len(firsts) == trips and min(firsts) == 0 and max(firsts) < total, (len(firsts), max(firsts), total)
 
 
 KERNEL_EXTENT, BLOCK_EXTENT, SCRATCH_EXTENT = 3, 5, LIMIT + 1
@@ -1131,7 +1132,8 @@ if __name__ == "__main__":
     test_a_tasklet_body_naming_a_lifted_buffer_gains_the_kernel_index()
     test_a_cpp_tasklet_subscripting_a_lifted_buffer_is_refused()
     for layout in LAYOUTS:
-        test_a_kernel_starting_above_zero_indexes_its_slice_from_the_first_iteration(layout)
+        test_the_lifted_dimension_holds_one_row_per_kernel_iteration(1, 126, 1, 126, layout)
+        test_the_lifted_dimension_holds_one_row_per_kernel_iteration(0, 127, 2, 64, layout)
         test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel(layout)
     test_lift_translates_a_locally_named_shape_symbol_through_symbol_mapping()
     test_lift_gives_descendant_nested_sdfgs_the_lifted_descriptor()
