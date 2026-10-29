@@ -9,6 +9,7 @@ from dace import graphlib as nx
 from dace.config import Config
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
+from dace.sdfg.replace import replace_in_codeblock
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
@@ -191,9 +192,15 @@ class BufferSharing:
         if not renamed:
             return {}
         for state in self.sdfg.states():
-            for node in state.data_nodes():
-                if node.data in renamed:
+            for node in state.nodes():
+                if isinstance(node, nodes.AccessNode) and node.data in renamed:
                     node.data = renamed[node.data]
+                # A Python tasklet may name a container in its code (``InlineTaskletConnectors``), not by connector
+                elif isinstance(node, nodes.Tasklet) and node.language is dtypes.Language.Python:
+                    names = renamed.keys() - node.in_connectors.keys() - node.out_connectors.keys()
+                    code_repl = {name: renamed[name] for name in names if name in node.code.as_string}
+                    if code_repl:
+                        replace_in_codeblock(node.code, code_repl, node, self.sdfg)
             # Scope connectors passing a renamed array through are named after it.
             moved: dict[tuple[nodes.Node, str], str] = {}
             for edge in state.edges():

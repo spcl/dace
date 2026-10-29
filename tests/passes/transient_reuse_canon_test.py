@@ -78,6 +78,26 @@ def test_sequential_states_share_one_buffer():
     assert np.allclose(C, 3 * (2 * A + 1) - 1)
 
 
+def test_a_container_tasklet_code_names_is_renamed_in_the_code():
+    """After ``InlineTaskletConnectors`` a tasklet names ``T2`` in its code; sharing ``T1`` renames it there too."""
+    from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
+
+    sdfg = new_sdfg("reuse_inlined_tasklet_code", ["A", "B", "C"], ["T1", "T2"])
+    chain(sdfg.add_state("s0", is_start_block=True), "A", "2 * x", "T1", "x + 1", "B")
+    chain(sdfg.add_state_after(sdfg.start_block, "s1"), "B", "3 * x", "T2", "x - 1", "C")
+    InlineTaskletConnectors().apply_pass(sdfg, {})
+    assert any("T2" in n.code.as_string for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.Tasklet))
+
+    assert reuse(sdfg) == {sdfg.cfg_id: {"T2": "T1"}}
+    assert not any(
+        "T2" in n.code.as_string for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.Tasklet)
+    )
+    A = np.random.rand(N_VALUE)
+    B, C = np.zeros(N_VALUE), np.zeros(N_VALUE)
+    run(sdfg, A=A, B=B, C=C)
+    assert np.allclose(C, 3 * (2 * A + 1) - 1)
+
+
 def test_same_state_reader_of_one_writing_the_other_keeps_both():
     sdfg = new_sdfg("reuse_same_state_reversal", ["A", "B", "C"], ["T1", "T2", "T3"])
     state = sdfg.add_state("s0", is_start_block=True)
