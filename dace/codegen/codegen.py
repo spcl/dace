@@ -513,6 +513,16 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # ``const_init``: transients that only store literals become ``constexpr`` SDFG constants.
         if config.Config.get("compiler", "cpu", "codegen_params", "const_init") == "on":
             PromoteConstantTransients().apply_pass(sdfg, {})
+        # The CUDA preprocess lifts in-kernel arrays too, but after the inlining below froze their accesses
+        # into tasklet code, so the readable path lifts them first.
+        if sdfg_uses_gpu(sdfg):
+            from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
+
+            move_arrays = MoveArrayOutOfKernel()
+            move_arrays.raise_on_unsupported = False
+            if move_arrays.apply_pass(sdfg, {}) is not None:
+                infer_types.infer_connector_types(sdfg)
+                infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Renames shared containers, so it must precede the inlining that writes data names into tasklet code.
         PrivatizeKernelSharedMemory().apply_pass(sdfg, {})
         InlineTaskletConnectors().apply_pass(sdfg, {})

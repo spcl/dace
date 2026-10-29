@@ -352,8 +352,102 @@ class TrivialMapEliminationWithDynamicMapRangesTest(unittest.TestCase):
         self.assertEqual(count2, 0)
 
 
+def test_an_ordering_edge_into_the_removed_map_still_orders_its_body():
+    """``t0 -> A -(empty)-> map[i=0] { t1 -> A }``: the empty edge is all that orders the two writes of ``A``."""
+    sdfg = dace.SDFG("ordering_into_entry")
+    sdfg.add_array("A", [1], dace.float64)
+    state = sdfg.add_state()
+    first = state.add_access("A")
+    t0 = state.add_tasklet("t0", {}, {"o"}, "o = 1")
+    state.add_edge(t0, "o", first, None, dace.Memlet("A[0]"))
+    me, mx = state.add_map("trivial", {"i": "0:1"})
+    t1 = state.add_tasklet("t1", {}, {"o"}, "o = 2")
+    state.add_edge(first, None, me, None, dace.Memlet())
+    state.add_edge(me, None, t1, None, dace.Memlet())
+    state.add_memlet_path(t1, mx, state.add_access("A"), src_conn="o", memlet=dace.Memlet("A[0]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    sdfg.validate()
+    assert networkx.has_path(state.nx, first, t1)
+
+
+def test_a_body_node_the_entry_reaches_only_by_an_ordering_edge_stays_after_the_inputs():
+    """``P -> C; C -(empty)-> B -> map[i=0] { B -> t1; (empty) -> t2 -> C }``: ``t2`` overwrites ``C`` and only the
+    map ordered it after ``P``."""
+    sdfg = dace.SDFG("ordering_out_of_entry")
+    for name in "BCD":
+        sdfg.add_array(name, [1], dace.float64)
+    state = sdfg.add_state()
+    c_first = state.add_access("C")
+    p = state.add_tasklet("p", {}, {"o"}, "o = 1")
+    state.add_edge(p, "o", c_first, None, dace.Memlet("C[0]"))
+    b = state.add_access("B")
+    state.add_edge(c_first, None, b, None, dace.Memlet())
+    me, mx = state.add_map("trivial", {"i": "0:1"})
+    t1 = state.add_tasklet("t1", {"x"}, {"y"}, "y = x")
+    state.add_memlet_path(b, me, t1, dst_conn="x", memlet=dace.Memlet("B[0]"))
+    state.add_memlet_path(t1, mx, state.add_access("D"), src_conn="y", memlet=dace.Memlet("D[0]"))
+    t2 = state.add_tasklet("t2", {}, {"o"}, "o = 2")
+    state.add_edge(me, None, t2, None, dace.Memlet())
+    state.add_memlet_path(t2, mx, state.add_access("C"), src_conn="o", memlet=dace.Memlet("C[0]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    sdfg.validate()
+    assert networkx.has_path(state.nx, c_first, t2)
+
+
+def test_an_ordering_edge_out_of_the_removed_map_still_orders_its_body():
+    """``map[i=0] { A -> t1 -> D } -(empty)-> t3 -> A``: ``t3`` overwrites what ``t1`` reads, ordered by the exit."""
+    sdfg = dace.SDFG("ordering_out_of_exit")
+    for name in "AD":
+        sdfg.add_array(name, [1], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("trivial", {"i": "0:1"})
+    t1 = state.add_tasklet("t1", {"x"}, {"y"}, "y = x")
+    state.add_memlet_path(state.add_access("A"), me, t1, dst_conn="x", memlet=dace.Memlet("A[0]"))
+    state.add_memlet_path(t1, mx, state.add_access("D"), src_conn="y", memlet=dace.Memlet("D[0]"))
+    t3 = state.add_tasklet("t3", {}, {"o"}, "o = 3")
+    state.add_edge(mx, None, t3, None, dace.Memlet())
+    state.add_edge(t3, "o", state.add_access("A"), None, dace.Memlet("A[0]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    sdfg.validate()
+    assert networkx.has_path(state.nx, t1, t3)
+
+
+def test_the_order_reaches_a_nested_scope_at_its_entry():
+    """The removed map's body is a nested map: its order attaches to the nested entry, never inside the scope."""
+    sdfg = dace.SDFG("ordering_nested_scope")
+    sdfg.add_array("A", [4], dace.float64)
+    state = sdfg.add_state()
+    first = state.add_access("A")
+    t0 = state.add_tasklet("t0", {}, {"o"}, "o = 1")
+    state.add_edge(t0, "o", first, None, dace.Memlet("A[0]"))
+    me, mx = state.add_map("trivial", {"i": "0:1"})
+    ie, ix = state.add_map("inner", {"j": "0:4"})
+    t1 = state.add_tasklet("t1", {}, {"o"}, "o = 2")
+    state.add_edge(first, None, me, None, dace.Memlet())
+    state.add_edge(me, None, ie, None, dace.Memlet())
+    state.add_edge(ie, None, t1, None, dace.Memlet())
+    state.add_memlet_path(t1, ix, mx, state.add_access("A"), src_conn="o", memlet=dace.Memlet("A[j]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    sdfg.validate()
+    assert networkx.has_path(state.nx, first, t1)
+    assert state.scope_dict()[t1] is ie
+    assert all(e.src is ie for e in state.in_edges(t1))
+
+
 if __name__ == "__main__":
     test_removing_a_trivial_map_keeps_the_order_its_empty_edges_held()
     test_removing_a_trivial_map_keeps_the_order_its_data_inputs_held()
     test_removing_a_trivial_map_orders_a_nested_scope_by_its_entry()
+    test_an_ordering_edge_into_the_removed_map_still_orders_its_body()
+    test_a_body_node_the_entry_reaches_only_by_an_ordering_edge_stays_after_the_inputs()
+    test_an_ordering_edge_out_of_the_removed_map_still_orders_its_body()
+    test_the_order_reaches_a_nested_scope_at_its_entry()
     unittest.main()
