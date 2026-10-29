@@ -201,22 +201,43 @@ class BufferSharing:
                     code_repl = {name: renamed[name] for name in names if name in node.code.as_string}
                     if code_repl:
                         replace_in_codeblock(node.code, code_repl, node, self.sdfg)
-            # Scope connectors passing a renamed array through are named after it.
-            moved: dict[tuple[nodes.Node, str], str] = {}
+            # Scope connectors passing a renamed array through are named after it, unless a scope already has that
+            # name: connector names need not match their data, so another array may hold it.
+            moved: dict[tuple[nodes.Node, str], bool] = {}
+
+            def renames(node: nodes.Node, old: str) -> bool:
+                if (node, old) not in moved:
+                    new = renamed[old]
+                    moved[(node, old)] = (
+                        f"IN_{new}" not in node.in_connectors and f"OUT_{new}" not in node.out_connectors
+                    )
+                return moved[(node, old)]
+
             for edge in state.edges():
                 old = edge.data.data
                 if old not in renamed:
                     continue
                 edge.data.data = renamed[old]
-                if isinstance(edge.src, (nodes.EntryNode, nodes.ExitNode)) and edge.src_conn == f"OUT_{old}":
-                    moved[(edge.src, edge.src_conn)] = edge.src_conn = f"OUT_{renamed[old]}"
-                if isinstance(edge.dst, (nodes.EntryNode, nodes.ExitNode)) and edge.dst_conn == f"IN_{old}":
-                    moved[(edge.dst, edge.dst_conn)] = edge.dst_conn = f"IN_{renamed[old]}"
-            for (node, old), new in moved.items():
-                if old.startswith("IN_"):
-                    node.add_in_connector(new, node.in_connectors.pop(old), force=True)
-                else:
-                    node.add_out_connector(new, node.out_connectors.pop(old), force=True)
+                src, dst = edge.src, edge.dst
+                if (
+                    isinstance(src, (nodes.EntryNode, nodes.ExitNode))
+                    and edge.src_conn == f"OUT_{old}"
+                    and renames(src, old)
+                ):
+                    edge.src_conn = f"OUT_{renamed[old]}"
+                if (
+                    isinstance(dst, (nodes.EntryNode, nodes.ExitNode))
+                    and edge.dst_conn == f"IN_{old}"
+                    and renames(dst, old)
+                ):
+                    edge.dst_conn = f"IN_{renamed[old]}"
+            for (node, old), rename in moved.items():
+                if not rename:
+                    continue
+                if f"IN_{old}" in node.in_connectors:
+                    node.add_in_connector(f"IN_{renamed[old]}", node.in_connectors.pop(f"IN_{old}"), force=True)
+                if f"OUT_{old}" in node.out_connectors:
+                    node.add_out_connector(f"OUT_{renamed[old]}", node.out_connectors.pop(f"OUT_{old}"), force=True)
         for name in renamed:
             self.sdfg.remove_data(name, validate=False)
         return renamed

@@ -443,6 +443,38 @@ def test_gpu_transients_shared_only_on_one_stream(streams):
     assert np.allclose(C, 3 * (2 * A + 1) - 1)
 
 
+def test_a_scope_connector_named_after_another_array_keeps_the_renamed_one_apart():
+    """Connector names need not match their data: a map passing ``B`` through ``IN_T1`` also reads ``T2``, which is
+    renamed to ``T1``; its connector keeps its own name instead of becoming a second ``IN_T1``."""
+    sdfg = new_sdfg("reuse_taken_connector", ["A", "B", "C"], ["T1", "T2"])
+    chain(sdfg.add_state("s0", is_start_block=True), "A", "2 * x", "T1", "x + 1", "B")
+    s1 = sdfg.add_state_after(sdfg.start_block, "s1")
+    chain(s1, "B", "3 * x", "T2")
+    t2 = next(n for n in s1.data_nodes() if n.data == "T2")
+    b = next(n for n in s1.data_nodes() if n.data == "B")
+    _, entry, _ = s1.add_mapped_tasklet(
+        "T2_plus_B",
+        {"i": "0:N"},
+        {"x": Memlet("T2[i]"), "z": Memlet("B[i]")},
+        "y = x + z",
+        {"y": Memlet("C[i]")},
+        input_nodes={"T2": t2, "B": b},
+        external_edges=True,
+    )
+    for edge in s1.in_edges_by_connector(entry, "IN_B"):
+        edge.dst_conn = "IN_T1"
+    for edge in s1.out_edges_by_connector(entry, "OUT_B"):
+        edge.src_conn = "OUT_T1"
+    entry.add_in_connector("IN_T1", entry.in_connectors.pop("IN_B"), force=True)
+    entry.add_out_connector("OUT_T1", entry.out_connectors.pop("OUT_B"), force=True)
+
+    assert reuse(sdfg) == {sdfg.cfg_id: {"T2": "T1"}}
+    A = np.random.rand(N_VALUE)
+    B, C = np.zeros(N_VALUE), np.zeros(N_VALUE)
+    run(sdfg, A=A, B=B, C=C)
+    assert np.allclose(C, 4 * (2 * A + 1))
+
+
 if __name__ == "__main__":
     test_sequential_states_share_one_buffer()
     test_same_state_reader_of_one_writing_the_other_keeps_both()
@@ -459,3 +491,4 @@ if __name__ == "__main__":
     test_in_map_transients_share_only_when_allocated_outside_the_map()
     test_gpu_transients_shared_only_on_one_stream(-1)
     test_gpu_transients_shared_only_on_one_stream(0)
+    test_a_scope_connector_named_after_another_array_keeps_the_renamed_one_apart()
