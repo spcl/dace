@@ -1004,19 +1004,23 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         first_state, second_state, match_nodes, nodes_first, nodes_second, False, False
                     ):
                         return False
-                # A second-state read of a first-state output orders only the writers downstream of it: refuse when
-                # another writer in this component overwrites what the first state wrote.
+                # A second-state read of a first-state output merges with one first-state instance: it orders a
+                # first-state writer upstream of that instance before a second-state writer downstream of the read,
+                # and no other pair. Refuse when an unordered pair overlaps.
                 for cand in sorted((fused_cc.first_outputs & fused_cc.second_outputs) & fused_cc.second_inputs):
-                    reads = [m for m in match_nodes.values() if m.data == cand]
-                    loose = [
-                        n
-                        for n in fused_cc.second_output_nodes
-                        if n.data == cand and not any(nx.has_path(second_state._nx, m, n) for m in reads)
-                    ]
-                    if loose and StateFusionExtended.memlets_intersect(
-                        first_state, first_output_by_data.get(cand, []), False, second_state, loose, False, facts
-                    ):
-                        return False
+                    merged = [(a, b) for a, b in match_nodes.items() if a.data == cand]
+                    seconds = [n for n in fused_cc.second_output_nodes if n.data == cand]
+                    for w1 in first_output_by_data.get(cand, []):
+                        for w2 in seconds:
+                            if any(
+                                nx.has_path(first_state._nx, w1, a) and nx.has_path(second_state._nx, b, w2)
+                                for a, b in merged
+                            ):
+                                continue
+                            if StateFusionExtended.memlets_intersect(
+                                first_state, [w1], False, second_state, [w2], False, facts
+                            ):
+                                return False
                 # End of write-write hazard check
 
                 first_inout = fused_cc.first_inputs | fused_cc.first_outputs

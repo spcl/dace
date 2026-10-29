@@ -94,6 +94,35 @@ def test_waw_write_after_write():
     _assert_fusion_preserves_semantics(sdfg, 1, A=a)
 
 
+def test_waw_after_a_merged_read_from_another_first_state_writer_stays_ordered():
+    """first: X[6] = A[6] and X[7] = A[7] through two X nodes;  second: X[0:9] = 0 after an X read.
+
+    The second-state read merges with one first-state X node only, so the overwrite must still follow both writers.
+    """
+    sdfg = SDFG("fuse_waw_other_first_writer")
+    sdfg.add_array("X", [9], dtypes.float64)
+    sdfg.add_array("A", [9], dtypes.float64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    a = s1.add_read("A")
+    wa = s1.add_tasklet("wa", {"i"}, {"o"}, "o = i")
+    wb = s1.add_tasklet("wb", {"i"}, {"o"}, "o = i")
+    s1.add_edge(a, None, wa, "i", Memlet("A[6]"))
+    s1.add_edge(a, None, wb, "i", Memlet("A[7]"))
+    s1.add_edge(wa, "o", s1.add_write("X"), None, Memlet("X[6]"))
+    s1.add_edge(wb, "o", s1.add_write("X"), None, Memlet("X[7]"))
+    _, me, _ = s2.add_mapped_tasklet("w2", {"i": "0:9"}, {}, "o = 0.0", {"o": Memlet("X[i]")}, external_edges=True)
+    s2.add_nedge(s2.add_read("X"), me, Memlet())
+    sdfg.validate()
+    w2 = next(n for n in s2.nodes() if n.label == "w2")
+
+    sdfg.apply_transformations_repeated(StateFusionExtended)
+    if sdfg.number_of_nodes() == 1:
+        st = sdfg.start_state
+        assert nx.has_path(st.nx, wa, w2) and nx.has_path(st.nx, wb, w2), "the overwrite of X is unordered"
+
+
 def test_waw_beside_a_read_of_the_same_array_stays_ordered():
     """first: X[0:9] = 1;  second: X[0:4] *= 2 and, beside it in the same component, X[4:9] = 0.
 
