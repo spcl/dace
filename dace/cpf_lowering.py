@@ -1523,13 +1523,12 @@ def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str
     teardown = ""
     if exit_code.strip():
         teardown = f"""\
-    auto __cpf_teardown = [&]() {{
-{exit_code}
-    }};
     struct __cpf_exit {{
-        decltype(__cpf_teardown) &run;
-        ~__cpf_exit() {{ run(); }}
-    }} __cpf_exit_guard{{__cpf_teardown}};
+        {state_struct} *__state;
+        ~__cpf_exit() {{
+{exit_code}
+        }}
+    }} __cpf_exit_guard{{__state}};
 """
     return f"""\
     // The device handshake, which a single entry point has nowhere else to put.
