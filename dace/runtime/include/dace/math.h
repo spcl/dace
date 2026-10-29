@@ -833,6 +833,15 @@ DACE_HDFI auto pow(const T& a, const dace::float16& b) {
 static DACE_HDFI dace::float16 pow(const dace::float16& a, const dace::float16& b) {
   return dace::float16(std::pow(float(a), float(b)));
 }
+// ``a ** (p / q)`` in the base's floating type R, double for an integral base as ``int ** float`` in NumPy.
+// ``p`` and ``q`` may be symbols: the quotient is computed in F, never integer division or half precision.
+template <typename T, typename P, typename Q>
+DACE_HDFI auto pow(const T& a, const P& p, const Q& q) {
+  using R = typename std::conditional<std::is_integral<T>::value, double, T>::type;
+  using F = typename std::conditional<std::is_integral<T>::value, double, decltype(a + 0.0f)>::type;
+  const F e = F(p) / F(q);
+  return R(pow(F(a), e));
+}
 
 template <typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
 DACE_CONSTEXPR DACE_HDFI T ifloor(const T& a) {

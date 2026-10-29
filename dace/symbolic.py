@@ -2775,29 +2775,34 @@ def sympy_divide_fix(expr):
     if not isinstance(expr, sympy.Basic):
         return expr
 
-    processed = 1
-    while processed > 0:
-        processed = 0
-        for candidate in nexpr.find(sympy.Mul):
-            for i, arg in enumerate(candidate.args):
-                if isinstance(arg, sympy.Number) and abs(arg) >= 1:
-                    continue
-                if isinstance(arg, sympy.Number) and (1 / arg) == int(1 / arg):
-                    ri = i
-                    break
-            else:
-                continue
-            rest = sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1 :]))
-            # Only an integer quotient is a floor division: ``x / 2`` over a double ``x`` is a half.
-            if not integral_index_expression(rest):
-                continue
-            # DaCe's ``int_floor``, not an undefined ``Function("int_floor")``: that one carries no
-            # integrality or sign, so no later query could reason about the quotient. Unevaluated, as the
-            # loop re-scans the expression and an exact quotient would fold back to the ``Mul``.
-            nexpr = nexpr.subs(candidate, int_floor(rest, int(1 / candidate.args[ri]), evaluate=False))
-            processed += 1
+    def rewrite(node):
+        if not isinstance(node, sympy.Basic):
+            return node
+        if isinstance(node, sympy.Pow) and not node.exp.is_integer:
+            # The printer lowers a non-integer exponent's exact quotient itself.
+            base = rewrite(node.base)
+            return node if base == node.base else node.func(base, node.exp)
 
-    return nexpr
+        args = tuple(rewrite(arg) for arg in node.args)
+        candidate = node if args == node.args else node.func(*args)
+        if not isinstance(candidate, sympy.Mul):
+            return candidate
+        for i, arg in enumerate(candidate.args):
+            if isinstance(arg, sympy.Number) and abs(arg) >= 1:
+                continue
+            if isinstance(arg, sympy.Number) and (1 / arg) == int(1 / arg):
+                ri = i
+                break
+        else:
+            return candidate
+        rest = sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1 :]))
+        # Only an integer quotient is a floor division: ``x / 2`` over a double ``x`` is a half.
+        if not integral_index_expression(rest):
+            return candidate
+        # Unevaluated, so an exact quotient cannot fold back to the Mul.
+        return int_floor(rest, int(1 / candidate.args[ri]), evaluate=False)
+
+    return rewrite(nexpr)
 
 
 @cache
@@ -4476,12 +4481,20 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return None
         return tuple(self.c_type(argument) for argument in arguments)
 
+    def c_power_exponent_type(self, base_type: str | None) -> str:
+        if base_type is None:
+            return "float32" if self.fp_ctype == "float" else "float64"
+        result = cpf_lowering.c_math_result_type("pow", (base_type, base_type))
+        return "float32" if result in ("float32", "complex64") else "float64"
+
     def c_power_types(self, expr) -> tuple[str | None, ...] | None:
-        """The C types of a printed ``pow``'s operands. A non-integer rational exponent prints as a
+        """The C types of a printed ``pow``'s operands. A non-integer quotient exponent prints as a
         floating quotient (see :meth:`_print_Pow`), not as the integer fraction its sympy atom is."""
         types = self.c_argument_types(expr.args)
-        if types is not None and isinstance(expr.args[1], sympy.Rational) and not expr.args[1].is_Integer:
-            types = (types[0], "float32" if self.fp_ctype == "float" else "float64")
+        if types is not None and not expr.args[1].is_integer:
+            _, den = sympy.fraction(sympy.together(expr.args[1]))
+            if den != 1:
+                types = (types[0], self.c_power_exponent_type(types[0]))
         return types
 
     def c_type(self, expr) -> str | None:
@@ -4686,12 +4699,18 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                     return lowered if lowered is not None else f"dace::math::sqrt({base})"
             except ValueError:
                 pass
-            # A non-integer rational exponent must reach C++ as a FLOATING quotient; the bare
-            # ``p/q`` would truncate to an integer and silently change the power.
-            if isinstance(expr.args[1], sympy.Rational) and not expr.args[1].is_Integer:
-                saved, self.fp_ctype = self.fp_ctype, (self.fp_ctype or "double")
-                exponent = "(%s / %s)" % (self._fp_literal(expr.args[1].p), self._fp_literal(expr.args[1].q))
-                self.fp_ctype = saved
+            if not expr.args[1].is_integer:
+                num, den = sympy.fraction(sympy.together(expr.args[1]))
+                if den != 1:
+                    if self.dialect is cpf_lowering.Dialect.RUNTIME:
+                        return f"dace::math::pow({base}, {self._print(num)}, {self._print(den)})"
+                    exponent_type = self.c_power_exponent_type(self.c_type(expr.args[0]))
+                    saved, self.fp_ctype = self.fp_ctype, ("float" if exponent_type == "float32" else "double")
+                    exponent = "(%s / %s)" % (
+                        self._fp_literal(self._print(num)),
+                        self._fp_literal(self._print(den)),
+                    )
+                    self.fp_ctype = saved
 
         # Special case for integer powers
         try:

@@ -433,6 +433,10 @@ class CPPUnparser:
             return cpf_lowering.c_common_type((base,))
         if power is not None and float(power) in (0.5, -0.5):
             return cpf_lowering.c_math_result_type("sqrt", (base,))
+        negated = isinstance(node.right, ast.UnaryOp) and isinstance(node.right.op, ast.USub)
+        quotient = node.right.operand if negated else node.right
+        if isinstance(quotient, ast.BinOp) and isinstance(quotient.op, ast.Div):
+            return cpf_lowering.c_math_result_type("pow", (base, base))
         exponent = self.c_type(node.right)
         return None if exponent is None else cpf_lowering.c_math_result_type("pow", (base, exponent))
 
@@ -1416,6 +1420,35 @@ class CPPUnparser:
                 root = runtime_call("dace::math::sqrt", [self.render(t.left)], self.c_argument_types([t.left]))
                 # rsqrt
                 self.write(runtime_call("reciprocal", [root]) if float(power) == -0.5 else root)
+                return
+
+            # A ``p/q`` exponent is C++ integer division: ``pow(x, 1/3)`` is ``pow(x, 0)``
+            negated = isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub)
+            quotient = t.right.operand if negated else t.right
+            if isinstance(quotient, ast.BinOp) and isinstance(quotient.op, ast.Div):
+                if not cpf_lowering.standalone():
+                    self.write("dace::math::pow(")
+                    self.dispatch(t.left)
+                    self.write(", -(" if negated else ", ")
+                    self.dispatch(quotient.left)
+                    self.write("), " if negated else ", ")
+                    self.dispatch(quotient.right)
+                    self.write(")")
+                else:
+                    base_type = self.c_type(t.left)
+                    if base_type is None:
+                        exponent_type = "float64"
+                    else:
+                        result_type = cpf_lowering.c_math_result_type("pow", (base_type, base_type))
+                        exponent_type = "float32" if result_type in ("float32", "complex64") else "float64"
+                    ctype = "float" if exponent_type == "float32" else "double"
+                    numerator = self.typecast(ctype, self.render(quotient.left))
+                    denominator = self.typecast(ctype, self.render(quotient.right))
+                    exponent = "(%s / %s)" % (numerator, denominator)
+                    if negated:
+                        exponent = "(-%s)" % exponent
+                    types = (base_type, exponent_type) if cpf_lowering.standalone_c() else None
+                    self.write(runtime_call("dace::math::pow", [self.render(t.left), exponent], types))
                 return
 
             # General pow operator
