@@ -1,8 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``BranchNormalization`` keeps an ``if/else`` whose arms bind a symbol a later block reads (triangle_count).
+"""``BranchNormalization`` and the interstate symbol bindings around and inside a conditional.
 
-Split into ``if c`` then ``if not c``, each binding sits under its own conditional, so the nested SDFG reads the
-symbol as possibly undefined and the parent fails validation with "Missing symbols on nested SDFG".
+* An ``if/else`` whose arms bind a symbol a later block reads is kept (triangle_count): split into ``if c`` then
+  ``if not c``, each binding sits under its own conditional, so the reader sees the symbol as possibly undefined.
+* An arm-entry binding that reads a symbol the in-edge assigns is not hoisted onto that edge (spgemm_hash): the
+  assignments of one edge are simultaneous, so the hoisted read would race the assignment.
 """
 
 import numpy as np
@@ -58,6 +60,38 @@ def test_if_else_binding_a_symbol_read_after_stays_valid():
         assert np.array_equal(b[:n], a[:n]) and not b[n:].any(), (c, b)
 
 
+def test_arm_binding_reading_an_in_edge_symbol_is_not_hoisted():
+    """``k = idx[0]; if k >= 0: v = A[k]; B[0] = v``."""
+    sdfg = dace.SDFG("hoist_reads_in_edge_symbol")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_array("idx", [1], dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_symbol("v", dace.float64)
+    head = sdfg.add_state("head", is_start_block=True)
+    cb = ConditionalBlock("guard", sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(cb)
+    sdfg.add_edge(head, cb, dace.InterstateEdge(assignments={"k": "idx[0]"}))
+    arm = ControlFlowRegion("arm", sdfg=sdfg, parent=cb)
+    enter = arm.add_state("enter", is_start_block=True)
+    write = arm.add_state("write")
+    arm.add_edge(enter, write, dace.InterstateEdge(assignments={"v": "A[k]"}))
+    tasklet = write.add_tasklet("store", {}, {"b"}, "b = v")
+    write.add_edge(tasklet, "b", write.add_access("B"), None, dace.Memlet("B[0]"))
+    cb.add_branch(CodeBlock("k >= 0"), arm)
+    sdfg.validate()
+
+    BranchNormalization().apply_pass(sdfg, {})
+
+    sdfg.validate()
+    a = np.arange(1, 5, dtype=np.float64)
+    for k, expected in ((2, 3.0), (-1, 0.0)):
+        b = np.zeros(1)
+        sdfg(A=a, B=b, idx=np.array([k], dtype=np.int64))
+        assert b[0] == expected, (k, b)
+
+
 if __name__ == "__main__":
     test_if_else_binding_a_symbol_read_after_stays_valid()
+    test_arm_binding_reading_an_in_edge_symbol_is_not_hoisted()
     print("ok")

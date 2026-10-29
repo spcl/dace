@@ -251,6 +251,8 @@ class BranchNormalization(ppl.Pass):
         for c, _br in cb.branches:
             if c is not None:
                 pred_syms |= symbolic.symbols_in_code(c.as_string if isinstance(c, CodeBlock) else str(c))
+        # Assignments on one edge are simultaneous: a hoisted binding may not read a symbol an in-edge assigns.
+        in_assigned = {sym for ie in in_edges for sym in ie.data.assignments}
         hoisted = False
         for _c, br in cb.branches:
             sb = br.start_block
@@ -263,8 +265,8 @@ class BranchNormalization(ppl.Pass):
             assigns = dict(e.data.assignments)
             hoistable = True
             for sym, expr in assigns.items():
-                if symbolic.symbols_in_code(str(expr)) & arm_assigned:
-                    hoistable = False  # RHS depends on an arm-produced symbol
+                if symbolic.symbols_in_code(str(expr)) & (arm_assigned | in_assigned):
+                    hoistable = False  # RHS depends on an arm-produced symbol or one the in-edge assigns
                     break
                 if sym in pred_syms:
                     hoistable = False  # would change which branch is taken
@@ -300,6 +302,7 @@ class BranchNormalization(ppl.Pass):
                     sym: expr
                     for sym, expr in e.data.assignments.items()
                     if sym not in pred_syms
+                    and not symbolic.symbols_in_code(str(expr)) & in_assigned
                     and self._sdfg_constant_binding(cb.sdfg, sym, str(expr))
                     and all(str(ie.data.assignments.get(sym, expr)) == str(expr) for ie in in_edges)
                 }
