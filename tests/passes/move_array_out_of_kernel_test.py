@@ -1091,6 +1091,24 @@ def test_wcr_np_sum_small_n_auto_staging():
     assert total[0] == np.sum(A)
 
 
+def test_a_kernel_level_access_above_a_per_thread_scratch_is_refused():
+    """A kernel-level write of ``tmp`` would span every thread's slice, yet the tasklet produces one value."""
+    sdfg = kernel_with_a_thread_block_around_its_scratch()
+    state = sdfg.start_state
+    entries = {n.map.schedule: n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)}
+    init = state.add_tasklet("init", {}, {"__out": None}, "__out = 0.0")
+    state.add_nedge(entries[GPU_DEVICE], init, dace.Memlet())
+    zeroed = state.add_access("tmp")
+    state.add_edge(init, "__out", zeroed, None, dace.Memlet("tmp[0]"))
+    state.add_nedge(zeroed, entries[dtypes.ScheduleType.GPU_ThreadBlock], dace.Memlet())
+    sdfg.validate()
+    sut = MoveArrayOutOfKernel()
+    sut.register_demotion_max_elements = 0
+
+    with pytest.raises(NotImplementedError, match="outside the kernel levels"):
+        sut.apply_pass(sdfg, {})
+
+
 if __name__ == "__main__":
     test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel()
     test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads()
@@ -1143,3 +1161,4 @@ if __name__ == "__main__":
     for program, expected in [(aug_assign, lambda A: A[0].sum(keepdims=True)), (row_reduce, lambda A: A.sum(axis=1))]:
         test_a_non_transient_accumulator_keeps_its_storage_and_sums(program, expected)
     test_wcr_np_sum_small_n_auto_staging()
+    test_a_kernel_level_access_above_a_per_thread_scratch_is_refused()

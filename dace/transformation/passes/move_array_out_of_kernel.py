@@ -128,9 +128,21 @@ def path_ends(state: SDFGState, edge: MultiConnectorEdge) -> tuple[nodes.Node, n
     return path[0].src, path[-1].dst
 
 
+def _main(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
+    """The exact form of a ``SymExpr``. ``int_floor`` is a sympy function and cannot take the pair."""
+    return expr.expr if isinstance(expr, symbolic.SymExpr) else expr
+
+
+def _approx(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
+    return expr.approx if isinstance(expr, symbolic.SymExpr) else expr
+
+
 def slot(offset: symbolic.SymbolicType, step: symbolic.SymbolicType) -> symbolic.SymbolicType:
     """The slot of the iteration ``offset`` past a level's first one: one slot per iteration, also for a strided level
     (a tile grid), whose slots would otherwise leave ``step - 1`` unused between two."""
+    # A tiled bound is a ``SymExpr`` (exact end, over-approximation). sympy cannot construct ``int_floor`` from it.
+    if isinstance(offset, symbolic.SymExpr) or isinstance(step, symbolic.SymExpr):
+        return symbolic.SymExpr(slot(_main(offset), _main(step)), slot(_approx(offset), _approx(step)))
     return offset if step == 1 else symbolic.int_floor(offset, step)
 
 
@@ -452,6 +464,15 @@ class MoveArrayOutOfKernel(ppl.Pass):
             if edge.data.data == name
             or any(isinstance(node, nodes.AccessNode) and node.data == name for node in path_ends(state, edge))
         ]
+        # An access that neither enters nor leaves a scope names one slice; above a slicing level it would span all
+        for edge, prefix, state in prefixes:
+            crosses = (
+                edge.data.is_empty() or isinstance(edge.dst, nodes.EntryNode) or isinstance(edge.src, nodes.ExitNode)
+            )
+            if not crosses and any(dim[0] != dim[1] for dim in prefix):
+                raise NotImplementedError(
+                    f"Memlet {edge.data} in {state.label} reads '{name}' outside the kernel levels it is lifted by"
+                )
         desc = owner.arrays[name]
         hierarchy = sdfg_chain(owner, kernel_state.sdfg)
         extent_bounds = self.extent_bounds(desc, hierarchy, kernel, kernel_state)

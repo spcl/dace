@@ -204,6 +204,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
         ) as scope_manager:
             self.write_scope_hint(self._current_kernel_spec.kernel_map_entry, cfg, state_id, callsite_stream)
             scope_manager.open(prefix=self.kernel_signature(dfg_scope))
+            self.codegen._frame.generate_constants(sdfg, callsite_stream)
 
             kernel_spec = self._current_kernel_spec
             kernel_entry_node = kernel_spec.kernel_map_entry  # == dfg_scope.source_nodes()[0]

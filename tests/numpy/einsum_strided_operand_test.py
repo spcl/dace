@@ -10,6 +10,7 @@ import numpy as np
 
 import dace
 from dace.frontend.common.einsum import create_einsum_sdfg
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 N, C, O, H, W, K = (dace.symbol(s) for s in "NCOHWK")
 
@@ -101,9 +102,32 @@ def test_einsum_column_major_batch_is_copied():
     assert np.allclose(out, np.einsum("bmk,bkn->bmn", a, b))
 
 
+def test_a_blas_gemm_copies_an_operand_simplify_turned_back_into_a_view():
+    """Simplify turns the frontend's dense copy of ``w[:, :, 1, 2]`` back into a view, so the BLAS lowering copies it."""
+    sdfg = one_tap.to_sdfg(simplify=True)
+    assert isinstance(sdfg.arrays["w_0_dense"], dace.data.View)
+    auto_optimize(sdfg, dace.DeviceType.CPU)
+    sdfg.expand_library_nodes()
+    gemm_reads = [
+        state.sdfg.arrays[edge.data.data]
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.Tasklet) and "gemm" in node.code.as_string
+        for edge in state.in_edges(node)
+        if not edge.data.is_empty()
+    ]
+    assert gemm_reads, "auto_optimize lowered the einsum to no BLAS call"
+    assert all(any(stride == 1 for stride in desc.strides[-2:]) for desc in gemm_reads), gemm_reads
+
+    rng = np.random.default_rng(0)
+    x, w, out = rng.random((2, 3, 8, 9)), rng.random((4, 3, 3, 3)), np.zeros((2, 4, 6, 7))
+    sdfg(x=x, w=w, out=out, N=2, C=3, O=4, H=8, W=9, K=3)
+    assert np.allclose(out, np.einsum("nchw,oc->nohw", x[:, :, 1:7, 2:9], w[:, :, 1, 2]))
+
+
 if __name__ == "__main__":
     test_einsum_tap_of_weight_view()
     test_einsum_strided_matrix_operand()
     test_einsum_column_major_matrix_is_not_copied()
     test_einsum_column_major_output()
     test_einsum_column_major_batch_is_copied()
+    test_a_blas_gemm_copies_an_operand_simplify_turned_back_into_a_view()

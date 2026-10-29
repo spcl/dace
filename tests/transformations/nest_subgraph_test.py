@@ -970,6 +970,22 @@ def test_inlining_the_nest_back_keeps_the_declared_type():
     assert sdfg.symbols["i"] == dace.int32
 
 
+def test_an_sdfg_nested_in_a_moved_state_gets_the_new_sdfg_as_parent():
+    """The loop body calls a nested SDFG; after nesting the loop, that SDFG's parent is the new nested SDFG."""
+    sdfg, loop = loop_through_a_scalar(read_after=False)
+    body = loop.start_block
+    inner = nest_state_subgraph(sdfg, body, SubgraphView(body, body.nodes()))
+
+    outer = nested_node(nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop])))
+
+    assert inner.sdfg.parent_sdfg is outer.sdfg
+    sdfg.validate()
+    x = np.random.default_rng(5).random(16)
+    a = np.zeros(16)
+    sdfg(a=a, x=x, N=16)
+    assert np.allclose(a, x * 2.0 + 1.0)
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -1004,3 +1020,4 @@ if __name__ == "__main__":
     test_a_symbol_the_subgraph_owns_keeps_its_declared_type()
     test_a_symbol_the_subgraph_assigns_keeps_its_declared_type()
     test_inlining_the_nest_back_keeps_the_declared_type()
+    test_an_sdfg_nested_in_a_moved_state_gets_the_new_sdfg_as_parent()

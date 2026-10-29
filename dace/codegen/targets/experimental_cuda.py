@@ -1124,7 +1124,12 @@ class KernelSpec:
             f"_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}"
         )
 
-        self.arglist: dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
+        # A constant array is declared inside the kernel (``generate_constants``), so it is no argument
+        self.arglist: dict[str, dt.Data] = {
+            name: desc
+            for name, desc in cudaCodeGen._kernel_arglists[kernel_map_entry].items()
+            if name not in sdfg.constants
+        }
 
         kernel_const_data = kernel_read_only_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
