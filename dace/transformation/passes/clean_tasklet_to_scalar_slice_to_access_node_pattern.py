@@ -267,7 +267,6 @@ class CleanTaskletToScalarSliceToAccessNodePattern(ppl.Pass):
                         # Not reused: drop the scalar and wire the tasklet
                         # output straight into the sink (array AccessNode or
                         # MapExit connector).
-                        state.remove_node(an_slice)
                         state.add_edge(
                             ie.src,
                             ie.src_conn,
@@ -275,6 +274,7 @@ class CleanTaskletToScalarSliceToAccessNodePattern(ppl.Pass):
                             oe.dst_conn,
                             dace.memlet.Memlet(data=array_name, subset=write_subset),
                         )
+                        state.remove_node(an_slice)
 
                     folded += 1
 

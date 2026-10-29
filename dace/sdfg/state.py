@@ -1745,7 +1745,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def keep_order_through(self, removed: Sequence[nd.Node]) -> None:
         """Before ``removed`` leave the state: order each live node before the live nodes it reached only through
         them, by empty edges (one predecessor or successor) or through one empty ``order_hub`` tasklet. Skips
-        predecessors that are access nodes nothing writes, pairs a direct edge already orders, and pairs that would
+        predecessors that are access nodes nothing writes, pairs another path already orders, and pairs that would
         cross a scope boundary.
         """
         gone = set(removed)
@@ -1766,8 +1766,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     for e in self.out_edges(node):
                         if e.dst in gone:
                             stack.append((e.dst, level))
-                        elif level == 0 and e.dst is not src and not self.edges_between(src, e.dst):
+                        elif level == 0 and e.dst is not src:
                             found.add(e.dst)
+                found = self.not_reached_without(src, found, gone)
                 if found:
                     reached[src] = found
         groups: dict[tuple, list[nd.Node]] = {}
@@ -1784,6 +1785,21 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 self.add_nedge(src, hub, mm.Memlet())
             for dst in found:
                 self.add_nedge(hub, dst, mm.Memlet())
+
+    def not_reached_without(self, src: nd.Node, targets: OrderedSet, gone: set) -> OrderedSet:
+        """The ``targets`` no path from ``src`` that avoids the ``gone`` nodes reaches."""
+        left = OrderedSet(targets)
+        seen = {src}
+        stack = [src]
+        while stack and left:
+            for edge in self.out_edges(stack.pop()):
+                dst = edge.dst
+                if dst in gone or dst in seen:
+                    continue
+                seen.add(dst)
+                left.discard(dst)
+                stack.append(dst)
+        return left
 
     def detach_node(self, node):
         """Remove ``node`` and its edges, without keeping the order it carried (see :meth:`remove_node`)."""
