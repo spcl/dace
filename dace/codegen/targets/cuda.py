@@ -37,6 +37,7 @@ from dace.sdfg import (
     ScopeSubgraphView,
     SDFGState,
     has_dynamic_map_inputs,
+    infer_types,
     is_array_stream_view,
     is_devicelevel_gpu,
     memlet_utils,
@@ -51,7 +52,7 @@ from dace.transformation import gpu_helpers
 from dace.transformation import helpers as xfh
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes import analysis as ap
-from dace.transformation.passes import gpu_shared_memory
+from dace.transformation.passes import gpu_shared_memory, move_array_out_of_kernel
 
 if TYPE_CHECKING:
     from dace.codegen.targets.cpu import CPUCodeGen
@@ -201,6 +202,15 @@ class CUDACodeGen(TargetCodeGenerator):
         self._codeobject = CodeObject(
             sdfg.name + "_" + "cuda", "", self.language, CUDACodeGen, "CUDA", target_type=target_type
         )
+
+        # A kernel allocates neither GPU_Global memory nor dynamically sized registers. Before thread-block maps are
+        # added, so that a lifted size names no tile symbol.
+        move_arrays = move_array_out_of_kernel.MoveArrayOutOfKernel()
+        move_arrays.raise_on_unsupported = False
+        if move_arrays.apply_pass(sdfg, {}) is not None:
+            # The moved arrays bring new connectors and access nodes, which code generation already typed for the rest.
+            infer_types.infer_connector_types(sdfg)
+            infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
         # TODO: Below implementation is a bit wasteful to iterate over all nodes.
         # Better: Do this in a dedicated pass and do not e.g. recurse further into

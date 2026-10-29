@@ -25,6 +25,7 @@ REGISTER = dtypes.StorageType.Register
 GPU_DEVICE = dtypes.ScheduleType.GPU_Device
 SEQUENTIAL = dtypes.ScheduleType.Sequential
 LIMIT = MoveArrayOutOfKernel().register_limit
+LAYOUTS = ["coalesced", "contiguous"]
 ROWS, COLS = 8, 8
 
 B_I, N = sympy.symbols("b_i N")
@@ -43,17 +44,18 @@ def test_tile_extent(max_elem, min_elem, expected):
 
 
 @pytest.mark.parametrize(
-    "ranges, shape, strides, expected_shape, expected_strides",
+    "ranges, shape, strides, expected_shape, coalesced_strides, contiguous_strides",
     [
-        (dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [2048, 64, 1]),
-        (dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [64, 1, 4]),
-        (dict(i="0:8"), [4, 16], [32, 2], None, None),
+        (dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [32, 1, 4096], [2048, 64, 1]),
+        (dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [1, 8, 32], [64, 1, 4]),
+        (dict(i="0:8"), [4, 16], [32, 2], None, None, None),
     ],
 )
-def test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
-    ranges, shape, strides, expected_shape, expected_strides
+def test_lifted_dimensions_are_prepended_keeping_the_own_layout(
+    ranges, shape, strides, expected_shape, coalesced_strides, contiguous_strides
 ):
-    """Map dimensions lead as the slowest axes; C or Fortran keep their own axes, any other layout is refused."""
+    """Map dimensions vary fastest when coalesced, the last (``threadIdx.x``) innermost, and slowest when contiguous;
+    C or Fortran keep the order of their own axes, any other layout is refused."""
     state = dace.SDFG("move_array_strides").add_state("s")
     me, _ = state.add_map("kernel", ranges, schedule=GPU_DEVICE)
     arr = dace.data.Array(dace.float64, shape, strides=strides)
@@ -62,11 +64,12 @@ def test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
             lifted_layout(arr, [me])
         return
 
-    layout = lifted_layout(arr, [me])
+    for coalesced, expected_strides in ((True, coalesced_strides), (False, contiguous_strides)):
+        layout = lifted_layout(arr, [me], coalesced)
 
-    assert [int(s) for s in layout.shape] == expected_shape, layout.shape
-    assert [int(s) for s in layout.strides] == expected_strides, layout.strides
-    assert int(layout.total_size) == int(np.prod(expected_shape)), layout.total_size
+        assert [int(s) for s in layout.shape] == expected_shape, layout.shape
+        assert [int(s) for s in layout.strides] == expected_strides, layout.strides
+        assert int(layout.total_size) == int(np.prod(expected_shape)), layout.total_size
 
 
 def kernel_with_internal_transient(shape=(1024,), storage=GLOBAL) -> dace.SDFG:
@@ -119,18 +122,20 @@ def kernel_with_transient_behind_a_nested_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def buf_scopes(sdfg: dace.SDFG) -> list:
+def buf_scopes(sdfg: dace.SDFG, name: str = "buf") -> list:
     return [
         state.scope_dict()[node]
         for sub in sdfg.all_sdfgs_recursive()
         for state in sub.states()
         for node in state.data_nodes()
-        if node.data == "buf"
+        if node.data == name
     ]
 
 
-def lift(sdfg: dace.SDFG) -> int | None:
-    return MoveArrayOutOfKernel().apply_pass(sdfg, {})
+def lift(sdfg: dace.SDFG, layout: str = "coalesced") -> int | None:
+    sut = MoveArrayOutOfKernel()
+    sut.layout = layout
+    return sut.apply_pass(sdfg, {})
 
 
 @pytest.mark.parametrize("storage", [REGISTER, dtypes.StorageType.Default])
@@ -184,18 +189,39 @@ def test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(lifeti
     sdfg.validate()
 
 
-@pytest.mark.parametrize("storage", [REGISTER, dtypes.StorageType.Default])
-def test_a_symbolically_sized_per_thread_array_is_moved_to_global_memory(storage):
+def test_a_reference_is_not_moved():
+    """A reference names memory its ``set`` connector gives it (e.g. a memlet access policy's cursor), so it owns
+    nothing to move."""
+    sdfg = kernel_with_internal_transient((NX,), REGISTER)
+    sdfg.arrays["buf"] = dace.data.ArrayReference(dace.float64, (NX,), storage=REGISTER, transient=True)
+
+    assert lift(sdfg) is None
+
+    assert isinstance(sdfg.arrays["buf"], dace.data.ArrayReference) and sdfg.arrays["buf"].storage == REGISTER
+
+
+def test_a_symbolically_sized_register_array_is_moved_to_global_memory():
     """GPUs cannot hold a variable-length array in registers."""
     sdfg = wrap_kernel_around_a_body_it_never_reaches()
     body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
-    body.arrays["tmp"].storage = storage
+    body.arrays["tmp"].storage = REGISTER
 
     assert lift(sdfg) == 1
 
     assert sdfg.arrays["tmp"].storage == GLOBAL and len(sdfg.arrays["tmp"].shape) == 2, sdfg.arrays["tmp"]
     assert body.arrays["tmp"].storage == GLOBAL and not body.arrays["tmp"].transient
     sdfg.validate()
+
+
+def test_a_default_storage_array_is_left_to_storage_inference():
+    """``Default`` is not known to be per-thread; code generation resolves it before the pass runs."""
+    sdfg = wrap_kernel_around_a_body_it_never_reaches()
+    body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    body.arrays["tmp"].storage = dtypes.StorageType.Default
+
+    assert lift(sdfg) is None
+
+    assert "tmp" not in sdfg.arrays and body.arrays["tmp"].transient
 
 
 def test_transient_behind_a_nested_sdfg_is_lifted_through_the_boundary():
@@ -247,20 +273,20 @@ def flat_offsets(desc: dace.data.Array, subset: dace.subsets.Range, values: dict
     )
 
 
-@pytest.mark.parametrize("start, end, step, trips", [(1, 126, 1, 126), (0, 127, 2, 64)])
-def test_the_lifted_dimension_holds_one_row_per_kernel_iteration(start, end, step, trips):
-    """Iteration ``i`` of ``start:end+1:step`` owns row ``(i - start) // step``: no row is skipped or shared."""
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_kernel_starting_above_zero_indexes_its_slice_from_the_first_iteration(layout):
+    """The lifted dimension holds the trip count, so iteration ``i`` of ``1:127`` owns row ``i - 1``."""
     sdfg = kernel_with_internal_transient()
     kernel = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry))
-    kernel.map.range = dace.subsets.Range([(start, end, step)])
-    lift(sdfg)
+    kernel.map.range = dace.subsets.Range([(1, 126, 1)])
+    lift(sdfg, layout)
 
     desc = sdfg.arrays["buf"]
-    assert tuple(desc.shape) == (trips, 1024), desc.shape
+    assert tuple(desc.shape) == (126, 1024), desc.shape
     total = int(desc.total_size)
     inner = [e for e in sdfg.start_state.edges() if e.data.data == "buf" and isinstance(e.src, dace.nodes.Tasklet)]
-    firsts = {flat_offsets(desc, inner[0].data.subset, {"i": i})[0] for i in range(start, end + 1, step)}
-    assert len(firsts) == trips and min(firsts) == 0 and max(firsts) < total, (len(firsts), max(firsts), total)
+    firsts = {flat_offsets(desc, inner[0].data.subset, {"i": i})[0] for i in range(1, 127)}
+    assert min(firsts) == 0 and max(firsts) < total, (min(firsts), max(firsts), total)
 
 
 KERNEL_EXTENT, BLOCK_EXTENT, SCRATCH_EXTENT = 3, 5, LIMIT + 1
@@ -290,14 +316,21 @@ def kernel_with_a_thread_block_around_its_scratch() -> dace.SDFG:
     return sdfg
 
 
-def test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel():
-    """Shape gains ``[KERNEL, BLOCK]`` outermost first; every access leads with ``[i, t]`` and each map exit carries
-    exactly the slices of its own iterations (a whole-buffer edge would lower to a racing copy)."""
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel(layout):
+    """Shape gains ``[KERNEL, BLOCK]`` outermost first; every access leads with ``[i, t]`` and no map exit carries data
+    (an edge between two accesses of one array is a copy into the whole array, which races)."""
     sdfg = kernel_with_a_thread_block_around_its_scratch()
-    lift(sdfg)
+    lift(sdfg, layout)
 
     desc = sdfg.arrays["tmp"]
     assert [int(s) for s in desc.shape] == [KERNEL_EXTENT, BLOCK_EXTENT, SCRATCH_EXTENT], desc.shape
+    # Coalesced: neighboring threads ``t`` touch neighboring elements; contiguous: one thread's slice is consecutive
+    expected = {
+        "coalesced": [BLOCK_EXTENT, 1, KERNEL_EXTENT * BLOCK_EXTENT],
+        "contiguous": [BLOCK_EXTENT * SCRATCH_EXTENT, SCRATCH_EXTENT, 1],
+    }[layout]
+    assert [int(s) for s in desc.strides] == expected, desc.strides
     accesses = [
         e
         for e in sdfg.start_state.edges()
@@ -312,12 +345,10 @@ def test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel():
         }
         assert len(offsets) == KERNEL_EXTENT * BLOCK_EXTENT, f"{edge.data}: two iterations share one slice"
         assert min(offsets) >= 0 and max(offsets) < int(desc.total_size), (edge.data, min(offsets), max(offsets))
-    moved = {
-        e.dst.map.label: int(e.data.subset.num_elements())
-        for e in sdfg.start_state.edges()
-        if isinstance(e.dst, dace.nodes.MapExit) and e.data.data == "tmp"
-    }
-    assert moved == {"block": SCRATCH_EXTENT, "kernel": BLOCK_EXTENT * SCRATCH_EXTENT}, moved
+    moved = [str(e.data) for e in sdfg.start_state.edges() if isinstance(e.dst, dace.nodes.MapExit) and e.data.data]
+    assert all(not m.startswith("tmp") for m in moved), moved
+    outside = [n for n in sdfg.start_state.data_nodes() if n.data == "tmp" and sdfg.start_state.entry_node(n) is None]
+    assert len(outside) == 1, "nothing places the array outside the kernel"
 
 
 def add_sequential_map(state: dace.SDFGState, param: str, extent, read: str, write: str, *, code: str):
@@ -478,8 +509,8 @@ def test_a_lift_binds_the_kernel_parameter_it_indexes_by():
     sdfg.validate()
 
 
-def test_a_nest_giving_the_kernel_parameter_its_own_meaning_keeps_its_transient():
-    """Inside a loop over ``w`` the lifted index would name the loop counter, so the transient is left in place."""
+def test_a_nest_looping_over_the_kernel_parameter_name_is_lifted_with_its_loop_renamed():
+    """Inside a loop over ``w`` the lifted index would name the loop counter, so the loop is renamed instead."""
     sdfg = wrap_kernel_around_a_body_it_never_reaches()
     body = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
     loop = LoopRegion("again", "w < 1", "w", "w = 0", "w = w + 1")
@@ -491,12 +522,13 @@ def test_a_nest_giving_the_kernel_parameter_its_own_meaning_keeps_its_transient(
     body.add_node(loop, is_start_block=True)
     sdfg.validate()
 
-    assert lift(sdfg) is None
+    assert lift(sdfg) == 1
 
-    assert "tmp" not in sdfg.arrays
-    assert tuple(body.arrays["tmp"].shape) == (NZ,) and body.arrays["tmp"].transient
-    nest = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
-    assert "tmp" not in nest.out_connectors and "w" not in nest.symbol_mapping
+    assert loop.loop_variable != "w", loop.loop_variable
+    assert len(body.arrays["tmp"].shape) == 2 and not body.arrays["tmp"].transient
+    accesses = [e.data for s in body.states() for e in s.edges() if e.data.data == "tmp"]
+    assert accesses and all(str(m.subset[0][0]) == "w" for m in accesses), [str(m) for m in accesses]
+    sdfg.validate()
 
 
 def test_a_nest_below_a_body_that_never_named_the_kernel_parameter_is_indexed_by_it():
@@ -577,7 +609,7 @@ def test_lift_does_not_bind_a_name_the_nest_assigns_itself():
     assert "k" not in sweep.symbol_mapping, sweep.symbol_mapping
     sdfg.validate()
     code = "".join(obj.clean_code for obj in sdfg.generate_code())
-    assert re.search(r"\w+ k;", code), "the loop counter is used without a declaration in scope"
+    assert re.search(r"\w+ k;|for \(\w+ k = ", code), "the loop counter is used without a declaration in scope"
 
 
 def kernel_with_interstate_buffer_read() -> dace.SDFG:
@@ -710,8 +742,8 @@ def test_a_transient_inside_a_loop_of_the_nested_body_is_lifted():
     sdfg.validate()
 
 
-def test_a_transient_shared_by_two_kernels_is_refused():
-    """One allocation used by two kernels has no single per-iteration slicing."""
+def kernel_with_a_transient_shared_by_two_kernels() -> dace.SDFG:
+    """``buf`` of :func:`kernel_with_internal_transient`, written again by a second kernel."""
     sdfg = kernel_with_internal_transient()
     second = sdfg.add_state_after(sdfg.start_state, "again")
     me, mx = second.add_map("kernel2", dict(i="0:128"), schedule=GPU_DEVICE)
@@ -721,6 +753,12 @@ def test_a_transient_shared_by_two_kernels_is_refused():
     second.add_edge(produce, "o", buf, None, dace.Memlet("buf[1]"))
     second.add_edge(buf, None, mx, None, dace.Memlet())
     sdfg.validate()
+    return sdfg
+
+
+def test_a_transient_shared_by_two_kernels_is_refused():
+    """One allocation used by two kernels has no single per-iteration slicing."""
+    sdfg = kernel_with_a_transient_shared_by_two_kernels()
 
     with pytest.raises(NotImplementedError, match="shared by the kernels"):
         lift(sdfg)
@@ -733,14 +771,14 @@ def test_code_mentioning_the_name_without_subscripting_it_is_returned_verbatim()
     assert prepend_subscript_indices("tmp[0]+1", "tmp", ["i"]) == "tmp[i, 0] + 1"
 
 
-def kernel_with_accumulator() -> dace.SDFG:
+def kernel_with_accumulator(rows: int = ROWS) -> dace.SDFG:
     """``out[i] = sum_j A[i, j]`` through a kernel-local one-element ``acc`` accumulated with a WCR."""
     sdfg = dace.SDFG("kernel_accumulator")
-    sdfg.add_array("A", [ROWS, COLS], dace.float64, storage=GLOBAL)
-    sdfg.add_array("out", [ROWS], dace.float64, storage=GLOBAL)
+    sdfg.add_array("A", [rows, COLS], dace.float64, storage=GLOBAL)
+    sdfg.add_array("out", [rows], dace.float64, storage=GLOBAL)
     sdfg.add_transient("acc", [1], dace.float64, storage=GLOBAL)
     state = sdfg.add_state("s")
-    kernel_entry, kernel_exit = state.add_map("kernel", dict(i=f"0:{ROWS}"), schedule=GPU_DEVICE)
+    kernel_entry, kernel_exit = state.add_map("kernel", dict(i=f"0:{rows}"), schedule=GPU_DEVICE)
     kernel_entry.map.gpu_block_size = [32, 1, 1]
     row_entry, row_exit = state.add_map("row", dict(j=f"0:{COLS}"), schedule=SEQUENTIAL)
 
@@ -777,11 +815,12 @@ def test_a_small_accumulator_is_lifted_not_demoted():
 
 
 @pytest.mark.gpu
-def test_the_lifted_accumulator_sums_each_row():
+def test_a_contiguous_lifted_accumulator_sums_each_row():
+    """Code generation lifts coalesced; this covers the contiguous layout end to end."""
     import cupy  # Only present on GPU runners.
 
     sdfg = kernel_with_accumulator()
-    lift(sdfg)
+    lift(sdfg, "contiguous")
     A = cupy.arange(ROWS * COLS, dtype=cupy.float64).reshape(ROWS, COLS)
     out = cupy.zeros(ROWS, dtype=cupy.float64)
 
@@ -791,18 +830,154 @@ def test_the_lifted_accumulator_sums_each_row():
 
 
 @pytest.mark.gpu
-def test_a_moved_symbolic_register_scratch_below_a_nested_sdfg_computes_the_right_values():
+def test_a_contiguous_symbolic_scratch_below_a_nested_sdfg_computes_the_right_values():
+    """Code generation lifts coalesced; this covers the contiguous layout through nests."""
     import cupy  # Only present on GPU runners.
 
     nx, nz = 5, 7
     host_a = np.random.default_rng(0).random((nx, nz))
     sdfg = kernel_with_scratch_below_a_nested_sdfg(REGISTER)
-    lift(sdfg)
+    lift(sdfg, "contiguous")
     out = cupy.zeros((nx, nz))
 
     sdfg(a=cupy.asarray(host_a), out=out, NX=nx, NZ=nz)
 
     assert np.allclose(cupy.asnumpy(out), host_a[:, ::-1] * 2.0 + 1.0)
+
+
+def test_a_transient_shared_by_two_kernels_is_left_in_place_by_code_generation():
+    """Code generation runs the pass without raising: what it cannot slice keeps its current lowering."""
+    sdfg = kernel_with_a_transient_shared_by_two_kernels()
+    sut = MoveArrayOutOfKernel()
+    sut.raise_on_unsupported = False
+
+    with pytest.warns(UserWarning, match="shared by the kernels"):
+        assert sut.apply_pass(sdfg, {}) is None
+
+    assert tuple(sdfg.arrays["buf"].shape) == (1024,)
+
+
+@pytest.mark.gpu
+def test_code_generation_gives_every_thread_its_own_scratch():
+    """Unlifted, every thread accumulates its row into one shared ``acc``; many blocks make the race show."""
+    import cupy  # Only present on GPU runners.
+
+    rows = 4096
+    sdfg = kernel_with_accumulator(rows)
+    A = cupy.arange(rows * COLS, dtype=cupy.float64).reshape(rows, COLS)
+    out = cupy.zeros(rows, dtype=cupy.float64)
+
+    sdfg(A=A, out=out)
+
+    assert np.array_equal(cupy.asnumpy(out), cupy.asnumpy(A).sum(axis=1))
+
+
+@pytest.mark.gpu
+def test_code_generation_computes_through_a_symbolic_scratch_below_a_nested_sdfg():
+    """The code generator lifts the scratch itself and types the connectors the lift adds."""
+    import cupy  # Only present on GPU runners.
+
+    nx, nz = 300, 7
+    host_a = np.random.default_rng(0).random((nx, nz))
+    sdfg = kernel_with_scratch_below_a_nested_sdfg(REGISTER)
+    out = cupy.zeros((nx, nz))
+
+    sdfg(a=cupy.asarray(host_a), out=out, NX=nx, NZ=nz)
+
+    assert np.allclose(cupy.asnumpy(out), host_a[:, ::-1] * 2.0 + 1.0)
+
+
+@pytest.mark.parametrize("schedule", [GPU_DEVICE, dtypes.ScheduleType.GPU_Persistent])
+def test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(schedule):
+    sdfg = kernel_with_internal_transient((NX,), REGISTER)
+    (kernel,) = [n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry)]
+    kernel.map.schedule = schedule
+
+    assert lift(sdfg) == 1
+
+    buf = sdfg.arrays["buf"]
+    assert buf.storage == GLOBAL and [str(d) for d in buf.shape] == ["128", "NX"], buf
+    assert buf_scopes(sdfg).count(None) == 1, "the moved array is allocated outside the kernel"
+    inner = [e.data for e in sdfg.start_state.edges() if e.data.data == "buf" and isinstance(e.src, dace.nodes.Tasklet)]
+    assert [str(m.subset[0][0]) for m in inner] == ["i"], [str(m) for m in inner]
+    sdfg.validate()
+
+
+def flat_symbolic_scratch() -> dace.SDFG:
+    sdfg = kernel_with_internal_transient((NX,), REGISTER)
+    next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.MapEntry)).map.gpu_block_size = [32, 1, 1]
+    return sdfg
+
+
+CODEGEN_CASES = {
+    "flat": (flat_symbolic_scratch, "buf", "NX"),
+    "nested": (lambda: kernel_with_scratch_below_a_nested_sdfg(REGISTER), "tmp", "NZ"),
+}
+
+
+@pytest.mark.parametrize("case", list(CODEGEN_CASES))
+def test_code_generation_moves_a_symbolic_scratch_out_of_the_kernel(case):
+    """C++ has no variable-length arrays: the CUDA code generator runs the pass itself, so the scratch is one
+    device allocation outside the kernel, not a per-thread one."""
+    build, name, extent = CODEGEN_CASES[case]
+
+    objects = build().generate_code()
+    host = "\n".join(obj.clean_code for obj in objects)
+    (device,) = [obj.clean_code for obj in objects if obj.language == "cu"]
+
+    assert not re.search(rf"double\s+{name}\s*\[\s*{extent}", device), f"{name} is declared per thread"
+    assert re.search(rf"(cuda|hip)Malloc\(\(void\*\*\)&{name}\b", host), f"{name} is not allocated on the device"
+    assert "aligned_new_array" not in host
+    assert not re.search(rf"Copy\w*\([^;]*\b{name}\b", device), f"the kernel copies {name} onto itself"
+
+
+def kernel_computing_the_size_of_its_scratch() -> dace.SDFG:
+    """The nested body sets ``m = i + 1`` on an interstate edge and sizes its ``Register`` scratch ``buf[m]`` by it, as
+    a CSR row's length is read inside the kernel (npbench spmv)."""
+    sdfg = kernel_with_transient_behind_a_nested_sdfg()
+    inner = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    inner.add_symbol("m", dace.int64)
+    body = inner.start_block
+    size = inner.add_state_before(body, "size", is_start_block=True)
+    inner.edges_between(size, body)[0].data.assignments["m"] = "i + 1"
+    inner.arrays["buf"].set_shape(new_shape=[dace.symbol("m", dace.int64)])
+    inner.arrays["buf"].storage = REGISTER
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_scratch_the_kernel_sizes_stays_where_it_is():
+    """An allocation before the launch cannot use a size the kernel computes."""
+    sdfg = kernel_computing_the_size_of_its_scratch()
+
+    assert lift(sdfg) is None
+
+    inner = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG)).sdfg
+    assert inner.arrays["buf"].storage == REGISTER and [str(d) for d in inner.arrays["buf"].shape] == ["m"]
+    sdfg.validate()
+
+
+def test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is():
+    """``buf[i + 1]`` in kernel ``i`` has no size before the launch."""
+    sdfg = kernel_with_internal_transient()
+    sdfg.arrays["buf"].set_shape(new_shape=[dace.symbol("i", dace.int64) + 1])
+    sdfg.arrays["buf"].storage = REGISTER
+
+    assert lift(sdfg) is None
+
+    assert sdfg.arrays["buf"].storage == REGISTER
+
+
+@pytest.mark.gpu
+def test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values():
+    import cupy  # Only present on GPU runners.
+
+    sdfg = flat_symbolic_scratch()
+    out = cupy.zeros(128)
+
+    sdfg(A=out, NX=4)
+
+    assert np.array_equal(cupy.asnumpy(out), np.ones(128))
 
 
 def test_a_kernel_level_access_above_a_per_thread_scratch_is_refused():
@@ -821,18 +996,109 @@ def test_a_kernel_level_access_above_a_per_thread_scratch_is_refused():
         lift(sdfg)
 
 
+def kernel_with_a_per_thread_count(indirect: bool = False) -> dace.SDFG:
+    """``for b: n = counts[b]; buf = empty(n + 1); buf[n] = 2; out[b] = buf[n]``: the extent of ``buf`` is a
+    count each thread reads (lavamd's ``pointers = np.empty(1 + neighbor_counts[l])``). ``indirect`` reads it
+    through ``r = rows[b]; n = counts[r]`` (spgemm_hash's ``row_bin[rows_in_bins[b]]``)."""
+    body = dace.SDFG("count_body")
+    body.add_symbol("b", dace.int64)
+    body.add_array("counts", [NX], dace.int32, storage=GLOBAL)
+    body.add_array("o", [NX], dace.float64, storage=GLOBAL)
+    body.add_transient("buf", ["n + 1"], dace.float64, storage=dtypes.StorageType.Register)
+    load = body.add_state("load", is_start_block=True)
+    use = body.add_state("use")
+    index = "b"
+    if indirect:
+        body.add_array("rows", [NX], dace.int32, storage=GLOBAL)
+        pick = body.add_state("pick")
+        body.add_edge(load, pick, dace.InterstateEdge(assignments={"r": "rows[b]"}))
+        load, index = pick, "r"
+    body.add_edge(load, use, dace.InterstateEdge(assignments={"n": f"counts[{index}]"}))
+    buf = use.add_access("buf")
+    fill = use.add_tasklet("fill", {}, {"v"}, "v = 2.0")
+    use.add_edge(fill, "v", buf, None, dace.Memlet("buf[n]"))
+    take = use.add_tasklet("take", {"x"}, {"y"}, "y = x")
+    use.add_edge(buf, None, take, "x", dace.Memlet("buf[n]"))
+    use.add_edge(take, "y", use.add_write("o"), None, dace.Memlet("o[b]"))
+
+    sdfg = dace.SDFG("per_thread_indirect_count" if indirect else "per_thread_count")
+    sdfg.add_array("out", [NX], dace.float64, storage=GLOBAL)
+    state = sdfg.add_state("kernel")
+    me, mx = state.add_map("kernel", {"b": "0:NX"}, schedule=GPU_DEVICE)
+    me.map.gpu_block_size = [32, 1, 1]
+    inputs = ("counts", "rows") if indirect else ("counts",)
+    nsdfg = state.add_nested_sdfg(body, dict.fromkeys(inputs), {"o": None}, symbol_mapping={"b": "b", "NX": "NX"})
+    for name in inputs:
+        sdfg.add_array(name, [NX], dace.int32, storage=GLOBAL)
+        state.add_memlet_path(state.add_read(name), me, nsdfg, dst_conn=name, memlet=dace.Memlet(f"{name}[0:NX]"))
+    state.add_memlet_path(nsdfg, mx, state.add_write("out"), src_conn="o", memlet=dace.Memlet("out[b]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel():
+    """The lifted ``buf`` is sized by ``n_max``, the largest ``counts[b]``, folded before the kernel: ``n`` is
+    assigned inside the kernel, so no host allocation can name it."""
+    sdfg = kernel_with_a_per_thread_count()
+    assert lift(sdfg) == 1
+    shape_symbols = {
+        str(sym) for dim in sdfg.arrays["buf"].shape for sym in dace.symbolic.pystr_to_symbolic(dim).free_symbols
+    }
+    assert "n" not in shape_symbols and "n_max" in shape_symbols, sdfg.arrays["buf"].shape
+    into_kernel = list(sdfg.in_edges(next(s for s in sdfg.states() if s.label == "kernel")))
+    assert [e.data.assignments.get("n_max") for e in into_kernel] == ["n_max_host[0]"]
+    sdfg.validate()
+
+
+@pytest.mark.gpu
+def test_an_extent_a_thread_reads_runs_on_the_device():
+    cp = pytest.importorskip("cupy")
+    sdfg = kernel_with_a_per_thread_count()
+    counts = cp.asarray(np.array([3, 0, 7, 1, 5], dtype=np.int32))
+    out = cp.zeros(5)
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        sdfg(counts=counts, out=out, NX=5)
+    assert np.allclose(cp.asnumpy(out), 2.0)
+
+
+def test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads():
+    """``n = counts[rows[b]]``: the fold before the kernel reads ``counts`` at ``rows[b]``, not at the nest-local ``r``,
+    which no host code defines."""
+    sdfg = kernel_with_a_per_thread_count(indirect=True)
+    assert lift(sdfg) == 1
+    folds = [
+        node
+        for state in sdfg.states()
+        for node in state.nodes()
+        if isinstance(node, dace.nodes.Tasklet) and node.label == "fold_n_max"
+    ]
+    assert [node.code.as_string.strip() for node in folds] == ["o = __read_counts[__read_rows[b]]"]
+    assert "r" not in sdfg.free_symbols and "n" not in sdfg.free_symbols, sdfg.free_symbols
+    sdfg.validate()
+
+
+@pytest.mark.gpu
+def test_an_extent_a_thread_reads_through_an_index_runs_on_the_device():
+    cp = pytest.importorskip("cupy")
+    sdfg = kernel_with_a_per_thread_count(indirect=True)
+    counts = cp.asarray(np.array([3, 0, 7, 1, 5], dtype=np.int32))
+    rows = cp.asarray(np.array([4, 2, 0, 3, 1], dtype=np.int32))
+    out = cp.zeros(5)
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        sdfg(counts=counts, rows=rows, out=out, NX=5)
+    assert np.allclose(cp.asnumpy(out), 2.0)
+
+
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)
-    test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
-        dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [2048, 64, 1]
+    test_lifted_dimensions_are_prepended_keeping_the_own_layout(
+        dict(i="0:128", j="0:32"), [64], None, [128, 32, 64], [32, 1, 4096], [2048, 64, 1]
     )
-    test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
-        dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [64, 1, 4]
+    test_lifted_dimensions_are_prepended_keeping_the_own_layout(
+        dict(i="0:8"), [4, 16], [1, 4], [8, 4, 16], [1, 8, 32], [64, 1, 4]
     )
-    test_lifted_dimensions_are_prepended_slowest_varying_keeping_the_own_layout(
-        dict(i="0:8"), [4, 16], [32, 2], None, None
-    )
+    test_lifted_dimensions_are_prepended_keeping_the_own_layout(dict(i="0:8"), [4, 16], [32, 2], None, None, None)
     test_a_constant_size_per_thread_array_within_the_limit_stays_in_place(REGISTER)
     test_a_constant_size_per_thread_array_within_the_limit_stays_in_place(dtypes.StorageType.Default)
     test_a_constant_size_register_array_over_the_limit_is_moved_out()
@@ -840,19 +1106,20 @@ if __name__ == "__main__":
     test_a_small_global_array_is_demoted_to_registers()
     test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(dace.AllocationLifetime.Persistent)
     test_a_small_transient_outliving_the_invocation_is_lifted_not_demoted(dace.AllocationLifetime.External)
-    test_a_symbolically_sized_per_thread_array_is_moved_to_global_memory(REGISTER)
-    test_a_symbolically_sized_per_thread_array_is_moved_to_global_memory(dtypes.StorageType.Default)
+    test_a_reference_is_not_moved()
+    test_a_symbolically_sized_register_array_is_moved_to_global_memory()
+    test_a_default_storage_array_is_left_to_storage_inference()
     test_transient_behind_a_nested_sdfg_is_lifted_through_the_boundary()
     test_a_tasklet_body_naming_a_lifted_buffer_gains_the_kernel_index()
     test_a_cpp_tasklet_subscripting_a_lifted_buffer_is_refused()
-    test_the_lifted_dimension_holds_one_row_per_kernel_iteration(1, 126, 1, 126)
-    test_the_lifted_dimension_holds_one_row_per_kernel_iteration(0, 127, 2, 64)
-    test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel()
+    for layout in LAYOUTS:
+        test_a_kernel_starting_above_zero_indexes_its_slice_from_the_first_iteration(layout)
+        test_each_thread_owns_one_slice_and_moves_it_out_of_the_kernel(layout)
     test_lift_translates_a_locally_named_shape_symbol_through_symbol_mapping()
     test_lift_gives_descendant_nested_sdfgs_the_lifted_descriptor()
     test_a_renamed_lift_gives_a_descendant_the_lifted_descriptor()
     test_a_lift_binds_the_kernel_parameter_it_indexes_by()
-    test_a_nest_giving_the_kernel_parameter_its_own_meaning_keeps_its_transient()
+    test_a_nest_looping_over_the_kernel_parameter_name_is_lifted_with_its_loop_renamed()
     test_a_nest_below_a_body_that_never_named_the_kernel_parameter_is_indexed_by_it()
     test_lift_does_not_bind_a_name_the_nest_assigns_itself()
     test_an_interstate_read_of_a_lifted_buffer_gains_the_kernel_index()
@@ -863,6 +1130,20 @@ if __name__ == "__main__":
     test_a_transient_shared_by_two_kernels_is_refused()
     test_code_mentioning_the_name_without_subscripting_it_is_returned_verbatim()
     test_a_small_accumulator_is_lifted_not_demoted()
-    test_the_lifted_accumulator_sums_each_row()
-    test_a_moved_symbolic_register_scratch_below_a_nested_sdfg_computes_the_right_values()
+    test_a_contiguous_lifted_accumulator_sums_each_row()
+    test_a_contiguous_symbolic_scratch_below_a_nested_sdfg_computes_the_right_values()
+    test_a_transient_shared_by_two_kernels_is_left_in_place_by_code_generation()
+    test_code_generation_gives_every_thread_its_own_scratch()
+    test_code_generation_computes_through_a_symbolic_scratch_below_a_nested_sdfg()
+    test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(GPU_DEVICE)
+    test_a_symbolic_per_thread_array_is_moved_out_of_any_kernel(dtypes.ScheduleType.GPU_Persistent)
+    test_code_generation_moves_a_symbolic_scratch_out_of_the_kernel("flat")
+    test_code_generation_moves_a_symbolic_scratch_out_of_the_kernel("nested")
+    test_a_scratch_the_kernel_sizes_stays_where_it_is()
+    test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is()
+    test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values()
     test_a_kernel_level_access_above_a_per_thread_scratch_is_refused()
+    test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel()
+    test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads()
+    test_an_extent_a_thread_reads_runs_on_the_device()
+    test_an_extent_a_thread_reads_through_an_index_runs_on_the_device()
