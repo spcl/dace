@@ -491,6 +491,14 @@ def _is_c_contiguous(shape, strides):
     return tuple(strides) == computed_strides
 
 
+def _is_contiguous_run(subset: subsets.Subset, strides: list[symbolic.SymbolicType]) -> bool:
+    """Whether ``subset``, addressed with the given absolute (step-including) strides, is one uninterrupted run of
+    memory (see :func:`dace.subsets.contiguous_run_length`)."""
+    if not isinstance(subset, subsets.Range) or any((ts == 1) != True for ts in subset.tile_sizes):
+        return False
+    return subsets.contiguous_run_length(subset.size(), strides[: subset.dims()]) is not None
+
+
 def ndcopy_to_strided_copy(
     copy_shape,
     src_shape,
@@ -527,23 +535,28 @@ def ndcopy_to_strided_copy(
     src_copylen = symbolic.pystr_to_symbolic(src_copylen).simplify()
     dst_copylen = symbolic.pystr_to_symbolic(dst_copylen).simplify()
 
+    # Whether each side is one run of memory (then its span is the run). Comparing the span with the volume is not
+    # enough: overlapping strides can match the volume without being contiguous.
+    src_contiguous = _is_contiguous_run(src_subset, src_strides)
+    dst_contiguous = _is_contiguous_run(dst_subset, dst_strides)
+
     # Detect 1D copies. The first condition is the general one, whereas the
     # second one applies when the arrays are completely equivalent in strides
     # and shapes to the copy. The second condition is there because sometimes
     # the symbolic math engine fails to produce the same expressions for both
     # arrays.
     if tuple(src_strides) == tuple(dst_strides) and (
-        (src_copylen == copy_length and dst_copylen == copy_length)
+        (src_contiguous and dst_contiguous)
         or (tuple(src_shape) == tuple(copy_shape) and tuple(dst_shape) == tuple(copy_shape))
     ):
         # Emit 1D copy of the whole array
         return [src_copylen], [1], [1]
-    # Another case of non-strided 1D copy: all indices match and copy length
-    # matches pointer difference, as well as match in contiguity and padding
+    # Another case of non-strided 1D copy: all indices match and the source is
+    # one run, as well as match in contiguity and padding
     elif (
         first_src_index == first_dst_index
         and last_src_index == last_dst_index
-        and copy_length == src_copylen
+        and src_contiguous
         and _is_c_contiguous(src_shape, src_strides)
         and _is_c_contiguous(dst_shape, dst_strides)
     ):

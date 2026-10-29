@@ -1924,8 +1924,9 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
     """
     if isinstance(desc, (dt.View)):
         # Views can be non-free symbol dependent due to the adjacent edges.
+        # None for an orphaned view, which has no edge-side dependency to check
         e = get_view_edge(state, node)
-        if e.data:
+        if e is not None and e.data:
             src_subset = e.data.get_src_subset(e, state)
             dst_subset = e.data.get_dst_subset(e, state)
             free_symbols = set()
@@ -2532,14 +2533,18 @@ def get_control_flow_block_dominators(
 
 def set_nested_sdfg_parent_references(sdfg: SDFG):
     """
-    Sets the parent_sdfg attribute for all NestedSDFGs recursively.
+    Sets the parent_sdfg attribute for all NestedSDFGs recursively, and rebuilds the CFG list once.
     """
     sdfg.reset_cfg_list()
+    point_nested_sdfgs_at_their_parents(sdfg)
+
+
+def point_nested_sdfgs_at_their_parents(sdfg: SDFG):
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, NestedSDFG):
                 node.sdfg.parent_sdfg = sdfg
-                set_nested_sdfg_parent_references(node.sdfg)
+                point_nested_sdfgs_at_their_parents(node.sdfg)
 
 
 def get_used_data(

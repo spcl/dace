@@ -3,12 +3,13 @@
 Functions for generating C++ code for control flow in SDFGs using control flow regions.
 """
 
+import ast
 import re
 import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from dace import dtypes
+from dace import dtypes, properties
 from dace.codegen.common import unparse_interstate_edge
 from dace.codegen.prettycode import CodeIOStream
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -93,6 +94,15 @@ def _generate_interstate_edge_code(
     return expr
 
 
+def _statements(block: properties.CodeBlock) -> list[ast.AST | str]:
+    """The statements of a :class:`~dace.properties.CodeBlock` as a list (a loop's init or update block may hold
+    several, e.g. the loop variable plus loop-carried symbols such as address cursors)."""
+    code = block.code
+    if isinstance(code, list):
+        return code
+    return [code]
+
+
 def _loop_region_to_code(
     region: LoopRegion,
     dispatch_state: Callable[[SDFGState], str],
@@ -124,26 +134,32 @@ def _loop_region_to_code(
         lsyms[loop.loop_variable] = codegen.dispatcher.defined_vars.get(loop.loop_variable)[1]
 
     if loop.init_statement:
-        init = unparse_interstate_edge(loop.init_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
-        init = init.strip(";")
+        inits = [
+            unparse_interstate_edge(stmt, sdfg, codegen=codegen, symbols=lsyms).strip(";")
+            for stmt in _statements(loop.init_statement)
+        ]
         # ``decl_placement = late``: a loop-local counter is declared HERE, in the init clause, instead
         # of being hoisted to the top of the generated function. The gate that put it in this map also
         # established that the init is a plain ``i = <expr>`` and that the loop is not inverted, so this
         # only ever runs for the `for (init; cond; update)` form below, where the clause scopes the
-        # counter to the loop. Absent under the default ``eager``, leaving `init` untouched.
+        # counter to the loop. Absent under the default ``eager``, leaving the init untouched.
         counter_ctype = codegen.loop_local_counters.get((sdfg.cfg_id, loop.loop_variable))
         if counter_ctype is not None:
-            init = f"{counter_ctype} {init}"
+            inits[0] = f"{counter_ctype} {inits[0]}"
     else:
-        init = ""
+        inits = []
 
     if loop.update_statement:
-        update = unparse_interstate_edge(loop.update_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
-        update = update.strip(";")
+        updates = [
+            unparse_interstate_edge(stmt, sdfg, codegen=codegen, symbols=lsyms).strip(";")
+            for stmt in _statements(loop.update_statement)
+        ]
     else:
-        update = ""
+        updates = []
 
     if loop.inverted:
+        init = ";\n".join(inits)
+        update = ";\n".join(updates)
         if loop.update_before_condition:
             if init:
                 expr += f"{init};\n"
@@ -165,6 +181,8 @@ def _loop_region_to_code(
                 expr += f"{update};\n"
             expr += "}\n"
     else:
+        init = ", ".join(inits)
+        update = ", ".join(updates)
         if loop.unroll:
             if loop.unroll_factor >= 1:
                 expr += f"#pragma unroll {loop.unroll_factor}\n"

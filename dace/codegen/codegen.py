@@ -169,6 +169,21 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
+def sdfg_uses_gpu(sdfg: SDFG) -> bool:
+    """True when any descriptor lives in GPU storage or any scope/library node carries a GPU schedule."""
+    from dace.sdfg import nodes
+
+    if any(
+        desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared)
+        for _, _, desc in sdfg.arrays_recursive()
+    ):
+        return True
+    return any(
+        isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
+        for node, _ in sdfg.all_nodes_recursive()
+    )
+
+
 def unselected_cuda_target() -> str:
     """The CUDA target not chosen in ``compiler.cuda.implementation``. Both share the GPU schedule types,
     so instantiating both would register duplicate dispatchers."""
@@ -188,6 +203,12 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     :param validate: If True, validates the SDFG before generating the code.
     :return: List of code objects that correspond to files to compile.
     """
+    # Lowering is not program history; recorded, the first expansion deep-copies the SDFG into ``orig_sdfg``
+    with config.set_temporary("store_history", value=False):
+        return lower_and_generate_code(sdfg, validate)
+
+
+def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     from dace.codegen.target import TargetCodeGenerator  # Avoid import loop
 
     # Before compiling, validate SDFG correctness
@@ -252,6 +273,13 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
 
     NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+    # Lower memlet access policies (e.g. loop-carried address cursors) to ordinary SDFG constructs on this
+    # code-generation copy of the SDFG. This is a no-op unless a memlet carries a non-default policy. It must
+    # follow InsertExplicitCopies (which moves the policy of a lifted copy onto the library node's operand
+    # memlet) and precede library-node expansion (whose generated code addresses the rewritten operands).
+    from dace.transformation.passes.memlet_access_policy_lowering import LowerMemletAccessPolicies
+
+    LowerMemletAccessPolicies().apply_pass(sdfg, {})
 
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
@@ -298,6 +326,16 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
         # ``const_init``: transients that only store literals become ``constexpr`` SDFG constants.
         if config.Config.get("compiler", "cpu", "codegen_params", "const_init") == "on":
             PromoteConstantTransients().apply_pass(sdfg, {})
+        # The GPU preprocess lifts in-kernel arrays too, but after the inlining below froze their accesses into
+        # tasklet code, so the readable path lifts them first.
+        if sdfg_uses_gpu(sdfg):
+            from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
+
+            move_arrays = MoveArrayOutOfKernel()
+            move_arrays.raise_on_unsupported = False
+            if move_arrays.apply_pass(sdfg, {}) is not None:
+                infer_types.infer_connector_types(sdfg)
+                infer_types.set_default_schedule_and_storage_types(sdfg, None)
         InlineTaskletConnectors().apply_pass(sdfg, {})
         # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name
         # with a differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.

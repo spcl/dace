@@ -5,6 +5,8 @@ import pathlib
 import re
 from typing import Any
 
+import numpy as np
+
 import dace
 from dace import config, data, dtypes, symbolic
 from dace.cli import progress
@@ -32,6 +34,28 @@ def _get_or_eval_sdfg_first_arg(func, sdfg):
     if callable(func):
         return func(sdfg)
     return func
+
+
+def constant_as_stored(desc: data.Array, value: Any) -> np.ndarray:
+    """The elements of constant ``value`` in the order ``desc`` lays them out in memory.
+
+    ``value`` holds the elements by index, and the code reads element ``i`` at ``sum(i * strides)``: a Fortran-ordered
+    constant written in index order reads its transpose. A value that is not of the descriptor's shape, or a
+    descriptor with symbolic strides, is written in index order.
+    """
+    value = np.asarray(value)
+    try:
+        shape = tuple(int(extent) for extent in desc.shape)
+        strides = tuple(int(stride) for stride in desc.strides)
+        size = int(desc.total_size)
+    except TypeError:
+        return value
+    if value.shape != shape or not value.size:
+        return value
+    offsets = sum(index * stride for index, stride in zip(np.indices(shape), strides))
+    stored = np.zeros(max(size, int(offsets.max()) + 1), dtype=value.dtype)
+    stored[offsets] = value
+    return stored
 
 
 class DaCeCodeGenerator:
@@ -175,9 +199,10 @@ class DaCeCodeGenerator:
         # Write constants
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, data.Array):
-                const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(cstval.size) + "] = {"
+                stored = constant_as_stored(csttype, cstval)
+                const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(stored.size) + "] = {"
                 # sym2cpp, not str: a numpy bool prints as Python 'True', and a complex as '(1+2j)'.
-                const_str += ", ".join(sym2cpp(value) for value in cstval.flat) + "};\n"
+                const_str += ", ".join(sym2cpp(value) for value in stored.flat) + "};\n"
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write(f"constexpr {csttype.dtype.ctype} {cstname} = {sym2cpp(cstval)};\n", sdfg)
@@ -771,6 +796,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         fsyms = {}
         reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.AccessNode]]]] = {}
+        # Per SDFG cfg_id, built on first need
+        dominance: dict[int, tuple[DominatorTree, DominatorTree]] = {}
         code_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.Node]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
@@ -1038,7 +1065,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         continue
 
                     if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
-                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
+                        if sdfg.cfg_id not in dominance:
+                            dominance[sdfg.cfg_id] = dominator_trees(sdfg)
+                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(
+                            instances, *dominance[sdfg.cfg_id]
+                        )
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
                         # instances. This is especially needed for Views which require both the SDFGState and the
@@ -1219,6 +1250,15 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
+                # Further loop-carried symbols defined by the init statement (e.g. address cursors)
+                for name, rhs in loop_analysis.get_assignments(cfr.init_statement).items():
+                    if name == cfr.loop_variable or name in interstate_symbols:
+                        continue
+                    if name in global_symbols:
+                        interstate_symbols[name] = global_symbols[name]
+                    else:
+                        interstate_symbols[name] = infer_expr_type(rhs, global_symbols)
+                        global_symbols[name] = interstate_symbols[name]
 
             for e in cfr.dfs_edges(cfr.start_block):
                 symbols = e.data.new_symbols(sdfg, global_symbols)
@@ -1386,36 +1426,73 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     return block
 
 
-def _get_dominator_and_postdominator(sdfg: SDFG, accesses: list[tuple[SDFGState, nodes.AccessNode]]):
+class DominatorTree:
+    """The tree of ``immediate`` (a root maps to itself) with DFS entry/exit times: ``a`` dominates ``b`` iff ``b``'s
+    interval lies within ``a``'s, so no transitive closure is built."""
+
+    def __init__(self, immediate: dict[ControlFlowBlock, ControlFlowBlock]) -> None:
+        self.immediate = immediate
+        children: dict[ControlFlowBlock, list[ControlFlowBlock]] = collections.defaultdict(list)
+        roots = {parent for parent in immediate.values() if immediate.get(parent, parent) is parent}
+        for block, parent in immediate.items():
+            if parent is not block:
+                children[parent].append(block)
+        self.entry: dict[ControlFlowBlock, int] = {}
+        self.exit: dict[ControlFlowBlock, int] = {}
+        clock = 0
+        for root in roots:
+            stack = [(root, iter(children[root]))]
+            self.entry[root] = clock
+            clock += 1
+            while stack:
+                block, pending = stack[-1]
+                child = next(pending, None)
+                if child is None:
+                    self.exit[block] = clock
+                    clock += 1
+                    stack.pop()
+                elif child not in self.entry:
+                    self.entry[child] = clock
+                    clock += 1
+                    stack.append((child, iter(children[child])))
+
+    def dominates(self, a: ControlFlowBlock, b: ControlFlowBlock) -> bool:
+        if a is b:
+            return True
+        if a not in self.entry or b not in self.entry:
+            return False
+        return self.entry[a] <= self.entry[b] and self.exit[b] <= self.exit[a]
+
+
+def dominator_trees(sdfg: SDFG) -> tuple[DominatorTree, DominatorTree]:
+    """The dominator and post-dominator trees of the blocks of ``sdfg``, across its control flow regions."""
+    idom: dict[ControlFlowBlock, ControlFlowBlock] = {}
+    ipostdom: dict[ControlFlowBlock, ControlFlowBlock] = {}
+    utils.get_control_flow_block_dominators(sdfg, idom, None, ipostdom, None)
+    return DominatorTree(idom), DominatorTree(ipostdom)
+
+
+def _get_dominator_and_postdominator(
+    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: DominatorTree, postdom: DominatorTree
+):
     """
     Gets the closest common dominator and post-dominator for a list of states.
     Used for determining allocation of data used in branched states.
     """
-    alldoms: dict[ControlFlowBlock, set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
-    allpostdoms: dict[ControlFlowBlock, set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
-    idom: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]] = {}
-    ipostdom: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]] = {}
-    utils.get_control_flow_block_dominators(sdfg, idom, alldoms, ipostdom, allpostdoms)
-
     states = [a for a, _ in accesses]
     data_name = accesses[0][1].data
 
-    # All dominators and postdominators include the states themselves
-    for state in states:
-        alldoms[state].add(state)
-        allpostdoms[state].add(state)
-
     start_state = states[0]
-    while any(start_state not in alldoms[n] for n in states):
-        if idom[start_state] is start_state:
+    while any(not dom.dominates(start_state, n) for n in states):
+        if dom.immediate[start_state] is start_state:
             raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
-        start_state = idom[start_state]
+        start_state = dom.immediate[start_state]
 
     end_state = states[-1]
-    while any(end_state not in allpostdoms[n] for n in states):
-        if ipostdom[end_state] is end_state:
+    while any(not postdom.dominates(end_state, n) for n in states):
+        if postdom.immediate[end_state] is end_state:
             raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
-        end_state = ipostdom[end_state]
+        end_state = postdom.immediate[end_state]
 
     # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
     # raise NotImplementedError

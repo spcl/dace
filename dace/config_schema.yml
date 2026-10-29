@@ -371,7 +371,7 @@ required:
 
                     implementation:
                         type: str
-                        default: legacy
+                        default: experimental_readable
                         title: CPU code generator implementation
                         description: >
                             Selects the CPU code generator. ``legacy`` uses the classic
@@ -936,7 +936,7 @@ required:
                             "legacy" is the stable implementation; "experimental" is a
                             work-in-progress rewrite (ExperimentalCUDACodeGen).
                         enum: [legacy, experimental]
-                        default: legacy
+                        default: experimental
 
                     allow_implicit_memlet_to_map:
                         type: bool
