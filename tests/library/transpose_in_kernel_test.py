@@ -61,3 +61,37 @@ def test_a_transpose_on_the_block_matches_numpy(build):
     sdfg(A=cupy.asarray(A), B=B)
 
     np.testing.assert_array_equal(cupy.asnumpy(B), A.transpose(0, 2, 1))
+
+
+def _fill_beside(update_reads_output: bool) -> tuple[dace.SDFG, dace.SDFGState, dace.nodes.LibraryNode]:
+    """A kernel over ``b`` holding a Fill of ``buf[b]`` and the tasklet ``o[b] = (o or i)[b] + 1``."""
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+
+    gpu = dace.StorageType.GPU_Global
+    sdfg = dace.SDFG(f"fill_beside_{update_reads_output}")
+    sdfg.add_array("o", [8], dace.float64, storage=gpu)
+    sdfg.add_array("i", [8], dace.float64, storage=gpu)
+    sdfg.add_array("buf", [8, 512], dace.float64, storage=gpu)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("k", {"b": "0:8"}, schedule=dace.ScheduleType.GPU_Device)
+    update = state.add_tasklet("inc", {"x"}, {"y"}, "y = x + 1.0")
+    source = "o" if update_reads_output else "i"
+    state.add_memlet_path(state.add_read(source), entry, update, dst_conn="x", memlet=dace.Memlet(f"{source}[b]"))
+    state.add_memlet_path(update, exit_, state.add_write("o"), src_conn="y", memlet=dace.Memlet("o[b]"))
+    fill = FillLibraryNode("fill", value=3.0)
+    state.add_node(fill)
+    state.add_nedge(entry, fill, dace.Memlet())
+    state.add_memlet_path(
+        fill, exit_, state.add_write("buf"), src_conn="_fill_out", memlet=dace.Memlet("buf[b, 0:512]")
+    )
+    return sdfg, state, fill
+
+
+@pytest.mark.parametrize("update_reads_output, block", [(True, False), (False, True)])
+def test_a_block_collective_refuses_a_kernel_that_updates_what_it_reads(update_reads_output, block):
+    """A block collective runs the rest of its kernel on every lane: ``o[b] = o[b] + 1`` would add once per lane, a
+    plain store of the same value per lane would not."""
+    from dace.libraries.standard.block_reduce import in_kernel_block_implementation
+
+    _, state, fill = _fill_beside(update_reads_output)
+    assert (in_kernel_block_implementation(fill, state) is not None) == block

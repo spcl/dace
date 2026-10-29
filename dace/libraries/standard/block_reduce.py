@@ -232,9 +232,17 @@ def in_kernel_block_implementation(node: nodes.LibraryNode, state: SDFGState) ->
 def accumulates_beside(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether the kernel around ``node`` accumulates anywhere but at ``node``: a block collective runs the kernel
     body on every lane of the block, so each lane would add. A map exit only relays an accumulation made inside it.
+    A plain update of what the body reads (``o[b] = o[b] + 1``) accumulates as surely as a WCR does.
     """
 
     def accumulates(graph: SDFGState, scope: list[nodes.Node]) -> bool:
+        read = {
+            edge.data.data
+            for inner in scope
+            if inner is not node and isinstance(inner, nodes.CodeNode)
+            for edge in graph.in_edges(inner)
+            if not edge.data.is_empty()
+        }
         for inner in scope:
             if isinstance(inner, nodes.NestedSDFG) and any(
                 accumulates(nested, nested.nodes()) for nested in inner.sdfg.states()
@@ -243,6 +251,10 @@ def accumulates_beside(node: nodes.LibraryNode, state: SDFGState) -> bool:
             if inner is node or isinstance(inner, nodes.MapExit):
                 continue
             if any(edge.data.wcr is not None for edge in graph.out_edges(inner)):
+                return True
+            if isinstance(inner, nodes.Tasklet) and any(
+                edge.data.data in read for edge in graph.out_edges(inner) if not edge.data.is_empty()
+            ):
                 return True
         return False
 
