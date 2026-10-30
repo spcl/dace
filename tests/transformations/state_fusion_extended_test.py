@@ -204,6 +204,37 @@ def test_waw_into_the_node_a_read_also_writes_stays_ordered():
         assert nx.has_path(sdfg.start_state.nx, w1, w2), "the overwrite of X[4:9] is unordered against the first write"
 
 
+def test_waw_ordered_through_a_read_that_also_takes_a_war_edge_stays_ordered():
+    """first: Z[0] = U[0], then U[0:8] = IN[0:8], ordered before a later IN node;  second: U[0] = IN[0] + 2.
+
+    The second-state IN read takes the WAR edge from the U reader and still has to merge with the first state's last
+    IN node, which is what orders the copy into U before the second write of U[0].
+    """
+    sdfg = SDFG("fuse_waw_through_a_war_read")
+    for name in ("U", "IN", "Z"):
+        sdfg.add_array(name, [9], dtypes.float64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    reader = s1.add_tasklet("reader", {"a"}, {"o"}, "o = a")
+    s1.add_edge(s1.add_read("U"), None, reader, "a", Memlet("U[0]"))
+    s1.add_edge(reader, "o", s1.add_write("Z"), None, Memlet("Z[0]"))
+    u_copy = s1.add_access("U")
+    s1.add_nedge(reader, u_copy, Memlet())
+    s1.add_nedge(s1.add_read("IN"), u_copy, Memlet("IN[0:8] -> [0:8]"))
+    s1.add_nedge(u_copy, s1.add_access("IN"), Memlet())
+    writer = s2.add_tasklet("writer", {"a"}, {"o"}, "o = a + 2")
+    s2.add_edge(s2.add_read("IN"), None, writer, "a", Memlet("IN[0]"))
+    s2.add_edge(writer, "o", s2.add_write("U"), None, Memlet("U[0]"))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    if sdfg.number_of_nodes() == 1:
+        assert nx.has_path(sdfg.start_state.nx, u_copy, writer), (
+            "the second write of U[0] is unordered against the copy"
+        )
+
+
 def test_war_write_after_read():
     """first: B[k] = A[k];  second: A[k] = 9.  B must get the OLD A[k].
 

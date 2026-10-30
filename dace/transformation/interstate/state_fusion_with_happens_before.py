@@ -1258,6 +1258,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             for x in reversed(list(nx.topological_sort(first_state._nx)))
             if isinstance(x, nodes.AccessNode) and sdict[x] is None
         ]
+        first_written_names = {n.data for n in first_state.data_nodes() if first_state.in_degree(n) > 0}
         for node in second_state.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 # update parent information
@@ -1283,9 +1284,13 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     for i in top2:
                         if i not in second_state.source_nodes():
                             continue
-                        if kind in ("seed", "read_before") and isinstance(i, nodes.AccessNode):
+                        if isinstance(i, nodes.AccessNode) and (
+                            kind in ("seed", "read_before") or i.data in first_written_names
+                        ):
                             # A source AccessNode may merge into a first-state node upstream of the seed
                             # writer, closing a cycle (ludcmp ``w = y[i]; w(+)= ...``); its consumers never merge.
+                            # A read of what the first state writes must merge too: an edge on it would keep it a
+                            # separate node, and the WAW check counts on that merge to order the first writer.
                             # A library node takes no ordering edge (it counts its inputs); it is ordered through ``i``.
                             for j in first_nodes:
                                 for k in dict.fromkeys(e.dst for e in second_state.out_edges(i)):
