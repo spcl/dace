@@ -517,9 +517,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             and edge.data.wcr is not None
             and isinstance(src_node, nodes.AccessNode)
             and isinstance(dst_node, nodes.AccessNode)
+            and src_node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
             and not is_in_scope(sdfg, cfg.state(state_id), dst_node, [dtypes.ScheduleType.GPU_ThreadBlock])
         ):
-            # Every thread of the block runs block-level code, so the reduction is split across the block
+            # Every thread of the block runs block-level code, so the reduction of a shared buffer is split across
+            # the block. A per-thread (register) source is a thread-level write, as everywhere else.
             code = self.block_accumulate_code(sdfg, cfg.state(state_id), edge, src_node, dst_node)
             callsite_stream.write(code, cfg, state_id, [src_node, dst_node])
             return
