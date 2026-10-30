@@ -19,7 +19,6 @@ from dace_fortran.pipelines import num_loops, num_maps, optimize
 
 import dace
 from dace.dtypes import AllocationLifetime, DeviceType, ScheduleType, StorageType
-from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg import nodes
 from dace.transformation.passes.config_propagation import specialize_variant
 from dace.transformation.passes.megakernel import MegaKernelOptimization
@@ -31,6 +30,8 @@ SOURCE = "tests/icon/atmosphere/velocity_advection_inlined_no_loop_exchange_sing
 #: Namelist values every dump of the data set shares
 FIXED_CONFIG = {"ldeepatmo": 0, "lextra_diffu": 1}
 LIBRARY = "velocity_inner_wrap"
+#: Thread blocks of every GPU kernel, with or without a megakernel
+BLOCK_SIZE = "256,1,1"
 STRICT_FLAGS = "-fno-fast-math -ffp-contract=off"
 
 
@@ -97,40 +98,53 @@ def crosses(state: dace.SDFGState, source: frozenset[StorageType], target: froze
     )
 
 
-def time_compute_region(sdfg: dace.SDFG) -> None:
-    """Prints the seconds between the last copy to the device and the first copy back, every call. The copies are an
-    artifact of this benchmark, whose fields start on the host; a megakernel changes only what lies between them."""
+def time_compute_region(sdfg: dace.SDFG, null_region: bool) -> None:
+    """Prints the device time between the last copy to the device and the first copy back, every call: device events on
+    the stream of the kernels, with the device idle before the first. The copies are an artifact of this benchmark, whose
+    fields start on the host, and a megakernel changes only what lies between them. With ``null_region``, the events
+    enclose nothing, which measures their own overhead."""
     device, host = frozenset({StorageType.GPU_Global}), frozenset({StorageType.Default, StorageType.CPU_Heap})
-    blocks = list(sdfg.bfs_nodes(sdfg.start_block))
-    states = [b for b in blocks if isinstance(b, dace.SDFGState)]
+    states = [b for b in sdfg.bfs_nodes(sdfg.start_block) if isinstance(b, dace.SDFGState)]
     last_in = [s for s in states if crosses(s, host, device)][-1]
     first_out = next(s for s in states[states.index(last_in) + 1 :] if crosses(s, device, host))
 
     def add(state: dace.SDFGState, code: str, code_global: str = "") -> None:
-        wait = Sync(f"{state.label}_wait", scope=SyncScope.DEVICE)
-        state.add_node(wait)
-        tasklet = state.add_tasklet(
-            state.label,
-            {},
-            {},
-            code,
-            language=dace.Language.CPP,
-            code_global=code_global,
-            side_effects=True,
+        state.add_tasklet(
+            state.label, {}, {}, code, language=dace.Language.CPP, code_global=code_global, side_effects=True
         )
-        state.add_nedge(wait, tasklet, dace.Memlet())
 
-    add(
-        sdfg.add_state_after(last_in, "compute_start"),
-        "vt_start = std::chrono::steady_clock::now();",
-        "#include <chrono>\n#include <cstdio>\nstatic std::chrono::steady_clock::time_point vt_start;",
+    record = """
+#include <cstdio>
+#ifdef WITH_HIP
+#include <hip/hip_runtime.h>
+#define VT_GPU(name) hip##name
+typedef hipEvent_t vt_event_t;
+#else
+#include <cuda_runtime.h>
+#define VT_GPU(name) cuda##name
+typedef cudaEvent_t vt_event_t;
+#endif
+static vt_event_t vt_events[2];
+"""
+    stream = "gpu_streams[0]"
+    start = (
+        "VT_GPU(DeviceSynchronize)();\n"
+        "if (!vt_events[0]) { VT_GPU(EventCreate)(&vt_events[0]); VT_GPU(EventCreate)(&vt_events[1]); }\n"
+        f"VT_GPU(EventRecord)(vt_events[0], {stream});"
     )
-    add(
-        sdfg.add_state_before(first_out, "compute_stop"),
-        'printf("COMPUTE seconds=%.6f\\n", '
-        "std::chrono::duration<double>(std::chrono::steady_clock::now() - vt_start).count());\n"
-        "fflush(stdout);",
+    stop = (
+        f"VT_GPU(EventRecord)(vt_events[1], {stream});\n"
+        "VT_GPU(DeviceSynchronize)();\n"
+        "float milliseconds = 0;\n"
+        "VT_GPU(EventElapsedTime)(&milliseconds, vt_events[0], vt_events[1]);\n"
+        'printf("COMPUTE seconds=%.6f\\n", milliseconds / 1e3);\n'
+        "fflush(stdout);"
     )
+    if null_region:
+        add(sdfg.add_state_after(last_in, "compute_timer"), f"{start}\n{stop}", record)
+    else:
+        add(sdfg.add_state_after(last_in, "compute_start"), start, record)
+        add(sdfg.add_state_before(first_out, "compute_stop"), stop)
 
 
 def build(
@@ -144,6 +158,7 @@ def build(
     chunk: int,
     block_size: int,
     sync_all: bool,
+    null_timer: bool = False,
 ) -> None:
     out.mkdir(parents=True, exist_ok=True)
     sdfg = build_sdfg(source.read_text(), entry=ENTRY, name=NAME, out_dir=str(out / "frontend"))
@@ -164,7 +179,7 @@ def build(
     if device == DeviceType.CPU:
         schedule_levels(sdfg, chunk)
     if device == DeviceType.GPU:
-        time_compute_region(sdfg)
+        time_compute_region(sdfg, null_timer)
     refreeze(sdfg)
     sdfg.build_folder = str(out / "sdfg")
     sdfg.save(str(out / f"{NAME}.sdfgz"), compress=True)
@@ -187,12 +202,17 @@ def main() -> None:
     argp.add_argument("--strict", action="store_true")
     argp.add_argument("--block-size", type=int, default=256, help="Threads per block of a GPU megakernel")
     argp.add_argument("--fewer-syncs", action="store_true", help="Grid barriers only between dependent stages")
+    argp.add_argument("--chiplets", type=int, default=0, help="GPU: chiplets to spread thread blocks over; 0 detects")
+    argp.add_argument("--null-timer", action="store_true", help="GPU: time an empty region, for the timer's overhead")
     argp.add_argument("--chunk", type=int, default=0, help="CPU: levels per schedule(static, chunk); 0 is equal blocks")
     args = argp.parse_args()
     if args.strict:
         flags = dace.Config.get("compiler", "cpu", "args")
         dace.Config.set("compiler", "cpu", "args", value=f"{flags} {STRICT_FLAGS}")
     device = DeviceType.GPU if args.device == "gpu" else DeviceType.CPU
+    if device == DeviceType.GPU:
+        dace.Config.set("compiler", "cuda", "default_block_size", value=BLOCK_SIZE)
+        dace.Config.set("compiler", "cuda", "chiplet_number", value=args.chiplets)
     build(
         args.dace_fortran / SOURCE,
         args.out,
@@ -204,6 +224,7 @@ def main() -> None:
         args.chunk,
         args.block_size,
         not args.fewer_syncs,
+        args.null_timer,
     )
 
 
