@@ -17,7 +17,7 @@ BUILD_PARALLEL=${BUILD_PARALLEL:-2}
 # Every (lvn_only, istep) the data set has, with its timesteps; (1, 2) never occurs
 VARIANTS=("0 1 1" "0 2 2,9,93,519,1140,1814,6519" "1 1 7,43,463,2593,5701")
 
-# base: one launch per kernel. megakernel: the pass's defaults. tuned: the block size and barriers best on the MI300A.
+# base: one launch per kernel. megakernel: a grid barrier between all stages. tuned: only between dependent stages.
 kinds() { if [ "$1" = gpu ]; then echo base megakernel tuned; else echo base megakernel; fi; }
 
 # build <device> <base|megakernel|tuned> <lvn_only> <istep> <build dir> [build.py flags]: library and driver in the directory
@@ -26,7 +26,8 @@ build() {
   shift 5
   local flags=("$@")
   [ "$kind" = megakernel ] && flags+=(--megakernel)
-  [ "$kind" = tuned ] && flags+=(--megakernel --block-size 32 --fewer-syncs)
+  [ "$kind" = tuned ] && flags+=(--megakernel --fewer-syncs)
+  [ "$device" = gpu ] && flags+=(--chiplets "${CHIPLETS:-0}")
   "$PYTHON" "$HERE/build.py" --out "$dir" --lvn-only "$lvn" --istep "$istep" --device "$device" "${flags[@]}" \
     >"$dir.build.log" 2>&1
   # The library decides, not the exit code: a GPU build can crash in TLS destructors at interpreter exit

@@ -12,6 +12,8 @@ export CC=$(command -v gcc) CXX=$(command -v g++) FC=$(command -v gfortran)
 export ROCM_PATH=/opt/rocm CMAKE_PREFIX_PATH=/opt/rocm${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}
 export LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib/llvm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 # One MI300A socket, as one GPU of Daint takes the 72 cores next to it
+# The XCDs of an MI300A; detection needs amdsmi, which the python environment lacks
+export CHIPLETS=6
 export ROCR_VISIBLE_DEVICES=0 OMP_NUM_THREADS=${OMP_NUM_THREADS:-24}
 HERE=$SLURM_SUBMIT_DIR
 MACHINE=beverin
