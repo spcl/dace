@@ -5522,8 +5522,7 @@ class ProgramVisitor(ExtNodeVisitor):
         :return: The new symbol.
         """
         desc = self.sdfg.arrays[scalar]
-        name = utils.find_new_name(f"__sym_{scalar}", self.sdfg.symbols.keys() | self.sdfg.arrays.keys())
-        self.sdfg.add_symbol(name, desc.dtype)
+        name = self.sdfg.add_symbol(f"__sym_{scalar}", desc.dtype, find_new_name=True)
         sym = dace.symbol(name, dtype=desc.dtype)
         # Nested scopes resolve free symbols through globals
         self.globals[name] = sym
