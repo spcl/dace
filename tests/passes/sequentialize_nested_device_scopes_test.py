@@ -23,13 +23,13 @@ from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_s
 N = dace.symbol("N")
 
 
-def nested_device_maps():
+def nested_device_maps(inner_schedule=dtypes.ScheduleType.GPU_Device):
     """``GPU_Device`` map inside a ``GPU_Device`` map -- an in-kernel kernel launch."""
-    sdfg = dace.SDFG("nested_device_maps")
+    sdfg = dace.SDFG(f"nested_device_maps_{inner_schedule.name}")
     sdfg.add_array("a", [N, N], dace.float64)
     state = sdfg.add_state()
     outer_entry, outer_exit = state.add_map("outer", dict(i="0:N"), schedule=dtypes.ScheduleType.GPU_Device)
-    inner_entry, inner_exit = state.add_map("inner", dict(j="0:N"), schedule=dtypes.ScheduleType.GPU_Device)
+    inner_entry, inner_exit = state.add_map("inner", dict(j="0:N"), schedule=inner_schedule)
     tasklet = state.add_tasklet("t", {}, {"out"}, "out = 1.0")
     access = state.add_access("a")
     state.add_edge(outer_entry, None, inner_entry, None, dace.Memlet())
@@ -47,6 +47,15 @@ def schedules(sdfg):
 def test_nested_device_map_is_sequentialized():
     """The inner kernel loses the device schedule; the outer one keeps it."""
     sdfg = nested_device_maps()
+    SequentializeNestedDeviceScopes().apply_pass(sdfg, {})
+    assert schedules(sdfg)["outer"] == dtypes.ScheduleType.GPU_Device
+    assert schedules(sdfg)["inner"] == dtypes.ScheduleType.Sequential
+
+
+def test_default_map_in_a_kernel_is_sequentialized():
+    """Left Default, the inner map would infer to a thread-block map over ``N`` threads, which the kernel's block
+    size does not cover (warpx_esirkepov_deposition's lane maps failed codegen)."""
+    sdfg = nested_device_maps(dtypes.ScheduleType.Default)
     SequentializeNestedDeviceScopes().apply_pass(sdfg, {})
     assert schedules(sdfg)["outer"] == dtypes.ScheduleType.GPU_Device
     assert schedules(sdfg)["inner"] == dtypes.ScheduleType.Sequential
@@ -106,6 +115,7 @@ def test_top_level_device_map_is_left_alone():
 
 
 if __name__ == "__main__":
+    test_default_map_in_a_kernel_is_sequentialized()
     import sys
 
     sys.exit(pytest.main([__file__, "-q"]))
