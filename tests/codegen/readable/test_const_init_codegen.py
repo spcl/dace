@@ -87,27 +87,6 @@ def _no_redundant_init(code, name):
             assert "memset" not in line, f"redundant memset of const {name}: {line}"
 
 
-def test_const_init_flag_off_keeps_the_runtime_write():
-    """``codegen_params.const_init = off`` takes PromoteConstantTransients out of the readable pipeline.
-
-    With it off the literal-only scalar stays a mutable buffer written at runtime instead of a
-    ``constexpr`` initializer, and the result must be unchanged either way.
-    """
-    with set_temporary("compiler", "cpu", "codegen_params", "const_init", value="off"):
-        sdfg_off, code_off = _gen(_scalar_const_sdfg, "experimental_readable", "sc_flag_off")
-    sdfg_on, code_on = _gen(_scalar_const_sdfg, "experimental_readable", "sc_flag_on")
-
-    assert not SCALAR_CONSTEXPR.search(code_off), "const_init=off still promoted the scalar to a constexpr"
-    assert SCALAR_CONSTEXPR.search(code_on), "const_init=on (the default) must still promote the scalar"
-
-    # Semantics are identical -- this key changes what is emitted, never what is computed.
-    A = np.random.rand(8)
-    b_off, b_on = np.zeros(8), np.zeros(8)
-    sdfg_off.compile()(A=A.copy(), B=b_off, N=8)
-    sdfg_on.compile()(A=A.copy(), B=b_on, N=8)
-    assert np.array_equal(b_off, b_on) and np.allclose(b_on, A * 3.0)
-
-
 def test_scalar_constexpr_no_memset():
     sdfg, code = _gen(_scalar_const_sdfg, "experimental_readable", "sc_exp")
     # A write-once scalar is bound at compile time: constexpr double s[1] = {3.0};
@@ -302,10 +281,7 @@ def table_two_nest_levels(a: dace.float64[TableN, 3], out: dace.float64[TableN, 
 
 def test_constexpr_table_passed_through_two_nested_sdfg_levels():
     """A constexpr table reaching a nested SDFG's nested SDFG whole stays a ``const T*`` parameter."""
-    with (
-        set_temporary("compiler", "cpu", "implementation", value="experimental_readable"),
-        set_temporary("compiler", "cpu", "codegen_params", "const_init", value="on"),
-    ):
+    with set_temporary("compiler", "cpu", "implementation", value="experimental_readable"):
         sdfg = table_two_nest_levels.to_sdfg(simplify=True)
         code = sdfg.generate_code()[0].clean_code
         assert re.search(r"constexpr\s+int\s+tbl\[3\]\s*=\s*\{2, 3, -1\}", code)

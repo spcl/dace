@@ -202,6 +202,18 @@ def size_qualifier(is_constant: bool) -> str:
     return SIZE_CONSTEVAL_QUALIFIER if standard >= 20 else INDEX_FUNCTION_QUALIFIER
 
 
+def index_ctype(desc: dt.Data, flat: symbolic.SymbolicType) -> str:
+    """The narrowest integer that holds every flat index of ``desc``, ``flat`` over ``__d<i>`` dimension symbols.
+
+    Narrower than ``int`` gains nothing, as C++ promotes to it anyway; a size the compiler cannot see stays 64-bit.
+    """
+    corner = {f"__d{i}": symbolic.pystr_to_symbolic(str(s)) - 1 for i, s in enumerate(desc.shape)}
+    largest = abs(
+        symbolic.pystr_to_symbolic(str(flat)).subs({symbolic.pystr_to_symbolic(k): v for k, v in corner.items()})
+    )
+    return "int32_t" if largest.is_Integer and largest < 2**31 else "int64_t"
+
+
 def format_index_access(ptrname: str, fnname: str, indices: list[str], extra: list[str]) -> str:
     """C++ ``ptr[fn(idx.., extra..)]`` access through a registered ``<array>_idx`` index function."""
     call_args = [sym2cpp(symbolic.pystr_to_symbolic(ix)) for ix in indices] + list(extra)
@@ -769,15 +781,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         ``Array.as_arg`` and ``CPUCodeGen.generate_nsdfg_arguments`` already use to decide the
         qualifier on kernel/nested-SDFG arguments. ``may_alias`` marks an array that is deliberately
         reachable through a second pointer in the same function, so promising no-alias for it would
-        be a miscompile rather than a readability win. It is also dropped when
-        ``compiler.cpu.codegen_params.heap_ptr_restrict`` is ``none`` (the qualifier is a bimodal
-        knob; ``restrict``, the default, is the faster bet but not universally so).
+        be a miscompile rather than a readability win.
         """
-        emit_restrict = (
-            not nodedesc.may_alias
-            and Config.get("compiler", "cpu", "codegen_params", "heap_ptr_restrict") == "restrict"
-        )
-        restrict = "__restrict__ " if emit_restrict else ""
+        restrict = "" if nodedesc.may_alias else "__restrict__ "
         return "%s* %s%s" % (nodedesc.dtype.ctype, restrict, name)
 
     def heap_alloc_stmt(
@@ -1190,7 +1196,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         extra_names = [str(s) for s in extra]
 
         base = re.sub(r"\W", "_", data_name)
-        sig = (ndim, tuple(str(s) for s in desc.strides), tuple(str(o) for o in desc.offset))
+        ctype = index_ctype(desc, flatexpr)
+        sig = (ndim, tuple(str(s) for s in desc.strides), tuple(str(o) for o in desc.offset), ctype)
         key = (base, sig)
         if key in self._index_sig_to_name:
             return self._index_sig_to_name[key], extra_names
@@ -1203,7 +1210,6 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         fnname = self.unshadowed_helper_name(fnname, self._index_functions)
         self._index_sig_to_name[key] = fnname
 
-        ctype = "int64_t"
         params = ["%s %s" % (ctype, str(d)) for d in dim_syms]
         params += ["%s %s" % (ctype, s) for s in extra_names]
         body = sym2cpp(flatexpr)

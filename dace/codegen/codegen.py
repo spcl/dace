@@ -389,9 +389,8 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # Scalar fission (``PrivatizeScalars``) is deliberately NOT run here. It is an optimization pass and belongs in
         # the caller's pipeline, before WCR memlets exist: by codegen time an accumulator chain has been rewritten to
         # WCR, and fissioning a read-modify-write into a fresh SSA version drops the running value.
-        # ``const_init``: transients that only store literals become ``constexpr`` SDFG constants.
-        if config.Config.get("compiler", "cpu", "codegen_params", "const_init") == "on":
-            PromoteConstantTransients().apply_pass(sdfg, {})
+        # Transients that only store literals become ``constexpr`` SDFG constants.
+        PromoteConstantTransients().apply_pass(sdfg, {})
         InlineTaskletConnectors().apply_pass(sdfg, {})
         # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name
         # with a differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.
