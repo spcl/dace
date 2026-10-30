@@ -4,14 +4,57 @@
 import itertools
 from copy import deepcopy as dc
 
-from dace import Memlet, data, symbolic, utils
-from dace.properties import make_properties
+from dace import Memlet, data, dtypes, symbolic, utils
+from dace.properties import CodeBlock, make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
 from dace.sdfg.state import LoopRegion, ReturnBlock
+from dace.sdfg.tasklet_utils import tasklet_replace_code, token_replace_dict
 from dace.transformation import helpers, transformation
+
+
+def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: set[str]) -> None:
+    """Rename tasklet connectors that clash with outer-scope names.
+
+    After inlining, a tasklet connector whose name coincides with an outer
+    array, symbol, constant, or assignment target would fail validation (and
+    could confuse code generation). Rename such connectors to fresh names and
+    update the connecting edges and the tasklet code.
+
+    Library nodes are exempt: their connector names are part of the node's
+    interface (ONNX schema parameters, BLAS operand names), and expansions look
+    them up by name. Renaming one silently unbinds the node from its schema --
+    the name is not recoverable from connector order either, e.g. an ONNX Gemm
+    carries ``B, A, C`` against schema order ``A, B, C``. A library-node
+    connector is not emitted as an identifier at this point anyway: expansion
+    turns it into a nested-SDFG boundary, which has its own scope.
+    """
+    for nstate in nsdfg.states():
+        for node in list(nstate.nodes()):
+            if not isinstance(node, nodes.Tasklet):
+                continue
+            used = set(node.in_connectors.keys()) | set(node.out_connectors.keys())
+            renames: dict[str, str] = {}
+            for conn in used:
+                if conn in reserved_names:
+                    renames[conn] = utils.find_new_name(conn, reserved_names | used)
+            if not renames:
+                continue
+            node.in_connectors = {renames.get(k, k): v for k, v in node.in_connectors.items()}
+            node.out_connectors = {renames.get(k, k): v for k, v in node.out_connectors.items()}
+            for edge in list(nstate.in_edges(node)):
+                if edge.dst_conn in renames:
+                    helpers.redirect_edge(nstate, edge, new_dst_conn=renames[edge.dst_conn])
+            for edge in list(nstate.out_edges(node)):
+                if edge.src_conn in renames:
+                    helpers.redirect_edge(nstate, edge, new_src_conn=renames[edge.src_conn])
+            if node.code.language is dtypes.Language.Python:
+                tasklet_replace_code(node, renames)
+            # tasklet_replace_code only rewrites symbols on the right-hand side of Python code;
+            # the token replacement renames assignment targets and every C++ use.
+            node.code = CodeBlock(token_replace_dict(node.code.as_string, renames), language=node.code.language)
 
 
 def tasklet_connector_names(sdfg: SDFG) -> set[str]:
@@ -227,11 +270,15 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
         sym_replacements: dict[str, str] = {}
+        seeds: dict[str, str] = {}
         for assign in assignments_to_replace:
             newname = utils.find_new_name(assign, allnames)
             allnames.add(newname)
             outer_symbols[newname] = nsdfg.symbols.get(assign, None)
             sym_replacements[assign] = newname
+            # A symbol the parent passed in under its own name starts the renamed one
+            if str(nsdfg_node.symbol_mapping.get(assign)) == assign:
+                seeds[newname] = assign
         # The parent declares every symbol the body assigns with the body's type; left undeclared, codegen infers it
         # from the assigned expression and widens ``i = c ? 1 : i_in`` from ``int`` to ``int64_t``.
         for assign in sorted(inner_assignments):
@@ -316,6 +363,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Reconnect state machine
         for e in outer_state.parent_graph.in_edges(nsdfg_state):
+            e.data.assignments.update(seeds)
             outer_state.parent_graph.add_edge(e.src, source, e.data)
         for e in outer_state.parent_graph.out_edges(nsdfg_state):
             for sink in sinks:

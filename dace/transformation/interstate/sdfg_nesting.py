@@ -517,6 +517,13 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
                             reshapes.add(root.dst.data)
 
+        # A tasklet connector may not share its name with a container, symbol or constant (see validation): one of
+        # the nested state's that names a parent one is renamed, as InlineMultistateSDFG does
+        from dace.transformation.interstate.multistate_inline import _disambiguate_code_connectors
+
+        _disambiguate_code_connectors(
+            nsdfg, set(sdfg.arrays) | set(nsdfg.arrays) | set(sdfg.symbols) | set(sdfg.constants)
+        )
         # All transients become transients of the parent (if data already
         # exists, find new name)
         # A connector of a code node may not share a name with data either (see validation), and the code nodes of

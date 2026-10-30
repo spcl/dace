@@ -9,15 +9,23 @@ import re
 import dace
 from dace import dtypes
 from dace.codegen import common
-from dace.libraries import blas
-from dace.libraries.blas.nodes.gemm import ExpandGemmCuBLAS, ExpandGemmRocBLAS
+from dace.libraries import blas, hip_dialect
+from dace.libraries.blas.nodes.gemm import ExpandGemmCuBLAS
 
 BAILOUT = r"if \(__result\)"
-EVENT_CALL = r"(?:cuda|hip)(?:EventRecord|StreamWaitEvent)\("
-#: The vendor BLAS expansion of the configured GPU backend, and the call spellings it emits
-GPU_BLAS = ExpandGemmCuBLAS if common.get_gpu_backend() == "cuda" else ExpandGemmRocBLAS
-GPU_BLAS_IMPLEMENTATION = "cuBLAS" if GPU_BLAS is ExpandGemmCuBLAS else "rocBLAS"
-GPU_BLAS_CALL = rf"{GPU_BLAS.backend}blas[A-Z_]\w*\("
+# Matches DACE_GPU_CHECK and its _RETURN/_RETURN_VAL variants, either backend target.
+GPU_CHECK = r"DACE_GPU_CHECK\w*\("
+SYNC_CALL = r"(?:cuda|hip)StreamSynchronize\("
+CUDA = common.get_gpu_backend() == "cuda"
+GPU_BLAS_IMPLEMENTATION = "cuBLAS" if CUDA else "hipBLAS"
+
+
+def spelled(cuda_code: str) -> str:
+    """``cuda_code`` as the vendor BLAS expansion of the configured GPU backend emits it."""
+    return cuda_code if CUDA else hip_dialect.to_hip(cuda_code, hip_dialect.BLAS)
+
+
+GPU_BLAS_CALL = spelled("cublas") + r"[A-Z_]\w*\("
 
 
 def generated_code(sdfg: dace.SDFG) -> str:
@@ -114,23 +122,23 @@ def gpu_blas_gemm(alpha: float = 1.0) -> dace.SDFG:
 
 
 def test_a_failed_target_initializer_stops_before_the_state_it_left_unset():
-    """``__dace_init_cuda`` returns early without a gpu_context when no device is present."""
+    """The CUDA target initializer returns early without a gpu_context when no device is present."""
     init = init_function(generated_code(persistent_gpu_transient()), "persistent_gpu_transient")
-    initializer = re.search(r"__result \|= __dace_init_cuda\(", init)
+    initializer = re.search(r"__result \|= __dace_init_\w*cuda\w*\(", init)
     assert initializer, "the CUDA target initializer is not called, so this test is anchored on nothing"
-    allocation = re.search(r"DACE_GPU_CHECK\(", init)
+    allocation = re.search(GPU_CHECK, init)
     assert allocation, "the persistent GPU allocation was not hoisted into the init function"
     bailout = re.search(BAILOUT, init[initializer.end() : allocation.start()])
     assert bailout, (
-        "the persistent GPU allocation runs even when __dace_init_cuda failed, and every DACE_GPU_CHECK "
-        "in it dereferences the gpu_context that the failed initializer never constructed"
+        "the persistent GPU allocation runs even when the CUDA target initializer failed, and every "
+        "GPU check in it dereferences the gpu_context that the failed initializer never constructed"
     )
 
 
 def test_the_init_function_still_checks_what_runs_after_the_allocations():
     """Environment and SDFG-level init code can fail too, so the later guard has to stay."""
     init = init_function(generated_code(persistent_gpu_transient()), "persistent_gpu_transient")
-    allocation = re.search(r"DACE_GPU_CHECK\(", init)
+    allocation = re.search(GPU_CHECK, init)
     assert allocation, "the persistent GPU allocation was not hoisted into the init function"
     assert re.search(BAILOUT, init[allocation.end() :]), (
         "nothing checks __result after the allocation and init code, so a failure there returns a live state"
@@ -138,12 +146,37 @@ def test_the_init_function_still_checks_what_runs_after_the_allocations():
 
 
 def test_cross_stream_event_synchronization_is_checked():
-    """A silent EventRecord failure loses the ordering it was supposed to establish."""
+    """The producers have to be ordered against their consumer, and the ordering has to be checked.
+
+    The experimental CUDA target establishes cross-stream ordering without events: every kernel of
+    the state is issued on the same stream in dependency order (stream FIFO replaces
+    ``StreamWaitEvent``), and the host is blocked on that stream by a ``StreamSynchronize`` before
+    anything may read the results. A silent ``StreamSynchronize`` failure loses that ordering just
+    as a silent ``EventRecord`` did, so every emitted one has to be checked.
+    """
     code = generated_code(cross_stream_consumer())
-    calls = list(re.finditer(EVENT_CALL, code))
-    assert calls, "no cross-stream event synchronization was emitted, so this test is anchored on nothing"
-    unchecked = [call.group(0) for call in calls if not code[: call.start()].endswith("DACE_GPU_CHECK(")]
-    assert not unchecked, f"event synchronization emitted without an error check: {unchecked}"
+    launches = list(
+        re.finditer(
+            r"gpuStream_t __dace_current_stream = (?P<stream>[^;]+);\s*"
+            r"__dace_runkernel_cross_stream_consumer_(?P<kernel>k\d)_",
+            code,
+        )
+    )
+    kernels = [launch.group("kernel") for launch in launches]
+    assert sorted(kernels) == ["k1", "k2", "k3"], f"expected the three kernel launches, got {kernels}"
+    assert kernels[-1] == "k3", f"the consumer k3 is issued before a producer it reads from: {kernels}"
+    streams = {launch.group("kernel"): launch.group("stream").strip() for launch in launches}
+    assert streams["k3"] == streams["k1"] and streams["k3"] == streams["k2"], (
+        f"the consumer is issued on a different stream than its producers with no event between them, "
+        f"so nothing orders them: {streams}"
+    )
+    syncs = list(re.finditer(SYNC_CALL, code))
+    last_launch = launches[-1].end()
+    assert any(sync.start() > last_launch for sync in syncs), (
+        "no stream synchronization follows the kernels, so nothing orders the GPU work with the host"
+    )
+    unchecked = [sync.group(0) for sync in syncs if not re.search(GPU_CHECK + r"$", code[: sync.start()])]
+    assert not unchecked, f"stream synchronization emitted without an error check: {unchecked}"
 
 
 def test_gpu_blas_calls_are_checked():
@@ -153,7 +186,9 @@ def test_gpu_blas_calls_are_checked():
         calls = list(re.finditer(GPU_BLAS_CALL, code))
         assert calls, f"no vendor BLAS call was emitted for alpha={alpha}, so this test is anchored on nothing"
         unchecked = [
-            call.group(0) for call in calls if not code[: call.start()].rstrip().endswith(f"{GPU_BLAS.check_error}(")
+            call.group(0)
+            for call in calls
+            if not code[: call.start()].rstrip().endswith(spelled(f"{ExpandGemmCuBLAS.check_error}("))
         ]
         assert not unchecked, f"vendor BLAS called without checking its status: {unchecked}"
 
@@ -161,9 +196,9 @@ def test_gpu_blas_calls_are_checked():
 def test_the_gpu_blas_gemm_expansion_still_emits_the_pointer_mode_switch():
     """The check has to wrap the pointer mode switch, not replace it."""
     code = generated_code(gpu_blas_gemm(2.0))
-    handle = f"__dace_{GPU_BLAS.backend}blas_handle"
-    assert f"{GPU_BLAS.set_pointer_mode}({handle}, {GPU_BLAS.pointer_host})" in code
-    assert f"{GPU_BLAS.set_pointer_mode}({handle}, {GPU_BLAS.pointer_device})" in code
+    gemm, handle = ExpandGemmCuBLAS, "__dace_cublas_handle"
+    assert spelled(f"{gemm.set_pointer_mode}({handle}, {gemm.pointer_host})") in code
+    assert spelled(f"{gemm.set_pointer_mode}({handle}, {gemm.pointer_device})") in code
 
 
 if __name__ == "__main__":

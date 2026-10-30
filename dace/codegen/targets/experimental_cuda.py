@@ -131,6 +131,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._frame.statestruct.append("dace::cuda::Context *gpu_context;")
         self._dispatcher._used_targets.add(self)
 
+        for node, _ in sdfg.all_nodes_recursive():
+            if (
+                isinstance(node, nodes.MapEntry)
+                and node.map.schedule in dtypes.GPU_SCHEDULES_WITHOUT_CODEGEN
+                and node.map.schedule not in dtypes.EXPERIMENTAL_GPU_SCHEDULES
+            ):
+                raise NotImplementedError(f"GPU code generation does not implement {node.map.schedule} maps yet")
         pipeline_results: dict[str, Any] = {}
         GPUCodegenPreprocessPipeline().apply_pass(sdfg, pipeline_results)
         self._globalcode.write(plan_shared_memory(sdfg))
@@ -193,6 +200,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         )
 
         scope_entry = dfg_scope.source_nodes()[0]
+        if scope_entry.map.schedule not in dtypes.EXPERIMENTAL_GPU_SCHEDULES:
+            raise NotImplementedError(f"GPU code generation does not implement {scope_entry.map.schedule} maps yet")
 
         if not self._in_device_code:
             state = cfg.state(state_id)
