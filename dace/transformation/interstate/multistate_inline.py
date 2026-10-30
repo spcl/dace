@@ -394,12 +394,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             # (e.g. an external loop-init symbol whose inner name collides with the outer one).
             if assign in identity_names:
                 non_identity_mapping[assign] = assign
-        # The parent declares every symbol the body assigns with the body's type; left undeclared, codegen infers it
-        # from the assigned expression and widens ``i = c ? 1 : i_in`` from ``int`` to ``int64_t``.
-        for assign in sorted(inner_assignments):
-            name = sym_replacements.get(assign, assign)
-            if assign in nsdfg.symbols and name not in sdfg.symbols and name not in sdfg.arrays:
-                sdfg.add_symbol(name, nsdfg.symbols[assign])
         nsdfg.replace_dict(sym_replacements)
         # A symbol the inlined region assigns keeps the type the nested SDFG declares for it; undeclared in the
         # parent, codegen would infer one from the assigned value (a float set to ``3`` became an int64_t)

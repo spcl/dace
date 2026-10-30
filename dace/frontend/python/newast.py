@@ -6305,10 +6305,11 @@ class ProgramVisitor(ExtNodeVisitor):
         sym = None if version else (self.indirections.get(key) or self.promoted_scalars.get(scalar))
         if sym is None:
             # A shape symbol never takes the bare name a computed index reuses; neither shadows an existing symbol.
-            # The edge assignment binds the name, so it is not declared; ``is_name_free`` sees every bound name.
             name = base
             if version or not self.sdfg.is_name_free(base):
                 name = next(f"{base}_{i}" for i in itertools.count() if self.sdfg.is_name_free(f"{base}_{i}"))
+            # Declared, so the visitor's later reads (a loop range, a shape) find the promoted symbol and its type
+            self.sdfg.add_symbol(name, desc.dtype)
             sym = dace.symbol(name, dtype=desc.dtype)
             if not version:
                 self.promoted_scalars[scalar] = sym
