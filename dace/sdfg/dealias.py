@@ -675,7 +675,9 @@ def _restate_container(
                     edge.data = move(memlet)
                     edge.data.other_subset = other
             elif memlet.other_subset is not None and any(
-                isinstance(n, nd.AccessNode) and n.data == name for n in (edge.src, edge.dst)
+                # A copy into or out of a scope names the container only at the far end of its path
+                isinstance(n, nd.AccessNode) and n.data == name
+                for n in (state.memlet_path(edge)[0].src, state.memlet_path(edge)[-1].dst)
             ):
                 stand_in = Memlet(data=name, subset=copy.deepcopy(memlet.other_subset))
                 memlet.other_subset = move(stand_in).subset

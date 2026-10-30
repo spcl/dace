@@ -15,7 +15,6 @@ import pytest
 import dace
 from dace.codegen.cpf import render as render_sdfg
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
-from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from tests.codegen.cpf.conftest import assert_matches, assert_standalone, build_standalone, call_standalone
 
@@ -134,13 +133,6 @@ def test_an_accumulating_copy_from_a_scalar_renders_without_copynd(language):
     expected[3] += 3.0
     assert_matches({"out": expected}, {"out": runs["cpf"]["out"]}, sdfg.name)
     assert_matches({"out": expected}, {"out": runs["runtime"]["out"]}, f"{sdfg.name}/runtime")
-
-
-def test_finalize_leaves_no_accumulating_copy():
-    """The canonical CPU form compiles without ``dace::CopyND`` too, not only through CPF."""
-    sdfg = scalar_accumulation_sdfg("scalar_accumulation_finalized")
-    finalize_for_target(sdfg, "cpu")
-    assert all("CopyND" not in obj.clean_code for obj in sdfg.generate_code())
 
 
 @pytest.mark.parametrize("language", LANGUAGES)

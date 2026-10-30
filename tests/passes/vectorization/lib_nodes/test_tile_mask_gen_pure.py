@@ -70,6 +70,28 @@ def test_tile_mask_gen_pure_2d_any_dim_oob():
     np.testing.assert_array_equal(OUT, ref)
 
 
+@pytest.mark.parametrize("implementation", ["pure", "scalar"])
+def test_tile_mask_gen_floor_division_bound(implementation):
+    """A bound with ``//`` (``__int_floor`` in its printed form, as ``GenerateTileIterationMask`` stores it) compiles
+    as C++ (dwt2d)."""
+    sdfg = dace.SDFG(f"tile_mask_gen_floordiv_{implementation}")
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("OUT", (8,), dace.bool_)
+    sdfg.add_transient("mask", (8,), dace.bool_, storage=dace.StorageType.Register)
+    state = sdfg.add_state("main")
+    bound = str(dace.symbolic.pystr_to_symbolic("N // 2"))
+    assert "__int_floor" in bound
+    node = TileMaskGen(name="tmg", widths=(8,), iter_vars=("i",), global_ubs=(bound,))
+    node.implementation = implementation
+    mask = state.add_access("mask")
+    state.add_edge(node, "_o", mask, None, dace.Memlet("mask[0:8]"))
+    state.add_edge(mask, None, state.add_access("OUT"), None, dace.Memlet("mask[0:8] -> [0:8]"))
+    OUT = np.zeros(8, dtype=bool)
+    sdfg(OUT=OUT, i=0, N=11)
+    np.testing.assert_array_equal(OUT, np.arange(8) < 5)
+
+
 def test_tile_mask_gen_rejects_length_mismatch():
     """Constructor refuses unequal widths / iter_vars / global_ubs lengths."""
     with pytest.raises(ValueError, match="lengths must agree"):

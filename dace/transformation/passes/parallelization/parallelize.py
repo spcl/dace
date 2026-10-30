@@ -38,10 +38,9 @@ class Parallelize(ppl.Pipeline):
         from dace.transformation.passes.parallelization.contracts.guarded_scatter import ScatterToGuardedMaps
         from dace.transformation.passes.parallelization.contracts.under_constraint import ParallelizeUnderConstraint
         from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
-        from dace.transformation.passes.parallelization.sibling_chains import ParallelizeLoopsHoldingSiblingChains
         from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
 
-        lift = (ParallelizeLoopsHoldingSiblingChains if hold_sibling_chains else ParallelizeLoops)(propagate=False)
+        lift = ParallelizeLoops(propagate=False, hold_sibling_chains=hold_sibling_chains)
         # A loop refused on a scratch buffer only lifts with the buffer expanded per iteration
         lift.expand_buffers = True
         passes: list[ppl.Pass] = [lift, WavefrontSkew(target=target)]

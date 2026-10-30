@@ -54,7 +54,6 @@ from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import E
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.expand_index_remaps import ExpandIndexRemaps
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
-from dace.transformation.passes.canonicalize.forward_iota_reads import ForwardIotaReads
 from dace.transformation.passes.canonicalize.forward_offset_copies import ForwardOffsetCopies
 from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
 from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
@@ -105,12 +104,6 @@ from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNum
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.while_to_for import WhileToFor
-from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-    CleanAccessNodeToScalarSliceToTaskletPattern,
-)
-from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
-    CleanTaskletToScalarSliceToAccessNodePattern,
-)
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_fill_elimination import DeadFillElimination
@@ -118,6 +111,7 @@ from dace.transformation.passes.dead_state_elimination import DeadStateEliminati
 from dace.transformation.passes.demote_non_structural_symbols import DemoteNonStructuralSymbols
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.transformation.passes.equalize_symbol_dtypes import EqualizeSymbolDtypes, equalize
+from dace.transformation.passes.fold_constant_tables import FoldConstantTables
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions, InlineSDFGs
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
@@ -139,7 +133,6 @@ from dace.transformation.passes.parallelization.contracts.guarded_scatter import
 from dace.transformation.passes.parallelization.contracts.under_constraint import ParallelizeUnderConstraint
 from dace.transformation.passes.parallelization.parallelize import Parallelize
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
-from dace.transformation.passes.parallelization.sibling_chains import ParallelizeLoopsHoldingSiblingChains
 from dace.transformation.passes.parallelization_prep import (
     DEFAULT_PEEL_LIMIT,
     DEFAULT_UNROLL_LIMIT,
@@ -153,7 +146,6 @@ from dace.transformation.passes.pattern_matching import (
 )
 from dace.transformation.passes.privatize_scatter_reduction import PrivatizeScatterReduction
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
-from dace.transformation.passes.propagate_memlets import PropagateMemlets
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
@@ -349,19 +341,6 @@ def _inline_single_state(label: str) -> list[tuple[str, ppl.Pass]]:
     :returns: ``(stage_label, pass)`` pairs, in order.
     """
     return [(label, RouteOrderingThroughData()), (label, PruneAndInlineNestedSDFGs())]
-
-
-def _fold_scalar_slices(label: str) -> list[tuple[str, ppl.Pass]]:
-    """Fold the frontend scalar-slice bridge; behind the transient a matcher has no index to shift,
-    which costs tsvc s252 its ``_remat`` clone and its map.
-
-    :param label: The owning stage label.
-    :returns: ``(stage_label, pass)`` pairs, in order.
-    """
-    return [
-        (label, CleanAccessNodeToScalarSliceToTaskletPattern()),
-        (label, CleanTaskletToScalarSliceToAccessNodePattern()),
-    ]
 
 
 #: Cap on the IV-substitution / statement-fission alternation.
@@ -703,22 +682,12 @@ def dead_dataflow_units() -> list[ppl.Pass]:
     ]
 
 
-def loop_to_map_units(hold_sibling_chains: bool = False) -> list[ppl.Pass]:
-    """LoopToMap on every loop it accepts, the scope summaries it reads rebuilt first.
-
-    :param hold_sibling_chains: Leave a sibling-loop chain with a refused sibling whole, for ``WavefrontSkew``.
-    """
-    parallelize = ParallelizeLoopsHoldingSiblingChains if hold_sibling_chains else ParallelizeLoops
-    lift = parallelize(propagate=False)
+def first_lift() -> ParallelizeLoops:
+    """LoopToMap on every loop it accepts, sibling chains held for ``WavefrontSkew``."""
+    lift = ParallelizeLoops(propagate=False, hold_sibling_chains=True)
     # A loop refused on a scratch buffer only lifts with the buffer expanded per iteration
     lift.expand_buffers = True
-    return [
-        PropagateMemlets(),
-        # A scalar argument promoted to a symbol since ingestion is under the contract too (its step orients a map)
-        SetSymbolNonnegativeAssumptions(),
-        lift,
-        PatternApplyOnceEverywhere([PruneConnectors()]),
-    ]
+    return lift
 
 
 def statement_round() -> list[ppl.Pass]:
@@ -762,13 +731,16 @@ def ingest(target: str) -> Stages:
         # and not an opaque library node; the SimplifyPass right after inlines their nested SDFGs
         (CLEANUP, ExpandIndexRemaps()),
         (CLEANUP, SimplifyPass(pass_options=CANON_SIMPLIFY_OPTIONS)),
+        # A table filled once with literals (CloudSC's ``iphase``) is a constant host code and every kernel read alike,
+        # before a fusion moves its fill into a loop
+        (CLEANUP, FoldConstantTables()),
         # A while loop that counts gets its counter here, so every later pass sees a counted loop.
         (CLEANUP, WhileToFor()),
         # After simplification: the raised guard of a break still reads its condition through a separate
         # preparation region before it, which the matcher does not see through.
         (CLEANUP, LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
     ]
-    return s + rail()
+    return s + [(CLEANUP, StructuralCleanup())]
 
 
 def normalize_statements(
@@ -804,8 +776,7 @@ def normalize_statements(
         (label, PatternApplyOnceEverywhere([PruneConnectors()])),
         (label, InlineSDFGs()),
     ]
-    s += _fold_scalar_slices(label)
-    s += [(label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
+    s += [(label, NormalizeNegativeStride()), (label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
     s += [(label, RerollUnrolledLoops()), (label, UntileLoops()), (label, FuseConsecutiveLoops())]
     if unroll_limit > 0:
         s += [(label, ShortLoopUnroll(unroll_limit)), (label, unique_iterators()), (label, SymbolSSA())]
@@ -837,7 +808,7 @@ def normalize_statements(
 def lift_semantics(lift: bool, lift_copy: bool, interchange_carry_with_map: bool, target: str) -> Stages:
     """Recognize library operators on the normalized loop nests."""
     label = LIFT_SEMANTICS
-    s: Stages = _fold_scalar_slices(label)
+    s: Stages = []
     # Before LoopToEinsum, which would take the inner product out of the nest.
     if lift:
         s += [(label, LoopToGetrfNoPivot(target=target)), (label, LoopToSymm()), (label, LoopToRankKUpdate())]
@@ -899,7 +870,7 @@ def derive_parallelism(
     # Before the lift: a workspace whose pre-loop fill no iteration observes is then the loop's own, privatized per
     # iteration
     s += [(label, DeadLoopInitialization())]
-    s += [(label, unit) for unit in loop_to_map_units(hold_sibling_chains=True)]
+    s += [(label, first_lift())]
     # Rescue: each rewrite acts only on a loop LoopToMap refuses.
     segments: list = []
     if peel_limit > 0:
@@ -913,7 +884,6 @@ def derive_parallelism(
     # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted copy's
     # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
     s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, unique_iterators()), (label, SymbolSSA())]
-    s += [(label, unit) for unit in loop_to_map_units(hold_sibling_chains=True)]
     # A split or peel can leave a plain recurrence the lifting segment never saw (``y[i] = s[i] + y[i - 1]`` on the
     # ``[K:N)`` half of an ``if i < K`` body); lift it, on the split's segments only, before the levels below
     # settle it as sequential.
@@ -929,9 +899,7 @@ def derive_parallelism(
     s += [
         (label, FuseChainedScalarReductions()),
         (label, AccumulatorCopyChainToWCR()),
-        (label, PropagateMemlets()),
-        (label, SetSymbolNonnegativeAssumptions()),
-        (label, ParallelizeLoopsHoldingSiblingChains(propagate=False)),
+        (label, ParallelizeLoops(propagate=False, hold_sibling_chains=True)),
         (label, PrivatizeScalars()),
         (label, PrivatizeArrays()),
     ]
@@ -950,8 +918,7 @@ def derive_parallelism(
                     (CarriedAccumulationToWCR(), True),
                 ],
                 [
-                    PropagateMemlets(),
-                    ParallelizeLoopsHoldingSiblingChains(propagate=False),
+                    ParallelizeLoops(propagate=False, hold_sibling_chains=True),
                     PrivatizeScalars(),
                     PrivatizeArrays(),
                 ],
@@ -959,9 +926,7 @@ def derive_parallelism(
         )
     ]
     if scatter_to_guarded_maps:
-        # An ``arange`` fill is an inlined map by now: its interstate reads become their index, so a scatter keyed
-        # through it shows the loop variable as its slot and needs no conflict check.
-        s += [(label, ForwardIotaReads()), (label, SymbolPropagation())]
+        s += [(label, SymbolPropagation())]
         s += [
             (
                 label,
@@ -973,9 +938,8 @@ def derive_parallelism(
     s += [(label, RevertNonReductionWCR()), *_inline_single_state(label)]
     if target == "gpu":
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
-    s += [(label, FuseLoops()), (label, PropagateMemlets()), (label, SetSymbolNonnegativeAssumptions())]
+    s += [(label, FuseLoops())]
     s += [(label, Parallelize(target=target, hold_sibling_chains=False))]
-    s += [(label, PatternApplyOnceEverywhere([PruneConnectors()]))]
     return s
 
 
@@ -1017,7 +981,6 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
             SelectBranchMaps(),
             LiftTrivialIf(),
             NormalizeMapBody(),
-            *(unit for stage_label, unit in _inline_single_state(RECOMPOSE)),
         ]
 
     return PhaseFixpoint("maximal_fusion", outer_round, FUSION_OUTER_ROUNDS)
@@ -1050,24 +1013,21 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     # Out of phase: these matchers need the fused map form (contractions split over maps, durbin's unary copy).
     if lift_copy:
         s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
-        s += _inline_single_state(label)
     if lift:
         s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
     s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True)]))]
-    s += [*_inline_single_state(label), (label, PruneEmptyConditionalBranches())]
+    s += [(label, PruneEmptyConditionalBranches())]
     s += [
         (label, PatternApplyOnceEverywhere([RedundantArray()])),
         (label, RematerializeDerivedTemporaries()),
     ]
-    # Fusion frees loops the pre-fusion sweep had to keep: a level loop whose body was a fill, a map and a copy of one
-    # scratch plane is a single map after it (velocity_tendencies' nine level loops), so sweep once more and collapse.
-    s += [(label, ParallelizeLoopsHoldingSiblingChains()), (label, PatternApplyOnceEverywhere([MapCollapse()]))]
+    s += [(label, PatternApplyOnceEverywhere([MapCollapse()]))]
     return s
 
 
 def finish() -> Stages:
     """The terminal bookkeeping: symbols, derived annotations, assumption guard, hints; the views inlining minted."""
-    s: Stages = rail(FINISH)
+    s: Stages = [(FINISH, StructuralCleanup())]
     # On the settled form: a loop over the segments of a pointer array is lifted behind the entry guard that checks
     # the data facts its segment confinement rests on (nfa_frontier's components).
     s += [(FINISH, SegmentConfinedLoops())]
@@ -1115,7 +1075,6 @@ def build_stages(
     s += normalize_statements(
         lift, privatize_scatter_reductions, unroll_limit, perfect_loop_nesting, target, normalize_loop_and_map_origin
     )
-    s += rail()
     s += lift_semantics(lift, lift_copy, interchange_carry_with_map, target)
     s += rail()
     s += derive_parallelism(
@@ -1127,7 +1086,7 @@ def build_stages(
         target,
         validate,
     )
-    s += rail()
+    s += [(CLEANUP, StructuralCleanup())]
     s += recompose(lift, lift_copy, target)
     # Once more after the lifts recompose ends with: what they exposed fuses too
     s += [(FUSE, maximal_fusion(target))]

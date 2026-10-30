@@ -715,17 +715,25 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # Replace a redirected WCR escape write with an explicit base accumulate.
         write_node = edge.dst  # the _then_<arr> access node
         src = edge.src
+        src_conn = edge.src_conn
         sdfg = state.sdfg
-        if not isinstance(src, dace.nodes.AccessNode) or sdfg.arrays[src.data].total_size != 1:
+        if isinstance(src, dace.nodes.Tasklet):
+            # A tasklet's value (``c[i] += a * b`` under ``if``, spgemm_hash) is staged through a scalar first.
+            staged, _ = sdfg.add_scalar(
+                f"_acc_{base_name}", sdfg.arrays[write_node.data].dtype, transient=True, find_new_name=True
+            )
+            staged_node = state.add_access(staged)
+            state.add_edge(src, src_conn, staged_node, None, dace.Memlet(f"{staged}[0]"))
+            src, src_conn = staged_node, None
+        elif not isinstance(src, dace.nodes.AccessNode) or sdfg.arrays[src.data].total_size != 1:
             detail = src.data if isinstance(src, dace.nodes.AccessNode) else type(src).__name__
             raise NotImplementedError(
                 "SameWriteSetIfElseToITECFG: predicated WCR write must come from a "
-                f"single-element access node (got {detail!r})"
+                f"single-element access node or a tasklet (got {detail!r})"
             )
         op_code = _wcr_apply_code(edge.data.wcr, "_base", "_acc")
         then_name = write_node.data
         src_name = src.data
-        src_conn = edge.src_conn
         state.remove_edge(edge)
         acc_t = state.add_tasklet(
             name=f"wcr_acc_{base_name}",

@@ -872,8 +872,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         continue
                     if second_state.in_degree(a) != 0:
                         continue  # re-written inside the second state: not a merge point
+                    # ``a`` merges with the one producer its read selects, not with whichever the read reaches
                     producers = [n for n in first_output if n.data == a.data and _has_data_write(n)]
-                    if producers and all(any(nx.has_path(first_state._nx, c, p) for p in producers) for c in consumers):
+                    if producers and all(nx.has_path(first_state._nx, c, p) for c in consumers for p in producers):
                         return True
                 return False
 
@@ -1012,8 +1013,14 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     seconds = [n for n in fused_cc.second_output_nodes if n.data == cand]
                     for w1 in first_output_by_data.get(cand, []):
                         for w2 in seconds:
+                            # Every writer into ``w2`` has to follow the read, not one of them (a memset beside a map
+                            # writing the other half of the container)
                             if any(
-                                nx.has_path(first_state._nx, w1, a) and nx.has_path(second_state._nx, b, w2)
+                                nx.has_path(first_state._nx, w1, a)
+                                and all(
+                                    e.data.is_empty() or nx.has_path(second_state._nx, b, e.src)
+                                    for e in second_state.in_edges(w2)
+                                )
                                 for a, b in merged
                             ):
                                 continue
@@ -1153,6 +1160,27 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                         return False
                                 found = outnode
 
+            # A happens-before edge that lands on a second-state read keeps it a non-source, which merges only with a
+            # first-state instance it intersects; one the first state reaches by ordering edges alone then stays apart,
+            # though the WAW checks above order a container both states write through that merge
+            # A rewrite fed by a read of its own data is ordered through that read's merge instead
+            rewritten = [
+                n
+                for n in second_output
+                if n.data in first_out_data
+                and not any(i.data == n.data and nx.has_path(second_state._nx, i, n) for i in second_input)
+            ]
+            for kind, _, targets in self.connections_to_make:
+                if kind not in ("war", "waw"):
+                    continue
+                for source in second_input:
+                    if (
+                        source.data in first_output_by_data
+                        and source.data not in first_out_data
+                        and any(source is t or nx.has_path(second_state._nx, source, t) for t in targets)
+                        and any(nx.has_path(second_state._nx, source, w) for w in rewritten)
+                    ):
+                        return False
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg):
@@ -1307,6 +1335,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         # Merge common (data) nodes
         merged_nodes = set()
+        # Per container, the nodes that took a first-state instance: a later second-state reader finds that instance
+        # gone from the candidates and is ordered behind them instead (seeds 349, 1663)
+        absorbed: dict[str, list[nodes.AccessNode]] = {}
+        second_writes = {n.data for n in second_state.data_nodes() if second_state.in_degree(n) > 0}
         for node in second_mid:
             # merge only top level nodes, skip everything else
             if node not in top2:
@@ -1339,6 +1371,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     for kind, first_nodes, second_nodes in self.connections_to_make
                     if kind == "waw"
                 )
+                took = False
                 for cand in candidates:
                     if node_waw_flagged and first_state.in_degree(cand) > 0:
                         continue
@@ -1348,6 +1381,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         sdutil.change_edge_src(first_state, cand, node)
                         sdutil.change_edge_dest(first_state, cand, node)
                         first_state.remove_node(cand)
+                        took = True
                         # Record the merged-away node so a later ``second_mid`` node with the same
                         # data does not re-select it: ``candidates`` (above) filters on the stale
                         # ``order`` / ``top`` snapshots, which still contain this now-removed node.
@@ -1356,11 +1390,19 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         # ``__t0_split_*`` from SplitTasklets). Mirrors the ``merged_nodes.add(n)``
                         # in the general same-name-merge branch below.
                         merged_nodes.add(cand)
+                if took:
+                    absorbed.setdefault(node.data, []).append(node)
+                elif second_state.out_degree(node) > 0:
+                    for m in absorbed.get(node.data, []):
+                        if not nx.has_path(first_state._nx, node, m) and not nx.has_path(first_state._nx, m, node):
+                            first_state.add_nedge(m, node, memlet.Memlet())
                 continue
 
             if len(candidates) == 0:
                 continue
-            elif len(candidates) == 1:
+            elif len(candidates) == 1 or node.data in second_writes:
+                # When the second state also writes the container, the WAW check orders the first state's writers
+                # through the topologically last instance, so the read has to merge with that one
                 n = candidates[0]
             else:
                 # Choose first candidate that intersects memlets
@@ -1376,6 +1418,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             sdutil.change_edge_dest(first_state, node, n)
             first_state.remove_node(node)
             merged_nodes.add(n)
+            absorbed.setdefault(n.data, []).append(n)
 
         # Redirect edges and remove second state
         was_start = is_start_block(graph, second_state)

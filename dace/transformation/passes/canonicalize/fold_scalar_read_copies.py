@@ -16,10 +16,21 @@ from typing import Any
 
 from dace import SDFG, Memlet, data, symbolic
 from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import view_keeps_a_data_binding
+
+
+def view_keeps_a_data_binding(state: SDFGState, view: nodes.AccessNode, dropped: MultiConnectorEdge[Memlet]) -> bool:
+    """Whether ``view`` binds data through some edge other than ``dropped`` (else the fold leaves it dangling)."""
+    for e in state.in_edges(view):
+        if e is not dropped and not e.data.is_empty() and isinstance(state.memlet_path(e)[0].src, nodes.AccessNode):
+            return True
+    for e in state.out_edges(view):
+        if e is not dropped and not e.data.is_empty() and isinstance(state.memlet_path(e)[-1].dst, nodes.AccessNode):
+            return True
+    return False
 
 
 def reachable(state: SDFGState, start: nodes.Node, forward: bool = True) -> set[nodes.Node]:

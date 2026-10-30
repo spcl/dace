@@ -75,9 +75,9 @@ def test_the_loop_stays_outside_when_its_own_axis_is_contiguous(prog):
     assert len(top_level_loops(sdfg)) == 1
 
 
-def loop_over_maps(name: str, trips: str, maps: int) -> tuple:
+def loop_over_maps(name: str, trips: str, maps: int, width: int = 16) -> tuple:
     sdfg = dace.SDFG(name)
-    sdfg.add_array("a", (4, 16), dace.float64)
+    sdfg.add_array("a", (4, width), dace.float64)
     loop = LoopRegion("kloop", f"k < {trips}", "k", "k = 0", "k = k + 1")
     sdfg.add_node(loop, is_start_block=True)
     previous = None
@@ -85,7 +85,7 @@ def loop_over_maps(name: str, trips: str, maps: int) -> tuple:
         state = loop.add_state(f"step{m}", is_start_block=previous is None)
         state.add_mapped_tasklet(
             f"step{m}",
-            {"i": "0:16"},
+            {"i": f"0:{width}"},
             {"__in": dace.Memlet("a[k, i]")},
             "__out = __in + 1.0",
             {"__out": dace.Memlet("a[k, i]")},
@@ -225,8 +225,9 @@ def test_the_offloaded_graph_stage_leaves_a_loop_around_a_wide_kernel_alone():
 
 
 def offloaded_loop_over_maps(name: str) -> dace.SDFG:
-    """:func:`loop_over_maps` after the offload: every map a kernel over device memory."""
-    sdfg = loop_over_maps(name, "3", 2)[0]
+    """:func:`loop_over_maps` after the offload: every map a kernel over device memory, wide enough that its lanes are
+    no ``SMALL`` extent."""
+    sdfg = loop_over_maps(name, "3", 2, width=256)[0]
     sdfg.arrays["a"].storage = dace.StorageType.GPU_Global
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.MapEntry):
@@ -294,3 +295,48 @@ def test_the_carry_in_a_single_iteration_kernel_matches_numpy():
     with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
         sdfg(a=dev)
     np.testing.assert_allclose(cupy.asnumpy(dev), want, rtol=1e-13, atol=0)
+
+
+def offloaded_lanes(name: str, width: int) -> dace.SDFG:
+    sdfg = loop_over_maps(name, "3", 2, width=width)[0]
+    sdfg.arrays["a"].storage = dace.StorageType.GPU_Global
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry):
+            node.map.schedule = dace.ScheduleType.GPU_Device
+    assert MoveLoopIntoMapGated(target="gpu").apply_pass(sdfg, {})
+    return sdfg
+
+
+def test_small_lanes_stay_a_host_loop():
+    """Sixteen lanes launch too few kernels to be worth one kernel over them."""
+    sdfg = offloaded_lanes("small_lanes", 16)
+    assert PromoteHostMapsToKernels().apply_pass(sdfg, {}) is None
+    assert lane_maps(sdfg)[0].map.schedule == dace.ScheduleType.Sequential
+
+
+def test_a_host_map_launching_a_wide_kernel_stays_on_the_host():
+    """``for i in map(0:256): kernel over 0:N``: the wide kernel amortizes its launch, and inside one kernel each
+    thread would run it serially."""
+    inner = dace.SDFG("wide_body")
+    inner.add_array("b", [256, N], dace.float64, storage=dace.StorageType.GPU_Global)
+    inner.add_symbol("i", dace.int64)
+    st = inner.add_state()
+    st.add_mapped_tasklet(
+        "wide",
+        {"j": "0:N"},
+        {},
+        "o = 1.0",
+        {"o": dace.Memlet("b[i, j]")},
+        external_edges=True,
+        schedule=dace.ScheduleType.GPU_Device,
+    )
+    sdfg = dace.SDFG("host_map_over_wide_kernel")
+    sdfg.add_array("b", [256, N], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    me, mx = state.add_map("lanes", {"i": "0:256"}, schedule=dace.ScheduleType.Sequential)
+    nest = state.add_nested_sdfg(inner, {}, {"b"}, {"N": "N", "i": "i"})
+    state.add_nedge(me, nest, dace.Memlet())
+    state.add_memlet_path(nest, mx, state.add_write("b"), src_conn="b", memlet=dace.Memlet("b[0:256, 0:N]"))
+    sdfg.validate()
+    assert PromoteHostMapsToKernels().apply_pass(sdfg, {}) is None
+    assert me.map.schedule == dace.ScheduleType.Sequential

@@ -5,6 +5,7 @@ import sys
 import tempfile
 from typing import Any
 
+import networkx as nx
 import numpy as np
 import pytest
 
@@ -823,7 +824,46 @@ def test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range_through_views(bin
     sdfg.validate()
 
 
+def test_horizontal_fusion_keeps_what_ordered_a_reused_read():
+    """``Y[i] = A[i] / 2`` waits for ``X = 2 X + Y`` (an empty edge onto its read of ``A``); fused with ``C = A + 1``,
+    which reads ``A`` from another node, its read reused that edge and the wait was gone."""
+    sdfg = dace.SDFG(unique_name("horizontal_reused_ordered_read"))
+    for name in "XYAC":
+        sdfg.add_array(name, [10], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    _, _, update_exit = state.add_mapped_tasklet(
+        "update",
+        {"__i": "0:10"},
+        {"__x": dace.Memlet("X[__i]"), "__y": dace.Memlet("Y[__i]")},
+        "__out = 2 * __x + __y",
+        {"__out": dace.Memlet("X[__i]")},
+        external_edges=True,
+    )
+    ordered = state.add_access("A")
+    state.add_nedge(update_exit, ordered, dace.Memlet())
+    entries = {}
+    for name, code, source in (("Y", "__out = __in / 2", ordered), ("C", "__out = __in + 1", state.add_access("A"))):
+        _, entries[name], _ = state.add_mapped_tasklet(
+            f"to_{name}",
+            {"__i": "0:5"},
+            {"__in": dace.Memlet("A[__i]")},
+            code,
+            {"__out": dace.Memlet(f"{name}[__i]")},
+            input_nodes={source},
+            external_edges=True,
+        )
+    sdfg.validate()
+
+    dftrans.MapFusionHorizontal.apply_to(
+        sdfg, first_parallel_map_entry=entries["C"], second_parallel_map_entry=entries["Y"], verify=True
+    )
+
+    assert nx.has_path(state._nx, update_exit, entries["C"]), "the fused Map no longer waits for the update of X"
+    sdfg.validate()
+
+
 if __name__ == "__main__":
+    test_horizontal_fusion_keeps_what_ordered_a_reused_read()
     test_horizontal_fusion_refuses_an_inner_shared_transient()
     test_horizontal_fusion_refuses_to_reorder_side_effects()
     test_horizontal_fusion_relocates_a_multi_edge_connector_once()

@@ -54,12 +54,8 @@ class LiftPreprocess(ppl.Pass):
         # ``out[i+1] = out[i] + delta[i]`` shape instead of an ``assign_NN`` copy node.
         count += EliminateTrivialTasklets().apply_pass(sdfg, {}) or 0
 
-        # NOTE: D4 (CleanAccessNode + CleanTasklet) is deliberately NOT applied here.
-        # ``LoopToScan``'s matcher already handles the frontend's scalar-slice intermediates
-        # via ``_chase_forward_to_accum`` and friends; the WCR/TrivialTasklet folds above are
-        # sufficient. Running the clean folds in addition (in either order vs WCR) is
-        # redundant work and previously regressed the ``for_1133_shape_reverse_engineered``
-        # case by stripping intermediates the matcher relies on.
+        # No scalar-copy fold here: ``LoopToScan``'s matcher reads the frontend's scalar intermediates itself
+        # (``_chase_forward_to_accum``); stripping them regressed ``for_1133_shape_reverse_engineered``.
 
         # ``LoopToScan`` only handles ``stride == 1``; flip backward iteration up front rather
         # than teaching every gate about sign. ``NormalizeNegativeStride`` rebinds the old

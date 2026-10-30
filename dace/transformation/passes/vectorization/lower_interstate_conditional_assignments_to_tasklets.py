@@ -8,7 +8,7 @@ import dace.sdfg.utils as sdutil
 from dace import SDFG, SDFGState, dtypes, properties, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
 from dace.sdfg.narrowing import as_basic
-from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, ReturnBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.vectorization.utils.tasklets import is_python_tasklet
@@ -251,12 +251,9 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                             if isinstance(sn, nodes.NestedSDFG):
                                 if self._apply(sn.sdfg) and self.apply_once:
                                     return True
-            else:
-                # Ok if a break block just connintue
-                if isinstance(n, BreakBlock):
-                    continue
-                else:
-                    raise Exception(f"Unsupported node type for pass node {n} type {type(n)}")
+            elif not isinstance(n, (BreakBlock, ContinueBlock, ReturnBlock)):
+                # A break, continue or return block holds nothing to lower.
+                raise Exception(f"Unsupported node type for pass node {n} type {type(n)}")
 
         return False
 

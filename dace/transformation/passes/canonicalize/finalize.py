@@ -24,7 +24,7 @@ import os
 
 import sympy
 
-from dace import SDFG, Memlet, dtypes, subsets, symbolic
+from dace import SDFG, dtypes, symbolic
 from dace import data as dt
 from dace.config import Config
 from dace.libraries.blas.environments import libxsmm, openblas
@@ -38,7 +38,7 @@ from dace.libraries.standard.block_reduce import in_kernel_block_implementation,
 from dace.libraries.standard.nodes.scan import Scan
 from dace.libraries.standard.nodes.symmetrize import Symmetrize
 from dace.ordered import OrderedSet
-from dace.sdfg import infer_types, memlet_utils, nodes
+from dace.sdfg import infer_types, nodes
 from dace.sdfg.narrowing import as_range
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import helpers as xfh
@@ -80,6 +80,7 @@ from dace.transformation.passes.gpu_specialization.coarsen_scatter_kernels impor
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import gpu_specialize_offloaded
 from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+from dace.transformation.passes.minimize_transients import MinimizeTransients
 from dace.transformation.passes.offloading.batch_row_scans import BatchRowScans
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.specialize_small_gemms import (
@@ -87,7 +88,6 @@ from dace.transformation.passes.specialize_small_gemms import (
     SpecializeSmallGemms,
     matmul_extents_small,
 )
-from dace.transformation.passes.transient_reuse import TransientReuse
 
 #: Map the canonicalize target string to the codegen device type.
 TARGET_DEVICE = {"cpu": dtypes.DeviceType.CPU, "gpu": dtypes.DeviceType.GPU}
@@ -886,87 +886,6 @@ def assert_no_nested_parallel_maps(sdfg: SDFG, device: dtypes.DeviceType) -> Non
                 )
 
 
-def explicit_accumulating_copies(sdfg: SDFG) -> None:
-    """Turn every accumulating access-node-to-access-node copy into a tasklet or a map, in place.
-
-    ``InsertExplicitCopies`` leaves an accumulating copy implicit, since it is a reduction rather than a copy,
-    and the generator then emits ``dace::CopyND::Accumulate``, which a standalone unit cannot name (icon_scatter,
-    seissol_tensor_contraction, spmm). One element becomes one accumulating tasklet; more become a map over the
-    copied elements, each iteration accumulating into its own element, which the generator lowers like any WCR.
-    An omitted side of the memlet is the whole array on that side, as in copy-edge codegen.
-
-    :param sdfg: the SDFG to rewrite, nested SDFGs included.
-    """
-    for nested in sdfg.all_sdfgs_recursive():
-        for state in nested.states():
-            for edge in list(state.edges()):
-                wcr = edge.data.wcr
-                if (
-                    wcr is None
-                    or not isinstance(edge.src, nodes.AccessNode)
-                    or not isinstance(edge.dst, nodes.AccessNode)
-                ):
-                    continue
-                source = edge.data.get_src_subset(edge, state) or subsets.Range.from_array(edge.src.desc(nested))
-                target = edge.data.get_dst_subset(edge, state) or subsets.Range.from_array(edge.dst.desc(nested))
-                if source.num_elements_exact() == 1 and target.num_elements_exact() == 1:
-                    # A Scalar end has no index a map could use.
-                    tasklet = state.add_tasklet("accumulate", {"__inp": None}, {"__out": None}, "__out = __inp")
-                    state.add_edge(edge.src, edge.src_conn, tasklet, "__inp", Memlet(data=edge.src.data, subset=source))
-                    state.add_edge(
-                        tasklet, "__out", edge.dst, edge.dst_conn, Memlet(data=edge.dst.data, subset=target, wcr=wcr)
-                    )
-                    state.remove_edge(edge)
-                elif memlet_utils.can_memlet_be_turned_into_a_map(edge, state, nested):
-                    _, map_exit = memlet_utils.memlet_to_map(edge, state, nested)
-                    for written in state.in_edges(map_exit) + state.out_edges(map_exit):
-                        written.data.wcr = wcr
-
-
-def pin_span_copies(sdfg: SDFG) -> int:
-    """Pin every strided host/device copy whose span may be moved whole to ``MemcpyCUDAHull``.
-
-    One ``gpuMemcpyAsync`` of the span from a region's first element to its last overwrites the destination between
-    the rows, so the copy-node selector never picks it; this proves where nothing reads those elements
-    (:func:`~dace.libraries.standard.nodes.copy.common.hull_copy_is_safe`: same layout on both sides, a transient
-    destination read only inside the region, a span at most twice the region). The strided copy edges are lifted to
-    copy nodes here for that, as codegen would lift them; a copy the proof rejects keeps the selector's choice
-    (``MemcpyCUDAStaged`` for a loop of calls).
-
-    :param sdfg: an offloaded SDFG, nested SDFGs included.
-    :returns: how many copies were pinned.
-    """
-    from dace.libraries.standard.nodes.copy import CopyLibraryNode
-    from dace.libraries.standard.nodes.copy.common import _is_cross_cpu_gpu, hull_copy_is_safe
-    from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies, _derive_matching_dst_subset
-
-    gpu = dtypes.StorageType.GPU_Global
-
-    def strided_transfer(state: SDFGState, edge) -> bool:
-        src, dst = edge.src.desc(state.sdfg), edge.dst.desc(state.sdfg)
-        if (src.storage == gpu) == (dst.storage == gpu):
-            return False
-        src_subset, dst_subset = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
-        if src_subset is None and dst_subset is None:
-            return False
-        # An omitted side is the other side's region over its own array, as copy lifting reads it
-        src_subset = src_subset or _derive_matching_dst_subset(dst_subset, src)
-        dst_subset = dst_subset or _derive_matching_dst_subset(src_subset, dst)
-        return not (src_subset.is_contiguous_subset(src) and dst_subset.is_contiguous_subset(dst))
-
-    InsertExplicitCopies(only=strided_transfer).apply_pass(sdfg, {})
-    pinned = 0
-    for node, state in sdfg.all_nodes_recursive():
-        if not isinstance(node, CopyLibraryNode) or node.implementation not in (None, "Auto"):
-            continue
-        if not _is_cross_cpu_gpu(node.src_storage(state), node.dst_storage(state), node, state):
-            continue
-        if hull_copy_is_safe(node, state):
-            node.implementation = "MemcpyCUDAHull"
-            pinned += 1
-    return pinned
-
-
 def finalize_for_target(sdfg: SDFG, target: str = "cpu", validate: bool = False) -> SDFG:
     """Apply the performance finalization tail to a canonicalized ``sdfg``.
 
@@ -1042,18 +961,12 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     canonicalize_set_fast_implementations(sdfg, device)
     BetaFold().apply_pass(sdfg, {})
     refuse_silent_pure(sdfg, device)
-    if device == dtypes.DeviceType.GPU:
-        pin_span_copies(sdfg)
     # Select the fast implementation per library node but DO NOT expand here: a library
     # node is expanded exactly once, at codegen (``compile()`` auto-expands using the
     # ``implementation`` chosen above). Expanding in canonicalization would re-introduce
     # the per-implementation shapes (BLAS scratch, reduction accumulators) into a form the
     # rest of the toolchain must then re-canonicalize; keeping one shape per computation
     # until codegen is the invariant every downstream pass relies on.
-    if device == dtypes.DeviceType.CPU:
-        # shortcut: host only, as a map made here over GPU memory would be scheduled on the host; CPF's own
-        # call covers the device dialects.
-        explicit_accumulating_copies(sdfg)
     infer_types.infer_connector_types(sdfg)
     # Before storage is decided: one map-local name shared across states is otherwise one SDFG-wide buffer
     # the threads of a parallel map share.
@@ -1062,7 +975,7 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     # Once storage and lifetimes are final, and before the parallel-region hoist reads dependences by name. On GPU
     # it runs in GPUCodegenPreprocessPipeline instead, after MoveArrayOutOfKernel lifts kernel arrays.
     if device == dtypes.DeviceType.CPU:
-        TransientReuse().apply_pass(sdfg, {})
+        MinimizeTransients().apply_pass(sdfg, {})
 
     # Open the OpenMP team once per sequential loop rather than once per trip. It runs HERE, at the
     # very end, and not in the ``cpu_specialize`` band, because the step above is what decides which

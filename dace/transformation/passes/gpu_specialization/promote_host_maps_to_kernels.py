@@ -10,6 +10,9 @@ map or a device library node stays on the HOST and launches that work once per i
 The map is parallel by definition, so it becomes the ``GPU_Device`` map: one kernel, the inner device
 scopes nested in it (serial per thread, or a block collective where the node has one).
 
+Only a launch-bound map is promoted (:func:`launch_bound`): an extent that is not ``SMALL`` whose body's device maps
+are ``SMALL`` or relaunched by a sequential loop; wide device maps already amortize their launches.
+
 Only a body the device can run is promoted: data in device-accessible storage (or transients the body
 owns, or scalars it only reads), Python tasklets (a native tasklet may call the host runtime, a copy among them), nested SDFGs of
 the same kind, and library nodes that have an in-kernel block lowering for their shape.
@@ -17,9 +20,10 @@ the same kind, and library nodes that have an in-kernel block lowering for their
 
 from typing import Any
 
-from dace import SDFG, SDFGState, data, dtypes, properties
+from dace import SDFG, SDFGState, data, dtypes, properties, symbolic
 from dace.libraries.standard.block_reduce import gpu_block_implementation
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 
@@ -72,7 +76,51 @@ def promotable(state: SDFGState, entry: nodes.MapEntry) -> bool:
     ):
         return False
     body = state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes()
-    return any(launches_device_work(node) for node in body) and all(device_capable(node, state, False) for node in body)
+    if not any(launches_device_work(node) for node in body) or not all(
+        device_capable(node, state, False) for node in body
+    ):
+        return False
+    return launch_bound(state, entry, body)
+
+
+def launch_bound(state: SDFGState, entry: nodes.MapEntry, body: list[nodes.Node]) -> bool:
+    """Whether the host map's launches cost more than one kernel over it: its extent is not ``SMALL``, and every device
+    map in its body is ``SMALL`` or relaunched by a sequential loop. A body whose device maps are wide amortizes its
+    launches, and inside one kernel each thread would run them serially."""
+    if symbolic.is_small_extent(map_extent(entry), state.sdfg.facts()):
+        return False
+    return not any(wide_device_map(node, state, False) for node in body)
+
+
+def map_extent(entry: nodes.MapEntry) -> symbolic.SymbolicType:
+    return entry.map.range.num_elements()
+
+
+def wide_device_map(node: nodes.Node, state: SDFGState, in_loop: bool) -> bool:
+    """Whether ``node`` is, or nests, a device map that is neither ``SMALL`` nor under a sequential loop."""
+    if isinstance(node, nodes.MapEntry):
+        return (
+            node.map.schedule == dtypes.ScheduleType.GPU_Device
+            and not in_loop
+            and not symbolic.is_small_extent(map_extent(node), state.sdfg.facts())
+        )
+    if isinstance(node, nodes.NestedSDFG):
+        return any(
+            wide_device_map(inner, inner_state, in_loop or in_a_loop(inner_state))
+            for inner_state in node.sdfg.states()
+            for inner in inner_state.nodes()
+        )
+    return False
+
+
+def in_a_loop(block: SDFGState) -> bool:
+    """A ``LoopRegion`` of the block's own SDFG encloses it."""
+    region = block.parent_graph
+    while region is not None and not isinstance(region, SDFG):
+        if isinstance(region, LoopRegion):
+            return True
+        region = region.parent_graph
+    return False
 
 
 @properties.make_properties

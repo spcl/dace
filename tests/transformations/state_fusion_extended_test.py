@@ -170,6 +170,170 @@ def test_waw_beside_a_read_of_the_same_array_stays_ordered():
         assert nx.has_path(sdfg.start_state.nx, w1, w2), "the overwrite of X[4:9] is unordered against the first write"
 
 
+def test_waw_into_the_node_a_read_also_writes_stays_ordered():
+    """first: X[0:9] = 1;  second: one X node gets X[0:4] *= 2 behind an X read and X[4:9] = 0 from no read.
+
+    The read orders the first of the two writers into that node only, so the second must still follow the first write.
+    """
+    sdfg = SDFG("fuse_waw_second_writer_of_a_node")
+    sdfg.add_array("X", [9], dtypes.float64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    s1.add_mapped_tasklet("w1", {"i": "0:9"}, {}, "o = 1.0", {"o": Memlet("X[i]")}, external_edges=True)
+    x_out = s2.add_access("X")
+    s2.add_mapped_tasklet(
+        "rw",
+        {"i": "0:4"},
+        {"a": Memlet("X[i]")},
+        "o = 2 * a",
+        {"o": Memlet("X[i]")},
+        external_edges=True,
+        input_nodes={"X": s2.add_read("X")},
+        output_nodes={"X": x_out},
+    )
+    s2.add_mapped_tasklet(
+        "w2", {"i": "4:9"}, {}, "o = 0.0", {"o": Memlet("X[i]")}, external_edges=True, output_nodes={"X": x_out}
+    )
+    sdfg.validate()
+    w1 = next(n for n in s1.nodes() if n.label == "w1")
+    w2 = next(n for n in s2.nodes() if n.label == "w2")
+
+    sdfg.apply_transformations_repeated(StateFusionExtended)
+    if sdfg.number_of_nodes() == 1:
+        assert nx.has_path(sdfg.start_state.nx, w1, w2), "the overwrite of X[4:9] is unordered against the first write"
+
+
+def test_waw_ordered_through_a_read_that_also_takes_a_war_edge_stays_ordered():
+    """first: Z[0] = U[0], then U[0:8] = IN[0:8], ordered before a later IN node;  second: U[0] = IN[0] + 2.
+
+    The second-state IN read takes the WAR edge from the U reader and still has to merge with the first state's last
+    IN node, which is what orders the copy into U before the second write of U[0].
+    """
+    sdfg = SDFG("fuse_waw_through_a_war_read")
+    for name in ("U", "IN", "Z"):
+        sdfg.add_array(name, [9], dtypes.float64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    reader = s1.add_tasklet("reader", {"a"}, {"o"}, "o = a")
+    s1.add_edge(s1.add_read("U"), None, reader, "a", Memlet("U[0]"))
+    s1.add_edge(reader, "o", s1.add_write("Z"), None, Memlet("Z[0]"))
+    u_copy = s1.add_access("U")
+    s1.add_nedge(reader, u_copy, Memlet())
+    s1.add_nedge(s1.add_read("IN"), u_copy, Memlet("IN[0:8] -> [0:8]"))
+    s1.add_nedge(u_copy, s1.add_access("IN"), Memlet())
+    writer = s2.add_tasklet("writer", {"a"}, {"o"}, "o = a + 2")
+    s2.add_edge(s2.add_read("IN"), None, writer, "a", Memlet("IN[0]"))
+    s2.add_edge(writer, "o", s2.add_write("U"), None, Memlet("U[0]"))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    if sdfg.number_of_nodes() == 1:
+        assert nx.has_path(sdfg.start_state.nx, u_copy, writer), (
+            "the second write of U[0] is unordered against the copy"
+        )
+
+
+def test_raw_through_a_second_reader_of_a_merged_instance_stays_ordered():
+    """first: X[2] = 1 and X[3] = 1 into one X node;  second: two X nodes, written at X[6] and X[7], read X[3] and X[2].
+
+    The first X node merges into the first second-state node that reads it; the other reader has no candidate left
+    and still has to follow the first-state write of X[2].
+    """
+    sdfg = SDFG("fuse_raw_second_reader")
+    sdfg.add_array("X", [9], dtypes.float64)
+    sdfg.add_array("Y", [2], dtypes.float64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    x1 = s1.add_write("X")
+    writers = []
+    for index in (2, 3):
+        writer = s1.add_tasklet(f"w{index}", {}, {"o"}, "o = 1.0")
+        s1.add_edge(writer, "o", x1, None, Memlet(f"X[{index}]"))
+        writers.append(writer)
+    readers = []
+    for k, (written, read) in enumerate(((6, 3), (7, 2))):
+        writer = s2.add_tasklet(f"v{written}", {}, {"o"}, "o = 5.0")
+        x = s2.add_access("X")
+        s2.add_edge(writer, "o", x, None, Memlet(f"X[{written}]"))
+        reader = s2.add_tasklet(f"r{read}", {"a"}, {"o"}, "o = a")
+        s2.add_edge(x, None, reader, "a", Memlet(f"X[{read}]"))
+        s2.add_edge(reader, "o", s2.add_write("Y"), None, Memlet(f"Y[{k}]"))
+        readers.append(reader)
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    if sdfg.number_of_nodes() == 1:
+        st = sdfg.start_state
+        assert nx.has_path(st.nx, writers[0], readers[1]), "the read of X[2] is unordered against its write"
+        assert nx.has_path(st.nx, writers[1], readers[0]), "the read of X[3] is unordered against its write"
+
+
+def test_a_read_merging_before_the_last_writer_still_orders_the_overwrite():
+    """first: X[0] = 1, then X[1] = X[0] through a second X node;  second: X[1] = X[0] + 2.
+
+    The second-state read of X[0] intersects the first X node only, but the overwrite of X[1] has to follow the first
+    state's write of X[1] in the second node.
+    """
+    sdfg = SDFG("fuse_read_before_last_writer")
+    sdfg.add_array("X", [9], dtypes.float64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    first = s1.add_tasklet("first", {}, {"o"}, "o = 1.0")
+    x0 = s1.add_access("X")
+    s1.add_edge(first, "o", x0, None, Memlet("X[0]"))
+    copy = s1.add_tasklet("copy", {"a"}, {"o"}, "o = a")
+    s1.add_edge(x0, None, copy, "a", Memlet("X[0]"))
+    s1.add_edge(copy, "o", s1.add_access("X"), None, Memlet("X[1]"))
+    overwrite = s2.add_tasklet("overwrite", {"a"}, {"o"}, "o = a + 2")
+    s2.add_edge(s2.add_read("X"), None, overwrite, "a", Memlet("X[0]"))
+    s2.add_edge(overwrite, "o", s2.add_write("X"), None, Memlet("X[1]"))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    if sdfg.number_of_nodes() == 1:
+        assert nx.has_path(sdfg.start_state.nx, copy, overwrite), "the overwrite of X[1] is unordered against its write"
+
+
+def test_a_read_the_merge_point_does_not_follow_still_precedes_the_overwrite():
+    """first: T[8] = 0, then T[0:8] = X[0:8] (an empty edge orders the copy after);  second: Y[0] = T[8] and, after
+    the read of T, X[0] = U[0] + 2.
+
+    The second-state T merges with the write of T[8], which the copy follows: the copy's read of X is not ordered
+    before the overwrite by that merge.
+    """
+    sdfg = SDFG("fuse_read_not_before_merge_point")
+    for name in "TXUY":
+        sdfg.add_array(name, [9], dtypes.float64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    last = s1.add_access("T")
+    s1.add_edge(s1.add_tasklet("zero", {}, {"o"}, "o = 0.0"), "o", last, None, Memlet("T[8]"))
+    copied = s1.add_access("T")
+    s1.add_nedge(last, copied, Memlet())
+    s1.add_nedge(s1.add_read("X"), copied, Memlet("X[0:8] -> [0:8]"))
+    t = s2.add_read("T")
+    reader = s2.add_tasklet("reader", {"a"}, {"o"}, "o = a")
+    s2.add_edge(t, None, reader, "a", Memlet("T[8]"))
+    s2.add_edge(reader, "o", s2.add_write("Y"), None, Memlet("Y[0]"))
+    u = s2.add_read("U")
+    s2.add_nedge(t, u, Memlet())
+    overwrite = s2.add_tasklet("overwrite", {"a"}, {"o"}, "o = a + 2")
+    s2.add_edge(u, None, overwrite, "a", Memlet("U[0]"))
+    s2.add_edge(overwrite, "o", s2.add_write("X"), None, Memlet("X[0]"))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    if sdfg.number_of_nodes() == 1:
+        assert nx.has_path(sdfg.start_state.nx, copied, overwrite), (
+            "the overwrite of X[0] is unordered against its read"
+        )
+
+
 def test_war_write_after_read():
     """first: B[k] = A[k];  second: A[k] = 9.  B must get the OLD A[k].
 
@@ -1834,6 +1998,7 @@ def test_a_container_written_then_read_is_rewritten_after_its_reads():
 
 
 if __name__ == "__main__":
+    test_a_read_the_merge_point_does_not_follow_still_precedes_the_overwrite()
     test_extended_fusion()
     test_ordering_is_proven_by_any_candidate_not_just_the_first()
     test_fusion_result_is_reproducible_across_heap_layouts()

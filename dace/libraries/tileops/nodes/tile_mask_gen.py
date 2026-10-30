@@ -2,7 +2,8 @@
 """``TileMaskGen``: the iteration mask of a tile."""
 
 import dace
-from dace import library, properties, tile_functions
+from dace import library, properties, symbolic, tile_functions
+from dace.codegen.common import sym2cpp
 from dace.libraries.tileops.environments import (
     TileOpsAVX2,
     TileOpsAVX512,
@@ -60,6 +61,12 @@ class ExpandTileMaskGenSVE(ExpandTileIsa):
 class ExpandTileMaskGenCUDA(ExpandTileIsa):
     environments = [TileOpsCUDA]
     backend = "cuda"
+
+
+def cpp_expression(expression: str) -> str:
+    """A symbolic expression of :attr:`TileMaskGen.iter_vars` or :attr:`TileMaskGen.global_ubs` as C++ (``//`` is
+    ``__int_floor`` there, which C++ does not name)."""
+    return sym2cpp(symbolic.pystr_to_symbolic(expression))
 
 
 @library.node
@@ -140,7 +147,7 @@ class TileMaskGen(TileOp):
         self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
     ) -> nodes.Tasklet:
         terms = [
-            f"((({iter_var}) + __l{dim}) < ({bound}))"
+            f"((({cpp_expression(iter_var)}) + __l{dim}) < ({cpp_expression(bound)}))"
             for dim, (iter_var, bound) in enumerate(zip(self.iter_vars, self.global_ubs, strict=True))
         ]
         if self.guard_predicate:
@@ -159,8 +166,8 @@ class TileMaskGen(TileOp):
     ) -> nodes.Tasklet:
         self.validate(sdfg, state)
         vlen = require_k1(self, lowering=lowering)
-        start = lane_start(self.iter_vars[0], lowering=lowering)
-        bounds = [f"({start})", f"({self.global_ubs[0]})"]
+        start = lane_start(cpp_expression(self.iter_vars[0]), lowering=lowering)
+        bounds = [f"({start})", f"({cpp_expression(self.global_ubs[0])})"]
         if backend in tile_functions.ISAS:
             out = pointer("_o", next(edge for edge in state.out_edges(self) if edge.src_conn == "_o"))
             code = call_text(TileFunction("maskgen", backend, "i64", vlen).name, [out, *bounds])

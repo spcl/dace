@@ -1101,6 +1101,33 @@ def test_dde_keeps_the_order_a_removed_copy_carried_between_a_read_and_an_overwr
     assert X[0] == 3.0 and Y[0] == 5.0
 
 
+def test_dde_orders_nothing_through_access_nodes_the_removal_leaves_unwritten_and_unread():
+    """``IN`` is written only by dead code and ``X`` read only by dead code; ordering ``IN`` before ``X`` across the
+    removed nodes would keep ``IN`` alive by an edge the sink cleanup then drops, leaving it isolated."""
+    sdfg = dace.SDFG("dde_no_order_through_dead_ends")
+    for name in ("IN", "X"):
+        sdfg.add_array(name, [1], dace.float64)
+    for name in ("U1", "U2", "U3"):
+        sdfg.add_transient(name, [1], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_tasklet("a", {}, {"o"}, "o = 1")
+    u1, u2, u3 = state.add_write("U1"), state.add_access("U2"), state.add_write("U3")
+    state.add_edge(a, "o", u1, None, dace.Memlet("U1[0]"))
+    inp, x = state.add_access("IN"), state.add_read("X")
+    state.add_nedge(u1, inp, dace.Memlet())
+    t1 = state.add_tasklet("t1", {"i"}, {"o"}, "o = i")
+    state.add_edge(inp, None, t1, "i", dace.Memlet("IN[0]"))
+    state.add_edge(t1, "o", u2, None, dace.Memlet("U2[0]"))
+    state.add_nedge(u2, x, dace.Memlet())
+    t2 = state.add_tasklet("t2", {"i"}, {"o"}, "o = i")
+    state.add_edge(x, None, t2, "i", dace.Memlet("X[0]"))
+    state.add_edge(t2, "o", u3, None, dace.Memlet("U3[0]"))
+    sdfg.validate()
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_dse_simple()
     test_dse_unconditional()
@@ -1142,3 +1169,4 @@ if __name__ == "__main__":
     test_dde_keeps_a_loop_write_after_removing_a_dead_nested_sdfg()
     test_dde_keeps_a_nested_write_when_simplify_reapplies_it_per_nested_sdfg()
     test_dde_keeps_the_order_a_removed_copy_carried_between_a_read_and_an_overwrite()
+    test_dde_orders_nothing_through_access_nodes_the_removal_leaves_unwritten_and_unread()

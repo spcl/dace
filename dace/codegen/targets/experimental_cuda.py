@@ -48,7 +48,7 @@ from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_access, as_range, config_int, config_str
-from dace.sdfg.scope import is_in_scope
+from dace.sdfg.scope import is_in_scope, scope_contains_scope
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView, SymbolResolver
 from dace.transformation.passes import gpu_shared_memory
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUCodegenPreprocessPipeline
@@ -70,6 +70,16 @@ def scope_map_entry(dfg_scope: ScopeSubgraphView) -> nodes.MapEntry:
     entry = dfg_scope.source_nodes()[0]
     assert isinstance(entry, nodes.MapEntry)
     return entry
+
+
+def copy_site(state: SDFGState, src_node: nodes.Node, dst_node: nodes.Node) -> nodes.Node:
+    """The node whose scope runs a copy: the source, or the destination when it lies inside the source's scope.
+
+    A copy leaving a kernel through its map exit runs where its source is, inside the kernel, while its destination
+    is outside it.
+    """
+    sdict = state.scope_dict()
+    return dst_node if scope_contains_scope(sdict, src_node, dst_node) else src_node
 
 
 @registry.autoregister_params(name="experimental_cuda")
@@ -518,7 +528,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             and isinstance(src_node, nodes.AccessNode)
             and isinstance(dst_node, nodes.AccessNode)
             and src_node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
-            and not is_in_scope(sdfg, cfg.state(state_id), dst_node, [dtypes.ScheduleType.GPU_ThreadBlock])
+            and not is_in_scope(
+                sdfg,
+                cfg.state(state_id),
+                copy_site(cfg.state(state_id), src_node, dst_node),
+                [dtypes.ScheduleType.GPU_ThreadBlock],
+            )
         ):
             # Every thread of the block runs block-level code, so the reduction of a shared buffer is split across
             # the block. A per-thread (register) source is a thread-level write, as everywhere else.

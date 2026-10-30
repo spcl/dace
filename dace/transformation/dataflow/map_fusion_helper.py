@@ -365,6 +365,11 @@ def relocate_nodes(
                     state.remove_edge(edge_to_move)
                     if state.degree(edge_to_move.src) == 0:
                         state.remove_node(edge_to_move.src)
+                    elif state.in_degree(edge_to_move.src) > 0 and not any(
+                        o.dst is to_node for o in state.out_edges(edge_to_move.src)
+                    ):
+                        # The reused edge reads another node of the data: what orders this one still orders the Map
+                        state.add_nedge(edge_to_move.src, to_node, dace.Memlet())
                 else:
                     helpers.redirect_edge(state, e, new_dst=to_node, new_dst_conn=dst_in_conn)
 

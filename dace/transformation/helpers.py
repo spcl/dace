@@ -161,7 +161,14 @@ def nest_sdfg_subgraph(
         # Find NestedSDFG's connectors. Ordered: these name the nested SDFG's connectors and fix
         # the order its access nodes are wired, which numbers the enclosing map's IN_n / OUT_n.
         # Sorted, since a set of container names carries no order of its own to preserve.
-        read_set = OrderedSet(sorted(n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient))
+        # A constant only read inside is a constant of the nest too, declared there as here: a connector
+        # would bind a parameter of the very name the nest declares ``constexpr``
+        constant_reads = {n for n in read_set if n in sdfg.constants_prop and n not in write_set}
+        read_set = OrderedSet(
+            sorted(
+                n for n in read_set if n not in constant_reads and (n not in unique_set or not sdfg.arrays[n].transient)
+            )
+        )
         write_set = OrderedSet(sorted(n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient))
 
         # Find defined subgraph symbols
@@ -285,9 +292,11 @@ def nest_sdfg_subgraph(
         for name in read_set | write_set:
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
             nsdfg.arrays[name].transient = False
-        for name in unique_set:
+        for name in unique_set - constant_reads:
             nsdfg.arrays[name] = sdfg.arrays[name]
             del sdfg.arrays[name]
+        for name in constant_reads:
+            nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
 
         # If there are symbols (new or not) assigned value in the subgraph, their values will be propagated to the
         # (outer) SDFG through a symbol-scalar-symbol conversion. This is happening in two parts: (1) inside the nested
@@ -1299,7 +1308,8 @@ def isolate_nested_sdfg(
     )
 
     # The second reason, are read dependencies, for this we have to look at the incoming
-    #  edges and add any node that we need.
+    #  edges and add any node that we need. Such a node is only read in the post state: its writes stay where they are.
+    replicated: set[nodes.Node] = set()
     if len(post_nodes) != 0:
         for pnode in post_nodes.copy():
             for iedge in state.in_edges(pnode):
@@ -1310,6 +1320,7 @@ def isolate_nested_sdfg(
                             return False
                         raise ValueError("Can not replicate non non-View AccessNodes into the post state.")
                     post_nodes.add(node)
+                    replicated.add(node)
 
     # A read node replicated into POST loses the paths through the middle state. If such a path was all
     # that ordered one of its POST readers before a POST overwrite of the same data, the split would leave
@@ -1380,7 +1391,7 @@ def isolate_nested_sdfg(
             target.add_node(old_to_new[node])
         for node in members:
             for edge in state.in_edges(node):
-                if edge.src not in members:
+                if edge.src not in members or (target is post_state and node in replicated):
                     continue
                 memlet = copy.deepcopy(edge.data) if edge.src in kept and node in kept else edge.data
                 target.add_edge(old_to_new[edge.src], edge.src_conn, old_to_new[node], edge.dst_conn, memlet)
@@ -1389,6 +1400,10 @@ def isolate_nested_sdfg(
     for node in list(state.nodes()):
         if node not in kept:
             state.remove_node(node)
+    if post_state is state:
+        for node in replicated:
+            for edge in list(state.in_edges(node)):
+                state.remove_edge(edge)
 
     return (pre_state, middle_state, post_state)
 
