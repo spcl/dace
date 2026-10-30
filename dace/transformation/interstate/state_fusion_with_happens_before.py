@@ -872,8 +872,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         continue
                     if second_state.in_degree(a) != 0:
                         continue  # re-written inside the second state: not a merge point
+                    # ``a`` merges with the one producer its read selects, not with whichever the read reaches
                     producers = [n for n in first_output if n.data == a.data and _has_data_write(n)]
-                    if producers and all(any(nx.has_path(first_state._nx, c, p) for p in producers) for c in consumers):
+                    if producers and all(nx.has_path(first_state._nx, c, p) for c in consumers for p in producers):
                         return True
                 return False
 

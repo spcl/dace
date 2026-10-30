@@ -298,6 +298,42 @@ def test_a_read_merging_before_the_last_writer_still_orders_the_overwrite():
         assert nx.has_path(sdfg.start_state.nx, copy, overwrite), "the overwrite of X[1] is unordered against its write"
 
 
+def test_a_read_the_merge_point_does_not_follow_still_precedes_the_overwrite():
+    """first: T[8] = 0, then T[0:8] = X[0:8] (an empty edge orders the copy after);  second: Y[0] = T[8] and, after
+    the read of T, X[0] = U[0] + 2.
+
+    The second-state T merges with the write of T[8], which the copy follows: the copy's read of X is not ordered
+    before the overwrite by that merge.
+    """
+    sdfg = SDFG("fuse_read_not_before_merge_point")
+    for name in "TXUY":
+        sdfg.add_array(name, [9], dtypes.float64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    last = s1.add_access("T")
+    s1.add_edge(s1.add_tasklet("zero", {}, {"o"}, "o = 0.0"), "o", last, None, Memlet("T[8]"))
+    copied = s1.add_access("T")
+    s1.add_nedge(last, copied, Memlet())
+    s1.add_nedge(s1.add_read("X"), copied, Memlet("X[0:8] -> [0:8]"))
+    t = s2.add_read("T")
+    reader = s2.add_tasklet("reader", {"a"}, {"o"}, "o = a")
+    s2.add_edge(t, None, reader, "a", Memlet("T[8]"))
+    s2.add_edge(reader, "o", s2.add_write("Y"), None, Memlet("Y[0]"))
+    u = s2.add_read("U")
+    s2.add_nedge(t, u, Memlet())
+    overwrite = s2.add_tasklet("overwrite", {"a"}, {"o"}, "o = a + 2")
+    s2.add_edge(u, None, overwrite, "a", Memlet("U[0]"))
+    s2.add_edge(overwrite, "o", s2.add_write("X"), None, Memlet("X[0]"))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    if sdfg.number_of_nodes() == 1:
+        assert nx.has_path(sdfg.start_state.nx, copied, overwrite), (
+            "the overwrite of X[0] is unordered against its read"
+        )
+
+
 def test_war_write_after_read():
     """first: B[k] = A[k];  second: A[k] = 9.  B must get the OLD A[k].
 
@@ -1962,6 +1998,7 @@ def test_a_container_written_then_read_is_rewritten_after_its_reads():
 
 
 if __name__ == "__main__":
+    test_a_read_the_merge_point_does_not_follow_still_precedes_the_overwrite()
     test_extended_fusion()
     test_ordering_is_proven_by_any_candidate_not_just_the_first()
     test_fusion_result_is_reproducible_across_heap_layouts()
