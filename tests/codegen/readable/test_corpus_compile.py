@@ -58,9 +58,13 @@ def fp_contract_off():
 #: still non-trivial (a non-power-of-two catches naive stride assumptions).
 SYMBOL_SIZE = 13
 
-#: Kernels where the uniform SYMBOL_SIZE is too large. scattering_self is an 8-deep nest, so 13 per
-#: axis is ~8e8 iterations and took the CI worker down; two per axis still exercises the shape.
-SYMBOL_OVERRIDES = {"scattering_self": dict.fromkeys(("Nkz", "NE", "Nqz", "Nw", "N3D", "NA", "NB", "Norb"), 2)}
+#: Kernels where the uniform SYMBOL_SIZE is too large. stockham_fft sizes its arrays as ``R**K``, so 13**13 (~2 PiB)
+#: is unallocatable. scattering_self is an 8-deep nest, so 13 per axis is ~8e8 iterations and took the CI worker
+#: down; two per axis still exercises the shape.
+SYMBOL_OVERRIDES = {
+    "stockham_fft": {"R": 2, "K": 6},
+    "scattering_self": dict.fromkeys(("Nkz", "NE", "Nqz", "Nw", "N3D", "NA", "NB", "Norb"), 2),
+}
 
 #: Integer inputs that index an axis, as ``{kernel: {input: bounding symbol}}``; the generic integer
 #: range would read out of bounds once the axis is smaller.

@@ -236,15 +236,16 @@ def generate_program_folder(
         code_path = os.path.join(target_folder, basename)
         clean_code = code_object.clean_code
 
-        # The experimental (readable) code generator produces human-oriented code;
-        # collapse duplicate headers and format by default for readability.
+        # The experimental (readable) code generator's streams can each emit the same header or helper into one
+        # file; keep the first. Formatting stays opt-in: the saved file keeps the lines of ``code_object.code``,
+        # which build diagnostics are attributed by.
         readable = Config.get("compiler", "cpu", "implementation") == "experimental_readable"
 
         if readable:
             clean_code = deduplicate_includes(clean_code)
             clean_code = deduplicate_functions(clean_code)
 
-        if Config.get_bool("compiler", "format_code") or readable:
+        if Config.get_bool("compiler", "format_code"):
             config_file = Config.get("compiler", "format_config_file")
             if config_file is not None and config_file != "":
                 run_arg_list = ["clang-format", f"-style=file:{config_file}"]

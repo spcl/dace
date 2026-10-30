@@ -822,6 +822,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     # Traverse memlet path to determine conflicts.
     # If no conflicts will occur, write without atomics
     # (e.g., if the array has been defined in a non-parallel schedule context)
+    followed_view_edges = set()
     while edge is not None:
         path = dfg.memlet_path(edge)
         for e in path:
@@ -849,7 +850,14 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
             warnings.warn("Unexpected WCR path to not end in access node")
             return dst
 
-        # Writes through views conflict on the viewed container
+        # Writes through views conflict on the viewed container. The ``views`` edge can leave through a map exit
+        # (inlining a nested SDFG puts one there), so it is followed to let the loop above see the scopes on the way.
+        if isinstance(sdfg.arrays[dst.data], data.View):
+            view_edge = sdutil.get_view_edge(dfg, dst)
+            if view_edge is not None and view_edge.src is dst and view_edge not in followed_view_edges:
+                followed_view_edges.add(view_edge)
+                edge = view_edge
+                continue
         dst = sdutil.get_last_view_node(dfg, dst) or dst
 
         if dfg.in_degree(dst) > 0:
@@ -1103,12 +1111,13 @@ def unparse_tasklet(
         struct_initializer = StructInitializer(sdfg, structs)
     for stmt in body:
         stmt = copy.deepcopy(stmt)
-        if struct_initializer is not None:
-            struct_initializer.visit(stmt)
         if isinstance(stmt, ast.Expr):
             rk = codegen.make_keyword_remover(sdfg, memlets).visit_TopLevelExpr(stmt)
         else:
             rk = codegen.make_keyword_remover(sdfg, memlets).visit(stmt)
+        # After the keyword remover, so a field reading an array element is lowered like any other access
+        if rk is not None and struct_initializer is not None:
+            struct_initializer.visit(rk)
 
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
@@ -1176,7 +1185,7 @@ def is_lowered_target_code(node: ast.AST) -> bool:
     Checks whether a (partially) visited tasklet subtree already carries generated target code.
 
     The tasklet visitors splice emitted C++ back into the Python AST as an ``ast.Name`` holding a whole
-    expression (``A->indices[A_indices_idx(idx)]``, ``(*__walk_A)``, ...). A parsed ``ast.Name.id`` is
+    expression (``A->indices[A_indices_idx(idx)]``, ...). A parsed ``ast.Name.id`` is
     always an identifier, so a non-identifier id marks such a spliced node -- and marks a subtree that
     can no longer be re-parsed as Python, i.e. that must not re-enter the symbolic layer.
 

@@ -82,8 +82,8 @@ def generated_for(build, name, implementation, gpu=False):
 
 def tasklet_body_line(code):
     """The single emitted line that stores into ``C`` through the index functions."""
-    # A GPU build names the device copies ``<name>_gpu``
-    lines = [ln.strip() for ln in code.splitlines() if all(re.search(rf"\b{x}(_gpu)?_idx\(", ln) for x in "CAB")]
+    # A GPU build names the device copies ``gpu_<name>``
+    lines = [ln.strip() for ln in code.splitlines() if all(re.search(rf"\b(gpu_)?{x}_idx\(", ln) for x in "CAB")]
     assert lines, "no C[C_idx(..)] = A[A_idx(..)] + B[B_idx(..)] line found:\n" + code
     return lines[0]
 
@@ -156,7 +156,8 @@ def test_single_line_bit_exact(require_experimental, target):
 
 def test_wcr_reduction_bit_exact(require_experimental, target):
     """The WCR reduction (block-retained tasklet) is still equivalent to legacy."""
-    base = dict(A=np.random.rand(16), s=np.zeros(1))
+    # Threads accumulate in any order; integer-valued inputs make every order sum to the same bits
+    base = dict(A=np.random.randint(0, 1000, 16).astype(np.float64), s=np.zeros(1))
     legacy = run_variant(wcr_reduction_sdfg, f"wcr_run_leg_{target}", LEGACY, target, base)
     experimental = run_variant(wcr_reduction_sdfg, f"wcr_run_exp_{target}", EXPERIMENTAL, target, base)
     assert_outputs_equivalent(legacy, experimental, target, label="wcr_reduction")

@@ -20,6 +20,7 @@ legacy on a trivial SDFG (the readable form emits per-array ``_idx`` index
 functions and ``const``/``constexpr`` initialization, which legacy never does).
 """
 
+import ctypes
 import functools
 import os
 import signal
@@ -150,6 +151,17 @@ def waitpid_with_timeout(pid, timeout):
         raise RuntimeError(f"isolated kernel run failed (wait status={status})")
 
 
+def pause_openmp_pools():
+    """Tear down the thread pool of every OpenMP runtime already loaded: a team the parent started does not survive a
+    fork, so the child's first parallel region would wait on it forever."""
+    for soname in ("libgomp.so.1", "libomp.so.5", "libomp.so", "libiomp5.so"):
+        try:
+            runtime = ctypes.CDLL(soname, mode=os.RTLD_NOLOAD)
+        except OSError:
+            continue
+        runtime.omp_pause_resource_all(1)  # omp_pause_soft
+
+
 def run_isolated(build_and_run, timeout=300):
     """Run ``build_and_run() -> Dict[str, ndarray]`` in a forked child process.
 
@@ -164,6 +176,7 @@ def run_isolated(build_and_run, timeout=300):
     """
     handle, path = tempfile.mkstemp(suffix=".npz")
     os.close(handle)
+    pause_openmp_pools()
     pid = os.fork()
     if pid == 0:  # child
         try:

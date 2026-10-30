@@ -286,6 +286,7 @@ def _arange(
     outname = pv.get_target_name()
     outname, outarr = sdfg.add_transient(outname, shape, dtype, find_new_name=True)
 
+    # ``__out`` is an element lvalue, so ``decltype(__out)`` is a reference a prvalue cannot be cast to
     start = f"{dtype.ctype}({start})"
     actual_step = f"{dtype.ctype}({actual_step})"
 
@@ -405,7 +406,7 @@ def _linspace(
         stopcode = symbolic.symstr(stop)
 
     # Create tasklet code based on inputs
-    code = f"__out = {startcode} + __sind * ({dtype.ctype}({stopcode} - {startcode}) / {dtype.ctype}({symbolic.symstr(num)}))"
+    code = f"__out = {startcode} + __sind * {dtype.ctype}({stopcode} - {startcode}) / {dtype.ctype}({symbolic.symstr(num)})"
 
     state.add_mapped_tasklet(
         name="linspace",

@@ -138,11 +138,9 @@ def _loop_region_to_code(
             unparse_interstate_edge(stmt, sdfg, codegen=codegen, symbols=lsyms).strip(";")
             for stmt in _statements(loop.init_statement)
         ]
-        # ``decl_placement = late``: a loop-local counter is declared HERE, in the init clause, instead
-        # of being hoisted to the top of the generated function. The gate that put it in this map also
-        # established that the init is a plain ``i = <expr>`` and that the loop is not inverted, so this
-        # only ever runs for the `for (init; cond; update)` form below, where the clause scopes the
-        # counter to the loop. Absent under the default ``eager``, leaving the init untouched.
+        # The readable generator declares a loop-local counter HERE, in the init clause, instead of hoisting
+        # it to the top of the generated function. The gate that put it in this map also established that the
+        # init is a plain ``i = <expr>`` and that the loop is not inverted, so the clause scopes the counter.
         counter_ctype = codegen.loop_local_counters.get((sdfg.cfg_id, loop.loop_variable))
         if counter_ctype is not None:
             inits[0] = f"{counter_ctype} {inits[0]}"

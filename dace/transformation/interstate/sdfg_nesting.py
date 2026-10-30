@@ -15,6 +15,7 @@ from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, dealias, nodes, propagation, utils
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
+from dace.sdfg.replace import rename_clashing_tasklet_connectors
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, transformation
 
@@ -397,6 +398,11 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None
+        enclosing_scopes: list[tuple[nodes.EntryNode, nodes.ExitNode]] = []
+        entry = nsdfg_scope_entry
+        while entry is not None:
+            enclosing_scopes.append((entry, state.exit_node(entry)))
+            entry = state.entry_node(entry)
 
         #######################################################
         # Collect and update top-level SDFG metadata
@@ -517,18 +523,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
                             reshapes.add(root.dst.data)
 
-        # A tasklet connector may not share its name with a container, symbol or constant (see validation): one of
-        # the nested state's that names a parent one is renamed, as InlineMultistateSDFG does
-        from dace.transformation.interstate.multistate_inline import _disambiguate_code_connectors
-
-        _disambiguate_code_connectors(
-            nsdfg, set(sdfg.arrays) | set(nsdfg.arrays) | set(sdfg.symbols) | set(sdfg.constants)
-        )
         # All transients become transients of the parent (if data already
         # exists, find new name)
         # A connector of a code node may not share a name with data either (see validation), and the code nodes of
         # the nested state join the parent too.
         taken = set(sdfg.arrays) | set(sdfg.symbols) | set(sdfg.constants)
+        rename_clashing_tasklet_connectors(nsdfg, taken)
         for block in (*sdfg.states(), nstate):
             for node in block.nodes():
                 if isinstance(node, nodes.CodeNode) and not isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)):
@@ -568,6 +568,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     pass
 
         # All constants (and associated transients) become constants of the parent
+        renamed_constants: dict[str, str] = {}
         for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
             if cstname in sdfg.constants:
                 if cstname in transients:
@@ -575,9 +576,13 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 else:
                     newname = sdfg.find_new_constant(cstname)
                     transients[cstname] = newname
+                    renamed_constants[cstname] = newname
                 sdfg.constants_prop[newname] = (csttype, cstval)
             else:
                 sdfg.constants_prop[cstname] = (csttype, cstval)
+        # Code and memlets read a constant by name, too
+        if renamed_constants:
+            nsdfg.replace_dict(renamed_constants)
 
         #######################################################
         # Replace data on inlined SDFG nodes/edges
@@ -705,8 +710,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                             helpers.redirect_edge(state, e, nview)
                         arr, mem = views[node.data]
                         narr = state.add_access(arr)
-                        state.add_nedge(node, narr, dc(mem))
-                        state.add_nedge(narr, nview, dc(mem))
+                        # Through ``views`` connectors: an unbound view access node rebinds the whole container
+                        state.add_edge(node, "views", narr, None, dc(mem))
+                        state.add_edge(narr, None, nview, "views", dc(mem))
 
         # If source/sink node is not connected to a source/destination access
         # node, and the nested SDFG is in a scope, connect to scope with empty
@@ -731,9 +737,15 @@ class InlineSDFG(transformation.SingleStateTransformation):
         removed_in_edges = self._remove_edge_path(
             state, inputs, set(inputs.keys()) - {inverse_repldict[n.data] for n in source_accesses}, reverse=True
         )
-        removed_out_edges = self._remove_edge_path(
-            state, outputs, set(outputs.keys()) - {inverse_repldict[n.data] for n in sink_accesses}, reverse=False
-        )
+        unsunk_outputs = set(outputs.keys()) - {inverse_repldict[n.data] for n in sink_accesses}
+        # An output without a sink access node (a shared connector written, then read) keeps its path through the
+        # enclosing scope's exit, which orders the rest of the state after the write
+        scope_outputs = {
+            conn: e
+            for conn, e in outputs.items()
+            if conn in unsunk_outputs and conn is not None and e.dst is nsdfg_scope_exit
+        }
+        removed_out_edges = self._remove_edge_path(state, outputs, unsunk_outputs - set(scope_outputs), reverse=False)
 
         # Re-add in/out edges to first/last nodes in subgraph
         order = [x for x in nx.topological_sort(nstate._nx) if isinstance(x, nodes.AccessNode)]
@@ -785,9 +797,26 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 cc2 = SubgraphView(state, [n for n in state.nodes() if n not in cc])
                 state = helpers.state_fission(cc2)
 
+        # The last written inlined access node of each such output feeds the scope exit instead
+        for conn, edge in scope_outputs.items():
+            candidates = [n for n in reversed(order) if n.data == edge.data.data and n in state.nodes()]
+            last = next((n for n in candidates if state.in_degree(n) > 0), next(iter(candidates), None))
+            if last is None:
+                self._remove_edge_path(state, {conn: edge}, {conn}, reverse=False)
+                continue
+            state.remove_edge(edge)
+            state.add_edge(last, None, edge.dst, edge.dst_conn, dc(edge.data))
+
         #######################################################
         # Remove nested SDFG node
         state.remove_node(nsdfg_node)
+        # A node-less nested SDFG leaves the scopes around it with nothing between entry and exit
+        for entry, exit_node in enclosing_scopes:
+            if entry in state.nodes():
+                if state.out_degree(entry) > 0 or state.in_degree(exit_node) > 0:
+                    break
+                state.remove_node(entry)
+                state.remove_node(exit_node)
 
         # Remove newly-generated isolated nodes if exist
         for dnode in state.data_nodes():

@@ -3,7 +3,14 @@
 Self-contained equivalence tests for the experimental (readable) CPU code
 generator: no external corpus needed. Each kernel is generated + run with both
 ``compiler.cpu.implementation = legacy`` and ``experimental`` on identical
-inputs; the outputs must be bit-exact.
+inputs; the outputs must agree to the dtype's tolerance.
+
+Not bit-exact, because these run MULTITHREADED like the rest of the suite: a WCR
+reduction associates its partial sums by thread count, so ``red`` differed in the
+last ulp between the two generators the moment the step stopped pinning
+``OMP_NUM_THREADS=1``. The tolerance is the same one the corpus comparisons in this
+directory use -- 1e-9 relative for fp64 -- which is some seven orders tighter
+than any discrepancy a real codegen defect would produce.
 """
 
 import copy
@@ -12,6 +19,7 @@ import numpy as np
 
 import dace
 from dace.config import Config
+from tests.codegen.readable.conftest import max_abs_diff, tolerance_for
 
 N, M, K = (dace.symbol(s) for s in ("N", "M", "K"))
 
@@ -55,30 +63,37 @@ def _equivalence(prog, args):
     _build(prog, "legacy", "%s_legacy" % prog.name)(**a_leg)
     a_exp = copy.deepcopy(base)
     _build(prog, "experimental_readable", "%s_experimental" % prog.name)(**a_exp)
-    for key in a_leg:
-        v1, v2 = a_leg[key], a_exp[key]
-        if isinstance(v1, np.ndarray):
-            assert np.array_equal(v1, v2), f"{prog.name}: output {key} differs"
+    for key, legacy in a_leg.items():
+        if isinstance(legacy, np.ndarray):
+            rtol, atol = tolerance_for(legacy.dtype)
+            assert np.allclose(legacy, a_exp[key], rtol=rtol, atol=atol), (
+                f"{prog.name}/{key}: max|diff|={max_abs_diff(legacy, a_exp[key]):.3e}"
+            )
 
 
 def test_elementwise():
-    _equivalence(ew, lambda: dict(A=np.random.rand(6, 8), B=np.random.rand(6, 8), C=np.zeros((6, 8)), M=6, N=8))
+    rng = np.random.default_rng(42)
+    _equivalence(ew, lambda: dict(A=rng.random((6, 8)), B=rng.random((6, 8)), C=np.zeros((6, 8)), M=6, N=8))
 
 
 def test_reduction_wcr():
-    _equivalence(red, lambda: dict(A=np.random.rand(64), s=np.zeros(1), N=64))
+    rng = np.random.default_rng(42)
+    _equivalence(red, lambda: dict(A=rng.random(64), s=np.zeros(1), N=64))
 
 
 def test_matmul_library():
-    _equivalence(mm, lambda: dict(A=np.random.rand(6, 5), B=np.random.rand(5, 7), C=np.zeros((6, 7)), M=6, K=5, N=7))
+    rng = np.random.default_rng(42)
+    _equivalence(mm, lambda: dict(A=rng.random((6, 5)), B=rng.random((5, 7)), C=np.zeros((6, 7)), M=6, K=5, N=7))
 
 
 def test_jacobi_stencil():
-    _equivalence(jac, lambda: dict(A=np.random.rand(32), B=np.zeros(32), N=32))
+    rng = np.random.default_rng(42)
+    _equivalence(jac, lambda: dict(A=rng.random(32), B=np.zeros(32), N=32))
 
 
 def test_transient():
-    _equivalence(trans, lambda: dict(A=np.random.rand(20), B=np.zeros(20), N=20))
+    rng = np.random.default_rng(42)
+    _equivalence(trans, lambda: dict(A=rng.random(20), B=np.zeros(20), N=20))
 
 
 def test_const_init_constexpr():

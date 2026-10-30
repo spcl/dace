@@ -719,6 +719,17 @@ required:
                                     scalar whose every access is a direct-child tasklet of ONE scope, live
                                     in a single state, never read before it is written), minus ``setzero``
                                     scalars, whose ``T x = 0;`` init already IS a fused declaration.
+                            scalar_decl:
+                                type: str
+                                default: eager
+                                title: Mutable scalar declaration placement
+                                description: >
+                                    Applies to: experimental_readable ONLY. Where a mutable scope-lifetime value scalar (a transient
+                                    ``dace.data.Scalar`` that is not an SDFG constant) is declared: ``eager`` (the default) emits ``T x;``
+                                    at the top of its scope; ``late`` emits ``T x;`` right before the first tasklet that uses it;
+                                    ``late_fused`` folds the declaration into that first write, ``T x = expr;``. ``late`` and
+                                    ``late_fused`` apply only where every use of the scalar is a direct-child tasklet of one scope;
+                                    any other scalar keeps the eager declaration. A readability / live-range form, not a speed lever.
                             const_init:
                                 type: str
                                 default: 'on'
