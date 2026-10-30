@@ -614,6 +614,12 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # Flush any index / size helpers registered while lowering this tasklet body.
         self._flush_generated_functions(function_stream, cfg, state_id, node)
 
+    def _generate_AITasklet(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream, codegen=None):
+        # The classic layout keeps the markers AI diagnostics attribute errors by; its body still indexes
+        # through ``<array>_idx`` helpers, so they are flushed the same way.
+        super()._generate_AITasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream, codegen)
+        self._flush_generated_functions(function_stream, cfg, state_id, node)
+
     # -- readable tasklet body: single line, no separator noise ----------------
 
     def tasklet_body_comment(self, node) -> str:

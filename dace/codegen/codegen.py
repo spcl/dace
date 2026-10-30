@@ -169,6 +169,56 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
+def changes_symbol_kind(state: SDFGState, node: "dace.nodes.NestedSDFG") -> bool:
+    """Whether a symbol the nested SDFG declares is mapped to a value of another scalar kind (an integer fed a float,
+    a signed symbol an unsigned value): the call converts the value, inlining would substitute it as is."""
+    from dace.sdfg.type_inference import infer_expr_type
+
+    outer = None
+    for name, value in node.symbol_mapping.items():
+        declared = node.sdfg.symbols.get(name)
+        if declared is None:
+            continue
+        if outer is None:
+            outer = state.symbols_defined_at(node)
+        mapped = infer_expr_type(value, outer)
+        if mapped is not None and not (
+            type(declared) is type(mapped) is dtypes.typeclass
+            and declared.as_numpy_dtype().kind == mapped.as_numpy_dtype().kind
+        ):
+            return True
+    return False
+
+
+def inline_host_nested_sdfgs(sdfg: SDFG) -> int:
+    """Flattens the nested SDFGs the CPU target emits and returns how many were inlined.
+
+    A nest inside a GPU scope stays, as the CUDA target emits it as a device function, and so does one that
+    :func:`changes_symbol_kind`.
+    """
+    from dace.sdfg.scope import is_devicelevel_gpu
+    from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+    from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+
+    pinned = [
+        node
+        for node, parent in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.NestedSDFG)
+        and not node.no_inline
+        and isinstance(parent, SDFGState)
+        and (is_devicelevel_gpu(parent.sdfg, parent, node) or changes_symbol_kind(parent, node))
+    ]
+    for node in pinned:
+        node.no_inline = True
+    try:
+        return sdfg.apply_transformations_repeated(InlineSDFG) + sdfg.apply_transformations_repeated(
+            InlineMultistateSDFG
+        )
+    finally:
+        for node in pinned:
+            node.no_inline = False
+
+
 def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
@@ -229,8 +279,10 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
 
     # Give every implicit copy a node of its own, before the expansion below lowers it. An implicit
     # copy is a write no node performs, so an empty memlet ordering that write has nothing to point
-    # at and the copy is free to move ahead of a write it must follow.
-    if config.Config.get_bool("compiler", "cpu", "explicit_copy"):
+    # at and the copy is free to move ahead of a write it must follow. The readable generator lowers
+    # its copies after inlining instead: an expanded copy inside a nest changes what InlineSDFG accepts.
+    readable = config.Config.get("compiler", "cpu", "implementation") == "experimental_readable"
+    if config.Config.get_bool("compiler", "cpu", "explicit_copy") and not readable:
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
         InsertExplicitCopies().apply_pass(sdfg, {})
@@ -257,9 +309,7 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     # lowering applies uniformly, not stopping at NSDFG boundaries), then mark write-once data
     # const/constexpr and inline tasklet connectors. After library expansion so post-expansion
     # tasklets are seen; affects CPU and GPU-kernel tasklets alike.
-    if config.Config.get("compiler", "cpu", "implementation") == "experimental_readable":
-        from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
-        from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+    if readable:
         from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
         from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
         from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
@@ -270,15 +320,13 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
             and node.instrument != dtypes.DataInstrumentationType.No_Instrumentation
             for node, _ in sdfg.all_nodes_recursive()
         ):
-            inlined = sdfg.apply_transformations_repeated(InlineSDFG)
-            inlined += sdfg.apply_transformations_repeated(InlineMultistateSDFG)
-            # An inlined connector can leave a copy between outer containers; lower it like every other copy
-            if inlined and config.Config.get_bool("compiler", "cpu", "explicit_copy"):
-                from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+            inline_host_nested_sdfgs(sdfg)
+        if config.Config.get_bool("compiler", "cpu", "explicit_copy"):
+            from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
-                InsertExplicitCopies().apply_pass(sdfg, {})
-                infer_types.infer_connector_types(sdfg)
-                sdfg.expand_library_nodes()
+            InsertExplicitCopies().apply_pass(sdfg, {})
+            infer_types.infer_connector_types(sdfg)
+            sdfg.expand_library_nodes()
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Normalize single-value transients to Scalar (default is transient-only, so the signature
@@ -300,11 +348,21 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # ``const_init``: transients that only store literals become ``constexpr`` SDFG constants.
         if config.Config.get("compiler", "cpu", "codegen_params", "const_init") == "on":
             PromoteConstantTransients().apply_pass(sdfg, {})
+        # The CUDA preprocess lifts in-kernel arrays too, but after the inlining below froze their accesses into
+        # tasklet code, so the readable path lifts them first.
+        from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
+
+        move_arrays = MoveArrayOutOfKernel()
+        move_arrays.raise_on_unsupported = False
+        if move_arrays.apply_pass(sdfg, {}) is not None:
+            infer_types.infer_connector_types(sdfg)
+            infer_types.set_default_schedule_and_storage_types(sdfg, None)
         InlineTaskletConnectors().apply_pass(sdfg, {})
         # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name
         # with a differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.
         CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
-        sdfg.validate()
+        if validate:
+            sdfg.validate()
 
         # The readable ``<arr>_idx`` / ``<arr>_size`` helpers are ``constexpr``; when they are reached
         # from device code, nvcc needs ``--expt-relaxed-constexpr`` to evaluate a host/device constexpr

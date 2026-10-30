@@ -812,6 +812,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     # Traverse memlet path to determine conflicts.
     # If no conflicts will occur, write without atomics
     # (e.g., if the array has been defined in a non-parallel schedule context)
+    followed_view_edges = set()
     while edge is not None:
         path = dfg.memlet_path(edge)
         for e in path:
@@ -839,7 +840,14 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
             warnings.warn("Unexpected WCR path to not end in access node")
             return dst
 
-        # Writes through views conflict on the viewed container
+        # Writes through views conflict on the viewed container. The ``views`` edge can leave through a map exit
+        # (inlining a nested SDFG puts one there), so it is followed to let the loop above see the scopes on the way.
+        if isinstance(sdfg.arrays[dst.data], data.View):
+            view_edge = sdutil.get_view_edge(dfg, dst)
+            if view_edge is not None and view_edge.src is dst and view_edge not in followed_view_edges:
+                followed_view_edges.add(view_edge)
+                edge = view_edge
+                continue
         dst = sdutil.get_last_view_node(dfg, dst) or dst
 
         if dfg.in_degree(dst) > 0:

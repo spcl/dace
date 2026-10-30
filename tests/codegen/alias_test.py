@@ -38,7 +38,9 @@ def test_multi_nested():
     def tester(a: AliasedArray, b: dace.float64[20]):
         interim(a, b)
 
-    code = tester.to_sdfg(simplify=False).generate_code()[0]
+    # One function per nest is the legacy generator's; the readable one inlines the nests away
+    with dace.config.set_temporary("compiler", "cpu", "implementation", value="legacy"):
+        code = tester.to_sdfg(simplify=False).generate_code()[0]
 
     # Restrict keyword should show up once per aliased array, even if nested programs say otherwise
     assert code.clean_code.count("__restrict__") == 4  # = [__program, tester, interim, nested]
