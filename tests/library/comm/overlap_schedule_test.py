@@ -42,6 +42,12 @@ def _allreduce(name: str, inbuf: str, outbuf: str, request: str) -> tn.LibraryCa
     )
 
 
+def _waitall(name: str, requests: str) -> tn.LibraryCall:
+    node = comm.Waitall(name)
+    node.implementation = "MPI"
+    return tn.LibraryCall(node=node, in_memlets={"_request": Memlet(requests)}, out_memlets={})
+
+
 def _wait(name: str, buffer: str, request: str) -> tn.LibraryCall:
     node = comm.Wait(name)
     node.implementation = "MPI"
@@ -65,6 +71,7 @@ def _tree(name: str, children: list[tn.ScheduleTreeNode]) -> tn.ScheduleTreeRoot
         containers[array] = dace.data.Array(dace.float64, [n], transient=True)
     for request in ("request", "request2"):
         containers[request] = dace.data.Array(dace.opaque("MPI_Request"), [1], transient=True)
+    containers["requests"] = dace.data.Array(dace.opaque("MPI_Request"), [2], transient=True)
     return tn.ScheduleTreeRoot(
         name=name,
         containers=containers,
@@ -170,6 +177,43 @@ def test_overlap_respects_dependencies():
     assert _labels(stree) == ["assign m", "double", "|", "allreduce", "|", "wait", "|", "overwrite", "read"]
 
 
+def test_a_wait_completes_every_start_into_its_requests():
+    """Two starts into the elements of one request array: the wait of both keeps the writer of the first one's input
+    after it, though the second start came last."""
+    stree = _tree(
+        "overlap_request_array",
+        [
+            _allreduce("first", "x", "reduced", "requests"),
+            _allreduce("second", "other", "reduced2", "requests"),
+            _waitall("waitall", "requests[0:2]"),
+            _map("overwrite", "__out = __in", {"__in": "out"}, "x"),  # Writes the input of the first reduction
+        ],
+    )
+    stree.children[0].out_memlets["_request"] = Memlet("requests[0]")
+    stree.children[1].out_memlets["_request"] = Memlet("requests[1]")
+    overlap_communication(stree)
+    labels = _labels(stree)
+    assert labels.index("waitall") < labels.index("overwrite")
+
+
+def test_a_wait_completes_only_the_starts_into_its_requests():
+    """A wait of the second request leaves the first send's input free: its writer may move above the wait."""
+    stree = _tree(
+        "overlap_request_element",
+        [
+            _allreduce("first", "x", "reduced", "requests"),
+            _allreduce("second", "other", "reduced2", "requests"),
+            _waitall("waitall", "requests[1]"),
+            _map("overwrite", "__out = __in", {"__in": "out"}, "x"),
+        ],
+    )
+    stree.children[0].out_memlets["_request"] = Memlet("requests[0]")
+    stree.children[1].out_memlets["_request"] = Memlet("requests[1]")
+    overlap_communication(stree)
+    labels = _labels(stree)
+    assert labels.index("overwrite") < labels.index("waitall")
+
+
 @pytest.mark.mpi
 def test_overlapped_program():
     from mpi4py import MPI
@@ -203,4 +247,6 @@ if __name__ == "__main__":
     test_overlap_moves_work_from_before_the_start()
     test_overlap_keeps_the_order_of_starts()
     test_overlap_respects_dependencies()
+    test_a_wait_completes_every_start_into_its_requests()
+    test_a_wait_completes_only_the_starts_into_its_requests()
     test_overlapped_program()

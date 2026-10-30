@@ -7,8 +7,12 @@ from dace.libraries.comm import environments
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
-    expanded_input_connectors,
+    comm_tasklet,
+    count_expression,
+    gpu_buffers_ready,
     mpi_communicator,
+    mpi_request_connector,
+    mpi_vector_datatype,
     nccl_communicator,
     nccl_point_to_point,
     nccl_request,
@@ -32,46 +36,18 @@ class ExpandIsendMPI(ExpandTransformation):
             raise NotImplementedError
 
         comm = mpi_communicator(node, parent_state)
+        code = "" if node.nosync else gpu_buffers_ready(node, parent_sdfg, parent_state)
 
-        code = ""
+        vector_code, mpi_dtype_str, count_str, free = mpi_vector_datatype(ddt, mpi_dtype_str, count_str)
+        code += vector_code
+        code += f"MPI_Isend(_buffer, {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {comm}, _request);"
+        code += free
 
-        if not node.nosync and buffer.storage == dtypes.StorageType.GPU_Global:
-            code += """
-            cudaStreamSynchronize(__dace_current_stream);
-            """
-
-        if ddt is not None:
-            code += f"""static MPI_Datatype newtype;
-                        static int init=1;
-                        if (init) {{
-                           MPI_Type_vector({ddt["count"]}, {ddt["blocklen"]}, {ddt["stride"]}, {ddt["oldtype"]}, &newtype);
-                           MPI_Type_commit(&newtype);
-                           init=0;
-                        }}
-                            """
-            mpi_dtype_str = "newtype"
-            count_str = "1"
-        buffer_offset = 0
-        code += f"MPI_Isend(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {comm}, _request);"
-        if ddt is not None:
-            code += """// MPI_Type_free(&newtype);
-            """
-
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
+        tasklet = comm_tasklet(node, parent_state, code)
         conn = tasklet.in_connectors
         conn = {c: (dtypes.int32 if c == "_dest" else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
-        conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == "_request" else t) for c, t in conn.items()}
-        tasklet.out_connectors = conn
-        return tasklet
+        return mpi_request_connector(tasklet)
 
 
 @dace.library.expansion
@@ -111,6 +87,7 @@ class Isend(CommNode):
         "NCCL": ExpandIsendNCCL,
     }
     default_implementation = None
+    side_effects = True
 
     nosync = dace.properties.Property(
         dtype=bool, default=False, category="Scheduling", desc="Do not sync if memory is on GPU"
@@ -142,8 +119,7 @@ class Isend(CommNode):
         count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):
             if dst_conn == "_buffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                count_str = count_expression(data.subset)
                 # compute buffer offset
                 minelem = data.subset.min_element()
                 dims_data = sdfg.arrays[data.data].strides

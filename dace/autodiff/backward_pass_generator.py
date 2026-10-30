@@ -946,7 +946,7 @@ class BackwardPassGenerator:
 
         :note: This function operates in-place on the backward SDFG.
         """
-        for state in self.backward_sdfg.all_states():
+        for state in self.backward_sdfg.states():
             for node in list(state.nodes()):
                 if isinstance(node, nodes.NestedSDFG):
                     dealias.integrate_nested_sdfg(node.sdfg)
@@ -989,7 +989,7 @@ class BackwardPassGenerator:
 
     def _accessed_in_loop(self, data_name: str) -> bool:
         """Whether a state inside a loop of the forward pass accesses ``data_name``."""
-        for state in self.sdfg.all_states():
+        for state in self.sdfg.states():
             if ad_utils.state_within_loop(state)[0] and any(node.data == data_name for node in state.data_nodes()):
                 return True
         return False

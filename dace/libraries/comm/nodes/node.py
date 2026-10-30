@@ -1,13 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
+from collections.abc import Sequence
 from typing import Any
 
-import sympy
-
 from dace import data, dtypes, properties, subsets
+from dace.codegen import common
 from dace.libraries.comm import environments, utils
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -39,6 +42,48 @@ def validate_integer_descriptor(desc: Any, name: str) -> None:
         raise ValueError(f"{name} connector is missing")
     if desc.dtype.base_type not in dtypes.INTEGER_TYPES:
         raise ValueError(f"{name} must be an integer")
+
+
+def validate_integer_connector(node: nodes.Node, sdfg: SDFG, state: SDFGState, connector: str) -> None:
+    """Refuses a non-integer container on ``connector`` of ``node``."""
+    if connector in node.in_connectors:
+        desc = sdutil.in_desc_with_name(node, state, sdfg, connector)
+    else:
+        desc = sdutil.out_desc_with_name(node, state, sdfg, connector)
+    validate_integer_descriptor(desc, f'{type(node).__name__} "{node.label}" {connector}')
+
+
+def count_expression(subset: subsets.Subset) -> str:
+    """The number of elements of ``subset`` as a C++ expression."""
+    from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
+
+    return sym2cpp(subset.num_elements_exact())
+
+
+def int_array(name: str, values: Sequence, ctype: str = "int", static: bool = False) -> str:
+    """A C++ array ``name`` of ``ctype`` holding ``values``; ``static`` if a nonblocking operation reads it later."""
+    from dace.codegen.targets.cpp import sym2cpp  # avoid import loop
+
+    storage = "static " if static else ""
+    assignments = "".join(f"{name}[{i}] = ({ctype})({sym2cpp(v)});\n" for i, v in enumerate(values))
+    return f"{storage}{ctype} {name}[{len(values)}];\n{assignments}"
+
+
+#: The connectors of the buffers a communication node sends or receives
+BUFFER_CONNECTORS = ("_buffer", "_inbuffer", "_outbuffer")
+
+
+def comm_tasklet(node: nodes.LibraryNode, state: SDFGState, code: str) -> nodes.Tasklet:
+    """The tasklet running ``code``. Buffer connectors are pointers, also for scalars and single elements."""
+    inputs = expanded_input_connectors(node, state)
+    outputs = dict(node.out_connectors)
+    for connector in BUFFER_CONNECTORS:
+        if connector in inputs:
+            inputs[connector] = dtypes.pointer(sdutil.in_desc_with_name(node, state, state.sdfg, connector).dtype)
+        if connector in outputs:
+            outputs[connector] = dtypes.pointer(sdutil.out_desc_with_name(node, state, state.sdfg, connector).dtype)
+    side_effects = node.has_side_effects(state.sdfg)
+    return nodes.Tasklet(node.name, inputs, outputs, code, language=dtypes.Language.CPP, side_effects=side_effects)
 
 
 def external_communicator(node: nodes.Node, state: SDFGState) -> bool:
@@ -81,9 +126,9 @@ def _append_init_code_once(sdfg: SDFG, code: str) -> None:
 
 
 def mpi_average(op: str, buffer: str, count: str, comm: str, root: str | None = None) -> str:
-    """The code that turns the sum an MPI reduction wrote to ``buffer`` into the average, if ``op`` is the average
-    (see :func:`dace.libraries.comm.utils.is_average`): divides the ``count`` elements by the number of processes of
-    ``comm``, on ``root`` only if given."""
+    """The code that turns the sum an MPI reduction wrote to ``buffer`` (a pointer expression) into the average, if
+    ``op`` is the average (see :func:`dace.libraries.comm.utils.is_average`): divides the ``count`` elements by the
+    number of processes of ``comm``, on ``root`` only if given."""
     if not utils.is_average(op):
         return ""
     condition = "true"
@@ -95,26 +140,65 @@ def mpi_average(op: str, buffer: str, count: str, comm: str, root: str | None = 
             MPI_Comm_size({comm}, &__avg_size);
             MPI_Comm_rank({comm}, &__avg_rank);
             if ({condition}) {{
-                for (long long __i = 0; __i < ({count}); ++__i) {buffer}[__i] /= __avg_size;
+                for (long long __i = 0; __i < ({count}); ++__i) ({buffer})[__i] /= __avg_size;
             }}
         }}
         """
 
 
-def row_major_contiguous(subset: subsets.Range, desc: data.Data) -> bool:
-    """Whether ``subset`` of ``desc`` is one contiguous run of memory in row-major (C) element order, the order in
-    which a buffer is communicated. A packed permutation (e.g., a transposed view) is contiguous memory, but not in
-    this order."""
-    if any((step != 1) == True for _, _, step in subset):  # noqa: E712 (symbolic comparison)
+def touches_gpu_memory(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> bool:
+    """Whether ``node`` is connected to GPU memory, which gives its tasklet a GPU stream."""
+    return any(
+        e.data.data is not None and sdfg.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global
+        for e in state.all_edges(node)
+    )
+
+
+def gpu_buffers_ready(node: nodes.Node, sdfg: SDFG, state: SDFGState) -> str:
+    """Host-side wait for the stream of ``node`` before GPU-aware MPI touches its device buffers."""
+    if touches_gpu_memory(node, sdfg, state):
+        return f"DACE_GPU_CHECK({common.get_gpu_backend()}StreamSynchronize(__dace_current_stream));\n"
+    return ""
+
+
+def mpi_vector_datatype(ddt: dict | None, mpi_dtype: str, count: str) -> tuple[str, str, str, str]:
+    """(create code, datatype, count, free code) of a point-to-point buffer: the vector ``ddt`` (see
+    :func:`dace.libraries.comm.utils.create_vector_ddt`), created per call as its sizes may be symbols, or
+    ``mpi_dtype`` and ``count`` without it."""
+    if ddt is None:
+        return "", mpi_dtype, count, ""
+    create = f"""
+        MPI_Datatype __vector;
+        MPI_Type_vector({ddt["count"]}, {ddt["blocklen"]}, {ddt["stride"]}, {ddt["oldtype"]}, &__vector);
+        MPI_Type_commit(&__vector);
+        """
+    return create, "__vector", "1", "MPI_Type_free(&__vector);\n"
+
+
+def column_major(sdfg: SDFG, state: SDFGState, access: nodes.Node, name: str) -> bool:
+    """Whether ``name`` (or the array it views through ``access``) is column-major."""
+    if isinstance(access, nodes.AccessNode) and isinstance(sdfg.arrays[name], data.View):
+        viewed = sdutil.get_last_view_node(state, access)
+        if viewed is not None:
+            name = viewed.data
+    return utils.is_column_major(sdfg.arrays[name])
+
+
+def in_place(sdfg: SDFG, state: SDFGState, edge, node: nodes.Node) -> bool:
+    """Whether the buffer on ``edge`` is contiguous in its own element order (a transposed view is contiguous but
+    not in order), so it needs no packing."""
+    desc = sdfg.arrays[edge.data.data]
+    if isinstance(desc, data.Scalar):
+        return True
+    subset = edge.data.subset
+    if not subset.is_contiguous_subset(desc):
         return False
-    expected = 1
-    for size, stride in reversed(list(zip(subset.size(), desc.strides))):
-        if (size == 1) == True:  # noqa: E712 (symbolic comparison)
-            continue
-        if sympy.simplify(sympy.sympify(stride) - sympy.sympify(expected)) != 0:
-            return False
-        expected = expected * size
-    return True
+    if sum(1 for size in subset.size() if (size == 1) != True) <= 1:  # noqa: E712 (symbolic comparison)
+        return True  # One row: the same in any order
+    access = edge.src if edge.dst is node else edge.dst
+    if column_major(sdfg, state, access, edge.data.data):
+        return desc.is_packed_fortran_strides()
+    return desc.is_packed_c_strides()
 
 
 def pack_noncontiguous_buffers(
@@ -124,23 +208,15 @@ def pack_noncontiguous_buffers(
     inputs: tuple[str, ...] = ("_inbuffer",),
     outputs: tuple[str, ...] = ("_outbuffer",),
 ) -> None:
-    """
-    Routes the buffers of ``node`` that are not one contiguous run of memory (e.g., a transposed view, which
-    simplification may hand to the node in place of a contiguous copy) through contiguous transients: copies
-    into them before the node and out of them after it. The expansions communicate ``count`` elements from a
-    pointer, so they need contiguous buffers. A buffer that is both an input and an output (in place) gets one
-    transient.
-
-    :param inputs: The input connectors of buffers.
-    :param outputs: The output connectors of buffers.
-    """
+    """Routes the buffers of ``node`` that are not :func:`in_place` through packed transients, copied in before the
+    node and out after it. An in-place buffer gets one transient."""
     packed: dict[tuple[str, str], str] = {}
 
-    def transient(memlet: Memlet) -> str:
+    def transient(memlet: Memlet, access: nodes.Node) -> str:
         key = (memlet.data, str(memlet.subset))
         if key not in packed:
             desc = sdfg.arrays[memlet.data]
-            packed[key], _ = sdfg.add_array(
+            packed[key], packed_desc = sdfg.add_array(
                 f"__{node.label}_{memlet.data}_packed",
                 memlet.subset.size(),
                 desc.dtype,
@@ -148,43 +224,66 @@ def pack_noncontiguous_buffers(
                 transient=True,
                 find_new_name=True,
             )
+            if column_major(sdfg, state, access, memlet.data):
+                packed_desc.set_strides_from_layout(*range(len(packed_desc.shape)))
         return packed[key]
 
+    def add_copy(src: nodes.Node, src_conn: str | None, dst: nodes.Node, dst_conn: str | None, src_memlet, dst_memlet):
+        # A CopyLibraryNode picks the copy from the storages and strides of both ends, so packing need not handle
+        # memory locations or layouts. It connects access nodes only; other ends keep a copy edge.
+        if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)):
+            memlet = Memlet(data=src_memlet.data, subset=src_memlet.subset, other_subset=dst_memlet.subset)
+            state.add_edge(src, src_conn, dst, dst_conn, memlet)
+            return
+        copy_node = CopyLibraryNode(f"copy_{src_memlet.data}_to_{dst_memlet.data}")
+        state.add_edge(src, src_conn, copy_node, CopyLibraryNode.INPUT_CONNECTOR_NAME, src_memlet)
+        state.add_edge(copy_node, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, dst, dst_conn, dst_memlet)
+
     for edge in list(state.in_edges(node)):
-        if edge.dst_conn not in inputs or _contiguous_memlet(sdfg, edge.data):
+        if edge.dst_conn not in inputs or in_place(sdfg, state, edge, node):
             continue
-        name = transient(edge.data)
-        full = subsets.Range.from_array(sdfg.arrays[name])
-        access = state.add_access(name)
-        state.add_edge(
-            edge.src,
-            edge.src_conn,
-            access,
-            None,
-            Memlet(data=edge.data.data, subset=edge.data.subset, other_subset=full),
-        )
+        name = transient(edge.data, edge.src)
+        access, full = state.add_access(name), Memlet.from_array(name, sdfg.arrays[name])
+        add_copy(edge.src, edge.src_conn, access, None, Memlet(data=edge.data.data, subset=edge.data.subset), full)
         state.remove_edge(edge)
-        state.add_edge(access, None, node, edge.dst_conn, Memlet.from_array(name, sdfg.arrays[name]))
+        state.add_edge(access, None, node, edge.dst_conn, copy.deepcopy(full))
     for edge in list(state.out_edges(node)):
-        if edge.src_conn not in outputs or _contiguous_memlet(sdfg, edge.data):
+        if edge.src_conn not in outputs or in_place(sdfg, state, edge, node):
             continue
-        name = transient(edge.data)
-        full = subsets.Range.from_array(sdfg.arrays[name])
-        access = state.add_access(name)
-        state.add_edge(node, edge.src_conn, access, None, Memlet.from_array(name, sdfg.arrays[name]))
-        state.add_edge(
+        name = transient(edge.data, edge.dst)
+        access, full = state.add_access(name), Memlet.from_array(name, sdfg.arrays[name])
+        state.add_edge(node, edge.src_conn, access, None, full)
+        add_copy(
             access,
             None,
             edge.dst,
             edge.dst_conn,
-            Memlet(data=name, subset=full, other_subset=edge.data.subset),
+            copy.deepcopy(full),
+            Memlet(data=edge.data.data, subset=edge.data.subset),
         )
         state.remove_edge(edge)
 
 
-def _contiguous_memlet(sdfg: SDFG, memlet: Memlet) -> bool:
-    desc = sdfg.arrays[memlet.data]
-    return isinstance(desc, data.Scalar) or row_major_contiguous(memlet.subset, desc)
+def disjoint(subset_a: subsets.Subset, subset_b: subsets.Subset) -> bool:
+    """Whether two subsets of one container provably share no element."""
+    return subsets.intersects(subset_a, subset_b) is False
+
+
+def same_buffer(node: nodes.Node, state: SDFGState) -> bool:
+    """Whether the input and output of ``node`` are the same memory (``MPI_IN_PLACE``). Disjoint subsets are two
+    buffers; possibly overlapping ones are refused, as MPI forbids aliasing."""
+    inp = sdutil.in_edge_with_name(node, state, "_inbuffer").data
+    out = sdutil.out_edge_with_name(node, state, "_outbuffer").data
+    if inp.data != out.data:
+        return False
+    if inp.subset == out.subset:
+        return True
+    if disjoint(inp.subset, out.subset):
+        return False
+    raise ValueError(
+        f'{type(node).__name__} "{node.label}" reads {inp.data}[{inp.subset}] and writes the (possibly) overlapping '
+        f"{out.data}[{out.subset}]: use the same subset for an in-place operation, or disjoint ones"
+    )
 
 
 def mpi_collective(node: nodes.LibraryNode, name: str, args: str) -> str:
@@ -287,14 +386,7 @@ def nccl_tasklet(
         """
     if blocking:
         code += "__state->nccl->Launch();\n"
-    tasklet = nodes.Tasklet(
-        node.name,
-        expanded_input_connectors(node, state),
-        node.out_connectors,
-        code,
-        language=dtypes.Language.CPP,
-        side_effects=True,
-    )
+    tasklet = comm_tasklet(node, state, code)
     if isinstance(node, NonblockingCommNode) and node.nonblocking:
         if sdfg is None:
             raise ValueError("The tasklet of a nonblocking NCCL collective needs its SDFG")
@@ -333,8 +425,12 @@ class CommNode(nodes.LibraryNode):
     # Communication reads host control values (ranks, tags, requests) next to buffers in any memory
     bridges_storage = True
 
+    #: Whether the node acts beyond its outputs (creates or frees communicators, synchronizes, or uses its buffers
+    #: after returning), so transformations must neither remove nor reorder it
+    side_effects = False
+
     def has_side_effects(self, sdfg) -> bool:
-        return True
+        return self.side_effects
 
 
 @properties.make_properties
@@ -358,6 +454,9 @@ class NonblockingCommNode(CommNode):
         desc="Start the operation and return; a Wait on the _request output completes it",
     )
 
+    def has_side_effects(self, sdfg) -> bool:
+        return self.nonblocking
+
     def validate_nonblocking(self, sdfg: SDFG, state: SDFGState) -> None:
         """
         Checks what an MPI expansion of a nonblocking node needs: a connected ``_request`` output, and contiguous
@@ -371,7 +470,9 @@ class NonblockingCommNode(CommNode):
             raise ValueError(f'The nonblocking {type(self).__name__} "{self.label}" has no _request output')
         for edge in state.in_edges(self) + state.out_edges(self):
             connector = edge.dst_conn if edge.dst is self else edge.src_conn
-            if connector in ("_inbuffer", "_outbuffer") and not _contiguous_memlet(sdfg, edge.data):
+            if connector not in ("_inbuffer", "_outbuffer"):
+                continue
+            if not in_place(sdfg, state, edge, self):
                 raise ValueError(
                     f'The nonblocking {type(self).__name__} "{self.label}" requires contiguous buffers, but '
                     f"{edge.data.data} is not"

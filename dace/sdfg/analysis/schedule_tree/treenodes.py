@@ -297,6 +297,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         skip: set[str] | None = None,
         verbose: bool = False,
         state_boundary_behavior: Optional["StateBoundaryBehavior"] = None,
+        in_place: bool = True,
     ) -> SDFG:
         """
         Convert this schedule tree representation (back) into an SDFG.
@@ -310,6 +311,8 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         :param verbose: Turn on verbose logging of simplify. Unused if simplify is False.
         :param state_boundary_behavior: How state boundaries (e.g., due to write-after-write) are converted, see
                                         ``tree_to_sdfg.StateBoundaryBehavior``. Defaults to state transitions.
+        :param in_place: If True, this schedule tree is modified in-place during the conversion. Otherwise, a copy
+                         is converted and this tree is left unchanged.
 
         :return: SDFG version of this schedule tree.
         """
@@ -317,7 +320,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
 
         if state_boundary_behavior is None:
             state_boundary_behavior = t2s.StateBoundaryBehavior.STATE_TRANSITION
-        sdfg = t2s.from_schedule_tree(self, state_boundary_behavior)
+        sdfg = t2s.from_schedule_tree(self, state_boundary_behavior, in_place=in_place)
 
         if validate:
             sdfg.validate()

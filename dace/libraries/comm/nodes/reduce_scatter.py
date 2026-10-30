@@ -6,7 +6,9 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     NcclExpansion,
     NonblockingCommNode,
-    expanded_input_connectors,
+    comm_tasklet,
+    count_expression,
+    gpu_buffers_ready,
     mpi_average,
     mpi_collective,
     mpi_communicator,
@@ -39,21 +41,13 @@ class ExpandReduceScatterMPI(ExpandTransformation):
             raise NotImplementedError(
                 "The average of a nonblocking MPI reduction: reduce the sum and divide after the Wait"
             )
-        code = mpi_collective(
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state) + mpi_collective(
             node,
             "Reduce_scatter_block",
             f"_inbuffer, _outbuffer, {out_count_str}, {mpi_dtype_str}, {utils.mpi_op(node.op)}, {comm}",
         )
         code += mpi_average(node.op, "_outbuffer", out_count_str, comm)
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-            side_effects=True,
-        )
-        return mpi_request_connector(tasklet)
+        return mpi_request_connector(comm_tasklet(node, parent_state, code))
 
 
 @dace.library.expansion
@@ -112,7 +106,7 @@ class ReduceScatter(NonblockingCommNode):
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":
                 outbuffer = sdfg.arrays[e.data.data]
-                out_count_str = "*".join(str(s) for s in e.data.subset.size_exact())
+                out_count_str = count_expression(e.data.subset)
         if inbuffer is None or outbuffer is None:
             raise ValueError(f'ReduceScatter "{self.label}" needs an input and an output buffer')
         return inbuffer, (outbuffer, out_count_str)

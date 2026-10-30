@@ -9,8 +9,8 @@ import pytest
 import dace
 from dace.codegen.targets import framecode
 from dace.codegen.targets.cpu import _use_aligned_operator_new
-from dace.sdfg import infer_types
-from dace.sdfg.state import LoopRegion
+from dace.sdfg import infer_types, utils
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 
 
 def _count_heap_allocs(code: str, ctype: str) -> int:
@@ -657,6 +657,71 @@ def test_a_view_does_not_reallocate_the_array_it_views():
     )
 
 
+def test_dominator_tree_matches_the_transitive_closure():
+    sdfg = dace.SDFG("dominator_tree")
+    first = sdfg.add_state("first", is_start_block=True)
+    loop = LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    body = loop.add_state("body", is_start_block=True)
+    branches = ConditionalBlock("branches")
+    loop.add_node(branches)
+    loop.add_edge(body, branches, dace.InterstateEdge())
+    for index, condition in enumerate(("i < 5", None)):
+        arm = ControlFlowRegion(f"arm{index}", sdfg=sdfg)
+        branches.add_branch(dace.properties.CodeBlock(condition) if condition else None, arm)
+        arm.add_edge(arm.add_state(f"a{index}", is_start_block=True), arm.add_state(f"b{index}"), dace.InterstateEdge())
+    left, right, last = sdfg.add_state("left"), sdfg.add_state("right"), sdfg.add_state("last")
+    sdfg.add_edge(first, loop, dace.InterstateEdge())
+    sdfg.add_edge(loop, left, dace.InterstateEdge("N > 0"))
+    sdfg.add_edge(loop, right, dace.InterstateEdge("N <= 0"))
+    sdfg.add_edge(left, last, dace.InterstateEdge())
+    sdfg.add_edge(right, last, dace.InterstateEdge())
+
+    idom, alldom, ipostdom, allpostdom = {}, {}, {}, {}
+    utils.get_control_flow_block_dominators(sdfg, idom, alldom, ipostdom, allpostdom)
+    dom, postdom = framecode.dominator_trees(sdfg)
+    for tree, closure in ((dom, alldom), (postdom, allpostdom)):
+        blocks = list(closure)
+        for a in blocks:
+            for b in blocks:
+                assert tree.dominates(a, b) == (a is b or a in closure[b]), (a, b)
+    assert dom.dominates(first, last) and postdom.dominates(last, first) and not dom.dominates(left, last)
+
+
+def test_container_read_only_from_tasklet_code():
+    """``t`` is read by the code of a tasklet in a later state, with no access node there."""
+    sdfg = dace.SDFG("container_read_only_from_code")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    write = sdfg.add_state("write", is_start_block=True)
+    tasklet = write.add_tasklet("w", {"a"}, {"o"}, "o = 2 * a")
+    write.add_edge(write.add_read("A"), None, tasklet, "a", dace.Memlet("A[0]"))
+    write.add_edge(tasklet, "o", write.add_write("t"), None, dace.Memlet("t[0]"))
+    read = sdfg.add_state_after(write, "read")
+    tasklet = read.add_tasklet("r", {}, {"o"}, "o = t + 1")
+    read.add_edge(tasklet, "o", read.add_write("B"), None, dace.Memlet("B[0]"))
+    B = np.zeros(1)
+    sdfg(A=np.ones(1), B=B)
+    assert B[0] == 3
+
+
+def test_view_first_read_by_an_interstate_edge():
+    """A view whose first use is an interstate edge is declared with the data it views."""
+    sdfg = dace.SDFG("view_first_read_by_an_edge")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("buf", [8], dace.float64, transient=True)
+    sdfg.add_view("v", [8], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    first.add_nedge(first.add_read("A"), first.add_write("buf"), dace.Memlet("A[0:8]"))
+    second = sdfg.add_state("second")
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"k": "v[0]"}))
+    view = second.add_access("v")
+    second.add_edge(second.add_read("buf"), None, view, "views", dace.Memlet("buf[0:8]"))
+    second.add_nedge(view, second.add_write("A"), dace.Memlet("v[0:8]"))
+    sdfg.generate_code()
+
+
 if __name__ == "__main__":
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -682,3 +747,6 @@ if __name__ == "__main__":
     # test_scope_multisize()
     test_multisize()
     test_a_view_does_not_reallocate_the_array_it_views()
+    test_dominator_tree_matches_the_transitive_closure()
+    test_container_read_only_from_tasklet_code()
+    test_view_first_read_by_an_interstate_edge()

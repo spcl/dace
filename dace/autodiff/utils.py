@@ -88,7 +88,7 @@ def add_backward_desc(
     :param forward_name: A name for the forward array (doesn't have to match its actual name).
     :return: The name of the newly added gradient array in ``backward_sdfg``.
     """
-    backward_name = dt.find_new_name(forward_name + "_grad", forward_sdfg.arrays)
+    backward_name = dace.utils.find_new_name(forward_name + "_grad", forward_sdfg.arrays)
     new_desc = copy.deepcopy(forward_desc)
     new_desc.transient = False
     return backward_sdfg.add_datadesc(backward_name, new_desc)
@@ -1064,7 +1064,7 @@ def copy_view_at_exit(sdfg: SDFG, name: str) -> str:
 
 def view_definition(sdfg: SDFG, name: str) -> tuple[nd.AccessNode, dgraph.MultiConnectorEdge] | None:
     """Returns an access node of the view ``name`` in ``sdfg`` together with the edge that defines it, if any."""
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in state.data_nodes():
             if node.data == name:
                 edge = utils.get_view_edge(state, node)
@@ -1106,7 +1106,7 @@ def redefine_view(forward: SDFG, backward: SDFG, name: str) -> None:
         desc.transient = False
         backward.add_datadesc(viewed, desc)
     backward.arrays[name].transient = True
-    for state in backward.all_states():
+    for state in backward.states():
         for view in state.data_nodes():
             if view.data != name or utils.get_view_edge(state, view) is not None:
                 continue

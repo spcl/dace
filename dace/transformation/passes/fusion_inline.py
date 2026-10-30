@@ -137,7 +137,6 @@ class InlineControlFlowRegions(ppl.Pass):
     no_inline_unstructured = properties.Property(
         dtype=bool,
         default=True,
-        category="Applicability",
         desc="Whether to prevent inlining regions of unstructured control flow. Since control flow raising lifts "
         "unstructured control flow into such regions, inlining them prevents simplification from converging.",
     )

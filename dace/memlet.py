@@ -21,6 +21,8 @@ from dace.properties import (
     make_properties,
 )
 from dace.sdfg.graph import generate_element_id
+from dace.sdfg.memlet_access_policies import CopyOnAccess
+from dace.sdfg.memlet_access_policy import MemletAccessPolicy
 
 if TYPE_CHECKING:
     import dace.sdfg.graph
@@ -78,6 +80,18 @@ class Memlet:
         desc="If True, always generates non-conflicting (non-atomic) writes in resulting code",
     )
     allow_oob = Property(dtype=bool, default=False, category="Semantics", desc="Bypass out-of-bounds validation")
+    access_policy = Property(
+        dtype=MemletAccessPolicy,
+        default=CopyOnAccess(),
+        from_json=lambda obj, context=None: MemletAccessPolicy.from_json(obj, context),
+        serialize_if=lambda memlet: not memlet.access_policy.is_default,
+        desc="How this (leaf) memlet's addressing is realized in generated code (see "
+        "dace.sdfg.memlet_access_policy). The default, CopyOnAccess, evaluates the full offset at every "
+        "access; a LoopCursor policy advances a loop-carried cursor once per iteration of an "
+        "enclosing loop instead. Descriptive only: policies are lowered to ordinary SDFG "
+        "constructs in the code-generation window.",
+        category="Code Generation",
+    )
 
     guid = Property(dtype=str, allow_none=False, category="(Debug)")
 
@@ -166,6 +180,7 @@ class Memlet:
         self.wcr_nonatomic = wcr_nonatomic
         self.debuginfo = debuginfo
         self.allow_oob = allow_oob
+        self.access_policy = CopyOnAccess()
 
         self.guid = generate_element_id(self)
 
@@ -185,6 +200,7 @@ class Memlet:
             allow_oob=memlet.allow_oob,
         )
         result._is_data_src = memlet._is_data_src
+        result.access_policy = memlet.access_policy.copy()
         return result
 
     def to_json(self):
@@ -245,6 +261,7 @@ class Memlet:
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
+        node._access_policy = dcpy(self._access_policy, memo=memo)
         node._guid = generate_element_id(node)
 
         # TODO: Since we set the `.sdfg` and friends to `None` we should probably also set this to `None`.
@@ -425,15 +442,11 @@ class Memlet:
         Tries to initialize the internal fields of the memlet (e.g., src/dst
         subset) once it is added to an SDFG as an edge.
         """
-        from dace.sdfg.nodes import AccessNode, CodeNode  # Avoid import loops
+        from dace.sdfg.nodes import AccessNode  # Avoid import loops
 
         self._sdfg = sdfg
         self._state = state
         self._edge = edge
-
-        # If memlet is code->code, ensure volume=1
-        if isinstance(edge.src, CodeNode) and isinstance(edge.dst, CodeNode) and self.volume == 0:
-            self.volume = 1
 
         # Find source/destination of memlet
         try:

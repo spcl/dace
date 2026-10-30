@@ -13,5 +13,13 @@ from .allgather import Allgather
 from .alltoall import Alltoall
 from .alltoallv import Alltoallv
 from .reduce_scatter import ReduceScatter
+from .gatherv import Gatherv
+from .barrier import Barrier
+from .abort import Abort
+from .comm_rank import CommRank
+from .comm_size import CommSize
+from .comm_split import CommSplit
+from .comm_free import CommFree
+from .comm_f2c import CommF2c
 from .dummy import Dummy
 from .redistribute import Redistribute

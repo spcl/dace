@@ -374,7 +374,7 @@ def _states(blocks: Iterable[ControlFlowBlock]) -> Iterable[SDFGState]:
         if isinstance(block, SDFGState):
             yield block
         else:
-            yield from block.all_states()
+            yield from block.states()
 
 
 def _interstate_edges(sdfg: SDFG, blocks: set[ControlFlowBlock]) -> Iterable[InterstateEdge]:

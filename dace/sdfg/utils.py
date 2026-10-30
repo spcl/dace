@@ -1247,7 +1247,7 @@ def convert_to_view(sdfg: SDFG, name: str, viewed: str, subset: sbs.Subset) -> d
     view = dt.View.view(sdfg.arrays[name])
     sdfg.arrays[name] = view
 
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         for node in [n for n in state.data_nodes() if n.data == name]:
             _attach_view_edges(state, node, viewed, subset)
 
@@ -1825,8 +1825,8 @@ def distributed_compile(sdfg: SDFG | None, comm, *, validate: bool = True) -> cs
 
     # Rank 0 compiles SDFG.
     if rank == 0:
-        digest = sdfg.hash_sdfg()
         try:
+            digest = sdfg.hash_sdfg()
             func = sdfg.compile(validate=validate)
             root_outcome = (sdfg.build_folder, digest, None)
         except Exception as ex:
@@ -1923,8 +1923,9 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
     """
     if isinstance(desc, (dt.View)):
         # Views can be non-free symbol dependent due to the adjacent edges.
+        # None for an orphaned view, which has no edge-side dependency to check
         e = get_view_edge(state, node)
-        if e.data:
+        if e is not None and e.data:
             src_subset = e.data.get_src_subset(e, state)
             dst_subset = e.data.get_dst_subset(e, state)
             free_symbols = set()
@@ -2301,7 +2302,7 @@ def make_dynamic_map_inputs_unique(sdfg: SDFG):
                     for e in state.in_edges(node):
                         if not e.dst_conn.startswith("IN_"):
                             if e.dst_conn in dynamic_map_inputs:
-                                new_name = dt.find_new_name(e.dst_conn, dynamic_map_inputs)
+                                new_name = dace.utils.find_new_name(e.dst_conn, dynamic_map_inputs)
                                 dynamic_map_inputs.add(new_name)
                                 repl_dict[e.dst_conn] = new_name
                                 e._dst_conn = new_name
@@ -2547,14 +2548,18 @@ def get_control_flow_block_dominators(
 
 def set_nested_sdfg_parent_references(sdfg: SDFG):
     """
-    Sets the parent_sdfg attribute for all NestedSDFGs recursively.
+    Sets the parent_sdfg attribute for all NestedSDFGs recursively, and rebuilds the CFG list once.
     """
     sdfg.reset_cfg_list()
-    for state in sdfg.all_states():
+    point_nested_sdfgs_at_their_parents(sdfg)
+
+
+def point_nested_sdfgs_at_their_parents(sdfg: SDFG):
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, NestedSDFG):
                 node.sdfg.parent_sdfg = sdfg
-                set_nested_sdfg_parent_references(node.sdfg)
+                point_nested_sdfgs_at_their_parents(node.sdfg)
 
 
 def get_used_data(
@@ -2787,7 +2792,7 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalar_name: s
 
     nsdfgs = set()
     c = 0
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         # Check dynamic inputs
         for e in state.edges():
             if e not in state.edges():

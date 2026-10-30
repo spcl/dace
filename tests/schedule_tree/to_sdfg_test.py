@@ -300,7 +300,7 @@ def test_save_overwrite_restore_values(simplify: bool) -> None:
     sdfg.name = f"save_overwrite_restore_{int(simplify)}"
 
     # The overwrite and the restore must not write the same element in the same state
-    for state in sdfg.all_states():
+    for state in sdfg.states():
         labels = {n.label for n in state.nodes() if isinstance(n, nodes.Tasklet)}
         assert not {"overwrite", "restore"} <= labels
 
@@ -608,7 +608,7 @@ def test_state_boundary_empty_memlet(name: str) -> None:
 def test_state_boundary_empty_memlet_order() -> None:
     # The write after the boundary is ordered after the first write through an empty memlet edge
     sdfg = _boundary_tree_waw().as_sdfg(simplify=False, state_boundary_behavior=t2s.StateBoundaryBehavior.EMPTY_MEMLET)
-    state = sdfg.states()[0]
+    (state,) = sdfg.states()
     writes = [n for n in state.data_nodes() if n.data == "A"]
     assert len(writes) == 2
     first, second = sorted(writes, key=lambda n: state.in_edges(n)[0].src.code.as_string)
@@ -633,8 +633,8 @@ def test_create_tasklet_raw() -> None:
     )
 
     sdfg = stree.as_sdfg(validate=True)
-    assert len(sdfg.states()) == 1
-    state = sdfg.states()[0]
+    assert sdfg.num_states() == 1
+    state = next(iter(sdfg.states()))
     first_tasklet, write_read_node, second_tasklet, write_node = state.nodes()
 
     assert isinstance(first_tasklet, nodes.Tasklet)
@@ -665,7 +665,7 @@ def test_create_tasklet_waw() -> None:
     )
 
     sdfg = stree.as_sdfg(validate=True)
-    assert len(sdfg.states()) == 2
+    assert sdfg.num_states() == 2
     s1, s2 = sdfg.states()
 
     s1_tasklet, s1_anode = s1.nodes()
@@ -926,7 +926,7 @@ def test_create_map_scope_write() -> None:
 
     sdfg = stree.as_sdfg(validate=True)
 
-    states = sdfg.states()
+    states = list(sdfg.states())
     assert len(states) == 1
     assert [type(node) for node in states[0].nodes()] == [
         nodes.MapEntry,
@@ -1580,7 +1580,7 @@ def test_multiple_copy_nodes() -> None:
 
     sdfg = stree.as_sdfg(validate=True)
 
-    states = sdfg.states()
+    states = list(sdfg.states())
     assert len(states) == 1, "expect one state"
 
     nodes = states[0].nodes()
@@ -2119,6 +2119,31 @@ def test_trailing_assignment_in_body(scope: str) -> None:
         assert a[0] == (30 if scope == "loop" else expected)
 
 
+@pytest.mark.parametrize("in_place", (False, True))
+def test_from_schedule_tree_in_place(in_place: bool) -> None:
+    # A write-after-write makes the conversion insert a state boundary into the tree
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={"A": data.Array(dace.float64, [20])},
+        children=[
+            tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out = 1"), {}, {"out": dace.Memlet("A[1]")}),
+            tn.TaskletNode(nodes.Tasklet("bla2", {}, {"out"}, "out = 2"), {}, {"out": dace.Memlet("A[1]")}),
+        ],
+    )
+    before = stree.as_string()
+    children = list(stree.children)
+
+    sdfg = stree.as_sdfg(simplify=False, in_place=in_place)
+    sdfg.validate()
+
+    if in_place:
+        assert any(isinstance(n, tn.StateBoundaryNode) for n in stree.children)
+    else:
+        assert stree.as_string() == before
+        assert len(stree.children) == len(children)
+        assert all(a is b for a, b in zip(stree.children, children))
+
+
 if __name__ == "__main__":
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -2196,3 +2221,5 @@ if __name__ == "__main__":
     test_state_boundaries_read_modify_write()
     for scope in ("if", "elif", "else", "loop"):
         test_trailing_assignment_in_body(scope)
+    test_from_schedule_tree_in_place(False)
+    test_from_schedule_tree_in_place(True)

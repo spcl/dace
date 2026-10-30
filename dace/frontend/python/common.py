@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from dace import data
+from dace import data, utils
 from dace.sdfg.sdfg import SDFG
 
 
@@ -247,12 +247,12 @@ class SDFGClosure:
                 if id(arr) in self.array_mapping:
                     continue
 
-                new_name = data.find_new_name(arrname, self.closure_arrays.keys())
+                new_name = utils.find_new_name(arrname, self.closure_arrays.keys())
                 if not desc.transient:
                     self.closure_arrays[new_name] = (arrname, desc, evaluator, True)
                     self.array_mapping[id(arr)] = new_name
 
             for cbname, (_, cb, _) in sorted(child.callbacks.items()):
-                new_name = data.find_new_name(cbname, self.callbacks.keys())
+                new_name = utils.find_new_name(cbname, self.callbacks.keys())
                 self.callbacks[new_name] = (cbname, cb, True)
                 self.array_mapping[id(cb)] = new_name

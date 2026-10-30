@@ -8,7 +8,7 @@ from collections import defaultdict
 import networkx as nx
 
 import dace
-from dace import data, symbolic
+from dace import data, symbolic, utils
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import negate_expr
 from dace.memlet import Memlet
@@ -184,7 +184,7 @@ def _replace_memlets(sdfg: SDFG, input_mapping: dict[str, Memlet], output_mappin
                 dst_data = None
                 dst_memlet = None
 
-            # Other cases (code->code)
+            # Neither end is a mapped container
             if src_data is None and dst_data is None:
                 if e.data.data in input_mapping or e.data.data in output_mapping:
                     mapping = input_mapping if e.data.data in input_mapping else output_mapping
@@ -227,7 +227,7 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
             if block is nsdfg:
                 continue
             if block.label in state_names_seen:
-                block.label = data.find_new_name(block.label, state_names_seen)
+                block.label = utils.find_new_name(block.label, state_names_seen)
             state_names_seen.add(block.label)
 
         replacements: dict[str, str] = {}
@@ -245,7 +245,7 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
         taken_names |= set(nsdfg.constants_prop.keys())
 
         def _mint(name: str) -> str:
-            new_name = data.find_new_name(name, taken_names)
+            new_name = utils.find_new_name(name, taken_names)
             taken_names.add(new_name)
             replacements[name] = new_name
             return new_name
@@ -509,15 +509,16 @@ def _state_schedule_tree(state: SDFGState) -> list[tn.ScheduleTreeNode]:
             tasklet_node = tn.TaskletNode(node=node, in_memlets=in_memlets, out_memlets=out_memlets)
             result.append(tasklet_node)
         elif isinstance(node, dace.nodes.LibraryNode):
-            # NOTE: LibraryNodes do not necessarily have connectors
+            # NOTE: LibraryNodes do not necessarily have connectors. Empty (dependency) memlets are implied by the
+            # order of the schedule tree and are not part of the memlet sets.
             if node.in_connectors:
                 in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
             else:
-                in_memlets = {e.data for e in state.in_edges(node)}
+                in_memlets = {e.data for e in state.in_edges(node) if not e.data.is_empty()}
             if node.out_connectors:
                 out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
             else:
-                out_memlets = {e.data for e in state.out_edges(node)}
+                out_memlets = {e.data for e in state.out_edges(node) if not e.data.is_empty()}
             libnode = tn.LibraryCall(node=node, in_memlets=in_memlets, out_memlets=out_memlets)
             result.append(libnode)
         elif isinstance(node, dace.nodes.AccessNode):
@@ -546,7 +547,7 @@ def _nested_sdfg_return_label(state: SDFGState, node: nd.NestedSDFG) -> str:
     :return: A label name that does not clash with any control flow block label in the SDFG tree.
     """
     existing = {block.label for block in state.sdfg.root_sdfg.all_control_flow_blocks(recursive=True)}
-    return data.find_new_name(f"__return_{state.label}_{state.node_id(node)}", existing)
+    return utils.find_new_name(f"__return_{state.label}_{state.node_id(node)}", existing)
 
 
 def _bind_exits_to_label(scope: tn.ScheduleTreeScope, state: SDFGState, node: nd.NestedSDFG) -> None:
@@ -726,9 +727,6 @@ def _prepare_sdfg_for_conversion(sdfg: SDFG, *, toplevel: bool) -> None:
 
     # Split edges with assignments and conditions
     xfh.split_interstate_edges(sdfg)
-
-    # Replace code->code edges with data<->code edges
-    xfh.replace_code_to_code_edges(sdfg)
 
     if toplevel:  # Top-level SDFG preparation (only perform once)
         # Handle name collisions (in arrays, state labels, symbols)

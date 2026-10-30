@@ -4,7 +4,7 @@
 import itertools
 from copy import deepcopy as dc
 
-from dace import Memlet, data, symbolic
+from dace import Memlet, data, symbolic, utils
 from dace.properties import make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
@@ -217,10 +217,16 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
         sym_replacements: dict[str, str] = {}
         for assign in assignments_to_replace:
-            newname = data.find_new_name(assign, allnames)
+            newname = utils.find_new_name(assign, allnames)
             allnames.add(newname)
             outer_symbols[newname] = nsdfg.symbols.get(assign, None)
             sym_replacements[assign] = newname
+        # The parent declares every symbol the body assigns with the body's type; left undeclared, codegen infers it
+        # from the assigned expression and widens ``i = c ? 1 : i_in`` from ``int`` to ``int64_t``.
+        for assign in sorted(inner_assignments):
+            name = sym_replacements.get(assign, assign)
+            if assign in nsdfg.symbols and name not in sdfg.symbols and name not in sdfg.arrays:
+                sdfg.add_symbol(name, nsdfg.symbols[assign])
         nsdfg.replace_dict(sym_replacements)
 
         #######################################################
@@ -242,19 +248,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
                         name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                         transients[node.data] = name
-
-            # All transients of edges between code nodes are also added to parent
-            for edge in nstate.edges():
-                if isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode):
-                    if edge.data.data is not None:
-                        datadesc = nsdfg.arrays[edge.data.data]
-                        if edge.data.data not in transients and datadesc.transient:
-                            new_name = edge.data.data
-                            if new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants:
-                                new_name = f"{nsdfg.label}_{edge.data.data}"
-
-                            name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
-                            transients[edge.data.data] = name
 
         # All constants (and associated transients) become constants of the parent
         for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
@@ -282,7 +275,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         node_names = {cfr.label for cfr in sdfg.all_control_flow_blocks(recursive=True)}
         for node in nsdfg.all_control_flow_blocks(recursive=True):
             if node.label in node_names:
-                node_name = data.find_new_name(node.label, node_names)
+                node_name = utils.find_new_name(node.label, node_names)
                 node.label = node_name
             node_names.add(node.label)
 

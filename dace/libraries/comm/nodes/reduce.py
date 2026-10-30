@@ -6,12 +6,15 @@ from dace.libraries.comm import environments, utils
 from dace.libraries.comm.nodes.node import (
     CommNode,
     NcclExpansion,
-    expanded_input_connectors,
+    comm_tasklet,
+    count_expression,
+    gpu_buffers_ready,
     mpi_average,
     mpi_communicator,
     nccl_communicator,
     nccl_tasklet,
     pack_noncontiguous_buffers,
+    same_buffer,
     scaled,
     validate_nccl_buffers,
 )
@@ -33,7 +36,7 @@ class ExpandReduceMPI(ExpandTransformation):
         comm = mpi_communicator(node, parent_state)
         op = utils.mpi_op(node.op)
 
-        code = ""
+        code = gpu_buffers_ready(node, parent_sdfg, parent_state)
         if in_place:
             code += f"""
                 int __comm_rank;
@@ -48,14 +51,7 @@ class ExpandReduceMPI(ExpandTransformation):
         if in_place:
             code += "}"
         code += mpi_average(node.op, "_outbuffer", count_str, comm, root="_root")
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            expanded_input_connectors(node, parent_state),
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-        )
-        return tasklet
+        return comm_tasklet(node, parent_state, code)
 
 
 @dace.library.expansion
@@ -103,21 +99,16 @@ class Reduce(CommNode):
         """
 
         inbuffer, outbuffer = None, None
-        inpname, outname = None, None
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":
-                outname = e.data.data
                 outbuffer = sdfg.arrays[e.data.data]
         for e in state.in_edges(self):
             if e.dst_conn == "_inbuffer":
-                inpname = e.data.data
                 inbuffer = sdfg.arrays[e.data.data]
             if e.dst_conn == "_root":
                 root = sdfg.arrays[e.data.data]
 
-        in_place = False
-        if inpname == outname:
-            in_place = True
+        in_place = same_buffer(self, state)
 
         if root.dtype.base_type != dace.dtypes.int32:
             raise (ValueError("Reduce root must be an integer!"))
@@ -125,7 +116,6 @@ class Reduce(CommNode):
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
             if src_conn == "_outbuffer":
-                dims = [str(e) for e in data.subset.size_exact()]
-                count_str = "*".join(dims)
+                count_str = count_expression(data.subset)
 
         return (inbuffer, count_str), outbuffer, root, in_place

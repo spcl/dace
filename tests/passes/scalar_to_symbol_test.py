@@ -6,7 +6,8 @@ import pytest
 from sympy import core as sympy_core
 
 import dace
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import interstate as isxf
 from dace.transformation.passes import scalar_to_symbol
 
@@ -942,6 +943,67 @@ def test_do_not_promote_constant_container():
     assert np.array_equal(B, A + 3)
 
 
+def test_do_not_promote_unwritten_transient():
+    """A transient scalar that only an inter-state edge reads has no value to promote."""
+    sdfg = dace.SDFG("unwritten_transient")
+    sdfg.add_scalar("t", dace.int32, transient=True)
+    sdfg.add_array("A", [10], dace.int32)
+    first = sdfg.add_state("first")
+    second = sdfg.add_state_after(first, "second", assignments={"k": "t + 1"})
+    tasklet = second.add_tasklet("set", {}, {"out"}, "out = k")
+    second.add_edge(tasklet, "out", second.add_write("A"), None, dace.Memlet("A[0]"))
+
+    assert "t" not in scalar_to_symbol.find_promotable_scalars(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    assert "t" in sdfg.arrays
+    assert "t" not in {str(s) for s in sdfg.free_symbols}
+
+
+def _guarded_write_and_read_sdfg() -> dace.SDFG:
+    """``if a[0] > 0: fac = a[0] * 2`` then ``if a[0] > 0 and fac > 1: out[0] = fac``: the transient is only read on
+    the paths that write it, which the symbol analysis cannot see."""
+    sdfg = dace.SDFG("guarded_write_and_read")
+    sdfg.add_array("a", [1], dace.int32)
+    sdfg.add_array("out", [1], dace.int32)
+    sdfg.add_scalar("fac", dace.int32, transient=True)
+
+    write = ConditionalBlock("write", sdfg=sdfg)
+    write_body = ControlFlowRegion("write_body", sdfg=sdfg, parent=write)
+    state = write_body.add_state("compute", is_start_block=True)
+    tasklet = state.add_tasklet("double", {"x"}, {"f"}, "f = x * 2")
+    state.add_edge(state.add_read("a"), None, tasklet, "x", dace.Memlet("a[0]"))
+    state.add_edge(tasklet, "f", state.add_write("fac"), None, dace.Memlet("fac[0]"))
+    write.add_branch(CodeBlock("a[0] > 0"), write_body)
+
+    read = ConditionalBlock("read", sdfg=sdfg)
+    read_body = ControlFlowRegion("read_body", sdfg=sdfg, parent=read)
+    state = read_body.add_state("use", is_start_block=True)
+    tasklet = state.add_tasklet("copy", {"f"}, {"o"}, "o = f")
+    state.add_edge(state.add_read("fac"), None, tasklet, "f", dace.Memlet("fac[0]"))
+    state.add_edge(tasklet, "o", state.add_write("out"), None, dace.Memlet("out[0]"))
+    read.add_branch(CodeBlock("a[0] > 0 and fac > 1"), read_body)
+
+    sdfg.add_node(write, is_start_block=True)
+    sdfg.add_node(read)
+    sdfg.add_edge(write, read, dace.InterstateEdge())
+    return sdfg
+
+
+def test_promoted_transient_stays_out_of_the_signature():
+    """Promoting a conditionally written transient must not make it a free symbol the caller has to pass."""
+    sdfg = _guarded_write_and_read_sdfg()
+    assert "fac" in scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert "fac" not in sdfg.free_symbols
+    assert list(sdfg.arglist()) == ["a", "out"]
+
+    for value, expected in ((0, -1), (3, 6)):
+        a = np.array([value], dtype=np.int32)
+        out = np.array([-1], dtype=np.int32)
+        sdfg(a=a, out=out)
+        assert out[0] == expected
+
+
 if __name__ == "__main__":
     test_find_promotable()
     test_promote_simple()
@@ -976,3 +1038,7 @@ if __name__ == "__main__":
     test_do_not_promote_lossy_cast("out = dace.int64(inp + 1) - i", dace.int32)
     test_do_not_promote_lossy_cast("out = dace.int64(i) * dace.int64(inp)", dace.int32)
     test_promote_widened_loop_index()
+    test_do_not_promote_viewed_scalar()
+    test_do_not_promote_constant_container()
+    test_do_not_promote_unwritten_transient()
+    test_promoted_transient_stays_out_of_the_signature()

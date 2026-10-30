@@ -9,6 +9,7 @@ constant, an integer-valued float literal, or a symbolic integer proven ``>= 0``
 enclosing iterator ranges (``K - i - 1`` with ``for i in range(K)``).
 """
 
+import ast
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -158,20 +159,38 @@ class PowerRelaxer:
         desc.total_size = self.relax(desc.total_size, ranges, facts)
 
     def relax_text(self, text: str, ranges: Ranges, facts: SignFacts) -> str | None:
-        """The rewritten Python expression, or None if it is unparseable or unchanged."""
+        """The Python expression with each provable ``**`` rewritten to ``ipow``, or None if none was.
+
+        Rewrites the ``**`` nodes of the AST in place: a round trip through SymPy would reorder the floating-point
+        arithmetic around them and print array accesses as ``Subscript(...)`` calls.
+        """
         if not text or "**" not in text:
             return None
         try:
-            expr = symbolic.pystr_to_symbolic(text)
-        except Exception:  # pylint: disable=broad-exception-caught  # a non-symbolic statement is left as-is
+            tree = ast.parse(text)
+        except SyntaxError:
             return None
-        if not isinstance(expr, sympy.Basic) or not expr.has(sympy.Pow):
-            return None
-        relaxed = self.relax(expr, ranges, facts)
-        if relaxed is expr:
-            return None
-        out = str(relaxed)
-        return out if out != text else None
+        relaxer = self
+
+        class PowToIpow(ast.NodeTransformer):
+            def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+                self.generic_visit(node)
+                if not isinstance(node.op, ast.Pow):
+                    return node
+                try:
+                    exp = symbolic.pystr_to_symbolic(ast.unparse(node.right))
+                except (sympy.SympifyError, SyntaxError, TypeError):  # a non-symbolic exponent stays a power
+                    return node
+                result = relaxed_exponent(exp, ranges, facts) if isinstance(exp, sympy.Expr) else None
+                if result is None:
+                    return node
+                relaxer.relaxed += 1
+                power = node.right if result.free_symbols else ast.Constant(int(result))
+                return ast.copy_location(ast.Call(ast.Name("ipow", ast.Load()), [node.left, power], []), node)
+
+        before = self.relaxed
+        tree = PowToIpow().visit(tree)
+        return ast.unparse(tree) if self.relaxed > before else None
 
     def relax_code(self, code: CodeBlock | None, ranges: Ranges, facts: SignFacts) -> None:
         # Loop bounds and conditions codegen through the interstate-edge unparser, where an unrelaxed ``R**e``
@@ -199,7 +218,14 @@ class PowerRelaxer:
                 nsdfg.symbol_mapping[name] = relaxed
 
     def visit_sdfg(self, sdfg: SDFG, ranges: Ranges) -> None:
-        self.visit_region(sdfg, ranges, SignFacts.of_sdfg(sdfg), set())
+        facts = SignFacts.of_sdfg(sdfg)
+        relaxed_arrays: set[str] = set()
+        self.visit_region(sdfg, ranges, facts, relaxed_arrays)
+        # A nested SDFG's argument may have no access node of its own; left as ``R**e`` it would no longer match
+        # the parent's relaxed descriptor, which validation compares it with.
+        for name, desc in sdfg.arrays.items():
+            if name not in relaxed_arrays and isinstance(desc, data.Array):
+                self.relax_descriptor(desc, ranges, facts)
 
     def visit_region(
         self, region: ControlFlowRegion, ranges: Ranges, facts: SignFacts, relaxed_arrays: set[str]

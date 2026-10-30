@@ -37,6 +37,23 @@ def get_loop_end(loop: LoopRegion) -> symbolic.SymbolicType | None:
     return None
 
 
+def get_assignments(statement) -> dict[str, str]:
+    """
+    All ``name = expression`` assignments of a loop init or update statement (a code block may hold several
+    statements, e.g. the loop variable plus loop-carried cursor symbols), as a name-to-expression dictionary.
+    Statements that are not simple assignments are ignored.
+    """
+    if statement is None:
+        return {}
+    codes = statement.code if isinstance(statement.code, list) else [statement.code]
+    assignments: dict[str, str] = {}
+    for code in codes:
+        visitor = astutils.FindAssignment()
+        visitor.visit(code)
+        assignments.update(visitor.assignments)
+    return assignments
+
+
 def get_init_assignment(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """
     Parse a loop region's init statement to identify the exact init assignment expression.

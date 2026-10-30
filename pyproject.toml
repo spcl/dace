@@ -79,6 +79,9 @@ dependencies = [
 ml = ["onnx", "torch>=2.13", "onnxsim", "onnxscript", "onnxruntime", "protobuf", "ninja"]
 mpi = ["mpi4py", "pytest-mpi"]
 gpu = ["cupy-cuda13x", "cutensor-cu13"]
+agent-anthropic = ["anthropic>=1.0", "pydantic>=2"]
+agent-openai = ["openai>=1.66", "pydantic>=2"]
+agent = ["anthropic>=1.0", "openai>=1.66", "pydantic>=2"]
 
 [project.scripts]
 dacelab = "dace.cli.dacelab:main"

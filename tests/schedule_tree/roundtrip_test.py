@@ -3,10 +3,12 @@
 Tests conversion of schedule trees to SDFGs.
 """
 
+import networkx as nx
 import numpy as np
 import pytest
 
 import dace
+from dace import library
 from dace.properties import CodeBlock
 from dace.sdfg import dealias
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s
@@ -14,6 +16,7 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion, NamedRegion, ReturnBlock
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.transformation import ExpandTransformation
 
 
 def _roundtrip(
@@ -819,6 +822,304 @@ def test_reference_set_from_tasklet():
     assert any(e.dst_conn == "set" for state in new_sdfg.states() for e in state.edges())
 
 
+def _set_edges(sdfg: dace.SDFG) -> list:
+    """Returns the reference set edges of all states."""
+    return [e for state in sdfg.states() for e in state.edges() if e.dst_conn == "set"]
+
+
+@pytest.mark.parametrize("data_output", (False, True))
+def test_reference_sets_from_tasklet_outputs(data_output: bool):
+    """
+    A tasklet with two outputs sets two references, or a reference and a data container. Each reference set must be
+    attributed to the right output connector.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_array("B", [2], dace.float64)
+    sdfg.add_reference("r1", [19], dace.float64)
+    state = sdfg.add_state()
+    second = "o2 = a[0] * 2" if data_output else "o2 = a + 2"
+    tasklet = state.add_tasklet("ptrset", {"a": dace.pointer(dace.float64)}, {"o1", "o2"}, f"o1 = a + 1; {second}")
+    state.add_edge(state.add_read("A"), None, tasklet, "a", dace.Memlet("A"))
+    r1 = state.add_access("r1")
+    state.add_edge(tasklet, "o1", r1, "set", dace.Memlet("r1"))
+    result = state.add_write("B")
+    if data_output:
+        state.add_edge(tasklet, "o2", result, None, dace.Memlet("B[1]"))
+        reader = state.add_tasklet("read", {"i1"}, {"out"}, "out = i1")
+        state.add_edge(r1, None, reader, "i1", dace.Memlet("r1[0]"))
+        state.add_edge(reader, "out", result, None, dace.Memlet("B[0]"))
+    else:
+        sdfg.add_reference("r2", [18], dace.float64)
+        r2 = state.add_access("r2")
+        state.add_edge(tasklet, "o2", r2, "set", dace.Memlet("r2"))
+        reader = state.add_tasklet("read", {"i1", "i2"}, {"out1", "out2"}, "out1 = i1; out2 = i2")
+        state.add_edge(r1, None, reader, "i1", dace.Memlet("r1[0]"))
+        state.add_edge(r2, None, reader, "i2", dace.Memlet("r2[0]"))
+        state.add_edge(reader, "out1", result, None, dace.Memlet("B[0]"))
+        state.add_edge(reader, "out2", result, None, dace.Memlet("B[1]"))
+
+    new_sdfg = _roundtrip_and_compare(sdfg, tn.RefSetNode, dict(A=np.random.rand(20), B=np.zeros(2)))
+    assert {e.src_conn: e.dst.data for e in _set_edges(new_sdfg)} == (
+        {"o1": "r1"} if data_output else {"o1": "r1", "o2": "r2"}
+    )
+
+
+@library.expansion
+class _ExpandConnectorless(ExpandTransformation):
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        return parent_state.add_tasklet(node.label, {}, {}, 'printf("%d\\n", i);', language=dace.Language.CPP)
+
+
+@library.node
+class _ConnectorlessNode(dace.nodes.LibraryNode):
+    """A library node without connectors, whose edges are therefore only distinguished by their memlets."""
+
+    implementations = {"pure": _ExpandConnectorless}
+    default_implementation = "pure"
+
+    def __init__(self, name):
+        super().__init__(name, inputs=set(), outputs=set())
+
+
+@pytest.mark.parametrize("data_output", (False, True))
+def test_reference_sets_from_connectorless_library_node(data_output: bool):
+    """
+    A library node without connectors sets two references, or a reference and a data container. Without connectors,
+    the outputs are only told apart by their memlets.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_array("C", [20], dace.float64)
+    sdfg.add_reference("r1", [19], dace.float64)
+    sdfg.add_reference("r2", [18], dace.float64)
+    state = sdfg.add_state()
+    libnode = _ConnectorlessNode("ptrset")
+    state.add_node(libnode)
+    state.add_edge(state.add_read("A"), None, libnode, None, dace.Memlet("A"))
+    state.add_edge(libnode, None, state.add_access("r1"), "set", dace.Memlet("r1"))
+    if data_output:
+        state.add_edge(libnode, None, state.add_write("C"), None, dace.Memlet("C"))
+    else:
+        state.add_edge(libnode, None, state.add_access("r2"), "set", dace.Memlet("r2"))
+
+    new_sdfg = _roundtrip(sdfg, tn.RefSetNode, simplify=False)
+    assert {e.dst.data for e in _set_edges(new_sdfg)} == ({"r1"} if data_output else {"r1", "r2"})
+    (libnode,) = (n for state in new_sdfg.states() for n in state.nodes() if isinstance(n, dace.nodes.LibraryNode))
+    assert {e.dst.data for e in new_sdfg.start_state.out_edges(libnode)} == (
+        {"r1", "C"} if data_output else {"r1", "r2"}
+    )
+
+
+def test_connectorless_library_node_dependency_edges():
+    """
+    The empty memlets that connect a library node without connectors to its scope are not accesses.
+    """
+    sdfg = dace.SDFG("tester")
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("map", dict(i="0:4"))
+    libnode = _ConnectorlessNode("print")
+    state.add_node(libnode)
+    state.add_nedge(entry, libnode, dace.Memlet())
+    state.add_nedge(libnode, exit_node, dace.Memlet())
+
+    stree = sdfg.as_schedule_tree()
+    (call,) = (n for n in stree.preorder_traversal() if isinstance(n, tn.LibraryCall))
+    assert not call.in_memlets and not call.out_memlets
+
+    new_sdfg = _roundtrip_and_compare(sdfg, tn.LibraryCall, {}, simplify=False)
+    (state,) = new_sdfg.states()
+    (libnode,) = (n for n in state.nodes() if isinstance(n, dace.nodes.LibraryNode))
+    assert [e.data.is_empty() for e in state.in_edges(libnode)] == [True]
+    assert [e.data.is_empty() for e in state.out_edges(libnode)] == [True]
+    assert isinstance(state.in_edges(libnode)[0].src, dace.nodes.MapEntry)
+    assert isinstance(state.out_edges(libnode)[0].dst, dace.nodes.MapExit)
+
+
+def test_map_body_nested_sdfg_without_outputs():
+    """
+    A map body that requires a nested SDFG but has no outputs is connected to the map exit with an empty memlet.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [10], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("map", dict(i="0:10"))
+    inner = dace.SDFG("inner")
+    inner.add_array("A", [10], dace.float64)
+    start = inner.add_state("start", is_start_block=True)
+    then = inner.add_state_after(start, "then", condition="A[i] > 0.5")
+    then.add_tasklet("print", {}, {}, 'printf("%d\\n", i);', language=dace.Language.CPP)
+    nsdfg = state.add_nested_sdfg(inner, {"A"}, {})
+    state.add_memlet_path(state.add_read("A"), entry, nsdfg, dst_conn="A", memlet=dace.Memlet("A[0:10]"))
+    state.add_nedge(nsdfg, exit_node, dace.Memlet())
+
+    new_sdfg = _roundtrip_and_compare(sdfg, tn.MapScope, dict(A=np.random.rand(10)), simplify=False)
+    (state, nsdfg) = next((s, n) for s in new_sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    (exit_node,) = (n for n in state.nodes() if isinstance(n, dace.nodes.MapExit))
+    assert [e.data.is_empty() for e in state.edges_between(nsdfg, exit_node)] == [True]
+    assert not state.edges_between(state.entry_node(nsdfg), exit_node)
+
+
+def _ordered_tasklet(
+    state: dace.SDFGState, name: str, output: str | None, scope: tuple[dace.nodes.MapEntry, dace.nodes.MapExit] | None
+) -> dace.nodes.Tasklet:
+    """
+    Adds a tasklet with side effects that records the order in which it runs in ``output`` (if given) through a global
+    counter, which the SDFG must declare in its global code. The tasklet is connected into the given map scope, if any.
+    """
+    if output is None:
+        tasklet = state.add_tasklet(name, {}, {}, f'printf("{name}\\n");', language=dace.Language.CPP)
+        if scope is not None:
+            state.add_nedge(scope[0], tasklet, dace.Memlet())
+            state.add_nedge(tasklet, scope[1], dace.Memlet())
+        return tasklet
+    tasklet = state.add_tasklet(name, {}, {"out"}, "out = __order++;", language=dace.Language.CPP, side_effects=True)
+    write = state.add_write(output[: output.index("[")])
+    if scope is not None:
+        state.add_nedge(scope[0], tasklet, dace.Memlet())
+        state.add_memlet_path(tasklet, scope[1], write, src_conn="out", memlet=dace.Memlet(output))
+    else:
+        state.add_edge(tasklet, "out", write, None, dace.Memlet(output))
+    return tasklet
+
+
+def _tasklets(sdfg: dace.SDFG) -> dict[str, dace.nodes.Tasklet]:
+    return {n.label: n for state in sdfg.states() for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)}
+
+
+@pytest.mark.parametrize("in_map", (False, True))
+@pytest.mark.parametrize("with_outputs", (False, True))
+def test_dependency_edges_between_tasklets(in_map: bool, with_outputs: bool):
+    """
+    Empty memlets from one tasklet to several others order tasklets with side effects. The schedule tree expresses the
+    order through its sequence of nodes, which the conversion back must restore.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.append_global_code("static int __order = 0;")
+    state = sdfg.add_state()
+    size, index = (2, "i") if in_map else (1, "0")
+    scope = state.add_map("map", dict(i="0:2")) if in_map else None
+    tasklets = []
+    for name in "ABC":
+        if with_outputs:
+            sdfg.add_array(name, [size], dace.int32)
+        tasklets.append(_ordered_tasklet(state, f"t{name}", f"{name}[{index}]" if with_outputs else None, scope))
+    first, second, third = tasklets
+    state.add_nedge(first, second, dace.Memlet())
+    state.add_nedge(first, third, dace.Memlet())
+
+    new_sdfg = _roundtrip(sdfg, tn.TaskletNode, simplify=False)
+    (state,) = new_sdfg.states()
+    tasklets = _tasklets(new_sdfg)
+    assert nx.has_path(state.nx, tasklets["tA"], tasklets["tB"])
+    assert nx.has_path(state.nx, tasklets["tA"], tasklets["tC"])
+    assert all(
+        e.data.is_empty()
+        for e in state.edges()
+        if isinstance(e.src, dace.nodes.Tasklet) and isinstance(e.dst, dace.nodes.Tasklet)
+    )
+
+    if with_outputs:
+        arrays = {name: np.zeros(size, np.int32) for name in "ABC"}
+        new_sdfg(**arrays)
+        assert np.all(arrays["A"] < arrays["B"]) and np.all(arrays["A"] < arrays["C"])
+    else:
+        new_sdfg.compile()
+
+
+def test_dependency_edges_around_scope():
+    """
+    Empty memlets into a map entry and out of a map exit order a map with side effects between tasklets with side
+    effects.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.append_global_code("static int __order = 0;")
+    for name in "ABC":
+        sdfg.add_array(name, [2], dace.int32)
+    state = sdfg.add_state()
+    first = _ordered_tasklet(state, "tA", "A[0]", None)
+    scope = state.add_map("map", dict(i="0:2"))
+    _ordered_tasklet(state, "tB", "B[i]", scope)
+    third = _ordered_tasklet(state, "tC", "C[0]", None)
+    state.add_nedge(first, scope[0], dace.Memlet())
+    state.add_nedge(scope[1], third, dace.Memlet())
+
+    new_sdfg = _roundtrip(sdfg, tn.MapScope, simplify=False)
+    (state,) = new_sdfg.states()
+    tasklets = _tasklets(new_sdfg)
+    assert nx.has_path(state.nx, tasklets["tA"], tasklets["tB"])
+    assert nx.has_path(state.nx, tasklets["tB"], tasklets["tC"])
+
+    arrays = {name: np.zeros(2, np.int32) for name in "ABC"}
+    new_sdfg(**arrays)
+    assert np.all(arrays["A"][0] < arrays["B"]) and np.all(arrays["B"] < arrays["C"][0])
+
+
+@pytest.mark.parametrize("direction", ("to_tasklet", "from_tasklet"))
+def test_dependency_edges_with_access_nodes(direction: str):
+    """
+    Empty memlets between access nodes and tasklets with side effects: a tasklet that runs after a write, or a read
+    that happens after a tasklet.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [1], dace.int32)
+    sdfg.add_array("B", [1], dace.int32)
+    state = sdfg.add_state()
+    if direction == "to_tasklet":
+        first = state.add_tasklet("t1", {}, {"out"}, "out = 1")
+        access = state.add_write("A")
+        state.add_edge(first, "out", access, None, dace.Memlet("A[0]"))
+        second = state.add_tasklet("t2", {}, {}, 'printf("t2\\n");', language=dace.Language.CPP)
+        state.add_nedge(access, second, dace.Memlet())
+    else:
+        first = state.add_tasklet("t1", {}, {}, 'printf("t1\\n");', language=dace.Language.CPP)
+        access = state.add_read("A")
+        state.add_nedge(first, access, dace.Memlet())
+        second = state.add_tasklet("t2", {"inp"}, {"out"}, "out = inp")
+        state.add_edge(access, None, second, "inp", dace.Memlet("A[0]"))
+        state.add_edge(second, "out", state.add_write("B"), None, dace.Memlet("B[0]"))
+
+    new_sdfg = _roundtrip_and_compare(
+        sdfg, tn.TaskletNode, dict(A=np.ones(1, np.int32), B=np.zeros(1, np.int32)), simplify=False
+    )
+    (state,) = new_sdfg.states()
+    tasklets = _tasklets(new_sdfg)
+    assert nx.has_path(state.nx, tasklets["t1"], tasklets["t2"])
+
+
+def test_dependency_edges_around_nested_sdfg():
+    """
+    Empty memlets order a nested SDFG with side effects between tasklets with side effects.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.append_global_code("static int __order = 0;")
+    for name in "ABC":
+        sdfg.add_array(name, [1], dace.int32)
+    state = sdfg.add_state()
+    first = _ordered_tasklet(state, "tA", "A[0]", None)
+    inner = dace.SDFG("inner")
+    inner.add_array("B", [1], dace.int32)
+    _ordered_tasklet(inner.add_state("inner_state"), "tB", "B[0]", None)
+    nsdfg = state.add_nested_sdfg(inner, {}, {"B"})
+    state.add_edge(nsdfg, "B", state.add_write("B"), None, dace.Memlet("B[0]"))
+    third = _ordered_tasklet(state, "tC", "C[0]", None)
+    state.add_nedge(first, nsdfg, dace.Memlet())
+    state.add_nedge(nsdfg, third, dace.Memlet())
+
+    new_sdfg = _roundtrip(sdfg, tn.TaskletNode, simplify=False)
+    (state,) = new_sdfg.states()
+    tasklets = _tasklets(new_sdfg)
+    assert nx.has_path(state.nx, tasklets["tA"], tasklets["tB"])
+    assert nx.has_path(state.nx, tasklets["tB"], tasklets["tC"])
+
+    arrays = {name: np.zeros(1, np.int32) for name in "ABC"}
+    new_sdfg(**arrays)
+    assert arrays["A"][0] < arrays["B"][0] < arrays["C"][0]
+
+
 @pytest.mark.parametrize("side_effect", (False, True))
 def test_empty_map(side_effect: bool):
     sdfg = dace.SDFG("tester")
@@ -995,6 +1296,18 @@ if __name__ == "__main__":
     test_consume_fibonacci(False)
     test_consume_fibonacci(True)
     test_reference_set_from_tasklet()
+    test_reference_sets_from_tasklet_outputs(False)
+    test_reference_sets_from_tasklet_outputs(True)
+    test_reference_sets_from_connectorless_library_node(False)
+    test_reference_sets_from_connectorless_library_node(True)
+    test_connectorless_library_node_dependency_edges()
+    test_map_body_nested_sdfg_without_outputs()
+    test_dependency_edges_between_tasklets(False, False)
+    test_dependency_edges_between_tasklets(True, True)
+    test_dependency_edges_around_scope()
+    test_dependency_edges_with_access_nodes("to_tasklet")
+    test_dependency_edges_with_access_nodes("from_tasklet")
+    test_dependency_edges_around_nested_sdfg()
     for in_map in (False, True):
         for push in (False, True):
             for multistate in (False, True):

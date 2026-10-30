@@ -22,7 +22,7 @@ import sympy
 from dace import data
 from dace.config import Config
 from dace.libraries.comm.nodes import Irecv, Isend, Wait, Waitall
-from dace.libraries.comm.nodes.node import CommNode, NonblockingCommNode
+from dace.libraries.comm.nodes.node import CommNode, NonblockingCommNode, disjoint
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 #: Unknown memory: a container that may alias any other (e.g., a reference)
@@ -49,7 +49,12 @@ def _is_comm(node: tn.ScheduleTreeNode) -> bool:
 def _on_gpu_streams(node: tn.ScheduleTreeNode) -> bool:
     """Whether a communication node runs on GPU streams (NCCL or RCCL), which order it with the work around it on
     the device. A state of its own would make the host wait for it at the end of the state."""
-    implementation = node.node.implementation or Config.get("library", "comm", "default_implementation")
+    libnode = node.node
+    implementation = (
+        libnode.implementation
+        or type(libnode).default_implementation
+        or Config.get("library", "comm", "default_implementation")
+    )
     return implementation == "NCCL"
 
 
@@ -183,19 +188,28 @@ def _slice(candidates: list[tn.ScheduleTreeNode], node: tn.ScheduleTreeNode, acc
 def _wait_for_buffers_in_flight(children: list[tn.ScheduleTreeNode], accesses, root, aliases) -> None:
     """A wait accesses the buffers of the starts whose requests it completes: no node may write their inputs, or
     access their outputs, before the wait."""
-    in_flight: dict[str, _Access] = {}
+    in_flight: dict[str, list[tuple[object, _Access]]] = {}
     for child in children:
         if is_start(child):
             for connector, memlet in _items(child.out_memlets):
                 if connector == "_request":
-                    in_flight[_resolve(memlet.data, root, aliases)] = accesses[id(child)]
+                    request = _resolve(memlet.data, root, aliases)
+                    in_flight.setdefault(request, []).append((_own_subset(memlet, request), accesses[id(child)]))
         elif is_wait(child):
             access = accesses[id(child)]
             for memlet in child.input_memlets(root):
-                start = in_flight.get(_resolve(memlet.data, root, aliases))
-                if start is not None:
-                    access.reads |= start.reads
-                    access.writes |= start.writes
+                request = _resolve(memlet.data, root, aliases)
+                waited = _own_subset(memlet, request)
+                for started, start in in_flight.get(request, []):
+                    # A wait completes the starts whose requests lie in its subset of the requests
+                    if waited is None or started is None or not disjoint(waited, started):
+                        access.reads |= start.reads
+                        access.writes |= start.writes
+
+
+def _own_subset(memlet, container: str):
+    """The subset of ``container`` that ``memlet`` accesses, or None if it accesses it through a view."""
+    return memlet.subset if memlet.data == container else None
 
 
 def _items(memlets) -> list[tuple[str | None, object]]:

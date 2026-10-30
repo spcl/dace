@@ -44,6 +44,28 @@ def _constant_element_to_cpp(value: Any) -> str:
     return str(value)
 
 
+def constant_as_stored(desc: data.Array, value: Any) -> np.ndarray:
+    """The elements of constant ``value`` in the order ``desc`` lays them out in memory.
+
+    ``value`` holds the elements by index, and the code reads element ``i`` at ``sum(i * strides)``: a Fortran-ordered
+    constant written in index order reads its transpose. A value that is not of the descriptor's shape, or a
+    descriptor with symbolic strides, is written in index order.
+    """
+    value = np.asarray(value)
+    try:
+        shape = tuple(int(extent) for extent in desc.shape)
+        strides = tuple(int(stride) for stride in desc.strides)
+        size = int(desc.total_size)
+    except TypeError:
+        return value
+    if value.shape != shape or not value.size:
+        return value
+    offsets = sum(index * stride for index, stride in zip(np.indices(shape), strides))
+    stored = np.zeros(max(size, int(offsets.max()) + 1), dtype=value.dtype)
+    stored[offsets] = value
+    return stored
+
+
 class DaCeCodeGenerator:
     """DaCe code generator class that writes the generated code for SDFG
     state machines, and uses a dispatcher to generate code for
@@ -62,7 +84,7 @@ class DaCeCodeGenerator:
             list[tuple[SDFG, SDFGState | None, nodes.AccessNode | None, bool, bool, bool]],
         ] = collections.defaultdict(list)
         self.where_allocated: dict[tuple[SDFG, str], SDFG] = {}
-        self.fsyms: dict[int, set[str]] = {}
+        self.fsyms: dict[tuple[int, bool], set[str]] = {}
         self._symbols_and_constants: dict[int, set[str]] = {}
         # The symbols visible in each state, shared by all nodes of the state (filled during code generation)
         self._symbol_resolver = SymbolResolver()
@@ -105,11 +127,14 @@ class DaCeCodeGenerator:
     def symbols_and_constants(self, sdfg: SDFG):
         return self._symbols_and_constants[sdfg.cfg_id]
 
-    def free_symbols(self, obj: Any):
-        k = id(obj)
+    def free_symbols(self, obj: Any, keep_defined_in_mapping: bool = False):
+        k = (id(obj), keep_defined_in_mapping)
         if k in self.fsyms:
             return self.fsyms[k]
-        if hasattr(obj, "used_symbols"):
+        if keep_defined_in_mapping:
+            # The symbols a nested SDFG's header and call pass; interstate edges do not take the flag
+            result = obj.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        elif hasattr(obj, "used_symbols"):
             result = obj.used_symbols(all_symbols=False)
         else:
             result = obj.free_symbols
@@ -166,8 +191,9 @@ class DaCeCodeGenerator:
         # Write constants
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, data.Array):
-                elements = ", ".join(_constant_element_to_cpp(v) for v in np.asarray(cstval).flat)
-                const_str = f"constexpr {csttype.dtype.ctype} {cstname}[{cstval.size}] = {{{elements}}};\n"
+                stored = constant_as_stored(csttype, cstval)
+                elements = ", ".join(_constant_element_to_cpp(value) for value in stored.flat)
+                const_str = f"constexpr {csttype.dtype.ctype} {cstname}[{stored.size}] = {{{elements}}};\n"
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write(f"constexpr {csttype.dtype.ctype} {cstname} = {sym2cpp(cstval)};\n", sdfg)
@@ -599,7 +625,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
     def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream) -> set[SDFGState]:
         states_generated = set()
 
-        opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f"Generating code (SDFG {sdfg.cfg_id})")
+        opbar = progress.OptionalProgressBar(sdfg.num_states(), title=f"Generating code (SDFG {sdfg.cfg_id})")
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
@@ -669,6 +695,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         fsyms = {}
         reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.AccessNode]]]] = {}
+        # Per SDFG cfg_id, built on first need
+        dominance: dict[int, tuple[DominatorTree, DominatorTree]] = {}
+        code_instances: dict[int, dict[str, list[tuple[SDFGState, nodes.Node]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
             fsyms[sdfg.cfg_id] = self.symbols_and_constants(sdfg)
@@ -676,9 +705,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             #############################################
             # Look for all states in which a scope-allocated array is used in
             instances: dict[str, list[tuple[SDFGState, nodes.AccessNode]]] = collections.defaultdict(list)
+            code_uses: dict[str, list[tuple[SDFGState, nodes.Node]]] = collections.defaultdict(list)
             array_names = (
                 sdfg.arrays.keys()
             )  # set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
+            # A use with no access node of its own is stood in for by an access node that is in no state; a view's
+            # pointer comes from its viewed edge, so a view is never stood in for
+            standin_names = {n for n in array_names if not isinstance(sdfg.arrays[n], data.View)}
             # Iterate topologically to get state-order
             for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
                 for node in state.data_nodes():
@@ -686,15 +719,24 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         continue
                     instances[node.data].append((state, node))
 
+                # A code node may name a container in its code alone (no connector, memlet or access node)
+                for node in state.nodes():
+                    if not isinstance(node, nodes.CodeNode):
+                        continue
+                    for used in node.free_symbols & standin_names:
+                        instances[used].append((state, nodes.AccessNode(used)))
+                        code_uses[used].append((state, node))
+
                 # Look in the surrounding edges for usage
                 edge_fsyms: set[str] = set()
                 for e in state.parent_graph.all_edges(state):
                     edge_fsyms |= e.data.free_symbols
-                for edge_array in edge_fsyms & array_names:
+                for edge_array in edge_fsyms & standin_names:
                     instances[edge_array].append((state, nodes.AccessNode(edge_array)))
             #############################################
 
             access_instances[sdfg.cfg_id] = instances
+            code_instances[sdfg.cfg_id] = code_uses
 
         # Per-SDFG information for scope-lifetime arrays, computed on first use
         control_flow_symbols: dict[int, set[str]] = {}
@@ -823,7 +865,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 # Does the array appear in inter-state edges or loop / conditional block conditions etc.?
                 multistate = name in control_flow_symbols[sdfg.cfg_id]
 
-                for state, state_accesses in root_data_accesses[sdfg.cfg_id].get(name, {}).items():
+                # Code nodes naming the container in their code are uses as well
+                state_uses = {
+                    state: list(state_accesses)
+                    for state, state_accesses in root_data_accesses[sdfg.cfg_id].get(name, {}).items()
+                }
+                for state, node in code_instances[sdfg.cfg_id].get(name, []):
+                    state_uses.setdefault(state, []).append(node)
+                for state, state_accesses in state_uses.items():
                     if multistate:
                         break
                     sdict = state.scope_dict()
@@ -915,7 +964,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         continue
 
                     if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
-                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
+                        if sdfg.cfg_id not in dominance:
+                            dominance[sdfg.cfg_id] = dominator_trees(sdfg)
+                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(
+                            instances, *dominance[sdfg.cfg_id]
+                        )
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
                         # instances. This is especially needed for Views which require both the SDFGState and the
@@ -1092,6 +1145,15 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
+                # Further loop-carried symbols defined by the init statement (e.g. address cursors)
+                for name, rhs in loop_analysis.get_assignments(cfr.init_statement).items():
+                    if name == cfr.loop_variable or name in interstate_symbols:
+                        continue
+                    if name in global_symbols:
+                        interstate_symbols[name] = global_symbols[name]
+                    else:
+                        interstate_symbols[name] = infer_expr_type(rhs, global_symbols)
+                        global_symbols[name] = interstate_symbols[name]
 
             for e in cfr.dfs_edges(cfr.start_block):
                 symbols = e.data.new_symbols(sdfg, global_symbols)
@@ -1132,7 +1194,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         #######################################################################
 
         # Sanity check
-        if len(states_generated) != len(sdfg.states()):
+        if len(states_generated) != sdfg.num_states():
             raise RuntimeError(
                 f"Not all states were generated in SDFG {sdfg.label}!\n  Generated: {[s.label for s in states_generated]}\n  Missing: {[s.label for s in (set(sdfg.states()) - states_generated)]}"
             )
@@ -1232,7 +1294,7 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     def accesses(block: ControlFlowBlock) -> bool:
         if isinstance(block, SDFGState):
             return block in access_states
-        return any(inner in access_states for inner in block.all_states())
+        return any(inner in access_states for inner in block.states())
 
     def assigns_inside(block: ControlFlowBlock) -> bool:
         return isinstance(block, AbstractControlFlowRegion) and any(
@@ -1255,36 +1317,73 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     return block
 
 
-def _get_dominator_and_postdominator(sdfg: SDFG, accesses: list[tuple[SDFGState, nodes.AccessNode]]):
+class DominatorTree:
+    """The tree of ``immediate`` (a root maps to itself) with DFS entry/exit times: ``a`` dominates ``b`` iff ``b``'s
+    interval lies within ``a``'s, so no transitive closure is built."""
+
+    def __init__(self, immediate: dict[ControlFlowBlock, ControlFlowBlock]) -> None:
+        self.immediate = immediate
+        children: dict[ControlFlowBlock, list[ControlFlowBlock]] = collections.defaultdict(list)
+        roots = {parent for parent in immediate.values() if immediate.get(parent, parent) is parent}
+        for block, parent in immediate.items():
+            if parent is not block:
+                children[parent].append(block)
+        self.entry: dict[ControlFlowBlock, int] = {}
+        self.exit: dict[ControlFlowBlock, int] = {}
+        clock = 0
+        for root in roots:
+            stack = [(root, iter(children[root]))]
+            self.entry[root] = clock
+            clock += 1
+            while stack:
+                block, pending = stack[-1]
+                child = next(pending, None)
+                if child is None:
+                    self.exit[block] = clock
+                    clock += 1
+                    stack.pop()
+                elif child not in self.entry:
+                    self.entry[child] = clock
+                    clock += 1
+                    stack.append((child, iter(children[child])))
+
+    def dominates(self, a: ControlFlowBlock, b: ControlFlowBlock) -> bool:
+        if a is b:
+            return True
+        if a not in self.entry or b not in self.entry:
+            return False
+        return self.entry[a] <= self.entry[b] and self.exit[b] <= self.exit[a]
+
+
+def dominator_trees(sdfg: SDFG) -> tuple[DominatorTree, DominatorTree]:
+    """The dominator and post-dominator trees of the blocks of ``sdfg``, across its control flow regions."""
+    idom: dict[ControlFlowBlock, ControlFlowBlock] = {}
+    ipostdom: dict[ControlFlowBlock, ControlFlowBlock] = {}
+    utils.get_control_flow_block_dominators(sdfg, idom, None, ipostdom, None)
+    return DominatorTree(idom), DominatorTree(ipostdom)
+
+
+def _get_dominator_and_postdominator(
+    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: DominatorTree, postdom: DominatorTree
+):
     """
     Gets the closest common dominator and post-dominator for a list of states.
     Used for determining allocation of data used in branched states.
     """
-    alldoms: dict[ControlFlowBlock, set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
-    allpostdoms: dict[ControlFlowBlock, set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
-    idom: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]] = {}
-    ipostdom: dict[ControlFlowRegion, dict[ControlFlowBlock, ControlFlowBlock]] = {}
-    utils.get_control_flow_block_dominators(sdfg, idom, alldoms, ipostdom, allpostdoms)
-
     states = [a for a, _ in accesses]
     data_name = accesses[0][1].data
 
-    # All dominators and postdominators include the states themselves
-    for state in states:
-        alldoms[state].add(state)
-        allpostdoms[state].add(state)
-
     start_state = states[0]
-    while any(start_state not in alldoms[n] for n in states):
-        if idom[start_state] is start_state:
+    while any(not dom.dominates(start_state, n) for n in states):
+        if dom.immediate[start_state] is start_state:
             raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
-        start_state = idom[start_state]
+        start_state = dom.immediate[start_state]
 
     end_state = states[-1]
-    while any(end_state not in allpostdoms[n] for n in states):
-        if ipostdom[end_state] is end_state:
+    while any(not postdom.dominates(end_state, n) for n in states):
+        if postdom.immediate[end_state] is end_state:
             raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
-        end_state = ipostdom[end_state]
+        end_state = postdom.immediate[end_state]
 
     # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
     # raise NotImplementedError

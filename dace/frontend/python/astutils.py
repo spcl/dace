@@ -391,18 +391,27 @@ def negate_expr(node):
 
 def and_expr(node_a, node_b):
     """Generates the logical AND of two AST expressions."""
+    return _bool_expr(node_a, node_b, ast.And)
+
+
+def or_expr(node_a, node_b):
+    """Generates the logical OR of two AST expressions."""
+    return _bool_expr(node_a, node_b, ast.Or)
+
+
+def _bool_expr(node_a, node_b, op: type[ast.boolop]):
     if type(node_a) is not type(node_b):
         raise ValueError("Node types do not match")
 
     # Support for SymPy expressions
     if isinstance(node_a, sympy.Basic):
-        return sympy.And(node_a, node_b)
+        return (sympy.And if op is ast.And else sympy.Or)(node_a, node_b)
     # Support for numerical constants
     if isinstance(node_a, (numbers.Number, numpy.bool_)):
-        return str(node_a and node_b)
+        return str(node_a and node_b) if op is ast.And else str(node_a or node_b)
     # Support for strings (most likely dace.Data.Scalar names)
     if isinstance(node_a, str):
-        return f"({node_a}) and ({node_b})"
+        return f"({node_a}) {'and' if op is ast.And else 'or'} ({node_b})"
 
     from dace.properties import CodeBlock  # Avoid import loop
 
@@ -436,7 +445,7 @@ def and_expr(node_a, node_b):
         return ast.fix_missing_locations(expr_b)
     else:
         # Otherwise, create a new BoolOp with both expressions
-        newexpr = ast.Expr(value=ast.BoolOp(op=ast.And(), values=[copy_tree(expr_a), copy_tree(expr_b)]))
+        newexpr = ast.Expr(value=ast.BoolOp(op=op(), values=[copy_tree(expr_a), copy_tree(expr_b)]))
         newexpr = ast.copy_location(newexpr, expr_a)
         return ast.fix_missing_locations(newexpr)
 

@@ -57,7 +57,7 @@ def test_strided_chunk_loop_writes_in_place():
     buffers = [name for name in sdfg.arrays if name.startswith("cfg") and name.endswith("_out")]
     assert buffers, list(sdfg.arrays)
     extent = str(sdfg.arrays[buffers[0]].shape[0])
-    for state in loop.all_states():
+    for state in loop.states():
         for e in state.edges():
             if isinstance(e.src, AccessNode) and isinstance(e.dst, AccessNode) and e.dst.data in buffers:
                 assert str(e.data.subset.size()[0]) != extent, f"whole-buffer copy {e.data} in the loop"

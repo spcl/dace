@@ -43,7 +43,8 @@ class RemoveUnusedSymbols(ppl.Pass):
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
                                  pipeline, an empty dictionary is expected.
         :param initial_symbols: If not None, sets values of initial symbols.
-        :return: A set of propagated constants, or None if nothing was changed.
+        :return: The symbols removed; an empty set when only dead interstate assignments were deleted; ``None``
+                 only when the SDFG is untouched, since pipelines read ``None`` as "not modified".
         """
         result: set[str] = set()
 
@@ -53,10 +54,12 @@ class RemoveUnusedSymbols(ppl.Pass):
         used_symbols = self.used_symbols(sdfg)
 
         # Remove unused symbols from interstate edge assignments.
+        modified = False
         for isedge in sdfg.all_interstate_edges():
             edge_symbols_to_consider = set(isedge.data.assignments.keys())
             for sym in edge_symbols_to_consider - used_symbols:
                 del isedge.data.assignments[sym]
+                modified = True
 
         # Remove unused symbols from the SDFG's symbols repository.
         for sym in repository_symbols_to_consider - used_symbols:
@@ -76,11 +79,15 @@ class RemoveUnusedSymbols(ppl.Pass):
                         self.symbols = set()
                         nres = self.apply_pass(node.sdfg, _)
                         self.symbols = old_symbols
-                        if nres:
+                        # An empty set still means the nested run modified something
+                        if nres is not None:
+                            modified = True
                             result.update(nres)
 
         # Return result
-        return result or None
+        if result:
+            return result
+        return set() if modified else None
 
     def report(self, pass_retval: set[str]) -> str:
         return f"Removed {len(pass_retval)} unused symbols: {pass_retval}."
@@ -96,11 +103,11 @@ class RemoveUnusedSymbols(ppl.Pass):
             result |= set(map(str, desc.free_symbols))
 
         for block in sdfg.all_control_flow_blocks():
-            result |= block.free_symbols
             # In addition to the standard free symbols, we are conservative with other tasklet languages by
             # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are
             # ok to include
             if isinstance(block, SDFGState):
+                result |= block.free_symbols
                 for node in block.nodes():
                     if isinstance(node, nodes.Tasklet):
                         if node.code.language != dtypes.Language.Python:
@@ -120,6 +127,8 @@ class RemoveUnusedSymbols(ppl.Pass):
                                 node.code_exit.as_string, sdfg.symbols.keys(), node.ignored_symbols
                             )
             else:
+                # The blocks inside a region are visited themselves: walking them again for every enclosing region
+                # repeats the whole nest once per nesting level
                 result |= block.used_symbols(all_symbols=True, with_contents=False)
 
         for e in sdfg.all_interstate_edges():

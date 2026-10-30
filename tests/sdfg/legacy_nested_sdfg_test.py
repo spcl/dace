@@ -72,7 +72,7 @@ def _windowed_sdfg(symbolic_outer: bool = False) -> dace.SDFG:
 def _all_memlets(sdfg: dace.SDFG):
     """The memlets of the whole tree, as strings, to tell whether a conversion changed anything."""
     return sorted(
-        str(e.data) for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.all_states() for e in state.edges()
+        str(e.data) for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.states() for e in state.edges()
     )
 
 
@@ -109,9 +109,9 @@ def test_inline_windowed_connector():
     edges = {e.dst_conn: e.data for e in state.in_edges(child)}
     assert edges["a"].data == "A"
     assert str(edges["a"].subset) == "i + 3, j + 2"
-    inner_reads = [e.data for s in child.sdfg.all_states() for e in s.edges() if e.data.data == "a"]
+    inner_reads = [e.data for s in child.sdfg.states() for e in s.edges() if e.data.data == "a"]
     assert inner_reads and all(str(m.subset) == "i + 3, j + 2" for m in inner_reads)
-    inner_writes = [e.data for s in child.sdfg.all_states() for e in s.edges() if e.data.data == "b"]
+    inner_writes = [e.data for s in child.sdfg.states() for e in s.edges() if e.data.data == "b"]
     assert inner_writes and all(str(m.subset) == "i + 1, j + 4" for m in inner_writes)
     condition = next(e.data.condition.as_string for e in child.sdfg.edges() if not e.data.is_unconditional())
     assert condition.replace(" ", "").replace("(", "").replace(")", "") == "a[i+3,j+2]>0"
@@ -199,7 +199,7 @@ def test_convert_noop_on_conforming():
         double_window(A, B)
 
     sdfg = conforming.to_sdfg(simplify=False)
-    assert any(isinstance(n, nodes.NestedSDFG) for s in sdfg.all_states() for n in s.nodes())
+    assert any(isinstance(n, nodes.NestedSDFG) for s in sdfg.states() for n in s.nodes())
     before = _all_memlets(sdfg)
     assert dealias.convert_legacy_nested_sdfgs(sdfg) == []
     assert _all_memlets(sdfg) == before
@@ -366,6 +366,35 @@ def test_plain_window_replaces_symbols_at_once():
     assert dealias._plain_window(edge.data, sdfg.arrays["A"], inner.arrays["a"], node)
 
 
+def test_convert_widens_a_window_read_by_a_symbol_mapping():
+    """A nest bound to ``s = a[3]`` must read the same element once ``a`` is the whole parent container."""
+    sdfg = dace.SDFG("window_read_by_symbol_mapping")
+    sdfg.add_array("A", [4, 8], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    leaf = dace.SDFG("leaf")
+    leaf.add_symbol("s", dace.float64)
+    leaf.add_array("o", [1], dace.float64)
+    leaf_state = leaf.add_state()
+    write = leaf_state.add_tasklet("write", {}, {"x"}, "x = s")
+    leaf_state.add_edge(write, "x", leaf_state.add_write("o"), None, Memlet("o[0]"))
+    mid = dace.SDFG("mid")
+    mid.add_array("a", [8], dace.float64)
+    mid.add_array("b", [1], dace.float64)
+    mid_state = mid.add_state()
+    leaf_node = mid_state.add_nested_sdfg(leaf, {}, {"o"}, symbol_mapping={"s": "a[3]"})
+    mid_state.add_edge(leaf_node, "o", mid_state.add_write("b"), None, Memlet("b[0]"))
+    state = sdfg.add_state()
+    mid_node = state.add_nested_sdfg(mid, {"a"}, {"b"})
+    state.add_edge(state.add_read("A"), None, mid_node, "a", Memlet("A[2, 0:8]"))
+    state.add_edge(mid_node, "b", state.add_write("B"), None, Memlet("B[0]"))
+
+    dealias.convert_legacy_nested_sdfgs(sdfg)
+
+    assert tuple(mid.arrays["a"].shape) == (4, 8), mid.arrays["a"].shape
+    assert str(leaf_node.symbol_mapping["s"]) == "a[2, 3]", leaf_node.symbol_mapping
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_inline_windowed_connector()
     test_inline_windowed_connector_simplify()
@@ -377,3 +406,4 @@ if __name__ == "__main__":
     test_convert_window_under_shadowing_map_parameter()
     test_convert_rejects_different_read_and_write_windows()
     test_plain_window_replaces_symbols_at_once()
+    test_convert_widens_a_window_read_by_a_symbol_mapping()

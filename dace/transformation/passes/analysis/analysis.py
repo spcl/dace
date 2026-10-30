@@ -482,7 +482,7 @@ class AccessSets(ppl.Pass):
                         if block.out_degree(anode) > 0:
                             readset.add(anode.data)
                 elif isinstance(block, AbstractControlFlowRegion):
-                    for state in block.all_states():
+                    for state in block.states():
                         for anode in state.data_nodes():
                             if state.in_degree(anode) > 0:
                                 writeset.add(anode.data)
@@ -964,6 +964,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
             ]
 
             anames = sdfg.arrays.keys()
+            # AccessSets spans every nested SDFG, the dominator tree only this one; each nested SDFG gets its own turn
+            own_blocks = [b for b in sdfg.all_control_flow_blocks() if b in access_sets]
             for desc in sdfg.arrays:
                 desc_states_with_nodes = OrderedSet(access_nodes[desc].keys())
                 for state in desc_states_with_nodes:
@@ -973,8 +975,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         )
                         result[desc][write].add((state, read_node))
                 # Ensure accesses to interstate edges are also considered.
-                for block, accesses in access_sets.items():
-                    if desc in accesses[0]:
+                for block in own_blocks:
+                    if desc in access_sets[block][0]:
                         out_edges = block.parent_graph.out_edges(block)
                         for oedge in out_edges:
                             syms = oedge.data.free_symbols & anames
@@ -1415,7 +1417,7 @@ class ConditionUniqueWrites(ppl.Pass):
             # Build a mapping of access_node -> written subset -> set of branches it appears in
             access_write_branch = {}
             for _, br in cfb.branches:
-                for st in br.all_states():
+                for st in br.states():
                     for an in st.data_nodes():
                         array_name = an.data
                         write_subsets = OrderedSet(e.data.dst_subset for e in st.in_edges(an))
