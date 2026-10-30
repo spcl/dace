@@ -82,8 +82,8 @@ def generated_for(build, name, implementation, gpu=False):
 
 def tasklet_body_line(code):
     """The single emitted line that stores into ``C`` through the index functions."""
-    # A GPU build names the device copies ``gpu_<name>``
-    lines = [ln.strip() for ln in code.splitlines() if all(re.search(rf"\b(gpu_)?{x}_idx\(", ln) for x in "CAB")]
+    # A GPU build names the device copies ``gpu_<name>`` or ``<name>_gpu``
+    lines = [ln.strip() for ln in code.splitlines() if all(re.search(rf"\b(gpu_)?{x}(_gpu)?_idx\(", ln) for x in "CAB")]
     assert lines, "no C[C_idx(..)] = A[A_idx(..)] + B[B_idx(..)] line found:\n" + code
     return lines[0]
 
