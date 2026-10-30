@@ -150,6 +150,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         if Config.get("compiler", "cuda", "auto_syncthreads_insertion"):
             DefaultSharedMemorySync().apply_pass(sdfg, None)
+            # Its barriers arrive after the library nodes were expanded
+            sdfg.expand_library_nodes()
 
         if compute_pool_release(sdfg, self.pool_release):
             self.has_pool = True
