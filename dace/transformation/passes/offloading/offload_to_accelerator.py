@@ -8,8 +8,8 @@ from dace import dtypes, properties
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, UnstructuredControlFlow
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.full_map_fusion import FullMapFusion
 from dace.transformation.passes.fold_constant_tables import FoldConstantTables
+from dace.transformation.passes.full_map_fusion import FullMapFusion
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, find_host_maps, maps_pinned_by_host_loops
 from dace.transformation.passes.offloading.locations import Locations, Wants
 from dace.transformation.passes.offloading.nested_bodies import host_level_nested_sdfgs, prepare_body

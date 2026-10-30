@@ -1300,7 +1300,9 @@ class KernelSpec:
         )
         # A cooperative grid must fit the device as launched, so it is never padded over chiplets
         self.chiplets: int = (
-            1 if kernel_map_entry.map.cooperative else chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, False, [])
+            1
+            if kernel_map_entry.map.cooperative
+            else chiplet_count(kernel_map_entry, cudaCodeGen.backend, False, False, [])
         )
         self.grid_dims, self.chiplet_chunk = distribute_over_chiplets(
             kernel_map_entry, list(self.grid_dims), self.chiplets
