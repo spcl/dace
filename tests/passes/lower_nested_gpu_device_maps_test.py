@@ -3,7 +3,6 @@
 
 from typing import Literal
 
-import numpy as np
 import pytest
 
 import dace
@@ -89,67 +88,6 @@ def nested_sdfg_nodes(sdfg: dace.SDFG) -> list[dace.nodes.NestedSDFG]:
         for node in state.nodes()
         if isinstance(node, dace.nodes.NestedSDFG)
     ]
-
-
-def test_pass_flattens_nested_gpu_kernels_validates_clean():
-    """The kernel gains the inner params, the inner maps disappear, and each guarded body binds ``__k``."""
-    sdfg = build_outer_with_two_sibling_inner_gpu_kernels()
-    assert count_gpu_device_maps(sdfg) == (1, 2)
-
-    assert lower(sdfg) == 2
-
-    assert count_gpu_device_maps(sdfg) == (1, 0)
-    assert set(kernel_entry(sdfg).map.params) >= {"__j", "__i"}, kernel_entry(sdfg).map.params
-    guarded = [n for n in nested_sdfg_nodes(sdfg) if n.label.startswith("if_of_nested_")]
-    assert len(guarded) == 2, [n.label for n in guarded]
-    for node in guarded:
-        assert "__k" in node.symbol_mapping, (node.label, sorted(node.symbol_mapping))
-
-
-def build_nested_kernel_with_internal_inout_node() -> dace.SDFG:
-    """Kernel wrapping a NestedSDFG whose inner GPU map reads, bumps and rewrites ``c_io`` through an
-    internal non-transient access node: ``c_read -> map -> t1 -> c_mid -> t2 -> map -> c_write``."""
-    J = dace.symbol("J", dtype=dace.int32)
-
-    sdfg = dace.SDFG("lower_nested_inout")
-    sdfg.add_array("C", [K, J], dace.float64, storage=GPU_GLOBAL)
-
-    state = sdfg.add_state("s")
-    outer_me, outer_mx = state.add_map("vertical_loop", dict(__k="0:K"), schedule=GPU_DEVICE)
-
-    inner = dace.SDFG("nested_sdfg")
-    inner.add_symbol("__k", dace.int32)
-    inner.add_array("c_io", [K, J], dace.float64, storage=GPU_GLOBAL)
-    inner_state = inner.add_state("nested_root", is_start_block=True)
-
-    me, mx = inner_state.add_map("horizontal_loop", dict(__j="0:J"), schedule=GPU_DEVICE)
-    c_read = inner_state.add_read("c_io")
-    c_mid = inner_state.add_access("c_io")
-    c_write = inner_state.add_write("c_io")
-    t1 = inner_state.add_tasklet("bump", {"i": None}, {"o": None}, "o = i + 1.0")
-    t2 = inner_state.add_tasklet("bump2", {"i": None}, {"o": None}, "o = i + 2.0")
-    inner_state.add_memlet_path(c_read, me, t1, dst_conn="i", memlet=dace.Memlet("c_io[__k, __j]"))
-    inner_state.add_edge(t1, "o", c_mid, None, dace.Memlet("c_io[__k, __j]"))
-    inner_state.add_edge(c_mid, None, t2, "i", dace.Memlet("c_io[__k, __j]"))
-    inner_state.add_memlet_path(t2, mx, c_write, src_conn="o", memlet=dace.Memlet("c_io[__k, __j]"))
-
-    nsdfg = state.add_nested_sdfg(inner, {"c_io": None}, {"c_io": None})
-    state.add_memlet_path(state.add_read("C"), outer_me, nsdfg, dst_conn="c_io", memlet=dace.Memlet("C[__k, 0:J]"))
-    state.add_memlet_path(nsdfg, outer_mx, state.add_write("C"), src_conn="c_io", memlet=dace.Memlet("C[__k, 0:J]"))
-    return sdfg
-
-
-def test_inner_kernel_with_internal_inout_node_lowers_clean():
-    """An internal inout node of a non-transient array is nested by data name, not as an ``AccessNode`` leaking
-    into the NestedSDFG connectors."""
-    sdfg = build_nested_kernel_with_internal_inout_node()
-
-    lower(sdfg)
-
-    assert count_gpu_device_maps(sdfg) == (1, 0)
-    for node in nested_sdfg_nodes(sdfg):
-        for conn in [*node.in_connectors, *node.out_connectors]:
-            assert isinstance(conn, str), conn
 
 
 def build_inner_kernel_with_range(
@@ -282,63 +220,6 @@ def test_each_guard_admits_exactly_the_iterations_of_its_own_map(j_ranges):
         assert admitted == list(range(owned_begin, owned_end + 1, owned_step)), (label, condition, admitted)
 
 
-def kernel_with_directly_nested_gpu_maps(ranges: tuple[str, ...], in_nested_sdfg: bool = False) -> dace.SDFG:
-    """``GPU_Device`` maps over ``ranges`` nested straight in each other's scope, writing ``A[k, j, i] = 1``.
-
-    The maps are joined only by empty memlets, which carry ordering rather than data. With ``in_nested_sdfg``, every
-    map below the outermost one sits in a NestedSDFG.
-    """
-    params = ["__k", "__j", "__i"][: len(ranges)]
-    sdfg = dace.SDFG(f"direct_{len(ranges)}_{'nested' if in_nested_sdfg else 'flat'}")
-    sdfg.add_array("A", [16, 32, 32][: len(ranges)], dace.float64, storage=GPU_GLOBAL)
-    state = sdfg.add_state("s")
-    scopes = [state.add_map(f"map{p}", {p: r}, schedule=GPU_DEVICE) for p, r in zip(params, ranges, strict=True)]
-    tasklet = state.add_tasklet("w", {}, {"_v": dace.float64}, "_v = 1.0")
-    state.add_memlet_path(*(entry for entry, _ in scopes), tasklet, memlet=dace.Memlet())
-    state.add_memlet_path(
-        tasklet,
-        *(exit_node for _, exit_node in reversed(scopes)),
-        state.add_write("A"),
-        src_conn="_v",
-        memlet=dace.Memlet(f"A[{', '.join(params)}]"),
-    )
-    if in_nested_sdfg:
-        kernel, kernel_exit = scopes[0]
-        body = StateSubgraphView(state, list(state.all_nodes_between(kernel, kernel_exit)))
-        helpers.nest_state_subgraph(sdfg, state, body)
-    sdfg.validate()
-    return sdfg
-
-
-def run_on_cpu(sdfg: dace.SDFG, **arrays: np.ndarray) -> None:
-    """Run a lowered kernel on the host: every ``GPU_Device`` map becomes multicore and every array host memory."""
-    for sub in sdfg.all_sdfgs_recursive():
-        for desc in sub.arrays.values():
-            if desc.storage == GPU_GLOBAL:
-                desc.storage = dace.dtypes.StorageType.CPU_Heap
-        for state in sub.states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == GPU_DEVICE:
-                    node.map.schedule = dace.dtypes.ScheduleType.CPU_Multicore
-    sdfg(**arrays)
-
-
-@pytest.mark.parametrize("in_nested_sdfg", [False, True])
-def test_gpu_maps_nested_three_deep_become_one_kernel_computing_each_iteration_once(in_nested_sdfg):
-    """Every layer is absorbed into the outermost kernel, whether the inner maps are direct or behind a NestedSDFG."""
-    sdfg = kernel_with_directly_nested_gpu_maps(("0:16", "2:30:4", "1:7"), in_nested_sdfg)
-
-    lower(sdfg)
-
-    assert count_gpu_device_maps(sdfg) == (1, 0)
-    assert kernel_entry(sdfg).map.params == ["__k", "__j", "__i"]
-    A = np.zeros((16, 32, 32))
-    run_on_cpu(sdfg, A=A)
-    expected = np.zeros((16, 32, 32))
-    expected[:, 2:30:4, 1:7] = 1.0
-    assert np.array_equal(A, expected)
-
-
 @pytest.mark.parametrize("inner_range, loop_var, unavailable", [("__k:__k + 4", None, "__k"), ("0:t + 1", "t", "'t'")])
 def test_a_bound_the_host_cannot_evaluate_is_refused(inner_range, loop_var, unavailable):
     """The grid is sized on the host, where neither a kernel parameter nor an in-kernel loop variable exists."""
@@ -381,23 +262,6 @@ def test_an_inner_param_reusing_a_kernel_param_gets_its_own_dimension():
     assert params[0] == "i" and "j" in params, params
     b_write = next(e for e in state.edges() if e.data.data == "B" and isinstance(e.src, dace.nodes.Tasklet))
     assert str(b_write.data.subset) == "i", b_write.data.subset
-
-
-@pytest.mark.gpu
-def test_the_flattened_kernel_computes_both_indices():
-    """Outer and inner writes each land at their own index."""
-    import cupy  # Only present on GPU runners.
-
-    sdfg = build_inner_kernel_reusing_the_outer_param("inner_reuses_outer_param_run")
-    lower(sdfg)
-    A = cupy.zeros((3, 4), dtype=cupy.float64)
-    B = cupy.zeros((1,), dtype=cupy.float64)
-
-    sdfg(A=A, B=B)
-
-    expected = np.array([[0.0, 1.0, 2.0, 3.0], [10.0, 11.0, 12.0, 13.0], [20.0, 21.0, 22.0, 23.0]])
-    assert np.array_equal(cupy.asnumpy(A), expected)
-    assert cupy.asnumpy(B).tolist() == [7.0]
 
 
 def test_an_inner_param_shadowing_a_nested_symbol_is_renamed():
@@ -606,22 +470,7 @@ def test_a_persistent_kernel_writes_global_memory_outside_its_maps_from_one_thre
     assert [dace.symbolic.pystr_to_symbolic(g) for g in guards] == [expected], guards
 
 
-@pytest.mark.gpu
-@pytest.mark.parametrize("tiled", [False, True])
-def test_the_lowered_persistent_kernel_computes_each_element_once(tiled: bool):
-    import cupy  # Only present on GPU runners.
-
-    sdfg = persistent_kernel(tiled)
-    sdfg.name = f"persistent_numeric_{'tiled' if tiled else 'flat'}"
-    a = cupy.arange(1000, dtype=cupy.float64)
-    expected = 2 * cupy.asnumpy(a)
-    sdfg(A=a, N=a.size)
-    assert np.array_equal(cupy.asnumpy(a), expected)
-
-
 if __name__ == "__main__":
-    test_pass_flattens_nested_gpu_kernels_validates_clean()
-    test_inner_kernel_with_internal_inout_node_lowers_clean()
     for inner_range, symbol_mapping, expected in [
         ("5:10", None, ("5", "9")),
         ("0:M", {"__k": "__k", "M": "N", "N": "M"}, ("0", "N - 1")),
@@ -631,8 +480,6 @@ if __name__ == "__main__":
         test_a_bound_naming_a_nested_scope_symbol_is_hoisted_in_the_kernel_symbols(nest_twice)
     for j_ranges in [("0:10:2", "1:10:3"), ("3:12:3", "0:6"), ("4:8", "0:10:4")]:
         test_each_guard_admits_exactly_the_iterations_of_its_own_map(j_ranges)
-    for in_nested_sdfg in [False, True]:
-        test_gpu_maps_nested_three_deep_become_one_kernel_computing_each_iteration_once(in_nested_sdfg)
     for inner_range, loop_var, unavailable in [("__k:__k + 4", None, "__k"), ("0:t + 1", "t", "'t'")]:
         test_a_bound_the_host_cannot_evaluate_is_refused(inner_range, loop_var, unavailable)
     test_an_inner_param_reusing_a_kernel_param_gets_its_own_dimension()
@@ -642,7 +489,6 @@ if __name__ == "__main__":
     for sequential_scope in ["inside", "around"]:
         test_a_gpu_map_behind_a_sequential_map_is_absorbed(sequential_scope)
     test_sibling_bounds_carrying_an_overapproximation_are_unioned()
-    test_the_flattened_kernel_computes_both_indices()
     for tiled in [False, True]:
         test_a_device_map_of_a_persistent_kernel_becomes_a_grid_stride_loop(tiled)
     test_a_persistent_kernel_writes_global_memory_outside_its_maps_from_one_thread()

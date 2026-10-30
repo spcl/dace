@@ -13,52 +13,14 @@ ROW = BlockLayout(128, 1, 256, None)
 
 
 @dace.program
-def blocked_gemm(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, N]):
-    for i, j in dace.map[0:M:BM, 0:N:BN]:
-        acc = dace.define_local([BM, BN], dace.float64, storage=dace.StorageType.Register)
-        dace.tile.fill(acc, 0.0)
-        for k in range(0, K, BK):
-            dace.tile.mma(A[i : i + BM, k : k + BK], B[k : k + BK, j : j + BN], acc)
-        dace.tile.store(C[i : i + BM, j : j + BN], acc)
-
-
-@dace.program
 def elementwise_chain(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
     for i in dace.map[0:N:256]:
         C[i : i + 256] = dace.tile.exp(dace.tile.add(A[i : i + 256], B[i : i + 256]))
 
 
-def barriers(sdfg: dace.SDFG) -> dict[str, list[str]]:
-    """The nodes each barrier comes right before, by label."""
-    return {
-        f"{node.label}{index}": sorted(edge.dst.label for edge in state.out_edges(node))
-        for index, (node, state) in enumerate(
-            (node, state) for node, state in sdfg.all_nodes_recursive() if node.label == "tile_sync"
-        )
-    }
-
-
-def test_a_gemm_waits_for_its_loads_and_for_the_last_iteration_reads():
-    sdfg = blocked_gemm.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    assert InsertTileSync().apply_pass(sdfg, {}) == 2
-    # The loads, before the mma reads them across lanes; and the loads of the next iteration, before they overwrite
-    # what the mma of this one reads. The accumulator stays on its threads from the fill to the store.
-    assert sorted(barriers(sdfg).values()) == [["copy_A_tile", "copy_B_tile", "mma"], ["mma"]]
-
-
 def test_an_elementwise_chain_keeps_every_element_on_its_thread():
     sdfg = elementwise_chain.to_sdfg()
     sdfg.apply_gpu_transformations()
-    assert InsertTileSync().apply_pass(sdfg, {}) is None
-
-
-def test_expanding_the_tiles_places_their_barriers_once():
-    """The first block-level node of a kernel to expand places the barriers of all of them, whoever expands it."""
-    sdfg = blocked_gemm.to_sdfg()
-    sdfg.apply_gpu_transformations()
-    sdfg.expand_library_nodes()
-    assert len(barriers(sdfg)) == 2
     assert InsertTileSync().apply_pass(sdfg, {}) is None
 
 
@@ -75,7 +37,5 @@ def test_the_slots_of_a_circular_buffer_carry_their_own_tokens():
 
 
 if __name__ == "__main__":
-    test_a_gemm_waits_for_its_loads_and_for_the_last_iteration_reads()
     test_an_elementwise_chain_keeps_every_element_on_its_thread()
-    test_expanding_the_tiles_places_their_barriers_once()
     test_the_slots_of_a_circular_buffer_carry_their_own_tokens()

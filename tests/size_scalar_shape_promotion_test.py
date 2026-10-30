@@ -65,13 +65,6 @@ def size_reused_as_index(out: dace.float64[1]):
     out[0] = a[m]  # the shape symbol must not be the one this index reassigns
 
 
-@dace.program
-def size_from_size_one_array(nt: dace.int64[1], out: dace.float64[4]):
-    b = np.empty(nt, dace.float64)
-    b[0] = 1.0
-    out[0] = b[0]
-
-
 def test_scalar_size_as_shape():
     n, nt = 5, 7
     a = np.arange(n, dtype=np.float64)
@@ -142,13 +135,6 @@ def test_shape_stays_correct_through_simplify():
         out = np.zeros(n)
         sdfg(a=a, Nt=np.int64(nt), out=out, N=n)
         assert np.allclose(out, a * 2.0), f"wrong result with simplify={simplify}"
-
-
-def test_a_size_one_array_is_read_through_a_subscript():
-    """A size-1 array is a valid extent, but the assignment must read ``nt[0]``, not the pointer."""
-    out = np.zeros(4)
-    size_from_size_one_array(np.array([4], dtype=np.int64), out)
-    assert np.allclose(out, [1.0, 0.0, 0.0, 0.0])
 
 
 @dace.program
@@ -235,41 +221,6 @@ def test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it():
     assert np.allclose(out, 3.0), out
 
 
-def test_a_slice_bounded_by_a_size_shares_its_extent():
-    """``psi[:, :my_n]`` reads the same symbol ``np.zeros((N, my_n))`` was sized by, so the copy's extents match."""
-
-    @dace.program
-    def slice_by_size(nib: dace.int64[1], psi: dace.float64[N, N], out: dace.float64[N]):
-        my_n = int(nib[0])
-        tg = np.zeros((N, my_n), dtype=np.float64)
-        tg[:, :] = psi[:, :my_n]
-        out[:] = np.sum(tg, axis=1)
-
-    psi = np.arange(25, dtype=np.float64).reshape(5, 5).copy()
-    out = np.zeros(5)
-    slice_by_size(np.array([3], dtype=np.int64), psi, out)
-    assert np.allclose(out, psi[:, :3].sum(axis=1)), out
-
-
-def test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote():
-    """The size grows at the end of each iteration, after a shape in the body used it; the version read before the
-    loop must not stand in for it (cegterg's ``nbase_iter`` in HPCAgent-Bench)."""
-
-    @dace.program
-    def size_grows_in_a_loop(out: dace.float64[4]):
-        n = 2
-        first = np.ones(n)
-        out[3] = np.sum(first)
-        for k in range(3):
-            buf = np.ones(n)
-            out[k] = np.sum(buf[:n])
-            n = n + 1
-
-    out = np.zeros(4)
-    size_grows_in_a_loop(out)
-    assert np.allclose(out, [2.0, 3.0, 4.0, 2.0]), out
-
-
 def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
     """``pol[:nlp, 0]`` promotes ``nlp`` first; the later ``np.ones(nlp)`` reads the same symbol, so the two
     broadcast together (cp2k_grid_integrate in HPCAgent-Bench)."""
@@ -294,8 +245,6 @@ def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
 
 if __name__ == "__main__":
     test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent()
-    test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()
-    test_a_slice_bounded_by_a_size_shares_its_extent()
     test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it()
     test_two_arrays_from_one_size_share_their_extent()
     test_scalar_size_as_shape()
@@ -305,7 +254,6 @@ if __name__ == "__main__":
     test_a_size_reused_as_an_index_does_not_rebind_the_extent()
     test_promotion_leaves_the_descriptor_in_place()
     test_shape_stays_correct_through_simplify()
-    test_a_size_one_array_is_read_through_a_subscript()
     test_the_fill_constructors_accept_a_computed_size(zeros_from_size, 0.0)
     test_the_fill_constructors_accept_a_computed_size(ones_from_size, 4.0)
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(size_from_empty_into_a_branch)

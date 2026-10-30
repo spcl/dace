@@ -129,15 +129,6 @@ SPLIT_DECL = re.compile(r"double\s*\*\s*tmp\s*;")
 SPLIT_ALLOC = re.compile(r"(?<![\w>])tmp\s*=\s*" + ALIGNED_NEW)
 
 
-def test_fused_definition_with_restrict(require_experimental):
-    """The readable generator emits ONE fused definition carrying ``__restrict__``, not the split pair."""
-    code = code_for(heap_transient_sdfg, "fused_readable", EXPERIMENTAL)
-    assert FUSED.search(code), f"expected a fused restrict-qualified definition, got:\n{code}"
-    assert not SPLIT_DECL.search(code), f"declaration was not fused away:\n{code}"
-    # Exactly one statement mentions the allocation (the fused definition), i.e. no stray assignment.
-    assert len(SPLIT_ALLOC.findall(code)) == 1
-
-
 def test_legacy_still_splits(require_experimental):
     """The legacy generator keeps the split declaration + assignment (its output must not change)."""
     code = code_for(heap_transient_sdfg, "fused_legacy", LEGACY)

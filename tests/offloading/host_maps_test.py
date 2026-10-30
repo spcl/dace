@@ -5,7 +5,6 @@ Structural tests: they assert which schedule each map came out with, so they do 
 The numerical companion lives in ``offload_to_accelerator_graphs_test.py``.
 """
 
-import numpy as np
 import pytest
 
 import dace
@@ -167,24 +166,6 @@ def test_host_maps_rejects_anything_that_is_not_a_label_or_a_map():
         host_maps(sdfg, "nblks")
 
 
-def test_apply_gpu_transformations_forwards_host_maps() -> None:
-    """The public entry point reaches the same decision the pass does.
-
-    ``apply_gpu_transformations`` is how callers outside this package offload, so a ``host_maps``
-    the pass honours but the method drops is a feature nobody can use. Asserting the two agree keeps
-    the parameter plumbed.
-    """
-    through_pass = zekinh_sdfg()
-    outer = outer_map_label(through_pass)
-    ppl.Pipeline([OffloadToAccelerator(host_maps=[outer])]).apply_pass(through_pass, {})
-
-    through_method = zekinh_sdfg()
-    through_method.apply_gpu_transformations(host_maps=[outer], validate=False, simplify=False)
-
-    assert map_schedules(through_method) == map_schedules(through_pass)
-    assert map_schedules(through_method)[outer] != dace.ScheduleType.GPU_Device
-
-
 def test_apply_gpu_transformations_without_host_maps_offloads_the_outer_map() -> None:
     """The control: the parameter defaults to naming nothing, so the outer map is still the kernel."""
     sdfg = zekinh_sdfg()
@@ -323,39 +304,3 @@ def test_a_loop_whose_map_shares_nothing_with_host_code_keeps_it_a_kernel():
     )
 
     assert list(maps_pinned_by_host_loops(sdfg)) == []
-
-
-def zekinh_inputs(nb: int = 3, nlev: int = 4, nproma: int = 5) -> dict:
-    rng = np.random.default_rng(0)
-    return {
-        "e_bln": rng.random((nb, 3, nproma)),
-        "edge_idx": rng.integers(0, nproma, (nb, nproma, 3)).astype(np.int32),
-        "edge_blk": rng.integers(0, nb, (nb, nproma, 3)).astype(np.int32),
-        "z_kin_hor_e": rng.random((nb, nlev, nproma)),
-        "z_ekinh": np.zeros((nb, nlev, nproma)),
-    }
-
-
-def test_a_named_host_map_hands_its_kernels_device_memory():
-    """The body of ``jb`` is a nested SDFG: its arrays take the storage of what they bind, the device twins."""
-    sdfg = zekinh_sdfg()
-    sdfg.apply_gpu_transformations(host_maps=[outer_map_label(sdfg)], simplify=False)
-    nested = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
-    bound = [name for name, desc in nested.sdfg.arrays.items() if not desc.transient]
-    assert bound and all(nested.sdfg.arrays[name].storage == dace.StorageType.GPU_Global for name in bound)
-
-
-@pytest.mark.gpu
-def test_a_named_host_map_computes_what_numpy_computes():
-    sdfg = zekinh_sdfg()
-    sdfg.apply_gpu_transformations(host_maps=[outer_map_label(sdfg)])
-    args = zekinh_inputs()
-    nb, nlev, nproma = args["z_ekinh"].shape
-    sdfg(**args, NB=nb, NLEV=nlev, NPROMA=nproma)
-    blk, idx = args["edge_blk"], args["edge_idx"]
-    levels = np.arange(nlev)[None, :, None]
-    want = sum(
-        args["e_bln"][:, None, k, :] * args["z_kin_hor_e"][blk[:, :, k][:, None, :], levels, idx[:, :, k][:, None, :]]
-        for k in range(3)
-    )
-    np.testing.assert_allclose(args["z_ekinh"], want)

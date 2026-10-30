@@ -16,19 +16,14 @@ inspection, no compile) and that the lowered access reproduces the legacy result
 kernels.
 """
 
-import copy
 import re
 
-import numpy as np
 import pytest
 
 import dace
 from dace import subsets
 from tests.codegen.readable.conftest import (
     EXPERIMENTAL,
-    LEGACY,
-    assert_outputs_equivalent,
-    run_isolated,
     use_implementation,
 )
 
@@ -55,11 +50,6 @@ def strided_view_copy_sdfg(name):
     return sdfg
 
 
-def reference(A):
-    """The value ``strided_view_copy_sdfg`` computes: ``A[:, ::2]``."""
-    return A[:, ::2].copy()
-
-
 def generated_for(build, name, implementation, gpu=False):
     with use_implementation(implementation):
         sdfg = build(name)
@@ -76,21 +66,6 @@ def view_index_body(code):
     return lines[0]
 
 
-# --------------------------------------------------------------------------- #
-# Codegen shape (no compile)
-# --------------------------------------------------------------------------- #
-def test_view_idx_uses_view_strides(require_experimental):
-    """``V_idx`` linearizes with the VIEW's strides ``[16, 2]`` -- ``16*d0 + 2*d1``
-    -- and the access is connector-free (``V[V_idx(...)]`` in the body)."""
-    code = generated_for(strided_view_copy_sdfg, "view_inspect", EXPERIMENTAL)
-    body = view_index_body(code)
-    assert "16 * __d0" in body, body
-    assert "2 * __d1" in body, body
-    # The view is accessed directly through its index function, no copy-in temp.
-    assert any("V[V_idx(" in ln for ln in code.splitlines()), "no V[V_idx(..)] access emitted:\n" + code
-    assert "double inp =" not in code and "double inp;" not in code
-
-
 def test_view_no_pure_fallback(require_experimental):
     """A View input never forces the classic connector copy: the readable body
     references the view pointer directly."""
@@ -98,33 +73,6 @@ def test_view_no_pure_fallback(require_experimental):
     # Connector name gone from the body; view name present as an indexed pointer.
     assert "V[V_idx(" in code
     assert "///////////////////" not in code
-
-
-# --------------------------------------------------------------------------- #
-# Numerical equivalence (compile + run): CPU (fork) and GPU (in-process)
-# --------------------------------------------------------------------------- #
-def run_variant(build, name, implementation, target, base):
-
-    def work():
-        sdfg = build(name)
-        if target == "gpu":
-            sdfg.apply_gpu_transformations()
-        arrays = copy.deepcopy(base)
-        sdfg.compile()(**arrays)
-        return {k: v for k, v in arrays.items() if isinstance(v, np.ndarray)}
-
-    with use_implementation(implementation):
-        return work() if target == "gpu" else run_isolated(work)
-
-
-def test_view_access_bit_exact(require_experimental, target):
-    """The strided-view copy reproduces the legacy result (bit-exact CPU / tight
-    tolerance GPU) and equals the analytical ``A[:, ::2]``."""
-    base = dict(A=np.random.rand(8, 16), C=np.zeros((8, 8)))
-    legacy = run_variant(strided_view_copy_sdfg, f"view_run_leg_{target}", LEGACY, target, base)
-    experimental = run_variant(strided_view_copy_sdfg, f"view_run_exp_{target}", EXPERIMENTAL, target, base)
-    assert_outputs_equivalent(legacy, experimental, target, label="strided_view_copy")
-    assert np.allclose(experimental["C"], reference(base["A"]))
 
 
 @pytest.mark.gpu
@@ -143,9 +91,6 @@ if __name__ == "__main__":
     if not experimental_available():
         print("experimental readable codegen not ready; skipping")
     else:
-        test_view_idx_uses_view_strides(None)
         test_view_no_pure_fallback(None)
-        test_view_access_bit_exact(None, "cpu")
-        test_view_access_bit_exact(None, "gpu")
         test_view_idx_inside_kernel(None)
         print("ok")

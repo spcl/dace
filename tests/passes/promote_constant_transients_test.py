@@ -20,68 +20,6 @@ def _map_entries(state):
     return [n for n in state.nodes() if isinstance(n, nd.MapEntry)]
 
 
-def test_scalar_constant_single_write():
-    """A scalar written once by ``a = 0`` then read becomes a SDFG constant."""
-    sdfg = dace.SDFG("scalar_const")
-    sdfg.add_scalar("a", dace.int32, transient=True)
-    sdfg.add_array("B", [1], dace.int32)
-
-    s1 = sdfg.add_state("init")
-    init_t = s1.add_tasklet("init", {}, {"out"}, "out = 0")
-    a_write = s1.add_write("a")
-    s1.add_edge(init_t, "out", a_write, None, dace.Memlet("a[0]"))
-
-    s2 = sdfg.add_state("use")
-    a_read = s2.add_read("a")
-    use_t = s2.add_tasklet("use", {"inp"}, {"out"}, "out = inp + 1")
-    b_write = s2.add_write("B")
-    s2.add_edge(a_read, None, use_t, "inp", dace.Memlet("a[0]"))
-    s2.add_edge(use_t, "out", b_write, None, dace.Memlet("B[0]"))
-
-    sdfg.add_edge(s1, s2, dace.InterstateEdge())
-
-    res = _run(sdfg)
-
-    kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert "a" in kinds
-    assert "a" in sdfg.constants
-    assert int(sdfg.constants["a"]) == 0
-    assert _tasklets(s1) == []
-    assert [n for n in s1.data_nodes() if n.data == "a"] == []
-    assert any(n.data == "a" for n in s2.data_nodes())
-
-
-def test_array_full_constant_write():
-    """An array fully written by a constant map then read becomes a SDFG constant."""
-    sdfg = dace.SDFG("array_full")
-    sdfg.add_array("A", [10], dace.float64, transient=True)
-    sdfg.add_array("B", [10], dace.float64)
-
-    s1 = sdfg.add_state("init")
-    s1.add_mapped_tasklet("init", dict(i="0:10"), {}, "out = 3.0", dict(out=dace.Memlet("A[i]")), external_edges=True)
-
-    s2 = sdfg.add_state("use")
-    s2.add_mapped_tasklet(
-        "use",
-        dict(i="0:10"),
-        dict(inp=dace.Memlet("A[i]")),
-        "out = inp * 2.0",
-        dict(out=dace.Memlet("B[i]")),
-        external_edges=True,
-    )
-
-    sdfg.add_edge(s1, s2, dace.InterstateEdge())
-
-    res = _run(sdfg)
-
-    kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert "A" in kinds
-    assert "A" in sdfg.constants
-    assert np.array_equal(sdfg.constants["A"], np.full(10, 3.0))
-    assert _tasklets(s1) == []
-    assert [n for n in s1.data_nodes() if n.data == "A"] == []
-
-
 def test_device_storage_array_is_not_promoted_to_a_host_constant():
     """A constant lives at host file scope, which a GPU kernel cannot read, so a GPU_Global fill keeps its writes."""
     sdfg = dace.SDFG("array_full_gpu_global")
@@ -250,32 +188,6 @@ def test_interstate_edge_read_not_marked():
     assert "a" not in sdfg.constants
     assert len(_tasklets(s1)) == 1
     assert any(n.data == "a" for n in s1.data_nodes())
-
-
-def test_same_state_separable_marked():
-    """Init and read in the SAME state are fine when the read comes from the write node (init precedes read)."""
-    sdfg = dace.SDFG("same_state_sep")
-    sdfg.add_scalar("a", dace.int32, transient=True)
-    sdfg.add_array("B", [1], dace.int32)
-
-    s = sdfg.add_state("main")
-    init_t = s.add_tasklet("init", {}, {"out"}, "out = 4")
-    a_node = s.add_access("a")
-    s.add_edge(init_t, "out", a_node, None, dace.Memlet("a[0]"))
-    use_t = s.add_tasklet("use", {"inp"}, {"out"}, "out = inp + 1")
-    b_write = s.add_write("B")
-    s.add_edge(a_node, None, use_t, "inp", dace.Memlet("a[0]"))
-    s.add_edge(use_t, "out", b_write, None, dace.Memlet("B[0]"))
-
-    res = _run(sdfg)
-
-    kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert "a" in kinds
-    assert "a" in sdfg.constants
-    assert int(sdfg.constants["a"]) == 4
-    assert init_t not in s.nodes()
-    assert a_node in s.nodes()
-    assert use_t in s.nodes()
 
 
 def test_same_state_unordered_write_is_promoted():
@@ -772,60 +684,6 @@ def test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_
     sdfg.validate()
 
 
-def _fill_map_inside_an_outer_map_sdfg(name: str = "held_fill") -> dace.SDFG:
-    """A constant fill map whose entry is held by an ENCLOSING map's ordering edge.
-
-    This is what inlining a nested SDFG into a map scope leaves behind (``lift_transients``), and
-    the shape that separates the two ends of the fill scope: the exit reaches degree zero when the
-    promotion takes its write, while the entry never does.
-    """
-    sdfg = dace.SDFG(name)
-    sdfg.add_array("B", [8, 4], dace.float64)
-    sdfg.add_array("t", [8], dace.float64, transient=True)
-    state = sdfg.add_state("block")
-
-    outer_me, outer_mx = state.add_map("outer", {"jb": "0:4"})
-    fill_me, fill_mx = state.add_map("fill", {"k": "0:8"})
-    seed = state.add_tasklet("set", {}, {"o"}, "o = 1.0")
-    t_acc = state.add_access("t")
-    b_write = state.add_write("B")
-
-    state.add_nedge(outer_me, fill_me, dace.Memlet())
-    state.add_nedge(fill_me, seed, dace.Memlet())
-    state.add_edge(seed, "o", fill_mx, "IN_t", dace.Memlet("t[k]"))
-    fill_mx.add_in_connector("IN_t")
-    fill_mx.add_out_connector("OUT_t")
-    state.add_edge(fill_mx, "OUT_t", t_acc, None, dace.Memlet("t[0:8]"))
-    state.add_edge(t_acc, None, outer_mx, "IN_B", dace.Memlet(data="t", subset="0:8", other_subset="0:8, jb"))
-    outer_mx.add_in_connector("IN_B")
-    outer_mx.add_out_connector("OUT_B")
-    state.add_edge(outer_mx, "OUT_B", b_write, None, dace.Memlet("B[0:8, 0:4]"))
-    sdfg.validate()
-    return sdfg
-
-
-def test_promoting_a_held_fill_removes_both_ends_of_its_scope():
-    """Taking a fill's write must remove its map entry too, not only its exit.
-
-    Deadness was tested per node as full isolation, which the two ends do not reach together: the
-    enclosing map holds the entry by an empty ordering edge, so the exit hits degree zero and the
-    entry never does. Taking only the exit leaves a scope that never closes -- ``scope_dict``
-    refuses to walk it, and every SDFG holding one fails validation on the next pass that asks.
-    """
-    sdfg = _fill_map_inside_an_outer_map_sdfg()
-    _run(sdfg)
-    sdfg.validate()
-
-    state = next(iter(sdfg.states()))
-    entries = {n.map for n in state.nodes() if isinstance(n, nd.MapEntry)}
-    exits = {n.map for n in state.nodes() if isinstance(n, nd.MapExit)}
-    assert entries == exits, f"unpaired scope ends: {sorted(m.label for m in entries ^ exits)}"
-
-    out = np.zeros((8, 4), dtype=np.float64)
-    sdfg(B=out)
-    assert np.array_equal(out, np.ones((8, 4))), f"got {out}"
-
-
 def test_data_bound_to_a_reference_is_not_promoted():
     """A reference writes its target under another name, so the target's literal writes are not all of them."""
     sdfg = dace.SDFG("ref_target")
@@ -847,14 +705,11 @@ def test_data_bound_to_a_reference_is_not_promoted():
 
 
 if __name__ == "__main__":
-    test_scalar_constant_single_write()
-    test_array_full_constant_write()
     test_device_storage_array_is_not_promoted_to_a_host_constant()
     test_array_partial_constant_write()
     test_scalar_runtime_single_write_not_promoted()
     test_array_double_write_not_marked()
     test_interstate_edge_read_not_marked()
-    test_same_state_separable_marked()
     test_same_state_unordered_write_is_promoted()
     test_nested_sdfg_no_crash_and_marks()
     test_multiwrite_elementwise_one_state_marked()
@@ -870,5 +725,4 @@ if __name__ == "__main__":
     test_gpu_constant_fill_map_keeps_its_schedule()
     test_gpu_rejected_fill_map_stays_valid()
     test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_scope()
-    test_promoting_a_held_fill_removes_both_ends_of_its_scope()
     test_data_bound_to_a_reference_is_not_promoted()

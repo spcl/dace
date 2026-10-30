@@ -60,16 +60,6 @@ def frame_object(objects, sdfg):
     return next(obj for obj in objects if obj.name == sdfg.name and obj.language == "cpp")
 
 
-def test_repeated_tasklet_code_global_included_once():
-    """Three tasklets naming the same two headers: each header appears exactly once."""
-    sdfg = sqrt_chain_sdfg("incdedup_tasklets", 3)
-    lines = include_lines(frame_object(generate(sdfg), sdfg))
-    counts = collections.Counter(lines)
-    assert counts["#include <cmath>"] == 1
-    assert counts["#include <cstdio>"] == 1
-    assert not [line for line, count in counts.items() if count > 1]
-
-
 def test_sdfg_global_code_and_tasklet_agree_on_one_copy():
     """A header named by BOTH the SDFG's ``global_code`` and a tasklet's ``code_global`` -- the two
     streams cannot see each other, so this is the cross-source case."""

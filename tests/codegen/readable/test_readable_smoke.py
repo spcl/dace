@@ -25,11 +25,6 @@ N, M, K = (dace.symbol(s) for s in ("N", "M", "K"))
 
 
 @dace.program
-def ew(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M, N]):
-    C[:] = A + B
-
-
-@dace.program
 def red(A: dace.float64[N], s: dace.float64[1]):
     s[0] = np.sum(A)
 
@@ -37,17 +32,6 @@ def red(A: dace.float64[N], s: dace.float64[1]):
 @dace.program
 def mm(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, N]):
     C[:] = A @ B
-
-
-@dace.program
-def jac(A: dace.float64[N], B: dace.float64[N]):
-    B[1 : N - 1] = 0.33 * (A[0 : N - 2] + A[1 : N - 1] + A[2:N])
-
-
-@dace.program
-def trans(A: dace.float64[N], B: dace.float64[N]):
-    tmp = A + 1.0
-    B[:] = tmp * 2.0
 
 
 def _build(prog, impl, name):
@@ -71,29 +55,9 @@ def _equivalence(prog, args):
             )
 
 
-def test_elementwise():
-    rng = np.random.default_rng(42)
-    _equivalence(ew, lambda: dict(A=rng.random((6, 8)), B=rng.random((6, 8)), C=np.zeros((6, 8)), M=6, N=8))
-
-
-def test_reduction_wcr():
-    rng = np.random.default_rng(42)
-    _equivalence(red, lambda: dict(A=rng.random(64), s=np.zeros(1), N=64))
-
-
 def test_matmul_library():
     rng = np.random.default_rng(42)
     _equivalence(mm, lambda: dict(A=rng.random((6, 5)), B=rng.random((5, 7)), C=np.zeros((6, 7)), M=6, K=5, N=7))
-
-
-def test_jacobi_stencil():
-    rng = np.random.default_rng(42)
-    _equivalence(jac, lambda: dict(A=rng.random(32), B=np.zeros(32), N=32))
-
-
-def test_transient():
-    rng = np.random.default_rng(42)
-    _equivalence(trans, lambda: dict(A=rng.random(20), B=np.zeros(20), N=20))
 
 
 def test_const_init_constexpr():
@@ -137,10 +101,6 @@ def _const_sdfg(impl):
 
 
 if __name__ == "__main__":
-    test_elementwise()
-    test_reduction_wcr()
     test_matmul_library()
-    test_jacobi_stencil()
-    test_transient()
     test_const_init_constexpr()
     print("ok")

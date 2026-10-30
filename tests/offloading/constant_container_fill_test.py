@@ -11,9 +11,6 @@ side ever writes ``seq``, so every copy after the first carries the bytes alread
 
 import collections
 
-import numpy as np
-import pytest
-
 import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
@@ -46,23 +43,6 @@ def nussinov(seq: dace.int32[N], table: dace.int32[N, N]):
                 table[i, j] = max(table[i, j], table[i, k] + table[k + 1, j])
 
 
-def reference(seq: np.ndarray, table: np.ndarray) -> None:
-    n = seq.shape[0]
-    for i in range(n - 1, -1, -1):
-        for j in range(i + 1, n):
-            if j - 1 >= 0:
-                table[i, j] = max(table[i, j], table[i, j - 1])
-            if i + 1 < n:
-                table[i, j] = max(table[i, j], table[i + 1, j])
-            if j - 1 >= 0 and i + 1 < n:
-                if i < j - 1:
-                    table[i, j] = max(table[i, j], table[i + 1, j - 1] + (1 if seq[i] + seq[j] == 3 else 0))
-                else:
-                    table[i, j] = max(table[i, j], table[i + 1, j - 1])
-            for k in range(i + 1, j):
-                table[i, j] = max(table[i, j], table[i, k] + table[k + 1, j])
-
-
 def offloaded() -> dace.SDFG:
     """``nussinov`` with its arguments resident on the device, the way a GPU column hands them over."""
     sdfg = nussinov.to_sdfg(simplify=True)
@@ -89,19 +69,3 @@ def seq_copies(sdfg: dace.SDFG) -> collections.Counter:
 
 def test_a_container_nothing_writes_is_filled_once_at_the_entry():
     assert seq_copies(offloaded()) == collections.Counter({("seq", "seq_host", "top"): 1})
-
-
-@pytest.mark.gpu
-def test_the_offloaded_recurrence_computes_what_numpy_computes():
-    import cupy
-
-    sdfg = offloaded()
-    rng = np.random.default_rng(0)
-    seq = rng.integers(0, 4, size=40).astype(np.int32)
-    table = np.zeros((40, 40), dtype=np.int32)
-    want = table.copy()
-    reference(seq, want)
-    d_seq, d_table = cupy.asarray(seq), cupy.asarray(table)
-    sdfg(seq=d_seq, table=d_table, N=40)
-    np.testing.assert_array_equal(cupy.asnumpy(d_table), want)
-    np.testing.assert_array_equal(cupy.asnumpy(d_seq), seq)

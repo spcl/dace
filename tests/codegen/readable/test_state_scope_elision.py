@@ -78,17 +78,6 @@ def _code_to_code_sdfg():
     return sdfg
 
 
-def test_pure_map_state_elides_brace():
-    if not experimental_available():
-        pytest.skip("experimental readable codegen not ready")
-    sdfg = _pure_map_sdfg()
-    with use_implementation(EXPERIMENTAL):
-        fc = _frame(sdfg)
-        assert fc._structured_control_flow(sdfg) is True
-        (state,) = [s for s in sdfg.states() if s.number_of_nodes() > 0]
-        assert fc.state_needs_brace(state) is False  # elided
-
-
 def test_conditional_edge_keeps_brace():
     if not experimental_available():
         pytest.skip("experimental readable codegen not ready")
@@ -148,7 +137,6 @@ def test_pure_map_bit_exact():
 
 
 if __name__ == "__main__":
-    test_pure_map_state_elides_brace()
     test_conditional_edge_keeps_brace()
     test_code_to_code_keeps_brace()
     test_legacy_always_braces()

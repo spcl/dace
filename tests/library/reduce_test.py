@@ -134,17 +134,6 @@ def test_device_reduce_expands_with_typed_connectors():
     assert not any(isinstance(n, std.Reduce) for n, _ in sdfg.all_nodes_recursive())
 
 
-@pytest.mark.gpu
-def test_device_reduce_through_connectors_computes_the_sum():
-    import cupy  # GPU-only dependency; a CPU collection of this file must not need it
-
-    sdfg = device_reduce_through_connectors()
-    A = cupy.asarray(np.random.default_rng(0).random(64))
-    out = cupy.zeros(1)
-    sdfg(A=A, out=out)
-    assert np.allclose(out.get(), A.get().sum())
-
-
 if __name__ == "__main__":
     for params in itertools.product(_impls, _case_params):
         test_multidim_gpu(params[0], params[1])

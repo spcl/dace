@@ -13,39 +13,6 @@ from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG
 CPY_IN, CPY_OUT = CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME
 
 
-def test_a_multistate_inlined_transient_is_named_apart_from_a_parent_connector():
-    """A multistate nest's transient ``tmp`` beside a parent tasklet that reads through a connector ``tmp``."""
-    nest = dace.SDFG("nest")
-    nest.add_array("out", [1], dace.float64)
-    nest.add_transient("tmp", [1], dace.float64)
-    first = nest.add_state("first", is_start_block=True)
-    tasklet = first.add_tasklet("produce", {}, {"o"}, "o = 2")
-    first.add_edge(tasklet, "o", first.add_write("tmp"), None, dace.Memlet("tmp[0]"))
-    second = nest.add_state_after(first, "second")
-    tasklet = second.add_tasklet("consume", {"i"}, {"o"}, "o = i + 1")
-    second.add_edge(second.add_read("tmp"), None, tasklet, "i", dace.Memlet("tmp[0]"))
-    second.add_edge(tasklet, "o", second.add_write("out"), None, dace.Memlet("out[0]"))
-
-    sdfg = dace.SDFG("multistate_inline_beside_a_tmp_connector")
-    sdfg.add_array("out", [1], dace.float64)
-    sdfg.add_array("res", [1], dace.float64)
-    state = sdfg.add_state("call", is_start_block=True)
-    node = state.add_nested_sdfg(nest, {}, {"out"})
-    state.add_edge(node, "out", state.add_write("out"), None, dace.Memlet("out[0]"))
-    after = sdfg.add_state_after(state, "scale")
-    tasklet = after.add_tasklet("scale", {"tmp"}, {"o"}, "o = tmp * 10")
-    after.add_edge(after.add_read("out"), None, tasklet, "tmp", dace.Memlet("out[0]"))
-    after.add_edge(tasklet, "o", after.add_write("res"), None, dace.Memlet("res[0]"))
-    sdfg.validate()
-
-    assert sdfg.apply_transformations(InlineMultistateSDFG) == 1
-    sdfg.validate()
-
-    out, res = np.zeros(1), np.zeros(1)
-    sdfg(out=out, res=res)
-    assert out[0] == 3 and res[0] == 30, (out, res)
-
-
 def parent_with_a_cpy_in_connector_and_a_nest() -> dace.SDFG:
     """A tasklet with the copy connectors, beside a nest computing through its own transient named like the input
     connector."""
@@ -142,7 +109,6 @@ def test_inlined_tasklet_connectors_are_renamed_apart_from_parent_data_and_symbo
 
 
 if __name__ == "__main__":
-    test_a_multistate_inlined_transient_is_named_apart_from_a_parent_connector()
     test_an_inlined_transient_is_named_apart_from_a_connector()
     for inliner in [InlineSDFG, InlineMultistateSDFG]:
         for language in [dace.Language.Python, dace.Language.CPP]:

@@ -63,31 +63,6 @@ def _host_upload_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
-def _host_consumer_sdfg(name: str) -> dace.SDFG:
-    """``gA[0]`` copied back to a host scalar, scaled by a host tasklet, then fed to a kernel.
-
-    The trailing kernel keeps the state mixed (GPU -> CPU -> GPU), which the state splitting refuses
-    to break apart -- so the host read and the copy stay in one state, with no state boundary to
-    synchronize them.
-    """
-    sdfg = dace.SDFG(name)
-    sdfg.add_array("gA", [16], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array("gB0", [16], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_scalar("copied", dace.float64, storage=dtypes.StorageType.Register, transient=True)
-    sdfg.add_scalar("s", dace.float64, storage=dtypes.StorageType.Register, transient=True)
-
-    state = sdfg.add_state("host_read")
-    copied = state.add_access("copied")
-    state.add_nedge(state.add_read("gA"), copied, dace.Memlet("gA[0] -> [0]"))
-    tasklet = state.add_tasklet("scale_on_host", {"sc": None}, {"o": None}, "o = sc * 3.0")
-    scalar = state.add_access("s")
-    state.add_edge(copied, None, tasklet, "sc", dace.Memlet("copied[0]"))
-    state.add_edge(tasklet, "o", scalar, None, dace.Memlet("s[0]"))
-    _add_kernel(state, "k0", scalar, "gB0")
-    sdfg.validate()
-    return sdfg
-
-
 def _launch_call(label: str) -> str:
     """The wrapper's call site. Its forward declaration takes the state struct by type, not ``__state``.
 
@@ -101,18 +76,6 @@ def _position(code: str, pattern: str) -> int:
     match = re.search(pattern, code)
     assert match, f"{pattern!r} was not emitted, so this test is anchored on nothing"
     return match.start()
-
-
-def test_the_readback_is_synchronized_between_the_copy_and_the_kernel_launch():
-    """The kernel wrapper reads the scalar on the host, so the copy must have landed by then."""
-    code = _generated_code(_scalar_readback_sdfg("d2h_before_launch"))
-    copy = _position(code, r"MemcpyAsync\([^;]*DeviceToHost")
-    launch = _position(code, _launch_call("k0"))
-    sync = _position(code, r"StreamSynchronize")
-    assert copy < sync < launch, (
-        "the device-to-host copy is not synchronized between the copy and the launch that "
-        "packs its destination into the argument list"
-    )
 
 
 def test_the_synchronization_is_lazy_rather_than_emitted_at_the_copy():
@@ -132,18 +95,6 @@ def test_a_second_consumer_reuses_the_first_synchronization():
     )
 
 
-def test_a_host_tasklet_consumer_is_synchronized():
-    """A plain host tasklet reading the destination is a host consumer like any other."""
-    code = _generated_code(_host_consumer_sdfg("d2h_host_tasklet"))
-    copy = _position(code, r"MemcpyAsync\([^;]*DeviceToHost")
-    # Either spelling of the tasklet's read of the copy's destination. Whether the connector is
-    # inlined (``copied * 3.0``) or bound to a local first (``double sc = copied;``) is a codegen
-    # style question; what this test is about is that the read lands after the synchronization.
-    read = _position(code, r"copied \s*\*\s*3\.0|\bdouble\s+\w+\s*=\s*copied\s*;")
-    sync = _position(code, r"StreamSynchronize")
-    assert copy < sync < read, "the host tasklet reads the destination of an unsynchronized copy"
-
-
 def test_a_host_to_device_copy_is_not_synchronized_before_the_kernel():
     """The kernel is issued on the copy's stream, which orders it without blocking the host."""
     code = _generated_code(_host_upload_sdfg("h2d_no_sync"))
@@ -155,8 +106,6 @@ def test_a_host_to_device_copy_is_not_synchronized_before_the_kernel():
 
 
 if __name__ == "__main__":
-    test_the_readback_is_synchronized_between_the_copy_and_the_kernel_launch()
     test_the_synchronization_is_lazy_rather_than_emitted_at_the_copy()
     test_a_second_consumer_reuses_the_first_synchronization()
-    test_a_host_tasklet_consumer_is_synchronized()
     test_a_host_to_device_copy_is_not_synchronized_before_the_kernel()

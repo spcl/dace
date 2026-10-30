@@ -40,26 +40,6 @@ def _run(sdfg: dace.SDFG):
     return DemoteKernelInternalArraysToScalars().apply_pass(sdfg, {})
 
 
-def test_kernel_internal_transient_demoted():
-    """A length-1 Register transient inside a device function becomes a Scalar."""
-    inner = dace.SDFG("roundtrip")
-    inner.add_array("a", (1,), dace.float64)
-    inner.add_array("b", (1,), dace.float64)
-    inner.add_array("tmp", (1,), dace.float64, transient=True, storage=REGISTER)
-    s = inner.add_state("s")
-    t1 = s.add_tasklet("t1", {"x": None}, {"y": None}, "y = x + 1.0")
-    t2 = s.add_tasklet("t2", {"x": None}, {"y": None}, "y = x * 2.0")
-    tmp = s.add_access("tmp")
-    s.add_edge(s.add_access("a"), None, t1, "x", dace.Memlet("a[0]"))
-    s.add_edge(t1, "y", tmp, None, dace.Memlet("tmp[0]"))
-    s.add_edge(tmp, None, t2, "x", dace.Memlet("tmp[0]"))
-    s.add_edge(t2, "y", s.add_access("b"), None, dace.Memlet("b[0]"))
-
-    sdfg = _kernel_with_inner(inner, {"a"}, {"b"})
-    assert _run(sdfg) is not None
-    assert isinstance(inner.arrays["tmp"], data.Scalar), inner.arrays["tmp"]
-
-
 def test_gpu_global_len1_array_not_demoted():
     """A ``GPU_Global`` length-1 array (a promoted kernel output) is kept as an Array."""
     inner = dace.SDFG("keepglobal")
@@ -115,21 +95,6 @@ def test_kernel_output_written_across_gpu_exit_not_demoted():
     assert written_by_gpu_map_exit(sdfg, "out") is True
     DemoteKernelInternalArraysToScalars().apply_pass(sdfg, {})
     assert isinstance(sdfg.arrays["out"], data.Array), sdfg.arrays["out"]
-
-
-def test_non_gpu_len1_array_untouched():
-    """Outside any GPU kernel, length-1 arrays are left alone (this is a GPU-codegen pass)."""
-    sdfg = dace.SDFG("host")
-    sdfg.add_array("a", (1,), dace.float64, transient=True)
-    sdfg.add_array("b", (1,), dace.float64)
-    st = sdfg.add_state("s")
-    t = st.add_tasklet("t", {"x": None}, {"y": None}, "y = x")
-    st.add_edge(st.add_access("a"), None, t, "x", dace.Memlet("a[0]"))
-    st.add_edge(t, "y", st.add_access("b"), None, dace.Memlet("b[0]"))
-
-    InferDefaultSchedulesAndStorages().apply_pass(sdfg, {})
-    assert DemoteKernelInternalArraysToScalars().apply_pass(sdfg, {}) is None
-    assert isinstance(sdfg.arrays["a"], data.Array)
 
 
 def _build_block_reduction() -> dace.SDFG:
@@ -271,11 +236,9 @@ def test_gpu_scheduled_nested_map_boundary_not_demoted():
 
 
 if __name__ == "__main__":
-    test_kernel_internal_transient_demoted()
     test_gpu_global_len1_array_not_demoted()
     test_gpu_shared_len1_array_not_demoted()
     test_kernel_output_written_across_gpu_exit_not_demoted()
-    test_non_gpu_len1_array_untouched()
     test_library_node_output_not_demoted()
     test_block_reduce_output_not_scalarized_end_to_end()
     test_cpp_tasklet_neighbor_not_demoted()

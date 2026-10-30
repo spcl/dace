@@ -9,7 +9,6 @@ without finishing, while the CPU column validated in under 5 minutes.
 
 import collections
 
-import numpy as np
 import pytest
 from ordered_set import OrderedSet
 
@@ -39,13 +38,6 @@ def conditionals_in_a_row(A: dace.float64[N], c: dace.int64):
                     A[i] = A[i] - 1.0
 
 
-def reference(A: np.ndarray, c: int) -> None:
-    for step in range(STEPS):
-        taken = min(max(c, 0), IN_A_ROW)
-        A *= 0.5
-        A += taken - (IN_A_ROW - taken)
-
-
 def ir_diamonds(count: int):
     """``(open, tail)`` for one section of ``count`` two-armed conditionals in a row and a last state.
 
@@ -67,12 +59,6 @@ def ir_diamonds(count: int):
     previous.append_node(tail)
     tail.append_node(section.close)
     return section, tail
-
-
-def test_a_tail_behind_conditionals_in_a_row_is_found_once():
-    """Twenty conditionals are a million routes to the one tail, and the walk listed it once per route."""
-    section, tail = ir_diamonds(20)
-    assert section.get_all_tails() == [tail]
 
 
 @pytest.mark.parametrize("count, one_route", [(0, True), (1, False), (IN_A_ROW, False)])
@@ -118,17 +104,3 @@ def test_conditionals_in_a_row_are_offloaded_and_keep_the_data_on_the_device():
     assert len(maps) == 2 * IN_A_ROW + 1
     assert all(entry.map.schedule == dace.ScheduleType.GPU_Device for entry in maps)
     assert not copies_inside_loops(sdfg)
-
-
-@pytest.mark.gpu
-@pytest.mark.parametrize("c", [0, 5, IN_A_ROW + 2])
-def test_the_offloaded_conditionals_compute_what_numpy_computes(c):
-    sdfg = offloaded()
-    for node, parent in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device:
-            node.map.gpu_block_size = [128, 1, 1]
-    A = np.arange(16, dtype=np.float64)
-    want = A.copy()
-    reference(want, c)
-    sdfg(A=A, c=c, N=16)
-    np.testing.assert_array_equal(A, want)

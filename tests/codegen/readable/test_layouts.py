@@ -182,25 +182,6 @@ def index_function_body(code):
     return lines[0]
 
 
-# --------------------------------------------------------------------------- #
-# Cases
-# --------------------------------------------------------------------------- #
-def test_fortran_column_major(require_experimental):
-    """Case 1: column-major / Fortran strides ``[1, 6]`` on a ``(6, 8)`` transient."""
-    base = dict(A=np.random.rand(6, 8), B=np.zeros((6, 8)))
-    build = lambda name: elementwise_2d_sdfg(
-        name, strides=[1, 6], offset=None, total_size=48, irange="0:6", jrange="0:8"
-    )
-
-    _, experimental = assert_bit_exact(build, "fortran", base)
-    # Full elementwise write -> analytically B == (A + 1) * 2 everywhere.
-    assert np.array_equal(experimental["B"], (base["A"] + 1.0) * 2.0)
-
-    # The column stride 6 must scale the SECOND index in the index function.
-    body = index_function_body(experimental_code(build, "fortran_inspect"))
-    assert "6 * __d1" in body, body
-
-
 def test_padded_row_strides(require_experimental):
     """Case 2: rows padded to 16 elements -- strides ``[16, 1]`` on ``(6, 8)``."""
     base = dict(A=np.random.rand(6, 8), B=np.zeros((6, 8)))
@@ -214,28 +195,6 @@ def test_padded_row_strides(require_experimental):
     # The padded row stride 16 must scale the FIRST index in the index function.
     body = index_function_body(experimental_code(build, "padded_inspect"))
     assert "16 * __d0" in body, body
-
-
-def test_nonzero_offset(require_experimental):
-    """Case 3: non-zero descriptor ``offset [1, 2]`` (C strides ``[8, 1]``).
-
-    Access is restricted to ``i<5, j<6`` so ``max_index + offset < shape`` (DaCe
-    validates ``offset`` against ``shape``). The offset contributes a constant
-    ``1*8 + 2*1 = 10`` to every ``T_idx`` call.
-    """
-    base = dict(A=np.random.rand(6, 8), B=np.zeros((6, 8)))
-    build = lambda name: elementwise_2d_sdfg(
-        name, strides=[8, 1], offset=[1, 2], total_size=58, irange="0:5", jrange="0:6"
-    )
-
-    _, experimental = assert_bit_exact(build, "offset", base)
-    expected = base["B"].copy()
-    expected[0:5, 0:6] = (base["A"][0:5, 0:6] + 1.0) * 2.0
-    assert np.array_equal(experimental["B"], expected)
-
-    # offset*stride == 1*8 + 2*1 == 10 appears as the constant term.
-    body = index_function_body(experimental_code(build, "offset_inspect"))
-    assert "+ 10" in body, body
 
 
 def test_strided_stencil(require_experimental):

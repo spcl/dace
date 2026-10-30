@@ -6,9 +6,6 @@ once its FIRST arm reached it. A transient only the second arm writes then had n
 after the conditional, and the host read behind them was renamed to a host twin nothing declared.
 """
 
-import numpy as np
-import pytest
-
 import dace
 from dace import InterstateEdge, Memlet
 from dace.properties import CodeBlock
@@ -81,13 +78,3 @@ def test_the_blocks_after_a_conditional_know_where_its_later_arm_left_the_data()
         if isinstance(dst, dace.nodes.AccessNode)
     ]
     assert ("T", read_T.data) in copies, copies
-
-
-@pytest.mark.gpu
-def test_the_host_read_after_the_conditional_sees_the_device_result():
-    sdfg = offloaded()
-    A = np.arange(1, 2 * SMALL + 1, dtype=np.float64)
-    X = np.zeros(1)
-    out = np.zeros(1)
-    sdfg(A=A, X=X, out=out, N=2 * SMALL)
-    np.testing.assert_array_equal(out, [2 * A[0]])

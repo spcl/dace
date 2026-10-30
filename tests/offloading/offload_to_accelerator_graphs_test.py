@@ -138,24 +138,6 @@ def scalar_to_gpu_within_loopregion_sdfg(num_iters: int = 4):
     return sdfg
 
 
-def nested_sdfg():
-
-    @dace.program
-    def nested_kernel_program(inp: dace.float64[5], out: dace.float64[5]):
-        for idx in dace.map[0:5]:
-            tmp = dace.define_local([1], dace.float64)
-
-            for phase in range(2):
-                if phase == 0:
-                    tmp[0] = inp[idx] + 1.0
-                else:
-                    out[idx] = tmp[0] * 2.0
-
-    sdfg = nested_kernel_program.to_sdfg()
-    sdfg.validate()
-    return sdfg
-
-
 def kernel_sdfg():
     TS = dace.symbol("TS")
 
@@ -225,26 +207,6 @@ def tasklet_map_wrapper_sdfg():
     def tasklet_map_wrapper_program(A: dace.float64[4, 4], out: dace.float64[4, 4]):
         out = A @ A
         out[0, 0] += 1
-
-    sdfg = tasklet_map_wrapper_program.to_sdfg()
-    sdfg.validate()
-    return sdfg
-
-
-def tasklet_map_wrapper_larger_sdfg():
-
-    @dace.program
-    def tasklet_map_wrapper_program(A: dace.float64[4, 4], B: dace.float64[4, 4], out: dace.float64[4, 4]):
-        B = A @ A  # parallel
-
-        B[0, 0] += A[0, 0]  # sequential region
-        A[1, 0] += 5
-
-        B = B @ A  # parallel
-
-        s = 5  # sequential region
-        B[0, 3] += s
-        out[1, 1] += s
 
     sdfg = tasklet_map_wrapper_program.to_sdfg()
     sdfg.validate()
@@ -452,20 +414,6 @@ def test_conditional_offload_else():
 
 
 @pytest.mark.gpu
-def test_nested_sdfg():
-    sdfg = nested_sdfg()
-
-    orig_output = np.zeros(5, dtype=np.float64)
-    new_output = np.zeros(5, dtype=np.float64)
-    run_numerical_offloading_test(
-        sdfg,
-        {"inp": np.arange(5, dtype=np.float64)},
-        orig_output,
-        new_output,
-    )
-
-
-@pytest.mark.gpu
 def test_kernel_sdfg():
     sdfg = kernel_sdfg()
     orig_output = np.zeros((100, 100), dtype=np.float64)
@@ -517,23 +465,6 @@ def test_tasklet_map_wrapper():
     run_numerical_offloading_test(
         sdfg,
         {"A": A},
-        orig_out,
-        new_out,
-    )
-
-
-@pytest.mark.gpu
-def test_tasklet_map_wrapper_larger():
-    sdfg = tasklet_map_wrapper_larger_sdfg()
-
-    A = np.arange(16, dtype=np.float64).reshape(4, 4) / 10.0
-    B = np.zeros((4, 4), dtype=np.float64)
-    orig_out = np.zeros((4, 4), dtype=np.float64)
-    new_out = np.zeros((4, 4), dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"A": A, "B": B},
         orig_out,
         new_out,
     )

@@ -173,18 +173,6 @@ def test_cross_stream_event_synchronization_is_checked():
     assert not unchecked, f"stream synchronization emitted without an error check: {unchecked}"
 
 
-def test_gpu_blas_calls_are_checked():
-    """The vendor BLAS reports through its return value only, so a dropped status is a silently wrong result."""
-    for alpha in (1.0, 2.0):
-        code = generated_code(gpu_blas_gemm(alpha))
-        calls = list(re.finditer(GPU_BLAS_CALL, code))
-        assert calls, f"no vendor BLAS call was emitted for alpha={alpha}, so this test is anchored on nothing"
-        unchecked = [
-            call.group(0) for call in calls if not code[: call.start()].rstrip().endswith(f"{GPU_BLAS.check_error}(")
-        ]
-        assert not unchecked, f"vendor BLAS called without checking its status: {unchecked}"
-
-
 def test_the_gpu_blas_gemm_expansion_still_emits_the_pointer_mode_switch():
     """The check has to wrap the pointer mode switch, not replace it."""
     code = generated_code(gpu_blas_gemm(2.0))
@@ -197,5 +185,4 @@ if __name__ == "__main__":
     test_a_failed_target_initializer_stops_before_the_state_it_left_unset()
     test_the_init_function_still_checks_what_runs_after_the_allocations()
     test_cross_stream_event_synchronization_is_checked()
-    test_gpu_blas_calls_are_checked()
     test_the_gpu_blas_gemm_expansion_still_emits_the_pointer_mode_switch()

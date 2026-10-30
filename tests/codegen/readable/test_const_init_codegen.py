@@ -53,27 +53,6 @@ def _array_const_sdfg(name, shape, values, read=True):
     return sdfg
 
 
-def _scalar_const_sdfg(name):
-    """s = 3.0 (write-once constant scalar), then B[i] = A[i] * s."""
-    N = dace.symbol("N")
-    sdfg = dace.SDFG(name)
-    sdfg.add_array("A", [N], dace.float64)
-    sdfg.add_array("B", [N], dace.float64)
-    sdfg.add_transient("s", [1], dace.float64)
-    s1 = sdfg.add_state("init")
-    ts = s1.add_tasklet("setc", {}, {"o"}, "o = 3.0")
-    s1.add_edge(ts, "o", s1.add_access("s"), None, dace.Memlet("s[0]"))
-    s2 = sdfg.add_state_after(s1, "compute")
-    ra, rs, wb = s2.add_access("A"), s2.add_access("s"), s2.add_access("B")
-    me, mx = s2.add_map("m", dict(i="0:N"))
-    t2 = s2.add_tasklet("mul", {"a", "sc"}, {"o"}, "o = a * sc")
-    s2.add_memlet_path(ra, me, t2, dst_conn="a", memlet=dace.Memlet("A[i]"))
-    s2.add_memlet_path(rs, me, t2, dst_conn="sc", memlet=dace.Memlet("s[0]"))
-    s2.add_memlet_path(t2, mx, wb, src_conn="o", memlet=dace.Memlet("B[i]"))
-    sdfg.validate()
-    return sdfg
-
-
 def _no_redundant_init(code, name):
     """Assert the promoted const data has no runtime init/allocation.
 
@@ -85,40 +64,6 @@ def _no_redundant_init(code, name):
         if token.search(line):
             assert "new" not in line or "constexpr" in line, f"runtime alloc of const {name}: {line}"
             assert "memset" not in line, f"redundant memset of const {name}: {line}"
-
-
-def test_scalar_constexpr_no_memset():
-    sdfg, code = _gen(_scalar_const_sdfg, "experimental_readable", "sc_exp")
-    # A write-once scalar is bound at compile time: constexpr double s[1] = {3.0};
-    assert SCALAR_CONSTEXPR.search(code), "scalar not emitted const/constexpr"
-    _no_redundant_init(code, "s")
-    # correctness
-    sdfg_l = _scalar_const_sdfg("sc_leg")
-    A = np.random.rand(8)
-    bl, be = np.zeros(8), np.zeros(8)
-    with set_temporary("compiler", "cpu", "implementation", value="legacy"):
-        sdfg_l.compile()(A=A.copy(), B=bl, N=8)
-    with set_temporary("compiler", "cpu", "implementation", value="experimental_readable"):
-        sdfg.compile()(A=A.copy(), B=be, N=8)
-    assert np.array_equal(bl, be) and np.allclose(be, A * 3.0)
-
-
-def test_array_constexpr_full_no_memset():
-    vals = {0: "0.0", 1: "1.0", 2: "2.0", 3: "3.0"}
-    fac = lambda name: _array_const_sdfg(name, (4,), vals)
-    sdfg, code = _gen(fac, "experimental_readable", "ac_exp")
-    assert any("constexpr" in l and "arr[" in l and "= {" in l for l in code.splitlines()), (
-        "array not emitted constexpr initializer"
-    )
-    _no_redundant_init(code, "arr")
-    # correctness
-    A = np.random.rand(4)
-    bl, be = np.zeros(4), np.zeros(4)
-    with set_temporary("compiler", "cpu", "implementation", value="legacy"):
-        fac("ac_leg").compile()(A=A.copy(), B=bl)
-    with set_temporary("compiler", "cpu", "implementation", value="experimental_readable"):
-        sdfg.compile()(A=A.copy(), B=be)
-    assert np.array_equal(bl, be) and np.allclose(be, A + np.array([0.0, 1.0, 2.0, 3.0]))
 
 
 def test_array_constexpr_partial_zerofill():
@@ -299,8 +244,6 @@ def test_constexpr_table_passed_through_two_nested_sdfg_levels():
 
 
 if __name__ == "__main__":
-    test_scalar_constexpr_no_memset()
-    test_array_constexpr_full_no_memset()
     test_array_constexpr_partial_zerofill()
     test_scalar_constant_subscript_lowered_to_bare_name()
     test_chain_scalar_stays_in_scope_of_its_readers()

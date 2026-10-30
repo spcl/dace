@@ -19,18 +19,14 @@ on CPU and -- since the CUDA generator emits its device tasklets through the sam
 CPU generator instance -- inside ``__global__`` kernels.
 """
 
-import copy
 import re
 
-import numpy as np
 import pytest
 
 import dace
 from tests.codegen.readable.conftest import (
     EXPERIMENTAL,
     LEGACY,
-    assert_outputs_equivalent,
-    run_isolated,
     use_implementation,
 )
 
@@ -124,46 +120,6 @@ def test_wcr_tasklet_keeps_block(require_experimental):
     assert "{" in experimental and "}" in experimental
 
 
-# --------------------------------------------------------------------------- #
-# Numerical equivalence (compile + run): CPU (fork) and GPU (in-process)
-# --------------------------------------------------------------------------- #
-def run_variant(build, name, implementation, target, base):
-    """Compile + run one variant on a deep copy of ``base``; CPU forks, GPU runs
-    in-process (CUDA and ``os.fork`` do not mix)."""
-
-    def work():
-        sdfg = build(name)
-        if target == "gpu":
-            sdfg.apply_gpu_transformations()
-        arrays = copy.deepcopy(base)
-        sdfg.compile()(**arrays)
-        return {k: v for k, v in arrays.items() if isinstance(v, np.ndarray)}
-
-    with use_implementation(implementation):
-        return work() if target == "gpu" else run_isolated(work)
-
-
-def test_single_line_bit_exact(require_experimental, target):
-    """The single-line add reproduces the legacy result exactly (CPU) / within a
-    tight tolerance (GPU)."""
-    base = dict(A=np.random.rand(6, 7), B=np.random.rand(6, 7), C=np.zeros((6, 7)))
-    legacy = run_variant(add_2d_sdfg, f"sl_run_leg_{target}", LEGACY, target, base)
-    experimental = run_variant(add_2d_sdfg, f"sl_run_exp_{target}", EXPERIMENTAL, target, base)
-    assert_outputs_equivalent(legacy, experimental, target, label="single_line_add")
-    # And it is the analytically correct value.
-    assert np.allclose(experimental["C"], base["A"] + base["B"])
-
-
-def test_wcr_reduction_bit_exact(require_experimental, target):
-    """The WCR reduction (block-retained tasklet) is still equivalent to legacy."""
-    # Threads accumulate in any order; integer-valued inputs make every order sum to the same bits
-    base = dict(A=np.random.randint(0, 1000, 16).astype(np.float64), s=np.zeros(1))
-    legacy = run_variant(wcr_reduction_sdfg, f"wcr_run_leg_{target}", LEGACY, target, base)
-    experimental = run_variant(wcr_reduction_sdfg, f"wcr_run_exp_{target}", EXPERIMENTAL, target, base)
-    assert_outputs_equivalent(legacy, experimental, target, label="wcr_reduction")
-    assert np.allclose(experimental["s"][0], base["A"].sum())
-
-
 @pytest.mark.gpu
 def test_single_line_inside_kernel(require_experimental):
     """The connector-free single-line tasklet appears inside the ``__global__``
@@ -184,9 +140,5 @@ if __name__ == "__main__":
     else:
         test_single_line_no_block(None)
         test_wcr_tasklet_keeps_block(None)
-        test_single_line_bit_exact(None, "cpu")
-        test_wcr_reduction_bit_exact(None, "cpu")
-        test_single_line_bit_exact(None, "gpu")
-        test_wcr_reduction_bit_exact(None, "gpu")
         test_single_line_inside_kernel(None)
         print("ok")

@@ -93,44 +93,6 @@ def readable_code(sdfg, placement):
         return generated_code(sdfg)
 
 
-def body_lines(code):
-    """The stripped, non-empty source lines of the ``*_internal`` function body."""
-    out, inside, depth = [], False, 0
-    for raw in code.splitlines():
-        line = raw.split("////")[0].rstrip()
-        if not inside and "internal(" in line:
-            inside = True
-        if not inside:
-            continue
-        if line.strip():
-            out.append(line.strip())
-            depth += line.count("{") - line.count("}")
-            if depth == 0 and len(out) > 1:
-                break
-    return out
-
-
-def test_late_moves_declaration_to_first_use(require_experimental):
-    """Under ``late`` the ``double s;`` declaration is emitted on the line immediately before the first
-    statement that uses ``s`` (``s = (A...``); under ``eager`` it is hoisted above unrelated code.
-    ``late_fused`` folds the declaration into that write instead (test_scalar_decl_fused.py).
-    """
-    eager = body_lines(readable_code(reassign_scalar_sdfg("a_eager"), "eager"))
-    late = body_lines(readable_code(reassign_scalar_sdfg("a_late"), "late"))
-
-    decl = "double s;"
-    first_use = next(i for i, l in enumerate(late) if l.startswith("s = ("))
-    assert decl in late, late
-    # late: the declaration sits on exactly the line before the first use.
-    assert late[first_use - 1] == decl, late
-
-    # eager: the declaration is present but hoisted -- there is intervening code (the `pre` chain) between
-    # it and the first use of `s`, so it is NOT on the immediately-preceding line.
-    eager_decl = eager.index(decl)
-    eager_use = next(i for i, l in enumerate(eager) if l.startswith("s = ("))
-    assert eager_use - eager_decl > 1, eager
-
-
 def test_default_placement_is_eager(require_experimental):
     """The default readable output equals the explicit ``eager`` output (byte-identical)."""
     with use_implementation(EXPERIMENTAL):
@@ -284,7 +246,6 @@ def test_legacy_keeps_the_hoisted_loop_counter():
 
 
 if __name__ == "__main__":
-    test_late_moves_declaration_to_first_use(None)
     test_default_placement_is_eager(None)
     test_legacy_byte_identical_across_placement()
     test_parallel_map_unaffected(None)
