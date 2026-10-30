@@ -235,6 +235,42 @@ def test_waw_ordered_through_a_read_that_also_takes_a_war_edge_stays_ordered():
         )
 
 
+def test_raw_through_a_second_reader_of_a_merged_instance_stays_ordered():
+    """first: X[2] = 1 and X[3] = 1 into one X node;  second: two X nodes, written at X[6] and X[7], read X[3] and X[2].
+
+    The first X node merges into the first second-state node that reads it; the other reader has no candidate left
+    and still has to follow the first-state write of X[2].
+    """
+    sdfg = SDFG("fuse_raw_second_reader")
+    sdfg.add_array("X", [9], dtypes.float64)
+    sdfg.add_array("Y", [2], dtypes.float64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    x1 = s1.add_write("X")
+    writers = []
+    for index in (2, 3):
+        writer = s1.add_tasklet(f"w{index}", {}, {"o"}, "o = 1.0")
+        s1.add_edge(writer, "o", x1, None, Memlet(f"X[{index}]"))
+        writers.append(writer)
+    readers = []
+    for k, (written, read) in enumerate(((6, 3), (7, 2))):
+        writer = s2.add_tasklet(f"v{written}", {}, {"o"}, "o = 5.0")
+        x = s2.add_access("X")
+        s2.add_edge(writer, "o", x, None, Memlet(f"X[{written}]"))
+        reader = s2.add_tasklet(f"r{read}", {"a"}, {"o"}, "o = a")
+        s2.add_edge(x, None, reader, "a", Memlet(f"X[{read}]"))
+        s2.add_edge(reader, "o", s2.add_write("Y"), None, Memlet(f"Y[{k}]"))
+        readers.append(reader)
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    if sdfg.number_of_nodes() == 1:
+        st = sdfg.start_state
+        assert nx.has_path(st.nx, writers[0], readers[1]), "the read of X[2] is unordered against its write"
+        assert nx.has_path(st.nx, writers[1], readers[0]), "the read of X[3] is unordered against its write"
+
+
 def test_war_write_after_read():
     """first: B[k] = A[k];  second: A[k] = 9.  B must get the OLD A[k].
 

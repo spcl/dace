@@ -1318,6 +1318,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         # Merge common (data) nodes
         merged_nodes = set()
+        # Per container, the nodes that took a first-state instance: a later second-state reader finds that instance
+        # gone from the candidates and is ordered behind them instead (seeds 349, 1663)
+        absorbed: dict[str, list[nodes.AccessNode]] = {}
         for node in second_mid:
             # merge only top level nodes, skip everything else
             if node not in top2:
@@ -1350,6 +1353,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     for kind, first_nodes, second_nodes in self.connections_to_make
                     if kind == "waw"
                 )
+                took = False
                 for cand in candidates:
                     if node_waw_flagged and first_state.in_degree(cand) > 0:
                         continue
@@ -1359,6 +1363,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         sdutil.change_edge_src(first_state, cand, node)
                         sdutil.change_edge_dest(first_state, cand, node)
                         first_state.remove_node(cand)
+                        took = True
                         # Record the merged-away node so a later ``second_mid`` node with the same
                         # data does not re-select it: ``candidates`` (above) filters on the stale
                         # ``order`` / ``top`` snapshots, which still contain this now-removed node.
@@ -1367,6 +1372,12 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         # ``__t0_split_*`` from SplitTasklets). Mirrors the ``merged_nodes.add(n)``
                         # in the general same-name-merge branch below.
                         merged_nodes.add(cand)
+                if took:
+                    absorbed.setdefault(node.data, []).append(node)
+                elif second_state.out_degree(node) > 0:
+                    for m in absorbed.get(node.data, []):
+                        if not nx.has_path(first_state._nx, node, m) and not nx.has_path(first_state._nx, m, node):
+                            first_state.add_nedge(m, node, memlet.Memlet())
                 continue
 
             if len(candidates) == 0:
@@ -1387,6 +1398,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             sdutil.change_edge_dest(first_state, node, n)
             first_state.remove_node(node)
             merged_nodes.add(n)
+            absorbed.setdefault(n.data, []).append(n)
 
         # Redirect edges and remove second state
         was_start = is_start_block(graph, second_state)
