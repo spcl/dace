@@ -397,7 +397,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         nsdfg.replace_dict(sym_replacements)
         # A symbol the inlined region assigns keeps the type the nested SDFG declares for it; undeclared in the
         # parent, codegen would infer one from the assigned value (a float set to ``3`` became an int64_t)
-        for inner in edge_assigned - loop_variables:
+        for inner in sorted((edge_assigned - loop_variables) | non_identity_mapping.keys()):
             name = sym_replacements.get(inner, inner)
             dtype = nsdfg.symbols.get(name, nsdfg.symbols.get(inner))
             if dtype is not None and name not in sdfg.symbols:
@@ -457,6 +457,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 sdfg.constants_prop[newname] = (csttype, cstval)
             else:
                 sdfg.constants_prop[cstname] = (csttype, cstval)
+        # A constant table only interstate edges read has no access node to move its descriptor with
+        for cstname in nsdfg.constants_prop:
+            name = transients.get(cstname, cstname)
+            if cstname in nsdfg.arrays and nsdfg.arrays[cstname].transient and name not in sdfg.arrays:
+                sdfg.add_datadesc(name, dc(nsdfg.arrays[cstname]))
         # Code and memlets read a constant by name, too
         if renamed_constants:
             nsdfg.replace_dict(renamed_constants)

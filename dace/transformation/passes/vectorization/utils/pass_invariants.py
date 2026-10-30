@@ -604,7 +604,8 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> 
         inner_sdfg = nsdfg_node.sdfg
         iter_vars = tuple(map_entry.map.params[-len(map_widths) :])
         for name, desc in inner_sdfg.arrays.items():
-            if not desc.transient:
+            # An SDFG constant is never written, so it is never lane-dependent
+            if not desc.transient or name in inner_sdfg.constants_prop:
                 continue
             if name.startswith("_idx_") or name.startswith("_ite_sym_tile") or name.startswith("_cond_bcast"):
                 continue

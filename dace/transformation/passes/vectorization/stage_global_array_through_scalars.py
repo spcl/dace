@@ -269,10 +269,15 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                 and body_owner.get(e.src) is owning_entry
                 and self._carries_data_read(e, node.data)
             ]
+            # A copy out of the bridge into other data reads the written value as a tasklet does: left on the bridge,
+            # it reads the array the write no longer reaches.
             consumers = [
                 e
                 for e in state.out_edges(node)
-                if isinstance(e.dst, dace.nodes.Tasklet)
+                if (
+                    isinstance(e.dst, dace.nodes.Tasklet)
+                    or (isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data != node.data)
+                )
                 and body_owner.get(e.dst) is owning_entry
                 and self._carries_data_read(e, node.data)
             ]
@@ -372,7 +377,9 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                 if e not in state.edges():
                     continue
                 state.remove_edge(e)
-                state.add_edge(sn, None, e.dst, e.dst_conn, Memlet(f"{sn.data}[0]"))
+                state.add_edge(
+                    sn, None, e.dst, e.dst_conn, Memlet(data=sn.data, subset="0", other_subset=e.data.dst_subset)
+                )
 
         for x in exits:
             self._purge_bridge_scope_edges(state, bridge, x, array_name, direction="drain")
