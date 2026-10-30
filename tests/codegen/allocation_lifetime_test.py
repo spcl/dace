@@ -722,10 +722,10 @@ def add_map_scoped_mutable_scalar(sdfg: dace.SDFG, state: dace.SDFGState) -> Non
 def run_deferred_scalar_case(sdfg: dace.SDFG, **extra) -> None:
     """Compile and run ``sdfg`` with scalar declaration deferral FORCED on, and check the map result.
 
-    ``scalar_init_style`` defaults to ``split``, which disables deferral entirely, so a deferral bug is
+    ``scalar_decl`` defaults to ``eager``, which disables deferral entirely, so a deferral bug is
     invisible without this override. Every caller's SDFG has a use of ``zqe`` that the deferred
     declaration would not be in scope of; the test is that the generated C++ still compiles."""
-    with dace.config.set_temporary("compiler", "cpu", "codegen_params", "scalar_init_style", value="fused"):
+    with dace.config.set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value="late_fused"):
         a = np.random.rand(16)
         b = np.zeros(16)
         sdfg(A=a, B=b, **extra)
@@ -824,7 +824,7 @@ def test_deferred_scalar_still_applies():
 
     # Only the readable generator defers a scalar declaration to its first write.
     with dace.config.set_temporary("compiler", "cpu", "implementation", value="experimental_readable"):
-        with dace.config.set_temporary("compiler", "cpu", "codegen_params", "scalar_init_style", value="fused"):
+        with dace.config.set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value="late_fused"):
             code = sdfg.generate_code()[0].clean_code
         assert "double zqe = " in code
         assert "double zqe;" not in code

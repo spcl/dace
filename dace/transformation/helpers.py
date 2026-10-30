@@ -405,7 +405,9 @@ def nest_state_subgraph(
             continue
         name = edge.data.data
         if name not in nested_names:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+            desc = sdfg.arrays[edge.data.data]
+            # A view is a plain array in the nest: what it views stays outside
+            datadesc = desc.as_array() if isinstance(desc, dace.data.View) else copy.deepcopy(desc)
             datadesc.transient = False
             nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
         new_name = nested_names[name]
@@ -415,7 +417,9 @@ def nest_state_subgraph(
             continue
         name = edge.data.data
         if name not in nested_names:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+            desc = sdfg.arrays[edge.data.data]
+            # A view is a plain array in the nest: what it views stays outside
+            datadesc = desc.as_array() if isinstance(desc, dace.data.View) else copy.deepcopy(desc)
             datadesc.transient = False
             nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
         new_name = nested_names[name]
