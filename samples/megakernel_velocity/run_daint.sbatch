@@ -12,6 +12,6 @@ export CC=$(command -v gcc) CXX=$(command -v g++) FC=$(command -v gfortran)
 # One GH200 module: one GPU and its 72 Grace cores
 export CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=${OMP_NUM_THREADS:-72}
 HERE=$SLURM_SUBMIT_DIR
-MACHINE=daint
+MACHINE=${MACHINE:-daint}
 OUT=${OUT:-$HERE/results/daint-$SLURM_JOB_ID}
 . "$HERE/run_experiment.sh"
