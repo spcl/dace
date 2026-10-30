@@ -75,8 +75,8 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
         height = sym2cpp(height_elems)
 
         code = (
-            f"{backend}Memcpy2DAsync({OUTPUT_CONNECTOR_NAME}, {dpitch}, {INPUT_CONNECTOR_NAME}, {spitch}, "
-            f"{width}, {height}, {kind}, {CURRENT_STREAM_NAME});"
+            f"DACE_GPU_CHECK({backend}Memcpy2DAsync({OUTPUT_CONNECTOR_NAME}, {dpitch}, {INPUT_CONNECTOR_NAME}, {spitch}, "
+            f"{width}, {height}, {kind}, {CURRENT_STREAM_NAME}));"
         )
 
         in_conns = {INPUT_CONNECTOR_NAME: dace.dtypes.pointer(inp.dtype)}
