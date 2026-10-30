@@ -18,13 +18,12 @@ The job asks for 8 hours. To try it first, use `DEVICES=gpu REPS=5`, which build
 
 ## Which code to run
 
-This branch uses the old CPU codegen and the older offloading. The numbers in hand come from the port to `extended`, so to
-match them use dace branch `megakernel-extended` with dace-fortran branch `extended-compat`, and install both with
-`uv pip install --no-deps -e` for dace-fortran, because its lock pins another DaCe.
+This branch uses the old CPU codegen and the older offloading. The numbers in hand come from the port to `extended`: use
+dace branch `megakernel-extended` with dace-fortran branch `extended-compat` to match them, and install dace-fortran with
+`uv pip install --no-deps -e`, because its lock pins another DaCe.
 
-On that port, `export DACE_compiler_cpu_implementation=legacy` before `sbatch` gave the fastest megakernels on Beverin, on
-CPU and GPU. Leaving it out uses the new CPU codegen. Set `MACHINE=daint-legacy-cpu` for that run, so that both can be
-plotted side by side.
+On that port, `CPU_CODEGEN=legacy` gave the fastest megakernels on Beverin, on CPU and GPU. Run `run_daint_ranks.sbatch` once
+with it and once without; they land under different machine names, so both plot side by side.
 
 ## Expect to adapt
 
