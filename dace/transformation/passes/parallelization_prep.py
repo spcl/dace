@@ -1211,7 +1211,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         The mode travels with the point because the two candidate families want different splits: a
         guard true for ONE iteration wants that iteration carved out (``middle_singleton``), a guard
         true over a RUN wants the two-way split that keeps the run whole."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap, loop_varying_symbols
+        from dace.transformation.interstate.loop_to_map import loop_varying_symbols
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         # Cheap structural gate FIRST: a loop with no ``if i == x`` equality guard and no
         # broadcast-conflict split point has no split candidate, so a split can never unblock it --
@@ -1238,7 +1239,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         if not candidates or sum(1 for _ in loop.all_control_flow_blocks(recursive=True)) > SPLIT_SEARCH_MAX_BLOCKS:
             return None
         try:
-            if LoopToMap.can_be_applied_to(sdfg, loop=loop):
+            if ParallelizeLoops().accepts(loop):
                 return None
         except Exception:
             pass
@@ -1246,7 +1247,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         # only by mapping strictly more: the first candidate reaching a count keeps it.
         best_count, best = 0, None
         # Each probe resolves the facts of the SDFG for every guard it decides; shared until a probe edits a branch.
-        with memoize_facts():
+        with memoize_facts(sdfg):
             for x in candidates:
                 singleton = x not in two_way
                 clamp = self._split_sides_needing_clamp(loop, x) or frozenset()
@@ -1296,15 +1297,15 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         A verdict only CHOOSES a split. The split itself and ``LoopToMap`` after it re-check everything on the
         transformed graph, so a wrong verdict costs a missed or a pointless split, never a miscompile."""
-        from dace.transformation.interstate.loop_to_map import LoopToMap
         from dace.transformation.passes.analysis import loop_analysis
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
         try:
             with self._as_segment(loop, init, condition) as clean:
                 if loop_analysis.loop_provably_at_most_one_iteration(loop):
                     return False
                 clean()
-                return bool(LoopToMap.can_be_applied_to(sdfg, loop=loop))
+                return ParallelizeLoops().accepts(loop)
         except Exception:
             return False
 
@@ -1346,7 +1347,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 cfb.branches[:] = entries
             loop.init_statement, loop.loop_condition = header
             if branches:
-                forget_all_facts()  # the restored branches hold their interstate assignments again
+                forget_all_facts(loop)  # the restored branches hold their interstate assignments again
 
     @staticmethod
     def _lift_trivial_ifs_virtually(loop: LoopRegion, saved: dict[ConditionalBlock, list]) -> None:
@@ -1381,7 +1382,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                     if lift.dead_branch(entries[index][0], cfb):
                         saved.setdefault(cfb, original)
                         del entries[index]
-                        forget_all_facts()  # the branch may have held interstate assignments
+                        forget_all_facts(loop)  # the branch may have held interstate assignments
                         changed = True
                     else:
                         index += 1
@@ -1389,7 +1390,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                 if decided:
                     saved.setdefault(cfb, original)
                     entries[:] = [] if taken is None else [(None, taken)]
-                    forget_all_facts()
+                    forget_all_facts(loop)
                     resolved.add(cfb)
                     changed = True
 

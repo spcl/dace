@@ -9,6 +9,8 @@ from .fusion_inline import FuseStates, InlineSDFGs
 from .gpu_block_size_selection import SelectGPUDeviceBlockSize, pick_gpu_block_size, select_gpu_device_block_size
 from .instrument_with_timer import InstrumentWithTimer
 from .loop_local_memory_reduction import LoopLocalMemoryReduction
+from .memlet_access_policies import AssignLoopCursors
+from .memlet_access_policy_lowering import LowerMemletAccessPolicies
 from .optional_arrays import OptionalArrayInference
 from .persistent_transients import MakeTransientsPersistent
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere

@@ -18,6 +18,7 @@ from dace.libraries.tileops.environments import (
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import IsaCall, call_text, template_flag
 from dace.libraries.tileops.kinds import TILE
+from dace.libraries.tileops.lanes import SEQUENTIAL, TileLowering
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import (
     LaneOperands,
@@ -201,7 +202,9 @@ class TileFMA(TileOp):
             self, state, sdfg, operands, "_o"
         )
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         self.validate(sdfg, state)
         operands = self.operands()
         out_ctype = edge_ctype(sdfg, output_edge(state, self, "_o"))
@@ -216,12 +219,14 @@ class TileFMA(TileOp):
             rhs = f"{lanes.shared}(std::fma(double({a}), double({b}), double({c})))"
         else:
             rhs = f"std::fma({a}, {b}, {c})"
-        return elementwise_tasklet(self, state, operands, "_o", rhs, out_ctype, lanes.in_edges)
+        return elementwise_tasklet(self, state, operands, "_o", rhs, out_ctype, lanes.in_edges, lowering=lowering)
 
-    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
+    def isa_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         self.validate(sdfg, state)
         operands = self.operands()
-        call = IsaCall.of(self, state, sdfg, "_o", backend)
+        call = IsaCall.of(self, state, sdfg, "_o", backend, lowering)
         (a_broadcast, a_pointer), (b_broadcast, b_pointer), (c_broadcast, c_pointer) = (
             call.operand(operand) for operand in operands
         )

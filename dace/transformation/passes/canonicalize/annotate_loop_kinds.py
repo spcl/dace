@@ -14,14 +14,13 @@ So it is written down, as a ``specialization_hint`` comment, in four kinds:
   was proven either way, and the difference from the line above is the whole point of this pass:
   a proof closes the question, a decline does not.
 * **wavefront** -- the diagonal, front, tile and tile-interior axes a skew produces.
-  :mod:`~dace.transformation.passes.canonicalize.wavefront_skew` labels those itself, because it is
+  :mod:`~dace.transformation.passes.parallelization.wavefront.skew` labels those itself, because it is
   the only thing that knows a loop is one; the wording lives here so all four kinds read alike.
 
 One pass, run last, rather than a label at each site that could have set one: a loop that a pass
 forgot would then carry no comment and read as "nobody looked", which is a claim in its own right.
-Here every loop is visited, and the classifier is ``LoopToMap.can_be_applied`` -- the same oracle
-:class:`~dace.transformation.passes.loop_to_reduce.PinCarriedTopLevelLoops` uses, so the comment
-and the pipeline's own decision cannot disagree.
+Here every loop is visited, and the classifier is ``LoopToMap.can_be_applied`` -- the pipeline's own oracle, so
+the comment and the pipeline's decision cannot disagree.
 
 A hint is a NOTE. Nothing in the pipeline dispatches on these strings, ``hint_comment`` drops them
 outside a standalone rendering, and this pass changes no graph.
@@ -44,7 +43,8 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDF
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.passes.analysis import loop_analysis, smt_dependence
+from dace.transformation.interstate.loop_to_map import LoopRefusal, Refusal
+from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 
 # Three classes, named by the first word of every loop hint: ``parallel`` and ``sequential`` are
 # settled and need no further dependence reasoning, ``unsure`` is the only open one. A role (a
@@ -145,8 +145,9 @@ def tile_label(bi: int, bj: int) -> str:
     return f"[{bi}x{bj}]"
 
 
-def refusal_reason(loop: LoopRegion) -> str | None:
-    """Why ``LoopToMap`` would refuse ``loop``, ``None`` if it would accept, ``''`` if it refused without a reason.
+def refusal_reason(loop: LoopRegion, session: Any = None) -> LoopRefusal | str | None:
+    """Why ``LoopToMap`` would refuse ``loop`` (its :class:`LoopRefusal`), ``None`` if it would accept, or the text
+    of why it was never examined; ``session`` the :class:`ProbeSession` the caller's probes share.
 
     Asked with ``pinned_sequential`` set aside. The pin is a schedule decision an earlier pass made,
     and "loop is pinned sequential" is not an answer to the dependence question a reader is asking --
@@ -156,27 +157,23 @@ def refusal_reason(loop: LoopRegion) -> str | None:
     if not loop.loop_variable:
         return NO_COUNTER
     from dace.transformation.interstate.loop_to_map import LoopToMap
+    from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
     probe = LoopToMap()
-    probe.loop = loop
     pinned = loop.pinned_sequential
     loop.pinned_sequential = False
     try:
-        applicable = probe.can_be_applied(loop.parent_graph, 0, loop.sdfg, permissive=False)
+        applicable = ParallelizeLoops().accepts(loop, probe, session=session)
     except Exception as error:  # pylint: disable=broad-exception-caught
         # A comment must not be able to fail the compilation that asked for it. Nothing downstream
         # reads a hint, so a probe with no answer leaves the loop unsure and says so.
         return f"{NEVER_EXAMINED}: the dependence test failed ({type(error).__name__})"
     finally:
         loop.pinned_sequential = pinned
-    return None if applicable else (probe.last_refusal_reason or "")
+    if applicable:
+        return None
+    return NEVER_EXAMINED if probe.last_refusal is None else probe.last_refusal
 
-
-#: ``LoopToMap``'s refusal, as ``<kind> conflict on <array> within the loop body - src_subset=<subset>``.
-REFUSAL_SHAPE = re.compile(r"(\w+)-after-(\w+) conflict on (\w+).*?src_subset=(.*)$", re.DOTALL)
-
-#: The three conflict kinds, as the two-letter names a reader of dependence analysis already has.
-CONFLICT_ABBREV = {("read", "write"): "RAW", ("write", "read"): "WAR", ("write", "write"): "WAW"}
 
 #: What each proven conflict means for the order, in the words a reader of the loop needs.
 CONFLICT_MEANING = {
@@ -191,21 +188,14 @@ def proven_why(access: str) -> str:
     return CONFLICT_MEANING.get(access.split(" ", 1)[0], "one iteration depends on another one")
 
 
-def carrying_access(reason: str) -> str:
-    """``reason`` as the ACCESS that carries it: ``RAW on aa[_loop_it_1 - 1, 8:LEN_2D]``.
-
-    The refusal reads as a sentence because it is also shown to a human debugging a refusal. In a
-    rendered form it is one comment on one loop, repeated for every carried loop in the unit, and
-    the sentence around the access says the same thing every time. Anything that does not match the
-    known shape is passed through whole rather than truncated -- a reason nobody anticipated is
-    still worth reading.
-    """
-    hit = REFUSAL_SHAPE.search(reason)
-    if hit is None:
-        return reason
-    first, second, array, subset = hit.groups()
-    kind = CONFLICT_ABBREV.get((first, second), f"{first}-after-{second}")
-    return f"{kind} on {array}[{subset.strip()}]"
+def carrying_access(refusal: LoopRefusal | str) -> str:
+    """``refusal`` as the ACCESS that carries it: ``RAW on aa[_loop_it_1 - 1, 8:LEN_2D]``; any other refusal as its
+    message, whole."""
+    if isinstance(refusal, str):
+        return refusal
+    if refusal.kind is Refusal.CARRIED_DEPENDENCE and refusal.container is not None and refusal.reads:
+        return f"RAW on {refusal.container}[{refusal.reads[0]}]"
+    return refusal.message
 
 
 #: Array name -> (outer array, element offset in the loop's names) for every array the body can see.
@@ -605,9 +595,10 @@ def witnessed_carrying_access(loop: LoopRegion) -> str | None:
     pairs.sort(key=lambda pair: pair[1].access.write)
     for write, other in pairs:
         for first, second in ((write, other), (other, write)):
-            found = smt_dependence.find_conflict_witness(
-                first.access.index, second.access.index, first.iters, second.iters, sizes, outer=tuple(outer)
-            )
+            with canon_stats.timed("z3", loop):
+                found = smt_dependence.find_conflict_witness(
+                    first.access.index, second.access.index, first.iters, second.iters, sizes, outer=tuple(outer)
+                )
             if found is not None:
                 return conflict_label(first, second, found, counter[0])
     return None
@@ -631,13 +622,13 @@ def conflict_label(first: Site, second: Site, witness: dict[str, int], carrier: 
     return f"{kind} on {site_text(named)} (witness: {where})"
 
 
-def loop_hint(loop: LoopRegion) -> str:
-    """The hint text naming what kind of loop ``loop`` is."""
-    reason = refusal_reason(loop)
+def loop_hint(loop: LoopRegion, session: Any = None) -> str:
+    """The hint text naming what kind of loop ``loop`` is; ``session`` as :func:`refusal_reason`."""
+    reason = refusal_reason(loop, session)
     if reason is None:
         return SEQUENTIAL_PINNED if loop.pinned_sequential else PARALLEL
-    if not reason:
-        return UNSURE.format(reason=NEVER_EXAMINED)
+    if isinstance(reason, str):
+        return UNSURE.format(reason=reason)
     access = proof_of_carry(loop, reason)
     if access is not None:
         text = SEQUENTIAL_PROVEN_OVER_DOALL if over_doall_nest(loop) else SEQUENTIAL_PROVEN
@@ -657,7 +648,7 @@ def over_doall_nest(loop: LoopRegion) -> bool:
     )
 
 
-def proof_of_carry(loop: LoopRegion, reason: str) -> str | None:
+def proof_of_carry(loop: LoopRegion, reason: LoopRefusal) -> str | None:
     """The access that proves ``loop`` carries a dependence, or ``None``: a solver witness, else a constant distance
     or a carried symbol ``LoopToMap`` named.
 
@@ -670,21 +661,10 @@ def proof_of_carry(loop: LoopRegion, reason: str) -> str | None:
     # The element-level proof also names the direction: LoopToMap's "read-after-write conflict" is
     # any read meeting a write, so its access alone reads as RAW for a read-ahead WAR too.
     access = proven_carrying_access(loop)
-    if access is None and refusal_matches_a_carried_symbol(reason):
+    if access is None and reason.kind is Refusal.CARRIED_SYMBOL:
         # A symbol one iteration hands to the next: the witness is two consecutive iterations
         access = carrying_access(reason) + pattern_witness(loop, 1)
     return access
-
-
-#: Refusals whose pattern IS a carried dependence: a symbol the body updates from itself, or reads before it assigns.
-#: "writes ... may overlap", "read-after-write conflict" and an access off the ``a*i+b`` write pattern only say the
-#: test could not separate the iterations, so they stay unsure.
-CARRIED_SYMBOL_PATTERNS = ("self-recurrent carried symbol", "carried symbol dependency")
-
-
-def refusal_matches_a_carried_symbol(reason: str) -> bool:
-    """Whether a ``LoopToMap`` refusal is a carried-symbol pattern, a proof rather than an unseparated pair."""
-    return any(pattern in reason.lower() for pattern in CARRIED_SYMBOL_PATTERNS)
 
 
 #: Appended to a parallel map's class line when its independence rests on entry traps.
@@ -752,8 +732,12 @@ class AnnotateLoopKinds(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
         """:returns: The number of loops newly labelled, or ``None`` if none was."""
+        from dace.transformation.passes.parallelization.parallelize_loops import ProbeSession
+
         labelled = 0
         traps = entry_traps(sdfg)
+        # Labelling changes only the hints, which no probe reads
+        session = ProbeSession()
         for node, parent_graph in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, (nodes.MapEntry, LoopRegion)):
                 continue
@@ -762,7 +746,11 @@ class AnnotateLoopKinds(ppl.Pass):
                 continue
             # A note another pass left (an anti-dependence it broke) says what it did, not what the loop is: the
             # verdict goes first, so every loop still opens with its class.
-            kind = parallel_hint(parent_graph, node, traps) if isinstance(node, nodes.MapEntry) else loop_hint(node)
+            kind = (
+                parallel_hint(parent_graph, node, traps)
+                if isinstance(node, nodes.MapEntry)
+                else loop_hint(node, session)
+            )
             node.specialization_hint = f"{kind}\n{hint}" if hint else kind
             labelled += 1
         return labelled or None

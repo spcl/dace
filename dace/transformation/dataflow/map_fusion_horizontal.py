@@ -231,6 +231,12 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
             if not mfhelper.map_scope_data_is_known(graph, sdfg, map_entry, map_exit):
                 return False
 
+        # The fused Map runs after the predecessors of both: neither Map's reads may move past a write.
+        if mfhelper.read_overtaken_by_write(
+            graph, first_map_entry, first_map_exit, second_map_entry
+        ) or mfhelper.read_overtaken_by_write(graph, second_map_entry, second_map_exit, first_map_entry):
+            return False
+
         # Maps that are only ordered by happens-before edges, the shape `StateFusionExtended`
         #  produces for a WAR/WAW hazard, are not parallel but can still be fused if no
         #  iteration can collide with a different one. See `analyze_happens_before_fusion()`.
@@ -247,7 +253,10 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
                 is not None
             )
 
-        return True
+        # Unordered, the Maps must not touch what the other writes: the fused body orders them arbitrarily.
+        return not mfhelper.conflicting_accesses(
+            graph, (first_map_entry, first_map_exit), (second_map_entry, second_map_exit)
+        )
 
     def apply(
         self,

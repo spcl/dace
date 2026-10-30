@@ -337,7 +337,21 @@ class WidenAccesses(ppl.Pass):
         state_defs: dict[int, dict[str, Any]] = {}
         for inner_state in inner_sdfg.states():
             for edge in inner_state.edges():
-                if edge.data is None or edge.data.data != name:
+                if edge.data is None:
+                    continue
+                if edge.data.data != name:
+                    # A copy whose memlet names the other end keeps ``name``'s side as its other subset.
+                    if edge.data.other_subset is None or not any(
+                        isinstance(ep, AccessNode) and ep.data == name for ep in (edge.src, edge.dst)
+                    ):
+                        continue
+                    defs = _state_defs(inner_sdfg, inner_state, state_defs, scan_cache)
+                    new_other = self._widen_subset_inplace(
+                        edge.data.other_subset, iter_vars, inner_sdfg, inner_state, defs
+                    )
+                    if new_other is not None:
+                        edge.data.other_subset = new_other
+                        changed = True
                     continue
                 edge_changed = False
                 defs = _state_defs(inner_sdfg, inner_state, state_defs, scan_cache)
@@ -764,6 +778,8 @@ class WidenAccesses(ppl.Pass):
             return True
         if other.data in to_widen:
             return True  # the other endpoint is itself being widened to a tile
+        if not other_desc.transient:
+            return False  # a non-transient keeps its own region, widened lane-wise in step 2
         try:
             return int(as_expr(other_desc.total_size)) != 1
         except (TypeError, ValueError):

@@ -4219,6 +4219,67 @@ def test_ordering_edge_beside_an_inout_read_computes_the_fused_values():
     assert np.allclose(a, ref)
 
 
+def make_nested_producer_below_inner_map() -> SDFG:
+    """``T[i, j] = 2 * A[i, j]`` written by a nested SDFG inside a map over ``j`` inside a map over ``i``, the nested
+    SDFG addressing the whole of ``T`` with the outer ``i``; then ``B[i, j] = T[i, j] + 1``."""
+    sdfg = SDFG(unique_name("nested_producer_below_inner_map"))
+    state = sdfg.add_state(is_start_block=True)
+    for name in "ABT":
+        sdfg.add_array(name, shape=(8, 6), dtype=dace.float64, transient=name == "T")
+
+    inner = SDFG("producer")
+    inner.add_symbol("i", dace.int64)
+    inner.add_symbol("j", dace.int64)
+    inner.add_array("a", shape=(8, 6), dtype=dace.float64)
+    inner.add_array("t", shape=(8, 6), dtype=dace.float64)
+    inner_state = inner.add_state(is_start_block=True)
+    inner_state.add_mapped_tasklet(
+        "double",
+        map_ranges={"__k": "0:1"},
+        inputs={"__in": dace.Memlet("a[i, j]")},
+        code="__out = 2.0 * __in",
+        outputs={"__out": dace.Memlet("t[i, j]")},
+        external_edges=True,
+    )
+
+    me1, mx1 = state.add_map("first_map", ndrange={"i": "0:8"})
+    me1_in, mx1_in = state.add_map("first_inner_map", ndrange={"j": "0:6"})
+    nsdfg = state.add_nested_sdfg(inner, {"a"}, {"t"}, symbol_mapping={"i": "i", "j": "j"})
+    a, t = state.add_access("A"), state.add_access("T")
+    state.add_memlet_path(a, me1, me1_in, nsdfg, dst_conn="a", memlet=dace.Memlet("A[i, j]"))
+    state.add_memlet_path(nsdfg, mx1_in, mx1, t, src_conn="t", memlet=dace.Memlet("T[i, j]"))
+
+    me2, mx2 = state.add_map("second_map", ndrange={"i": "0:8"})
+    me2_in, mx2_in = state.add_map("second_inner_map", ndrange={"j": "0:6"})
+    plus_one = state.add_tasklet("plus_one", {"__in"}, {"__out"}, "__out = __in + 1.0")
+    state.add_memlet_path(t, me2, me2_in, plus_one, dst_conn="__in", memlet=dace.Memlet("T[i, j]"))
+    state.add_memlet_path(plus_one, mx2_in, mx2, state.add_access("B"), src_conn="__out", memlet=dace.Memlet("B[i, j]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_fusion_rebases_a_nested_producer_below_an_inner_map():
+    """The reduced ``T`` holds one ``i`` row, so the nested SDFG must write row ``0`` of it, not row ``i``."""
+    sdfg = make_nested_producer_below_inner_map()
+    a = np.random.rand(8, 6)
+    b = np.zeros((8, 6))
+
+    apply_fusion(sdfg, removed_maps=1, apply_once=True)
+
+    nsdfg = next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+    reduced = nsdfg.sdfg.arrays["t"]
+    writes = [e.data for st in nsdfg.sdfg.states() for e in st.edges() if e.data.data == "t"]
+    assert writes
+    for memlet in writes:
+        for index, extent in zip(memlet.subset.min_element(), reduced.shape):
+            # in bounds of the reduced container for every row the outer map visits
+            last = dace_symbolic.pystr_to_symbolic(str(index)).subs({"j": 5})
+            assert all(int(last.subs({"i": row})) < extent for row in range(8)), f"{memlet} is out of {reduced.shape}"
+
+    compile_and_run_sdfg(sdfg, A=a, B=b)
+    assert np.allclose(b, 2.0 * a + 1.0)
+
+
 if __name__ == "__main__":
     test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in_place()
     test_fusion_intrinsic_memlet_direction()
@@ -4280,3 +4341,61 @@ if __name__ == "__main__":
     test_map_fusion_symbolic_intermediate(allow_intermediates_with_symbolic_size=False)
     test_ordering_edge_beside_an_inout_read()
     test_ordering_edge_beside_an_inout_read_computes_the_fused_values()
+    test_fusion_rebases_a_nested_producer_below_an_inner_map()
+
+
+def _two_maps_writing_out(second_column: int) -> tuple[SDFG, SDFGState]:
+    """``for i: T[i] = 2 * A[i]; B[i, 0] = A[i]`` then ``for i: B[i, c] = T[i] + 1`` (bout_elm_pb's ``ddt_P`` planes)."""
+    sdfg = SDFG(f"two_maps_writing_out_{second_column}")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    sdfg.add_array("B", ["N", 2], dace.float64)
+    sdfg.add_transient("T", ["N"], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    a, t, b = state.add_read("A"), state.add_access("T"), state.add_write("B")
+    _, first_entry, first_exit = state.add_mapped_tasklet(
+        "first",
+        {"i": "0:N"},
+        {"x": dace.Memlet("A[i]")},
+        "t = 2 * x\nb = x",
+        {"t": dace.Memlet("T[i]"), "b": dace.Memlet("B[i, 0]")},
+        input_nodes={"A": a},
+        output_nodes={"T": t, "B": b},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "second",
+        {"j": "0:N"},
+        {"y": dace.Memlet("T[j]")},
+        "b = y + 1",
+        {"b": dace.Memlet(f"B[j, {second_column}]")},
+        input_nodes={"T": t},
+        output_nodes={"B": b},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg, state
+
+
+@pytest.mark.parametrize("second_column, fuses", [(1, True), (0, False)])
+def test_maps_writing_one_output_fuse_only_where_their_writes_are_disjoint(second_column: int, fuses: bool):
+    """Each element of ``B`` has one writer when the columns differ, so the fused map writes the same values; the
+    same column is a write-write conflict the program order decides, and stays two maps."""
+    sdfg, _ = _two_maps_writing_out(second_column)
+    applied = sdfg.apply_transformations_repeated(MapFusionVertical(), validate=True)
+    assert (applied == 1) == fuses
+    if fuses:
+        n = 5
+        a = np.random.default_rng(0).random(n)
+        b = np.zeros((n, 2))
+        sdfg(A=a, B=b, N=n)
+        assert np.allclose(b[:, 0], a) and np.allclose(b[:, 1], 2 * a + 1)
+
+
+def test_maps_accumulating_into_one_output_stay_apart():
+    """Two reductions into disjoint columns of ``B`` are a reduction each (a Gemv each, for nbody); fused they are not."""
+    sdfg, state = _two_maps_writing_out(1)
+    for edge in state.edges():
+        if edge.data.data == "B":
+            edge.data.wcr = "lambda a, b: a + b"
+    assert sdfg.apply_transformations_repeated(MapFusionVertical(), validate=True) == 0

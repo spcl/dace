@@ -1523,13 +1523,12 @@ def device_entry_prologue(state_struct: str, init_code: str = "", exit_code: str
     teardown = ""
     if exit_code.strip():
         teardown = f"""\
-    auto __cpf_teardown = [&]() {{
-{exit_code}
-    }};
     struct __cpf_exit {{
-        decltype(__cpf_teardown) &run;
-        ~__cpf_exit() {{ run(); }}
-    }} __cpf_exit_guard{{__cpf_teardown}};
+        {state_struct} *__state;
+        ~__cpf_exit() {{
+{exit_code}
+        }}
+    }} __cpf_exit_guard{{__state}};
 """
     return f"""\
     // The device handshake, which a single entry point has nowhere else to put.
@@ -2370,6 +2369,13 @@ def c_math_result_type(name: str, types: tuple[str | None, ...] | None) -> str:
     if family == "complex_component":
         return "float32" if picking == "complex64" else "float64"
     return "float32" if picking == "float32" else "float64"
+
+
+def pow_exponent_type(base_type: str | None, default: str) -> str:
+    """The floating type a ``p/q`` exponent divides in: ``float32`` for a single-precision power, else ``float64``."""
+    if base_type is None:
+        return default
+    return "float32" if c_math_result_type("pow", (base_type, base_type)) in ("float32", "complex64") else "float64"
 
 
 #: ``Max``/``Min`` in C. Not the ``<stdlib.h>`` integer ``max``, which does not exist: CPF emits its
@@ -3775,14 +3781,10 @@ VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
         wrapper=FFT_PLANS_WRAPPER,
         families=("cufft",),
     ),
-    "rocBLAS": VendorLibrary(
-        (), ("-lrocblas",), wrapper="libraries/blas/include/dace_rocblas.h", families=("rocblas",)
-    ),
-    "rocSOLVER": VendorLibrary(
-        (),
-        ("-lrocsolver", "-lrocblas"),
-        wrapper="libraries/lapack/include/dace_rocsolver.h",
-        families=("rocsolver",),
+    # hipBLAS and hipSOLVER take the cuBLAS and cuSOLVER wrappers, which spell their HIP counterparts under WITH_HIP.
+    "hipBLAS": VendorLibrary((), ("-lhipblas",), wrapper="libraries/blas/include/dace_cublas.h", families=("hipblas",)),
+    "hipSolverDn": VendorLibrary(
+        (), ("-lhipsolver",), wrapper="libraries/lapack/include/dace_cusolverdn.h", families=("hipsolver",)
     ),
     "hipFFT": VendorLibrary(
         ("<hipfft/hipfft.h>", "<hipfft/hipfftXt.h>", "<stdexcept>", "<string>"),
@@ -3790,6 +3792,12 @@ VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
         wrapper=FFT_PLANS_WRAPPER,
         families=("hipfft",),
     ),
+}
+
+#: Per device dialect, the vendor libraries of the other device toolkit.
+OTHER_DEVICE_LIBRARIES: dict[Dialect, frozenset[str]] = {
+    Dialect.STANDALONE_HIP: frozenset({"cuBLAS", "cuSolverDn", "cuFFT"}),
+    Dialect.STANDALONE_CUDA: frozenset({"hipBLAS", "hipSolverDn", "hipFFT"}),
 }
 
 #: The namespace a unit's inlined vendor wrappers live in, in place of ``dace``.
@@ -3804,10 +3812,18 @@ def respell_vendor_namespaces(code: str) -> str:
     return VENDOR_QUALIFIED.sub(lambda match: f"{VENDOR_NAMESPACE}::{match.group(1)}::", code)
 
 
-def vendor_wrapper(path: str, seen: set[str]) -> tuple[list[str], str]:
+#: The condition DaCe's GPU wrappers select their HIP spelling under.
+HIP_BRANCH = re.compile(r"\s*#\s*if\s+defined\(__HIPCC__\)\s*\|\|\s*defined\(WITH_HIP\)\s*$")
+
+
+def vendor_wrapper(path: str, seen: set[str], hip: bool = False) -> tuple[list[str], str]:
     """DaCe's wrapper header at ``path`` (relative to the ``dace`` package) as inline text: its system includes,
     and its body with ``namespace dace`` respelled to :data:`VENDOR_NAMESPACE`. A wrapper it includes by quoted
     path comes first, once per unit (``seen``); ``#pragma once`` and comments-only lines are dropped.
+
+    The header's HIP/CUDA branch is resolved for the unit (``hip``), and a ``#define`` of that branch becomes
+    what it stands for: an object-like rename is applied to the text, a configuration flag (``HIPBLAS_V2``, the
+    default from ROCm 7 on) is dropped. A nested ``#if`` of the branch stays inline, its includes with it.
 
     :returns: ``(system headers, definitions)``.
     """
@@ -3819,8 +3835,37 @@ def vendor_wrapper(path: str, seen: set[str]) -> tuple[list[str], str]:
     seen.add(full)
     headers: list[str] = []
     body: list[str] = []
+    renames: dict[str, str] = {}
+    # Inside the HIP/CUDA conditional: whether its current branch is the unit's, and how deep a nested #if is
+    branch: bool | None = None
+    depth = 0
     with open(full) as handle:
         for line in handle:
+            if branch is None and HIP_BRANCH.match(line):
+                branch = hip
+                continue
+            if branch is not None:
+                directive = re.match(r"\s*#\s*(if|ifdef|ifndef|else|elif|endif)\b", line)
+                if directive and depth == 0 and directive.group(1) == "else":
+                    branch = not hip
+                    continue
+                if directive and depth == 0 and directive.group(1) == "endif":
+                    branch = None
+                    continue
+                if directive and directive.group(1).startswith("if"):
+                    depth += 1
+                elif directive and directive.group(1) == "endif":
+                    depth -= 1
+                if not branch:
+                    continue
+                define = re.match(r"\s*#\s*define\s+(\w+)(?:\s+(\w+))?", line)
+                if define:
+                    if define.group(2):
+                        renames[define.group(1)] = define.group(2)
+                    continue
+                if depth > 0:
+                    body.append(line.rstrip("\n"))
+                    continue
             include = re.match(r'\s*#\s*include\s*([<"])([^>"]+)[>"]', line)
             if include and include.group(1) == "<":
                 headers.append(f"<{include.group(2)}>")
@@ -3829,12 +3874,14 @@ def vendor_wrapper(path: str, seen: set[str]) -> tuple[list[str], str]:
                     os.path.normpath(os.path.join(os.path.dirname(full), include.group(2))),
                     os.path.dirname(dace.__file__),
                 )
-                nested_headers, nested_body = vendor_wrapper(nested, seen)
+                nested_headers, nested_body = vendor_wrapper(nested, seen, hip)
                 headers += nested_headers
                 body.append(nested_body)
             elif not re.match(r"\s*#\s*pragma\s+once", line):
                 body.append(line.rstrip("\n"))
     text = "\n".join(body).strip("\n")
+    if renames:
+        text = re.sub(r"\b(%s)\b" % "|".join(map(re.escape, renames)), lambda match: renames[match.group(1)], text)
     text = re.sub(r"\bnamespace\s+dace\b", f"namespace {VENDOR_NAMESPACE}", text)
     text = re.sub(r"//\s*namespace dace\b", f"// namespace {VENDOR_NAMESPACE}", text)
     return headers, respell_vendor_namespaces(text)
@@ -3849,8 +3896,8 @@ VENDOR_FAMILIES: tuple[tuple[str, "re.Pattern"], ...] = (
     ("cublas", re.compile(r"\bcublas\w+\s*\(")),
     ("cusolver", re.compile(r"\bcusolverDn\w+\s*\(")),
     ("cufft", re.compile(r"\bcufft\w+\s*\(")),
-    ("rocblas", re.compile(r"\brocblas_\w+\s*\(")),
-    ("rocsolver", re.compile(r"\brocsolver_\w+\s*\(")),
+    ("hipblas", re.compile(r"\bhipblas\w+\s*\(")),
+    ("hipsolver", re.compile(r"\bhipsolverDn\w+\s*\(")),
     ("hipfft", re.compile(r"\bhipfft\w+\s*\(")),
 )
 
@@ -3865,8 +3912,8 @@ VENDOR_NAMES: dict[str, "re.Pattern"] = {
     "cublas": re.compile(r"\b(?:cublas|CUBLAS_)\w+"),
     "cusolver": re.compile(r"\b(?:cusolver|CUSOLVER_)\w+"),
     "cufft": re.compile(r"\b(?:cufft|CUFFT_)\w+"),
-    "rocblas": re.compile(r"\brocblas_\w+"),
-    "rocsolver": re.compile(r"\brocsolver_\w+"),
+    "hipblas": re.compile(r"\b(?:hipblas|HIPBLAS_)\w+"),
+    "hipsolver": re.compile(r"\b(?:hipsolver|HIPSOLVER_)\w+"),
     "hipfft": re.compile(r"\b(?:hipfft|HIPFFT_)\w+"),
 }
 
@@ -3886,7 +3933,7 @@ def vendor_environments(environments) -> list:
     return [found[name] for name in sorted(found)]
 
 
-def vendor_libraries(environments, code: str) -> list[VendorLibrary]:
+def vendor_libraries(environments, code: str, dialect: Dialect | None = None) -> list[VendorLibrary]:
     """The :data:`VENDOR_LIBRARIES` entries of ``environments`` (code-object names) that ``code`` uses, in key
     order. An environment is listed for the library a node PREFERS, also when its expansion fell back to the pure
     one (an int64 GEMV has no CBLAS call); such a unit carries none of the library's headers or link tokens. A
@@ -3894,10 +3941,14 @@ def vendor_libraries(environments, code: str) -> list[VendorLibrary]:
     inlined wrapper's namespace (a state struct's handle field, which the device unit repeats without the call)."""
     named = {family for family, names in VENDOR_NAMES.items() if names.search(code)}
     wrapped = VENDOR_QUALIFIED.search(code) is not None or f"{VENDOR_NAMESPACE}::" in code
+    # A HIP unit shares the CUDA libraries' wrappers and so their namespace, but never links the CUDA ones
+    foreign = OTHER_DEVICE_LIBRARIES.get(_active_dialect if dialect is None else dialect, frozenset())
     return [
         library
-        for library in (VENDOR_LIBRARIES[env.__name__] for env in vendor_environments(environments))
-        if named.intersection(library.families) or (library.wrapper and wrapped)
+        for name, library in (
+            (env.__name__, VENDOR_LIBRARIES[env.__name__]) for env in vendor_environments(environments)
+        )
+        if name not in foreign and (named.intersection(library.families) or (library.wrapper and wrapped))
     ]
 
 

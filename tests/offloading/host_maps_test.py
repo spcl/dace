@@ -1,8 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Maps the offloading keeps on the HOST, and the things it must never offload at all.
 
-Structural tests: they assert which schedule each map came out with, so they do not need a GPU.
-The numerical companion lives in ``offload_to_accelerator_graphs_test.py``.
+Structural tests: they assert which schedule each map came out with, so they do not need a GPU. The ``gpu`` tests run
+the offloaded graph against the host one.
 """
 
 import numpy as np
@@ -14,7 +14,12 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
-from dace.transformation.passes.offloading.host_maps import host_maps, maps_pinned_by_host_loops, moved_elements
+from dace.transformation.passes.offloading.host_maps import (
+    host_maps,
+    map_containers_and_traffic,
+    maps_pinned_by_host_loops,
+    moved_elements,
+)
 from dace.transformation.passes.offloading.offloading_helpers import is_callback_tasklet
 
 NB = dace.symbol("NB")
@@ -383,3 +388,179 @@ def test_a_library_node_kept_on_the_host_beside_a_kernel_runs_in_a_state_of_its_
     assert (reduce.schedule, state.entry_node(reduce)) == (dace.ScheduleType.CPU_Multicore, None)
     assert not any(isinstance(node, nodes.MapEntry) for node in state.nodes())
     assert {sdfg.arrays[name].storage for name in operands} == {dace.StorageType.Default}
+
+
+def block_bounds_read_on_the_host(read_in: str) -> dace.SDFG:
+    """ICON's ``i_endidx = end_index(jb)``: a host tasklet reads a bound out of a table the kernels read too, and the
+    host map over the blocks binds it to a body that reads it on the host -- on an interstate edge as its kernel's
+    extent, or in a branch condition (``jb == i_startblk``)."""
+    body = dace.SDFG("block_body")
+    body.add_scalar("e", dace.int32)
+    body.add_array("idx", [4], dace.int32)
+    body.add_array("A", [3, 8], dace.float64)
+    body.add_array("B", [3, 8], dace.float64)
+    body.add_symbol("jb", dace.int64)
+    head = body.add_state("head", is_start_block=True)
+    if read_in == "interstate":
+        body.add_symbol("iend", dace.int32)
+        work = body.add_state_after(head, "work", assignments={"iend": "e"})
+        extent = "0:iend"
+    else:
+        branch = ConditionalBlock("below_the_bound")
+        body.add_edge(head, branch, dace.InterstateEdge())
+        arm = ControlFlowRegion("arm", sdfg=body)
+        branch.add_branch(CodeBlock("jb < e"), arm)
+        work = arm.add_state("work", is_start_block=True)
+        extent = "0:8"
+    work.add_mapped_tasklet(
+        "scale",
+        {"i": extent},
+        {"a": dace.Memlet("A[jb, i]"), "k": dace.Memlet("idx[0]")},
+        "b = a * k",
+        {"b": dace.Memlet("B[jb, i]")},
+        external_edges=True,
+    )
+
+    sdfg = dace.SDFG(f"block_bound_read_in_{read_in}")
+    sdfg.add_array("idx", [4], dace.int32)
+    sdfg.add_array("A", [3, 8], dace.float64)
+    sdfg.add_array("B", [3, 8], dace.float64)
+    sdfg.add_scalar("e", dace.int32, transient=True)
+    state = sdfg.add_state("main")
+    idx = state.add_read("idx")
+    load = state.add_tasklet("load_end", {"inp": None}, {"out": None}, "out = inp")
+    bound = state.add_access("e")
+    state.add_edge(idx, None, load, "inp", dace.Memlet("idx[2]"))
+    state.add_edge(load, "out", bound, None, dace.Memlet("e[0]"))
+    entry, exit_node = state.add_map("blocks", {"jb": "0:3"})
+    inputs = {"e": None, "idx": None, "A": None}
+    nested = state.add_nested_sdfg(body, inputs, {"B": None}, symbol_mapping={"jb": "jb"})
+    state.add_memlet_path(bound, entry, nested, dst_conn="e", memlet=dace.Memlet("e[0]"))
+    state.add_memlet_path(idx, entry, nested, dst_conn="idx", memlet=dace.Memlet("idx[0:4]"))
+    state.add_memlet_path(state.add_read("A"), entry, nested, dst_conn="A", memlet=dace.Memlet("A[0:3, 0:8]"))
+    state.add_memlet_path(nested, exit_node, state.add_write("B"), src_conn="B", memlet=dace.Memlet("B[0:3, 0:8]"))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("read_in", ["interstate", "condition"])
+def test_a_bound_a_host_maps_body_reads_on_the_host_reaches_it_in_host_memory(read_in):
+    """The body under a host map is a host level, as a taskloop's is, and a condition reads on the host as an
+    interstate edge does. ``e`` reached the body as device memory once the hybrid resolution moved the table read
+    into a size-1 kernel."""
+    sdfg = block_bounds_read_on_the_host(read_in)
+    OffloadToAccelerator(host_maps=["blocks"]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    ((nested, state),) = [(n, s) for n, s in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)]
+    (binding,) = [edge for edge in state.in_edges(nested) if edge.dst_conn == "e"]
+    assert sdfg.arrays[binding.data.data].storage == dace.StorageType.Default, binding.data.data
+    assert map_schedules(sdfg)["blocks"] == dace.ScheduleType.Sequential
+    assert map_schedules(sdfg)["scale_map"] == dace.ScheduleType.GPU_Device
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("read_in", ["interstate", "condition"])
+def test_a_bound_a_host_maps_body_reads_on_the_host_computes_what_the_host_computes(read_in):
+    idx = np.array([2, 0, 2, 0], dtype=np.int32)
+    A = np.random.default_rng(0).random((3, 8))
+    expected, got = np.zeros((3, 8)), np.zeros((3, 8))
+    block_bounds_read_on_the_host(read_in)(idx=idx, A=A, B=expected)
+    sdfg = block_bounds_read_on_the_host(read_in)
+    OffloadToAccelerator(host_maps=["blocks"]).apply_pass(sdfg, {})
+    sdfg(idx=idx, A=A, B=got)
+    assert np.array_equal(got, expected)
+    assert np.count_nonzero(expected) == (3 * 2 if read_in == "interstate" else 2 * 8)
+
+
+def test_a_map_in_a_row_loop_under_a_carried_pin_stays_on_the_host():
+    """amg_setup's shape: a carried-pinned level loop around a row loop whose host code touches ``A`` beside a map over
+    the ``K`` elements of the row, a length the row loop assigns. Offloading the map copies ``A`` once per row for a
+    row's work, so it stays on the host; the outer pin is a dependence fact, not a fallback arm, and does not exempt
+    it."""
+    sdfg = sdfg_with_two_arrays("row_loop_under_pin")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("lengths", ["N"], dace.int64)
+    levels = LoopRegion("levels", "t < 4", "t", "t = 0", "t = t + 1")
+    levels.pinned_sequential = True
+    sdfg.add_node(levels, is_start_block=True)
+    rows = LoopRegion("rows", "i < N", "i", "i = 0", "i = i + 1")
+    levels.add_node(rows, is_start_block=True)
+    head = rows.add_state("head", is_start_block=True)
+    body = rows.add_state("body")
+    rows.add_edge(head, body, dace.InterstateEdge(assignments={"K": "lengths[i]"}))
+    host = body.add_tasklet("host", {}, {"a"}, "a = i")
+    body.add_edge(host, "a", body.add_write("A"), None, dace.Memlet("A[i]"))
+    _, entry, _ = body.add_mapped_tasklet(
+        "copy_out", {"j": "0:K"}, {"a": dace.Memlet("A[j]")}, "b = a", {"b": dace.Memlet("B[j]")}, external_edges=True
+    )
+
+    assert list(maps_pinned_by_host_loops(sdfg)) == [entry]
+
+
+def test_a_map_in_a_row_loop_over_a_program_size_stays_a_kernel():
+    """The same loop with ``K`` a program size: no rule ranks it against ``N``, and it is taken as big."""
+    sdfg = sdfg_with_two_arrays("row_loop_program_size")
+    sdfg.add_symbol("K", dace.int64)
+    rows = LoopRegion("rows", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(rows, is_start_block=True)
+    body = rows.add_state("body", is_start_block=True)
+    host = body.add_tasklet("host", {}, {"a"}, "a = i")
+    body.add_edge(host, "a", body.add_write("A"), None, dace.Memlet("A[i]"))
+    body.add_mapped_tasklet(
+        "copy_out", {"j": "0:K"}, {"a": dace.Memlet("A[j]")}, "b = a", {"b": dace.Memlet("B[j]")}, external_edges=True
+    )
+
+    assert list(maps_pinned_by_host_loops(sdfg)) == []
+
+
+def test_a_nested_index_read_on_an_interstate_edge_moves_one_element_per_iteration():
+    """``c = idx[j]`` on an interstate edge of a map's nested body widens the memlet into the nest to all of ``idx``;
+    the map still reads one element of it per iteration."""
+    sdfg = dace.SDFG("nest_index_read")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("idx", ["N"], dace.int64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    sdfg.add_array("B", ["N"], dace.float64)
+    inner = dace.SDFG("inner")
+    inner.add_symbol("j", dace.int64)
+    for name in ("idx", "A", "B"):
+        inner.add_array(name, ["N"], sdfg.arrays[name].dtype)
+    first = inner.add_state("first", is_start_block=True)
+    second = inner.add_state("second")
+    inner.add_edge(first, second, dace.InterstateEdge(assignments={"c": "idx[j]"}))
+    copy = second.add_tasklet("copy", {"a"}, {"b"}, "b = a")
+    second.add_edge(second.add_read("A"), None, copy, "a", dace.Memlet("A[c]"))
+    second.add_edge(copy, "b", second.add_write("B"), None, dace.Memlet("B[j]"))
+    state = sdfg.add_state("main")
+    entry, exit_ = state.add_map("over_k", {"j": "0:K"})
+    nest = state.add_nested_sdfg(inner, ["idx", "A"], ["B"], {"N": "N", "j": "j"})
+    for name in ("idx", "A"):
+        state.add_memlet_path(state.add_read(name), entry, nest, dst_conn=name, memlet=dace.Memlet(f"{name}[0:N]"))
+    state.add_memlet_path(nest, exit_, state.add_write("B"), src_conn="B", memlet=dace.Memlet("B[0:K]"))
+
+    names, traffic = map_containers_and_traffic(state, entry)
+
+    assert set(names) == {"idx", "A", "B"}
+    assert dace.symbolic.simplify(traffic - 3 * dace.symbol("K")) == 0
+
+
+def test_a_map_sharing_only_what_both_sides_read_stays_a_kernel():
+    """nussinov's wavefront: the loop's host code reads ``A`` and the map reads it too, so no copy runs per
+    iteration and the map keeps its kernel even under a carried pin."""
+    sdfg = sdfg_with_two_arrays("read_only_share")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    levels = LoopRegion("diagonals", "t < N", "t", "t = 0", "t = t + 1")
+    levels.pinned_sequential = True
+    sdfg.add_node(levels, is_start_block=True)
+    body = levels.add_state("body", is_start_block=True)
+    host = body.add_tasklet("host", {"a"}, {"o"}, "o = a")
+    body.add_edge(body.add_read("A"), None, host, "a", dace.Memlet("A[t]"))
+    body.add_edge(host, "o", body.add_write("s"), None, dace.Memlet("s[0]"))
+    body.add_mapped_tasklet(
+        "sweep", {"j": "0:K"}, {"a": dace.Memlet("A[j]")}, "b = a", {"b": dace.Memlet("B[j]")}, external_edges=True
+    )
+
+    assert list(maps_pinned_by_host_loops(sdfg)) == []

@@ -1,3 +1,3 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from .cusolverdn import *
-from .rocsolver import *
+from .hipsolverdn import *

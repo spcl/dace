@@ -153,7 +153,7 @@ def test_nussinov_canonicalize_valid_deterministic():
     base = PB.fresh_sdfg(_nussinov_kernel())
     for _ in range(5):
         # validate=True raises InvalidSDFG* if any stage left the SDFG invalid.
-        canonicalize(copy.deepcopy(base), validate=True, validate_all=False, peel_limit=4, break_anti_dependence=True)
+        canonicalize(copy.deepcopy(base), validate=True, validate_all=False, peel_limit=4)
 
 
 def _end_to_end_bit_exact(peel_limit: int):
@@ -168,7 +168,7 @@ def _end_to_end_bit_exact(peel_limit: int):
     reference = PB.reference(kernel, call_arrays, psize)
 
     base = PB.fresh_sdfg(kernel)
-    candidate = canonicalize(copy.deepcopy(base), validate=True, peel_limit=peel_limit, break_anti_dependence=True)
+    candidate = canonicalize(copy.deepcopy(base), validate=True, peel_limit=peel_limit)
     finalized = finalize_for_target(candidate, "cpu")
 
     got = call_in_child(PB.run, finalized, call_arrays, psize)

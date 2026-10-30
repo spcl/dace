@@ -147,10 +147,24 @@ class _SymbolDTypeContext(threading.local):
 
     def declare(self, name: str, dtype: "dtypes.typeclass") -> None:
         """Adds ``name`` to the active level (no-op without one), for a symbol declared while it is active."""
-        if len(self.ctx_stack) > 1 and self._is_scalar_symbol_dtype(dtype):
-            level = {**self.ctx_stack[-1], name: dtype}
-            self.ctx_stack[-1] = types.MappingProxyType(level)
-            self.key_stack[-1] = AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
+        self.declare_all({name: dtype})
+
+    def declare_all(self, declared: Mapping[str, "dtypes.typeclass"]) -> None:
+        """Adds every name of ``declared`` to the active level at once; a name it already holds at that dtype is
+        no change."""
+        if len(self.ctx_stack) == 1:
+            return
+        current = self.ctx_stack[-1]
+        new = {
+            name: dtype
+            for name, dtype in declared.items()
+            if self._is_scalar_symbol_dtype(dtype) and (name not in current or current[name] != dtype)
+        }
+        if not new:
+            return
+        level = {**current, **new}
+        self.ctx_stack[-1] = types.MappingProxyType(level)
+        self.key_stack[-1] = AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
 
     def get(self) -> types.MappingProxyType:
         """Get the current active set of authoritative dtype."""
@@ -187,6 +201,11 @@ _SERIALIZATION_SYMBOL_DTYPES = _SymbolDTypeContext()
 def declare_symbol_dtype(name: str, dtype: "dtypes.typeclass") -> None:
     """Makes the active symbol-dtype authority (if any) know ``name``, declared while it is active."""
     _SERIALIZATION_SYMBOL_DTYPES.declare(name, dtype)
+
+
+def declare_symbol_dtypes(declared: Mapping[str, "dtypes.typeclass"]) -> None:
+    """:func:`declare_symbol_dtype` for every name of ``declared``, at the cost of one."""
+    _SERIALIZATION_SYMBOL_DTYPES.declare_all(declared)
 
 
 def declared_symbol_dtype(name: str) -> Optional["dtypes.typeclass"]:
@@ -1262,6 +1281,14 @@ def _overapproximate(expr):
     if isinstance(expr, (sympy.Number, TypedConstant)):
         return expr
 
+    # A strided extent ``ceiling((Min(...) - i + 1) / k)``: ``ceiling`` is monotonic, so bounding the numerator bounds it
+    if isinstance(expr, sympy.ceiling):
+        numerator, denominator = sympy.fraction(sympy.together(expr.args[0]))
+        if denominator.is_Integer and denominator > 0:
+            bound = _overapproximate(numerator)
+            if bound != numerator:
+                return sympy.ceiling(bound / denominator)
+
     # Unification is MILLISECONDS against a microsecond structural test, so refuse on the head
     # first (measured 4.6x on the miss path). NOT gated on ``is_Add``: the trailing ``+ c`` is a
     # Wild that happily binds 0, so ``Min(4, N)`` matches the first pattern with no Add in sight.
@@ -1588,6 +1615,39 @@ def scalars(expr: SymbolicType | str, descriptors: dict[str, Any]) -> set[str]:
     from dace import data  # avoid import loop
 
     return {str(s) for s in expr.free_symbols if isinstance(descriptors.get(str(s)), data.Scalar)}
+
+
+def substitutable_names(expr: SymbolicType | SymExpr | str) -> set[str]:
+    """Names a ``subs`` key can match in ``expr``: free symbols, functions and subscripted containers."""
+    if isinstance(expr, SymExpr):
+        return substitutable_names(expr.expr) | substitutable_names(expr.approx)
+    return free_symbols_and_functions(expr) | arrays(expr)
+
+
+def keys_by_free_name(repl_dict: dict) -> dict[str, list]:
+    """Groups the keys of ``repl_dict`` under every name they mention, for :func:`subs_reachable`."""
+    keys_by_name: dict[str, list] = {}
+    for key in repl_dict:
+        for name in substitutable_names(key):
+            keys_by_name.setdefault(name, []).append(key)
+    return keys_by_name
+
+
+def subs_reachable(expr, repl_dict: dict, keys_by_name: dict[str, list]):
+    """``expr.subs(repl_dict)`` with only the entries that can reach ``expr``, directly or through the value of another
+    entry: SymPy walks ``expr`` once per entry it is given. ``keys_by_name`` is ``keys_by_free_name(repl_dict)``."""
+    if not issymbolic(expr):
+        return expr
+    reachable: dict = {}
+    pending = list(substitutable_names(expr))
+    while pending:
+        for key in keys_by_name.get(pending.pop(), ()):
+            if key not in reachable:
+                reachable[key] = None
+                pending.extend(substitutable_names(repl_dict[key]))
+    if not reachable:
+        return expr
+    return expr.subs({key: value for key, value in repl_dict.items() if key in reachable})
 
 
 def is_undefined(expr: SymbolicType | str) -> bool:
@@ -2775,32 +2835,33 @@ def sympy_divide_fix(expr):
     if not isinstance(expr, sympy.Basic):
         return expr
 
+    # Rewrites each occurrence in place: ``subs`` would also rewrite an equal quotient inside an exponent
     def rewrite(node):
-        if not isinstance(node, sympy.Basic):
-            return node
         if isinstance(node, sympy.Pow) and not node.exp.is_integer:
-            # The printer lowers a non-integer exponent's exact quotient itself.
+            # The printer lowers a non-integer exponent's exact quotient itself
             base = rewrite(node.base)
             return node if base == node.base else node.func(base, node.exp)
-
         args = tuple(rewrite(arg) for arg in node.args)
-        candidate = node if args == node.args else node.func(*args)
-        if not isinstance(candidate, sympy.Mul):
-            return candidate
-        for i, arg in enumerate(candidate.args):
-            if isinstance(arg, sympy.Number) and abs(arg) >= 1:
-                continue
-            if isinstance(arg, sympy.Number) and (1 / arg) == int(1 / arg):
-                ri = i
-                break
-        else:
-            return candidate
-        rest = sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1 :]))
-        # Only an integer quotient is a floor division: ``x / 2`` over a double ``x`` is a half.
+        node = node if args == node.args else node.func(*args)
+        if not isinstance(node, sympy.Mul):
+            return node
+        # ``rest * (1/k)`` is the integer division ``rest / k``
+        ri = next(
+            (
+                i
+                for i, arg in enumerate(node.args)
+                if isinstance(arg, sympy.Number) and abs(arg) < 1 and 1 / arg == int(1 / arg)
+            ),
+            None,
+        )
+        if ri is None:
+            return node
+        rest = sympy.Mul(*node.args[:ri], *node.args[ri + 1 :])
+        # Only an integer quotient is a floor division: ``x / 2`` over a double ``x`` is a half
         if not integral_index_expression(rest):
-            return candidate
-        # Unevaluated, so an exact quotient cannot fold back to the Mul.
-        return int_floor(rest, int(1 / candidate.args[ri]), evaluate=False)
+            return node
+        # Unevaluated, so an exact quotient cannot fold back to the Mul
+        return int_floor(rest, int(1 / node.args[ri]), evaluate=False)
 
     return rewrite(nexpr)
 
@@ -3984,6 +4045,23 @@ def fold_extrema(expr: sympy.Expr, facts: Facts) -> sympy.Expr:
     return expr.replace(lambda node: isinstance(node, (sympy.Min, sympy.Max)), fold)
 
 
+def convex_bound_terms(expr: sympy.Expr, upper: bool) -> list[sympy.Expr] | None:
+    """The terms whose conjunction ``x <= expr`` (``upper``) or ``x >= expr`` is: ``Min`` of an upper bound and
+    ``Max`` of a lower bound split into their arguments. ``None`` for the other extremum, a disjunction."""
+    keep, refuse = (sympy.Min, sympy.Max) if upper else (sympy.Max, sympy.Min)
+    if isinstance(expr, keep):
+        terms: list[sympy.Expr] = []
+        for arg in expr.args:
+            sub = convex_bound_terms(arg, upper)
+            if sub is None:
+                return None
+            terms += sub
+        return terms
+    if expr.has(refuse):
+        return None
+    return [expr]
+
+
 def extremum_union(func: type[sympy.Min] | type[sympy.Max], a: sympy.Expr, b: sympy.Expr, facts: Facts) -> sympy.Expr:
     """``func(a, b)`` without the arguments the facts prove are not the extremum. ``a``'s own arguments are taken as
     already folded (a bound this built), so only ``b``'s are proved against the kept ones: a union over many
@@ -4482,17 +4560,14 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return tuple(self.c_type(argument) for argument in arguments)
 
     def c_power_exponent_type(self, base_type: str | None) -> str:
-        if base_type is None:
-            return "float32" if self.fp_ctype == "float" else "float64"
-        result = cpf_lowering.c_math_result_type("pow", (base_type, base_type))
-        return "float32" if result in ("float32", "complex64") else "float64"
+        return cpf_lowering.pow_exponent_type(base_type, "float32" if self.fp_ctype == "float" else "float64")
 
     def c_power_types(self, expr) -> tuple[str | None, ...] | None:
         """The C types of a printed ``pow``'s operands. A non-integer quotient exponent prints as a
         floating quotient (see :meth:`_print_Pow`), not as the integer fraction its sympy atom is."""
         types = self.c_argument_types(expr.args)
         if types is not None and not expr.args[1].is_integer:
-            _, den = sympy.fraction(sympy.together(expr.args[1]))
+            den = sympy.denom(sympy.together(expr.args[1]))
             if den != 1:
                 types = (types[0], self.c_power_exponent_type(types[0]))
         return types
@@ -4737,8 +4812,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 if lowered is not None:
                     return lowered
                 return f"dace::math::pow({base}, {exponent})"
-            else:
-                return f"({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})"
+            # A non-integer Rational exponent prints as its integer quotient, which parses back to the same Rational
+            # (a floating one parses to a Float); the C++ unparser lowers ``a ** (p / q)`` itself
+            if isinstance(expr.args[1], sympy.Rational):
+                return f"({base}) ** ({expr.args[1].p} / {expr.args[1].q})"
+            return f"({base}) ** ({exponent})"
 
 
 #: Node types an index expression is built from. A whitelist, not a list of floating functions to

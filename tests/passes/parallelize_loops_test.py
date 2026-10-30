@@ -17,7 +17,6 @@ from typing import Any
 
 import numpy as np
 import pytest
-import sympy
 
 import dace
 from dace.ordered import OrderedSet
@@ -25,14 +24,20 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_to_map import (
     LiftContext,
+    LoopLift,
     LoopToMap,
     block_free_symbols,
     build_lift_context,
     build_lift_invariants,
     control_flow_reads,
+    loop_facts_of,
 )
 from dace.transformation.passes.analysis import smt_dependence
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops, candidate_loops, loop_order_key
+from dace.transformation.passes.parallelization.parallelize_loops import (
+    ParallelizeLoops,
+    candidate_loops,
+    loop_order_key,
+)
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 N = 24
@@ -77,7 +82,7 @@ def test_lift_never_changes_a_surviving_blocks_free_symbols():
     after -- so no block that survives the lift gains or loses a free symbol.
     """
     sdfg = three_independent_sweeps.to_sdfg(simplify=True)
-    real_apply = LoopToMap.apply
+    real_apply = LoopLift.lift_in
     mismatches = []
     comparisons = 0
 
@@ -97,11 +102,11 @@ def test_lift_never_changes_a_surviving_blocks_free_symbols():
                 mismatches.append((block, sorted(was - now), sorted(now - was)))
         return out
 
-    LoopToMap.apply = checking_apply
+    LoopLift.lift_in = checking_apply
     try:
         ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     finally:
-        LoopToMap.apply = real_apply
+        LoopLift.lift_in = real_apply
 
     assert comparisons > 0, "no lift happened, so the invariant was never exercised"
     assert not mismatches, (
@@ -202,7 +207,7 @@ def test_a_lift_never_moves_the_sdfgs_own_free_symbols():
     context holding a stale ``sdfg_free_symbols`` and mis-report what the FOLLOWING lift freed.
     """
     sdfg = three_independent_sweeps.to_sdfg(simplify=True)
-    real_apply = LoopToMap.apply
+    real_apply = LoopLift.lift_in
     moved = []
     lifts = 0
 
@@ -216,11 +221,11 @@ def test_a_lift_never_moves_the_sdfgs_own_free_symbols():
             moved.append((inner_sdfg.label, sorted(after - before), sorted(before - after)))
         return out
 
-    LoopToMap.apply = checking_apply
+    LoopLift.lift_in = checking_apply
     try:
         ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     finally:
-        LoopToMap.apply = real_apply
+        LoopLift.lift_in = real_apply
 
     assert lifts > 0, "nothing was lifted, so the invariant was never exercised"
     assert not moved, f"a lift moved the SDFG free symbols: {moved}"
@@ -279,7 +284,7 @@ def test_a_lift_only_ever_removes_from_an_enclosing_regions_read_write_sets():
     reads it would then accept a loop it must refuse.
     """
     sdfg = sequential_outer_parallel_inner.to_sdfg(simplify=True)
-    real_apply = LoopToMap.apply
+    real_apply = LoopLift.lift_in
     additions = []
     unexplained = []
     observations = 0
@@ -308,11 +313,11 @@ def test_a_lift_only_ever_removes_from_an_enclosing_regions_read_write_sets():
                 unexplained.append((region.label, sorted(removed - gone)))
         return out
 
-    LoopToMap.apply = checking_apply
+    LoopLift.lift_in = checking_apply
     try:
         ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     finally:
-        LoopToMap.apply = real_apply
+        LoopLift.lift_in = real_apply
 
     assert observations > 0, "no enclosing region was observed, so the invariant was never exercised"
     assert not additions, f"a lift ADDED to an enclosing region read/write set: {additions}"
@@ -362,7 +367,7 @@ def test_a_mapping_the_callee_stopped_needing_is_pruned():
     ['__map_fusion___tmp0', '__map_fusion___tmp1']``, one lift making the entry stale and a later
     one tripping over it.
     """
-    from dace.transformation.passes.parallelize_loops import prune_stale_symbol_mappings
+    from dace.transformation.passes.parallelization.parallelize_loops import prune_stale_symbol_mappings
 
     inner = dace.SDFG("callee_binds_it")
     inner.add_array("a", (4,), dace.float64)
@@ -466,7 +471,7 @@ def test_a_lift_leaves_every_other_sdfgs_context_exact() -> None:
     index or a wrong "used after the loop" answer, which is a miscompile, so it is asserted.
     """
     sdfg = three_independent_sweeps.to_sdfg(simplify=True)
-    real_apply = LoopToMap.apply
+    real_apply = LoopLift.lift_in
     stale: list[str] = []
     comparisons = 0
     nested_lifts = 0
@@ -490,11 +495,11 @@ def test_a_lift_leaves_every_other_sdfgs_context_exact() -> None:
                 stale.append(sd.label)
         return out
 
-    LoopToMap.apply = checking_apply
+    LoopLift.lift_in = checking_apply
     try:
         ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     finally:
-        LoopToMap.apply = real_apply
+        LoopLift.lift_in = real_apply
 
     assert nested_lifts > 0 and comparisons > 0, "no lift ran beside another SDFG, so nothing was exercised"
     assert not stale, f"a lift changed the context of an SDFG it did not lift in: {stale}"
@@ -508,39 +513,25 @@ def colliding_scatter_then_independent(a: dace.float64[N], b: dace.float64[N], c
         c[i] = b[i] + 1.0
 
 
-def test_a_refused_smt_write_reaches_z3_once_however_often_its_loop_is_reprobed() -> None:
-    """Every lift restarts the sweep, so a loop the oracle refused is probed again after each one.
-    The question it asks is the same text every time; z3 must answer it once per pass."""
+def test_a_refused_loop_is_probed_once() -> None:
+    """The sweep probes each loop of a level once: a refused loop is not re-probed after the lifts around it."""
     sdfg = colliding_scatter_then_independent.to_sdfg(simplify=True)
-    real_prove = smt_dependence.prove_injective_write
-    real_can = LoopToMap.can_be_applied
-    questions: list[tuple[str, str, str, str]] = []
+    real_can = LoopLift.can_lift
     probes: list[LoopRegion] = []
 
-    def spy_prove(
-        write_expr: sympy.Basic, itervar: str, start: Any, end: Any, *args: Any, **kwargs: Any
-    ) -> bool | None:
-        questions.append((str(write_expr), itervar, str(start), str(end)))
-        return real_prove(write_expr, itervar, start, end, *args, **kwargs)
-
-    def spy_can(
-        self: LoopToMap, graph: ControlFlowRegion, expr_index: int, inner_sdfg: dace.SDFG, permissive: bool = False
-    ) -> bool:
+    def spy_can(self: LoopLift, graph: ControlFlowRegion, inner_sdfg: dace.SDFG, permissive: bool = False) -> bool:
         probes.append(self.loop)
-        return real_can(self, graph, expr_index, inner_sdfg, permissive)
+        return real_can(self, graph, inner_sdfg, permissive)
 
-    smt_dependence.prove_injective_write = spy_prove
-    LoopToMap.can_be_applied = spy_can
+    LoopLift.can_lift = spy_can
     try:
         ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     finally:
-        smt_dependence.prove_injective_write = real_prove
-        LoopToMap.can_be_applied = real_can
+        LoopLift.can_lift = real_can
 
     refused = candidate_loops(sdfg)
     assert len(refused) == 1 and map_count(sdfg) == 1, "the colliding scatter must stay a loop, the other lift"
-    assert probes.count(refused[0]) >= 3, "the refused loop was not re-probed, so nothing was exercised"
-    assert questions == [(f"Min(i, {N - 1} - i)", "i", "0", str(N - 1))], f"z3 was asked again: {questions}"
+    assert probes.count(refused[0]) == 1, probes
 
 
 def test_a_sweep_never_rebuilds_the_cfg_list(monkeypatch) -> None:
@@ -584,7 +575,7 @@ def many_sibling_sweeps(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.fl
 def test_a_sweep_patches_its_context_instead_of_rebuilding_it_per_lift(monkeypatch) -> None:
     """Rebuilding the context walks the whole SDFG once per lift: quadratic in the loop count, 22% of
     the parallelize stage on warpx_field_gather (3300 lifts in one SDFG)."""
-    from dace.transformation.passes import parallelize_loops
+    from dace.transformation.passes.parallelization import parallelize_loops
 
     sdfg = many_sibling_sweeps.to_sdfg(simplify=True)
     built: list[dace.SDFG] = []
@@ -604,11 +595,11 @@ def test_a_patched_context_is_the_context_a_rebuild_builds(monkeypatch) -> None:
     """A patched context that drifted from the graph hands the next probe a wrong access index or a
     wrong "used after the loop" answer, which is a miscompile."""
     from dace.transformation.interstate.loop_to_map import symbol_bindings
-    from dace.transformation.passes import parallelize_loops
+    from dace.transformation.passes.parallelization import parallelize_loops
 
     sdfg = many_sibling_sweeps.to_sdfg(simplify=True)
     checked = []
-    original_context, original_candidates = parallelize_loops.patch_context, parallelize_loops.patch_candidates
+    original_context = parallelize_loops.patch_context
 
     def checked_context(ctx, sd, loop, region, site, added):
         patched = original_context(ctx, sd, loop, region, site, added)
@@ -624,13 +615,7 @@ def test_a_patched_context_is_the_context_a_rebuild_builds(monkeypatch) -> None:
             checked.append(loop)
         return patched
 
-    def checked_candidates(candidates, loop, region, site, added):
-        patched = original_candidates(candidates, loop, region, site, added)
-        assert [id(r) for r in patched] == [id(r) for r in candidate_loops(sdfg)]
-        return patched
-
     monkeypatch.setattr(parallelize_loops, "patch_context", checked_context)
-    monkeypatch.setattr(parallelize_loops, "patch_candidates", checked_candidates)
     ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     assert len(checked) >= 5, "no context was patched, so nothing was exercised"
 
@@ -670,7 +655,7 @@ def test_a_sweep_derives_an_sdfgs_facts_once_per_lift_in_it(monkeypatch) -> None
     sdfg = colliding_scatter_then_four_independent.to_sdfg(simplify=True)
     walked: list[dace.SDFG] = []
     applying = [False]
-    original_walk, original_apply = dace.sdfg.sdfg.interstate_bound_names, LoopToMap.apply
+    original_walk, original_apply = dace.sdfg.sdfg.interstate_bound_names, LoopLift.lift_in
 
     def recorded(sd: dace.SDFG) -> set[str]:
         if not applying[0]:
@@ -685,7 +670,7 @@ def test_a_sweep_derives_an_sdfgs_facts_once_per_lift_in_it(monkeypatch) -> None
             applying[0] = False
 
     monkeypatch.setattr(dace.sdfg.sdfg, "interstate_bound_names", recorded)
-    monkeypatch.setattr(LoopToMap, "apply", apply)
+    monkeypatch.setattr(LoopLift, "lift_in", apply)
     lifted = ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     assert lifted == 4 and len(candidate_loops(sdfg)) == 1, "the scatter must stay a loop, every other lift"
     assert 0 < walked.count(sdfg) <= lifted + 1, f"{walked.count(sdfg)} probe walks for {lifted} lifts"
@@ -701,7 +686,7 @@ def test_the_probes_of_a_sweep_derive_each_scopes_facts_once_per_lift(monkeypatc
     derived: Counter = Counter()
     outside: Counter = Counter()
     probing = [False]
-    original_derive, original_probe = SymbolResolver.derive_facts, LoopToMap.can_be_applied
+    original_derive, original_probe = SymbolResolver.derive_facts, LoopLift.can_lift
 
     def derive(self: SymbolResolver, block: Any, entry: Any) -> dace.symbolic.Facts:
         if probing[0]:
@@ -710,15 +695,15 @@ def test_the_probes_of_a_sweep_derive_each_scopes_facts_once_per_lift(monkeypatc
                 outside[(id(block), id(entry))] += 1
         return original_derive(self, block, entry)
 
-    def probe(self: LoopToMap, graph: ControlFlowRegion, expr_index: int, sd: dace.SDFG, permissive=False) -> bool:
+    def probe(self: LoopLift, graph: ControlFlowRegion, sd: dace.SDFG, permissive=False) -> bool:
         probing[0] = True
         try:
-            return original_probe(self, graph, expr_index, sd, permissive)
+            return original_probe(self, graph, sd, permissive)
         finally:
             probing[0] = False
 
     monkeypatch.setattr(SymbolResolver, "derive_facts", derive)
-    monkeypatch.setattr(LoopToMap, "can_be_applied", probe)
+    monkeypatch.setattr(LoopLift, "can_lift", probe)
     lifted = ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     assert lifted == 5 and len(candidate_loops(sdfg)) == 1, "the inner scatter must stay a loop, every other lift"
     assert max(derived.values()) <= lifted + 1, f"a scope's facts were derived {max(derived.values())} times"
@@ -753,8 +738,8 @@ def test_every_memoized_fact_of_a_sweep_is_the_derived_one(monkeypatch) -> None:
     hits: list[dace.SDFG] = []
     original = dace.SDFG.facts
 
-    def checked(sd: dace.SDFG) -> dace.symbolic.Facts:
-        facts = original(sd)
+    def checked(sd: dace.SDFG, assigned=None) -> dace.symbolic.Facts:
+        facts = original(sd, assigned)
         assert facts == sd.derive_facts(), f"stale facts for {sd.label}"
         hits.append(sd)
         return facts
@@ -839,7 +824,7 @@ def test_every_lift_of_a_sweep_leaves_the_nested_references_exact() -> None:
     """A sweep re-derives the nested SDFGs' parent references once per SDFG instead of after every lift; a
     stale one sends the next lift in that body to the wrong parent mapping."""
     sdfg = carried_rows_beside_parallel_rows.to_sdfg(simplify=True)
-    real_apply = LoopToMap.apply
+    real_apply = LoopLift.lift_in
     stale: list[str] = []
     lifts = 0
 
@@ -850,11 +835,11 @@ def test_every_lift_of_a_sweep_leaves_the_nested_references_exact() -> None:
         stale.extend(stale_nested_references(sdfg))
         return out
 
-    LoopToMap.apply = checking_apply
+    LoopLift.lift_in = checking_apply
     try:
         ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     finally:
-        LoopToMap.apply = real_apply
+        LoopLift.lift_in = real_apply
 
     assert lifts >= 4, "too few lifts to reach a nested SDFG twice"
     assert not stale, f"nested SDFGs with stale parent references: {stale}"
@@ -875,7 +860,7 @@ def test_a_lift_never_changes_what_a_surviving_edge_or_header_reads() -> None:
     """The invariant the pass-lifetime ``control_flow_reads`` memo rests on; a stale entry hides a read of
     a loop-local transient and lets a lift privatize a carried value."""
     sdfg = carried_rows_beside_parallel_rows.to_sdfg(simplify=True)
-    real_apply = LoopToMap.apply
+    real_apply = LoopLift.lift_in
     changed: list[str] = []
     comparisons = 0
 
@@ -891,11 +876,11 @@ def test_a_lift_never_changes_what_a_surviving_edge_or_header_reads() -> None:
                     changed.append(f"{site}: {names} -> {after[site]}")
         return out
 
-    LoopToMap.apply = checking_apply
+    LoopLift.lift_in = checking_apply
     try:
         ParallelizeLoops(propagate=False).apply_pass(sdfg, {})
     finally:
-        LoopToMap.apply = real_apply
+        LoopLift.lift_in = real_apply
 
     assert comparisons > 0, "no edge or header survived a lift, so nothing was exercised"
     assert not changed, f"a lift changed what a surviving edge or header reads: {changed}"
@@ -947,25 +932,23 @@ def carried_local_cover(x: dace.float64[T, N], y: dace.float64[T, N]):
 
 def sweep_with_witnesses(sdfg: dace.SDFG, use_witnesses: bool) -> list[tuple[str, bool]]:
     """Run the sweep, logging every probe verdict; ``use_witnesses=False`` forces the full analysis."""
-    real_can = LoopToMap.can_be_applied
-    real_witness = LoopToMap.witnessed_refusal
+    real_can = LoopLift.can_lift
+    real_witness = LoopLift.witnessed_refusal
     log: list[tuple[str, bool]] = []
 
-    def spy_can(
-        self: LoopToMap, graph: ControlFlowRegion, expr_index: int, inner_sdfg: dace.SDFG, permissive: bool = False
-    ) -> bool:
-        verdict = real_can(self, graph, expr_index, inner_sdfg, permissive)
+    def spy_can(self: LoopLift, graph: ControlFlowRegion, inner_sdfg: dace.SDFG, permissive: bool = False) -> bool:
+        verdict = real_can(self, graph, inner_sdfg, permissive)
         log.append((self.loop.label, verdict))
         return verdict
 
-    LoopToMap.can_be_applied = spy_can
+    LoopLift.can_lift = spy_can
     if not use_witnesses:
-        LoopToMap.witnessed_refusal = lambda self, *args: None
+        LoopLift.witnessed_refusal = lambda self, *args: None
     try:
         ParallelizeLoops().apply_pass(sdfg, {})
     finally:
-        LoopToMap.can_be_applied = real_can
-        LoopToMap.witnessed_refusal = real_witness
+        LoopLift.can_lift = real_can
+        LoopLift.witnessed_refusal = real_witness
     return log
 
 
@@ -980,32 +963,6 @@ def test_a_witnessed_refusal_decides_every_probe_as_the_full_analysis(program) -
     assert got == want
     assert map_count(candidate) == map_count(reference) and loop_count(candidate) == loop_count(reference) == 1
     candidate.validate()
-
-
-@pytest.mark.parametrize(
-    "program, kind", [(carried_time_steps, "write"), (carried_rows, "read"), (carried_local_cover, "write")]
-)
-def test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(program, kind: str, monkeypatch) -> None:
-    """The loops enclosing each lift are re-probed after it; re-running the whole analysis for a refusal that
-    stands on the same site was 1.3 ks of CloudSC's parallelize stage (8 loops, 3051 probes each)."""
-    sdfg = program.to_sdfg(simplify=True)
-    outer = next(r for r in candidate_loops(sdfg) if loop_order_key(r) == (0, 0))
-    witnessed: list[str] = []
-    real_witness = LoopToMap.witnessed_refusal
-
-    def spy(self: LoopToMap, inner_sdfg: dace.SDFG, facts: Any, *args: Any) -> str | None:
-        reason = real_witness(self, inner_sdfg, facts, *args)
-        if reason is not None and self.loop is outer:
-            witnessed.append(facts.refusal_witness[0])
-        return reason
-
-    monkeypatch.setattr(LoopToMap, "witnessed_refusal", spy)
-    log = sweep_with_witnesses(sdfg, use_witnesses=True)
-    probes = sum(1 for label, _ in log if label == outer.label)
-    assert candidate_loops(sdfg) == [outer], "only the carried outer loop stays a loop"
-    assert probes >= 3, "the outer loop was not re-probed around its inner lifts, so nothing was exercised"
-    # The first probe runs the full analysis and records the witness; every re-probe re-checks it.
-    assert witnessed == [kind] * (probes - 1), (witnessed, probes)
 
 
 @pytest.mark.parametrize("first, second", [("i, i:M", "i:M, i"), ("i, 0:M", "i + 1, 0:M"), ("i, 0:M", "0:M, i")])
@@ -1056,6 +1013,25 @@ def test_a_declared_body_symbol_has_the_type_the_parent_walk_gives(monkeypatch) 
     ParallelizeLoops().apply_pass(sdfg, {})
     assert outer in checked, f"the enclosing iterator {outer} was never declared, so nothing was exercised"
     assert not mismatches, mismatches
+
+
+def test_a_lifted_body_declares_a_symbol_with_the_type_the_parent_declares() -> None:
+    """An array extent's symbol carries its own type (``int32`` by default); the parent's declared ``int64`` wins."""
+    n = dace.symbol("N")
+    sdfg = dace.SDFG("declared_extent_type")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [n], dace.float64)
+    loop = LoopRegion("l", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("s", is_start_block=True)
+    tasklet = state.add_tasklet("t", {}, {"o"}, "o = N")
+    state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[i]"))
+    assert n.dtype != dace.int64
+
+    ParallelizeLoops().apply_pass(sdfg, {})
+
+    body = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG))
+    assert body.sdfg.symbols["N"] == dace.int64
 
 
 NBLK = dace.symbol("NBLK", dace.int64, positive=True)
@@ -1149,6 +1125,31 @@ def test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop():
     assert np.allclose(q, ref)
 
 
+@dace.program
+def shared_slot_per_row(arr: dace.float64[4], scale: dace.float64[N], out: dace.float64[N]):
+    for i in range(N):
+        arr[1] = 0.5 * scale[i]
+        out[i] = 2.0 * arr[1]
+
+
+def test_a_container_assumed_private_is_left_out_of_the_dependence_test():
+    """The loop refuses on the shared slot ``arr[1]``; with ``arr`` assumed private it is accepted, also after the
+    refusal is cached as the loop's witness. The probe changes nothing and restores the instance's assumption."""
+    sdfg = shared_slot_per_row.to_sdfg(simplify=True)
+    before = sdfg.hash_sdfg()
+    (loop,) = candidate_loops(sdfg)
+    xform = LoopToMap()
+    xform.lift_context = build_lift_context(sdfg)
+
+    assert not ParallelizeLoops().accepts(loop, xform)
+    assert xform.last_refusal.container == "arr"
+    assert loop_facts_of(xform.lift_context.loop_facts, loop).refusal_witness == ("write", "arr")
+    assert ParallelizeLoops().accepts(loop, xform, frozenset({"arr"}))
+    assert xform.assume_private == frozenset()
+    assert not ParallelizeLoops().accepts(loop, xform)
+    assert sdfg.hash_sdfg() == before
+
+
 if __name__ == "__main__":
     test_lift_never_changes_a_surviving_blocks_free_symbols()
     test_reused_analysis_costs_no_maps_against_the_matcher()
@@ -1165,7 +1166,7 @@ if __name__ == "__main__":
     test_a_loop_the_probe_refuses_is_left_untouched()
     test_a_proven_lift_is_taken_where_the_probe_refuses()
     test_a_lift_leaves_every_other_sdfgs_context_exact()
-    test_a_refused_smt_write_reaches_z3_once_however_often_its_loop_is_reprobed()
+    test_a_refused_loop_is_probed_once()
     with pytest.MonkeyPatch.context() as mp:
         test_a_sweep_never_rebuilds_the_cfg_list(mp)
     with pytest.MonkeyPatch.context() as mp:
@@ -1191,12 +1192,6 @@ if __name__ == "__main__":
     test_a_witnessed_refusal_decides_every_probe_as_the_full_analysis(carried_rows)
     test_a_witnessed_refusal_decides_every_probe_as_the_full_analysis(carried_local_cover)
     with pytest.MonkeyPatch.context() as mp:
-        test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(carried_time_steps, "write", mp)
-    with pytest.MonkeyPatch.context() as mp:
-        test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(carried_rows, "read", mp)
-    with pytest.MonkeyPatch.context() as mp:
-        test_a_loop_refused_around_lifts_is_rechecked_on_its_witness(carried_local_cover, "write", mp)
-    with pytest.MonkeyPatch.context() as mp:
         test_a_disjoint_box_verdict_is_asked_of_z3_once("i, i:M", "i:M, i", mp)
     with pytest.MonkeyPatch.context() as mp:
         test_a_disjoint_box_verdict_is_asked_of_z3_once("i, 0:M", "i + 1, 0:M", mp)
@@ -1207,3 +1202,4 @@ if __name__ == "__main__":
     test_a_strided_lift_ends_at_its_last_iterate()
     test_a_gather_lifted_through_a_loop_fuses_into_its_consumer()
     test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop()
+    test_a_container_assumed_private_is_left_out_of_the_dependence_test()

@@ -14,33 +14,46 @@ import pytest
 
 import dace
 from dace import dtypes
-from dace.libraries.blas.nodes.syrk import Syrk
+from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.standard.nodes.scan import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan, ScanOp
 
 N = 32
 
 
-def syrk_with_runtime_alpha(storage: dtypes.StorageType) -> tuple:
-    """A ``Syrk`` whose alpha and beta arrive through connectors backed by ``storage``."""
-    sdfg = dace.SDFG(f"syrk_alpha_{storage.name}")
-    sdfg.add_array("A", [N, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array("C", [N, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
+def gemm_with_runtime_alpha(storage: dtypes.StorageType) -> tuple:
+    """A ``Gemm`` whose alpha and beta arrive through connectors backed by ``storage``."""
+    sdfg = dace.SDFG(f"gemm_alpha_{storage.name}")
+    for name in "ABC":
+        sdfg.add_array(name, [N, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
     sdfg.add_array("alpha", [1], dace.float64, storage=storage)
     sdfg.add_array("beta", [1], dace.float64, storage=storage)
     state = sdfg.add_state()
-    node = Syrk("syrk", alpha=1, beta=1)
+    node = Gemm("gemm", alpha=1, beta=1, alpha_input=True, beta_input=True)
     node.implementation = "cuBLAS"
-    for conn in ("_a", "_c", "_alpha", "_beta"):
-        node.add_in_connector(conn)
-    node.add_out_connector("_c")
     state.add_node(node)
-    state.add_edge(state.add_read("A"), None, node, "_a", dace.Memlet("A[0:N, 0:N]".replace("N", str(N))))
-    state.add_edge(state.add_read("C"), None, node, "_c", dace.Memlet(f"C[0:{N}, 0:{N}]"))
+    for name, conn in (("A", "_a"), ("B", "_b"), ("C", "_c")):
+        state.add_edge(state.add_read(name), None, node, conn, dace.Memlet(f"{name}[0:{N}, 0:{N}]"))
     state.add_edge(state.add_read("alpha"), None, node, "_alpha", dace.Memlet("alpha[0]"))
     state.add_edge(state.add_read("beta"), None, node, "_beta", dace.Memlet("beta[0]"))
     state.add_edge(node, "_c", state.add_write("C"), None, dace.Memlet(f"C[0:{N}, 0:{N}]"))
     sdfg.validate()
     return sdfg, state, node
+
+
+def gemm_with_constant_coefficients() -> dace.SDFG:
+    """A ``Gemm`` with compile-time alpha 1 and beta 0 over device operands."""
+    sdfg = dace.SDFG("gemm_constant")
+    for name in "ABC":
+        sdfg.add_array(name, [N, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    node = Gemm("gemm", alpha=1, beta=0)
+    node.implementation = "cuBLAS"
+    state.add_node(node)
+    for name, conn in (("A", "_a"), ("B", "_b")):
+        state.add_edge(state.add_read(name), None, node, conn, dace.Memlet(f"{name}[0:{N}, 0:{N}]"))
+    state.add_edge(node, "_c", state.add_write("C"), None, dace.Memlet(f"C[0:{N}, 0:{N}]"))
+    sdfg.validate()
+    return sdfg
 
 
 def scan_with_seed(storage: dtypes.StorageType) -> tuple:
@@ -79,15 +92,23 @@ def expanded_code(sdfg: dace.SDFG) -> str:
 
 def test_a_host_coefficient_is_read_by_value():
     """Nothing to copy: the value is right there, so the call takes a host pointer to a local."""
-    sdfg, _, _ = syrk_with_runtime_alpha(dtypes.StorageType.CPU_Heap)
+    sdfg, state, node = gemm_with_runtime_alpha(dtypes.StorageType.CPU_Heap)
     code = expanded_code(sdfg)
     assert "CUBLAS_POINTER_MODE_HOST" in code
     assert "&__alpha" in code, "the host path should point at its own local"
 
 
+def test_gemm_constant_coefficients_are_host_values():
+    """A compile-time 0 or 1 goes in as a host value: in device pointer mode rocBLAS copies each coefficient back to
+    the host, with a synchronization, to test for a quick return."""
+    code = expanded_code(gemm_with_constant_coefficients())
+    assert "CUBLAS_POINTER_MODE_HOST" in code
+    assert "Constants()" not in code, "a compile-time coefficient must not be a device constant"
+
+
 def test_a_device_coefficient_is_read_where_it_lies():
     """Copying it back would cost a transfer and a sync; cuBLAS can dereference it itself."""
-    sdfg, _, _ = syrk_with_runtime_alpha(dtypes.StorageType.GPU_Global)
+    sdfg, state, node = gemm_with_runtime_alpha(dtypes.StorageType.GPU_Global)
     code = expanded_code(sdfg)
     assert "CUBLAS_POINTER_MODE_DEVICE" in code
     assert "&__alpha" not in code, "a device coefficient must not be dereferenced by the host"
@@ -95,10 +116,10 @@ def test_a_device_coefficient_is_read_where_it_lies():
 
 def test_a_device_coefficient_reaches_the_tasklet_as_a_pointer():
     """A scalar connector would be dereferenced host-side, which SDFG validation rejects outright."""
-    sdfg, _, _ = syrk_with_runtime_alpha(dtypes.StorageType.GPU_Global)
+    sdfg, state, node = gemm_with_runtime_alpha(dtypes.StorageType.GPU_Global)
     sdfg.expand_library_nodes()
     tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.Tasklet)]
-    typed = [t.in_connectors["__alpha_in"] for t in tasklets if "__alpha_in" in t.in_connectors]
+    typed = [t.in_connectors["_conn_alpha"] for t in tasklets if "_conn_alpha" in t.in_connectors]
     assert typed, "the coefficient connector went missing"
     assert all(isinstance(t, dtypes.pointer) for t in typed), typed
     sdfg.validate()

@@ -28,9 +28,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
     AssignmentAndCopyKernelToMemsetAndMemcpy,
 )
-from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-    CleanAccessNodeToScalarSliceToTaskletPattern,
-)
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 
 N = dace.symbol("N")
 
@@ -95,13 +93,15 @@ def test_copy_loop_lifts_to_copy_libnode():
     sdfg = _copy_loop.to_sdfg(simplify=True)
     # The pipeline's structural cleanup folds the frontend ``AccessNode -> scalar-slice ->
     # Tasklet`` bridge before the lift runs; mirror that here so the ``_out = _in`` detector matches.
-    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
+    FoldScalarReadCopies().apply_pass(sdfg, {})
 
     lifted = AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert lifted == 1
     assert _count(sdfg, CopyLibraryNode) == 1
     assert _count(sdfg, FillLibraryNode) == 0
     assert not _has_loop(sdfg)
+    # Nothing left to lift: no change reported
+    assert AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {}) is None
 
     sdfg.expand_library_nodes(recursive=True)
     sdfg.validate()
@@ -139,7 +139,7 @@ def test_self_referential_copy_loop_is_not_lifted():
             a[i] = a[i - 1]
 
     sdfg = _shift.to_sdfg(simplify=True)
-    CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
+    FoldScalarReadCopies().apply_pass(sdfg, {})
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _count(sdfg, CopyLibraryNode) == 0
 

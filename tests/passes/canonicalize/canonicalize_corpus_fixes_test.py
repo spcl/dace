@@ -71,7 +71,6 @@ def test_finalize_does_not_persist_reduction_scalar():
         validate=True,
         target="cpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
     )
@@ -130,7 +129,6 @@ def test_finalize_selects_openmp_for_reduce():
             validate=True,
             target="cpu",
             peel_limit=4,
-            break_anti_dependence=True,
             interchange_carry_with_map=True,
             scatter_to_guarded_maps=True,
         )
@@ -186,7 +184,6 @@ def test_finalize_selects_openmp_scan_for_prefix_scan():
         validate=True,
         target="cpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
     )
@@ -233,7 +230,6 @@ def test_finalize_nested_reduction_stays_sequential():
         validate=True,
         target="cpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
     )
@@ -281,7 +277,7 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
 
     The extent is a CONSTANT below the break-even because that is the only input the decision reads.
     It is rule 2 of
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`,
+    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`,
     which compares the map's OWN iteration count against the threshold and assumes a SYMBOLIC count
     is big enough -- correctly so: the same nest measured 2526 ms parallel against 2744 ms
     sequential at N=1400. Both enclosing loops carry the dependence and stay loops; neither is
@@ -293,9 +289,6 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
     from dace.transformation.passes.cpu_specialization import cpu_specialize
-    from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
-        min_work_per_region,
-    )
 
     @dace.program
     def nussinov_shaped(
@@ -309,7 +302,7 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
                     out[i, j] = max(out[i, j], A[i, k] + A[k, j])
 
     with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_region", value=REDUCTION_BREAK_EVEN):
-        assert min_work_per_region() == REDUCTION_BREAK_EVEN, (
+        assert int(dace.Config.get("compiler", "cpu", "parallel_min_work_per_region")) == REDUCTION_BREAK_EVEN, (
             "DACE_compiler_cpu_parallel_min_work_per_region overrides the pin, so the reduction no "
             "longer sits below the break-even; unset it to run this test"
         )
@@ -319,7 +312,6 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
             validate=True,
             target="cpu",
             peel_limit=4,
-            break_anti_dependence=True,
             interchange_carry_with_map=True,
             scatter_to_guarded_maps=True,
         )
@@ -434,6 +426,67 @@ def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
     # Idempotent: offloading and finalizing again does not double-offload / crash.
     offload_to_gpu(sdfg)
     finalize_for_target(sdfg, "gpu", validate=True)
+
+
+def test_a_buffer_only_a_guard_admits_is_persistent_and_sized_at_least_zero():
+    """``tmp`` (``N - 4`` elements) exists only under ``N > 4``: it is Persistent, allocated with ``Max(0, N - 4)``
+    elements, so an ``N`` the guard rejects allocates nothing and an ``N`` it admits computes."""
+    from dace.transformation.passes.canonicalize.finalize import finalize_transient_storage
+
+    N = dace.symbol("N")
+
+    @dace.program
+    def guarded(A: dace.float64[N], B: dace.float64[N]):
+        if N > 4:
+            tmp = np.ndarray([N - 4], dtype=np.float64)
+            for i in dace.map[0 : N - 4]:
+                tmp[i] = A[i + 4] * 2.0
+            for i in dace.map[0 : N - 4]:
+                B[i + 4] = tmp[N - 5 - i] + 1.0
+
+    sdfg = guarded.to_sdfg(simplify=True)
+    finalize_transient_storage(sdfg, dace.dtypes.DeviceType.CPU)
+    (tmp,) = [d for sd in sdfg.all_sdfgs_recursive() for n, d in sd.arrays.items() if n == "tmp"]
+    assert tmp.lifetime == dace.dtypes.AllocationLifetime.Persistent
+    assert "Max" in str(tmp.total_size)
+    for n in (2, 9):
+        A, B = np.arange(n, dtype=np.float64), np.zeros(n)
+        sdfg(A=A, B=B, N=n)
+        expected = np.zeros(n)
+        if n > 4:
+            expected[4:] = (A[4:] * 2.0)[::-1] + 1.0
+        assert np.array_equal(B, expected)
+
+
+def test_a_persistent_accumulator_of_a_parallel_map_is_reduced_through_a_local_alias():
+    """A column sum into a transient of a size fixed for the run: the accumulator stays Persistent, and the map reduces
+    into it with an OpenMP clause on a local pointer to the state-struct member rather than atomically."""
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    N = dace.symbol("N")
+
+    @dace.program
+    def column_sum(A: dace.float64[N, 8], out: dace.float64[8]):
+        acc = np.zeros(8)
+        for i in dace.map[0:N]:
+            acc += A[i]
+        out[:] = acc * 2.0
+
+    sdfg = column_sum.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu", nonnegative_symbols=["N"])
+    finalize_for_target(sdfg, "cpu", validate=True)
+    accumulators = [
+        d for sd in sdfg.all_sdfgs_recursive() for d in sd.arrays.values() if d.transient and d.total_size == 8
+    ]
+    assert accumulators and all(d.lifetime == dace.dtypes.AllocationLifetime.Persistent for d in accumulators)
+    code = sdfg.generate_code()[0].clean_code
+    assert "reduction(+:__rd_" in code, code
+
+    A = np.random.default_rng(7).random((1000, 8))
+    out = np.zeros(8)
+    sdfg(A=A, out=out, N=1000)
+    assert np.allclose(out, A.sum(axis=0) * 2.0)
 
 
 def test_finalize_transient_storage_converts_len1_transient_array_to_scalar():

@@ -46,7 +46,6 @@ from dace.transformation.passes.canonicalize.loop_iteration_value import (
     Refused,
     Scale,
     Summary,
-    blas_coefficients,
     canonical,
     leaf,
     outer_loop_candidates,
@@ -56,7 +55,7 @@ from dace.transformation.passes.canonicalize.loop_iteration_value import (
     same,
     scale_of,
     shape_is,
-    splice_blas_node,
+    splice_blas_update,
     summarize,
     transients_dead_outside,
 )
@@ -225,8 +224,8 @@ def replace(parent: ControlFlowRegion, loop: LoopRegion, match: SymmMatch) -> No
     """Splice the recognized nest out and emit the ``Symm`` node in its place."""
     from dace.libraries.blas.nodes.symm import Symm  # local: the BLAS package imports transformations
 
-    node = Symm(loop.label + "_symm", side=match.side, uplo=match.uplo, **blas_coefficients(match.alpha, match.beta))
-    splice_blas_node(parent, loop, node, {"_a": match.a, "_b": match.b}, match.c, match.alpha, match.beta)
+    node = Symm(loop.label + "_symm", side=match.side == "R", uplo=match.uplo == "U")
+    splice_blas_update(parent, loop, node, {"_A": match.a, "_B": match.b}, match.c, match.alpha, match.beta)
 
 
 __all__ = ["LoopToSymm"]

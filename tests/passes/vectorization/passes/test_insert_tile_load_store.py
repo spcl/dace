@@ -274,3 +274,23 @@ if __name__ == "__main__":
     test_resize_scalar_chain_preserves_ordering_edge()
     test_writes_to_two_elements_of_one_access_node_get_one_store_each()
     test_writes_to_two_elements_of_one_access_node_both_reach_the_array()
+
+
+def test_a_copy_into_a_scalar_keeps_its_destination_element_on_the_bridge():
+    """``c[1] -> s`` with the memlet naming ``s`` (``other_subset`` is the source's ``[1]``): rewired onto the bridge,
+    the copy still writes ``s[0]``. Reading ``other_subset`` as the destination wrote ``s[1]`` (CloudSC's
+    ``iphase_const[1] -> iphase_index``)."""
+    inner_sdfg = dace.SDFG("body_copy_into_a_scalar")
+    inner_sdfg.add_array("c", [2], dace.float64, transient=True)
+    inner_sdfg.add_scalar("c_bridge", dace.float64, transient=True)
+    inner_sdfg.add_scalar("s", dace.float64, transient=True)
+    state = inner_sdfg.add_state("s")
+    source = state.add_access("c")
+    copy_edge = state.add_edge(
+        source, None, state.add_access("s"), None, dace.Memlet(data="s", subset="0", other_subset="1")
+    )
+
+    InsertTileLoadStore(widths=(4,))._rewire_consumers_to_bridge(state, source, "c_bridge", [copy_edge])
+
+    (edge,) = [e for e in state.edges() if isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == "s"]
+    assert str(edge.data.get_dst_subset(edge, state)) == "0"

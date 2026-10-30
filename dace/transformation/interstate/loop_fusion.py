@@ -62,17 +62,19 @@ from dace.transformation.passes.loop_fission import _linear_blocks, _single_comp
 class LoopFusion(transformation.MultiStateTransformation):
     """Fuse one consecutive same-range sequential sibling loop pair into a single loop.
 
-    Applicable only where the fusion is provably value-preserving, and never on a loop that is
-    independently parallel (left to ``LoopToMap``) -- unless the caller passes
-    ``allow_doall_fuse=True`` to ``can_be_applied``, a narrow opt-in for
-    ``ReconstructWavefrontNest`` (reassembling a perfect nest for ``WavefrontSkew`` out of a
-    Map-derived DOALL sibling is exactly its job); every other caller keeps the default
-    refusal. ``first`` is the surviving loop; ``second``'s body is appended to it per
-    iteration and ``second`` is spliced out.
+    Applicable only where the fusion is provably value-preserving, and (``defer_doall``) never on a
+    loop that is independently parallel, which is left to ``LoopToMap``. ``first`` is the surviving
+    loop; ``second``'s body is appended to it per iteration and ``second`` is spliced out.
     """
 
     first = transformation.PatternNode(LoopRegion)
     second = transformation.PatternNode(LoopRegion)
+
+    defer_doall = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Refuse a pair with an independently parallel loop: serializing it is LoopToMap's work undone.",
+    )
 
     dont_mix_known_parallel = properties.Property(
         dtype=bool,
@@ -91,8 +93,6 @@ class LoopFusion(transformation.MultiStateTransformation):
         expr_index: int,
         sdfg: SDFG,
         permissive: bool = False,
-        *,
-        allow_doall_fuse: bool = False,
     ) -> bool:
         first, second = self.first, self.second
         if second is first:
@@ -124,9 +124,7 @@ class LoopFusion(transformation.MultiStateTransformation):
             return False
         # Never serialize a loop that could parallelize on its own -- leave it to LoopToMap. Post-LoopToMap
         # this is already true of every candidate; the guard keeps it correct if it runs earlier.
-        # ``allow_doall_fuse`` is ReconstructWavefrontNest's opt-in: default False preserves this refusal
-        # for every other caller.
-        if not allow_doall_fuse and (self._is_doall(sdfg, first) or self._is_doall(sdfg, second)):
+        if self.defer_doall and (self._is_doall(sdfg, first) or self._is_doall(sdfg, second)):
             return False
         known1, known2 = loop_analysis.is_known_parallel(first), loop_analysis.is_known_parallel(second)
         if self.dont_mix_known_parallel and known1 != known2:

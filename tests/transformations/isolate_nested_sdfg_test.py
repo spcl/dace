@@ -873,6 +873,27 @@ def test_isolate_refuses_to_leave_a_read_unordered_before_an_overwrite():
     assert np.allclose(A[1:9], (A0[1:9] + 1.0) * 2.0)
 
 
+def test_an_accumulated_output_stays_out_of_the_pre_state():
+    """As ``test_a_node_an_ordering_edge_puts_before_takes_its_outputs_to_the_pre_state``, but ``first`` adds into
+    ``B``. Moved to the pre state, the accumulation lost contributions (a model's backward pass kept one of three
+    gradient terms), so the split is refused instead."""
+    sdfg = dace.SDFG("accumulated_before_isolated")
+    for name in "ABCD":
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    first = state.add_nested_sdfg(_make_nested_sdfg_simple(), {"A"}, {"B"})
+    state.add_edge(state.add_read("A"), None, first, "A", dace.Memlet("A[0:10]"))
+    state.add_edge(first, "B", state.add_write("B"), None, dace.Memlet("B[0:10]", wcr="lambda a, b: a + b"))
+    d = state.add_access("D")
+    state.add_nedge(first, d, dace.Memlet())
+    isolated = state.add_nested_sdfg(_make_nested_sdfg_simple(), {"A"}, {"B"})
+    state.add_edge(d, None, isolated, "A", dace.Memlet("D[0:10]"))
+    state.add_edge(isolated, "B", state.add_write("C"), None, dace.Memlet("C[0:10]"))
+    sdfg.validate()
+
+    assert isolate_nested_sdfg(state, isolated, test_if_applicable=True) is False
+
+
 if __name__ == "__main__":
     test_already_isolated_sdfg()
     test_non_empty_pre_set()
@@ -938,3 +959,36 @@ def test_an_output_another_writer_also_fills_stays_out_of_the_pre_state():
 
     assert isolate_nested_sdfg(state, isolated, test_if_applicable=True) is False
     assert count_writes(sdfg) == writes
+
+
+def test_a_write_the_post_state_reads_again_runs_only_before_the_isolated_node():
+    """``Y = T`` runs before the isolated node (an empty edge orders it before ``D``), which then writes ``Y``; a post
+    reader of ``T`` and ``Y`` replicated the copy into the post state, which overwrote the isolated node's ``Y``."""
+    import numpy as np
+
+    sdfg = dace.SDFG("copy_read_again_after_isolated")
+    for name in "TYDF":
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    t, copied = state.add_read("T"), state.add_access("Y")
+    state.add_nedge(t, copied, dace.Memlet("T[0:10]"))
+    d = state.add_access("D")
+    state.add_nedge(copied, d, dace.Memlet())
+    isolated = state.add_nested_sdfg(_make_nested_sdfg_simple(), {"A"}, {"B"})
+    state.add_edge(d, None, isolated, "A", dace.Memlet("D[0:10]"))
+    state.add_edge(isolated, "B", state.add_write("Y"), None, dace.Memlet("Y[0:10]"))
+    other = state.add_nested_sdfg(_make_nested_sdfg_simple(), {"A"}, {"B"})
+    state.add_edge(t, None, other, "A", dace.Memlet("T[0:10]"))
+    state.add_nedge(copied, other, dace.Memlet())
+    state.add_edge(other, "B", state.add_write("F"), None, dace.Memlet("F[0:10]"))
+    sdfg.validate()
+
+    pre, middle, post = isolate_nested_sdfg(state, isolated)
+
+    assert not any(n.data == "Y" and post.in_degree(n) for n in post.data_nodes())
+    sdfg.validate()
+    T, D = np.random.rand(10), np.random.rand(10)
+    Y, F = np.zeros(10), np.zeros(10)
+    sdfg(T=T, Y=Y, D=D, F=F)
+    assert np.allclose(Y[1:9], D[1:9] + 1.0), "the copy ran again after the isolated node"
+    assert np.allclose(F[1:9], T[1:9] + 1.0)

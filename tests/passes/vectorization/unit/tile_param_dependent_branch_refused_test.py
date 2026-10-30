@@ -74,7 +74,7 @@ def outer_param_guard_kernel(a: dace.float64[M, N], b: dace.float64[M, N], c: da
 def vectorized(prog, tag):
     sdfg = prog.to_sdfg(simplify=True)
     sdfg.name = tag
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
     VectorizeCPUMultiDim(
         VectorizeConfig(
             widths=(W,),

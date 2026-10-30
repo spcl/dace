@@ -10,7 +10,7 @@ map::
 The write slot ``bin[i]`` is not an affine function of the map parameter -- it is
 an integer read from an array -- so it is neither a plain per-element write (each
 iteration a distinct slot) nor a provable permutation (the
-:class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`
+:class:`~dace.transformation.passes.parallelization.contracts.guarded_scatter.ScatterToGuardedMaps`
 guard does not apply: histogram bins repeat). It is a genuine *reduction*: many
 iterations fold into the same slot. The DaCe CPU codegen lowers the per-iteration
 write to a ``reduce_atomic`` on ``hist[bin[i]]`` -- correct but, with ``T`` threads
@@ -48,7 +48,7 @@ that pass's drop-WCR shortcut, which is unsound for a scatter: it rewrites
 scalar accumulator, but a scatter writes only ONE element of a bounded ``oc``,
 leaving the rest of a per-iteration whole-array private buffer uninitialised (read
 back into the sum -> garbage). Because this pass makes the outer edge non-plain,
-``NormalizeWCR`` and ``NormalizeWCRSource`` both skip the scatter (the latter via
+``NormalizeWCR`` skips the scatter in both its rewrites (the access-node sourcing via
 :func:`scatter_reduction_wcr_edge`, so its per-iteration whole-array buffer -- the
 same latent bug -- is never inserted either).
 
@@ -84,14 +84,13 @@ for the rest, so Strategy B is documented but intentionally not built here (YAGN
 the refuse path keeps the non-reducible cases correct.
 """
 
-import ast
-
 from dace import SDFG, data, dtypes, properties
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.dataflow.wcr_conversion import wcr_operator
 
 #: Reduction operators OpenMP's ``reduction`` clause supports (Strategy A). ``-`` /
 #: ``/`` and custom lambdas are refused (left as the correct contended atomic).
@@ -99,40 +98,10 @@ SCATTER_REDUCIBLE_OPS = frozenset({"+", "*", "min", "max"})
 
 
 def scatter_wcr_op(wcr: str) -> str | None:
-    """The reduction operator (``+`` / ``*`` / ``min`` / ``max``) of a WCR lambda
-    string, or ``None`` when the reducer is not exactly one of those over its two
-    arguments.
-
-    Strict: the body must be ``p0 (+|*) p1`` or ``min|max(p0, p1)`` where ``p0`` /
-    ``p1`` are the lambda's two parameters -- an associative, commutative fold. Anything
-    else (``p0 - p1``, ``2*p0 + p1``, a custom lambda) returns ``None`` so the scatter is
-    left as the correct, contended atomic rather than mis-privatised (a whole-buffer
-    reduction reassociates the fold, which is only value-preserving for such an op).
-    """
-    try:
-        tree = ast.parse(wcr.strip(), mode="eval").body
-    except (SyntaxError, ValueError, TypeError):
-        return None
-    if not isinstance(tree, ast.Lambda) or len(tree.args.args) != 2:
-        return None
-    params = {a.arg for a in tree.args.args}
-    body = tree.body
-
-    def _is_two_params(*operands) -> bool:
-        names = [o.id for o in operands if isinstance(o, ast.Name)]
-        return len(names) == 2 and set(names) == params
-
-    if isinstance(body, ast.BinOp) and _is_two_params(body.left, body.right):
-        return {ast.Add: "+", ast.Mult: "*"}.get(type(body.op))
-    if (
-        isinstance(body, ast.Call)
-        and isinstance(body.func, ast.Name)
-        and body.func.id in ("min", "max")
-        and len(body.args) == 2
-        and _is_two_params(*body.args)
-    ):
-        return body.func.id
-    return None
+    """The reduction operator of a WCR lambda when it is one of :data:`SCATTER_REDUCIBLE_OPS` over its two parameters
+    (an associative, commutative fold a whole-buffer reduction may reassociate); ``None`` otherwise."""
+    op = wcr_operator(wcr)
+    return op if op in SCATTER_REDUCIBLE_OPS else None
 
 
 def _is_single_element(desc: data.Data) -> bool:
@@ -191,9 +160,8 @@ def data_dependent_scatter_wcr_edge(nsdfg: nodes.NestedSDFG, oc: str):
     offset). The reducer is *not* consulted -- ``+`` / ``-`` / ``*`` / ``/`` / ``min`` /
     ``max`` / a custom lambda all match.
 
-    It is the fail-safe predicate the WCR-normalization passes
-    (:class:`~dace.transformation.passes.normalize_wcr.NormalizeWCR`,
-    :class:`~dace.transformation.passes.normalize_wcr_source.NormalizeWCRSource`) key their
+    It is the fail-safe predicate the WCR normalization
+    (:class:`~dace.transformation.passes.normalize_wcr.NormalizeWCR`) keys its
     refusal on: the drop-WCR / whole-buffer ``_nnr_out`` / ``_wcr_priv`` rewrites are
     UNSOUND for such a sink -- only one element of a per-iteration whole-array buffer is
     written, the rest read back uninitialised -- so both refuse it (any op, any device)

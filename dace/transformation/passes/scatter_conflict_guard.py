@@ -427,7 +427,7 @@ def scatter_index_domain(sdfg: SDFG, idx_name: str) -> symbolic.SymbolicType | N
     """
     # Local import: ``scatter_to_guarded_maps`` imports this module at load time, so importing it
     # back at module level would cycle.
-    from dace.transformation.passes.scatter_to_guarded_maps import scatter_target_arrays
+    from dace.transformation.passes.parallelization.contracts.guarded_scatter import scatter_target_arrays
 
     sizes = set()
     for target in scatter_target_arrays(sdfg, idx_name):

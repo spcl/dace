@@ -21,11 +21,12 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from dace import SDFG, nodes, properties
+from dace import SDFG, nodes, properties, subsets
 from dace.optionals import required
 from dace.sdfg import InterstateEdge, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_datadesc_names
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import map_scope
 from dace.utils import find_new_name
@@ -127,6 +128,61 @@ def shared_carrier_connectors(
             return None
         forward[e.dst_conn] = (produced[name], carrier)
     return forward
+
+
+def co_written_connectors(state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.NestedSDFG) -> dict[str, str]:
+    """Out-connectors of ``drop`` that write the access node ``keep`` writes too, each with ``keep``'s connector.
+
+    ``OTFMapFusion`` leaves one producer per element of a window, each writing its element of one buffer
+    (``nsdfg0 -> t[0]``, ``nsdfg1 -> t[1]``). Merged, the writes are one array of the node, written in sequence:
+    tail's inner array is bound to keep's, and the outer write covers both elements.
+
+    :param state: The state holding both nested SDFGs.
+    :param keep: The merge base.
+    :param drop: The sibling being folded into ``keep``.
+    :returns: ``{drop out-connector: keep out-connector}``.
+    """
+    # Through an access node only: two writes through a map exit leave by connectors of their own
+    plain = [
+        e
+        for e in state.out_edges(keep)
+        if e.src_conn is not None and e.data.data and e.data.wcr is None and isinstance(e.dst, nodes.AccessNode)
+    ]
+    written = {(e.dst, e.data.data): e.src_conn for e in plain}
+    return {
+        e.src_conn: written[e.dst, e.data.data]
+        for e in state.out_edges(drop)
+        if e.src_conn is not None and e.data.wcr is None and (e.dst, e.data.data) in written
+    }
+
+
+def bound_apart(keep: nodes.NestedSDFG, drop: nodes.NestedSDFG) -> dict[str, str]:
+    """Fresh names for the symbols ``drop`` binds to another value than ``keep`` binds the same name to."""
+    taken = dict.fromkeys([*keep.sdfg.symbols, *drop.sdfg.symbols, *keep.symbol_mapping, *drop.symbol_mapping])
+    repl: dict[str, str] = {}
+    for name, value in drop.symbol_mapping.items():
+        if name in keep.symbol_mapping and str(keep.symbol_mapping[name]) != str(value):
+            repl[name] = find_new_name(name, taken)
+            taken[repl[name]] = None
+    return repl
+
+
+def linked_through_other_nodes(
+    state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.NestedSDFG, carriers: set[nodes.Node]
+) -> bool:
+    """Whether a path inside their map scope leads from ``keep`` to ``drop`` other than through ``carriers``."""
+    scope_exit = state.exit_node(state.entry_node(keep))
+    stack = [e.dst for e in state.out_edges(keep) if e.dst not in carriers]
+    seen: set[nodes.Node] = set()
+    while stack:
+        node = stack.pop()
+        if node is drop:
+            return True
+        if node in seen or node is scope_exit:
+            continue
+        seen.add(node)
+        stack.extend(e.dst for e in state.out_edges(node))
+    return False
 
 
 def _append_cfg(base: SDFG, tail: SDFG) -> None:
@@ -251,14 +307,23 @@ class NormalizeMapBody(ppl.Pass):
 
     def _merge_siblings(self, state: SDFGState, siblings: list[nodes.NestedSDFG]) -> bool:
         """Merge sibling NestedSDFGs in ``state`` into ``siblings[0]`` by
-        sequencing their control-flow graphs. Returns True on success."""
+        sequencing their control-flow graphs. Returns whether any sibling was merged."""
         keep = siblings[0]
         base = keep.sdfg
+        merged = False
         for drop in siblings[1:]:
             carried = shared_carrier_connectors(state, keep, drop)
             if carried is None:
-                return False
+                break
+            if linked_through_other_nodes(state, keep, drop, {carrier for connector, carrier in carried.values()}):
+                # The merged node would feed the nodes between and read them back: a cycle
+                continue
+            merged = True
             tail = copy.deepcopy(drop.sdfg)
+            # Same-named symbols are shared, unless the siblings bind them to different values (``OTFMapFusion``
+            # replicates a producer per element it recomputes, each with its own ``_i0``): those are renamed apart
+            symbol_repl = bound_apart(keep, drop)
+            tail.replace_dict(symbol_repl)
             # Rename tail's data that collides with any base identifier, tracking how
             # drop's connectors were renamed so we can rewire the outer edges. DaCe forbids
             # an array name that also names a symbol, constant, or tasklet connector -- so
@@ -273,6 +338,15 @@ class NormalizeMapBody(ppl.Pass):
             # A container keep WRITES and drop READS is one value, not two: point tail's copy at
             # keep's array so it crosses the sequencing edge ``_append_cfg`` adds.
             for drop_conn, (keep_conn, carrier) in carried.items():
+                renamed = drepl.get(drop_conn, drop_conn)
+                if renamed != keep_conn:
+                    replace_datadesc_names(tail, {renamed: keep_conn})
+                    drepl[drop_conn] = keep_conn
+            # A container both write through one access node is one array of the merged node as well.
+            co_written = co_written_connectors(state, keep, drop)
+            # Asked before the rewiring below: half rewired, the scope is not walkable
+            facts = SymbolResolver().facts_at(state, keep) if co_written else None
+            for drop_conn, keep_conn in co_written.items():
                 renamed = drepl.get(drop_conn, drop_conn)
                 if renamed != keep_conn:
                     replace_datadesc_names(tail, {renamed: keep_conn})
@@ -318,6 +392,11 @@ class NormalizeMapBody(ppl.Pass):
                         state.add_edge(keep, None, e.dst, e.dst_conn, copy.deepcopy(e.data))
                     state.remove_edge(e)
                     continue
+                if e.src_conn in co_written:
+                    (write,) = [w for w in state.out_edges_by_connector(keep, co_written[e.src_conn]) if w.dst is e.dst]
+                    write.data.subset = subsets.union(write.data.subset, e.data.subset, facts)
+                    state.remove_edge(e)
+                    continue
                 conn = drepl.get(e.src_conn, e.src_conn)
                 keep.add_out_connector(conn, force=True)
                 state.add_edge(keep, conn, e.dst, e.dst_conn, copy.deepcopy(e.data))
@@ -336,7 +415,7 @@ class NormalizeMapBody(ppl.Pass):
 
             # Merge symbol mapping (rename keys that were renamed inside tail).
             for k, v in drop.symbol_mapping.items():
-                keep.symbol_mapping.setdefault(k, v)
+                keep.symbol_mapping.setdefault(symbol_repl.get(k, k), v)
             state.remove_node(drop)
 
         # Fold redundant boundary connectors / symbol-mapping aliases the merge
@@ -351,4 +430,4 @@ class NormalizeMapBody(ppl.Pass):
         # would get ``base`` as its owner and later miss that SDFG's own arrays.
         for blk in base.all_control_flow_blocks():
             blk.sdfg = base
-        return True
+        return merged

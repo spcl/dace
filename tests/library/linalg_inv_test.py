@@ -407,9 +407,66 @@ def test_inv(implementation, dtype, size, shape, overwrite, getri):
         assert not np.array_equal(A0, A1)
 
 
+B = dace.symbol("B", dace.int64)
+
+
+@dace.program
+def inv_per_step(A: dace.float64[B, n, n], X: dace.float64[B, n, n]):
+    for b in range(B):
+        X[b] = np.linalg.inv(A[b])
+
+
+@dace.program
+def inv_per_map_point(A: dace.float64[B, n, n], X: dace.float64[B, n, n]):
+    for b in dace.map[0:B]:
+        X[b] = np.linalg.inv(A[b])
+
+
+def _scratch_lifetimes(program, schedule: dace.ScheduleType | None = None) -> tuple[dace.SDFG, set]:
+    sdfg = program.to_sdfg(simplify=True)
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, Inv):
+            node.implementation = "OpenBLAS"
+        elif isinstance(node, dace.nodes.MapEntry) and schedule is not None:
+            node.map.schedule = schedule
+    sdfg.expand_library_nodes(recursive=False)
+    lifetimes = {
+        desc.lifetime
+        for nested in sdfg.all_sdfgs_recursive()
+        for name, desc in nested.arrays.items()
+        if name in ("_pivots", "_info")
+    }
+    return sdfg, lifetimes
+
+
+def test_inv_scratch_of_a_sequential_loop_is_allocated_once():
+    """A loop of inversions sized by a program argument allocates the pivots and status once, at init."""
+    sdfg, lifetimes = _scratch_lifetimes(inv_per_step)
+    assert lifetimes == {dace.AllocationLifetime.Persistent}, lifetimes
+    A = np.stack([generate_matrix(4, np.float64) @ generate_matrix(4, np.float64).T + 4 * np.eye(4)] * 3)
+    X = np.zeros_like(A)
+    sdfg(A=A, X=X, B=3, n=4)
+    assert np.allclose(X, np.linalg.inv(A), rtol=1e-12, atol=1e-12)
+
+
+def test_inv_scratch_under_a_map_stays_per_call():
+    """Inversions a map may run at once each need their own pivots and status."""
+    _, lifetimes = _scratch_lifetimes(inv_per_map_point)
+    assert lifetimes == {dace.AllocationLifetime.Scope}, lifetimes
+
+
+def test_inv_scratch_under_a_sequential_map_is_allocated_once():
+    """A sequential map runs one inversion at a time, as a loop does (a GPU offload's host-side level map)."""
+    _, lifetimes = _scratch_lifetimes(inv_per_map_point, dace.ScheduleType.Sequential)
+    assert lifetimes == {dace.AllocationLifetime.Persistent}, lifetimes
+
+
 ###############################################################################
 
 if __name__ == "__main__":
+    test_inv_scratch_of_a_sequential_loop_is_allocated_once()
+    test_inv_scratch_under_a_map_stays_per_call()
+    test_inv_scratch_under_a_sequential_map_is_allocated_once()
     test_inv("MKL", np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, True)
     test_inv("MKL", np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, True)
     test_inv("MKL", np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], False, True)

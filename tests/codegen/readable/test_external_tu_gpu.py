@@ -192,6 +192,15 @@ def test_external_call_emitted():
 # #
 # Compile + run tests (need a GPU) -- correctness vs the single-TU build.
 # #
+def test_gpu_runtime_helpers_are_defined_once():
+    """Every ``.cu`` of a split program exports the same GPU helpers; a shared name does not link."""
+    objects = generate_with_ext_tu(two_sibling_kernels("helpers"), True)
+    assert len(cu_objects(objects)) > 1
+    code = "\n".join(o.clean_code or o.code for o in cu_objects(objects))
+    for helper in re.findall(r"^(?:int|void|bool) (__dace_gpu_\w+)\(", code, re.MULTILINE):
+        assert len(re.findall(rf"^(?:int|void|bool) {helper}\(", code, re.MULTILINE)) == 1, helper
+
+
 @pytest.mark.gpu
 def test_two_siblings_run_matches_single_tu():
     """The split library must LINK (child extern-C entry points resolve in-binary) and compute exactly
@@ -263,6 +272,7 @@ if __name__ == "__main__":
     test_loop_nested_one_kernel_cu()
     test_hybrid_only_gpu_externalized()
     test_external_call_emitted()
+    test_gpu_runtime_helpers_are_defined_once()
     test_two_siblings_run_matches_single_tu()
     test_loop_nested_run()
     test_hybrid_run()

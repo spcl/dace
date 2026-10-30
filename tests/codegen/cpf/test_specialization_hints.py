@@ -46,7 +46,7 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     proven_carrying_access,
 )
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
+from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
 
 N = dace.symbol("N")
 K = dace.symbol("K")

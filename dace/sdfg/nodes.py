@@ -992,10 +992,15 @@ class NestedSDFG(CodeNode):
                 # to the external data descriptor connected to the connector.
                 edge = next(iter(state.edges_by_connector(self, conn)))
                 if not inner_desc.is_equivalent(sdfg.arrays[edge.data.data], symbol_mapping=replacements):
+                    from dace.transformation.passes.cast_nested_sdfg_arguments import dtype_only_mismatch
+
+                    hint = "If a reinterpretation or a subset is needed, use a view."
+                    if dtype_only_mismatch(inner_desc, sdfg.arrays[edge.data.data], self.symbol_mapping):
+                        hint = "To convert the values, apply the CastNestedSDFGArguments pass."
                     raise ValueError(
                         f'Connector "{conn}" was given but the internal data descriptor ({self.sdfg.arrays[conn]}) '
                         f'is not equivalent to the data descriptor connected to it ("{edge.data.data}", '
-                        f"{sdfg.arrays[edge.data.data]}). If a reinterpretation or a subset is needed, use a view."
+                        f"{sdfg.arrays[edge.data.data]}). {hint}"
                     )
 
             for dname, desc in self.sdfg.arrays.items():
@@ -1457,6 +1462,15 @@ class Map:
         serialize_if=lambda m: m.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock),
     )
 
+    gpu_grid_syncs_lowered = Property(
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="The grid barriers between the states of this persistent kernel are Sync nodes (see "
+        "``NestedGPUDeviceMapLowering``), so code generation adds none of its own",
+        serialize_if=lambda m: m.schedule == dtypes.ScheduleType.GPU_Persistent,
+    )
+
     def __init__(
         self,
         label,
@@ -1763,7 +1777,7 @@ def full_class_path(cls_or_obj: type | object):
 @make_properties
 class LibraryNode(CodeNode):
     #: Whether a parallel schedule of this node is serialized when an enclosing loop re-enters it (see
-    #: ``SequentializeUnprofitableParallelScopes``). A node whose work per entry is the chunk the loop hands it opts out.
+    #: ``SequentializeSmallAxes``). A node whose work per entry is the chunk the loop hands it opts out.
     serial_on_loop_reentry: bool = True
 
     def folds_onto_output(self) -> bool:

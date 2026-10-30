@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for the experimental readable CPU generator's ``compiler.cpu.codegen_params.heap_ptr_restrict`` knob. It
-defaults to the faster form and only the experimental generator emits the qualified declaration, so legacy output is
-unaffected by construction."""
+"""Tests for the experimental readable CPU generator's ``compiler.cpu.codegen_params.heap_ptr_restrict`` knob and
+its fixed ``<array>_idx`` helper signature. Only the experimental generator emits the qualified constructs, so
+legacy output is unaffected by construction."""
 
 import numpy
 
@@ -41,14 +41,16 @@ def test_heap_ptr_restrict_none_drops_restrict():
     assert "double* tmp" in code
 
 
-def test_index_helpers_are_constexpr():
-    code = generate()
-    assert "static DACE_HDFI constexpr" in code
+def test_index_helpers_are_int64_constexpr():
+    """Every ``<array>_idx`` helper computes in ``int64_t`` and is ``static DACE_HDFI constexpr``."""
+    helpers = [line for line in generate().splitlines() if "_idx(" in line and "return" in line and "{" in line]
+    assert helpers
+    for line in helpers:
+        assert line.lstrip().startswith("static DACE_HDFI constexpr int64_t "), line
 
 
 def test_legacy_ignores_the_flag():
-    """Legacy emits no fused restrict declaration, so its output is identical across both values of this
-    experimental-only key."""
+    """Legacy emits no fused restrict declaration, so its output is identical for every value."""
 
     def legacy(hpr):
         sdfg = scaled_twice.to_sdfg(simplify=True)
@@ -76,6 +78,6 @@ def test_both_configs_compile_and_run():
 if __name__ == "__main__":
     test_heap_ptr_restrict_default_emits_restrict()
     test_heap_ptr_restrict_none_drops_restrict()
-    test_index_helpers_are_constexpr()
+    test_index_helpers_are_int64_constexpr()
     test_legacy_ignores_the_flag()
     test_both_configs_compile_and_run()

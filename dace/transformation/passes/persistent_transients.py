@@ -5,6 +5,7 @@ from typing import Any
 
 from dace import data as dt
 from dace import dtypes, properties, symbolic
+from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers as xfh
@@ -100,6 +101,14 @@ def size_is_program_wide(nsdfg: SDFG, desc: dt.Data, allowed: set[str]) -> bool:
     return at_root is not None and not (at_root - allowed)
 
 
+def only_sequential_maps_around(state, node) -> bool:
+    """Whether every map enclosing ``node``, out through nested SDFGs, is ``Sequential``: no two iterations run at once."""
+    return all(
+        isinstance(entry, nodes.MapEntry) and entry.map.schedule == dtypes.ScheduleType.Sequential
+        for entry, _ in xfh.get_parent_maps(state, node)
+    )
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MakeTransientsPersistent(ppl.Pass):
@@ -186,11 +195,11 @@ class MakeTransientsPersistent(ppl.Pass):
                     refused.add(dnode.data)
                     continue
                 if xfh.get_parent_map(state, dnode) is not None:
-                    # Default storage inside a map resolves to a per-thread register or stack array
-                    if (
-                        self.toplevel_only
-                        or desc.lifetime == dtypes.AllocationLifetime.Scope
-                        or desc.storage == dtypes.StorageType.Default
+                    # Default storage inside a map resolves to a per-thread register or stack array. Under Sequential
+                    # maps alone one buffer serves every iteration in turn, whatever its lifetime.
+                    if desc.storage == dtypes.StorageType.Default or not (
+                        only_sequential_maps_around(state, dnode)
+                        or not (self.toplevel_only or desc.lifetime == dtypes.AllocationLifetime.Scope)
                     ):
                         refused.add(dnode.data)
                         continue

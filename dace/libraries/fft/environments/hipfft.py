@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """hipFFT environment for the ROCm backend of the :mod:`dace.libraries.fft` library nodes."""
 
-import ctypes.util
-
 import dace.library
+from dace.libraries import hip_dialect
+from dace.libraries.fft.environments.plans import FFTPlans
 
 
 @dace.library.environment
@@ -21,10 +21,11 @@ class hipFFT:
     state_fields: list[str] = []
     init_code = ""
     finalize_code = ""
-    dependencies: list[str] = []
+    # The plan cache the renamed cuFFT code keeps its plans in
+    dependencies = [FFTPlans]
 
     cmake_includes: list[str] = []
 
     @staticmethod
     def is_installed():
-        return ctypes.util.find_library("hipfft") is not None
+        return hip_dialect.find_rocm_library("hipfft") is not None

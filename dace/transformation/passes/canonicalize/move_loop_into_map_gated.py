@@ -78,7 +78,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap, lane_maps
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.minimize_stride_permutation import _to_float, score_indexed_strides
+from dace.transformation.passes.minimize_stride_permutation import score_indexed_strides, score_to_float
 from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT, _constant_trip_count
 
 
@@ -94,8 +94,8 @@ def stride_costs(loop: LoopRegion, sdfg: SDFG) -> tuple[tuple[float, float], tup
         e for state, entry in lanes for e in state.scope_subgraph(entry, include_entry=True, include_exit=True).edges()
     ]
     scores = score_indexed_strides(edges, sdfg, [itervar] + mparams)
-    loop_cost = (_to_float(scores[itervar][0]), _to_float(scores[itervar][1]))
-    map_cost = min((_to_float(scores[p][0]), _to_float(scores[p][1])) for p in mparams)
+    loop_cost = (score_to_float(scores[itervar][0]), score_to_float(scores[itervar][1]))
+    map_cost = min((score_to_float(scores[p][0]), score_to_float(scores[p][1])) for p in mparams)
     return loop_cost, map_cost
 
 

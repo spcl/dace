@@ -2,6 +2,8 @@ import numpy as np
 import pytest
 
 import dace
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.dataflow import AugAssignToWCR, WCRToAugAssign
 
 
@@ -195,6 +197,80 @@ def test_aug_assign_free_map():
 
     applied = sdfg.apply_transformations_repeated(AugAssignToWCR)
     assert applied == 1
+
+
+def test_aug_assign_in_a_nested_body_drops_the_read_connector_it_no_longer_uses():
+    """``A[0] = A[0] + B[i]`` in a map's nested body: as a WCR the body no longer reads ``A``, so the nested SDFG's
+    ``A`` input goes too -- left behind it is a read of ``A`` that keeps a loop around the map refused."""
+    body = dace.SDFG("rmw_body")
+    body.add_symbol("i", dace.int64)
+    body.add_array("A", [1], dace.float64)
+    body.add_array("b", [32], dace.float64)
+    bstate = body.add_state("rmw")
+    t = bstate.add_tasklet("add", {"x", "y"}, {"z"}, "z = x + y")
+    bstate.add_edge(bstate.add_read("A"), None, t, "x", dace.Memlet("A[0]"))
+    bstate.add_edge(bstate.add_read("b"), None, t, "y", dace.Memlet("b[i]"))
+    bstate.add_edge(t, "z", bstate.add_write("A"), None, dace.Memlet("A[0]"))
+
+    sdfg = dace.SDFG("rmw_nested")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [32], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", {"i": "0:32"})
+    nsdfg = state.add_nested_sdfg(body, {"A", "b"}, {"A"}, symbol_mapping={"i": "i"})
+    state.add_memlet_path(state.add_read("A"), me, nsdfg, dst_conn="A", memlet=dace.Memlet("A[0]"))
+    state.add_memlet_path(state.add_read("B"), me, nsdfg, dst_conn="b", memlet=dace.Memlet("B[i]"))
+    state.add_memlet_path(nsdfg, mx, state.add_write("A"), src_conn="A", memlet=dace.Memlet("A[0]"))
+    sdfg.validate()
+
+    assert body.apply_transformations(AugAssignToWCR) == 1
+    sdfg.validate()
+    assert "A" not in nsdfg.in_connectors
+    assert all(e.data.data != "A" for e in state.in_edges(me))
+    a, b = np.zeros(1), np.arange(32.0)
+    sdfg(A=a, B=b)
+    assert np.isclose(a[0], b.sum())
+
+
+def test_aug_assign_in_a_nested_body_keeps_the_read_connector_a_branch_condition_uses():
+    """The nested body updates ``A[0]`` and then branches on ``A[0]``: the condition still reads ``A``, so its
+    connector stays -- dropped, a loop around the nest would map on a carried read."""
+    body = dace.SDFG("rmw_cond_body")
+    body.add_array("A", [1], dace.float64)
+    body.add_array("b", [32], dace.float64)
+    body.add_array("F", [1], dace.float64)
+    bstate = body.add_state("rmw", is_start_block=True)
+    bstate.add_mapped_tasklet(
+        "add",
+        {"i": "0:32"},
+        {"x": dace.Memlet("A[0]"), "y": dace.Memlet("b[i]")},
+        "z = x + y",
+        {"z": dace.Memlet("A[0]")},
+        external_edges=True,
+    )
+    check = ConditionalBlock("check")
+    body.add_node(check)
+    body.add_edge(bstate, check, dace.InterstateEdge())
+    branch = ControlFlowRegion("big", sdfg=body)
+    check.add_branch(CodeBlock("A[0] > 20.0"), branch)
+    flag = branch.add_state("flag", is_start_block=True)
+    t = flag.add_tasklet("set", {}, {"o"}, "o = 1.0")
+    flag.add_edge(t, "o", flag.add_write("F"), None, dace.Memlet("F[0]"))
+
+    sdfg = dace.SDFG("rmw_cond_nested")
+    for name, size in (("A", 1), ("B", 32), ("F", 1)):
+        sdfg.add_array(name, [size], dace.float64)
+    state = sdfg.add_state()
+    nsdfg = state.add_nested_sdfg(body, {"A", "b"}, {"A", "F"})
+    state.add_edge(state.add_read("A"), None, nsdfg, "A", dace.Memlet("A[0]"))
+    state.add_edge(state.add_read("B"), None, nsdfg, "b", dace.Memlet("B[0:32]"))
+    state.add_edge(nsdfg, "A", state.add_write("A"), None, dace.Memlet("A[0]"))
+    state.add_edge(nsdfg, "F", state.add_write("F"), None, dace.Memlet("F[0]"))
+    sdfg.validate()
+
+    assert body.apply_transformations(AugAssignToWCR) == 1
+    sdfg.validate()
+    assert "A" in nsdfg.in_connectors
 
 
 def test_aug_assign_state_fission_map():
@@ -792,6 +868,85 @@ def test_aug_assign_fission_moves_the_whole_map_of_a_multi_tasklet_update():
     assert np.allclose(A, 3.0 * B)
 
 
+@pytest.mark.parametrize("code,expected", [("o = x - acc", lambda b, c: c - b), ("o = acc - x", lambda b, c: b - c)])
+def test_aug_assign_python_subtraction_keeps_its_operand_order(code, expected):
+    """``b = c - b`` is no update of ``b``; ``b = b - c`` is, and becomes a sum of ``-c``."""
+    sdfg = dace.SDFG("subtraction_order")
+    sdfg.add_array("b", [1], dace.float64)
+    sdfg.add_array("c", [1], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("t", {"x", "acc"}, {"o"}, code)
+    state.add_edge(state.add_read("c"), None, tasklet, "x", dace.Memlet("c[0]"))
+    state.add_edge(state.add_read("b"), None, tasklet, "acc", dace.Memlet("b[0]"))
+    state.add_edge(tasklet, "o", state.add_write("b"), None, dace.Memlet("b[0]"))
+    sdfg.apply_transformations_repeated(AugAssignToWCR)
+    assert all("a - b" not in (e.data.wcr or "") for e in state.edges())
+    b, c = np.array([3.0]), np.array([10.0])
+    reference = expected(b.copy(), c)
+    sdfg(b=b, c=c)
+    assert np.allclose(b, reference)
+
+
+def _update_of_a(code: str, language: dace.Language) -> tuple[dace.SDFG, dace.nodes.Tasklet]:
+    """``A[0] = <code>`` over connectors ``a`` (``A[0]``) and ``b`` (``B[0]``)."""
+    sdfg = dace.SDFG("update_of_a")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("t", {"a", "b"}, {"o"}, code, language=language)
+    state.add_edge(state.add_read("A"), None, tasklet, "a", dace.Memlet("A[0]"))
+    state.add_edge(state.add_read("B"), None, tasklet, "b", dace.Memlet("B[0]"))
+    state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
+    return sdfg, tasklet
+
+
+@pytest.mark.parametrize(
+    "code, language",
+    [
+        ("o = a * b + 1.0;", dace.Language.CPP),
+        ("o = a - b + 1.0;", dace.Language.CPP),
+        ("o = b - a;", dace.Language.CPP),
+        ("o = a + a * b", dace.Language.Python),
+    ],
+)
+def test_aug_assign_refuses_what_is_no_update_of_the_accumulator(code, language):
+    sdfg, _ = _update_of_a(code, language)
+
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
+
+
+@pytest.mark.parametrize(
+    "code, reference",
+    [("o = a - (b + 1.0);", lambda a, b: a - (b + 1.0)), ("o = (b * 2.0) + a;", lambda a, b: a + b * 2.0)],
+)
+def test_aug_assign_cpp_keeps_the_increment_as_written(code, reference):
+    sdfg, tasklet = _update_of_a(code, dace.Language.CPP)
+    A, B = np.array([5.0]), np.array([3.0])
+    expected = reference(A[0], B[0])
+
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    assert list(tasklet.in_connectors) == ["b"]
+    sdfg(A=A, B=B)
+    assert A[0] == expected
+
+
+def test_python_update_reads_the_update_of_a_python_tasklet_only():
+    """``out = acc + inc`` reading the element it writes is ``("+", acc edge, inc)``; a C++ tasklet is None."""
+    sdfg = dace.SDFG("python_update")
+    sdfg.add_array("A", [4], dace.float64)
+    state = sdfg.add_state()
+    updates = {}
+    for language, code in ((dace.Language.Python, "b = a + 2.0"), (dace.Language.CPP, "b = a + 2.0;")):
+        tasklet = state.add_tasklet("t", {"a"}, {"b"}, code, language=language)
+        read = state.add_edge(state.add_read("A"), None, tasklet, "a", dace.Memlet("A[1]"))
+        write = state.add_edge(tasklet, "b", state.add_write("A"), None, dace.Memlet("A[1]"))
+        updates[language] = (AugAssignToWCR.python_update(tasklet, [read], write), read)
+
+    (op, edge, inc), read = updates[dace.Language.Python]
+    assert (op, edge, dace.frontend.python.astutils.unparse(inc)) == ("+", read, "2.0")
+    assert updates[dace.Language.CPP][0] is None
+
+
 if __name__ == "__main__":
     test_aug_assign_python_logical_or()
     test_aug_assign_tasklet_lhs()
@@ -826,3 +981,5 @@ if __name__ == "__main__":
     test_aug_assign_python_min_max("min(k, a)", np.minimum)
     test_aug_assign_python_reads_another_element()
     test_aug_assign_python_reads_another_array()
+    test_aug_assign_python_subtraction_keeps_its_operand_order("o = x - acc", lambda b, c: c - b)
+    test_aug_assign_in_a_nested_body_keeps_the_read_connector_a_branch_condition_uses()

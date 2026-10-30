@@ -13,9 +13,9 @@ from typing import NamedTuple
 from dace import SDFG, Memlet, SDFGState, cpf_lowering, data, dtypes, library, nodes, properties, symbolic
 from dace import transformation as xf
 from dace.frontend.python.replacements.utils import normalize_axes
+from dace.libraries import hip_dialect
 from dace.libraries.blas.environments.intel_mkl import IntelMKL
 from dace.libraries.fft import environments as env
-from dace.libraries.fft.gpu_dialect import CUFFT, HIPFFT, GpuFftDialect
 from dace.sdfg import utils as sdutil
 
 
@@ -86,7 +86,20 @@ def pure_sdfg(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG
     from dace.libraries.fft.algorithms import dft  # Lazy import functions
 
     indesc, outdesc = input_and_output(parent_state, parent_sdfg, node)
-    return dft.dft_nd_sdfg(indesc, outdesc, node.factor, isinstance(node, IFFT), node.axes, node.half_spectrum)
+    sdfg = dft.dft_nd_sdfg(indesc, outdesc, node.factor, isinstance(node, IFFT), node.axes, node.half_spectrum)
+    # The factor scales a C++ tasklet, whose code no symbol inference reads: declare what it names, typed as where
+    # the node sits -- a symbol in scope there, or the scalar container the factor reads
+    names = sorted(str(s) for s in symbolic.pystr_to_symbolic(node.factor).free_symbols)
+    if any(name not in sdfg.symbols for name in names):
+        defined = parent_state.symbols_defined_at(node)
+        for name in names:
+            if name in sdfg.symbols:
+                continue
+            if name in defined:
+                sdfg.add_symbol(name, defined[name])
+            elif isinstance(parent_sdfg.arrays.get(name), data.Scalar):
+                sdfg.add_symbol(name, parent_sdfg.arrays[name].dtype)
+    return sdfg
 
 
 @library.register_expansion(FFT, "pure")
@@ -116,6 +129,14 @@ COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
 
 #: The most axes one cuFFT / hipFFT plan transforms.
 MAX_GPU_FFT_RANK = 3
+
+#: cuFFT to hipFFT: a prefix swap, except the inverse direction.
+HIP_FFT = (
+    ("CUFFT_INVERSE", "HIPFFT_BACKWARD"),
+    ("cufft", "hipfft"),
+    ("CUFFT_", "HIPFFT_"),
+    ("cuFFT", "hipFFT"),
+)
 
 
 class Transform(NamedTuple):
@@ -162,7 +183,7 @@ def vendor_fft_sdfg(
     layout the vendor cannot address even staged falls back to the ``pure`` expansion, with a warning naming the
     backend.
     """
-    from dace.libraries.fft.algorithms.dft import complex_of, floating_text, real_of  # avoid loop
+    from dace.libraries.fft.algorithms.dft import complex_of, floating_text, is_unit, real_of  # avoid loop
 
     inverse = isinstance(node, IFFT)
     indesc, outdesc = input_and_output(parent_state, parent_sdfg, node)
@@ -210,39 +231,30 @@ def vendor_fft_sdfg(
     # Divide in floating point: ``1/N`` over an integer extent symbol is C integer division.
     scale = (
         ""
-        if str(node.factor) == "1"
+        if is_unit(node.factor)
         else f" * dace.{'float64' if complex_type == dtypes.complex128 else 'float32'}({floating_text(node.factor)})"
     )
 
-    from dace.libraries.fft.algorithms.dft import index_ranges  # avoid loop
+    from dace.libraries.fft.algorithms.dft import add_elementwise_state, index_ranges  # avoid loop
 
-    def elementwise(state: SDFGState, label: str, src: str, dst: str, shape, code: str) -> None:
+    def elementwise(after, label: str, src: str, dst: str, shape, code: str) -> SDFGState:
         ranges = index_ranges(shape, "__i")
         subset = ", ".join(ranges)
-        state.add_mapped_tasklet(
-            label,
-            ranges,
-            {"i": Memlet(data=src, subset=subset)},
-            code,
-            {"o": Memlet(data=dst, subset=subset)},
-            schedule=schedule,
-            external_edges=True,
-        )
+        return add_elementwise_state(sdfg, after, label, src, dst, ranges, subset, subset, code, schedule=schedule)
 
-    source = "_inp"
-    state = sdfg.add_state("fft", is_start_block=True)
+    source, state = "_inp", None
     if stage:
         sdfg.add_transient("__staged", staged.shape, staged.dtype, storage=staged.storage, strides=staged.strides)
         # The cast names the type: ``decltype(o)`` would be a reference to the target element.
-        elementwise(state, "stage", "_inp", "__staged", indesc.shape, f"o = dace.{read_type.to_string()}(i){scale}")
+        state = elementwise(
+            None, "stage", "_inp", "__staged", indesc.shape, f"o = dace.{read_type.to_string()}(i){scale}"
+        )
         source = "__staged"
-        state = sdfg.add_state_after(state, "fft")
+    state = sdfg.add_state("fft", is_start_block=True) if state is None else sdfg.add_state_after(state, "fft")
     state.add_edge(state.add_read(source), None, tasklet, "__in", Memlet.from_array(source, sdfg.arrays[source]))
     state.add_edge(tasklet, "__out", state.add_write("_out"), None, Memlet.from_array("_out", sdfg.arrays["_out"]))
     if scale and not stage:
-        elementwise(
-            sdfg.add_state_after(state, "normalize"), "normalize", "_out", "_out", outdesc.shape, f"o = i{scale}"
-        )
+        elementwise(state, "normalize", "_out", "_out", outdesc.shape, f"o = i{scale}")
     return sdfg
 
 
@@ -256,7 +268,9 @@ def dense_block_order(
     dimension list maps the same logical axis in the input and the output. Compared through
     :func:`~dace.symbolic.relax_ipow`, since canonicalization respells a packed stride ``N**2`` as ``ipow(N, 2)``.
     """
-    for order in itertools.permutations(axes):
+    # Every order up to rank 3 (the GPU plans' limit); past it, C and Fortran order only, not ``r!`` orders.
+    orders = itertools.permutations(axes) if len(axes) <= 3 else (tuple(axes), tuple(reversed(axes)))
+    for order in orders:
         steps = []
         for desc in descs:
             step = span = desc.strides[order[-1]]
@@ -273,14 +287,15 @@ def dense_block_order(
     return None
 
 
-def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
+def fftw3_call(transform: Transform, threaded: bool | None = None) -> nodes.Tasklet | None:
     """One ``fftw_plan_guru64_dft`` (``_r2c``, ``_c2r``) over the transformed axes, every other axis a ``howmany``
     batch dimension, planned once and kept in the library's plan cache.
 
     Both dimension lists step by the descriptors' own strides, so any rank, any axis set and any strided view is
     one plan, and one buffer on both connectors is FFTW's in-place transform. A plan is keyed by the transform
     kind, the extents and strides, whether the transform is in place, the planner's thread count and the arrays'
-    alignment, the conditions under which FFTW's new-array execute may reuse a plan.
+    alignment, the conditions under which FFTW's new-array execute may reuse a plan. ``threaded`` says whether the
+    planner threads; ``None`` asks the FFTW3 install whether it links the threaded planner of this precision.
     """
     from dace.codegen.targets import cpp  # avoid import loop
     from dace.libraries.fft.environments import fftw3
@@ -328,11 +343,19 @@ def fftw3_call(transform: Transform) -> nodes.Tasklet | None:
         else "(long long)(reinterpret_cast<uintptr_t>(__in) % 64), (long long)(reinterpret_cast<uintptr_t>(__out) % 64)"
     )
     sign = f"{'FFTW_BACKWARD' if transform.inverse else 'FFTW_FORWARD'}, " if kind == "dft" else ""
-    threaded = fftw3.threaded()
-    # A threaded FFTW plans for the team the program runs (pocketfft's ``workers``); inside a parallel region, one.
+    # FFTW's threads library is a companion a program may unload under the planner it registered into; MKL's
+    # interface threads inside MKL
+    pin = (
+        f"static const int __threads_pinned = dace::fft::PinLibraryOf(reinterpret_cast<void *>(&{prefix}_init_threads));"
+        " (void)__threads_pinned;\n"
+        if threaded is None
+        else ""
+    )
+    threaded = fftw3.threaded(transform.double) if threaded is None else threaded
+    # A threaded FFTW plans for the program's OpenMP team, or for one thread inside a parallel region
     team = (
         f"static const int __threads_ready = {prefix}_init_threads(); (void)__threads_ready;\n"
-        f"{prefix}_plan_with_nthreads(__threads);"
+        f"{pin}{prefix}_plan_with_nthreads(__threads);"
         if threaded
         else ""
     )
@@ -441,85 +464,82 @@ def gpu_fft_layout(transform: Transform) -> GpuFftLayout | None:
     )
 
 
-def gpu_fft_call(dialect: GpuFftDialect) -> VendorCall:
-    """The cuFFT / hipFFT call in ``dialect``'s spelling: a ``MakePlanMany64`` plan from the library's plan cache,
-    run on the SDFG's stream, so a transform inside a loop plans once. One buffer on both connectors is the vendor's
-    in-place transform.
+def cufft_call(transform: Transform) -> nodes.Tasklet | None:
+    """The cuFFT call: a ``MakePlanMany64`` plan from the library's plan cache, run on the SDFG's stream, so a
+    transform inside a loop plans once. One buffer on both connectors is the vendor's in-place transform.
     """
+    from dace.codegen.targets import cpp  # avoid import loop
 
-    def call(transform: Transform) -> nodes.Tasklet | None:
-        from dace.codegen.targets import cpp  # avoid import loop
-
-        layout = gpu_fft_layout(transform)
-        if layout is None:
-            return None
-        rank = len(layout.lengths)
-        key = [
-            cpp.sym2cpp(e)
-            for e in (
-                *layout.lengths,
-                *layout.in_embed,
-                layout.in_stride,
-                layout.in_distance,
-                *layout.out_embed,
-                layout.out_stride,
-                layout.out_distance,
-                layout.batch,
-            )
-        ]
-        lengths, in_embed, out_embed = "__key", f"__key + {rank}", f"__key + {2 * rank + 2}"
-        in_layout = f"{in_embed}, __key[{2 * rank}], __key[{2 * rank + 1}]"
-        out_layout = f"{out_embed}, __key[{3 * rank + 2}], __key[{3 * rank + 3}]"
-        batch = f"__key[{3 * rank + 4}]"
-        letter = "Z" if transform.double else "C"
-        real_letter = "D" if transform.double else "R"
-        kind = (
-            f"{real_letter}2{letter}"
-            if transform.real_input
-            else f"{letter}2{real_letter}"
-            if transform.real_output
-            else f"{letter}2{letter}"
+    layout = gpu_fft_layout(transform)
+    if layout is None:
+        return None
+    rank = len(layout.lengths)
+    key = [
+        cpp.sym2cpp(e)
+        for e in (
+            *layout.lengths,
+            *layout.in_embed,
+            layout.in_stride,
+            layout.in_distance,
+            *layout.out_embed,
+            layout.out_stride,
+            layout.out_distance,
+            layout.batch,
         )
-        direction = dialect.inverse if transform.inverse else f"{dialect.enum}FORWARD"
-        # The cache is shared by every transform, so the key ends with the transform type.
-        key += [str(int(transform.real_input) + 2 * int(transform.real_output)), str(int(transform.double))]
-        check = (
-            f"void (*__check)(const char *, {dialect.api}Result) = [](const char *what, {dialect.api}Result result) {{ "
-            f'if (result != {dialect.enum}SUCCESS) throw std::runtime_error(std::string("{dialect.name} ") + '
-            f'what + " failed with status " + std::to_string((int)result)); }};'
-        )
-        code = f"""
-        {check}
-        long long __key[{len(key)}] = {{{", ".join(key)}}};
-        // An empty transform is numpy's empty result: nothing to plan, and the vendor planner raises
-        // SIGFPE on a zero extent or batch.
-        bool __empty = {batch} == 0;
-        for (int __k = 0; __k < {rank}; ++__k)
-            __empty = __empty || __key[__k] == 0;
-        if (!__empty) {{
-        {dialect.api}Handle __plan = dace::fft::Plans<{dialect.api}Handle>([]({dialect.api}Handle plan) {{
-            {dialect.api}Destroy(plan);
-        }}).Get({{std::begin(__key), std::end(__key)}}, [&] {{
-            {dialect.api}Handle __made;
-            __check("{dialect.api}Create", {dialect.api}Create(&__made));
-            size_t __work_size = 0;
-            __check("{dialect.api}MakePlanMany64", {dialect.api}MakePlanMany64(__made, {rank}, {lengths},
-                {in_layout}, {out_layout}, {dialect.enum}{kind}, {batch}, &__work_size));
-            return __made;
-        }});
-        __check("{dialect.api}SetStream", {dialect.api}SetStream(__plan, __dace_current_stream));
-        __check("{dialect.api}XtExec", {dialect.api}XtExec(__plan, (void *)__in, (void *)__out, {direction}));
-        }}
-        """
-        return nodes.Tasklet(
-            f"{dialect.api}_{'i' if transform.inverse else ''}fft",
-            {"__in"},
-            {"__out"},
-            code,
-            language=dtypes.Language.CPP,
-        )
-
-    return call
+    ]
+    lengths, in_embed, out_embed = "__key", f"__key + {rank}", f"__key + {2 * rank + 2}"
+    in_layout = f"{in_embed}, __key[{2 * rank}], __key[{2 * rank + 1}]"
+    out_layout = f"{out_embed}, __key[{3 * rank + 2}], __key[{3 * rank + 3}]"
+    batch = f"__key[{3 * rank + 4}]"
+    letter = "Z" if transform.double else "C"
+    real_letter = "D" if transform.double else "R"
+    kind = (
+        f"{real_letter}2{letter}"
+        if transform.real_input
+        else f"{letter}2{real_letter}"
+        if transform.real_output
+        else f"{letter}2{letter}"
+    )
+    direction = "CUFFT_INVERSE" if transform.inverse else "CUFFT_FORWARD"
+    # The cache is shared by every transform, so the key ends with the transform type.
+    key += [str(int(transform.real_input) + 2 * int(transform.real_output)), str(int(transform.double))]
+    # A plan's work area serves one transform at a time: each stream gets its own plan
+    key.append("(long long)reinterpret_cast<uintptr_t>(__dace_current_stream)")
+    check = (
+        "void (*__check)(const char *, cufftResult) = [](const char *what, cufftResult result) { "
+        'if (result != CUFFT_SUCCESS) throw std::runtime_error(std::string("cuFFT ") + '
+        'what + " failed with status " + std::to_string((int)result)); };'
+    )
+    code = f"""
+    {check}
+    long long __key[{len(key)}] = {{{", ".join(key)}}};
+    // An empty transform is numpy's empty result: nothing to plan, and the vendor planner raises
+    // SIGFPE on a zero extent or batch.
+    bool __empty = {batch} == 0;
+    for (int __k = 0; __k < {rank}; ++__k)
+        __empty = __empty || __key[__k] == 0;
+    if (!__empty) {{
+    cufftHandle __plan = dace::fft::Plans<cufftHandle>([](cufftHandle plan) {{
+        cufftDestroy(plan);
+    }}).Get({{std::begin(__key), std::end(__key)}}, [&] {{
+        cufftHandle __made;
+        __check("cufftCreate", cufftCreate(&__made));
+        size_t __work_size = 0;
+        __check("cufftMakePlanMany64", cufftMakePlanMany64(__made, {rank}, {lengths},
+            {in_layout}, {out_layout}, CUFFT_{kind}, {batch}, &__work_size));
+        return __made;
+    }});
+    __check("cufftSetStream", cufftSetStream(__plan, __dace_current_stream));
+    __check("cufftXtExec", cufftXtExec(__plan, (void *)__in, (void *)__out, {direction}));
+    }}
+    """
+    return nodes.Tasklet(
+        f"cufft_{'i' if transform.inverse else ''}fft",
+        {"__in"},
+        {"__out"},
+        code,
+        language=dtypes.Language.CPP,
+    )
 
 
 class ExpandFFTW3(xf.ExpandTransformation):
@@ -542,45 +562,38 @@ class FFTW3IFFTExpansion(ExpandFFTW3):
     pass
 
 
-class ExpandGPUFFT(xf.ExpandTransformation):
-    """The one GPU FFT expansion; a backend subclass names its environment and :class:`GpuFftDialect`."""
+class ExpandCuFFT(xf.ExpandTransformation):
+    """GPU cuFFT backend; the hipFFT one is its code renamed."""
 
-    environments = []
-    dialect: GpuFftDialect
+    environments = [env.cuFFT, env.FFTPlans]
 
-    @classmethod
-    def expansion(cls, node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
-        return vendor_fft_sdfg(node, parent_state, parent_sdfg, gpu_fft_call(cls.dialect), cls.dialect.name)
+    @staticmethod
+    def expansion(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return vendor_fft_sdfg(node, parent_state, parent_sdfg, cufft_call, "cuFFT")
 
 
 @library.register_expansion(FFT, "cuFFT")
-class cuFFTFFTExpansion(ExpandGPUFFT):
-    environments = [env.cuFFT, env.FFTPlans]
-    dialect = CUFFT
+class cuFFTFFTExpansion(ExpandCuFFT):
+    pass
 
 
 @library.register_expansion(IFFT, "cuFFT")
-class cuFFTIFFTExpansion(ExpandGPUFFT):
-    environments = [env.cuFFT, env.FFTPlans]
-    dialect = CUFFT
+class cuFFTIFFTExpansion(ExpandCuFFT):
+    pass
 
 
-@library.register_expansion(FFT, "hipFFT")
-class hipFFTFFTExpansion(ExpandGPUFFT):
-    environments = [env.hipFFT, env.FFTPlans]
-    dialect = HIPFFT
+for node_type, cuda_expansion in ((FFT, cuFFTFFTExpansion), (IFFT, cuFFTIFFTExpansion)):
+    library.register_expansion(node_type, "hipFFT")(hip_dialect.hip_expansion(cuda_expansion, env.hipFFT, HIP_FFT))
 
 
-@library.register_expansion(IFFT, "hipFFT")
-class hipFFTIFFTExpansion(ExpandGPUFFT):
-    environments = [env.hipFFT, env.FFTPlans]
-    dialect = HIPFFT
+class ExpandMKL(xf.ExpandTransformation):
+    """MKL backend: the FFTW3 expansion's code against MKL's FFTW3 interface, whose planner always threads."""
 
+    environments = [IntelMKL, env.MKLFFTW3, env.FFTPlans]
 
-class ExpandMKL(ExpandFFTW3):
-    """MKL backend: MKL exposes the FFTW3 C ABI, so the code is the FFTW3 expansion's, linked against MKL."""
-
-    environments = [IntelMKL, env.FFTPlans]
+    @staticmethod
+    def expansion(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return vendor_fft_sdfg(node, parent_state, parent_sdfg, functools.partial(fftw3_call, threaded=True), "MKL")
 
 
 @library.register_expansion(FFT, "MKL")

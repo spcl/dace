@@ -120,10 +120,8 @@ sdfg.validate()
 @pytest.mark.gpu
 def test_multistream_custom():
     N = 27
-    # First, add the vendor BLAS library to link to the configuration
-    oldconf = dp.Config.get("compiler", "cpu", "libs")
     library = GPU_BLAS["library"]
-    dp.Config.append("compiler", "cpu", "libs", value=f"{library}.lib" if os.name == "nt" else f"lib{library}.so")
+    linked = f"{library}.lib" if os.name == "nt" else f"lib{library}.so"
 
     # Initialize arrays. We are using column-major order to support the vendor BLAS!
     A = np.ndarray([N, N], dtype=np.float64, order="F")
@@ -137,11 +135,10 @@ def test_multistream_custom():
     out_ref = A @ A @ B
 
     # We can safely call numpy with arrays allocated on the CPU, since they
-    # will be copied.
-    sdfg(A=A, B=B, C=C, N=N)
-
-    # Revert config change
-    dp.Config.set("compiler", "cpu", "libs", value=oldconf)
+    # will be copied. The vendor BLAS is linked for this call only, even when it fails.
+    libs = " ".join(filter(None, [dp.Config.get("compiler", "cpu", "libs"), linked]))
+    with dp.config.set_temporary("compiler", "cpu", "libs", value=libs):
+        sdfg(A=A, B=B, C=C, N=N)
 
     diff = np.linalg.norm(C - out_ref)
     print("Difference:", diff)

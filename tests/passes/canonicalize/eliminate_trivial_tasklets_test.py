@@ -92,8 +92,7 @@ def _access_to_mapexit():
     """expr 2: ``AccessNode -> Tasklet -> MapExit``, the copy at the stage-out boundary.
 
     Kept, not eliminated, whenever the stage-out memlet names the outer array rather than the
-    read access node: splicing then yields an invalid ``<scalar> -> MapExit`` edge. This is the
-    shape ``InsertAssignTaskletsAtMapBoundary`` re-creates, so the refusal is the normal outcome.
+    read access node: splicing then yields an invalid ``<scalar> -> MapExit`` edge.
     """
     sdfg = dace.SDFG("expr2_access_to_mapexit")
     sdfg.add_array("a", [N], dace.float64)

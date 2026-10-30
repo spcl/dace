@@ -48,6 +48,8 @@ bit-identical.
 import copy
 from typing import Any
 
+import sympy
+
 from dace import Memlet, data, dtypes, properties, subsets, symbolic
 from dace.optionals import required
 from dace.sdfg import SDFG, nodes
@@ -362,22 +364,28 @@ class ChunkAntiDependence(ppl.Pass):
             copy_state.remove_node(written)
 
     @staticmethod
-    def _copy_trailing_row(seam: SDFGState, arr: str, buf: str, hi, offset, last_row) -> None:
-        """Copy the ``offset`` cells after ``hi``, the read no chunk boundary lands on, into seam row ``last_row``."""
+    def _copy_trailing_row(seam: SDFGState, arr: str, buf: str, lo, hi, offset, last_row) -> None:
+        """Copy the ``offset`` cells after ``hi``, the read no chunk boundary lands on, into seam row ``last_row``. Cell
+        ``hi + 1 + m`` is read by iteration ``hi + 1 + m - offset``, so only the cells of iterations at or past ``lo``
+        are copied: a range shorter than ``offset`` (none at all when ``hi < lo``) reads fewer, and the rest lie
+        outside the array. A map spells the possibly empty range."""
         if isinstance(offset, int):
+            # Cells ``hi + 1 .. hi + offset`` are the reads of the last ``offset`` iterations, in bounds whenever the
+            # loop runs: one copy, no map
             row = [(last_row, last_row, 1)] + ([(0, offset - 1, 1)] if offset != 1 else [])
             trailing = Memlet(
                 data=arr, subset=subsets.Range([(hi + 1, hi + offset, 1)]), other_subset=subsets.Range(row)
             )
             seam.add_nedge(seam.add_read(arr), seam.add_write(buf), trailing)
             return
-        # A symbolic row may be empty at run time, which a copy range cannot spell; a map runs zero times.
+        first = symbolic.symstr(sympy.Max(0, as_expr(lo) + offset - as_expr(hi) - 1))
+        out = f"{buf}[{symbolic.symstr(last_row)}]" if offset == 1 else f"{buf}[{symbolic.symstr(last_row)}, _seam_m]"
         seam.add_mapped_tasklet(
             f"{arr}_antidep_trailing",
-            {"_seam_m": f"0:{symbolic.symstr(offset)}"},
+            {"_seam_m": f"{first}:{symbolic.symstr(offset)}"},
             {"_in": Memlet(f"{arr}[{symbolic.symstr(hi + 1)} + _seam_m]")},
             "_out = _in",
-            {"_out": Memlet(f"{buf}[{symbolic.symstr(last_row)}, _seam_m]")},
+            {"_out": Memlet(out)},
             external_edges=True,
         )
 
@@ -448,7 +456,7 @@ class ChunkAntiDependence(ppl.Pass):
                 {"_out": Memlet(f"{buf}[_seam_j, _seam_m]")},
                 external_edges=True,
             )
-        self._copy_trailing_row(seam, arr, buf, hi, offset, nchunks)
+        self._copy_trailing_row(seam, arr, buf, lo, hi, offset, nchunks)
         every_row = subsets.Range([(0, nchunks, 1)] + row(0)[1:])
 
         # Prologue: the one iteration whose read-ahead has no chunk in front of it, so it

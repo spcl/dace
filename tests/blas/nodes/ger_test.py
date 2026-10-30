@@ -140,7 +140,7 @@ def test_complex_ger_on_the_gpu_does_not_conjugate(order):
     sdfg.add_array("y", [n], dace.complex128, gpu)
     state = sdfg.add_state()
     node = blas.Ger("ger", m=m, n=n, alpha=1.5)
-    node.implementation = "rocBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
+    node.implementation = "hipBLAS" if get_gpu_backend() == "hip" else "cuBLAS"
     for connector, name in (("_A", "A"), ("_x", "x"), ("_y", "y")):
         state.add_edge(state.add_read(name), None, node, connector, Memlet.from_array(name, sdfg.arrays[name]))
     state.add_edge(node, "_res", state.add_write("res"), None, Memlet.from_array("res", sdfg.arrays["res"]))

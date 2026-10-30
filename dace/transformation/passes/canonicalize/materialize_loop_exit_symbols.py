@@ -220,17 +220,26 @@ def _post_loop_blocks(parent: ControlFlowRegion, loop: LoopRegion) -> dict[Contr
     return visited
 
 
-def reiterated_names(post_blocks: dict[ControlFlowBlock, None]) -> dict[str, None]:
+def reiterated_names(
+    post_blocks: dict[ControlFlowBlock, None], iterators: dict[ControlFlowBlock, list[str]] | None = None
+) -> dict[str, None]:
     """Iterators of the loops in the post-loop region. Such a loop binds its iterator afresh, so a read inside it is
-    not a read of the exit value; renaming it to the exit symbol reads the wrong element (TSVC s1244 after fission)."""
+    not a read of the exit value; renaming it to the exit symbol reads the wrong element (TSVC s1244 after fission).
+
+    :param iterators: Memo of each region's loop iterators, valid while the graph is unchanged.
+    """
+    iterators = {} if iterators is None else iterators
     names: dict[str, None] = {}
     for block in post_blocks:
         if isinstance(block, AbstractControlFlowRegion):
-            names.update(
-                (region.loop_variable, None)
-                for region in block.all_control_flow_regions()
-                if isinstance(region, LoopRegion) and region.loop_variable
-            )
+            found = iterators.get(block)
+            if found is None:
+                found = iterators[block] = [
+                    region.loop_variable
+                    for region in block.all_control_flow_regions()
+                    if isinstance(region, LoopRegion) and region.loop_variable
+                ]
+            names.update((name, None) for name in found)
     return names
 
 
@@ -291,13 +300,18 @@ def _is_read_in(
     parent: ControlFlowRegion,
     state_reads: dict[SDFGState, set[str]],
     edge_texts: dict[int, str],
+    block_states: dict[ControlFlowBlock, list] | None = None,
 ) -> bool:
     """Whether ``name`` is read in ``blocks``: among a state's used symbols, or in the text of an
     interstate edge that stays within ``blocks``. The edge half stays TEXT because the test is a
-    substring one, not an identifier one. Both lookups are memoised in the caller's dicts.
+    substring one, not an identifier one. All lookups are memoised in the caller's dicts.
     """
+    block_states = {} if block_states is None else block_states
     for block in blocks:
-        for s in block.states() if isinstance(block, ControlFlowRegion) else [block]:
+        held = block_states.get(block)
+        if held is None:
+            held = block_states[block] = list(block.states()) if isinstance(block, ControlFlowRegion) else [block]
+        for s in held:
             if not isinstance(s, SDFGState):
                 continue
             if s not in state_reads:
@@ -347,10 +361,12 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             # read once per SDFG instead of once per loop before it; a materialisation clears both.
             state_reads: dict[SDFGState, set[str]] = {}
             edge_texts: dict[int, str] = {}
+            # What each region holds (its states, its loops' iterators), until a materialisation
+            held: tuple[dict, dict] = ({}, {})
             for cfg in list(sd.all_control_flow_regions()):
                 if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
                     continue
-                count = self._try_materialise(cfg, sd, sd_free_symbols, resolver, state_reads, edge_texts)
+                count = self._try_materialise(cfg, sd, sd_free_symbols, resolver, state_reads, edge_texts, held)
                 if count:
                     materialised += count
                     sd_free_symbols = sd.free_symbols
@@ -382,6 +398,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         resolver: scopes.ScopedSymbolResolver,
         state_reads: dict[SDFGState, set[str]],
         edge_texts: dict[int, str],
+        held: tuple[dict, dict] | None = None,
     ) -> int:
         parent = loop.parent_graph
         if parent is None:
@@ -411,7 +428,8 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         post_blocks = _post_loop_blocks(parent, loop)
         if not post_blocks:
             return 0
-        reiterated = reiterated_names(post_blocks)
+        block_states, iterators = ({}, {}) if held is None else held
+        reiterated = reiterated_names(post_blocks, iterators)
 
         count = 0
         next_id = _next_post_id(sdfg, sdfg_free_symbols)
@@ -419,7 +437,7 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             if sym_name in reiterated:
                 continue  # a later loop rebinds it: its readers there never see this exit value
             # Check this symbol is actually READ in the post-loop region.
-            if not _is_read_in(sym_name, post_blocks, parent, state_reads, edge_texts):
+            if not _is_read_in(sym_name, post_blocks, parent, state_reads, edge_texts, block_states):
                 continue
             # The seed is the pre-loop value: a body symbol's own name, read on an edge BEFORE the loop (after
             # it the name already holds the exit value), or the iterator's init expression.
@@ -448,6 +466,8 @@ class MaterializeLoopExitSymbols(ppl.Pass):
             count += 1
             state_reads.clear()  # the rewrite changed what these very blocks read
             edge_texts.clear()
+            block_states.clear()
+            iterators.clear()
         return count
 
 

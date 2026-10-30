@@ -51,7 +51,6 @@ def cpu_canon(sdfg: dace.SDFG) -> dace.SDFG:
     canonicalize(
         sdfg,
         target="cpu",
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
         validate_all=False,

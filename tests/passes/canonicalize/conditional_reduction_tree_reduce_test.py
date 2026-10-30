@@ -89,7 +89,6 @@ def test_condsum_cpu_emits_reduction_clause_and_no_atomic():
         sdfg,
         target="cpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
     )
@@ -114,7 +113,6 @@ def test_condsum_cpu_value_preserving():
         sdfg,
         target="cpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
     )
@@ -137,7 +135,6 @@ def test_condsum_symbolic_threshold_cpu():
         sdfg,
         target="cpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
     )
@@ -168,7 +165,6 @@ def test_condprod_cpu_uses_multiplicative_identity():
         sdfg,
         target="cpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=True,
         scatter_to_guarded_maps=True,
     )
@@ -194,7 +190,6 @@ def test_condsum_gpu_emits_block_reduce():
         sdfg,
         target="gpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=False,
         scatter_to_guarded_maps=True,
     )
@@ -215,7 +210,6 @@ def test_condsum_gpu_block_reduce_matches_numpy(n):
         sdfg,
         target="gpu",
         peel_limit=4,
-        break_anti_dependence=True,
         interchange_carry_with_map=False,
         scatter_to_guarded_maps=True,
     )

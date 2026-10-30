@@ -254,6 +254,10 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                     else:
                         # Tasklet -> AN: ``data`` must be the AN side (no other_subset).
                         new_memlet = dace.Memlet(data=dst_an.data, subset=out_subset)
+                    # The copy's write into ``dst`` may reduce (``acc[i] (+)= v``); the spliced write still does.
+                    if out_e.data.wcr is not None:
+                        new_memlet.wcr = out_e.data.wcr
+                        new_memlet.wcr_nonatomic = out_e.data.wcr_nonatomic
                     istate.add_edge(pe.src, pe.src_conn, dst_an, out_e.dst_conn, new_memlet)
                     istate.remove_edge(pe)
                 for te in list(istate.in_edges(t)) + list(istate.out_edges(t)):

@@ -303,7 +303,7 @@ def test_symbolic_fractional_power_cpp_lowering():
     assert symstr(pystr_to_symbolic("M**(1/N)"), cpp_mode=True) == "(dace::math::pow(M, 1, N))"
 
 
-def test_fractional_power_does_not_protect_equal_quotient_elsewhere():
+def test_equal_quotient_outside_an_exponent_stays_floored():
     expr = pystr_to_symbolic("M**(N/3) + N/3")
     assert symstr(expr) == "((M) ** (N/3) + int_floor(N, 3))"
     assert symstr(expr, cpp_mode=True) == "(dace::math::pow(M, N, 3) + py_floor(N, 3))"
@@ -471,6 +471,12 @@ def test_max_roundtrip_is_lossless():
     assert rt == expr
 
 
+def test_integer_power_in_a_denominator_stays_one_operand():
+    expr = pystr_to_symbolic("x / N**2")
+    assert symstr(expr, cpp_mode=True) == "(x/((N) * (N)))"
+    assert eval(symstr(expr), {"x": 36.0, "N": 3.0}) == 4.0
+
+
 if __name__ == "__main__":
     test_operator_roundtrip_renders_operator()
     test_ternary_roundtrip()
@@ -495,7 +501,7 @@ if __name__ == "__main__":
     test_infinity_cpp_lowering()
     test_fractional_power_cpp_lowering()
     test_symbolic_fractional_power_cpp_lowering()
-    test_fractional_power_does_not_protect_equal_quotient_elsewhere()
+    test_equal_quotient_outside_an_exponent_stays_floored()
     test_interstate_fractional_power_is_a_real_power()
     test_nan_roundtrip()
     test_boolean_preserved_and_distinct_from_int()
@@ -506,3 +512,4 @@ if __name__ == "__main__":
     test_symbolic_expression_serialization_preserves_integerness()
     test_symbolic_roundtrip_preserves_integerness()
     test_max_roundtrip_is_lossless()
+    test_integer_power_in_a_denominator_stays_one_operand()

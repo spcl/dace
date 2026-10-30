@@ -75,13 +75,17 @@ def drop_scope_alias(state: SDFGState, edge, inner: nodes.AccessNode) -> bool:
     """Remove ``inner``, a stage-in access node that only renames the container across the map entry.
 
     The staging ``edge`` must be its sole producer; its consumers then read the map connector directly.
-    A consumer that is itself an access node would become a new staging copy, so that shape is left to
-    the lift.
+    A consumer that is itself an access node would become a new staging copy, and one that is a scope exit (a copy
+    straight through the scope) would join the entry to the exit, so those shapes are left to the lift.
 
     :returns: whether ``inner`` was removed.
     """
     consumers = list(state.out_edges(inner))
-    if state.in_degree(inner) != 1 or not consumers or any(isinstance(e.dst, nodes.AccessNode) for e in consumers):
+    if (
+        state.in_degree(inner) != 1
+        or not consumers
+        or any(isinstance(e.dst, (nodes.AccessNode, nodes.ExitNode)) for e in consumers)
+    ):
         return False
     for e in consumers:
         if e.data.is_empty():
@@ -192,7 +196,7 @@ class InsertExplicitCopies(ppl.Pass):
         """
         count = 0
         # The copies it inserts change no symbol, interstate edge or existing descriptor: the facts hold throughout
-        with memoize_facts():
+        with memoize_facts(sdfg):
             for nsdfg in sdfg.all_sdfgs_recursive():
                 self.free_copy_connector_names(nsdfg, connectors=False)
                 inserted = 0
@@ -330,6 +334,9 @@ class InsertExplicitCopies(ppl.Pass):
             # honours it the same way); dropping it here turns a legal copy into an expansion error.
             in_memlet.allow_oob = memlet.allow_oob
             out_memlet.allow_oob = memlet.allow_oob
+            # A memlet access policy (e.g. a loop-carried address cursor) describes the side the memlet's data names.
+            if not memlet.access_policy.is_default:
+                (in_memlet if memlet.data == src_name else out_memlet).access_policy = memlet.access_policy.copy()
 
             label = f"copy_{src_name}_to_{dst_name}"
             libnode = CopyLibraryNode(name=label)

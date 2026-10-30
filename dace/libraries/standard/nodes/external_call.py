@@ -303,6 +303,13 @@ class ExternalCall(nodes.LibraryNode):
         self.numpy_source = numpy_source
 
     @property
+    def free_symbols(self) -> set[str]:
+        """The symbols the call passes by value: every ``abi_order`` argument no connector carries. A data name among
+        them is no symbol of the parent, which drops it."""
+        connected = self.in_connectors.keys() | self.out_connectors.keys()
+        return super().free_symbols | {arg for arg in self.abi_order if arg not in connected}
+
+    @property
     def standalone_sdfg(self) -> dace.SDFG | None:
         """The nest the ``DaceReference`` expansion copies; kept in memory only, never serialized."""
         return self._standalone_sdfg

@@ -84,6 +84,12 @@ def _symm_nodes(sdfg):
     return [n for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes() if isinstance(n, Symm)]
 
 
+def runtime_coefficient(value) -> bool:
+    """Whether a lifted coefficient is the symbol a runtime ``alpha[0]`` / ``beta[0]`` was read into, unscaled."""
+    expr = dace.symbolic.pystr_to_symbolic(str(value))
+    return bool(expr.free_symbols) and expr.as_coeff_Mul()[0] == 1
+
+
 def _reference(A_tri, B, C, alpha, beta):
     Asym = np.tril(A_tri) + np.tril(A_tri, -1).T
     return alpha * (Asym @ B) + beta * C
@@ -169,8 +175,8 @@ def _slice_inputs(m, n):
 
 
 def test_symm_loop_nest_lifted_to_symm_node():
-    """The scalar-loop symm nest, normalized, becomes exactly one ``Symm`` node (side L, uplo L, runtime alpha/beta
-    connectors) that matches a dense reference."""
+    """The scalar-loop symm nest, normalized, becomes exactly one ``Symm`` node (side L, uplo L, alpha and beta read
+    at run time) that matches a dense reference."""
     sdfg = _normalized(symm_loops)
     sdfg.name = f"{sdfg.name}_normalized_lift"
     assert LoopToSymm().apply_pass(sdfg, {}) == 1
@@ -178,9 +184,9 @@ def test_symm_loop_nest_lifted_to_symm_node():
     symms = _symm_nodes(sdfg)
     assert len(symms) == 1
     node = symms[0]
-    assert node.side == "L" and node.uplo == "L"
-    assert node.alpha_input and node.beta_input
-    assert node.in_connectors.keys() >= {"_a", "_b", "_c", "_alpha", "_beta"}
+    assert not node.side and not node.uplo
+    assert runtime_coefficient(node.alpha) and runtime_coefficient(node.beta)
+    assert node.in_connectors.keys() == {"_A", "_B", "_Cin"}
 
     m, n = 20, 30
     A, B, C, alpha, beta = _slice_inputs(m, n)
@@ -200,21 +206,21 @@ def test_gemm_nest_not_matched():
 def test_slice_nest_lifted_with_the_prescale_left_alone():
     """The npbench slice spelling lifts to one ``Symm`` with the RIGHT operands, the
     loop nest disappears, and the separate ``C *= beta`` prescale is left in place --
-    so the node carries a compile-time ``beta = 1`` and no ``_beta`` connector."""
+    so the node carries a compile-time ``beta = 1``."""
     sdfg = canonicalized(_symm_slice_kernel)
     symms = _symm_nodes(sdfg)
     assert len(symms) == 1
     node = symms[0]
     state = next(st for sd in sdfg.all_sdfgs_recursive() for st in sd.states() if node in st.nodes())
-    assert node.side == "L" and node.uplo == "L"
-    assert node.alpha_input and not node.beta_input and node.beta == 1
-    assert "_beta" not in node.in_connectors
-    assert (
-        _operand(state, node, "_a"),
-        _operand(state, node, "_b"),
-        _operand(state, node, "_c"),
-        _operand(state, node, "_alpha"),
-    ) == ("A", "B", "C", "alpha")
+    assert not node.side and not node.uplo
+    assert runtime_coefficient(node.alpha) and node.beta == 1
+    assert (_operand(state, node, "_A"), _operand(state, node, "_B"), _operand(state, node, "_Cin")) == ("A", "B", "C")
+    alpha = str(dace.symbolic.pystr_to_symbolic(str(node.alpha)))
+    assert any(
+        e.data.assignments.get(alpha) == "alpha[0]"
+        for sd in sdfg.all_sdfgs_recursive()
+        for e in sd.all_interstate_edges()
+    )
     # The whole nest is gone: no LoopRegion is left anywhere to recompute C.
     assert [
         r
@@ -449,13 +455,10 @@ def test_orientation_and_scaling_variants_lift(variant):
     sdfg = canonicalized(variant.program)
     (node,) = _symm_nodes(sdfg)
     state = next(st for sd in sdfg.all_sdfgs_recursive() for st in sd.states() if node in st.nodes())
-    assert (node.side, node.uplo) == (variant.side, variant.uplo)
-    assert node.alpha_input == (variant.alpha == "runtime") and node.beta_input == (variant.beta == "runtime")
-    assert (
-        float(node.alpha) == COEFFICIENT_VALUES[variant.alpha] and float(node.beta) == COEFFICIENT_VALUES[variant.beta]
-    )
-    assert (_operand(state, node, "_a"), _operand(state, node, "_b")) == ("A", "B")
-    assert ("_c" in node.in_connectors) == (variant.beta != "zero")
+    assert (node.side, node.uplo) == (variant.side == "R", variant.uplo == "U")
+    for value, want in ((node.alpha, variant.alpha), (node.beta, variant.beta)):
+        assert runtime_coefficient(value) if want == "runtime" else float(value) == COEFFICIENT_VALUES[want]
+    assert (_operand(state, node, "_A"), _operand(state, node, "_B"), _operand(state, node, "_Cin")) == ("A", "B", "C")
 
     A, B, C, alpha, beta = variant_inputs(variant.side)
     want = variant_reference(variant, A, B, C, alpha, beta)

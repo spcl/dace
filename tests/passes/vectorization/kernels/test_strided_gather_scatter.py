@@ -5,7 +5,7 @@ import pytest
 
 import dace
 from dace.libraries.tileops import TileGather
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from tests.passes.vectorization.helpers.harness import (

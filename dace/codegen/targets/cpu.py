@@ -128,51 +128,12 @@ def register_align_attribute(desc: data.Data) -> str:
     return f"  DACE_ALIGN({desc.alignment})" if desc.alignment > 0 else ""
 
 
-#: C++ spelling of each ``codegen_params.loop_index_type`` value. ``auto`` deduces from the lower
-#: bound (for the usual ``0`` that is ``int``); the others state the width outright, as exact-width
-#: ``<cstdint>`` types -- ``long long`` is only guaranteed to be AT LEAST 64 bits, so it does not
-#: state the width the key names. ``inferred`` has no single spelling: each parameter gets its own.
-LOOP_INDEX_CTYPES = {"auto": "auto", "int64": "int64_t", "int32": "int32_t", "inferred": "auto"}
-
-
 def standalone_integer_dtype(dtype: dtypes.typeclass) -> dtypes.typeclass:
     """``dtype`` as CPF declares a symbol or induction variable of it: a signed integer widens to ``int64``,
     the width of every index and ``_size`` helper beside it, so no call or comparison narrows."""
     if cpf_lowering.standalone() and dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64):
         return dtypes.int64
     return dtype
-
-
-def loop_region_index_ctype() -> str | None:
-    """Declared-type override for a sequential ``LoopRegion`` counter, per
-    ``codegen_params.loop_index_type``. ``auto`` (the default) returns ``None`` -- keep the counter's
-    inferred type, so the emitted declaration is byte-for-byte what it was before the knob existed.
-    ``int32`` / ``int64`` return ``int32_t`` / ``int64_t`` (the same spellings the map-loop emitter uses
-    via ``LOOP_INDEX_CTYPES``), applied to the hoisted declaration a LoopRegion counter is given ahead
-    of its loop. A LoopRegion is inherently sequential, so there is no OpenMP gate here."""
-    ctype = LOOP_INDEX_CTYPES[Config.get("compiler", "cpu", "codegen_params", "loop_index_type")]
-    return None if ctype == "auto" else ctype
-
-
-def is_loop_region_variable(name: str, sdfg: SDFG) -> bool:
-    """Whether ``name`` is the loop counter of some ``LoopRegion`` in ``sdfg``. Only such a counter's
-    declaration is retyped by ``loop_index_type``; every other interstate symbol keeps its inferred
-    type (retyping an arbitrary interstate assignment target would change semantics, not spelling)."""
-    return any(isinstance(cfr, LoopRegion) and cfr.loop_variable == name for cfr in sdfg.all_control_flow_regions())
-
-
-def decl_placement() -> str:
-    """Where a declaration is emitted relative to its first use, per ``codegen_params.decl_placement``:
-    ``eager`` (the default -- every declaration at the top of its scope, the legacy placement) or
-    ``late`` (each declaration moved as close to its first use as it is provably sound to move it)."""
-    return Config.get("compiler", "cpu", "codegen_params", "decl_placement")
-
-
-def scalar_init_style() -> str:
-    """Whether a mutable scalar's declaration and its first write are emitted as one binding, per
-    ``codegen_params.scalar_init_style``: ``split`` (the default -- ``T x;`` then ``x = expr;``) or
-    ``fused`` (``T x = expr;``, the declaration IS the first write)."""
-    return Config.get("compiler", "cpu", "codegen_params", "scalar_init_style")
 
 
 def counter_init_assigns_only(loop: LoopRegion) -> bool:
@@ -190,33 +151,6 @@ def counter_init_assigns_only(loop: LoopRegion) -> bool:
         and isinstance(stmt.targets[0], ast.Name)
         and stmt.targets[0].id == loop.loop_variable
     )
-
-
-def loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, sdfg: SDFG) -> str | None:
-    """The C++ type to declare interstate symbol ``name`` with INSIDE its own loop's ``for``-init clause
-    (``for (int64_t i = 0; ...)``), or ``None`` to keep the hoisted ``int64_t i;`` declaration that
-    every LoopRegion counter gets today.
-
-    ``late`` only: this is the ``decl_placement`` knob applied to a loop counter, whose hoisted
-    declaration is the single furthest-from-use declaration the generator emits -- it sits at the top of
-    the function no matter how deep the loop is. Moving it into the init clause is sound only when the
-    counter is genuinely loop-local:
-
-    - exactly ONE LoopRegion owns the name. Two loops sharing a counter share the one hoisted
-      declaration; giving each its own is a bigger change than a placement knob should make.
-    - the loop is not ``inverted``. An inverted loop emits its init BEFORE the ``do``/``while`` brace,
-      so a declaration there is not scoped to the loop and could collide with a sibling.
-    - the init statement is a plain ``i = <expr>`` (see :func:`counter_init_assigns_only`).
-    - nothing outside the loop uses the counter (see :func:`counter_used_outside_loop`).
-
-    Applies to both generators (the loop emitter is shared). ``eager`` returns ``None`` throughout, so
-    output stays byte-for-byte what it is today.
-    """
-    if decl_placement() != "late":
-        return None
-    if loop_local_counter_loop(name, loop_counter_index(sdfg)) is None:
-        return None
-    return loop_region_index_ctype() or dtype.ctype
 
 
 @dataclass(slots=True)
@@ -241,8 +175,8 @@ def loop_counter_index(sdfg: SDFG) -> LoopCounterIndex:
 
 
 def loop_local_counter_loop(name: str, index: LoopCounterIndex) -> LoopRegion | None:
-    """The loop whose ``for``-init clause may declare counter ``name``, or ``None`` when a gate of
-    :func:`loop_local_counter_ctype` refuses. ``decl_placement`` is not read here."""
+    """The loop whose ``for``-init clause may declare counter ``name``, or ``None`` when no single loop owns it, the
+    loop is inverted, its init is not a plain assignment, or the counter is used outside the loop."""
     owners = index.owners.get(name, ())
     if len(owners) != 1:
         return None
@@ -256,28 +190,60 @@ def loop_local_counter_loop(name: str, index: LoopCounterIndex) -> LoopRegion | 
     return loop
 
 
-def map_schedule_is_sequential(node: nodes.MapEntry) -> bool:
-    """Whether this map emits a plain sequential loop rather than an OpenMP ``parallel for``. The gate
-    shared by every knob that rewrites the loop into a non-canonical form (hoisted declaration, walking
-    pointer): an OpenMP pragma must be immediately followed by a CANONICAL indexed loop, and a
-    loop-carried rewrite is exactly what a ``parallel for`` forbids, so those knobs apply to sequential
-    (non-``CPU_Multicore`` / non-``CPU_Persistent``) maps only."""
-    return node.map.schedule not in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
-
-
-def gpu_block_reduction_write_slot(subset, base, length):
-    """Register-partial slot for a write to a GPU thread-block tree-reduction accumulator.
-
-    The function considers the selected C++ standard and the `alignment` property
-    of the data descriptor.
-    """
-    if subset is None or len(subset.ranges) != 1:
+def contiguous_span(subset, strides):
+    """``(start, length)`` of ``subset`` in the flat element order of an array of ``strides``, when it is one
+    contiguous run: a single index on every dimension but the last, a unit-step range on the last at unit stride;
+    else ``None``. ``length`` is symbolic where the range is."""
+    if subset is None or len(subset.ranges) != len(strides) or subset.ranges[-1][2] != 1:
         return None
-    offset = subset.ranges[0][0] - base
+    if len(subset.ranges) > 1 and (strides[-1] != 1 or any(r[0] != r[1] for r in subset.ranges[:-1])):
+        return None
+    start = sum(r[0] * stride for r, stride in zip(subset.ranges, strides))
+    return start, subset.ranges[-1][1] - subset.ranges[-1][0] + 1
+
+
+def gpu_block_reduction_write_slot(subset, base, length, strides=(1,)):
+    """Register-partial slot for a write to a GPU thread-block tree-reduction accumulator of ``strides``: its flat
+    offset from the accumulator's ``base``, or ``None`` when it is not one element of the ``length`` slots."""
+    span = contiguous_span(subset, strides)
+    if span is None:
+        return None
+    offset = span[0] - base
     if not symbolic.issymbolic(offset):
         if int(offset) < 0 or int(offset) >= length:
             return None
     return offset
+
+
+def block_invariant_params(scope_entry: nodes.MapEntry, block_dims: tuple[int, int, int]) -> set[str]:
+    """The parameters of a kernel map every thread of one block shares: those whose thread-block extent is 1 (the
+    last parameter runs along ``x``, the one before along ``y``, then ``z``), each the block's base. A map of more
+    parameters, folded onto the three axes, has none."""
+    params = scope_entry.map.params
+    if len(params) > 3:
+        return set()
+    return {param for param, extent in zip(reversed(params), block_dims) if extent == 1}
+
+
+def union_of_spans(edges: list, strides, base, redtype, invariant: set[str]) -> tuple | None:
+    """``(start, length)`` of the run covering every span ``edges`` write, each a contiguous, block-invariant run of
+    ``redtype`` a constant number of elements from ``base``; ``None`` if any is not."""
+    low = high = None
+    for edge in edges:
+        span = contiguous_span(edge.data.subset, strides)
+        if (
+            span is None
+            or edge.data.dynamic
+            or operations.detect_reduction_type(edge.data.wcr) != redtype
+            or any(str(sym) not in invariant for sym in edge.data.subset.free_symbols)
+        ):
+            return None
+        offset = symbolic.simplify(span[0] - base)
+        if symbolic.issymbolic(offset) or symbolic.issymbolic(span[1]):
+            return None
+        low = int(offset) if low is None else min(low, int(offset))
+        high = int(offset + span[1]) if high is None else max(high, int(offset + span[1]))
+    return base + low, high - low
 
 
 def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEntry, block_dims, frame) -> list:
@@ -289,8 +255,8 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
     commits a single atomic (versus one contended atomic per thread). A scalar accumulator is one slot
     (``m == 1``); a length-``m`` reduced subset is folded element-wise by the drain loop.
 
-    The guard is deliberately narrow: a single, loop-invariant, compile-time-length 1-D span (a
-    param-dependent subset is a scatter, not a reduction), a scalar (non-vector) built-in op with a
+    The guard is deliberately narrow: a single, block-invariant, compile-time-length 1-D span (one indexed by a
+    parameter the threads of a block vary is a scatter, not a reduction), a scalar (non-vector) built-in op with a
     known identity element, and compile-time-constant block dimensions (cub templates on them). Anything
     else keeps the per-thread atomic fallback.
 
@@ -311,6 +277,12 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
     map_params = set(scope_entry.map.params)
     outer_symbols: set[str] | None = None
     seen_targets: set[str] = set()
+    # Every WCR edge into one accumulator: the components of one row (``f[i, 0]``, ``f[i, 1]``, ``f[i, 2]``) are one
+    # register partial spanning them all
+    wcr_edges: dict[str, list] = {}
+    for iedge in state.in_edges(map_exit):
+        if iedge.data is not None and iedge.data.wcr is not None:
+            wcr_edges.setdefault(iedge.data.data, []).append(iedge)
     for i, iedge in enumerate(state.in_edges(map_exit)):
         if iedge.data is None or iedge.data.wcr is None:
             continue
@@ -321,20 +293,24 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
         # cub, the identity literal and ``_wcr_fixed::reduce_atomic`` all want a scalar ctype.
         if isinstance(acc_desc.dtype, dtypes.vector):
             continue
-        if len(subset) != 1 or subset.ranges[0][2] != 1:
+        # One contiguous run of the accumulator: a 1-D span, or a row of a multi-dimensional one
+        span = contiguous_span(subset, acc_desc.strides)
+        if span is None:
             continue
         redtype = operations.detect_reduction_type(iedge.data.wcr)
         identity = dtypes.reduction_identity(acc_desc.dtype, redtype)
         if redtype == dtypes.ReductionType.Custom or identity is None:
             continue  # only built-in ops with a known identity element
-        base, end, _ = subset.ranges[0]
-        # Loop-invariant target: indexed by nothing this scope defines (its parameters, a value read inside it)
+        base, length = span
+        # Block-invariant target: indexed by nothing this scope defines (its parameters, a value read inside it)
+        # but the parameters every thread of one block shares
         if outer_symbols is None:
             outer_symbols = set(map(str, frame.symbols_defined_at(state, scope_entry))) - map_params
+            outer_symbols |= block_invariant_params(scope_entry, (block_x, block_y, block_z))
         shared = iedge.data.dynamic or any(str(s) not in outer_symbols for s in subset.free_symbols)
         if shared:
             # A scatter into a small array: privatized per block in shared memory instead (``shared_scatter_target``)
-            if not shared_scatter_target(sdfg, state, scope_entry, iedge.data.data, acc_desc):
+            if len(subset) != 1 or not shared_scatter_target(sdfg, state, scope_entry, iedge.data.data, acc_desc):
                 continue
             base = 0
             size = acc_desc.total_size
@@ -342,9 +318,12 @@ def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: node
             extent = sym2cpp(size)
         else:
             try:
-                m = int(end - base) + 1
+                m = int(length)
             except (TypeError, ValueError):
                 continue  # symbolic length: cannot size the register partial / drain loop
+            union = union_of_spans(wcr_edges[iedge.data.data], acc_desc.strides, base, redtype, outer_symbols)
+            if union is not None:
+                base, m = union
             extent = str(m)
         seen_targets.add(iedge.data.data)
         ctype = acc_desc.dtype.ctype
@@ -399,7 +378,8 @@ def shared_scatter_target(sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEn
         return False
     scope = state.scope_subgraph(scope_entry)
     if symbolic.issymbolic(desc.total_size, sdfg.constants):
-        if not {str(sym) for sym in desc.total_size.free_symbols} <= set(map(str, scope.free_symbols)):
+        # The symbols a kernel receives: a shape symbol nothing in the scope uses is not among them
+        if not {str(sym) for sym in desc.total_size.free_symbols} <= set(scope.arglist()):
             return False
     elif int(desc.total_size) > SHARED_SCATTER_ELEMENTS:
         return False
@@ -612,6 +592,14 @@ _REDUCTION_TO_OMP_OP = {
 #: ``#pragma omp declare reduction`` (OpenMP has no built-in reduction for complex).
 _COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
 
+#: The exported helpers of a ``.cu``, named after neither the target nor the SDFG.
+GPU_RUNTIME_HELPERS = (
+    "__dace_gpu_drain_error",
+    "__dace_gpu_last_error",
+    "__dace_gpu_set_stream",
+    "__dace_gpu_set_all_streams",
+)
+
 
 def array_reductions_enabled(sdfg: SDFG) -> bool:
     """Whether ``sdfg`` may emit OpenMP array-section and complex ``declare reduction`` clauses: its own
@@ -684,6 +672,16 @@ def one_section_per_array(clauses: list[tuple], whole_targets: dict[str, str]) -
             seen.add((op_str, target))
             out.append((op_str, target, name, declare))
     return out
+
+
+def reduction_alias(sdfg: SDFG, name: str) -> str | None:
+    """The local pointer a persistent reduction accumulator is named by inside its map, or ``None`` if it needs none."""
+    desc = sdfg.arrays[name]
+    return (
+        f"__rd_{sdfg.cfg_id}_{name}"
+        if desc.transient and desc.lifetime == dtypes.AllocationLifetime.Persistent
+        else None
+    )
 
 
 def _complex_declare_reduction(op_str: str, ctype: str) -> tuple[str, str] | None:
@@ -1611,6 +1609,8 @@ class CPUCodeGen(TargetCodeGenerator):
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ) -> None:
+        if hands_on_unchanged(dfg, src_node, dst_node, edge):
+            return
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
             try:
@@ -1710,8 +1710,15 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(dst_nodedesc, data.Reference) and orig_vconn == "set":
                 srcptr = self.ptr(src_node.data, src_nodedesc, sdfg)
                 defined_type, _ = self._dispatcher.defined_vars.get(srcptr)
+                # A reference is a plain pointer, but it may be set from a read-only (const-qualified) argument,
+                # e.g. an input array of a nested SDFG; cast to the reference's own pointer type.
                 stream.write(
-                    f"{vconn} = {cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)};",
+                    "%s = (%s)(%s);"
+                    % (
+                        vconn,
+                        dtypes.pointer(dst_nodedesc.dtype).ctype,
+                        cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self),
+                    ),
                     cfg,
                     state_id,
                     [src_node, dst_node],
@@ -1950,12 +1957,18 @@ class CPUCodeGen(TargetCodeGenerator):
         # accumulator (``base``-offset 0, one slot) and a length-``m`` subset reduction share a path.
         cover = self._gpu_block_reduction_covered.get(memlet.data)
         if cover is not None and cover["sdfg"] is sdfg:
-            slot = gpu_block_reduction_write_slot(memlet.subset, cover["base"], cover["m"])
+            slot = gpu_block_reduction_write_slot(
+                memlet.subset, cover["base"], cover["m"], sdfg.arrays[memlet.data].strides
+            )
             # A vector into the shared copy has no atomic fold here: it commits to memory directly instead
             if cover["shared"] and isinstance(dtype, dtypes.vector):
                 slot = None
+            # A subscripted write (``o[ix] = v``) lands ``indices`` past the subset's start, as the direct path's
+            # pointer does; one subscripted otherwise goes to memory, the partial left at the identity
+            if slot is not None and indices is not None and not isinstance(indices, str):
+                slot = None
             if slot is not None:
-                lhs = f"{cover['partial']}[{sym2cpp(slot)}]"
+                lhs = f"{cover['partial']}[{sym2cpp(slot)}{'' if indices is None else f' + {indices}'}]"
                 # Vector value, scalar partial: horizontal fold first, as the atomic path below does.
                 if isinstance(dtype, dtypes.vector):
                     if cpf_lowering.standalone():
@@ -2076,7 +2089,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # General reduction
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
-        return f"const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})"
+        # The lambda is an argument, not a named local: two custom reductions in one scope must not redefine a name
+        return f"dace::wcr_custom<{dtype.ctype}>::{func}({custom_reduction}, {ptr}, {inname})"
 
     #: WCR operators ``omp atomic update`` accepts on the ``x = x op expr`` form. ``min``/``max`` take
     #: ``atomic compare`` (``cpf_atomic_max`` / ``cpf_atomic_min``), ``&&``/``||`` an ``atomic write``,
@@ -2994,17 +3008,12 @@ class CPUCodeGen(TargetCodeGenerator):
         return standalone_integer_dtype(symbol).as_arg(name)
 
     def map_loop_ctypes(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry) -> list[str]:
-        """The declared type of each induction variable of ``node``, per ``codegen_params.loop_index_type``.
-
-        ``inferred`` spells each parameter's resolved type (``auto`` where none resolves). CPF writes no
-        ``auto``: there each parameter's resolved type is spelled, widened as a symbol is.
+        """The declared type of each induction variable of ``node``: its resolved type, ``auto`` where none resolves.
+        CPF writes no ``auto``: there each parameter's resolved type is spelled, widened as a symbol is.
 
         :raises NotImplementedError: if CPF finds a parameter whose range resolves to no integer type.
         """
-        setting = Config.get("compiler", "cpu", "codegen_params", "loop_index_type")
         standalone = cpf_lowering.standalone()
-        if setting in ("int32", "int64") or (setting == "auto" and not standalone):
-            return [LOOP_INDEX_CTYPES[setting]] * len(node.map.params)
         resolved = node.new_symbols(sdfg, state, self._frame.symbols_defined_at(state, node))
         if not standalone:
             return [resolved[p].ctype if resolved.get(p) is not None else "auto" for p in node.map.params]
@@ -3599,14 +3608,13 @@ class CPUCodeGen(TargetCodeGenerator):
         caller). The child's PUBLIC ``__dace_init_<child>`` -- the only entry the parent calls -- is left
         untouched, so the cross-program handle call still resolves.
 
-        The two GPU error helpers get the same treatment. They are named after neither the target nor
-        the SDFG, so every ``.cu`` in the binary defines ``__dace_gpu_drain_error`` and
-        ``__dace_gpu_last_error`` and every frame calls its own -- one definition each is fine for a
-        program that is a single translation unit, and a multiple-definition link error the moment a
-        child is added. They cannot share the parent's copy either: ``__dace_gpu_last_error`` reads
-        ``__state->gpu_context``, and each program has its own state struct. Only the CHILD's objects
-        are rewritten, so the parent keeps the canonical spelling -- the one ``compiled_sdfg`` looks
-        up on the loaded library.
+        The GPU runtime helpers get the same treatment. They are named after neither the target nor
+        the SDFG, so every ``.cu`` in the binary defines all of :data:`GPU_RUNTIME_HELPERS` and every
+        frame calls its own -- one definition each is fine for a program that is a single translation
+        unit, and a multiple-definition link error the moment a child is added. They cannot share the
+        parent's copy either: each reads ``__state->gpu_context``, and each program has its own state
+        struct. Only the CHILD's objects are rewritten, so the parent keeps the canonical spelling -- the
+        one ``compiled_sdfg`` looks up on the loaded library.
         """
         module_targets = set()
         finder = re.compile(r"__dace_(?:init|exit)_(\w+)")
@@ -3621,7 +3629,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         "__dace_%s_%s_%s" % (kind, target, child_name),
                         code,
                     )
-            for helper in ("__dace_gpu_drain_error", "__dace_gpu_last_error"):
+            for helper in GPU_RUNTIME_HELPERS:
                 code = re.sub(r"\b%s\b" % re.escape(helper), "%s_%s" % (helper, child_name), code)
             obj.code = code
 
@@ -3723,6 +3731,22 @@ class CPUCodeGen(TargetCodeGenerator):
             out.append((iedge.data.data, iedge.data.subset, op_str, desc.dtype.ctype, target, var))
         return out
 
+    def _bind_reduction_aliases(self, sdfg: SDFG, names: list[str]) -> str:
+        """Bind each persistent accumulator in ``names`` to its local alias for the map about to open; returns the
+        alias declarations, which precede the map's pragma."""
+        lines = ""
+        for name in dict.fromkeys(names):
+            alias = reduction_alias(sdfg, name)
+            if alias is None:
+                continue
+            desc = sdfg.arrays[name]
+            lines += f"{desc.dtype.ctype}* {alias} = {self.ptr(name, desc, sdfg)};\n"
+            self._frame.reduction_aliases[(sdfg.cfg_id, name)] = alias
+            self._dispatcher.defined_vars.add(
+                alias, DefinedType.Pointer, dtypes.pointer(desc.dtype).ctype, allow_shadowing=True
+            )
+        return lines
+
     def _collect_omp_reductions(self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry):
         """Walk the map's WCR-write edges that target an accumulator outside the scope and
         return ``(op_str, clause_target, data_name, declare_line)`` tuples for OpenMP
@@ -3765,16 +3789,29 @@ class CPUCodeGen(TargetCodeGenerator):
             if len(out_edges) != 1:
                 continue
             oedge = out_edges[0]
+            # Through the exits of enclosing sequential maps: a loop over a SMALL axis around this map
+            # (``SequentializeReductionAxes``) re-enters it per trip, and each trip is one reduction
+            while (
+                isinstance(oedge.dst, nodes.MapExit)
+                and oedge.dst.map.schedule == dtypes.ScheduleType.Sequential
+                and oedge.data.wcr is not None
+            ):
+                outer_conn = "OUT_" + oedge.dst_conn[3:]
+                outer_edges = [e for e in state.out_edges(oedge.dst) if e.src_conn == outer_conn]
+                if len(outer_edges) != 1:
+                    break
+                oedge = outer_edges[0]
             if not isinstance(oedge.dst, nodes.AccessNode):
                 continue
             desc = sdfg.arrays.get(oedge.dst.data)
             if desc is None:
                 continue
-            # A persistent / external accumulator is emitted as a state-struct member
-            # (``__state->x``), which is not a valid ``reduction(...)`` lvalue. Only a
-            # non-persistent (locally-declared) target can be privatized by the OMP
-            # runtime; persistent targets fall through to the atomic path.
-            if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+            # A persistent accumulator is a state-struct member (``__state->x``), which is no ``reduction(...)``
+            # lvalue: an array is named by a local pointer bound around the map (:meth:`_bind_reduction_aliases`) in
+            # the clause and the body. A persistent scalar, and an External accumulator (the caller's), stay atomic.
+            if desc.lifetime == dtypes.AllocationLifetime.External or (
+                desc.lifetime == dtypes.AllocationLifetime.Persistent and not isinstance(desc, data.Array)
+            ):
                 continue
             # Loop-invariant subset (independent of THIS map's iter variables): the WCR
             # accumulates into the same region every iteration -- a genuine reduction over
@@ -3787,7 +3824,7 @@ class CPUCodeGen(TargetCodeGenerator):
             op_str = _REDUCTION_TO_OMP_OP.get(redtype)
             if op_str is None:
                 continue
-            var_name = self.ptr(oedge.dst.data, desc, sdfg)
+            var_name = reduction_alias(sdfg, oedge.dst.data) or self.ptr(oedge.dst.data, desc, sdfg)
 
             # A reduction clause privatizes the target per thread, identity-initialized, for
             # the whole region. If the map body also READS the accumulator, those reads see
@@ -3868,7 +3905,7 @@ class CPUCodeGen(TargetCodeGenerator):
         return {
             name: plan
             for name, plan in rpsr.range_private_accumulators(state, map_entry).items()
-            if self.ptr(name, sdfg.arrays[name], sdfg).isidentifier()
+            if (reduction_alias(sdfg, name) or self.ptr(name, sdfg.arrays[name], sdfg)).isidentifier()
         }
 
     #: ``(operator, element types)`` whose update ``wcr_fixed`` emits as an ``omp atomic`` on the host.
@@ -3900,7 +3937,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(stmt, rpsr.Let):
                 lines.append(f"const {stmt.dtype.ctype} {stmt.name} = {expr(stmt.expr)};")
             elif isinstance(stmt, rpsr.Row):
-                lines.append(row.format(expr(stmt.expr)))
+                lines.append(row.format(expr(stmt.expr), expr(stmt.weight)))
             elif isinstance(stmt, rpsr.Guard):
                 lines += [f"if ({expr(stmt.cond)}) {{", *self._range_private_site(sdfg, stmt.body, types, row), "}"]
             elif isinstance(stmt, rpsr.Loop):
@@ -3930,6 +3967,20 @@ class CPUCodeGen(TargetCodeGenerator):
                 CPUCodeGen._range_private_locals(stmt.body, types)
         return types
 
+    def _range_private_params(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry, index: str) -> list[str]:
+        """Declarations of the parameters of ``node`` at the linear iteration ``index`` of its range, the last
+        parameter running fastest."""
+        lines, stride = [], ""
+        sizes = node.map.range.size(for_codegen=True)
+        for var, (begin, end, step), size, ctype in reversed(
+            list(zip(node.map.params, node.map.range, sizes, self.map_loop_ctypes(sdfg, state, node)))
+        ):
+            ctype = "int64_t" if ctype == "auto" else ctype
+            position = f"({index}{stride})" if len(sizes) == 1 else f"(({index}{stride}) % ({cpp.sym2cpp(size)}))"
+            lines.append(f"const {ctype} {var} = {cpp.sym2cpp(begin)} + {cpp.sym2cpp(step)} * {position};")
+            stride += f" / ({cpp.sym2cpp(size)})"
+        return lines[::-1]
+
     def _open_range_private(
         self,
         sdfg: SDFG,
@@ -3941,9 +3992,10 @@ class CPUCodeGen(TargetCodeGenerator):
         cfg: ControlFlowRegion,
         state_id: int,
     ) -> dict:
-        """Open the parallel region of a range-privatized map: the index pre-pass over each thread's
-        static chunk, then each accumulator's private rows shadowing its pointer. Returns the plan
-        :meth:`_close_range_private` combines."""
+        """Open the parallel region of a range-privatized map: the index pre-pass over each thread's chunk of
+        the linearized range, the ``dace::range_private::Order`` that chooses the iteration order from it, then
+        each accumulator's private rows shadowing its pointer. Returns the plan :meth:`_close_range_private`
+        combines and the body loop iterates."""
         function_stream.write("#include <omp.h>\n#include <dace/range_private.h>", cfg, state_id, node)
         prefix = f"__rp{self._range_private_count}"
         self._range_private_count += 1
@@ -3952,7 +4004,15 @@ class CPUCodeGen(TargetCodeGenerator):
             groups.setdefault(sources.sites, []).append(name)
 
         nthreads = str(node.map.omp_num_threads) if node.map.omp_num_threads > 0 else "omp_get_max_threads()"
-        lines = [f"const int {prefix}_nt = {nthreads};"]
+        trips = " * ".join(
+            f"std::max<int64_t>(0, {cpp.sym2cpp(size)})" for size in node.map.range.size(for_codegen=True)
+        )
+        order = f"{prefix}_order"
+        # A persistent accumulator is named by a local pointer, which its private rows then shadow
+        lines = [
+            *self._bind_reduction_aliases(sdfg, list(targets)).splitlines(),
+            f"const int {prefix}_nt = {nthreads};",
+        ]
         plan = {"prefix": prefix, "accumulators": [], "flags": {}}
         for name, (redtype, _sources) in targets.items():
             desc = sdfg.arrays[name]
@@ -3965,33 +4025,41 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             plan["accumulators"].append(ptr)
             plan["flags"][name] = f"{prefix}_atomic_{ptr}" if atomic else None
+        row_bytes = [
+            " + ".join(f"{cpp.sym2cpp(sdfg.arrays[n].strides[0])} * {sdfg.arrays[n].dtype.bytes}" for n in names)
+            for names in groups.values()
+        ]
+        g = len(groups)
         lines += [
+            f"dace::range_private::Order {order}({prefix}_nt, {trips}, {g});",
+            f"const int64_t {prefix}_rb[{g}] = {{{', '.join(f'(int64_t)({b})' for b in row_bytes)}}};",
             f"#pragma omp parallel num_threads({prefix}_nt)",
             "{",
             f"const int {prefix}_t = omp_get_thread_num();",
+            f"const int {prefix}_T = omp_get_num_threads();",
+            f"for (int64_t {prefix}_k = {order}.first({prefix}_t, {prefix}_T); "
+            f"{prefix}_k < {order}.first({prefix}_t + 1, {prefix}_T); ++{prefix}_k) {{",
+            *self._range_private_params(sdfg, state, node, f"{prefix}_k"),
+            f"int64_t {prefix}_lo[{g}], {prefix}_hi[{g}], {prefix}_n[{g}];",
         ]
-        collapse = f" collapse({node.map.collapse})" if node.map.collapse > 1 else ""
-        ctypes = self.map_loop_ctypes(sdfg, state, node)
-        for g, (sites, names) in enumerate(groups.items()):
-            lo, hi, count = f"{prefix}_lo{g}", f"{prefix}_hi{g}", f"{prefix}_n{g}"
+        for i, sites in enumerate(groups):
+            lo, hi, count = f"{prefix}_lo[{i}]", f"{prefix}_hi[{i}]", f"{prefix}_n[{i}]"
             lines.append(
-                f"int64_t {lo} = std::numeric_limits<int64_t>::max(), "
-                f"{hi} = std::numeric_limits<int64_t>::min(), {count} = 0;"
+                f"{lo} = std::numeric_limits<int64_t>::max(); {hi} = std::numeric_limits<int64_t>::min(); {count} = 0;"
             )
-            lines.append(f"#pragma omp for schedule(static) nowait{collapse}")
-            for var, (begin, end, step), ctype in zip(node.map.params, node.map.range, ctypes):
-                lines.append(
-                    f"for ({ctype} {var} = {cpp.sym2cpp(begin)}; {var} < {cpp.sym2cpp(end + 1)}; "
-                    f"{var} += {cpp.sym2cpp(step)}) {{"
-                )
             row = (
                 f"{{{{ const int64_t {prefix}_v = (int64_t)({{}}); {lo} = std::min({lo}, {prefix}_v); "
-                f"{hi} = std::max({hi}, {prefix}_v); ++{count}; }}}}"
+                f"{hi} = std::max({hi}, {prefix}_v); {count} += {{}}; }}}}"
             )
             for site in sites:
                 types = self._range_private_locals(site, {})
                 lines += ["{", *self._range_private_site(sdfg, site, types, row), "}"]
-            lines += ["}"] * len(node.map.params)
+        lines += [
+            f"{order}.note({prefix}_t, {prefix}_k, {prefix}_lo, {prefix}_hi, {prefix}_n);",
+            "}",
+            f"{order}.arrange({prefix}_t, {prefix}_T, {prefix}_rb);",
+        ]
+        for i, names in enumerate(groups.values()):
             for name in names:
                 desc = sdfg.arrays[name]
                 ptr, ctype = self.ptr(name, desc, sdfg), desc.dtype.ctype
@@ -3999,20 +4067,34 @@ class CPUCodeGen(TargetCodeGenerator):
                 lines += [
                     f"{ctype}* const {prefix}_shared_{ptr} = {ptr};",
                     f"bool {flag};",
-                    f"{ctype}* {ptr} = {prefix}_{ptr}.open({prefix}_t, {prefix}_shared_{ptr}, {lo}, {hi}, {count}, {flag});",
+                    f"{ctype}* {ptr} = {prefix}_{ptr}.open({prefix}_t, {prefix}_shared_{ptr}, "
+                    f"{order}.lo({prefix}_t, {i}), {order}.hi({prefix}_t, {i}), {order}.updates({prefix}_t, {i}), "
+                    f"{order}.owned({prefix}_t, {i}), {flag});",
                 ]
         result.write("\n".join(lines), cfg, state_id, node)
         return plan
 
+    def _range_private_loop(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry, plan: dict) -> str:
+        """The body loop of a range-privatized map: the thread's chunk in the chosen order, one brace per
+        parameter as the map exit closes."""
+        p = plan["prefix"]
+        lines = [
+            f"for (int64_t {p}_k = {p}_order.first({p}_t, {p}_T); {p}_k < {p}_order.first({p}_t + 1, {p}_T); "
+            f"++{p}_k) {{",
+            f"const int64_t {p}_i = {p}_order[{p}_k];",
+            *self._range_private_params(sdfg, state, node, f"{p}_i"),
+        ]
+        return "\n".join(lines + ["{"] * (len(node.map.params) - 1))
+
     def _close_range_private(
         self, plan: dict, result: CodeIOStream, cfg: ControlFlowRegion, state_id: int, node: nodes.MapExit
     ) -> None:
-        """Fold every thread's private rows into the shared accumulators once all bodies are done, and
-        close the region."""
+        """Fold every thread's private rows into the shared accumulators once all bodies are done, and close the
+        region."""
         p = plan["prefix"]
-        lines = ["#pragma omp barrier", "{", f"const int {p}_T = omp_get_num_threads();"]
+        lines = ["#pragma omp barrier"]
         lines += [f"{p}_{ptr}.combine({p}_t, {p}_T, {p}_shared_{ptr});" for ptr in plan["accumulators"]]
-        lines += ["}", "}"]
+        lines += ["}"]
         result.write("\n".join(lines), cfg, state_id, node)
 
     def _range_private_flag(self, name: str) -> str | None:
@@ -4137,10 +4219,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     # If already in a #pragma omp parallel, no need to use it twice
                     map_header += "#pragma omp for"
                     # TODO(later): barriers and map_header += " nowait"
-                elif range_private:
-                    # The region opens in the range-privatized prelude; both of its loops share this schedule.
-                    map_header += "#pragma omp for schedule(static) nowait"
-                else:
+                elif not range_private:
+                    # A range-privatized map opens its region and partitions its loops in its prelude.
                     map_header += "#pragma omp parallel for"
 
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
@@ -4184,6 +4264,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # the now-redundant ``reduce_atomic``.
             if omp_reductions:
                 declares = []
+                aliases = (
+                    "" if range_private else self._bind_reduction_aliases(sdfg, [d for _o, _c, d, _x in omp_reductions])
+                )
                 for op_str, clause_target, _dname, declare in omp_reductions:
                     if _dname in range_private:
                         continue
@@ -4194,6 +4277,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 # each unique one on its own line ahead of the ``parallel for``.
                 for declare in declares:
                     map_header = declare + "\n" + map_header
+                if aliases:
+                    map_header = aliases + map_header
 
             # ``MarkSIMDMaps`` decided this map vectorizes -- it owns the analysis (leaf body, no
             # directive-carrying tasklet, no min/max WCR) and expands a multidimensional map so the
@@ -4212,8 +4297,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # Push scope frame even if empty -- ``_generate_MapExit`` always pops. Keyed by
             # target data name so the nested WCR write's covered-check (``memlet.data in
             # frame``) skips the now-redundant atomic and accumulates into the private copy.
-            frame = {dname: op for op, _ct, dname, _dec in omp_reductions}
-            frame.update({name: redtype for name, (redtype, _sources) in range_private.items()})
+            # A range-privatized region has no worksharing loop to carry a clause: its other accumulators stay atomic.
+            frame = {} if range_private else {dname: op for op, target, dname, declare in omp_reductions}
+            frame.update({name: plan[0] for name, plan in range_private.items()})
             self._omp_reduction_scope_stack.append(frame)
 
         # A sequential map's WCR accumulator lives in a local scalar for the loop's duration --
@@ -4254,7 +4340,9 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             self._range_private_maps[node.map] = plan
             self._range_private_flags.append(plan["flags"])
-        result.write(map_header, cfg, state_id, node)
+            result.write(self._range_private_loop(sdfg, state_dfg, node, plan), cfg, state_id, node)
+        else:
+            result.write(map_header, cfg, state_id, node)
 
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
             result.write("{\n", cfg, state_id, node)
@@ -4276,7 +4364,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 result.write(f"int {node.map.params[0]} = omp_get_thread_num();", cfg, state_id, node)
             if ntid_is_used:
                 result.write("int __omp_num_threads = omp_get_num_threads();", cfg, state_id, node)
-        else:
+        elif not range_private:
             loop_ctypes = self.map_loop_ctypes(sdfg, state_dfg, node)
             for i, r in enumerate(node.map.range):
                 var = map_params[i]
@@ -4387,7 +4475,10 @@ class CPUCodeGen(TargetCodeGenerator):
         # Pop the OMP-reduction scope frame the matching MapEntry pushed -- only a parallel one does: a sequential
         # map inside a range-private nested SDFG would otherwise pop the nest's frame.
         if map_node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
-            self._omp_reduction_scope_stack.pop()
+            for name in self._omp_reduction_scope_stack.pop():
+                alias = self._frame.reduction_aliases.pop((sdfg.cfg_id, name), None)
+                if alias is not None:
+                    self._dispatcher.defined_vars.remove(alias)
 
     def _generate_ConsumeEntry(
         self,
@@ -4742,26 +4833,6 @@ class CPUCodeGen(TargetCodeGenerator):
     def emit_interstate_variable_declaration(
         self, name: str, dtype: dtypes.typeclass, callsite_stream: CodeIOStream, sdfg: SDFG
     ):
-        # ``loop_index_type`` (int32/int64) retypes ONLY a LoopRegion counter's hoisted declaration --
-        # ``int32_t i;`` / ``int64_t i;`` in place of the inferred type. The registered defined-type
-        # follows the same spelling so the counter's other uses (condition, body indexing) name that
-        # type without introducing a cast. ``auto`` (the default) leaves the declaration untouched, so
-        # legacy output stays byte-identical. Every non-counter interstate symbol is unaffected.
-        # ``decl_placement = late`` moves a loop-local counter's declaration into its own loop's
-        # for-init clause -- the loop emitter reads the recorded ctype and spells ``for (T i = ...)``.
-        # Nothing is written here in that case: this hoisted declaration IS what the knob removes. The
-        # defined type is still registered, exactly as the hoisted declaration would, so the counter's
-        # uses inside the loop resolve identically (by the gate, it has no uses outside).
-        local_ctype = loop_local_counter_ctype(name, dtype, sdfg)
-        if local_ctype is not None:
-            self._frame.loop_local_counters[(sdfg.cfg_id, name)] = local_ctype
-            self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, local_ctype)
-            return
-        override = loop_region_index_ctype()
-        if override is not None and is_loop_region_variable(name, sdfg):
-            callsite_stream.write("%s %s;\n" % (override, name), sdfg)
-            self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, override)
-            return
         isvar = data.Scalar(dtype)
         callsite_stream.write(f"{isvar.as_arg(with_types=True, name=name)};\n", sdfg)
         self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, dtype.ctype)
@@ -4809,3 +4880,16 @@ def tasklet_instrumentation(node: nodes.Tasklet, state: SDFGState) -> dtypes.Ins
     if node.instrument == dtypes.InstrumentationType.No_Instrumentation:
         return state.instrument
     return node.instrument
+
+
+def hands_on_unchanged(
+    dfg: StateSubgraphView, src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[mmlt.Memlet]
+) -> bool:
+    """Whether ``edge`` hands one container on through scope exits as itself, with a single subset: that moves
+    nothing. A copy would take the exit's slice as the source and the whole container as the target."""
+    return (
+        isinstance(src_node, nodes.AccessNode)
+        and isinstance(dst_node, nodes.AccessNode)
+        and src_node.data == dst_node.data
+        and all(e.data.data == src_node.data and e.data.other_subset is None for e in dfg.memlet_path(edge))
+    )

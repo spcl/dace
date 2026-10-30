@@ -181,13 +181,6 @@ def pytest_generate_tests(metafunc):
         )
 
 
-def _active_cuda_impl():
-    # Imported lazily so pytest collection works even if the dace package can't be imported.
-    from dace.config import Config
-
-    return Config.get("compiler", "cuda", "implementation")
-
-
 #: Directories owned by a dedicated workflow. Marked by path so the suites stay selectable
 #: without touching hundreds of files; general CI deselects them.
 _SUITE_DIRS = (
@@ -261,8 +254,7 @@ _CORPUS_FILES = (
 
 
 def pytest_collection_modifyitems(config, items):
-    """Mark the vectorization / canonicalization suites by path, then auto-skip tests marked
-    old_gpu_codegen_only / new_gpu_codegen_only per ``compiler.cuda.implementation``."""
+    """Mark the vectorization / canonicalization suites by path."""
     for item in items:
         path = str(getattr(item, "fspath", ""))
         name = os.path.basename(path)
@@ -280,13 +272,18 @@ def pytest_collection_modifyitems(config, items):
             if name in _CORPUS_FILES:
                 item.add_marker(pytest.mark.corpus)
 
-    try:
-        impl = _active_cuda_impl()
-    except Exception:
-        return  # If dace config is unavailable, don't interfere with collection.
 
-    for item in items:
-        if "old_gpu_codegen_only" in item.keywords and impl != "legacy":
-            item.add_marker(pytest.mark.skip(reason="Requires the legacy CUDA codegen"))
-        if "new_gpu_codegen_only" in item.keywords and impl != "experimental":
-            item.add_marker(pytest.mark.skip(reason="Requires the experimental CUDA codegen"))
+@pytest.fixture(autouse=True)
+def pinned_cuda_implementation(request):
+    """Run a test marked for one CUDA implementation under that implementation, whatever the default is."""
+    from dace.config import set_temporary  # Imported late: collection must not depend on importing dace.
+
+    if request.node.get_closest_marker("old_gpu_codegen_only"):
+        impl = "legacy"
+    elif request.node.get_closest_marker("new_gpu_codegen_only"):
+        impl = "experimental"
+    else:
+        yield
+        return
+    with set_temporary("compiler", "cuda", "implementation", value=impl):
+        yield

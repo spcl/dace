@@ -5,6 +5,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
@@ -137,20 +138,9 @@ class ExpandGetrsCuSolverDn(ExpandGetrsGPUSolver):
                 """
 
 
-@dace.library.expansion
-class ExpandGetrsRocSolver(ExpandGetrsGPUSolver):
-    environments = [environments.rocsolver.rocSOLVER]
-
-    @classmethod
-    def call(cls, func, ctype, rows_a, cols_rhs, stride_a, stride_rhs) -> str:
-        # rocsolver_?getrs reports no info code, so the status the caller reads is written here.
-        ctype = blas_helpers.rocblas_type(ctype)
-        return f"""
-                dace::lapack::CheckRocsolverError(rocsolver_{func.lower()}(
-                    __dace_rocblas_handle, rocblas_operation_none, {rows_a}, {cols_rhs},
-                    ({ctype}*)_a, {stride_a}, _ipiv, ({ctype}*)_rhs_in, {stride_rhs}));
-                DACE_GPU_CHECK(gpuMemsetAsync(_res, 0, sizeof(int), __dace_current_stream));
-                """
+ExpandGetrsHipSolverDn = hip_dialect.hip_expansion(
+    ExpandGetrsCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
 
 
 @dace.library.node
@@ -160,7 +150,7 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGetrsOpenBLAS,
         "MKL": ExpandGetrsMKL,
         "cuSolverDn": ExpandGetrsCuSolverDn,
-        "rocSOLVER": ExpandGetrsRocSolver,
+        "hipSolverDn": ExpandGetrsHipSolverDn,
     }
     default_implementation = None
 

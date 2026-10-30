@@ -20,8 +20,23 @@ from dace.sdfg import nodes
 from dace.transformation.dataflow.wcr_conversion import _wcr_augassign_body
 
 
+def boundary_reduces(inner_sdfg: SDFG, name: str) -> bool:
+    """Whether the enclosing NestedSDFG's output connector ``name`` reduces across iterations: its edge carries a WCR,
+    or feeds a partial access node that does."""
+    nsdfg, state = inner_sdfg.parent_nsdfg_node, inner_sdfg.parent
+    if nsdfg is None or state is None:
+        return False
+    for edge in state.out_edges_by_connector(nsdfg, name):
+        if edge.data.wcr is not None:
+            return True
+        if isinstance(edge.dst, nodes.AccessNode) and any(e.data.wcr is not None for e in state.out_edges(edge.dst)):
+            return True
+    return False
+
+
 def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
-    """Resolve every ``src -[wcr]-> acc`` reduction edge in ``inner_sdfg``, leaving no loose WCR.
+    """Resolve every ``src -[wcr]-> acc`` reduction edge in ``inner_sdfg`` (``src`` an access node or a tasklet),
+    leaving no loose WCR.
 
     :param inner_sdfg: The body NestedSDFG to rewrite in place.
     :param tiled: ``True`` rewrites to ``acc = acc <op> src`` (folds to ``TileReduce``).
@@ -39,13 +54,23 @@ def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
             if not (isinstance(dst, nodes.AccessNode) and state.out_degree(dst) == 0):
                 continue
             desc = inner_sdfg.arrays.get(dst.data)
-            if desc is None or desc.transient or not isinstance(edge.src, nodes.AccessNode):
+            if desc is None or desc.transient or not isinstance(edge.src, (nodes.AccessNode, nodes.Tasklet)):
+                continue
+            # A tasklet's WCR is the body's own reduction unless the boundary repeats it (the nesting duplicate).
+            if isinstance(edge.src, nodes.Tasklet) and not boundary_reduces(inner_sdfg, dst.data):
                 continue
             if not tiled:
                 edge.data.wcr = None
                 rewritten += 1
                 continue
             acc, acc_subset = dst.data, memlet.subset
+            if isinstance(edge.src, nodes.Tasklet):
+                # The tasklet's value is the addend: stage it in a scalar the accumulation reads.
+                addend, _ = inner_sdfg.add_scalar(f"{acc}_addend", desc.dtype, transient=True, find_new_name=True)
+                addend_node = state.add_access(addend)
+                state.add_edge(edge.src, edge.src_conn, addend_node, None, Memlet(data=addend, subset="0"))
+                state.remove_edge(edge)
+                edge = state.add_edge(addend_node, None, dst, edge.dst_conn, memlet)
             src_subset = memlet.get_src_subset(edge, state)
             tasklet = state.add_tasklet(
                 "reduce_accum", OrderedSet(("__in1", "__in2")), {"__out"}, f"__out = {_wcr_augassign_body(memlet.wcr)}"

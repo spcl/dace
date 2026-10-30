@@ -136,7 +136,7 @@ def ext_modular_wrap(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 @dace.program
 def ext_war_unit(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     """TSVC ``s121`` shape: ``a[i] = a[i+1] + b[i]``. ``LoopToMap`` refuses
-    without ``break_anti_dependence=True``, which snapshot-renames ``a`` to lift."""
+    until ``BreakAntiDependence`` snapshot-renames ``a``."""
     for i in range(LEN_1D - 1):
         a[i] = a[i + 1] + b[i]
 

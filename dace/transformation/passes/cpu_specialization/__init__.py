@@ -12,8 +12,6 @@ from dace.transformation.passes.cpu_specialization.hoist_parallel_region import 
 from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (
     RecomputeIntermediates,
 )
-from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
-    SequentializeUnprofitableParallelScopes,
-)
+from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
 from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize

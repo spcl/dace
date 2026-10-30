@@ -3,7 +3,9 @@
 
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode  # noqa: F401
 from dace.libraries.standard.nodes.copy.expansions.auto import ExpandAuto
+from dace.libraries.standard.nodes.copy.expansions.cast_on_device import ExpandCastOnDevice
 from dace.libraries.standard.nodes.copy.expansions.mapped_tasklet import ExpandMappedTasklet
+from dace.libraries.standard.nodes.copy.expansions.cuda_block import ExpandCUDABlock
 from dace.libraries.standard.nodes.copy.expansions.memcpy_cpu import ExpandMemcpyCPU
 from dace.libraries.standard.nodes.copy.expansions.memcpy_cuda1d import ExpandMemcpyCUDA1D
 from dace.libraries.standard.nodes.copy.expansions.memcpy_cuda2d import ExpandMemcpyCUDA2D

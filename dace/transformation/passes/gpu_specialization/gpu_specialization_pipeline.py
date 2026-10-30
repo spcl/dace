@@ -101,7 +101,9 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
         from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
+        from dace.transformation.passes.minimize_transients import MinimizeTransients
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
+        from dace.transformation.passes.persistent_transients import MakeTransientsPersistent
         from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
         # Order constraints:
@@ -110,6 +112,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #   * PromoteWarpTiles before AddThreadBlockMaps -- canonicalize promotes a pending ``is_warp_tile``
         #     before choosing a block size; a graph that reaches codegen with one still pending gets its
         #     thread-block level from the tile, not a second one on top of it.
+        #   * MakeTransientsPersistent, MinimizeTransients right after MoveArrayOutOfKernel -- device buffers are decided once,
+        #     the arrays hoisted out of kernels included (canon finalize leaves device reuse to this point).
         #   * AddThreadBlockMaps after the MoveArrayOutOfKernel hoist -- tiling first leaks the
         #     inner-map outer-loop symbol into host-side cudaMalloc sizes.
         #   * GridStrideKernels right after AddThreadBlockMaps -- it folds the (GPU_Device, GPU_ThreadBlock)
@@ -130,6 +134,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
                 lower_nested_maps,
                 scalar_promotion,
                 MoveArrayOutOfKernel(),
+                MakeTransientsPersistent(),
+                MinimizeTransients(),
                 InsertExplicitCopies(),
                 ExpandLibraryNodes(),
                 strategy,

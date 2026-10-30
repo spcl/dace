@@ -836,6 +836,8 @@ def test_a_container_passing_through_a_map_exit_is_not_a_copy():
         "the renaming access node is dropped, not left as an implicit copy edge for codegen to read the far side of"
     )
     sdfg.validate()
+    # Nor does the CPU code generator copy it: a copy would write the whole of B from each tile's slice
+    _assert_no_copynd(sdfg)
     _run_and_check(sdfg, lambda A: A + 1.0)
 
 

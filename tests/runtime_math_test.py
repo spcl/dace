@@ -69,7 +69,7 @@ def cpp_fractional_pow(
     OF: dace.float32[1],
     OD: dace.float64[1],
     OI: dace.float64[1],
-    OQ: dace.float16[1],
+    O_BIG: dace.float16[1],
 ):
 
     @dace.tasklet("CPP")
@@ -82,7 +82,7 @@ def cpp_fractional_pow(
         of >> OF[0]
         od >> OD[0]
         oi >> OI[0]
-        oq >> OQ[0]
+        o_big >> O_BIG[0]
         """
         static_assert(std::is_same<decltype(dace::math::pow(h, 1, 2)), dace::float16>::value, "half stays half");
         static_assert(std::is_same<decltype(dace::math::pow(f, 1, 3)), float>::value, "float stays float");
@@ -92,7 +92,7 @@ def cpp_fractional_pow(
         of = dace::math::pow(f, 1, 3);
         od = dace::math::pow(d, -2, 3);
         oi = dace::math::pow(i, 1, 3);
-        oq = dace::math::pow(h, 100000, 100000);
+        o_big = dace::math::pow(h, 100000, 100000);
         """
 
 
@@ -128,10 +128,11 @@ def test_fractional_power_keeps_the_floating_type_of_the_base():
         np.array([8], np.int32),
     )
     oh, of, od, oi = np.zeros(1, np.float16), np.zeros(1, np.float32), np.zeros(1, np.float64), np.zeros(1, np.float64)
-    oq = np.zeros(1, np.float16)
-    cpp_fractional_pow(h, f, d, i, oh, of, od, oi, oq)
+    o_big = np.zeros(1, np.float16)
+    cpp_fractional_pow(h, f, d, i, oh, of, od, oi, o_big)
     assert (oh[0], of[0], od[0], oi[0]) == (2.0, 2.0, 0.25, 2.0)
-    assert oq[0] == h[0]
+    # p and q overflow a half: the exponent must be divided in float
+    assert o_big[0] == h[0]
 
 
 @dace.program

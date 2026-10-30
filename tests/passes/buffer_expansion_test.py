@@ -468,5 +468,69 @@ def test_view_operand_is_not_expanded():
             assert not (set(arrs) & set(views))
 
 
+def _ordering_read_sdfg(name: str, carried_acc: bool):
+    """``for i: (buf -> zero) ordering; out[i] = 0; buf[0:M] = 2 * a[i, :]; out[i] += sum(buf)`` -- the ordering edge
+    makes ``LoopToMap`` count ``buf`` as read before written (carried), while the define-before-read guard proves it
+    private. ``carried_acc`` adds a genuinely carried ``acc[0] += out[i]`` after it."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N, M], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    sdfg.add_transient("buf", [M], dace.float64)
+    loop = LoopRegion("lp", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    head = loop.add_state("head", is_start_block=True)
+    ws = loop.add_state_after(head, "write")
+    rs = loop.add_state_after(ws, "read")
+    zero = head.add_tasklet("zero", {}, {"o": None}, "o = 0.0")
+    head.add_nedge(head.add_read("buf"), zero, dace.Memlet())
+    head.add_edge(zero, "o", head.add_write("out"), None, dace.Memlet("out[i]"))
+    ws.add_mapped_tasklet(
+        "w",
+        {"j": "0:M"},
+        {"x": dace.Memlet("a[i, j]")},
+        "y = 2.0 * x",
+        {"y": dace.Memlet("buf[j]")},
+        external_edges=True,
+    )
+    rs.add_mapped_tasklet(
+        "r",
+        {"j": "0:M"},
+        {"x": dace.Memlet("buf[j]")},
+        "y = x",
+        {"y": dace.Memlet("out[i]", wcr="lambda p, q: p + q")},
+        external_edges=True,
+    )
+    if carried_acc:
+        cs = loop.add_state_after(rs, "carry")
+        add = cs.add_tasklet("acc", {"p": None, "x": None}, {"n": None}, "n = p + x")
+        cs.add_edge(cs.add_read("acc"), None, add, "p", dace.Memlet("acc[0]"))
+        cs.add_edge(cs.add_read("out"), None, add, "x", dace.Memlet("out[i]"))
+        cs.add_edge(add, "n", cs.add_write("acc"), None, dace.Memlet("acc[0]"))
+    sdfg.validate()
+    return sdfg, loop
+
+
+def test_parallelize_loops_lifts_a_loop_refused_on_its_scratch_buffer_by_expanding_it():
+    """``ParallelizeLoops.expand_buffers`` expands the buffer a loop is refused on and lifts the loop; without it
+    the loop stays."""
+    from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+
+    plain, _ = _ordering_read_sdfg("pl_without_expansion", carried_acc=False)
+    ParallelizeLoops().apply_pass(plain, {})
+    assert _num_loops(plain) == 1
+    sdfg, _ = _ordering_read_sdfg("pl_expands_buffers", carried_acc=False)
+    lift = ParallelizeLoops()
+    lift.expand_buffers = True
+    lift.apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0 and [str(d) for d in sdfg.arrays["buf"].shape] == ["N", "M"]
+    n, m = 6, 5
+    a = np.random.default_rng(7).random((n, m))
+    out = np.zeros(n)
+    sdfg(a=a, out=out, acc=np.zeros(1), N=n, M=m)
+    assert np.allclose(out, 2.0 * a.sum(axis=1))
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

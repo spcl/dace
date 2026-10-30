@@ -621,7 +621,7 @@ def _nest_then_expand(sdfg):
     from dace.transformation.passes.canonicalize.pipeline import canonicalize
     from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
 
-    canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True, unroll_limit=4)
+    canonicalize(sdfg, validate=True, peel_limit=4, unroll_limit=4)
     NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
     PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
     sdfg.validate()

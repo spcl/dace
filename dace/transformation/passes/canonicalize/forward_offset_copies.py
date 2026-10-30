@@ -14,8 +14,8 @@ transient and the copy are gone.
 Contract, per copy edge ``A -> B``:
 
 * ``B`` is a transient array written only by this copy, over its whole extent, with the source range of the same
-  shape (an offset, no reshape); it is not a view, reaches no nested SDFG, and no interstate edge or condition
-  names it;
+  shape (an offset, no reshape), in the storage of ``A`` (a host-device transfer is not an offset); it is not a
+  view, reaches no nested SDFG, and no interstate edge or condition names it;
 * every reader of ``B`` is in a state of the copy's control-flow region (an acyclic one), reachable from it;
 * no block of that region on a path from the copy to a reader writes ``A``, nor does the copy's state or a
   reader's state.
@@ -66,23 +66,28 @@ class ForwardOffsetCopies(ppl.Pass):
             named |= {str(s) for s in edge.data.free_symbols}
         for region in sdfg.all_control_flow_regions():
             named |= region.used_symbols(all_symbols=True, with_contents=False)
+        accesses: dict[str, list[tuple[SDFGState, nodes.AccessNode]]] = defaultdict(list)
+        for st in sdfg.states():
+            for an in st.data_nodes():
+                accesses[an.data].append((st, an))
         forwarded = 0
-        changed = True
-        while changed:
-            changed = False
-            accesses: dict[str, list[tuple[SDFGState, nodes.AccessNode]]] = defaultdict(list)
-            for st in sdfg.states():
-                for an in st.data_nodes():
-                    accesses[an.data].append((st, an))
-            for st in sdfg.states():
+        for st in sdfg.states():
+            # A forward rewires this state only around the copy: rescan it, the table follows the renamed readers
+            progress = True
+            while progress:
+                progress = False
                 for edge in st.edges():
                     offset = self.forwardable(sdfg, st, edge, accesses, named)
-                    if offset is not None:
-                        self.forward(sdfg, st, edge, offset, accesses[edge.dst.data])
-                        forwarded += 1
-                        changed = True
-                        break
-                if changed:
+                    if offset is None:
+                        continue
+                    source, uses = edge.src, accesses.pop(edge.dst.data)
+                    self.forward(sdfg, st, edge, offset, uses)
+                    kept = accesses[source.data]
+                    if source not in st.nodes():
+                        kept[:] = [(s, n) for s, n in kept if n is not source]
+                    kept.extend((s, n) for s, n in uses if n is not edge.dst)
+                    forwarded += 1
+                    progress = True
                     break
         return forwarded
 
@@ -96,6 +101,8 @@ class ForwardOffsetCopies(ppl.Pass):
             return None
         a, b = sdfg.arrays[src.data], sdfg.arrays[dst.data]
         if not isinstance(b, data.Array) or isinstance(b, data.View) or isinstance(a, data.View) or not b.transient:
+            return None
+        if a.storage != b.storage:
             return None
         if len(a.shape) != len(b.shape) or dst.data in named:
             return None

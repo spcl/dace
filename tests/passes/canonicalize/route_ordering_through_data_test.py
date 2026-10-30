@@ -95,6 +95,40 @@ def test_ordering_edge_guarding_a_write_after_read_is_kept_in_order():
     assert np.allclose(b, np.arange(5.0) + 1.0) and np.allclose(a, 2.0 * np.arange(5.0))
 
 
+def test_parallel_copies_of_an_ordering_edge_guarding_a_write_after_read_keep_one():
+    """Three copies of the nest's edge to the overwrite of ``a``: each guards nothing while the others stay, so
+    deciding all against one graph dropped every copy and let the doubling run before the nest's read."""
+    sdfg, state = nest_with_ordering_edge("ordering_war_parallel", conflicting=True)
+    nest = nests(sdfg)[0]
+    read = next(e.dst for e in state.out_edges(nest) if e.data.is_empty())
+    state.add_nedge(nest, read, dace.Memlet())
+    state.add_nedge(nest, read, dace.Memlet())
+    RouteOrderingThroughData().apply_pass(sdfg, {})
+    writer = next(n for n in state.nodes() if isinstance(n, nodes.MapExit))
+    assert dace.graphlib.has_path(state._nx, nest, writer), "the overwrite of a must stay after the nest's read"
+
+
+def test_ordering_edge_after_a_copy_reading_what_the_nest_updates_is_kept_in_order():
+    """``c = a`` is a copy into ``c``'s access node, then the nest updates ``a = a + 1`` from the same read of ``a``:
+    the copy reads ``a`` at ``c``'s node, so the edge from it to the nest guards a write after read even though
+    ``c`` itself is not ``a``."""
+    sdfg = dace.SDFG("ordering_war_copy")
+    for array in ("a", "c"):
+        sdfg.add_array(array, [N], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    nest = add_one_nest(state, "ordering_war_copy_nest", "a", "a")
+    read = next(e.src for e in state.in_edges(nest) if not e.data.is_empty())
+    copy_target = state.add_write("c")
+    state.add_nedge(read, copy_target, dace.Memlet("a[0:N] -> [0:N]"))
+    state.add_nedge(copy_target, nest, dace.Memlet())
+    sdfg.validate()
+    RouteOrderingThroughData().apply_pass(sdfg, {})
+    assert dace.graphlib.has_path(state._nx, copy_target, nest), "the update of a must stay after the copy"
+    a, c = np.arange(5.0), np.zeros(5)
+    sdfg(a=a, c=c, N=5)
+    assert np.allclose(c, np.arange(5.0)) and np.allclose(a, np.arange(5.0) + 1.0)
+
+
 def test_ordering_edge_that_anchors_an_access_node_in_its_map_is_kept():
     """Inside a map, an access node read from outside data and reached only by the nest's ordering edge
     belongs to the map through that edge alone (velocity_tendencies after the GPU offload). Dropping it
@@ -133,7 +167,60 @@ def test_ordering_edge_that_anchors_an_access_node_in_its_map_is_kept():
     assert np.allclose(y, x + 1.0) and np.allclose(d, 2.0 * c)
 
 
+def test_nest_sharing_a_sink_gets_its_own_access_node_and_inlines():
+    """The nest and a later map write the two halves of ONE ``out`` access node, and the copy ``b -> a``
+    after the nest's read of ``a`` must follow the nest. Rerouting the order through the shared sink closes a
+    cycle through the later map, so the nest gets an ``out`` access node of its own and then inlines."""
+    sdfg = dace.SDFG("ordering_shared_sink")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("out", [2 * N], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    # ``out[0:N] = a + 1`` in a nest whose outer memlet is the dynamic whole array, as MapToForLoop leaves it.
+    inner = dace.SDFG("ordering_shared_sink_nest")
+    inner.add_array("x", [N], dace.float64)
+    inner.add_array("y", [2 * N], dace.float64)
+    inner.add_state("body", is_start_block=True).add_mapped_tasklet(
+        "lower_half",
+        {"i": "0:N"},
+        {"v": dace.Memlet("x[i]")},
+        "w = v + 1.0",
+        {"w": dace.Memlet("y[i]")},
+        external_edges=True,
+    )
+    nest = state.add_nested_sdfg(inner, {"x"}, {"y"}, symbol_mapping={"N": N})
+    sink = state.add_write("out")
+    state.add_edge(state.add_read("a"), None, nest, "x", dace.Memlet("a[0:N]"))
+    state.add_edge(nest, "y", sink, None, dace.Memlet("out[0:2*N]", dynamic=True))
+    read_b, write_a = state.add_read("b"), state.add_write("a")
+    state.add_edge(read_b, None, write_a, None, dace.Memlet(data="b", subset="0:N", other_subset="0:N"))
+    state.add_nedge(nest, read_b, dace.Memlet())
+    state.add_mapped_tasklet(
+        "upper_half",
+        {"k": "0:N"},
+        {"v": dace.Memlet("a[k]")},
+        "w = v",
+        {"w": dace.Memlet("out[k + N]")},
+        external_edges=True,
+        input_nodes={"a": write_a},
+        output_nodes={"out": sink},
+    )
+    sdfg.validate()
+
+    assert RouteOrderingThroughData().apply_pass(sdfg, {}) == 1
+    assert not any(e.data.is_empty() for e in state.out_edges(nest))
+    PruneAndInlineNestedSDFGs().apply_pass(sdfg, {})
+    assert not nests(sdfg)
+    sdfg.validate()
+    a, b, out = np.arange(5.0), np.arange(5.0) + 10.0, np.zeros(10)
+    sdfg(a=a, b=b, out=out, N=5)
+    assert np.allclose(out[:5], np.arange(5.0) + 1.0) and np.allclose(out[5:], b) and np.allclose(a, b)
+
+
 if __name__ == "__main__":
     test_ordering_edge_guarding_no_conflict_is_dropped_and_the_nest_inlines()
     test_ordering_edge_guarding_a_write_after_read_is_kept_in_order()
     test_ordering_edge_that_anchors_an_access_node_in_its_map_is_kept()
+    test_nest_sharing_a_sink_gets_its_own_access_node_and_inlines()
+    test_parallel_copies_of_an_ordering_edge_guarding_a_write_after_read_keep_one()
+    test_ordering_edge_after_a_copy_reading_what_the_nest_updates_is_kept_in_order()

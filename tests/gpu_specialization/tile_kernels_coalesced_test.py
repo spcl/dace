@@ -74,6 +74,43 @@ def test_a_one_dimensional_kernel_keeps_its_selected_block():
     assert list(kernel.map.gpu_block_size) == block
 
 
+@dace.program
+def last_row_zeroed(B: dace.float64[N + 1, M, M]):
+    for i, j, k in dace.map[N : N + 1, 0:M, 0:M]:
+        B[i, j, k] = 0.0
+
+
+def test_an_axis_narrower_than_its_tile_is_tiled_by_its_extent():
+    """One row tiled by rows of block rows reaches past the array in the memlets around the grid (cp2k trs4's sink)."""
+    # Not canonicalized, which would drop the one-iteration axis: a pass after it narrows a map to one row
+    sdfg = last_row_zeroed.to_sdfg(simplify=True)
+    sdfg.name = "tile_coalesced_one_row"
+    offload_to_gpu(sdfg)
+    TileKernelsCoalesced(factor=4).apply_pass(sdfg, {})
+    sdfg.validate()
+    # One row: no block rows over it, no thread loop along it
+    grid = schedules(sdfg)[dtypes.ScheduleType.GPU_Device]
+    assert list(grid.map.gpu_block_size)[1:] == [1, 1]
+
+
+@dace.program
+def small_block_zeroed(B: dace.float64[8, 4]):
+    for i, j in dace.map[0:8, 0:4]:
+        B[i, j] = 0.0
+
+
+def test_a_kernel_that_is_one_tile_is_left_alone():
+    """An 8 x 4 kernel fits one tile of 4 lanes by 8 rows: no axis splits, so there is no grid to tile (lulesh)."""
+    sdfg = small_block_zeroed.to_sdfg(simplify=True)
+    sdfg.name = "tile_coalesced_one_tile"
+    offload_to_gpu(sdfg)
+    kernel = schedules(sdfg)[dtypes.ScheduleType.GPU_Device]
+    kernel.map.gpu_block_size = [4, 8, 1]
+    assert TileKernelsCoalesced(factor=4).apply_pass(sdfg, {}) is None
+    sdfg.validate()
+    assert dtypes.ScheduleType.GPU_ThreadBlock not in schedules(sdfg)
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("program", [scaled_rows, scaled_columns_transposed])
 def test_tiled_kernels_compute_what_numpy_does(program):
@@ -96,5 +133,6 @@ if __name__ == "__main__":
     test_the_coalesced_axis_is_the_lanes_and_the_outer_axis_the_thread_loop(scaled_rows, "j", "i")
     test_the_coalesced_axis_is_the_lanes_and_the_outer_axis_the_thread_loop(scaled_columns_transposed, "i", "j")
     test_a_one_dimensional_kernel_keeps_its_selected_block()
+    test_a_kernel_that_is_one_tile_is_left_alone()
     test_tiled_kernels_compute_what_numpy_does(scaled_rows)
     test_tiled_kernels_compute_what_numpy_does(scaled_columns_transposed)

@@ -26,8 +26,6 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
-from dace.transformation.passes.insert_assign_tasklets_at_map_boundary import InsertAssignTaskletsAtMapBoundary
-from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 
 N, M, S = dace.symbol("N"), dace.symbol("M"), dace.symbol("S")
 
@@ -138,11 +136,6 @@ def _run(program, w, cidx, n, m, oracle, **symbols):
     b_ref = np.full((n, m), -7.0)
     ref(w=w.copy(), cidx=cidx.copy(), b=b_ref, N=n, M=m, **symbols)
     assert np.allclose(b_ref, oracle), "pre-pass SDFG disagrees with numpy oracle"
-
-    # Mirror the pipeline: the preparation cleanup removes ``other_subset``
-    # copies before ``NormalizeLoopsAndMaps`` runs.
-    InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
-    InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
 
     changed = NormalizeLoopsAndMaps().apply_pass(sdfg, {})
     assert changed is not None, "pass did not normalize a non-canonical map/loop"

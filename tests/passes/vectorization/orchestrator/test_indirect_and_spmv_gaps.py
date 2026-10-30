@@ -192,7 +192,7 @@ def test_vectorize_cpu_multi_dim_tiles_the_spmv_row_reduction_on_k_only():
 @pytest.mark.parametrize("widths", [(8,), (4, 8)])
 def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
     """Element-wise sum reduction ``s += a[i]`` uses WCR; the orchestrator's
-    ``NormalizeWCRSource`` pre-pass + ``EmitTileOps`` reduction emission now
+    ``NormalizeWCR`` pre-pass + ``EmitTileOps`` reduction emission now
     lower this to a ``TileReduce`` writing a private scalar that flows out
     via the surviving WCR edge to MapExit (OpenMP reduction). Asserts the
     pipeline accepts the kernel (no ``NotImplementedError``) — prior

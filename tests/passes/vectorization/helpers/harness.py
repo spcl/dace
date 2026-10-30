@@ -20,7 +20,7 @@ from dace.sdfg import ControlFlowRegion
 from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, BranchMode, RemainderStrategy
 from tests.passes.vectorization.tile_assertions import tile_library_nodes

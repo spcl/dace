@@ -38,7 +38,6 @@
 #include "cuda/dynmap.cuh"
 // After cudacommon.cuh, whose gpu* aliases it uses, and after vector.h, which cudacommon needs in
 // turn -- so this cannot go back into the GPU block of types.h, which precedes both.
-#include "cuda/multidim_gbar.cuh"
 #else
 #include "cudainterop.h"
 #endif

@@ -27,16 +27,14 @@ Order within the stage, and why:
    verdict the fork/join model exists to give.
 3. :class:`~dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates.RecomputeIntermediates`
    -- recomputes a producer map inside every consumer map and drops the intermediate, wherever legal.
-4. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes` -- a
-   parallel map never shares out a ``SMALL`` axis (``nblks``) alone: the leading ones are collapsed with the first
-   larger axis, and a map over ``SMALL`` axes only is collapsed with the map over larger ones it holds. Before the reduction
-   split and the cost model, which then rule on the map that is actually shared out.
 5. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes.SequentializeReductionAxes`
    -- a parallel map that reduces over some of its axes shares out the others and walks the reduced
    ones in an inner sequential map, so its writes need no atomic. Before the cost model, which then
    rules on the split shape.
-6. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes.SequentializeUnprofitableParallelScopes`
-   -- the fork/join cost model itself.
+6. :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes`
+   -- the small facts decide: nested parallel scopes, small maps and data segments under a long loop run
+   sequentially, and a map's leading ``SMALL`` axes are shared out with the first larger one. After the reduction
+   split, which it then rules on.
 7. :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
    -- gives the transfers step 6 just sequentialized their single ``memcpy`` / ``memset`` back, so
    the parallel-by-default copy expansion costs nothing when the cost model refuses it.
@@ -71,14 +69,11 @@ from dace.transformation.passes.cpu_specialization.recompute_oversized_intermedi
 )
 from dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes import SequentializeReductionAxes
 from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import SequentializeSmallAxes
-from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
-    SequentializeUnprofitableParallelScopes,
-)
 from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
 from dace.transformation.passes.specialize_small_gemms import SpecializeSmallGemms
 
 
-def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: bool = False) -> SDFG:
+def cpu_specialize(sdfg: SDFG, validate: bool = False) -> SDFG:
     """Specialize a canonicalized ``sdfg`` for the CPU, in place.
 
     Run this AFTER :func:`~dace.transformation.passes.canonicalize.pipeline.canonicalize`, which
@@ -86,9 +81,6 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     the same verdicts.
 
     :param sdfg: A canonicalized SDFG.
-    :param break_anti_dependence: Chunk the anti-dependence snapshots into per-chunk seam buffers.
-                                  Pass ``False`` when canonicalization did not break anti
-                                  dependences, so there are no snapshots to chunk.
     :param validate: Validate the SDFG once at the end.
     :returns: The same ``sdfg`` instance, specialized.
     """
@@ -100,12 +92,10 @@ def cpu_specialize(sdfg: SDFG, break_anti_dependence: bool = True, validate: boo
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     hoist_invariant_guards(sdfg, require_full_hoist=False)
-    if break_anti_dependence:
-        ChunkAntiDependence().apply_pass(sdfg, {})
+    ChunkAntiDependence().apply_pass(sdfg, {})
     RecomputeIntermediates().apply_pass(sdfg, {})
-    SequentializeSmallAxes().apply_pass(sdfg, {})
     SequentializeReductionAxes().apply_pass(sdfg, {})
-    SequentializeUnprofitableParallelScopes().apply_pass(sdfg, {})
+    SequentializeSmallAxes().apply_pass(sdfg, {})
     # After the schedules are final: only a body that stays a parallel map is if-converted.
     IfConvertParallelMapBodies().apply_pass(sdfg, {})
     RangePrivatizeScatterReductions().apply_pass(sdfg, {})

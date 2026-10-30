@@ -204,7 +204,7 @@ def move_ifs_into_loops(sdfg):
 
 
 def parallelize(sdfg):
-    from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+    from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
     # Without the closing memlet propagation: its reachability analysis resets the list itself.
     ParallelizeLoops(propagate=False).apply_pass(sdfg, {})

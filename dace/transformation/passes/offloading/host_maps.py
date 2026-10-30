@@ -172,13 +172,55 @@ def map_containers_and_traffic(
     """The containers a top-level map reads or writes, and the elements it moves (dynamic memlets count 0)."""
     names: OrderedSet[str] = OrderedSet()
     traffic: symbolic.SymbolicType | int = 0
-    for edge in itertools.chain(state.in_edges(entry), state.out_edges(state.exit_node(entry))):
+    exit_node = state.exit_node(entry)
+    for edge in itertools.chain(state.in_edges(entry), state.out_edges(exit_node)):
         if edge.data.data is None:
             continue
         names.add(edge.data.data)
         if not edge.data.dynamic:
-            traffic = traffic + moved_elements(edge.data)
+            inner = (
+                state.out_edges_by_connector(entry, "OUT_" + edge.dst_conn[3:])
+                if edge.dst is entry and edge.dst_conn
+                else state.in_edges_by_connector(exit_node, "IN_" + edge.src_conn[4:])
+                if edge.src is exit_node and edge.src_conn
+                else []
+            )
+            per_iteration = nest_accesses(list(inner))
+            if per_iteration is None:
+                traffic = traffic + moved_elements(edge.data)
+            else:
+                traffic = traffic + entry.map.range.num_elements() * per_iteration
     return names, traffic
+
+
+def nest_accesses(inner_edges: list) -> symbolic.SymbolicType | int | None:
+    """Elements one map iteration moves through ``inner_edges`` when each ends at a loop-free nested SDFG: the
+    accesses its states and interstate edges make to the connector, which the memlet into the nest overstates
+    when an interstate edge reads it (amg_setup's ``c = touched[t]`` widens to all of ``touched``). None otherwise."""
+    if not inner_edges:
+        return None
+    count: symbolic.SymbolicType | int = 0
+    for edge in inner_edges:
+        nsdfg = edge.dst if isinstance(edge.dst, nodes.NestedSDFG) else edge.src
+        conn = edge.dst_conn if nsdfg is edge.dst else edge.src_conn
+        if not isinstance(nsdfg, nodes.NestedSDFG) or conn is None:
+            return None
+        inner = nsdfg.sdfg
+        if any(isinstance(block, LoopRegion) for block in inner.all_control_flow_blocks(recursive=True)):
+            return None
+        for body in inner.states():
+            for node in body.data_nodes():
+                if node.data != conn:
+                    continue
+                for e in body.all_edges(node):
+                    if e.data.data != conn:
+                        continue
+                    if e.data.dynamic:
+                        return None
+                    count = count + e.data.volume
+        for ise in inner.all_interstate_edges(recursive=True):
+            count = count + sum(m.volume for m in ise.data.get_read_memlets(inner.arrays) if m.data == conn)
+    return count
 
 
 def moved_elements(memlet) -> symbolic.SymbolicType | int:
@@ -210,6 +252,23 @@ def provably_moves_less(
     )
 
 
+def stays_with_the_loop(
+    traffic: symbolic.SymbolicType | int, size: symbolic.SymbolicType | int, facts: symbolic.Facts, assigned: set[str]
+) -> bool:
+    """Whether a map moving ``traffic`` beside host code sharing ``size`` elements stays on the host: provably less,
+    or not provably at least and sized by a symbol the loop assigns. A per-iteration extent is the row a serial
+    algorithm works on (amg_setup's ``ntouch`` touched columns), small beside the arrays it copies; a program-wide
+    one no rule ranks is taken as big."""
+    if provably_moves_less(traffic, size, facts):
+        return True
+    named = (
+        {str(sym) for sym in symbolic.pystr_to_symbolic(traffic).free_symbols}
+        if symbolic.issymbolic(traffic)
+        else set()
+    )
+    return bool(named & assigned) and not symbolic.provably_nonnegative(traffic - size, facts)
+
+
 def is_fallback_loop(loop: LoopRegion) -> bool:
     """Whether ``loop`` is a guarded specialization's sequential fallback: pinned sequential at the top
     level of a conditional's branch. A carried-dependence or wavefront pin elsewhere is no fallback."""
@@ -225,7 +284,7 @@ def in_fallback_loop(loop: LoopRegion) -> bool:
     """Whether ``loop`` is, or lies inside, a loop pinned sequential as a specialization's fallback."""
     region = loop
     while region is not None and not isinstance(region, SDFG):
-        if isinstance(region, LoopRegion) and region.pinned_sequential:
+        if isinstance(region, LoopRegion) and is_fallback_loop(region):
             return True
         region = region.parent_graph
     return False
@@ -238,7 +297,7 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
     every map in it is pinned, except in a state that also calls a library (a state has one
     location), so the arm copies only at its own boundary. In any other loop, offloading a map
     copies each non-scalar container it shares with the loop's host code once per iteration, and
-    when the map provably moves less than those hold the copies dominate (amg_setup: 344 s on GPU
+    when the map moves less than those hold the copies dominate (:func:`stays_with_the_loop`) (amg_setup: 344 s on GPU
     against 0.8 s on CPU). Such a loop is pinned all or nothing: any other device work in it (a map
     not provably smaller, a library call, a second map in a state) keeps every kernel on the device,
     since the offload gives a state one location. Loops of nested SDFGs are kernel code.
@@ -256,6 +315,8 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
         if in_fallback_loop(loop):
             continue
         host = host_code_containers(sdfg, loop)
+        assigned = {lhs for edge in loop.all_interstate_edges(recursive=True) for lhs in edge.data.assignments}
+        written = {node.data for state in loop.states() for node in state.data_nodes() if state.in_degree(node) > 0}
         candidates: OrderedSet = OrderedSet()
         device_loop = False
         for state in loop.states():
@@ -265,9 +326,10 @@ def maps_pinned_by_host_loops(sdfg: SDFG) -> OrderedSet:
                     device_loop = True
                     continue
                 names, traffic = map_containers_and_traffic(state, node)
-                shared = [n for n in names & host if n in sdfg.arrays and sdfg.arrays[n].total_size != 1]
+                # Read on both sides only, a container is copied once at the entry, not per iteration
+                shared = [n for n in names & host & written if n in sdfg.arrays and sdfg.arrays[n].total_size != 1]
                 total = sum(sdfg.arrays[n].total_size for n in shared)
-                if shared and provably_moves_less(traffic, total, SymbolResolver().facts_at(state, node)):
+                if shared and stays_with_the_loop(traffic, total, SymbolResolver().facts_at(state, node), assigned):
                     candidates.add(node)
                 else:
                     device_loop = True

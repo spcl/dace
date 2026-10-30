@@ -118,6 +118,14 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
                 )
 
 
+def _side_of(memlet: Memlet, name: str) -> Memlet:
+    """``memlet`` spelled on the side of ``name``: a copy edge's memlet may name the other container, with ``name``'s
+    subset as its other subset."""
+    if memlet.data == name or memlet.other_subset is None:
+        return memlet
+    return Memlet(data=name, subset=copy.deepcopy(memlet.other_subset))
+
+
 def _libnode_boundary_memlet(other_memlet: Memlet) -> Memlet:
     # Memlet for an edge adjacent to a tile lib node (AN -> Load._src, TileScatter._dst -> AN, etc.).
     return Memlet(data=other_memlet.data, subset=copy.deepcopy(other_memlet.subset))
@@ -285,6 +293,7 @@ def stage_tile_load(
     :returns: ``(bridge_name, load_node)`` -- staged transient name + the load node.
     :raises ValueError: When ``gather_dims`` non-empty and ``set(gather_dims) != set(idx_sources)``.
     """
+    src_subset = _side_of(src_subset, an.data)
     if gather_dims and (idx_sources is None or set(gather_dims) != set(idx_sources)):
         raise ValueError(
             f"stage_tile_load: gather_dims {gather_dims!r} must match the keys of "
@@ -384,6 +393,7 @@ def stage_tile_store(
     :returns: ``(bridge_name, store_node)`` -- staged transient name + the store node.
     :raises ValueError: When ``gather_dims`` non-empty and ``set(gather_dims) != set(idx_sources)``.
     """
+    dst_subset = _side_of(dst_subset, an.data)
     if gather_dims and (idx_sources is None or set(gather_dims) != set(idx_sources)):
         raise ValueError(
             f"stage_tile_store: gather_dims {gather_dims!r} must match the keys of "
@@ -772,7 +782,9 @@ class InsertTileLoadStore(ppl.Pass):
                     mask_an=self._mask_an(inner_state, mask_name),
                 )
                 if idx_an is None:
-                    raise NotImplementedError(
+                    # A refusal, as for the gather index: the map stays scalar and correct (vloc_psi_k_acc's
+                    # ``psic[nl[igk[i]]]`` binds its index through interstate symbols).
+                    raise VectorizeUnsupported(
                         f"InsertTileLoadStore: could not build a tile-op scatter index for "
                         f"{begin_str!r} (write of '{an.data}' dest dim {k}, iter_vars={iter_vars}). "
                         f"The CPP per-lane materialiser was removed (user 2026-06-14: no CPP index "
@@ -1265,12 +1277,14 @@ class InsertTileLoadStore(ppl.Pass):
             # Scalar bridge (CONSTANT staging output). For Array tile bridges the
             # consumer reads the FULL tile -- bridge_memlet_template encodes that and
             # ``other_subset`` would carry a stale value (``[0]`` from a former Scalar).
+            # The copy's memlet may name either end; the source side is read off the edge.
             if (
                 isinstance(old_edge.src, AccessNode)
                 and old_edge.data.other_subset is not None
                 and isinstance(inner_state.sdfg.arrays.get(old_edge.src.data), data.Scalar)
             ):
-                new_memlet.other_subset = subsets.Range(list(as_range(old_edge.data.other_subset).ranges))
+                source = old_edge.data.get_src_subset(old_edge, inner_state)
+                new_memlet.other_subset = subsets.Range(list(as_range(source).ranges))
             inner_state.add_edge(old_edge.src, old_edge.src_conn, bridge_an, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 
@@ -1300,22 +1314,29 @@ class InsertTileLoadStore(ppl.Pass):
         D = len(consumer_shape)
         if D < K:
             return False
-        # Per-iteration begin for each OUTER (non-tile) consumer dim, taken from
-        # the original write memlet's consumer-side subset. Full-extent only as a
-        # fallback when that subset is missing or rank-mismatched.
+        # Per-iteration begin for each consumer dim, taken from the original write memlet's consumer-side subset: an
+        # OUTER (non-tile) dim's own begin, a tile dim's begin when it is its iterator shifted by a constant
+        # (``acc[i - 1]``). Full extent / the bare iterator only as a fallback when that subset is missing or
+        # rank-mismatched.
         prefix_begins = None
+        tile_begins: list = [iter_vars[k] for k in range(K)]
         if orig_edge is not None:
             try:
                 _sd, _ss, dst_data, dst_subset = infer_edge_endpoints(orig_edge, sdfg, inner_state)
                 if dst_data == consumer_an.data and dst_subset is not None and len(dst_subset.ranges) == D:
                     prefix_begins = [dst_subset.ranges[d][0] for d in range(D - K)]
+                    for k in range(K):
+                        begin = symbolic.pystr_to_symbolic(dst_subset.ranges[D - K + k][0])
+                        named = [s for s in begin.free_symbols if str(s) == iter_vars[k]]
+                        if len(named) == 1 and named[0] not in (begin - named[0]).free_symbols:
+                            tile_begins[k] = begin
             except Exception:  # noqa: BLE001 -- exotic edge; fall back to full extent
                 prefix_begins = None
         if prefix_begins is not None:
             prefix_parts = [f"{b}:{b} + 1" for b in prefix_begins]
         else:
             prefix_parts = [f"0:{consumer_shape[d]}" for d in range(D - K)]
-        tile_parts = [f"{iter_vars[k]}:{iter_vars[k]} + {widths[k]}" for k in range(K)]
+        tile_parts = [f"{tile_begins[k]}:{tile_begins[k]} + {widths[k]}" for k in range(K)]
         dst_subset_str = ", ".join(prefix_parts + tile_parts)
         # Mask the bridge -> output store when an iteration mask is in scope, else the tail lanes write out
         # of bounds. The mask producer may live in another state.
@@ -1444,12 +1465,14 @@ class InsertTileLoadStore(ppl.Pass):
             # Scalar bridge (CONSTANT staging output). For Array tile bridges the
             # consumer reads the FULL tile -- bridge_memlet_template encodes that and
             # ``other_subset`` would carry a stale value (``[0]`` from a former Scalar).
+            # The copy's memlet may name either end; the destination side is read off the edge.
             if (
                 isinstance(old_edge.dst, AccessNode)
                 and old_edge.data.other_subset is not None
                 and isinstance(inner_state.sdfg.arrays.get(old_edge.dst.data), data.Scalar)
             ):
-                new_memlet.other_subset = subsets.Range(list(as_range(old_edge.data.other_subset).ranges))
+                target = old_edge.data.get_dst_subset(old_edge, inner_state)
+                new_memlet.other_subset = subsets.Range(list(as_range(target).ranges))
             inner_state.add_edge(bridge_an, None, old_edge.dst, old_edge.dst_conn, new_memlet)
             inner_state.remove_edge(old_edge)
 

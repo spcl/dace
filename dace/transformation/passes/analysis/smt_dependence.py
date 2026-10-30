@@ -14,7 +14,6 @@ import sympy as sp
 from dace import symbolic
 from dace.optionals import required
 from dace.sdfg.analysis.cfg import collect_enclosing_conditions  # noqa: F401 -- re-exported
-from dace.transformation.passes.analysis import canon_stats
 
 try:
     import z3
@@ -323,8 +322,7 @@ def prove_unsat(antecedent: Any, consequent: Any, rlimit: int = DEFAULT_RLIMIT) 
     s.add(antecedent)
     s.add(required(z3).Not(consequent))
     try:
-        with canon_stats.timed("z3"):
-            r = s.check()
+        r = s.check()
         if r == required(z3).unsat:
             return True
         if r == required(z3).sat:
@@ -332,6 +330,34 @@ def prove_unsat(antecedent: Any, consequent: Any, rlimit: int = DEFAULT_RLIMIT) 
         return None
     except Exception:
         return None
+
+
+def assumed(antecedent: Any, domain_assumptions: sp.Basic | None, facts: Any, terms: list[Any]) -> Any:
+    """``antecedent`` with the caller's ``domain_assumptions`` and what ``facts`` (a
+    :class:`~dace.transformation.passes.parallelization.facts.SolverFacts`) let the solver assume about ``terms``."""
+    extra = []
+    if domain_assumptions is not None:
+        dom = _bool_to_z3(domain_assumptions, {}, {})
+        if dom is not None:
+            extra.append(dom)
+    if facts is not None:
+        extra += facts.axioms(terms)
+    return required(z3).And(antecedent, *extra) if extra else antecedent
+
+
+def prove_assuming(
+    antecedent: Any,
+    consequent: Any,
+    domain_assumptions: sp.Basic | None,
+    facts: Any,
+    terms: list[Any],
+    rlimit: int = DEFAULT_RLIMIT,
+) -> bool | None:
+    """:func:`prove_unsat` under :func:`assumed`; a proof tells ``facts`` that the facts it was offered held."""
+    result = prove_unsat(assumed(antecedent, domain_assumptions, facts, terms), consequent, rlimit)
+    if result is True and facts is not None:
+        facts.confirm()
+    return result
 
 
 def prove_injective_write(
@@ -342,6 +368,7 @@ def prove_injective_write(
     step: Any = 1,
     domain_assumptions: sp.Basic | None = None,
     rlimit: int = DEFAULT_RLIMIT,
+    facts: Any = None,
 ) -> bool | None:
     """Prove that distinct iterations write to distinct locations.
 
@@ -368,13 +395,7 @@ def prove_injective_write(
         return None
 
     antecedent = required(z3).And(i1 != i2, *bounds)
-    if domain_assumptions is not None:
-        dom = _bool_to_z3(domain_assumptions, {}, {})
-        if dom is not None:
-            antecedent = required(z3).And(antecedent, dom)
-
-    consequent = w1 != w2
-    return prove_unsat(antecedent, consequent, rlimit)
+    return prove_assuming(antecedent, w1 != w2, domain_assumptions, facts, [w1, w2, *bounds], rlimit)
 
 
 def prove_disjoint_write_ranges(
@@ -386,6 +407,7 @@ def prove_disjoint_write_ranges(
     step: Any = 1,
     domain_assumptions: sp.Basic | None = None,
     rlimit: int = DEFAULT_RLIMIT,
+    facts: Any = None,
 ) -> bool | None:
     """Prove that distinct iterations write to non-overlapping RANGES.
 
@@ -426,13 +448,8 @@ def prove_disjoint_write_ranges(
         return None
 
     antecedent = required(z3).And(i1 != i2, *bounds)
-    if domain_assumptions is not None:
-        dom = _bool_to_z3(domain_assumptions, {}, {})
-        if dom is not None:
-            antecedent = required(z3).And(antecedent, dom)
-
     consequent = required(z3).Not(required(z3).And(lo1 <= hi2, lo2 <= hi1))
-    return prove_unsat(antecedent, consequent, rlimit)
+    return prove_assuming(antecedent, consequent, domain_assumptions, facts, [lo1, hi1, lo2, hi2, *bounds], rlimit)
 
 
 def prove_disjoint_access_boxes(
@@ -444,6 +461,7 @@ def prove_disjoint_access_boxes(
     step: Any = 1,
     domain_assumptions: sp.Basic | None = None,
     rlimit: int = DEFAULT_RLIMIT,
+    facts: Any = None,
 ) -> bool | None:
     """Prove that two MULTI-DIMENSIONAL range accesses never touch the same element on
     two different iterations.
@@ -508,12 +526,8 @@ def prove_disjoint_access_boxes(
         return None
 
     antecedent = required(z3).And(i1 != i2, *bounds)
-    if domain_assumptions is not None:
-        dom = _bool_to_z3(domain_assumptions, {}, {})
-        if dom is not None:
-            antecedent = required(z3).And(antecedent, dom)
-
-    return prove_unsat(antecedent, required(z3).Not(required(z3).And(*intersects)), rlimit)
+    consequent = required(z3).Not(required(z3).And(*intersects))
+    return prove_assuming(antecedent, consequent, domain_assumptions, facts, [*intersects, *bounds], rlimit)
 
 
 def _overlap_pair(
@@ -526,6 +540,7 @@ def _overlap_pair(
     step: Any,
     order: str,
     domain_assumptions: sp.Basic | None = None,
+    facts: Any = None,
 ) -> bool | None:
     """Prove/disprove an overlap of the requested order.
 
@@ -557,14 +572,9 @@ def _overlap_pair(
         order_cons = i_w <= i_r
     else:
         order_cons = i_w > i_r
+    terms = [wz, rz, *bounds] + ([] if gz is True else [gz])
     antecedent = required(z3).And(order_cons, *bounds, gz)
-    if domain_assumptions is not None:
-        dom = _bool_to_z3(domain_assumptions, {}, {})
-        if dom is not None:
-            antecedent = required(z3).And(antecedent, dom)
-
-    consequent = wz != rz
-    return prove_unsat(antecedent, consequent, rlimit=DEFAULT_RLIMIT)
+    return prove_assuming(antecedent, wz != rz, domain_assumptions, facts, terms)
 
 
 def prove_read_ahead(
@@ -576,6 +586,7 @@ def prove_read_ahead(
     step: Any = 1,
     read_guard: sp.Basic | None = None,
     domain_assumptions: sp.Basic | None = None,
+    facts: Any = None,
 ) -> bool | None:
     """Prove that a read only ever touches elements no iteration up to and including its own
     has written -- the precondition for breaking an anti-dependence by snapshotting.
@@ -589,7 +600,9 @@ def prove_read_ahead(
     """
     if not _HAS_Z3:
         return None
-    return _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, "raw_le", domain_assumptions)
+    return _overlap_pair(
+        write_expr, read_expr, read_guard, itervar, start, end, step, "raw_le", domain_assumptions, facts
+    )
 
 
 def prove_no_write_after_read(
@@ -601,6 +614,7 @@ def prove_no_write_after_read(
     step: Any = 1,
     read_guard: sp.Basic | None = None,
     domain_assumptions: sp.Basic | None = None,
+    facts: Any = None,
 ) -> bool | None:
     """Prove that no iteration AFTER the reader's own writes the element it reads.
 
@@ -613,7 +627,7 @@ def prove_no_write_after_read(
     """
     if not _HAS_Z3:
         return None
-    return _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, "war", domain_assumptions)
+    return _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, "war", domain_assumptions, facts)
 
 
 def classify_read_write_pair(
@@ -625,6 +639,7 @@ def classify_read_write_pair(
     step: Any = 1,
     read_guard: sp.Basic | None = None,
     domain_assumptions: sp.Basic | None = None,
+    facts: Any = None,
 ) -> str | None:
     """Classify a single read/write pair as ``'WAR'``, ``'RAW'``, ``'none'``,
     or ``None`` (inconclusive).
@@ -641,10 +656,10 @@ def classify_read_write_pair(
         return None
 
     no_overlap_raw = _overlap_pair(
-        write_expr, read_expr, read_guard, itervar, start, end, step, "raw", domain_assumptions
+        write_expr, read_expr, read_guard, itervar, start, end, step, "raw", domain_assumptions, facts
     )
     no_overlap_war = _overlap_pair(
-        write_expr, read_expr, read_guard, itervar, start, end, step, "war", domain_assumptions
+        write_expr, read_expr, read_guard, itervar, start, end, step, "war", domain_assumptions, facts
     )
 
     if no_overlap_raw is True and no_overlap_war is True:
@@ -726,8 +741,7 @@ def find_conflict_witness(
     solver.add(earlier < later if int(symbolic.evaluate(step, {})) > 0 else earlier > later)
     solver.add(*(required(z3).Int(name) >= 0 for name in sorted(sizes)))
     try:
-        with canon_stats.timed("z3"):
-            verdict = solver.check()
+        verdict = solver.check()
         if verdict != required(z3).sat:
             return None
     except Exception:

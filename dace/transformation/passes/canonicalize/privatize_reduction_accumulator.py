@@ -127,6 +127,11 @@ def privatize_reduction_accumulator(
     if any(s in map_param_set for s in (str(x) for x in write_subset.free_symbols)):
         return False
 
+    # Every edge of the scope's path writes that slot: a map nest renames them all to the scalar.
+    inner = [e for e in state.memlet_path(wcr_edge) if e is not oedge]
+    if any(e.data.data != arr_node.data or e.data.subset != write_subset for e in inner):
+        return False
+
     parent_graph: ControlFlowRegion = state.parent_graph
 
     # Is the seed value WRITTEN INSIDE THIS STATE (kernel's own ``acc[c] = init``
@@ -151,6 +156,17 @@ def privatize_reduction_accumulator(
         in_state_init_an = n
         break
 
+    # Another writer of ``arr`` in this state (a sibling map reducing into the same slot) would get its own seed and
+    # writeback, and only the last writeback would survive.
+    if state.in_degree(arr_node) != 1 or any(
+        n.data == arr_node.data
+        and n is not arr_node
+        and n is not in_state_init_an
+        and any(not e.data.is_empty() for e in state.in_edges(n))
+        for n in state.data_nodes()
+    ):
+        return False
+
     # The cross-state writeback would run after any access to ``arr`` that follows the map in this state.
     if in_state_init_an is None and any(
         isinstance(n, nodes.AccessNode) and n.data == arr_node.data and (n is not arr_node or state.out_degree(n))
@@ -163,10 +179,9 @@ def privatize_reduction_accumulator(
 
     # Redirect the WCR target: rewrite both the in-edge (tasklet -> MapExit)
     # and the out-edge (MapExit -> AccessNode) to refer to the scalar.
-    wcr = wcr_edge.data.wcr
-    wcr_edge.data.data = scalar_name
-    wcr_edge.data.subset = subsets.Range([(0, 0, 1)])
-    wcr_edge.data.wcr = wcr  # keep
+    for edge in inner:
+        edge.data.data = scalar_name
+        edge.data.subset = subsets.Range([(0, 0, 1)])
 
     if in_state_init_an is not None:
         # In-state pattern: seed _priv_dot from the in-state init AN; emit the

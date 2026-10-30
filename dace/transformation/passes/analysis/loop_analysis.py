@@ -164,6 +164,7 @@ def counter_used_outside_loop(
     sdfg: "SDFG",
     use_sites: dict[str, set[int]] | None = None,
     descriptor_symbols: set[str] | None = None,
+    rebinding: dict[str, list[LoopRegion]] | None = None,
 ) -> bool:
     """Whether ``name`` is read or written anywhere outside ``loop``.
 
@@ -174,17 +175,32 @@ def counter_used_outside_loop(
     value at a nesting boundary -- has to ask this, not assume it.
 
     Pass ``use_sites`` / ``descriptor_symbols`` from :func:`symbol_use_sites` when asking about several
-    loops of the same SDFG; omitted, the index is built here for this one query.
+    loops of the same SDFG; omitted, the index is built here for this one query. ``rebinding`` is
+    :func:`rebinding_loops` of ``sdfg``, likewise.
     """
     if use_sites is None or descriptor_symbols is None:
         use_sites, descriptor_symbols = symbol_use_sites(sdfg)
     inside = {id(loop)}
     # Another loop that binds the same counter outright reads its own value, not this loop's
-    for other in [loop] + [b for b in sdfg.all_control_flow_blocks() if b is not loop and rebinds_counter(b, name)]:
+    others = (
+        [b for b in sdfg.all_control_flow_blocks() if rebinds_counter(b, name)]
+        if rebinding is None
+        else rebinding.get(name, [])
+    )
+    for other in [loop] + [b for b in others if b is not loop]:
         inside.add(id(other))
         inside.update(id(block) for block in other.all_control_flow_blocks())
         inside.update(id(edge) for edge in other.all_interstate_edges())
     return symbol_used_outside(name, inside, use_sites, descriptor_symbols)
+
+
+def rebinding_loops(sdfg: "SDFG") -> dict[str, list[LoopRegion]]:
+    """Per counter name, the loops of ``sdfg`` that bind it outright (:func:`rebinds_counter`), in block order."""
+    found: dict[str, list[LoopRegion]] = {}
+    for block in sdfg.all_control_flow_blocks():
+        if isinstance(block, LoopRegion) and rebinds_counter(block, block.loop_variable):
+            found.setdefault(block.loop_variable, []).append(block)
+    return found
 
 
 def rebinds_counter(block: ControlFlowBlock, name: str) -> bool:
@@ -243,6 +259,23 @@ def get_loop_end(loop: LoopRegion) -> symbolic.SymbolicType | None:
     return end
 
 
+def get_assignments(statement) -> dict[str, str]:
+    """
+    All ``name = expression`` assignments of a loop init or update statement (a code block may hold several
+    statements, e.g. the loop variable plus loop-carried cursor symbols), as a name-to-expression dictionary.
+    Statements that are not simple assignments are ignored.
+    """
+    if statement is None:
+        return {}
+    codes = statement.code if isinstance(statement.code, list) else [statement.code]
+    assignments: dict[str, str] = {}
+    for code in codes:
+        visitor = astutils.FindAssignment()
+        visitor.visit(code)
+        assignments.update(visitor.assignments)
+    return assignments
+
+
 def assignment_text(stmt: Optional["CodeBlock"], variable: str | None) -> str | None:
     """
     The right-hand side text a loop's init or update statement assigns to ``variable``.
@@ -294,20 +327,25 @@ def _provably_le(a: symbolic.SymbolicType, b: symbolic.SymbolicType, facts: symb
     return symbolic.provably_le(sympy.sympify(a), sympy.sympify(b), facts)
 
 
-def loop_provably_at_most_one_iteration(loop: LoopRegion) -> bool:
+def loop_provably_at_most_one_iteration(loop: LoopRegion, facts: symbolic.Facts | None = None) -> bool:
     """Whether ``loop`` provably runs at most once (zero or one iterations).
 
     Such a loop carries no cross-iteration dependence by construction, so it is trivially DOALL --
     a ``LoopToMap`` can map it without any dependence analysis. Restricted to the unit ascending
     stride so the inclusive trip count is exactly ``end - start + 1``; the loop runs at most once iff
     ``end <= start``. Conservative: returns ``False`` whenever the bound cannot be proven.
+
+    :param facts: ``loop.sdfg.facts()``, when the caller holds it.
     """
     start = get_init_assignment(loop)
     end = get_loop_end(loop)  # inclusive
     step = get_loop_stride(loop)
-    # A loop not yet placed in an SDFG has no facts beyond its own bounds
-    facts = loop.sdfg.facts() if loop.sdfg is not None else symbolic.Facts.none()
-    if start is None or end is None or step is None or symbolic.simplify(step, facts) != 1:
+    if start is None or end is None or step is None:
+        return False
+    if facts is None:
+        # A loop not yet placed in an SDFG has no facts beyond its own bounds
+        facts = loop.sdfg.facts() if loop.sdfg is not None else symbolic.Facts.none()
+    if symbolic.simplify(step, facts) != 1:
         return False
     return _provably_le(symbolic.simplify(end, facts), symbolic.simplify(start, facts), facts)
 
@@ -621,3 +659,11 @@ def detect_induction_variables(loop: LoopRegion) -> dict[str, InductionVariable]
             changed = True
 
     return ivs
+
+
+def control_reads(loop: LoopRegion) -> set[str]:
+    """The names the loop's interstate edges and its own and nested regions' conditions read."""
+    names = {read for edge in loop.all_interstate_edges() for read in edge.data.free_symbols}
+    for region in [loop, *loop.all_control_flow_regions()]:
+        names |= region.used_symbols(all_symbols=True, with_contents=False)
+    return names

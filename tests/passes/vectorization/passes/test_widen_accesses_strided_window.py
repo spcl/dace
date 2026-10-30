@@ -91,9 +91,7 @@ def assert_window_strides_by(edge, stride_name: str, width: int = 8):
 def canonicalized_and_vectorized(prog):
     """Canonicalize + vectorize ``prog``, returning the SDFG and any refusal messages."""
     sdfg = prog.to_sdfg(simplify=True)
-    canonicalize(
-        sdfg, validate=True, peel_limit=4, break_anti_dependence=True, nonnegative_symbols=known_nonnegative(sdfg)
-    )
+    canonicalize(sdfg, validate=True, peel_limit=4, nonnegative_symbols=known_nonnegative(sdfg))
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         VectorizeCPUMultiDim(
@@ -181,9 +179,7 @@ def test_linearized_multi_var_index_is_refused_not_broadcast():
     is a ``W x W`` box at strides ``(N, 1)`` over ONE array dim, which a per-array-dim tile window
     cannot spell, so the kernel must stay un-tiled and correct."""
     sdfg = linearized_write.to_sdfg(simplify=True)
-    canonicalize(
-        sdfg, validate=True, peel_limit=4, break_anti_dependence=True, nonnegative_symbols=known_nonnegative(sdfg)
-    )
+    canonicalize(sdfg, validate=True, peel_limit=4, nonnegative_symbols=known_nonnegative(sdfg))
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         VectorizeCPUMultiDim(

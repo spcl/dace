@@ -166,6 +166,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     #:  `map_fusion_helper.propagate_fused_map_scope()`. `None` propagates everything.
     propagated_nsdfgs: dict[SDFG, None] | None = None
     scope_records: mfhelper.ScopeRecords | None = None
+    #: The resolver the probes share while the SDFG is unchanged, replaced by the driving pass at every rewrite.
+    #:  `None` derives the facts per probe.
+    probe_symbols: SymbolResolver | None = None
 
     def __init__(
         self,
@@ -457,7 +460,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  the data that goes through the scope nodes. `has_inner_read_write_dependency()`
         #  if used to check if there are internal dependencies.
         # Both tests below compare subsets at the facts inside the first Map; one resolver derives them once.
-        symbols = SymbolResolver()
+        symbols = SymbolResolver() if self.probe_symbols is None else self.probe_symbols
         if self.has_read_write_dependency(
             first_map_entry=first_map_entry,
             second_map_entry=second_map_entry,
@@ -466,6 +469,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             sdfg=sdfg,
             symbols=symbols,
         ):
+            return False
+
+        # The fused Map runs where the second one does: a read of the first one must not move past a write.
+        if mfhelper.read_overtaken_by_write(graph, first_map_entry, first_map_exit, second_map_entry):
             return False
 
         # Two maps can be serially fused if the node decomposition exists and
@@ -675,6 +682,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         pure_outputs, exclusive_outputs, shared_outputs = output_partition
         assert (not self.require_exclusive_intermediates) or (len(shared_outputs) == 0)
 
+        # Also before the rewiring: the reads of the first Map the second Map's writes must stay behind
+        anti_dependences = mfhelper.anti_dependences(graph, first_map_entry, second_map_exit)
+
         # Collected BEFORE the rewiring, which deletes the intermediates carrying these edges.
         ordering_sources = self.ordering_sources_of_intermediates(
             graph, first_map_exit, exclusive_outputs | shared_outputs
@@ -759,6 +769,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # Now turn the second output node into the output node of the first Map.
         second_map_exit.map = first_map_entry.map
+
+        mfhelper.keep_anti_dependences(graph, anti_dependences)
 
         # Put back the happens-before the rewrite took out of the graph, see
         #  `ordering_sources_of_intermediates`.
@@ -1194,6 +1206,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         state: dace.SDFGState,
         new_pre_exit_edge: graph.MultiConnectorEdge[dace.Memlet],
         inter_name: str,
+        inter_desc: data.Data,
         new_inter_name: str,
         new_inter_desc: data.Data,
         producer_offset: subsets.Range,
@@ -1208,6 +1221,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param state: The state being rewritten.
         :param new_pre_exit_edge: The freshly created edge into the reduced intermediate.
         :param inter_name: Name of the original intermediate.
+        :param inter_desc: Descriptor of the original intermediate.
         :param new_inter_name: Name of the reduced intermediate.
         :param new_inter_desc: Descriptor of the reduced intermediate.
         :param producer_offset: Where the writes originally began.
@@ -1239,13 +1253,17 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 producer_edge.data.dst_subset.offset(producer_offset, negative=True)
                 producer_edge.data.dst_subset.pop(squeezed_dims)
 
-            # Modify the strides of the mapped data of the nested SDFG.
+            # A nested SDFG below the MapExit addresses the old intermediate like the one at it: its
+            #  accesses move to the reduced container's origin, not only its strides.
             if isinstance(producer_edge.src, nodes.NestedSDFG):
                 self._updated_inner_strides_of_nested_sdfg(
                     nsdfg=producer_edge.src,
                     reduced_intermediate_desc=new_inter_desc,
                     inner_data=producer_edge.src_conn,
                     outer_edge=producer_edge,
+                    old_intermediate_desc=inter_desc,
+                    offset=producer_offset,
+                    squeezed_dims=squeezed_dims,
                 )
 
     def handle_intermediate_set(
@@ -1420,6 +1438,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     state=state,
                     new_pre_exit_edge=new_pre_exit_edge,
                     inter_name=inter_name,
+                    inter_desc=inter_desc,
                     new_inter_name=new_inter_name,
                     new_inter_desc=new_inter_desc,
                     producer_offset=producer_offset,
@@ -1780,6 +1799,30 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         return False
 
+    @staticmethod
+    def written_disjointly(
+        name: str,
+        first_map_exit: nodes.MapExit,
+        second_map_exit: nodes.MapExit,
+        state: SDFGState,
+        facts: symbolic.Facts,
+    ) -> bool:
+        """Whether everything ``first_map_exit`` writes to ``name`` provably misses everything ``second_map_exit`` writes."""
+        sides = [
+            [e for e in state.out_edges(exit_node) if e.data.data == name]
+            for exit_node in (first_map_exit, second_map_exit)
+        ]
+        # Plain stores only: maps accumulating into one container are each a reduction, and fused they stop being
+        # one (nbody's per-component gemv maps, a Gemv each)
+        if any(e.data.wcr is not None for side in sides for e in side):
+            return False
+        first, second = ([e.data.dst_subset or e.data.subset for e in side] for side in sides)
+        return all(
+            a is not None and b is not None and subsets.intersects(a, b, facts) is symbolic.Truth.FALSE
+            for a in first
+            for b in second
+        )
+
     def has_read_write_dependency(
         self,
         first_map_entry: nodes.MapEntry,
@@ -1860,8 +1903,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  This essentially ensures that an intermediate can not be used as output of
         #  the second Map at the same time. It is actually stronger as it does not
         #  take their role into account.
-        if not real_write_map_1.isdisjoint(real_write_map_2):
-            return True
+        # Relaxed for data neither Map reads and whose written regions are disjoint: every element of it then has
+        # one writer, so the fused Map writes the same values in any order (bout_elm_pb's ``ddt_P``, one z plane
+        # from the first Map and the others from the second).
+        for name in real_write_map_1 & real_write_map_2:
+            if name in real_read_map_1 or name in real_read_map_2:
+                return True
+            if not self.written_disjointly(name, first_map_exit, second_map_exit, state, facts):
+                return True
 
         # These are the names (unresolved) and the access nodes of the data that is used
         #  to transmit information between the maps. The partition function ensures that
@@ -1898,6 +1947,18 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  node that is created because the intermediate is shared.
         # TODO(phimuell): Handle this case.
         if not fused_inout_data_names.isdisjoint(exchange_names):
+            return True
+
+        # The intermediate orders the first Map's reads before the second Map's writes only for a write that depends
+        #  on it: an independent one runs in no fixed order with the reads in the fused body.
+        if fused_inout_data_names and not mfhelper.writes_follow(
+            state, second_map_entry, second_map_exit, exchange_nodes, fused_inout_data_names
+        ):
+            return True
+        # Symmetrically, a read of the first Map is ordered before those writes only if it feeds the intermediate.
+        if fused_inout_data_names and not mfhelper.reads_precede(
+            state, first_map_entry, first_map_exit, exchange_nodes, fused_inout_data_names
+        ):
             return True
 
         # While it is forbidden that a data container, used as intermediate, is also
@@ -2554,6 +2615,16 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Undecided counts as carrying: only a claim provably narrower than the array is let through.
         if claimed.dims() != full_range.dims():
             return True
+        # A window of fixed extent that moves with an iteration of the first Map is a different part of the array in
+        # two iterations, so it is never the whole array (and a single iteration was let through above)
+        params = set(first_map_exit.map.params)
+        for cb, ce, _ in claimed:
+            begin = symbolic.pystr_to_symbolic(cb)
+            moves = any(
+                str(p) in params and (slope := begin.diff(p)).is_number and slope != 0 for p in begin.free_symbols
+            )
+            if moves and params.isdisjoint(map(str, symbolic.pystr_to_symbolic(ce - cb).free_symbols)):
+                return False
         facts = sdfg.facts()
         for claimed_range, full_dim in zip(claimed, full_range):
             (cb, ce), (fb, fe) = claimed_range[:2], full_dim[:2]

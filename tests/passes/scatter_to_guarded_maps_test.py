@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`~dace.transformation.passes.scatter_to_guarded_maps.ScatterToGuardedMaps`.
+"""Tests for :class:`~dace.transformation.passes.parallelization.contracts.guarded_scatter.ScatterToGuardedMaps`.
 
 End-to-end coverage: TSVC scatter kernels are detected, guarded, and parallelized
 by a single pass invocation. Per-array detection is checked (multiple distinct
@@ -16,7 +16,10 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.scatter_to_guarded_maps import ScatterToGuardedMaps, detect_scatter_idx_arrays
+from dace.transformation.passes.parallelization.contracts.guarded_scatter import (
+    ScatterToGuardedMaps,
+    detect_scatter_idx_arrays,
+)
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 N = dace.symbol("N")
@@ -263,28 +266,28 @@ def test_two_distinct_scatters_get_individual_guards():
 def test_the_contract_probes_read_each_sdfgs_facts_once(monkeypatch):
     """Every probe walked its SDFG's interstate edges for the facts, two probes per scatter loop on an unchanged
     graph: a third of this pass on warpx_esirkepov_deposition."""
-    from dace.transformation.interstate.loop_to_map import LoopToMap
+    from dace.transformation.interstate.loop_to_map import LoopLift
 
     sdfg = two_distinct_scatters.to_sdfg(simplify=True)
     UniqueLoopIterators().apply_pass(sdfg, {})
     walked = []
     probing = [False]
-    original_walk, original_probe = dace.sdfg.sdfg.interstate_bound_names, LoopToMap.can_be_applied
+    original_walk, original_probe = dace.sdfg.sdfg.interstate_bound_names, LoopLift.can_lift
 
     def walk(sd):
         if probing[0]:
             walked.append(sd)
         return original_walk(sd)
 
-    def probe(self, graph, expr_index, sd, permissive=False):
+    def probe(self, graph, sd, permissive=False):
         probing[0] = True
         try:
-            return original_probe(self, graph, expr_index, sd, permissive)
+            return original_probe(self, graph, sd, permissive)
         finally:
             probing[0] = False
 
     monkeypatch.setattr(dace.sdfg.sdfg, "interstate_bound_names", walk)
-    monkeypatch.setattr(LoopToMap, "can_be_applied", probe)
+    monkeypatch.setattr(LoopLift, "can_lift", probe)
     assert ScatterToGuardedMaps().apply_pass(sdfg, {}) == 2
     assert walked.count(sdfg) == 1, f"{walked.count(sdfg)} walks of the unchanged SDFG"
 
@@ -844,3 +847,29 @@ if __name__ == "__main__":
     test_the_contract_waives_only_the_scatter_and_a_carried_counter_stays_sequential()
     with pytest.MonkeyPatch.context() as mp:
         test_the_contract_probes_read_each_sdfgs_facts_once(mp)
+
+
+@dace.program
+def chained_scatter_into_a_transient(c: dace.float64[N], nl: dace.int64[N], igk: dace.int64[N], out: dace.float64[N]):
+    buf = np.zeros(N, dtype=np.float64)
+    for i in range(N):
+        buf[nl[igk[i]]] = c[i]
+    out[:] = 2.0 * buf
+
+
+def test_a_transient_scattered_through_an_index_of_an_index_is_guarded_on_both():
+    """vloc_psi_k_acc's ``psic[nl[igk[i]]] = c[i]``: the target is a transient read after the loop, not loop scratch,
+    and the slot is injective when ``igk`` and ``nl`` both are. The parallel branch matches the loop on permutations,
+    the sequential one on a repeated slot."""
+    sdfg = chained_scatter_into_a_transient.to_sdfg(simplify=True)
+    assert {"nl", "igk"} <= set(detect_scatter_idx_arrays(sdfg))
+    canonicalize(sdfg)
+    n = 16
+    c = np.random.default_rng(0).random(n)
+    for nl, igk in ((_make_permutation(n, 1), _make_permutation(n, 2)), (np.zeros(n, np.int64), np.arange(n))):
+        expected = np.zeros(n)
+        for i in range(n):
+            expected[nl[igk[i]]] = c[i]
+        out = np.zeros(n)
+        sdfg(c=c, nl=nl.astype(np.int64), igk=igk.astype(np.int64), out=out, N=n)
+        assert np.allclose(out, 2.0 * expected)

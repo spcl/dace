@@ -6,9 +6,11 @@ import pytest
 import dace
 from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutils
+from dace.sdfg.graph import SubgraphView
 from dace.transformation.dataflow import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.interstate import InlineSDFG
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 
@@ -1338,6 +1340,113 @@ def test_an_ordering_edge_out_of_a_nested_sdfg_map_is_kept():
         assert np.allclose(got[name], want[name], rtol=1e-14, atol=0), name
 
 
+@dace.program
+def scale_and_sum(A: dace.float64[16], B: dace.float64[16], S: dace.float64[1]):
+    for i in dace.map[0:16]:
+        B[i] = 2 * A[i]
+        S[0] += A[i] + 1
+
+
+def nested_body_reducing_through_an_access_node(program) -> dace.SDFG:
+    """``map { nested SDFG } -> access node -wcr-> map exit``: the body nested, the reduction left outside it."""
+    sdfg = program.to_sdfg(simplify=True)
+    NormalizeWCR().apply_pass(sdfg, {})
+    state = sdfg.start_block
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    leaves = {e.src for e in state.in_edges(state.exit_node(entry)) if e.data.wcr}
+    body = [n for n in state.scope_children()[entry] if n is not state.exit_node(entry) and n not in leaves]
+    nest_state_subgraph(sdfg, state, SubgraphView(state, body))
+    return sdfg
+
+
+def test_fission_of_a_nested_body_keeps_the_reduction_it_leaves_through_an_access_node():
+    sdfg = nested_body_reducing_through_an_access_node(scale_and_sum)
+    A = np.arange(16.0)
+    B, S = np.zeros(16), np.zeros(1)
+
+    assert sdfg.apply_transformations(MapFission) == 1
+
+    sdfg(A=A, B=B, S=S)
+    (nest,) = [n for n in sdfg.start_block.nodes() if isinstance(n, nodes.NestedSDFG)]
+    inner = [n for s in nest.sdfg.states() for n in s.nodes() if isinstance(n, nodes.MapEntry)]
+    assert not any(isinstance(n, nodes.MapEntry) for n in sdfg.start_block.nodes())
+    assert len(inner) > 1
+    assert np.allclose(B, 2 * A)
+    assert S[0] == (A + 1).sum()
+
+
+def body_tasklet(state: dace.SDFGState, out: str, code: str, ins: list[str]) -> None:
+    """``out[0] = code(ins)`` in ``state``; ``a`` is read at ``i``, the others at ``0``."""
+    tasklet = state.add_tasklet(f"{out}_{state.label}", {f"in_{x}": None for x in ins}, {"o": None}, code)
+    for x in ins:
+        state.add_edge(state.add_read(x), None, tasklet, f"in_{x}", dace.Memlet(f"{x}[i]" if x == "a" else f"{x}[0]"))
+    state.add_edge(tasklet, "o", state.add_write(out), None, dace.Memlet(f"{out}[0]"))
+
+
+def reduction_through_a_transient(name: str, second_reads: str, exit_memlet: dace.Memlet | None = None):
+    """``for i in map: nested { first: u = 2 * a[i]; second: t = second_reads + 1 } -> tmp -wcr-> S[0]``."""
+    nested = dace.SDFG(f"{name}_body")
+    nested.add_symbol("i", dace.int64)
+    nested.add_array("a", [16], dace.float64)
+    nested.add_array("t", [1], dace.float64)
+    nested.add_transient("u", [1], dace.float64)
+    first = nested.add_state("first")
+    body_tasklet(first, "u" if second_reads == "u" else "t", "o = 2 * in_a", ["a"])
+    body_tasklet(nested.add_state_after(first, "second"), "t", f"o = in_{second_reads} + 1", [second_reads])
+
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [16], dace.float64)
+    sdfg.add_array("S", [1], dace.float64)
+    sdfg.add_transient("tmp", [1], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", {"i": "0:16"})
+    body = state.add_nested_sdfg(nested, {"a": None}, {"t": None}, symbol_mapping={"i": "i"})
+    state.add_memlet_path(state.add_read("A"), entry, body, dst_conn="a", memlet=dace.Memlet("A[0:16]"))
+    tmp = state.add_access("tmp")
+    state.add_edge(body, "t", tmp, None, dace.Memlet("tmp[0]"))
+    exit_.add_in_connector("IN_S")
+    exit_.add_out_connector("OUT_S")
+    state.add_edge(tmp, None, exit_, "IN_S", exit_memlet or dace.Memlet("S[0]", wcr="lambda x, y: x + y"))
+    state.add_edge(exit_, "OUT_S", state.add_write("S"), None, dace.Memlet("S[0]", wcr="lambda x, y: x + y"))
+    sdfg.validate()
+    return sdfg, entry, body
+
+
+def test_fission_folds_a_reduction_whose_memlet_names_the_folded_transient():
+    """``tmp[0] -> [0]`` into the exit names the transient the fold drops; the folded edge names ``S`` instead."""
+    memlet = dace.Memlet(data="tmp", subset="0", other_subset="0", wcr="lambda x, y: x + y")
+    sdfg, entry, body = reduction_through_a_transient("fission_fold_source_memlet", "u", memlet)
+
+    MapFission.apply_to(sdfg, expr_index=1, map_entry=entry, nested_sdfg=body)
+
+    sdfg.validate()
+    assert "tmp" not in sdfg.arrays
+    S = np.zeros(1)
+    sdfg(A=np.arange(16.0), S=S)
+    assert S[0] == (2 * np.arange(16.0) + 1).sum()
+
+
+def test_fission_declines_a_nested_body_with_a_dead_transient_output():
+    """A transient the body writes and nothing reads is not a reduction to fold: folding dropped its only edge."""
+    sdfg, entry, body = reduction_through_a_transient("fission_dead_transient_output", "u")
+    body.sdfg.add_array("d", [1], dace.float64)
+    body.add_out_connector("d")
+    body_tasklet(body.sdfg.start_block, "d", "o = in_a", ["a"])
+    sdfg.add_transient("dead", [1], dace.float64)
+    state = sdfg.start_block
+    state.add_edge(body, "d", state.add_access("dead"), None, dace.Memlet("dead[0]"))
+    sdfg.validate()
+
+    assert not MapFission.can_be_applied_to(sdfg, expr_index=1, map_entry=entry, nested_sdfg=body)
+
+
+def test_fission_declines_a_reduction_the_body_writes_twice():
+    """``t`` is written in both states and read by the second: every fissioned map would reduce into ``S``."""
+    sdfg, entry, body = reduction_through_a_transient("fission_reduction_written_twice", "t")
+
+    assert not MapFission.can_be_applied_to(sdfg, expr_index=1, map_entry=entry, nested_sdfg=body)
+
+
 if __name__ == "__main__":
     test_subgraph()
     test_nested_sdfg()
@@ -1380,3 +1489,7 @@ if __name__ == "__main__":
     )
     test_an_ordering_edge_out_of_the_map_is_kept_on_the_fissioned_maps()
     test_an_ordering_edge_out_of_a_nested_sdfg_map_is_kept()
+    test_fission_of_a_nested_body_keeps_the_reduction_it_leaves_through_an_access_node()
+    test_fission_folds_a_reduction_whose_memlet_names_the_folded_transient()
+    test_fission_declines_a_nested_body_with_a_dead_transient_output()
+    test_fission_declines_a_reduction_the_body_writes_twice()

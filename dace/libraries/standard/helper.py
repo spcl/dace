@@ -84,6 +84,43 @@ def host_accessible_info_storage(storage: dtypes.StorageType) -> dtypes.StorageT
     return storage
 
 
+def call_scratch_lifetime(
+    node: nodes.LibraryNode, parent_state: "dace.SDFGState", parent_sdfg: "dace.SDFG", *sizes
+) -> dtypes.AllocationLifetime:
+    """The lifetime of the scratch an expansion of ``node`` allocates, sized by ``sizes``: ``Persistent``, allocated
+    once at init, when every map enclosing the call is ``Sequential`` and every size holds one value for the whole run
+    (a loop of calls otherwise allocates and frees per trip, and on a GPU that pair costs more than a small
+    factorization); ``Scope`` otherwise, where calls that may run at once each need their own."""
+    # Avoid import loops
+    from dace.transformation import helpers as xfh
+    from dace.transformation.passes.persistent_transients import persistent_size_symbols, size_symbols_at_root
+
+    if any(
+        entry.schedule != dtypes.ScheduleType.Sequential
+        for entry, entry_state in xfh.get_parent_maps(parent_state, node)
+    ):
+        return dtypes.AllocationLifetime.Scope
+    names = {str(free) for size in sizes for free in dace.symbolic.pystr_to_symbolic(size).free_symbols}
+    root = parent_sdfg
+    while root.parent_sdfg is not None:
+        root = root.parent_sdfg
+    resolved = size_symbols_at_root(parent_sdfg, names)
+    if resolved is None or not resolved <= persistent_size_symbols(root):
+        return dtypes.AllocationLifetime.Scope
+    return dtypes.AllocationLifetime.Persistent
+
+
+def scratch_storage(storage: dtypes.StorageType, lifetime: dtypes.AllocationLifetime) -> dtypes.StorageType:
+    """``storage`` for scratch of ``lifetime``: a ``Persistent`` one left to storage inference (``Default``, or a
+    ``Register`` operand's) is placed on the heap, the only host storage a persistent allocation may take."""
+    if lifetime == dtypes.AllocationLifetime.Persistent and storage in (
+        dtypes.StorageType.Default,
+        dtypes.StorageType.Register,
+    ):
+        return dtypes.StorageType.CPU_Heap
+    return storage
+
+
 def collapse_shape_and_strides(
     subset: dace.subsets.Range, strides: list[dace.symbolic.SymExpr]
 ) -> tuple[list[dace.symbolic.SymExpr], list[dace.symbolic.SymExpr]]:
@@ -246,7 +283,7 @@ def is_short_loop(loop, cache: dict[int, bool] | None = None) -> bool:
                  it runs without mutating any ``LoopRegion``'s bounds -- neither
                  :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
                  nor
-                 :class:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes.SequentializeUnprofitableParallelScopes`
+                 :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes`
                  does; both only set ``schedule``/``implementation`` on library and map nodes.
     :returns: ``True`` only when the trip count is provably short; an unanalyzable, descending or
               symbolic-length loop answers ``False``.
@@ -321,7 +358,7 @@ def transfer_size_symbols(node: nodes.LibraryNode, state: dace.SDFGState) -> set
     """The free symbols of a copy's or memset's element count; ``None`` for any other library node.
 
     A loop that re-enters a transfer of a size it does not change is the map case of
-    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`:
+    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`:
     ``E`` entries cost ``E * (fork + work / P)`` against ``E * work``, so the entry count cancels and
     only the size decides (bicgstab's per-iteration ``N``-element memsets). A size the loop varies
     is not one size: npbench ``stockham_fft``'s ``R**i``-element copy is tiny on most of its 349,525

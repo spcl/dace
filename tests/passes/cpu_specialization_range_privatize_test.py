@@ -179,6 +179,34 @@ def elementwise_add(val: dace.float64[N], out: dace.float64[N]):
 
 
 @dace.program
+def scatter_block_loop(idx: dace.int64[N], val: dace.float64[N, K, K], out: dace.float64[M, K, K]):
+    for k in range(N):
+        for a in range(K):
+            for b in range(K):
+                out[idx[k], a, b] += val[k, a, b]
+
+
+@dace.program
+def scatter_and_total(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[M], tot: dace.float64[4]):
+    acc = np.zeros(4)
+    for i in dace.map[0:N]:
+        out[idx[i]] += val[i]
+        acc[:] += val[i]
+    tot[:] = acc * 2.0
+
+
+@dace.program
+def scatter_through_a_reshape(
+    idx: dace.int64[K, 3], keep: dace.bool_[K, 3], val: dace.float64[3 * K], out: dace.float64[M + 1]
+):
+    flat = np.reshape(idx, [3 * K])
+    ok = np.reshape(keep, [3 * K])
+    pos = np.where(ok, flat, M)
+    for i in dace.map[0 : 3 * K]:
+        out[pos[i]] += val[i]
+
+
+@dace.program
 def gather_sum(idx: dace.int64[N], val: dace.float64[M], out: dace.float64[N]):
     for i in dace.map[0:N]:
         out[i] += val[idx[i]]
@@ -257,6 +285,40 @@ def test_float_sum_matches_add_at(pattern, m):
     np.add.at(ref, idx, val)
     _run(sdfg, idx=idx, val=val, out=out, N=NV, M=m)
     assert np.allclose(out, ref, rtol=1e-12, atol=1e-12)
+
+
+def test_iterations_sorted_by_row_match_add_at_and_repeat_bitwise():
+    """A random scatter over an array larger than a thread's cache share: every chunk spans all rows, so the
+    iterations are sorted by row and each thread privatizes about an eighth of them; the fold is in thread order."""
+    sdfg, code = _specialize(scatter_sum, "sum_sorted", threads=8)
+    _assert_range_privatized(sdfg, code)
+    n, m = 1 << 21, 1 << 18
+    idx = _indices("random", n, m)
+    val = np.random.default_rng(5).random(n)
+    out = np.random.default_rng(6).random(m)
+    ref = out.copy()
+    np.add.at(ref, idx, val)
+    first, second = out.copy(), out.copy()
+    _run(sdfg, idx=idx, val=val, out=first, N=n, M=m)
+    _run(sdfg, idx=idx, val=val, out=second, N=n, M=m)
+    assert np.allclose(first, ref, rtol=1e-12, atol=1e-12)
+    assert np.array_equal(first, second)
+
+
+def test_block_rows_split_by_no_chunk_are_written_in_place_bitwise():
+    """A blocked-CSR scatter: block row ``r``'s nine products land on ``3r .. 3r + 2`` in any order, and the even
+    chunk boundaries cut block rows. Each boundary moves to the next block row, so every thread alone writes its
+    rows, in iteration order, straight into the shared array: bitwise ``np.add.at``."""
+    sdfg, code = _specialize(scatter_sum, "sum_owned", threads=8)
+    _assert_range_privatized(sdfg, code)
+    rows = NV // 9
+    idx = np.repeat(np.arange(rows), 9) * 3 + np.random.default_rng(9).integers(0, 3, 9 * rows)
+    val = np.random.default_rng(7).random(idx.size)
+    out = np.random.default_rng(8).random(3 * rows)
+    ref = out.copy()
+    np.add.at(ref, idx, val)
+    _run(sdfg, idx=idx, val=val, out=out, N=idx.size, M=3 * rows)
+    assert np.array_equal(out, ref)
 
 
 @pytest.mark.parametrize("n", [0, 1, 3])
@@ -345,7 +407,7 @@ def test_two_accumulators_of_different_types_share_one_pre_pass():
     sdfg, code = _specialize(scatter_two_dtypes, "twotypes")
     _assert_range_privatized(sdfg, code, "out", "cnt")
     assert "Accumulator<dace::ReductionType::Sum, int, true>" in code
-    assert "__rp0_lo0" in code and "__rp0_lo1" not in code, "the same rows need one pre-pass"
+    assert "__rp0_lo[0] = " in code and "__rp0_lo[1] = " not in code, "the same rows need one pre-pass"
     idx = _indices("random", NV, MV)
     val = np.random.default_rng(12).random(NV)
     out = np.zeros(MV)
@@ -360,7 +422,7 @@ def test_two_accumulators_of_different_types_share_one_pre_pass():
 def test_two_accumulators_with_different_indices_have_one_span_each():
     sdfg, code = _specialize(scatter_two_index_sets, "twoindex")
     _assert_range_privatized(sdfg, code, "out", "cnt")
-    assert "__rp0_lo1" in code
+    assert "__rp0_lo[1] = " in code
     a = _indices("sorted", NV, MV)
     b = _indices("random", NV, MV)
     val = np.random.default_rng(19).random(NV)
@@ -396,6 +458,23 @@ def test_element_corners_lulesh_shape():
     ref = out.copy()
     np.add.at(ref, nodelist.ravel(), val.ravel())
     _run(sdfg, nodelist=nodelist, val=val, out=out, N=NV, M=MV)
+    assert np.allclose(out, ref, rtol=1e-12, atol=1e-12)
+
+
+def test_a_block_row_read_inside_the_block_loops_is_noted_once():
+    """The row ``idx[k]`` is bound inside the ``a, b`` block loops, but reads neither and the loops run (``K`` is
+    positive): the pre-pass reads it once per ``k`` and counts the ``K * K`` writes, with no loop of its own."""
+    sdfg, code = _specialize(scatter_block_loop, "block_loop")
+    _assert_range_privatized(sdfg, code)
+    prepass = code[code.index("__rp0_lo[0] = std") : code.index("__rp0_order.note(")]
+    assert "for (" not in prepass, prepass
+    k = 3
+    idx = _indices("sorted", NV, MV)
+    val = np.random.default_rng(11).random((NV, k, k))
+    out = np.random.default_rng(12).random((MV, k, k))
+    ref = out.copy()
+    np.add.at(ref, idx, val)
+    _run(sdfg, idx=idx, val=val, out=out, N=NV, M=MV, K=k)
     assert np.allclose(out, ref, rtol=1e-12, atol=1e-12)
 
 
@@ -558,6 +637,36 @@ def test_pass_marks_once():
     assert RangePrivatizeScatterReductions().apply_pass(sdfg, {}) is None, "a marked map is not marked again"
 
 
+def test_a_persistent_accumulator_of_a_range_privatized_map_is_privatized_through_a_local_alias():
+    """``acc`` lives in the state struct, whose member is no name to shadow: a local pointer bound ahead of the
+    region names it, and its private rows shadow that pointer as they do an argument's."""
+    sdfg, code = _specialize(scatter_and_total, "persistent_total")
+    assert len(_marked_maps(sdfg)) == 1
+    assert "__rp0___rd_0_acc" in code, code
+    rng = np.random.default_rng(1)
+    idx, val = rng.integers(0, MV, NV), rng.random(NV)
+    out, tot = np.zeros(MV), np.zeros(4)
+    _run(sdfg, idx=idx, val=val, out=out, tot=tot, N=NV, M=MV)
+    ref = np.zeros(MV)
+    np.add.at(ref, idx, val)
+    assert np.allclose(out, ref) and np.allclose(tot, 2.0 * val.sum())
+
+
+def test_an_index_read_through_a_view_of_the_map_state_is_sliced():
+    """cp2k trs4: fusion moves ``where(ok, flat, M)`` into the scatter, which then reads its index through the
+    reshaped views ``flat`` and ``ok`` the map's own state defines, so the pre-pass reads them there."""
+    sdfg, code = _specialize(scatter_through_a_reshape, "through_view")
+    _assert_range_privatized(sdfg, code)
+    rng = np.random.default_rng(3)
+    k = 1500
+    idx, keep, val = rng.integers(0, MV, (k, 3)), rng.random((k, 3)) < 0.8, rng.random(3 * k)
+    out = np.zeros(MV + 1)
+    _run(sdfg, idx=idx, keep=keep, val=val, out=out, K=k, M=MV)
+    ref = np.zeros(MV + 1)
+    np.add.at(ref, np.where(keep.ravel(), idx.ravel(), MV), val)
+    assert np.allclose(out, ref)
+
+
 def test_a_row_stride_spelled_as_a_power_is_contiguous():
     """cp2k_trs4's ``sink[3 * n + 1, b, b]`` reaches the check with the row stride ``ipow(b, 2)``: the same
     ``b * b`` as the extents, so the scatter into it is range-privatized, not left to an atomic per element."""
@@ -572,6 +681,7 @@ def test_a_row_stride_spelled_as_a_power_is_contiguous():
 if __name__ == "__main__":
     for p, m in [("sorted", MV), ("random", MV), ("reversed", MV), ("equal", MV), ("extremes", MV), ("random", 100003)]:
         test_float_sum_matches_add_at(p, m)
+    test_block_rows_split_by_no_chunk_are_written_in_place_bitwise()
     for n in (0, 1, 3):
         test_fewer_iterations_than_threads(n)
     test_complex_sum_matches_add_at()
@@ -586,6 +696,7 @@ if __name__ == "__main__":
     test_multidimensional_rows_match_add_at("sorted")
     test_multidimensional_rows_match_add_at("random")
     test_element_corners_lulesh_shape()
+    test_a_block_row_read_inside_the_block_loops_is_noted_once()
     test_scatter_under_a_sequential_loop()
     test_clamped_computed_index_is_re_evaluated()
     test_arithmetic_index_of_an_index_array()
@@ -598,4 +709,6 @@ if __name__ == "__main__":
     test_a_map_that_does_not_scatter_is_left_alone(elementwise_add)
     test_a_map_that_does_not_scatter_is_left_alone(gather_sum)
     test_pass_marks_once()
+    test_a_persistent_accumulator_of_a_range_privatized_map_is_privatized_through_a_local_alias()
+    test_an_index_read_through_a_view_of_the_map_state_is_sliced()
     test_a_row_stride_spelled_as_a_power_is_contiguous()

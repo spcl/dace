@@ -9,7 +9,7 @@ import pytest
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 from tests.corpus.velocity_tendencies.velocity_tendencies import velocity_tendencies
 
 

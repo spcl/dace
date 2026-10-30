@@ -11,7 +11,7 @@ edge chain. Three correctness guards are exercised here:
    reads the other ``n-1`` back uninitialised (garbage). The refusal holds for ANY op
    (``+`` / ``-`` / ``*`` / ``min`` / ``max`` ...) and ANY device, so an un-privatised
    scatter (GPU, or a non-reducible op like ``-``) falls back to the correct per-element
-   atomic. ``NormalizeWCRSource`` widens its skip the same way.
+   atomic. ``NormalizeWCR`` widens its skip the same way.
 2. The scatter is STILL optimised to the fast OpenMP array-section ``reduction(op:hist[0:n])``
    by ``PrivatizeScatterReduction`` -- but only when the map is PARALLEL. A sequential /
    nested map has no cross-thread contention, so it is left a plain serial WCR accumulate.
@@ -45,7 +45,6 @@ from dace.config import set_temporary
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
-from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 from dace.transformation.passes.privatize_scatter_reduction import (
     PrivatizeScatterReduction,
     data_dependent_scatter_wcr_edge,
@@ -231,19 +230,19 @@ def test_map_is_parallel_predicate():
         assert map_is_parallel(st, me) is expected
 
 
-# NormalizeWCR / NormalizeWCRSource refuse (bugs 1 + 2)
+# NormalizeWCR / NormalizeWCR refuse (bugs 1 + 2)
 @pytest.mark.parametrize("prog", [weighted_histogram, subtracted_histogram], ids=["plus", "minus"])
 def test_normalize_wcr_refuses_data_dependent_scatter(prog):
     """``NormalizeWCR`` alone refuses the drop-WCR / whole-buffer rewrite for a
     data-dependent multi-element scatter sink (any op) -- no ``_nnr_out`` buffer, no rewrite."""
     sdfg = prog.to_sdfg(simplify=True)
-    res = NormalizeWCR().apply_pass(sdfg, {})
-    assert res is None, "NormalizeWCR must not rewrite a data-dependent scatter sink"
+    rewritten = NormalizeWCR().normalize_nested_reductions(sdfg)
+    assert rewritten == 0, "NormalizeWCR must not rewrite a data-dependent scatter sink"
     assert not nnr_out_arrays(sdfg), "no per-iteration whole-array _nnr_out buffer may be inserted"
 
 
 def test_normalize_wcr_source_skips_scatter_sink_regardless_of_op():
-    """``NormalizeWCRSource`` skips a data-dependent scatter sink for a NON-reducible op too:
+    """``NormalizeWCR`` skips a data-dependent scatter sink for a NON-reducible op too:
     even with a ``-`` WCR surfaced onto the ``NestedSDFG -> MapExit`` edge, the edge is left
     direct (no interposed whole-array ``_wcr_priv``) so codegen falls back to the atomic."""
     sdfg = build_scatter(dace.ScheduleType.CPU_Multicore, wcr="lambda x, y: (x - y)")
@@ -252,7 +251,7 @@ def test_normalize_wcr_source_skips_scatter_sink_regardless_of_op():
     # Simulate a surfaced WCR on the outer edge chain (what a hypothetical surfacing would do).
     for e in st.memlet_path(out_edge):
         e.data.wcr = "lambda x, y: (x - y)"
-    NormalizeWCRSource().apply_pass(sdfg, {})
+    NormalizeWCR().apply_pass(sdfg, {})
     edge = next(e for e in st.out_edges(nsdfg) if e.src_conn == "oc")
     assert isinstance(edge.dst, nodes.MapExit) and edge.data.wcr is not None, (
         "scatter WCR must stay on the direct NestedSDFG -> MapExit edge (no whole-array _wcr_priv)"

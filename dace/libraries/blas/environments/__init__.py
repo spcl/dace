@@ -3,5 +3,6 @@ from .blas import *
 from .openblas import *
 from .intel_mkl import *
 from .cublas import *
-from .rocblas import *
+from .hipblas import *
 from .libxsmm import *
+from .rocblas import *

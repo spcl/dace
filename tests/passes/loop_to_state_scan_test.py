@@ -501,3 +501,62 @@ def test_a_gf2_scan_whose_last_block_is_short_still_equals_the_bytewise_crc(chun
     sdfg(data=data, crc=actual, polynomial=np.int64(0x8408), N=length)
 
     assert actual[0] == reference_crc16(data, 0x8408)
+
+
+R = dace.symbol("R", dace.int64)
+
+
+@dace.program
+def batched_dfa(trans: dace.int64[8, 4], symbols: dace.int64[R, N], final: dace.int64[R]):
+    for r in dace.map[0:R]:
+        state = 0
+        for i in range(N):
+            state = trans[state, symbols[r, i]]
+        final[r] = state
+
+
+def offloaded_batched_dfa() -> dace.SDFG:
+    from dace.transformation.passes.canonicalize import finalize
+
+    sdfg = batched_dfa.to_sdfg(simplify=True)
+    pipeline.canonicalize(sdfg, target="gpu")
+    finalize.offload_to_gpu(sdfg)
+    return sdfg
+
+
+def test_a_map_around_a_state_scan_is_the_kernel_it_runs_in():
+    sdfg = offloaded_batched_dfa()
+
+    (scan,) = state_scans(sdfg)
+    kernels = [
+        node
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device
+    ]
+    assert [str(kernel.map.range) for kernel in kernels] == ["0:R"]
+    assert scan.schedule == dace.ScheduleType.Sequential
+
+
+@pytest.mark.gpu
+def test_a_state_scan_in_a_kernel_runs_on_the_block_and_matches_each_row():
+    import cupy  # Only present on GPU runners.
+
+    from dace.transformation.passes.canonicalize import finalize
+
+    rng = np.random.default_rng(5)
+    trans, rows = rng.integers(0, 8, (8, 4)), rng.integers(0, 4, (300, 700))
+    expected = np.zeros(300, np.int64)
+    for row, symbols in enumerate(rows):
+        state = 0
+        for symbol in symbols:
+            state = trans[state, symbol]
+        expected[row] = state
+    sdfg = offloaded_batched_dfa()
+    finalize.finalize_for_target(sdfg, "gpu")
+    actual = cupy.zeros(300, cupy.int64)
+
+    sdfg(trans=cupy.asarray(trans), symbols=cupy.asarray(rows), final=actual, R=300, N=700)
+
+    np.testing.assert_array_equal(cupy.asnumpy(actual), expected)
+    code = "".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "__shared__" in code

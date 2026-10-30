@@ -43,7 +43,8 @@ def pause_openmp_pools(mode: int = OMP_PAUSE_SOFT) -> bool:
             continue
         pause.argtypes = [ctypes.c_int]
         pause.restype = ctypes.c_int
-        if pause(mode) != 0:  # e.g. inside a parallel region: pool not torn down
+        # LLVM's libomp also refuses a pool already paused or never started; only inside a parallel region is a team live
+        if pause(mode) != 0 and lib.omp_in_parallel() != 0:
             warnings.warn(
                 f"{soname}: omp_pause_resource_all(mode={mode}) returned non-zero; its "
                 f"thread pool was NOT torn down before the fork."

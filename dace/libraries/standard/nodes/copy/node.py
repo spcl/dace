@@ -20,7 +20,8 @@ class CopyLibraryNode(nodes.LibraryNode):
     (Sequential map of ``gpuMemcpyAsync``), ``SharedMemoryCollective`` (block-collective
     ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D`` for a static 1-D transfer, else
     ``dace::BlockCollective3D`` for rank 1-3, with a trailing ``__syncthreads()`` controlled
-    by ``sync``).
+    by ``sync``), ``CastOnDevice`` (host/device
+    copy that changes dtype: memcpy through a pooled device buffer, the GPU casts).
 
     Does NOT accept dynamic (Scalar) input connectors -- subset expressions must use symbols
     already in scope at construction time, so the auto selector reasons purely from static

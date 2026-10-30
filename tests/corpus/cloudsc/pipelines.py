@@ -388,24 +388,25 @@ def _parallelize_phases() -> list[Phase]:
 _CANON_ORDER: tuple[str, ...] = ("normalize", "loop_to_x", "parallelize", "finalize")
 #: The recipe's between-phase cleanup label: it separates two phases and belongs to neither.
 _CANON_RAIL = "cleanup"
+#: The recipe's closing stage: it opens ``finalize`` directly after the last fusion, with no cleanup in between.
+CANON_FINISH = "finish"
 
 
 def _canon_coarse_phases(target: str, assume_parallel_guards: bool) -> list[Phase]:
     """The canonicalization recipe grouped into the four :data:`_CANON_ORDER` super-phases, one per recipe phase.
 
-    The recipe puts a structural cleanup (label :data:`_CANON_RAIL`) at its start and between every two phases, so
-    a phase begins where a cleanup run ends; the ingest cleanup joins ``normalize``, the terminal cleanup joins
-    ``finalize``. Grouping by the cleanup runs rather than by label keeps the out-of-phase lifts (labelled
+    The recipe puts a structural cleanup (label :data:`_CANON_RAIL`) at its start and between the first three phases,
+    so such a phase begins where a cleanup run ends; the ingest cleanup joins ``normalize`` and ``finalize`` begins at
+    :data:`CANON_FINISH`. Grouping by the cleanup runs rather than by label keeps the out-of-phase lifts (labelled
     ``lift_semantics`` where their matcher needs another phase's shape) inside the phase they run in. Sound
-    max-parallelism defaults (peel_limit=4, break_anti_dependence=True)."""
+    max-parallelism defaults (peel_limit=4)."""
     phases: list[Phase] = []
     index = 0
     previous = None
     in_a_phase = False
-    for label, unit in build_stages(
-        target=target, peel_limit=4, break_anti_dependence=True, assume_parallel_guards=assume_parallel_guards
-    ):
-        if previous == _CANON_RAIL and label != _CANON_RAIL and in_a_phase:
+    for label, unit in build_stages(target=target, peel_limit=4, assume_parallel_guards=assume_parallel_guards):
+        ends_cleanup = previous == _CANON_RAIL and label != _CANON_RAIL
+        if (ends_cleanup and in_a_phase) or (label == CANON_FINISH and previous != CANON_FINISH):
             index = min(index + 1, len(_CANON_ORDER) - 1)
         in_a_phase = in_a_phase or label != _CANON_RAIL
         previous = label

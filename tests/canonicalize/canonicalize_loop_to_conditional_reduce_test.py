@@ -386,5 +386,40 @@ def test_doesnt_lift_a_break_loop():
     assert res is None
 
 
+def test_refuses_a_guard_on_the_running_sum():
+    """``if s < 10: s += a[i]``: the mask would read ``s`` with no connector, and the guard depends on the sum."""
+
+    @dace.program
+    def kernel_capped_sum(a: dace.float64[N], out: dace.float64[1]):
+        s = 0.0
+        for i in range(N):
+            if s < 10.0:
+                s = s + a[i]
+        out[0] = s
+
+    sdfg = kernel_capped_sum.to_sdfg(simplify=True)
+    LoopToConditionalReduce().apply_pass(sdfg, {})
+    a = np.full(8, 3.0)
+    out = np.zeros(1)
+    sdfg(a=a, out=out, N=8)
+    assert out[0] == 12.0
+
+
+def test_refuses_a_guard_read_its_short_circuit_keeps_in_bounds():
+    """``i + 1 < N and a[i + 1] > 0``: wired as a mask input, ``a[i + 1]`` would be read at ``i = N - 1``."""
+
+    @dace.program
+    def kernel_lookahead(a: dace.float64[N], b: dace.float64[N], out: dace.float64[1]):
+        s = 0.0
+        for i in range(N):
+            if i + 1 < N and a[i + 1] > 0.0:
+                s = s + b[i]
+        out[0] = s
+
+    sdfg = kernel_lookahead.to_sdfg(simplify=True)
+    LoopToConditionalReduce().apply_pass(sdfg, {})
+    assert _has_conditional_block(sdfg)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

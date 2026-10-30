@@ -35,7 +35,10 @@ def build(
     :param extra_consumer: ``S`` also feeds an output ``C`` in the SAME state (``scalar_used_later``
         puts that second consumer in a later state instead).
     """
-    sdfg = dace.SDFG("distribute_tasklet")
+    # One name per variant: parallel test workers would otherwise build into the same cache folder
+    flags = (ordering_edge, tasklet_reads_data, tasklet_has_side_effects, scalar_used_later, tasklet_reads_symbol)
+    variant = "".join(str(int(flag)) for flag in (*flags, extra_consumer))
+    sdfg = dace.SDFG(f"distribute_tasklet_{variant}_{second_map_end}")
     for name in ("A", "B"):
         sdfg.add_array(name, [N], dace.float64)
     sdfg.add_array("T", [N], dace.float64, transient=True)

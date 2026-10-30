@@ -20,10 +20,10 @@ from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.loop_to_reduce import (
-    AccumulatorCopyChainToWCR,
     LoopToReduce,
-    RetargetWCRAccumulator,
     augassign_to_wcr_in_state,
+    collapse_accumulator_chains,
+    retarget_wcr_accumulators,
 )
 
 N = dace.symbol("N")
@@ -607,8 +607,8 @@ def _prep_and_lift(sdfg: dace.SDFG, prefer: str) -> int:
     if prefer != "wcr-scalar":
         return LoopToReduce(prefer=prefer).apply_pass(sdfg, {}) or 0
     lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {}) or 0
-    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
-    return lifted + (RetargetWCRAccumulator().apply_pass(sdfg, {}) or 0)
+    collapse_accumulator_chains(sdfg)
+    return lifted + (retarget_wcr_accumulators(sdfg) or 0)
 
 
 # s311 family: array-slot accumulator (sum)
@@ -1261,8 +1261,8 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
     # Now run the wcr-scalar lift with its full prelude. It must NOT create any WCR-bearing
     # write on ``b`` (the recurrence target).
     LoopToReduce(prefer="wcr-scalar").apply_pass(sdfg, {})
-    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
-    RetargetWCRAccumulator().apply_pass(sdfg, {})
+    collapse_accumulator_chains(sdfg)
+    retarget_wcr_accumulators(sdfg)
     sdfg.validate()
     bad_wcr = [
         e
@@ -1641,7 +1641,7 @@ def test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient(
 
 
 def test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_arrays():
-    """Same ownership property for ``RetargetWCRAccumulator``.
+    """Same ownership property for ``retarget_wcr_accumulators``.
 
     ``_extract_wcr_body`` looks the WCR write's destination up with ``sdfg.arrays.get`` and
     skips it when the descriptor is missing or transient. ``dd`` lives only in the callee,
@@ -1654,8 +1654,8 @@ def test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_array
     assert "dd" not in sdfg.arrays, "fixture is vacuous: the caller must NOT define the accumulator"
 
     LoopToReduce(prefer="wcr-scalar").apply_pass(sdfg, {})
-    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
-    retargeted = RetargetWCRAccumulator().apply_pass(sdfg, {})
+    collapse_accumulator_chains(sdfg)
+    retargeted = retarget_wcr_accumulators(sdfg)
     sdfg.validate()
     assert retargeted == 1, f"the nested WCR accumulator must be retargeted; got {retargeted}"
 
@@ -1722,9 +1722,9 @@ def test_scatter_by_index_array_is_not_retargeted():
     sdfg.validate()
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
     PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
-    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
+    collapse_accumulator_chains(sdfg)
 
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None
+    assert retarget_wcr_accumulators(sdfg) is None
     assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
 
 
@@ -1739,9 +1739,9 @@ def test_scatter_with_guarded_bin_index_is_not_retargeted():
     sdfg.validate()
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
     PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
-    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
+    collapse_accumulator_chains(sdfg)
 
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None
+    assert retarget_wcr_accumulators(sdfg) is None
     assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
 
 
@@ -1907,7 +1907,7 @@ def test_body_reinitialized_accumulator_is_not_retargeted():
     ONE term, so the multi-chain refusal cannot stand in for this one.
     """
     sdfg = _scratch_slot_loop(terms=1)
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, "per-iteration scratch must not be retargeted"
+    assert retarget_wcr_accumulators(sdfg) is None, "per-iteration scratch must not be retargeted"
     assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
     sdfg.validate()
 
@@ -1924,7 +1924,7 @@ def test_slot_accumulated_twice_per_iteration_is_not_retargeted():
     Before it did, three terms turned a sum of 1.077926 into 10.059380.
     """
     sdfg = _carried_accumulator_loop(terms=3)
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, "a slot accumulated twice must not be retargeted"
+    assert retarget_wcr_accumulators(sdfg) is None, "a slot accumulated twice must not be retargeted"
     assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
     sdfg.validate()
 
@@ -1940,12 +1940,20 @@ def test_accumulator_initialized_before_the_loop_is_still_retargeted():
     still be privatized into the ``wcr-scalar`` shape ``LoopToMap`` lowers to ``reduction(+:scalar)``.
     """
     sdfg = _carried_accumulator_loop(terms=1)
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) == 1, "a loop-carried accumulator must still be retargeted"
+    assert retarget_wcr_accumulators(sdfg) == 1, "a loop-carried accumulator must still be retargeted"
     assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") >= 1
     sdfg.validate()
 
     out, src, _base = _run_chain(sdfg, terms=1, seed=4116)
     assert np.allclose(out[0], src.sum()), "retargeting changed the carried sum"
+
+
+def test_an_accumulator_of_a_pinned_loop_is_not_retargeted():
+    """A pinned loop stays a loop: its accumulator gains nothing as a ``wcr-scalar`` (cp2k_density_matrix_trs4's scan
+    sums; RevertNonReductionWCR undid them)."""
+    sdfg = _carried_accumulator_loop(terms=1)
+    next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)).pinned_sequential = True
+    assert retarget_wcr_accumulators(sdfg) is None
 
 
 def wcr_write_beside_plain_chain_loop() -> dace.SDFG:
@@ -1989,7 +1997,7 @@ def test_wcr_write_beside_a_plain_chain_on_the_same_slot_is_not_retargeted():
     and 107032401 of 108321948 outputs were wrong.
     """
     sdfg = wcr_write_beside_plain_chain_loop()
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, "a slot also accessed by a plain chain was retargeted"
+    assert retarget_wcr_accumulators(sdfg) is None, "a slot also accessed by a plain chain was retargeted"
     assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
     sdfg.validate()
 
@@ -2027,7 +2035,7 @@ def test_wcr_write_beside_a_read_of_other_elements_is_retargeted():
     ``a[i]`` is undecidable with ``j`` free, so s118's accumulation stopped being lifted to a reduction.
     Over the loop's range the read is ``a[0:i]``, disjoint from the slot."""
     sdfg = wcr_write_beside_a_read_of_other_elements_loop()
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is not None, "a slot no other access touches was refused"
+    assert retarget_wcr_accumulators(sdfg) is not None, "a slot no other access touches was refused"
     assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 1
     sdfg.validate()
 
@@ -2082,7 +2090,7 @@ def test_accumulator_read_in_the_body_is_not_retargeted(nested):
     out wrong in 10% of its elements with nothing raised -- hence the value assertion.
     """
     sdfg = running_value_consumer_loop(nested)
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, "a scan must not be retargeted"
+    assert retarget_wcr_accumulators(sdfg) is None, "a scan must not be retargeted"
     assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
     sdfg.validate()
 
@@ -2202,6 +2210,42 @@ def test_a_read_modify_write_that_runs_once_stays_plain():
     state.add_edge(tasklet, "__out", state.add_write("A"), None, mm.Memlet("A[0]"))
     assert augassign_to_wcr_in_state(AugAssignToWCR(), sdfg, state) == 0
     assert not any(e.data.wcr for e in state.edges())
+
+
+def test_an_accumulation_the_loop_reads_back_stays_plain():
+    """``A[0] += B[r]; C[r] = A[0]`` is a scan: as a WCR the read of ``A[0]`` still keeps the loop sequential, so the
+    update stays plain (spgemm_hash's running offset; RevertNonReductionWCR undid it)."""
+    sdfg = build_free_tasklet_rmw()
+    sdfg.add_array("C", [4], dace.float64)
+    body = next(iter(sdfg.states()))
+    scan = body.parent_graph.add_state_after(body, "scan")
+    copy_out = scan.add_tasklet("copy", {"__in": None}, {"__out": None}, "__out = __in")
+    scan.add_edge(scan.add_read("A"), None, copy_out, "__in", mm.Memlet("A[0]"))
+    scan.add_edge(copy_out, "__out", scan.add_write("C"), None, mm.Memlet("C[r]"))
+    sdfg.reset_cfg_list()
+    collapse_accumulator_chains(sdfg)
+    assert not [e for st in sdfg.states() for e in st.edges() if e.data.wcr]
+
+
+@dace.program
+def scale_owned_rows(x: dace.complex128[M, N], v: dace.complex128[N], out: dace.complex128[M, N]):
+    for b in dace.map[0:M]:
+        row = np.empty(N, dtype=np.complex128)
+        for j in dace.map[0:N]:
+            row[j] = x[b, j]
+        for j in dace.map[0:N]:
+            if v[j].real > 0:
+                row[j] = row[j] * v[j]
+        out[b, :] = row
+
+
+def test_an_update_of_a_row_each_map_iteration_owns_stays_plain():
+    """``row[j] *= v[j]`` in a branch nest: the nest hands out ``row[j]``, one slot per ``j``, and ``row`` is
+    accessed only inside the ``b`` map, one copy per ``b``; nothing repeats the write. As a WCR it was a complex
+    product, which no GPU atomic does (QE's vloc_psi_k ``psic[j] = psic[j] * v[j]``)."""
+    sdfg = scale_owned_rows.to_sdfg(simplify=True)
+    collapse_accumulator_chains(sdfg)
+    assert not [e.data for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges() if e.data.wcr]
 
 
 @pytest.mark.parametrize("build", (build_free_tasklet_rmw, build_free_map_rmw, build_copy_wrapped_rmw))

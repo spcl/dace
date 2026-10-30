@@ -312,14 +312,15 @@ def test_a_map_with_nothing_in_its_scope_is_left_unnested() -> None:
     assert not any(isinstance(n, nodes.NestedSDFG) for n in state.nodes())
 
 
-def test_a_body_already_nested_beside_its_reduction_partial_is_not_renested() -> None:
+def reduction_partial_map(body: dace.SDFG) -> tuple[SDFGState, nodes.MapEntry]:
+    """A map whose body is ``body`` writing a partial the map exit reduces into ``B[0]``."""
     sdfg = dace.SDFG("nested_reduction")
     sdfg.add_array("A", [N, N], dace.float64)
     sdfg.add_array("B", [N], dace.float64)
     sdfg.add_transient("part", [1], dace.float64)
     state = sdfg.add_state("main", is_start_block=True)
     me, mx = state.add_map("row", dict(i=f"0:{N}"))
-    ns = state.add_nested_sdfg(body_nest(), {"p": None}, {"q": None}, symbol_mapping={"i": "i"})
+    ns = state.add_nested_sdfg(body, {"p": None}, {"q": None}, symbol_mapping={"i": "i"})
     state.add_memlet_path(state.add_access("A"), me, ns, dst_conn="p", memlet=dace.Memlet(f"A[0:{N}, 0:{N}]"))
     partial = state.add_access("part")
     state.add_edge(ns, "q", partial, None, dace.Memlet(f"part[0] -> [0:{N}]"))
@@ -329,9 +330,24 @@ def test_a_body_already_nested_beside_its_reduction_partial_is_not_renested() ->
     state.add_edge(
         mx, "OUT_B", state.add_access("B"), None, dace.Memlet(data="B", subset="0", wcr="lambda a, b: a + b")
     )
+    return state, me
+
+
+def test_a_body_already_nested_beside_its_reduction_partial_is_not_renested() -> None:
+    body = body_nest()
+    (write,) = [e for e in body.start_block.edges() if e.data.data == "q"]
+    write.data.wcr = "lambda a, b: a + b"
+    state, map_entry = reduction_partial_map(body)
     pass_instance = NestInnermostMapBodyIntoNSDFG(vector_width=8, nest_provably_divisible=True)
 
-    assert pass_instance._body_is_nested_reduction(state, me) is True
+    assert pass_instance._body_is_nested_reduction(state, map_entry) is True
+
+
+def test_a_body_writing_only_the_addend_of_its_reduction_partial_is_not_nested_yet() -> None:
+    state, map_entry = reduction_partial_map(body_nest())
+    pass_instance = NestInnermostMapBodyIntoNSDFG(vector_width=8, nest_provably_divisible=True)
+
+    assert pass_instance._body_is_nested_reduction(state, map_entry) is False
 
 
 def test_a_bare_tasklet_body_beside_a_scratch_scalar_is_not_an_already_nested_reduction() -> None:

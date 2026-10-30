@@ -327,5 +327,29 @@ def test_contour_pattern_indexed_write_is_injective_not_reduction():
     assert np.allclose(Q, ref)
 
 
+def test_a_loop_whose_control_flow_reads_the_running_sum_is_not_lifted():
+    """``for k: map i: out[i] = out[i] + B[k, i]`` then ``s = out[0]`` on the interstate edge: lifting would hand ``s``
+    a partial sum."""
+    sdfg = dace.SDFG("control_reads_accumulator")
+    sdfg.add_array("B", [4, 3], dace.float64)
+    sdfg.add_array("out", [3], dace.float64)
+    sdfg.add_array("seen", [4], dace.float64)
+    sdfg.add_symbol("s", dace.float64)
+    loop = LoopRegion("over_k", "k < 4", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("accumulate", is_start_block=True)
+    entry, exit_ = body.add_map("lanes", {"i": "0:3"})
+    add = body.add_tasklet("add", {"acc", "b"}, {"o"}, "o = acc + b")
+    body.add_memlet_path(body.add_read("out"), entry, add, dst_conn="acc", memlet=dace.Memlet("out[i]"))
+    body.add_memlet_path(body.add_read("B"), entry, add, dst_conn="b", memlet=dace.Memlet("B[k, i]"))
+    body.add_memlet_path(add, exit_, body.add_write("out"), src_conn="o", memlet=dace.Memlet("out[i]"))
+    record = loop.add_state("record")
+    loop.add_edge(body, record, dace.InterstateEdge(assignments={"s": "out[0]"}))
+    keep = record.add_tasklet("keep", {}, {"o"}, "o = s")
+    record.add_edge(keep, "o", record.add_write("seen"), None, dace.Memlet("seen[k]"))
+
+    assert _apply(sdfg) == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

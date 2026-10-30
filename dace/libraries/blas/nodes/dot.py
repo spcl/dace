@@ -7,7 +7,9 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import SDFG, SDFGState, dtypes, symbolic
 from dace import memlet as mm
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
 from dace.libraries.standard.environments.cuda import CUDA
 from dace.ordered import OrderedSet
@@ -216,7 +218,7 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
-        code = f"_result = cblas_{func}({n}, _x, {stride_x}, _y, {stride_y});"
+        code = f"_result = cblas_{func}({sym2cpp(n)}, _x, {sym2cpp(stride_x)}, _y, {sym2cpp(stride_y)});"
         # The return type is scalar in cblas_?dot signature
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, {"_result": dtype}, code, language=dace.dtypes.Language.CPP
@@ -264,6 +266,8 @@ class ExpandDotGPUBLAS(ExpandTransformation):
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
+        # C++ text: a symbolic length or stride prints ``Lb**3`` otherwise
+        n, stride_x, stride_y = sym2cpp(n), sym2cpp(stride_x), sym2cpp(stride_y)
 
         code = cls.environments[0].handle_setup_code(node)
         if node.accumulator_type is None:
@@ -304,20 +308,7 @@ class ExpandDotCuBLAS(ExpandDotGPUBLAS):
         return f"cublas{func}"
 
 
-@dace.library.expansion
-class ExpandDotRocBLAS(ExpandDotGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    handle = "__dace_rocblas_handle"
-    check_error = "dace::blas::CheckRocblasError"
-    #: No mixed-precision path: ``rocblas_dot_ex`` takes ``rocblas_datatype_*`` enums, which the
-    #: shared body has no mapping for. Empty makes the base fall back to ``pure`` for that case
-    #: instead of emitting a rocBLAS call carrying CUDA enum names.
-    ex_name = ""
-
-    @classmethod
-    def funcname(cls, func: str) -> str:
-        # ``Ddot`` -> ``rocblas_ddot``: rocBLAS is snake_case with the type letter lowered.
-        return f"rocblas_{func.lower()}"
+ExpandDotHipBLAS = hip_dialect.hip_expansion(ExpandDotCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
 
 
 @dace.library.node
@@ -330,7 +321,8 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
         "CUDA (block strided)": ExpandDotCUDABlock,
-        "rocBLAS": ExpandDotRocBLAS,
+        "hipBLAS": ExpandDotHipBLAS,
+        "rocBLAS": ExpandDotHipBLAS,
     }
     default_implementation = None
 

@@ -22,8 +22,12 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.transformation.dataflow import OTFMapFusion
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
+from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
@@ -169,6 +173,37 @@ def test_merge_siblings_data_vs_connector_name_collision():
     A, B = np.zeros(n), np.zeros(n)
     sdfg(X=X.copy(), A=A, B=B, N=n)
     assert np.allclose(A, X + 2.0) and np.allclose(B, X + 1.0)
+
+
+def test_siblings_joined_through_a_tasklet_stay_apart():
+    """``A`` feeds a tasklet that feeds ``B``: merged, the node would write the tasklet's input and read its output,
+    a cycle (warpx_esirkepov_deposition on GPU: ``State should be acyclic``)."""
+    sdfg = dace.SDFG("merge_through_tasklet")
+    for arr in ("X", "B"):
+        sdfg.add_array(arr, [N], dace.float64)
+    sdfg.add_array("t", [N], dace.float64, transient=True)
+    sdfg.add_array("u", [N], dace.float64, transient=True)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", {"i": "0:N"})
+    first = state.add_nested_sdfg(_sibling_nsdfg("first", False, False), {"x"}, {"o"})
+    second = state.add_nested_sdfg(_sibling_nsdfg("second", False, False), {"x"}, {"o"})
+    triple = state.add_tasklet("triple", {"a"}, {"b"}, "b = 3 * a")
+    t, u = state.add_access("t"), state.add_access("u")
+    state.add_memlet_path(state.add_read("X"), me, first, dst_conn="x", memlet=dace.Memlet("X[i]"))
+    state.add_edge(first, "o", t, None, dace.Memlet("t[i]"))
+    state.add_edge(t, None, triple, "a", dace.Memlet("t[i]"))
+    state.add_edge(triple, "b", u, None, dace.Memlet("u[i]"))
+    state.add_edge(u, None, second, "x", dace.Memlet("u[i]"))
+    state.add_memlet_path(second, mx, state.add_write("B"), src_conn="o", memlet=dace.Memlet("B[i]"))
+    convert_legacy_nested_sdfgs(sdfg)
+    sdfg.validate()
+
+    NormalizeMapBody().apply_pass(sdfg, {})
+    sdfg.validate()
+    X = np.random.default_rng(1).random(8)
+    B = np.zeros(8)
+    sdfg(X=X.copy(), B=B, N=8)
+    assert np.allclose(B, 3 * (X + 2.0) + 2.0)
 
 
 @dace.program
@@ -531,3 +566,34 @@ def test_merging_conditional_block_siblings_keeps_the_cfg_list_of_a_fresh_reset(
     a, b = np.zeros(8), np.zeros(8)
     sdfg(X=x, O0_0=a, O0_1=b, N=8)
     assert np.allclose(a, x + 1.0) and np.allclose(b, x - 1.0)
+
+
+@dace.program
+def scale_then_neighbors(A: dace.float64[N], B: dace.float64[N]):
+    t = np.empty(N, dace.float64)
+    for i in dace.map[0:N]:
+        t[i] = A[i] * 2
+    for i in dace.map[1 : N - 1]:
+        B[i] = t[i - 1] + t[i + 1]
+
+
+def test_producers_of_one_window_merge_with_their_own_element_and_index():
+    """``OTFMapFusion`` leaves one producer per window element, each writing its element of one buffer and binding
+    its own ``_i0``: merged, all three write the one buffer, and each keeps its index."""
+    sdfg = scale_then_neighbors.to_sdfg(simplify=True)
+    state = sdfg.start_block
+    for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
+        body = [n for n in state.scope_children()[entry] if n is not state.exit_node(entry)]
+        nest_state_subgraph(sdfg, state, SubgraphView(state, body))
+    propagate_memlets_sdfg(sdfg)
+    assert sdfg.apply_transformations(OTFMapFusion, options={"recompute_windows": True}) == 1
+    A, B = np.random.rand(12), np.zeros(12)
+    expected = np.zeros(12)
+    expected[1:-1] = 2 * A[:-2] + 2 * A[2:]
+
+    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1
+
+    sdfg.validate()
+    assert len([n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]) == 1
+    sdfg(A=A, B=B, N=12)
+    assert np.allclose(B, expected)

@@ -1404,11 +1404,43 @@ def test_refusal_reason_follows_block_order_not_memory_addresses():
         sut = LoopToMap()
         sut.loop = loop
         assert not sut.can_be_applied(loop.parent_graph, 0, loop.sdfg)
-        reasons.append(sut.last_refusal_reason)
+        reasons.append(sut.last_refusal.message)
     assert all(reason.startswith("write to A0 ") for reason in reasons), reasons
 
 
+def test_a_symbol_the_body_assigns_in_a_branch_keeps_its_declared_type():
+    """``j = 1 if i == 0 else start; A[i] = j`` with ``j`` an ``int32`` symbol: the nested body declares ``j`` as the
+    parent did instead of inferring ``int64_t`` from the literal."""
+    sdfg = dace.SDFG("branch_assigned_symbol_type")
+    for name in ("start", "j"):
+        sdfg.add_symbol(name, dace.int32)
+    sdfg.add_array("A", [10], dace.float64)
+    loop = LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    pick = ConditionalBlock("pick")
+    loop.add_node(pick, is_start_block=True)
+    for condition, value in (("i == 0", "1"), (None, "start")):
+        branch = ControlFlowRegion(f"branch_{len(pick.branches)}")
+        branch.add_state_after(branch.add_state(is_start_block=True), assignments={"j": value})
+        pick.add_branch(None if condition is None else dace.properties.CodeBlock(condition), branch)
+    use = loop.add_state("use")
+    loop.add_edge(pick, use, dace.InterstateEdge())
+    tasklet = use.add_tasklet("store", {}, {"o"}, "o = j")
+    use.add_edge(tasklet, "o", use.add_write("A"), None, dace.Memlet("A[i]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(LoopToMap) == 1
+
+    nested = next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+    assert nested.sdfg.symbols["j"] == dace.int32
+    assert "int64_t j;" not in "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    A = np.zeros(10)
+    sdfg(A=A, start=7)
+    assert np.array_equal(A, np.array([1.0] + [7.0] * 9))
+
+
 if __name__ == "__main__":
+    test_a_symbol_the_body_assigns_in_a_branch_keeps_its_declared_type()
     test_transient_read_only_on_interstate_edges_of_two_loops()
     test_symbol_assigned_in_every_branch_before_its_read()
     parser = argparse.ArgumentParser()
@@ -1454,6 +1486,7 @@ if __name__ == "__main__":
     test_dynamic_write_slab_separated_by_iteration_var()
     test_refuse_when_body_assigns_loop_range_symbol()
     test_symbolic_step_of_unknown_sign_stays_a_loop()
+    test_a_symbol_the_body_assigns_in_a_branch_keeps_its_declared_type()
 
 
 def branchy_symbol_loop() -> dace.SDFG:

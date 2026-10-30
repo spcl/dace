@@ -32,7 +32,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
-from dace.transformation.passes.scatter_to_guarded_maps import (
+from dace.transformation.passes.parallelization.contracts.guarded_scatter import (
     detect_scatter_idx_arrays,
     indirect_write_needs_injectivity,
 )

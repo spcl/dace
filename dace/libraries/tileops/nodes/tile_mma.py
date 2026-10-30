@@ -41,7 +41,7 @@ for (size_t i = 0; i < M; ++i) {
 import dace
 from dace import library, properties
 from dace.libraries.tileops.expansions import ExpandTilePure
-from dace.libraries.tileops.lanes import distributed_element_loop
+from dace.libraries.tileops.lanes import SEQUENTIAL, TileLowering, distributed_element_loop
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import edge_ctype, output_edge
 from dace.optionals import required
@@ -149,7 +149,9 @@ class TileMMA(TileOp):
         # A dot product reads a row of ``_a`` and a column of ``_b``
         return connector not in ("_a", "_b")
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         self.validate(sdfg, state)
         M, K_inner, N = self.widths
         # Pick the accumulator dtype from the ``_c`` output edge descriptor; the
@@ -183,7 +185,10 @@ class TileMMA(TileOp):
         ]
         # Spread over a thread group, each thread computes the dot products of its own (i, j) elements
         code = distributed_element_loop(
-            M * N, [f"const std::size_t i = __e / {N};", f"const std::size_t j = __e % {N};"], "\n".join(dot)
+            M * N,
+            [f"const std::size_t i = __e / {N};", f"const std::size_t j = __e % {N};"],
+            "\n".join(dot),
+            lowering=lowering,
         )
         if code is None:
             lines = [

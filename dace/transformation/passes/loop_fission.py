@@ -22,12 +22,15 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.analysis import loop_analysis, smt_dependence
+from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 
 
-def _is_per_iter_subset(subset, loop_var: str | None) -> bool:
+def _is_per_iter_subset(subset, loop_var: str | None, extra_index=None) -> bool:
     """``True`` iff every dimension of ``subset`` is a single-point access at
     the loop variable with offset zero (or loop-invariant).
+
+    ``extra_index`` is one more single-point dimension the access is judged with: the slot index a buffer
+    expansion would add (:func:`~dace.transformation.passes.buffer_expansion.iteration_private_buffers`).
 
     A ``write-then-read`` chain through a non-transient AccessNode that obeys
     this is *per-iteration* -- the produced and consumed values coincide on
@@ -46,7 +49,8 @@ def _is_per_iter_subset(subset, loop_var: str | None) -> bool:
     except Exception:
         return False
     saw_loop_var = False
-    for rb, re_, _ in subset.ndrange():
+    extra = [] if extra_index is None else [(extra_index, extra_index, 1)]
+    for rb, re_, _ in [*subset.ndrange(), *extra]:
         if rb != re_:
             return False
         try:
@@ -124,7 +128,8 @@ def _accesses_interfere_across_iterations(loop: LoopRegion, subset_a, subset_b, 
     except Exception:
         return True
     try:
-        disjoint = smt_dependence.prove_disjoint_access_boxes(box_a, box_b, loop.loop_variable, start, end, step)
+        with canon_stats.timed("z3", loop):
+            disjoint = smt_dependence.prove_disjoint_access_boxes(box_a, box_b, loop.loop_variable, start, end, step)
     except Exception:
         return True
     return disjoint is not True
@@ -133,22 +138,16 @@ def _accesses_interfere_across_iterations(loop: LoopRegion, subset_a, subset_b, 
 def _fissions_after_bridge_rewrite(loop: LoopRegion, sdfg: SDFG) -> bool:
     """Whether ``loop``'s body splits into >= 2 independent groups once its per-iter bridges are rewritten.
 
-    Decided on a DEEPCOPY. The rewrite has to happen before the grouping -- severing a bridge is what makes
-    a producer and its consumer look independent (TSVC s221 goes 1 -> 2 groups only because of it) -- but it
-    is only SOUND once the fission puts them in separate loops. Answering the question on a throwaway copy
-    keeps that conditional mutation off the real graph entirely: a loop that does not fission is never
-    touched, so the pass reporting "nothing applied" is the truth.
+    The rewrite has to happen before the grouping -- severing a bridge is what makes a producer and its consumer
+    look independent (TSVC s221 goes 1 -> 2 groups only because of it) -- but it is only SOUND once the fission
+    puts them in separate loops. So the grouping is asked with the bridges it would sever left out
+    (:func:`_per_iter_bridges`), and the graph is not touched.
     """
-    probe = copy.deepcopy(loop)  # detached: its states carry no .sdfg, hence the explicit one below
-    # Restore the parent reference so that grouping can see sibling loops (e.g. the
-    # accumulator loop that consumes a split-out side-writes loop). The probe is
-    # never written back, so this is safe.
-    probe.parent_graph = loop.parent_graph
-    probe_compute = _single_compute_state(probe)
-    if probe_compute is None:
+    compute = _single_compute_state(loop)
+    if compute is None:
         return False
-    _rewrite_per_iter_bridges(probe_compute, probe.loop_variable, sdfg)
-    return len(_independent_groups(probe_compute, probe, sdfg)) >= 2
+    severed = frozenset(_per_iter_bridges(compute, loop.loop_variable, sdfg))
+    return len(_independent_groups(compute, loop, sdfg, severed=severed)) >= 2
 
 
 def _container_per_iter_only(state: SDFGState, data: str, loop_var: str | None) -> bool:
@@ -182,47 +181,43 @@ def _rewrite_per_iter_bridges(state: SDFGState, loop_var: str | None, sdfg: SDFG
     state says nothing about which runs first -- so the value would depend on
     the order codegen happens to pick. CALL THIS ONLY WHEN THE FISSION IS GOING
     TO BE APPLIED; to ask whether it would, use
-    :func:`_fissions_after_bridge_rewrite`, which decides on a copy.
+    :func:`_fissions_after_bridge_rewrite`, which decides without rewriting.
 
     Has no effect if ``loop_var`` is ``None`` or if no per-iter shared
     container exists.
 
-    :param sdfg: The SDFG owning ``state``'s data descriptors, passed in rather
-        than read off ``state``: a detached copy of a loop (what the fission
-        probe reasons about) has no ``.sdfg``.
+    :param sdfg: The SDFG owning ``state``'s data descriptors.
     """
+    for oe in _per_iter_bridges(state, loop_var, sdfg):
+        fresh = state.add_access(oe.src.data)
+        state.add_edge(fresh, oe.src_conn, oe.dst, oe.dst_conn, oe.data)
+        state.remove_edge(oe)
+
+
+def _per_iter_bridges(state: SDFGState, loop_var: str | None, sdfg: SDFG) -> list:
+    """The edges :func:`_rewrite_per_iter_bridges` moves to a fresh reader: the out-edges of the writer-side access
+    nodes of every non-transient container ``state`` accesses only per iteration. Reads the graph only."""
     if loop_var is None:
-        return
+        return []
     written = OrderedSet(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
-    for data in list(written):
+    bridges = []
+    for data in written:
         desc = sdfg.arrays.get(data)
         if desc is None or desc.transient:
             continue
         if not _container_per_iter_only(state, data, loop_var):
             continue
-        # Find writer-side AccessNodes with downstream consumers.
-        for n in list(state.nodes()):
-            if not (
-                isinstance(n, nodes.AccessNode)
-                and n.data == data
-                and state.in_degree(n) > 0
-                and state.out_degree(n) > 0
-            ):
-                continue
-            out_edges = list(state.out_edges(n))
-            if not out_edges:
-                continue
-            for oe in out_edges:
-                fresh = state.add_access(data)
-                state.add_edge(fresh, oe.src_conn, oe.dst, oe.dst_conn, oe.data)
-                state.remove_edge(oe)
+        for n in state.nodes():
+            if isinstance(n, nodes.AccessNode) and n.data == data and state.in_degree(n) > 0:
+                bridges.extend(state.out_edges(n))
+    return bridges
 
 
-def _has_self_path(state: SDFGState, data: str) -> bool:
+def _has_self_path(state: SDFGState, data: str, severed: frozenset = frozenset()) -> bool:
     """True if the state's dataflow graph contains a directed path from an
     :class:`AccessNode` of ``data`` to another (or the same) :class:`AccessNode`
     of ``data``. Such a self-path captures a live-in/live-out recurrence like a
-    scalar accumulator update.
+    scalar accumulator update. ``severed`` edges are left out.
     """
     starts = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == data]
     if len(starts) < 2 and not any(state.out_degree(n) > 0 and state.in_degree(n) > 0 for n in starts):
@@ -237,11 +232,13 @@ def _has_self_path(state: SDFGState, data: str) -> bool:
             seen.add(cur)
             if cur is not start and isinstance(cur, nodes.AccessNode) and cur.data == data:
                 return True
-            stack.extend(e.dst for e in state.out_edges(cur))
+            stack.extend(e.dst for e in state.out_edges(cur) if e not in severed)
     return False
 
 
-def _is_accumulator_group(group: list[nodes.Node], state: SDFGState, sdfg: SDFG) -> bool:
+def _is_accumulator_group(
+    group: list[nodes.Node], state: SDFGState, sdfg: SDFG, severed: frozenset = frozenset()
+) -> bool:
     """True if ``group`` contains a transient scalar that is both read and written
     in the same state, indicating a loop-carried accumulator update. Per-iteration
     transient temporaries (produced and consumed within one iteration) are excluded
@@ -253,7 +250,7 @@ def _is_accumulator_group(group: list[nodes.Node], state: SDFGState, sdfg: SDFG)
         desc = sdfg.arrays.get(data)
         if desc is None or desc.transient is False:
             continue
-        if _has_self_path(state, data):
+        if _has_self_path(state, data, severed):
             return True
     return False
 
@@ -278,9 +275,8 @@ def _consumed_by_sibling_loop(state: SDFGState, data: set[str]) -> bool:
     for block in parent.nodes():
         if not isinstance(block, LoopRegion):
             continue
-        # Skip the loop itself, and skip the original loop when this state is a
-        # deepcopy probe (the probe shares the parent's nodes, so the original loop
-        # would otherwise look like a sibling of itself).
+        # Skip the loop itself, and the original loop when this state belongs to one of its
+        # fission clones (a clone shares the label, and would otherwise see it as a sibling).
         if block is loop or block.label == loop.label:
             continue
         reads, _ = _block_rw(block)
@@ -290,7 +286,12 @@ def _consumed_by_sibling_loop(state: SDFGState, data: set[str]) -> bool:
 
 
 def _merge_side_write_groups(
-    groups: list[list[nodes.Node]], state: SDFGState, loop_var: str | None, sdfg: SDFG, sibling_check: bool = True
+    groups: list[list[nodes.Node]],
+    state: SDFGState,
+    loop_var: str | None,
+    sdfg: SDFG,
+    sibling_check: bool = True,
+    severed: frozenset = frozenset(),
 ) -> list[list[nodes.Node]]:
     """Merge side-write groups when they are part of a compound reduction body
     (one scalar accumulator group plus multiple per-element side writes) or when
@@ -300,7 +301,7 @@ def _merge_side_write_groups(
     """
     if loop_var is None or len(groups) < 2:
         return groups
-    acc_idxs = {i for i, g in enumerate(groups) if _is_accumulator_group(g, state, sdfg)}
+    acc_idxs = {i for i, g in enumerate(groups) if _is_accumulator_group(g, state, sdfg, severed)}
     side_idxs = [i for i in range(len(groups)) if i not in acc_idxs]
     if len(side_idxs) <= 1:
         return groups
@@ -327,7 +328,11 @@ def _merge_side_write_groups(
 
 
 def _independent_groups(
-    state: SDFGState, loop: LoopRegion | None, sdfg: SDFG, sibling_check: bool = True
+    state: SDFGState,
+    loop: LoopRegion | None,
+    sdfg: SDFG,
+    sibling_check: bool = True,
+    severed: frozenset = frozenset(),
 ) -> list[list[nodes.Node]]:
     """Partition ``state``'s nodes into data-independent groups.
 
@@ -354,9 +359,9 @@ def _independent_groups(
     :param state: The loop body state.
     :param loop: The enclosing ``LoopRegion``. ``None`` keeps the legacy
         strict-merge behaviour.
-    :param sdfg: The SDFG owning ``state``'s data descriptors, passed in rather
-        than read off ``state``: a detached copy of a loop (what the fission
-        probe reasons about) has no ``.sdfg``.
+    :param sdfg: The SDFG owning ``state``'s data descriptors.
+    :param severed: Edges taken as moved to a fresh reader of their source's container (:func:`_per_iter_bridges`):
+        the grouping of the rewritten state, without rewriting it.
     :returns: A list of node lists, one per independent group, deterministic.
     """
     order = {n: i for i, n in enumerate(state.nodes())}
@@ -383,7 +388,7 @@ def _independent_groups(
 
     # Connect non-input nodes by dataflow.
     for e in state.edges():
-        if e.src not in is_input and e.dst not in is_input:
+        if e.src not in is_input and e.dst not in is_input and e not in severed:
             union(e.src, e.dst)
 
     # Merge groups that touch a container written in the state. A re-read
@@ -456,7 +461,7 @@ def _independent_groups(
         feeders = [n for n in is_input if any(e.dst in member_set for e in state.out_edges(n))]
         groups.append(sorted(members + feeders, key=lambda n: order[n]))
     groups = sorted(groups, key=lambda g: order[g[0]])
-    return _merge_side_write_groups(groups, state, loop_var, sdfg, sibling_check=sibling_check)
+    return _merge_side_write_groups(groups, state, loop_var, sdfg, sibling_check=sibling_check, severed=severed)
 
 
 def _single_compute_state(loop: LoopRegion) -> SDFGState | None:
@@ -673,7 +678,7 @@ class LoopFission(ppl.Pass):
         sdfg = loop.sdfg
         compute = _single_compute_state(loop)
         if compute is not None:
-            # Decide on a copy, then mutate: the bridge rewrite is only sound once the fission
+            # Decide without rewriting, then mutate: the bridge rewrite is only sound once the fission
             # separates producer and consumer into their own loops, so a loop that turns out not to
             # fission must come out exactly as it went in.
             if not _fissions_after_bridge_rewrite(loop, sdfg):
@@ -696,28 +701,48 @@ class LoopFission(ppl.Pass):
         is_start = parent.start_block is loop
         orig_order = _linear_blocks(loop, allow_assignments=True)
         keep_idx = [sorted(required(orig_order).index(b) for b in g) for g in groups]
+        order = required(orig_order)
+        # The last group keeping a block takes the block itself, as ``loop`` is dropped below; only a block a later
+        # group keeps too is copied.
+        last_group = {order[i]: gi for gi, idxs in enumerate(keep_idx) for i in idxs}
+        # An edge between two blocks that stay adjacent keeps its data (a symbol it assigns feeds the next block).
+        kept_edges = edge_data_by_ends(loop)
+        # The loop without its body, copied once per group: a body split n ways is not copied n times whole.
+        memo = {id(b): b for b in loop.nodes()}
+        memo.update((id(e.data), e.data) for e in loop.edges())
+        shell = copy.deepcopy(loop, memo)
+        for b in list(shell.nodes()):
+            shell.remove_node(b)
+
+        position = {b: i for i, b in enumerate(loop.nodes())}
 
         clones: list[LoopRegion] = []
         for gi, idxs in enumerate(keep_idx):
-            # Copy only the blocks this group keeps: the others stand in as themselves until the pruning below
-            # drops them, so a body split n ways is not copied n times whole (CloudSC: 51 groups, 3 min).
-            kept = {required(orig_order)[i] for i in idxs}
-            clone = copy.deepcopy(loop, {id(b): b for b in loop.nodes() if b not in kept})
+            clone = copy.deepcopy(shell)
             clone.label = f"{loop.label}_fis{gi}"
-            corder = _linear_blocks(clone, allow_assignments=True)
-            keep = [required(corder)[i] for i in idxs]
-            # An edge between two blocks that stay adjacent keeps its data (a symbol it assigns feeds the next block).
-            kept_edges = edge_data_by_ends(clone)
-            for b in [b for b in clone.nodes() if b not in keep]:
-                clone.remove_node(b)
-            for e in list(clone.edges()):
-                clone.remove_edge(e)
-            for a, b in zip(keep, keep[1:]):
-                clone.add_edge(a, b, kept_edges.get((a, b), InterstateEdge()))
-            clone.start_block = clone.node_id(keep[0])
-            # Added once pruned, so the stand-ins never join the tree.
-            parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
+            originals = [order[i] for i in idxs]
+            # Added in the loop's own block order, as a pruned copy of the loop holds them.
+            claimed = {}
+            for b in sorted(originals, key=position.__getitem__):
+                if last_group[b] == gi:
+                    # Leaves ``loop``, and the CFG list with it, before the clone claims it.
+                    loop.remove_node(b)
+                    claimed[b] = b
+                else:
+                    claimed[b] = copy.deepcopy(b)
+                clone.add_node(claimed[b])
+            for a, b in zip(originals, originals[1:]):
+                data = kept_edges.get((a, b))
+                if data is None:
+                    data = InterstateEdge()
+                elif claimed[a] is not a or claimed[b] is not b:
+                    data = copy.deepcopy(data)
+                clone.add_edge(claimed[a], claimed[b], data)
+            clone.start_block = clone.node_id(claimed[originals[0]])
             clones.append(clone)
+
+        for clone in clones:
+            parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
 
         for e in in_edges:
             parent.add_edge(e.src, clones[0], copy.deepcopy(e.data))

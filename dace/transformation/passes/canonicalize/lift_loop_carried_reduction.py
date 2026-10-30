@@ -25,7 +25,7 @@ view and the multi-output handling.
 Soundness -- the lift is value-preserving (up to reduction reassociation, as for
 any parallel reduction) when, for the accumulator ``A`` and the loop ``L``:
 
-* the combine is an associative/commutative reduction (``+``, ``*``, ``min``,
+* the combine is an order-independent update (``+``, ``-`` with the accumulator on the left, ``*``, ``^``, ``min``,
   ``max``) -- WCR-safe;
 * ``A`` is read at the accumulated subset ``S`` ONLY as the accumulator operand
   of its own in-place write (a PURE accumulator -- never used to compute the
@@ -110,44 +110,21 @@ from dace.sdfg import SDFGState
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.transformation import explicit_cf_compatible
 
-#: Python AST op -> WCR operator symbol for the associative/commutative reductions.
-REDUCTION_OPS: dict[type[ast.operator], str] = {ast.Add: "+", ast.Mult: "*"}
-#: min / max reductions arrive as a 2-argument Call.
-REDUCTION_FUNCS: tuple[str, ...] = ("min", "max")
 
-
-def _reduction_operands(tasklet: nodes.Tasklet) -> tuple[str, tuple[ast.AST, ast.AST]] | None:
-    """If ``tasklet`` is a single assignment whose RHS is an associative binary
-    reduction (``+`` / ``*``) or a two-argument ``min`` / ``max``, return
-    ``(op, (operand0, operand1))`` -- the reduction operator symbol and the two
-    RHS operand AST nodes. Else ``None``.
-
-    WHICH operand is the accumulator is decided by the CALLER from dataflow (the
-    operand whose connector reads the accumulator array at the written element),
-    not by position here: picking it by identity alone is ambiguous when both
-    operands are bare input Names (``out = out + B`` vs ``out = B + out``). The
-    other operand is the increment -- it may be any expression and becomes the
-    WCR value verbatim (see :func:`_increment_ast`).
-    """
-    if tasklet.language.name != "Python" or len(tasklet.code.code) != 1:
+def _update(tasklet: nodes.Tasklet) -> ast.Assign | None:
+    """The tasklet's single assignment when it updates one of its inputs (``out = acc OP inc``,
+    :meth:`~dace.transformation.dataflow.wcr_conversion.AugAssignToWCR.increment`); else ``None``. Which input is
+    the accumulator the caller decides from dataflow: ``out = out + B`` and ``out = B + out`` both qualify."""
+    if len(tasklet.out_connectors) != 1:
         return None
-    stmt = tasklet.code.code[0]
-    if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+    assign = AugAssignToWCR.assignment(tasklet, next(iter(tasklet.out_connectors)))
+    if assign is None or not any(AugAssignToWCR.increment(assign.value, c) for c in tasklet.in_connectors):
         return None
-    rhs = stmt.value
-    if isinstance(rhs, ast.BinOp) and type(rhs.op) in REDUCTION_OPS:
-        return REDUCTION_OPS[type(rhs.op)], (rhs.left, rhs.right)
-    if (
-        isinstance(rhs, ast.Call)
-        and isinstance(rhs.func, ast.Name)
-        and rhs.func.id in REDUCTION_FUNCS
-        and len(rhs.args) == 2
-    ):
-        return rhs.func.id, (rhs.args[0], rhs.args[1])
-    return None
+    return assign
 
 
 def _copy_input_connector(tasklet: nodes.Tasklet) -> str | None:
@@ -180,7 +157,7 @@ def _trace_to_reduction(st: SDFGState, mx_in: MultiConnectorEdge[Memlet]) -> nod
     src = mx_in.src
     if not isinstance(src, nodes.Tasklet):
         return None
-    if _reduction_operands(src) is not None:
+    if _update(src) is not None:
         return src  # direct: the reduction tasklet writes the map exit
     copy_in = _copy_input_connector(src)
     if copy_in is None:
@@ -193,15 +170,7 @@ def _trace_to_reduction(st: SDFGState, mx_in: MultiConnectorEdge[Memlet]) -> nod
     if len(producers) != 1 or not isinstance(producers[0].src, nodes.Tasklet):
         return None
     red = producers[0].src
-    return red if _reduction_operands(red) is not None else None
-
-
-def _increment_ast(tasklet: nodes.Tasklet, acc_conn: str) -> ast.AST:
-    """The non-accumulator (increment) operand of the reduction tasklet."""
-    rhs = tasklet.code.code[0].value
-    operands = (rhs.left, rhs.right) if isinstance(rhs, ast.BinOp) else tuple(rhs.args)
-    acc = next(o for o in operands if isinstance(o, ast.Name) and o.id == acc_conn)
-    return operands[1] if operands[0] is acc else operands[0]
+    return red if _update(red) is not None else None
 
 
 class _AccumulatorCandidate:
@@ -278,10 +247,11 @@ class LiftLoopCarriedReduction(ppl.Pass):
         # read-back of its own reduction (never to compute an increment or anything else),
         # else it is a recurrence and the WCR would change the value.
         reads_by_array = self._accumulator_reads(body_states)
+        controls = loop_analysis.control_reads(loop)
         lifted = 0
         for cand in candidates:
-            if any(e != cand.read_edge for e in reads_by_array.get(cand.array, {})):
-                continue  # array read elsewhere in the loop -> not a pure accumulator
+            if any(e != cand.read_edge for e in reads_by_array.get(cand.array, {})) or cand.array in controls:
+                continue  # array read elsewhere in the loop, or by its control flow -> not a pure accumulator
             if not self._sizes_are_concrete(loop, cand):
                 continue  # symbolic extents -> cost undecidable, refuse (see module docstring)
             self._apply_lift(cand)
@@ -345,23 +315,22 @@ class LiftLoopCarriedReduction(ppl.Pass):
         tasklet = _trace_to_reduction(st, mx_in)
         if tasklet is None:
             return None
-        op, operands = _reduction_operands(tasklet)
-        operand_conns = dict.fromkeys(
-            o.id for o in operands if isinstance(o, ast.Name) and o.id in tasklet.in_connectors
-        )
-        # Accumulator read-back: map_entry -> tasklet, reading A at the write subset, into a
-        # bare-Name reduction operand. Identify the accumulator by dataflow (which operand
-        # reads exactly the written element), so the increment stays whatever the other
-        # operand is -- and refuse ``out = out + out`` (both operands read A) as ambiguous.
+        rhs = required(_update(tasklet)).value
+        # Accumulator read-back: map_entry -> tasklet, reading A at the write subset, into the operand the update
+        # accumulates; ``out = out + out`` (the increment reads A too) is no update of either.
         acc_edges = [
             e
             for e in st.in_edges(tasklet)
-            if e.src is me and e.dst_conn in operand_conns and e.data.data == array and e.data.subset == write_subset
+            if e.src is me
+            and e.data.data == array
+            and e.data.subset == write_subset
+            and AugAssignToWCR.increment(rhs, e.dst_conn) is not None
         ]
         if len(acc_edges) != 1:
             return None
         entry_out = acc_edges[0]
         acc_conn = entry_out.dst_conn
+        op = required(AugAssignToWCR.increment(rhs, acc_conn))[0]
         # Intra-map purity: the map-entry read feeding the accumulator element must be
         # consumed ONLY by this accumulator operand. If that map-entry-out connector fans
         # out to any other tasklet inside the map, A[write_subset] also forms the increment
@@ -393,11 +362,10 @@ class LiftLoopCarriedReduction(ppl.Pass):
 
     def _apply_lift(self, c: _AccumulatorCandidate) -> None:
         st = c.state
-        wcr = f"lambda a, b: {c.op}(a, b)" if c.op in REDUCTION_FUNCS else f"lambda a, b: a {c.op} b"
         # Rewrite the tasklet to emit only the increment (drop the accumulator operand).
-        inc = _increment_ast(c.tasklet, c.acc_conn)
-        stmt = c.tasklet.code.code[0]
-        c.tasklet.code.code = [ast.copy_location(ast.Assign(targets=stmt.targets, value=inc), stmt)]
+        target = next(iter(c.tasklet.out_connectors))
+        op, inc = required(AugAssignToWCR.increment(required(_update(c.tasklet)).value, c.acc_conn))
+        wcr = AugAssignToWCR.write_increment(c.tasklet, target, op, inc)
         # Set the WCR on the write path (tasklet -> map_exit -> array).
         c.tasklet_out_edge.data.wcr = wcr
         c.exit_out_edge.data.wcr = wcr

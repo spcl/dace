@@ -5,8 +5,10 @@ import re
 from collections.abc import Set as AbstractSet
 from typing import Any
 
+import numpy as np
+
 import dace
-from dace import config, cpf_lowering, data, dtypes, symbolic, tile_functions
+from dace import config, cpf_lowering, data, dtypes, graphlib, symbolic, tile_functions
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -27,7 +29,7 @@ from dace.sdfg.state import (
 from dace.sdfg.symbol_repo import assumption_check, program_assumptions
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import validate_declared_symbols
-from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.analysis.scopes import AccessInstances, AllocationScopes, CodegenAnalysisPipeline
 from dace.transformation.passes.canonicalize import supply_num_threads
 
@@ -66,6 +68,28 @@ def _get_or_eval_sdfg_first_arg(func, sdfg):
     return func
 
 
+def constant_as_stored(desc: data.Array, value: Any) -> np.ndarray:
+    """The elements of constant ``value`` in the order ``desc`` lays them out in memory.
+
+    ``value`` holds the elements by index, and the code reads element ``i`` at ``sum(i * strides)``: a Fortran-ordered
+    constant written in index order reads its transpose. A value that is not of the descriptor's shape, or a
+    descriptor with symbolic strides, is written in index order.
+    """
+    value = np.asarray(value)
+    try:
+        shape = tuple(int(extent) for extent in desc.shape)
+        strides = tuple(int(stride) for stride in desc.strides)
+        size = int(desc.total_size)
+    except TypeError:
+        return value
+    if value.shape != shape or not value.size:
+        return value
+    offsets = sum(index * stride for index, stride in zip(np.indices(shape), strides))
+    stored = np.zeros(max(size, int(offsets.max()) + 1), dtype=value.dtype)
+    stored[offsets] = value
+    return stored
+
+
 class DaCeCodeGenerator:
     """DaCe code generator class that writes the generated code for SDFG
     state machines, and uses a dispatcher to generate code for
@@ -76,6 +100,8 @@ class DaCeCodeGenerator:
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
+        # File-scope stream of the SDFG whose control flow is being generated (see ``generate_states``)
+        self.region_function_stream = CodeIOStream()
         self.statestruct: list[str] = []
         self.environments: list[Any] = []
         # OrderedSet for the same reason as used_targets: codegen.py iterates this to order
@@ -86,10 +112,11 @@ class DaCeCodeGenerator:
             list[tuple[SDFG, SDFGState | None, nodes.AccessNode | None, bool, bool, bool]],
         ] = collections.defaultdict(list)
         self.where_allocated: dict[tuple[SDFG, str], SDFG] = {}
-        # (cfg_id, symbol) -> ctype, for each loop counter whose hoisted declaration was SKIPPED because
-        # ``codegen_params.decl_placement`` is ``late`` and the counter is loop-local. The loop emitter
-        # declares it in the for-init clause instead. Keyed by cfg_id: two SDFGs may each own a counter
-        # of the same name, and only one of them may qualify. Empty under the default ``eager``.
+        #: ``(cfg_id, name)`` of a persistent array -> the local pointer a CPU reduction clause names it by, while bound.
+        self.reduction_aliases: dict[tuple[int, str], str] = {}
+        # (cfg_id, symbol) -> ctype, for each loop-local counter the readable generator declares in its
+        # for-init clause instead of hoisting. Keyed by cfg_id: two SDFGs may each own a counter of the same
+        # name, and only one of them may qualify.
         self.loop_local_counters: dict[tuple[int, str], str] = {}
         # (id(obj), keep_defined_in_mapping) -> (obj, result). The object itself is kept alive here so its address
         # cannot be recycled by a later, unrelated object for as long as the entry lives
@@ -218,10 +245,11 @@ class DaCeCodeGenerator:
         # Write constants
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, data.Array):
-                const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(cstval.size) + "] = {"
+                stored = constant_as_stored(csttype, cstval)
+                const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(stored.size) + "] = {"
                 # sym2cpp, not str: a numpy bool prints as Python 'True', and complex as '(1+2j)'.
                 # .flat keeps the numpy scalar, so sym2cpp still sees the element's own width.
-                const_str += ", ".join(sym2cpp(cstval.flat[i]) for i in range(cstval.size))
+                const_str += ", ".join(sym2cpp(stored.flat[i]) for i in range(stored.size))
                 const_str += "};\n"
                 callsite_stream.write(const_str, sdfg)
             else:
@@ -886,7 +914,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
-        callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, dict(sdfg.symbols)), sdfg)
+        # A region's allocations write their helpers (index and size functions) to file scope, as a state's do
+        enclosing, self.region_function_stream = self.region_function_stream, global_stream
+        try:
+            callsite_stream.write(
+                cflow.control_flow_region_to_code(sdfg, dispatch_state, self, dict(sdfg.symbols)), sdfg
+            )
+        finally:
+            self.region_function_stream = enclosing
 
         opbar.done()
 
@@ -915,8 +950,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
     def _can_allocate(
         self, sdfg: SDFG, state: SDFGState, desc: data.Data, scope: nodes.EntryNode | SDFGState | SDFG
     ) -> bool:
-        # Views allocate no memory: they are bound at their access node, whose subset may use scope parameters
-        if isinstance(desc, data.View):
+        # Views and references allocate no memory: a view is bound at its access node, whose subset may use scope
+        # parameters, and a reference is a pointer set where it is used
+        if isinstance(desc, (data.View, data.Reference)):
             return True
 
         schedule = self._get_schedule(scope)
@@ -943,7 +979,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         """
         # Every read-only analysis codegen needs, resolved once through one pipeline.
         analysis_results = CodegenAnalysisPipeline().apply_pass(top_sdfg, {})
-        reachability = analysis_results[StateReachability.__name__]
         alloc_scopes = analysis_results[AllocationScopes.__name__]
         instances = analysis_results[AccessInstances.__name__]
         access_instances = instances["access_instances"]
@@ -952,8 +987,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Symbols-and-constants stays here: it is memoized on this code generator, not on the SDFG.
         fsyms = {sdfg.cfg_id: self.symbols_and_constants(sdfg) for sdfg in top_sdfg.all_sdfgs_recursive()}
-        # Per SDFG, built on its first container that needs a common (post)dominator.
-        dominance: dict[int, tuple[_DominatorTree, _DominatorTree]] = {}
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             if isinstance(desc, data.DistributedDescriptor):
@@ -1169,8 +1202,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             ):
                 # Allocate in first State, deallocate in last State
                 if first_state_instance != last_state_instance:
-                    # If any state is not reachable from first state, find common denominators in the form of
-                    # dominator and postdominator.
                     instances: list[tuple[SDFGState, nodes.AccessNode]] = access_instances[sdfg.cfg_id][name]
 
                     # A view gets "allocated" everywhere it appears
@@ -1181,27 +1212,22 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self.where_allocated[(sdfg, name)] = cursdfg
                         continue
 
-                    if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
-                        if sdfg.cfg_id not in dominance:
-                            dominance[sdfg.cfg_id] = _dominator_trees(sdfg)
-                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(
-                            instances, *dominance[sdfg.cfg_id]
+                    access_states = {state for state, _ in instances}
+                    first_block, last_block = paired_allocation_blocks([state for state, _ in instances])
+                    if first_block is first_state_instance:
+                        self.to_allocate[curscope].append(
+                            (sdfg, first_state_instance, first_node_instance, True, False, False)
                         )
+                    else:
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
                         # instances. This is especially needed for Views which require both the SDFGState and the
                         # AccessNode.
                         self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
-                    else:
-                        self.to_allocate[curscope].append(
-                            (sdfg, first_state_instance, first_node_instance, True, False, False)
-                        )
-
-                    curscope = allocation_block(first_state_instance, desc, {state for state, _ in instances})
-                    self.to_allocate[curscope].append(
-                        (sdfg, first_state_instance, first_node_instance, False, True, False)
-                    )
-                    curscope = last_state_instance
+                    alloc_state = first_block if isinstance(first_block, SDFGState) else first_state_instance
+                    curscope = allocation_block(first_block, desc, access_states)
+                    self.to_allocate[curscope].append((sdfg, alloc_state, first_node_instance, False, True, False))
+                    curscope = last_block
                     # A control flow region has no state to dispatch the deallocation through
                     dealloc_state = curscope if isinstance(curscope, SDFGState) else instances[-1][0]
                     self.to_allocate[curscope].append((sdfg, dealloc_state, last_node_instance, False, False, True))
@@ -1406,7 +1432,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         for cfr in sdfg.all_control_flow_regions():
             if isinstance(cfr, LoopRegion) and cfr.loop_variable is not None and cfr.init_statement is not None:
                 if not cfr.loop_variable in interstate_symbols:
-                    if cfr.loop_variable in global_symbols:
+                    declared = sdfg.symbol_repo.declared(cfr).types.get(cfr.loop_variable)
+                    if declared is not None:
+                        interstate_symbols[cfr.loop_variable] = declared
+                    elif cfr.loop_variable in global_symbols:
                         interstate_symbols[cfr.loop_variable] = global_symbols[cfr.loop_variable]
                     else:
                         l_end = loop_analysis.get_loop_end(cfr)
@@ -1423,6 +1452,15 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
+                # Further loop-carried symbols defined by the init statement (e.g. address cursors)
+                for name, rhs in loop_analysis.get_assignments(cfr.init_statement).items():
+                    if name == cfr.loop_variable or name in interstate_symbols:
+                        continue
+                    if name in global_symbols:
+                        interstate_symbols[name] = global_symbols[name]
+                    else:
+                        interstate_symbols[name] = infer_expr_type(rhs, global_symbols)
+                        global_symbols[name] = interstate_symbols[name]
 
             for e in cfr.dfs_edges(cfr.start_block):
                 symbols = e.data.new_symbols(sdfg, global_symbols)
@@ -1635,79 +1673,102 @@ def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGS
     return block
 
 
-class _DominatorTree:
-    """The tree of ``immediate`` (a root maps to itself), numbered by a DFS: ``a`` dominates ``b`` iff ``b``'s
-    entry/exit interval lies within ``a``'s. One walk answers every query, where the transitive closure of the tree is
-    quadratic in its depth."""
-
-    def __init__(self, immediate: dict[ControlFlowBlock, ControlFlowBlock]) -> None:
-        self.immediate = immediate
-        children: dict[ControlFlowBlock, list[ControlFlowBlock]] = collections.defaultdict(list)
-        roots = {parent for parent in immediate.values() if immediate.get(parent, parent) is parent}
-        for block, parent in immediate.items():
-            if parent is not block:
-                children[parent].append(block)
-        self.entry: dict[ControlFlowBlock, int] = {}
-        self.exit: dict[ControlFlowBlock, int] = {}
-        clock = 0
-        for root in roots:
-            stack = [(root, iter(children[root]))]
-            self.entry[root] = clock
-            clock += 1
-            while stack:
-                block, pending = stack[-1]
-                child = next(pending, None)
-                if child is None:
-                    self.exit[block] = clock
-                    clock += 1
-                    stack.pop()
-                elif child not in self.entry:
-                    self.entry[child] = clock
-                    clock += 1
-                    stack.append((child, iter(children[child])))
-
-    def dominates(self, a: ControlFlowBlock, b: ControlFlowBlock) -> bool:
-        if a is b:
-            return True
-        if a not in self.entry or b not in self.entry:
-            return False
-        return self.entry[a] <= self.entry[b] and self.exit[b] <= self.exit[a]
+def common_dominator(idom: dict, blocks) -> Any:
+    """The nearest block that dominates every one of ``blocks`` in the tree of ``idom`` (a root maps to itself)."""
+    paths = []
+    for block in blocks:
+        path = [block]
+        while idom[path[-1]] is not path[-1]:
+            path.append(idom[path[-1]])
+        paths.append(path)
+    return next(block for block in paths[0] if all(any(block is other for other in path) for path in paths[1:]))
 
 
-def _dominator_trees(sdfg: SDFG) -> tuple[_DominatorTree, _DominatorTree]:
-    """The dominator and post-dominator trees of the blocks of ``sdfg``, across its control flow regions."""
-    idom: dict[ControlFlowBlock, ControlFlowBlock] = {}
-    ipostdom: dict[ControlFlowBlock, ControlFlowBlock] = {}
-    utils.get_control_flow_block_dominators(sdfg, idom, None, ipostdom, None)
-    return _DominatorTree(idom), _DominatorTree(ipostdom)
+def region_dominators(region: ControlFlowRegion) -> tuple[dict, dict, object]:
+    """The immediate dominators and post-dominators of ``region``'s own blocks, and the exit node its sinks lead to."""
+    exit_node = object()
+    graph = graphlib.DiGraph()
+    graph.add_nodes_from(region.nodes())
+    graph.add_edges_from((edge.src, edge.dst) for edge in region.edges())
+    graph.add_edges_from((sink, exit_node) for sink in region.sink_nodes())
+    return (
+        utils.immediate_dominators(graph, region.start_block),
+        utils.immediate_dominators(graph.reverse(), exit_node),
+        exit_node,
+    )
 
 
-def _get_dominator_and_postdominator(
-    accesses: list[tuple[SDFGState, nodes.AccessNode]], dom: _DominatorTree, postdom: _DominatorTree
-):
+def paired_blocks_in(region: ControlFlowRegion, blocks: list[ControlFlowBlock]) -> tuple | None:
+    """Blocks ``(first, last)`` of ``region`` where ``first`` dominates and ``last`` post-dominates ``blocks`` and
+    each other in ``region``'s own graph, or ``None`` when no block of ``region`` post-dominates them."""
+    idom, ipostdom, exit_node = region_dominators(region)
+    if any(block not in idom or block not in ipostdom for block in blocks):
+        return None
+    first, last = common_dominator(idom, blocks), common_dominator(ipostdom, blocks)
+    while True:
+        new_first = common_dominator(idom, [*blocks, last]) if last is not exit_node else first
+        new_last = common_dominator(ipostdom, [*blocks, new_first])
+        if new_first is first and new_last is last:
+            return None if last is exit_node else (first, last)
+        first, last = new_first, new_last
+
+
+def paired_allocation_blocks(states: list[SDFGState]) -> tuple[ControlFlowBlock, ControlFlowBlock]:
+    """The block whose entry allocates and the block whose exit frees a container accessed in ``states``.
+
+    Both are blocks of one control flow region, the first dominating and the second post-dominating every access and
+    each other there, so each allocation is freed exactly once, wherever the accesses sit in branches or loop bodies.
+    The region is the innermost one holding every access; a conditional counts as one block of its parent.
     """
-    Gets the closest common dominator and post-dominator for a list of states.
-    Used for determining allocation of data used in branched states.
-    """
-    states = [a for a, _ in accesses]
-    data_name = accesses[0][1].data
+    chains = []
+    for state in states:
+        chain = [state]
+        while not isinstance(chain[-1], SDFG):
+            chain.append(chain[-1].parent_graph)
+        chains.append(chain)
+    region = next(
+        r
+        for r in chains[0][1:]
+        if not isinstance(r, ConditionalBlock) and all(any(r is other for other in chain) for chain in chains[1:])
+    )
+    blocks = []
+    for chain in chains:
+        block = chain[next(i for i, r in enumerate(chain) if r is region) - 1]
+        if not any(block is other for other in blocks):
+            blocks.append(block)
+    while True:
+        pair = paired_blocks_in(region, blocks)
+        if pair is not None:
+            return entered_block(pair[0], chains), pair[1]
+        if isinstance(region, SDFG):
+            raise NotImplementedError(f"No block pair allocates and frees a container accessed in {states}")
+        blocks = [region]
+        region = region.parent_graph
+        while isinstance(region, ConditionalBlock):
+            blocks, region = [region], region.parent_graph
 
-    start_state = states[0]
-    while not all(dom.dominates(start_state, n) for n in states):
-        if dom.immediate[start_state] is start_state:
-            raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
-        start_state = dom.immediate[start_state]
 
-    end_state = states[-1]
-    while not all(postdom.dominates(end_state, n) for n in states):
-        if postdom.immediate[end_state] is end_state:
-            raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
-        end_state = postdom.immediate[end_state]
-
-    # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
-    # raise NotImplementedError
-
-    return start_state, end_state
+def entered_block(block: ControlFlowBlock, chains: list[list[ControlFlowBlock]]) -> ControlFlowBlock:
+    """Descends from a region that runs its body once per entry (not a loop or a conditional) to the block in it that
+    every entry passes and that dominates the accesses on ``chains`` there: an allocation at that block follows the
+    assignments the region makes first (a call region binding the size symbols of its result)."""
+    while isinstance(block, ControlFlowRegion) and not isinstance(block, LoopRegion):
+        inner = []
+        for chain in chains:
+            at = next((i for i, r in enumerate(chain) if r is block), None)
+            if at is not None and not any(chain[at - 1] is other for other in inner):
+                inner.append(chain[at - 1])
+        idom, ipostdom, _ = region_dominators(block)
+        if not inner or any(b not in idom for b in inner):
+            return block
+        dom = common_dominator(idom, inner)
+        passed = block.start_block
+        while passed is not dom and ipostdom[passed] is not passed:
+            passed = ipostdom[passed]
+        if passed is not dom:
+            return block
+        block = dom
+    return block
 
 
 def pad_control_flow_region_boundaries(top_sdfg: SDFG):

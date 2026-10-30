@@ -13,6 +13,8 @@ from dace.libraries.tileops.expansions import ExpandTilePure
 from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from dace.libraries.tileops.lanes import (
     GATHER_INDEX_DTYPES,
+    SEQUENTIAL,
+    TileLowering,
     gather_lane_offset,
     nested_loops,
     offset_via_strides,
@@ -317,7 +319,9 @@ class TileScatter(TileOp):
                         f"single-element writes are deferred."
                     )
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         from dace.symbolic import symstr
 
         widths = list(self.widths)
@@ -385,7 +389,7 @@ class TileScatter(TileOp):
             body = f"if (_mask[{src_off}]) {{ _dst[{dst_off}] = {src_ref}; }}"
         else:
             body = f"_dst[{dst_off}] = {src_ref};"
-        code = nested_loops(widths, body)
+        code = nested_loops(widths, body, lowering=lowering)
         inputs = (set() if self.src_kind == SYMBOL else {"_src"}) | ({"_mask"} if self.has_mask else set())
         inputs |= {f"_idx_{d}" for d in self.gather_dims}
         return nodes.Tasklet(

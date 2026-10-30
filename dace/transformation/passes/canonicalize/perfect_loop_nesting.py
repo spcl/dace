@@ -286,13 +286,17 @@ def groups_with_expansion(
 
 
 def split_after_expansion(loop: LoopRegion) -> list[list[ControlFlowBlock]] | None:
-    """The distribution groups of a sequential ``loop`` after the transients its blocks share get one slot each.
+    """The distribution groups of a sequential ``loop`` once the transients its blocks share get one slot each.
 
     Only a loop ``LoopToMap`` refuses is tried: a parallel loop privatizes its temporaries in place, and
-    expanding them would only add an array and a second loop. The expansion is undone unless it splits, so a
-    second visit finds the same refusal.
+    expanding them would only add an array and a second loop. The groups are judged on the expansion before any
+    is made, and only the containers two groups share are expanded.
     """
-    from dace.transformation.passes.buffer_expansion import BufferExpansion, expand_iteration_private
+    from dace.transformation.passes.buffer_expansion import (
+        BufferExpansion,
+        expand_iteration_private,
+        iteration_private_buffers,
+    )
 
     order = _linear_blocks(loop, allow_assignments=True) if loop.loop_variable else None
     if order is None or len(order) < 2:
@@ -312,29 +316,26 @@ def split_after_expansion(loop: LoopRegion) -> list[list[ControlFlowBlock]] | No
     transients = {name for name in shared & accumulated if name in sdfg.arrays and sdfg.arrays[name].transient}
     if not transients or BufferExpansion._loop_mappable(sdfg, loop):
         return None
-    applied = expand_iteration_private(sdfg, loop, shared)
-    if applied is None:
+    found = iteration_private_buffers(sdfg, loop, shared)
+    if found is None:
         return None
-    groups = _forward_flow_groups(loop, allow_assignments=True)
+    buffers, slot = found
+    groups = _forward_flow_groups(loop, allow_assignments=True, expanded=dict.fromkeys(buffers, slot))
     # The expansion is for a producer with work (CSR's row sum) to run ahead of its consumer. A producer of no loop or
     # map is a sliver (symm's per-row ``alpha[0]`` load): splitting it off gains no parallel work, costs an expanded
     # array and a pass over it, and breaks the nest a later lift matches
     if groups is None or not any(holds_iteration(block) for block in groups[0]):
-        for record in applied:
-            record.undo()
         return None
     # Only a container two groups share needs a slot per iteration. One the split leaves inside a single group
-    # gets its old shape back: expanded, it is no longer a scalar a tile can keep private (CloudSC's
-    # ``zldifdt_slice``, which kept the jk loop from being strip-mined)
+    # keeps its shape: expanded, it is no longer a scalar a tile can keep private (CloudSC's ``zldifdt_slice``,
+    # which kept the jk loop from being strip-mined)
     groups_of: dict[str, set[int]] = {}
     for index, group in enumerate(groups):
         for block in group:
             writes, reads = _rw_subsets(block, loop.loop_variable)
             for name in (*writes, *reads):
                 groups_of.setdefault(name, set()).add(index)
-    for record in applied:
-        if len(groups_of.get(record.name, ())) < 2:
-            record.undo()
+    expand_iteration_private(sdfg, loop, [name for name in buffers if len(groups_of.get(name, ())) >= 2])
     return groups
 
 

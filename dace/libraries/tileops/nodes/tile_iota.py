@@ -6,7 +6,7 @@ from collections.abc import Sequence
 import dace
 from dace import library, properties
 from dace.libraries.tileops.expansions import ExpandTilePure
-from dace.libraries.tileops.lanes import nested_loops, tile_offset
+from dace.libraries.tileops.lanes import SEQUENTIAL, TileLowering, nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.sdfg import nodes
 
@@ -66,7 +66,9 @@ class TileIota(TileOp):
             if conn not in in_conns:
                 raise ValueError(f"{self.label}: declared extra input {conn!r} not connected")
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         widths = list(self.widths)
         if all(width == 1 for width in widths):
             # DaCe collapses a ``Register`` ``Array(shape=(1,))`` to a plain scalar, which ``_dst[__l0]`` would index
@@ -78,7 +80,7 @@ class TileIota(TileOp):
                 expr = expr.replace(f"{conn}[0]", conn)
             code = f"_dst = {expr};"
         else:
-            code = nested_loops(widths, f"_dst[{tile_offset(widths)}] = {self.expr};")
+            code = nested_loops(widths, f"_dst[{tile_offset(widths)}] = {self.expr};", lowering=lowering)
         return nodes.Tasklet(
             label=f"{self.label}_pure",
             inputs=dict.fromkeys(self.extra_inputs),

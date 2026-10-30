@@ -14,7 +14,8 @@ Constraints are sympy expressions read as ``expr >= 0``.
 import pytest
 
 from dace import symbolic
-from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
+from dace.sdfg.analysis.polyhedral_isl import is_domain_empty
+from dace.transformation.passes.parallelization.wavefront import polyhedron as poly
 
 #: ``0 <= u < N`` and ``0 <= v < M``.
 _DIMS = ("u", "v")
@@ -33,19 +34,19 @@ def _rectangle():
 def test_rectangle_is_not_empty() -> None:
     """A parametric rectangle has integer points (N, M are unconstrained, so ISL
     must not conclude emptiness from the parameters alone)."""
-    assert poly.is_domain_empty(_DIMS, _PARAMS, _rectangle()) is False
+    assert is_domain_empty(_DIMS, _PARAMS, _rectangle()) is False
 
 
 def test_contradictory_constraints_are_empty() -> None:
     """``u >= 1`` together with ``u <= 0`` has no integer solution."""
-    assert poly.is_domain_empty(_DIMS, _PARAMS, [_sym("u - 1"), _sym("-u")]) is True
+    assert is_domain_empty(_DIMS, _PARAMS, [_sym("u - 1"), _sym("-u")]) is True
 
 
 def test_integer_gap_is_empty() -> None:
     """``2u >= 1`` and ``2u <= 1`` is satisfiable over the RATIONALS (u = 1/2) but
     empty over the integers -- the reason the legality test must be an exact
     integer query and not a relaxation."""
-    assert poly.is_domain_empty(_DIMS, _PARAMS, [_sym("2*u - 1"), _sym("1 - 2*u")]) is True
+    assert is_domain_empty(_DIMS, _PARAMS, [_sym("2*u - 1"), _sym("1 - 2*u")]) is True
 
 
 def test_skew_bounds_refuses_non_unimodular_tau() -> None:

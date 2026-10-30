@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``TileReduce``: a reduction inside a tile, along one axis or over all of it."""
 
+import dataclasses
+
 import dace
 from dace import cpf_lowering, library, properties, tile_functions
 from dace.libraries.tileops.dispatch import TileGroup
@@ -15,7 +17,7 @@ from dace.libraries.tileops.environments import (
 )
 from dace.libraries.tileops.expansions import THREAD_INDEX, ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import element_code, pointer, require_k1
-from dace.libraries.tileops.lanes import LaneDistribution, distributed_lanes, nested_loops, tile_offset
+from dace.libraries.tileops.lanes import SEQUENTIAL, LaneDistribution, TileLowering, nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.operands import connected_edges, edge_ctype, output_edge
 from dace.libraries.tileops.ops import BINARY_OPS, REDUCE_OPS
@@ -173,7 +175,9 @@ class TileReduce(TileOp):
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
         return self.axis is None and not self.has_mask and len(self.widths) == 1
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         widths = list(self.widths)
         ctype = edge_ctype(sdfg, connected_edges(state, self)["_src"])
         identity = identity_literal(self.op, ctype)
@@ -185,7 +189,7 @@ class TileReduce(TileOp):
             scalar_destination = out_edge.data.subset is None or out_edge.data.subset.num_elements() == 1
             writeback = "_dst = __acc;" if scalar_destination else "_dst[0] = __acc;"
             body = f"{gate}__acc = {combine_expr(self.op, '__acc', f'_src[{source_offset}]', ctype)};"
-            code = f"{ctype} __acc = {identity};\n{nested_loops(widths, body)}\n{writeback}"
+            code = f"{ctype} __acc = {identity};\n{nested_loops(widths, body, lowering=lowering)}\n{writeback}"
         else:
             kept = [dim for dim in range(len(widths)) if dim != self.axis]
             kept_widths = [widths[dim] for dim in kept]
@@ -195,8 +199,8 @@ class TileReduce(TileOp):
             init_offset = tile_offset(kept_widths)
             combined = combine_expr(self.op, f"_dst[{reduce_offset}]", f"_src[{source_offset}]", ctype)
             code = (
-                f"{nested_loops(kept_widths, f'_dst[{init_offset}] = {identity};')}\n"
-                f"{nested_loops(widths, f'{gate}_dst[{reduce_offset}] = {combined};')}"
+                f"{nested_loops(kept_widths, f'_dst[{init_offset}] = {identity};', lowering=lowering)}\n"
+                f"{nested_loops(widths, f'{gate}_dst[{reduce_offset}] = {combined};', lowering=lowering)}"
             )
         return nodes.Tasklet(
             label=f"{self.label}_pure",
@@ -206,7 +210,9 @@ class TileReduce(TileOp):
             language=dace.dtypes.Language.CPP,
         )
 
-    def block_collective(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet | None:
+    def block_collective(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet | None:
         """A full reduction: each thread folds its share of the lanes, ``cub::BlockReduce`` folds the threads, and
         every thread reads the result from shared memory. A reduction along an axis runs on one thread."""
         if self.axis is not None:
@@ -216,8 +222,8 @@ class TileReduce(TileOp):
         ctype = edge_ctype(sdfg, connected_edges(state, self)["_src"])
         gate = f"if (_mask[{tile_offset(widths)}]) " if self.has_mask else ""
         body = f"{gate}__acc = {combine_expr(self.op, '__acc', f'_src[{tile_offset(widths)}]', ctype)};"
-        with distributed_lanes(LaneDistribution(THREAD_INDEX, threads)):
-            partial = nested_loops(widths, body)
+        spread = dataclasses.replace(lowering, distribution=LaneDistribution(THREAD_INDEX, threads))
+        partial = nested_loops(widths, body, lowering=spread)
         reduce = f"dace::tileops::BlockReduce<{ctype}, {threads}>"
         combine = f"dace::tileops::tile_combine<{ctype}, '{BINARY_OPS[self.op].isa_code}'>()"
         out_edge = output_edge(state, self, "_dst")
@@ -244,8 +250,10 @@ class TileReduce(TileOp):
         tasklet.environments = {TileOpsCUDABlock.full_class_path()}
         return tasklet
 
-    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
-        vlen = require_k1(self)
+    def isa_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
+        vlen = require_k1(self, lowering=lowering)
         ctype = edge_ctype(sdfg, connected_edges(state, self)["_src"])
         # A one-element output is bound by value, so it is assigned bare; a pointer target is dereferenced.
         out_edge = output_edge(state, self, "_dst")

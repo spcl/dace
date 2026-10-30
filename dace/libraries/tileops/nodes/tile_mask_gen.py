@@ -2,7 +2,8 @@
 """``TileMaskGen``: the iteration mask of a tile."""
 
 import dace
-from dace import library, properties, tile_functions
+from dace import library, properties, symbolic, tile_functions
+from dace.codegen.common import sym2cpp
 from dace.libraries.tileops.environments import (
     TileOpsAVX2,
     TileOpsAVX512,
@@ -13,7 +14,7 @@ from dace.libraries.tileops.environments import (
 )
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import call_text, lane_start, pointer, require_k1
-from dace.libraries.tileops.lanes import nested_loops, tile_offset
+from dace.libraries.tileops.lanes import SEQUENTIAL, TileLowering, nested_loops, tile_offset
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock
 from dace.optionals import required
@@ -60,6 +61,12 @@ class ExpandTileMaskGenSVE(ExpandTileIsa):
 class ExpandTileMaskGenCUDA(ExpandTileIsa):
     environments = [TileOpsCUDA]
     backend = "cuda"
+
+
+def cpp_expression(expression: str) -> str:
+    """A symbolic expression of :attr:`TileMaskGen.iter_vars` or :attr:`TileMaskGen.global_ubs` as C++ (``//`` is
+    ``__int_floor`` there, which C++ does not name)."""
+    return sym2cpp(symbolic.pystr_to_symbolic(expression))
 
 
 @library.node
@@ -136,9 +143,11 @@ class TileMaskGen(TileOp):
         # The headers build the mask from the bounds alone and would drop the guard, running every lane.
         return not self.guard_predicate
 
-    def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
+    def pure_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         terms = [
-            f"((({iter_var}) + __l{dim}) < ({bound}))"
+            f"((({cpp_expression(iter_var)}) + __l{dim}) < ({cpp_expression(bound)}))"
             for dim, (iter_var, bound) in enumerate(zip(self.iter_vars, self.global_ubs, strict=True))
         ]
         if self.guard_predicate:
@@ -148,15 +157,17 @@ class TileMaskGen(TileOp):
             label=f"{self.label}_pure",
             inputs={},
             outputs={"_o": None},
-            code=nested_loops(self.widths, f"_o[{tile_offset(self.widths)}] = {condition};"),
+            code=nested_loops(self.widths, f"_o[{tile_offset(self.widths)}] = {condition};", lowering=lowering),
             language=dace.dtypes.Language.CPP,
         )
 
-    def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
+    def isa_tasklet(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str, lowering: TileLowering = SEQUENTIAL
+    ) -> nodes.Tasklet:
         self.validate(sdfg, state)
-        vlen = require_k1(self)
-        start = lane_start(self.iter_vars[0])
-        bounds = [f"({start})", f"({self.global_ubs[0]})"]
+        vlen = require_k1(self, lowering=lowering)
+        start = lane_start(cpp_expression(self.iter_vars[0]), lowering=lowering)
+        bounds = [f"({start})", f"({cpp_expression(self.global_ubs[0])})"]
         if backend in tile_functions.ISAS:
             out = pointer("_o", next(edge for edge in state.out_edges(self) if edge.src_conn == "_o"))
             code = call_text(TileFunction("maskgen", backend, "i64", vlen).name, [out, *bounds])

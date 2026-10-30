@@ -17,6 +17,7 @@ from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, graph, nodes, utils
 from dace.sdfg.graph import Edge, MultiConnectorEdge, SubgraphView
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
@@ -160,7 +161,14 @@ def nest_sdfg_subgraph(
         # Find NestedSDFG's connectors. Ordered: these name the nested SDFG's connectors and fix
         # the order its access nodes are wired, which numbers the enclosing map's IN_n / OUT_n.
         # Sorted, since a set of container names carries no order of its own to preserve.
-        read_set = OrderedSet(sorted(n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient))
+        # A constant only read inside is a constant of the nest too, declared there as here: a connector
+        # would bind a parameter of the very name the nest declares ``constexpr``
+        constant_reads = {n for n in read_set if n in sdfg.constants_prop and n not in write_set}
+        read_set = OrderedSet(
+            sorted(
+                n for n in read_set if n not in constant_reads and (n not in unique_set or not sdfg.arrays[n].transient)
+            )
+        )
         write_set = OrderedSet(sorted(n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient))
 
         # Find defined subgraph symbols
@@ -284,9 +292,11 @@ def nest_sdfg_subgraph(
         for name in read_set | write_set:
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
             nsdfg.arrays[name].transient = False
-        for name in unique_set:
+        for name in unique_set - constant_reads:
             nsdfg.arrays[name] = sdfg.arrays[name]
             del sdfg.arrays[name]
+        for name in constant_reads:
+            nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
 
         # If there are symbols (new or not) assigned value in the subgraph, their values will be propagated to the
         # (outer) SDFG through a symbol-scalar-symbol conversion. This is happening in two parts: (1) inside the nested
@@ -374,6 +384,10 @@ def nest_sdfg_subgraph(
         )
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
+                # The subgraph owns the symbol now: it keeps its declared type there, or codegen infers one from
+                # the assigned value (a float symbol set to ``3`` became an int64_t)
+                if s not in nsdfg.symbols:
+                    nsdfg.add_symbol(s, sdfg.symbols[s])
                 sdfg.remove_symbol(s)
 
         # Connect input/output data of the subgraph to the NestedSDFG node.
@@ -769,23 +783,21 @@ def nest_state_subgraph(
             node.sdfg.parent_sdfg = nsdfg
             node.sdfg.parent_nsdfg_node = node
 
-    def reads_whole_connector(edge: MultiConnectorEdge, name: str) -> bool:
-        """Whether the input boundary ``edge`` already ends on an AccessNode of ``name``'s whole container.
+    def reads_the_connector(edge: MultiConnectorEdge, name: str) -> bool:
+        """Whether the input boundary ``edge`` already ends on an AccessNode of ``name``.
 
         Then it needs no access node of its own inside: the ``name -> name`` copy that would be
         added is a no-op, and its write turns the input connector into a written descriptor, which
-        validation rejects. The connector IS that array inside the nested SDFG, so an access node of
-        it already reads the boundary data. Restricted to a whole-container access -- a partial one
-        still needs the copy that rebases it into the connector's coordinates.
+        validation rejects. The connector IS that array inside the nested SDFG, in the outer
+        descriptor's coordinates (:func:`boundary_descriptor`), so an access node of it already reads
+        the boundary data at its own subsets.
         """
-        if not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data != name:
-            return False
-        return edge.data.subset is not None and edge.data.subset.num_elements() == nsdfg.arrays[name].total_size
+        return isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name
 
     # Add access nodes and edges as necessary, each with the outer name its memlet tree spoke
     edges_to_rename = []
     for edge, name in input_names.items():
-        if reads_whole_connector(edge, name):
+        if reads_the_connector(edge, name):
             continue
         node = nstate.add_read(name)
         new_edge = copy.deepcopy(edge.data)
@@ -1094,7 +1106,12 @@ def state_fission(
         # Only DATA in-edges must be gone: everything producing into a boundary node moved to the
         # first state. An empty memlet carries no data, it orders one node after another, and two
         # boundary nodes ordered that way both stay in the second state -- so their ordering edge
-        # legitimately survives here (``__return`` before the arrays it aliases, in spmv).
+        # legitimately survives here (``__return`` before the arrays it aliases, in spmv). A copy from
+        # another boundary node (``offsets -> offsets_index`` with both read on) ran in the first
+        # state already, so the second state's copy of it is dropped.
+        for iedge in list(second_state.in_edges(second_state_boundary_node)):
+            if not iedge.data.is_empty() and iedge.src in boundary_nodes:
+                second_state.remove_edge(iedge)
         assert all(iedge.data.is_empty() for iedge in second_state.in_edges(second_state_boundary_node))
         first_state_boundary_node._out_connectors.clear()
         second_state_boundary_node._in_connectors.clear()
@@ -1270,6 +1287,8 @@ def isolate_nested_sdfg(
     # the post state, an output would lose its producer and the split would be refused. Only an output every producer
     # of which is in the pre state moves: the pre state keeps just the edges among its own nodes, so another writer's
     # edge into it would be dropped.
+    # Nor an output written by accumulation: it stays where the isolated node's own accumulations reach it (moved,
+    # the backward pass of a model lost two of its three gradient contributions).
     for node in list(pre_nodes):
         if not isinstance(node, nodes.AccessNode):
             pre_nodes.update(
@@ -1278,6 +1297,7 @@ def isolate_nested_sdfg(
                 if isinstance(oedge.dst, nodes.AccessNode)
                 and oedge.dst not in middle_nodes
                 and all(iedge.src in pre_nodes for iedge in state.in_edges(oedge.dst))
+                and all(iedge.data.wcr is None for iedge in state.in_edges(oedge.dst))
             )
 
     # These are the nodes that belongs to the Post State. There are two reasons why a
@@ -1288,7 +1308,8 @@ def isolate_nested_sdfg(
     )
 
     # The second reason, are read dependencies, for this we have to look at the incoming
-    #  edges and add any node that we need.
+    #  edges and add any node that we need. Such a node is only read in the post state: its writes stay where they are.
+    replicated: set[nodes.Node] = set()
     if len(post_nodes) != 0:
         for pnode in post_nodes.copy():
             for iedge in state.in_edges(pnode):
@@ -1299,6 +1320,7 @@ def isolate_nested_sdfg(
                             return False
                         raise ValueError("Can not replicate non non-View AccessNodes into the post state.")
                     post_nodes.add(node)
+                    replicated.add(node)
 
     # A read node replicated into POST loses the paths through the middle state. If such a path was all
     # that ordered one of its POST readers before a POST overwrite of the same data, the split would leave
@@ -1332,67 +1354,58 @@ def isolate_nested_sdfg(
     if test_if_applicable:
         return True
 
-    # Now we are creating the two new states.
+    # The larger of the pre and post parts stays in ``state``: only the other one and the middle move, so isolating
+    # every nested SDFG of a state one after the other does not move the whole state each time.
     parent_graph = state.parent_graph
-    pre_state: dace.SDFGState = parent_graph.add_state_before(
-        state=state, label=(state.label + "_pre_state" if state.label else None)
-    )
-    post_state: dace.SDFGState = parent_graph.add_state_after(
-        state=state, label=(state.label + "_post_state" if state.label else None)
-    )
+    # Only a source or an explicitly set start can be the start block: the check skips the source-node walk otherwise
+    was_start = (
+        parent_graph.in_degree(state) == 0 or parent_graph._start_block is not None
+    ) and parent_graph.start_block is state
+    label = state.label or None
+    if len(post_nodes) >= len(pre_nodes):
+        middle_state = parent_graph.add_state_before(
+            state=state, label=label and label + "_nsdfg_state", is_start_block=was_start
+        )
+        pre_state = parent_graph.add_state_before(
+            state=middle_state, label=label and label + "_pre_state", is_start_block=was_start
+        )
+        post_state, kept = state, post_nodes
+    else:
+        pre_state, kept = state, pre_nodes
+        middle_state = parent_graph.add_state_after(state=state, label=label and label + "_nsdfg_state")
+        post_state = parent_graph.add_state_after(state=middle_state, label=label and label + "_post_state")
 
-    # We will now populate the pre state.
-    pre_old_to_new_map: dict[nodes.Node, nodes.Node] = dict()
-    for node in pre_nodes:
-        new_node = copy.deepcopy(node) if node in middle_nodes else node
-        pre_old_to_new_map[node] = new_node
-        pre_state.add_node(new_node)
+    # A node moves to the first other state that takes it; any further one gets a copy, as does every one that also
+    # stays. A moved edge keeps its memlet: only an edge that also stays is copied.
+    moved: set[nodes.Node] = set()
+    for target, members in ((pre_state, pre_nodes), (middle_state, middle_nodes), (post_state, post_nodes)):
+        if target is state:
+            continue
+        old_to_new: dict[nodes.Node, nodes.Node] = {}
+        for node in members:
+            if node in kept or node in moved:
+                old_to_new[node] = copy.deepcopy(node)
+            else:
+                old_to_new[node] = node
+                moved.add(node)
+            target.add_node(old_to_new[node])
+        for node in members:
+            for edge in state.in_edges(node):
+                if edge.src not in members or (target is post_state and node in replicated):
+                    continue
+                memlet = copy.deepcopy(edge.data) if edge.src in kept and node in kept else edge.data
+                target.add_edge(old_to_new[edge.src], edge.src_conn, old_to_new[node], edge.dst_conn, memlet)
 
-    # Now add the edges, we only have to inspect the incoming ones.
-    for old_dst in pre_nodes:
-        new_dst = pre_old_to_new_map[old_dst]
-        for old_iedge in state.in_edges(old_dst):
-            old_src = old_iedge.src
-            if old_src in pre_nodes:
-                new_src = pre_old_to_new_map[old_src]
-                pre_state.add_edge(
-                    new_src,
-                    old_iedge.src_conn,
-                    new_dst,
-                    old_iedge.dst_conn,
-                    copy.deepcopy(old_iedge.data),
-                )
-
-    # Now we will populate the post state.
-    post_old_to_new_map: dict[nodes.Node, nodes.Node] = dict()
-    for node in post_nodes:
-        new_node = copy.deepcopy(node) if (node in middle_nodes or node in pre_nodes) else node
-        post_old_to_new_map[node] = new_node
-        post_state.add_node(new_node)
-
-    # Now make the connections inside the post node. For this we only have to look
-    #  at the outgoing edges in the original state.
-    for old_src in post_nodes:
-        new_src = post_old_to_new_map[old_src]
-        for old_oedge in state.out_edges(old_src):
-            old_dst = old_oedge.dst
-            if old_dst in post_nodes:
-                new_dst = post_old_to_new_map[old_dst]
-                post_state.add_edge(
-                    new_src,
-                    old_oedge.src_conn,
-                    new_dst,
-                    old_oedge.dst_conn,
-                    copy.deepcopy(old_oedge.data),
-                )
-
-    # Remove all nodes from the middle state that are not classified as middle nodes,
-    #  this will also remove all the edges that are no longer needed.
+    # What stays is the kept part; removing the rest drops its edges with it.
     for node in list(state.nodes()):
-        if node not in middle_nodes:
+        if node not in kept:
             state.remove_node(node)
+    if post_state is state:
+        for node in replicated:
+            for edge in list(state.in_edges(node)):
+                state.remove_edge(edge)
 
-    return (pre_state, state, post_state)
+    return (pre_state, middle_state, post_state)
 
 
 def _get_internal_subset(
@@ -1957,7 +1970,8 @@ def extract_map_dims(
     if len(map_entry.map.params) > 1:
         entries = MapExpansion.apply_to(sdfg, map_entry=map_entry)
 
-        # Collapse extracted maps
+        # Collapse extracted maps. A collapse keeps the outer map's external memlets, which already hold the union
+        # over both maps, so nothing is propagated again
         extracted_map = entries[0]
         for idx in range(len(dims) - 1):
             extracted_map, _ = MapCollapse.apply_to(
@@ -1965,6 +1979,7 @@ def extract_map_dims(
                 outer_map_entry=extracted_map,
                 inner_map_entry=entries[idx + 1],
                 permissive=True,  # Since MapExpansion creates sequential maps
+                annotate=False,
             )
 
         # Collapse remaining maps, if any
@@ -1976,6 +1991,7 @@ def extract_map_dims(
                     outer_map_entry=map_to_collapse,
                     inner_map_entry=entries[idx + 1],
                     permissive=True,  # Since MapExpansion creates sequential maps
+                    annotate=False,
                 )
         else:
             # All dimensions extracted, no remainder
@@ -1991,7 +2007,8 @@ def small_map_axes(state: SDFGState, map_entry: nodes.MapEntry, resolver: Symbol
     """Per parameter of ``map_entry``, whether its extent is too small to share out
     (:func:`~dace.symbolic.is_small_extent`), at the facts around the map."""
     facts = resolver.facts_at(state, map_entry)
-    return [symbolic.is_small_extent(end - begin + 1, facts) for begin, end, _ in map_entry.map.range.ranges]
+    # A range bound may be a SymExpr; its main expression is the extent
+    return [symbolic.is_small_extent(as_expr(end - begin + 1), facts) for begin, end, _ in map_entry.map.range.ranges]
 
 
 def isolate_small_map_axes(

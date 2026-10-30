@@ -50,7 +50,7 @@ class RecomputeIntermediates(ppl.Pass):
         xform = OTFMapFusion()
         applied = 0
         changed = True
-        with memoize_facts():
+        with memoize_facts(sdfg):
             while changed:
                 changed = False
                 for sd in list(sdfg.all_sdfgs_recursive()):

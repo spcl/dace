@@ -1004,3 +1004,39 @@ if __name__ == "__main__":
     test_a_host_accumulator_beside_a_kernel_computes_what_numpy_computes(4)
     test_host_tasklets_on_both_sides_of_a_kernel_get_separate_wrappers()
     test_host_tasklets_on_both_sides_of_a_kernel_compute_what_numpy_computes()
+
+
+def register_array_two_kernels_share() -> dace.SDFG:
+    """dace-fortran's loop-local arrays are ``Register``: one map fills ``t``, the next reads it (ICON's
+    ``z_w_con_c`` in a block body)."""
+    sdfg = dace.SDFG("register_array_two_kernels_share")
+    sdfg.add_array("A", [LENGTH], dace.float64)
+    sdfg.add_array("B", [LENGTH], dace.float64)
+    sdfg.add_transient("t", [LENGTH], dace.float64, storage=dace.StorageType.Register)
+    fill = sdfg.add_state("fill")
+    fill.add_mapped_tasklet(
+        "double",
+        {"i": f"0:{LENGTH}"},
+        {"a": dace.Memlet("A[i]")},
+        "o = 2 * a",
+        {"o": dace.Memlet("t[i]")},
+        external_edges=True,
+    )
+    use = sdfg.add_state_after(fill, "use")
+    use.add_mapped_tasklet(
+        "shift",
+        {"i": f"0:{LENGTH}"},
+        {"x": dace.Memlet("t[i]")},
+        "o = x + 1",
+        {"o": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
+    return sdfg
+
+
+def test_a_register_array_two_kernels_share_is_device_memory():
+    """Kept in ``Register`` as if it were scope-local, it was a host stack array both kernels were handed."""
+    sdfg = register_array_two_kernels_share()
+    OffloadToAccelerator().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert sdfg.arrays["t"].storage == dace.StorageType.GPU_Global

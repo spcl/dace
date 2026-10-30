@@ -137,9 +137,10 @@ class Guard:
 
 @dataclass(frozen=True)
 class Row:
-    """The row a write lands in, symbolic over earlier names."""
+    """The row a write lands in, symbolic over earlier names, and how many writes it stands for."""
 
     expr: Any
+    weight: Any = 1
 
 
 @dataclass(frozen=True)
@@ -183,6 +184,11 @@ def _is_scalar(desc: data.Data) -> bool:
     )
 
 
+def _single_element(desc: data.Data | None) -> bool:
+    """Whether ``desc`` is an array of one element, so any in-bounds subscript reads that element."""
+    return type(desc) is data.Array and symbolic.simplify(desc.total_size - 1) == 0
+
+
 def _sequential_entry(state: SDFGState, entry: nodes.MapEntry) -> bool:
     """A sequential map with a static, positive-step range."""
     if entry.map.schedule != dtypes.ScheduleType.Sequential:
@@ -223,7 +229,7 @@ class Frame:
     nest: Nest
     stmts: list = field(default_factory=list)
     vars: dict[str, str] = field(default_factory=dict)  # name in the nest -> local
-    used: bool = False
+    used: set[str] = field(default_factory=set)  # names of ``vars`` the index computation reads
     order: dict = field(default_factory=dict)  # region frame: chain block -> index
     edges: dict = field(default_factory=dict)  # region frame: chain edge -> index
     payload: Any = None
@@ -276,7 +282,7 @@ class SiteSlicer:
         for i in range(min(at[0], len(self.frames) - 1), -1, -1):
             f = self.frames[i]
             if f.nest is nest and name in f.vars:
-                f.used = True
+                f.used.add(name)
                 return f.vars[name]
         if nest.node is None:
             if name in nest.sdfg.arrays:
@@ -348,7 +354,9 @@ class SiteSlicer:
         key = ("node", id(node))
         if key in self.memo:
             return self.memo[key]
-        if state.in_degree(node) != 1 or state.entry_node(node) is not None:
+        # At the top, a value the map body computes before the call runs once per iteration, as the call does.
+        scope = self.map_entry if nest.node is None else None
+        if state.in_degree(node) != 1 or state.entry_node(node) is not scope:
             raise Refuse(node.data)
         edge = state.in_edges(node)[0]
         dtype = nest.sdfg.arrays[node.data].dtype
@@ -396,7 +404,8 @@ class SiteSlicer:
         if key in self.memo:
             return self.memo[key]
         desc = nest.sdfg.arrays.get(name)
-        if not isinstance(desc, data.Array) or isinstance(desc, data.View):
+        # A view the map's own state defines is declared before the map, so its pre-pass reads it as is
+        if not isinstance(desc, data.Array) or isinstance(desc, data.View) and nest.node is not None:
             raise Refuse(name)
         if nest.node is None:
             if name in self.written:
@@ -432,6 +441,8 @@ class SiteSlicer:
             def visit_Subscript(self, node: ast.Subscript):
                 if not isinstance(node.value, ast.Name):
                     raise Refuse(ast.unparse(node))
+                if _single_element(nest.sdfg.arrays.get(node.value.id)):
+                    return ast.Name(id=slicer.scalar(nest, node.value.id, at), ctx=ast.Load())
                 node.value = ast.Name(id=slicer.array(nest, node.value.id), ctx=ast.Load())
                 node.slice = self.visit(node.slice)
                 return node
@@ -508,25 +519,46 @@ class SiteSlicer:
         return len(self.frames) - 1
 
     def build(self) -> tuple:
-        def tree(i: int) -> tuple:
+        facts: dict[int, Any] = {}
+
+        def runs(f: Frame, k: int) -> bool:
+            """Whether map dimension ``k`` of ``f`` provably runs at least once."""
+            begin, end, step = f.payload[2][k]
+            if id(f.nest) not in facts:
+                facts[id(f.nest)] = f.nest.sdfg.facts()
+            return symbolic.provably_le(begin, end, facts[id(f.nest)])
+
+        def tree(i: int, weight) -> tuple:
             if i == len(self.frames):
                 return ()
             f = self.frames[i]
-            inner = tuple(f.stmts) + tree(i + 1)
+            below = self.frames[i:]
+            # Without a guard or value below, a loop variable no row reads only multiplies the rows' writes; with
+            # one, only a dimension that runs: a value or guard read below may be valid only inside a trip.
+            free = not any(g.kind == "guard" or any(isinstance(s, Let) for s in g.stmts) for g in below)
+            kept = []
+            if f.kind == "map":
+                read = {f.vars[n] for n in f.used}
+                kept = [k for k, v in enumerate(f.payload[0]) if v in read or not (free or runs(f, k))]
+                for k, (begin, end, step) in enumerate(f.payload[2]):
+                    if k not in kept:
+                        weight = weight * symbolic.sympy.Max(0, symbolic.int_floor(end - begin, step) + 1)
+            stmts = tuple(Row(s.expr, weight) if isinstance(s, Row) else s for s in f.stmts)
+            inner = stmts + tree(i + 1, weight)
             if f.kind in ("region", "top", "nest"):
                 return inner
             if f.kind == "guard":
                 return (Guard(f.payload, inner),)
-            below = self.frames[i:]
-            if not f.used and not any(g.kind == "guard" or any(isinstance(s, Let) for s in g.stmts) for g in below):
-                return inner
             if f.kind == "loop":
+                if not f.used and free:
+                    return inner
                 var, dtype, init, cond, update = f.payload
                 return (Loop(var, dtype, init, cond, update, inner),)
-            names, types, ranges = f.payload
-            return (MapLoop(names, types, ranges, inner),)
+            if not kept:
+                return inner
+            return (MapLoop(*(tuple(x[k] for k in kept) for x in f.payload), inner),)
 
-        return tree(0)
+        return tree(0, 1)
 
 
 def _nest_tables(nest: Nest) -> None:
@@ -619,8 +651,10 @@ class ScatterAnalysis:
         exits = [e for e in state.in_edges(state.exit_node(self.map_entry)) if e.data.data == self.name]
         if len(exits) != 1:
             raise Refuse(self.name)
-        # A region that moves with the map's own variables is written per iteration, not reduced over.
-        if {str(s) for s in exits[0].data.subset.free_symbols} & set(self.map_entry.map.params):
+        # Rows that move with the map's own variables are written per iteration, not reduced over; the map's
+        # variables may index within a row (cp2k_trs4's sink[x0[i0], t0, t1]): a private row holds all of it.
+        rows = exits[0].data.subset[0]
+        if {str(s) for x in rows for s in symbolic.pystr_to_symbolic(x).free_symbols} & set(self.map_entry.map.params):
             raise Refuse(self.name)
         entries, first = self.wcr_path(state, exits[0], state.exit_node(self.map_entry))
         if not isinstance(first.src, nodes.NestedSDFG):
@@ -726,7 +760,9 @@ class ScatterAnalysis:
             raise Refuse(loop.label)
         var = loop.loop_variable
         dtype = loop.new_symbols(dict(nest.sdfg.symbols)).get(var) or nest.sdfg.symbols.get(var)
-        if dtype is None or len(nest.assigned.get(var, [])) != 1:
+        # The loop's frame binds ``var`` for its body; a sibling loop over the same name does not reach it, a body
+        # edge assigning it would.
+        if dtype is None or any(edge is not None for _region, edge in nest.assigned.get(var, [])):
             raise Refuse(loop.label)
         init, update = loop.init_statement.code, loop.update_statement.code
         if len(init) != 1 or len(update) != 1:
@@ -805,10 +841,7 @@ def range_private_accumulators(state: SDFGState, map_entry: nodes.MapEntry) -> d
         if edge.data.wcr is None or name is None or name in out or name in read:
             continue
         desc = state.sdfg.arrays[name]
-        if desc.may_alias or desc.lifetime in (
-            dtypes.AllocationLifetime.Persistent,
-            dtypes.AllocationLifetime.External,
-        ):
+        if desc.may_alias or desc.lifetime == dtypes.AllocationLifetime.External:
             continue
         redtype = operations.detect_reduction_type(edge.data.wcr)
         if redtype not in RANGE_PRIVATIZABLE_OPS:

@@ -5,7 +5,7 @@ import warnings
 
 from dace import data as dt
 from dace import graphlib as nx
-from dace import memlet, properties, sdfg, subsets
+from dace import memlet, properties, sdfg, subsets, symbolic
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -222,6 +222,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # ask the same question the matcher answered. See ``apply``.
         self._matched_permissive = False
         self._side_effect_cache: dict[tuple[SDFGState, bool], bool] | None = None
+        self._region_facts: dict[ControlFlowRegion, symbolic.Facts] | None = None
 
     @property
     def connections_to_make(self):
@@ -236,6 +237,25 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     @side_effect_cache.setter
     def side_effect_cache(self, cache: dict[tuple[SDFGState, bool], bool] | None) -> None:
         self._side_effect_cache = cache
+
+    @property
+    def region_facts(self) -> dict[ControlFlowRegion, symbolic.Facts] | None:
+        """The facts inside each region, shared by the probes of one caller; ``None`` = derived per probe. A state
+        fusion changes neither the regions nor the symbols they are derived from."""
+        return self._region_facts
+
+    @region_facts.setter
+    def region_facts(self, cache: dict[ControlFlowRegion, symbolic.Facts] | None) -> None:
+        self._region_facts = cache
+
+    def state_facts(self, state: SDFGState) -> symbolic.Facts:
+        """The facts that hold in ``state``: those of its region, as it has no scope of its own."""
+        if self._region_facts is None:
+            return SymbolResolver().facts_at(state)
+        region = state.parent_graph
+        if region not in self._region_facts:
+            self._region_facts[region] = SymbolResolver().facts_at(state)
+        return self._region_facts[region]
 
     @staticmethod
     def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> list[CCDesc]:
@@ -277,6 +297,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         graph_b: SDFGState,
         group_b: list[nodes.AccessNode],
         inputs_b: bool,
+        facts: symbolic.Facts | None = None,
     ) -> bool:
         """
         Performs an all-pairs check for subset intersection on two
@@ -289,6 +310,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         :param graph_b: The graph in which the second set of nodes reside.
         :param group_b: The second set of nodes to check.
         :param inputs_b: If True, checks inputs of the second group.
+        :param facts: The facts in ``graph_a``; ``None`` derives them.
         :return: True if subsets intersect or result is indeterminate.
         """
         # Set traversal functions: the subset an edge accesses on the side of the group's node, never the other
@@ -309,7 +331,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             subset_b = dst_subset
 
         # Simple all-pairs check. The states are consecutive, so what holds in the first holds in the second.
-        facts = SymbolResolver().facts_at(graph_a)
+        facts = SymbolResolver().facts_at(graph_a) if facts is None else facts
         # An empty Memlet only orders, it accesses no data
         edges_a = [e for e in edges_a if not e.data.is_empty()]
         edges_b = [e for e in edges_b if not e.data.is_empty()]
@@ -357,7 +379,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     return True
         # Path not found, check memlets
         if StateFusionExtended.memlets_intersect(
-            first_state, nodes_first, first_read, second_state, nodes_second, second_read
+            first_state, nodes_first, first_read, second_state, nodes_second, second_read, self.state_facts(first_state)
         ):
             return False
         return True
@@ -410,7 +432,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         # Not ordered by dataflow. Only an actual overlap is a hazard.
         return not StateFusionExtended.memlets_intersect(
-            first_state, nodes_first, first_read, second_state, nodes_second, second_read
+            first_state, nodes_first, first_read, second_state, nodes_second, second_read, self.state_facts(first_state)
         )
 
     def state_blocks_fusion(self, state: SDFGState, sdfg, permissive: bool) -> bool:
@@ -599,13 +621,24 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 desc = sdfg.arrays.get(dname)
                 if desc is None or not desc.transient or isinstance(desc, dt.View):
                     continue
-                if first_producers.get(dname, 0) >= 2 and not (
-                    self.aggressive_merges
-                    # A read in the second state would bind to one producer only
-                    and not any(second_state.out_degree(n) > 0 for n in second_state.data_nodes() if n.data == dname)
-                    and producers_disjoint(first_state, first_scope, dname, sdfg.facts())
-                ):
+                if first_producers.get(dname, 0) < 2:
+                    continue
+                if not self.aggressive_merges or not producers_disjoint(first_state, first_scope, dname, sdfg.facts()):
                     return False
+                if not any(second_state.out_degree(n) > 0 for n in second_state.data_nodes() if n.data == dname):
+                    continue
+                # A read in the second state binds to one node, which has to come after every producer: the producers
+                # that are sinks of the first state become one node, and every other producer already reaches one
+                producers = [
+                    n
+                    for n in first_state.data_nodes()
+                    if n.data == dname and first_scope[n] is None and first_state.in_degree(n) > 0
+                ]
+                sinks = [n for n in producers if first_state.out_degree(n) == 0]
+                if not sinks or not all(any(nx.has_path(first_state._nx, n, t) for t in sinks) for n in producers):
+                    return False
+                if len(sinks) > 1:
+                    self.connections_to_make.append(("unify", sinks, []))
 
             # If second state has other input edges, there might be issues
             # Exceptions are when none of the states contain dataflow, unless
@@ -645,7 +678,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # see ``is_read_view_binding``.
             top1, top2 = top_level_nodes(first_state), top_level_nodes(second_state)
             # The states are consecutive, so what holds in the first holds in the second
-            facts = SymbolResolver().facts_at(first_state)
+            facts = self.state_facts(first_state)
             first_input = in_state_order(
                 first_state, [n for n in first_state.source_nodes() if isinstance(n, nodes.AccessNode)], first_order
             )
@@ -839,8 +872,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         continue
                     if second_state.in_degree(a) != 0:
                         continue  # re-written inside the second state: not a merge point
+                    # ``a`` merges with the one producer its read selects, not with whichever the read reaches
                     producers = [n for n in first_output if n.data == a.data and _has_data_write(n)]
-                    if producers and all(any(nx.has_path(first_state._nx, c, p) for p in producers) for c in consumers):
+                    if producers and all(nx.has_path(first_state._nx, c, p) for c in consumers for p in producers):
                         return True
                 return False
 
@@ -971,6 +1005,29 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         first_state, second_state, match_nodes, nodes_first, nodes_second, False, False
                     ):
                         return False
+                # A second-state read of a first-state output merges with one first-state instance: it orders a
+                # first-state writer upstream of that instance before a second-state writer downstream of the read,
+                # and no other pair. Refuse when an unordered pair overlaps.
+                for cand in sorted((fused_cc.first_outputs & fused_cc.second_outputs) & fused_cc.second_inputs):
+                    merged = [(a, b) for a, b in match_nodes.items() if a.data == cand]
+                    seconds = [n for n in fused_cc.second_output_nodes if n.data == cand]
+                    for w1 in first_output_by_data.get(cand, []):
+                        for w2 in seconds:
+                            # Every writer into ``w2`` has to follow the read, not one of them (a memset beside a map
+                            # writing the other half of the container)
+                            if any(
+                                nx.has_path(first_state._nx, w1, a)
+                                and all(
+                                    e.data.is_empty() or nx.has_path(second_state._nx, b, e.src)
+                                    for e in second_state.in_edges(w2)
+                                )
+                                for a, b in merged
+                            ):
+                                continue
+                            if StateFusionExtended.memlets_intersect(
+                                first_state, [w1], False, second_state, [w2], False, facts
+                            ):
+                                return False
                 # End of write-write hazard check
 
                 first_inout = fused_cc.first_inputs | fused_cc.first_outputs
@@ -1032,7 +1089,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                             if d in fused_cc.first_outputs:
                                 nodes_first = first_output_by_data.get(d, [])
                                 if StateFusionExtended.memlets_intersect(
-                                    first_state, nodes_first, False, second_state, nodes_second, False
+                                    first_state, nodes_first, False, second_state, nodes_second, False, facts
                                 ):
                                     self.connections_to_make.append(("waw", nodes_first, nodes_second))
                     # End of data race check
@@ -1045,8 +1102,16 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 second_inout = (fused_cc.first_inputs | fused_cc.first_outputs) & fused_cc.second_outputs
                 for inout in sorted(second_inout):
                     nodes_first = [n for n in match_nodes if n.data == inout]
-                    if any(first_state.out_degree(n) > 0 for n in nodes_first):
-                        return False
+                    read_first = [n for n in nodes_first if first_state.out_degree(n) > 0]
+                    if read_first:
+                        # The second state rewrites a container the first state writes and then reads. The second
+                        # state binds to that same node; its writers are ordered after every first-state read of it.
+                        writers = second_output_by_data.get(inout, [])
+                        endpoints = ordering_endpoints(read_first) if self.aggressive_merges else None
+                        if not endpoints or not writers:
+                            return False
+                        self.connections_to_make.append(("read_before", endpoints, writers))
+                        continue
 
                     # If we have potential candidates, check if there is a
                     # path from the first read to the second write (in that
@@ -1095,6 +1160,27 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                         return False
                                 found = outnode
 
+            # A happens-before edge that lands on a second-state read keeps it a non-source, which merges only with a
+            # first-state instance it intersects; one the first state reaches by ordering edges alone then stays apart,
+            # though the WAW checks above order a container both states write through that merge
+            # A rewrite fed by a read of its own data is ordered through that read's merge instead
+            rewritten = [
+                n
+                for n in second_output
+                if n.data in first_out_data
+                and not any(i.data == n.data and nx.has_path(second_state._nx, i, n) for i in second_input)
+            ]
+            for kind, _, targets in self.connections_to_make:
+                if kind not in ("war", "waw"):
+                    continue
+                for source in second_input:
+                    if (
+                        source.data in first_output_by_data
+                        and source.data not in first_out_data
+                        and any(source is t or nx.has_path(second_state._nx, source, t) for t in targets)
+                        and any(nx.has_path(second_state._nx, source, w) for w in rewritten)
+                    ):
+                        return False
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg):
@@ -1156,6 +1242,15 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         preexisting = {(e.src, e.dst, name) for _, e, _, _, name in mismatched_data_edges(first_state, sdfg)}
         preexisting |= {(e.src, e.dst, name) for _, e, _, _, name in mismatched_data_edges(second_state, sdfg)}
 
+        # Disjoint producers of one container the second state reads become one access node
+        for kind, producers, _ in self.connections_to_make:
+            if kind != "unify":
+                continue
+            keep = producers[0]
+            for other in producers[1:]:
+                sdutil.change_edge_dest(first_state, other, keep)
+                first_state.remove_node(other)
+
         # Find source/sink (data) nodes
         first_input = [node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)]
         first_output = [node for node in first_state.sink_nodes() if isinstance(node, nodes.AccessNode)]
@@ -1210,7 +1305,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     for i in top2:
                         if i not in second_state.source_nodes():
                             continue
-                        if kind == "seed" and isinstance(i, nodes.AccessNode):
+                        if kind in ("seed", "read_before") and isinstance(i, nodes.AccessNode):
                             # A source AccessNode may merge into a first-state node upstream of the seed
                             # writer, closing a cycle (ludcmp ``w = y[i]; w(+)= ...``); its consumers never merge.
                             # A library node takes no ordering edge (it counts its inputs); it is ordered through ``i``.
@@ -1240,6 +1335,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         # Merge common (data) nodes
         merged_nodes = set()
+        # Per container, the nodes that took a first-state instance: a later second-state reader finds that instance
+        # gone from the candidates and is ordered behind them instead (seeds 349, 1663)
+        absorbed: dict[str, list[nodes.AccessNode]] = {}
+        second_writes = {n.data for n in second_state.data_nodes() if second_state.in_degree(n) > 0}
         for node in second_mid:
             # merge only top level nodes, skip everything else
             if node not in top2:
@@ -1272,6 +1371,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     for kind, first_nodes, second_nodes in self.connections_to_make
                     if kind == "waw"
                 )
+                took = False
                 for cand in candidates:
                     if node_waw_flagged and first_state.in_degree(cand) > 0:
                         continue
@@ -1281,6 +1381,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         sdutil.change_edge_src(first_state, cand, node)
                         sdutil.change_edge_dest(first_state, cand, node)
                         first_state.remove_node(cand)
+                        took = True
                         # Record the merged-away node so a later ``second_mid`` node with the same
                         # data does not re-select it: ``candidates`` (above) filters on the stale
                         # ``order`` / ``top`` snapshots, which still contain this now-removed node.
@@ -1289,11 +1390,19 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         # ``__t0_split_*`` from SplitTasklets). Mirrors the ``merged_nodes.add(n)``
                         # in the general same-name-merge branch below.
                         merged_nodes.add(cand)
+                if took:
+                    absorbed.setdefault(node.data, []).append(node)
+                elif second_state.out_degree(node) > 0:
+                    for m in absorbed.get(node.data, []):
+                        if not nx.has_path(first_state._nx, node, m) and not nx.has_path(first_state._nx, m, node):
+                            first_state.add_nedge(m, node, memlet.Memlet())
                 continue
 
             if len(candidates) == 0:
                 continue
-            elif len(candidates) == 1:
+            elif len(candidates) == 1 or node.data in second_writes:
+                # When the second state also writes the container, the WAW check orders the first state's writers
+                # through the topologically last instance, so the read has to merge with that one
                 n = candidates[0]
             else:
                 # Choose first candidate that intersects memlets
@@ -1309,6 +1418,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             sdutil.change_edge_dest(first_state, node, n)
             first_state.remove_node(node)
             merged_nodes.add(n)
+            absorbed.setdefault(n.data, []).append(n)
 
         # Redirect edges and remove second state
         was_start = is_start_block(graph, second_state)

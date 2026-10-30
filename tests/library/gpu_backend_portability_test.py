@@ -104,12 +104,12 @@ def test_no_frame_header_names_the_cuda_runtime_on_a_rocm_host(env_name: str) ->
 @pytest.mark.parametrize(
     "backend, vendors, foreign",
     [
-        ("cuda", ("cuBLAS", "cuSolverDn", "cuTENSOR"), ("rocBLAS", "rocSOLVER", "hipTENSOR")),
-        ("hip", ("rocBLAS", "rocSOLVER", "hipTENSOR"), ("cuBLAS", "cuSolverDn", "cuTENSOR")),
+        ("cuda", ("cuBLAS", "cuSolverDn", "cuTENSOR"), ("hipBLAS", "hipSolverDn", "hipTENSOR")),
+        ("hip", ("hipBLAS", "hipSolverDn", "hipTENSOR"), ("cuBLAS", "cuSolverDn", "cuTENSOR")),
     ],
 )
 def test_canonicalize_picks_the_backend_s_own_vendor_libraries(backend, vendors, foreign, monkeypatch) -> None:
-    """The canonicalize perf tail forced a pick from a CUDA-only list, so every rocBLAS-lowered
+    """The canonicalize perf tail forced a pick from a CUDA-only list, so every vendor-lowered
     node fell back to the serial ``pure`` loop on a ROCm host -- the lowering existed and was
     never selected. Both tensor libraries are pinned installed: whether THIS host can build them is
     :func:`test_a_tensor_library_the_host_cannot_build_is_not_picked`'s question."""
@@ -196,7 +196,7 @@ def test_a_tensor_contraction_does_not_lower_to_a_library_the_host_cannot_build(
     "backend, blas, env",
     [
         ("cuda", "cuBLAS", cutensor.cuTensor),
-        ("hip", "rocBLAS", hiptensor.hipTensor),
+        ("hip", "hipBLAS", hiptensor.hipTensor),
     ],
 )
 @pytest.mark.parametrize(
@@ -262,7 +262,7 @@ def test_a_tensor_permutation_does_not_delegate_to_a_library_the_host_cannot_bui
 def test_hiptensor_counts_as_installed_only_with_its_v2_header(tmp_path, monkeypatch) -> None:
     """The library alone is not enough: ``dace_hiptensor.h`` includes ``hiptensor/hiptensor.h``, which
     ROCm 6.3 does not ship (it has ``hiptensor/hiptensor.hpp``, the older API)."""
-    monkeypatch.setattr(hiptensor.ctypes.util, "find_library", lambda name: f"lib{name}.so")
+    monkeypatch.setattr(hiptensor.hip_dialect, "find_rocm_library", lambda name: f"lib{name}.so")
     monkeypatch.setenv("ROCM_PATH", str(tmp_path))
     header = tmp_path / "include" / "hiptensor"
     header.mkdir(parents=True)
@@ -566,6 +566,12 @@ def persistent_kernel(x: dace.float32[SIZE_SYMBOL], b: dace.float32[SIZE_SYMBOL]
                 a << x[i]
                 o >> b[i]
                 o = a * 2.0
+        # Reads what other blocks wrote, so the grid synchronizes between the two steps
+        for i in dace.map[0:SIZE_SYMBOL]:
+            with dace.tasklet:
+                a << b[SIZE_SYMBOL - 1 - i]
+                o >> x[i]
+                o = a + 1.0
 
 
 def make_outermost_map_persistent(sdfg) -> None:
@@ -575,10 +581,10 @@ def make_outermost_map_persistent(sdfg) -> None:
                 scope.map.schedule = dtypes.ScheduleType.GPU_Persistent
 
 
-def test_the_grid_barrier_is_named_in_dace_s_own_namespace() -> None:
-    """A persistent kernel takes a grid barrier as an argument. The barrier is DaCe's own class --
-    it only borrows CUB's ``ThreadLoad`` -- but it was declared by reopening CUB's namespace, which
-    an alias cannot do, so it could never follow the backend. It lives in ``dace::`` now."""
+def test_the_grid_barrier_of_a_persistent_kernel_follows_the_backend() -> None:
+    """A persistent kernel synchronizes its grid through cooperative groups under a cooperative launch of the
+    selected backend, and names nothing in CUB's namespace."""
     code = generated_gpu_code(persistent_kernel, "hip", make_outermost_map_persistent, implementation="legacy")
-    assert "dace::GridBarrier" in code, "no grid barrier was emitted; the test lowers nothing"
+    assert "cooperative_groups::this_grid().sync();" in code, "no grid barrier was emitted; the test lowers nothing"
+    assert "hipLaunchCooperativeKernel(" in code
     assert not BARE_CUB_NAMESPACE.findall(code), BARE_CUB_NAMESPACE.findall(code)

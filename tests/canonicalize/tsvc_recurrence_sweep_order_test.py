@@ -31,7 +31,7 @@ from dace.transformation.passes.canonicalize.move_loop_into_map_gated import (
     interchange_lowers_stride,
 )
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.minimize_stride_permutation import _to_float, score_indexed_strides
+from dace.transformation.passes.minimize_stride_permutation import score_indexed_strides, score_to_float
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
@@ -96,7 +96,7 @@ def innermost_stride(sdfg, array):
         for state in sub.states():
             scores = score_indexed_strides(state.edges(), sub, [axis])
             if axis in scores:
-                best = min(best, _to_float(scores[axis][0]))
+                best = min(best, score_to_float(scores[axis][0]))
     return best
 
 

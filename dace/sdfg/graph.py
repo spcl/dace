@@ -6,8 +6,6 @@ import itertools
 import uuid
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import networkx as nx
@@ -29,23 +27,6 @@ class EdgeNotFoundError(Exception):
 T = TypeVar("T")
 NodeT = TypeVar("NodeT")
 EdgeT = TypeVar("EdgeT")
-
-# ``id(graph) -> (graph, {id(node): index})`` while the graphs are frozen; the graph is kept to pin its id.
-_frozen_node_ids: ContextVar[dict[int, tuple[Any, dict[int, int]]] | None] = ContextVar(
-    "_frozen_node_ids", default=None
-)
-
-
-@contextmanager
-def frozen_node_ids() -> Iterator[None]:
-    """Answers ``OrderedDiGraph.node_id`` from an index built once per graph. Only for spans that add or
-    remove no nodes, e.g. serialization, where a linear scan per edge endpoint is quadratic."""
-    token = _frozen_node_ids.set({}) if _frozen_node_ids.get() is None else None
-    try:
-        yield
-    finally:
-        if token is not None:
-            _frozen_node_ids.reset(token)
 
 
 @dace.serialize.serializable
@@ -685,6 +666,8 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._nodes = OrderedDict()
         # {(src, dst): edge}
         self._edges = OrderedDict()
+        # {node: position}, built by ``node_id``; a removal shifts later positions, so it drops the index
+        self._node_indices: dict[NodeT, int] | None = None
 
     @property
     def nx(self):
@@ -700,22 +683,12 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         except StopIteration:
             raise NodeNotFoundError
 
-    #: ``{node: index}`` while a serialization holds the node order fixed; ``None`` otherwise.
-    _frozen_node_ids: dict[NodeT, int] | None = None
-
     def node_id(self, node: NodeT) -> int:
-        frozen = _frozen_node_ids.get()
-        if frozen is not None:
-            entry = frozen.get(id(self))
-            if entry is None:
-                entry = frozen[id(self)] = (self, {id(n): i for i, n in enumerate(self._nodes.keys())})
-            try:
-                return entry[1][id(node)]
-            except KeyError:
-                raise NodeNotFoundError(node)
+        if self._node_indices is None:
+            self._node_indices = {n: i for i, n in enumerate(self._nodes)}
         try:
-            return next(i for i, n in enumerate(self._nodes.keys()) if n is node)
-        except StopIteration:
+            return self._node_indices[node]
+        except KeyError:
             raise NodeNotFoundError(node)
 
     def nodes(self) -> list[NodeT]:
@@ -735,6 +708,8 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
             raise RuntimeError("Duplicate node added")
         self._nodes[node] = (OrderedDict(), OrderedDict())
         self._nx.add_node(node)
+        if self._node_indices is not None:
+            self._node_indices[node] = len(self._node_indices)
 
     def add_edge(self, src: NodeT, dst: NodeT, data: EdgeT = None):
         t = (src, dst)
@@ -767,6 +742,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         if len(reordered) != len(self._nodes):
             raise ValueError("reorder_nodes expects a permutation of the current node list")
         self._nodes = reordered
+        self._node_indices = None
         # networkx has no reordering API; popping and re-inserting each node in the wanted order
         # moves it to the end of every backing dict, so after one sweep they read in ``order``.
         for n in order:
@@ -779,6 +755,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
             for edge in self.all_edges(node):
                 self.remove_edge(edge)
             del self._nodes[node]
+            self._node_indices = None
             self._nx.remove_node(node)
         except KeyError:
             pass
@@ -849,6 +826,7 @@ class OrderedMultiDiGraph(OrderedDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._nodes = OrderedDict()
         # {edge: edge}
         self._edges = OrderedDict()
+        self._node_indices: dict[NodeT, int] | None = None
 
     def add_edge(self, src: NodeT, dst: NodeT, data: EdgeT) -> MultiEdge[EdgeT]:
         key = self._nx.add_edge(src, dst, data=data)
@@ -1074,6 +1052,9 @@ def copy_graph_field(owner: Any, name: str, value: Any, memo: dict[int, Any]) ->
             return copy_node_index(value, memo)
         if name == "_edges":
             return copy_edge_index(value, memo)
+        if name == "_node_indices":
+            # Rebuilt on first ``node_id``
+            return None
     return copy_value(value, memo)
 
 

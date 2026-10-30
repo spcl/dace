@@ -8,7 +8,7 @@ import dace
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.scalar_fission import ScalarFission
+from dace.transformation.passes.scalar_fission import ScalarFission, rename_access
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 
@@ -533,7 +533,7 @@ def test_ordering_edge_does_not_start_a_version():
     assert out[0] == 6.0, f"got {out[0]}"
 
 
-def test_rename_node_memlets_follows_an_earlier_version():
+def test_rename_access_follows_an_earlier_version():
     """The rename guard must accept a memlet already pointing at an earlier version of the name.
 
     A node renamed twice in one pass no longer carries the ORIGINAL container on its memlets, and a
@@ -549,8 +549,7 @@ def test_rename_node_memlets_follows_an_earlier_version():
     sink = state.add_tasklet("sink", {"i"}, {}, "pass")
     state.add_edge(node, None, sink, "i", dace.Memlet("s_0[0]"))
 
-    node.data = "s_1"
-    ScalarFission().rename_node_memlets(state, node, {"s", "s_0"}, "s_1")
+    rename_access(state, node, {"s", "s_0"}, "s_1")
 
     assert state.out_edges(node)[0].data.data == "s_1", "a memlet on an already-renamed node stayed stale"
 
@@ -1055,6 +1054,6 @@ if __name__ == "__main__":
     test_branch_subscopes_fission(True)
     test_scalar_fission_propagates_rename_into_nsdfg()
     test_ordering_edge_does_not_start_a_version()
-    test_rename_node_memlets_follows_an_earlier_version()
+    test_rename_access_follows_an_earlier_version()
     test_scalar_read_by_a_branch_condition_is_private_to_each_loop()
     test_an_access_in_two_write_scopes_leaves_the_scalar_whole()

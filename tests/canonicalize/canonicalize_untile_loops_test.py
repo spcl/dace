@@ -413,6 +413,13 @@ def test_refuses_when_outer_body_is_not_a_perfect_two_level_nest():
     assert res is None
 
 
+def _assert_one_untiled_map(sdfg, rank):
+    entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert len(entries) == 1 and len(entries[0].map.params) == rank, f"expected one {rank}-D Map, got {entries}"
+    assert all(step == 1 for _, _, step in entries[0].map.range), "the Map kept a tile stride"
+    assert _count_loops(sdfg) == 0
+
+
 # Tiled jacobi2d / heat3d -- multi-dim and multi-level tile coverage.
 #
 # These tests pin the contract for the ``UntileLoops`` extensions (multi-dim,
@@ -423,9 +430,8 @@ def test_refuses_when_outer_body_is_not_a_perfect_two_level_nest():
 #   * range-style -- ``for i in range(...)`` literal tile loops; the rewrite
 #     untiles via the existing LoopRegion path (extended to multi-dim and
 #     multi-level).
-#   * Map-style   -- ``dace.map[...]`` literal tile maps; the rewrite goes
-#     through the Map -> LoopRegion -> untile -> LoopRegion -> Map round-trip
-#     so unchanged tagged-as-Map loops come back as Maps.
+#   * Map-style   -- ``dace.map[...]`` literal tile maps; the rewrite collapses
+#     the Map dimensions in place.
 #
 # Each kernel has two levels of tiling on top of the natural loop:
 #   * 1-level tile -- 2D tile (jacobi2d) / 3D tile (heat3d), outermost-axis
@@ -491,7 +497,7 @@ def test_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest():
 
 
 def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
-    """1-level 2D tile in dace.map form. ``UntileLoops(map_roundtrip=True)``
+    """1-level 2D tile in dace.map form. ``UntileLoops()``
     lowers every Map to a LoopRegion via ``MapExpansion`` + ``MapToForLoop``,
     runs the untile fixpoint, then re-lifts via ``LoopToMap``, leaving one
     recovered Map per axis over the full ``[0:N-2]`` / ``[0:M-2]`` extent and no
@@ -521,13 +527,9 @@ def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
     )
 
     sdfg = jacobi2d_tiled_jacobi2d_tiled_1lvl_map_collapses_to_2d_map.to_sdfg(simplify=True)
-    UntileLoops(map_roundtrip=True).apply_pass(sdfg, {})
+    UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    # ExpandNestedSDFGInputs + InlineMultistateSDFG flatten the round-trip NSDFGs, the multi-dim
-    # ascent fires, and the fixpoint collapses the tile pair per axis. The general splice
-    # reconnects the parent's pred/succ chain through the spliced body, so no orphan state remains.
-    assert _count_maps(sdfg) == 2, f"expected one recovered Map per axis, got {_count_maps(sdfg)}"
-    assert _count_loops(sdfg) == 0, f"the Map round-trip left a LoopRegion behind: {_count_loops(sdfg)}"
+    _assert_one_untiled_map(sdfg, 2)
     sdfg(a=a, b=b, N=n, M=m)
     assert np.allclose(b, ref)
 
@@ -623,7 +625,7 @@ def test_heat3d_tiled_1lvl_range_collapses_to_3d_nest():
 
 
 def test_heat3d_tiled_1lvl_map_collapses_to_3d_map():
-    """1-level 3D tile in dace.map form. Same Map round-trip as the 2D
+    """1-level 3D tile in dace.map form. Same in-place collapse as the 2D
     case, three axes."""
 
     K = 4
@@ -657,11 +659,9 @@ def test_heat3d_tiled_1lvl_map_collapses_to_3d_map():
     )
 
     sdfg = heat3d_tiled_heat3d_tiled_1lvl_map_collapses_to_3d_map.to_sdfg(simplify=True)
-    UntileLoops(map_roundtrip=True).apply_pass(sdfg, {})
+    UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    # 3 axes -> one recovered Map each, and no orphan connective state from the general splice.
-    assert _count_maps(sdfg) == 3, f"expected one recovered Map per axis, got {_count_maps(sdfg)}"
-    assert _count_loops(sdfg) == 0, f"the Map round-trip left a LoopRegion behind: {_count_loops(sdfg)}"
+    _assert_one_untiled_map(sdfg, 3)
     sdfg(a=a, b=b, N=n, M=m, P=p)
     assert np.allclose(b, ref)
 
@@ -960,11 +960,7 @@ def _map_dims(sdfg):
 
 
 def test_map_tiled_3level_untiles_on_the_pass_defaults():
-    """A ``dace.map``-tiled 3-level nest is recovered WITHOUT the caller forcing the round trip.
-
-    The matcher only reads LoopRegions, so before the auto-trigger this kernel came out of the
-    pass byte-identical -- the hand-written tiling reached codegen and the canonical form was
-    never seen. Structure is what proves the recovery: one 2-D iteration space over the full
+    """A ``dace.map``-tiled 3-level nest is recovered on the pass's defaults: one 2-D iteration space over the full
     extent, unit stride, no tile-strided Map left."""
     M = dace.symbol("M")
 
@@ -1004,10 +1000,38 @@ def test_map_tiled_3level_untiles_on_the_pass_defaults():
     assert np.allclose(b, ref)
 
 
-def test_map_roundtrip_brings_a_scatter_map_back_as_a_map():
-    """The auto round trip lowers EVERY Map and re-lifts every one. A scatter Map beside the tiled nest is independent
-    by contract (it was a Map), so it comes back a Map even though ``LoopToMap`` could not prove its index array a
-    permutation."""
+def test_a_map_tiling_with_a_partial_last_tile_untiles_back_to_one_map():
+    """``MapTiling`` with ``divides_evenly=False`` writes the point Map's end as a ``SymExpr`` (``min(N, i0 + 8) - 1``
+    approximated by ``i0 + 7``); the matcher reads its exact expression instead of failing to sympify it."""
+    from dace.transformation.dataflow.tiling import MapTiling
+
+    @dace.program
+    def scaled(a: dace.float64[N, N], b: dace.float64[N, N]):
+        for i, j in dace.map[0:N, 0:N]:
+            b[i, j] = 2.0 * a[i, j] + 1.0
+
+    n = 20  # not a multiple of either tile, so the last tiles are partial
+    sdfg = scaled.to_sdfg(simplify=True)
+    sdfg.apply_transformations(MapTiling, options={"tile_sizes": (8, 6), "divides_evenly": False})
+    ends = [
+        rng[1]
+        for node, parent in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.MapEntry)
+        for rng in node.map.range
+    ]
+    assert _count_maps(sdfg) == 2 and any(isinstance(end, symbolic.SymExpr) for end in ends), "precondition"
+
+    assert UntileLoops().apply_pass(sdfg, {}) == 2, "both axes untile"
+    sdfg.validate()
+    assert _count_maps(sdfg) == 1, "the tile and point Maps must become one"
+    a, b = np.arange(n * n, dtype=np.float64).reshape(n, n).copy(), np.zeros((n, n))
+    sdfg(a=a, b=b, N=n)
+    assert np.array_equal(b, 2.0 * a + 1.0)
+
+
+def test_a_scatter_map_beside_a_tiled_map_stays_a_map():
+    """A scatter Map beside the tiled nest stays a Map although ``LoopToMap`` could not prove its index array a
+    permutation: Map tiles collapse without lowering any Map."""
 
     @dace.program
     def tiled_plus_scatter(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], idx: dace.int64[N]):
@@ -1142,6 +1166,7 @@ def test_a_four_level_cascade_of_nested_clamps_collapses_completely():
 
 
 if __name__ == "__main__":
+    test_a_map_tiling_with_a_partial_last_tile_untiles_back_to_one_map()
     test_case_a_combined_access_K4_collapses_to_single_loop()
     test_case_a_with_arithmetic_combination_collapses()
     test_case_b_absolute_inner_collapses_to_single_loop()
@@ -1170,7 +1195,7 @@ if __name__ == "__main__":
     for family_member in sorted(_TILED_FAMILY):
         test_tiled_stencil_corpus_untiles_to_the_canonical_nest(family_member)
     test_map_tiled_3level_untiles_on_the_pass_defaults()
-    test_map_roundtrip_brings_a_scatter_map_back_as_a_map()
+    test_a_scatter_map_beside_a_tiled_map_stays_a_map()
     test_a_clamped_two_level_tile_collapses_to_the_flat_stencil()
     test_a_clamped_tile_with_swapped_inner_axes_collapses()
     test_a_four_level_cascade_of_nested_clamps_collapses_completely()

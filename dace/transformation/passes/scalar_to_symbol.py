@@ -270,6 +270,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 if sdfg.arrays[edge.src.data].storage != sdfg.arrays[candidate].storage:
                     candidates.remove(candidate)
                     continue
+                # The promoted symbol is read on host interstate edges, which cannot read device memory
+                if not dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, sdfg.arrays[edge.src.data].storage):
+                    candidates.remove(candidate)
+                    continue
                 # If input is array, ensure it is not a stream
                 if isinstance(sdfg.arrays[edge.src.data], dt.Stream):
                     candidates.remove(candidate)
@@ -930,17 +934,6 @@ class ScalarToSymbolPromotion(passes.Pass):
         if len(to_promote) == 0:
             return None
 
-        # Postcondition guard (checked at the end): promotion must DEFINE every
-        # symbol it introduces -- a promoted scalar's writer becomes an interstate
-        # assignment, so the new symbol is bound. Record the pre-promotion free
-        # symbols and which promotions are transient, so a promoted *transient*
-        # scalar that ends up as a NEW free (undefined) symbol -- e.g. one whose
-        # writer was removed while it was referenced only by a control-flow
-        # condition -- is caught here instead of leaking into codegen. Only
-        # transient promotions are checked (non-transient args stay arguments).
-        before_free: set[str] = {str(s) for s in sdfg.free_symbols}
-        transient_promotions: set[str] = {s for s in to_promote if s in sdfg.arrays and sdfg.arrays[s].transient}
-
         for state in sdfg.states():
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             # Step 2: Assignment tasklets
@@ -1013,6 +1006,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         # Step 5: Data descriptor management
         # Removing descriptors and adding symbols binds no loop or map name: the scope-bound names are read once.
         scope_bound = None
+        new_local_symbols: set[str] = set()
         for scalar in to_promote:
             desc = sdfg.arrays[scalar]
             sdfg.remove_data(scalar, validate=False)
@@ -1022,6 +1016,15 @@ class ScalarToSymbolPromotion(passes.Pass):
                 if scope_bound is None:
                     scope_bound = scope_bound_names(sdfg)
                 sdfg.add_symbol(scalar, desc.dtype, scope_bound=scope_bound)
+                if desc.transient:
+                    new_local_symbols.add(scalar)
+        # A scalar argument its caller declared nonnegative carries that contract on as a symbol
+        if sdfg.parent_sdfg is None and to_promote:
+            # avoid an import cycle
+            from dace.transformation.passes.canonicalize import assume_symbols_nonnegative as nonneg
+
+            if not to_promote.isdisjoint(nonneg.declared_nonnegative_symbols(sdfg)):
+                nonneg.set_symbol_nonnegative_assumptions(sdfg)
 
         # Step 6: Inter-state edge cleanup
         cleanup_re = {s: re.compile(rf"\b{re.escape(s)}\[.*?\]") for s in to_promote}
@@ -1055,20 +1058,18 @@ class ScalarToSymbolPromotion(passes.Pass):
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)
 
-        # Postcondition: a valid promotion never leaves a promoted transient scalar
-        # as a NEW free (undefined) symbol -- every introduced symbol must be bound
-        # by the interstate assignment built from its writer. A violation means the
-        # writer was already gone before promotion (e.g. removed while the scalar was
-        # referenced only by a branch/loop condition), so the symbol has no binding;
-        # fail loudly here rather than emit an SDFG that errors at compile/run time.
-        new_free: set[str] = {str(s) for s in sdfg.free_symbols} - before_free
-        orphaned = new_free & transient_promotions
-        if orphaned:
-            raise ValueError(
-                f"ScalarToSymbolPromotion would introduce undefined symbol(s) {sorted(orphaned)}: "
-                f"a promoted transient scalar has no defining assignment (its writer was removed "
-                f"while it was still referenced by a control-flow condition)."
-            )
+        # Step 8: A promoted transient that some read may reach unassigned (e.g., written and read under the same
+        # condition) would be a free symbol, i.e., a new argument of the SDFG. Such a read sees an undefined value
+        # anyway, so give the symbol an initial value on entry instead.
+        if new_local_symbols:
+            unassigned = new_local_symbols & {str(s) for s in sdfg.free_symbols}
+            if unassigned:
+                sdfg.add_state_before(
+                    sdfg.start_block,
+                    "init_promoted_scalars",
+                    is_start_block=True,
+                    assignments=dict.fromkeys(sorted(unassigned), "0"),
+                )
 
         return to_promote or None
 

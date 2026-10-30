@@ -18,6 +18,7 @@ from dace.libraries.standard.nodes.copy.common import (
     _both_packed_same_layout,
     _is_cross_cpu_gpu,
     cuda2d_pitch_params,
+    hull_copy_is_safe,
     strided_copy_calls,
 )
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
@@ -46,20 +47,13 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # A 0-D map crashes memlet propagation, so single-element copies use Tasklet/MemcpyCUDA1D.
     single_elt = in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1
 
-    # A cast is not a byte move. No memcpy variant -- host, gpuMemcpyAsync or the 2D/ND forms --
-    # can carry one, so a converting copy has to reach a tasklet that performs the conversion.
+    # A cast is not a byte move, so no memcpy variant can carry it. On one side of the CPU/GPU
+    # boundary a tasklet casts; across it from host code, the bytes move first and the GPU casts.
     if inp.dtype != out.dtype:
-        # Inside a kernel the host/device boundary does not exist for the operands in hand, the way
-        # the single-element case below already reasons.
         if not is_devicelevel_gpu(parent_state.sdfg, parent_state, node) and _is_cross_cpu_gpu(
             inp.storage, out.storage, node, parent_state
         ):
-            raise ValueError(
-                f"CopyLibraryNode '{node.name}' converts {inp.dtype} to {out.dtype} across the "
-                f"CPU/GPU boundary ({inp.storage} -> {out.storage}). Staging the transfer and "
-                f"casting on the device is not implemented yet; keep the cast on one side of "
-                f"the boundary, or pick an implementation explicitly."
-            )
+            return "CastOnDevice"
         return "Tasklet" if single_elt else "MappedTasklet"
 
     # GPU_Shared: SharedMemoryCollective, unless thread-level (Register endpoint or in a map).
@@ -103,6 +97,14 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
                 f"'{parent_state.label}'). Device code cannot address host memory and "
                 f"cannot issue a Memcpy; place the copy outside the kernel."
             )
+        from dace.libraries.standard.block_reduce import in_kernel_block_implementation, release_kernel_block_size
+
+        # Lanes split the elements only of data the block shares, not of a thread's own copy
+        shared = not out.transient or out.storage == dtypes.StorageType.GPU_Shared
+        block = in_kernel_block_implementation(node, parent_state) if shared else None
+        if block is not None:
+            release_kernel_block_size(node, parent_state)
+            return block
         return "MappedTasklet"
 
     # Host CPU-resident: same-shape/contiguous/same-layout below the parallel-transfer threshold
@@ -194,9 +196,10 @@ def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SD
     if get_gpu_backend() == "hip" and not _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
         return "MappedTasklet"
 
-    # ``MemcpyCUDAHull`` is never chosen here: it is correct only where nothing reads the destination between the rows,
-    # which canonicalization proves and pins (``pin_span_copies``).
     crosses_boundary = _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state)
+    # One flat copy of the span, where nothing reads the destination between the rows of the region.
+    if crosses_boundary and hull_copy_is_safe(node, parent_state):
+        return "MemcpyCUDAHull"
 
     in_shape_collapsed, in_strides_collapsed = collapse_shape_and_strides(in_subset, inp.strides)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)

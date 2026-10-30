@@ -32,7 +32,15 @@ class MapPartialReduceFusion(MapReduceFusion):
         axes = reduce_node.axes
         if reduce_node.identity is None or axes is None or not 0 < len(axes) < ndim:
             return False
-        if graph.out_degree(tmap_exit) != 1 or not sdfg.arrays[out_array.data].transient:
+        # The Map may write other data too: the split leaves those writes in the inner Map, unchanged. Not another
+        # reduction (a WCR write, or data a Reduce reads): ``MapReduceFusion`` keeps those in the full Map instead.
+        if len(graph.edges_between(tmap_exit, in_array)) != 1 or not sdfg.arrays[out_array.data].transient:
+            return False
+        if any(
+            e.data.wcr is not None or any(isinstance(oe.dst, type(reduce_node)) for oe in graph.out_edges(e.dst))
+            for e in graph.out_edges(tmap_exit)
+            if e.dst is not in_array
+        ):
             return False
         params = self.dim_params(graph)
         if params is None:
@@ -80,7 +88,7 @@ class MapPartialReduceFusion(MapReduceFusion):
         )
         (write,) = [e for e in graph.in_edges(inner_exit) if e.data.data == in_array.data]
         write.data = Memlet(data=acc, subset="0", wcr=reduce_node.wcr)
-        (passed,) = [e for e in graph.in_edges(outer_exit) if e.src is inner_exit]
+        (passed,) = [e for e in graph.in_edges(outer_exit) if e.src is inner_exit and e.data.data == in_array.data]
         accumulated = graph.add_access(acc)
         graph.remove_edge(passed)
         graph.add_edge(

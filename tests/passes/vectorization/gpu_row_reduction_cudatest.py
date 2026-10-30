@@ -54,15 +54,15 @@ def test_the_reduce_keeps_reducing_the_row_after_widening():
 def test_the_result_copy_lands_on_its_row():
     sdfg = vectorized_row_sums()
     copies = [
-        e.data
-        for e, _ in sdfg.all_edges_recursive()
+        (e, state)
+        for e, state in sdfg.all_edges_recursive()
         if isinstance(e.data, dace.Memlet)
         and isinstance(e.dst, dace.nodes.AccessNode)
         and e.dst.data == "s"
         and isinstance(e.src, dace.nodes.AccessNode)
     ]
     assert copies
-    assert all(m.other_subset is not None and m.other_subset.free_symbols for m in copies), [str(m) for m in copies]
+    assert all(e.data.get_dst_subset(e, state).free_symbols for e, state in copies), [str(e.data) for e, _ in copies]
 
 
 @pytest.mark.gpu

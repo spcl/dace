@@ -75,6 +75,68 @@ class ExpandPure(ExpandTransformation):
 
 
 @library.expansion
+class ExpandCUDABlock(ExpandTransformation):
+    """Inside a GPU kernel: the block's lanes split the elements, the innermost input axis strided across them, and a
+    barrier at the lane map's exit publishes the result."""
+
+    environments = []
+    runs_inside_kernel = True
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
+        from dace.sdfg.propagation import propagate_memlets_state
+
+        inp_tensor, out_tensor, inp_shape, out_shape = node.validate(parent_sdfg, parent_state)
+        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        sdfg.add_array("_inp_tensor", inp_shape, inp_tensor.dtype, inp_tensor.storage, strides=inp_tensor.strides)
+        sdfg.add_array("_out_tensor", out_shape, out_tensor.dtype, out_tensor.storage, strides=out_tensor.strides)
+        state = sdfg.add_state(f"{node.label}_state")
+        params = [f"__i{i}" for i in range(len(inp_shape))]
+        ranges = {param: (0, extent - 1, 1) for param, extent in zip(params, inp_shape)}
+        ranges[params[-1]] = ("__lane", inp_shape[-1] - 1, BLOCK_COLLECTIVE_THREADS)
+        lanes, lanes_exit = state.add_map(
+            f"{node.label}_lanes", {"__lane": f"0:{BLOCK_COLLECTIVE_THREADS}"}, dtypes.ScheduleType.GPU_ThreadBlock
+        )
+        lanes.map.gpu_force_syncthreads = True
+        entry, leave = state.add_map(f"{node.label}_elements", ranges, dtypes.ScheduleType.Sequential)
+        out_subset = ",".join(params[i] for i in node.axes)
+        code = "_out = _inp" if node.alpha == 1 else f"_out = decltype(_inp)({node.alpha}) * _inp"
+        inputs = {"_inp"}
+        if node.beta != 0:
+            inputs.add("_inout")
+            code = f"_out = {node.alpha} * _inp + {node.beta} * _inout"
+        tasklet = state.add_tasklet(f"{node.label}_tasklet", inputs, {"_out"}, code)
+        state.add_memlet_path(
+            state.add_read("_inp_tensor"),
+            lanes,
+            entry,
+            tasklet,
+            dst_conn="_inp",
+            memlet=dace.Memlet(f"_inp_tensor[{','.join(params)}]"),
+        )
+        if node.beta != 0:
+            state.add_memlet_path(
+                state.add_read("_out_tensor"),
+                lanes,
+                entry,
+                tasklet,
+                dst_conn="_inout",
+                memlet=dace.Memlet(f"_out_tensor[{out_subset}]"),
+            )
+        state.add_memlet_path(
+            tasklet,
+            leave,
+            lanes_exit,
+            state.add_write("_out_tensor"),
+            src_conn="_out",
+            memlet=dace.Memlet(f"_out_tensor[{out_subset}]"),
+        )
+        propagate_memlets_state(sdfg, state)
+        return sdfg
+
+
+@library.expansion
 class ExpandSequential(ExpandTransformation):
     """One core's transpose for a node a parallel region encloses: ``dace::linalg::transpose_blocked`` tiles the
     axis contiguous in the input with the one contiguous in the output, so both stream through cache lines (the
@@ -476,6 +538,7 @@ class TensorTranspose(nodes.LibraryNode):
         "cuTENSOR": ExpandCuTensor,
         "hipTENSOR": ExpandHipTensor,
         "CUDA": ExpandTensorTransposeCUDA,
+        "CUDA (block)": ExpandCUDABlock,
     }
     default_implementation = "pure"
 

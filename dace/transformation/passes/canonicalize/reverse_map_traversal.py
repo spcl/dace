@@ -58,7 +58,8 @@ def access_coefficients(
         ascending/descending access, or ``None`` for the whole map if any use is non-affine.
     """
     sym = symbolic.pystr_to_symbolic(param)
-    facts = (SymbolResolver() if symbols is None else symbols).facts_at(state, entry)
+    # Only a symbolic coefficient needs the facts at ``entry``; a number's sign is its own
+    facts = None
     signs: list[int | None] = []
     for edge in state.scope_subgraph(entry).edges():
         if edge.data is None or edge.data.is_empty():
@@ -77,6 +78,13 @@ def access_coefficients(
                         or sym in as_basic(symbolic.simplify(expr - coeff * sym)).free_symbols
                     ):
                         return None
+                    if coeff.is_Number:
+                        if coeff == 0:
+                            return None
+                        signs.append(-1 if coeff < 0 else 1)
+                        continue
+                    if facts is None:
+                        facts = (SymbolResolver() if symbols is None else symbols).facts_at(state, entry)
                     if (
                         symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, required(coeff)), facts)
                         is symbolic.Truth.TRUE

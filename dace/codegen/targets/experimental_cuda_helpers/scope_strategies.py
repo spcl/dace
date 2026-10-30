@@ -204,6 +204,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
         ) as scope_manager:
             self.write_scope_hint(self._current_kernel_spec.kernel_map_entry, cfg, state_id, callsite_stream)
             scope_manager.open(prefix=self.kernel_signature(dfg_scope))
+            self.codegen._frame.generate_constants(sdfg, callsite_stream)
 
             kernel_spec = self._current_kernel_spec
             kernel_entry_node = kernel_spec.kernel_map_entry  # == dfg_scope.source_nodes()[0]
@@ -215,6 +216,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                 kernel_spec.chiplets,
                 kernel_spec.chiplet_chunk,
                 kernel_spec.index_types,
+                kernel_spec.grid_folded,
             ):
                 ctype = kernel_spec.index_types[var_name].ctype
                 callsite_stream.write(f"{ctype} {var_name} = {expr};", cfg, state_id, kernel_entry_node)
@@ -230,10 +232,11 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
             unguarded = scope_manager.opened
             if kernel_spec.per_thread:
                 conditions = kernel_grid_conditions(
-                    kernel_spec.kernel_map, kernel_spec.block_dims, kernel_spec.chiplets
+                    kernel_spec.kernel_map, kernel_spec.block_dims, kernel_spec.chiplets, kernel_spec.grid_folded
                 )
             else:
-                conditions = [chiplet_padding_condition(kernel_spec.kernel_map)] if kernel_spec.chiplets > 1 else []
+                padded = kernel_spec.chiplets > 1 or kernel_spec.grid_folded
+                conditions = [chiplet_padding_condition(kernel_spec.kernel_map)] if padded else []
             for condition in filter(None, conditions):
                 scope_manager.open(condition=condition)
 

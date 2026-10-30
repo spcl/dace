@@ -1,467 +1,132 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``Symm`` BLAS library node: symmetric matrix-matrix product.
-
-Computes ``C := alpha * A * B + beta * C`` (``side='L'``) or
-``C := alpha * B * A + beta * C`` (``side='R'``), where ``A`` is a symmetric
-matrix of which only the ``uplo`` (``'L'`` lower / ``'U'`` upper) triangle is
-referenced. ``B`` and ``C`` are ``M x N``; ``A`` is ``M x M`` (left) or
-``N x N`` (right). This is the LAPACK/BLAS ``xSYMM`` primitive -- the operation
-polybench ``symm`` implements by hand as an in-place triangular accumulation.
-
-Lifting the hand-written nest to this node (see the recognizer that emits it)
-avoids fighting the in-place ``C[0:i,j] +=`` slice-WCR: the ``pure`` expansion
-is a correct reference lowering, and ``MKL`` / ``OpenBLAS`` / ``cuBLAS`` /
-``rocBLAS`` dispatch to the vendor ``dsymm`` / ``cublasDsymm`` kernels.
-"""
-
-from copy import deepcopy as dc
-
-import dace.library
-import dace.sdfg.nodes
-from dace import SDFG, SDFGState, dtypes, properties, symbolic
+import dace
+from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, environments, gpu_dialect
-from dace.libraries.blas.blas_helpers import to_blastype
-from dace.optionals import required
-from dace.sdfg.narrowing import as_range
-from dace.symbolic import symstr
+from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
+from dace.libraries.blas.blas_helpers import operand
+from dace.libraries.blas.nodes.symv import symmetric_element
+from dace.sdfg import nodes
+from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
 
-from .rank_k_helpers import gpu_coeff_pointers, host_can_read
 
-
-def _symm_operands(node: "Symm", state: SDFGState, sdfg: SDFG):
-    """Resolve ``(desc, shape, strides)`` for the ``_a`` / ``_b`` inputs and the
-    ``_c`` output from the connector memlets. ``A`` is the symmetric operand."""
-    in_edges, out_edges = state.in_edges(node), state.out_edges(node)
-    a = next((e for e in in_edges if e.dst_conn == "_a"), None)
-    b = next((e for e in in_edges if e.dst_conn == "_b"), None)
-    c = next((e for e in out_edges if e.src_conn == "_c"), None)
-    if a is None or b is None or c is None:
-        raise ValueError("Symm: expected _a, _b inputs and a _c output")
-    ad, bd, cd = (sdfg.arrays[required(e.data.data)] for e in (a, b, c))
-    return (
-        (ad, as_range(a.data.subset).size(), ad.strides),
-        (bd, as_range(b.data.subset).size(), bd.strides),
-        (cd, as_range(c.data.subset).size(), cd.strides),
-    )
-
-
-def _scalar_conn_descs(node: "Symm", state: SDFGState, sdfg: SDFG) -> dict:
-    """Descriptors of the runtime coefficient connectors (``_alpha`` / ``_beta``)
-    that are actually wired, keyed by connector name."""
-    return {
-        e.dst_conn: sdfg.arrays[required(e.data.data)]
-        for e in state.in_edges(node)
-        if e.dst_conn in ("_alpha", "_beta")
-    }
-
-
-@dace.library.expansion
+@library.expansion
 class ExpandSymmPure(ExpandTransformation):
-    """Reference lowering: materialize the full symmetric ``A`` from its ``uplo``
-    triangle, then ``C = beta*C + alpha * (A@B | B@A)`` as a WCR contraction."""
-
     environments: list[type] = []
 
     @staticmethod
-    def expansion(node: "Symm", state: SDFGState, sdfg: SDFG) -> SDFG:
-        (ad, ashape, astrides), (bd, bshape, _), (cd, cshape, _) = _symm_operands(node, state, sdfg)
-        dtype = cd.dtype.base_type
-        M, N = cshape[0], cshape[1]
-        SA = ashape[0]  # A is SA x SA (SA == M for side L, N for side R)
-
-        nsdfg = SDFG(node.label + "_pure")
-        _, a_arr = nsdfg.add_array("_a", ashape, dtype, strides=astrides, storage=ad.storage)
-        nsdfg.add_array("_b", bshape, dtype, strides=bd.strides, storage=bd.storage)
-        nsdfg.add_array("_c", cshape, dtype, strides=cd.strides, storage=cd.storage)
-        nsdfg.add_transient("_asym", [SA, SA], dtype, storage=ad.storage)
-
-        # Runtime coefficients: a wired ``_alpha``/``_beta`` scalar connector is added
-        # as a [1] input array and broadcast into the scaling tasklets (composed
-        # multiplicatively with the symbolic property, mirroring Einsum). Feeding the
-        # scalar as a tasklet input -- rather than binding a symbol from ``_alpha[0]``
-        # in an interstate edge -- keeps it a proper array read (a [1] connector reaches
-        # the nested SDFG as a scalar reference, which ``[0]`` cannot subscript).
-        scalars = _scalar_conn_descs(node, state, sdfg)
-        for conn, desc in scalars.items():
-            nsdfg.add_array(conn, [1], dtype, storage=desc.storage)
-        rt_alpha, rt_beta = "_alpha" in scalars, "_beta" in scalars
-        alpha, beta = node.alpha, node.beta
-
-        # 1) Symmetric fill: asym[i,k] reads the stored triangle, mirroring the other.
-        fill = nsdfg.add_state(node.label + "_fill")
-        cond = "__k <= __i" if node.uplo == "L" else "__k >= __i"
-        ra = fill.add_read("_a")
-        wsym = fill.add_write("_asym")
-        t = fill.add_tasklet(
-            "symm_fill", {"__lo": None, "__up": None}, {"__out": None}, f"__out = __lo if ({cond}) else __up"
-        )
-        me, mx = fill.add_map("symm_fill", {"__i": f"0:{symstr(SA)}", "__k": f"0:{symstr(SA)}"})
-        fill.add_memlet_path(ra, me, t, dst_conn="__lo", memlet=mm.Memlet("_a[__i, __k]"))
-        fill.add_memlet_path(ra, me, t, dst_conn="__up", memlet=mm.Memlet("_a[__k, __i]"))
-        fill.add_memlet_path(t, mx, wsym, src_conn="__out", memlet=mm.Memlet("_asym[__i, __k]"))
-
-        # 2) beta init on C, then the alpha-scaled contraction. A runtime beta always
-        # takes the scale path (its value is unknown at build time).
-        ij = {"__i": f"0:{symstr(M)}", "__j": f"0:{symstr(N)}"}
-        if rt_beta:
-            beta_factor = "__beta" if beta == 1 else f"{_scalar(beta, dtype)} * __beta"
-            binit = nsdfg.add_state_after(fill, node.label + "_betascale")
-            binit.add_mapped_tasklet(
-                "symm_betascale",
-                ij,
-                {"__c": mm.Memlet("_c[__i, __j]"), "__beta": mm.Memlet("_beta[0]")},
-                f"__o = {beta_factor} * __c",
-                {"__o": mm.Memlet("_c[__i, __j]")},
-                external_edges=True,
-            )
-            comp = nsdfg.add_state_after(binit, node.label + "_mul")
-        elif beta == 0:
-            comp = nsdfg.add_state_after(fill, node.label + "_comp")
-            comp.add_mapped_tasklet(
-                "symm_betainit", ij, {}, "__o = 0", {"__o": mm.Memlet("_c[__i, __j]")}, external_edges=True
-            )
-            comp = nsdfg.add_state_after(comp, node.label + "_mul")
-        elif beta == 1:
-            comp = nsdfg.add_state_after(fill, node.label + "_mul")
-        else:
-            binit = nsdfg.add_state_after(fill, node.label + "_betascale")
-            binit.add_mapped_tasklet(
-                "symm_betascale",
-                ij,
-                {"__c": mm.Memlet("_c[__i, __j]")},
-                f"__o = {_scalar(beta, dtype)} * __c",
-                {"__o": mm.Memlet("_c[__i, __j]")},
-                external_edges=True,
-            )
-            comp = nsdfg.add_state_after(binit, node.label + "_mul")
-
-        # Contraction axis k: side L -> C[i,j] += Asym[i,k]*B[k,j]; side R -> B[i,k]*Asym[k,j].
-        if node.side == "L":
-            a_idx, b_idx = "__i, __k", "__k, __j"
-        else:
-            a_idx, b_idx = "__k, __j", "__i, __k"
-        prod = "__a * __b"
-        mul_inputs = {"__a": mm.Memlet(f"_asym[{a_idx}]"), "__b": mm.Memlet(f"_b[{b_idx}]")}
-        if rt_alpha:
-            mul_inputs["__alpha"] = mm.Memlet("_alpha[0]")
-            acode = f"__alpha * {prod}" if alpha == 1 else f"{_scalar(alpha, dtype)} * __alpha * {prod}"
-        else:
-            acode = prod if alpha == 1 else f"{_scalar(alpha, dtype)} * {prod}"
-        comp.add_mapped_tasklet(
-            "symm_mul",
-            {"__i": f"0:{symstr(M)}", "__j": f"0:{symstr(N)}", "__k": f"0:{symstr(SA)}"},
-            mul_inputs,
-            f"__o = {acode}",
-            {"__o": mm.Memlet("_c[__i, __j]", wcr="lambda x, y: x + y")},
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
+        m, n = sdfg.arrays["_Cin"].shape
+        init = sdfg.add_state(f"{node.label}_init")
+        # As in BLAS, beta == 0 does not read C, so NaN there does not reach the result
+        zero = equal_valued(0, node.beta)
+        init.add_mapped_tasklet(
+            "scale_c",
+            {"__i": f"0:{m}", "__j": f"0:{n}"},
+            {} if zero else {"__c": dace.Memlet("_Cin[__i, __j]")},
+            "__out = 0" if zero else f"__out = ({node.beta}) * __c",
+            {"__out": dace.Memlet("_Cout[__i, __j]")},
             external_edges=True,
         )
-        return nsdfg
-
-
-def _scalar(value, dtype: dtypes.typeclass) -> str:
-    """Render a scalar constant at ``dtype`` for a tasklet/BLAS argument."""
-    return f"dace.{dtype.to_string()}({value})"
-
-
-class _ExpandSymmCBLAS(ExpandTransformation):
-    """CBLAS ``cblas_?symm`` in the operands' common order, row- or column-major; the pure
-    expansion when they share none."""
-
-    environments: list[type] = []
-
-    @staticmethod
-    def expansion(node: "Symm", state: SDFGState, sdfg: SDFG):
-        operands = _symm_operands(node, state, sdfg)
-        layout = blas_helpers.matrix_layout(*(blas_helpers.Operand(*o) for o in operands))
-        if layout is None:
-            return ExpandSymmPure.expansion(node, state, sdfg)
-        cd, cshape = operands[2][0], operands[2][1]
-        dtype = cd.dtype.base_type
-        func = to_blastype(dtype.type).lower() + "symm"
-        M, N = symstr(cshape[0]), symstr(cshape[1])
-        side = "CblasLeft" if node.side == "L" else "CblasRight"
-        uplo = "CblasLower" if node.uplo == "L" else "CblasUpper"
-        order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
-        lda, ldb, ldc = (symstr(ld) for ld in layout.leading)
-        code_fn = lambda a, b, c, pa, pb: (
-            f"{_coeff_decl('__alpha', node.alpha, dtype, pa)}\n"
-            f"{_coeff_decl('__beta', node.beta, dtype, pb)}\n"
-            f"cblas_{func}({order}, {side}, {uplo}, {M}, {N}, __alpha, "
-            f"{a}, {lda}, {b}, {ldb}, __beta, {c}, {ldc});"
+        # Left: C += alpha * A[i, k] * B[k, j]; right: C += alpha * B[i, k] * A[k, j]
+        row, col = ("__k", "__j") if node.side else ("__i", "__k")
+        b = "_B[__i, __k]" if node.side else "_B[__k, __j]"
+        product = sdfg.add_state_after(init, f"{node.label}_product")
+        product.add_mapped_tasklet(
+            "symm",
+            {"__i": f"0:{m}", "__j": f"0:{n}", "__k": f"0:{n if node.side else m}"},
+            {
+                "__a": dace.Memlet(f"_A[{row}, {col}]"),
+                "__mirror": dace.Memlet(f"_A[{col}, {row}]"),
+                "__b": dace.Memlet(b),
+            },
+            f"__out = ({node.alpha}) * (__a if {symmetric_element(node.uplo, row, col)} else __mirror) * __b",
+            {"__out": dace.Memlet("_Cout[__i, __j]", wcr="lambda a, b: a + b")},
+            external_edges=True,
         )
-        return _blas_inplace(node, state, sdfg, code_fn)
+        return sdfg
 
 
-def _scalar_ctype(value, dtype: dtypes.typeclass) -> str:
-    return f"{dtype.ctype}({value})"
-
-
-def _coeff_decl(var: str, prop, dtype: dtypes.typeclass, scalar) -> str:
-    """C declaration of an effective coefficient: the symbolic property value, times
-    the runtime scalar connector ``scalar`` when one is wired (the two compose,
-    mirroring the pure/Einsum path). A single-element connector reaches the tasklet
-    by value, so it is used directly (no dereference)."""
-    if scalar is not None:
-        return f"{dtype.ctype} {var} = {_scalar_ctype(prop, dtype)} * {scalar};"
-    return f"{dtype.ctype} {var} = {_scalar_ctype(prop, dtype)};"
-
-
-def _blas_inplace(node: "Symm", state: SDFGState, sdfg: SDFG, code_fn):
-    """Build the vendor-BLAS node. ``code_fn(a, b, c, pa, pb)`` renders the BLAS call
-    for the given ``A`` / ``B`` / ``C`` pointer names and the runtime ``_alpha`` /
-    ``_beta`` scalar-pointer names (``None`` when a coefficient is a compile-time
-    property). ``xSYMM`` reads and writes ``C`` through one pointer, but a CPP tasklet
-    with the same name as both an in- and an out-connector redeclares the pointer.
-    When ``C`` is read (``beta != 0``) or a runtime scalar is wired, the tasklet is
-    wrapped in a nested SDFG whose incoming arrays reach it through prefixed
-    connectors (``__cin``, ``__alpha_in``, ``__beta_in``) that never collide with the
-    nested arrays ``_a`` / ``_b`` / ``_c`` / ``_alpha`` / ``_beta``; the plain
-    ``beta == 0`` no-scalar case needs no wrapper, so a bare tasklet suffices."""
-    reads_c = "_c" in node.in_connectors
-    scalars = _scalar_conn_descs(node, state, sdfg)
-    if not reads_c and not scalars:
-        return dace.sdfg.nodes.Tasklet(
-            node.name,
-            {"_a": None, "_b": None},
-            {"_c": None},
-            code_fn("_a", "_b", "_c", None, None),
-            language=dtypes.Language.CPP,
+def symm_call(node, state, sdfg, environment=None) -> SDFG:
+    """``_Cout = _Cin``, then ``?symm`` updates ``_Cout`` in place, through CBLAS or the GPU library of ``environment``."""
+    a, b, c = (operand(node, state, sdfg, conn) for conn in ("_A", "_B", "_Cout"))
+    prefix = blas_helpers.blas_prefix(a.desc.dtype)
+    if environment is not None and prefix is not None:
+        layout = gpu_dialect.required_layout(node, a, b, c)
+    else:
+        layout = blas_helpers.matrix_layout(a, b, c)
+    if layout is None or prefix is None:
+        return ExpandSymmPure.expansion(node, state, sdfg)
+    (m, n), (lda, ldb, ldc) = c.shape, layout.leading
+    if environment is not None:
+        # Row-major C = A B is column-major C^T = B^T A^T = B^T A: the side and the stored triangle flip, the
+        # dimensions swap
+        gpu = gpu_dialect.gpu_call(a.desc.dtype)
+        scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
+        right, upper = node.side != layout.row_major, node.uplo != layout.row_major
+        rows, cols = (n, m) if layout.row_major else (m, n)
+        call = (
+            f"{gpu.routine('symm')}({gpu_dialect.HANDLE}, {gpu_dialect.side(right)}, {gpu_dialect.fill(upper)}, {sym2cpp(rows)}, {sym2cpp(cols)}, "
+            f"{arg['alpha']}, {gpu.pointer('__A')}, {sym2cpp(lda)}, {gpu.pointer('__B')}, {sym2cpp(ldb)}, {arg['beta']}, "
+            f"{gpu.pointer('__Cout')}, {sym2cpp(ldc)})"
         )
-    (ad, _, _), (bd, _, _), (cd, _, _) = _symm_operands(node, state, sdfg)
-    nsdfg = SDFG(node.label + "_inplace")
-    for name, desc in (("_a", ad), ("_b", bd), ("_c", cd)):
-        d = dc(desc)
-        d.transient = False
-        nsdfg.add_datadesc(name, d)
-    for conn, desc in scalars.items():
-        d = dc(desc)
-        d.transient = False
-        nsdfg.add_datadesc(conn, d)
-    inner = {"_alpha": "__alpha_in", "_beta": "__beta_in"}
-    pa = inner["_alpha"] if "_alpha" in scalars else None
-    pb = inner["_beta"] if "_beta" in scalars else None
-    in_conns: dict[str, dtypes.typeclass | None] = {"__a": None, "__b": None}
-    if reads_c:
-        in_conns["__cin"] = None
-    # A device-resident coefficient reaches the call as a POINTER: a scalar connector would be
-    # dereferenced by the host code issuing the call, which validation rejects.
-    for conn, desc in scalars.items():
-        in_conns[inner[conn]] = None if host_can_read(desc) else dtypes.pointer(desc.dtype.base_type)
-    st = nsdfg.add_state(node.label + "_state")
-    t = st.add_tasklet(
-        node.name, in_conns, {"__c": None}, code_fn("__a", "__b", "__c", pa, pb), language=dtypes.Language.CPP
+        code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
+        return blas_helpers.in_place_call(
+            node, state, sdfg, "_Cin", "_Cout", code, overwrites=equal_valued(0, node.beta)
+        )
+    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
+    order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
+    side = "CblasRight" if node.side else "CblasLeft"
+    uplo = "CblasUpper" if node.uplo else "CblasLower"
+    call = (
+        f"cblas_{prefix.lower()}symm({order}, {side}, {uplo}, {sym2cpp(m)}, {sym2cpp(n)}, {arg['alpha']}, __A, {sym2cpp(lda)}, __B, {sym2cpp(ldb)}, "
+        f"{arg['beta']}, __Cout, {sym2cpp(ldc)});"
     )
-    st.add_edge(st.add_read("_a"), None, t, "__a", mm.Memlet.from_array("_a", nsdfg.arrays["_a"]))
-    st.add_edge(st.add_read("_b"), None, t, "__b", mm.Memlet.from_array("_b", nsdfg.arrays["_b"]))
-    if reads_c:
-        st.add_edge(st.add_read("_c"), None, t, "__cin", mm.Memlet.from_array("_c", nsdfg.arrays["_c"]))
-    for conn in scalars:
-        st.add_edge(st.add_read(conn), None, t, inner[conn], mm.Memlet.from_array(conn, nsdfg.arrays[conn]))
-    st.add_edge(t, "__c", st.add_write("_c"), None, mm.Memlet.from_array("_c", nsdfg.arrays["_c"]))
-    return nsdfg
+    return blas_helpers.in_place_call(
+        node, state, sdfg, "_Cin", "_Cout", scalars + call, overwrites=equal_valued(0, node.beta)
+    )
 
 
-@dace.library.expansion
-class ExpandSymmOpenBLAS(_ExpandSymmCBLAS):
-    environments = [environments.openblas.OpenBLAS]
-
-
-@dace.library.expansion
-class ExpandSymmMKL(_ExpandSymmCBLAS):
-    environments = [environments.intel_mkl.IntelMKL]
-
-
-class _ExpandSymmGPUBLAS(ExpandTransformation):
-    """cuBLAS / rocBLAS ``?symm``, column-major only. Row-major operands go through the transpose identity
-    ``C = alpha*A*B + beta*C`` (row-major) ``<=> C^T = alpha*B^T*A + beta*C^T`` (A symmetric): a ``side`` flip,
-    a ``uplo`` flip, and swapped ``m``/``n``. Any other layout is an error."""
-
-    dialect: gpu_dialect.GpuBlasDialect
-
-    environments: list[type] = []
-    backend = "cu"
-
-    @classmethod
-    def side_enum(cls, flipped: str) -> str:
-        raise NotImplementedError
-
-    @classmethod
-    def fill_enum(cls, flipped: str) -> str:
-        raise NotImplementedError
-
-    @classmethod
-    def expansion(cls, node: "Symm", state: SDFGState, sdfg: SDFG):
-        operands = _symm_operands(node, state, sdfg)
-        layout = gpu_dialect.required_layout(node, *(blas_helpers.Operand(*o) for o in operands))
-        cd, cshape = operands[2][0], operands[2][1]
-        dtype = cd.dtype.base_type
-        func = cls.dialect.func(to_blastype(dtype.type), "symm")
-        side, uplo, (m, n) = node.side, node.uplo, (symstr(cshape[0]), symstr(cshape[1]))
-        if layout.row_major:
-            side, uplo, (m, n) = ("R" if side == "L" else "L"), ("U" if uplo == "L" else "L"), (n, m)
-        lda, ldb, ldc = (symstr(ld) for ld in layout.leading)
-        setup = cls.environments[0].handle_setup_code(node)
-        handle = f"__dace_{cls.backend}blas_handle"
-        scalars = _scalar_conn_descs(node, state, sdfg)
-
-        def code_fn(a, b, c, pa, pb):
-            prologue, alpha, beta = gpu_coeff_pointers(cls, node, dtype, pa, pb, scalars)
-            return (
-                f"{setup}"
-                f"{prologue}"
-                f"{func}({handle}, {cls.side_enum(side)}, {cls.fill_enum(uplo)}, {m}, {n}, "
-                f"{alpha}, ({dtype.ctype}*){a}, {lda}, ({dtype.ctype}*){b}, {ldb}, "
-                f"{beta}, ({dtype.ctype}*){c}, {ldc});\n"
-            )
-
-        return _blas_inplace(node, state, sdfg, code_fn)
-
-
-@dace.library.expansion
-class ExpandSymmCuBLAS(_ExpandSymmGPUBLAS):
-    environments = [environments.cublas.cuBLAS]
-    dialect = gpu_dialect.CUBLAS
-    backend = "cu"
-    set_pointer_mode = "cublasSetPointerMode"
-    pointer_host = "CUBLAS_POINTER_MODE_HOST"
-    pointer_device = "CUBLAS_POINTER_MODE_DEVICE"
-
-    @classmethod
-    def side_enum(cls, flipped: str) -> str:
-        return "CUBLAS_SIDE_LEFT" if flipped == "L" else "CUBLAS_SIDE_RIGHT"
-
-    @classmethod
-    def fill_enum(cls, flipped: str) -> str:
-        return "CUBLAS_FILL_MODE_LOWER" if flipped == "L" else "CUBLAS_FILL_MODE_UPPER"
-
-
-@dace.library.expansion
-class ExpandSymmRocBLAS(_ExpandSymmGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    dialect = gpu_dialect.ROCBLAS
-    backend = "roc"
-    set_pointer_mode = "rocblas_set_pointer_mode"
-    pointer_host = "rocblas_pointer_mode_host"
-    pointer_device = "rocblas_pointer_mode_device"
-
-    @classmethod
-    def side_enum(cls, flipped: str) -> str:
-        return "rocblas_side_left" if flipped == "L" else "rocblas_side_right"
-
-    @classmethod
-    def fill_enum(cls, flipped: str) -> str:
-        return "rocblas_fill_lower" if flipped == "L" else "rocblas_fill_upper"
-
-
-@dace.library.node
-class Symm(dace.sdfg.nodes.LibraryNode):
-    """Symmetric matrix-matrix product ``C := alpha*A*B + beta*C`` (``side='L'``)
-    or ``C := alpha*B*A + beta*C`` (``side='R'``); only the ``uplo`` triangle of
-    the symmetric ``A`` is referenced."""
+@library.node
+class Symm(nodes.LibraryNode):
+    """BLAS ``?symm``: ``_Cout = alpha * _A @ _B + beta * _Cin``, or ``alpha * _B @ _A + beta * _Cin`` with ``side``,
+    for a symmetric ``_A`` of which only the upper (``uplo``) or the lower triangle is read."""
 
     implementations = {
         "pure": ExpandSymmPure,
-        "MKL": ExpandSymmMKL,
-        "OpenBLAS": ExpandSymmOpenBLAS,
-        "cuBLAS": ExpandSymmCuBLAS,
-        "rocBLAS": ExpandSymmRocBLAS,
+        **vendor.vendor_expansions("Symm", symm_call),
     }
     default_implementation = None
-    #: The vendor calls read a runtime coefficient through a host or a device pointer alike.
-    host_or_device_connectors = frozenset({"_alpha", "_beta"})
 
-    side = properties.Property(
-        dtype=str, default="L", choices=["L", "R"], desc="Side of the symmetric matrix A: 'L' -> A*B, 'R' -> B*A."
-    )
-    uplo = properties.Property(
-        dtype=str, default="L", choices=["L", "U"], desc="Referenced triangle of A: 'L' lower, 'U' upper."
-    )
-    alpha = properties.SymbolicProperty(allow_none=False, default=1, desc="Scalar multiplied with the product.")
+    side = properties.Property(dtype=bool, default=False, desc="Multiply _A from the right instead of the left.")
+    uplo = properties.Property(dtype=bool, default=False, desc="Read the upper triangle of _A instead of the lower.")
+    alpha = properties.SymbolicProperty(allow_none=False, default=1)
+    beta = properties.SymbolicProperty(allow_none=False, default=0)
 
-    def folds_onto_output(self) -> bool:
-        return self.folds_by_beta(self.beta)
-
-    beta = properties.SymbolicProperty(allow_none=False, default=0, desc="Scalar multiplied with C before adding.")
-    cin = properties.Property(dtype=bool, default=True, desc="Whether C is an input connector when beta != 0.")
-    alpha_input = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="Whether alpha is supplied at runtime through an '_alpha' scalar connector "
-        "(composed multiplicatively with the 'alpha' property).",
-    )
-    beta_input = properties.Property(
-        dtype=bool,
-        default=False,
-        desc="Whether beta is supplied at runtime through a '_beta' scalar connector "
-        "(composed multiplicatively with the 'beta' property); forces C to be read.",
-    )
-
-    def __init__(
-        self, name, side="L", uplo="L", alpha=1, beta=0, cin=True, alpha_input=False, beta_input=False, location=None
-    ):
-        # C is read when a nonzero compile-time beta is added in place, or whenever
-        # beta is a runtime input (its value is unknown, so C must be available).
-        reads_c = (beta != 0 and cin) or beta_input
-        inputs = {"_a": None, "_b": None}
-        if reads_c:
-            inputs["_c"] = None
-        if alpha_input:
-            inputs["_alpha"] = None
-        if beta_input:
-            inputs["_beta"] = None
-        super().__init__(name, location=location, inputs=inputs, outputs={"_c": None})
-        self.side = side
-        self.uplo = uplo
-        self.alpha = alpha
-        self.beta = beta
-        self.cin = cin
-        self.alpha_input = alpha_input
-        self.beta_input = beta_input
+    def __init__(self, name, side=False, uplo=False, alpha=1, beta=0, **kwargs):
+        super().__init__(name, inputs=["_A", "_B", "_Cin"], outputs=["_Cout"], **kwargs)
+        self.side, self.uplo, self.alpha, self.beta = side, uplo, alpha, beta
 
     def validate(self, sdfg, state):
-        (ad, ashape, _), (bd, bshape, _), (cd, cshape, _) = _symm_operands(self, state, sdfg)
-        if len(ashape) != 2 or len(bshape) != 2 or len(cshape) != 2:
-            raise ValueError("Symm operands must be matrices")
-        if symbolic.inequal_symbols(ashape[0], ashape[1]):
-            raise ValueError(f"Symm: A must be square, got {ashape}")
-        # side L: A is (M,M), contraction M; side R: A is (N,N), contraction N.
-        want = cshape[0] if self.side == "L" else cshape[1]
-        if symbolic.inequal_symbols(ashape[0], want):
-            raise ValueError(
-                f"Symm: A dimension {ashape[0]} must match C's {'row' if self.side == 'L' else 'column'} dim {want}"
-            )
-        if not symbolic.shapes_equal(bshape, cshape):
-            raise ValueError(f"Symm: B shape {bshape} must equal C shape {cshape}")
+        blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_B", "_Cin", "_Cout")
+        a, b, cin, cout = (operand(self, state, sdfg, c).shape for c in ("_A", "_B", "_Cin", "_Cout"))
+        if len(cin) != 2 or not b == cin == cout:
+            raise ValueError(f"{self.label}: _B, _Cin and _Cout must be matrices of one shape")
+        k = cin[1] if self.side else cin[0]
+        if a != [k, k]:
+            raise ValueError(f"{self.label}: _A must be a {k} x {k} matrix")
 
 
 @oprepo.replaces("dace.libraries.blas.symm")
 @oprepo.replaces("dace.libraries.blas.Symm")
-def symm_libnode(pv, sdfg: SDFG, state: SDFGState, A, B, C, alpha=1, beta=0, side="L", uplo="L"):
-    # ``alpha`` / ``beta`` may be numbers/symbols (compile-time coefficients) or the
-    # name of a scalar array in the SDFG (a runtime coefficient wired via _alpha/_beta).
-    alpha_input = isinstance(alpha, str) and alpha in sdfg.arrays
-    beta_input = isinstance(beta, str) and beta in sdfg.arrays
-    reads_c = beta_input or (not isinstance(beta, str) and beta != 0)
-    libnode = Symm(
-        "symm",
-        side=side,
-        uplo=uplo,
-        alpha=1 if alpha_input else alpha,
-        beta=1 if beta_input else beta,
-        alpha_input=alpha_input,
-        beta_input=beta_input,
-    )
-    state.add_node(libnode)
-    state.add_edge(state.add_read(A), None, libnode, "_a", mm.Memlet(A))
-    state.add_edge(state.add_read(B), None, libnode, "_b", mm.Memlet(B))
-    state.add_edge(libnode, "_c", state.add_write(C), None, mm.Memlet(C))
-    if reads_c:
-        state.add_edge(state.add_read(C), None, libnode, "_c", mm.Memlet(C))
-    if alpha_input:
-        state.add_edge(state.add_read(alpha), None, libnode, "_alpha", mm.Memlet(alpha))
-    if beta_input:
-        state.add_edge(state.add_read(beta), None, libnode, "_beta", mm.Memlet(beta))
+def symm_libnode(pv, sdfg: SDFG, state: SDFGState, A, B, C, result=None, side=False, uplo=False, alpha=1, beta=0):
+    result = result if result is not None else C
+    node = Symm("symm", side=side, uplo=uplo, alpha=alpha, beta=beta)
+    for name, connector in ((A, "_A"), (B, "_B"), (C, "_Cin")):
+        state.add_edge(state.add_read(name), None, node, connector, mm.Memlet(name))
+    state.add_edge(node, "_Cout", state.add_write(result), None, mm.Memlet(result))
     return []

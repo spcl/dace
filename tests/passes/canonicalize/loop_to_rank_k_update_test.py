@@ -57,6 +57,12 @@ def inputs_of(state, node):
     return {e.dst_conn: e.data.data for e in state.in_edges(node)}
 
 
+def runtime_coefficient(value, scale: int = 1) -> bool:
+    """Whether a lifted coefficient is ``scale`` times the symbol a runtime ``alpha[0]`` / ``beta[0]`` was read into."""
+    expr = dace.symbolic.pystr_to_symbolic(str(value))
+    return bool(expr.free_symbols) and expr.as_coeff_Mul()[0] == scale
+
+
 def assert_matches_baseline(kernel, arrays, psize, sdfg):
     """The lifted SDFG reproduces the corpus baseline up to the reassociation a BLAS rank-k update performs."""
     ref = polybench.reference(kernel, arrays, psize)
@@ -75,9 +81,9 @@ def test_syrk_nest_lifted_to_syrk_node():
     assert len(found) == 1 and lifted(sdfg, Syr2k) == []
     assert loop_count(sdfg) == loops_before - 2, "the outer row loop and the inner k loop are both spliced out"
     node = found[0][1]
-    assert node.uplo == "L" and node.trans == "N"
-    assert node.alpha_input and node.beta_input
-    assert node.in_connectors.keys() >= {"_a", "_c", "_alpha", "_beta"}
+    assert not node.uplo and not node.transA
+    assert runtime_coefficient(node.alpha) and runtime_coefficient(node.beta)
+    assert node.in_connectors.keys() == {"_A", "_Cin"}
 
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -95,9 +101,9 @@ def test_syr2k_nest_lifted_to_syr2k_node():
     assert len(found) == 1 and lifted(sdfg, Syrk) == []
     assert loop_count(sdfg) == loops_before - 2, "the outer row loop and the inner k loop are both spliced out"
     node = found[0][1]
-    assert node.uplo == "L" and node.trans == "N"
-    assert node.alpha_input and node.beta_input
-    assert node.in_connectors.keys() >= {"_a", "_b", "_c", "_alpha", "_beta"}
+    assert not node.uplo and not node.transA
+    assert runtime_coefficient(node.alpha) and runtime_coefficient(node.beta)
+    assert node.in_connectors.keys() == {"_A", "_B", "_Cin"}
 
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -133,7 +139,7 @@ def test_syr2k_nest_is_not_lifted_to_syrk():
     LoopToRankKUpdate().apply_pass(sdfg, {})
     assert lifted(sdfg, Syrk) == []
     ((state, node),) = lifted(sdfg, Syr2k)
-    assert inputs_of(state, node) == {"_a": "A", "_b": "B", "_c": "C", "_alpha": "alpha", "_beta": "beta"}
+    assert inputs_of(state, node) == {"_A": "A", "_B": "B", "_Cin": "C"}
 
 
 def test_syrk_nest_is_not_lifted_to_syr2k():
@@ -143,7 +149,7 @@ def test_syrk_nest_is_not_lifted_to_syr2k():
     LoopToRankKUpdate().apply_pass(sdfg, {})
     assert lifted(sdfg, Syr2k) == []
     ((state, node),) = lifted(sdfg, Syrk)
-    assert inputs_of(state, node) == {"_a": "A", "_c": "C", "_alpha": "alpha", "_beta": "beta"}
+    assert inputs_of(state, node) == {"_A": "A", "_Cin": "C"}
 
 
 @dace.program
@@ -167,8 +173,8 @@ def test_rank_k_and_rank_2k_nests_lifted_in_one_run():
 
     ((syrk_state, syrk_node),) = lifted(sdfg, Syrk)
     ((syr2k_state, syr2k_node),) = lifted(sdfg, Syr2k)
-    assert inputs_of(syrk_state, syrk_node)["_c"] == "C" and "_b" not in inputs_of(syrk_state, syrk_node)
-    assert inputs_of(syr2k_state, syr2k_node)["_c"] == "D"
+    assert inputs_of(syrk_state, syrk_node)["_Cin"] == "C" and "_B" not in inputs_of(syrk_state, syrk_node)
+    assert inputs_of(syr2k_state, syr2k_node)["_Cin"] == "D"
     assert loop_count(sdfg) == 0
     sdfg.validate()
 
@@ -305,7 +311,8 @@ def test_loop_spelling_lifted_on_the_normalized_nest(loops, cls):
     sdfg.name = f"{sdfg.name}_normalized_lift"
     assert LoopToRankKUpdate().apply_pass(sdfg, {}) == 1
     ((_, node),) = lifted(sdfg, cls)
-    assert node.uplo == "L" and node.trans == "N" and node.alpha_input and node.beta_input
+    assert not node.uplo and not node.transA
+    assert runtime_coefficient(node.alpha) and runtime_coefficient(node.beta)
 
     rng = np.random.default_rng(11)
     n, m = 30, 20
@@ -517,14 +524,14 @@ def test_orientation_and_scaling_variants_lift(variant):
     canonicalize(sdfg)
     ((state, node),) = lifted(sdfg, variant.cls)
     assert lifted(sdfg, Syr2k if variant.cls is Syrk else Syrk) == []
-    assert (node.uplo, node.trans) == (variant.uplo, variant.trans)
-    assert node.alpha_input == (variant.alpha in RUNTIME) and node.beta_input == (variant.beta == "runtime")
-    assert (
-        float(node.alpha) == COEFFICIENT_VALUES[variant.alpha] and float(node.beta) == COEFFICIENT_VALUES[variant.beta]
-    )
+    assert (node.uplo, node.transA) == (variant.uplo == "U", variant.trans == "T")
+    for value, want in ((node.alpha, variant.alpha), (node.beta, variant.beta)):
+        if want in RUNTIME:
+            assert runtime_coefficient(value, COEFFICIENT_VALUES[want])
+        else:
+            assert float(value) == COEFFICIENT_VALUES[want]
     wired = inputs_of(state, node)
-    assert wired["_a"] == "A" and wired.get("_b") == (None if variant.cls is Syrk else "B")
-    assert ("_c" in wired) == (variant.beta != "zero")
+    assert wired["_A"] == "A" and wired.get("_B") == (None if variant.cls is Syrk else "B") and wired["_Cin"] == "C"
 
     A, B, C, alpha, beta = rank_k_inputs(variant.trans)
     want = rank_k_reference(variant, A, B, C, alpha, beta)

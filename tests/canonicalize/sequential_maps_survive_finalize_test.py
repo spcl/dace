@@ -12,7 +12,7 @@ which one it is, by NAME, not by count:
   chunks in parallel and each chunk's interior in order; the two Sequential MAPS left over are
   its single-iteration seam/prologue points -- there is no loop to extract from a domain of one.
 * ``tsvc_2_s1232`` -- a data-parallel inner loop (no aliasing between iterations at all) that
-  stays ``Sequential`` only because ``sequentialize_unprofitable_parallel_scopes.py``'s rule 1
+  stays ``Sequential`` only because ``sequentialize_small_axes.py``'s rule 1
   forbids a SECOND ``CPU_Multicore`` region nested inside one that is already parallel (OpenMP
   gives one team level; nesting would oversubscribe, not speed anything up). The outer loop
   already carries the parallelism; the inner one is correctly ``Sequential`` by POLICY, not by
@@ -118,7 +118,7 @@ def names_behind(sdfg: dace.SDFG, condition: str) -> OrderedSet[str]:
     """Names ``condition`` reads once staged values are substituted back in.
 
     Canonicalize stages an array read (``cond_index = cond[i]``) into a symbol on an interstate
-    edge, or into a scalar a tasklet writes, and the branch predicate reads that, so the
+    edge, or into a scalar a tasklet or a copy writes, and the branch predicate reads that, so the
     predicate's own free symbols no longer mention the array the guard actually tests.
     """
     sources: dict[str, OrderedSet[str]] = defaultdict(OrderedSet)
@@ -130,7 +130,10 @@ def names_behind(sdfg: dace.SDFG, condition: str) -> OrderedSet[str]:
         for state in sd.states():
             for node in state.data_nodes():
                 for e in state.in_edges(node):
-                    sources[node.data] |= OrderedSet(i.data.data for i in state.in_edges(e.src) if i.data.data)
+                    if isinstance(e.src, nd.AccessNode):  # a copy: the staged value is its source container
+                        sources[node.data].add(e.src.data)
+                    else:
+                        sources[node.data] |= OrderedSet(i.data.data for i in state.in_edges(e.src) if i.data.data)
     names: OrderedSet[str] = OrderedSet(str(s) for s in CodeBlock(condition).get_free_symbols())
     for _ in range(len(sources) + 1):
         grown = OrderedSet(names)
@@ -285,8 +288,8 @@ def test_fuse_move_ifs_fuses_to_one_parallel_region_and_keeps_the_guard_as_a_pre
     ``b[i, j] = src[i, j] + 1.0``, have no cross-iteration dependence at all -- every ``(i, j)``
     writes a distinct cell and reads only its own ``src`` element. Until ``56c2a2ec3`` the two
     nests stayed apart and the guarded inner j-loop came out ``Sequential`` under a parallel
-    per-i map, by rule 1 of ``SequentializeUnprofitableParallelScopes.decide_map``
-    (dace/transformation/passes/cpu_specialization/sequentialize_unprofitable_parallel_scopes.py
+    per-i map, by rule 1 of ``SequentializeSmallAxes.decide_map``
+    (dace/transformation/passes/cpu_specialization/sequentialize_small_axes.py
     :157-161): no second ``CPU_Multicore`` region inside one that is already parallel. Sinking the
     guard's condition prep with the guard made both nests perfect, they fuse, and ONE flat map
     over both dimensions is what is left -- an outcome the previous pin named as permitted, and
@@ -363,7 +366,7 @@ def test_tsvc_2_s1232_inner_loop_is_sequential_by_nested_parallelism_policy_not_
     into an outer map over ``i`` (``LEN_2D`` independent values, made ``CPU_Multicore``) and an
     inner map over the valid ``j <= floor(i / VLEN)`` (made ``Sequential``) -- the SAME rule 1
     nested-parallelism decision as ``fuse_move_ifs``, at the same file:line
-    (dace/transformation/passes/cpu_specialization/sequentialize_unprofitable_parallel_scopes.py
+    (dace/transformation/passes/cpu_specialization/sequentialize_small_axes.py
     :157-161). The outer loop already gives every thread independent work; parallelizing the
     (much smaller, per-i) inner loop too would only add a second, nested OpenMP region.
     """

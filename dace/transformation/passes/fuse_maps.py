@@ -1,14 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import warnings
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from dace import SDFG, SDFGState, properties, transformation
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import forget_all_facts, memoize_facts
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowRegion, SymbolResolver
 from dace.sdfg.validation import validate_state
 from dace.transformation import dataflow as dftrans
 from dace.transformation import pass_pipeline as ppl
@@ -398,19 +398,39 @@ class FuseMaps(ppl.Pass):
                 xform.propagated_nsdfgs = propagated
                 xform.scope_records = scope_records
 
+        vertical = [xform for xform, _ in units if isinstance(xform, dftrans.MapFusionVertical)]
+
+        def forget_probes() -> None:
+            for xform in vertical:
+                xform.probe_symbols = SymbolResolver()
+
+        forget_probes()
         applied: AppliedMap = collections.defaultdict(list)
         # The probes between two fusions share the facts of each SDFG; ``_drain`` drops them at every fusion.
-        with memoize_facts():
+        with memoize_facts(sdfg):
             for _ in range(FUSE_ROUNDS):
                 for cfg in sdfg.all_control_flow_regions(recursive=True):
                     for state_id, state in enumerate(cfg.nodes()):
                         if not isinstance(state, SDFGState):
                             continue
                         if self.align_step_equivalent_maps and align_step_equivalent_candidates(state):
-                            forget_all_facts()
+                            forget_all_facts(sdfg)
+                            forget_probes()
                             propagated.clear()
                         for xform, shapes in units:
-                            self._drain(xform, shapes, cfg, state, state_id, pipeline_results, applied, propagated)
+                            self._drain(
+                                xform,
+                                shapes,
+                                cfg,
+                                state,
+                                state_id,
+                                pipeline_results,
+                                applied,
+                                propagated,
+                                forget_probes,
+                            )
+        for xform in vertical:
+            xform.probe_symbols = None
 
         # Nothing fused means the SDFG is the one the caller passed in; validating THAT is the caller's
         #  contract (canonicalize: its own validate / validate_all), not a check of this pass's work.
@@ -429,6 +449,7 @@ class FuseMaps(ppl.Pass):
         pipeline_results: dict[str, Any],
         applied: AppliedMap,
         propagated: dict[SDFG, None],
+        forget_probes: Callable[[], None],
     ) -> None:
         """Apply ``xform`` in ``state`` until nothing matches there any more.
 
@@ -469,9 +490,10 @@ class FuseMaps(ppl.Pass):
                     else:
                         # Any other fusion is not known to leave nested SDFGs untouched.
                         propagated.clear()
-                    with memoize_facts(active=False):
+                    with memoize_facts(state, active=False):
                         applied[name].append(xform.apply(state, owner))
-                    forget_all_facts()
+                    forget_all_facts(state)
+                    forget_probes()
                     if self.validate_all:
                         validate_state(state, state_id, owner, initialized_transients=set(owner.arrays.keys()))
                     progress = True

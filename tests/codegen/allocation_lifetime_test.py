@@ -10,7 +10,7 @@ import dace
 from dace.codegen.targets import framecode
 from dace.codegen.targets.cpu import use_aligned_operator_new
 from dace.sdfg import infer_types
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, FunctionCallRegion, LoopRegion
 
 
 def _count_heap_allocs(code: str, ctype: str) -> int:
@@ -722,10 +722,10 @@ def add_map_scoped_mutable_scalar(sdfg: dace.SDFG, state: dace.SDFGState) -> Non
 def run_deferred_scalar_case(sdfg: dace.SDFG, **extra) -> None:
     """Compile and run ``sdfg`` with scalar declaration deferral FORCED on, and check the map result.
 
-    ``scalar_init_style`` defaults to ``split``, which disables deferral entirely, so a deferral bug is
+    ``scalar_decl`` defaults to ``eager``, which disables deferral entirely, so a deferral bug is
     invisible without this override. Every caller's SDFG has a use of ``zqe`` that the deferred
     declaration would not be in scope of; the test is that the generated C++ still compiles."""
-    with dace.config.set_temporary("compiler", "cpu", "codegen_params", "scalar_init_style", value="fused"):
+    with dace.config.set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value="late_fused"):
         a = np.random.rand(16)
         b = np.zeros(16)
         sdfg(A=a, B=b, **extra)
@@ -824,7 +824,7 @@ def test_deferred_scalar_still_applies():
 
     # Only the readable generator defers a scalar declaration to its first write.
     with dace.config.set_temporary("compiler", "cpu", "implementation", value="experimental_readable"):
-        with dace.config.set_temporary("compiler", "cpu", "codegen_params", "scalar_init_style", value="fused"):
+        with dace.config.set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value="late_fused"):
             code = sdfg.generate_code()[0].clean_code
         assert "double zqe = " in code
         assert "double zqe;" not in code
@@ -870,6 +870,62 @@ def test_a_view_does_not_reallocate_the_array_it_views():
         f"'t' is allocated {allocations} times; the second one is the view's, "
         "and it throws away what the fill state wrote"
     )
+
+
+def test_branch_local_transient_is_freed_in_its_branch():
+    """``t``, sized by a symbol set in the SDFG, is used only in a branch, in a state and in a loop after it: it is
+    allocated and freed inside that branch, never freed when the branch is skipped."""
+    sdfg = dace.SDFG("branch_local_transient")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("N", [1], dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("t", ["n"], dace.float64, transient=True)
+    first = sdfg.add_state("first", is_start_block=True)
+    branches = ConditionalBlock("branches")
+    sdfg.add_node(branches)
+    sdfg.add_edge(first, branches, dace.InterstateEdge(assignments={"n": "N[0]"}))
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    branches.add_branch(dace.properties.CodeBlock("A[1] > 0"), arm)
+    write = arm.add_state("write", is_start_block=True)
+    write.add_mapped_tasklet("fill", {"i": "0:n"}, {}, "o = i", {"o": dace.Memlet("t[i]")}, external_edges=True)
+    loop = LoopRegion("loop", "k < 2", "k", "k = 0", "k = k + 1")
+    arm.add_node(loop)
+    arm.add_edge(write, loop, dace.InterstateEdge())
+    read = loop.add_state("read", is_start_block=True)
+    tasklet = read.add_tasklet("acc", {"a", "b"}, {"o"}, "o = a + b")
+    read.add_edge(read.add_read("t"), None, tasklet, "a", dace.Memlet("t[n - 1]"))
+    read.add_edge(read.add_read("A"), None, tasklet, "b", dace.Memlet("A[3]"))
+    read.add_edge(tasklet, "o", read.add_write("A"), None, dace.Memlet("A[3]"))
+    sdfg.add_state_after(branches, "last")
+
+    assert framecode.paired_allocation_blocks([write, read]) == (write, loop)
+    for taken in (True, False):
+        A = np.array([0.0, 1.0 if taken else -1.0, 0.0, 0.0])
+        sdfg(A=A, N=np.array([3], dtype=np.int64))
+        assert A[3] == (4.0 if taken else 0.0)
+
+
+def test_a_transient_first_used_in_a_call_region_is_allocated_after_its_assignments():
+    """``t`` is sized by ``n``, which a call region assigns before its first use there, and is read after the region:
+    the allocation sits at that use, after the assignment, not at the entry of the region."""
+    sdfg = dace.SDFG("call_region_allocation")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("N", [1], dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("t", ["n"], dace.float64, transient=True)
+    call = FunctionCallRegion("call", sdfg=sdfg)
+    sdfg.add_node(call, is_start_block=True)
+    enter = call.add_state("enter", is_start_block=True)
+    write = call.add_state("write")
+    call.add_edge(enter, write, dace.InterstateEdge(assignments={"n": "N[0]"}))
+    write.add_mapped_tasklet("fill", {"i": "0:n"}, {}, "o = i", {"o": dace.Memlet("t[i]")}, external_edges=True)
+    read = sdfg.add_state_after(call, "read")
+    read.add_nedge(read.add_read("t"), read.add_write("A"), dace.Memlet("t[n - 1]", other_subset="3"))
+
+    assert framecode.paired_allocation_blocks([write, read]) == (write, read)
+    A = np.zeros(4)
+    sdfg(A=A, N=np.array([3], dtype=np.int64))
+    assert A[3] == 2.0
 
 
 def test_container_read_only_from_tasklet_code():
@@ -938,5 +994,7 @@ if __name__ == "__main__":
     test_deferred_scalar_cpp_tasklet_same_scope()
     test_deferred_scalar_still_applies()
     test_a_view_does_not_reallocate_the_array_it_views()
+    test_branch_local_transient_is_freed_in_its_branch()
+    test_a_transient_first_used_in_a_call_region_is_allocated_after_its_assignments()
     test_container_read_only_from_tasklet_code()
     test_view_first_read_by_an_interstate_edge()

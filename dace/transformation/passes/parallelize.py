@@ -110,7 +110,7 @@ class ParallelizePipeline(ppl.Pass):
         from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint, StructuralCleanup
         from dace.transformation.passes.fuse_maps import FuseMaps
         from dace.transformation.passes.fusion_inline import FuseStates
-        from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+        from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
         from dace.transformation.passes.simplify import SimplifyPass
         from dace.transformation.passes.symbol_ssa import SymbolSSA

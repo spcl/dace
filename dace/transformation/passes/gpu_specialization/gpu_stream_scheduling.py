@@ -670,19 +670,32 @@ class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 
         stream_array_name = get_gpu_stream_array_name()
 
+        # A nested SDFG that holds ``gpu_streams`` is a host level of its own -- the body of a host
+        # map launches its kernels and reads their results back on its own interstate edges (ICON's
+        # ``i_endidx = end_index(jb)``) -- so its edges are spliced like the root's.
+        sync_states = OrderedSet()
+        for level in sdfg.all_sdfgs_recursive():
+            if level is sdfg or stream_array_name in level.arrays:
+                sync_states |= self.splice_host_reads(level, sdfg, stream_array_name)
+        self.append_host_sink_exit_syncs(sdfg, sync_states, stream_array_name)
+        self.add_sync_state(sdfg, stream_array_name)
+
+    def splice_host_reads(self, level: SDFG, root: SDFG, stream_array_name: str) -> OrderedSet:
+        """Splice a sync state into every edge of ``level`` that follows GPU work the host waits on."""
+        gpu_written = self._gpu_written if level is root else collect_gpu_written_arrays(level)
         # Snapshot iedges first; splicing mutates each region's edge set. Walking every nested
         # CFG makes a sync inserted on a ``LoopRegion`` / ``ConditionalBlock`` body edge land in
-        # that owning region, not the root SDFG -- the correct per-iteration sync semantics.
+        # that owning region, not the level's SDFG -- the correct per-iteration sync semantics.
         edges_to_splice: list[tuple[AbstractControlFlowRegion, Any]] = []
-        for region in sdfg.all_control_flow_regions(recursive=True):
-            if region.sdfg is not sdfg:
-                continue  # a nested SDFG has no ``gpu_streams`` of its own to sync on
+        for region in level.all_control_flow_regions(recursive=True):
+            if region.sdfg is not level:
+                continue  # a deeper SDFG is a level of its own, or device code
             for edge in list(region.edges()):
                 src, dst = edge.src, edge.dst
                 # A host read of GPU output on this edge: its assignments / condition, or the branch or
                 # loop condition of the block it enters, all evaluated on the host.
-                host_read = iedge_reads_gpu_array(edge.data, sdfg, self._gpu_written) or meta_reads_gpu_written(
-                    dst, sdfg, self._gpu_written
+                host_read = iedge_reads_gpu_array(edge.data, level, gpu_written) or meta_reads_gpu_written(
+                    dst, level, gpu_written
                 )
                 # src/dst may be any block kind; ``classify_root_block`` returns the union of a
                 # block's descendant kinds, so a CF region whose payload is GPU (or host) is
@@ -703,17 +716,15 @@ class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
                         continue
                 elif not (
                     host_read
-                    or block_reads_gpu_written(dst, self._gpu_written)
+                    or block_reads_gpu_written(dst, gpu_written)
                     or block_writes_gpu_accessed(dst, queued_gpu_accessed(region, src))
                 ):
                     continue
                 edges_to_splice.append((region, edge))
 
-        sync_states = {
-            splice_sync_state_on_edge(region, edge, sdfg, stream_array_name) for region, edge in edges_to_splice
-        }
-        self.append_host_sink_exit_syncs(sdfg, sync_states, stream_array_name)
-        self.add_sync_state(sdfg, stream_array_name)
+        return OrderedSet(
+            splice_sync_state_on_edge(region, edge, level, stream_array_name) for region, edge in edges_to_splice
+        )
 
     def block_kind(self, block) -> NodeKind:
         """A root block's cached class, else the class of a block below the root, computed the same way."""
@@ -1100,11 +1111,12 @@ def make_sync_tasklet(state: SDFGState, name: str, stream_ids) -> nodes.Tasklet:
     ``cudaStreamSynchronize`` per connector. Caller wires each connector to
     the matching ``gpu_streams[<id>]`` AccessNode after construction.
     """
+    from dace.libraries.standard.nodes.sync import SyncScope, sync_code
+
     backend: str = common.get_gpu_backend()
-    sync_lines = [f"DACE_GPU_CHECK({backend}StreamSynchronize({stream_connector_name(sid)}));" for sid in stream_ids]
-    sync_code = "\n".join(sync_lines)
+    code = "\n".join(sync_code(SyncScope.STREAM, backend, stream=stream_connector_name(sid)) for sid in stream_ids)
     tasklet = state.add_tasklet(
-        name=name, inputs={}, outputs={}, code=sync_code, language=dtypes.Language.CPP, side_effects=True
+        name=name, inputs={}, outputs={}, code=code, language=dtypes.Language.CPP, side_effects=True
     )
     for sid in stream_ids:
         tasklet.add_in_connector(stream_connector_name(sid), dtypes.gpuStream_t)

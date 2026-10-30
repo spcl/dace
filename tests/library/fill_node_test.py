@@ -331,6 +331,47 @@ def test_fill_pure_inside_a_kernel_writes_every_row():
     np.testing.assert_array_equal(cupy.asnumpy(gpuB), np.full((8, 4), 5.0))
 
 
+def block_fill_in_kernel_sdfg(name: str) -> dace.SDFG:
+    """``map i (GPU_Device) { gpuB[i, 0:1000] = 5 }``, the Fill left to ``Auto``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("gpuB", [8, 1000], dace.float64, dace.StorageType.GPU_Global)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("kernel", dict(i="0:8"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    fill_node = FillLibraryNode(name="fill_row", value=5.0)
+    state.add_memlet_path(me, fill_node, memlet=dace.Memlet())
+    state.add_memlet_path(
+        fill_node,
+        mx,
+        state.add_write("gpuB"),
+        src_conn=FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+        memlet=dace.Memlet("gpuB[i, 0:1000]"),
+    )
+    return sdfg
+
+
+def test_a_fill_of_shared_data_inside_a_kernel_runs_on_the_block():
+    """One CTA per kernel iteration: the block's lanes split the row, not one thread walking all of it."""
+    sdfg = block_fill_in_kernel_sdfg("fill_block_in_kernel_schedule")
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    lanes = [
+        n.map
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock
+    ]
+    assert len(lanes) == 1 and lanes[0].gpu_force_syncthreads
+
+
+@pytest.mark.gpu
+def test_a_fill_on_the_block_inside_a_kernel_writes_every_row():
+    import cupy  # Only present on GPU runners.
+
+    sdfg = block_fill_in_kernel_sdfg("fill_block_in_kernel_run")
+    gpuB = cupy.zeros((8, 1000), dtype=cupy.float64)
+    sdfg(gpuB=gpuB)
+    np.testing.assert_array_equal(cupy.asnumpy(gpuB), np.full((8, 1000), 5.0))
+
+
 def test_fill_single_gpu_shared_inside_kernel_expands_clean():
     """A single-element fill targeting GPU-resident storage *inside* a GPU kernel is valid device
     code (a device-side ``_out = 0``) and must expand cleanly. Regression: the ``tasklet`` guard fired

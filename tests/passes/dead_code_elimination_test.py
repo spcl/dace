@@ -1054,6 +1054,80 @@ def test_dde_removes_a_dead_transient_whose_ordering_edge_ends_in_an_unused_glob
     assert np.allclose(B, 2 * np.arange(8))
 
 
+def test_dde_leaves_no_access_node_isolated_by_an_ordering_edge_it_removes():
+    """``X -> (empty) -> Y``, both reads whose consumers die: removing ``Y`` leaves ``X`` with nothing, whichever of the
+    two the cleanup looks at first (fresh graphs, so a hash order over the nodes differs between them)."""
+    for k in range(20):
+        sdfg = dace.SDFG(f"dde_isolated_by_ordering_{k}")
+        sdfg.add_array("X", [4], dace.float64)
+        sdfg.add_array("Y", [4], dace.float64)
+        sdfg.add_array("T", [4], dace.float64, transient=True)
+        state = sdfg.add_state()
+        x, y = state.add_read("X"), state.add_read("Y")
+        state.add_nedge(x, y, dace.Memlet())
+        for src in (x, y):
+            t = state.add_tasklet("t", {"i"}, {"o"}, "o = i")
+            state.add_edge(src, None, t, "i", dace.Memlet(f"{src.data}[0]"))
+            state.add_edge(t, "o", state.add_write("T"), None, dace.Memlet("T[0]"))
+        Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+        assert all(state.degree(n) > 0 for n in state.nodes()), [n.label for n in state.nodes()]
+
+
+def test_dde_keeps_the_order_a_removed_copy_carried_between_a_read_and_an_overwrite():
+    """``X = Y + 1`` reads ``Y``, a dead copy into ``T`` follows it, and ``Y = 5`` follows the copy: the copy is all
+    that orders the read before the overwrite, so removing it must leave that order behind."""
+    sdfg = dace.SDFG("dde_order_through_dead_copy")
+    sdfg.add_array("X", [1], dace.float64)
+    sdfg.add_array("Y", [1], dace.float64)
+    sdfg.add_transient("T", [1], dace.float64)
+    state = sdfg.add_state()
+    read = state.add_tasklet("read", {"y"}, {"x"}, "x = y + 1")
+    state.add_edge(state.add_read("Y"), None, read, "y", dace.Memlet("Y[0]"))
+    state.add_edge(read, "x", state.add_write("X"), None, dace.Memlet("X[0]"))
+    dead = state.add_tasklet("dead", {}, {"t"}, "t = 1")
+    state.add_nedge(read, dead, dace.Memlet())
+    t = state.add_write("T")
+    state.add_edge(dead, "t", t, None, dace.Memlet("T[0]"))
+    overwrite = state.add_tasklet("overwrite", {}, {"y"}, "y = 5")
+    state.add_nedge(t, overwrite, dace.Memlet())
+    state.add_edge(overwrite, "y", state.add_write("Y"), None, dace.Memlet("Y[0]"))
+    sdfg.validate()
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    assert dead not in state.nodes()
+    assert dace.graphlib.has_path(state._nx, read, overwrite), "the overwrite of Y must stay after its read"
+    X, Y = np.zeros(1), np.full(1, 2.0)
+    sdfg(X=X, Y=Y)
+    assert X[0] == 3.0 and Y[0] == 5.0
+
+
+def test_dde_orders_nothing_through_access_nodes_the_removal_leaves_unwritten_and_unread():
+    """``IN`` is written only by dead code and ``X`` read only by dead code; ordering ``IN`` before ``X`` across the
+    removed nodes would keep ``IN`` alive by an edge the sink cleanup then drops, leaving it isolated."""
+    sdfg = dace.SDFG("dde_no_order_through_dead_ends")
+    for name in ("IN", "X"):
+        sdfg.add_array(name, [1], dace.float64)
+    for name in ("U1", "U2", "U3"):
+        sdfg.add_transient(name, [1], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_tasklet("a", {}, {"o"}, "o = 1")
+    u1, u2, u3 = state.add_write("U1"), state.add_access("U2"), state.add_write("U3")
+    state.add_edge(a, "o", u1, None, dace.Memlet("U1[0]"))
+    inp, x = state.add_access("IN"), state.add_read("X")
+    state.add_nedge(u1, inp, dace.Memlet())
+    t1 = state.add_tasklet("t1", {"i"}, {"o"}, "o = i")
+    state.add_edge(inp, None, t1, "i", dace.Memlet("IN[0]"))
+    state.add_edge(t1, "o", u2, None, dace.Memlet("U2[0]"))
+    state.add_nedge(u2, x, dace.Memlet())
+    t2 = state.add_tasklet("t2", {"i"}, {"o"}, "o = i")
+    state.add_edge(x, None, t2, "i", dace.Memlet("X[0]"))
+    state.add_edge(t2, "o", u3, None, dace.Memlet("U3[0]"))
+    sdfg.validate()
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_dse_simple()
     test_dse_unconditional()
@@ -1094,3 +1168,5 @@ if __name__ == "__main__":
     test_dde_removes_a_copy_that_a_write_through_a_view_fully_covers()
     test_dde_keeps_a_loop_write_after_removing_a_dead_nested_sdfg()
     test_dde_keeps_a_nested_write_when_simplify_reapplies_it_per_nested_sdfg()
+    test_dde_keeps_the_order_a_removed_copy_carried_between_a_read_and_an_overwrite()
+    test_dde_orders_nothing_through_access_nodes_the_removal_leaves_unwritten_and_unread()

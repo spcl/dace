@@ -368,6 +368,58 @@ def test_in_state_seed_is_written_before_the_reduction_map():
     assert c[0] == 66.0
 
 
+def test_two_maps_reducing_into_one_slot_in_one_state_keep_both_sums():
+    sdfg = dace.SDFG("two_reductions")
+    sdfg.add_array("acc", [2], dace.float64)
+    sdfg.add_array("x", [10], dace.float64)
+    sdfg.add_array("y", [10], dace.float64)
+    state = sdfg.add_state()
+    for name in ("x", "y"):
+        state.add_mapped_tasklet(
+            name,
+            {"i": "0:10"},
+            {"v": dace.Memlet(f"{name}[i]")},
+            "o = v",
+            {"o": dace.Memlet("acc[0]", wcr="lambda a, b: a + b")},
+            external_edges=True,
+        )
+    acc = np.zeros(2)
+
+    PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    sdfg(acc=acc, x=np.ones(10), y=np.full(10, 2.0))
+
+    assert acc[0] == 30.0
+
+
+def test_a_map_nest_reducing_into_one_slot_accumulates_into_the_scalar():
+    sdfg = dace.SDFG("nest_reduction")
+    sdfg.add_array("acc", [2], dace.float64)
+    sdfg.add_array("x", [4, 5], dace.float64)
+    state = sdfg.add_state()
+    outer_entry, outer_exit = state.add_map("outer", {"i": "0:4"})
+    inner_entry, inner_exit = state.add_map("inner", {"k": "0:5"})
+    tasklet = state.add_tasklet("t", {"v"}, {"o"}, "o = v")
+    state.add_memlet_path(
+        state.add_read("x"), outer_entry, inner_entry, tasklet, dst_conn="v", memlet=dace.Memlet("x[i, k]")
+    )
+    state.add_memlet_path(
+        tasklet,
+        inner_exit,
+        outer_exit,
+        state.add_write("acc"),
+        src_conn="o",
+        memlet=dace.Memlet("acc[0]", wcr="lambda a, b: a + b"),
+    )
+    x = np.arange(20, dtype=np.float64).reshape(4, 5)
+    acc = np.full(2, 1.0)
+
+    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    sdfg(acc=acc, x=x)
+
+    assert acc[0] == 1.0 + x.sum()
+
+
 if __name__ == "__main__":
     test_array_slot_dot_product_privatized()
     test_two_reductions_get_unique_scalar_names()
@@ -375,3 +427,5 @@ if __name__ == "__main__":
     test_idempotent_no_double_privatize()
     test_targeted_helper_rewrites_single_wcr_edge()
     test_targeted_helper_refuses_non_wcr_edge()
+    test_two_maps_reducing_into_one_slot_in_one_state_keep_both_sums()
+    test_a_map_nest_reducing_into_one_slot_accumulates_into_the_scalar()

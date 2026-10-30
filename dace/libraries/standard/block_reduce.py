@@ -13,7 +13,7 @@ loop, the shared-memory declaration and the broadcast is how two copies drift ap
 placement, which is the part that goes silently wrong rather than loudly broken.
 """
 
-from dace import SDFG, dtypes, nodes
+from dace import SDFG, dtypes, nodes, subsets, symbolic
 from dace.sdfg.state import SDFGState
 
 #: Threads per block for the in-kernel collectives. Four wavefronts on CDNA (64 wide), eight warps
@@ -143,7 +143,9 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
     """
     from dace.libraries.standard.nodes.reduce import Reduce, block_strided_refusal
     from dace.libraries.standard.nodes.scan import Scan, block_refusal
+    from dace.libraries.standard.nodes.state_scan import StateScan, block_chunks
 
+    lane_nodes = lane_map_nodes()
     impls = type(node).implementations
     block = next((impl for impl in GPU_BLOCK_IMPLEMENTATIONS if impl in impls), None)
     if block is None or state is None:
@@ -155,7 +157,38 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
         return None
     if isinstance(node, Scan) and block_refusal(node, state, sdfg if sdfg is not None else state.sdfg) is not None:
         return None
+    if isinstance(node, StateScan) and block_chunks(node) is None:
+        return None
+    if isinstance(node, lane_nodes) and holds_thread_block_maps(node, state):
+        return None
     return block
+
+
+def lane_map_nodes() -> tuple[type, ...]:
+    """The library nodes whose block lowering adds its own ``BLOCK_COLLECTIVE_THREADS``-lane map."""
+    from dace.libraries.linalg.nodes.transpose import Transpose
+    from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+    from dace.libraries.standard.nodes.state_scan import StateScan
+
+    return (CopyLibraryNode, FillLibraryNode, StateScan, TensorTranspose, Transpose)
+
+
+def holds_thread_block_maps(node: nodes.Node, state: SDFGState) -> bool:
+    """Whether the kernel around ``node`` already has thread-block maps of its own: a lane map beside them would
+    give the kernel a second block shape."""
+    from dace.transformation.helpers import gpu_map_has_explicit_threadblocks
+
+    graph, inner = state, node
+    while graph is not None:
+        scope = graph.entry_node(inner)
+        while scope is not None:
+            if isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device:
+                return gpu_map_has_explicit_threadblocks(graph, scope)
+            scope = graph.entry_node(scope)
+        inner, graph = graph.sdfg.parent_nsdfg_node, graph.sdfg.parent
+    return False
 
 
 #: Schedules whose code already runs per thread: a collective there would be entered once per lane.
@@ -181,12 +214,76 @@ def in_kernel_block_implementation(node: nodes.LibraryNode, state: SDFGState) ->
     :returns: The implementation key, or ``None`` on the host, in thread-level code, or for a shape the
               node's block lowering refuses.
     """
+    from dace.transformation.passes.offloading.taskloop import small_operands
+
     maps = enclosing_maps(node, state)
     if not any(m.map.schedule == dtypes.ScheduleType.GPU_Device for m in maps):
         return None
     if any(m.map.schedule in THREAD_LEVEL_SCHEDULES for m in maps):
         return None
+    # One thread's work: a block of lanes would idle over a handful of elements
+    if small_operands(node, state):
+        return None
+    if accumulates_beside(node, state):
+        return None
     return gpu_block_implementation(node, state, state.sdfg)
+
+
+def accumulates_beside(node: nodes.LibraryNode, state: SDFGState) -> bool:
+    """Whether the kernel around ``node`` accumulates anywhere but at ``node``: a block collective runs the kernel
+    body on every lane of the block, so each lane would add. A map exit only relays an accumulation made inside it.
+    A plain update of what the body reads (``o[b] = o[b] + 1``) accumulates as surely as a WCR does; a write
+    the body's reads provably miss only repeats the same values on every lane.
+    """
+
+    def widest(graph: SDFGState, edge, inside: set[nodes.Node], reading: bool):
+        """The subset ``edge`` moves at the outermost scope inside ``inside``."""
+        path = [e for e in graph.memlet_path(edge) if e.src in inside and e.dst in inside]
+        return (path[0] if reading else path[-1]).data.subset
+
+    def accumulates(graph: SDFGState, scope: list[nodes.Node]) -> bool:
+        inside, facts = set(scope), graph.sdfg.facts()
+        read: dict[str, list] = {}
+        for inner in scope:
+            if inner is not node and isinstance(inner, nodes.CodeNode):
+                for edge in graph.in_edges(inner):
+                    if not edge.data.is_empty():
+                        read.setdefault(edge.data.data, []).append(widest(graph, edge, inside, True))
+        for inner in scope:
+            if isinstance(inner, nodes.NestedSDFG) and any(
+                accumulates(nested, nested.nodes()) for nested in inner.sdfg.states()
+            ):
+                return True
+            if inner is node or isinstance(inner, nodes.MapExit):
+                continue
+            if any(edge.data.wcr is not None for edge in graph.out_edges(inner)):
+                return True
+            if isinstance(inner, nodes.Tasklet) and any(
+                subsets.intersects(widest(graph, edge, inside, False), other, facts) is not symbolic.Truth.FALSE
+                for edge in graph.out_edges(inner)
+                if not edge.data.is_empty()
+                for other in read.get(edge.data.data, ())
+            ):
+                return True
+        return False
+
+    graph, anchor = state, node
+    while True:
+        scopes = graph.scope_dict()
+        entry = scopes[anchor]
+        while entry is not None and not (
+            isinstance(entry, nodes.MapEntry) and entry.map.schedule == dtypes.ScheduleType.GPU_Device
+        ):
+            entry = scopes[entry]
+        if entry is not None:
+            return accumulates(graph, graph.scope_subgraph(entry).nodes())
+        # No kernel in this SDFG: all of it runs inside the kernel around its nested SDFG node
+        sdfg = graph.sdfg
+        if any(accumulates(other, other.nodes()) for other in sdfg.states()):
+            return True
+        if sdfg.parent_nsdfg_node is None:
+            return False
+        graph, anchor = sdfg.parent, sdfg.parent_nsdfg_node
 
 
 def release_kernel_block_size(node: nodes.Node, state: SDFGState) -> None:

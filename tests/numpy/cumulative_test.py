@@ -109,16 +109,51 @@ def test_a_batched_scan_keeps_the_batch_axis_parallel():
     assert state.entry_node(scans[0]) is not None, "the scan is not inside the batch map"
 
 
-def test_an_inner_axis_is_refused_rather_than_scanned_as_the_last():
-    """axis=0 of a 2-D operand is a strided chain per column. Silently scanning the last axis
-    instead would return the right SHAPE holding the wrong numbers."""
+@compare_numpy_output(positive=True)
+def test_cumsum_first_axis(A: dace.float64[5, 40]):
+    return np.cumsum(A, axis=0)
+
+
+@compare_numpy_output(positive=True)
+def test_cumsum_middle_axis(A: dace.float64[4, 6, 7]):
+    return np.cumsum(A, axis=1)
+
+
+@compare_numpy_output(positive=True, max_value=2)
+def test_cumprod_middle_axis(A: dace.float64[3, 5, 4]):
+    return np.cumprod(A, axis=-2)
+
+
+@compare_numpy_output(positive=True)
+def test_cumsum_int32_middle_axis_accumulates_in_int64(A: dace.int32[3, 5, 4]):
+    return np.cumsum(A, axis=1)
+
+
+def test_an_inner_axis_scan_of_a_strided_view_matches_numpy():
+    """A transposed view has no contiguous trailing block, so the scan reads a contiguous copy of it."""
 
     @dace.program
-    def prog_an_inner_axis_is_refused_rather_than_scanned_as_the_last(a: dace.float64[5, 40], out: dace.float64[5, 40]):
-        out[:] = np.cumsum(a, axis=0)
+    def prog_an_inner_axis_scan_of_a_strided_view(a: dace.float64[7, 5], out: dace.float64[5, 7]):
+        out[:] = np.cumsum(a.T, axis=0)
 
-    with pytest.raises(Exception, match="last axis only"):
-        prog_an_inner_axis_is_refused_rather_than_scanned_as_the_last.to_sdfg()
+    a = np.random.default_rng(5).random((7, 5))
+    out = np.zeros((5, 7))
+    prog_an_inner_axis_scan_of_a_strided_view(a=a, out=out)
+    np.testing.assert_allclose(out, np.cumsum(a.T, axis=0))
+
+
+def test_an_inner_axis_scans_the_trailing_block_one_chain_per_trailing_index():
+    """axis=1 of ``[4, 6, 7]``: a map over axis 0, one scan over the contiguous ``[6, 7]`` block with stride 7."""
+
+    @dace.program
+    def prog_an_inner_axis_scans_the_trailing_block(a: dace.float64[4, 6, 7], out: dace.float64[4, 6, 7]):
+        out[:] = np.cumsum(a, axis=1)
+
+    sdfg = prog_an_inner_axis_scans_the_trailing_block.to_sdfg(simplify=False)
+    (scan,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
+    assert scan.stride == 7
+    state = next(s for s in sdfg.states() if scan in s.nodes())
+    assert state.entry_node(scan).map.params == ["__s0"]
 
 
 def test_an_axis_less_scan_over_a_matrix_is_refused():
@@ -144,5 +179,10 @@ if __name__ == "__main__":
     test_cumsum_lowers_to_a_scan_libnode()
     test_cumprod_carries_the_product_op()
     test_a_batched_scan_keeps_the_batch_axis_parallel()
-    test_an_inner_axis_is_refused_rather_than_scanned_as_the_last()
+    test_cumsum_first_axis()
+    test_cumsum_middle_axis()
+    test_cumprod_middle_axis()
+    test_cumsum_int32_middle_axis_accumulates_in_int64()
+    test_an_inner_axis_scan_of_a_strided_view_matches_numpy()
+    test_an_inner_axis_scans_the_trailing_block_one_chain_per_trailing_index()
     test_an_axis_less_scan_over_a_matrix_is_refused()

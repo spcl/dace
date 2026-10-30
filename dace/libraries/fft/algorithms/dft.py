@@ -80,9 +80,18 @@ def floating_text(factor: dace.symbolic.SymbolicType) -> str:
     return FloatingPrinter().doprint(dace.symbolic.pystr_to_symbolic(factor))
 
 
-def complex_of(real: dace.typeclass) -> dace.typeclass:
-    """The complex type with ``real``'s precision; a complex type is its own."""
-    return {dace.float32: dace.complex64, dace.float64: dace.complex128}.get(real, real)
+def is_unit(factor: dace.symbolic.SymbolicType) -> bool:
+    """Whether ``factor`` is the number one, as ``1`` or ``1.0``."""
+    value = dace.symbolic.pystr_to_symbolic(factor)
+    return bool(value.is_Number) and float(value) == 1.0
+
+
+def complex_of(element: dace.typeclass) -> dace.typeclass:
+    """The complex type numpy's FFTs compute ``element`` in: ``complex64`` for half and single precision, its own
+    type for a complex one, ``complex128`` otherwise (double precision, integers and booleans)."""
+    if element in (dace.complex64, dace.complex128):
+        return element
+    return dace.complex64 if element in (dace.float16, dace.float32) else dace.complex128
 
 
 def real_of(complex_type: dace.typeclass) -> dace.typeclass:
@@ -105,6 +114,7 @@ def add_elementwise_state(
     dst_index: str,
     code: str,
     language: dace.Language = dace.Language.Python,
+    schedule: dace.ScheduleType = dace.ScheduleType.Default,
 ) -> dace.SDFGState:
     """Append (or start with, for ``after=None``) a state running ``o = <code of i>`` over ``ranges``."""
     state = sdfg.add_state(label) if after is None else sdfg.add_state_after(after, label)
@@ -115,6 +125,7 @@ def add_elementwise_state(
         code,
         {"o": dace.Memlet(data=dst, subset=dst_index)},
         language=language,
+        schedule=schedule,
         external_edges=True,
     )
     return state
@@ -138,7 +149,7 @@ def add_dft_axis_state(
     line[axis] = f"0:{dace.symbolic.symstr(shape[axis])}"
     # Divide by a FLOATING denominator: ``1/(M*N)`` over integer symbols is C integer division, i.e. zero. In the
     # element's own precision: ``complex64 * double`` multiplies to zero.
-    scale = "" if str(factor) == "1" else f"o *= {real}({floating_text(factor)});"
+    scale = "" if is_unit(factor) else f"o *= {real}({floating_text(factor)});"
     # The angle's integer part is reduced modulo the length first, as an FFT's twiddle factors are
     code = f"""
 {element.ctype} sum({real}(0), {real}(0));

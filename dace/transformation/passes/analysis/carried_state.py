@@ -57,8 +57,7 @@ def proves_equal(lhs: Any, rhs: Any) -> bool:
     """Whether z3 proves ``lhs == rhs`` for every value of their free variables."""
     solver = smt_dependence.bounded_solver()
     solver.add(lhs != rhs)
-    with canon_stats.timed("z3"):
-        return solver.check() == smt_body.z3.unsat
+    return solver.check() == smt_body.z3.unsat
 
 
 def proves_gf2_affine(loop: LoopRegion, step: StepSlice) -> int | None:
@@ -90,7 +89,8 @@ def proves_gf2_affine(loop: LoopRegion, step: StepSlice) -> int | None:
         column = smt_body.z3.simplify(smt_body.z3.substitute(from_state(1 << bit) ^ constant, *data))
         is_set = smt_body.z3.Extract(bit, bit, raw) == smt_body.z3.BitVecVal(1, 1)
         predicted = predicted ^ smt_body.z3.If(is_set, column, smt_body.constant(0, width))
-    return bits if proves_equal(actual, predicted) else None
+    with canon_stats.timed("z3", loop):
+        return bits if proves_equal(actual, predicted) else None
 
 
 def gf2_state(loop: LoopRegion) -> Gf2State | None:

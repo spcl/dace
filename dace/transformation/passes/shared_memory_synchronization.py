@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pass that inserts ``__syncthreads()`` barriers around GPU shared-memory accesses."""
+"""Pass that inserts thread-block barriers (:class:`~dace.libraries.standard.nodes.sync.Sync`) around GPU shared-memory
+accesses."""
 
 import warnings
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
+from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.libraries.tileops.expansions import TILE_THREADS_MAP
 from dace.optionals import required
-from dace.ordered import OrderedSet
 from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node, Tasklet
 from dace.sdfg.scope import is_in_scope
@@ -30,12 +31,14 @@ BARRIER = "__syncthreads();"
 
 
 def is_barrier(node: Node) -> bool:
-    """Whether ``node`` is a ``__syncthreads()`` tasklet."""
+    """Whether ``node`` is a block :class:`Sync` or a ``__syncthreads()`` tasklet."""
+    if isinstance(node, Sync):
+        return node.scope == SyncScope.BLOCK
     return isinstance(node, Tasklet) and node.language == dtypes.Language.CPP and node.code.as_string.strip() == BARRIER
 
 
 def followed_by_barrier(node: Node, state: SDFGState) -> bool:
-    """Whether a ``__syncthreads()`` tasklet directly follows ``node`` (a staging pass placed one barrier for
+    """Whether a block barrier directly follows ``node`` (a staging pass placed one barrier for
     several shared-memory writes)."""
     return any(is_barrier(succ) for succ in state.successors(node))
 
@@ -43,8 +46,7 @@ def followed_by_barrier(node: Node, state: SDFGState) -> bool:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class DefaultSharedMemorySync(ppl.Pass):
-    """Insert ``__syncthreads()`` tasklets after ``GPU_ThreadBlock`` map exits and collaborative writes of shared memory
-    that no barrier tasklet already follows.
+    """Insert a block :class:`Sync` after ``GPU_ThreadBlock`` map exits and collaborative writes of shared memory.
 
     Barriers stay outside thread-block maps, where thread divergence would deadlock them. So a shared-memory write in
     a sequential map or loop nested in a thread-block map only warns, a write-then-read inside one thread-block map
@@ -151,18 +153,13 @@ class DefaultSharedMemorySync(ppl.Pass):
         )
 
     def insert_synchronization_after_nodes(self, nodes: dict[Node, SDFGState]):
-        """Insert a ``__syncthreads()`` tasklet after each given node."""
+        """Insert a block :class:`Sync` after each given node, ordered before the node's successors."""
         for node, state in nodes.items():
-            sync_tasklet = state.add_tasklet(
-                name="sync_threads",
-                inputs=OrderedSet(),
-                outputs=OrderedSet(),
-                code="__syncthreads();\n",
-                language=dtypes.Language.CPP,
-            )
+            sync = Sync("sync_threads", scope=SyncScope.BLOCK)
+            state.add_node(sync)
             for succ in state.successors(node):
-                state.add_edge(sync_tasklet, None, succ, None, dace.Memlet())
-            state.add_edge(node, None, sync_tasklet, None, dace.Memlet())
+                state.add_edge(sync, None, succ, None, dace.Memlet())
+            state.add_edge(node, None, sync, None, dace.Memlet())
 
 
 def nested_in_threadblock_map(state: SDFGState, map_entry: MapEntry) -> bool:

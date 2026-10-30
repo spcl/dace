@@ -99,6 +99,9 @@ class Data:
     )
     debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
 
+    #: ``(shape, names)`` of the last :meth:`scaled_symbols`, so the names are derived once per shape.
+    _scaled_symbols: tuple[tuple, frozenset[str]] | None = None
+
     def __init__(self, dtype, shape, transient, storage, location, lifetime, debuginfo):
         self.dtype = dtype
         self.shape = shape
@@ -112,6 +115,25 @@ class Data:
     def __call__(self):
         # This method is implemented to support type hints
         return self
+
+    def scaled_symbols(self) -> frozenset[str]:
+        """The names of the defined symbols ``s`` the shape has a dimension ``c * s`` of, ``c`` a positive number."""
+        shape = tuple(self.shape)
+        if self._scaled_symbols is None or self._scaled_symbols[0] != shape:
+            names = set()
+            for dim in shape:
+                if not isinstance(dim, sp.Expr) and (isinstance(dim, Integral) or not symbolic.issymbolic(dim)):
+                    continue
+                coefficient, base = dim.as_coeff_Mul()
+                # An undefined symbol is a placeholder with no facts
+                if (
+                    coefficient.is_positive
+                    and isinstance(base, symbolic.symbol)
+                    and not isinstance(base, symbolic.UndefinedSymbol)
+                ):
+                    names.add(base.name)
+            self._scaled_symbols = (shape, frozenset(names))
+        return self._scaled_symbols[1]
 
     def validate(self):
         """Validate the correctness of this object.

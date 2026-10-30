@@ -12,6 +12,7 @@ Tests build SDFGs through the Python frontend, run ``apply_gpu_transformations``
 through the pipeline so we can inspect the *real* shape the strategy sees in production.
 """
 
+import re
 import warnings
 
 import numpy as np
@@ -552,3 +553,50 @@ if __name__ == "__main__":
     test_multikernel_stencil_pipeline_one_sync_at_exit()
     test_host_visible_output_always_synced_even_when_opted_out()
     test_wired_stream_array_validates_without_an_uninitialized_transient_warning()
+
+
+def table_bound_read_in_a_block_body() -> dace.SDFG:
+    """ICON's ``i_endidx = end_index(jb)``: the body of a host map over the blocks reads its kernel's extent off a
+    table the kernel reads too, on its own interstate edge."""
+    from dace.transformation.passes.offloading import OffloadToAccelerator
+
+    body = dace.SDFG("block_body")
+    body.add_array("idx", [4], dace.int32)
+    body.add_array("A", [3, 8], dace.float64)
+    body.add_array("B", [3, 8], dace.float64)
+    body.add_symbol("jb", dace.int64)
+    body.add_symbol("iend", dace.int32)
+    head = body.add_state("head", is_start_block=True)
+    work = body.add_state_after(head, "work", assignments={"iend": "idx[2]"})
+    work.add_mapped_tasklet(
+        "scale",
+        {"i": "0:iend"},
+        {"a": dace.Memlet("A[jb, i]"), "k": dace.Memlet("idx[0]")},
+        "b = a * k",
+        {"b": dace.Memlet("B[jb, i]")},
+        external_edges=True,
+    )
+    sdfg = dace.SDFG("table_bound_read_in_a_block_body")
+    sdfg.add_array("idx", [4], dace.int32)
+    sdfg.add_array("A", [3, 8], dace.float64)
+    sdfg.add_array("B", [3, 8], dace.float64)
+    state = sdfg.add_state("main")
+    entry, exit_node = state.add_map("blocks", {"jb": "0:3"})
+    nested = state.add_nested_sdfg(body, {"idx": None, "A": None}, {"B": None}, symbol_mapping={"jb": "jb"})
+    state.add_memlet_path(state.add_read("idx"), entry, nested, dst_conn="idx", memlet=dace.Memlet("idx[0:4]"))
+    state.add_memlet_path(state.add_read("A"), entry, nested, dst_conn="A", memlet=dace.Memlet("A[0:3, 0:8]"))
+    state.add_memlet_path(nested, exit_node, state.add_write("B"), src_conn="B", memlet=dace.Memlet("B[0:3, 0:8]"))
+    OffloadToAccelerator(host_maps=["blocks"]).apply_pass(sdfg, {})
+    return sdfg
+
+
+def test_a_host_maps_body_waits_for_the_copy_its_interstate_edge_reads():
+    """The body is a host level holding its own ``gpu_streams``: it copies ``idx`` back and reads it on an interstate
+    edge, so it has to wait for the copy. Only the root's edges were spliced, and the body read whatever the host
+    buffer held before the copy landed."""
+    code = next(c.clean_code for c in table_bound_read_in_a_block_body().generate_code() if c.language == "cpp")
+    lines = code.splitlines()
+    copy = next(i for i, line in enumerate(lines) if "DeviceToHost" in line and "idx_host" in line)
+    # ``idx_host`` may be a persistent ``__state`` member
+    read = next(i for i, line in enumerate(lines) if re.search(r"iend = \S*idx_host\[2\]", line))
+    assert any("StreamSynchronize" in line for line in lines[copy:read]), "\n".join(lines[copy : read + 1])

@@ -22,7 +22,9 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 
 import os
 
-from dace import SDFG, Memlet, dtypes, subsets, symbolic
+import sympy
+
+from dace import SDFG, dtypes, symbolic
 from dace import data as dt
 from dace.config import Config
 from dace.libraries.blas.environments import libxsmm, openblas
@@ -36,7 +38,7 @@ from dace.libraries.standard.block_reduce import in_kernel_block_implementation,
 from dace.libraries.standard.nodes.scan import Scan
 from dace.libraries.standard.nodes.symmetrize import Symmetrize
 from dace.ordered import OrderedSet
-from dace.sdfg import infer_types, memlet_utils, nodes
+from dace.sdfg import infer_types, nodes
 from dace.sdfg.narrowing import as_range
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import helpers as xfh
@@ -51,6 +53,7 @@ from dace.transformation.auto.auto_optimize import (
 )
 from dace.transformation.dataflow import OTFMapFusion, RedundantArray, RedundantSecondArray
 from dace.transformation.interstate import InlineSDFG
+from dace.transformation.passes.bound_data_dependent_extents import BoundDataDependentExtents
 from dace.transformation.passes.canonicalize.beta_fold import BetaFold
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
@@ -62,8 +65,9 @@ from dace.transformation.passes.cpu_specialization.demote_level_maps import (
     demote_uncoalesced_level_maps,
 )
 from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
+from dace.transformation.passes.cpu_specialization.interchange_loops_into_lane_maps import InterchangeLoopsIntoLaneMaps
 from dace.transformation.passes.cpu_specialization.pipeline import cpu_specialize
-from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
+from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import (
     assigned_in_enclosing_loop,
     release_one_trip_maps,
 )
@@ -76,6 +80,7 @@ from dace.transformation.passes.gpu_specialization.coarsen_scatter_kernels impor
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import gpu_specialize_offloaded
 from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+from dace.transformation.passes.minimize_transients import MinimizeTransients
 from dace.transformation.passes.offloading.batch_row_scans import BatchRowScans
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.specialize_small_gemms import (
@@ -83,7 +88,6 @@ from dace.transformation.passes.specialize_small_gemms import (
     SpecializeSmallGemms,
     matmul_extents_small,
 )
-from dace.transformation.passes.transient_reuse import TransientReuse
 
 #: Map the canonicalize target string to the codegen device type.
 TARGET_DEVICE = {"cpu": dtypes.DeviceType.CPU, "gpu": dtypes.DeviceType.GPU}
@@ -121,7 +125,7 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> list[str]:
       ``TTGT`` (tensor contraction via transpose+GEMM, no external dependency), ``OpenMP`` (``Reduce``),
       ``CPU`` (OpenMP-5 ``Scan``, radix ``IntegerSort``, ``ska_sort`` ``ScatterConflictCheck``).
     * GPU: taken straight from ``auto_optimize``, so the per-backend rows cannot drift -- cuBLAS /
-      cuSolverDn / cuTENSOR / cuFFT on CUDA, rocBLAS / rocSOLVER / hipTENSOR / hipFFT on HIP, plus ``GPUAuto``,
+      cuSolverDn / cuTENSOR / cuFFT on CUDA, hipBLAS / hipSolverDn / hipTENSOR / hipFFT on HIP, plus ``GPUAuto``,
       ``CUB`` and ``CUDA`` (``gpucub::DeviceScan`` / device sort / ``DeviceReduce::ArgMax`` / the
       bounding-box ``Symmetrize``) on both.
 
@@ -130,7 +134,7 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> list[str]:
     are compared column against column, so a node that lowers to a tuned expansion under one and to
     the serial ``pure`` loop under the other measures the priority list rather than the pipeline.
     Naming the GPU row here a second time is what let it keep the CUDA vendors on a ROCm host, where
-    every rocBLAS-lowered node fell back to ``pure``.
+    every vendor-lowered node fell back to ``pure``.
 
     Only impls whose environment is available on this host are listed, so forcing a pick never selects
     an unbuilt library. ``MatMul``/``Gemm`` still get the tiny-matmul ``rowwise`` override in
@@ -482,21 +486,14 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
                 desc.lifetime = dtypes.AllocationLifetime.State
                 desc.storage = dtypes.StorageType.Register(force=True)
                 continue
-            # The same holds for an array a map accumulates into: ``__state->histw`` is no ``reduction(+:histw[0:n])``
-            # target, so every write falls back to an atomic (azimint_hist: 10^8 contended adds on 1000 bins).
-            if device == dtypes.DeviceType.CPU and map_reduces_into(sd, name):
-                desc.lifetime = dtypes.AllocationLifetime.State
-                continue
-            # Hoisting into ``__dace_init`` is sound only where the program would have made the
-            # allocation anyway, or where the extent holds for every value the boundary admits: a
-            # buffer sized by the very quantity its guard tests (LoopToScan's carry distance) is
-            # positive inside the branch and negative outside it, and ``new T[negative]`` aborts.
+            # A buffer sized by the very quantity its guard tests (LoopToScan's carry distance) is positive inside the
+            # branch and not outside it, and ``new T[negative]`` aborts. Its size symbols hold one value for the run,
+            # so a non-positive size at init means the branch never runs: allocate nothing then.
             if not (
                 allocated_unconditionally(sd, name)
                 or all(symbolic.provably_nonnegative(dim, sd.facts()) for dim in desc.shape)
             ):
-                desc.lifetime = dtypes.AllocationLifetime.State
-                continue
+                desc.total_size = sympy.Max(0, desc.total_size)
             # A shape naming a RUNTIME-SUPPLIED symbol cannot be allocated in ``__dace_init``:
             # that runs before any state, and ``__dace_num_threads`` is defined by a graph tasklet
             # once the program is running. Promoting such a buffer emits an init that references an
@@ -532,15 +529,6 @@ def pool_gpu_transients(sdfg: SDFG) -> int:
                 desc.pool = True
                 marked += 1
     return marked
-
-
-def map_reduces_into(sdfg: SDFG, name: str) -> bool:
-    """Whether a map of ``sdfg`` writes ``name`` through a WCR memlet leaving its scope."""
-    return any(
-        isinstance(edge.src, nodes.MapExit) and edge.data.wcr is not None and edge.data.data == name
-        for state in sdfg.states()
-        for edge in state.edges()
-    )
 
 
 def outermost_map(state: SDFGState, node: nodes.Node) -> nodes.EntryNode | None:
@@ -797,6 +785,8 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
     SpecializeSmallGemms(dtypes.DeviceType.GPU).apply_pass(sdfg, {})
     # Before the offload makes a level map the kernel: its planes, along the contiguous axis, are the threads.
     demote_uncoalesced_level_maps(sdfg)
+    # Before the offload decides what a kernel can own: a buffer sized per iteration by data is allocated by the host.
+    BoundDataDependentExtents().apply_pass(sdfg, {})
     apply_gpu_storage(sdfg)
     # One validation for the whole offload, after the last step, instead of one per step.
     # Its own ``simplify`` would validate: simplified here instead, without validation.
@@ -896,90 +886,7 @@ def assert_no_nested_parallel_maps(sdfg: SDFG, device: dtypes.DeviceType) -> Non
                 )
 
 
-def explicit_accumulating_copies(sdfg: SDFG) -> None:
-    """Turn every accumulating access-node-to-access-node copy into a tasklet or a map, in place.
-
-    ``InsertExplicitCopies`` leaves an accumulating copy implicit, since it is a reduction rather than a copy,
-    and the generator then emits ``dace::CopyND::Accumulate``, which a standalone unit cannot name (icon_scatter,
-    seissol_tensor_contraction, spmm). One element becomes one accumulating tasklet; more become a map over the
-    copied elements, each iteration accumulating into its own element, which the generator lowers like any WCR.
-    An omitted side of the memlet is the whole array on that side, as in copy-edge codegen.
-
-    :param sdfg: the SDFG to rewrite, nested SDFGs included.
-    """
-    for nested in sdfg.all_sdfgs_recursive():
-        for state in nested.states():
-            for edge in list(state.edges()):
-                wcr = edge.data.wcr
-                if (
-                    wcr is None
-                    or not isinstance(edge.src, nodes.AccessNode)
-                    or not isinstance(edge.dst, nodes.AccessNode)
-                ):
-                    continue
-                source = edge.data.get_src_subset(edge, state) or subsets.Range.from_array(edge.src.desc(nested))
-                target = edge.data.get_dst_subset(edge, state) or subsets.Range.from_array(edge.dst.desc(nested))
-                if source.num_elements_exact() == 1 and target.num_elements_exact() == 1:
-                    # A Scalar end has no index a map could use.
-                    tasklet = state.add_tasklet("accumulate", {"__inp": None}, {"__out": None}, "__out = __inp")
-                    state.add_edge(edge.src, edge.src_conn, tasklet, "__inp", Memlet(data=edge.src.data, subset=source))
-                    state.add_edge(
-                        tasklet, "__out", edge.dst, edge.dst_conn, Memlet(data=edge.dst.data, subset=target, wcr=wcr)
-                    )
-                    state.remove_edge(edge)
-                elif memlet_utils.can_memlet_be_turned_into_a_map(edge, state, nested):
-                    _, map_exit = memlet_utils.memlet_to_map(edge, state, nested)
-                    for written in state.in_edges(map_exit) + state.out_edges(map_exit):
-                        written.data.wcr = wcr
-
-
-def pin_span_copies(sdfg: SDFG) -> int:
-    """Pin every strided host/device copy whose span may be moved whole to ``MemcpyCUDAHull``.
-
-    One ``gpuMemcpyAsync`` of the span from a region's first element to its last overwrites the destination between
-    the rows, so the copy-node selector never picks it; this proves where nothing reads those elements
-    (:func:`~dace.libraries.standard.nodes.copy.common.hull_copy_is_safe`: same layout on both sides, a transient
-    destination read only inside the region, a span at most twice the region). The strided copy edges are lifted to
-    copy nodes here for that, as codegen would lift them; a copy the proof rejects keeps the selector's choice
-    (``MemcpyCUDAStaged`` for a loop of calls).
-
-    :param sdfg: an offloaded SDFG, nested SDFGs included.
-    :returns: how many copies were pinned.
-    """
-    from dace.libraries.standard.nodes.copy import CopyLibraryNode
-    from dace.libraries.standard.nodes.copy.common import _is_cross_cpu_gpu, hull_copy_is_safe
-    from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies, _derive_matching_dst_subset
-
-    gpu = dtypes.StorageType.GPU_Global
-
-    def strided_transfer(state: SDFGState, edge) -> bool:
-        src, dst = edge.src.desc(state.sdfg), edge.dst.desc(state.sdfg)
-        if (src.storage == gpu) == (dst.storage == gpu):
-            return False
-        src_subset, dst_subset = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
-        if src_subset is None and dst_subset is None:
-            return False
-        # An omitted side is the other side's region over its own array, as copy lifting reads it
-        src_subset = src_subset or _derive_matching_dst_subset(dst_subset, src)
-        dst_subset = dst_subset or _derive_matching_dst_subset(src_subset, dst)
-        return not (src_subset.is_contiguous_subset(src) and dst_subset.is_contiguous_subset(dst))
-
-    InsertExplicitCopies(only=strided_transfer).apply_pass(sdfg, {})
-    pinned = 0
-    for node, state in sdfg.all_nodes_recursive():
-        if not isinstance(node, CopyLibraryNode) or node.implementation not in (None, "Auto"):
-            continue
-        if not _is_cross_cpu_gpu(node.src_storage(state), node.dst_storage(state), node, state):
-            continue
-        if hull_copy_is_safe(node, state):
-            node.implementation = "MemcpyCUDAHull"
-            pinned += 1
-    return pinned
-
-
-def finalize_for_target(
-    sdfg: SDFG, target: str = "cpu", validate: bool = False, break_anti_dependence: bool = True
-) -> SDFG:
+def finalize_for_target(sdfg: SDFG, target: str = "cpu", validate: bool = False) -> SDFG:
     """Apply the performance finalization tail to a canonicalized ``sdfg``.
 
     Selects fast library implementations (leaving the nodes un-expanded for
@@ -995,9 +902,6 @@ def finalize_for_target(
     :param sdfg: A canonicalized SDFG; for ``target='gpu'``, an offloaded one.
     :param target: ``'cpu'`` or ``'gpu'`` (selects the fast-library priority).
     :param validate: Validate the SDFG once at the end.
-    :param break_anti_dependence: Forwarded to the CPU specialization stage: chunk the
-                                  anti-dependence snapshots canonicalization left behind. Pass
-                                  ``False`` when canonicalization did not break anti dependences.
     :returns: The same ``sdfg`` instance, finalized.
     :raises ValueError: If ``target='gpu'`` and ``sdfg`` was never offloaded.
     """
@@ -1005,14 +909,14 @@ def finalize_for_target(
         raise ValueError(f"target must be one of {sorted(TARGET_DEVICE)}; got {target!r}")
     device = TARGET_DEVICE[target]
     with equalized(sdfg):
-        finalize_stages(sdfg, device, break_anti_dependence)
+        finalize_stages(sdfg, device)
     if validate:
         assert_no_nested_parallel_maps(sdfg, device)
         sdfg.validate()
     return sdfg
 
 
-def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence: bool) -> None:
+def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     """The stages of :func:`finalize_for_target`, for the ``device`` it resolved."""
     # Offload is NOT part of this tail: the caller runs it, so passes can be inserted between
     # canonicalization and the device move (see :func:`offload_to_gpu`). Everything below still
@@ -1034,6 +938,8 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
         # pinned ``Sequential`` for good, and a demoted level map's plane maps must be inferred top-level.
         demote_strided_level_maps(sdfg)
         release_one_trip_maps(sdfg)
+        # A sequential loop over maps of one lane axis becomes one parallel map over it, the loop inside
+        InterchangeLoopsIntoLaneMaps().apply_pass(sdfg, {})
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     # Canonicalization stops at the maximally parallel form, so the target's specialization stage
@@ -1046,7 +952,7 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
     if device == dtypes.DeviceType.GPU:
         gpu_specialize_offloaded(sdfg)
     else:
-        cpu_specialize(sdfg, break_anti_dependence=break_anti_dependence, validate=False)
+        cpu_specialize(sdfg, validate=False)
 
     # ``X = X + T`` onto the contraction writing ``T``: once on the lifted nodes, once on the BLAS nodes the
     # selection specializes them to, before either expands to a call.
@@ -1055,25 +961,21 @@ def finalize_stages(sdfg: SDFG, device: dtypes.DeviceType, break_anti_dependence
     canonicalize_set_fast_implementations(sdfg, device)
     BetaFold().apply_pass(sdfg, {})
     refuse_silent_pure(sdfg, device)
-    if device == dtypes.DeviceType.GPU:
-        pin_span_copies(sdfg)
     # Select the fast implementation per library node but DO NOT expand here: a library
     # node is expanded exactly once, at codegen (``compile()`` auto-expands using the
     # ``implementation`` chosen above). Expanding in canonicalization would re-introduce
     # the per-implementation shapes (BLAS scratch, reduction accumulators) into a form the
     # rest of the toolchain must then re-canonicalize; keeping one shape per computation
     # until codegen is the invariant every downstream pass relies on.
-    if device == dtypes.DeviceType.CPU:
-        # shortcut: host only, as a map made here over GPU memory would be scheduled on the host; CPF's own
-        # call covers the device dialects.
-        explicit_accumulating_copies(sdfg)
     infer_types.infer_connector_types(sdfg)
     # Before storage is decided: one map-local name shared across states is otherwise one SDFG-wide buffer
     # the threads of a parallel map share.
     SplitMapLocalTransients().apply_pass(sdfg, {})
     finalize_transient_storage(sdfg, device)
-    # Once storage and lifetimes are final, and before the parallel-region hoist reads dependences by name.
-    TransientReuse().apply_pass(sdfg, {})
+    # Once storage and lifetimes are final, and before the parallel-region hoist reads dependences by name. On GPU
+    # it runs in GPUCodegenPreprocessPipeline instead, after MoveArrayOutOfKernel lifts kernel arrays.
+    if device == dtypes.DeviceType.CPU:
+        MinimizeTransients().apply_pass(sdfg, {})
 
     # Open the OpenMP team once per sequential loop rather than once per trip. It runs HERE, at the
     # very end, and not in the ``cpu_specialize`` band, because the step above is what decides which

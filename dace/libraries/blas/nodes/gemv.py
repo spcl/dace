@@ -9,6 +9,7 @@ import dace.sdfg.nodes
 from dace import memlet as mm
 from dace import properties, symbolic
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments, gpu_dialect
 from dace.libraries.blas.nodes.gemm import _cast_to_dtype_str, _is_complex
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
@@ -192,43 +193,35 @@ class ExpandGemvGPUBLAS(ExpandTransformation):
             warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
         # Use the vendor's type name for both the coefficients and the operands. The connectors are
-        # dace::complex128 pointers, which do not convert to cuDoubleComplex* or rocblas_double_complex*.
+        # dace::complex128 pointers, which do not convert to cuDoubleComplex*.
         ctype = cls.dialect.ctype(ctype)
         scal_func = func + "scal"
         func += "gemv"
         call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ""
 
-        # Handle alpha / beta
-        constants = {
-            1.0: f"__state->{cls.dialect.handle_field}.Constants().{runtimetype}Pone()",
-            0.0: f"__state->{cls.dialect.handle_field}.Constants().{runtimetype}Zero()",
-        }
-        if node.alpha not in constants or node.beta not in constants:
-            # Deal with complex input constants
-            if isinstance(node.alpha, complex):
-                alpha = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
-            else:
-                alpha = f"{dtype.ctype}({node.alpha})"
-            if isinstance(node.beta, complex):
-                beta = f"{dtype.ctype}({node.beta.real}, {node.beta.imag})"
-            else:
-                beta = f"{dtype.ctype}({node.beta})"
-
-            # Set pointer mode to host
-            call_prefix += f"""{cls.dialect.check_error}(
-            {cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_host}));
-            {dtype.ctype} alpha = {alpha};
-            {dtype.ctype} beta = {beta};
-            """
-            call_suffix += f"""
-{cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
-            """
-            alpha = f"({ctype} *)&alpha"
-            beta = f"({ctype} *)&beta"
+        # Alpha and beta go in as host values, under host pointer mode for this call: under device mode rocBLAS
+        # copies both back to the host (a synchronizing copy each) to test for a quick return.
+        if isinstance(node.alpha, complex):
+            alpha = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
         else:
-            alpha = constants[node.alpha]
-            beta = constants[node.beta]
+            alpha = f"{dtype.ctype}({node.alpha})"
+        if isinstance(node.beta, complex):
+            beta = f"{dtype.ctype}({node.beta.real}, {node.beta.imag})"
+        else:
+            beta = f"{dtype.ctype}({node.beta})"
+
+        # Set pointer mode to host
+        call_prefix += f"""{cls.dialect.check_error}(
+        {cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_host}));
+        {dtype.ctype} alpha = {alpha};
+        {dtype.ctype} beta = {beta};
+        """
+        call_suffix += f"""
+{cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
+        """
+        alpha = f"({ctype} *)&alpha"
+        beta = f"({ctype} *)&beta"
 
         call = f"""
 {cls.dialect.check_error}({cls.dialect.routine(func)}({cls.dialect.handle}, {trans}, {symbolic.symstr(m)}, {symbolic.symstr(n)}, {alpha}, ({ctype} *)_A, {symbolic.symstr(lda)},
@@ -421,10 +414,7 @@ class ExpandGemvCuBLAS(ExpandGemvGPUBLAS):
     dialect = gpu_dialect.CUBLAS
 
 
-@dace.library.expansion
-class ExpandGemvRocBLAS(ExpandGemvGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    dialect = gpu_dialect.ROCBLAS
+ExpandGemvHipBLAS = hip_dialect.hip_expansion(ExpandGemvCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
 
 
 @dace.library.node
@@ -435,7 +425,8 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGemvOpenBLAS,
         "MKL": ExpandGemvMKL,
         "cuBLAS": ExpandGemvCuBLAS,
-        "rocBLAS": ExpandGemvRocBLAS,
+        "hipBLAS": ExpandGemvHipBLAS,
+        "rocBLAS": ExpandGemvHipBLAS,
         "PBLAS": ExpandGemvPBLAS,
     }
     default_implementation = None

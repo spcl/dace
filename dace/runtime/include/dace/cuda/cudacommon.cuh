@@ -183,6 +183,7 @@ static inline gpuError_t request_dynamic_shared_memory(const void *kernel,
         "thread-block: %s (%d).\n",
         kernel_name, bytes, device, max_bytes, gpuGetErrorString(err),
         (int)err);
+    fflush(stdout);
   }
   return err;
 }

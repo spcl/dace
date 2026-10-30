@@ -177,12 +177,15 @@ def parse_diff(diff_output: str) -> dict[str, tuple[bool, set[int]]]:
 
 def collect_diff_ranges(file_args: list[str], ref: str | None) -> dict[str, tuple[bool, set[int]]]:
     diff_target = [ref] if ref else ["--cached"]
-    command = ["git", "diff", *diff_target, "-U0", "--", *file_args]
+    # Over the whole diff, not the checked paths: rename detection needs the old path in view, and a moved
+    # file then shows only the lines the move changed.
+    command = ["git", "diff", *diff_target, "-M", "-U0"]
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         print(f"warning: git diff failed: {result.stderr.strip()}", file=sys.stderr)
         return {}
-    return parse_diff(result.stdout)
+    checked = {Path(f).as_posix() for f in file_args}
+    return {path: lines for path, lines in parse_diff(result.stdout).items() if path in checked}
 
 
 def build_parser() -> argparse.ArgumentParser:

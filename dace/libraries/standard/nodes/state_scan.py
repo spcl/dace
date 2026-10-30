@@ -334,7 +334,7 @@ def nest(
 ) -> None:
     """``inner`` under a map over ``ranges``, reading and writing whole containers of ``sdfg``."""
     entry, leave = state.add_map(inner.name, ranges, schedule=schedule)
-    if schedule in dtypes.ALL_GPU_SCHEDULES:
+    if schedule == dtypes.ScheduleType.GPU_Device:
         # one thread per map point; a single-point map gets one thread
         entry.map.gpu_block_size = [GPU_BLOCK_THREADS if ranges != {"__unit": "0:1"} else 1, 1, 1]
     mapping = {name: name for name in inner.free_symbols if name not in inner.arrays}
@@ -366,6 +366,9 @@ def scan_sdfg(node: "StateScan", state: dace.SDFGState, outer: SDFG, schedule: d
     declare_operands(node, sdfg, outer, state)
     on_gpu = schedule in dtypes.ALL_GPU_SCHEDULES
     storage = dtypes.StorageType.GPU_Global if on_gpu else dtypes.StorageType.CPU_Heap
+    if schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+        # one block runs the whole scan: its scratch is the block's
+        storage = dtypes.StorageType.GPU_Shared
     single = schedule if on_gpu else dtypes.ScheduleType.Sequential
     dtype = sdfg.arrays[OUT_CONNECTOR].dtype
     # flat and one element longer than needed: a container of one element reaches a tasklet as a scalar, not an array
@@ -473,11 +476,42 @@ class ExpandCUDA(ExpandTransformation):
         return scan_sdfg(node, state, sdfg, dtypes.ScheduleType.GPU_Device)
 
 
+def block_chunks(node: "StateScan") -> int | None:
+    """How many chunks one block of :data:`BLOCK_COLLECTIVE_THREADS` lanes scans in: one lane per chunk and start
+    state (FINITE), or one per chunk (GF2-affine); ``None`` for a FINITE scan whose state count is not a literal."""
+    from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
+
+    if node.kind is StateScanKind.GF2_AFFINE:
+        return BLOCK_COLLECTIVE_THREADS
+    count = symbolic.pystr_to_symbolic(node.count)
+    if not count.is_Integer or not 0 < int(count) <= BLOCK_COLLECTIVE_THREADS:
+        return None
+    return BLOCK_COLLECTIVE_THREADS // int(count)
+
+
+@library.expansion
+class ExpandCUDABlock(ExpandTransformation):
+    """One thread BLOCK scans inside a kernel: the chunk maps across its lanes, the scratch in shared memory."""
+
+    environments: list[type] = []
+    runs_inside_kernel = True
+
+    @staticmethod
+    def expansion(node: "StateScan", state: dace.SDFGState, sdfg: SDFG) -> SDFG:
+        chunks = block_chunks(node)
+        if chunks is None:
+            raise NotImplementedError(f"StateScan(CUDA (block)): {node.count} states do not fit one block")
+        # the node is replaced by its expansion, so the chunking is its own to change
+        node.chunks = chunks
+        return scan_sdfg(node, state, sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
+
+
 @library.expansion
 class ExpandPure(ExpandTransformation):
     """Sequential maps, for consumers that read the SDFG."""
 
     environments: list[type] = []
+    runs_inside_kernel = True
 
     @staticmethod
     def expansion(node: "StateScan", state: dace.SDFGState, sdfg: SDFG) -> SDFG:
@@ -486,9 +520,10 @@ class ExpandPure(ExpandTransformation):
 
 @library.expansion
 class ExpandAuto(ExpandTransformation):
-    """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule."""
+    """Picks ``CPU``, ``CUDA`` or ``pure`` from the node's schedule: inside a kernel, ``pure``, which each thread runs."""
 
     environments: list[type] = []
+    runs_inside_kernel = True
 
     @staticmethod
     def expansion(node: "StateScan", state: dace.SDFGState, sdfg: SDFG):
@@ -517,7 +552,13 @@ class StateScan(nodes.LibraryNode):
     bits = Property(dtype=int, default=64, desc="GF2_AFFINE: the width of the state, at most 64.")
     chunks = SymbolicProperty(default=256, desc="How many blocks the iterations are cut into.")
 
-    implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "pure": ExpandPure, "Auto": ExpandAuto}
+    implementations = {
+        "CPU": ExpandCPU,
+        "CUDA": ExpandCUDA,
+        "CUDA (block)": ExpandCUDABlock,
+        "pure": ExpandPure,
+        "Auto": ExpandAuto,
+    }
     default_implementation = "Auto"
 
     def __init__(self, name: str = "StateScan", tables: tuple[str, ...] = (), *args, **kwargs):

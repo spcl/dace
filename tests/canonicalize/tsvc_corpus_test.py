@@ -7,8 +7,7 @@ examples live in the other ``tests/canonicalize/*`` files; here we import
 *every* kernel, checking it against the kernel's plain-numpy reference in
 :mod:`tests.corpus.tsvc_numpy` (the scalar oracle).
 
-Corpus default (user-specified): best-effort loop peeling ``peel_limit=4`` plus
-anti-dependence breaking ``break_anti_dependence=True``. The transform input is
+Corpus default (user-specified): best-effort loop peeling ``peel_limit=4``. The transform input is
 exercised at **both** ``simplify=False`` and ``simplify=True``. A recurrence kernel
 that canonicalize wrongly parallelized, or an anti-dependence it broke unsafely,
 diverges from the numpy reference. Comparison always treats matching
@@ -26,7 +25,6 @@ from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
 _PEEL_LIMIT = 4
-_BREAK_ANTI_DEP = True
 _TOL = 1e-9
 
 #: Kernels read out of bounds *as written* at the corpus lengths (genuine
@@ -59,7 +57,7 @@ def test_canonicalize_corpus_value_preserving(kernel, request):
 
     cand = tsvc.to_sdfg(kernel, request.node.name, simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
-        canonicalize(cand, validate=True, peel_limit=_PEEL_LIMIT, break_anti_dependence=_BREAK_ANTI_DEP)
+        canonicalize(cand, validate=True, peel_limit=_PEEL_LIMIT)
     got = {n: a.copy() for n, a in arrays.items()}
     with contextlib.redirect_stdout(io.StringIO()):
         cand.compile()(**got, **call_kwargs)

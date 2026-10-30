@@ -6,6 +6,7 @@ import copy
 import ctypes
 import functools
 import gzip
+import importlib.metadata
 import json
 import os
 import pathlib
@@ -60,12 +61,11 @@ from dace.sdfg.graph import (
     copy_edge_index,
     copy_graph_field,
     copy_node_index,
-    frozen_node_ids,
     generate_element_id,
 )
 from dace.sdfg.replace import replace_properties_dict, symbolic_replacements
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg.symbol_repo import SymbolRepo, bound_names, scope_owners
+from dace.sdfg.symbol_repo import SymbolRepo, bound_names, scope_from_json, scope_owners
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
@@ -239,37 +239,45 @@ def interstate_bound_names(sdfg: "SDFG") -> set[str]:
     return {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
 
 
-#: SDFG -> its ``facts()``, while :func:`memoize_facts` is active; ``None`` otherwise.
-_FACTS_MEMO: dict["SDFG", symbolic.Facts] | None = None
+def root_sdfg(anchor: Any) -> "SDFG":
+    """The outermost SDFG holding ``anchor``, an SDFG or a block of one."""
+    sdfg = anchor if isinstance(anchor, SDFG) else anchor.sdfg
+    while sdfg.parent_sdfg is not None:
+        sdfg = sdfg.parent_sdfg
+    return sdfg
 
 
 @contextlib.contextmanager
-def memoize_facts(active: bool = True) -> Iterator[None]:
-    """Compute ``SDFG.facts()`` once per SDFG inside the block, or, with ``active=False``, suspend an enclosing memo.
+def memoize_facts(anchor: Any, active: bool = True) -> Iterator[None]:
+    """Compute ``SDFG.facts()`` once per SDFG of ``anchor``'s SDFG tree inside the block, or, with ``active=False``,
+    suspend an enclosing memo. The memo lives on the root SDFG.
 
     ``facts()`` walks every interstate edge and data descriptor of the SDFG, so a span probing one graph many times
     pays it once per SDFG. The caller owns invalidation: it drops every SDFG it changes with :func:`forget_facts`,
     and suspends the memo while a change is under way.
     """
-    global _FACTS_MEMO
-    enclosing = _FACTS_MEMO
-    _FACTS_MEMO = {} if active else None
+    root = root_sdfg(anchor)
+    enclosing = root._facts_memo
+    root._facts_memo = {} if active else None
     try:
         yield
     finally:
-        _FACTS_MEMO = enclosing
+        root._facts_memo = enclosing
 
 
 def forget_facts(sdfg: "SDFG") -> None:
     """Drop the memoized facts of ``sdfg``, after a change to its symbols, data descriptors or interstate edges."""
-    if _FACTS_MEMO is not None:
-        _FACTS_MEMO.pop(sdfg, None)
+    memo = root_sdfg(sdfg)._facts_memo
+    if memo is not None:
+        memo.pop(sdfg, None)
 
 
-def forget_all_facts() -> None:
-    """Drop every memoized fact, after a change whose reach over the SDFG tree the caller does not track."""
-    if _FACTS_MEMO is not None:
-        _FACTS_MEMO.clear()
+def forget_all_facts(anchor: Any) -> None:
+    """Drop every memoized fact of ``anchor``'s SDFG tree, after a change whose reach over the tree the caller does
+    not track."""
+    memo = root_sdfg(anchor)._facts_memo
+    if memo is not None:
+        memo.clear()
 
 
 def _replace_dict_keys(d, renames: Mapping) -> None:
@@ -906,6 +914,12 @@ class SDFG(ControlFlowRegion):
         self._parent = parent
         self._symbol_repo = SymbolRepo()
         self._bound_names: tuple[frozenset[str], frozenset[str]] | None = None
+        #: Per-state ``(len(symbols), defined_symbols())`` of one ``expand_library_nodes`` sweep; ``None`` outside it
+        self._expansion_symbols: dict[SDFGState, tuple[int, dict[str, dt.Data]]] | None = None
+        #: The ``CanonStats`` recording a ``canonicalize(stats=...)`` run of this root SDFG; ``None`` otherwise
+        self._canon_stats = None
+        #: SDFG of this tree -> its ``facts()``, while :func:`memoize_facts` is active on this root; ``None`` otherwise
+        self._facts_memo: dict[SDFG, symbolic.Facts] | None = None
         # Symbols ``add_datadesc`` declared because a shape names them; a scope that binds one later takes it over
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
@@ -951,6 +965,9 @@ class SDFG(ControlFlowRegion):
                 "guid",
                 "_symbol_repo",
             ):
+                continue
+            if k in ("_expansion_symbols", "_canon_stats", "_facts_memo"):
+                setattr(result, k, None)
                 continue
             setattr(result, k, copy_graph_field(self, k, v, memo))
         # Copy edges and nodes
@@ -1058,7 +1075,7 @@ class SDFG(ControlFlowRegion):
         # (e.g. interstate-edge conditions/assignments) emit a deterministic dtype.
         # Each nested SDFG re-pushes its own symbols, and the previous authority is
         # restored on exit.
-        with symbolic.serialization_symbol_dtypes(self.symbols), frozen_node_ids():
+        with symbolic.serialization_symbol_dtypes(self.symbols):
             tmp = super().to_json()
         tmp["attributes"]["symbol_repo"] = self._symbol_repo.to_json(self)
         if is_root:
@@ -1121,18 +1138,21 @@ class SDFG(ControlFlowRegion):
             ret, json_obj, context=context, ignore_properties={"constants_prop", "name", "hash"}
         )
 
+        # The blocks parse their expressions under the symbols ``to_json`` wrote them under: ``s / 2`` of a
+        # float ``s`` read as an integer one is a floor division. The repository needs the blocks, so it follows.
         nodelist = []
-        for n in nodes:
-            nci = copy.copy(context)
-            nci["sdfg"] = ret
+        with symbolic.serialization_symbol_dtypes(scope_from_json(repo_json["params"], context).types):
+            for n in nodes:
+                nci = copy.copy(context)
+                nci["sdfg"] = ret
 
-            block = dace.serialize.from_json(n, context=nci)
-            ret.add_node(block)
-            nodelist.append(block)
+                block = dace.serialize.from_json(n, context=nci)
+                ret.add_node(block)
+                nodelist.append(block)
 
-        for e in edges:
-            e = dace.serialize.from_json(e, context=context)
-            ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
+            for e in edges:
+                e = dace.serialize.from_json(e, context=context)
+                ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
         if json_obj.get("start_block") is not None:
             # An INDEX into the node list, which is what ``to_json`` wrote and what the getter
@@ -1433,21 +1453,26 @@ class SDFG(ControlFlowRegion):
         """The facts assumed of the contents of container ``name`` when the program is called."""
         return self._symbol_repo.data_facts(name)
 
-    def facts(self) -> symbolic.Facts:
+    def facts(self, assigned: AbstractSet[str] | None = None) -> symbolic.Facts:
         """The facts assumed about this SDFG's symbols, and that a symbol a data descriptor's dimension is a positive
         multiple of (``N``, ``2 * N``) is nonnegative, for explicit use in proofs. What is assumed of a symbol holds
-        for its value on entry only, so nothing is assumed of one an interstate edge assigns."""
-        if _FACTS_MEMO is None:
-            return self.derive_facts()
-        facts = _FACTS_MEMO.get(self)
+        for its value on entry only, so nothing is assumed of one an interstate edge assigns.
+
+        :param assigned: ``interstate_bound_names(self)``, when the caller keeps it up to date; walked otherwise.
+        """
+        memo = root_sdfg(self)._facts_memo
+        if memo is None:
+            return self.derive_facts(assigned)
+        facts = memo.get(self)
         if facts is None:
-            facts = _FACTS_MEMO[self] = self.derive_facts()
+            facts = memo[self] = self.derive_facts(assigned)
         return facts
 
-    def derive_facts(self) -> symbolic.Facts:
+    def derive_facts(self, assigned: AbstractSet[str] | None = None) -> symbolic.Facts:
         """``facts()``, computed from the graph regardless of an active :func:`memoize_facts`."""
         own = self._symbol_repo.facts()
-        assigned = interstate_bound_names(self)
+        if assigned is None:
+            assigned = interstate_bound_names(self)
         if assigned:
             own = symbolic.Facts(
                 [relation for relation in own.relations if not symbolic.relation_names(relation) & assigned],
@@ -1459,17 +1484,11 @@ class SDFG(ControlFlowRegion):
         declared = self._symbol_repo.params.types
         extents = sorted(
             {
-                base.name
+                name
                 for desc in self._arrays.values()
-                for dim in getattr(desc, "shape", ())
-                if symbolic.issymbolic(dim)
-                for coefficient, base in [dim.as_coeff_Mul()]
-                # An undefined symbol is a placeholder with no facts
-                if coefficient.is_positive
-                and isinstance(base, symbolic.symbol)
-                and not isinstance(base, symbolic.UndefinedSymbol)
-                and base.name in declared
-                and base.name not in assigned
+                if isinstance(desc, dt.Data)
+                for name in desc.scaled_symbols()
+                if name in declared and name not in assigned
             }
         )
         if not extents:
@@ -3330,13 +3349,17 @@ class SDFG(ControlFlowRegion):
         stats = {} if stats is None else stats
         stats.update(codegen_seconds=0.0, compile_seconds=0.0, load_seconds=0.0, cached=False)
 
-        if Config.get("compiler", "alloy", "mode") != "off":
-            # Alloy builds each scope's variants and compiles the program linking every scope's pick
-            from alloy import dace_backend
-
-            return dace_backend.compile(
-                self, output_file=output_file, validate=validate, return_program_handle=return_program_handle
-            )
+        plugin = Config.get("compiler", "build_plugin")
+        if plugin:
+            # An installed package builds the program its own way (config ``compiler.build_plugin``)
+            entries = importlib.metadata.entry_points(group="dace.build_plugins", name=plugin)
+            if not entries:
+                raise ValueError(
+                    f"compiler.build_plugin = {plugin!r}: no installed package registers it under "
+                    "the dace.build_plugins entry point group"
+                )
+            build = next(iter(entries)).load()
+            return build(self, output_file=output_file, validate=validate, return_program_handle=return_program_handle)
 
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
@@ -3856,14 +3879,14 @@ class SDFG(ControlFlowRegion):
                           stage). Nested SDFGs are still descended into either way.
         """
 
-        from dace.sdfg.state import EXPANSION_DEFINED_SYMBOLS
-
-        token = EXPANSION_DEFINED_SYMBOLS.set({}) if EXPANSION_DEFINED_SYMBOLS.get() is None else None
+        outermost = self._expansion_symbols is None
+        if outermost:
+            self._expansion_symbols = {}
         try:
             self._expand_library_nodes(recursive, predicate)
         finally:
-            if token is not None:
-                EXPANSION_DEFINED_SYMBOLS.reset(token)
+            if outermost:
+                self._expansion_symbols = None
 
     def _expand_library_nodes(self, recursive: bool, predicate: Callable[[nd.LibraryNode], bool] | None) -> None:
         states = list(self.states())

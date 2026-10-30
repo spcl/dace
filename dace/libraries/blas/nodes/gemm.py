@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import itertools
+import math
 import warnings
 from copy import deepcopy as dc
 from typing import Any
@@ -12,6 +13,7 @@ from dace import SDFG, SDFGState, dtypes, properties
 from dace import data as dt
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
 from dace.libraries.blas.blas_helpers import (
     check_access,
@@ -88,7 +90,7 @@ def _host_coeff(
 
     A wired runtime host scalar is read by value and composed multiplicatively with the compile-time
     ``prop`` (the identity in the usual runtime case); otherwise ``prop`` is inlined (the existing
-    behavior). cuBLAS/rocBLAS always dereference the coefficient through a pointer, so the value is
+    behavior). cuBLAS always dereferences the coefficient through a pointer, so the value is
     materialized into a host local and its address is passed.
 
     :param var: Name of the host local to declare (for example ``__alpha``).
@@ -410,14 +412,68 @@ class ExpandGemmPure(ExpandTransformation):
         return ExpandGemmPure.make_sdfg(node, state, sdfg)
 
 
+def block_tiled_gemm_code(
+    ctypes: tuple[str, str, str], extents: tuple[str, str, str], at: tuple[str, str, str], result: str, lanes: int
+) -> str:
+    """C++ for ``C = result(sum_k A[i, k] * B[k, j])`` by one block of ``lanes`` threads, a square number: square
+    tiles of A and B staged through shared memory, one element of C per lane and tile.
+
+    :param ctypes: The C types of A, B and the accumulator.
+    :param extents: ``M``, ``N`` and ``K`` as C++.
+    :param at: The offsets of ``A[__gi, __bri]``, ``B[__bri, __gj]`` and ``C[__gi, __gj]`` as C++, over the
+               pointers ``__a``, ``__b`` and ``__c``.
+    :param result: The value stored to C, over the accumulator ``__gacc``.
+    """
+    tile = math.isqrt(lanes)
+    if tile * tile != lanes:
+        raise ValueError(f"A tiled block GEMM needs a square lane count, not {lanes}")
+    (ctype_a, ctype_b, ctype), (m, n, k), (a_at, b_at, c_at) = ctypes, extents, at
+    pitch = tile + 1
+    stage = []
+    for name, elem in (("a", ctype_a), ("b", ctype_b)):
+        stage.append(
+            f"alignas({elem}) __shared__ unsigned char __gs{name}_raw[{tile * pitch} * sizeof({elem})];\n"
+            f"{elem} *__gs{name} = reinterpret_cast<{elem} *>(__gs{name}_raw);"
+        )
+    staged = "\n".join(stage)
+    return f"""{{
+{staged}
+const long __gm = (long)({m}), __gn = (long)({n}), __gk = (long)({k});
+const long __gtx = (long)threadIdx.x % {tile}, __gty = (long)threadIdx.x / {tile};
+for (long __gti = 0; __gti < __gm; __gti += {tile}) {{
+    for (long __gtj = 0; __gtj < __gn; __gtj += {tile}) {{
+        const long __gi = __gti + __gty, __gj = __gtj + __gtx;
+        {ctype} __gacc = static_cast<{ctype}>(0);
+        for (long __gtk = 0; __gtk < __gk; __gtk += {tile}) {{
+            {{
+                const long __bri = __gtk + __gtx;
+                __gsa[__gty * {pitch} + __gtx] = (__gi < __gm && __bri < __gk) ? __a[{a_at}] : static_cast<{ctype_a}>(0);
+            }}
+            {{
+                const long __bri = __gtk + __gty;
+                __gsb[__gty * {pitch} + __gtx] = (__bri < __gk && __gj < __gn) ? __b[{b_at}] : static_cast<{ctype_b}>(0);
+            }}
+            __syncthreads();
+            for (long __gkk = 0; __gkk < {tile}; ++__gkk) {{
+                __gacc = __gacc + __gsa[__gty * {pitch} + __gkk] * __gsb[__gkk * {pitch} + __gtx];
+            }}
+            __syncthreads();
+        }}
+        if (__gi < __gm && __gj < __gn) __c[{c_at}] = {result};
+    }}
+}}
+}}"""
+
+
 @dace.library.expansion
 class ExpandGemmCUDABlock(ExpandTransformation):
-    """In-kernel GEMM by ONE thread block: each element of C is one ``gpucub::BlockReduce`` over K.
+    """In-kernel GEMM by ONE thread block, chosen at run time by shape.
 
-    CUB has no GEMM, and the device-wide vendor call cannot be issued from inside a kernel, so the
-    block walks C and folds each dot product along K with the collective the in-kernel ``Reduce``
-    and ``Dot`` use (:func:`block_reduce_code`). A broadcast C or a runtime coefficient takes the
-    ``pure`` expansion instead: slower, never wrong.
+    CUB has no GEMM, and the device-wide vendor call cannot be issued from inside a kernel. When C has more
+    elements than its square tiles have steps along K, the block computes C in square shared-memory tiles, one
+    element per lane (:func:`block_tiled_gemm_code`); otherwise (a long K under a small C) each element of C is
+    one ``gpucub::BlockReduce`` over K (:func:`block_reduce_code`). A broadcast C or a runtime coefficient takes
+    the ``pure`` expansion instead: slower, never wrong.
     """
 
     runs_inside_kernel = True
@@ -459,9 +515,16 @@ class ExpandGemmCUDABlock(ExpandTransformation):
         a_at = element(strides_a, "__gi", "__bri", node.transA)
         b_at = element(strides_b, "__bri", "__gj", node.transB)
         c_at = element(strides_c, "__gi", "__gj", False)
-        result = "__gacc" if equal_valued(1, node.alpha) else f"{_cast_to_dtype_str(node.alpha, desc_c.dtype)} * __gacc"
+
+        def coefficient(value) -> str:
+            if _is_complex(desc_c.dtype):
+                value = complex(value)
+                return f"{ctype}({value.real}, {value.imag})"
+            return f"static_cast<{ctype}>({value})"
+
+        result = "__gacc" if equal_valued(1, node.alpha) else f"{coefficient(node.alpha)} * __gacc"
         if not equal_valued(0, node.beta):
-            scale = "" if equal_valued(1, node.beta) else f"{_cast_to_dtype_str(node.beta, desc_c.dtype)} * "
+            scale = "" if equal_valued(1, node.beta) else f"{coefficient(node.beta)} * "
             result = f"{result} + {scale}__c[{c_at}]"
         fold = block_reduce_code(
             idstr=global_code_id(parent_sdfg, parent_state, node),
@@ -473,14 +536,26 @@ class ExpandGemmCUDABlock(ExpandTransformation):
             identity=f"static_cast<{ctype}>(0)",
             out_expr="__gacc",
         )
-        code = (
+        per_element = (
             f"{ctype} __gacc;\n"
             f"for (long __gi = 0; __gi < (long)({symstr(M)}); ++__gi) {{\n"
             f"    for (long __gj = 0; __gj < (long)({symstr(N)}); ++__gj) {{\n"
             f"{fold}\n"
             f"        if (threadIdx.x == 0) __c[{c_at}] = {result};\n"
             f"    }}\n"
-            f"}}\n"
+            f"}}"
+        )
+        tiled = block_tiled_gemm_code(
+            (desc_a.dtype.base_type.ctype, desc_b.dtype.base_type.ctype, ctype),
+            (symstr(M), symstr(N), symstr(K)),
+            (a_at, b_at, c_at),
+            result,
+            BLOCK_COLLECTIVE_THREADS,
+        )
+        tile = math.isqrt(BLOCK_COLLECTIVE_THREADS)
+        steps = " * ".join(f"(((long)({symstr(d)}) + {tile - 1}) / {tile})" for d in (M, N, K))
+        code = (
+            f"if ({steps} <= (long)({symstr(M)}) * (long)({symstr(N)})) {{\n{tiled}\n}} else {{\n{per_element}\n}}\n"
             f"__syncthreads();"
         )
 
@@ -825,7 +900,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             if device_mode and host_mode:
                 raise NotImplementedError(
                     "Gemm GPU: alpha and beta runtime scalars must share a memory space (both host or "
-                    "both device); the cuBLAS/rocBLAS pointer mode is handle-wide."
+                    "both device); the cuBLAS pointer mode is handle-wide."
                 )
             if device_mode:
                 call_prefix += f"{cls.set_pointer_mode}({handle}, {cls.pointer_device});\n"
@@ -837,7 +912,9 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 bdecl, beta = _host_coeff("__beta", "_beta", node.beta, beta_desc, arr_prefix, dtype, cdtype)
                 call_prefix += adecl + bdecl
                 call_suffix += f"{cls.set_pointer_mode}({handle}, {cls.pointer_device});"
-        elif node.alpha not in constants or node.beta not in constants:
+        else:
+            # Compile-time coefficients go in as host values, under host pointer mode for this call: under device
+            # mode rocBLAS copies both back to the host (a synchronizing copy each) to test for a quick return.
             # Deal with complex input constants
             if isinstance(node.alpha, complex):
                 alpha = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
@@ -858,9 +935,6 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             {cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_device}));"""
             alpha = f"({cdtype} *)&__alpha"
             beta = f"({cdtype} *)&__beta"
-        else:
-            alpha = constants[node.alpha]
-            beta = constants[node.beta]
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
@@ -926,7 +1000,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
         # header requirement. Tag the tasklet itself.
         tasklet.environments = {env.full_class_path() for env in cls.environments}
 
-        # cuBLAS/rocBLAS read and write C in place through a single pointer, so the expansion is
+        # cuBLAS reads and writes C in place through a single pointer, so the expansion is
         # ALWAYS wrapped in a nested SDFG: a bare tasklet cannot carry `_c` as both an in- and an
         # out-connector (a duplicate-connector error -- which surfaces once the operands are already
         # on the GPU, e.g. after apply_gpu_transformations, so no host staging renames it away).
@@ -1042,36 +1116,7 @@ class ExpandGemmCuBLAS(ExpandGemmGPUBLAS):
         return f"{dtype}gemm"
 
 
-@dace.library.expansion
-class ExpandGemmRocBLAS(ExpandGemmGPUBLAS):
-    environments = [environments.rocblas.rocBLAS]
-    backend = "roc"
-    dtype_backend = "hip"
-
-    @classmethod
-    def complex_ctype(cls, double: bool) -> str:
-        # rocBLAS in C++ declares its complex parameters as rocblas_complex_num<T>. The hip vector
-        # types are a different type there, so rocblas_zgemm rejects a hipDoubleComplex* operand
-        # (measured on ROCm 6.3); every complex GEMM on ROCm failed to compile.
-        return blas_helpers.rocblas_type("cuDoubleComplex" if double else "cuComplex")
-
-    set_pointer_mode = "rocblas_set_pointer_mode"
-    pointer_host = "rocblas_pointer_mode_host"
-    pointer_device = "rocblas_pointer_mode_device"
-    ex_suffix = "_gemm_ex"
-    check_error = "dace::blas::CheckRocblasError"
-
-    @classmethod
-    def backend_op(cls, mode: str) -> str:
-        if mode == "N":
-            return "rocblas_operation_none"
-        elif mode == "T":
-            return "rocblas_operation_transpose"
-        raise ValueError(f"Invalid gemm matrix operation {mode}")
-
-    @classmethod
-    def funcname(cls, dtype: str) -> str:
-        return f"_{dtype.lower()}gemm"
+ExpandGemmHipBLAS = hip_dialect.hip_expansion(ExpandGemmCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
 
 
 @dace.library.expansion
@@ -1131,7 +1176,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "Planned": ExpandGemmPlanned,
         "cuBLAS": ExpandGemmCuBLAS,
         "CUDA (block strided)": ExpandGemmCUDABlock,
-        "rocBLAS": ExpandGemmRocBLAS,
+        "hipBLAS": ExpandGemmHipBLAS,
+        "rocBLAS": ExpandGemmHipBLAS,
         "PBLAS": ExpandGemmPBLAS,
     }
     default_implementation = None

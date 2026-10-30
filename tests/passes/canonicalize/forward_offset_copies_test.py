@@ -61,6 +61,16 @@ def test_a_write_to_the_source_between_keeps_the_copy():
     assert np.allclose(out, expected)
 
 
+def test_a_device_to_host_transfer_is_not_forwarded():
+    """warpx_esirkepov on GPU: a host map reading the host twin of a device array keeps reading the twin."""
+    sdfg = shifted_copy_sdfg(write_between=False)
+    sdfg.arrays["q"].storage = dace.StorageType.GPU_Global
+    sdfg.arrays["t"].storage = dace.StorageType.CPU_Heap
+    assert ForwardOffsetCopies().apply_pass(sdfg, {}) is None
+    assert "t" in sdfg.arrays
+
+
 if __name__ == "__main__":
     test_a_shifted_copy_read_in_a_later_state_reads_its_source()
     test_a_write_to_the_source_between_keeps_the_copy()
+    test_a_device_to_host_transfer_is_not_forwarded()

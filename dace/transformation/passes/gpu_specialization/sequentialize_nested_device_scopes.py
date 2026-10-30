@@ -29,7 +29,7 @@ from dace.transformation import pass_pipeline as ppl
 
 @properties.make_properties
 class SequentializeNestedDeviceScopes(ppl.Pass):
-    """Pin every ``GPU_Device`` scope nested in another device scope to ``Sequential``."""
+    """Pin every ``GPU_Device`` scope, and every ``Default`` map, nested in another device scope to ``Sequential``."""
 
     CATEGORY: str = "Device Specialization"
 
@@ -57,7 +57,9 @@ class SequentializeNestedDeviceScopes(ppl.Pass):
                 schedule = node.schedule
             else:
                 continue
-            if schedule != dtypes.ScheduleType.GPU_Device:
+            # A Default map inside a kernel would infer to a thread-block map, which the kernel's block size does
+            # not cover; what BlockTileKernels did not tile stays sequential
+            if schedule != dtypes.ScheduleType.GPU_Device and not (is_map and schedule == dtypes.ScheduleType.Default):
                 continue
             for scope in get_parent_map_and_loop_scopes(sdfg, node, state):
                 in_device_map = (

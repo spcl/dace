@@ -10,13 +10,18 @@ The parameters that index the reduced container are the ones whose iterations wr
 so they are the ones to share out. This pass moves them to the front of the map and splits the rest off
 into an inner ``Sequential`` map, which is the same iteration space in an order the code generator proves
 conflict-free: the write leaves the outer map indexed by its own parameter, so no atomic is emitted.
+
+When those axes are all SMALL (ICON's ``max_abs_vcfl[blk]`` over a handful of blocks, reduced over levels and
+cells) sharing them out leaves the threads idle, and collapsing them with a reduced axis puts a contended atomic on
+every element. The split is then inverted: the indexing axes become the outer ``Sequential`` loop and the reduced
+axes the inner parallel map, whose write names no parameter of its own and so becomes an OpenMP ``reduction``.
 """
 
 from typing import Any
 
-from dace import SDFG, dtypes, properties
+from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import MapDimShuffle, MapExpansion
 
@@ -25,14 +30,20 @@ def reduction_output_params(state: SDFGState, entry: nodes.MapEntry) -> set[str]
     """The parameters of ``entry`` that index its write-conflict-resolved outputs.
 
     ``None`` when there is nothing to split: no such output, outputs indexed by DIFFERENT parameters
-    (no one order serves them all), or every parameter indexes them (no axis is reduced) or none does
-    (a reduction to one element, which OpenMP's ``reduction`` clause already serves).
+    (no one order serves them all), every parameter indexes them (no axis is reduced) or none does
+    (a reduction to one element, which OpenMP's ``reduction`` clause already serves), or a data-dependent
+    scatter of rows (a dynamic write whose first dimension no parameter indexes, cp2k_trs4's
+    ``sink[x0[i0], t0, t1]``): its parallel axis is the one that scatters, which
+    :class:`RangePrivatizeScatterReductions` serves by rows.
     """
     params = set(entry.map.params)
     indexing: set[str] | None = None
     for edge in state.in_edges(state.exit_node(entry)):
         if edge.data.is_empty() or edge.data.wcr is None:
             continue
+        begin, end, _ = edge.data.subset.ndrange()[0]
+        if edge.data.dynamic and begin != end and not ({str(s) for s in edge.data.subset[0][0].free_symbols} & params):
+            return None
         used = {str(symbol) for symbol in edge.data.subset.free_symbols} & params
         if indexing is not None and used != indexing:
             return None
@@ -78,8 +89,23 @@ class SequentializeReductionAxes(ppl.Pass):
                 candidates.append((node, state, indexing))
         for entry, state, indexing in candidates:
             order = [p for p in entry.map.params if p in indexing] + [p for p in entry.map.params if p not in indexing]
+            inverted = small_indexing_axes(state, entry, indexing)
             if order != entry.map.params:
                 MapDimShuffle.apply_to(state.sdfg, map_entry=entry, options={"parameters": order}, save=False)
+            if inverted:
+                # The outer loops over the SMALL indexing axes, one parallel map over the reduced ones inside
+                MapExpansion.apply_to(
+                    state.sdfg,
+                    map_entry=entry,
+                    options={"inner_schedule": dtypes.ScheduleType.Sequential, "expansion_limit": len(indexing)},
+                    save=False,
+                )
+                inner = entry
+                for _ in indexing:
+                    inner.map.schedule = dtypes.ScheduleType.Sequential
+                    inner = next(e.dst for e in state.out_edges(inner) if isinstance(e.dst, nodes.MapEntry))
+                inner.map.schedule = dtypes.ScheduleType.CPU_Multicore
+                continue
             MapExpansion.apply_to(
                 state.sdfg,
                 map_entry=entry,
@@ -87,3 +113,11 @@ class SequentializeReductionAxes(ppl.Pass):
                 save=False,
             )
         return len(candidates) or None
+
+
+def small_indexing_axes(state: SDFGState, entry: nodes.MapEntry, indexing: set[str]) -> bool:
+    """Whether every axis indexing ``entry``'s reduced outputs is SMALL and some reduced axis is not: sharing the
+    indexing axes out would leave the threads idle."""
+    facts = SymbolResolver().facts_at(state, entry)
+    small = {p: symbolic.is_small_extent(size, facts) for p, size in zip(entry.map.params, entry.map.range.size())}
+    return all(small[p] for p in indexing) and any(not small[p] for p in small if p not in indexing)

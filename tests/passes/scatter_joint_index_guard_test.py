@@ -19,7 +19,7 @@ import numpy as np
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes import scatter_to_guarded_maps as sgm
+from dace.transformation.passes.parallelization.contracts import guarded_scatter as sgm
 from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
 
 M, N, K = (dace.symbol(s, dtype=dace.int64) for s in ("M", "N", "K"))

@@ -15,10 +15,9 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SymbolResolver
 from dace.symbolic import Scale
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
-from dace.transformation.passes.canonicalize.hold_sibling_chains import ParallelizeLoopsHoldingSiblingChains
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
-from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
+from dace.transformation.passes.parallelization.wavefront.skew import WavefrontSkew
 
 nblks = dace.symbol("nblks", dace.int64, small=True)
 nproma = dace.symbol("nproma", dace.int64)
@@ -136,7 +135,7 @@ def test_a_small_sibling_does_not_hold_back_its_large_doall_sibling():
     """Both siblings are DOALL: the chain is no wavefront. The SMALL sibling stays a loop for its scale only, so it
     must not count as the refused sibling that holds the chain back for ``WavefrontSkew``."""
     sdfg = sibling_chain_with_a_block_prefix.to_sdfg(simplify=True)
-    ParallelizeLoopsHoldingSiblingChains().apply_pass(sdfg, {})
+    ParallelizeLoops(hold_sibling_chains=True).apply_pass(sdfg, {})
     sdfg.validate()
     assert small_map_params(sdfg) == []
     ranges = [str(entry.map.range) for entry, _ in maps(sdfg)]

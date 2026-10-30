@@ -5,7 +5,7 @@ import itertools
 from copy import deepcopy as dc
 from typing import Any
 
-from dace import Memlet, data, symbolic, utils
+from dace import Memlet, data, dtypes, symbolic, utils
 from dace.properties import CodeBlock, make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
@@ -124,9 +124,10 @@ def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: set[str]) -> None
             for edge in list(nstate.out_edges(node)):
                 if edge.src_conn in renames:
                     helpers.redirect_edge(nstate, edge, new_src_conn=renames[edge.src_conn])
-            tasklet_replace_code(node, renames)
-            # tasklet_replace_code only rewrites symbols on the right-hand side;
-            # also rename connector names that appear as assignment targets.
+            if node.code.language is dtypes.Language.Python:
+                tasklet_replace_code(node, renames)
+            # tasklet_replace_code only rewrites symbols on the right-hand side of Python code;
+            # the token replacement renames assignment targets and every C++ use.
             node.code = CodeBlock(token_replace_dict(node.code.as_string, renames), language=node.code.language)
 
 
@@ -358,6 +359,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         inner_assignments = set()
         for e in nsdfg.all_interstate_edges():
             inner_assignments |= e.data.assignments.keys()
+        edge_assigned = set(inner_assignments)
         loop_variables = {
             b.loop_variable for b in nsdfg.all_control_flow_blocks() if isinstance(b, LoopRegion) and b.loop_variable
         }
@@ -393,6 +395,13 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if assign in identity_names:
                 non_identity_mapping[assign] = assign
         nsdfg.replace_dict(sym_replacements)
+        # A symbol the inlined region assigns keeps the type the nested SDFG declares for it; undeclared in the
+        # parent, codegen would infer one from the assigned value (a float set to ``3`` became an int64_t)
+        for inner in sorted((edge_assigned - loop_variables) | non_identity_mapping.keys()):
+            name = sym_replacements.get(inner, inner)
+            dtype = nsdfg.symbols.get(name, nsdfg.symbols.get(inner))
+            if dtype is not None and name not in sdfg.symbols:
+                sdfg.add_symbol(name, dtype)
 
         #######################################################
         # Collect and modify access nodes as necessary
@@ -404,7 +413,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         _disambiguate_code_connectors(
             nsdfg, set(sdfg.arrays) | set(nsdfg.arrays) | set(outer_symbols) | set(sdfg.constants)
         )
-        connectors = tasklet_connector_names(sdfg) | tasklet_connector_names(nsdfg)
+        # Built on the first transient that needs it: the scan covers every state of the parent
+        connectors: set[str] | None = None
 
         # Mapping from nested transient name to top-level name
         transients: dict[str, str] = {}
@@ -418,6 +428,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     datadesc = nsdfg.arrays[node.data]
                     if node.data not in transients and datadesc.transient:
                         new_name = node.data
+                        if connectors is None:
+                            connectors = tasklet_connector_names(sdfg) | tasklet_connector_names(nsdfg)
                         if (
                             new_name in sdfg.arrays
                             or new_name in outer_symbols
@@ -430,6 +442,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         transients[node.data] = name
 
         # All constants (and associated transients) become constants of the parent
+        renamed_constants: dict[str, str] = {}
         for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
             # The parent's own constant of the same name, type and value is this one: nesting copied it down
             if cstname not in transients and sdfg.holds_constant(cstname, csttype, cstval):
@@ -440,9 +453,18 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 else:
                     newname = sdfg.find_new_constant(cstname)
                     transients[cstname] = newname
+                    renamed_constants[cstname] = newname
                 sdfg.constants_prop[newname] = (csttype, cstval)
             else:
                 sdfg.constants_prop[cstname] = (csttype, cstval)
+        # A constant table only interstate edges read has no access node to move its descriptor with
+        for cstname in nsdfg.constants_prop:
+            name = transients.get(cstname, cstname)
+            if cstname in nsdfg.arrays and nsdfg.arrays[cstname].transient and name not in sdfg.arrays:
+                sdfg.add_datadesc(name, dc(nsdfg.arrays[cstname]))
+        # Code and memlets read a constant by name, too
+        if renamed_constants:
+            nsdfg.replace_dict(renamed_constants)
 
         #######################################################
         # Replace data on inlined SDFG nodes/edges
@@ -474,6 +496,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         outer_state.parent_graph.add_nodes_from(nsdfg.nodes())
         for ise in nsdfg.edges():
             outer_state.parent_graph.add_edge(ise.src, ise.dst, ise.data)
+        # The loops, scope entries and interstate edges move as they are, so their declarations move with them
+        sdfg.symbol_repo.scopes.update(nsdfg.symbol_repo.scopes)
 
         #######################################################
         # Reconnect inlined SDFG

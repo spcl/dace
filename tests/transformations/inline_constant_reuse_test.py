@@ -56,8 +56,39 @@ def test_a_nested_constant_of_another_value_is_renamed_apart(xform_type: type) -
     assert np.array_equal(sdfg.constants_prop[renamed][1], VALUES + 1.0)
 
 
+def test_a_constant_table_only_an_interstate_edge_reads_keeps_its_descriptor() -> None:
+    """The nested SDFG reads its constant table ``C`` only on an interstate edge, so no access node carries ``C``'s
+    descriptor into the parent, which holds the constant but not the array the edge reads."""
+    descriptor = dace.data.Array(dace.float64, [4], transient=True)
+    nested = dace.SDFG("reads_c_on_an_edge")
+    nested.add_array("A", [4], dace.float64)
+    nested.add_datadesc("C", descriptor.clone())
+    nested.add_constant("C", VALUES.copy(), descriptor.clone())
+    nested.add_symbol("k", dace.float64)
+    first = nested.add_state(is_start_block=True)
+    second = nested.add_state()
+    nested.add_edge(first, second, dace.InterstateEdge(assignments={"k": "C[2]"}))
+    tasklet = second.add_tasklet("t", {}, {"o"}, "o = k")
+    second.add_edge(tasklet, "o", second.add_write("A"), None, dace.Memlet("A[0]"))
+
+    sdfg = dace.SDFG("constant_table_on_an_edge")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_constant("C", VALUES.copy(), descriptor.clone())
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(nested, {}, {"A"})
+    state.add_edge(node, "A", state.add_write("A"), None, dace.Memlet("A[0:4]"))
+    inline(InlineMultistateSDFG, sdfg, state, node)
+
+    assert "C" in sdfg.arrays
+    sdfg.validate()
+    a = np.zeros(4)
+    sdfg(A=a)
+    assert a[0] == VALUES[2]
+
+
 if __name__ == "__main__":
     test_nesting_and_inlining_again_and_again_keeps_one_constant(InlineMultistateSDFG)
     test_nesting_and_inlining_again_and_again_keeps_one_constant(InlineSDFG)
     test_a_nested_constant_of_another_value_is_renamed_apart(InlineMultistateSDFG)
     test_a_nested_constant_of_another_value_is_renamed_apart(InlineSDFG)
+    test_a_constant_table_only_an_interstate_edge_reads_keeps_its_descriptor()

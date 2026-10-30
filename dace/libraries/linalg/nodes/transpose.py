@@ -7,6 +7,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import symbolic
 from dace.codegen.common import global_code_id, sym2cpp
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.blas.environments import openblas
@@ -177,7 +178,7 @@ class ExpandTransposeMKL(ExpandTransformation):
             return ExpandTransposePure.expansion(node, state, sdfg)
 
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
-        code = f"mkl_{func}('R', 'T', {m}, {n}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
+        code = f"mkl_{func}('R', 'T', {sym2cpp(m)}, {sym2cpp(n)}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -244,7 +245,7 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         # Adaptations for BLAS API
         order = "CblasRowMajor"
         trans = "CblasTrans"
-        code = f"cblas_{func}({order}, {trans}, {m}, {n}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
+        code = f"cblas_{func}({order}, {trans}, {sym2cpp(m)}, {sym2cpp(n)}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -291,20 +292,22 @@ class ExpandTransposeGPUBLAS(ExpandTransformation):
             return ExpandTransposePure.expansion(node, state, sdfg, **kwargs)
 
         func = func + "geam"
-        # Only the complex spellings differ between the two vendors (see GpuBlasDialect.ctype):
-        # rocblas_zgeam rejects a hipDoubleComplex* operand and the CUDA name does not exist there,
-        # which is what quatrex_rgf's complex128 transpose failed on.
         cdtype = cls.cast_ctype(cdtype)
 
-        alpha = f"__state->{cls.handle_field}.Constants().{factort}Pone()"
-        beta = f"__state->{cls.handle_field}.Constants().{factort}Zero()"
+        # Host coefficients under host pointer mode: under device mode rocBLAS copies both back to the host (a
+        # synchronizing copy each) to test for a quick return.
+        one, zero = ("{1, 0}", "{0, 0}") if factort.startswith("Complex") else ("1", "0")
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
 
         code = (
             cls.environments[0].handle_setup_code(node)
-            + f"""{cls.check_error}({cls.funcname(func)}(
+            + f"""{cls.check_error}(cublasSetPointerMode({cls.handle}, CUBLAS_POINTER_MODE_HOST));
+                const {cdtype} __one = {one};
+                const {cdtype} __zero = {zero};
+                {cls.check_error}({cls.funcname(func)}(
                     {cls.handle}, {cls.op("T")}, {cls.op("N")},
-                    {m}, {n}, {alpha}, ({cdtype}*)_inp, {lda}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {ldb}));
+                    {sym2cpp(m)}, {sym2cpp(n)}, &__one, ({cdtype}*)_inp, {lda}, &__zero, ({cdtype}*)_inp, {sym2cpp(m)}, ({cdtype}*)_out, {ldb}));
+                {cls.check_error}(cublasSetPointerMode({cls.handle}, CUBLAS_POINTER_MODE_DEVICE));
                 """
         )
 
@@ -331,25 +334,58 @@ class ExpandTransposeCuBLAS(ExpandTransposeGPUBLAS):
         return f"cublas{func}"
 
 
+ExpandTransposeHipBLAS = hip_dialect.hip_expansion(
+    ExpandTransposeCuBLAS, blas_environments.hipblas.hipBLAS, hip_dialect.BLAS
+)
+
+
 @dace.library.expansion
-class ExpandTransposeRocBLAS(ExpandTransposeGPUBLAS):
-    environments = [blas_environments.rocblas.rocBLAS]
-    handle = "__dace_rocblas_handle"
-    handle_field = "rocblas_handle"
+class ExpandTransposeCUDABlock(ExpandTransformation):
+    """Inside a GPU kernel: the block's lanes split the elements, the innermost input axis strided across them so
+    adjacent lanes read adjacent elements, and a barrier at the lane map's exit publishes the result."""
 
-    @classmethod
-    def cast_ctype(cls, cuda_type: str) -> str:
-        return blas_helpers.rocblas_type(cuda_type)
+    environments = []
+    runs_inside_kernel = True
 
-    check_error = "dace::blas::CheckRocblasError"
+    @staticmethod
+    def expansion(node, state, sdfg):
+        from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS
+        from dace.sdfg.propagation import propagate_memlets_state
 
-    @classmethod
-    def op(cls, mode: str) -> str:
-        return "rocblas_operation_transpose" if mode == "T" else "rocblas_operation_none"
-
-    @classmethod
-    def funcname(cls, func: str) -> str:
-        return f"rocblas_{func.lower()}"
+        node.validate(sdfg, state)
+        _, in_outer, in_shape, in_strides = _get_transpose_input(node, state, sdfg)
+        _, out_outer, out_shape, out_strides = _get_transpose_output(node, state, sdfg)
+        nsdfg = dace.SDFG(node.label + "_sdfg")
+        nstate = nsdfg.add_state(node.label + "_state")
+        nsdfg.add_array("_inp", in_shape, node.dtype, strides=in_strides, storage=in_outer.storage)
+        nsdfg.add_array("_out", out_shape, node.dtype, strides=out_strides, storage=out_outer.storage)
+        params = [f"__i{i}" for i in range(len(in_shape))]
+        ranges = {param: (0, extent - 1, 1) for param, extent in zip(params, in_shape)}
+        ranges[params[-1]] = ("__lane", in_shape[-1] - 1, BLOCK_COLLECTIVE_THREADS)
+        lanes, lanes_exit = nstate.add_map(
+            node.label + "_lanes", {"__lane": f"0:{BLOCK_COLLECTIVE_THREADS}"}, dace.ScheduleType.GPU_ThreadBlock
+        )
+        lanes.map.gpu_force_syncthreads = True
+        entry, leave = nstate.add_map(node.label + "_elements", ranges, dace.ScheduleType.Sequential)
+        tasklet = nstate.add_tasklet("transpose", {"__inp"}, {"__out"}, "__out = __inp")
+        nstate.add_memlet_path(
+            nstate.add_read("_inp"),
+            lanes,
+            entry,
+            tasklet,
+            dst_conn="__inp",
+            memlet=dace.Memlet(f"_inp[{', '.join(params)}]"),
+        )
+        nstate.add_memlet_path(
+            tasklet,
+            leave,
+            lanes_exit,
+            nstate.add_write("_out"),
+            src_conn="__out",
+            memlet=dace.Memlet(f"_out[{', '.join(reversed(params))}]"),
+        )
+        propagate_memlets_state(nsdfg, nstate)
+        return nsdfg
 
 
 @dace.library.expansion
@@ -422,8 +458,10 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandTransposeMKL,
         "OpenBLAS": ExpandTransposeOpenBLAS,
         "cuBLAS": ExpandTransposeCuBLAS,
-        "rocBLAS": ExpandTransposeRocBLAS,
+        "hipBLAS": ExpandTransposeHipBLAS,
         "CUDA": ExpandTransposeCUDA,
+        "CUDA (block)": ExpandTransposeCUDABlock,
+        "rocBLAS": ExpandTransposeHipBLAS,
     }
     default_implementation = "pure"
 

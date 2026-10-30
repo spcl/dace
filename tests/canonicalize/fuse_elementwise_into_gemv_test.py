@@ -65,7 +65,24 @@ def test_a_matrix_with_another_reader_keeps_the_library_node():
     assert _apply(_matrix_read_twice.to_sdfg(simplify=True)) == 0
 
 
+m = dace.symbol("m")
+
+
+@dace.program
+def _pairwise_acc_over_m(x: dace.float64[m], mass: dace.float64[m], ax: dace.float64[m]):
+    dx = np.reshape(x, (1, m)) - np.reshape(x, (m, 1))
+    ax[:] = (dx * dx) @ mass
+
+
+def test_the_lowered_gemv_avoids_the_names_of_the_sdfg():
+    """vexx_k: its extent symbol ``m`` is not a free connector name."""
+    sdfg = _pairwise_acc_over_m.to_sdfg(simplify=True)
+    assert _apply(sdfg) == 1
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_a_gemv_over_a_private_elementwise_matrix_fuses_away_the_matrix()
     test_a_gemm_keeps_its_library_node()
     test_a_matrix_with_another_reader_keeps_the_library_node()
+    test_the_lowered_gemv_avoids_the_names_of_the_sdfg()

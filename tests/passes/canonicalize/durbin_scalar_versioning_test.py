@@ -72,7 +72,7 @@ def test_durbin_canonicalize_valid_deterministic():
     base = PB.fresh_sdfg(_durbin_kernel())
     for _ in range(10):
         # validate=True raises InvalidSDFG* if any stage left the SDFG invalid.
-        canonicalize(copy.deepcopy(base), validate=True, validate_all=False, peel_limit=4, break_anti_dependence=True)
+        canonicalize(copy.deepcopy(base), validate=True, validate_all=False, peel_limit=4)
 
 
 def test_durbin_value_preserving():
@@ -95,7 +95,7 @@ def test_durbin_value_preserving():
     reference = PB.reference(kernel, call_arrays, psize)
 
     base = PB.fresh_sdfg(kernel)
-    candidate = canonicalize(copy.deepcopy(base), validate=True, peel_limit=0, break_anti_dependence=True)
+    candidate = canonicalize(copy.deepcopy(base), validate=True, peel_limit=0)
     finalized = finalize_for_target(candidate, "cpu")
 
     got = call_in_child(PB.run, finalized, call_arrays, psize)
@@ -120,7 +120,7 @@ def test_durbin_peel4_end_to_end_bit_exact():
     reference = PB.reference(kernel, call_arrays, psize)
 
     base = PB.fresh_sdfg(kernel)
-    candidate = canonicalize(copy.deepcopy(base), validate=True, peel_limit=4, break_anti_dependence=True)
+    candidate = canonicalize(copy.deepcopy(base), validate=True, peel_limit=4)
     finalized = finalize_for_target(candidate, "cpu")
 
     got = call_in_child(PB.run, finalized, call_arrays, psize)

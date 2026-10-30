@@ -6,7 +6,10 @@ import numpy as np
 
 import dace
 from dace.sdfg import nodes
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.dataflow import MapFusionVertical
+from dace.transformation.helpers import nest_state_subgraph
 
 N = dace.symbol("N")
 SIZE = 24
@@ -72,6 +75,33 @@ def test_a_reader_of_another_iterations_row_is_refused():
     assert top_level_maps(sdfg) == 2
 
 
+@dace.program
+def scale_in_place_then_read(A: dace.float64[N], B: dace.float64[N]):
+    for i in dace.map[0:N]:
+        A[i] = A[i] * 2
+    for i in dace.map[0:N]:
+        B[i] = A[i] + 1
+
+
+def test_maps_whose_bodies_are_nested_sdfgs_fuse_through_an_array_the_first_updates_point_wise():
+    """A nested body reading and writing ``A[i]`` updates one element per iteration, not the whole array."""
+    sdfg = scale_in_place_then_read.to_sdfg(simplify=True)
+    state = sdfg.start_block
+    for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
+        body = [n for n in state.scope_children()[entry] if n is not state.exit_node(entry)]
+        nest_state_subgraph(sdfg, state, SubgraphView(state, body))
+    propagate_memlets_sdfg(sdfg)
+    A, B = np.random.rand(SIZE), np.zeros(SIZE)
+    expected = A * 2 + 1
+
+    assert sdfg.apply_transformations_repeated(MapFusionVertical) == 1
+
+    assert top_level_maps(sdfg) == 1
+    sdfg(A=A, B=B, N=SIZE)
+    assert np.allclose(B, expected)
+
+
 if __name__ == "__main__":
     test_a_row_recurrence_and_its_reader_fuse_in_place()
     test_a_reader_of_another_iterations_row_is_refused()
+    test_maps_whose_bodies_are_nested_sdfgs_fuse_through_an_array_the_first_updates_point_wise()

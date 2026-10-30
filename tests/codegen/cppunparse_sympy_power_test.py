@@ -18,18 +18,19 @@ def test_an_ipow_of_a_symbol_converts_to_its_cpp_spelling():
 
 
 def test_fractional_exponent_is_real_in_standalone_dialects():
-    M = symbolic.symbol("M", dace.float32)
-    N = symbolic.symbol("N", dace.int64)
+    # Names no other test declares: symbols compare equal across dtypes, so ``symstr``'s cache would hit
+    base = symbolic.symbol("pow_base_f32", dace.float32)
+    count = symbolic.symbol("pow_count_i64", dace.int64)
     expected = {
-        cpf_lowering.Dialect.STANDALONE: "std::pow(M, (float(N) / float(3)))",
-        cpf_lowering.Dialect.STANDALONE_C: "powf(M, (((float)(N)) / ((float)(3))))",
+        cpf_lowering.Dialect.STANDALONE: "std::pow(pow_base_f32, (float(pow_count_i64) / float(3)))",
+        cpf_lowering.Dialect.STANDALONE_C: "powf(pow_base_f32, (((float)(pow_count_i64)) / ((float)(3))))",
     }
     for dialect, unparsed in expected.items():
         with cpf_lowering.dialect_scope(dialect):
-            tree = ast.parse("M**(N/3)", mode="eval").body
-            symbols = {"M": dace.float32, "N": dace.int64}
+            tree = ast.parse("pow_base_f32**(pow_count_i64/3)", mode="eval").body
+            symbols = {"pow_base_f32": dace.float32, "pow_count_i64": dace.int64}
             assert cppunparse.cppunparse(tree, expr_semicolon=False, defined_symbols=symbols) == unparsed
-            assert symbolic.symstr(M ** (N / 3), cpp_mode=True) == f"({unparsed})"
+            assert symbolic.symstr(base ** (count / 3), cpp_mode=True) == f"({unparsed})"
 
 
 if __name__ == "__main__":

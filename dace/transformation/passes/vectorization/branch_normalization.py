@@ -251,6 +251,8 @@ class BranchNormalization(ppl.Pass):
         for c, _br in cb.branches:
             if c is not None:
                 pred_syms |= symbolic.symbols_in_code(c.as_string if isinstance(c, CodeBlock) else str(c))
+        # Assignments on one edge are simultaneous: a hoisted binding may not read a symbol an in-edge assigns.
+        in_assigned = {sym for ie in in_edges for sym in ie.data.assignments}
         hoisted = False
         for _c, br in cb.branches:
             sb = br.start_block
@@ -263,8 +265,8 @@ class BranchNormalization(ppl.Pass):
             assigns = dict(e.data.assignments)
             hoistable = True
             for sym, expr in assigns.items():
-                if symbolic.symbols_in_code(str(expr)) & arm_assigned:
-                    hoistable = False  # RHS depends on an arm-produced symbol
+                if symbolic.symbols_in_code(str(expr)) & (arm_assigned | in_assigned):
+                    hoistable = False  # RHS depends on an arm-produced symbol or one the in-edge assigns
                     break
                 if sym in pred_syms:
                     hoistable = False  # would change which branch is taken
@@ -300,6 +302,7 @@ class BranchNormalization(ppl.Pass):
                     sym: expr
                     for sym, expr in e.data.assignments.items()
                     if sym not in pred_syms
+                    and not symbolic.symbols_in_code(str(expr)) & in_assigned
                     and self._sdfg_constant_binding(cb.sdfg, sym, str(expr))
                     and all(str(ie.data.assignments.get(sym, expr)) == str(expr) for ie in in_edges)
                 }
@@ -376,15 +379,8 @@ class BranchNormalization(ppl.Pass):
                         code.as_string if isinstance(code, CodeBlock) else str(code), potential_symbols=only
                     ):
                         return True
-        for state in sdfg.states():
-            if state in inside_states:
-                continue
-            for n in state.nodes():
-                if isinstance(n, dace.nodes.Tasklet):
-                    code = n.code.as_string if isinstance(n.code, CodeBlock) else str(n.code)
-                    if symbolic.symbols_in_code(code, potential_symbols=only):
-                        return True
-        return False
+        # A state reads a symbol in a tasklet, a memlet, a map range or a nested SDFG's symbol mapping.
+        return any(sym in state.used_symbols(all_symbols=True) for state in sdfg.states() if state not in inside_states)
 
     @staticmethod
     def _substantive_states(body: ControlFlowRegion) -> list[dace.SDFGState]:
@@ -635,6 +631,12 @@ class BranchNormalization(ppl.Pass):
         :returns: ``True`` if serialized, ``False`` if the guard is not snapshottable.
         """
         parent = cb.parent_graph
+        # A symbol an arm binds and a block outside it reads: after the split each binding sits under its own
+        # conditional, so the reader sees the symbol as possibly undefined (triangle_count).
+        for _cond, body in cb.branches:
+            for edge in body.all_interstate_edges():
+                if any(self._symbol_read_outside_arm(sym, body) for sym in edge.data.assignments):
+                    return False
         cond_text = cond0.as_string if isinstance(cond0, CodeBlock) else str(cond0)
         frozen = self.freeze_guard_for_serialization(cb, cond_text)
         if frozen is None:
@@ -919,8 +921,8 @@ class BranchNormalization(ppl.Pass):
         cond_array_name: str | None,
         cond_producer: dace.nodes.AccessNode | None,
     ) -> None:
-        # Redirect ONE write edge through ``arr = ITE(cond, expr, arr)``.
-        write_subset = in_edge.data.subset
+        # Redirect ONE write edge through ``arr = ITE(cond, expr, arr)``. A copy's memlet may name either end.
+        write_subset = in_edge.data.get_dst_subset(in_edge, state)
 
         # 1-element scratch ``__bn_<arr>_new`` holds this element's value.
         tmp_name, _ = sdfg.add_array(
@@ -950,9 +952,12 @@ class BranchNormalization(ppl.Pass):
         if old_an is None:
             old_an = state.add_access(arr_name)
 
-        # Redirect the existing in-edge to write to the temp instead.
+        # Redirect the existing in-edge to write to the temp instead; a copy keeps the element it reads.
+        redirected = dace.Memlet(expr=f"{tmp_name}[0]")
+        if isinstance(in_edge.src, dace.nodes.AccessNode):
+            redirected.other_subset = copy.deepcopy(in_edge.data.get_src_subset(in_edge, state))
         state.remove_edge(in_edge)
-        state.add_edge(in_edge.src, in_edge.src_conn, tmp_an, None, dace.Memlet(expr=f"{tmp_name}[0]"))
+        state.add_edge(in_edge.src, in_edge.src_conn, tmp_an, None, redirected)
         if cond_array_name is not None:
             # Reuse the producing AN (see ``_resolve_cond_to_array``): a
             # fresh read node disconnects the lift and lets codegen emit

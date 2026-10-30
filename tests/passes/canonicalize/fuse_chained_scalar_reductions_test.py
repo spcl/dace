@@ -15,6 +15,7 @@ import pytest
 
 import dace
 from dace.sdfg import SDFGState, nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import (
     FuseChainedScalarReductions,
     _binop_op,
@@ -159,5 +160,30 @@ def test_ordering_memlet_on_a_chain_node_refuses_the_fold():
     run(sdfg, 24)
 
 
+def test_a_step_whose_increment_is_an_expression_keeps_its_value():
+    """``s = s + v; s = s + 3.0 * v``: the fold rewires raw increment inputs, so it must leave the scaled step alone."""
+    sdfg = dace.SDFG("scaled_chain")
+    sdfg.add_array("s", [1], dace.float64)
+    sdfg.add_array("x", [10], dace.float64)
+    loop = LoopRegion("L", "i < 10", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state(is_start_block=True)
+    acc = state.add_read("s")
+    for code in ("o = acc + v", "o = acc + 3.0 * v"):
+        step = state.add_tasklet("step", {"acc", "v"}, {"o"}, code)
+        state.add_edge(acc, None, step, "acc", dace.Memlet("s[0]"))
+        state.add_edge(state.add_read("x"), None, step, "v", dace.Memlet("x[i]"))
+        acc = state.add_access("s")
+        state.add_edge(step, "o", acc, None, dace.Memlet("s[0]"))
+    x = np.arange(10, dtype=np.float64)
+    s = np.zeros(1)
+
+    FuseChainedScalarReductions().apply_pass(sdfg, {})
+    sdfg(s=s, x=x)
+
+    assert s[0] == 4 * x.sum()
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+    test_a_step_whose_increment_is_an_expression_keeps_its_value()

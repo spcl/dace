@@ -36,6 +36,26 @@ using std::abs;
 //     return (a > b) ? a : b;
 // }
 
+// min/max/Min/Max operand kinds: 1 floating-point (half included), 2 signed integer, 3 unsigned integer, 0 any
+// other type (vectors, complex), which is not checked. Operands of one kind mix (float with double upcasts,
+// int with int64 widens); floating-point with integer, or signed with unsigned, is rejected at compile time.
+template <typename T>
+struct _dace_minmax_kind
+    : std::integral_constant<int, (std::is_floating_point<T>::value || std::is_same<T, dace::float16>::value) ? 1
+                                  : !std::is_integral<T>::value                                                 ? 0
+                                  : std::is_signed<T>::value                                                    ? 2
+                                                                                                                : 3> {};
+template <typename... Ts>
+struct _dace_minmax_same_kind : std::true_type {};
+template <typename T0, typename T1, typename... Ts>
+struct _dace_minmax_same_kind<T0, T1, Ts...>
+    : std::integral_constant<bool, (_dace_minmax_kind<T0>::value == 0 || _dace_minmax_kind<T1>::value == 0 ||
+                                    _dace_minmax_kind<T0>::value == _dace_minmax_kind<T1>::value) &&
+                                       _dace_minmax_same_kind<T1, Ts...>::value> {};
+#define _DACE_MINMAX_MIXED_MSG                                                                         \
+  "DaCe min/max: mixing floating-point with integer, or signed with unsigned integer arguments is not " \
+  "allowed. Cast the operands to a common type (e.g. write min(x, 1.0) instead of min(x, 1))."
+
 // A later argument wins only by comparing strictly better, so a tie (or a NaN operand)
 // keeps the earlier one, matching Python's and std::max/min's behavior.
 template <typename T>
@@ -44,6 +64,7 @@ DACE_CONSTEXPR DACE_HDFI T min(const T& val) {
 }
 template <typename T, typename... Ts>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type min(const T& a, const Ts&... ts) {
+  static_assert(_dace_minmax_same_kind<std::decay_t<T>, std::decay_t<Ts>...>::value, _DACE_MINMAX_MIXED_MSG);
   return (min(ts...) < a) ? min(ts...) : a;
 }
 
@@ -53,6 +74,7 @@ DACE_CONSTEXPR DACE_HDFI T max(const T& val) {
 }
 template <typename T, typename... Ts>
 DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(const T& a, const Ts&... ts) {
+  static_assert(_dace_minmax_same_kind<std::decay_t<T>, std::decay_t<Ts>...>::value, _DACE_MINMAX_MIXED_MSG);
   return (a < max(ts...)) ? max(ts...) : a;
 }
 
@@ -184,6 +206,7 @@ DACE_CONSTEXPR DACE_HDFI auto min(const dace::float16& a, const T& b, const Ts&.
   if constexpr (std::is_floating_point<T>::value) {
     return min(T(a), b, c...);
   } else {
+    static_assert(_dace_minmax_same_kind<dace::float16, T, Ts...>::value, _DACE_MINMAX_MIXED_MSG);
     return dace::float16((dace::float16(b) < a) ? min(dace::float16(b), c...) : min(a, c...));
   }
 }
@@ -192,6 +215,7 @@ DACE_CONSTEXPR DACE_HDFI auto min(const T& a, const dace::float16& b, const Ts&.
   if constexpr (std::is_floating_point<T>::value) {
     return min(a, T(b), c...);
   } else {
+    static_assert(_dace_minmax_same_kind<dace::float16, T, Ts...>::value, _DACE_MINMAX_MIXED_MSG);
     return dace::float16((b < dace::float16(a)) ? min(b, c...) : min(dace::float16(a), c...));
   }
 }
@@ -204,6 +228,7 @@ DACE_CONSTEXPR DACE_HDFI auto max(const dace::float16& a, const T& b, const Ts&.
   if constexpr (std::is_floating_point<T>::value) {
     return max(T(a), b, c...);
   } else {
+    static_assert(_dace_minmax_same_kind<dace::float16, T, Ts...>::value, _DACE_MINMAX_MIXED_MSG);
     return dace::float16((a < dace::float16(b)) ? max(dace::float16(b), c...) : max(a, c...));
   }
 }
@@ -212,6 +237,7 @@ DACE_CONSTEXPR DACE_HDFI auto max(const T& a, const dace::float16& b, const Ts&.
   if constexpr (std::is_floating_point<T>::value) {
     return max(a, T(b), c...);
   } else {
+    static_assert(_dace_minmax_same_kind<dace::float16, T, Ts...>::value, _DACE_MINMAX_MIXED_MSG);
     return dace::float16((dace::float16(a) < b) ? max(b, c...) : max(dace::float16(a), c...));
   }
 }
@@ -406,6 +432,15 @@ static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator, const T& deno
   } else if (numerator == std::numeric_limits<T>::min() && denominator == static_cast<T>(-1)) {
     quotient = numerator;
     remainder = 0;
+  } else if (denominator > 0 && (denominator & (denominator - 1)) == 0) {
+    // A power of two: the arithmetic shift and the two's-complement mask round toward minus infinity, as // and %
+#if defined(__CUDA_ARCH__)
+    const int shift = __ffsll(static_cast<long long>(denominator)) - 1;
+#else
+    const int shift = __builtin_ctzll(static_cast<unsigned long long>(denominator));
+#endif
+    quotient = static_cast<T>(numerator >> shift);
+    remainder = static_cast<T>(numerator & (denominator - 1));
   } else {
     quotient = static_cast<T>(numerator / denominator);
     remainder = static_cast<T>(numerator % denominator);
@@ -833,8 +868,9 @@ DACE_HDFI auto pow(const T& a, const dace::float16& b) {
 static DACE_HDFI dace::float16 pow(const dace::float16& a, const dace::float16& b) {
   return dace::float16(std::pow(float(a), float(b)));
 }
-// ``a ** (p / q)`` in the base's floating type R, double for an integral base as ``int ** float`` in NumPy.
-// ``p`` and ``q`` may be symbols: the quotient is computed in F, never integer division or half precision.
+// ``a ** (p / q)`` computed in F (float for a half, double for an integral base) and returned as R (the base's
+// type, double for an integral base as ``int ** float`` in NumPy). Dividing in F avoids integer division and half
+// overflow.
 template <typename T, typename P, typename Q>
 DACE_HDFI auto pow(const T& a, const P& p, const Q& q) {
   using R = typename std::conditional<std::is_integral<T>::value, double, T>::type;

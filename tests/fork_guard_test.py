@@ -89,6 +89,24 @@ def test_pause_reports_the_teardown_it_performed(live_team):
     assert openmp_pool_may_outlive_fork() is False
 
 
+def test_an_idle_llvm_openmp_pool_counts_as_torn_down():
+    """LLVM's libomp refuses to pause a pool it never started or already paused; neither leaves a team to strand. Run
+    in a fresh interpreter, so libomp never shares a process with this one's libgomp."""
+    import ctypes.util
+    import subprocess
+    import sys
+
+    library = ctypes.util.find_library("omp")
+    if library is None:
+        pytest.skip("no LLVM OpenMP runtime on this host")
+    probe = (
+        "import ctypes, os; ctypes.CDLL(%r, mode=os.RTLD_GLOBAL)\n"
+        "from dace.isolation import pause_openmp_pools\n"
+        "assert pause_openmp_pools() is True and pause_openmp_pools() is True" % library
+    )
+    subprocess.run([sys.executable, "-c", probe], check=True, env={**os.environ, "OMP_NUM_THREADS": "1"})
+
+
 def test_fork_is_refused_when_the_pool_cannot_be_torn_down(live_team, monkeypatch):
     """A runtime predating OpenMP 5.0, or a fork from inside a parallel region: the teardown does not
     happen, the child would wait on a barrier forever, and the guard must refuse instead."""

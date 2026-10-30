@@ -48,7 +48,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from typing import NamedTuple
 
-from dace import cpf_lowering, dtypes, symbolic, tile_functions
+from dace import cpf_lowering, dtypes, subsets, symbolic, tile_functions
 from dace import data as dt
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
@@ -62,11 +62,11 @@ from dace.library import get_environment
 from dace.memlet import Memlet
 from dace.optionals import required
 from dace.ordered import OrderedSet
-from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import SDFG, SDFGState, memlet_utils, nodes
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
-from dace.transformation.passes.canonicalize.finalize import blas_addresses, explicit_accumulating_copies
+from dace.transformation.passes.canonicalize.finalize import blas_addresses
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 
 #: The storage types CPF can render, as an ALLOWLIST. Ordinary host memory, plain locals and Arm SVE
@@ -197,6 +197,7 @@ LIBRARY_NODE_DESCRIPTIONS: dict[str, str] = {
     "ReduceScatter": "MPI_Reduce_scatter: reduce across ranks, scatter the result blocks",
     "Scal": "BLAS scal: x = alpha * x",
     "Scan": "scan: running (prefix) fold along an axis",
+    "Sync": "sync: barrier among the threads of a warp, block or grid, or a host wait for a stream or the device",
     "Scatter": "MPI_Scatter: distribute from the root to every rank",
     "ScatterConflictCheck": "scatter conflict check: detect indices written more than once",
     "Send": "MPI_Send: blocking send",
@@ -339,7 +340,7 @@ VENDOR_IMPLEMENTATIONS_HOST: tuple[str, ...] = ("OpenBLAS", "FFTW3")
 VENDOR_EXCLUDED_NODES: frozenset[str] = frozenset({"Transpose"})
 VENDOR_IMPLEMENTATIONS_DEVICE: dict[cpf_lowering.Dialect, tuple[str, ...]] = {
     cpf_lowering.Dialect.STANDALONE_CUDA: ("cuBLAS", "cuSolverDn", "cuFFT"),
-    cpf_lowering.Dialect.STANDALONE_HIP: ("rocBLAS", "rocSOLVER", "hipFFT"),
+    cpf_lowering.Dialect.STANDALONE_HIP: ("hipBLAS", "hipSolverDn", "hipFFT"),
 }
 
 
@@ -447,7 +448,7 @@ def on_device_at_host_level(node: nodes.LibraryNode, state: SDFGState) -> bool:
 
 
 #: Floating types no vendor library CPF calls takes: BLAS, LAPACK and the FFTs come in single and double
-#: precision, real and complex, and their bfloat16 / half entry points (``rocblas_gemm_ex``) are not what the
+#: precision, real and complex, and their bfloat16 / half entry points (``cublasGemmEx``) are not what the
 #: expansions call. A node over one of these takes the loops (HB's bf16 ML kernels).
 VENDOR_UNTYPED_FLOATS: frozenset = frozenset(dtypes.FLOAT_TYPES) - {dtypes.float32, dtypes.float64}
 
@@ -607,7 +608,10 @@ def force_renderable_expansions(sdfg: SDFG, provenance: dict[str, tuple[str, str
         described: dict[int, tuple[nodes.LibraryNode, str, set]] = {}
         for node, state in chosen:
             available = type(node).implementations
-            selected = next((c for c in renderable_implementations(node, state) if c in available), None)
+            renderable = renderable_implementations(node, state)
+            # A node whose implementation was chosen deliberately keeps it, when the unit can render it
+            pinned = not node.auto_select_implementation and node.implementation in renderable
+            selected = node.implementation if pinned else next((c for c in renderable if c in available), None)
             if selected is not None:
                 node.implementation = selected
                 # A device expansion (``CUDA``) is a host call that launches its own kernel. Every
@@ -794,12 +798,49 @@ def widen_narrow_scalar_arguments(sdfg: SDFG) -> list[str]:
     return widened
 
 
+def explicit_accumulating_copies(sdfg: SDFG) -> None:
+    """Turn every accumulating access-node-to-access-node copy into a tasklet or a map, in place.
+
+    ``InsertExplicitCopies`` leaves an accumulating copy implicit, since it is a reduction rather than a copy,
+    and the generator then emits ``dace::CopyND::Accumulate``, which a standalone unit cannot name (icon_scatter,
+    seissol_tensor_contraction, spmm). One element becomes one accumulating tasklet; more become a map over the
+    copied elements, each iteration accumulating into its own element, which the generator lowers like any WCR.
+    An omitted side of the memlet is the whole array on that side, as in copy-edge codegen.
+
+    :param sdfg: the SDFG to rewrite, nested SDFGs included.
+    """
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.states():
+            for edge in list(state.edges()):
+                wcr = edge.data.wcr
+                if (
+                    wcr is None
+                    or not isinstance(edge.src, nodes.AccessNode)
+                    or not isinstance(edge.dst, nodes.AccessNode)
+                ):
+                    continue
+                source = edge.data.get_src_subset(edge, state) or subsets.Range.from_array(edge.src.desc(nested))
+                target = edge.data.get_dst_subset(edge, state) or subsets.Range.from_array(edge.dst.desc(nested))
+                if source.num_elements_exact() == 1 and target.num_elements_exact() == 1:
+                    # A Scalar end has no index a map could use.
+                    tasklet = state.add_tasklet("accumulate", {"__inp": None}, {"__out": None}, "__out = __inp")
+                    state.add_edge(edge.src, edge.src_conn, tasklet, "__inp", Memlet(data=edge.src.data, subset=source))
+                    state.add_edge(
+                        tasklet, "__out", edge.dst, edge.dst_conn, Memlet(data=edge.dst.data, subset=target, wcr=wcr)
+                    )
+                    state.remove_edge(edge)
+                elif memlet_utils.can_memlet_be_turned_into_a_map(edge, state, nested):
+                    map_exit = memlet_utils.memlet_to_map(edge, state, nested)[1]
+                    for written in state.in_edges(map_exit) + state.out_edges(map_exit):
+                        written.data.wcr = wcr
+
+
 def prepare(sdfg: SDFG, provenance: dict[str, tuple[str, str]] | None = None) -> tuple[str, ...]:
     """Make ``sdfg`` renderable as one host translation unit, in place.
 
     Six things happen: every library node is pointed at the best implementation a standalone unit
     can compile and expanded (:func:`force_renderable_expansions`), every accumulating copy becomes a
-    tasklet or a map (:func:`~dace.transformation.passes.canonicalize.finalize.explicit_accumulating_copies`), every written signature scalar,
+    tasklet or a map (:func:`explicit_accumulating_copies`), every written signature scalar,
     the expansions' included, is promoted to a length-1 array so it is addressable
     (:class:`~dace.transformation.passes.scalar_promotion.PromoteScalarOutputsToArrays`), what that
     could not make renderable is refused (:func:`refuse_by_value_returns`), every loop still
@@ -1261,7 +1302,7 @@ def preamble(
     used = cpf_lowering.helpers_used(code, dialect)
     definitions = cpf_lowering.definitions_for(used, dialect)
     headers = cpf_lowering.headers_for(used, dialect)
-    vendors = cpf_lowering.vendor_libraries(environments, code)
+    vendors = cpf_lowering.vendor_libraries(environments, code, dialect)
     lines = ["// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime."]
     if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS:
         lines += CONTRACT_LINES
@@ -1276,7 +1317,9 @@ def preamble(
     for vendor in vendors:
         # The wrappers are C++; a C unit's expansions call the vendor directly.
         if vendor.wrapper and dialect is not cpf_lowering.Dialect.STANDALONE_C:
-            wrapper_headers, wrapper = cpf_lowering.vendor_wrapper(vendor.wrapper, seen_wrappers)
+            wrapper_headers, wrapper = cpf_lowering.vendor_wrapper(
+                vendor.wrapper, seen_wrappers, hip=dialect is cpf_lowering.Dialect.STANDALONE_HIP
+            )
             vendor_headers += wrapper_headers
             wrappers.append(wrapper)
     lines += [f"#include {header}" for header in dict.fromkeys(vendor_headers) if header not in headers]
@@ -1406,6 +1449,9 @@ COMPILE_CHECK_TOOLCHAINS: dict[cpf_lowering.Dialect, tuple[str, str, str, tuple[
     cpf_lowering.Dialect.STANDALONE_C: ("c23", ".c", "CC", ("gcc", "cc")),
 }
 
+#: The draft name a compiler older than a standard's final name accepts for it.
+STANDARD_DRAFT_NAMES: dict[str, str] = {"c23": "c2x", "c++20": "c++2a"}
+
 #: What a ``'cuda'`` unit is built with besides the output flags. ``--expt-relaxed-constexpr`` is what
 #: DaCe's own CUDA build adds (``dace/codegen/CMakeLists.txt``): kernels call the ``constexpr`` index
 #: and runtime helpers, which nvcc otherwise treats as host-only. hipcc needs no such flag.
@@ -1515,6 +1561,10 @@ def compile_check(
             handle.write(code)
         command = [compiler, "-std=" + standard, *COMPILE_CHECK_FLAGS, *extra_flags, source]
         proc = subprocess.run(command, cwd=workdir, capture_output=True, text=True)
+        if proc.returncode != 0 and standard in STANDARD_DRAFT_NAMES and f"-std={standard}" in proc.stderr:
+            # A compiler older than the standard's name knows it by its draft name (gcc 13: ``-std=c2x``)
+            command[1] = "-std=" + STANDARD_DRAFT_NAMES[standard]
+            proc = subprocess.run(command, cwd=workdir, capture_output=True, text=True)
         if proc.returncode == 0:
             return
         first = next((line for line in proc.stderr.splitlines() if " error" in line), proc.stderr.strip())
@@ -1570,7 +1620,7 @@ class Rendering(NamedTuple):
     #: (:data:`~dace.cpf_lowering.VENDOR_LIBRARIES`). Empty when the units need nothing beyond the system's.
     link: tuple[str, ...] = ()
     #: The vendor libraries the units call, by family name (``blas``, ``lapack``, ``fftw``, ``cublas``,
-    #: ``cusolver``, ``cufft``, ``rocblas``, ``rocsolver``, ``hipfft``): what a caller that loads libraries by
+    #: ``cusolver``, ``cufft``, ``hipblas``, ``hipsolver``, ``hipfft``): what a caller that loads libraries by
     #: name has to load for :attr:`link` to resolve (:func:`~dace.cpf_lowering.vendor_families`).
     libraries: tuple[str, ...] = ()
     #: The bytes the unit needs in its workspace, as an arithmetic expression over the entry's scalar
@@ -1735,7 +1785,7 @@ def link_libraries(frame: CodeObject, dialect: cpf_lowering.Dialect, code: str =
     """The libraries of the frame's environments, by environment name, without those CPF supplies itself. Only
     link-only environments carry any here: the standalone footer refuses every other kind."""
     libraries: list[str] = []
-    for vendor in cpf_lowering.vendor_libraries(frame.environments, code):
+    for vendor in cpf_lowering.vendor_libraries(frame.environments, code, dialect):
         libraries += vendor.link_tokens(code)
     for name in sorted(frame.environments):
         env = get_environment(name)

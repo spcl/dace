@@ -181,6 +181,7 @@ class Facts:
         "parameters",
         "assumed",
         "solution",
+        "fallback",
     )
 
     relations: tuple[Relation, ...]
@@ -197,15 +198,19 @@ class Facts:
         parameters: frozenset[str] = frozenset(),
         assumed: OrderedSet[Relation] | None = None,
         check: bool = True,
+        fallback: Iterable[Relation] | None = None,
     ) -> None:
         """:param check: Solve the relations now, raising ``InconsistentAssumptionsError`` if they contradict; without,
-        they are solved by the first proof that needs them."""
+        they are solved by the first proof that needs them.
+        :param fallback: The relations solved instead when ``relations`` contradict (``check`` off only): a subset that
+            is sound to know where they do."""
         # A canonical order, so that what is proven does not depend on the order the facts were given in
         self.relations = tuple(sorted(dict.fromkeys(relations), key=_relation_order))
         self.integers = integers
         self.small = small
         self.parameters = parameters
         self.assumed = assumed
+        self.fallback = None if fallback is None else tuple(sorted(dict.fromkeys(fallback), key=_relation_order))
         self.solution = solve(self.relations, integers) if check else None
 
     def solved(
@@ -214,8 +219,21 @@ class Facts:
         dict[sympy.Symbol, sympy.Expr], dict[sympy.Dummy, sympy.Expr], tuple[sympy.Expr, ...], tuple[sympy.Expr, ...]
     ]:
         if self.solution is None:
-            self.solution = solve(self.relations, self.integers)
+            try:
+                self.solution = solve(self.relations, self.integers)
+                self.fallback = None
+            except InconsistentAssumptionsError:
+                if self.fallback is None:
+                    raise
+                # ``relations`` stay the key: equal facts share their proofs either way
+                self.solution = solve(self.fallback, self.integers)
         return self.solution
+
+    def known(self) -> tuple[Relation, ...]:
+        """The relations the facts are solved from: the fallback when ``relations`` contradict."""
+        if self.fallback is not None:
+            self.solved()
+        return self.relations if self.fallback is None else self.fallback
 
     @property
     def substitution(self) -> dict[sympy.Symbol, sympy.Expr]:
@@ -239,12 +257,12 @@ class Facts:
 
     def with_relations(self, relations: Iterable[Relation]) -> "Facts":
         """These facts with more relations, the same scales, recording into the same assumptions."""
-        return Facts((*self.relations, *relations), self.integers, self.small, self.parameters, self.assumed)
+        return Facts((*self.known(), *relations), self.integers, self.small, self.parameters, self.assumed)
 
     def about(self, names: set[str]) -> "Facts":
         """These facts without the relations sharing no symbol with ``names``, directly or through other relations:
         what they prove about an expression over ``names`` is the same."""
-        names, kept, rest = set(names), [], list(self.relations)
+        names, kept, rest = set(names), [], list(self.known())
         grown = True
         while grown:
             grown = False
@@ -254,7 +272,7 @@ class Facts:
                     kept.append(relation)
                     rest.remove(relation)
                     grown = True
-        if not rest and names >= self.integers | self.small | self.parameters:
+        if not rest and self.fallback is None and names >= self.integers | self.small | self.parameters:
             return self
         # A part of facts is as consistent as the whole
         return Facts(
@@ -401,7 +419,7 @@ def split_extrema(relation: Relation) -> list[Relation]:
     return [relation]
 
 
-@functools.lru_cache(maxsize=1024)
+@functools.lru_cache(maxsize=1 << 14)
 def solve(
     relations: tuple[Relation, ...], integers: frozenset[str]
 ) -> tuple[
@@ -689,9 +707,14 @@ def divides(query: Relation, facts: Facts) -> Truth:
     return Truth.FALSE if divisor.is_number and multiple.is_number else Truth.UNKNOWN
 
 
+def _main_expr(expr: sympy.Expr) -> sympy.Expr:
+    """The exact form of a ``SymExpr``. ``sympy.sympify`` rejects the pair."""
+    return expr.expr if isinstance(expr, symbolic.SymExpr) else expr
+
+
 def is_small(expr: sympy.Expr, facts: Facts) -> bool:
     """Whether every symbol of ``expr`` is ``SMALL``; an expression of literals only has the default scale."""
-    names = {str(free) for free in sympy.sympify(expr).free_symbols}
+    names = {str(free) for free in sympy.sympify(_main_expr(expr)).free_symbols}
     return bool(names) and names <= facts.small
 
 
@@ -702,7 +725,7 @@ SMALL_CONSTANT_EXTENT = 64
 def is_small_extent(expr: sympy.Expr, facts: Facts) -> bool:
     """Whether a scheduled extent is too small to share out: ``SMALL`` (:func:`is_small`), or a literal below
     :data:`SMALL_CONSTANT_EXTENT`. For schedules only: the canonical form stays parallel over literals."""
-    expr = sympy.sympify(expr)
+    expr = sympy.sympify(_main_expr(expr))
     if expr.is_number:
         return bool(expr < SMALL_CONSTANT_EXTENT)
     return is_small(expr, facts)

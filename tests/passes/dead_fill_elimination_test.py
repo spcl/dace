@@ -211,3 +211,59 @@ if __name__ == "__main__":
     test_memset_kept_when_the_loop_is_guarded_without_else()
     test_memset_every_branch_overwrites_is_dropped()
     test_memset_in_a_branch_overwritten_after_it_is_dropped()
+
+
+def zeros_then_prefix_copy(prefix: str) -> dace.SDFG:
+    """``sink = zeros(N + 1, 4); sink[prefix] = c; out = sink`` in one state, the zeros a map."""
+    sdfg = dace.SDFG(f"zeros_then_prefix_copy_{abs(hash(prefix))}")
+    sdfg.add_array("c", [N, 4], dace.float64)
+    sdfg.add_array("out", [N + 1, 4], dace.float64)
+    sdfg.add_transient("sink", [N + 1, 4], dace.float64)
+    state = sdfg.add_state()
+    zeroed = state.add_access("sink")
+    state.add_mapped_tasklet(
+        "zeros",
+        {"i": "0:N + 1", "j": "0:4"},
+        {},
+        "__o = 0.0",
+        {"__o": dace.Memlet("sink[i, j]")},
+        output_nodes={"sink": zeroed},
+        external_edges=True,
+    )
+    c = state.add_read("c")
+    state.add_nedge(zeroed, c, dace.Memlet())
+    written = state.add_access("sink")
+    state.add_nedge(c, written, dace.Memlet(data="c", subset="0:N, 0:4", other_subset=f"{prefix}, 0:4"))
+    state.add_nedge(written, state.add_write("out"), dace.Memlet("sink[0:N + 1, 0:4]"))
+    return sdfg
+
+
+def zeroing_map_ranges(sdfg: dace.SDFG) -> list[str]:
+    return [str(n.map.range) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+
+
+def test_zeros_a_copy_overwrites_but_its_last_row_shrink_to_that_row():
+    sdfg = zeros_then_prefix_copy("0:N")
+    assert DeadFillElimination().apply_pass(sdfg, {}) == 1
+    assert zeroing_map_ranges(sdfg) == ["N, 0:4"]
+    sdfg.validate()
+    c = np.random.rand(9, 4)
+    out = np.full((10, 4), np.nan)
+    sdfg(c=c, out=out, N=9)
+    assert np.array_equal(out, np.concatenate([c, np.zeros((1, 4))]))
+
+
+def test_zeros_a_copy_overwrites_but_its_first_row_shrink_to_that_row():
+    sdfg = zeros_then_prefix_copy("1:N + 1")
+    assert DeadFillElimination().apply_pass(sdfg, {}) == 1
+    assert zeroing_map_ranges(sdfg) == ["0, 0:4"]
+    c = np.random.rand(9, 4)
+    out = np.full((10, 4), np.nan)
+    sdfg(c=c, out=out, N=9)
+    assert np.array_equal(out, np.concatenate([np.zeros((1, 4)), c]))
+
+
+def test_zeros_a_copy_leaves_a_middle_row_of_stay_whole():
+    sdfg = zeros_then_prefix_copy("1:N")
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
+    assert zeroing_map_ranges(sdfg) == ["0:N + 1, 0:4"]

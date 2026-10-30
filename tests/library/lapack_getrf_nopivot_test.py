@@ -128,8 +128,8 @@ def test_cusolverdn(dtype, offset):
 @pytest.mark.gpu
 @pytest.mark.parametrize("dtype", [dace.float32, dace.float64, dace.complex128])
 @pytest.mark.parametrize("offset", [0, 2])
-def test_rocsolver(dtype, offset):
-    run("rocSOLVER", dtype, dace.StorageType.GPU_Global, offset)
+def test_hipsolver(dtype, offset):
+    run("hipSolverDn", dtype, dace.StorageType.GPU_Global, offset)
 
 
 if __name__ == "__main__":

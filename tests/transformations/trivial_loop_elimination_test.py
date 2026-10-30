@@ -79,6 +79,46 @@ class TrivialLoopEliminationTest(unittest.TestCase):
         self.assertIn(body_region, sdfg.nodes(), "its body region was reparented into the parent")
         self.assertIs(body_region.parent_graph, sdfg, "and knows the parent it moved to")
 
+    def test_a_transient_sized_by_the_iterator_loses_it(self):
+        """A conv2d's one-group loop ``for g in range(1)`` sizes its per-group slice ``N*(g + 1) - N*g``. The
+        substitution must reach that descriptor too, or ``g`` stays a free symbol nothing binds."""
+        sdfg = dace.SDFG("group_slice")
+        sdfg.add_symbol("N", dace.int64)
+        sdfg.add_array("a", ["N"], dace.float64)
+        sdfg.add_transient("tmp", ["N*(g + 1) - N*g"], dace.float64)
+        loop = LoopRegion("G", initialize_expr="g = 0", condition_expr="g < 1", update_expr="g = g + 1", loop_var="g")
+        sdfg.add_node(loop, is_start_block=True)
+        body = loop.add_state("body", is_start_block=True)
+        body.add_nedge(body.add_read("a"), body.add_access("tmp"), dace.Memlet("a[N*g:N*(g + 1)]"))
+        body.add_nedge(body.add_access("tmp"), body.add_write("a"), dace.Memlet("tmp[0:N]"))
+
+        self.assertEqual(sdfg.apply_transformations(TrivialLoopElimination), 1)
+
+        self.assertNotIn("g", {str(s) for s in sdfg.free_symbols})
+        self.assertEqual(str(sdfg.arrays["tmp"].shape[0]), "N")
+        sdfg.validate()
+
+    def test_a_name_another_loop_still_binds_is_left_in_the_descriptors(self):
+        """Two sibling loops over ``i`` (before unique iterators): eliminating the trivial one must not
+        rewrite a descriptor the other loop's ``i`` sizes."""
+        sdfg = dace.SDFG("shared_iterator")
+        sdfg.add_array("a", [4], dace.float64)
+        sdfg.add_transient("tmp", ["i + 1"], dace.float64)
+        trivial = LoopRegion(
+            "T", initialize_expr="i = 0", condition_expr="i < 1", update_expr="i = i + 1", loop_var="i"
+        )
+        other = LoopRegion("O", initialize_expr="i = 0", condition_expr="i < 3", update_expr="i = i + 1", loop_var="i")
+        sdfg.add_node(trivial, is_start_block=True)
+        sdfg.add_node(other)
+        sdfg.add_edge(trivial, other, dace.InterstateEdge())
+        for region in (trivial, other):
+            state = region.add_state("s", is_start_block=True)
+            state.add_nedge(state.add_read("a"), state.add_write("tmp"), dace.Memlet("a[i]"))
+
+        self.assertEqual(sdfg.apply_transformations(TrivialLoopElimination), 1)
+
+        self.assertEqual(str(sdfg.arrays["tmp"].shape[0]), "i + 1")
+
 
 if __name__ == "__main__":
     unittest.main()

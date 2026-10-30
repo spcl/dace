@@ -11,6 +11,7 @@ import numpy as np
 import dace
 from dace import dtypes
 from dace.sdfg import nodes
+from dace.symbolic import Scale
 from dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes import SequentializeReductionAxes
 
 N = 64
@@ -71,6 +72,41 @@ def test_a_reduction_to_one_element_is_left_to_the_openmp_reduction_clause():
     assert SequentializeReductionAxes().apply_pass(sdfg, {}) is None
 
 
+def test_a_reduction_indexed_by_a_small_axis_loops_over_it_outside_one_parallel_map():
+    """ICON velocity's ``max_abs_vcfl[blk]`` over few blocks, reduced over levels and cells: sharing out the blocks
+    leaves the threads idle, so the blocks become the outer loop and the reduced axes one parallel map inside, whose
+    write names none of its own parameters."""
+    sdfg = dace.SDFG("cpu_reduction_axes_small_index")
+    sdfg.add_symbol("nblks", dace.int64, scale=Scale.SMALL)
+    sdfg.add_array("a", ["nblks", N, N], dace.float64)
+    sdfg.add_array("m", ["nblks"], dace.float64)
+    sdfg.add_state().add_mapped_tasklet(
+        "peak",
+        {"b": "0:nblks", "k": f"0:{N}", "i": f"0:{N}"},
+        {"v": dace.Memlet("a[b, k, i]")},
+        "out = abs(v)",
+        {"out": dace.Memlet("m[b]", wcr="lambda x, y: max(x, y)")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    assert SequentializeReductionAxes().apply_pass(sdfg, {}) == 1
+    maps = sorted(
+        (node.map.params, node.map.schedule)
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.MapEntry)
+    )
+    assert maps == [(["b"], dtypes.ScheduleType.Sequential), (["k", "i"], dtypes.ScheduleType.CPU_Multicore)], maps
+    sdfg.openmp_array_reductions = True
+    code = "".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "reduction(max:m[" in code and "atomic" not in code, "each block's peak is one OpenMP reduction"
+
+    a = np.random.default_rng(7).standard_normal((3, N, N))
+    m = np.full(3, -np.inf)
+    sdfg(a=a, m=m, nblks=3)
+    np.testing.assert_allclose(m, np.abs(a).max(axis=(1, 2)))
+
+
 if __name__ == "__main__":
     test_the_reduced_axis_becomes_an_inner_sequential_loop_and_the_write_needs_no_atomic()
     test_a_reduction_to_one_element_is_left_to_the_openmp_reduction_clause()
+    test_a_reduction_indexed_by_a_small_axis_loops_over_it_outside_one_parallel_map()

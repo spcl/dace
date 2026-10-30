@@ -65,6 +65,16 @@ def rest_is_parallel(loop: LoopRegion, symbol: str) -> bool:
     )
 
 
+def folds_only(loop: LoopRegion, symbol: str) -> bool:
+    """Whether ``symbol`` is a sum or product reduction nothing else in ``loop`` reads: only its exit value is
+    used, which is the loop's closed form, not a scan."""
+    if not is_reduction(loop, symbol):
+        return False
+    if any(symbol in names(rhs) for lhs, rhs in assignments_in(loop) if lhs != symbol):
+        return False
+    return not any(symbol in state.free_symbols for state in loop.states())
+
+
 def scan_node(loop: LoopRegion) -> tuple[StateScan, StepSlice] | None:
     """A :class:`StateScan` for ``loop``'s carried state, finite if it is, else GF(2)-affine, or ``None``."""
     finite = finite_state(loop)
@@ -151,7 +161,7 @@ class LoopToStateScan(ppl.Pass):
             loops = [loop for loop in loops if id(loop) in only]
         for loop in loops:
             made = scan_node(loop)
-            if made is None or not rest_is_parallel(loop, made[1].symbol):
+            if made is None or not rest_is_parallel(loop, made[1].symbol) or folds_only(loop, made[1].symbol):
                 continue
             lift(loop, made[0], made[1])
             lifted += 1

@@ -93,7 +93,26 @@ def test_decreasing_propagation_reads_every_element_it_should():
     assert np.allclose(b, expected), f"{b} != {expected}"
 
 
+def test_a_decreasing_range_access_propagates_to_its_whole_image():
+    """``A[-2*p + 40 : -2*p + 44]`` over ``p = 2:9`` reads ``A[22:40]``, not an inverted range (a wavefront tile)."""
+    from dace import subsets, symbolic
+
+    p = dace.symbol("p")
+    inner = subsets.Range([(-2 * p + 40, -2 * p + 44, 1)])
+    out = propagation.propagate_subset(
+        [dace.Memlet(data="A", subset=inner)],
+        dace.data.Array(dace.float64, [100]),
+        ["p"],
+        subsets.Range([(2, 9, 1)]),
+        symbolic.Facts((), frozenset({"p"})),
+    )
+    ((begin, end, step),), (tile,) = out.subset.ranges, out.subset.tile_sizes
+    covered = {x + k for x in range(int(begin), int(end) + 1, int(step)) for k in range(int(tile))}
+    assert {-2 * q + 40 + k for q in range(2, 10) for k in range(5)} <= covered
+
+
 if __name__ == "__main__":
     test_decreasing_propagation()
     test_decreasing_propagation_with_a_symbolic_bound()
     test_decreasing_propagation_reads_every_element_it_should()
+    test_a_decreasing_range_access_propagates_to_its_whole_image()

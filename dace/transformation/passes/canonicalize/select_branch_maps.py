@@ -14,7 +14,8 @@ select per output, which fuses like any element-wise map; the condition, made tr
 Contract, per ``ConditionalBlock`` with an ``if`` and an ``else`` branch:
 
 * each branch is states without interstate assignments, exactly one of them non-empty, holding one top-level map
-  whose body is tasklets and one-element access nodes only (no WCR), with every output written by a tasklet;
+  whose body is tasklets and one-element access nodes only (no WCR), with every output written by a tasklet, and
+  no copy beside it;
 * the two maps have equal ranges (up to parameter names) and write the same arrays at the same subsets;
 * the condition reads symbols, none a map parameter, and one-element containers neither branch writes;
 * both bodies together have at most ``MAX_TASKLETS`` tasklets: each element computes both;
@@ -56,6 +57,9 @@ def branch_map(region: ControlFlowRegion) -> tuple[SDFGState, nodes.MapEntry] | 
     scope = state.scope_subgraph(entry)
     top = set(state.nodes()) - set(scope.nodes())
     if any(not isinstance(n, nodes.AccessNode) for n in top):
+        return None
+    # A copy between two of those access nodes runs only in its branch; the merged map would drop it.
+    if any(e.src in top and e.dst in top for e in state.edges()):
         return None
     body = [n for n in scope.nodes() if n is not entry and n is not state.exit_node(entry)]
     if any(not isinstance(n, (nodes.Tasklet, nodes.AccessNode)) for n in body):

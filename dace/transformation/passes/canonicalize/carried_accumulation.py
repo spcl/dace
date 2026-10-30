@@ -12,9 +12,9 @@ loop whose only conflicting writes are WCR ones is a map (the WCR stays atomic a
 leaves such an update alone inside its own map -- every map index addresses one element, so the map has no conflict
 of its own -- which is right until an enclosing loop is to be lifted.
 
-Only the container a refused loop names is rewritten, and only its in-place updates by a free tasklet or one in a
-top-level map; a WCR
-that does not let the loop map after all is conflict-free and ``RevertNonReductionWCR`` restores it.
+Only the containers a refused loop names are rewritten, only when their updates as WCR let it map
+(:meth:`~dace.transformation.passes.parallelization.parallelize_loops.ParallelizeLoops.rescuing_wcr`), and only their
+in-place updates by a free tasklet or one in a top-level map.
 """
 
 from typing import Any
@@ -24,9 +24,10 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
-from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.interstate.loop_to_map import Refusal
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 
 def updated_in_state(state: SDFGState) -> set[str]:
@@ -49,54 +50,73 @@ def updated_containers(loop: LoopRegion, per_state: dict[SDFGState, set[str]]) -
     return names
 
 
-def refused_container(sdfg: SDFG, loop: LoopRegion) -> str | None:
-    """The container whose non-affine write keeps ``loop`` from mapping, or ``None`` if it maps or refuses else."""
-    probe = LoopToMap()
-    probe.setup_match(
-        sdfg, loop.parent_graph.cfg_id, -1, {LoopToMap.loop: loop.parent_graph.node_id(loop)}, 0, override=True
-    )
-    if probe.can_be_applied(loop.parent_graph, 0, sdfg):
-        return None
-    reason = probe.last_refusal_reason or ""
-    return probe.last_refusal_container if "not uniquely indexed" in reason else None
-
-
-def in_place_update(sdfg: SDFG, state: SDFGState, name: str) -> AugAssignToWCR | None:
-    """One matched ``X -> [map ->] tasklet [-> map] -> X`` update of ``name`` in ``state`` that may become WCR."""
+def updates_of(state: SDFGState, name: str) -> list[tuple[nodes.Tasklet, AugAssignToWCR | None]]:
+    """Each tasklet in ``state`` that reads and writes ``name``, with its matched ``X -> [map ->] tasklet [-> map] ->
+    X`` update that may become WCR (``None`` when it is no such update)."""
+    found = []
     for tasklet in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
-        entry = state.entry_node(tasklet)
-        if entry is not None and state.entry_node(entry) is not None:
-            continue
         ins = [e for e in state.in_edges(tasklet) if not e.data.is_empty() and e.data.data == name]
         outs = [e for e in state.out_edges(tasklet) if not e.data.is_empty() and e.data.data == name]
-        if len(ins) != 1 or len(outs) != 1:
+        if not ins or not outs:
             continue
-        source = state.memlet_path(ins[0])[0].src
-        target = state.memlet_path(outs[0])[-1].dst
-        if not (isinstance(source, nodes.AccessNode) and isinstance(target, nodes.AccessNode)):
-            continue
-        # A free tasklet (``f[j] = f[j] - d`` inside a pair loop) or one in a top-level map
-        match = {
-            AugAssignToWCR.input: state.node_id(source),
-            AugAssignToWCR.tasklet: state.node_id(tasklet),
-            AugAssignToWCR.output: state.node_id(target),
-        }
-        expr = 0
-        if entry is not None:
-            match[AugAssignToWCR.map_entry] = state.node_id(entry)
-            match[AugAssignToWCR.map_exit] = state.node_id(state.exit_node(entry))
-            expr = 1
-        xform = AugAssignToWCR()
-        xform.setup_match(sdfg, state.parent_graph.cfg_id, state.block_id, match, expr)
-        if xform.can_be_applied(state, expr, sdfg, permissive=True):
-            return xform
-    return None
+        found.append((tasklet, update_match(state, tasklet, ins, outs)))
+    return found
 
 
-def read_only_by_updates(sdfg: SDFG, loop: LoopRegion, name: str) -> bool:
-    """Whether every read of ``name`` in ``loop`` is a tasklet that writes ``name`` back: an update's own read. Any
-    other reader (householder's ``V @ Q[k:, :]`` beside ``Q[k:, :] -= ...``) sees the accumulated value, which a WCR
-    does not order."""
+def update_match(state: SDFGState, tasklet: nodes.Tasklet, ins: list, outs: list) -> AugAssignToWCR | None:
+    """The update of a free tasklet (``f[j] = f[j] - d`` inside a pair loop) or one in a top-level map."""
+    entry = state.entry_node(tasklet)
+    if entry is not None and state.entry_node(entry) is not None:
+        return None
+    if len(ins) != 1 or len(outs) != 1:
+        return None
+    source = state.memlet_path(ins[0])[0].src
+    target = state.memlet_path(outs[0])[-1].dst
+    if not (isinstance(source, nodes.AccessNode) and isinstance(target, nodes.AccessNode)):
+        return None
+    match = {
+        AugAssignToWCR.input: state.node_id(source),
+        AugAssignToWCR.tasklet: state.node_id(tasklet),
+        AugAssignToWCR.output: state.node_id(target),
+    }
+    expr = 0
+    if entry is not None:
+        match[AugAssignToWCR.map_entry] = state.node_id(entry)
+        match[AugAssignToWCR.map_exit] = state.node_id(state.exit_node(entry))
+        expr = 1
+    xform = AugAssignToWCR()
+    xform.setup_match(state.sdfg, state.parent_graph.cfg_id, state.block_id, match, expr)
+    return xform if xform.can_be_applied(state, expr, state.sdfg, permissive=True) else None
+
+
+def loop_states(loop: LoopRegion) -> list[SDFGState]:
+    return [b for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState)]
+
+
+def all_convertible(loop: LoopRegion, names: set[str]) -> bool:
+    """Whether every update of every container in ``names`` becomes WCR: the loop maps only with all of them."""
+    return all(xform is not None for name in names for st in loop_states(loop) for _, xform in updates_of(st, name))
+
+
+def convert_updates(loop: LoopRegion, name: str) -> int:
+    """Turn every update of ``name`` in ``loop`` into WCR; :returns: how many. A rewrite may fission its state, so the
+    states are listed afresh after each."""
+    converted = 0
+    while True:
+        for state in loop_states(loop):
+            xform = next((x for _, x in updates_of(state, name) if x is not None), None)
+            if xform is not None:
+                xform.apply(state, state.sdfg)
+                converted += 1
+                break
+        else:
+            return converted
+
+
+def read_only_by_updates(loop: LoopRegion, name: str) -> bool:
+    """Whether every read of ``name`` in ``loop`` is a tasklet that writes ``name`` back: an update's own
+    read. Any other reader (householder's ``V @ Q[k:, :]`` beside ``Q[k:, :] -= ...``, a branch
+    condition) sees the accumulated value, which a WCR does not order."""
     for block in loop.all_control_flow_blocks():
         if not isinstance(block, SDFGState):
             continue
@@ -111,9 +131,7 @@ def read_only_by_updates(sdfg: SDFG, loop: LoopRegion, name: str) -> bool:
                     return False
                 if not any(not e.data.is_empty() and e.data.data == name for e in block.out_edges(reader)):
                     return False
-    return name not in {
-        read for edge in loop.all_interstate_edges() for read in edge.data.free_symbols
-    } and name not in control_flow_reads_names(loop)
+    return name not in loop_analysis.control_reads(loop)
 
 
 def writes_move_with_the_iteration(loop: LoopRegion, name: str) -> bool:
@@ -138,14 +156,6 @@ def writes_move_with_the_iteration(loop: LoopRegion, name: str) -> bool:
     return found
 
 
-def control_flow_reads_names(loop: LoopRegion) -> set[str]:
-    """The names the loop's own and nested regions' conditions read."""
-    names: set[str] = set()
-    for region in [loop, *loop.all_control_flow_regions()]:
-        names |= region.used_symbols(all_symbols=True, with_contents=False)
-    return names
-
-
 class CarriedAccumulationToWCR(ppl.Pass):
     """WCR for the in-place accumulations that alone keep a loop from mapping (``EliminateCopyBack`` first)."""
 
@@ -168,18 +178,19 @@ class CarriedAccumulationToWCR(ppl.Pass):
                 updated = updated_containers(loop, per_state)
                 if not updated:
                     continue
-                # Until the loop maps or nothing is left to rewrite: one probe per refused container.
-                while (name := refused_container(owner, loop)) is not None and name in updated:
-                    if not writes_move_with_the_iteration(loop, name) or not read_only_by_updates(owner, loop, name):
-                        break
-                    applied = False
-                    for state in [b for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState)]:
-                        # An applied rewrite renumbers the state, so each next update is matched afresh.
-                        while (xform := in_place_update(owner, state, name)) is not None:
-                            xform.apply(state, owner)
-                            per_state.pop(state, None)
-                            converted += 1
-                            applied = True
-                    if not applied:
-                        break
+                # The refused containers whose updates, as WCR, let the loop map; none when the loop maps without
+                names = ParallelizeLoops().rescuing_wcr(
+                    loop,
+                    lambda r: (
+                        r.kind is Refusal.NON_UNIQUE_WRITE
+                        and r.container in updated
+                        and writes_move_with_the_iteration(loop, r.container)
+                        and read_only_by_updates(loop, r.container)
+                    ),
+                )
+                if not names or not all_convertible(loop, names):
+                    continue
+                for name in sorted(names):
+                    converted += convert_updates(loop, name)
+                per_state.clear()
         return converted or None

@@ -86,15 +86,8 @@ from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
 # argmax and early-exit kernels exist to test index capture, and their index went unchecked.
 
 
-def cpu_params(peel_limit: int = DEFAULT_PEEL_LIMIT, reconstruct_wavefront_nest: bool = False) -> dict:
-    return dict(
-        target="cpu",
-        peel_limit=peel_limit,
-        break_anti_dependence=True,
-        interchange_carry_with_map=True,
-        scatter_to_guarded_maps=True,
-        reconstruct_wavefront_nest=reconstruct_wavefront_nest,
-    )
+def cpu_params(peel_limit: int = DEFAULT_PEEL_LIMIT) -> dict:
+    return dict(target="cpu", peel_limit=peel_limit, interchange_carry_with_map=True, scatter_to_guarded_maps=True)
 
 
 # #
@@ -381,10 +374,10 @@ def apply_config(sdfg, config: str, params: dict):
     # they actually emit.
     if config == "canon":
         canonicalize(sdfg, validate=True, validate_all=False, **params)
-        cpu_specialize(sdfg, break_anti_dependence=params.get("break_anti_dependence", True))
+        cpu_specialize(sdfg)
     elif config == "canon+vec":
         canonicalize(sdfg, validate=True, validate_all=False, **params)
-        cpu_specialize(sdfg, break_anti_dependence=params.get("break_anti_dependence", True))
+        cpu_specialize(sdfg)
         _vectorize(sdfg)
     elif config == "parallelize+vec":
         parallelize(sdfg, validate=True, validate_all=False)

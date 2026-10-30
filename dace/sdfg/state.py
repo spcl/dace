@@ -5,14 +5,11 @@ import abc
 import ast
 import collections
 import collections.abc
-import contextvars
 import copy
 import functools
-import inspect
 import itertools
 import re
 import sys
-import types
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
@@ -88,25 +85,10 @@ def _get_debug_info(explicit_lineinfo: dtypes.DebugInfo | None) -> dtypes.DebugI
         return explicit_lineinfo
 
     if dace.Config.get("compiler", "lineinfo") == "inspect":
-        # Two frames up is this function's caller's caller; ``inspect.stack()`` would resolve every frame to the root
-        lineno, filename = caller_position(sys._getframe(2))
-        return dtypes.DebugInfo(lineno, 0, lineno, 0, filename)
+        caller = sys._getframe(2)
+        return dtypes.DebugInfo(caller.f_lineno, 0, caller.f_lineno, 0, caller.f_code.co_filename)
 
     return None
-
-
-#: ``(code, instruction offset) -> (line, file)`` per resolved call site; ``getframeinfo`` stats the file each call.
-CALLER_POSITIONS: dict[tuple[types.CodeType, int], tuple[int, str]] = {}
-
-
-def caller_position(frame: types.FrameType) -> tuple[int, str]:
-    """``(lineno, filename)`` as ``inspect.getframeinfo(frame, context=0)`` reports them, once per call site."""
-    key = (frame.f_code, frame.f_lasti)
-    position = CALLER_POSITIONS.get(key)
-    if position is None:
-        info = inspect.getframeinfo(frame, context=0)
-        position = CALLER_POSITIONS[key] = (info.lineno, info.filename)
-    return position
 
 
 #: One map dimension: a range string, a subset, or a ``(begin, end, step)`` triple of symbolic bounds.
@@ -153,13 +135,6 @@ def _make_iterators(ndrange: MapRanges):
     map_range = sbs.Range(ranges)
 
     return params, map_range
-
-
-#: Per-state :meth:`~SDFGState.defined_symbols` for the library expansions of one
-#: :meth:`~dace.sdfg.SDFG.expand_library_nodes` sweep; ``None`` outside a sweep.
-EXPANSION_DEFINED_SYMBOLS: contextvars.ContextVar[dict["SDFGState", tuple[int, dict[str, dt.Data]]] | None] = (
-    contextvars.ContextVar("EXPANSION_DEFINED_SYMBOLS", default=None)
-)
 
 
 class BlockGraphView:
@@ -869,6 +844,13 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             update = {k: v for k, v in update.items() if v is not None}
             dic.update(update)
 
+        # Add data-descriptor free symbols the SDFG does not declare: a declaration wins over the type of the symbol
+        # object a shape holds
+        for desc in sdfg.arrays.values():
+            for sym in desc.free_symbols:
+                if sym.dtype is not None:
+                    defined_syms.setdefault(str(sym), sym.dtype)
+
         # Add inter-state symbols
         try:
             start_block = sdfg.start_block
@@ -877,8 +859,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             start_block = None
         if isinstance(start_block, AbstractControlFlowRegion):
             update_if_not_none(defined_syms, start_block.new_symbols(defined_syms))
-        # ``new_symbols(sdfg, ...)`` rebuilds this type environment (the symbols overridden by every array's dtype)
-        # per edge; keep it alongside ``defined_syms`` instead.
+        # ``new_symbols(sdfg, ...)`` rebuilds this type environment per edge; keep it alongside ``defined_syms``
         array_types = {k: v.dtype for k, v in sdfg.arrays.items()}
         environment = {**defined_syms, **array_types}
         for edge in sdfg.all_interstate_edges():
@@ -1144,11 +1125,14 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Add scalar arguments from free symbols
         defined_syms = defined_syms or self.defined_symbols()
+        # A container a tasklet names in its code is a used symbol too; one with an access node here was decided above
         scalar_args.update(
             {
                 k: dt.Scalar(defined_syms[k]) if k in defined_syms else sdfg.arrays[k]
                 for k in self.used_symbols(all_symbols=False)
-                if not k.startswith("__dace") and k not in sdfg.constants and (k in defined_syms or k in sdfg.arrays)
+                if not k.startswith("__dace")
+                and k not in sdfg.constants
+                and (k in defined_syms or (k in sdfg.arrays and k not in descs_with_nodes))
             }
         )
 
@@ -1747,6 +1731,85 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         return result
 
     def remove_node(self, node):
+        """Remove ``node`` and its edges, keeping the order it carried between live nodes (:meth:`keep_order_through`)."""
+        if node in self._nodes and self.in_degree(node) and self.out_degree(node):
+            self.keep_order_through([node])
+        self.detach_node(node)
+
+    def remove_nodes_from(self, node_list):
+        removed = list(node_list)
+        self.keep_order_through([node for node in removed if node in self._nodes])
+        for node in removed:
+            self.detach_node(node)
+
+    def keep_order_through(self, removed: Sequence[nd.Node]) -> None:
+        """Before ``removed`` leave the state: order each live node before the live nodes it reached only through
+        them, by empty edges (one predecessor or successor) or through one empty ``order_hub`` tasklet. Skips
+        predecessors that are access nodes nothing live writes, successors that are access nodes nothing live reads, pairs
+        another path already orders, and pairs that would cross a scope boundary.
+        """
+        gone = set(removed)
+        reached: dict[nd.Node, OrderedSet] = {}
+        for dead in removed:
+            for edge in self.in_edges(dead):
+                src = edge.src
+                if src in gone or src in reached or self.unordered_access(src, gone, incoming=True):
+                    continue
+                found, seen = OrderedSet(), set()
+                stack = [(e.dst, 0) for e in self.out_edges(src) if e.dst in gone]
+                while stack:
+                    node, level = stack.pop()
+                    if (node, level) in seen:
+                        continue
+                    seen.add((node, level))
+                    level += isinstance(node, nd.EntryNode) - isinstance(node, nd.ExitNode)
+                    for e in self.out_edges(node):
+                        if e.dst in gone:
+                            stack.append((e.dst, level))
+                        elif level == 0 and e.dst is not src and not self.unordered_access(e.dst, gone, incoming=False):
+                            found.add(e.dst)
+                found = self.not_reached_without(src, found, gone)
+                if found:
+                    reached[src] = found
+        groups: dict[tuple, list[nd.Node]] = {}
+        for src, found in reached.items():
+            groups.setdefault(tuple(found), []).append(src)
+        for found, sources in groups.items():
+            if len(sources) == 1 or len(found) == 1:
+                for src in sources:
+                    for dst in found:
+                        self.add_nedge(src, dst, mm.Memlet())
+                continue
+            hub = self.add_tasklet("order_hub", {}, {}, "")
+            for src in sources:
+                self.add_nedge(src, hub, mm.Memlet())
+            for dst in found:
+                self.add_nedge(hub, dst, mm.Memlet())
+
+    def unordered_access(self, node: nd.Node, gone: set, incoming: bool) -> bool:
+        """Whether ``node`` is an access node that, once ``gone`` leaves, nothing writes (``incoming``) or reads."""
+        if not isinstance(node, nd.AccessNode):
+            return False
+        edges = self.in_edges(node) if incoming else self.out_edges(node)
+        return all((e.src if incoming else e.dst) in gone for e in edges)
+
+    def not_reached_without(self, src: nd.Node, targets: OrderedSet, gone: set) -> OrderedSet:
+        """The ``targets`` no path from ``src`` that avoids the ``gone`` nodes reaches."""
+        left = OrderedSet(targets)
+        seen = {src}
+        stack = [src]
+        while stack and left:
+            for edge in self.out_edges(stack.pop()):
+                dst = edge.dst
+                if dst in gone or dst in seen:
+                    continue
+                seen.add(dst)
+                left.discard(dst)
+                stack.append(dst)
+        return left
+
+    def detach_node(self, node):
+        """Remove ``node`` and its edges, without keeping the order it carried (see :meth:`remove_node`)."""
         self._clear_scopedict_cache()
         self.forget_bound_names()
         # A node already added to another state (and so re-parented) moved: nothing leaves the tree.
@@ -2248,7 +2311,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         """
         if self.sdfg is None:
             return {}
-        memo = EXPANSION_DEFINED_SYMBOLS.get()
+        memo = self.sdfg._expansion_symbols
         if memo is None:
             return self.defined_symbols()
         cached = memo.get(self)
@@ -3198,21 +3261,24 @@ class SymbolResolver:
                 declared = scope_facts(sdfg.symbol_repo.scopes[owner])
                 relations.extend(declared.relations)
                 integers |= declared.integers
-        try:
-            return symbolic.Facts(
-                tuple(relations), frozenset(integers), frozenset(small), frozenset(parameters), own.assumed
-            )
-        except symbolic.InconsistentAssumptionsError:
-            # A range the facts prove empty: its body never runs, so it is sound to know less there
-            kept = tuple(relation for relation in relations if relation not in from_ranges)
-            return symbolic.Facts(kept, frozenset(integers), frozenset(small), frozenset(parameters), own.assumed)
+        # Solved by the first proof that needs them: most scopes are never asked. A range the facts prove empty has a
+        # body that never runs, so it is sound to know less there: without its bounds.
+        return symbolic.Facts(
+            tuple(relations),
+            frozenset(integers),
+            frozenset(small),
+            frozenset(parameters),
+            own.assumed,
+            check=False,
+            fallback=tuple(relation for relation in relations if relation not in from_ranges),
+        )
 
     def outer_facts(self, sdfg: "SDFG") -> tuple[list[symbolic.Relation], set[str], set[str], frozenset[str]]:
         """The facts at the node nesting ``sdfg``, over renamed outer symbols, with each mapped symbol equal to its
         renamed expression; and the mapped symbols that are ``SMALL`` there, and those a check at program entry cannot
         read (their values come from more than the outer parameters)."""
         nsdfg = sdfg.parent_nsdfg_node
-        # A detached copy (no state around its node) has no outer facts
+        # A detached copy (no parent state) has no outer facts, as an unnested SDFG
         if nsdfg is None or sdfg.parent is None:
             return [], set(), set(), frozenset()
         outer = self.facts_at(sdfg.parent, nsdfg)
@@ -3227,11 +3293,12 @@ class SymbolResolver:
         unreadable = frozenset(
             name for name, value in mapped.items() if not {str(f) for f in value.free_symbols} <= outer.parameters
         )
-        names = {name for relation in outer.relations for name in symbolic.relation_names(relation)}
+        known = outer.known()
+        names = {name for relation in known for name in symbolic.relation_names(relation)}
         names |= {str(free) for value in mapped.values() for free in value.free_symbols}
         # ':' cannot appear in a DaCe name, so a renamed outer symbol never meets an inner one
         renamed = {name: sympy.Symbol(f"outer:{name}") for name in names}
-        relations = [relation.replaced(renamed) for relation in outer.relations]
+        relations = [relation.replaced(renamed) for relation in known]
         relations += [
             symbolic.Relation(symbolic.RelationKind.EQ, symbolic.symbol(name), symbolic.replace_symbols(value, renamed))
             for name, value in mapped.items()
@@ -3302,16 +3369,31 @@ class SymbolResolver:
     def forget_within(self, sdfg: "SDFG") -> None:
         """Drops what was resolved inside ``sdfg`` and every SDFG nested in it, after a change to ``sdfg``'s graph.
         What an enclosing or unrelated SDFG resolved reads neither, and is kept."""
-        within = set(sdfg.all_sdfgs_recursive())
-        self._facts = {key: facts for key, facts in self._facts.items() if key[0].sdfg not in within}
-        self._data_facts = {key: facts for key, facts in self._data_facts.items() if key[0].sdfg not in within}
+        if sdfg.parent_sdfg is None:
+            # Every SDFG is within the root: drop all, without walking the tree
+            for table in (self._facts, self._data_facts, self._region_updates, self._per_sdfg, self._per_state):
+                table.clear()
+            self._per_scope.clear()
+            return
+        # Up the nesting chain of each resolved SDFG, not down the whole tree below ``sdfg``
+        inside: dict[SDFG, bool] = {}
+
+        def within(owner: "SDFG") -> bool:
+            if owner not in inside:
+                cursor = owner
+                while cursor is not None and cursor is not sdfg:
+                    cursor = cursor.parent_sdfg
+                inside[owner] = cursor is sdfg
+            return inside[owner]
+
+        self._facts = {key: facts for key, facts in self._facts.items() if not within(key[0].sdfg)}
+        self._data_facts = {key: facts for key, facts in self._data_facts.items() if not within(key[0].sdfg)}
         self._region_updates = {
-            key: updates for key, updates in self._region_updates.items() if key[0].sdfg not in within
+            key: updates for key, updates in self._region_updates.items() if not within(key[0].sdfg)
         }
-        for nested in within:
-            self._per_sdfg.pop(nested, None)
-            self._per_state.pop(nested, None)
-            self._per_scope.pop(nested, None)
+        for table in (self._per_sdfg, self._per_state, self._per_scope):
+            for nested in [owner for owner in table if within(owner)]:
+                del table[nested]
 
 
 def entry_bound_names(entry: nd.EntryNode) -> set[str]:
@@ -3924,8 +4006,7 @@ class AbstractControlFlowRegion(
         super().remove_edge(edge)
 
     def _ensure_unique_block_name(self, proposed: str | None = None) -> str:
-        # Every name ever issued here: ``add_node`` and the ``label`` setter record them. A removed block keeps its
-        # name reserved, as an inlined reference may still point at it.
+        # ``add_node`` and the ``label`` setter record every name; a removed block keeps its name reserved
         return utils.find_new_name(proposed or "block", self._labels)
 
     def add_node(
@@ -3972,10 +4053,12 @@ class AbstractControlFlowRegion(
         # `_start_block` is an index into the node list, so any removal invalidates it:
         # the indices of later nodes shift down, leaving it pointing at a different block
         # or past the end. Re-resolve it by identity around the removal.
-        if self._start_block is not None:
+        # Deserialization can leave it out of range on entry
+        if self._start_block is not None and 0 <= self._start_block < self.number_of_nodes():
             start_block = self.node(self._start_block)
         else:
             start_block = None
+            self._start_block = None
         # A block already added to another region (and so re-parented) moved: nothing leaves the tree.
         released = contributed_regions(node) if node.parent_graph is self else []
         super().remove_node(node)
@@ -4104,10 +4187,9 @@ class AbstractControlFlowRegion(
             yield self
 
     def control_flow_regions_preorder(self, recursive: bool, load_ext: bool) -> Iterator["AbstractControlFlowRegion"]:
-        """``all_control_flow_regions(parent_first=True)`` with an explicit stack: a generator per nesting level costs
-        every region its depth in resumes. Each ``nodes()`` list is taken when its owner is reached."""
+        """``all_control_flow_regions(parent_first=True)`` with an explicit stack instead of one generator per level."""
         yield self
-        # (remaining items, the state they belong to or None for a region's blocks)
+        # (remaining items, their state, or None for a region's blocks)
         stack: list[tuple[Iterator[Any], SDFGState | None]] = [(iter(self.nodes()), None)]
         while stack:
             items, owner = stack[-1]
@@ -4122,7 +4204,7 @@ class AbstractControlFlowRegion(
                         yield item.sdfg
                         stack.append((iter(item.sdfg.nodes()), None))
             elif isinstance(item, SDFGState):
-                if recursive:
+                if recursive and item.number_of_nodes() > 0:
                     stack.append((iter(item.nodes()), item))
             elif isinstance(item, AbstractControlFlowRegion):
                 yield item
@@ -4961,8 +5043,12 @@ class LoopRegion(ControlFlowRegion):
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
         if self.init_statement is not None:
-            # Loops with no initialization statement do not redefine the loop variable
+            # Loops with no initialization statement do not redefine the loop variable. The init statement may
+            # also define further loop-carried symbols (e.g. address cursors), one assignment per statement.
             defined_syms.add(self.loop_variable)
+            for stmt in self.init_statement.code if isinstance(self.init_statement.code, list) else []:
+                if isinstance(stmt, ast.Assign):
+                    defined_syms.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
 
             free_syms |= self.init_statement.get_free_symbols()
         if self.update_statement is not None:
