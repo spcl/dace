@@ -16,7 +16,8 @@ from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.megakernel import MegaKernelOptimization
-from dace.transformation.passes.megakernel.discovery import find_chains
+from dace.transformation.passes.megakernel.discovery import GPU, find_chains, linear_chain
+from dace.transformation.passes.megakernel.gather_kernels import hoist_host_scalar_states
 from dace.transformation.passes.megakernel.grid_sync import InsertGridSyncs, is_grid_sync
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "npbench" / "polybench"))
@@ -483,6 +484,23 @@ def test_a_bound_the_host_reads_after_the_kernels_stays_on_the_host():
     assert out_got[0] == out_want[0] == 3
     for name in "ABC":
         np.testing.assert_array_equal(cupy.asnumpy(got[name]), cupy.asnumpy(want[name]))
+
+
+def test_independent_host_scalar_states_hoist_past_a_kernel_and_stop():
+    """Two host scalar states next to each other can each run before the other: hoisting must not swap them forever."""
+    sdfg = gpu_sdfg("megakernel_two_scalar_states")
+    kernel = sdfg.add_state("kernel", is_start_block=True)
+    add_kernel(kernel, "k0")
+    previous = kernel
+    for name in "xy":
+        sdfg.add_scalar(name, dace.float64, transient=True)
+        state = sdfg.add_state_after(previous, f"scalar_{name}")
+        tasklet = state.add_tasklet(name, {}, {"o"}, "o = 1.0")
+        state.add_edge(tasklet, "o", state.add_write(name), None, dace.Memlet(f"{name}[0]"))
+        previous = state
+    sdfg.add_state_after(previous, "end")
+    assert hoist_host_scalar_states(sdfg, GPU) == 2
+    assert [b.label for b in linear_chain(sdfg)] == ["scalar_x", "scalar_y", "kernel", "end"]
 
 
 @pytest.mark.parametrize("program, dtype, rank, size", STENCILS, ids=STENCIL_IDS)
