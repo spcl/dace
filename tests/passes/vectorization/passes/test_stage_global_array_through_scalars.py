@@ -693,6 +693,7 @@ def test_rmw_chain_in_map_body_drains_only_the_final_hop(k: int):
 # The cloudsc-pattern (zqlhs / zsolqb reuse) tests live separately in
 # ``test_stage_global_array_cloudsc.py``.
 
+
 def _bridge_copied_to_a_scalar() -> dace.SDFG:
     """``A[i] = b[i] + 1``, then a tasklet and a copy into the scalar ``s`` both read ``A[i]`` off the same node."""
     sdfg = dace.SDFG("bridge_copied_to_a_scalar")

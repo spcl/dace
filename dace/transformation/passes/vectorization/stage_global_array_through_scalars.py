@@ -377,7 +377,9 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                 if e not in state.edges():
                     continue
                 state.remove_edge(e)
-                state.add_edge(sn, None, e.dst, e.dst_conn, Memlet(data=sn.data, subset="0", other_subset=e.data.dst_subset))
+                state.add_edge(
+                    sn, None, e.dst, e.dst_conn, Memlet(data=sn.data, subset="0", other_subset=e.data.dst_subset)
+                )
 
         for x in exits:
             self._purge_bridge_scope_edges(state, bridge, x, array_name, direction="drain")
