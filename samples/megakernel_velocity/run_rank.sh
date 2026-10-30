@@ -11,7 +11,7 @@ case $rank in
   2) export DEVICES=gpu KINDS="base" ;;
   3) export DEVICES=gpu KINDS="megakernel tuned" ;;
 esac
-export OUT=$ROOT/rank$rank ROCR_VISIBLE_DEVICES=$rank CUDA_VISIBLE_DEVICES=$rank
+export OUT=$ROOT/rank$rank "${GPU_SELECT:?the variable that picks a GPU here}=$rank"
 mkdir -p "$OUT"
 # srun on Daint starts tasks with SIGCHLD blocked, children inherit that, and cmake then hangs in its configure step
 exec "${PYTHON:-python}" -c '

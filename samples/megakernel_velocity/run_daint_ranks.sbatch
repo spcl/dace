@@ -25,6 +25,7 @@ export CPU_CODEGEN=${CPU_CODEGEN:-experimental_readable} DACE_compiler_cpu_imple
 export MACHINE=daint
 [ "$CPU_CODEGEN" = legacy ] && MACHINE=daint-legacy
 export PYTHON=${PYTHON:-$VIRTUAL_ENV/bin/python} BASELINES=${BASELINES:?the SDFGs of save_baselines.py}
+export GPU_SELECT=CUDA_VISIBLE_DEVICES
 export HERE=$SLURM_SUBMIT_DIR
 export ROOT=${OUT:-$HERE/results/$MACHINE-$SLURM_JOB_ID}
 mkdir -p "$ROOT"

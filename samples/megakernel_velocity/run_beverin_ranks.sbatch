@@ -14,6 +14,8 @@ export CC=$(command -v gcc) CXX=$(command -v g++) FC=$(command -v gfortran)
 export ROCM_PATH=/opt/rocm CMAKE_PREFIX_PATH=/opt/rocm${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}
 export LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib/llvm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 export CHIPLETS=6 OMP_NUM_THREADS=24 BUILD_PARALLEL=${BUILD_PARALLEL:-4} MACHINE=${MACHINE:-beverin}
+# ROCm also reads CUDA_VISIBLE_DEVICES, on top of this: setting both leaves ranks 2 and 3 without a GPU
+export GPU_SELECT=ROCR_VISIBLE_DEVICES
 export HERE=$SLURM_SUBMIT_DIR
 export ROOT=${OUT:-$HERE/results/beverin-$SLURM_JOB_ID}
 mkdir -p "$ROOT"
