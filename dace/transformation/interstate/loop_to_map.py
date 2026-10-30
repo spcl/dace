@@ -3107,14 +3107,22 @@ class LoopLift:
         else:
             post_free_symbols = sdfg.free_symbols
             newly_free = post_free_symbols - fsymbols
+        deregistered = False
         for var in newly_free:
             if var not in sdfg.symbols:
                 continue
             if sdfg.parent_nsdfg_node:
                 if var not in sdfg.parent_nsdfg_node.symbol_mapping:
                     sdfg.remove_symbol(var)
+                    deregistered = True
             else:
                 sdfg.remove_symbol(var)
+                deregistered = True
+        # A declaration alone makes a symbol free, so deregistering one the body was the only definer and user of
+        # un-frees it
+        if deregistered:
+            post_free_symbols = sdfg.free_symbols
+            newly_free &= post_free_symbols
 
         # Deregistering does not un-free a symbol whose uses remain; the parent node must map it.
         if sdfg.parent_nsdfg_node is not None:
@@ -3138,8 +3146,8 @@ class LoopLift:
 
         # Hand the post-lift free symbols to the holder, so the context it rebuilds next does not
         # walk the whole SDFG for a set this already has. Nothing between the snapshot above and
-        # here changes it: ``remove_symbol`` deregisters a declaration without moving a use, and
-        # the parent's ``symbol_mapping`` belongs to the parent SDFG. ``remove_data`` DOES change
+        # here changes it: it was retaken after ``remove_symbol``, and the parent's
+        # ``symbol_mapping`` belongs to the parent SDFG. ``remove_data`` DOES change
         # it -- a name leaving ``sdfg.arrays`` leaves the walk's defined set -- so skip the handoff
         # whenever the loop had body-local arrays to drop.
         if lift_ctx is not None and (frees_nothing or not unique_set):
