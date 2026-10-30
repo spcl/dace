@@ -66,8 +66,16 @@ def _kernel_with_consecutive_maps(nested: bool, read: str = "T[i, j]") -> dace.S
 
 
 def _cuda_code(sdfg: dace.SDFG) -> str:
+    from dace.codegen import common
+
+    # get_gpu_backend() is lru_cached, so a HIP-resolved earlier test in the same process would
+    # otherwise keep generating HIP here and no code object carries the "cu" language.
     with dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"):
-        return next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
+        common.get_gpu_backend.cache_clear()
+        try:
+            return next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
+        finally:
+            common.get_gpu_backend.cache_clear()
 
 
 @pytest.mark.parametrize("nested", [False, True])
