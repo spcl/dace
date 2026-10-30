@@ -104,8 +104,8 @@ def ger_gpu_call(node, state, sdfg, environment, layout, res, x, y) -> SDFG:
     first, second = (("__y", y), ("__x", x)) if layout.row_major else (("__x", x), ("__y", y))
     rows, cols = (n, m) if layout.row_major else (m, n)
     call = (
-        f"{routine}({gpu_dialect.HANDLE}, {rows}, {cols}, {arg['alpha']}, {gpu.pointer(first[0])}, {first[1].strides[0]}, "
-        f"{gpu.pointer(second[0])}, {second[1].strides[0]}, {gpu.pointer('__res')}, {lda})"
+        f"{routine}({gpu_dialect.HANDLE}, {sym2cpp(rows)}, {sym2cpp(cols)}, {arg['alpha']}, {gpu.pointer(first[0])}, {sym2cpp(first[1].strides[0])}, "
+        f"{gpu.pointer(second[0])}, {sym2cpp(second[1].strides[0])}, {gpu.pointer('__res')}, {sym2cpp(lda)})"
     )
     code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
     return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", code)

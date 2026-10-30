@@ -38,7 +38,7 @@ def scal_call(node, state, sdfg, environment=None) -> SDFG:
         if gpu is None:
             return ExpandScalPure.expansion(node, state, sdfg)
         scalars, arg = gpu_dialect.scalar_pointers(gpu, dtype, a=node.a)
-        call = f"{gpu.routine('scal')}({gpu_dialect.HANDLE}, {x.shape[0]}, {arg['a']}, {gpu.pointer('__res')}, {res.strides[0]})"
+        call = f"{gpu.routine('scal')}({gpu_dialect.HANDLE}, {sym2cpp(x.shape[0])}, {arg['a']}, {gpu.pointer('__res')}, {sym2cpp(res.strides[0])})"
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
         return blas_helpers.in_place_call(node, state, sdfg, "_x", "_res", code)
     prefix = blas_helpers.blas_prefix(dtype)

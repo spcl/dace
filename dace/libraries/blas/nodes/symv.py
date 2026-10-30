@@ -2,6 +2,7 @@
 import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
@@ -59,9 +60,9 @@ def symv_call(node, state, sdfg, environment=None) -> SDFG:
         scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
         upper = node.uplo != layout.row_major
         call = (
-            f"{gpu.routine('symv')}({gpu_dialect.HANDLE}, {gpu_dialect.fill(upper)}, {x.shape[0]}, {arg['alpha']}, "
-            f"{gpu.pointer('__A')}, {layout.leading[0]}, {gpu.pointer('__x')}, {x.strides[0]}, {arg['beta']}, "
-            f"{gpu.pointer('__yout')}, {yout.strides[0]})"
+            f"{gpu.routine('symv')}({gpu_dialect.HANDLE}, {gpu_dialect.fill(upper)}, {sym2cpp(x.shape[0])}, {arg['alpha']}, "
+            f"{gpu.pointer('__A')}, {sym2cpp(layout.leading[0])}, {gpu.pointer('__x')}, {sym2cpp(x.strides[0])}, {arg['beta']}, "
+            f"{gpu.pointer('__yout')}, {sym2cpp(yout.strides[0])})"
         )
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
         return blas_helpers.in_place_call(
@@ -75,8 +76,8 @@ def symv_call(node, state, sdfg, environment=None) -> SDFG:
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
     uplo = "CblasUpper" if node.uplo else "CblasLower"
     call = (
-        f"cblas_{prefix.lower()}symv({order}, {uplo}, {x.shape[0]}, {arg['alpha']}, __A, {layout.leading[0]}, __x, "
-        f"{x.strides[0]}, {arg['beta']}, __yout, {yout.strides[0]});"
+        f"cblas_{prefix.lower()}symv({order}, {uplo}, {sym2cpp(x.shape[0])}, {arg['alpha']}, __A, {sym2cpp(layout.leading[0])}, __x, "
+        f"{sym2cpp(x.strides[0])}, {arg['beta']}, __yout, {sym2cpp(yout.strides[0])});"
     )
     return blas_helpers.in_place_call(
         node, state, sdfg, "_yin", "_yout", scalars + call, overwrites=equal_valued(0, node.beta)
