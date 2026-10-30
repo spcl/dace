@@ -12,6 +12,7 @@ import math
 import numbers
 import re
 import warnings
+from collections.abc import Sequence
 from io import StringIO
 from typing import IO, TYPE_CHECKING, Optional
 
@@ -53,6 +54,24 @@ def mangle_dace_state_struct_name(sdfg: SDFG | str) -> str:
     if not dtypes.validate_name(type_name):
         raise ValueError(f"The mangled type name `{type_name}` of the state struct of SDFG '{name}' is invalid.")
     return type_name
+
+
+def readable_cpu_codegen_active() -> bool:
+    return Config.get("compiler", "cpu", "implementation") == "experimental_readable"
+
+
+def const_scalar_by_value() -> bool:
+    """Whether a READ-ONLY scalar is bound by const VALUE (``const T x``) rather than by const
+    reference (``const T& x``, the legacy convention).
+
+    Only the experimental readable generator honours ``compiler.cpu.const_scalar_abi``; the legacy
+    generator always binds by reference, so its output stays byte-identical. The two forms are
+    semantically identical -- which is faster is a backend artifact (see the config description),
+    so it is a knob rather than a hardcoded choice."""
+    return (
+        readable_cpu_codegen_active()
+        and Config.get("compiler", "cpu", "codegen_params", "const_scalar_abi") == "by_value"
+    )
 
 
 def copy_expr(
@@ -360,19 +379,32 @@ def emit_memlet_reference(
             defined_type = DefinedType.Scalar
             if is_write is False:
                 typedef = make_const(typedef)
-            ref = "&"
-        # constexpr arrays
-        elif memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
-            ref = "*"
-            typedef = make_const(typedef)
-        elif is_write is False and const_read_only_array:
-            # ``is_write`` is a direction at one node, not "never written in the callee".
-            typedef = make_const(typedef)
+            # A read-only scalar binds by const reference (legacy, and the readable default) or by
+            # const value, per ``compiler.cpu.const_scalar_abi`` -- see const_scalar_by_value().
+            ref = "" if (is_write is False and const_scalar_by_value()) else "&"
+        else:
+            # constexpr arrays. The pointer belongs in ``typedef``, NOT in ``ref``: the two are
+            # concatenated for the returned declaration, so either spelling declares the same
+            # ``const T*``, but only ``typedef`` is what gets registered in ``defined_vars`` below.
+            # Leaving the ``*`` in ``ref`` registered this operand as ``const T`` -- a SCALAR -- and
+            # the next consumer to read that ctype back emitted a scalar parameter for an array it
+            # then indexed (``const float _cpy_in`` taking ``&a_0[0]``, which does not compile).
+            # Reachable through a view of a constant-folded array, so it needs ``simplify=0`` to
+            # survive: np.vstack of two np.zeros/np.ones rows (tests/numpy/concat_test.py).
+            if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
+                typedef = make_const(typedef)
+            elif is_write is False and const_read_only_array:
+                # ``is_write`` is a direction at one node, not "never written in the callee".
+                typedef = make_const(typedef)
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + "*")
+        # A read-only scalar binds by const reference (legacy, and the readable default) or by const
+        # value, per ``compiler.cpu.const_scalar_abi`` -- see const_scalar_by_value(). A WRITTEN
+        # scalar always keeps its reference.
+        by_value = is_scalar and is_write is False and not isinstance(desc, data.Structure) and const_scalar_by_value()
         if is_write is False and not isinstance(desc, data.Structure):
             typedef = make_const(typedef)
-        ref = "&" if is_scalar else ""
+        ref = "" if by_value else ("&" if is_scalar else "")
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         offset_expr = ""
     elif defined_type in (DefinedType.Stream, DefinedType.Object):
@@ -972,7 +1004,7 @@ def unparse_tasklet(
             callsite_stream.write(mlir_out_name + " = mlir_entry" + mlir_func_uid + "(" + mlir_in_untyped + ");")
 
         if node.language == dtypes.Language.CPP:
-            callsite_stream.write(type(node).__properties__["code"].to_string(node.code), cfg, state_id, node)
+            callsite_stream.write(codegen.rewrite_cpp_tasklet_body(node, sdfg, state_dfg), cfg, state_id, node)
 
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):
             # Get GPU codegen
@@ -1035,7 +1067,7 @@ def unparse_tasklet(
         if connector is not None:
             defined_symbols.update({connector: conntype})
 
-    callsite_stream.write(f"// Tasklet code ({node.label})\n", cfg, state_id, node)
+    callsite_stream.write(codegen.tasklet_body_comment(node), cfg, state_id, node)
     # Struct initializers only apply to calls of the SDFG's struct types or explicitly marked ones
     structs = frame.struct_types(sdfg) if frame is not None else StructInitializer.struct_types(sdfg)
     struct_initializer = None
@@ -1050,9 +1082,9 @@ def unparse_tasklet(
         if struct_initializer is not None:
             struct_initializer.visit(stmt)
         if isinstance(stmt, ast.Expr):
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit_TopLevelExpr(stmt)
+            rk = codegen.make_keyword_remover(sdfg, memlets).visit_TopLevelExpr(stmt)
         else:
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit(stmt)
+            rk = codegen.make_keyword_remover(sdfg, memlets).visit(stmt)
 
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
@@ -1115,6 +1147,21 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         self.write(cpp_array_expr(self.sdfg, memlet, framecode=self.framecode))
 
 
+def is_lowered_target_code(node: ast.AST) -> bool:
+    """
+    Checks whether a (partially) visited tasklet subtree already carries generated target code.
+
+    The tasklet visitors splice emitted C++ back into the Python AST as an ``ast.Name`` holding a whole
+    expression (``A->indices[A_indices_idx(idx)]``, ``(*__walk_A)``, ...). A parsed ``ast.Name.id`` is
+    always an identifier, so a non-identifier id marks such a spliced node -- and marks a subtree that
+    can no longer be re-parsed as Python, i.e. that must not re-enter the symbolic layer.
+
+    :param node: The AST node to inspect, including its descendants.
+    :return: True if any node in the subtree holds already-generated target code.
+    """
+    return any(isinstance(n, ast.Name) and not n.id.isidentifier() for n in ast.walk(node))
+
+
 class DaCeKeywordRemover(ExtNodeTransformer):
     """Removes memlets and other DaCe keywords from a Python AST, and
     converts array accesses to C++ methods that can be generated.
@@ -1157,7 +1204,35 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         # More than one target, i.e., x = y = z
         return ast.copy_location(ast.Assign(targets=node.targets[:-1], value=locfix), node)
 
-    def _subscript_expr(self, slicenode: ast.AST, target: str) -> symbolic.SymbolicType:
+    def index_offset(
+        self, elts: Sequence[ast.AST], strides: Sequence[symbolic.SymbolicType]
+    ) -> symbolic.SymbolicType | str:
+        """
+        Builds the flat offset ``sum(index * stride)`` of a subscript from its per-dimension indices.
+
+        The offset stays symbolic while every index is still a Python expression. An index the visitor
+        already lowered to target code -- an indirection such as ``A->indices[A_indices_idx(idx)]``,
+        which is C++ and not Python -- cannot round-trip through ``pystr_to_symbolic``, so the offset is
+        then composed as C++ text instead. ``sym2cpp`` passes such a string through unchanged.
+
+        :param elts: Visited index expression per dimension.
+        :param strides: Stride per dimension, matching ``elts``.
+        :return: The offset as a symbolic expression, or as a C++ string for an already-lowered index.
+        """
+        if not any(is_lowered_target_code(elt) for elt in elts):
+            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(elts, strides))
+
+        terms: list[str] = []
+        for elt, stride in zip(elts, strides):
+            if not is_lowered_target_code(elt):
+                terms.append(sym2cpp(symbolic.pystr_to_symbolic(unparse(elt)) * stride))
+            elif stride == 1:
+                terms.append(unparse(elt))
+            else:
+                terms.append("(%s) * %s" % (unparse(elt), sym2cpp(stride)))
+        return " + ".join(terms)
+
+    def _subscript_expr(self, slicenode: ast.AST, target: str) -> symbolic.SymbolicType | str:
         visited_slice = self.visit(slicenode)
 
         if isinstance(visited_slice, ast.Index):
@@ -1202,10 +1277,13 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                     "Invalid number of dimensions in expression (expected %d, got %d)" % (len(strides), len(elts))
                 )
 
-            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(elts, strides))
+            return self.index_offset(elts, strides)
 
         if len(strides) != 1:
             raise SyntaxError("Missing dimensions in expression (expected one, got %d)" % len(strides))
+
+        if is_lowered_target_code(visited_slice):
+            return self.index_offset([visited_slice], strides)
 
         try:
             return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]
