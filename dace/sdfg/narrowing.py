@@ -9,10 +9,8 @@ probing at every call site.
 
 import sympy
 
-from dace import dtypes, subsets, symbolic
-from dace.config import Config
+from dace import subsets, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 #: Anything a subset bound, loop bound or parsed expression can be (``sympy.Basic`` also covers sympy's own stubs,
 #: which declare ``Basic`` where an ``Expr`` is returned).
@@ -76,21 +74,6 @@ def as_map_entry(node: nodes.Node | None) -> nodes.MapEntry:
     return node
 
 
-def as_typeclass(dtype: object) -> dtypes.typeclass:
-    """``dtype`` as a :class:`~dace.dtypes.typeclass`.
-
-    ``dace.int64`` and friends are typeclass instances at run time but are declared as array classes for
-    annotation syntax (``dace.float64[N]``), so a type checker rejects them where a typeclass is expected.
-
-    :param dtype: ``dace.int64``, ``dace.float32``, ... or any typeclass.
-    :returns: The same object.
-    :raises TypeError: If ``dtype`` is not a typeclass.
-    """
-    if not isinstance(dtype, dtypes.typeclass):
-        raise TypeError(f"expected a dace typeclass, got {dtype!r}")
-    return dtype
-
-
 def free_symbols(expr: sympy.Basic) -> set[sympy.Symbol]:
     """Free symbols of ``expr`` narrowed from sympy's ``set[Basic]`` to ``set[Symbol]``.
 
@@ -106,49 +89,6 @@ def free_symbols(expr: sympy.Basic) -> set[sympy.Symbol]:
     return result
 
 
-def coeff_of(expr: sympy.Expr, symbol: sympy.Expr, power: int = 1) -> sympy.Expr:
-    """``expr.coeff(symbol, power)`` narrowed from sympy's ``Expr | None`` (it returns ``0`` for no match)."""
-    coeff = expr.coeff(symbol, power)
-    if coeff is None:
-        raise TypeError(f"{expr} has no coefficient for {symbol}**{power}")
-    return coeff
-
-
-def ndrange_exprs(subset: subsets.Subset) -> list[tuple[sympy.Expr, sympy.Expr, sympy.Expr]]:
-    """``subset.ndrange()`` with every ``(begin, end, step)`` entry narrowed to a sympy ``Expr``."""
-    return [(as_expr(begin), as_expr(end), as_expr(step)) for begin, end, step in subset.ndrange()]
-
-
-def config_str(*key_hierarchy: str) -> str:
-    """The current value of a string configuration entry (``Config.get`` returns any schema type)."""
-    value = Config.get(*key_hierarchy)
-    if not isinstance(value, str):
-        raise TypeError(f"configuration entry {'.'.join(key_hierarchy)} is {value!r}, not a string")
-    return value
-
-
-def config_int(*key_hierarchy: str) -> int:
-    """The current value of an integer configuration entry (``Config.get`` returns any schema type)."""
-    value = Config.get(*key_hierarchy)
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"configuration entry {'.'.join(key_hierarchy)} is {value!r}, not an integer")
-    return value
-
-
-def as_state(block: ControlFlowBlock) -> SDFGState:
-    """``block`` as an :class:`~dace.sdfg.state.SDFGState`; the control-flow region it came from must hold a state."""
-    if not isinstance(block, SDFGState):
-        raise TypeError(f"expected an SDFGState, got {type(block).__name__}")
-    return block
-
-
-def as_loop(region: ControlFlowRegion | ControlFlowBlock | None) -> LoopRegion:
-    """``region`` as a :class:`~dace.sdfg.state.LoopRegion`; parent-graph walks answer with the abstract region."""
-    if not isinstance(region, LoopRegion):
-        raise TypeError(f"expected a LoopRegion, got {type(region).__name__}")
-    return region
-
-
 def free_symbol_names(value: symbolic.SymbolicType | int | float) -> set[str]:
     """Names of the free symbols of a subset bound or stride; a Python number has none.
 
@@ -158,10 +98,3 @@ def free_symbol_names(value: symbolic.SymbolicType | int | float) -> set[str]:
     if isinstance(expr, sympy.Basic):
         return {str(s) for s in expr.free_symbols}
     return set()
-
-
-def as_access(node: nodes.Node) -> nodes.AccessNode:
-    """``node`` as an :class:`~dace.sdfg.nodes.AccessNode`."""
-    if not isinstance(node, nodes.AccessNode):
-        raise TypeError(f"expected an AccessNode, got {type(node).__name__}")
-    return node
