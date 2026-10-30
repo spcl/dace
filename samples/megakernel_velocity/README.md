@@ -29,7 +29,9 @@ export SPACK_ROOT=<a spack with gcc, llvm 22 and cuda for aarch64>
 sbatch -A <project> run_daint.sbatch
 ```
 
-`run_beverin.sbatch` is the same on an MI300A node. Results land in `results/<machine>-<job>/`: `verify.txt` is the
+`run_beverin.sbatch` is the same on an MI300A node. `run_beverin_ranks.sbatch` splits the work over the four APUs of one
+node, one rank each: CPU base, CPU megakernel, GPU base, GPU megakernel; it lands in the same place, with `rank*/` beside
+the merged files. Results land in `results/<machine>-<job>/`: `verify.txt` is the
 numerics check, `time.txt` the timings, and `times.csv` every repetition, one row each. `python plot.py
 results/<machine>-<job>/times.csv --out plot.png` draws them (it needs matplotlib, and takes several CSVs to put machines
 side by side). `OUT`, `REPS` (100), `DEVICES` and `CHUNKS` override the defaults.
