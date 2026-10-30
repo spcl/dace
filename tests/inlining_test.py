@@ -1279,7 +1279,8 @@ def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdf
     #  `_0` is an implementation detail. There is no renaming when the outer
     #  SDFG does not uses the same symbol name as on the inside.
     renamed_inner_symbol_name = inner_symbol_name if outside_uses_different_symbol else f"{inner_symbol_name}_0"
-    assert outer_sdfg.symbols.keys() == {outer_symbol_name, renamed_inner_symbol_name}
+    # A mapped symbol becomes an assignment, which the parent declares with the nested SDFG's type
+    assert outer_sdfg.symbols.keys() == {outer_symbol_name, renamed_inner_symbol_name} | mapped_symbols
 
     assert str(outer_sdfg.arrays["t"].shape[0]) == renamed_inner_symbol_name
     assert str(outer_sdfg.arrays["T"].shape[0]) == outer_symbol_name
