@@ -7,7 +7,8 @@ import re
 import pytest
 
 import dace
-from dace.libraries.blas import Dot, Gemm, Gemv
+from dace.libraries.blas import BatchedMatMul, Dot, Gemm, Gemv, Ger, Scal, Symm, Symv, Syrk
+from dace.libraries.blas.environments import hipblas, rocblas
 from dace.libraries.lapack import Getrs, Potrf
 from dace.libraries.linalg import Cholesky, TensorDot, Transpose
 
@@ -125,3 +126,16 @@ def test_hip_expansion_speaks_hip(node, inputs, outputs, implementation, expecte
     # A CUDA environment would link the CUDA library (``-lcublas`` on a ROCm host)
     linked = environments_of(sdfg)
     assert not any(".cublas." in env or ".cusolverdn." in env or ".cutensor." in env for env in linked), linked
+
+
+def test_rocblas_is_hipblas():
+    """rocBLAS, the former name of the HIP BLAS implementation, selects the hipBLAS expansion and environment."""
+    for node in (BatchedMatMul, Dot, Gemm, Gemv, Ger, Scal, Symm, Symv, Syrk, Transpose):
+        assert node.implementations["rocBLAS"] is node.implementations["hipBLAS"], node.__name__
+    assert rocblas.rocBLAS is hipblas.hipBLAS
+
+
+if __name__ == "__main__":
+    for case in CASES:
+        test_hip_expansion_speaks_hip(*case)
+    test_rocblas_is_hipblas()

@@ -322,6 +322,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "cuBLAS": ExpandDotCuBLAS,
         "CUDA (block strided)": ExpandDotCUDABlock,
         "hipBLAS": ExpandDotHipBLAS,
+        "rocBLAS": ExpandDotHipBLAS,
     }
     default_implementation = None
 

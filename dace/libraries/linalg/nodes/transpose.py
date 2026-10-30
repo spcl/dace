@@ -461,6 +461,7 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         "hipBLAS": ExpandTransposeHipBLAS,
         "CUDA": ExpandTransposeCUDA,
         "CUDA (block)": ExpandTransposeCUDABlock,
+        "rocBLAS": ExpandTransposeHipBLAS,
     }
     default_implementation = "pure"
 

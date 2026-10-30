@@ -12,7 +12,7 @@ from dace.transformation.transformation import ExpandTransformation
 def vendor_expansions(node_name: str, call: Callable) -> dict[str, type[ExpandTransformation]]:
     """The OpenBLAS, MKL, cuBLAS and hipBLAS expansions of a node, each validating the node and returning
     ``call(node, state, sdfg, gpu_environment)``; the CPU libraries get ``None``, as both are CBLAS. hipBLAS is the
-    cuBLAS expansion renamed."""
+    cuBLAS expansion renamed; rocBLAS is its older name."""
     backends = {
         "OpenBLAS": (environments.openblas.OpenBLAS, False),
         "MKL": (environments.intel_mkl.IntelMKL, False),
@@ -35,4 +35,5 @@ def vendor_expansions(node_name: str, call: Callable) -> dict[str, type[ExpandTr
     expansions["hipBLAS"] = hip_dialect.hip_expansion(
         expansions["cuBLAS"], environments.hipblas.hipBLAS, hip_dialect.BLAS
     )
+    expansions["rocBLAS"] = expansions["hipBLAS"]
     return expansions

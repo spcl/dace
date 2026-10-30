@@ -1177,6 +1177,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "cuBLAS": ExpandGemmCuBLAS,
         "CUDA (block strided)": ExpandGemmCUDABlock,
         "hipBLAS": ExpandGemmHipBLAS,
+        "rocBLAS": ExpandGemmHipBLAS,
         "PBLAS": ExpandGemmPBLAS,
     }
     default_implementation = None

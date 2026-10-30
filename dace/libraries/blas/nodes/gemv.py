@@ -426,6 +426,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandGemvMKL,
         "cuBLAS": ExpandGemvCuBLAS,
         "hipBLAS": ExpandGemvHipBLAS,
+        "rocBLAS": ExpandGemvHipBLAS,
         "PBLAS": ExpandGemvPBLAS,
     }
     default_implementation = None

@@ -631,6 +631,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         "LIBXSMM": ExpandBatchedMatMulLIBXSMM,
         "cuBLAS": ExpandBatchedMatMulCuBLAS,
         "hipBLAS": ExpandBatchedMatMulHipBLAS,
+        "rocBLAS": ExpandBatchedMatMulHipBLAS,
     }
     transA = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose A before multiplying")
     transB = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose B before multiplying")
