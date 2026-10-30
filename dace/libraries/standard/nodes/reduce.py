@@ -1397,8 +1397,12 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     schedule=dtypes.ScheduleType.Sequential,
                 )
             else:
+                # The cooperating threads are schedule.block[0] (= 512 / warp_size), so the stride must
+                # follow the warp width: a hard-coded 16 skips half the axis on 64-lane HIP warps.
                 ime, imx = real_state.add_map(
-                    "reduce_values", {"_i": f"_b0:{schedule.sequential[0]}:16"}, schedule=dtypes.ScheduleType.Sequential
+                    "reduce_values",
+                    {"_i": f"_b0:{schedule.sequential[0]}:{schedule.block[0]}"},
+                    schedule=dtypes.ScheduleType.Sequential,
                 )
 
             id = real_state.add_tasklet("identity", {"a", "b"}, {"o"}, "o = b")
