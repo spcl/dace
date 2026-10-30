@@ -1035,6 +1035,8 @@ def finish() -> Stages:
         (FINISH, RemoveUnusedSymbols()),
         (FINISH, OptionalArrayInference()),
         (FINISH, ConvertLengthOneArraysToScalars()),
+        # A WCR the parallelization and fusion phases left on a write nothing else touches is a plain update
+        (FINISH, RevertNonReductionWCR()),
         (FINISH, DeadFillElimination()),
         (FINISH, PruneUnreferencedTransients()),
         (FINISH, InlineControlFlowRegions()),
