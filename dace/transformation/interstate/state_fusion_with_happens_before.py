@@ -1163,7 +1163,13 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # A happens-before edge that lands on a second-state read keeps it a non-source, which merges only with a
             # first-state instance it intersects; one the first state reaches by ordering edges alone then stays apart,
             # though the WAW checks above order a container both states write through that merge
-            rewritten = [n for n in second_output if n.data in first_out_data]
+            # A rewrite fed by a read of its own data is ordered through that read's merge instead
+            rewritten = [
+                n
+                for n in second_output
+                if n.data in first_out_data
+                and not any(i.data == n.data and nx.has_path(second_state._nx, i, n) for i in second_input)
+            ]
             for kind, _, targets in self.connections_to_make:
                 if kind not in ("war", "waw"):
                     continue
