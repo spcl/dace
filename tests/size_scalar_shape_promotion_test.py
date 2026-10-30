@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A size computed in the program (``nt = Nt + 1; np.empty(nt)``) is read into a symbol and used as a shape; the
-size descriptor stays, and every shape sized from one version of it shares one symbol."""
+"""A size computed in the program (``nt = Nt + 1; np.empty(nt)``) is read into a fresh symbol at every use as a shape;
+the size descriptor stays."""
 
 import numpy as np
 import pytest
@@ -145,49 +145,21 @@ def test_a_size_promoted_in_one_branch_is_not_reused_in_a_sibling():
         assert out[0] == expected
 
 
-def test_two_arrays_from_one_size_share_their_extent():
+def test_every_promotion_is_its_own_symbol():
+    """Two reads of a size are unrelated extents, so combining them is refused at parse time, not aliased."""
 
     @dace.program
-    def counts(p: dace.float64[N]):
-        a_grid = np.zeros(9, dtype=np.int64)
-        b_grid = np.zeros(16, dtype=np.int64)
-        n = a_grid.size * b_grid.size
-        count_c = p.size - np.ones(n, dtype=np.int64) - np.ones(n, dtype=np.int64)
-        p[0] = count_c[0]
-
-    p = np.zeros(5)
-    counts(p)
-    assert p[0] == 3
-
-
-def test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it():
+    def two_creations(n: dace.int64):
+        return np.ones(n, dtype=np.int64) - np.ones(n, dtype=np.int64)
 
     @dace.program
-    def loop_body_array(nib: dace.int64[1], out: dace.float64[N, 2]):
-        my_n = int(nib[0])
-        acc = np.zeros((N, 2, my_n), dtype=np.float64)
-        for ip in range(2):
-            acc[:, ip, :] = np.ones((N, my_n), dtype=np.float64)
-        out[:] = np.sum(acc, axis=2)
+    def creation_and_slice(n: dace.int64, psi: dace.float64[N, N]):
+        tg = np.zeros((N, n), dtype=np.float64)
+        tg[:, :] = psi[:, :n]
 
-    out = np.zeros((5, 2))
-    loop_body_array(np.array([3], dtype=np.int64), out)
-    assert np.allclose(out, 3.0)
-
-
-def test_a_slice_bounded_by_a_size_shares_its_extent():
-
-    @dace.program
-    def slice_by_size(nib: dace.int64[1], psi: dace.float64[N, N], out: dace.float64[N]):
-        my_n = int(nib[0])
-        tg = np.zeros((N, my_n), dtype=np.float64)
-        tg[:, :] = psi[:, :my_n]
-        out[:] = np.sum(tg, axis=1)
-
-    psi = np.arange(25, dtype=np.float64).reshape(5, 5).copy()
-    out = np.zeros(5)
-    slice_by_size(np.array([3], dtype=np.int64), psi, out)
-    assert np.allclose(out, psi[:, :3].sum(axis=1))
+    for program in (two_creations, creation_and_slice):
+        with pytest.raises(IndexError, match="broadcast"):
+            program.to_sdfg(simplify=False)
 
 
 def test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote():
@@ -216,7 +188,5 @@ if __name__ == "__main__":
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(size_from_empty_into_a_branch)
     test_a_size_assigned_into_a_region_is_defined_before_the_allocation(calls_size_from_empty)
     test_a_size_promoted_in_one_branch_is_not_reused_in_a_sibling()
-    test_two_arrays_from_one_size_share_their_extent()
-    test_an_array_made_in_a_loop_shares_the_extent_of_one_made_before_it()
-    test_a_slice_bounded_by_a_size_shares_its_extent()
+    test_every_promotion_is_its_own_symbol()
     test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()
