@@ -29,6 +29,21 @@ def _get_or_eval_sdfg_first_arg(func, sdfg):
     return func
 
 
+def _constant_element_to_cpp(value: Any) -> str:
+    """
+    Formats one element of a constant array as a C++ literal. Booleans and non-finite floating-point values have no
+    C++ spelling in their NumPy string form.
+
+    :param value: The element (a NumPy scalar).
+    :return: The C++ literal.
+    """
+    if isinstance(value, (bool, np.bool_)):
+        return "true" if value else "false"
+    if isinstance(value, (float, np.floating)) and not np.isfinite(value):
+        return "NAN" if np.isnan(value) else ("INFINITY" if value > 0 else "-INFINITY")
+    return str(value)
+
+
 def constant_as_stored(desc: data.Array, value: Any) -> np.ndarray:
     """The elements of constant ``value`` in the order ``desc`` lays them out in memory.
 
@@ -177,8 +192,8 @@ class DaCeCodeGenerator:
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, data.Array):
                 stored = constant_as_stored(csttype, cstval)
-                const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(stored.size) + "] = {"
-                const_str += ", ".join(str(value) for value in stored.flat) + "};\n"
+                elements = ", ".join(_constant_element_to_cpp(value) for value in stored.flat)
+                const_str = f"constexpr {csttype.dtype.ctype} {cstname}[{stored.size}] = {{{elements}}};\n"
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write(f"constexpr {csttype.dtype.ctype} {cstname} = {sym2cpp(cstval)};\n", sdfg)

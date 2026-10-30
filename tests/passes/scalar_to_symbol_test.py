@@ -883,6 +883,66 @@ def test_promote_widened_loop_index():
     assert np.allclose(b, expected)
 
 
+def test_do_not_promote_viewed_scalar():
+    """A scalar that a View points to is not promoted: the View would have nothing to view after the promotion."""
+    sdfg = dace.SDFG("viewed_scalar")
+    sdfg.add_array("A", [20], dace.int64)
+    sdfg.add_array("B", [20], dace.int64)
+    sdfg.add_transient("s", [1], dace.int64)
+    sdfg.add_view("v", [1], dace.int64)
+    state = sdfg.add_state()
+    s = state.add_access("s")
+    state.add_edge(state.add_tasklet("set", {}, {"out"}, "out = 5"), "out", s, None, dace.Memlet("s[0]"))
+    v = state.add_access("v")
+    state.add_edge(s, None, v, "views", dace.Memlet("s[0]"))
+    me, mx = state.add_map("m", {"i": "0:20"})
+    tasklet = state.add_tasklet("add", {"a", "offset"}, {"b"}, "b = a + offset")
+    state.add_memlet_path(v, me, tasklet, dst_conn="offset", memlet=dace.Memlet("v[0]"))
+    state.add_memlet_path(state.add_read("A"), me, tasklet, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(tasklet, mx, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
+    sdfg.validate()
+
+    assert "s" not in scalar_to_symbol.find_promotable_scalars(sdfg)
+    sdfg.simplify()
+    sdfg.validate()
+    A = np.arange(20, dtype=np.int64)
+    B = np.zeros(20, dtype=np.int64)
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, A + 5)
+
+
+def test_do_not_promote_constant_container():
+    """
+    A one-element compile-time constant container is not promoted: it is never assigned, and the code generator
+    resolves its name to the constant array, so a promoted read would compare a pointer instead of the value.
+    """
+    sdfg = dace.SDFG("constant_container")
+    sdfg.add_array("A", [20], dace.int64)
+    sdfg.add_array("B", [20], dace.int64)
+    _, cdesc = sdfg.add_array("cst", [1], dace.int64, transient=True)
+    sdfg.add_constant("cst", np.array([3], dtype=np.int64), cdesc)
+    sdfg.add_transient("t", [1], dace.int64)
+    state = sdfg.add_state()
+    t = state.add_access("t")
+    copy = state.add_tasklet("lift", {"inp"}, {"out"}, "out = inp")
+    state.add_edge(state.add_read("cst"), None, copy, "inp", dace.Memlet("cst[0]"))
+    state.add_edge(copy, "out", t, None, dace.Memlet("t[0]"))
+    me, mx = state.add_map("m", {"i": "0:20"})
+    tasklet = state.add_tasklet("index", {"a", "idx"}, {"b"}, "b = a + (idx + (3 if idx < 0 else 0))")
+    state.add_memlet_path(t, me, tasklet, dst_conn="idx", memlet=dace.Memlet("t[0]"))
+    state.add_memlet_path(state.add_read("A"), me, tasklet, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(tasklet, mx, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
+    sdfg.validate()
+
+    assert "cst" not in scalar_to_symbol.find_promotable_scalars(sdfg)
+    sdfg.simplify()
+    sdfg.validate()
+    A = np.arange(20, dtype=np.int64)
+    B = np.zeros(20, dtype=np.int64)
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, A + 3)
+
+
 def test_do_not_promote_unwritten_transient():
     """A transient scalar that only an inter-state edge reads has no value to promote."""
     sdfg = dace.SDFG("unwritten_transient")
@@ -978,5 +1038,7 @@ if __name__ == "__main__":
     test_do_not_promote_lossy_cast("out = dace.int64(inp + 1) - i", dace.int32)
     test_do_not_promote_lossy_cast("out = dace.int64(i) * dace.int64(inp)", dace.int32)
     test_promote_widened_loop_index()
+    test_do_not_promote_viewed_scalar()
+    test_do_not_promote_constant_container()
     test_do_not_promote_unwritten_transient()
     test_promoted_transient_stays_out_of_the_signature()

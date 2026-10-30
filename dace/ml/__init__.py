@@ -13,4 +13,35 @@ try:
 except ImportError:
     ONNXModel = None
 
-__all__ = ["DaceModule", "module", "ONNXModel"]
+# Import TorchDynamo frontend (registers the 'dace' torch.compile backend)
+try:
+    from dace.frontend.ml.torch.dynamo import (
+        compile,
+        to_sdfg,
+        sdfg_of,
+        DaceBackend,
+        dace_backend,
+        differentiable,
+        training_step,
+    )
+except ImportError:
+    compile = None
+    to_sdfg = None
+    sdfg_of = None
+    DaceBackend = None
+    dace_backend = None
+    training_step = None
+    differentiable = None
+
+__all__ = [
+    "DaceModule",
+    "module",
+    "ONNXModel",
+    "compile",
+    "to_sdfg",
+    "sdfg_of",
+    "DaceBackend",
+    "dace_backend",
+    "training_step",
+    "differentiable",
+]

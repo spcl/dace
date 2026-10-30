@@ -369,9 +369,9 @@ def find_fast_library(device: dtypes.DeviceType) -> list[str]:
             backend = "none"
 
         if backend == "cuda":
-            return ["cuBLAS", "cuSolverDn", "GPUAuto", "cuTENSOR", "CUB", "pure"]
+            return ["cuBLAS", "cuDNN", "cuSolverDn", "GPUAuto", "cuTENSOR", "CUB", "pure"]
         elif backend == "hip":
-            return ["rocBLAS", "GPUAuto", "pure"]
+            return ["rocBLAS", "MIOpen", "GPUAuto", "pure"]
         else:
             return ["GPUAuto", "pure"]
     elif device == dtypes.DeviceType.CPU:
