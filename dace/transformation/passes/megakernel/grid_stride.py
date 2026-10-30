@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Runs a kernel map inside a persistent megakernel: every thread walks the flattened iteration space in steps of the
+"""Runs a kernel map inside a persistent megakernel: every thread walks every ``nthreads``-th column in steps of the
 grid size, and dimensions too short to spread over the grid stay a loop in every thread."""
 
 from dace import SDFG, SDFGState, dtypes, subsets, symbolic
@@ -9,7 +9,7 @@ from dace.transformation import helpers as xfh
 
 #: A literal extent below this stays a loop in every thread
 SMALL_EXTENT = 64
-#: The flattened index of a grid-stride loop
+#: The index of a grid-stride loop
 FLAT_INDEX = "__mk_g"
 
 
@@ -22,40 +22,30 @@ def is_small(extent: symbolic.SymbolicType, small_symbols: set[str]) -> bool:
     return bool(small_symbols) and {str(s) for s in extent.free_symbols} <= small_symbols
 
 
-def flatten_to_grid_stride(state: SDFGState, entry: nodes.MapEntry, tid: str, nthreads: str) -> None:
-    """Turns ``entry`` into one sequential loop over its flattened iteration space, from thread ``tid`` in steps of
-    ``nthreads``; the body reads every original index back from the flat one (the outermost one needs no modulo)."""
-    flat = symbolic.symbol(FLAT_INDEX, dtypes.int64)
-    sizes = entry.map.range.size()
-    repl, stride = {}, 1
-    for dim in reversed(range(len(sizes))):
-        begin, _, step = entry.map.range[dim]
-        index = flat if stride == 1 else symbolic.int_floor(flat, stride)
-        if dim > 0:
-            index = index % sizes[dim]
-        repl[entry.map.params[dim]] = begin + step * index
-        stride *= sizes[dim]
-    symrepl = {symbolic.pystr_to_symbolic(name): value for name, value in repl.items()}
-    replace_dict(state.scope_subgraph(entry), {name: str(value) for name, value in repl.items()}, symrepl)
+def to_grid_stride(state: SDFGState, entry: nodes.MapEntry, tid: str, nthreads: str) -> None:
+    """Turns the one-dimensional ``entry`` into a sequential loop from thread ``tid`` in steps of ``nthreads``; the body
+    reads the original index back from the loop's."""
+    (begin, _, step), size = entry.map.range[0], entry.map.range.size()[0]
+    param, index = entry.map.params[0], begin + step * symbolic.symbol(FLAT_INDEX, dtypes.int64)
+    replace_dict(state.scope_subgraph(entry), {param: str(index)}, {symbolic.pystr_to_symbolic(param): index})
     entry.map.params = [FLAT_INDEX]
-    entry.map.range = subsets.Range(
-        [(symbolic.pystr_to_symbolic(tid), stride - 1, symbolic.pystr_to_symbolic(nthreads))]
-    )
+    entry.map.range = subsets.Range([(symbolic.pystr_to_symbolic(tid), size - 1, symbolic.pystr_to_symbolic(nthreads))])
     entry.map.schedule = dtypes.ScheduleType.Sequential
 
 
 def grid_stride(
     sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, tid: str, nthreads: str, small_symbols: set[str]
 ) -> nodes.MapEntry:
-    """Lowers the kernel map ``entry`` to a grid-stride loop of thread ``tid`` among ``nthreads``. Its small
-    dimensions (:func:`is_small`) move into an inner sequential map; with only small dimensions, all are spread.
+    """Lowers the kernel map ``entry`` to a grid-stride loop of thread ``tid`` among ``nthreads`` over its innermost
+    dimension that is not small (:func:`is_small`), or its innermost if all are: on nproma-first data, the columns. The
+    other dimensions stay loops, in an inner sequential map, so a thread walks its column.
 
     :return: The grid-stride loop.
     """
     sizes = entry.map.range.size()
-    spread = [d for d, extent in enumerate(sizes) if not is_small(extent, small_symbols)] or list(range(len(sizes)))
-    if len(spread) < len(sizes):
-        entry, inner = xfh.extract_map_dims(sdfg, entry, spread)
+    spread = max((d for d, extent in enumerate(sizes) if not is_small(extent, small_symbols)), default=len(sizes) - 1)
+    if len(sizes) > 1:
+        entry, inner = xfh.extract_map_dims(sdfg, entry, [spread])
         inner.map.schedule = dtypes.ScheduleType.Sequential
-    flatten_to_grid_stride(state, entry, tid, nthreads)
+    to_grid_stride(state, entry, tid, nthreads)
     return entry
