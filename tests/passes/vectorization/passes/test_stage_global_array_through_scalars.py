@@ -693,6 +693,43 @@ def test_rmw_chain_in_map_body_drains_only_the_final_hop(k: int):
 # The cloudsc-pattern (zqlhs / zsolqb reuse) tests live separately in
 # ``test_stage_global_array_cloudsc.py``.
 
+def _bridge_copied_to_a_scalar() -> dace.SDFG:
+    """``A[i] = b[i] + 1``, then a tasklet and a copy into the scalar ``s`` both read ``A[i]`` off the same node."""
+    sdfg = dace.SDFG("bridge_copied_to_a_scalar")
+    for name in "AbCD":
+        sdfg.add_array(name, [8], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("m", {"i": "0:8"})
+    write = state.add_tasklet("write", {"x"}, {"y"}, "y = x + 1")
+    read = state.add_tasklet("read", {"x"}, {"y"}, "y = x * 2")
+    use = state.add_tasklet("use", {"x"}, {"y"}, "y = x * 3")
+    bridge, scalar = state.add_access("A"), state.add_access("s")
+    state.add_memlet_path(state.add_read("b"), entry, write, dst_conn="x", memlet=dace.Memlet("b[i]"))
+    state.add_edge(write, "y", bridge, None, dace.Memlet("A[i]"))
+    state.add_edge(bridge, None, read, "x", dace.Memlet("A[i]"))
+    state.add_edge(bridge, None, scalar, None, dace.Memlet("A[i]"))
+    state.add_edge(scalar, None, use, "x", dace.Memlet("s[0]"))
+    state.add_memlet_path(read, exit_node, state.add_write("C"), src_conn="y", memlet=dace.Memlet("C[i]"))
+    state.add_memlet_path(use, exit_node, state.add_write("D"), src_conn="y", memlet=dace.Memlet("D[i]"))
+    state.add_memlet_path(bridge, exit_node, state.add_write("A"), memlet=dace.Memlet("A[i]"))
+    return sdfg
+
+
+def test_a_copy_out_of_the_bridge_reads_the_staged_value():
+    """The write moves to a scalar, so a copy left on the bridge would read ``A`` before the write reached it
+    (CloudSC ``ztp1``, whose copies into index scalars read the temperature of the previous step)."""
+    sdfg = _bridge_copied_to_a_scalar()
+    assert StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
+    sdfg.validate()
+    b = numpy.arange(8, dtype=numpy.float64)
+    A, C, D = numpy.zeros(8), numpy.zeros(8), numpy.zeros(8)
+    sdfg(A=A, b=b, C=C, D=D)
+    assert numpy.array_equal(A, b + 1)
+    assert numpy.array_equal(C, 2 * (b + 1))
+    assert numpy.array_equal(D, 3 * (b + 1))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
 
