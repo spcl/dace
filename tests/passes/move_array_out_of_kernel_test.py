@@ -1108,6 +1108,41 @@ def test_a_tasklet_naming_an_array_the_lifted_name_prefixes_is_left_alone():
     sdfg.validate()
 
 
+def kernel_reading_its_scratch_through_a_flat_view() -> dace.SDFG:
+    """``A[i] = flat[10]`` with ``buf[1, 2] = i``; ``flat`` views ``buf[4, 8]`` as 32 elements, in kernel ``i``."""
+    sdfg = dace.SDFG("scratch_behind_a_flat_view")
+    sdfg.add_array("A", [128], dace.float64, storage=GLOBAL)
+    sdfg.add_transient("buf", [4, 8], dace.float64, storage=GLOBAL)
+    sdfg.add_view("flat", [32], dace.float64, storage=GLOBAL)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("kernel", dict(i="0:128"), schedule=GPU_DEVICE)
+    buf = state.add_access("buf")
+    produce = state.add_tasklet("produce", {}, {"o": None}, "o = i")
+    state.add_edge(me, None, produce, None, dace.Memlet())
+    state.add_edge(produce, "o", buf, None, dace.Memlet("buf[1, 2]"))
+    flat = state.add_access("flat")
+    state.add_edge(buf, None, flat, None, dace.Memlet("buf[0:4, 0:8]"))
+    consume = state.add_tasklet("consume", {"b": None}, {"o": None}, "o = b")
+    state.add_edge(flat, None, consume, "b", dace.Memlet("flat[10]"))
+    state.add_memlet_path(consume, mx, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i]"))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_view_of_a_lifted_array_steps_over_the_other_threads_slices(layout):
+    """Coalesced, one element of a thread's slice lies 128 apart from the next; the view kept stride 1 and read the
+    other threads' elements (lavamd's per-box neighbor offsets)."""
+    sdfg = kernel_reading_its_scratch_through_a_flat_view()
+    lift(sdfg, layout)
+
+    buf, flat = sdfg.arrays["buf"], sdfg.arrays["flat"]
+    view_stride = int(flat.strides[0])
+    assert view_stride == int(buf.strides[-1]), (flat.strides, buf.strides)
+    # flat[10] is buf[1, 2] of the same thread
+    assert 10 * view_stride == int(buf.strides[1] + 2 * buf.strides[2])
+
+
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)

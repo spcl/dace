@@ -692,9 +692,40 @@ def pass_out_through_nests(plan: LiftPlan) -> None:
         inner_name = outer_name
 
 
+def restride_views(sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new: list[symbolic.SymbolicType]) -> None:
+    """Views of ``name`` in ``sdfg`` scale their strides as the lift scaled ``old`` to ``new``: one factor for every
+    axis, the packed extent of the map dimensions placed inside them (1 when they are outside)."""
+    factor = symbolic.simplify(new[-1] / old[-1])
+    if factor == 1:
+        return
+    scaled, pending = {name}, [name]
+    while pending:
+        viewed = pending.pop()
+        for state in sdfg.states():
+            for node in state.data_nodes():
+                if node.data != viewed:
+                    continue
+                for edge in state.all_edges(node):
+                    other = edge.dst if edge.src is node else edge.src
+                    if (
+                        isinstance(other, nodes.AccessNode)
+                        and other.data not in scaled
+                        and isinstance(other.desc(sdfg), dt.View)
+                    ):
+                        view = other.desc(sdfg)
+                        view.set_shape(
+                            view.shape,
+                            strides=[st * factor for st in view.strides],
+                            total_size=view.total_size * factor,
+                        )
+                        scaled.add(other.data)
+                        pending.append(other.data)
+
+
 def restride_nests(sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new: list[symbolic.SymbolicType]) -> None:
     """Nests below that describe ``name`` with its own strides ``old`` take ``new``, so their window stays a plain
-    slice of the lifted array that ``dealias`` widens."""
+    slice of the lifted array that ``dealias`` widens; so do the views of it in each of them."""
+    restride_views(sdfg, name, old, new)
     for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, nodes.NestedSDFG):
