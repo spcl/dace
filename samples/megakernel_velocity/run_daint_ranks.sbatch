@@ -28,6 +28,12 @@ export PYTHON=${PYTHON:-$VIRTUAL_ENV/bin/python} BASELINES=${BASELINES:?the SDFG
 export HERE=$SLURM_SUBMIT_DIR
 export ROOT=${OUT:-$HERE/results/$MACHINE-$SLURM_JOB_ID}
 mkdir -p "$ROOT"
+# A rank's GPU can be missing from the step. DaCe then builds for sm_80 and the driver segfaults on its first call, which
+# the job still reports as completed, so end it here instead
+srun --cpu-bind=none bash -c 'CUDA_VISIBLE_DEVICES=$SLURM_PROCID exec "$PYTHON" -c "import ctypes, sys; sys.exit(ctypes.CDLL(\"libcuda.so\").cuInit(0))"' || {
+  echo "A rank sees no GPU on $SLURM_JOB_NODELIST" >&2
+  exit 1
+}
 # A rank that fails leaves the other three running
 srun --kill-on-bad-exit=0 --cpu-bind=none bash "$HERE/run_rank.sh"
 cat "$ROOT"/rank*/verify.txt >"$ROOT/verify.txt"

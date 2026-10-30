@@ -3,6 +3,8 @@
 # One rank of run_<machine>_ranks.sbatch: an MI300A node has four APUs and a Daint node four GH200 modules, so each rank
 # takes one, with its cores, memory and GPU to itself. The ranks do not share what they time.
 rank=$SLURM_PROCID
+# RANKS repeats some of them: the ranks left out exit, so each one keeps its module
+case " ${RANKS:-0 1 2 3} " in *" $rank "*) ;; *) exit 0 ;; esac
 case $rank in
   0) export DEVICES=cpu KINDS="base" ;;
   1) export DEVICES=cpu KINDS="megakernel tuned" ;;

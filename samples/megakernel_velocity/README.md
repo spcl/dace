@@ -46,7 +46,8 @@ sbatch -A <project> run_daint_ranks.sbatch                       # machine "dain
 CPU_CODEGEN=legacy sbatch -A <project> run_daint_ranks.sbatch    # machine "daint-legacy", old CPU, new GPU codegen
 ```
 
-`PYTHONPATH` picks the DaCe that compiles them. The results land in `results/<machine>-<job>/`, and `times.csv` is all
+The job ends at once if a rank sees no GPU. `RANKS="2 3"` repeats only those ranks; add their rows to the earlier
+`times.csv` so that the machine keeps one column. `PYTHONPATH` picks the DaCe that compiles them. The results land in `results/<machine>-<job>/`, and `times.csv` is all
 four ranks merged. `CPU_CODEGEN=legacy` also changes the tasklets inside GPU kernels. Building the GPU libraries takes
 `GPU_CXX`, the system gcc, because nvcc cannot parse the headers of gcc 16; the kernels are nvcc's either way.
 
