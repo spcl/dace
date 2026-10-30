@@ -5429,7 +5429,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # We also check the type of the slice attribute of the node
         # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
         # (the former is an index, the latter is a slice).
-        is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice)
+        # A[1:2, 1:2] has index-shaped ranges but non-empty slice_dims forces the slice path (stays 2-D).
+        is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice) and not expr.slice_dims
         other_subset = copy.deepcopy(expr.subset)
         strides = list(arrobj.strides)
 
@@ -5441,7 +5442,13 @@ class ProgramVisitor(ExtNodeVisitor):
             for i in new_axes:
                 strides.insert(i, 1)
         length = len(other_subset)
-        nsqz = other_subset.squeeze(ignore_indices=new_axes)
+        # Squeeze only scalar-index dims; a length-1 slice keeps its axis. Shift slice_dims past inserted new axes.
+        keep = set(new_axes)
+        for dim in expr.slice_dims or []:
+            for inserted in sorted(new_axes):
+                dim += inserted <= dim
+            keep.add(dim)
+        nsqz = other_subset.squeeze(ignore_indices=sorted(keep))
         sqz = [i for i in range(length) if i not in nsqz]
         for i in reversed(sqz):
             strides.pop(i)
@@ -5505,6 +5512,25 @@ class ProgramVisitor(ExtNodeVisitor):
                 ),
             )
         return tmp
+
+    def promote_scalar_to_symbol(self, scalar: str) -> symbolic.symbol:
+        """
+        Reads a size-1 descriptor into a fresh symbol on a new interstate edge, keeping the descriptor. Sizes an
+        array, so unlike a subscript promotion the symbol is never reassigned.
+
+        :param scalar: Name of the data descriptor to read.
+        :return: The new symbol.
+        """
+        desc = self.sdfg.arrays[scalar]
+        name = self.sdfg.add_symbol(f"__sym_{scalar}", desc.dtype, find_new_name=True)
+        sym = dace.symbol(name, dtype=desc.dtype)
+        # Nested scopes resolve free symbols through globals
+        self.globals[name] = sym
+        state = self._add_state(f"promote_{scalar}_to_{name}")
+        # A size-1 array reads by subscript, or the assignment would take its pointer
+        rhs = scalar if isinstance(desc, data.Scalar) else f"{scalar}[{', '.join(['0'] * len(desc.shape))}]"
+        state.parent_graph.in_edges(state)[0].data.assignments = {name: rhs}
+        return sym
 
     def _parse_subscript_slice(self, s: ast.AST, multidim: bool = False) -> Any | tuple[Any | str | symbolic.symbol]:
         """Parses the slice attribute of an ast.Subscript node.
