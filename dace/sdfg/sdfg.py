@@ -65,7 +65,7 @@ from dace.sdfg.graph import (
 )
 from dace.sdfg.replace import replace_properties_dict, symbolic_replacements
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg.symbol_repo import SymbolRepo, bound_names, scope_owners
+from dace.sdfg.symbol_repo import SymbolRepo, bound_names, scope_from_json, scope_owners
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
@@ -1138,18 +1138,21 @@ class SDFG(ControlFlowRegion):
             ret, json_obj, context=context, ignore_properties={"constants_prop", "name", "hash"}
         )
 
+        # The blocks parse their expressions under the symbols ``to_json`` wrote them under: ``s / 2`` of a
+        # float ``s`` read as an integer one is a floor division. The repository needs the blocks, so it follows.
         nodelist = []
-        for n in nodes:
-            nci = copy.copy(context)
-            nci["sdfg"] = ret
+        with symbolic.serialization_symbol_dtypes(scope_from_json(repo_json["params"], context).types):
+            for n in nodes:
+                nci = copy.copy(context)
+                nci["sdfg"] = ret
 
-            block = dace.serialize.from_json(n, context=nci)
-            ret.add_node(block)
-            nodelist.append(block)
+                block = dace.serialize.from_json(n, context=nci)
+                ret.add_node(block)
+                nodelist.append(block)
 
-        for e in edges:
-            e = dace.serialize.from_json(e, context=context)
-            ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
+            for e in edges:
+                e = dace.serialize.from_json(e, context=context)
+                ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
         if json_obj.get("start_block") is not None:
             # An INDEX into the node list, which is what ``to_json`` wrote and what the getter
