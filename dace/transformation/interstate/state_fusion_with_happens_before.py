@@ -1321,6 +1321,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # Per container, the nodes that took a first-state instance: a later second-state reader finds that instance
         # gone from the candidates and is ordered behind them instead (seeds 349, 1663)
         absorbed: dict[str, list[nodes.AccessNode]] = {}
+        second_writes = {n.data for n in second_state.data_nodes() if second_state.in_degree(n) > 0}
         for node in second_mid:
             # merge only top level nodes, skip everything else
             if node not in top2:
@@ -1382,7 +1383,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
             if len(candidates) == 0:
                 continue
-            elif len(candidates) == 1:
+            elif len(candidates) == 1 or node.data in second_writes:
+                # When the second state also writes the container, the WAW check orders the first state's writers
+                # through the topologically last instance, so the read has to merge with that one
                 n = candidates[0]
             else:
                 # Choose first candidate that intersects memlets
