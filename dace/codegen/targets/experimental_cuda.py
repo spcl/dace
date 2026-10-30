@@ -909,7 +909,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         arrsize_malloc = f"{sym2cpp(nodedesc.total_size)} * sizeof({nodedesc.dtype.ctype})"
 
         allocation_stream.write(
-            f"DACE_GPU_CHECK({self.backend}MallocHost(&{dataname}, {arrsize_malloc}));\n", cfg, state_id, node
+            f"DACE_GPU_CHECK({self.backend}MallocHost((void**)&{dataname}, {arrsize_malloc}));\n", cfg, state_id, node
         )
         if node.setzero:
             allocation_stream.write(f"memset({dataname}, 0, {arrsize_malloc});\n", cfg, state_id, node)

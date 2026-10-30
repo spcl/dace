@@ -136,7 +136,7 @@ static DACE_CONSTEXPR DACE_HDFI T ROUND(const T& value) {
 //          will be implicitly converted to it in min/max -- except a float or double, which
 //          would be rounded to half before the comparison (``min(1e-20, h)`` answering 0). Those
 //          compare in the wider type instead and return it.
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
 template <typename... Ts>
 DACE_CONSTEXPR DACE_HDFI dace::float16 min(const dace::float16& a, const dace::float16& b, const Ts&... c)
 {
@@ -918,7 +918,7 @@ namespace dace
             return std::hypot(a, b);
         }
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
         // The templates above call ``std::NAME`` directly, whose float/double/long double overloads
         // tie for a half -- and codegen spells ``x ** 0.5`` as ``dace::math::sqrt``. These exact
         // matches run the float version and round back. ``exp`` and ``tanh`` have their native half

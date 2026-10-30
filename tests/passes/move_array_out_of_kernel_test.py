@@ -923,7 +923,7 @@ def test_code_generation_moves_a_symbolic_scratch_out_of_the_kernel(case):
 
     objects = build().generate_code()
     host = "\n".join(obj.clean_code for obj in objects)
-    (device,) = [obj.clean_code for obj in objects if obj.language == "cu"]
+    (device,) = [obj.clean_code for obj in objects if obj.language == "cu" or obj.name.endswith("_cuda")]
 
     assert not re.search(rf"double\s+{name}\s*\[\s*{extent}", device), f"{name} is declared per thread"
     assert re.search(rf"(cuda|hip)Malloc\(\(void\*\*\)&{name}\b", host), f"{name} is not allocated on the device"

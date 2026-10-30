@@ -80,14 +80,14 @@ def test_configure_cache_seeds_a_working_build(tmp_path, private_cache):
         build_and_check(tmp_path, "seedsecond")
 
 
-@pytest.mark.skipif(os.name != "posix", reason="recorded builds need the Ninja generator")
+@pytest.mark.skipif(shutil.which("ninja") is None, reason="recorded builds need the Ninja generator")
 def test_recorded_build_is_replayed(tmp_path, private_cache):
     """The second program of a shape must reuse the first one's commands instead of running CMake."""
     assert ran_cmake(build_and_check(tmp_path, "recordfirst"))
     assert not ran_cmake(build_and_check(tmp_path, "recordsecond"))
 
 
-@pytest.mark.skipif(os.name != "posix", reason="recorded builds need the Ninja generator")
+@pytest.mark.skipif(shutil.which("ninja") is None, reason="recorded builds need the Ninja generator")
 def test_unusable_recording_falls_back_to_cmake(tmp_path, private_cache):
     """A recording that misdescribes the program costs speed, not correctness. Here it names a TU the
     program lacks -- staleness where every path still substitutes to something plausible."""

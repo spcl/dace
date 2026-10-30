@@ -216,11 +216,20 @@ def changes_symbol_kind(state: SDFGState, node: "dace.nodes.NestedSDFG") -> bool
     return False
 
 
+def passes_thread_local_data(state: SDFGState, node: "dace.nodes.NestedSDFG") -> bool:
+    """Whether the nested SDFG is handed thread-local data: it receives the calling thread's pointer, and its parallel
+    maps share that one. Inlined, each of their threads would read its own copy of the ``threadprivate`` variable."""
+    return any(
+        e.data.data is not None and state.sdfg.arrays[e.data.data].storage == dtypes.StorageType.CPU_ThreadLocal
+        for e in state.all_edges(node)
+    )
+
+
 def inline_host_nested_sdfgs(sdfg: SDFG) -> int:
     """Flattens the nested SDFGs the CPU target emits and returns how many were inlined.
 
     A nest inside a GPU scope stays, as the CUDA target emits it as a device function, and so does one that
-    :func:`changes_symbol_kind`.
+    :func:`changes_symbol_kind` or :func:`passes_thread_local_data`.
     """
     from dace.sdfg.scope import is_devicelevel_gpu
     from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
@@ -232,7 +241,11 @@ def inline_host_nested_sdfgs(sdfg: SDFG) -> int:
         if isinstance(node, dace.nodes.NestedSDFG)
         and not node.no_inline
         and isinstance(parent, SDFGState)
-        and (is_devicelevel_gpu(parent.sdfg, parent, node) or changes_symbol_kind(parent, node))
+        and (
+            is_devicelevel_gpu(parent.sdfg, parent, node)
+            or changes_symbol_kind(parent, node)
+            or passes_thread_local_data(parent, node)
+        )
     ]
     for node in pinned:
         node.no_inline = True
