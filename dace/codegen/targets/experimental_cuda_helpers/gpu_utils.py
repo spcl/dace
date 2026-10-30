@@ -3,12 +3,19 @@
 
 from collections.abc import Iterator
 
-from dace import Config
+from dace import Config, dtypes
 from dace.codegen import common
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import SDFGState
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
+
+
+def issues_on_gpu_stream(node: nodes.Node) -> bool:
+    """Whether ``node`` issues device work. A host tasklet in a stream's component carries the id without using it."""
+    if node.gpu_stream_id is None:
+        return False
+    return not isinstance(node, nodes.Tasklet) or dtypes.gpuStream_t in node.in_connectors.values()
 
 
 def host_read_device_copies(state: SDFGState, consumer: nodes.Node) -> Iterator[tuple[nodes.AccessNode, nodes.Node]]:
@@ -23,7 +30,7 @@ def host_read_device_copies(state: SDFGState, consumer: nodes.Node) -> Iterator[
             continue
         for producer_edge in state.in_edges(source):
             producer = producer_edge.src
-            if producer.gpu_stream_id is not None:
+            if issues_on_gpu_stream(producer):
                 yield source, producer
 
 

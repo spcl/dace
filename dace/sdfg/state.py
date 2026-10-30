@@ -1378,6 +1378,13 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     def sub_regions(self) -> list["AbstractControlFlowRegion"]:
         return []
 
+    def get_meta_codeblocks(self) -> list[CodeBlock]:
+        """
+        Get a list of codeblocks used by the block.
+        This may include things such as loop control statements or conditions for branching etc.
+        """
+        return []
+
     def set_default_lineinfo(self, lineinfo: dace.dtypes.DebugInfo | None) -> None:
         """
         Sets the default source line information to be lineinfo, or None to
