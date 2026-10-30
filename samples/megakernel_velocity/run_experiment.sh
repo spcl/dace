@@ -18,7 +18,7 @@ BUILD_PARALLEL=${BUILD_PARALLEL:-2}
 VARIANTS=("0 1 1" "0 2 2,9,93,519,1140,1814,6519" "1 1 7,43,463,2593,5701")
 
 # base: one launch per kernel. megakernel: a grid barrier between all stages. tuned: only between dependent stages.
-kinds() { if [ "$1" = gpu ]; then echo base megakernel tuned; else echo base megakernel; fi; }
+KINDS="base megakernel tuned"
 
 # build <device> <base|megakernel|tuned> <lvn_only> <istep> <build dir> [build.py flags]: library and driver in the directory
 build() {
@@ -46,7 +46,7 @@ build_all() {
   local device=$1 tag=$2
   shift 2
   local kind entry count=0
-  for kind in $(kinds "$device"); do
+  for kind in $KINDS; do
     for entry in "${VARIANTS[@]}"; do
       read -r lvn istep _ <<<"$entry"
       mkdir -p "$OUT/$tag"
@@ -62,7 +62,7 @@ verify_and_time() {
   build_all "$device" strict --strict
   build_all "$device" release
   mkdir -p "$OUT/verify" "$OUT/time"
-  for kind in $(kinds "$device"); do
+  for kind in $KINDS; do
     for entry in "${VARIANTS[@]}"; do
       read -r lvn istep steps <<<"$entry"
       name=${device}_${kind}_l${lvn}i${istep}

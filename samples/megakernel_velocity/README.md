@@ -46,7 +46,7 @@ the times. The data set holds (0, 1), (0, 2) and (1, 1); (1, 2) never occurs.
 |------|---------|
 | `base` | one launch per kernel, or one `omp parallel` per map on the CPU |
 | `megakernel` | `MegaKernelOptimization` with its defaults |
-| `tuned` (GPU) | `--fewer-syncs`: the megakernel with grid barriers only between dependent stages |
+| `tuned` | `--fewer-syncs`: the megakernel with grid barriers only between dependent stages |
 
 Every GPU kernel uses thread blocks of 256,1,1. On the MI300A, `CHIPLETS=6` spreads the blocks of each `base` kernel over
 the XCDs; a cooperative grid is launched as it is, so the megakernels are not spread.
