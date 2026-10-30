@@ -426,6 +426,28 @@ def test_while_counter():
 
 
 @pytest.mark.torch
+def test_symbolic_bool_in_arithmetic():
+    """
+    ``n // c + (n % c != 0)`` (the chunk count of a chunked layer): Dynamo decides the boolean and guards on it, so
+    lengths that are multiples of the chunk size would need another compilation. With ``symbolic_branches`` it stays
+    symbolic (a 0/1 integer), and one compilation covers both cases and the one-chunk case.
+    """
+
+    def f(x):
+        n = x.shape[0]
+        chunks = n // 4 + (n % 4 != 0)
+        if chunks == 1:
+            return x * 2
+        out = torch.zeros_like(x)
+        for i in range(chunks):
+            out[i * 4:(i + 1) * 4] = x[i * 4:(i + 1) * 4] + 1
+        return out
+
+    inputs = [torch.randn(6, 2), torch.randn(8, 2), torch.randn(3, 2), torch.randn(13, 2)]
+    _check(f, inputs, symbolic_branches=True)
+
+
+@pytest.mark.torch
 def test_counting_down():
     """A loop variable that may become negative is not assumed nonnegative (the capture falls back)."""
 
@@ -582,3 +604,4 @@ if __name__ == "__main__":
     test_training_interleaved_calls_keep_their_branches()
     test_match_on_bool_of_tensor_falls_back()
     test_training_through_captured_loop()
+    test_symbolic_bool_in_arithmetic()

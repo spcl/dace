@@ -131,6 +131,8 @@ class SymbolTable:
             return self.get(expr.name)
         if isinstance(expr, sympy.Symbol):
             return self.get(expr)
+        if isinstance(expr, sympy.Piecewise):
+            return self._conditional(expr)
         if isinstance(expr, _PASSTHROUGH):
             return expr.func(*[self._as_sympy(self.to_dace(a)) for a in expr.args])
         if isinstance(expr, sympy.Basic):
@@ -176,6 +178,20 @@ class SymbolTable:
     @staticmethod
     def _as_sympy(v: SymExpr) -> sympy.Basic:
         return sympy.Integer(v) if isinstance(v, int) else v
+
+    def _conditional(self, expr: sympy.Piecewise) -> SymExpr:
+        """
+        A ``Piecewise`` (``torch.sym_ite``, a boolean used in arithmetic) as nested DaCe conditional expressions: the
+        code generator prints ``IfExpr`` as a ternary, ``Piecewise`` it does not know.
+        """
+        result = None
+        for value, cond in reversed(expr.args):
+            value = self._as_sympy(self.to_dace(value))
+            if result is None or cond is sympy.true:
+                result = value
+            else:
+                result = symbolic.IfExpr(self._as_sympy(self.to_dace(cond)), value, result)
+        return result
 
     def shape(self, sizes: Iterable) -> tuple[SymExpr, ...]:
         return tuple(self.to_dace(s) for s in sizes)

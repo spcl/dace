@@ -87,8 +87,9 @@ class CaptureFallback(Exception):
 
 # ---------------------------------------------------------------------------------------------- values at boundaries
 #: Kinds of nodes of the structure (``spec``) of a variable's value: a leaf (a block input or a constant), a container
-#: of children, or a function defined in the frame (rebuilt from its code and the frame's cells)
-LEAF, LIST, TUPLE, DICT, FUNCTION = "leaf", "list", "tuple", "dict", "function"
+#: of children, a range (the sequence of a loop: its bounds are the leaves), or a function defined in the frame
+#: (rebuilt from its code and the frame's cells)
+LEAF, LIST, TUPLE, DICT, RANGE, FUNCTION = "leaf", "list", "tuple", "dict", "range", "function"
 
 #: Python constants that can be rebuilt by ``LOAD_CONST`` in a continuation
 _LITERAL_TYPES = (int, float, bool, str, bytes, type(None), type(Ellipsis))
@@ -109,7 +110,7 @@ def _flatten(vt, cells: frozenset = frozenset()) -> tuple[Any, list] | None:
         return (LEAF,), [vt]
     if isinstance(vt, ConstantVariable) and isinstance(vt.as_python_constant(), _LITERAL_TYPES):
         return (LEAF,), [vt]
-    if type(vt) in (ListVariable, TupleVariable):
+    if type(vt) in (ListVariable, TupleVariable, RangeVariable):
         specs, leaves = [], []
         for item in vt.items:
             flat = _flatten(item, cells)
@@ -117,7 +118,8 @@ def _flatten(vt, cells: frozenset = frozenset()) -> tuple[Any, list] | None:
                 return None
             specs.append(flat[0])
             leaves.extend(flat[1])
-        return (LIST if type(vt) is ListVariable else TUPLE, tuple(specs)), leaves
+        kind = {ListVariable: LIST, TupleVariable: TUPLE, RangeVariable: RANGE}[type(vt)]
+        return (kind, tuple(specs)), leaves
     if type(vt) is ConstDictVariable and vt.user_cls is dict:
         entries, leaves = [], []
         for key, item in vt.items.items():
@@ -153,9 +155,9 @@ def _unflatten(spec, leaves: Iterator) -> VariableTracker:
     kind = spec[0]
     if kind == LEAF:
         return next(leaves)
-    if kind in (LIST, TUPLE):
+    if kind in (LIST, TUPLE, RANGE):
         items = [_unflatten(child, leaves) for child in spec[1]]
-        return ListVariable(items) if kind == LIST else TupleVariable(items)
+        return {LIST: ListVariable, TUPLE: TupleVariable, RANGE: RangeVariable}[kind](items)
     if kind == FUNCTION:  # A stand-in with the function's code and defaults (its cells are the successor's)
         code, defaults_spec = spec[1], spec[2]
         defaults = _unflatten(defaults_spec, leaves) if defaults_spec[1] else None
@@ -178,6 +180,8 @@ def _build_value(tx, spec, leaves: Iterator) -> VariableTracker:
     if kind in (LIST, TUPLE):
         items = [_build_value(tx, child, leaves) for child in spec[1]]
         return VariableTracker.build(tx, items if kind == LIST else tuple(items))
+    if kind == RANGE:
+        return RangeVariable([_build_value(tx, child, leaves) for child in spec[1]])
     if kind == FUNCTION:
         raise CaptureFallback("the frame returns a function")
     return VariableTracker.build(
@@ -1043,6 +1047,12 @@ def _build_instructions(spec, leaves: Iterator) -> list[bt.Instruction]:
             result.extend(_build_instructions(child, leaves))
         result.append(bt.create_instruction("BUILD_LIST" if kind == LIST else "BUILD_TUPLE", arg=len(spec[1])))
         return result
+    if kind == RANGE:  # ``range(start, stop, step)`` from its bounds (the builtin, as Dynamo traces it)
+        result.extend(bt.add_push_null([bt.create_instruction("LOAD_GLOBAL", argval="range")]))
+        for child in spec[1]:
+            result.extend(_build_instructions(child, leaves))
+        result.extend(bt.create_call_function(len(spec[1]), False))
+        return result
     if kind == FUNCTION:  # Defaults (if any), the closure from the frame's cells, the code; as CPython emits it
         code, defaults_spec = spec[1], spec[2]
         flags = 0x08
@@ -1336,13 +1346,14 @@ def _make_call_range(original: Callable) -> Callable:
     def call_range(self, tx, *args, **kwargs):
         # Dynamo specializes symbolic bounds when it builds the range (``__index__``); keep them symbolic when the
         # range is iterated right away (``for i in range(n)``), so that the loop can be captured with a symbolic trip
-        # count (``GET_ITER``). Ranges used otherwise (``list(range(n))``, ``len``, ``reversed``) stay Dynamo's.
-        backend, _ = _region_of(tx)
+        # count (``GET_ITER``), and when a block's prologue rebuilds the sequence of a loop from its inputs. Ranges
+        # used otherwise (``list(range(n))``, ``len``, ``reversed``) stay Dynamo's.
+        backend, region = _region_of(tx)
         if (
             backend is not None
             and not kwargs
             and 1 <= len(args) <= 3
-            and _next_opname(tx) == "GET_ITER"
+            and (_next_opname(tx) == "GET_ITER" or _in_prologue(tx, region))
             and any(_is_symint(a.realize()) for a in args)
             and all(_is_symint(a.realize()) or _is_int_constant(a.realize()) for a in args)
         ):
@@ -1350,6 +1361,16 @@ def _make_call_range(original: Callable) -> Callable:
         return original(self, tx, *args, **kwargs)
 
     return call_range
+
+
+def _in_prologue(tx, region) -> bool:
+    """Whether ``tx`` is tracing the prologue of a block's continuation (rebuilding its inputs, before its code)."""
+    return (
+        region is not None
+        and region.is_block_translator(tx)
+        and tx.current_instruction is not None
+        and tx.indexof[tx.current_instruction] < region.active.prefix
+    )
 
 
 def _next_opname(tx) -> str | None:
@@ -1528,6 +1549,43 @@ def _make_getitem(original: Callable) -> Callable:
     return method
 
 
+_ARITHMETIC = frozenset((operator.add, operator.sub, operator.mul, operator.floordiv, operator.truediv, operator.mod,
+                         operator.pow, operator.neg, operator.pos, operator.iadd, operator.isub, operator.imul))
+
+
+def _bool_as_int(tx, vt):
+    """``torch.sym_ite(b, 1, 0)`` for a symbolic boolean ``b``: what ``int(b)`` means, without deciding ``b``."""
+    proxy = tx.output.create_proxy("call_function", torch.sym_ite, (vt.as_proxy(), 1, 0), {})
+    return SymNodeVariable.create(tx, proxy, None)
+
+
+def _make_builtin_call(original: Callable) -> Callable:
+    """
+    Arithmetic on a symbolic boolean (``n // c + (n % c != 0)``): Dynamo decides the boolean and guards on it. With
+    ``symbolic_branches`` (or for data-dependent booleans) it stays symbolic as a 0/1 integer instead. Dynamo's
+    handlers for symbolic operands build the graph node themselves, so this wraps the entry point of every builtin.
+    """
+
+    @functools.wraps(original)
+    def method(self, tx, args, kwargs):
+        if self.fn in _ARITHMETIC and not kwargs:
+            backend, _ = _region_of(tx)
+            if backend is not None:
+                converted = [_bool_as_int(tx, a) if _symbolic_bool_operand(backend, a) else a for a in args]
+                if any(c is not a for c, a in zip(converted, args)):
+                    return original(self, tx, converted, kwargs)
+        return original(self, tx, args, kwargs)
+
+    return method
+
+
+def _symbolic_bool_operand(backend, vt) -> bool:
+    """A symbolic boolean that must not be decided: data-dependent, or over sizes with ``symbolic_branches``."""
+    if not isinstance(vt, SymNodeVariable) or not isinstance(vt.sym_num, torch.SymBool):
+        return False
+    return _is_data_dependent_bool(vt) or (backend.symbolic_branches and _is_symbolic_bool(vt))
+
+
 def _make_insert_op(original: Callable) -> Callable:
     """``BINARY_SUBSCR`` on a tensor reaches the graph through ``BuiltinVariable`` (``operator.getitem``)."""
 
@@ -1612,6 +1670,8 @@ class _Patches:
                 (BuiltinVariable, "_handle_insert_op_in_graph", BuiltinVariable._handle_insert_op_in_graph)
             )
             BuiltinVariable._handle_insert_op_in_graph = _make_insert_op(BuiltinVariable._handle_insert_op_in_graph)
+            cls._saved.append((BuiltinVariable, "call_function", BuiltinVariable.call_function))
+            BuiltinVariable.call_function = _make_builtin_call(BuiltinVariable.call_function)
             _forget_range_handlers()
 
     @classmethod

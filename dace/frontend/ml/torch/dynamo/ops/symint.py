@@ -216,4 +216,4 @@ def lower_sym_ite(ctx, node, cond, a, b):
     v = value_from_meta(ctx, node)
     if v is not None:
         return v
-    return SymValue(sympy.Piecewise((as_sym(a), as_sym(cond)), (as_sym(b), True)))
+    return SymValue(dsym.IfExpr(as_sym(cond), as_sym(a), as_sym(b)))  # printed as a ternary, unlike Piecewise

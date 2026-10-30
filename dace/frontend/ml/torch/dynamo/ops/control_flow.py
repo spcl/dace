@@ -67,6 +67,10 @@ def predicate_expr(pred) -> str:
             return "1" if pred.expr else "0"
         if isinstance(pred.expr, (sympy.StrictLessThan, sympy.LessThan, sympy.StrictGreaterThan, sympy.GreaterThan)):
             return str(pred.expr)  # A comparison, e.g., of a loop counter (which loop analyses match)
+        if isinstance(pred.expr, sympy.logic.boolalg.Boolean):
+            # Equalities and connectives: ``str()`` gives the call form (``Eq(a, 1)``), which parsed back and compared
+            # with 0 is always true; DaCe's printer gives the comparison (``a == 1``)
+            return symbolic.symstr(pred.expr, cpp_mode=False)
         return f"({pred.expr}) != 0"
     if isinstance(pred, ConstValue):
         return "1" if pred.value else "0"
