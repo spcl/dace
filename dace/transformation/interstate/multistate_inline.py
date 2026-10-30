@@ -463,6 +463,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 sdfg.constants_prop[newname] = (csttype, cstval)
             else:
                 sdfg.constants_prop[cstname] = (csttype, cstval)
+        # A constant table only interstate edges read has no access node to move its descriptor with
+        for cstname in nsdfg.constants_prop:
+            name = transients.get(cstname, cstname)
+            if cstname in nsdfg.arrays and nsdfg.arrays[cstname].transient and name not in sdfg.arrays:
+                sdfg.add_datadesc(name, dc(nsdfg.arrays[cstname]))
         # Code and memlets read a constant by name, too
         if renamed_constants:
             nsdfg.replace_dict(renamed_constants)
