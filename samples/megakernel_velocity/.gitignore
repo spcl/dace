@@ -1,0 +1,3 @@
+results/*/*
+!results/*/times.csv
+!results/*/verify.txt

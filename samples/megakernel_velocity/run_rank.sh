@@ -1,7 +1,7 @@
 #!/bin/bash
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-# One rank of run_beverin_ranks.sbatch: an MI300A node has four APUs, so each rank takes one, with its cores, memory and
-# GPU to itself. The ranks do not share what they time.
+# One rank of run_<machine>_ranks.sbatch: an MI300A node has four APUs and a Daint node four GH200 modules, so each rank
+# takes one, with its cores, memory and GPU to itself. The ranks do not share what they time.
 rank=$SLURM_PROCID
 case $rank in
   0) export DEVICES=cpu KINDS="base" ;;
@@ -9,6 +9,11 @@ case $rank in
   2) export DEVICES=gpu KINDS="base" ;;
   3) export DEVICES=gpu KINDS="megakernel tuned" ;;
 esac
-export OUT=$ROOT/rank$rank ROCR_VISIBLE_DEVICES=$rank
+export OUT=$ROOT/rank$rank ROCR_VISIBLE_DEVICES=$rank CUDA_VISIBLE_DEVICES=$rank
 mkdir -p "$OUT"
-exec numactl --cpunodebind="$rank" --membind="$rank" bash "$HERE/run_experiment.sh" >"$OUT/rank.log" 2>&1
+# srun on Daint starts tasks with SIGCHLD blocked, children inherit that, and cmake then hangs in its configure step
+exec "${PYTHON:-python}" -c '
+import os, signal, sys
+signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
+os.execvp(sys.argv[1], sys.argv[1:])
+' numactl --cpunodebind="$rank" --membind="$rank" bash "$HERE/run_experiment.sh" >"$OUT/rank.log" 2>&1

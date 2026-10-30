@@ -4,7 +4,8 @@
 # and times both. Sourced by run_<machine>.sbatch, after the machine's environment.
 #
 # Needs: DACE_FORTRAN_ROOT (dace-fortran checkout), DATA_DIR (data_r02b05, see README.md), OUT (results).
-# Optional: MACHINE (the CSV's machine column), REPS (100), DEVICES ("gpu cpu"), BUILD_PARALLEL (2).
+# Optional: MACHINE (the CSV's machine column), REPS (100), DEVICES ("gpu cpu"), BUILD_PARALLEL (2), BASELINES (the SDFGs
+# of save_baselines.py, to skip the frontend), GPU_CXX (CXX of GPU builds, for a CXX nvcc cannot host).
 set -u
 HERE=${HERE:-$(pwd)}
 PYTHON=${PYTHON:-python}
@@ -28,7 +29,10 @@ build() {
   [ "$kind" = megakernel ] && flags+=(--megakernel)
   [ "$kind" = tuned ] && flags+=(--megakernel --fewer-syncs)
   [ "$device" = gpu ] && flags+=(--chiplets "${CHIPLETS:-0}")
-  "$PYTHON" "$HERE/build.py" --out "$dir" --lvn-only "$lvn" --istep "$istep" --device "$device" "${flags[@]}" \
+  [ -n "${BASELINES:-}" ] && flags+=(--baselines "$BASELINES")
+  local cxx=${CXX:-c++}
+  [ "$device" = gpu ] && cxx=${GPU_CXX:-$cxx}
+  CXX=$cxx "$PYTHON" "$HERE/build.py" --out "$dir" --lvn-only "$lvn" --istep "$istep" --device "$device" "${flags[@]}" \
     >"$dir.build.log" 2>&1
   # The library decides, not the exit code: a GPU build can crash in TLS destructors at interpreter exit
   [ -f "$dir/libvelocity_inner_wrap.so" ] || { echo "build of $dir failed, see $dir.build.log" >&2; return 1; }

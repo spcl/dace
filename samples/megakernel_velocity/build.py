@@ -4,9 +4,11 @@
 The Fortran is parsed, one namelist combination is baked in, the SDFG is parallelized, optionally moved to the device
 and fused into a megakernel, and compiled into a library with the generated Fortran binding, which ``velocity_driver.F90``
 links. ``--strict`` turns off value-changing floating-point optimization, for a bit-exact comparison with Fortran.
+``--baselines`` starts from the SDFGs of save_baselines.py instead of the Fortran, on a machine without flang.
 """
 
 import argparse
+import json
 import os
 from pathlib import Path
 
@@ -14,8 +16,6 @@ from dace_fortran.bindings.build_fortran_library import BuildMode, build_fortran
 from dace_fortran.bindings.flatten_plan import FlattenPlan
 from dace_fortran.bindings.fortran_interface import build_auto_interface
 from dace_fortran.bindings.frozen_signature import refreeze
-from dace_fortran.build import build_sdfg
-from dace_fortran.pipelines import num_loops, num_maps, optimize
 
 import dace
 from dace.dtypes import AllocationLifetime, DeviceType, ScheduleType, StorageType
@@ -147,6 +147,30 @@ static vt_event_t vt_events[2];
         add(sdfg.add_state_before(first_out, "compute_stop"), stop)
 
 
+def from_fortran(source: Path, out: Path, lvn_only: int, istep: int, device: DeviceType) -> tuple:
+    """The SDFG of one configuration, parallelized and on ``device``, with its interface and flatten plan."""
+    from dace_fortran.build import build_sdfg
+    from dace_fortran.pipelines import num_loops, num_maps, optimize
+
+    sdfg = build_sdfg(source.read_text(), entry=ENTRY, name=NAME, out_dir=str(out / "frontend"))
+    specialize_variant(sdfg, {"lvn_only": lvn_only, "istep": istep, **FIXED_CONFIG})
+    optimize(sdfg)
+    print(f"{out.name}: {num_maps(sdfg)} maps, {num_loops(sdfg)} loops", flush=True)
+    if device == DeviceType.CPU:
+        share_levels_not_blocks(sdfg)
+    if device == DeviceType.GPU:
+        sdfg.apply_gpu_transformations(host_maps=block_maps(sdfg))
+        keep_device_transients(sdfg)
+    return sdfg, sdfg._fortran_interface_raw, sdfg._flatten_plan_raw
+
+
+def from_baseline(baselines: Path, lvn_only: int, istep: int, device: DeviceType) -> tuple:
+    """What :func:`from_fortran` returns, as save_baselines.py stored it."""
+    path = baselines / f"velocity_l{lvn_only}i{istep}_{device.name.lower()}.sdfgz"
+    bindings = json.loads(path.with_suffix(".bindings.json").read_text())
+    return dace.SDFG.from_file(str(path)), bindings["interface"], bindings["flatten_plan"]
+
+
 def build(
     source: Path,
     out: Path,
@@ -159,17 +183,13 @@ def build(
     block_size: int,
     sync_all: bool,
     null_timer: bool = False,
+    baselines: Path | None = None,
 ) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    sdfg = build_sdfg(source.read_text(), entry=ENTRY, name=NAME, out_dir=str(out / "frontend"))
-    specialize_variant(sdfg, {"lvn_only": lvn_only, "istep": istep, **FIXED_CONFIG})
-    optimize(sdfg)
-    print(f"{out.name}: {num_maps(sdfg)} maps, {num_loops(sdfg)} loops", flush=True)
-    if device == DeviceType.CPU:
-        share_levels_not_blocks(sdfg)
-    if device == DeviceType.GPU:
-        sdfg.apply_gpu_transformations(host_maps=block_maps(sdfg))
-        keep_device_transients(sdfg)
+    if baselines:
+        sdfg, interface, flatten_plan = from_baseline(baselines, lvn_only, istep, device)
+    else:
+        sdfg, interface, flatten_plan = from_fortran(source, out, lvn_only, istep, device)
     if megakernel:
         fuse = MegaKernelOptimization(device=device)
         fuse.block_size = block_size
@@ -183,8 +203,8 @@ def build(
     refreeze(sdfg)
     sdfg.build_folder = str(out / "sdfg")
     sdfg.save(str(out / f"{NAME}.sdfgz"), compress=True)
-    iface = build_auto_interface(sdfg._fortran_interface_raw, NAME)
-    plan = FlattenPlan.from_dict(sdfg._flatten_plan_raw or {})
+    iface = build_auto_interface(interface, NAME)
+    plan = FlattenPlan.from_dict(flatten_plan or {})
     mode = BuildMode.DEBUG if strict else BuildMode.RELEASE
     build_fortran_library(
         sdfg, iface=iface, plan=plan, out_dir=str(out), name=LIBRARY, prelude_sources=[source], mode=mode
@@ -195,6 +215,7 @@ def main() -> None:
     argp = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     argp.add_argument("--dace-fortran", type=Path, default=os.environ.get("DACE_FORTRAN_ROOT"))
     argp.add_argument("--out", type=Path, required=True)
+    argp.add_argument("--baselines", type=Path, help="Directory of save_baselines.py's SDFGs, to skip the frontend")
     argp.add_argument("--lvn-only", type=int, required=True, choices=[0, 1])
     argp.add_argument("--istep", type=int, required=True, choices=[1, 2])
     argp.add_argument("--device", choices=["cpu", "gpu"], default="cpu")
@@ -225,6 +246,7 @@ def main() -> None:
         args.block_size,
         not args.fewer_syncs,
         args.null_timer,
+        args.baselines,
     )
 
 
