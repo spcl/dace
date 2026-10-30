@@ -12,7 +12,7 @@ for chunk in $CHUNKS; do
   build_all cpu "release_static$chunk" --chunk "$chunk"
 done
 mkdir -p "$OUT/verify" "$OUT/time"
-for kind in base megakernel; do
+for kind in $KINDS; do
   for entry in "${VARIANTS[@]}"; do
     read -r lvn istep steps <<<"$entry"
     name=cpu_${kind}_l${lvn}i${istep}
