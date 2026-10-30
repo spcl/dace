@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for ``compiler.cpu.codegen_params.decl_placement`` (FEATURE A).
+"""Tests for the placement half of ``compiler.cpu.codegen_params.scalar_decl`` (``eager`` | ``late``).
 
 ``eager`` (the default) declares a mutable scope-lifetime value scalar as ``T x;`` at the top of its
 scope, exactly as the legacy generator does. ``late`` defers that declaration to the line immediately
@@ -88,7 +88,7 @@ def parallel_map_sdfg(name):
 def readable_code(sdfg, placement):
     with (
         use_implementation(EXPERIMENTAL),
-        set_temporary("compiler", "cpu", "codegen_params", "decl_placement", value=placement),
+        set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value=placement),
     ):
         return generated_code(sdfg)
 
@@ -113,15 +113,10 @@ def body_lines(code):
 def test_late_moves_declaration_to_first_use(require_experimental):
     """Under ``late`` the ``double s;`` declaration is emitted on the line immediately before the first
     statement that uses ``s`` (``s = (A...``); under ``eager`` it is hoisted above unrelated code.
-
-    ``scalar_init_style`` is pinned to ``split`` so this exercises ONE axis: a separate ``double s;``
-    line is what has a placement to test at all. Under the ``fused`` default the declaration and the
-    first write are the same statement, so there is nothing left to move -- that is the two knobs
-    agreeing, not a conflict, and it is covered by test_scalar_init_style.py.
+    ``late_fused`` folds the declaration into that write instead (test_scalar_decl_fused.py).
     """
-    with set_temporary("compiler", "cpu", "codegen_params", "scalar_init_style", value="split"):
-        eager = body_lines(readable_code(reassign_scalar_sdfg("a_eager"), "eager"))
-        late = body_lines(readable_code(reassign_scalar_sdfg("a_late"), "late"))
+    eager = body_lines(readable_code(reassign_scalar_sdfg("a_eager"), "eager"))
+    late = body_lines(readable_code(reassign_scalar_sdfg("a_late"), "late"))
 
     decl = "double s;"
     first_use = next(i for i, l in enumerate(late) if l.startswith("s = ("))
@@ -151,11 +146,11 @@ def test_legacy_byte_identical_across_placement():
         sdfg = reassign_scalar_sdfg("a_leg")
         with (
             use_implementation(LEGACY),
-            set_temporary("compiler", "cpu", "codegen_params", "decl_placement", value=placement),
+            set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value=placement),
         ):
             return generated_code(sdfg)
 
-    assert legacy("eager") == legacy("late")
+    assert legacy("eager") == legacy("late") == legacy("late_fused")
 
 
 def test_parallel_map_unaffected(require_experimental):
@@ -167,17 +162,17 @@ def test_parallel_map_unaffected(require_experimental):
     assert eager == late
 
 
-@pytest.mark.parametrize("placement", ["eager", "late"])
+@pytest.mark.parametrize("placement", ["eager", "late", "late_fused"])
 def test_compiles_and_runs_bit_identical(require_experimental, placement):
     """Both placements compile and reproduce the legacy result bit-for-bit."""
     A = np.array([2.0], dtype=np.float64)
 
-    def run(impl, decl_placement="eager"):
+    def run(impl, scalar_decl="eager"):
 
         def build_and_run():
             with (
                 use_implementation(impl),
-                set_temporary("compiler", "cpu", "codegen_params", "decl_placement", value=decl_placement),
+                set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value=scalar_decl),
             ):
                 csdfg = reassign_scalar_sdfg("a_run").compile()
                 out = np.zeros(2, dtype=np.float64)
@@ -189,7 +184,7 @@ def test_compiles_and_runs_bit_identical(require_experimental, placement):
     legacy = run(LEGACY)
     experimental = run(EXPERIMENTAL, placement)
     assert np.allclose(legacy["out"], [A[0] + EXPECTED_S, A[0] * EXPECTED_PRE_FACTOR])
-    assert_outputs_equivalent(legacy, experimental, "cpu", label=f"decl_placement={placement}")
+    assert_outputs_equivalent(legacy, experimental, "cpu", label=f"scalar_decl={placement}")
 
 
 N = dace.symbol("N")
@@ -221,10 +216,9 @@ def test_multistate_scalar_stays_eager(require_experimental):
     assert decl < code.index("{", decl) < init, code[decl - 200 : init + 40]
 
 
-def test_late_declares_loop_counter_in_for_init(require_experimental):
-    """A loop-local LoopRegion counter is declared in its own for-init clause in the readable
-    generator (both ``eager`` and ``late``); only legacy keeps the hoisted declaration under
-    ``eager``."""
+def test_loop_counter_declared_in_for_init(require_experimental):
+    """A loop-local LoopRegion counter is declared in its own for-init clause by the readable
+    generator, whatever ``scalar_decl`` is."""
     sdfg = accumulate.to_sdfg(simplify=True)
     eager, late = readable_code(sdfg, "eager"), readable_code(sdfg, "late")
 
@@ -253,7 +247,7 @@ def test_counter_used_after_loop_stays_hoisted(require_experimental):
     assert "for (int64_t j = 0;" not in late and "for (long long j = 0;" not in late, late
 
 
-@pytest.mark.parametrize("placement", ["eager", "late"])
+@pytest.mark.parametrize("placement", ["eager", "late", "late_fused"])
 def test_accumulator_compiles_and_runs(require_experimental, placement):
     """Both placements compile and match legacy on the accumulator -- the shape that caught the bug."""
     rng = np.random.default_rng(0)
@@ -264,7 +258,7 @@ def test_accumulator_compiles_and_runs(require_experimental, placement):
         def build_and_run():
             with (
                 use_implementation(impl),
-                set_temporary("compiler", "cpu", "codegen_params", "decl_placement", value=decl),
+                set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value=decl),
             ):
                 csdfg = accumulate.to_sdfg(simplify=True).compile()
                 B = np.zeros(4)
@@ -276,22 +270,17 @@ def test_accumulator_compiles_and_runs(require_experimental, placement):
     legacy = run(LEGACY)
     experimental = run(EXPERIMENTAL, placement)
     assert np.allclose(legacy["B"], A.sum(axis=1))
-    assert_outputs_equivalent(legacy, experimental, "cpu", label=f"decl_placement={placement}")
+    assert_outputs_equivalent(legacy, experimental, "cpu", label=f"scalar_decl={placement}")
 
 
-def test_legacy_loop_counter_honors_late():
-    """The counter half of the knob is shared: legacy also declares a loop-local counter in its
-    for-init clause under ``late`` (the scalar half remains experimental-only)."""
-
-    def legacy(placement):
-        with (
-            use_implementation(LEGACY),
-            set_temporary("compiler", "cpu", "codegen_params", "decl_placement", value=placement),
-        ):
-            return generated_code(accumulate.to_sdfg(simplify=True))
-
-    assert "int k;" in legacy("eager")
-    assert "for (int k = 0;" in legacy("late")
+def test_legacy_keeps_the_hoisted_loop_counter():
+    """Legacy hoists a LoopRegion counter's declaration whatever ``scalar_decl`` is."""
+    with (
+        use_implementation(LEGACY),
+        set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value="late"),
+    ):
+        code = generated_code(accumulate.to_sdfg(simplify=True))
+    assert "int k;" in code and "for (int k = 0;" not in code, code
 
 
 if __name__ == "__main__":
@@ -299,6 +288,12 @@ if __name__ == "__main__":
     test_default_placement_is_eager(None)
     test_legacy_byte_identical_across_placement()
     test_parallel_map_unaffected(None)
-    for p in ("eager", "late"):
+    for p in ("eager", "late", "late_fused"):
         test_compiles_and_runs_bit_identical(None, p)
+    test_multistate_scalar_stays_eager(None)
+    test_loop_counter_declared_in_for_init(None)
+    test_counter_used_after_loop_stays_hoisted(None)
+    for p in ("eager", "late", "late_fused"):
+        test_accumulator_compiles_and_runs(None, p)
+    test_legacy_keeps_the_hoisted_loop_counter()
     print("OK")

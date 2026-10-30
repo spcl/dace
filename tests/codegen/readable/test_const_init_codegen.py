@@ -13,11 +13,10 @@ import numpy as np
 import dace
 from dace.config import set_temporary
 
-#: The constexpr binding a literal-only single-value transient gets. The readable pipeline
-#: normalizes the length-1 transient to a by-value Scalar and binds it as
-#: ``constexpr double s = 3.0;``. Matching keeps these tests pinned on what they are about --
-#: the value is bound at compile time rather than written at runtime.
-SCALAR_CONSTEXPR = re.compile(r"constexpr\s+double\s+s\s*=\s*\{?\s*3")
+#: The constexpr binding a literal-only single-value transient gets: ``constexpr double s[1] = {3.0};``.
+#: A CPU-only SDFG keeps the length-1 shape, only GPU preprocessing normalizes it to a Scalar. Matching keeps
+#: these tests pinned on what they are about -- the value is bound at compile time, not written at runtime.
+SCALAR_CONSTEXPR = re.compile(r"constexpr\s+double\s+s\s*(?:\[1\]\s*)?=\s*\{?\s*3")
 
 
 def _gen(sdfg_factory, impl, name):
@@ -78,9 +77,8 @@ def _scalar_const_sdfg(name):
 def _no_redundant_init(code, name):
     """Assert the promoted const data has no runtime init/allocation.
 
-    ``name`` is matched as a whole identifier rather than as a substring: a single-value
-    transient is bound as ``s``, not ``s[0]``, so a subscripted needle would silently scan zero
-    lines and pass vacuously.
+    ``name`` is matched as a whole identifier rather than as a substring, so a subscripted
+    needle cannot silently scan zero lines and pass vacuously.
     """
     token = re.compile(r"\b%s\b" % re.escape(name))
     for line in code.splitlines():
@@ -112,7 +110,7 @@ def test_const_init_flag_off_keeps_the_runtime_write():
 
 def test_scalar_constexpr_no_memset():
     sdfg, code = _gen(_scalar_const_sdfg, "experimental_readable", "sc_exp")
-    # A write-once scalar is bound at compile time: constexpr double s = 3.0;
+    # A write-once scalar is bound at compile time: constexpr double s[1] = {3.0};
     assert SCALAR_CONSTEXPR.search(code), "scalar not emitted const/constexpr"
     _no_redundant_init(code, "s")
     # correctness

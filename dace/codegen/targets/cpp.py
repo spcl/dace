@@ -1161,7 +1161,7 @@ def is_lowered_target_code(node: ast.AST) -> bool:
     Checks whether a (partially) visited tasklet subtree already carries generated target code.
 
     The tasklet visitors splice emitted C++ back into the Python AST as an ``ast.Name`` holding a whole
-    expression (``A->indices[A_indices_idx(idx)]``, ``(*__walk_A)``, ...). A parsed ``ast.Name.id`` is
+    expression (``A->indices[A_indices_idx(idx)]``, ...). A parsed ``ast.Name.id`` is
     always an identifier, so a non-identifier id marks such a spliced node -- and marks a subtree that
     can no longer be re-parsed as Python, i.e. that must not re-enter the symbolic layer.
 

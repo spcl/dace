@@ -329,18 +329,25 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
             sdfg.expand_library_nodes()
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        # Normalize single-value transients to Scalar (default is transient-only, so the signature
-        # is untouched). GPU kernel outputs are widened back to length-1 arrays because a by-value
-        # Scalar cannot live in device memory.
-        from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
-        from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
+        # GPU preprocessing, before the inlining below freezes accesses into tasklet code. Single-value transients
+        # become Scalars, kernel outputs are widened back to length-1 arrays (a by-value Scalar cannot live in device
+        # memory), and in-kernel arrays are lifted out of their kernels.
+        from dace.transformation.gpu_helpers import gpu_kernels
 
-        ConvertLengthOneArraysToScalars(skip_gpu_outputs=True).apply_pass(sdfg, {})
-        promote_gpu_scalars = PromoteScalarOutputsToArrays()
-        promote_gpu_scalars.gpu = True
-        promote_gpu_scalars.apply_pass(sdfg, {})
-        infer_types.infer_connector_types(sdfg)
-        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        if gpu_kernels(sdfg):
+            from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+            from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
+            from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
+
+            ConvertLengthOneArraysToScalars(skip_gpu_outputs=True).apply_pass(sdfg, {})
+            promote_gpu_scalars = PromoteScalarOutputsToArrays()
+            promote_gpu_scalars.gpu = True
+            promote_gpu_scalars.apply_pass(sdfg, {})
+            move_arrays = MoveArrayOutOfKernel()
+            move_arrays.raise_on_unsupported = False
+            move_arrays.apply_pass(sdfg, {})
+            infer_types.infer_connector_types(sdfg)
+            infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
         # Scalar fission (``PrivatizeScalars``) is deliberately NOT run here. It is an optimization pass and belongs in
         # the caller's pipeline, before WCR memlets exist: by codegen time an accumulator chain has been rewritten to
@@ -348,15 +355,6 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # ``const_init``: transients that only store literals become ``constexpr`` SDFG constants.
         if config.Config.get("compiler", "cpu", "codegen_params", "const_init") == "on":
             PromoteConstantTransients().apply_pass(sdfg, {})
-        # The CUDA preprocess lifts in-kernel arrays too, but after the inlining below froze their accesses into
-        # tasklet code, so the readable path lifts them first.
-        from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
-
-        move_arrays = MoveArrayOutOfKernel()
-        move_arrays.raise_on_unsupported = False
-        if move_arrays.apply_pass(sdfg, {}) is not None:
-            infer_types.infer_connector_types(sdfg)
-            infer_types.set_default_schedule_and_storage_types(sdfg, None)
         InlineTaskletConnectors().apply_pass(sdfg, {})
         # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name
         # with a differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.

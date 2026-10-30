@@ -29,29 +29,16 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
 from dace.codegen.targets.cpu import (
     CPUCodeGen,
-    counter_init_assigns_only,
-    counter_used_outside_loop,
-    decl_placement,
-    hoist_loop_decls,
-    loop_region_index_ctype,
-    map_schedule_is_sequential,
-    scalar_init_style,
 )
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
 from dace.utils import find_new_name
 
-#: C++ integer type for computed flat indices, per ``codegen_params.index_ctype``. Exact-width
-#: ``<cstdint>`` types: ``long long`` is only guaranteed to be AT LEAST 64 bits, so it does not say
-#: what the key promises, whereas ``int64_t`` is exactly 64. (``int32`` is likewise ``int32_t``,
-#: which is what the generated loops deduce for ``for (auto i = 0; ...)`` on every platform DaCe
-#: targets, so an int32 helper still takes its indices with no conversion.)
-INDEX_CTYPES = {"int64": "int64_t", "int32": "int32_t"}
 # Qualifier for the generated ``<array>_idx`` and symbolic ``<array>_size`` helpers: host+device
 # callable, inlined, usable in constant expressions.
 INDEX_FUNCTION_QUALIFIER = "static DACE_HDFI constexpr"
@@ -73,14 +60,65 @@ PREPROCESSOR_IF = re.compile(r"^\s*#\s*if")
 PREPROCESSOR_ENDIF = re.compile(r"^\s*#\s*endif")
 
 
+def scalar_decl() -> str:
+    """Where a mutable scope scalar is declared, per ``codegen_params.scalar_decl``: ``eager`` (the default, ``T x;``
+    at the top of its scope), ``late`` (``T x;`` right before its first use) or ``late_fused`` (``T x = expr;``, the
+    declaration is the first write)."""
+    return Config.get("compiler", "cpu", "codegen_params", "scalar_decl")
+
+
+def counter_init_assigns_only(loop: LoopRegion) -> bool:
+    """Whether ``loop``'s init statement is exactly ``<loop_variable> = <expr>``, the one shape a
+    declared-in-place counter can be spelled as (``T i = <expr>``). Any other init (a tuple target, a
+    compound statement, an augmented assignment, or one that initialises a DIFFERENT name) has no such
+    spelling, so the counter keeps its hoisted declaration."""
+    code = loop.init_statement.code
+    if not isinstance(code, list) or len(code) != 1:
+        return False
+    stmt = code[0]
+    return (
+        isinstance(stmt, ast.Assign)
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Name)
+        and stmt.targets[0].id == loop.loop_variable
+    )
+
+
+def counter_used_outside_loop(name: str, loop: LoopRegion, sdfg: SDFG) -> bool:
+    """Whether ``name`` is read or written anywhere outside ``loop``. Declaring the counter in the
+    loop's own ``for``-init clause scopes it to the loop, so its value stops being observable after the
+    loop closes -- exactly what a use outside would need. DaCe permits such a use (a LoopRegion leaks
+    its counter's final value to subsequent blocks), so this must be checked, not assumed.
+
+    Every block of the SDFG is enumerated individually, hence a REGION is asked only for the symbols it
+    uses on itself (``with_contents=False`` -- its condition / init / update); its contents arrive as
+    their own blocks. A state must be asked WITH contents: ``SDFGState.used_symbols(with_contents=False)``
+    returns the empty set, which would silently hide every real use.
+    """
+    inside = {id(loop)} | {id(block) for block in loop.all_control_flow_blocks()}
+    for block in sdfg.all_control_flow_blocks():
+        if id(block) in inside:
+            continue
+        with_contents = not isinstance(block, AbstractControlFlowRegion)
+        if name in block.used_symbols(all_symbols=True, with_contents=with_contents):
+            return True
+    inside_edges = {id(edge) for edge in loop.all_interstate_edges()}
+    for edge in sdfg.all_interstate_edges():
+        if id(edge) in inside_edges:
+            continue
+        if name in edge.data.free_symbols or name in edge.data.assignments:
+            return True
+    # A descriptor whose shape/strides mention the counter is materialised outside the loop.
+    for desc in sdfg.arrays.values():
+        if name in {str(s) for s in desc.free_symbols}:
+            return True
+    return False
+
+
 def loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, sdfg: SDFG) -> str | None:
     """C++ type to declare a LoopRegion counter INSIDE its ``for``-init clause in the readable
-    generator, ignoring the ``decl_placement`` knob (which otherwise leaves it hoisted by default).
-
-    The eligibility gates match :func:`dace.codegen.targets.cpu.loop_local_counter_ctype`: the
-    counter must be owned by exactly one non-inverted LoopRegion whose init is a plain assignment,
-    and it must not be read outside that loop. ``loop_index_type``/``loop_region_index_ctype`` still
-    apply.
+    generator, or ``None`` to keep the hoisted declaration. The counter must be owned by exactly one
+    non-inverted LoopRegion whose init is a plain assignment, and must not be read outside that loop.
     """
     owners = [
         cfr
@@ -96,7 +134,7 @@ def loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, sdfg: SDFG) -> 
     # uses that may be outside the loop body, so the counter must stay in function scope.
     if loop_variable_in_instrument_conditions(loop, name):
         return None
-    return loop_region_index_ctype() or dtype.ctype
+    return dtype.ctype
 
 
 def loop_variable_in_instrument_conditions(loop: LoopRegion, name: str) -> bool:
@@ -155,28 +193,6 @@ def identifiers_in(blocks) -> set[str]:
     return names
 
 
-def index_function_qualifier() -> str:
-    """Qualifier for the generated ``<array>_idx`` / ``<array>_size`` helpers, per
-    ``compiler.cpu.codegen_params.index_fn_qualifier``. ``inline_constexpr`` is the default
-    (``static DACE_HDFI constexpr`` -- the backend inlines these tiny functions at -O2); ``always_inline``
-    additionally forces inlining, which only matters where a helper is otherwise left out of line and
-    an un-inlined access would block vectorization."""
-    if Config.get("compiler", "cpu", "codegen_params", "index_fn_qualifier") == "always_inline":
-        return "static __attribute__((always_inline)) inline constexpr"
-    return INDEX_FUNCTION_QUALIFIER
-
-
-def index_ctype() -> str:
-    """The C++ integer type the ``<array>_idx`` / ``<array>_size`` helpers compute in, per
-    ``compiler.cpu.codegen_params.index_ctype``.
-
-    ``int32`` is UNSAFE past 2**31 ELEMENTS and is never selected automatically -- the bound is on the
-    element count, not the byte size, so an int8 array overflows at only 2 GiB (a float64 one at 16
-    GiB). The generator cannot prove an SDFG stays under that for symbolic shapes, so this stays an
-    opt-in knob whose default (``int64``) reproduces the historical signature exactly."""
-    return INDEX_CTYPES[Config.get("compiler", "cpu", "codegen_params", "index_ctype")]
-
-
 def size_qualifier(is_constant: bool) -> str:
     """Qualifier for an ``<array>_size`` helper: ``consteval`` for a constant extent under C++20+
     (folds it at compile time), else ``constexpr`` (the same qualifier as the index functions)."""
@@ -203,15 +219,6 @@ def parenthesized_ptr(expr: str) -> str:
     return expr if expr.isidentifier() else f"({expr})"
 
 
-def loop_access_form() -> str:
-    """How arrays indexed at a sequential loop counter are accessed, per
-    ``compiler.cpu.codegen_params.loop_access_form``: ``indexed`` (the default, recompute the flat
-    index each iteration) or ``ptr_increment`` (walk a base pointer). ``indexed`` reproduces today's
-    output byte-for-byte; ``ptr_increment`` only ever applies where a walk is provably equivalent (see
-    :meth:`ExperimentalCPUCodeGen.build_walk_plan`), otherwise it falls back to ``indexed``."""
-    return Config.get("compiler", "cpu", "codegen_params", "loop_access_form")
-
-
 def index_expr_nodes(slicenode: ast.AST) -> list[ast.AST]:
     """The per-dimension index AST expressions of a subscript's slice (a tuple's elements, else the
     single expression)."""
@@ -221,12 +228,6 @@ def index_expr_nodes(slicenode: ast.AST) -> list[ast.AST]:
     if isinstance(node, ast.Tuple):
         return list(node.elts)
     return [node]
-
-
-def subscript_index_strings(slicenode: ast.AST) -> list[str]:
-    """The per-dimension index expressions of a subscript's slice as source strings. Shared by the
-    walk-plan builder and the readable rewriter so both key an access on the identical strings."""
-    return [ast.unparse(e) for e in index_expr_nodes(slicenode)]
 
 
 def deduplicate_includes(code: str) -> str:
@@ -294,17 +295,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # Per-native-tasklet cache: id(node) -> {connector_name: cpp_access}. An entry means the
         # connector is accessed directly (scalar index / base pointer) instead of via a copy-in/out.
         self._cpp_inline: dict[int, dict[str, str]] = {}
-        # ptr_increment (loop_access_form) support. ``_map_scope_stack`` is the chain of currently-open
-        # MapEntry nodes (pushed before the base MapEntry emitter runs, popped after the matching
-        # MapExit), so the scope-preamble / -postamble hooks and the readable rewriter can find the map
-        # whose body they are inside. ``_walk_plans`` memoizes id(map) -> walk plan ({} when a pointer
-        # walk is not provably equivalent). The two ``_walk_emitted_*`` sets guard the once-per-map
-        # emission of the pointer declarations and increments.
-        self._map_scope_stack: list[nodes.MapEntry] = []
-        self._walk_plans: dict[int, dict] = {}
-        self._walk_emitted_decls: set[int] = set()
-        self._walk_emitted_incs: set[int] = set()
-        # decl_placement = late: a mutable scope-lifetime value scalar whose ``T x;`` declaration
+        # scalar_decl = late: a mutable scope-lifetime value scalar whose ``T x;`` declaration
         # was deferred by allocate_array is held here until the first tasklet that uses it is emitted
         # (see late_declarable_scalar / emit_pending_late_decls). ptrname -> declaration info. Empty in
         # the default ``eager`` mode, so the emit hook is a no-op and the output stays byte-identical.
@@ -351,217 +342,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         """
         if dynamic_map_inputs(state_dfg, node):  # emit memlet_definition declarations
             return True
-        if hoist_loop_decls(node):  # declares the induction variables ahead of the loop headers
-            return True
-        if self.walk_plan_for(sdfg, state_dfg, node):  # declares the walking base pointers ahead of the loop
-            return True
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:  # declares the thread id
             return True
         if node.map.instrument != dtypes.InstrumentationType.No_Instrumentation:  # declares timers
             return True
         return False
-
-    # -- ptr_increment: walking base pointers for a sequential map -------------
-
-    def _generate_MapEntry(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream):
-        # Compute (and memoize) the walk plan BEFORE the base emitter runs, so ``map_scope_needs_brace``
-        # -- which the base calls -- sees it, and push this map so the scope hooks below can find it.
-        self.walk_plan_for(sdfg, cfg.state(state_id), node)
-        self._map_scope_stack.append(node)
-        super()._generate_MapEntry(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-
-    def _generate_MapExit(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream):
-        super()._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-        # Pop the matching entry pushed in _generate_MapEntry and drop its plan (ids are reused once a
-        # map is freed, so do not let a stale plan linger).
-        if self._map_scope_stack:
-            entry = self._map_scope_stack.pop()
-            self._walk_plans.pop(id(entry.map), None)
-            self._walk_emitted_decls.discard(id(entry.map))
-            self._walk_emitted_incs.discard(id(entry.map))
-
-    def generate_scope_preamble(self, sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream):
-        super().generate_scope_preamble(sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream)
-        # ``outer_stream`` here is the code position just after the map's encapsulating brace and before
-        # its loop headers: exactly where the walking base pointers must be declared.
-        plan = self._current_walk_plan()
-        if not plan:
-            return
-        key = id(self._map_scope_stack[-1].map)
-        if key in self._walk_emitted_decls:
-            return
-        self._walk_emitted_decls.add(key)
-        for decl in plan["decls"]:
-            outer_stream.write(decl + "\n", sdfg)
-
-    def generate_scope_postamble(self, sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream):
-        super().generate_scope_postamble(sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream)
-        # ``inner_stream`` here is the end of the loop body (before the closing brace): where each
-        # walking pointer is advanced by its per-iteration stride.
-        plan = self._current_walk_plan()
-        if not plan:
-            return
-        key = id(self._map_scope_stack[-1].map)
-        if key in self._walk_emitted_incs:
-            return
-        self._walk_emitted_incs.add(key)
-        for inc in plan["incs"]:
-            inner_stream.write(inc + "\n", sdfg)
-
-    def _current_walk_plan(self) -> dict | None:
-        """The (non-empty) walk plan of the map currently being emitted, or None."""
-        if not self._map_scope_stack:
-            return None
-        plan = self._walk_plans.get(id(self._map_scope_stack[-1].map))
-        return plan or None
-
-    def current_walk_accesses(self) -> dict[tuple, str] | None:
-        """``{(array_name, index_string_tuple): pointer_name}`` for the map currently being emitted, or
-        None. The readable rewriter consults this to replace a walked access with ``(*pointer)``."""
-        plan = self._current_walk_plan()
-        return plan["accesses"] if plan else None
-
-    def walk_plan_for(self, sdfg, state_dfg, node: nodes.MapEntry) -> dict:
-        """Memoized :meth:`build_walk_plan` for map ``node`` (keyed on the map object's id)."""
-        cached = self._walk_plans.get(id(node.map))
-        if cached is not None:
-            return cached
-        plan = self.build_walk_plan(sdfg, state_dfg, node)
-        self._walk_plans[id(node.map)] = plan
-        return plan
-
-    def build_walk_plan(self, sdfg, state_dfg, node: nodes.MapEntry) -> dict:
-        """A plan to walk this map's array accesses with incrementing base pointers, or ``{}`` to keep
-        the indexed form. A plan is built ONLY where the walk is provably equivalent to the indexed
-        access -- otherwise (any shape that cannot be walked with a single simple pointer) it returns
-        ``{}`` and the construct stays indexed. See the ``loop_access_form`` schema entry.
-
-        The plan is ``{'accesses': {(name, idx_tuple): pointer}, 'decls': [str], 'incs': [str]}``.
-        """
-        if loop_access_form() != "ptr_increment":
-            return {}
-        # SEQUENTIAL only (reuse the hoisted-declaration gate): an OpenMP map keeps the canonical
-        # indexed loop its parallel-for pragma requires.
-        if not map_schedule_is_sequential(node):
-            return {}
-        if node.map.unroll:
-            return {}
-        # A single 1-D loop: the per-iteration pointer stride is defined against one counter.
-        if len(node.map.range) != 1 or len(node.map.params) != 1:
-            return {}
-        if dynamic_map_inputs(state_dfg, node):
-            return {}
-        # Exactly one Python tasklet in the scope (no nested maps, extra tasklets, or scope transients).
-        scope_nodes = list(state_dfg.scope_subgraph(node, include_entry=False, include_exit=False).nodes())
-        if len(scope_nodes) != 1 or not isinstance(scope_nodes[0], nodes.Tasklet):
-            return {}
-        tasklet = scope_nodes[0]
-        if tasklet.language != dtypes.Language.Python:
-            return {}
-        # A WCR write must go through the atomic resolve path, never a plain ``*p =``.
-        exit_node = state_dfg.exit_node(node)
-        for edge in list(state_dfg.all_edges(tasklet)) + list(state_dfg.all_edges(exit_node)):
-            if edge.data is not None and edge.data.wcr is not None:
-                return {}
-
-        var = node.map.params[0]
-        begin, _end, skip = node.map.range[0]
-        loop_sym = symbolic.pystr_to_symbolic(var)
-        skip_sym = symbolic.pystr_to_symbolic(str(skip))
-        begin_sym = symbolic.pystr_to_symbolic(str(begin))
-
-        stmts = tasklet.code.code
-        if isinstance(stmts, str):
-            try:
-                body = ast.parse(stmts).body
-            except SyntaxError:
-                return {}
-        else:
-            body = list(stmts)
-
-        # Collect every array subscript; bail (whole construct falls back) on any array reference that
-        # is not a plain affine subscript in the loop counter -- a bare (unsubscripted) array, a
-        # gather / call inside an index, or a subscript whose arity does not match the descriptor.
-        records: list[tuple] = []  # (name, idx_tuple, desc)
-        if not all(self._scan_walkable(stmt, sdfg, records) for stmt in body):
-            return {}
-        if not records:
-            return {}
-
-        accesses: dict[tuple, str] = {}
-        decls: list[str] = []
-        incs: list[str] = []
-        used_names: set[str] = set()
-        for name, idx_tuple, desc in records:
-            key = (name, idx_tuple)
-            if key in accesses:
-                continue  # an identical access shares its cursor
-            flat = self._flat_index(idx_tuple, desc)
-            per_iter = symbolic.pystr_to_symbolic(flat.subs(loop_sym, loop_sym + skip_sym) - flat).simplify()
-            if loop_sym in per_iter.free_symbols:
-                return {}  # non-affine in the loop counter -> not a simple walk
-            ptrname = self.ptr(name, desc, sdfg)
-            try:
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
-            except KeyError:
-                return {}  # base pointer not yet in scope (e.g. a scope transient) -> keep indexed
-            if defined_type != DefinedType.Pointer:
-                return {}
-            pointer = self._unique_walk_name(name, used_names)
-            accesses[key] = pointer
-            base_off = sym2cpp(flat.subs(loop_sym, begin_sym))
-            start = ptrname if base_off == "0" else "%s + (%s)" % (ptrname, base_off)
-            decls.append("%s* %s = %s;" % (desc.dtype.ctype, pointer, start))
-            step = sym2cpp(per_iter)
-            if step != "0":
-                incs.append("%s += %s;" % (pointer, step))
-        return {"accesses": accesses, "decls": decls, "incs": incs}
-
-    def _flat_index(self, idx_tuple, desc):
-        """The flat element offset (index . strides + offset . strides) of a subscript, as a symbolic
-        expression -- exactly what the ``<array>_idx`` helper computes, but as a Python expression so
-        the base offset and per-iteration stride fall out by substitution."""
-        strides = [symbolic.pystr_to_symbolic(str(s)) for s in desc.strides]
-        offset = [symbolic.pystr_to_symbolic(str(o)) for o in desc.offset]
-        flat = sum(symbolic.pystr_to_symbolic(idx_tuple[i]) * strides[i] for i in range(len(strides)))
-        flat += sum(offset[i] * strides[i] for i in range(len(strides)))
-        return symbolic.pystr_to_symbolic(flat)
-
-    def _scan_walkable(self, astnode, sdfg, records: list[tuple]) -> bool:
-        """Walk ``astnode`` recording every plain-array subscript into ``records``; return False the
-        moment an array is referenced in a way a simple pointer walk cannot express."""
-        if isinstance(astnode, ast.Subscript):
-            base = rname(astnode)
-            desc = sdfg.arrays.get(base)
-            if isinstance(desc, dt.Array) and not isinstance(desc, dt.View):
-                # A plain-array subscript: its index expressions must be affine (no nested subscript /
-                # call = no gather / indirection), and match the descriptor's rank.
-                for idx in index_expr_nodes(astnode.slice):
-                    if any(isinstance(sub, (ast.Subscript, ast.Call)) for sub in ast.walk(idx)):
-                        return False
-                idx_tuple = tuple(subscript_index_strings(astnode.slice))
-                if len(idx_tuple) != len(desc.shape):
-                    return False
-                records.append((base, idx_tuple, desc))
-                return True  # indices are plain symbols; nothing further to walk inside
-            # Non-array subscript (a connector / constant): scan its children normally.
-        elif isinstance(astnode, ast.Name):
-            desc = sdfg.arrays.get(astnode.id)
-            if isinstance(desc, dt.Array) and not isinstance(desc, dt.View):
-                return False  # a bare (unsubscripted) array reference cannot be a single walked element
-            return True
-        return all(self._scan_walkable(child, sdfg, records) for child in ast.iter_child_nodes(astnode))
-
-    def _unique_walk_name(self, data_name: str, used: set[str]) -> str:
-        """A collision-free C++ name for a walking base pointer over ``data_name``."""
-        base = "__walk_" + re.sub(r"\W", "_", data_name)
-        name = base
-        k = 1
-        while name in used:
-            name = "%s_%d" % (base, k)
-            k += 1
-        used.add(name)
-        return name
 
     # -- tasklet lowering hooks ------------------------------------------------
 
@@ -921,7 +706,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         allocation_stream,
         allocate_nested_data: bool = True,
     ):
-        # decl_placement = late: a MUTABLE scope-lifetime value scalar whose declaration is provably
+        # scalar_decl = late: a MUTABLE scope-lifetime value scalar whose declaration is provably
         # safe to move keeps its `T x;` out of the scope
         # preamble; it is registered now (so reads resolve) and the declaration is emitted just before
         # its first-use tasklet (emit_pending_late_decls). Eager mode / any non-deferrable scalar falls
@@ -1044,7 +829,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     # -- readable array indexing ----------------------------------------------
 
-    # -- late scalar declarations (decl_placement = late) ----------------
+    # -- late scalar declarations (scalar_decl = late / late_fused) ------
 
     def defer_scalar_declaration(self, sdfg, dfg, node, desc) -> bool:
         """Register a mutable scope scalar as a deferred (late) declaration and return True, or return
@@ -1074,13 +859,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             "setzero": setzero,
             "tasklets": {id(t) for t in scope_tasklets},
             "writers": writers,
-            "fusable": scalar_init_style() == "fused" and not setzero,
+            "fusable": scalar_decl() == "late_fused" and not setzero,
         }
         return True
 
     def late_declarable_scalar(self, sdfg, dfg, node, desc) -> tuple[set[nodes.Tasklet], bool] | None:
         """Whether ``desc`` (the scalar being allocated at ``node`` in state ``dfg``) may have its
-        declaration deferred to first use, per ``decl_placement``. Returns ``(neighbor_tasklets,
+        declaration deferred to first use, per ``scalar_decl``. Returns ``(neighbor_tasklets,
         setzero)`` when deferrable, else ``None`` (keep the eager declaration).
 
         Sound only for a plain transient VALUE scalar (never a view/reference/stream, a const write-once
@@ -1102,11 +887,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
            tasklets rather than at the top of the brace, so even a use inside the same brace can precede
            it. That check starts from every mention of the name and proves the mentions are the expected
            ones, so a use shape nobody anticipated lands outside the permitted set and refuses."""
-        # Both knobs need the eager ``T x;`` skipped and re-emitted at first use: ``late`` re-emits it as
-        # its own line there, ``fused`` folds it into the first write. ``fused`` therefore implies late
-        # placement for a candidate it cannot fuse (a braced first-use tasklet) -- the declaration still
-        # has to land somewhere, and first-use is the nearest correct place.
-        if decl_placement() != "late" and scalar_init_style() != "fused":
+        # ``late`` re-emits the skipped ``T x;`` at first use; ``late_fused`` folds it into the first write, and
+        # falls back to ``late`` for a candidate it cannot fuse (a braced first-use tasklet).
+        if scalar_decl() == "eager":
             return None
         # A plain mutable value scalar only. GPU-global scalars are device pointers, and heap/persistent
         # ones do not live in a plain brace.
@@ -1329,7 +1112,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         """Fold a pending declaration into ``line``, the brace-free single statement of ``tasklet``,
         turning ``x = expr;`` into ``T x = expr;`` -- the declaration IS the first write. Returns the
         line unchanged (leaving the declaration pending, to be emitted on its own) unless
-        ``scalar_init_style`` is ``fused`` and this line is genuinely that scalar's first write.
+        ``scalar_decl`` is ``late_fused`` and this line is genuinely that scalar's first write.
 
         The write must be spelled by this line: the scalar is deferred on the strength of its DATAFLOW
         (see ``late_declarable_scalar``), but only the emitted text proves the statement really is
@@ -1346,7 +1129,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     def emit_pending_late_decls(self, cfg, state_id, tasklet, callsite_stream) -> None:
         """Emit the deferred ``T x;`` declaration of every scalar this ``tasklet`` is the first to use,
         immediately before the tasklet body. A no-op (and byte-identical) unless a declaration was
-        deferred (``decl_placement = late`` / ``scalar_init_style = fused``)."""
+        deferred (``scalar_decl`` other than ``eager``)."""
         if not self._late_pending:
             return
         for ptrname, info in list(self._late_pending.items()):
@@ -1420,12 +1203,12 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         fnname = self.unshadowed_helper_name(fnname, self._index_functions)
         self._index_sig_to_name[key] = fnname
 
-        ctype = index_ctype()
+        ctype = "int64_t"
         params = ["%s %s" % (ctype, str(d)) for d in dim_syms]
         params += ["%s %s" % (ctype, s) for s in extra_names]
         body = sym2cpp(flatexpr)
         self._index_functions[fnname] = "%s %s %s(%s) { return %s; }" % (
-            index_function_qualifier(),
+            INDEX_FUNCTION_QUALIFIER,
             ctype,
             fnname,
             ", ".join(params),
@@ -1480,7 +1263,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._size_sig_to_name[key] = fnname
 
         qualifier = size_qualifier(is_constant)
-        ctype = index_ctype()
+        ctype = "int64_t"
         params = ["%s %s" % (ctype, s) for s in call_args]
         body = sym2cpp(total)
         self._size_functions[fnname] = "%s %s %s(%s) { return %s; }" % (
@@ -1547,15 +1330,6 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
     def _bare_access(self, node: ast.AST) -> str | None:
         """C++ access string for a direct (inlined) access to an SDFG array."""
         name = rname(node)
-        # ptr_increment: an access this map's walk plan covers is emitted as a pointer dereference
-        # ``(*__walk_X)`` rather than a recomputed ``X[X_idx(..)]``. Checked before array_index_access
-        # so a fully-walked array never registers an (unused) ``<array>_idx`` helper.
-        if isinstance(node, ast.Subscript):
-            walk = self.codegen.current_walk_accesses()
-            if walk is not None:
-                pointer = walk.get((name, tuple(self._index_list(node.slice))))
-                if pointer is not None:
-                    return "(*%s)" % pointer
         desc = self.sdfg.arrays[name]
         info = self.codegen.array_index_access(self.sdfg, desc, name)
         if info is None:
