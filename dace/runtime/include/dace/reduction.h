@@ -26,6 +26,12 @@
 #endif
 
 #ifdef __HIPCC__
+    // hipCUB mirrors the CUB API in the hipcub namespace; the reduce expansions spell it through
+    // the backend like every other GPU identifier.
+    #include <hipcub/hipcub.hpp>
+#endif
+
+#ifdef __HIPCC__
     // HIP supports the same set of atomic ops as CUDA SM 6.0+
     #define DACE_USE_GPU_ATOMICS
     #define DACE_USE_GPU_DOUBLE_ATOMICS
@@ -591,7 +597,12 @@ namespace dace {
     };
 
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#if defined(__HIPCC__)
+    namespace dace_cub = hipcub;
+#else
+    namespace dace_cub = cub;
+#endif
     struct StridedIteratorHelper {
 	explicit StridedIteratorHelper(size_t stride)
 	    : stride(stride) {}
@@ -607,14 +618,14 @@ namespace dace {
         #ifdef DACE_THRUST_ITERATORS
         thrust::counting_iterator
         #else
-        cub::CountingInputIterator
+        dace_cub::CountingInputIterator
         #endif
         <int> counting_iterator(0);
         StridedIteratorHelper conversion_op(stride);
         #ifdef DACE_THRUST_ITERATORS
         thrust::transform_iterator<decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
         #else
-        cub::TransformInputIterator<int, decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
+        dace_cub::TransformInputIterator<int, decltype(conversion_op), decltype(counting_iterator)> itr(counting_iterator, conversion_op);
         #endif
 
         return itr;

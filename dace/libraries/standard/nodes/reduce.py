@@ -452,8 +452,13 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Reduce", state: SDFGState, sdfg: SDFG):
+        from dace.codegen import common
         from dace.codegen.prettycode import CodeIOStream
         from dace.codegen.targets.cpp import unparse_cr_split
+
+        backend = common.get_gpu_backend()
+        # Same CUB API on both GPU backends, different namespace and headers (reduction.h pulls in hipcub).
+        cub_ns = "hipcub" if backend == "hip" else "cub"
 
         node.validate(sdfg, state)
         input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
@@ -607,9 +612,9 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         # silent no-op that leaves the output untouched.
         cuda_initcode.write(
             f"""
-            DACE_GPU_CHECK(cub::{reduce_type}::{kname}(nullptr, __cub_ssize_{sdfg.name}_{state_id}_{node_id},
+            DACE_GPU_CHECK({cub_ns}::{reduce_type}::{kname}(nullptr, __cub_ssize_{sdfg.name}_{state_id}_{node_id},
                                         ({input_data.dtype.ctype}*)nullptr, ({output_data.dtype.ctype}*)nullptr, {reduce_range}{reduce_op}));
-            DACE_GPU_CHECK(cudaMalloc(&__cub_storage_{sdfg.name}_{state_id}_{node_id},
+            DACE_GPU_CHECK({backend}Malloc(&__cub_storage_{sdfg.name}_{state_id}_{node_id},
                                       __cub_ssize_{sdfg.name}_{state_id}_{node_id} ? __cub_ssize_{sdfg.name}_{state_id}_{node_id} : 1));
 """,
             state.parent_graph,
@@ -618,7 +623,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         )
 
         cuda_exitcode.write(
-            f"DACE_GPU_CHECK(cudaFree(__cub_storage_{sdfg.name}_{state_id}_{node_id}));",
+            f"DACE_GPU_CHECK({backend}Free(__cub_storage_{sdfg.name}_{state_id}_{node_id}));",
             state.parent_graph,
             state_id,
             node,
@@ -628,10 +633,10 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         # function has no reason to take.
         cuda_globalcode.write(
             f"""
-DACE_EXPORTED cudaError_t __dace_reduce_{idstr}({input_data.dtype.ctype} *input, {output_data.dtype.ctype} *output, {reduce_range_def}, cudaStream_t stream);
-cudaError_t __dace_reduce_{idstr}({input_data.dtype.ctype} *input, {output_data.dtype.ctype} *output, {reduce_range_def}, cudaStream_t stream)
+DACE_EXPORTED {backend}Error_t __dace_reduce_{idstr}({input_data.dtype.ctype} *input, {output_data.dtype.ctype} *output, {reduce_range_def}, {backend}Stream_t stream);
+{backend}Error_t __dace_reduce_{idstr}({input_data.dtype.ctype} *input, {output_data.dtype.ctype} *output, {reduce_range_def}, {backend}Stream_t stream)
 {{
-return cub::{reduce_type}::{kname}(__cub_storage_{idstr}, __cub_ssize_{idstr},
+return {cub_ns}::{reduce_type}::{kname}(__cub_storage_{idstr}, __cub_ssize_{idstr},
                                    input, output, {reduce_range_use}{reduce_op}, stream);
 }}
         """
@@ -640,7 +645,7 @@ return cub::{reduce_type}::{kname}(__cub_storage_{idstr}, __cub_ssize_{idstr},
         # Write reduction function definition in caller file
         host_globalcode.write(
             f"""
-DACE_EXPORTED cudaError_t __dace_reduce_{idstr}({input_data.dtype.ctype} *input, {output_data.dtype.ctype} *output, {reduce_range_def}, cudaStream_t stream);
+DACE_EXPORTED {backend}Error_t __dace_reduce_{idstr}({input_data.dtype.ctype} *input, {output_data.dtype.ctype} *output, {reduce_range_def}, {backend}Stream_t stream);
         """,
             state.parent_graph,
             state_id,
