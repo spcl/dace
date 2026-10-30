@@ -244,12 +244,12 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         outm = dace.Memlet.simple("_out", ",".join(output_subset))
         inmm = dace.Memlet.simple("_in", ",".join(input_subset))
 
-        idt = nstate.add_tasklet("reset", {}, {"o"}, f"o = {node.identity}")
+        idt = nstate.add_tasklet("reset", {}, {"__o"}, f"__o = {node.identity}")
         nstate.add_edge(ome, None, idt, None, dace.Memlet())
 
         accread = nstate.add_access("acc")
         accwrite = nstate.add_access("acc")
-        nstate.add_edge(idt, "o", accread, None, dace.Memlet("acc"))
+        nstate.add_edge(idt, "__o", accread, None, dace.Memlet("acc"))
 
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
@@ -262,16 +262,22 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
             schedule=dtypes.ScheduleType.Sequential,
         )
 
-        # Add identity tasklet for reduction
-        t = nstate.add_tasklet("identity", {"a", "b"}, {"o"}, "o = b")
+        # Reserved connector names: an array named a, b or o must not collide once the expansion is inlined
+        t = nstate.add_tasklet("identity", {"__a", "__b"}, {"__o"}, "__o = __b")
 
         # Connect everything
         r = nstate.add_read("_in")
         w = nstate.add_write("_out")
-        nstate.add_memlet_path(r, ome, ime, t, dst_conn="b", memlet=inmm)
-        nstate.add_memlet_path(accread, ime, t, dst_conn="a", memlet=dace.Memlet("acc[0]"))
-        nstate.add_memlet_path(t, imx, accwrite, src_conn="o", memlet=dace.Memlet("acc[0]", wcr=node.wcr))
-        nstate.add_memlet_path(accwrite, omx, w, memlet=outm)
+        nstate.add_memlet_path(r, ome, ime, t, dst_conn="__b", memlet=inmm)
+        nstate.add_memlet_path(accread, ime, t, dst_conn="__a", memlet=dace.Memlet("acc[0]"))
+        nstate.add_memlet_path(t, imx, accwrite, src_conn="__o", memlet=dace.Memlet("acc[0]", wcr=node.wcr))
+        if nsdfg.arrays["acc"].dtype == nsdfg.arrays["_out"].dtype:
+            nstate.add_memlet_path(accwrite, omx, w, memlet=outm)
+        else:
+            # The accumulator keeps the input type; a tasklet casts, since an access-to-access copy moves raw bytes
+            cast = nstate.add_tasklet("store", {"__a"}, {"__o"}, "__o = __a")
+            nstate.add_edge(accwrite, None, cast, "__a", dace.Memlet("acc[0]"))
+            nstate.add_memlet_path(cast, omx, w, src_conn="__o", memlet=outm)
 
         # Rename outer connectors and add to node
         inedge._dst_conn = "_in"
@@ -284,6 +290,20 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         nsdfg.apply_transformations_repeated(dataflow.MapCollapse)
 
         return nsdfg
+
+
+@dace.library.expansion
+class ExpandReduceAuto(pm.ExpandTransformation):
+    """``Sequential`` with an identity (a reduction inside a parallel map) expands to the sequential accumulator,
+    whose order does not depend on the thread count; anything else to the ``pure`` map with a WCR output."""
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "Reduce", state: SDFGState, sdfg: SDFG):
+        if node.schedule == dtypes.ScheduleType.Sequential and node.identity is not None:
+            return ExpandReducePureSequentialDim.expansion(node, state, sdfg)
+        return ExpandReducePure.expansion(node, state, sdfg)
 
 
 @dace.library.expansion
@@ -1471,6 +1491,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
+        "auto": ExpandReduceAuto,
         "pure": ExpandReducePure,
         "pure-seq": ExpandReducePureSequentialDim,
         "OpenMP": ExpandReduceOpenMP,
@@ -1482,7 +1503,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         # 'CUDA (warp allreduce)': ExpandReduceCUDAWarpAll
     }
 
-    default_implementation = "pure"
+    default_implementation = "auto"
 
     # Properties
     axes = ListProperty(element_type=int, allow_none=True, category="Semantics")

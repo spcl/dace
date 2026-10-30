@@ -464,7 +464,13 @@ class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         # Is there an inherent reason why the nodes are in the same relative order than
         #  in their source graph. If there is no reason we can even drop the `sorted()`
         #  and store them in a `set`. Note as of Pathon 3.6, `dict` is ordered.
-        self._subgraph_nodes = dict.fromkeys(sorted(subgraph_nodes, key=lambda n: graph.node_id(n)))
+        if isinstance(graph, OrderedDiGraph):
+            members = dict.fromkeys(subgraph_nodes)
+            self._subgraph_nodes = {n: None for n in graph.nodes() if n in members}
+            if len(self._subgraph_nodes) != len(members):
+                raise NodeNotFoundError(next(n for n in members if n not in self._subgraph_nodes))
+        else:
+            self._subgraph_nodes = dict.fromkeys(sorted(subgraph_nodes, key=lambda n: graph.node_id(n)))
 
     def nodes(self) -> list[NodeT]:
         # TODO: The `Graph` interface defines that `nodes()` returns an `Iterable`, but here
@@ -656,6 +662,8 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._nodes = OrderedDict()
         # {(src, dst): edge}
         self._edges = OrderedDict()
+        # {node: position}, built by ``node_id``; a removal shifts later positions, so it drops the index
+        self._node_indices: dict[NodeT, int] | None = None
 
     @property
     def nx(self):
@@ -672,9 +680,11 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
             raise NodeNotFoundError
 
     def node_id(self, node: NodeT) -> int:
+        if self._node_indices is None:
+            self._node_indices = {n: i for i, n in enumerate(self._nodes)}
         try:
-            return next(i for i, n in enumerate(self._nodes.keys()) if n is node)
-        except StopIteration:
+            return self._node_indices[node]
+        except KeyError:
             raise NodeNotFoundError(node)
 
     def nodes(self) -> list[NodeT]:
@@ -694,6 +704,8 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
             raise RuntimeError("Duplicate node added")
         self._nodes[node] = (OrderedDict(), OrderedDict())
         self._nx.add_node(node)
+        if self._node_indices is not None:
+            self._node_indices[node] = len(self._node_indices)
 
     def add_edge(self, src: NodeT, dst: NodeT, data: EdgeT = None):
         t = (src, dst)
@@ -715,6 +727,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
             for edge in self.all_edges(node):
                 self.remove_edge(edge)
             del self._nodes[node]
+            self._node_indices = None
             self._nx.remove_node(node)
         except KeyError:
             pass
@@ -782,6 +795,7 @@ class OrderedMultiDiGraph(OrderedDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._nodes = OrderedDict()
         # {edge: edge}
         self._edges = OrderedDict()
+        self._node_indices: dict[NodeT, int] | None = None
 
     def add_edge(self, src: NodeT, dst: NodeT, data: EdgeT) -> MultiEdge[EdgeT]:
         key = self._nx.add_edge(src, dst, data=data)

@@ -1,13 +1,17 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
+
 import numpy as np
 import pytest
 
 import dace
+from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import sdfg_to_tree
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import LoopRegion, StateSubgraphView
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, StateSubgraphView
 from dace.transformation.helpers import nest_sdfg_control_flow, nest_sdfg_subgraph, nest_state_subgraph
+from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 
 
 @dace.program
@@ -274,6 +278,245 @@ def test_a_container_moved_across_the_boundary_gets_one_connector():
     assert np.allclose(a, (np.arange(8.0) + 1) * 2)
 
 
+def nested_node(state: dace.SDFGState) -> nodes.NestedSDFG:
+    return next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+
+
+def loop_through_a_scalar(read_after: bool) -> tuple[dace.SDFG, LoopRegion]:
+    """``for i: tmp = x[i] * 2; a[i] = tmp + 1``; with ``read_after``, ``tmp`` is also set before the loop and read by
+    the edge after it."""
+    N = dace.symbol("N")
+    sdfg = dace.SDFG(f"loop_through_a_scalar_{int(read_after)}")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_scalar("tmp", dace.float64, transient=True)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    st = loop.add_state("body", is_start_block=True)
+    t0 = st.add_tasklet("t0", {"inp": None}, {"out": None}, "out = inp * 2.0")
+    tmp = st.add_access("tmp")
+    st.add_edge(st.add_read("x"), None, t0, "inp", dace.Memlet("x[i]"))
+    st.add_edge(t0, "out", tmp, None, dace.Memlet("tmp"))
+    t1 = st.add_tasklet("t1", {"v": None}, {"out": None}, "out = v + 1.0")
+    st.add_edge(tmp, None, t1, "v", dace.Memlet("tmp"))
+    st.add_edge(t1, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
+    if read_after:
+        init = sdfg.add_state_before(loop, "init", is_start_block=True)
+        zero = init.add_tasklet("zero", {}, {"out": None}, "out = 0.0")
+        init.add_edge(zero, "out", init.add_write("tmp"), None, dace.Memlet("tmp"))
+        sdfg.add_edge(loop, sdfg.add_state("after"), dace.InterstateEdge(condition="tmp > 0.0"))
+    return sdfg, loop
+
+
+@pytest.mark.parametrize("read_after", [False, True], ids=["loop_only", "read_after"])
+def test_a_transient_moves_into_the_nest_only_if_nothing_else_uses_it(read_after):
+    """Without a use after the loop, ``tmp`` and the loop counter ``i`` stay inside the nested SDFG."""
+    sdfg, loop = loop_through_a_scalar(read_after)
+
+    node = nested_node(nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop])))
+    sdfg.validate()
+
+    assert ("tmp" in sdfg.arrays) == read_after
+    assert set(node.in_connectors) == {"x"} | ({"tmp"} if read_after else set())
+    if not read_after:
+        assert node.sdfg.arrays["tmp"].transient
+        assert sdfg.number_of_nodes() == 1  # No state hands ``i`` out
+        x = np.random.default_rng(4).random(16)
+        a = np.zeros(16)
+        sdfg(a=a, x=x, N=16)
+        assert np.allclose(a, x * 2.0 + 1.0)
+
+
+def test_symbol_needing_an_incoming_value_stays_an_argument():
+    """``N`` is read inside the region before the region reassigns it, so its value still comes from the caller."""
+    sdfg = dace.SDFG("incoming_symbol")
+    sdfg.add_array("A", [4], dace.int32)
+    sdfg.add_symbol("N", dace.int32)
+    pre = sdfg.add_state("pre", is_start_block=True)
+    reg = ControlFlowRegion("reg", sdfg)
+    sdfg.add_node(reg)
+    sdfg.add_edge(pre, reg, dace.InterstateEdge())
+    s0 = reg.add_state("s0", is_start_block=True)
+    t0 = s0.add_tasklet("use0", {}, {"o": None}, "o = N")
+    s0.add_edge(t0, "o", s0.add_access("A"), None, dace.Memlet("A[0]"))
+    s1 = reg.add_state("s1")
+    reg.add_edge(s0, s1, dace.InterstateEdge(assignments={"N": "7"}))
+    t1 = s1.add_tasklet("use1", {}, {"o": None}, "o = N")
+    s1.add_edge(t1, "o", s1.add_access("A"), None, dace.Memlet("A[1]"))
+    sdfg.add_edge(reg, sdfg.add_state("post"), dace.InterstateEdge())
+
+    reference = np.zeros(4, dtype=np.int32)
+    dace.SDFG.from_json(sdfg.to_json())(A=reference, N=3)
+
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [reg]))
+    sdfg.reset_cfg_list()
+    assert "N" in sdfg.symbols and "N" in sdfg.arglist()
+    assert "N" in next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG)).symbol_mapping
+    sdfg.validate()
+
+    A = np.zeros(4, dtype=np.int32)
+    sdfg(A=A, N=3)
+    assert np.array_equal(A, reference)
+
+
+def test_a_counter_the_loop_sets_and_the_parent_reads_is_exported_not_mapped():
+    """The undeclared counter ``loop_i`` is typed from its loop and handed out, since ``after`` reads it; the parent
+    does not pass it in."""
+    sdfg = dace.SDFG("exported_counter")
+    sdfg.add_array("a", [20], dace.float64)
+    sdfg.add_array("b", [1], dace.int64)
+    for name in ("base", "bound", "step"):
+        sdfg.add_symbol(name, dace.int32)
+    loop = LoopRegion("loop", "loop_i <= bound", "loop_i", "loop_i = base", "loop_i = loop_i + step")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("t", {}, {"o": None}, "o = 1.0")
+    body.add_edge(tasklet, "o", body.add_write("a"), None, dace.Memlet("a[loop_i]"))
+    after = sdfg.add_state("after")
+    sdfg.add_edge(loop, after, dace.InterstateEdge(assignments={"final": "loop_i"}))
+    tasklet = after.add_tasklet("t", {}, {"o": None}, "o = final")
+    after.add_edge(tasklet, "o", after.add_write("b"), None, dace.Memlet("b[0]"))
+
+    nsdfg = nested_node(nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop])))
+    assert "loop_i" not in nsdfg.symbol_mapping and "loop_i" not in sdfg.symbols
+    a, b = np.zeros(20), np.zeros(1, dtype=np.int64)
+    sdfg(a=a, b=b, base=2, bound=9, step=3)
+    assert np.nonzero(a)[0].tolist() == [2, 5, 8]
+    assert b[0] == 11
+
+
+def symbol_reset_then_loop(start_reads_k: bool) -> tuple[dace.SDFG, list]:
+    """``[pre --k = 7-->] start --k = 0--> loop(k = loop_i) --> after(b[0] = k)``; the nested group is
+    ``[start, loop]``."""
+    sdfg = dace.SDFG(f"symbol_reset_then_loop_{int(start_reads_k)}")
+    sdfg.add_array("a", [1], dace.int64)
+    sdfg.add_array("b", [1], dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    start = sdfg.add_state("start", is_start_block=True)
+    if start_reads_k:
+        sdfg.add_state_before(start, "pre", is_start_block=True, assignments={"k": "7"})
+        tasklet = start.add_tasklet("t", {}, {"o": None}, "o = k")
+        start.add_edge(tasklet, "o", start.add_write("a"), None, dace.Memlet("a[0]"))
+    loop = LoopRegion("loop", "loop_i < 5", "loop_i", "loop_i = 0", "loop_i = loop_i + 1")
+    sdfg.add_node(loop)
+    first = loop.add_state("first", is_start_block=True)
+    loop.add_edge(first, loop.add_state("second"), dace.InterstateEdge(assignments={"k": "loop_i"}))
+    sdfg.add_edge(start, loop, dace.InterstateEdge(assignments={"k": "0"}))
+    after = sdfg.add_state("after")
+    sdfg.add_edge(loop, after, dace.InterstateEdge())
+    tasklet = after.add_tasklet("t", {}, {"o": None}, "o = k")
+    after.add_edge(tasklet, "o", after.add_write("b"), None, dace.Memlet("b[0]"))
+    return sdfg, [start, loop]
+
+
+@pytest.mark.parametrize("start_reads_k", [False, True], ids=["dead_on_entry", "read_on_entry"])
+def test_a_symbol_the_start_block_resets_is_mapped_only_when_read_first(start_reads_k):
+    """``k = 0`` on the edge leaving the start block makes the parent's ``k`` dead unless the start block reads it
+    first; the final ``k`` reaches ``after`` either way."""
+    sdfg, blocks = symbol_reset_then_loop(start_reads_k)
+
+    nsdfg = nested_node(nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, blocks), start=blocks[0]))
+    assert ("k" in nsdfg.symbol_mapping) == start_reads_k
+    assert "k" not in sdfg.free_symbols
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        sdfg.validate()
+    a, b = np.zeros(1, dtype=np.int64), np.zeros(1, dtype=np.int64)
+    sdfg(a=a, b=b)
+    assert a[0] == (7 if start_reads_k else 0)
+    assert b[0] == 4
+
+
+def test_an_sdfg_nested_in_a_moved_state_gets_the_new_sdfg_as_parent():
+    """The loop body calls a nested SDFG; after nesting the loop, that SDFG's parent is the new nested SDFG."""
+    sdfg, loop = loop_through_a_scalar(read_after=False)
+    body = loop.start_block
+    inner = nest_state_subgraph(sdfg, body, SubgraphView(body, body.nodes()))
+
+    outer = nested_node(nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop])))
+
+    assert inner.sdfg.parent_sdfg is outer.sdfg
+    sdfg.validate()
+    x = np.random.default_rng(5).random(16)
+    a = np.zeros(16)
+    sdfg(a=a, x=x, N=16)
+    assert np.allclose(a, x * 2.0 + 1.0)
+
+
+def branch_assigned_symbol() -> tuple[dace.SDFG, list]:
+    """``i = 1 if first else start`` in both branches of a conditional, then ``A[i] = i``; ``i`` is ``int32``."""
+    sdfg = dace.SDFG("branch_assigned_symbol")
+    for name in ("first", "start", "i"):
+        sdfg.add_symbol(name, dace.int32)
+    sdfg.add_array("A", [10], dace.float64)
+    begin = sdfg.add_state("begin", is_start_block=True)
+    pick = ConditionalBlock("pick")
+    sdfg.add_node(pick)
+    sdfg.add_edge(begin, pick, dace.InterstateEdge())
+    for condition, value in (("first != 0", "1"), (None, "start")):
+        branch = ControlFlowRegion(f"pick_{value}")
+        pick.add_branch(condition, branch)
+        branch.add_edge(
+            branch.add_state(is_start_block=True), branch.add_state(), dace.InterstateEdge(assignments={"i": value})
+        )
+    use = sdfg.add_state("use")
+    sdfg.add_edge(pick, use, dace.InterstateEdge())
+    tasklet = use.add_tasklet("store", {}, {"out"}, "out = i")
+    use.add_edge(tasklet, "out", use.add_write("A"), None, dace.Memlet("A[i]"))
+    sdfg.add_edge(use, sdfg.add_state("end"), dace.InterstateEdge())
+    return sdfg, [pick, use]
+
+
+def test_a_symbol_the_subgraph_assigns_keeps_its_declared_type():
+    sdfg, blocks = branch_assigned_symbol()
+
+    state = nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, blocks))
+
+    nested = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+    assert nested.sdfg.symbols["i"] == dace.int32
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "int64_t i;" not in code
+    for first, start, index in ((1, 7, 1), (0, 7, 7)):
+        data = np.zeros(10)
+        sdfg(A=data, first=first, start=start)
+        assert data[index] == index and np.count_nonzero(data) == 1
+
+
+def test_inlining_the_nest_back_keeps_the_declared_type():
+    sdfg, blocks = branch_assigned_symbol()
+    state = nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, blocks))
+    nested = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+
+    InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nested)
+
+    assert sdfg.symbols["i"] == dace.int32
+
+
+def test_inlining_keeps_the_declared_type_of_a_loop_variable():
+    inner = dace.SDFG("inner_loop")
+    inner.add_symbol("i", dace.int32)
+    inner.add_array("A", [10], dace.float64)
+    loop = LoopRegion("fill", "i < 10", "i", "i = 0", "i = i + 1")
+    inner.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("store", {}, {"out"}, "out = i")
+    body.add_edge(tasklet, "out", body.add_write("A"), None, dace.Memlet("A[i]"))
+    sdfg = dace.SDFG("loop_variable_inline")
+    sdfg.add_array("A", [10], dace.float64)
+    state = sdfg.add_state()
+    nested = state.add_nested_sdfg(inner, {}, {"A"})
+    state.add_edge(nested, "A", state.add_write("A"), None, dace.Memlet("A[0:10]"))
+
+    InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nested)
+
+    assert sdfg.symbols["i"] == dace.int32
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "int64_t i;" not in code
+    data = np.zeros(10)
+    sdfg(A=data)
+    np.testing.assert_array_equal(data, np.arange(10.0))
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -286,3 +529,13 @@ if __name__ == "__main__":
     test_nest_cf_simple_if_chain()
     test_nest_two_loops_with_same_variable()
     test_a_container_moved_across_the_boundary_gets_one_connector()
+    test_a_transient_moves_into_the_nest_only_if_nothing_else_uses_it(False)
+    test_a_transient_moves_into_the_nest_only_if_nothing_else_uses_it(True)
+    test_symbol_needing_an_incoming_value_stays_an_argument()
+    test_a_counter_the_loop_sets_and_the_parent_reads_is_exported_not_mapped()
+    test_a_symbol_the_start_block_resets_is_mapped_only_when_read_first(False)
+    test_a_symbol_the_start_block_resets_is_mapped_only_when_read_first(True)
+    test_an_sdfg_nested_in_a_moved_state_gets_the_new_sdfg_as_parent()
+    test_a_symbol_the_subgraph_assigns_keeps_its_declared_type()
+    test_inlining_the_nest_back_keeps_the_declared_type()
+    test_inlining_keeps_the_declared_type_of_a_loop_variable()
