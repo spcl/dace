@@ -93,7 +93,13 @@ def table(samples: dict, schedule: str) -> None:
 
 def main() -> None:
     argp = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    argp.add_argument("csv", type=Path, nargs="+", help="One times.csv per column, in the order to draw them")
+    argp.add_argument(
+        "csv",
+        type=Path,
+        nargs="*",
+        default=sorted(Path(__file__).parent.glob("results/*/times.csv")),
+        help="One times.csv per column, in the order to draw them; every one under results/ by default",
+    )
     argp.add_argument("--out", type=Path, default=Path("megakernel_velocity.png"))
     argp.add_argument("--schedule", default="static0", help="CPU schedule to draw; static0 is plain schedule(static)")
     args = argp.parse_args()

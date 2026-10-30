@@ -1,7 +1,7 @@
 # Handoff: running the velocity experiment on Daint
 
 For whoever submits the job. It compares `velocity_tendencies` with and without the megakernel on one GH200 node, on the
-GPU and on the 72 Grace cores. Nothing here has run on Daint yet.
+GPU and on the 72 Grace cores. `run_daint_ranks.sbatch`, in the README, replaces the job below.
 
 ## Run it
 

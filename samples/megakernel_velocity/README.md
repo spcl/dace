@@ -34,8 +34,24 @@ node, one rank each: CPU base, CPU megakernel, GPU base, GPU megakernel; it land
 the merged files. Results land in `results/<machine>-<job>/`: `verify.txt` is the
 numerics check, `time.txt` the timings, and `times.csv` every repetition, one row each. "Plotting the results" below draws them. `OUT`, `REPS` (100), `DEVICES` and `CHUNKS` override the defaults.
 
-`run_daint.sbatch` has not been run yet; everything here was tested on Beverin. On Daint, expect to adapt the `spack
-load` line first, and check that DaCe picks the CUDA backend.
+## Running on Daint
+
+Daint has no flang with MLIR, so `run_daint_ranks.sbatch` starts from the SDFGs `save_baselines.py` wrote on Beverin
+instead of the Fortran. One GH200 node does all the work, a rank per module: CPU base, CPU megakernel, GPU base, GPU
+megakernel. It needs gcc 16 and cuda from spack, the Python environment of step 2, and `islpy` in it:
+
+```bash
+export SPACK_ROOT=<spack> DACE_FORTRAN_ROOT=<dace-fortran> DATA_DIR=<data_r02b05> BASELINES=<SDFGs of save_baselines.py>
+sbatch -A <project> run_daint_ranks.sbatch                       # machine "daint", new CPU and GPU codegen
+CPU_CODEGEN=legacy sbatch -A <project> run_daint_ranks.sbatch    # machine "daint-legacy", old CPU, new GPU codegen
+```
+
+`PYTHONPATH` picks the DaCe that compiles them. The results land in `results/<machine>-<job>/`, and `times.csv` is all
+four ranks merged. `CPU_CODEGEN=legacy` also changes the tasklets inside GPU kernels. Building the GPU libraries takes
+`GPU_CXX`, the system gcc, because nvcc cannot parse the headers of gcc 16; the kernels are nvcc's either way.
+
+Strict builds on CUDA are not bit-exact: nvcc fuses multiply-adds, which leaves differences of about 1e-15. `-fmad=false`
+removes them, so they are rounding, and the job keeps nvcc's default.
 
 ## Plotting the results
 
@@ -52,6 +68,15 @@ python plot.py beverin/times.csv daint/times.csv --out plot.png
 # Old and new CPU codegen on Beverin, then Daint
 python plot.py legacy-cpu/times.csv beverin/times.csv daint/times.csv --out plot.png
 ```
+
+Without arguments it draws every `results/*/times.csv` in the order of their names, so to add a run, copy its CSV there:
+
+```bash
+mkdir -p results/beverin-<job> && cp <run>/times.csv results/beverin-<job>/
+python plot.py --out plot.png
+```
+
+`.gitignore` keeps only each run's `times.csv` and `verify.txt` in git.
 
 The figure has a row per device and a column per run, and the columns are named after the CSV's `machine` column. Each row
 shares its axis, so a bar compares with the same bar in the next column by height. Each group is one `(lvn_only, istep)`
