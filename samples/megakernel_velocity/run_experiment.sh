@@ -4,7 +4,7 @@
 # and times both. Sourced by run_<machine>.sbatch, after the machine's environment.
 #
 # Needs: DACE_FORTRAN_ROOT (dace-fortran checkout), DATA_DIR (data_r02b05, see README.md), OUT (results).
-# Optional: MACHINE (the CSV's machine column), REPS (100), DEVICES ("gpu cpu"), BUILD_PARALLEL (2), BASELINES (the SDFGs
+# Optional: MACHINE (the CSV's machine column), REPS (100), DEVICES ("gpu cpu"), BUILD_PARALLEL (2), GPU_BASELINES (GPU SDFGs, if not BASELINES), BASELINES (the SDFGs
 # of save_baselines.py, to skip the frontend), GPU_CXX (CXX of GPU builds, for a CXX nvcc cannot host).
 set -u
 HERE=${HERE:-$(pwd)}
@@ -29,7 +29,9 @@ build() {
   [ "$kind" = megakernel ] && flags+=(--megakernel)
   [ "$kind" = tuned ] && flags+=(--megakernel --fewer-syncs)
   [ "$device" = gpu ] && flags+=(--chiplets "${CHIPLETS:-0}")
-  [ -n "${BASELINES:-}" ] && flags+=(--baselines "$BASELINES")
+  local baselines=${BASELINES:-}
+  [ "$device" = gpu ] && baselines=${GPU_BASELINES:-$baselines}
+  [ -n "$baselines" ] && flags+=(--baselines "$baselines")
   local cxx=${CXX:-c++}
   [ "$device" = gpu ] && cxx=${GPU_CXX:-$cxx}
   CXX=$cxx "$PYTHON" "$HERE/build.py" --out "$dir" --lvn-only "$lvn" --istep "$istep" --device "$device" "${flags[@]}" \

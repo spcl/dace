@@ -42,10 +42,11 @@ def save(sdfg, out: Path, name: str) -> None:
 def main() -> None:
     argp = argparse.ArgumentParser(description=__doc__)
     argp.add_argument("--dace-fortran", type=Path, default=os.environ.get("DACE_FORTRAN_ROOT"))
+    argp.add_argument("--source", default=SOURCE, help="The Fortran, relative to --dace-fortran")
     argp.add_argument("--out", type=Path, required=True)
     args = argp.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    source = (args.dace_fortran / SOURCE).read_text()
+    source = (args.dace_fortran / args.source).read_text()
     for lvn_only, istep in VARIANTS:
         stem = f"velocity_l{lvn_only}i{istep}"
         sdfg = build_sdfg(source, entry=ENTRY, name=NAME, out_dir=str(args.out / "frontend" / stem))
