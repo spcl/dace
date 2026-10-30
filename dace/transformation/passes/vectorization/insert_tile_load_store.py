@@ -782,7 +782,9 @@ class InsertTileLoadStore(ppl.Pass):
                     mask_an=self._mask_an(inner_state, mask_name),
                 )
                 if idx_an is None:
-                    raise NotImplementedError(
+                    # A refusal, as for the gather index: the map stays scalar and correct (vloc_psi_k_acc's
+                    # ``psic[nl[igk[i]]]`` binds its index through interstate symbols).
+                    raise VectorizeUnsupported(
                         f"InsertTileLoadStore: could not build a tile-op scatter index for "
                         f"{begin_str!r} (write of '{an.data}' dest dim {k}, iter_vars={iter_vars}). "
                         f"The CPP per-lane materialiser was removed (user 2026-06-14: no CPP index "
