@@ -1014,9 +1014,6 @@ def test_an_early_return_copies_the_written_array_back_first(return_after_arm: b
 
 
 @pytest.mark.gpu
-@pytest.mark.xfail(
-    strict=True, raises=AttributeError, reason="the CUDA codegen reads a ReturnBlock after a GPU state as an SDFGState"
-)
 @pytest.mark.parametrize("return_after_arm", [True, False], ids=["return_after_a_device_arm", "return_on_the_branch"])
 def test_an_early_return_hands_back_the_device_result(return_after_arm: bool) -> None:
     """3.0 doubles to 6.0 and returns (+1 -> 7.0 after ``big``); 0.5 doubles to 1.0 and takes ``small`` (-1 -> 0.0)."""
