@@ -114,10 +114,9 @@ class DaCeCodeGenerator:
         self.where_allocated: dict[tuple[SDFG, str], SDFG] = {}
         #: ``(cfg_id, name)`` of a persistent array -> the local pointer a CPU reduction clause names it by, while bound.
         self.reduction_aliases: dict[tuple[int, str], str] = {}
-        # (cfg_id, symbol) -> ctype, for each loop counter whose hoisted declaration was SKIPPED because
-        # ``codegen_params.decl_placement`` is ``late`` and the counter is loop-local. The loop emitter
-        # declares it in the for-init clause instead. Keyed by cfg_id: two SDFGs may each own a counter
-        # of the same name, and only one of them may qualify. Empty under the default ``eager``.
+        # (cfg_id, symbol) -> ctype, for each loop-local counter the readable generator declares in its
+        # for-init clause instead of hoisting. Keyed by cfg_id: two SDFGs may each own a counter of the same
+        # name, and only one of them may qualify.
         self.loop_local_counters: dict[tuple[int, str], str] = {}
         # (id(obj), keep_defined_in_mapping) -> (obj, result). The object itself is kept alive here so its address
         # cannot be recycled by a later, unrelated object for as long as the entry lives

@@ -59,8 +59,8 @@ def assignment_targets(code):
     """Every assignment target in the emitted body, so a versioned name would show up as ``s_0``.
 
     Matches every spelling a write to ``s`` can take: a bare ``s = (...)``, a ``const double s = (...)``,
-    and the ``double s = (...)`` binding the ``fused`` default of ``scalar_init_style`` produces for a
-    mutable scalar's FIRST write.
+    and the ``double s = (...)`` binding ``scalar_decl = late_fused`` produces for a mutable scalar's FIRST
+    write.
     """
     targets = []
     for raw in code.splitlines():
@@ -110,7 +110,7 @@ def test_late_placement_still_runs(require_experimental):
     def build_and_run():
         with (
             use_implementation(EXPERIMENTAL),
-            dace.config.set_temporary("compiler", "cpu", "codegen_params", "decl_placement", value="late"),
+            dace.config.set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value="late"),
         ):
             csdfg = reassign_scalar_sdfg("nofission_late").compile()
             out = np.zeros(1, dtype=np.float64)

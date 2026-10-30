@@ -2,18 +2,16 @@
 """Pins the INVARIANT the whole ``compiler.cpu.codegen_params.*`` matrix (plus
 ``compiler.cpu.implementation`` itself) promises: every knob is a SPELLING choice over the identical
 program, never a SEMANTIC one. Where the rest of this directory (``test_codegen_style_flags.py``,
-``test_index_ctype.py``, ``test_ptr_increment.py``, ...) each pin ONE knob's own emitted TEXT, this
+``test_scalar_decl_fused.py``, ...) each pin ONE knob's own emitted TEXT, this
 module parametrizes over the FULL option matrix -- default plus one deviation per knob -- and requires
 every arm to COMPILE, RUN, and reproduce the exact same numbers as a numpy reference. A knob that
 silently changes the answer is a miscompile, and until now only a throwaway shell sweep caught it.
 
 THE KERNEL (:func:`option_matrix_sdfg`) is a single, hand-built SDFG (not a ``@dace.program`` -- several
-arms need explicit control the frontend does not expose: a forced SEQUENTIAL map schedule for
-``loop_access_form``, and ``no_inline`` nested SDFGs for the split knobs)
+arms need explicit control the frontend does not expose: ``no_inline`` nested SDFGs for the split knobs)
 that in one pass touches: a symbolic-size heap transient (``heap_ptr_restrict``), a write-once constant
 scalar (``const_init``) and a separate genuinely MUTABLE, twice-reassigned scalar
-(``scalar_init_style``/``decl_placement``) feeding a write-once length-1 array, two SEQUENTIAL strided maps
-(``loop_index_type``/``loop_access_form``/``index_ctype``), a direct array-to-array copy
+(``scalar_decl``) feeding a write-once length-1 array, two SEQUENTIAL strided maps, a direct array-to-array copy
 (``explicit_copy``), and TWO separate top-level ``no_inline`` nested SDFGs: one with ONLY full-array
 connectors (``split_nsdfg_translation_units``/``external_translation_units``) and one with a READ-ONLY SCALAR
 connector (``const_scalar_abi``).
@@ -26,10 +24,6 @@ implementation only special-cases one literal string per key, and these are OTHE
 that key's own schema prose (an internal classification label, or an unrelated flag) rather than a
 value the code branches on. Each is confirmed by reading the branch in question and is pinned below as
 its OWN regression test rather than silently "fixed":
-  - ``decl_placement = 'inverted'``       -- only 'late' is special-cased; byte-identical to 'eager'
-                                             ('inverted' names a LOOP shape in this key's own prose).
-  - ``scalar_init_style = 'const'/'setzero'`` -- only 'fused' is special-cased; both fall through to
-                                             'split' ('setzero' names a node property, not a value).
   - ``const_init = 'const'/'constexpr_static'`` -- only 'on' is special-cased; both behave like 'off'
                                              (neither is a value of this key).
   - ``heap_ptr_restrict = 'may_alias'``   -- only 'restrict' is special-cased; behaves like 'none'
@@ -72,7 +66,7 @@ def option_matrix_sdfg(name: str) -> dace.SDFG:
     init_s.add_edge(ts, "o", init_s.add_access("s"), None, dace.Memlet("s[0]"))
 
     # A genuinely MUTABLE, twice-reassigned scalar `acc`, entirely within this ONE state/scope (the
-    # gate scalar_init_style/decl_placement require), feeding a write-once length-1 array `buf`.
+    # gate scalar_decl requires), feeding a write-once length-1 array `buf`.
     init_buf = sdfg.add_state_after(init_s, "init_buf")
     ra0 = init_buf.add_read("A")
     acc0 = init_buf.add_access("acc")
@@ -93,8 +87,8 @@ def option_matrix_sdfg(name: str) -> dace.SDFG:
     init_buf.add_edge(acc1, None, t_buf, "ac", dace.Memlet("acc[0]"))
     init_buf.add_edge(t_buf, "o", init_buf.add_access("buf"), None, dace.Memlet("buf[0]"))
 
-    # Two SEQUENTIAL, strided (non-unit-stride) maps: loop_index_type / loop_access_form gate on SEQUENTIAL, so an OpenMP map would leave them
-    # vacuous. Together 0:N:2 and 1:N:2 cover the whole array (SIZE is even).
+    # Two SEQUENTIAL, strided (non-unit-stride) maps.
+    # Together 0:N:2 and 1:N:2 cover the whole array (SIZE is even).
     compute = sdfg.add_state_after(init_buf, "compute")
     for parity, sign, label in ((0, "+", "even"), (1, "-", "odd")):
         ra = compute.add_read("A")
@@ -170,16 +164,10 @@ _EXPECTED_B = reference(_INPUT_A)
 ARMS: tuple[tuple[str, tuple[str, ...] | None, object], ...] = (
     ("default", None, None),
     ("impl_legacy", ("compiler", "cpu", "implementation"), "legacy"),
-    ("index_ctype_int32", ("compiler", "cpu", "codegen_params", "index_ctype"), "int32"),
     ("heap_ptr_restrict_none", ("compiler", "cpu", "codegen_params", "heap_ptr_restrict"), "none"),
     ("heap_ptr_restrict_may_alias", ("compiler", "cpu", "codegen_params", "heap_ptr_restrict"), "may_alias"),
-    ("loop_index_type_int32", ("compiler", "cpu", "codegen_params", "loop_index_type"), "int32"),
-    ("loop_access_form_ptr_increment", ("compiler", "cpu", "codegen_params", "loop_access_form"), "ptr_increment"),
-    ("decl_placement_late", ("compiler", "cpu", "codegen_params", "decl_placement"), "late"),
-    ("decl_placement_inverted", ("compiler", "cpu", "codegen_params", "decl_placement"), "inverted"),
-    ("scalar_init_style_fused", ("compiler", "cpu", "codegen_params", "scalar_init_style"), "fused"),
-    ("scalar_init_style_const", ("compiler", "cpu", "codegen_params", "scalar_init_style"), "const"),
-    ("scalar_init_style_setzero", ("compiler", "cpu", "codegen_params", "scalar_init_style"), "setzero"),
+    ("scalar_decl_late", ("compiler", "cpu", "codegen_params", "scalar_decl"), "late"),
+    ("scalar_decl_late_fused", ("compiler", "cpu", "codegen_params", "scalar_decl"), "late_fused"),
     ("const_init_off", ("compiler", "cpu", "codegen_params", "const_init"), "off"),
     ("const_init_const", ("compiler", "cpu", "codegen_params", "const_init"), "const"),
     ("const_init_constexpr_static", ("compiler", "cpu", "codegen_params", "const_init"), "constexpr_static"),
@@ -222,13 +210,6 @@ def cpp_text(sdfg_name: str, path: tuple[str, ...] | None = None, value: object 
         return "\n".join(o.code for o in sdfg.generate_code() if o.language == "cpp")
     with set_temporary(*path, value=value):
         return "\n".join(o.code for o in sdfg.generate_code() if o.language == "cpp")
-
-
-def test_index_ctype_int32_changes_the_helper_type() -> None:
-    default = cpp_text("nv_index_ctype")
-    arm = cpp_text("nv_index_ctype", ("compiler", "cpu", "codegen_params", "index_ctype"), "int32")
-    assert default != arm
-    assert "int64_t A_idx" in default and "int32_t A_idx" in arm
 
 
 def test_heap_ptr_restrict_none_drops_restrict() -> None:
@@ -274,36 +255,11 @@ def test_split_nsdfg_translation_units_splits_the_frame() -> None:
     assert len(split_objs) > len(default_objs)
 
 
-def test_loop_access_form_ptr_increment_walks_the_sequential_maps() -> None:
-    default = cpp_text("nv_loop_access_form")
-    arm = cpp_text("nv_loop_access_form", ("compiler", "cpu", "codegen_params", "loop_access_form"), "ptr_increment")
-    assert default != arm
-    assert "__walk_heap" in arm and "__walk_A" in arm
-    assert "__walk_" not in default
-
-
 # #
 # Degenerate arms: each requested value below is confirmed (by reading the branch, then verifying
 # here) to be indistinguishable from an existing value rather than a genuine third state. Each is
 # still exercised for the numeric invariant in ARMS above; these pin what it ACTUALLY does.
 # #
-def test_decl_placement_inverted_is_not_a_recognized_value() -> None:
-    """Only 'late' is special-cased; 'inverted' -- a LOOP-SHAPE term from this key's own schema prose,
-    not a settable value -- takes the same 'eager' path: byte-identical to the default."""
-    default = cpp_text("nv_declp")
-    arm = cpp_text("nv_declp", ("compiler", "cpu", "codegen_params", "decl_placement"), "inverted")
-    assert arm == default
-
-
-@pytest.mark.parametrize("value", ["const", "setzero"])
-def test_scalar_init_style_recognizes_only_fused(value: str) -> None:
-    """Only 'fused' is special-cased; 'const' and 'setzero' (an emission-time NODE PROPERTY, not a
-    settable value of this key) both fall through to the same 'split' default path."""
-    default = cpp_text("nv_sis")
-    arm = cpp_text("nv_sis", ("compiler", "cpu", "codegen_params", "scalar_init_style"), value)
-    assert arm == default
-
-
 @pytest.mark.parametrize("value", ["const", "constexpr_static"])
 def test_const_init_recognizes_only_on(value: str) -> None:
     """Only the literal 'on' runs PromoteConstantTransients; any other value behaves like 'off'."""
@@ -334,15 +290,10 @@ if __name__ == "__main__":
     # A representative slice, not the full (expensive) ARMS matrix -- see the module docstring.
     for _arm_id, _path, _value in ARMS[:4]:
         test_arm_matches_numpy_reference(_arm_id, _path, _value)
-    test_index_ctype_int32_changes_the_helper_type()
     test_heap_ptr_restrict_none_drops_restrict()
     test_explicit_copy_always_lifts_in_readable()
     test_const_scalar_abi_by_value_drops_the_reference()
     test_split_nsdfg_translation_units_splits_the_frame()
-    test_loop_access_form_ptr_increment_walks_the_sequential_maps()
-    test_decl_placement_inverted_is_not_a_recognized_value()
-    for _value in ("const", "setzero"):
-        test_scalar_init_style_recognizes_only_fused(_value)
     for _value in ("const", "constexpr_static"):
         test_const_init_recognizes_only_on(_value)
     test_heap_ptr_restrict_may_alias_behaves_like_none()

@@ -128,51 +128,12 @@ def register_align_attribute(desc: data.Data) -> str:
     return f"  DACE_ALIGN({desc.alignment})" if desc.alignment > 0 else ""
 
 
-#: C++ spelling of each ``codegen_params.loop_index_type`` value. ``auto`` deduces from the lower
-#: bound (for the usual ``0`` that is ``int``); the others state the width outright, as exact-width
-#: ``<cstdint>`` types -- ``long long`` is only guaranteed to be AT LEAST 64 bits, so it does not
-#: state the width the key names. ``inferred`` has no single spelling: each parameter gets its own.
-LOOP_INDEX_CTYPES = {"auto": "auto", "int64": "int64_t", "int32": "int32_t", "inferred": "auto"}
-
-
 def standalone_integer_dtype(dtype: dtypes.typeclass) -> dtypes.typeclass:
     """``dtype`` as CPF declares a symbol or induction variable of it: a signed integer widens to ``int64``,
     the width of every index and ``_size`` helper beside it, so no call or comparison narrows."""
     if cpf_lowering.standalone() and dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64):
         return dtypes.int64
     return dtype
-
-
-def loop_region_index_ctype() -> str | None:
-    """Declared-type override for a sequential ``LoopRegion`` counter, per
-    ``codegen_params.loop_index_type``. ``auto`` (the default) returns ``None`` -- keep the counter's
-    inferred type, so the emitted declaration is byte-for-byte what it was before the knob existed.
-    ``int32`` / ``int64`` return ``int32_t`` / ``int64_t`` (the same spellings the map-loop emitter uses
-    via ``LOOP_INDEX_CTYPES``), applied to the hoisted declaration a LoopRegion counter is given ahead
-    of its loop. A LoopRegion is inherently sequential, so there is no OpenMP gate here."""
-    ctype = LOOP_INDEX_CTYPES[Config.get("compiler", "cpu", "codegen_params", "loop_index_type")]
-    return None if ctype == "auto" else ctype
-
-
-def is_loop_region_variable(name: str, sdfg: SDFG) -> bool:
-    """Whether ``name`` is the loop counter of some ``LoopRegion`` in ``sdfg``. Only such a counter's
-    declaration is retyped by ``loop_index_type``; every other interstate symbol keeps its inferred
-    type (retyping an arbitrary interstate assignment target would change semantics, not spelling)."""
-    return any(isinstance(cfr, LoopRegion) and cfr.loop_variable == name for cfr in sdfg.all_control_flow_regions())
-
-
-def decl_placement() -> str:
-    """Where a declaration is emitted relative to its first use, per ``codegen_params.decl_placement``:
-    ``eager`` (the default -- every declaration at the top of its scope, the legacy placement) or
-    ``late`` (each declaration moved as close to its first use as it is provably sound to move it)."""
-    return Config.get("compiler", "cpu", "codegen_params", "decl_placement")
-
-
-def scalar_init_style() -> str:
-    """Whether a mutable scalar's declaration and its first write are emitted as one binding, per
-    ``codegen_params.scalar_init_style``: ``split`` (the default -- ``T x;`` then ``x = expr;``) or
-    ``fused`` (``T x = expr;``, the declaration IS the first write)."""
-    return Config.get("compiler", "cpu", "codegen_params", "scalar_init_style")
 
 
 def counter_init_assigns_only(loop: LoopRegion) -> bool:
@@ -190,33 +151,6 @@ def counter_init_assigns_only(loop: LoopRegion) -> bool:
         and isinstance(stmt.targets[0], ast.Name)
         and stmt.targets[0].id == loop.loop_variable
     )
-
-
-def loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, sdfg: SDFG) -> str | None:
-    """The C++ type to declare interstate symbol ``name`` with INSIDE its own loop's ``for``-init clause
-    (``for (int64_t i = 0; ...)``), or ``None`` to keep the hoisted ``int64_t i;`` declaration that
-    every LoopRegion counter gets today.
-
-    ``late`` only: this is the ``decl_placement`` knob applied to a loop counter, whose hoisted
-    declaration is the single furthest-from-use declaration the generator emits -- it sits at the top of
-    the function no matter how deep the loop is. Moving it into the init clause is sound only when the
-    counter is genuinely loop-local:
-
-    - exactly ONE LoopRegion owns the name. Two loops sharing a counter share the one hoisted
-      declaration; giving each its own is a bigger change than a placement knob should make.
-    - the loop is not ``inverted``. An inverted loop emits its init BEFORE the ``do``/``while`` brace,
-      so a declaration there is not scoped to the loop and could collide with a sibling.
-    - the init statement is a plain ``i = <expr>`` (see :func:`counter_init_assigns_only`).
-    - nothing outside the loop uses the counter (see :func:`counter_used_outside_loop`).
-
-    Applies to both generators (the loop emitter is shared). ``eager`` returns ``None`` throughout, so
-    output stays byte-for-byte what it is today.
-    """
-    if decl_placement() != "late":
-        return None
-    if loop_local_counter_loop(name, loop_counter_index(sdfg)) is None:
-        return None
-    return loop_region_index_ctype() or dtype.ctype
 
 
 @dataclass(slots=True)
@@ -241,8 +175,8 @@ def loop_counter_index(sdfg: SDFG) -> LoopCounterIndex:
 
 
 def loop_local_counter_loop(name: str, index: LoopCounterIndex) -> LoopRegion | None:
-    """The loop whose ``for``-init clause may declare counter ``name``, or ``None`` when a gate of
-    :func:`loop_local_counter_ctype` refuses. ``decl_placement`` is not read here."""
+    """The loop whose ``for``-init clause may declare counter ``name``, or ``None`` when no single loop owns it, the
+    loop is inverted, its init is not a plain assignment, or the counter is used outside the loop."""
     owners = index.owners.get(name, ())
     if len(owners) != 1:
         return None
@@ -254,15 +188,6 @@ def loop_local_counter_loop(name: str, index: LoopCounterIndex) -> LoopRegion | 
     if counter_used_outside_loop(name, loop, index.sdfg, index.use_sites, index.descriptor_symbols):
         return None
     return loop
-
-
-def map_schedule_is_sequential(node: nodes.MapEntry) -> bool:
-    """Whether this map emits a plain sequential loop rather than an OpenMP ``parallel for``. The gate
-    shared by every knob that rewrites the loop into a non-canonical form (hoisted declaration, walking
-    pointer): an OpenMP pragma must be immediately followed by a CANONICAL indexed loop, and a
-    loop-carried rewrite is exactly what a ``parallel for`` forbids, so those knobs apply to sequential
-    (non-``CPU_Multicore`` / non-``CPU_Persistent``) maps only."""
-    return node.map.schedule not in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
 
 
 def contiguous_span(subset, strides):
@@ -3075,17 +3000,12 @@ class CPUCodeGen(TargetCodeGenerator):
         return standalone_integer_dtype(symbol).as_arg(name)
 
     def map_loop_ctypes(self, sdfg: SDFG, state: SDFGState, node: nodes.MapEntry) -> list[str]:
-        """The declared type of each induction variable of ``node``, per ``codegen_params.loop_index_type``.
-
-        ``inferred`` spells each parameter's resolved type (``auto`` where none resolves). CPF writes no
-        ``auto``: there each parameter's resolved type is spelled, widened as a symbol is.
+        """The declared type of each induction variable of ``node``: its resolved type, ``auto`` where none resolves.
+        CPF writes no ``auto``: there each parameter's resolved type is spelled, widened as a symbol is.
 
         :raises NotImplementedError: if CPF finds a parameter whose range resolves to no integer type.
         """
-        setting = Config.get("compiler", "cpu", "codegen_params", "loop_index_type")
         standalone = cpf_lowering.standalone()
-        if setting in ("int32", "int64") or (setting == "auto" and not standalone):
-            return [LOOP_INDEX_CTYPES[setting]] * len(node.map.params)
         resolved = node.new_symbols(sdfg, state, self._frame.symbols_defined_at(state, node))
         if not standalone:
             return [resolved[p].ctype if resolved.get(p) is not None else "auto" for p in node.map.params]
@@ -4906,26 +4826,6 @@ class CPUCodeGen(TargetCodeGenerator):
     def emit_interstate_variable_declaration(
         self, name: str, dtype: dtypes.typeclass, callsite_stream: CodeIOStream, sdfg: SDFG
     ):
-        # ``loop_index_type`` (int32/int64) retypes ONLY a LoopRegion counter's hoisted declaration --
-        # ``int32_t i;`` / ``int64_t i;`` in place of the inferred type. The registered defined-type
-        # follows the same spelling so the counter's other uses (condition, body indexing) name that
-        # type without introducing a cast. ``auto`` (the default) leaves the declaration untouched, so
-        # legacy output stays byte-identical. Every non-counter interstate symbol is unaffected.
-        # ``decl_placement = late`` moves a loop-local counter's declaration into its own loop's
-        # for-init clause -- the loop emitter reads the recorded ctype and spells ``for (T i = ...)``.
-        # Nothing is written here in that case: this hoisted declaration IS what the knob removes. The
-        # defined type is still registered, exactly as the hoisted declaration would, so the counter's
-        # uses inside the loop resolve identically (by the gate, it has no uses outside).
-        local_ctype = loop_local_counter_ctype(name, dtype, sdfg)
-        if local_ctype is not None:
-            self._frame.loop_local_counters[(sdfg.cfg_id, name)] = local_ctype
-            self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, local_ctype)
-            return
-        override = loop_region_index_ctype()
-        if override is not None and is_loop_region_variable(name, sdfg):
-            callsite_stream.write("%s %s;\n" % (override, name), sdfg)
-            self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, override)
-            return
         isvar = data.Scalar(dtype)
         callsite_stream.write(f"{isvar.as_arg(with_types=True, name=name)};\n", sdfg)
         self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, dtype.ctype)
