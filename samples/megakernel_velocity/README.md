@@ -1,0 +1,68 @@
+# Megakernel on ICON velocity tendencies
+
+Compares `velocity_tendencies` with one launch per kernel against one megakernel, on the CPU and the GPU, on real ICON
+R02B05 data (nproma 20480, 90 levels). The Fortran source comes from dace-fortran.
+
+## Reproducing on Daint
+
+```bash
+# 1. Checkouts, next to each other
+git clone -b megakernel git@github.com:spcl/dace.git
+git clone git@github.com:spcl/dace-fortran.git
+
+# 2. Python environment: dace-fortran's locked packages with this DaCe over them
+cd dace-fortran
+uv sync --frozen --no-default-groups --group testing
+uv pip install -e ../dace
+source .venv/bin/activate
+export DACE_FORTRAN_ROOT=$PWD
+
+# 3. The data set: 5.8 GB to download, about 40 GB unpacked
+mkdir -p "$SCRATCH/data_r02b05"
+curl -fL https://polybox.ethz.ch/index.php/s/WoxiditKJjgdEfR/download/nproma20480_data_files.tar.xz |
+  tar -xJ -C "$SCRATCH/data_r02b05"
+export DATA_DIR=$SCRATCH/data_r02b05
+
+# 4. The experiment
+cd ../dace/samples/megakernel_velocity
+export SPACK_ROOT=<a spack with gcc, llvm 22 and cuda for aarch64>
+sbatch -A <project> run_daint.sbatch
+```
+
+`run_beverin.sbatch` is the same on an MI300A node. Results land in `results/<machine>-<job>/`: `verify.txt` is the
+numerics check, `time.txt` the timings, and `times.csv` every repetition, one row each. `python plot.py
+results/<machine>-<job>/times.csv --out plot.png` draws them (it needs matplotlib, and takes several CSVs to put machines
+side by side). `OUT`, `REPS` (100), `DEVICES` and `CHUNKS` override the defaults.
+
+`run_daint.sbatch` has not been run yet; everything here was tested on Beverin. On Daint, expect to adapt the `spack
+load` line first, and check that DaCe picks the CUDA backend.
+
+## What it builds
+
+Every configuration is built twice per `(lvn_only, istep)`: `--strict`, for the numerics, and with optimizing flags, for
+the times. The data set holds (0, 1), (0, 2) and (1, 1); (1, 2) never occurs.
+
+| kind | meaning |
+|------|---------|
+| `base` | one launch per kernel, or one `omp parallel` per map on the CPU |
+| `megakernel` | `MegaKernelOptimization` with its defaults |
+| `tuned` (GPU) | `--block-size 32 --fewer-syncs`: the best settings measured on the MI300A |
+
+The pipeline is dace-fortran's frontend, `specialize_variant` for the configuration, `optimize` (loops to maps,
+`MoveIfIntoMap`, fusion), then offloading with the block maps on the host, then the megakernel.
+
+## How the data gets in
+
+The dumps hold ICON's derived types, field by field, as text. `velocity_driver.F90` loads them into those same types and
+calls `velocity_tendencies_dace`, the binding dace-fortran generates: it has the kernel's signature and does the AoS to
+SoA unpacking. The untouched Fortran kernel is linked next to it and runs on the same state. `dace_vs_t1` compares with
+the dump after the step, and `n_differ=0` means bit-identical.
+
+## Reading the times
+
+`call` is the whole binding call. `compute` is the part between the last copy to the device and the first copy back. The
+benchmark starts with its fields on the host, so every call copies about 60 containers, which ICON would not do; those
+copies take most of `call` and are the same with and without the megakernel. Compare `compute`.
+
+A base GPU build can end with a segmentation fault in `__call_tls_dtors` when Python exits, after its libraries are
+written. `run_experiment.sh` therefore checks for the library, not the exit code.
