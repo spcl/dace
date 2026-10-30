@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen import common
 from dace.libraries import blas
 
 
@@ -56,6 +57,7 @@ def test_scalar_output():
 
 @pytest.mark.gpu
 def test_scalar_output_ptr_access():
+    backend = common.get_gpu_backend()
     sdfg = dace.SDFG("scalptrtest")
     state = sdfg.add_state()
     sdfg.add_scalar("scal", dace.float64, transient=True, storage=dace.dtypes.StorageType.GPU_Global)
@@ -65,10 +67,10 @@ def test_scalar_output_ptr_access():
         "write",
         {},
         {"outp": dace.pointer(dace.float64)},
-        """
+        f"""
         double a = 5;
-        cudaMemcpyAsync(outp, &a, 1 * sizeof(double), cudaMemcpyHostToDevice,
-                        __state->gpu_context->streams[0]);
+        {backend}MemcpyAsync(outp, &a, 1 * sizeof(double), {backend}MemcpyHostToDevice,
+                             __state->gpu_context->streams[0]);
         """,
         language=dace.dtypes.Language.CPP,
     )

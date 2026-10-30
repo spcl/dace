@@ -169,6 +169,95 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
+def sdfg_uses_gpu(sdfg: SDFG) -> bool:
+    """True when any descriptor lives in GPU storage or any scope/library node carries a GPU schedule."""
+    from dace.sdfg import nodes
+
+    if any(
+        desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared)
+        for _, _, desc in sdfg.arrays_recursive()
+    ):
+        return True
+    return any(
+        isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
+        for node, _ in sdfg.all_nodes_recursive()
+    )
+
+
+def unselected_cuda_target() -> str:
+    """The CUDA target not chosen in ``compiler.cuda.implementation``. Both share the GPU schedule types,
+    so instantiating both would register duplicate dispatchers."""
+    cuda_impl = config.Config.get("compiler", "cuda", "implementation")
+    if cuda_impl not in ("legacy", "experimental"):
+        raise ValueError(
+            f"Invalid compiler.cuda.implementation: {cuda_impl!r}. Please select one of 'legacy' or 'experimental'."
+        )
+    return "experimental_cuda" if cuda_impl == "legacy" else "cuda"
+
+
+def changes_symbol_kind(state: SDFGState, node: "dace.nodes.NestedSDFG") -> bool:
+    """Whether a symbol the nested SDFG declares is mapped to a value of another scalar kind (an integer fed a float,
+    a signed symbol an unsigned value): the call converts the value, inlining would substitute it as is."""
+    from dace.sdfg.type_inference import infer_expr_type
+
+    outer = None
+    for name, value in node.symbol_mapping.items():
+        declared = node.sdfg.symbols.get(name)
+        if declared is None:
+            continue
+        if outer is None:
+            outer = state.symbols_defined_at(node)
+        mapped = infer_expr_type(value, outer)
+        if mapped is not None and not (
+            type(declared) is type(mapped) is dtypes.typeclass
+            and declared.as_numpy_dtype().kind == mapped.as_numpy_dtype().kind
+        ):
+            return True
+    return False
+
+
+def passes_thread_local_data(state: SDFGState, node: "dace.nodes.NestedSDFG") -> bool:
+    """Whether the nested SDFG is handed thread-local data: it receives the calling thread's pointer, and its parallel
+    maps share that one. Inlined, each of their threads would read its own copy of the ``threadprivate`` variable."""
+    return any(
+        e.data.data is not None and state.sdfg.arrays[e.data.data].storage == dtypes.StorageType.CPU_ThreadLocal
+        for e in state.all_edges(node)
+    )
+
+
+def inline_host_nested_sdfgs(sdfg: SDFG) -> int:
+    """Flattens the nested SDFGs the CPU target emits and returns how many were inlined.
+
+    A nest inside a GPU scope stays, as the CUDA target emits it as a device function, and so does one that
+    :func:`changes_symbol_kind` or :func:`passes_thread_local_data`.
+    """
+    from dace.sdfg.scope import is_devicelevel_gpu
+    from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+    from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+
+    pinned = [
+        node
+        for node, parent in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.NestedSDFG)
+        and not node.no_inline
+        and isinstance(parent, SDFGState)
+        and (
+            is_devicelevel_gpu(parent.sdfg, parent, node)
+            or changes_symbol_kind(parent, node)
+            or passes_thread_local_data(parent, node)
+        )
+    ]
+    for node in pinned:
+        node.no_inline = True
+    try:
+        return sdfg.apply_transformations_repeated(InlineSDFG) + sdfg.apply_transformations_repeated(
+            InlineMultistateSDFG
+        )
+    finally:
+        for node in pinned:
+            node.no_inline = False
+
+
 def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
@@ -227,10 +316,17 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     # Set default storage/schedule types in SDFG
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    # Dynamic thread-block maps not lowered before code generation become thread-block maps that drive a work queue
+    from dace.transformation.passes.lower_dynamic_thread_block_maps import LowerDynamicThreadBlockMaps
+
+    LowerDynamicThreadBlockMaps().apply_pass(sdfg, {})
+
     # Give every implicit copy a node of its own, before the expansion below lowers it. An implicit
     # copy is a write no node performs, so an empty memlet ordering that write has nothing to point
-    # at and the copy is free to move ahead of a write it must follow.
-    if config.Config.get_bool("compiler", "cpu", "explicit_copy"):
+    # at and the copy is free to move ahead of a write it must follow. The readable generator lowers
+    # its copies after inlining instead: an expanded copy inside a nest changes what InlineSDFG accepts.
+    readable = config.Config.get("compiler", "cpu", "implementation") == "experimental_readable"
+    if config.Config.get_bool("compiler", "cpu", "explicit_copy") and not readable:
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
         InsertExplicitCopies().apply_pass(sdfg, {})
@@ -238,6 +334,10 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # them to decide pointer vs. value. Storage defaults above already hold.
         infer_types.infer_connector_types(sdfg)
 
+    # GPU device maps nested in kernels become guarded or grid-strided parts of their kernel
+    from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
+
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
     # Lower memlet access policies (e.g. loop-carried address cursors) to ordinary SDFG constructs on this
     # code-generation copy of the SDFG. This is a no-op unless a memlet carries a non-default policy. It must
     # follow InsertExplicitCopies (which moves the policy of a lifted copy onto the library node's operand
@@ -252,6 +352,72 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
+    # Experimental readable generator: flatten nested SDFGs (so the connector-free + index-function
+    # lowering applies uniformly, not stopping at NSDFG boundaries), then mark write-once data
+    # const/constexpr and inline tasklet connectors. After library expansion so post-expansion
+    # tasklets are seen; affects CPU and GPU-kernel tasklets alike.
+    if readable:
+        from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
+        from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
+        from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
+
+        # Data instrumentation saves at the access nodes the user instrumented; inlining would replace them
+        if not any(
+            isinstance(node, dace.nodes.AccessNode)
+            and node.instrument != dtypes.DataInstrumentationType.No_Instrumentation
+            for node, _ in sdfg.all_nodes_recursive()
+        ):
+            inline_host_nested_sdfgs(sdfg)
+        if config.Config.get_bool("compiler", "cpu", "explicit_copy"):
+            from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+
+            InsertExplicitCopies().apply_pass(sdfg, {})
+            infer_types.infer_connector_types(sdfg)
+            sdfg.expand_library_nodes()
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # GPU preprocessing, before the inlining below freezes accesses into tasklet code. Single-value transients
+        # become Scalars, kernel outputs are widened back to length-1 arrays (a by-value Scalar cannot live in device
+        # memory), and in-kernel arrays are lifted out of their kernels.
+        if sdfg_uses_gpu(sdfg):
+            from dace.transformation.pass_pipeline import Pipeline
+            from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
+                InferDefaultSchedulesAndStorages,
+            )
+            from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+            from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
+            from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
+
+            ConvertLengthOneArraysToScalars(skip_gpu_outputs=True).apply_pass(sdfg, {})
+            promote_gpu_scalars = PromoteScalarOutputsToArrays()
+            promote_gpu_scalars.gpu = True
+            Pipeline([InferDefaultSchedulesAndStorages(), promote_gpu_scalars]).apply_pass(sdfg, {})
+            move_arrays = MoveArrayOutOfKernel()
+            move_arrays.raise_on_unsupported = False
+            move_arrays.apply_pass(sdfg, {})
+            infer_types.infer_connector_types(sdfg)
+            infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
+        # Scalar fission (``PrivatizeScalars``) is deliberately NOT run here. It is an optimization pass and belongs in
+        # the caller's pipeline, before WCR memlets exist: by codegen time an accumulator chain has been rewritten to
+        # WCR, and fissioning a read-modify-write into a fresh SSA version drops the running value.
+        # Transients that only store literals become ``constexpr`` SDFG constants.
+        PromoteConstantTransients().apply_pass(sdfg, {})
+        InlineTaskletConnectors().apply_pass(sdfg, {})
+        # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name
+        # with a differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.
+        CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
+        if validate:
+            sdfg.validate()
+
+        # The readable ``<arr>_idx`` / ``<arr>_size`` helpers are ``constexpr``; when they are reached
+        # from device code, nvcc needs ``--expt-relaxed-constexpr`` to evaluate a host/device constexpr
+        # in a constant context. Ensure it is on the CUDA flags (idempotent) so a GPU build under the
+        # readable generator compiles without a manual config edit.
+        cuda_args = config.Config.get("compiler", "cuda", "args")
+        if "--expt-relaxed-constexpr" not in cuda_args:
+            config.Config.set("compiler", "cuda", "args", value=(cuda_args + " --expt-relaxed-constexpr").strip())
 
     # Right before codegen, not in simplify: until here SymPy's power laws can still fold ``Pow``
     # (``R**i * R**(K-i-1) -> R**(K-1)``), which the opaque ``ipow`` would freeze.
@@ -275,11 +441,24 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # If another target has already been registered as CPU, use it instead
         if v["name"] == "cpu":
             default_target = k
+    # The experimental readable CPU generator is opt-in and selected explicitly
+    # (it is not registered with the target registry), so it wins over any 'cpu'
+    # extension picked above.
+    if config.Config.get("compiler", "cpu", "implementation") == "experimental_readable":
+        from dace.codegen.targets import experimental_cpu
+
+        default_target = experimental_cpu.ExperimentalCPUCodeGen
     targets = {"cpu": default_target(frame, sdfg)}
+
+    disabled_cuda_target = unselected_cuda_target()
 
     # Instantiate the rest of the targets
     targets.update(
-        {v["name"]: k(frame, sdfg) for k, v in TargetCodeGenerator.extensions().items() if v["name"] not in targets}
+        {
+            v["name"]: k(frame, sdfg)
+            for k, v in TargetCodeGenerator.extensions().items()
+            if v["name"] not in (*targets, disabled_cuda_target)
+        }
     )
 
     # Query all code generation targets and instrumentation providers in SDFG

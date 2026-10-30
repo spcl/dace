@@ -34,6 +34,7 @@ from dace.sdfg.state import (
     LoopRegion,
     SDFGState,
     StateSubgraphView,
+    UnstructuredControlFlow,
 )
 
 
@@ -2447,10 +2448,15 @@ def get_control_flow_block_dominators(
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
         for k in idom.keys():
             if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
-                next_dom = idom[k.parent_graph]
-                while next_dom.parent_graph is not sdfg and next_dom is next_dom.parent_graph.start_block:
-                    next_dom = idom[next_dom.parent_graph]
-                idom[k] = next_dom
+                region = k.parent_graph
+                next_dom = idom[region]
+                # Only a region that opens its parent is its own dominator there; climb past it, never past a block.
+                while next_dom is region and region.parent_graph is not sdfg:
+                    region = region.parent_graph
+                    next_dom = idom[region]
+                # A plain region is resolved to its inside below, which is where ``k`` already is: ``k`` is the root
+                root = next_dom is region and not isinstance(region, (LoopRegion, ConditionalBlock))
+                idom[k] = k if root else next_dom
         changed = True
         while changed:
             changed = False
@@ -2504,13 +2510,14 @@ def get_control_flow_block_dominators(
             if k.parent_graph is not sdfg and (
                 k is sinks_per_cfg[k.parent_graph] or isinstance(k.parent_graph, ConditionalBlock)
             ):
-                next_pdom = ipostdom[k.parent_graph]
-                while next_pdom.parent_graph is not sdfg and (
-                    next_pdom is sinks_per_cfg[next_pdom.parent_graph]
-                    or isinstance(next_pdom.parent_graph, ConditionalBlock)
-                ):
-                    next_pdom = ipostdom[next_pdom.parent_graph]
-                ipostdom[k] = next_pdom
+                region = k.parent_graph
+                next_pdom = ipostdom[region]
+                # As for dominators: climb past a region that ends its parent, never past a block
+                while next_pdom is region and region.parent_graph is not sdfg:
+                    region = region.parent_graph
+                    next_pdom = ipostdom[region]
+                root = next_pdom is region and not isinstance(region, (LoopRegion, ConditionalBlock))
+                ipostdom[k] = k if root else next_pdom
         changed = True
         while changed:
             changed = False
@@ -2951,3 +2958,38 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
 
         if expanded_something:
             states.append(state)
+
+
+def unstructured_control_flow(sdfg: SDFG, recursive: bool = False) -> Generator[ControlFlowBlock, None, None]:
+    """Yield what makes the control flow of ``sdfg`` unstructured.
+
+    Structured control flow branches only through ``ConditionalBlock`` and loops only through ``LoopRegion``, so every
+    region is a line of blocks joined by unconditional edges. This yields each ``UnstructuredControlFlow`` region and
+    each block that leaves through more than one interstate edge or through a conditional one.
+
+    :param sdfg: The SDFG to inspect.
+    :param recursive: Whether to inspect nested SDFGs as well.
+    """
+    for region in sdfg.all_control_flow_regions(recursive=recursive):
+        if isinstance(region, UnstructuredControlFlow):
+            yield region
+        elif isinstance(region, ControlFlowRegion):
+            for block in region.nodes():
+                out_edges = region.out_edges(block)
+                if len(out_edges) > 1 or (out_edges and not out_edges[0].data.is_unconditional()):
+                    yield block
+
+
+def require_structured_control_flow(sdfg: SDFG, consumer: str) -> None:
+    """Raise if ``sdfg`` or an SDFG nested in it still has unstructured control flow, which ``consumer`` does not support.
+
+    :param sdfg: The SDFG to inspect.
+    :param consumer: The pass or pipeline that relies on structured control flow, named in the error.
+    :raises NotImplementedError: If any block makes the control flow unstructured; the message names every one.
+    """
+    offending = [block.label for block in unstructured_control_flow(sdfg, recursive=True)]
+    if offending:
+        raise NotImplementedError(
+            f"{consumer} requires structured control flow, which ControlFlowRaising could not "
+            f"produce: these blocks branch through interstate edges: {offending}"
+        )

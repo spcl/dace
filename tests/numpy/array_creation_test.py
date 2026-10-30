@@ -1,10 +1,9 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import pytest
 from common import compare_numpy_output
 
 import dace
-from dace.frontend.python.common import DaceSyntaxError
 
 # M = dace.symbol('M')
 # N = dace.symbol('N')
@@ -259,15 +258,15 @@ def test_zeros_symbolic_size_scalar():
 
 
 def test_ones_scalar_size_scalar():
+    """A size held in a scalar is read into a symbol, so it can be used as an extent."""
 
     @dace.program
     def ones_scalar_size(k: dace.int32):
         a = np.ones(k, dtype=np.uint32)
         return np.sum(a)
 
-    with pytest.raises(DaceSyntaxError):
-        out = ones_scalar_size(20)
-        assert out == 20
+    out = ones_scalar_size(20)
+    assert out[0] == 20
 
 
 def test_ones_scalar_size():
@@ -277,9 +276,8 @@ def test_ones_scalar_size():
         a = np.ones((k, k), dtype=np.uint32)
         return np.sum(a)
 
-    with pytest.raises(DaceSyntaxError):
-        out = ones_scalar_size(20)
-        assert out == 20 * 20
+    out = ones_scalar_size(20)
+    assert out[0] == 20 * 20
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from networkx import MultiDiGraph
 from ordered_set import OrderedSet
 
 from dace import data, dtypes, subsets, symbolic, typeclass
+from dace.data import View
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, graph, nodes, utils
@@ -405,7 +406,9 @@ def nest_state_subgraph(
             continue
         name = edge.data.data
         if name not in nested_names:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+            desc = sdfg.arrays[edge.data.data]
+            # A view is a plain array in the nest: what it views stays outside
+            datadesc = desc.as_array() if isinstance(desc, View) else copy.deepcopy(desc)
             datadesc.transient = False
             nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
         new_name = nested_names[name]
@@ -415,7 +418,9 @@ def nest_state_subgraph(
             continue
         name = edge.data.data
         if name not in nested_names:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+            desc = sdfg.arrays[edge.data.data]
+            # A view is a plain array in the nest: what it views stays outside
+            datadesc = desc.as_array() if isinstance(desc, View) else copy.deepcopy(desc)
             datadesc.transient = False
             nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
         new_name = nested_names[name]
@@ -1539,6 +1544,22 @@ def get_parent_map(state: SDFGState, node: nodes.Node | None = None) -> tuple[no
         curscope = cursdfg.parent_nsdfg_node
         cursdfg = cursdfg.parent_sdfg
     return None
+
+
+def get_parent_maps(state: SDFGState, node: nodes.Node) -> list[tuple[nodes.EntryNode, SDFGState]]:
+    """
+    Returns every scope enclosing the node, innermost first, continuing through enclosing nested SDFGs.
+
+    :param state: The state of the node.
+    :param node: The node to test.
+    :return: A list of (entry node, state) tuples, as get_parent_map returns them one at a time.
+    """
+    scopes = []
+    parent = get_parent_map(state, node)
+    while parent is not None:
+        scopes.append(parent)
+        parent = get_parent_map(parent[1], parent[0])
+    return scopes
 
 
 def redirect_edge(

@@ -18,6 +18,13 @@ FAILING_M = GRID_Y_LIMIT + 1
 WORKING_M = 8
 
 
+@pytest.fixture(autouse=True)
+def needs_the_grid_limit():
+    """HIP has no such limit, so the launch below would succeed there."""
+    if common.get_gpu_backend() == "hip":
+        pytest.skip("the failing launch relies on the CUDA grid limit")
+
+
 @dace.program
 def gpu_error_doubler(A: dace.float64[M, N], B: dace.float64[M, N]):
     for i, j in dace.map[0:M, 0:N]:

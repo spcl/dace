@@ -18,6 +18,7 @@ namespace dace { namespace math {
     DACE_DFI half max(half a, half b) {
         return __hgt(a, b) ? a : b;
     }
+#endif
 
     DACE_DFI half tanh(half val) {
         return __float2half(tanhf(__half2float(val)));
@@ -26,7 +27,6 @@ namespace dace { namespace math {
     DACE_DFI half exp(half val) {
         return hexp(val);
     }
-#endif
 
     DACE_DFI half reciprocal(half val) {
         return hrcp(val);
@@ -525,12 +525,12 @@ DACE_DFI half8 op(half8 x) {                                               \
                  op(x.h2<2>()), op(x.h2<3>()));                            \
 }
 
-#ifndef __HIPCC__
 namespace dace { namespace math {
     HALF_VEC_UFUNC(exp)
     HALF_VEC_UFUNC(tanh)
 } }
 
+#ifndef __HIPCC__
 // Vector comparison functions
 DACE_DFI half2 max(half2 a, half2 b) {
     return make_half2(max(a.x, b.x), max(a.y, b.y));

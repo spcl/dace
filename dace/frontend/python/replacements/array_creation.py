@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains replacements for array-filling methods (zeros, ones, etc.)
 """
@@ -7,6 +7,7 @@ import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type, broadcast_together
+from dace.frontend.python.replacements.array_creation_dace import promote_size_scalars_in_shape
 from dace.frontend.python.replacements.operators import result_type
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
@@ -69,6 +70,10 @@ def _numpy_full(
     if isinstance(shape, (Number, str)) or symbolic.issymbolic(shape):
         shape = [shape]
 
+    shape, promoted = promote_size_scalars_in_shape(pv, sdfg, shape)
+    if promoted:
+        # Promotion opens a state to carry the symbol assignment; the fill has to follow it.
+        state = pv.last_block
     if any(isinstance(s, str) for s in shape):
         raise DaceSyntaxError(
             pv,
@@ -281,8 +286,9 @@ def _arange(
     outname = pv.get_target_name()
     outname, outarr = sdfg.add_transient(outname, shape, dtype, find_new_name=True)
 
-    start = f"decltype(__out)({start})"
-    actual_step = f"decltype(__out)({actual_step})"
+    # ``__out`` is an element lvalue, so ``decltype(__out)`` is a reference a prvalue cannot be cast to
+    start = f"{dtype.ctype}({start})"
+    actual_step = f"{dtype.ctype}({actual_step})"
 
     state.add_mapped_tasklet(
         name="_numpy_arange_",
@@ -373,6 +379,9 @@ def _linspace(
             dtypes.uint64,
         ):
             dtype = dtypes.dtype_to_typeclass(float)
+    elif not isinstance(dtype, dtypes.typeclass):
+        # An explicitly passed dtype arrives as a numpy type; the tasklet body below needs ``ctype``.
+        dtype = dtypes.dtype_to_typeclass(dtype)
 
     outname = pv.get_target_name()
     outname, _ = sdfg.add_transient(outname, shape_with_axis, dtype, find_new_name=True)
@@ -397,7 +406,7 @@ def _linspace(
         stopcode = symbolic.symstr(stop)
 
     # Create tasklet code based on inputs
-    code = f"__out = {startcode} + __sind * decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})"
+    code = f"__out = {startcode} + __sind * {dtype.ctype}({stopcode} - {startcode}) / {dtype.ctype}({symbolic.symstr(num)})"
 
     state.add_mapped_tasklet(
         name="linspace",
@@ -429,7 +438,7 @@ def _linspace(
         "retstep",
         ranges,
         copy.deepcopy(inputs),
-        f"__out = decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})",
+        f"__out = {dtype.ctype}({stopcode} - {startcode}) / {dtype.ctype}({symbolic.symstr(num)})",
         {"__out": Memlet(f"{stepname}{out_index}")},
         external_edges=True,
     )
