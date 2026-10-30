@@ -596,5 +596,6 @@ def test_a_host_maps_body_waits_for_the_copy_its_interstate_edge_reads():
     code = next(c.clean_code for c in table_bound_read_in_a_block_body().generate_code() if c.language == "cpp")
     lines = code.splitlines()
     copy = next(i for i, line in enumerate(lines) if "DeviceToHost" in line and "idx_host" in line)
-    read = next(i for i, line in enumerate(lines) if "iend = idx_host[2]" in line)
+    # A persistent host buffer is read through the state struct (``__state->__1_idx_host``)
+    read = next(i for i, line in enumerate(lines) if "iend = " in line and "idx_host[2]" in line)
     assert any("StreamSynchronize" in line for line in lines[copy:read]), "\n".join(lines[copy : read + 1])

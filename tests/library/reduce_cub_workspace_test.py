@@ -85,8 +85,9 @@ def test_the_reduction_itself_reports_its_status(in_shape, axes, out_shape):
     # experimental_readable (the default CPU codegen) inlines the tasklet's _in/_out connectors to
     # the actual pointers they read/write; legacy keeps the literal connector names in the call. The
     # call site is the line that is not a declaration either way, and how the offloading pass spells
-    # its device copy (``gpu_a``, ``a_gpu``) is that pass's business rather than this test's.
-    call = re.search(r"^(?!.*gpuError_t).*__dace_reduce_\w+\(\w+, \w+,.*$", code, re.MULTILINE)
+    # its device copy (``gpu_a``, ``a_gpu``, a persistent ``__state->__0_a_gpu``) is that pass's business rather than
+    # this test's.
+    call = re.search(r"^(?!.*gpuError_t).*__dace_reduce_\w+\(.*$", code, re.MULTILINE)
     assert call, "no call to the reduce helper was emitted"
     assert "DACE_GPU_CHECK" in call.group(0), f"the reduction call is unchecked: {call.group(0).strip()}"
 
