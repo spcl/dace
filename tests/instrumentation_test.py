@@ -2,6 +2,7 @@
 """Tests that generate various instrumentation reports with timers and
 performance counters."""
 
+import os
 import re
 import sys
 
@@ -9,6 +10,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.codegen import common
 from dace.sdfg import nodes
 
 N = dace.symbol("N")
@@ -68,16 +70,32 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
 
     # Check that the NVTX/rocTX range wrapper is present in the generated CPU code
     if instrumentation == dace.InstrumentationType.GPU_TX_MARKERS:
+        # The provider emits nothing at all where rocTX is unavailable. It also never pushes
+        # the "init" range where rocTX is enabled: that marker would be pushed before HIP is
+        # initialized (see GPUTXMarkersProvider.on_sdfg_init_begin), and the provider's gate is
+        # the rocTX availability, not the backend.
+        rocm_path = os.getenv("ROCM_PATH", "/opt/rocm")
+        have_roctx = (
+            any(
+                os.path.isfile(path)
+                for path in (
+                    os.path.join(rocm_path, "roctracer/include/roctx.h"),
+                    os.path.join(rocm_path, "include/roctracer/roctx.h"),
+                )
+            )
+            and os.path.isfile(os.path.join(rocm_path, "lib/libroctx64.so"))
+        )
+        if backend == "hip" and not have_roctx:
+            pytest.skip("rocTX is not available")
+        ranges = ["sdfg", "copy", "state", "alloc", "dealloc", "exit"]
+        if not have_roctx:
+            ranges.append("init")
         code = sdfg.generate_code()[0].clean_code
         tx_include = re.search(r"#include <(nvtx3/nvToolsExt|roctx).h>", code)
         assert tx_include is not None
-        range_push = re.search(r'(nvtx|roctx)RangePush\("sdfg', code) is not None
-        range_push &= re.search(r'(nvtx|roctx)RangePush\("copy', code) is not None
-        range_push &= re.search(r'(nvtx|roctx)RangePush\("state', code) is not None
-        range_push &= re.search(r'(nvtx|roctx)RangePush\("alloc', code) is not None
-        range_push &= re.search(r'(nvtx|roctx)RangePush\("dealloc', code) is not None
-        range_push &= re.search(r'(nvtx|roctx)RangePush\("init', code) is not None
-        range_push &= re.search(r'(nvtx|roctx)RangePush\("exit', code) is not None
+        range_push = all(
+            re.search(rf'(nvtx|roctx)RangePush\("{name}', code) is not None for name in ranges
+        )
         assert range_push
         range_pop = re.search(r"(nvtx|roctx)RangePop\b", code)
         assert range_pop is not None
