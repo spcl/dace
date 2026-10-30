@@ -1159,6 +1159,21 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                         return False
                                 found = outnode
 
+            # A happens-before edge that lands on a second-state read keeps it a non-source, which merges only with a
+            # first-state instance it intersects; one the first state reaches by ordering edges alone then stays apart,
+            # though the WAW checks above order a container both states write through that merge
+            rewritten = [n for n in second_output if n.data in first_out_data]
+            for kind, _, targets in self.connections_to_make:
+                if kind not in ("war", "waw"):
+                    continue
+                for source in second_input:
+                    if (
+                        source.data in first_output_by_data
+                        and source.data not in first_out_data
+                        and any(source is t or nx.has_path(second_state._nx, source, t) for t in targets)
+                        and any(nx.has_path(second_state._nx, source, w) for w in rewritten)
+                    ):
+                        return False
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg):
@@ -1258,7 +1273,6 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             for x in reversed(list(nx.topological_sort(first_state._nx)))
             if isinstance(x, nodes.AccessNode) and sdict[x] is None
         ]
-        first_written_names = {n.data for n in first_state.data_nodes() if first_state.in_degree(n) > 0}
         for node in second_state.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 # update parent information
@@ -1284,13 +1298,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     for i in top2:
                         if i not in second_state.source_nodes():
                             continue
-                        if isinstance(i, nodes.AccessNode) and (
-                            kind in ("seed", "read_before") or i.data in first_written_names
-                        ):
+                        if kind in ("seed", "read_before") and isinstance(i, nodes.AccessNode):
                             # A source AccessNode may merge into a first-state node upstream of the seed
                             # writer, closing a cycle (ludcmp ``w = y[i]; w(+)= ...``); its consumers never merge.
-                            # A read of what the first state writes must merge too: an edge on it would keep it a
-                            # separate node, and the WAW check counts on that merge to order the first writer.
                             # A library node takes no ordering edge (it counts its inputs); it is ordered through ``i``.
                             for j in first_nodes:
                                 for k in dict.fromkeys(e.dst for e in second_state.out_edges(i)):
