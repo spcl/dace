@@ -7,6 +7,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.codegen.common import sym2cpp
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.transformation.transformation import ExpandTransformation
@@ -137,7 +138,7 @@ class ExpandTransposeMKL(ExpandTransformation):
             return ExpandTransposePure.expansion(node, state, sdfg)
         lda, ldb = leading
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
-        code = f"mkl_{func}('R', 'T', {m}, {n}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
+        code = f"mkl_{func}('R', 'T', {sym2cpp(m)}, {sym2cpp(n)}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -187,7 +188,7 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         # Adaptations for BLAS API
         order = "CblasRowMajor"
         trans = "CblasTrans"
-        code = f"cblas_{func}({order}, {trans}, {m}, {n}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
+        code = f"cblas_{func}({order}, {trans}, {sym2cpp(m)}, {sym2cpp(n)}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -241,6 +242,11 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
         return tasklet
 
 
+ExpandTransposeHipBLAS = hip_dialect.hip_expansion(
+    ExpandTransposeCuBLAS, blas_environments.hipblas.hipBLAS, hip_dialect.BLAS
+)
+
+
 @dace.library.node
 class Transpose(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -249,6 +255,8 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandTransposeMKL,
         "OpenBLAS": ExpandTransposeOpenBLAS,
         "cuBLAS": ExpandTransposeCuBLAS,
+        "hipBLAS": ExpandTransposeHipBLAS,
+        "rocBLAS": ExpandTransposeHipBLAS,
     }
     default_implementation = "pure"
 
