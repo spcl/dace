@@ -294,6 +294,49 @@ def test_empty_memlets():
     sdfg.simplify()
 
 
+def _nested_maps_around_an_empty_body(outer_content: bool):
+    body = dace.SDFG("empty_body")
+    body.add_state("body", is_start_block=True)
+    sdfg = dace.SDFG(unique_name("nested_maps_around_an_empty_body"))
+    sdfg.add_symbol("n", dace.int64)
+    state = sdfg.add_state("state", is_start_block=True)
+    outer_entry, outer_exit = state.add_map("outer_map", dict(i="0:n"))
+    inner_entry, inner_exit = state.add_map("inner_map", dict(j="0:n"))
+    nsdfg = state.add_nested_sdfg(body, {}, {})
+    state.add_edge(outer_entry, None, inner_entry, None, dace.Memlet())
+    state.add_edge(inner_entry, None, nsdfg, None, dace.Memlet())
+    state.add_edge(nsdfg, None, inner_exit, None, dace.Memlet())
+    state.add_edge(inner_exit, None, outer_exit, None, dace.Memlet())
+    if outer_content:
+        sdfg.add_array("A", ["n"], dace.float64)
+        tasklet = state.add_tasklet("one", {}, {"out": dace.float64}, "out = 1.0")
+        state.add_edge(outer_entry, None, tasklet, None, dace.Memlet())
+        state.add_memlet_path(tasklet, outer_exit, state.add_write("A"), src_conn="out", memlet=dace.Memlet("A[i]"))
+    sdfg.validate()
+    return sdfg, state, nsdfg
+
+
+def test_inline_removes_the_nested_maps_an_empty_nested_sdfg_leaves_empty():
+    """``outer_map -> inner_map -> NestedSDFG`` with a node-less nested state, joined by empty memlets."""
+    sdfg, state, nsdfg = _nested_maps_around_an_empty_body(outer_content=False)
+    InlineSDFG.apply_to(sdfg, nested_sdfg=nsdfg)
+    maps = [node for node in state.nodes() if isinstance(node, (dace_nodes.MapEntry, dace_nodes.MapExit))]
+    assert not maps, maps
+    sdfg.validate()
+
+
+def test_inline_of_an_empty_nested_sdfg_keeps_an_enclosing_map_with_content():
+    """As above, with a tasklet ``A[i] = 1`` in the outer map beside the inner one."""
+    sdfg, state, nsdfg = _nested_maps_around_an_empty_body(outer_content=True)
+    InlineSDFG.apply_to(sdfg, nested_sdfg=nsdfg)
+    maps = [node.map.label for node in state.nodes() if isinstance(node, dace_nodes.MapEntry)]
+    assert maps == ["outer_map"], maps
+    sdfg.validate()
+    A = np.zeros(4)
+    sdfg(A=A, n=4)
+    assert np.array_equal(A, np.ones(4)), A
+
+
 def test_multistate_inline():
 
     @dace.program
@@ -662,6 +705,74 @@ def test_inlining_view_input():
     expected = np.concatenate([A @ B.T, A @ B.T], axis=0)
     actual = sdfg(A=A, B=B)
     np.testing.assert_allclose(expected, actual)
+
+
+def test_inline_binds_a_rebuilt_output_view_through_its_views_connector():
+    """``B_v = B[0]`` bound to an output connector that the nest also reads through an interior access node."""
+    inner = dace.SDFG("inner_double")
+    inner.add_array("_ain", [3, 3], dace.float64)
+    inner.add_array("_aout", [3, 3], dace.float64)
+    istate = inner.add_state("inner_state", is_start_block=True)
+    mid = istate.add_access("_aout")
+    istate.add_nedge(istate.add_access("_ain"), mid, dace.Memlet("_ain[0:3, 0:3]"))
+    istate.add_mapped_tasklet(
+        "double",
+        map_ranges={"i": "0:3", "j": "0:3"},
+        inputs={"inp": dace.Memlet("_aout[i, j]")},
+        code="out = 2 * inp",
+        outputs={"out": dace.Memlet("_aout[i, j]")},
+        input_nodes={"_aout": mid},
+        output_nodes={"_aout": istate.add_access("_aout")},
+        external_edges=True,
+    )
+    sdfg = dace.SDFG(unique_name("inline_output_view_binding"))
+    sdfg.add_array("A", [2, 3, 3], dace.float64)
+    sdfg.add_array("B", [2, 3, 3], dace.float64)
+    sdfg.add_view("A_v", [3, 3], dace.float64)
+    sdfg.add_view("B_v", [3, 3], dace.float64)
+    state = sdfg.add_state("outer_state", is_start_block=True)
+    a_v, b_v = state.add_access("A_v"), state.add_access("B_v")
+    nested = state.add_nested_sdfg(inner, inputs={"_ain": None}, outputs={"_aout": None})
+    state.add_edge(state.add_access("A"), None, a_v, "views", dace.Memlet("A[0, 0:3, 0:3] -> [0:3, 0:3]"))
+    state.add_edge(a_v, None, nested, "_ain", dace.Memlet("A_v[0:3, 0:3]"))
+    state.add_edge(nested, "_aout", b_v, None, dace.Memlet("B_v[0:3, 0:3]"))
+    state.add_edge(b_v, "views", state.add_access("B"), None, dace.Memlet("B_v[0:3, 0:3] -> B[0, 0:3, 0:3]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated(InlineSDFG) == 1
+    sdfg.validate()
+
+    A = np.random.default_rng(7).random((2, 3, 3))
+    B = np.zeros((2, 3, 3))
+    sdfg(A=A, B=B)
+    expected = np.zeros((2, 3, 3))
+    expected[0] = 2 * A[0]
+    assert np.array_equal(B, expected), B
+
+
+@pytest.mark.parametrize("language", [dace.Language.Python, dace.Language.CPP])
+def test_inline_keeps_a_nested_constant_apart_from_the_parent_constant_it_shadows(language):
+    """A nest writes its constant ``C = 2`` from a tasklet and into ``out[C]``; the parent declares ``C = 1``."""
+    inner = dace.SDFG("inner")
+    inner.add_constant("C", 2)
+    inner.add_array("out", [3], dace.float64)
+    istate = inner.add_state(is_start_block=True)
+    code = "o = C" if language == dace.Language.Python else "o = C;"
+    tasklet = istate.add_tasklet("write", {}, {"o"}, code, language=language)
+    istate.add_edge(tasklet, "o", istate.add_write("out"), None, dace.Memlet("out[C]"))
+    sdfg = dace.SDFG(unique_name("inline_shadowed_constant"))
+    sdfg.add_constant("C", 1)
+    sdfg.add_array("out", [3], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {}, {"out"})
+    state.add_edge(node, "out", state.add_write("out"), None, dace.Memlet("out[0:3]"))
+
+    assert sdfg.apply_transformations(InlineSDFG) == 1
+    sdfg.validate()
+
+    out = np.zeros(3)
+    sdfg(out=out)
+    assert np.array_equal(out, [0, 0, 2]), out
 
 
 def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
@@ -1665,6 +1776,22 @@ def test_inline_shared_inout_connector(kind: str, in_map: bool):
     _check_shared_inout_inlining(sdfg, nested)
 
 
+def test_inline_shared_inout_connector_in_a_map_writes_through_the_map_exit():
+    """``write_then_read`` in a map: the nest has no sink node of ``A``, whose write must still leave the map."""
+    sdfg, nested = _make_shared_inout_sdfg("write_then_read", in_map=True)
+    InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
+    sdfg.validate()
+
+    (state,) = sdfg.states()
+    (map_exit,) = [node for node in state.nodes() if isinstance(node, dace_nodes.MapExit)]
+    writes = [
+        e
+        for e in state.in_edges(map_exit)
+        if isinstance(e.src, dace_nodes.AccessNode) and e.src.data == "A" and state.in_degree(e.src) > 0
+    ]
+    assert len(writes) == 1, state.in_edges(map_exit)
+
+
 @pytest.mark.parametrize("in_map", [False, True])
 def test_inline_shared_inout_connector_shared_outer_input(in_map: bool):
     """
@@ -1909,6 +2036,8 @@ if __name__ == "__main__":
     # Skipped due to bug that cannot be reproduced outside CI
     # test_regression_reshape_unsqueeze()
     test_empty_memlets()
+    test_inline_removes_the_nested_maps_an_empty_nested_sdfg_leaves_empty()
+    test_inline_of_an_empty_nested_sdfg_keeps_an_enclosing_map_with_content()
     test_multistate_inline()
     test_multistate_inline_outer_dependencies()
     test_multistate_inline_concurrent_subgraphs()
@@ -1922,6 +2051,9 @@ if __name__ == "__main__":
     test_inline_symbol_assignment()
     test_regression_inline_subset()
     test_inlining_view_input()
+    test_inline_binds_a_rebuilt_output_view_through_its_views_connector()
+    for language in [dace.Language.Python, dace.Language.CPP]:
+        test_inline_keeps_a_nested_constant_apart_from_the_parent_constant_it_shadows(language)
     test_chain_reduction_1()
     test_chain_reduction_2()
     test_chain_reduction_all()
@@ -1952,6 +2084,7 @@ if __name__ == "__main__":
     for kind in ["write_then_read", "overlapping_subsets", "read_then_write"]:
         for in_map in [False, True]:
             test_inline_shared_inout_connector(kind=kind, in_map=in_map)
+    test_inline_shared_inout_connector_in_a_map_writes_through_the_map_exit()
     for in_map in [False, True]:
         test_inline_shared_inout_connector_shared_outer_input(in_map=in_map)
     for in_map in [False, True]:
