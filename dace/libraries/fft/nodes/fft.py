@@ -268,7 +268,9 @@ def dense_block_order(
     dimension list maps the same logical axis in the input and the output. Compared through
     :func:`~dace.symbolic.relax_ipow`, since canonicalization respells a packed stride ``N**2`` as ``ipow(N, 2)``.
     """
-    for order in itertools.permutations(axes):
+    # Every order up to rank 3 (the GPU plans' limit); past it, C and Fortran order only, not ``r!`` orders.
+    orders = itertools.permutations(axes) if len(axes) <= 3 else (tuple(axes), tuple(reversed(axes)))
+    for order in orders:
         steps = []
         for desc in descs:
             step = span = desc.strides[order[-1]]
