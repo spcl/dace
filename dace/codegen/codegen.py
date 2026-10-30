@@ -264,8 +264,14 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
         from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
 
-        sdfg.apply_transformations_repeated(InlineSDFG)
-        sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+        # Data instrumentation saves at the access nodes the user instrumented; inlining would replace them
+        if not any(
+            isinstance(node, dace.nodes.AccessNode)
+            and node.instrument != dtypes.DataInstrumentationType.No_Instrumentation
+            for node, _ in sdfg.all_nodes_recursive()
+        ):
+            sdfg.apply_transformations_repeated(InlineSDFG)
+            sdfg.apply_transformations_repeated(InlineMultistateSDFG)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Normalize single-value transients to Scalar (default is transient-only, so the signature
