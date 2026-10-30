@@ -161,7 +161,14 @@ def nest_sdfg_subgraph(
         # Find NestedSDFG's connectors. Ordered: these name the nested SDFG's connectors and fix
         # the order its access nodes are wired, which numbers the enclosing map's IN_n / OUT_n.
         # Sorted, since a set of container names carries no order of its own to preserve.
-        read_set = OrderedSet(sorted(n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient))
+        # A constant only read inside is a constant of the nest too, declared there as here: a connector
+        # would bind a parameter of the very name the nest declares ``constexpr``
+        constant_reads = {n for n in read_set if n in sdfg.constants_prop and n not in write_set}
+        read_set = OrderedSet(
+            sorted(
+                n for n in read_set if n not in constant_reads and (n not in unique_set or not sdfg.arrays[n].transient)
+            )
+        )
         write_set = OrderedSet(sorted(n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient))
 
         # Find defined subgraph symbols
@@ -285,9 +292,11 @@ def nest_sdfg_subgraph(
         for name in read_set | write_set:
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
             nsdfg.arrays[name].transient = False
-        for name in unique_set:
+        for name in unique_set - constant_reads:
             nsdfg.arrays[name] = sdfg.arrays[name]
             del sdfg.arrays[name]
+        for name in constant_reads:
+            nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
 
         # If there are symbols (new or not) assigned value in the subgraph, their values will be propagated to the
         # (outer) SDFG through a symbol-scalar-symbol conversion. This is happening in two parts: (1) inside the nested
