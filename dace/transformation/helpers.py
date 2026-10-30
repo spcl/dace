@@ -1308,7 +1308,8 @@ def isolate_nested_sdfg(
     )
 
     # The second reason, are read dependencies, for this we have to look at the incoming
-    #  edges and add any node that we need.
+    #  edges and add any node that we need. Such a node is only read in the post state: its writes stay where they are.
+    replicated: set[nodes.Node] = set()
     if len(post_nodes) != 0:
         for pnode in post_nodes.copy():
             for iedge in state.in_edges(pnode):
@@ -1319,6 +1320,7 @@ def isolate_nested_sdfg(
                             return False
                         raise ValueError("Can not replicate non non-View AccessNodes into the post state.")
                     post_nodes.add(node)
+                    replicated.add(node)
 
     # A read node replicated into POST loses the paths through the middle state. If such a path was all
     # that ordered one of its POST readers before a POST overwrite of the same data, the split would leave
@@ -1389,7 +1391,7 @@ def isolate_nested_sdfg(
             target.add_node(old_to_new[node])
         for node in members:
             for edge in state.in_edges(node):
-                if edge.src not in members:
+                if edge.src not in members or (target is post_state and node in replicated):
                     continue
                 memlet = copy.deepcopy(edge.data) if edge.src in kept and node in kept else edge.data
                 target.add_edge(old_to_new[edge.src], edge.src_conn, old_to_new[node], edge.dst_conn, memlet)
@@ -1398,6 +1400,10 @@ def isolate_nested_sdfg(
     for node in list(state.nodes()):
         if node not in kept:
             state.remove_node(node)
+    if post_state is state:
+        for node in replicated:
+            for edge in list(state.in_edges(node)):
+                state.remove_edge(edge)
 
     return (pre_state, middle_state, post_state)
 
