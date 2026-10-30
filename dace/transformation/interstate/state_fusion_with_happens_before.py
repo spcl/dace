@@ -1012,8 +1012,14 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     seconds = [n for n in fused_cc.second_output_nodes if n.data == cand]
                     for w1 in first_output_by_data.get(cand, []):
                         for w2 in seconds:
+                            # Every writer into ``w2`` has to follow the read, not one of them (a memset beside a map
+                            # writing the other half of the container)
                             if any(
-                                nx.has_path(first_state._nx, w1, a) and nx.has_path(second_state._nx, b, w2)
+                                nx.has_path(first_state._nx, w1, a)
+                                and all(
+                                    e.data.is_empty() or nx.has_path(second_state._nx, b, e.src)
+                                    for e in second_state.in_edges(w2)
+                                )
                                 for a, b in merged
                             ):
                                 continue

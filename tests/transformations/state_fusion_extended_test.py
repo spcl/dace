@@ -170,6 +170,40 @@ def test_waw_beside_a_read_of_the_same_array_stays_ordered():
         assert nx.has_path(sdfg.start_state.nx, w1, w2), "the overwrite of X[4:9] is unordered against the first write"
 
 
+def test_waw_into_the_node_a_read_also_writes_stays_ordered():
+    """first: X[0:9] = 1;  second: one X node gets X[0:4] *= 2 behind an X read and X[4:9] = 0 from no read.
+
+    The read orders the first of the two writers into that node only, so the second must still follow the first write.
+    """
+    sdfg = SDFG("fuse_waw_second_writer_of_a_node")
+    sdfg.add_array("X", [9], dtypes.float64)
+    s1 = sdfg.add_state("s1", is_start_block=True)
+    s2 = sdfg.add_state("s2")
+    sdfg.add_edge(s1, s2, InterstateEdge())
+    s1.add_mapped_tasklet("w1", {"i": "0:9"}, {}, "o = 1.0", {"o": Memlet("X[i]")}, external_edges=True)
+    x_out = s2.add_access("X")
+    s2.add_mapped_tasklet(
+        "rw",
+        {"i": "0:4"},
+        {"a": Memlet("X[i]")},
+        "o = 2 * a",
+        {"o": Memlet("X[i]")},
+        external_edges=True,
+        input_nodes={"X": s2.add_read("X")},
+        output_nodes={"X": x_out},
+    )
+    s2.add_mapped_tasklet(
+        "w2", {"i": "4:9"}, {}, "o = 0.0", {"o": Memlet("X[i]")}, external_edges=True, output_nodes={"X": x_out}
+    )
+    sdfg.validate()
+    w1 = next(n for n in s1.nodes() if n.label == "w1")
+    w2 = next(n for n in s2.nodes() if n.label == "w2")
+
+    sdfg.apply_transformations_repeated(StateFusionExtended)
+    if sdfg.number_of_nodes() == 1:
+        assert nx.has_path(sdfg.start_state.nx, w1, w2), "the overwrite of X[4:9] is unordered against the first write"
+
+
 def test_war_write_after_read():
     """first: B[k] = A[k];  second: A[k] = 9.  B must get the OLD A[k].
 
