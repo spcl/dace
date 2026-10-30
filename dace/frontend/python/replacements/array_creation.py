@@ -286,8 +286,8 @@ def _arange(
     outname = pv.get_target_name()
     outname, outarr = sdfg.add_transient(outname, shape, dtype, find_new_name=True)
 
-    start = f"decltype(__out)({start})"
-    actual_step = f"decltype(__out)({actual_step})"
+    start = f"{dtype.ctype}({start})"
+    actual_step = f"{dtype.ctype}({actual_step})"
 
     state.add_mapped_tasklet(
         name="_numpy_arange_",
@@ -378,6 +378,9 @@ def _linspace(
             dtypes.uint64,
         ):
             dtype = dtypes.dtype_to_typeclass(float)
+    elif not isinstance(dtype, dtypes.typeclass):
+        # An explicitly passed dtype arrives as a numpy type; the tasklet body below needs ``ctype``.
+        dtype = dtypes.dtype_to_typeclass(dtype)
 
     outname = pv.get_target_name()
     outname, _ = sdfg.add_transient(outname, shape_with_axis, dtype, find_new_name=True)
@@ -402,7 +405,7 @@ def _linspace(
         stopcode = symbolic.symstr(stop)
 
     # Create tasklet code based on inputs
-    code = f"__out = {startcode} + __sind * decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})"
+    code = f"__out = {startcode} + __sind * ({dtype.ctype}({stopcode} - {startcode}) / {dtype.ctype}({symbolic.symstr(num)}))"
 
     state.add_mapped_tasklet(
         name="linspace",
@@ -434,7 +437,7 @@ def _linspace(
         "retstep",
         ranges,
         copy.deepcopy(inputs),
-        f"__out = decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})",
+        f"__out = {dtype.ctype}({stopcode} - {startcode}) / {dtype.ctype}({symbolic.symstr(num)})",
         {"__out": Memlet(f"{stepname}{out_index}")},
         external_edges=True,
     )
