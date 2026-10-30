@@ -39,6 +39,20 @@ side by side). `OUT`, `REPS` (100), `DEVICES` and `CHUNKS` override the defaults
 `run_daint.sbatch` has not been run yet; everything here was tested on Beverin. On Daint, expect to adapt the `spack
 load` line first, and check that DaCe picks the CUDA backend.
 
+## Plotting the results
+
+`times.csv` needs nothing done to it first. Any machine with Python and matplotlib can draw it:
+
+```bash
+python plot.py results/<machine>-<job>/times.csv --out plot.png
+```
+
+Each panel is one device and `(lvn_only, istep)`, with one group of bars per CPU schedule. Bars are the median per call
+and whiskers the quartiles: `compute_s` on the GPU, `call_s` on the CPU. Pass several CSVs to compare machines. The
+columns are `machine, device, kind, lvn_only, istep, schedule, timestep, rep, call_s, compute_s`, one row per repetition.
+
+Check `verify.txt` before reading the plot: it shows times whether or not a kind reproduced the dumps.
+
 ## What it builds
 
 Every configuration is built twice per `(lvn_only, istep)`: `--strict`, for the numerics, and with optimizing flags, for
