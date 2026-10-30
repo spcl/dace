@@ -182,8 +182,13 @@ def hoist_host_scalar_states(sdfg: SDFG, target: Target) -> int:
         while moved:
             moved = False
             for state in [b for b in region.nodes() if isinstance(b, SDFGState) and host_scalar_state(b, target)]:
-                while region.in_degree(state) == 1 and swappable(region, region.in_edges(state)[0].src, state):
-                    swap(region, region.in_edges(state)[0].src, state)
+                while region.in_degree(state) == 1:
+                    block = region.in_edges(state)[0].src
+                    # Past another host scalar state nothing is gained, and two independent ones would swap forever
+                    is_scalars = isinstance(block, SDFGState) and host_scalar_state(block, target)
+                    if is_scalars or not swappable(region, block, state):
+                        break
+                    swap(region, block, state)
                     swaps += 1
                     moved = True
     return swaps

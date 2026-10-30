@@ -211,9 +211,10 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
                 write_set.add(name)
 
         # Add NestedSDFG node. A symbol the subgraph assigns is passed in only if the subgraph reads it first, and is no
-        # longer declared outside if nothing else uses it.
+        # longer declared outside if nothing else uses it. One assigned elsewhere may be undefined here, so it needs a read
         incoming = nsdfg.free_symbols
-        mapping = {s: s for s in (sdfg.symbols.keys() - assigned) | incoming}
+        defined_outside = {s for e in sdfg.all_interstate_edges() for s in e.data.assignments}
+        mapping = {s: s for s in (sdfg.symbols.keys() - assigned - defined_outside) | incoming}
         # The subgraph's assignments keep the declared type; inferred, ``i = c ? 1 : i_in`` widens to ``int64_t``.
         for s in sorted(assigned):
             if s in sdfg.symbols and s not in nsdfg.symbols:
@@ -474,6 +475,11 @@ def nest_state_subgraph(
     for new_edge in edges_to_rename:
         for edge in nstate.memlet_tree(new_edge):
             edge.data.data = new_edge.data.data
+
+    # A symbol assigned elsewhere may be undefined at this state, so it goes in only if the subgraph uses it
+    defined_outside = {s for e in sdfg.all_interstate_edges() for s in e.data.assignments}
+    for name in (defined_outside & nsdfg.symbols.keys()) - names_used_in(nsdfg):
+        nsdfg.remove_symbol(name)
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(

@@ -442,6 +442,31 @@ def test_an_sdfg_nested_in_a_moved_state_gets_the_new_sdfg_as_parent():
     assert np.allclose(a, x * 2.0 + 1.0)
 
 
+def test_a_symbol_the_subgraph_does_not_use_is_not_passed_in():
+    """A symbol declared on the SDFG but defined only after the subgraph must not become an input of the nested SDFG:
+    it would read as free at the call, where nothing defines it."""
+    sdfg = dace.SDFG("nest_unused_symbol")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_symbol("later", dace.int64)
+    loop = LoopRegion("loop", "t < 2", "t", "t = 0", "t = t + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    fill = loop.add_state("fill", is_start_block=True)
+    fill.add_mapped_tasklet("fill", {"i": "0:4"}, {}, "o = 1.0", {"o": dace.Memlet("A[i]")}, external_edges=True)
+    use = sdfg.add_state("use")
+    sdfg.add_edge(loop, use, dace.InterstateEdge(assignments={"later": "2"}))
+    use.add_mapped_tasklet(
+        "use",
+        {"i": "0:later"},
+        {"a": dace.Memlet("A[i]")},
+        "o = a + 1",
+        {"o": dace.Memlet("A[i]")},
+        external_edges=True,
+    )
+    node = nested_node(nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop])))
+    assert "later" not in node.symbol_mapping
+    assert "later" not in sdfg.free_symbols
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
