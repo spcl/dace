@@ -53,6 +53,27 @@ columns are `machine, device, kind, lvn_only, istep, schedule, timestep, rep, ca
 
 Check `verify.txt` before reading the plot: it shows times whether or not a kind reproduced the dumps.
 
+## Reusing the SDFGs
+
+`save_baselines.py --out <dir>` stops before compiling and writes one set per `(lvn_only, istep)`:
+
+| file | state |
+|------|-------|
+| `velocity_l<lvn>i<istep>_optimized.sdfgz` | parallelized, on no device yet |
+| `velocity_l<lvn>i<istep>_cpu.sdfgz` | levels shared by the team |
+| `velocity_l<lvn>i<istep>_gpu.sdfgz` | offloaded |
+
+None has a megakernel or a timer. Each has a `.bindings.json` beside it, with the Fortran interface `dace.SDFG.from_file`
+does not restore. Load them with the DaCe that saved them.
+
+```bash
+python build_baseline.py velocity_l0i2_cpu.sdfgz --out build_cpu
+python build_baseline.py velocity_l0i2_gpu.sdfgz --out build_gpu --chiplets 6  # on the compute node
+```
+
+`build_baseline.py` compiles a file into the library `velocity_driver.F90` links. Run it on the node that will run the
+kernels: a login node targets the wrong GPU.
+
 ## What it builds
 
 Every configuration is built twice per `(lvn_only, istep)`: `--strict`, for the numerics, and with optimizing flags, for
