@@ -42,7 +42,8 @@ def host_map_over_kernels(sdfg: SDFG, target: Target) -> tuple[SDFGState, nodes.
 
 
 def inline(state: SDFGState, node: nodes.NestedSDFG) -> bool:
-    if not InlineMultistateSDFG.can_be_applied_to(state.sdfg, nested_sdfg=node):
+    """Inlines ``node`` into its parent, unless ``MapToForLoop`` already did."""
+    if node not in state.nodes() or not InlineMultistateSDFG.can_be_applied_to(state.sdfg, nested_sdfg=node):
         return False
     InlineMultistateSDFG.apply_to(state.sdfg, verify=False, save=False, nested_sdfg=node)
     return True
