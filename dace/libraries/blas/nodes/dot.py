@@ -7,6 +7,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import SDFG, SDFGState, dtypes
 from dace import memlet as mm
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
@@ -93,6 +94,8 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
+        # C++ text: a symbolic length or stride prints ``Lb**3`` otherwise
+        n, stride_x, stride_y = sym2cpp(n), sym2cpp(stride_x), sym2cpp(stride_y)
         code = f"_result = cblas_{func}({n}, _x, {stride_x}, _y, {stride_y});"
         # The return type is scalar in cblas_?dot signature
         tasklet = dace.sdfg.nodes.Tasklet(
@@ -134,6 +137,8 @@ class ExpandDotCuBLAS(ExpandTransformation):
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
+        # C++ text: a symbolic length or stride prints ``Lb**3`` otherwise
+        n, stride_x, stride_y = sym2cpp(n), sym2cpp(stride_x), sym2cpp(stride_y)
 
         code = environments.cublas.cuBLAS.handle_setup_code(node)
         if node.accumulator_type is None:

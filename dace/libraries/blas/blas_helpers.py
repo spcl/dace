@@ -5,7 +5,7 @@ from typing import Any, NamedTuple
 import numpy as np
 
 import dace
-from dace import data, dtypes
+from dace import data, dtypes, symbolic
 from dace.codegen.common import sym2cpp
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -106,6 +106,24 @@ def to_cublas_computetype(dtype: dtypes.typeclass) -> str:
         dtypes.uint64: "32I",
     }
     return types[dtype]
+
+
+def packed_unit_extent(shape, strides) -> list:
+    """``strides`` with the free stride of a single row or column replaced by a packed matrix's.
+
+    A dimension of extent 1 is never stepped over, so its stride is free, but BLAS still checks the
+    leading dimension against the other extent: the ``(1, K)`` row an ``abij,ab->aij`` einsum lowers
+    to reached ``cblas_zgemm`` with ``lda = 1 < K``, which OpenBLAS refuses without computing anything
+    (npbench vexx_k's augmentation). Both strides 1 name a single row or column whose extents may be
+    symbolic; the row-major form with the column count as the row stride is exact for either.
+    """
+    *batch, s_rows, s_cols = strides
+    rows, cols = shape[-2:]
+    if symbolic.equal_valued(1, cols) and symbolic.equal_valued(1, s_rows):
+        s_cols = rows
+    elif symbolic.equal_valued(1, s_cols) and (symbolic.equal_valued(1, rows) or symbolic.equal_valued(1, s_rows)):
+        s_rows = cols
+    return [*batch, s_rows, s_cols]
 
 
 def get_gemm_opts(a_strides, b_strides, c_strides) -> dict[str, Any]:
