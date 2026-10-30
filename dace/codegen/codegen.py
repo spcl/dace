@@ -270,8 +270,15 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
             and node.instrument != dtypes.DataInstrumentationType.No_Instrumentation
             for node, _ in sdfg.all_nodes_recursive()
         ):
-            sdfg.apply_transformations_repeated(InlineSDFG)
-            sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+            inlined = sdfg.apply_transformations_repeated(InlineSDFG)
+            inlined += sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+            # An inlined connector can leave a copy between outer containers; lower it like every other copy
+            if inlined and config.Config.get_bool("compiler", "cpu", "explicit_copy"):
+                from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+
+                InsertExplicitCopies().apply_pass(sdfg, {})
+                infer_types.infer_connector_types(sdfg)
+                sdfg.expand_library_nodes()
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Normalize single-value transients to Scalar (default is transient-only, so the signature

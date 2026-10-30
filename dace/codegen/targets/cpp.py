@@ -1079,12 +1079,13 @@ def unparse_tasklet(
         struct_initializer = StructInitializer(sdfg, structs)
     for stmt in body:
         stmt = copy.deepcopy(stmt)
-        if struct_initializer is not None:
-            struct_initializer.visit(stmt)
         if isinstance(stmt, ast.Expr):
             rk = codegen.make_keyword_remover(sdfg, memlets).visit_TopLevelExpr(stmt)
         else:
             rk = codegen.make_keyword_remover(sdfg, memlets).visit(stmt)
+        # After the keyword remover, so a field reading an array element is lowered like any other access
+        if rk is not None and struct_initializer is not None:
+            struct_initializer.visit(rk)
 
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
