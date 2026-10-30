@@ -166,13 +166,15 @@ def iteration_symbol_ranges(
     """``{iteration symbol: (min, max)}`` for every map/loop scope enclosing ``cb``.
 
     :param cb: the conditional block whose enclosing scopes are measured.
-    :returns: per-symbol inclusive range, or ``None`` if a scope's range can't be read (e.g. a
-        ``LoopRegion``, whose bounds live in init/condition/update code, not a range).
+    :returns: per-symbol inclusive range for every enclosing MAP param. A ``LoopRegion`` defines
+        its variable too, but its bounds live in init/condition/update code, not a range, so its
+        variable is simply absent: an access that references it stays symbolic in the corner
+        substitution and the range proof fails closed on it.
     """
     ranges: dict[str, tuple] = {}
     for scope in get_parent_map_and_loop_scopes(root_sdfg=cb.sdfg, node=cb, parent_state=None):
         if not isinstance(scope, dace.nodes.MapEntry):
-            return None
+            continue
         for param, (lo, hi, _step) in zip(scope.map.params, scope.map.range.ndrange()):
             ranges[str(param)] = (lo, hi)
     return ranges
@@ -185,13 +187,15 @@ def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
     relied on the guard for their range (vs. the guard itself being the bounds check that
     if-conversion would then bypass). Proof: substitute enclosing iteration symbols at range
     CORNERS (valid only for affine indices) and check each subset stays in bounds there. Fails
-    closed on an unreadable range, non-affine index, or unprovable bound.
+    closed on an unreadable range, non-affine index, or unprovable bound. With no enclosing map
+    every access is checked as written: constant indices prove against the facts, and an index
+    over an un-ranged loop variable stays symbolic and fails closed.
 
     :param cb: the candidate conditional block.
     :returns: ``True`` only if every arm access is provably in range without the guard.
     """
     ranges = iteration_symbol_ranges(cb)
-    if not ranges:  # no enclosing map: nothing guarded
+    if ranges is None:
         return False
     syms = [symbolic.pystr_to_symbolic(name) for name in ranges]
     # Inside the enclosing scopes: their ranges are what make a corner an executed iteration
@@ -449,7 +453,11 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
 
     def _matches(self, cb: ConditionalBlock) -> bool:
         # Whether ``cb`` is a rewritable conditional block.
-        if condition_guards_iteration_symbol(cb) and not arm_accesses_are_in_range_unguarded(cb):
+        # If-conversion makes the arm accesses unconditional, so it is sound only when they stay in
+        # range unguarded. This holds for any guard kind: an index guard (``i < N - 1``) and a
+        # data-dependent one (``c[i] < 0``) both hide out-of-bounds reads the excluded lanes must
+        # not perform.
+        if not arm_accesses_are_in_range_unguarded(cb):
             return False
         if len(cb.branches) == 2:
             (cond0, body0), (cond1, body1) = cb.branches

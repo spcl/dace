@@ -660,9 +660,12 @@ class BranchNormalization(ppl.Pass):
     def _normalize_single_arm(
         self, sdfg: dace.SDFG, cb: ConditionalBlock, cond: CodeBlock, body: ControlFlowRegion
     ) -> bool:
-        # Lower ``if cond: body`` to ``arr = ITE(cond, expr, arr)`` writes. An index guard (``if i < N - 1``)
-        # keeps the arm's own accesses in range, so leave it for the masking path (shared detector).
-        if condition_guards_iteration_symbol(cb) and not arm_accesses_are_in_range_unguarded(cb):
+        # Lower ``if cond: body`` to ``arr = ITE(cond, expr, arr)`` writes. The conversion makes the
+        # arm's accesses unconditional, so it is sound only when they stay in range without the
+        # guard -- whatever the guard constrains. An index guard (``i < N - 1``) keeps the arm's own
+        # accesses in range, and so does a data-dependent one (``c[i] < 0``); both go to the masking
+        # path when the range proof fails.
+        if not arm_accesses_are_in_range_unguarded(cb):
             return False
         # The arm may be a linear chain of empty states + one compute state; lift it whole and gate only
         # escaping writes. An interstate assignment is a conditional binding: unproven arm-locality refuses.
@@ -830,10 +833,10 @@ class BranchNormalization(ppl.Pass):
         body1: ControlFlowRegion,
     ) -> bool:
         # Split a two-arm ``if/else`` whose write sets differ into two sequential single-arm ``if`` s.
-        # Refuse to even split an index-guarded ``if/else`` (see _normalize_single_arm): the
-        # negated-else halves this produces would be flattened just the same, fabricating the
+        # Refuse to even split a guard the arms need for their range (see _normalize_single_arm):
+        # the negated-else halves this produces would be flattened just the same, fabricating the
         # out-of-range read. Leave it whole for the masking path.
-        if condition_guards_iteration_symbol(cb) and not arm_accesses_are_in_range_unguarded(cb):
+        if not arm_accesses_are_in_range_unguarded(cb):
             return False
         if len(body0.nodes()) != 1 or len(body1.nodes()) != 1:
             return False

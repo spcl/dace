@@ -69,6 +69,38 @@ def _guarded_map(then_index: str, else_index: str):
     return cond
 
 
+def _data_dependent_guard_map(read_index: str):
+    """``for i: if c[i] < 0: out[i] = a[<read_index>] * 2`` -- the guard never mentions the
+    iteration symbol, but it can still be the only thing keeping the arm's load in range."""
+    from dace.sdfg.state import ControlFlowRegion
+
+    sdfg = dace.SDFG("data_dependent_guarded_map")
+    for name in ("c", "a", "out"):
+        sdfg.add_array(name, [N], dace.float64)
+
+    inner = dace.SDFG("body_data_dependent_guard")
+    inner.add_symbol("i", dace.int64)
+    inner.add_symbol("N", dace.int64)
+    for name in ("c", "a", "out"):
+        inner.add_array(name, [N], dace.float64)
+    cond = ConditionalBlock("guard", sdfg=inner)
+    inner.add_node(cond, is_start_block=True)
+    branch = ControlFlowRegion("then", sdfg=inner)
+    cond.add_branch(dace.properties.CodeBlock("c[i] < 0"), branch)
+    st = branch.add_state("then_body", is_start_block=True)
+    t = st.add_tasklet("then_t", {"v"}, {"o"}, "o = v * 2")
+    st.add_edge(st.add_access("a"), None, t, "v", dace.Memlet(f"a[{read_index}]"))
+    st.add_edge(t, "o", st.add_access("out"), None, dace.Memlet("out[i]"))
+
+    state = sdfg.add_state("main", is_start_block=True)
+    me, mx = state.add_map("m", dict(i="0:N"))
+    ns = state.add_nested_sdfg(inner, {"c", "a"}, {"out"}, symbol_mapping={"i": "i", "N": "N"})
+    state.add_memlet_path(state.add_access("c"), me, ns, dst_conn="c", memlet=dace.Memlet("c[0:N]"))
+    state.add_memlet_path(state.add_access("a"), me, ns, dst_conn="a", memlet=dace.Memlet("a[0:N]"))
+    state.add_memlet_path(ns, mx, state.add_access("out"), src_conn="out", memlet=dace.Memlet("out[0:N]"))
+    return cond
+
+
 def test_value_selecting_guard_is_if_convertible():
     """Both arms index ``[i]`` -- always in range, so the guard only picks a value."""
     cond = _guarded_map("i", "i")
@@ -80,6 +112,33 @@ def test_range_protecting_guard_is_refused():
     """An arm reading ``b[i + 1]`` runs off the end at ``i = N-1`` without the guard."""
     cond = _guarded_map("i + 1", "i")
     assert arm_accesses_are_in_range_unguarded(cond) is False, "the guard IS the bounds check here"
+
+
+def test_data_dependent_guard_with_oob_arm_is_refused():
+    """``if c[i] < 0`` hides the load ``a[i + 1]``: if-conversion would run it on every lane and
+    lane ``i = N-1`` reads ``a[N]``. The guard's data dependence must not skip the range proof."""
+    cond = _data_dependent_guard_map("i + 1")
+    assert condition_guards_iteration_symbol(cond) is False, "the guard never mentions the iteration symbol"
+    assert arm_accesses_are_in_range_unguarded(cond) is False
+    from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
+    from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
+        SameWriteSetIfElseToITECFG,
+    )
+
+    assert BranchNormalization().apply_pass(cond.sdfg, {}) is None
+    assert SameWriteSetIfElseToITECFG().apply_pass(cond.sdfg, {}) is None
+    assert any(b is cond for b in cond.sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock))
+
+
+def test_data_dependent_value_selecting_guard_is_if_convertible():
+    """The same data-dependent guard with an in-range arm (``a[i]``) only selects a value, so the
+    conversion stays sound and the block flattens."""
+    cond = _data_dependent_guard_map("i")
+    assert arm_accesses_are_in_range_unguarded(cond) is True
+    from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
+
+    assert BranchNormalization().apply_pass(cond.sdfg, {}) is not None
+    assert not any(isinstance(b, ConditionalBlock) for b in cond.sdfg.all_control_flow_blocks())
 
 
 def test_s276_lowers_to_a_per_lane_blend():
