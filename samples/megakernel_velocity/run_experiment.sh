@@ -18,7 +18,7 @@ BUILD_PARALLEL=${BUILD_PARALLEL:-2}
 VARIANTS=("0 1 1" "0 2 2,9,93,519,1140,1814,6519" "1 1 7,43,463,2593,5701")
 
 # base: one launch per kernel. megakernel: a grid barrier between all stages. tuned: only between dependent stages.
-KINDS="base megakernel tuned"
+KINDS=${KINDS:-base megakernel tuned}
 
 # build <device> <base|megakernel|tuned> <lvn_only> <istep> <build dir> [build.py flags]: library and driver in the directory
 build() {
