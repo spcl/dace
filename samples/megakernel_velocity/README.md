@@ -96,6 +96,10 @@ Two runs with the same `machine` would share a column, so `plot.py` refuses them
 Check `verify.txt` first: the plot shows times whether or not a kind reproduced the dumps. The CSV columns are `machine,
 device, kind, lvn_only, istep, schedule, timestep, rep, call_s, compute_s`, one row per repetition.
 
+In `results/`, `daint` has CPU rows of job 5216153 and GPU rows of job 5216180, parsed with `_OPENACC`. `daint-no-openacc`
+holds the GPU rows of 5216153. They differ by one kernel: without `_OPENACC`, the `clip_count` branch keeps CFL clipping's
+map on the levels, so each thread walks every column in sequence, about 5 ms. `beverin` and `daint-legacy` have it too.
+
 ## Reusing the SDFGs
 
 `save_baselines.py --out <dir>` stops before compiling and writes one set per `(lvn_only, istep)`:
