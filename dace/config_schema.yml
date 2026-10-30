@@ -369,6 +369,103 @@ required:
                             performs, so an empty memlet ordering that write has nothing to point
                             at; giving the copy a node is what makes it orderable.
 
+                    implementation:
+                        type: str
+                        default: experimental_readable
+                        title: CPU code generator implementation
+                        description: >
+                            Selects the CPU code generator. ``legacy`` uses the classic
+                            connector-based tasklet codegen (copy-in / compute / copy-out
+                            blocks). ``experimental_readable`` emits human-readable code: one
+                            ``static constexpr``/``consteval`` ``<array>_idx(...)`` index
+                            function per array, connector-free tasklets that access arrays
+                            directly, and ``const``/``constexpr`` initialization for
+                            write-once data. This flag also governs GPU-kernel tasklets,
+                            which are emitted through the shared CPU generator instance.
+
+                    codegen_params:
+                        type: dict
+                        title: CPU codegen parameters
+                        description: >
+                            Tuning knobs for the CPU code generators. Each names a source-level form
+                            that is SEMANTICALLY NEUTRAL but can move backend decisions -- the
+                            published mean coefficient of variation across semantically-equivalent
+                            loop forms is ~17% for clang ("compiler instability", Gong et al.
+                            OOPSLA'18), and the sign of any given knob is target-, compiler- and
+                            kernel-dependent. So none of these is hardcoded: every default reproduces
+                            the legacy generator's existing output, and each knob exists to be SWEPT
+                            and MEASURED per target rather than argued from first principles.
+
+                            EVERY key here MUST state which generator(s) it affects, on an
+                            ``Applies to:`` line -- ``legacy``, ``experimental_readable``, or both
+                            (see ``compiler.cpu.implementation``). A knob that names only
+                            ``experimental_readable`` is a no-op under ``legacy``, whose output stays
+                            byte-identical.
+                        required:
+                            const_scalar_abi:
+                                type: str
+                                default: by_ref
+                                title: Read-only scalar calling convention
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy always binds by
+                                    reference and ignores this key).
+
+                                    How the readable generator binds a READ-ONLY scalar: ``by_ref``
+                                    emits ``const T& x`` (the legacy convention -- forming the
+                                    reference never copies), ``by_value`` emits ``const T x`` (a
+                                    copy). Semantically identical, and the faster one is NOT fixed:
+                                    LLVM #121262 is the same axis with the REFERENCE winning, while
+                                    Lemire measured by-reference 4.5x SLOWER on an aliasing-bound
+                                    loop. Measured here: on Neoverse-V2 + clang the two forms lower a
+                                    masked sum-reduction differently (``ld1w p/z`` + ``sel`` +
+                                    unpredicated ``fadd`` vs ``ldr z`` + merging-predicated ``fadd``),
+                                    correlating with ~17%. NOTE: Arm's Neoverse-V2 optimization guide
+                                    (Table 3-25) lists identical latency/throughput/pipelines for ALL
+                                    FADD forms, so that delta is NOT explained by published
+                                    instruction costs -- the mechanism is OPEN (a predicate-pipe
+                                    dependency in the accumulate chain is the leading candidate) and
+                                    code layout has not been excluded. Default ``by_ref`` matches
+                                    legacy.
+                            heap_ptr_restrict:
+                                type: str
+                                default: restrict
+                                title: __restrict__ on heap array pointers
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy does not emit the
+                                    fused ``T* ptr = alloc`` declaration this qualifies).
+
+                                    Whether a heap-allocated array pointer is declared
+                                    ``T* __restrict__ p`` (``restrict``, the default) or ``T* p``
+                                    (``none``). ``restrict`` promises the pointer does not alias, which
+                                    is what lets the vectorizer prove independence -- the default and
+                                    the faster bet. It is NEVER applied to a ``may_alias`` descriptor
+                                    regardless of this key: that array is deliberately reachable through
+                                    a second pointer, so promising no-alias would be a miscompile, not a
+                                    win. The effect is genuinely BIMODAL when it does apply (46 tests
+                                    faster / 18 slower in rust#82834; ``!noalias`` has even DISABLED
+                                    vectorization via GVN load-PRE in llvm#38583), which is why it is a
+                                    knob and not a hardcode. ``restrict`` reproduces today's output.
+                            scalar_decl:
+                                type: str
+                                default: eager
+                                title: Mutable scalar declaration placement
+                                description: >
+                                    Applies to: experimental_readable ONLY. Where a mutable scope-lifetime value scalar (a transient
+                                    ``dace.data.Scalar`` that is not an SDFG constant) is declared: ``eager`` (the default) emits ``T x;``
+                                    at the top of its scope; ``late`` emits ``T x;`` right before the first tasklet that uses it;
+                                    ``late_fused`` folds the declaration into that first write, ``T x = expr;``. ``late`` and
+                                    ``late_fused`` apply only where every use of the scalar is a direct-child tasklet of one scope;
+                                    any other scalar keeps the eager declaration. A readability / live-range form, not a speed lever.
+                            const_init:
+                                type: str
+                                default: 'on'
+                                title: constexpr constants for literal-only transients
+                                description: >
+                                    Applies to: experimental_readable ONLY. ``on`` (the default) runs
+                                    :class:`~dace.transformation.passes.promote_constant_transients.PromoteConstantTransients`,
+                                    which turns a transient whose writes all store literals into an SDFG constant
+                                    (``constexpr``) and removes those writes; ``off`` keeps the runtime writes.
+
             #############################################
             # GPU (CUDA/HIP) compiler
             cuda:

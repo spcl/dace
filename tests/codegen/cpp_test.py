@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import re
 import warnings
 from functools import reduce
 from operator import mul
@@ -179,7 +180,8 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
         # Consult the active cpp_standard: C++ >= 17 emits the aligned
         # new/delete forms, earlier standards the plain ones.
         if _use_aligned_operator_new(a_desc):
-            assert f"A = dace::aligned_new_array<double>(10000, {array_a_alignment})" in code, (
+            # The count is a literal under the legacy codegen and a size helper under the readable one.
+            assert re.search(rf"A = dace::aligned_new_array<double>\([^;]*, {array_a_alignment}\);", code), (
                 "A is allocated on the heap."
             )
             assert f"dace::aligned_delete_array(A, {array_a_alignment})" in code, "A is deallocated from the heap."
