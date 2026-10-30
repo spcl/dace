@@ -137,12 +137,12 @@ def level_prefix(levels: list[Level], chain: list[nodes.MapEntry]) -> Prefix:
     return prefix
 
 
-def _main(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
+def exact_form(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
     """The exact form of a ``SymExpr``. ``int_floor`` is a sympy function and cannot take the pair."""
     return expr.expr if isinstance(expr, symbolic.SymExpr) else expr
 
 
-def _approx(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
+def approximate_form(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
     return expr.approx if isinstance(expr, symbolic.SymExpr) else expr
 
 
@@ -151,7 +151,9 @@ def slot(offset: symbolic.SymbolicType, step: symbolic.SymbolicType) -> symbolic
     (a tile grid), whose slots would otherwise leave ``step - 1`` unused between two."""
     # A tiled bound is a ``SymExpr`` (exact end, over-approximation). sympy cannot construct ``int_floor`` from it.
     if isinstance(offset, symbolic.SymExpr) or isinstance(step, symbolic.SymExpr):
-        return symbolic.SymExpr(slot(_main(offset), _main(step)), slot(_approx(offset), _approx(step)))
+        return symbolic.SymExpr(
+            slot(exact_form(offset), exact_form(step)), slot(approximate_form(offset), approximate_form(step))
+        )
     return offset if step == 1 else symbolic.int_floor(offset, step)
 
 

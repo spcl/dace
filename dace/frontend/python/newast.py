@@ -6308,8 +6308,8 @@ class ProgramVisitor(ExtNodeVisitor):
             name = base
             if version or not self.sdfg.is_name_free(base):
                 name = next(f"{base}_{i}" for i in itertools.count() if self.sdfg.is_name_free(f"{base}_{i}"))
+            # Declared, so the visitor's later reads (a loop range, a shape) find the promoted symbol and its type
             sym = dace.symbol(name, dtype=desc.dtype)
-            # Bound by the edge assignment below; declared with the scalar's type, as an inlined body's are
             self.sdfg.add_symbol(name, desc.dtype)
             if not version:
                 self.promoted_scalars[scalar] = sym

@@ -12,6 +12,7 @@ Tests build SDFGs through the Python frontend, run ``apply_gpu_transformations``
 through the pipeline so we can inspect the *real* shape the strategy sees in production.
 """
 
+import re
 import warnings
 
 import numpy as np
@@ -596,6 +597,6 @@ def test_a_host_maps_body_waits_for_the_copy_its_interstate_edge_reads():
     code = next(c.clean_code for c in table_bound_read_in_a_block_body().generate_code() if c.language == "cpp")
     lines = code.splitlines()
     copy = next(i for i, line in enumerate(lines) if "DeviceToHost" in line and "idx_host" in line)
-    # A persistent host buffer is read through the state struct (``__state->__1_idx_host``)
-    read = next(i for i, line in enumerate(lines) if "iend = " in line and "idx_host[2]" in line)
+    # ``idx_host`` may be a persistent ``__state`` member
+    read = next(i for i, line in enumerate(lines) if re.search(r"iend = \S*idx_host\[2\]", line))
     assert any("StreamSynchronize" in line for line in lines[copy:read]), "\n".join(lines[copy : read + 1])
