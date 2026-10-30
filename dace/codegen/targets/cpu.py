@@ -592,6 +592,14 @@ _REDUCTION_TO_OMP_OP = {
 #: ``#pragma omp declare reduction`` (OpenMP has no built-in reduction for complex).
 _COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
 
+#: The exported helpers of a ``.cu``, named after neither the target nor the SDFG.
+GPU_RUNTIME_HELPERS = (
+    "__dace_gpu_drain_error",
+    "__dace_gpu_last_error",
+    "__dace_gpu_set_stream",
+    "__dace_gpu_set_all_streams",
+)
+
 
 def array_reductions_enabled(sdfg: SDFG) -> bool:
     """Whether ``sdfg`` may emit OpenMP array-section and complex ``declare reduction`` clauses: its own
@@ -3600,14 +3608,13 @@ class CPUCodeGen(TargetCodeGenerator):
         caller). The child's PUBLIC ``__dace_init_<child>`` -- the only entry the parent calls -- is left
         untouched, so the cross-program handle call still resolves.
 
-        The two GPU error helpers get the same treatment. They are named after neither the target nor
-        the SDFG, so every ``.cu`` in the binary defines ``__dace_gpu_drain_error`` and
-        ``__dace_gpu_last_error`` and every frame calls its own -- one definition each is fine for a
-        program that is a single translation unit, and a multiple-definition link error the moment a
-        child is added. They cannot share the parent's copy either: ``__dace_gpu_last_error`` reads
-        ``__state->gpu_context``, and each program has its own state struct. Only the CHILD's objects
-        are rewritten, so the parent keeps the canonical spelling -- the one ``compiled_sdfg`` looks
-        up on the loaded library.
+        The GPU runtime helpers get the same treatment. They are named after neither the target nor
+        the SDFG, so every ``.cu`` in the binary defines all of :data:`GPU_RUNTIME_HELPERS` and every
+        frame calls its own -- one definition each is fine for a program that is a single translation
+        unit, and a multiple-definition link error the moment a child is added. They cannot share the
+        parent's copy either: each reads ``__state->gpu_context``, and each program has its own state
+        struct. Only the CHILD's objects are rewritten, so the parent keeps the canonical spelling -- the
+        one ``compiled_sdfg`` looks up on the loaded library.
         """
         module_targets = set()
         finder = re.compile(r"__dace_(?:init|exit)_(\w+)")
@@ -3622,7 +3629,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         "__dace_%s_%s_%s" % (kind, target, child_name),
                         code,
                     )
-            for helper in ("__dace_gpu_drain_error", "__dace_gpu_last_error"):
+            for helper in GPU_RUNTIME_HELPERS:
                 code = re.sub(r"\b%s\b" % re.escape(helper), "%s_%s" % (helper, child_name), code)
             obj.code = code
 
