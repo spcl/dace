@@ -1950,6 +1950,184 @@ def test_inline_connector_offset():
     assert np.allclose(B, expected)
 
 
+@pytest.mark.parametrize("offset_connector", ["a", "b"])
+def test_multistate_inline_keeps_the_index_space_of_a_connector_with_its_own_offset(offset_connector: str):
+    """A one-based connector of a multistate nest: ``a[1]``/``b[1]`` must keep naming the first element."""
+    inner = dace.SDFG("inner")
+    for name in "ab":
+        inner.add_array(name, [4], dace.float64, offset=[-1] if name == offset_connector else [0])
+    first = inner.add_state(is_start_block=True)
+    tasklet = first.add_tasklet("inc", {"v"}, {"w"}, "w = v + 1")
+    first.add_edge(first.add_read("a"), None, tasklet, "v", dace.Memlet("a[1]"))
+    first.add_edge(tasklet, "w", first.add_write("b"), None, dace.Memlet("b[1]"))
+    inner.add_state_after(first)
+    sdfg = dace.SDFG(unique_name("multistate_inline_connector_offset"))
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {"a"}, {"b"})
+    state.add_edge(state.add_read("A"), None, node, "a", dace.Memlet("A[0:4]"))
+    state.add_edge(node, "b", state.add_write("B"), None, dace.Memlet("B[0:4]"))
+
+    sdfg.apply_transformations(InlineMultistateSDFG)
+    sdfg.validate()
+
+    A = np.arange(4.0)
+    B = np.zeros(4)
+    sdfg(A=A, B=B)
+    expected = np.zeros(4)
+    if offset_connector == "a":
+        expected[1] = A[0] + 1
+    else:
+        expected[0] = A[1] + 1
+    assert np.array_equal(B, expected), B
+
+
+def _add_accumulate(region: dace.sdfg.state.ControlFlowRegion, label: str, name: str) -> dace.SDFGState:
+    state = region.add_state(label, is_start_block=True)
+    tasklet = state.add_tasklet("inc", {"inp"}, {"out"}, "out = inp + 1")
+    state.add_edge(state.add_read(name), None, tasklet, "inp", dace.Memlet(f"{name}[0]"))
+    state.add_edge(tasklet, "out", state.add_write(name), None, dace.Memlet(f"{name}[0]"))
+    return state
+
+
+def _nest_in_state(sdfg: dace.SDFG, state: dace.SDFGState, inner: dace.SDFG, name: str) -> dace.nodes.NestedSDFG:
+    node = state.add_nested_sdfg(inner, {name}, {name}, symbol_mapping={})
+    state.add_edge(state.add_read(name), None, node, name, dace.Memlet(f"{name}[0]"))
+    state.add_edge(node, name, state.add_write(name), None, dace.Memlet(f"{name}[0]"))
+    return node
+
+
+def test_multistate_inline_renames_a_loop_variable_bound_by_an_undeclared_outer_loop():
+    """``for i in range(3): for i' in range(2): acc += 1``: the inner ``i`` must not overwrite the outer one."""
+    inner = dace.SDFG("inner")
+    inner.add_array("acc", [1], dace.float64)
+    loop = dace.sdfg.state.LoopRegion("inner_loop", "i < 2", "i", "i = 0", "i = i + 1")
+    inner.add_node(loop, is_start_block=True)
+    _add_accumulate(loop, "inner_body", "acc")
+    inner.add_state_after(loop)
+    sdfg = dace.SDFG(unique_name("multistate_inline_loop_variable_clash"))
+    sdfg.add_array("acc", [1], dace.float64)
+    outer_loop = dace.sdfg.state.LoopRegion("outer_loop", "i < 3", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(outer_loop, is_start_block=True)
+    _nest_in_state(sdfg, outer_loop.add_state("outer_body", is_start_block=True), inner, "acc")
+    assert "i" not in sdfg.symbols
+
+    assert sdfg.apply_transformations(InlineMultistateSDFG) == 1
+    sdfg.validate()
+
+    acc = np.zeros(1)
+    sdfg(acc=acc)
+    assert acc[0] == 6, acc
+
+
+def _add_while_loop(region: dace.sdfg.state.ControlFlowRegion, label: str, name: str) -> dace.SDFGState:
+    init = region.add_state(label + "_init", is_start_block=True)
+    loop = dace.sdfg.state.LoopRegion(label, "k < 3")
+    region.add_node(loop)
+    region.add_edge(init, loop, dace.InterstateEdge(assignments={"k": "0"}))
+    body = _add_accumulate(loop, label + "_body", name)
+    loop.add_edge(body, loop.add_state(label + "_latch"), dace.InterstateEdge(assignments={"k": "k + 1"}))
+    return loop
+
+
+def test_multistate_inline_does_not_rename_the_empty_loop_variable_of_while_loops():
+    """A while ``LoopRegion`` has the loop variable ``""`` in both SDFGs, which names no symbol."""
+    inner = dace.SDFG("inner")
+    inner.add_array("acc", [1], dace.float64)
+    inner.add_symbol("k", dace.int64)
+    _add_while_loop(inner, "inner_while", "acc")
+    sdfg = dace.SDFG(unique_name("multistate_inline_while_loops"))
+    sdfg.add_array("acc", [1], dace.float64)
+    sdfg.add_array("other", [1], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    outer_loop = _add_while_loop(sdfg, "outer_while", "other")
+    call = sdfg.add_state_after(outer_loop)
+    _nest_in_state(sdfg, call, inner, "acc")
+
+    assert sdfg.apply_transformations(InlineMultistateSDFG) == 1
+    sdfg.validate()
+
+    acc, other = np.zeros(1), np.zeros(1)
+    sdfg(acc=acc, other=other)
+    assert acc[0] == 3 and other[0] == 3, (acc, other)
+
+
+def test_multistate_inline_keeps_the_declared_type_of_a_symbol_the_nest_assigns():
+    """``s: float64 = 3; s = s / 2; out = s`` in a multistate nest: inlined, ``s`` must not become an integer."""
+    inner = dace.SDFG("inner")
+    inner.add_symbol("s", dace.float64)
+    inner.add_array("out", [1], dace.float64)
+    first = inner.add_state(is_start_block=True)
+    second = inner.add_state_after(first, assignments={"s": "3"})
+    third = inner.add_state_after(second, assignments={"s": "s / 2"})
+    tasklet = third.add_tasklet("write", {}, {"o"}, "o = s")
+    third.add_edge(tasklet, "o", third.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg = dace.SDFG(unique_name("multistate_inline_assigned_symbol_type"))
+    sdfg.add_array("out", [1], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {}, {"out"})
+    state.add_edge(node, "out", state.add_write("out"), None, dace.Memlet("out[0]"))
+
+    assert sdfg.apply_transformations(InlineMultistateSDFG) == 1
+    sdfg.validate()
+
+    out = np.zeros(1)
+    sdfg(out=out)
+    assert out[0] == 1.5, out
+
+
+@pytest.mark.parametrize("value", [5, "M"])
+def test_multistate_inline_seeds_a_mapped_symbol_the_nest_reassigns(value):
+    """``k = k + 1; out = k`` in a multistate nest called with ``k`` mapped to ``5`` or to ``M = 5``."""
+    inner = dace.SDFG("inner")
+    inner.add_symbol("k", dace.int64)
+    inner.add_array("out", [1], dace.float64)
+    first = inner.add_state(is_start_block=True)
+    second = inner.add_state_after(first, assignments={"k": "k + 1"})
+    tasklet = second.add_tasklet("write", {}, {"o"}, "o = k")
+    second.add_edge(tasklet, "o", second.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg = dace.SDFG(unique_name("multistate_inline_mapped_reassigned_symbol"))
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("out", [1], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {}, {"out"}, symbol_mapping={"k": value})
+    state.add_edge(node, "out", state.add_write("out"), None, dace.Memlet("out[0]"))
+
+    assert sdfg.apply_transformations(InlineMultistateSDFG) == 1
+    sdfg.validate()
+
+    out = np.zeros(1)
+    sdfg(out=out, M=5)
+    assert out[0] == 6, out
+
+
+@pytest.mark.parametrize("language", [dace.Language.Python, dace.Language.CPP])
+def test_multistate_inline_keeps_a_nested_constant_apart_from_the_parent_constant_it_shadows(language):
+    """A multistate nest writes its constant ``C = 2`` from a tasklet into ``out[C]``; the parent declares ``C = 1``."""
+    inner = dace.SDFG("inner")
+    inner.add_constant("C", 2)
+    inner.add_array("out", [3], dace.float64)
+    first = inner.add_state(is_start_block=True)
+    code = "o = C" if language == dace.Language.Python else "o = C;"
+    tasklet = first.add_tasklet("write", {}, {"o"}, code, language=language)
+    first.add_edge(tasklet, "o", first.add_write("out"), None, dace.Memlet("out[C]"))
+    inner.add_state_after(first)
+    sdfg = dace.SDFG(unique_name("multistate_inline_shadowed_constant"))
+    sdfg.add_constant("C", 1)
+    sdfg.add_array("out", [3], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {}, {"out"})
+    state.add_edge(node, "out", state.add_write("out"), None, dace.Memlet("out[0:3]"))
+
+    assert sdfg.apply_transformations(InlineMultistateSDFG) == 1
+    sdfg.validate()
+
+    out = np.zeros(3)
+    sdfg(out=out)
+    assert np.array_equal(out, [0, 0, 2]), out
+
+
 def _add_increment(region: dace.sdfg.state.ControlFlowRegion, label: str) -> dace.SDFGState:
     state = region.add_state(label)
     tasklet = state.add_tasklet("inc", {"inp"}, {"out"}, "out = inp + 1")
@@ -2096,6 +2274,15 @@ if __name__ == "__main__":
     for inliner in [InlineSDFG, InlineMultistateSDFG]:
         test_inline_restates_nested_connectors(inliner)
     test_inline_connector_offset()
+    for offset_connector in ["a", "b"]:
+        test_multistate_inline_keeps_the_index_space_of_a_connector_with_its_own_offset(offset_connector)
+    test_multistate_inline_renames_a_loop_variable_bound_by_an_undeclared_outer_loop()
+    test_multistate_inline_does_not_rename_the_empty_loop_variable_of_while_loops()
+    test_multistate_inline_keeps_the_declared_type_of_a_symbol_the_nest_assigns()
+    for value in [5, "M"]:
+        test_multistate_inline_seeds_a_mapped_symbol_the_nest_reassigns(value)
+    for language in [dace.Language.Python, dace.Language.CPP]:
+        test_multistate_inline_keeps_a_nested_constant_apart_from_the_parent_constant_it_shadows(language)
     for shape in ["loop", "conditional", "region"]:
         for dead_successor in [False, True]:
             test_multistate_inline_early_return(shape=shape, dead_successor=dead_successor)
