@@ -29,4 +29,4 @@ Results land in `results/daint-<job>/`.
 
 1. `verify.txt` must show `n_differ=0` for every kind and field. Do not quote times of a kind that fails.
 2. `times.csv` has one row per repetition. Use `compute_s` on the GPU, since `call_s` is mostly copies.
-3. `python plot.py results/daint-<job>/times.csv --out plot.png` draws base, `megakernel` and `tuned`.
+3. "Plotting the results" in `README.md` draws it, alone or beside the Beverin CSV.

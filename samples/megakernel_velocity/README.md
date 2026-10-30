@@ -32,26 +32,42 @@ sbatch -A <project> run_daint.sbatch
 `run_beverin.sbatch` is the same on an MI300A node. `run_beverin_ranks.sbatch` splits the work over the four APUs of one
 node, one rank each: CPU base, CPU megakernel, GPU base, GPU megakernel; it lands in the same place, with `rank*/` beside
 the merged files. Results land in `results/<machine>-<job>/`: `verify.txt` is the
-numerics check, `time.txt` the timings, and `times.csv` every repetition, one row each. `python plot.py
-results/<machine>-<job>/times.csv --out plot.png` draws them (it needs matplotlib, and takes several CSVs to put machines
-side by side). `OUT`, `REPS` (100), `DEVICES` and `CHUNKS` override the defaults.
+numerics check, `time.txt` the timings, and `times.csv` every repetition, one row each. "Plotting the results" below draws them. `OUT`, `REPS` (100), `DEVICES` and `CHUNKS` override the defaults.
 
 `run_daint.sbatch` has not been run yet; everything here was tested on Beverin. On Daint, expect to adapt the `spack
 load` line first, and check that DaCe picks the CUDA backend.
 
 ## Plotting the results
 
-`times.csv` needs nothing done to it first. Any machine with Python and matplotlib can draw it:
+`times.csv` needs nothing done to it first. Give `plot.py` one CSV per column, in the order to draw them; any machine with
+Python and matplotlib can do it, so copy the CSVs from Beverin and Daint to one place:
 
 ```bash
-python plot.py results/<machine>-<job>/times.csv --out plot.png
+# One run
+python plot.py results/beverin-<job>/times.csv --out plot.png
+
+# Beverin and Daint side by side
+python plot.py beverin/times.csv daint/times.csv --out plot.png
+
+# Old and new CPU codegen on Beverin, then Daint
+python plot.py legacy-cpu/times.csv beverin/times.csv daint/times.csv --out plot.png
 ```
 
-Each panel is one device and `(lvn_only, istep)`, with one group of bars per CPU schedule. Bars are the median per call
-and whiskers the quartiles: `compute_s` on the GPU, `call_s` on the CPU. Pass several CSVs to compare machines. The
-columns are `machine, device, kind, lvn_only, istep, schedule, timestep, rep, call_s, compute_s`, one row per repetition.
+The figure has a row per device and a column per run, and the columns are named after the CSV's `machine` column. Each row
+shares its axis, so a bar compares with the same bar in the next column by height. Each group is one `(lvn_only, istep)`
+with base, megakernel with all syncs and megakernel with dependent syncs. Bars are the median per call and whiskers the
+quartiles: `compute_s` on the GPU, `call_s` on the CPU. Base is labeled in ms, and a megakernel bar with its change from the
+base beside it, so a negative label is a faster megakernel. The first repetition of each timestep is left out. A variant
+missing from a run leaves a gap.
 
-Check `verify.txt` before reading the plot: it shows times whether or not a kind reproduced the dumps.
+The same numbers go to the terminal. The CPU row shows one schedule, plain `schedule(static)`; `--schedule static1` draws
+another (`static2` and `static4` too, or see `time.txt` for them all).
+
+Two runs with the same `machine` would share a column, so `plot.py` refuses them: set `MACHINE=<name>` when submitting.
+`run_beverin_ranks.sbatch` and `run_experiment.sh` keep it, and `run_daint.sbatch` sets `daint`.
+
+Check `verify.txt` first: the plot shows times whether or not a kind reproduced the dumps. The CSV columns are `machine,
+device, kind, lvn_only, istep, schedule, timestep, rep, call_s, compute_s`, one row per repetition.
 
 ## Reusing the SDFGs
 

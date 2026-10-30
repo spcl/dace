@@ -13,7 +13,7 @@ spack load gcc@16.1.0 llvm@22.1.7
 export CC=$(command -v gcc) CXX=$(command -v g++) FC=$(command -v gfortran)
 export ROCM_PATH=/opt/rocm CMAKE_PREFIX_PATH=/opt/rocm${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}
 export LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib/llvm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-export CHIPLETS=6 OMP_NUM_THREADS=24 BUILD_PARALLEL=${BUILD_PARALLEL:-4} MACHINE=beverin
+export CHIPLETS=6 OMP_NUM_THREADS=24 BUILD_PARALLEL=${BUILD_PARALLEL:-4} MACHINE=${MACHINE:-beverin}
 export HERE=$SLURM_SUBMIT_DIR
 export ROOT=${OUT:-$HERE/results/beverin-$SLURM_JOB_ID}
 mkdir -p "$ROOT"
