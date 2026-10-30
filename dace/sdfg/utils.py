@@ -2448,10 +2448,15 @@ def get_control_flow_block_dominators(
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
         for k in idom.keys():
             if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
-                next_dom = idom[k.parent_graph]
-                while next_dom.parent_graph is not sdfg and next_dom is next_dom.parent_graph.start_block:
-                    next_dom = idom[next_dom.parent_graph]
-                idom[k] = next_dom
+                region = k.parent_graph
+                next_dom = idom[region]
+                # Only a region that opens its parent is its own dominator there; climb past it, never past a block.
+                while next_dom is region and region.parent_graph is not sdfg:
+                    region = region.parent_graph
+                    next_dom = idom[region]
+                # A plain region is resolved to its inside below, which is where ``k`` already is: ``k`` is the root
+                root = next_dom is region and not isinstance(region, (LoopRegion, ConditionalBlock))
+                idom[k] = k if root else next_dom
         changed = True
         while changed:
             changed = False
@@ -2505,13 +2510,14 @@ def get_control_flow_block_dominators(
             if k.parent_graph is not sdfg and (
                 k is sinks_per_cfg[k.parent_graph] or isinstance(k.parent_graph, ConditionalBlock)
             ):
-                next_pdom = ipostdom[k.parent_graph]
-                while next_pdom.parent_graph is not sdfg and (
-                    next_pdom is sinks_per_cfg[next_pdom.parent_graph]
-                    or isinstance(next_pdom.parent_graph, ConditionalBlock)
-                ):
-                    next_pdom = ipostdom[next_pdom.parent_graph]
-                ipostdom[k] = next_pdom
+                region = k.parent_graph
+                next_pdom = ipostdom[region]
+                # As for dominators: climb past a region that ends its parent, never past a block
+                while next_pdom is region and region.parent_graph is not sdfg:
+                    region = region.parent_graph
+                    next_pdom = ipostdom[region]
+                root = next_pdom is region and not isinstance(region, (LoopRegion, ConditionalBlock))
+                ipostdom[k] = k if root else next_pdom
         changed = True
         while changed:
             changed = False
