@@ -724,8 +724,12 @@ def restride_views(sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new:
 
 def restride_nests(sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new: list[symbolic.SymbolicType]) -> None:
     """Nests below that describe ``name`` with its own strides ``old`` take ``new``, so their window stays a plain
-    slice of the lifted array that ``dealias`` widens; so do the views of it in each of them."""
+    slice of the lifted array that ``dealias`` widens; so do the views of it in each of them.
+
+    A nest that already describes the whole container addresses it as the parent does; its edges take the whole of
+    it too, so that the window ``dealias`` sees starts at the slice's origin rather than at the accessed elements."""
     restride_views(sdfg, name, old, new)
+    outer = sdfg.arrays[name]
     for state in sdfg.states():
         for node in state.nodes():
             if not isinstance(node, nodes.NestedSDFG):
@@ -734,6 +738,11 @@ def restride_nests(sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new:
             for conn in dict.fromkeys(c for c, e in edges if c is not None and e.data.data == name):
                 inner = node.sdfg.arrays[conn]
                 if list(inner.strides) == old:
+                    if list(inner.shape) == list(outer.shape):
+                        for c, edge in edges:
+                            if c == conn and edge.data.data == name:
+                                edge.data.subset = subsets.Range.from_array(outer)
+                                edge.data.volume = edge.data.subset.num_elements()
                     inner.set_shape(inner.shape, strides=new, total_size=inner.total_size)
                     restride_nests(node.sdfg, conn, old, new)
 

@@ -1143,6 +1143,44 @@ def test_a_view_of_a_lifted_array_steps_over_the_other_threads_slices(layout):
     assert 10 * view_stride == int(buf.strides[1] + 2 * buf.strides[2])
 
 
+def kernel_filling_its_scratch_through_a_whole_container_nest() -> dace.SDFG:
+    """``A[i] = buf[1]`` after a nest writes ``buf[1:3]``; the nest's ``buf`` is the whole container, its
+    memlets address it as the kernel does. ``buf`` is larger than registers hold."""
+    sdfg = dace.SDFG("scratch_filled_by_a_whole_container_nest")
+    sdfg.add_array("A", [128], dace.float64, storage=GLOBAL)
+    sdfg.add_transient("buf", [LIMIT + 4], dace.float64, storage=GLOBAL)
+    body = dace.SDFG("fill")
+    body.add_array("buf", [LIMIT + 4], dace.float64, storage=GLOBAL)
+    inner = body.add_state("fill", is_start_block=True)
+    write = inner.add_access("buf")
+    for k in (1, 2):
+        tasklet = inner.add_tasklet(f"set_{k}", {}, {"o"}, f"o = {k}.0")
+        inner.add_edge(tasklet, "o", write, None, dace.Memlet(f"buf[{k}]"))
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("kernel", dict(i="0:128"), schedule=GPU_DEVICE)
+    nest = state.add_nested_sdfg(body, set(), {"buf"})
+    state.add_edge(me, None, nest, None, dace.Memlet())
+    buf = state.add_access("buf")
+    state.add_edge(nest, "buf", buf, None, dace.Memlet("buf[1:3]"))
+    consume = state.add_tasklet("consume", {"b": None}, {"o": None}, "o = b")
+    state.add_edge(buf, None, consume, "b", dace.Memlet("buf[1]"))
+    state.add_memlet_path(consume, mx, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i]"))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_whole_container_nest_keeps_writing_the_elements_it_wrote(layout):
+    """The nest's memlets already address ``buf`` as the kernel does; read as a window starting at ``buf[1]`` they
+    were shifted once more and wrote ``buf[2:4]`` (lavamd's neighbor ``pointers`` ran past the end)."""
+    sdfg = kernel_filling_its_scratch_through_a_whole_container_nest()
+    lift(sdfg, layout)
+
+    nest = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    written = sorted(int(e.data.subset[-1][0]) for st in nest.sdfg.states() for e in st.edges() if e.data.data == "buf")
+    assert written == [1, 2], written
+
+
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)
