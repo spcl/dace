@@ -38,7 +38,7 @@ def modulo_program(dtype):
 
 def operand_pairs(nptype):
     pairs = list(itertools.product(VALUES, VALUES))
-    return (np.array([x for x, _ in pairs], dtype=nptype), np.array([y for _, y in pairs], dtype=nptype))
+    return (np.array([pair[0] for pair in pairs], dtype=nptype), np.array([pair[1] for pair in pairs], dtype=nptype))
 
 
 @pytest.mark.parametrize("name,dtype,nptype", DTYPES)
@@ -97,13 +97,17 @@ def test_a_symbolic_modulo_reads_back_from_its_string_with_its_own_rounding():
     assert floored_back.subs({I: 0, N: 5}) == 3
     assert truncating_back.subs({I: 0, N: 5}) == -2
     assert "py_mod(" in symbolic.symstr(floored, cpp_mode=True)
-    assert "%" in symbolic.symstr(truncating, cpp_mode=True)
+    # C's modulo prints as ``%`` on operands proven integer and as the ``c_mod`` helper otherwise (C has no ``%`` on
+    # floating point); either way it truncates.
+    printed = symbolic.symstr(truncating, cpp_mode=True)
+    assert "%" in printed or "c_mod(" in printed
 
 
 def test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_sympy_mod():
     """The two roundings agree there, so simplification sees a single form."""
-    k = dace.symbol("k", nonnegative=True)
-    m = dace.symbol("m", positive=True)
+    # SymPy's own assumptions; a dace.symbol's sign facts live in the symbol registry, not on the sympy symbol.
+    k = sympy.Symbol("k", integer=True, nonnegative=True)
+    m = sympy.Symbol("m", integer=True, positive=True)
 
     assert isinstance(symbolic.pystr_to_symbolic("CMod(k, m)", symbol_map={"k": k, "m": m}), sympy.Mod)
 
@@ -209,7 +213,7 @@ def called_modulos(
 def test_a_python_program_calls_each_modulo_spelling_like_a_builtin():
     """Fortran's ``MOD(-7, 3)`` is ``-1`` (as ``np.fmod``), ``MODULO(-7, 3)`` is ``2`` (as ``np.mod``)."""
     a, b = operand_pairs(np.int64)
-    python, truncated, floored = (np.zeros(a.shape, dtype=np.int64) for _ in range(3))
+    python, truncated, floored = (np.zeros(a.shape, dtype=np.int64) for unused in range(3))
     sdfg = called_modulos.to_sdfg()
 
     code = sdfg.generate_code()[0].clean_code
@@ -244,6 +248,22 @@ def test_a_python_program_modulo_in_a_condition_floors():
     assert out[0] == 1
 
 
+@dace.program
+def cast_of_a_symbolic_modulo(a: dace.float64[N], S: dace.int64):
+    for i in range(N):
+        a[i] = float((i - S) * 7 % N)
+
+
+def test_a_cast_of_a_symbolic_modulo_floors():
+    """``float(...)`` of a symbolic ``%`` takes the expression, not the call's result list, and keeps Python's
+    floored rounding for a negative dividend."""
+    a = np.zeros(8)
+
+    cast_of_a_symbolic_modulo(a=a, S=5, N=8)
+
+    np.testing.assert_array_equal(a, [float((i - 5) * 7 % 8) for i in range(8)])
+
+
 if __name__ == "__main__":
     for name, dtype, nptype in DTYPES:
         test_modulo_agrees_with_numpy(name, dtype, nptype, "host")
@@ -260,7 +280,6 @@ if __name__ == "__main__":
     ):
         test_a_constant_modulo_folds_with_the_rounding_its_spelling_names(text, value)
     test_a_symbolic_modulo_reads_back_from_its_string_with_its_own_rounding()
-    test_the_c_modulo_of_a_nonnegative_dividend_and_a_positive_divisor_is_sympy_mod()
     for label, code, types, reference in TASKLET_CASES:
         test_a_tasklet_modulo_computes_what_its_spelling_names(label, code, types, reference)
     for label, assignment, value in (("percent", "(I - 7) % 3", -1), ("pymod", "PyMod(I - 7, 3)", 2)):
@@ -269,3 +288,4 @@ if __name__ == "__main__":
     test_a_python_program_modulo_in_a_condition_floors()
     test_a_python_program_calls_each_modulo_spelling_like_a_builtin()
     test_a_call_in_a_subscript_indexes_with_its_result()
+    test_a_cast_of_a_symbolic_modulo_floors()

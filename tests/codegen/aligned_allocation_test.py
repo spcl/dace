@@ -14,6 +14,10 @@ import numpy as np
 import dace
 from dace.config import set_temporary
 
+#: The element count of a heap allocation. The legacy CPU codegen prints the literal (``2``), the
+#: readable one a generated size helper (``tmp_size()``); the alignment contract is the same either way.
+COUNT = r"(?:\d+|\w+_size\(\))"
+
 
 def _heap_transient_sdfg(name: str) -> dace.SDFG:
     """An SDFG with a constant-size CPU_Heap transient (A -> tmp -> B copy)."""
@@ -30,7 +34,7 @@ def _heap_transient_sdfg(name: str) -> dace.SDFG:
 
 def test_aligned_allocation_property():
     """Checks if the `.alignment` property is honored."""
-    new_code = r"dace::aligned_new_array<double>\(2, {alignment}\);"
+    new_code = r"dace::aligned_new_array<double>\(" + COUNT + r", {alignment}\);"
     del_code = r"dace::aligned_delete_array\(tmp, {alignment}\);"
     for alignment in [-1, 0, 64, 128]:
         name_suffix = str(alignment) if alignment >= 0 else f"m{str(abs(alignment))}"
@@ -40,7 +44,7 @@ def test_aligned_allocation_property():
         code = sdfg.generate_code()[0].clean_code
 
         if alignment < 0:
-            assert re.search(r"tmp\s+=\s*new\s+double\s*\[2\]\s*;", code)
+            assert re.search(r"tmp\s+=\s*new\s+double\s*\[" + COUNT + r"\]\s*;", code)
             assert re.search(r"delete\[\]\s+tmp\s*;", code)
 
         elif alignment == 0:
@@ -55,7 +59,7 @@ def test_aligned_allocation_property():
 def test_heap_allocation_aligned_new_cpp17():
     """With cpp_standard >= 17 (the default), heap arrays use aligned operator new/delete."""
     code = _heap_transient_sdfg("aligned_new_probe").generate_code()[0].clean_code
-    assert "dace::aligned_new_array<double>(2, 64);" in code
+    assert re.search(r"dace::aligned_new_array<double>\(" + COUNT + r", 64\);", code)
     assert "dace::aligned_delete_array(tmp, 64);" in code
     assert "DACE_ALIGN(64)[" not in code  # the attribute is invalid in a new expression
     assert "delete[] tmp" not in code  # would pair the unaligned deallocation function
@@ -65,7 +69,7 @@ def test_heap_allocation_plain_new_below_cpp17():
     """Below C++17 there is no aligned operator new; emit no annotation at all."""
     with set_temporary("compiler", "cpp_standard", value="14"):
         code = _heap_transient_sdfg("plain_new_probe").generate_code()[0].clean_code
-    assert re.search(r"new\s+double\s*\[2\]", code)
+    assert re.search(r"new\s+double\s*\[" + COUNT + r"\]", code)
     assert "delete[] tmp" in code
     assert "align_val_t" not in code
     assert "DACE_ALIGN(64)[" not in code
@@ -103,7 +107,7 @@ DACE_EXPORTED int counted_live() { return counted::live; }
     sdfg.add_transient("tmp", [8], dace.opaque("counted"), storage=dace.StorageType.CPU_Heap)
     state = sdfg.add_state()
     state.add_edge(state.add_tasklet("touch", {}, {"t"}, ""), "t", state.add_write("tmp"), None, dace.Memlet("tmp[0]"))
-    assert "dace::aligned_new_array<counted>(8, 64)" in sdfg.generate_code()[0].clean_code
+    assert re.search(r"dace::aligned_new_array<counted>\(" + COUNT + r", 64\)", sdfg.generate_code()[0].clean_code)
 
     csdfg = sdfg.compile()
     csdfg()

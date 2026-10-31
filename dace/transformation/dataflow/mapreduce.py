@@ -232,6 +232,11 @@ class MapWCRFusion(pm.SingleStateTransformation):
         in_array = self.in_array
         rmap_entry = self.rmap_out_entry
 
+        # ``apply`` fuses the collapsed reduction nest with the map unchecked: their iteration spaces must agree.
+        collapsed = list(rmap_entry.map.range) + list(self.rmap_in_entry.map.range)
+        if sorted(map(str, collapsed)) != sorted(map(str, tmap_exit.map.range)):
+            return False
+
         # Make sure that the array is only accessed by the map and the reduce
         if any(src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)):
             return False

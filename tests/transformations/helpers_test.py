@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
-from dace.transformation.helpers import all_isedges_between
+from dace.transformation.helpers import all_isedges_between, reconnect_edge_through_map
 
 
 def _make_consecutive_loops_sdfg():
@@ -97,6 +97,25 @@ def test_all_isedges_between_nested_loops():
     }
 
 
+def test_an_empty_edge_reconnects_through_a_map_without_connectors():
+    """``s = 0`` inside a map is bound to the scope by an empty edge. Routed through a new inner map it must
+    stay connector-free on both sides: one ``IN_``/``OUT_`` pair around a ``None`` left the memlet path
+    walking back to a ``None`` connector."""
+    sdfg = dace.SDFG("empty_edge_reconnect")
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    state = sdfg.add_state()
+    me, mx = state.add_map("outer", dict(i="0:4"))
+    seed = state.add_tasklet("seed", {}, {"__out"}, "__out = 0")
+    state.add_nedge(me, seed, dace.Memlet())
+    state.add_memlet_path(seed, mx, state.add_write("s"), src_conn="__out", memlet=dace.Memlet("s[0]"))
+    inner_me, _ = state.add_map("inner", dict(j="0:1"))
+    outer_edge, inner_edge = reconnect_edge_through_map(state, state.out_edges(me)[0], inner_me, True)
+    for edge in (outer_edge, inner_edge):
+        assert edge.data.is_empty() and edge.src_conn is None and edge.dst_conn is None
+        assert state.memlet_path(edge) == [edge]
+
+
 if __name__ == "__main__":
     test_all_isedges_between_consecutive_loops()
     test_all_isedges_between_nested_loops()
+    test_an_empty_edge_reconnects_through_a_map_without_connectors()

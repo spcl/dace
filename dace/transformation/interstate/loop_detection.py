@@ -4,9 +4,9 @@
 from collections.abc import Iterable
 from typing import AnyStr
 
-import networkx as nx
 import sympy as sp
 
+from dace import graphlib as nx
 from dace import sdfg as sd
 from dace import symbolic
 from dace.sdfg import InterstateEdge

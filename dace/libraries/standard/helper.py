@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared helpers for the standard library node expansions."""
 
+import functools
+import operator
 from collections.abc import Callable, Sequence
 
 import dace
@@ -25,6 +27,98 @@ CPU_RESIDENT_STORAGES = frozenset(
         dtypes.StorageType.CPU_ThreadLocal,
     }
 )
+
+
+def exact_element_count(subset: "dace.subsets.Range") -> "dace.symbolic.SymbolicType":
+    """The number of elements ``subset`` names, from its exact bounds: ``num_elements_exact()`` multiplies the
+    over-approximated bounding box, which is too many for a partial tile (``tile_i:Min(N, tile_i + 5)``)."""
+    return functools.reduce(operator.mul, subset.size_exact(), 1)
+
+
+def host_storages(node: nodes.Node, state: "dace.SDFGState") -> frozenset[dtypes.StorageType]:
+    """The storages host code at ``node`` reads and writes directly: the CPU-resident ones, plus ``Default`` and
+    ``Register`` outside device code. Both resolve by the enclosing scope, so inside a GPU kernel they are device
+    memory and outside it host memory (a register array is then a stack array, e.g. a loop's VLA scratch)."""
+    from dace.sdfg.scope import is_devicelevel_gpu
+
+    if is_devicelevel_gpu(state.sdfg, state, node):
+        return CPU_RESIDENT_STORAGES
+    return CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, dtypes.StorageType.Register}
+
+
+def single_core_expansion(pure: type) -> type:
+    """The single-core lowering of a library node: ``pure``'s expansion with every map it emits ``Sequential``. Selected,
+    by name, for a node a parallel region encloses or one with too little work for a region of its own."""
+    from dace import library
+    from dace.transformation.transformation import ExpandTransformation
+
+    class ExpandSingleCore(ExpandTransformation):
+        environments = pure.environments
+
+        @staticmethod
+        def expansion(node, parent_state, parent_sdfg, *args, **kwargs):
+            result = pure.expansion(node, parent_state, parent_sdfg, *args, **kwargs)
+            if isinstance(result, dace.SDFG):
+                for entry, _ in result.all_nodes_recursive():
+                    if isinstance(entry, nodes.MapEntry):
+                        entry.map.schedule = dtypes.ScheduleType.Sequential
+            return result
+
+    ExpandSingleCore.__name__ = ExpandSingleCore.__qualname__ = f"{pure.__name__}SingleCore"
+    return library.expansion(ExpandSingleCore)
+
+
+def host_accessible_info_storage(storage: dtypes.StorageType) -> dtypes.StorageType:
+    """
+    Return the storage a cuSOLVER/LAPACK status scalar (``devInfo``) should use so that it stays
+    host-checkable. When the matrix operand lives in GPU-resident memory, the status is placed in
+    pinned host memory (DMA-reachable from the device, so cuSOLVER can write it via the unified
+    address space while the host can still read the result). CPU-resident inputs keep their storage.
+
+    Lives here rather than in ``dace.dtypes`` because it keys off ``GPU_RESIDENT_STORAGES``
+    (``{GPU_Global, GPU_Shared}``), which is defined above -- note ``dtypes.GPU_STORAGES`` is a
+    *different*, narrower set (``{GPU_Shared}``) and is not a substitute.
+    """
+    if storage in GPU_RESIDENT_STORAGES:
+        return dtypes.StorageType.CPU_Pinned
+    return storage
+
+
+def call_scratch_lifetime(
+    node: nodes.LibraryNode, parent_state: "dace.SDFGState", parent_sdfg: "dace.SDFG", *sizes
+) -> dtypes.AllocationLifetime:
+    """The lifetime of the scratch an expansion of ``node`` allocates, sized by ``sizes``: ``Persistent``, allocated
+    once at init, when every map enclosing the call is ``Sequential`` and every size holds one value for the whole run
+    (a loop of calls otherwise allocates and frees per trip, and on a GPU that pair costs more than a small
+    factorization); ``Scope`` otherwise, where calls that may run at once each need their own."""
+    # Avoid import loops
+    from dace.transformation import helpers as xfh
+    from dace.transformation.passes.persistent_transients import persistent_size_symbols, size_symbols_at_root
+
+    if any(
+        entry.schedule != dtypes.ScheduleType.Sequential
+        for entry, entry_state in xfh.get_parent_maps(parent_state, node)
+    ):
+        return dtypes.AllocationLifetime.Scope
+    names = {str(free) for size in sizes for free in dace.symbolic.pystr_to_symbolic(size).free_symbols}
+    root = parent_sdfg
+    while root.parent_sdfg is not None:
+        root = root.parent_sdfg
+    resolved = size_symbols_at_root(parent_sdfg, names)
+    if resolved is None or not resolved <= persistent_size_symbols(root):
+        return dtypes.AllocationLifetime.Scope
+    return dtypes.AllocationLifetime.Persistent
+
+
+def scratch_storage(storage: dtypes.StorageType, lifetime: dtypes.AllocationLifetime) -> dtypes.StorageType:
+    """``storage`` for scratch of ``lifetime``: a ``Persistent`` one left to storage inference (``Default``, or a
+    ``Register`` operand's) is placed on the heap, the only host storage a persistent allocation may take."""
+    if lifetime == dtypes.AllocationLifetime.Persistent and storage in (
+        dtypes.StorageType.Default,
+        dtypes.StorageType.Register,
+    ):
+        return dtypes.StorageType.CPU_Heap
+    return storage
 
 
 def collapse_shape_and_strides(
@@ -57,17 +151,28 @@ def collapse_shape_and_strides(
     return collapsed_shape, collapsed_strides
 
 
-def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> bool:
+def collapse_to_elements(
+    subset: dace.subsets.Range, strides: list[dace.symbolic.SymExpr]
+) -> tuple[list[dace.symbolic.SymExpr], list[dace.symbolic.SymExpr]]:
+    """:func:`collapse_shape_and_strides` for an expansion that writes element by element. A single-element
+    subset collapses to zero dimensions; this helper returns one length-1 dimension for it, so the expansion
+    has an index to write through."""
+    shape, strides = collapse_shape_and_strides(subset, strides)
+    return (shape, strides) if shape else ([1], [1])
+
+
+def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType, facts: dace.symbolic.Facts) -> bool:
     """False only when ``num_elements`` is a compile-time constant below
     ``compiler.cpu.parallel_transfer_min_elements``; a symbolic (unknown-at-compile-time) size
     is assumed large and takes the parallel path too.
 
     :param num_elements: total contiguous element count (constant or symbolic).
+    :param facts: What is known about the symbols of ``num_elements``.
     :returns: ``True`` to route to the mapped expansion, ``False`` to keep the single libc call.
     """
     threshold = int(dace.Config.get("compiler", "cpu", "parallel_transfer_min_elements"))
     try:
-        return int(dace.symbolic.simplify(num_elements)) >= threshold
+        return int(dace.symbolic.simplify(num_elements, facts)) >= threshold
     except (TypeError, ValueError):
         return True
 
@@ -106,6 +211,208 @@ def auto_dispatch(
     assert impl_name != "Auto", f"{select_fn.__name__} must not return 'Auto'."
     node.implementation = impl_name
     return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)
+
+
+def select_implementation_by_schedule(node: nodes.LibraryNode, parent_state: dace.SDFGState) -> str:
+    """The lowering an ``'Auto'`` node takes: a thread-block collective inside a GPU kernel, else
+    :func:`implementation_by_schedule`. A query; :func:`schedule_dispatch` commits the pick.
+
+    :param node: the library node being expanded.
+    :param parent_state: state containing ``node``.
+    :returns: a key of the node's ``implementations``.
+    """
+    from dace.libraries.standard.block_reduce import in_kernel_block_implementation
+
+    return in_kernel_block_implementation(node, parent_state) or implementation_by_schedule(node)
+
+
+def implementation_by_schedule(node: nodes.LibraryNode) -> str:
+    """The lowering of ``node`` outside a GPU kernel: ``CUDA`` on a GPU schedule, ``pure`` when ``Sequential`` or
+    not yet inferred (``Default``: a caller expanding a graph it still transforms), ``CPU`` otherwise. A node
+    without the picked lowering takes ``pure``, else ``CPU``.
+
+    :param node: the library node being expanded.
+    :returns: a key of the node's ``implementations``.
+    """
+    if node.schedule in dtypes.ALL_GPU_SCHEDULES:
+        name = "CUDA"
+    elif node.schedule in (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default):
+        name = "pure"
+    else:
+        name = "CPU"
+    implementations = type(node).implementations
+    if name in implementations:
+        return name
+    return "pure" if "pure" in implementations else "CPU"
+
+
+def schedule_dispatch(auto_cls: type, node: nodes.LibraryNode, parent_state: dace.SDFGState):
+    """Expand ``node`` through the lowering :func:`select_implementation_by_schedule` picks, carrying its
+    environments onto ``auto_cls`` (the ``'Auto'`` expansion) so a CUDA pick still links its library.
+
+    :param auto_cls: the calling ``'Auto'`` expansion class.
+    :param node: the library node being expanded.
+    :param parent_state: state containing ``node``.
+    :returns: whatever the picked expansion returns.
+    """
+    from dace.libraries.standard.block_reduce import in_kernel_block_implementation, release_kernel_block_size
+
+    block = in_kernel_block_implementation(node, parent_state)
+    if block is not None:
+        # The block collective's lane map now sets the block size of the kernels around it
+        release_kernel_block_size(node, parent_state)
+    name = block or implementation_by_schedule(node)
+    expansion = auto_dispatch(node, parent_state, lambda *_: name, type(node))
+    # after the dispatch: an expansion may fill its environments inside ``expansion()``
+    auto_cls.environments = list(type(node).implementations[name].environments)
+    return expansion
+
+
+#: An enclosing loop of provably fewer than this many trips pays the fork/join of a library node
+#: inside it few enough times to ignore, so it does not count as re-entry.
+REENTRY_SHORT_LOOP_TRIPS = 8
+
+
+def is_short_loop(loop, cache: dict[int, bool] | None = None) -> bool:
+    """Whether ``loop`` provably runs fewer than :data:`REENTRY_SHORT_LOOP_TRIPS` ascending trips.
+
+    :param loop: the :class:`~dace.sdfg.state.LoopRegion` to measure.
+    :param cache: an optional ``id(loop) -> verdict`` map a caller reuses across many nodes sharing
+                 the same enclosing loops (a CPU-specialization pass visits one transfer at a time,
+                 but the loop nest above it repeats). Valid only for as long as the pass that owns
+                 it runs without mutating any ``LoopRegion``'s bounds -- neither
+                 :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
+                 nor
+                 :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes`
+                 does; both only set ``schedule``/``implementation`` on library and map nodes.
+    :returns: ``True`` only when the trip count is provably short; an unanalyzable, descending or
+              symbolic-length loop answers ``False``.
+    """
+    if cache is not None:
+        cached = cache.get(id(loop))
+        if cached is not None:
+            return cached
+    from dace.transformation.passes.analysis import loop_analysis
+
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    symbolic = dace.symbolic
+    if start is None or end is None or stride is None:
+        verdict = False
+    else:
+        from dace.sdfg.state import SymbolResolver  # dace.sdfg.state imports the libraries
+
+        facts = SymbolResolver().facts_at(loop)
+        stride = symbolic.simplify(stride, facts)
+        if (
+            symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, stride), facts)
+            is not symbolic.Truth.TRUE
+        ):
+            verdict = False
+        else:
+            trips = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1 - REENTRY_SHORT_LOOP_TRIPS, facts)
+            verdict = (
+                symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, trips), facts)
+                is symbolic.Truth.TRUE
+            )
+    if cache is not None:
+        cache[id(loop)] = verdict
+    return verdict
+
+
+def is_reentered_cpu_transfer(
+    node: nodes.LibraryNode, state: dace.SDFGState, loop_cache: dict[int, bool] | None = None
+) -> bool:
+    """Whether an enclosing parallel map or long loop re-enters ``node``, so its own OpenMP region
+    would be re-opened on every entry.
+
+    Same scope walk (:func:`~dace.transformation.helpers.get_parent_map_and_loop_scopes`) as
+    :func:`~dace.transformation.auto.auto_optimize.libnode_is_sequential`, but TRIP-COUNT aware: a
+    parallel enclosing map is always a hazard (nested parallelism), while an enclosing loop counts
+    only when it is not provably short -- pinning every loop-nested transfer sequential throws
+    away real parallelism around a handful of trips.
+
+    :param node: the library node to classify.
+    :param state: the state containing ``node``.
+    :param loop_cache: forwarded to :func:`is_short_loop`; see its docstring for the invalidation
+                       contract.
+    :returns: ``True`` if an enclosing parallel map or a not-provably-short loop re-enters ``node``.
+    """
+    from dace.sdfg.state import LoopRegion
+    from dace.transformation.helpers import get_parent_map_and_loop_scopes
+
+    size_symbols = transfer_size_symbols(node, state)
+    for scope in get_parent_map_and_loop_scopes(state.sdfg, node, state):
+        if isinstance(scope, nodes.MapEntry):
+            if scope.map.schedule != dtypes.ScheduleType.Sequential:
+                return True
+        elif isinstance(scope, LoopRegion) and not is_short_loop(scope, cache=loop_cache):
+            # A loop of an enclosing SDFG sees the size through a symbol mapping: counted as before.
+            if size_symbols is None or scope.sdfg is not state.sdfg or size_symbols & symbols_varying_in(scope):
+                return True
+    return False
+
+
+def transfer_size_symbols(node: nodes.LibraryNode, state: dace.SDFGState) -> set[str] | None:
+    """The free symbols of a copy's or memset's element count; ``None`` for any other library node.
+
+    A loop that re-enters a transfer of a size it does not change is the map case of
+    :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes`:
+    ``E`` entries cost ``E * (fork + work / P)`` against ``E * work``, so the entry count cancels and
+    only the size decides (bicgstab's per-iteration ``N``-element memsets). A size the loop varies
+    is not one size: npbench ``stockham_fft``'s ``R**i``-element copy is tiny on most of its 349,525
+    entries, a measured 44x when each forked.
+    """
+    from dace.libraries.standard.nodes.copy import CopyLibraryNode
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+
+    if not isinstance(node, (CopyLibraryNode, FillLibraryNode)):
+        return None
+    out_edges = [e for e in state.out_edges(node) if e.data.subset is not None]
+    if len(out_edges) != 1:
+        return None
+    return {str(s) for s in dace.symbolic.free_symbols_and_functions(out_edges[0].data.subset.num_elements())}
+
+
+def symbols_varying_in(loop) -> set[str]:
+    """The symbols that take more than one value across ``loop``'s trips: its iteration variable, the
+    variables of the loops inside it, and every symbol an interstate edge inside it assigns."""
+    from dace.sdfg.state import LoopRegion
+
+    varying = {loop.loop_variable} if loop.loop_variable else set()
+    for region in loop.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region.loop_variable:
+            varying.add(region.loop_variable)
+    for edge in loop.all_interstate_edges(recursive=True):
+        varying |= set(edge.data.assignments)
+    return varying
+
+
+def cpu_transfer_parallelizes(
+    node: nodes.LibraryNode,
+    state: dace.SDFGState,
+    num_elements: dace.symbolic.SymbolicType,
+    loop_cache: dict[int, bool] | None = None,
+) -> bool:
+    """Whether a CPU transfer of ``num_elements`` at ``node`` keeps its own OpenMP region.
+
+    Both reasons to take it away: provably too small to amortize a fork/join, or re-entered by an
+    enclosing parallel map / long loop that pays that fork/join again on every entry. Cheap size
+    check first, so the scope walk is skipped for a transfer that is small either way.
+
+    :param node: the library node to classify.
+    :param state: the state containing ``node``.
+    :param num_elements: total element count of the transfer (constant or symbolic).
+    :param loop_cache: forwarded to :func:`is_reentered_cpu_transfer`.
+    :returns: ``True`` to keep the parallel element map, ``False`` to sequentialize it.
+    """
+    from dace.sdfg.state import SymbolResolver  # dace.sdfg.state imports the libraries
+
+    facts = SymbolResolver().facts_at(state, node)
+    return is_parallel_cpu_transfer_size(num_elements, facts) and not is_reentered_cpu_transfer(
+        node, state, loop_cache=loop_cache
+    )
 
 
 def broadcast_indices(shape: Sequence, result: Sequence, axis: int | None = None) -> list[str]:

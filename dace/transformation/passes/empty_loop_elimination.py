@@ -34,7 +34,11 @@ class EmptyLoopElimination(ppl.Pass):
         num_removed = 0
         while changed:
             changed = False
-            cfgs_to_rm: set[LoopRegion] = set()
+            # Ordered, not a set: removal can splice in a new state whose label is uniquified, so
+            # the order decides which loop's replacement keeps the base name. Tuples of graph
+            # objects hash by id(), so a set would order that by allocation history. ``loops`` is
+            # already unique, so a list loses nothing.
+            cfgs_to_rm: list[tuple[LoopRegion, ControlFlowRegion]] = []
 
             for node, parent in loops:
                 inner_nodes = node.nodes()
@@ -43,7 +47,7 @@ class EmptyLoopElimination(ppl.Pass):
                     and len(inner_nodes[0].nodes()) == 0
                     and not isinstance(inner_nodes[0], ReturnBlock)
                 ):
-                    cfgs_to_rm.add((node, parent))
+                    cfgs_to_rm.append((node, parent))
 
             for node, parent_graph in cfgs_to_rm:
                 self._remove_node_connect_src_and_dst(node, parent_graph)

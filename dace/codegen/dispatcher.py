@@ -8,12 +8,13 @@ functionality to registered code generators based on user-defined predicates.
 from collections.abc import Callable
 from enum import auto
 
-from dace import attr_enum, config, dtypes, nodes
+from dace import attr_enum, config, dtypes, nodes, symbolic
 from dace import data as dt
 from dace.codegen import exceptions as cgx
 from dace.codegen import prettycode, target
 from dace.codegen.prettycode import CodeIOStream
 from dace.memlet import Memlet
+from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
@@ -31,6 +32,7 @@ class DefinedType(attr_enum.ExtensibleAttributeEnum):
     Object = auto()  # An object moved by reference
     Stream = auto()  # A stream object moved by reference and accessed via a push/pop API
     StreamArray = auto()  # An array of Streams
+    GPUStream = auto()  # A backend GPU stream handle (e.g., cudaStream_t / hipStream_t)
 
 
 class DefinedMemlets:
@@ -172,8 +174,13 @@ class TargetDispatcher:
         from dace.codegen.targets import framecode as fc
 
         self.frame: fc.DaCeCodeGenerator = framecode
-        self._used_targets: set[target.TargetCodeGenerator] = set()
-        self._used_environments = set()
+        # OrderedSet, not set: these hold TargetCodeGenerator instances and environment
+        # classes, neither of which overrides __hash__, so a plain set orders them by id()
+        # -- which ASLR moves every process. framecode iterates used_targets to emit the
+        # header includes, the __dace_init_/__dace_exit_ declarations AND the order the
+        # __dace_init_<target>() calls are made in, so that ordering reaches the output.
+        self._used_targets: set[target.TargetCodeGenerator] = OrderedSet()
+        self._used_environments = OrderedSet()
 
         self.instrumentation: dict[
             dtypes.InstrumentationType | dtypes.DataInstrumentationType, instrumentation.InstrumentationProvider
@@ -299,7 +306,9 @@ class TargetDispatcher:
             raise ValueError("Schedule already mapped to " + str(self._map_dispatchers[schedule_type]))
         self._map_dispatchers[schedule_type] = func
 
-    def register_array_dispatcher(self, storage_type: dtypes.StorageType, func: target.TargetCodeGenerator) -> None:
+    def register_array_dispatcher(
+        self, storage_type: dtypes.StorageType | list[dtypes.StorageType], func: target.TargetCodeGenerator
+    ) -> None:
         """Registers a function that processes data allocation,
         initialization, and deinitialization. Used when calling
         ``dispatch_allocate/deallocate/initialize``.
@@ -324,7 +333,7 @@ class TargetDispatcher:
         self,
         src_storage: dtypes.StorageType,
         dst_storage: dtypes.StorageType,
-        dst_schedule: dtypes.ScheduleType,
+        dst_schedule: dtypes.ScheduleType | None,
         func: target.TargetCodeGenerator,
         predicate: Callable | None = None,
     ) -> None:
@@ -474,7 +483,8 @@ class TargetDispatcher:
         state = cfg.state(state_id)
         disp = self.get_node_dispatcher(sdfg, state, node)
         self._used_targets.add(disp)
-        disp.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        with symbolic.printing_facts(lambda: self.frame._symbol_resolver.facts_at(state, node)):
+            disp.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def get_scope_dispatcher(self, schedule: dtypes.ScheduleType) -> target.TargetCodeGenerator:
         return self._map_dispatchers[schedule]
@@ -495,9 +505,11 @@ class TargetDispatcher:
         entry_node = sub_dfg.source_nodes()[0]
         self.defined_vars.enter_scope(entry_node)
         self._used_targets.add(self._map_dispatchers[map_schedule])
-        self._map_dispatchers[map_schedule].generate_scope(
-            sdfg, cfg, sub_dfg, state_id, function_stream, callsite_stream
-        )
+        state = cfg.state(state_id)
+        with symbolic.printing_facts(lambda: self.frame._symbol_resolver.facts_in_scope(state, entry_node)):
+            self._map_dispatchers[map_schedule].generate_scope(
+                sdfg, cfg, sub_dfg, state_id, function_stream, callsite_stream
+            )
         self.defined_vars.exit_scope(entry_node)
 
     def get_array_dispatcher(self, storage: dtypes.StorageType) -> target.TargetCodeGenerator:

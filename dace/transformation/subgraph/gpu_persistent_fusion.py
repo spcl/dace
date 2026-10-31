@@ -4,9 +4,11 @@ import copy
 import dace
 from dace import Memlet, nodes
 from dace.dtypes import ScheduleType, StorageType
+from dace.ordered import OrderedSet
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import AbstractControlFlowRegion
 from dace.transformation.transformation import SubgraphTransformation
 
@@ -17,7 +19,7 @@ class GPUPersistentKernel(SubgraphTransformation):
     This transformation takes a given subgraph of an SDFG and fuses the
     given states into a single persistent GPU kernel. Before this transformation can
     be applied the SDFG needs to be transformed to run on the GPU (e.g. with
-    the GPUTransformSDFG transformation).
+    ``apply_gpu_transformations``).
 
     If applicable the transform removes the selected states from the original
     SDFG and places a `launch` state in its place. The removed states will be
@@ -196,11 +198,13 @@ class GPUPersistentKernel(SubgraphTransformation):
                 new_symbols.add(k)
                 if k in sdfg.symbols and k not in kernel_sdfg.symbols:
                     kernel_sdfg.add_symbol(k, sdfg.symbols[k])
+        # A loop iterator is bound by its loop, not an SDFG symbol
+        scoped = scope_bound_names(kernel_sdfg)
         for blk in subgraph_blocks:
             if isinstance(blk, AbstractControlFlowRegion):
                 for k, v in blk.new_symbols(sdfg.symbols).items():
                     new_symbols.add(k)
-                    if k not in kernel_sdfg.symbols:
+                    if k not in kernel_sdfg.symbols and k not in scoped:
                         kernel_sdfg.add_symbol(k, v)
 
         # Setting entry node in nested SDFG if no entry guard was created
@@ -254,8 +258,8 @@ class GPUPersistentKernel(SubgraphTransformation):
 
         # read only data will be passed as input, writeable data will be passed
         # as 'output' otherwise kernel cannot write to data
-        kernel_args_read = set()
-        kernel_args_write = set()
+        kernel_args_read = OrderedSet()
+        kernel_args_write = OrderedSet()
         for data in kernel_args:
             data_accesses_read_only = [
                 state.in_degree(node) == 0

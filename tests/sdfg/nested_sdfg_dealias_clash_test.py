@@ -646,6 +646,42 @@ def test_rebase_descendants_adds_missing_symbols():
     sdfg.validate()
 
 
+def test_reduced_connector_offset_by_a_name_an_inner_map_binds():
+    """A fused per-iteration buffer is offset by the enclosing map parameter ``i``, which the nested SDFG's own map
+    also binds (mandelbrot after map fusion). The inner binding is renamed, so the parent's ``i`` enters unaliased."""
+    sdfg = dace.SDFG("parent")
+    sdfg.add_array("A", [4, 10], dace.float64)
+    sdfg.add_array("C", [4, 10], dace.float64)
+    state = sdfg.add_state()
+
+    inner = dace.SDFG("inner")
+    inner.add_array("a", [4, 10], dace.float64)
+    inner.add_array("o", [4, 10], dace.float64)
+    inner.add_symbol("row", dace.int64)
+    istate = inner.add_state()
+    r, w = istate.add_read("a"), istate.add_write("o")
+    me, mx = istate.add_map("m", {"i": "0:10"})
+    t = istate.add_tasklet("t", {"x"}, {"y"}, "y = x * 2")
+    istate.add_memlet_path(r, me, t, dst_conn="x", memlet=dace.Memlet("a[row, i]"))
+    istate.add_memlet_path(t, mx, w, src_conn="y", memlet=dace.Memlet("o[row, i]"))
+
+    # Fusion narrowed the intermediate to one iteration's row: a transient ``T`` the row ``i`` of C is copied from
+    sdfg.add_transient("T", [10], dace.float64)
+    entry, exit_ = state.add_map("outer", {"i": "0:4"})
+    node = state.add_nested_sdfg(inner, {"a"}, {"o"}, {"row": "i"})
+    state.add_memlet_path(state.add_read("A"), entry, node, dst_conn="a", memlet=dace.Memlet("A[0:4, 0:10]"))
+    t_node = state.add_access("T")
+    state.add_edge(node, "o", t_node, None, dace.Memlet("T[0:10]"))
+    state.add_memlet_path(t_node, exit_, state.add_write("C"), memlet=dace.Memlet("C[i, 0:10]"))
+    dealias.reduce_connector(inner, "o", sdfg.arrays["T"], offset=["i", 0], squeeze=[0])
+    sdfg.validate()
+
+    A = np.arange(40, dtype=np.float64).reshape(4, 10).copy()
+    C = np.zeros((4, 10), dtype=np.float64)
+    sdfg(A=A, C=C)
+    assert np.allclose(C, A * 2)
+
+
 if __name__ == "__main__":
     test_no_clash_identity_is_noop()
     test_symbol_clash_with_map_param()
@@ -670,3 +706,4 @@ if __name__ == "__main__":
     test_symbol_mapped_to_a_parent_container_is_kept()
     test_renamed_inner_container_avoids_scope_names()
     test_rebase_descendants_adds_missing_symbols()
+    test_reduced_connector_offset_by_a_name_an_inner_map_binds()

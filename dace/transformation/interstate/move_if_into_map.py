@@ -23,6 +23,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import helpers as xfh
 from dace.transformation import transformation
+from dace.transformation.passes.normalize_wcr import NormalizeWCR
 
 
 @dataclass(slots=True)
@@ -157,6 +158,8 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         enclosing, state = match.enclosing, match.branch_state
         for entry in sibling_maps(state):
             nsdfg = single_body_nsdfg(state, entry)
+            # The nest repeats a body reduction on its boundary; surface it the way NormalizeWCR does
+            NormalizeWCR().normalize_nested_node(state, nsdfg)
             self.guard_inner_body(match, cond_block, nsdfg)
             for name in sorted(match.reads):
                 nsdfg.add_in_connector(name)

@@ -85,15 +85,6 @@ required:
                     "for" and "while" from state transitions, allowing
                     code generators to generate appropriate code.
 
-            symbolic_positive:
-                type: bool
-                default: true
-                title: Treat all symbolic expressions as positive
-                description: >
-                    Every expression in which a symbolic value appears
-                    is treated as strictly positive. This is necessary
-                    for certain Range evaluations using Subgraph Fusion.
-
             match_exception:
                 type: bool
                 default: false
@@ -102,6 +93,64 @@ required:
                     When an exception is raised in a transformation "can_be_applied"
                     function, if True the exception is raised further. Otherwise
                     the exception is printed as a warning.
+
+            gpu_taskloop_heuristics:
+                type: bool
+                default: false
+                title: "Recognize kernel-launching maps as host taskloops"
+                description: >
+                    Let ``OffloadToAccelerator`` keep a map on the host when its body only launches
+                    work, rather than making every top-level map a kernel. A map qualifies when all
+                    computation under it sits inside inner maps (its own scope holds no tasklet), or
+                    when it encloses a library node that is neither a copy nor a fill -- a
+                    device-wide call such as a BLAS node cannot be issued from inside a kernel, so
+                    every map around it has to stay host code. The maps and library nodes below such
+                    a taskloop become the kernels, nested SDFGs included, which is the ICON blocking
+                    shape: the ``nblks`` map launches, the ``nproma``/``nlev`` maps compute.
+
+            canonicalization:
+                type: dict
+                title: Canonicalization pipeline defaults
+                description: >
+                    Default limits for the canonicalization / parallelization loop
+                    passes. Each seeds the matching pass Property default (read once
+                    at import); an explicit constructor argument still overrides.
+                required:
+                    unroll_limit:
+                        type: int
+                        default: 10
+                        title: Short-loop unroll limit
+                        description: >
+                            Fully unroll constant-trip loops with at most this many
+                            iterations (0 disables). Seeds ``ShortLoopUnroll.unroll_limit``.
+
+                    unroll_tasklet_budget:
+                        type: int
+                        default: 200
+                        title: Short-loop unroll tasklet budget
+                        description: >
+                            Leave a constant-trip loop rolled when its body holds a map or more
+                            than this many tasklets (nested SDFGs included). Inner loops do not
+                            block it. Seeds ``ShortLoopUnroll.unroll_tasklet_budget``.
+
+                    peel_limit:
+                        type: int
+                        default: 8
+                        title: Best-effort loop peel limit
+                        description: >
+                            Bounds the wrapping-modulo peel to 1..peel_limit iterations
+                            (0 disables). Seeds ``BestEffortLoopPeeling.peel_limit``.
+
+                    gpu_coarsen_factor:
+                        type: int
+                        default: 4
+                        title: GPU thread coarsening factor
+                        description: >
+                            Points of an outer axis each thread of a multi-dimensional GPU kernel computes,
+                            under an explicit thread block whose lanes walk the coalesced axis
+                            (``TileKernelsCoalesced``); one-dimensional, warp-tiled and tree-reduction kernels
+                            keep their selected block. 1 disables. MI300A, 20 2-D / 3-D LLR kernels at M with 64-lane
+                            blocks: 4 is 1.05x geomean over 1 (stencils up to 1.25x).
     compiler:
         type: dict
         title: Compiler
@@ -114,6 +163,43 @@ required:
                 description: >
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
+
+            backend:
+                type: str
+                default: cpp
+                title: Code generation backend
+                enum: [cpp, python]
+                description: >
+                    ``cpp`` compiles the SDFG to a shared library. ``python`` emits it as one Python
+                    function over NumPy arrays (``dace.codegen.python``) and loads it without a C++
+                    compiler.
+
+            build_plugin:
+                type: str
+                default: ""
+                title: Build plugin
+                description: >
+                    Empty compiles the DaCe way. Otherwise the name of an entry point in the
+                    ``dace.build_plugins`` group of an installed package: ``SDFG.compile`` calls it with the
+                    SDFG and its own arguments (``output_file``, ``validate``, ``return_program_handle``)
+                    and returns what it returns. A plugin that compiles programs through DaCe sets this key
+                    to empty for those builds.
+
+            emit_tree_reductions:
+                type: bool
+                default: false
+                title: Emit tree reductions for parallel WCR (legacy codegen only)
+                description: >
+                    LEGACY CODE GENERATORS ONLY -- the experimental CPU/CUDA targets always
+                    tree-reduce and ignore this flag, since the fold is how they lower a
+                    reduction at all.
+                    If enabled, a conflict-free (WCR) reduction accumulator written from a
+                    parallel map is lowered to a privatize-and-tree-reduce form: on CPU an
+                    OpenMP ``reduction(op:var)`` clause on the ``parallel for``, and on GPU a
+                    per-thread-block ``cub::BlockReduce`` (one atomic per block). If disabled,
+                    the same reduction instead lowers to a plain atomic WCR (one atomic per
+                    iteration on CPU / ``atomicAdd`` per thread on GPU) -- correct but
+                    contended. Only affects codegen; the SDFG is unchanged either way.
 
             build_folder_mode:
                 type: str
@@ -191,6 +277,19 @@ required:
                 description: >
                     CMake build type (Debug, Release, RelWithDebInfo, MinSizeRel). Sole source of
                     the optimization level; ``args`` add to it.
+            static_archive:
+                type: bool
+                default: false
+                title: Also emit a static archive
+                description: >
+                    When true, the build additionally emits ``lib<name>.a`` (the
+                    compiled object files archived with ``ar rcs``) next to the
+                    runnable ``lib<name>.so``. The ``.so`` is untouched -- the SDFG
+                    still loads and runs exactly as before -- so this only ADDS an
+                    artifact. Used to link an offloaded loop-nest into a parent
+                    SDFG's shared library as a static member instead of a second
+                    dlopen. Off by default.
+
 
             allow_shadowing:
                 type: bool
@@ -312,6 +411,20 @@ required:
 
             #############################################
             # CPU compiler
+            python:
+                type: dict
+                title: Python
+                description: Python backend preferences
+                required:
+                    tile_dialect:
+                        type: str
+                        default: triton
+                        title: Tile kernel dialect
+                        enum: [triton, cutile, tilelang]
+                        description: >
+                            The tile DSL a GPU map over BLOCK tile nodes is written in by the
+                            Python backend (``compiler.backend: python``).
+
             cpu:
                 type: dict
                 title: CPU
@@ -332,7 +445,7 @@ required:
                             language, from ``CMAKE_POSITION_INDEPENDENT_CODE``).
                             ``default_<family>`` applies for that host compiler, since nvc++
                             rejects several switches below.
-                        default: '-Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
+                        default: '-Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -fcx-limited-range -Wno-unused-parameter -Wno-unused-label'
                         default_nvhpc: '-Wall -Wextra -march=native -fno-signed-zeros -Mfprelaxed=recip -Wno-unused-parameter'
                         default_Windows: '/fp:precise /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
@@ -341,6 +454,25 @@ required:
                         title: Additional libraries
                         description: Additional linked libraries required by target
                         default: ''
+
+                    heap_allocator:
+                        type: str
+                        default: auto
+                        title: CPU heap allocator
+                        description: >
+                            Allocator of CPU heap arrays: ``system`` (aligned ``operator new``),
+                            ``mimalloc`` (``mi_malloc_aligned``, linked from ``MIMALLOC_ROOT`` or the
+                            loader path), or ``auto``, mimalloc when it is installed.
+
+                    simd_maps:
+                        type: bool
+                        default: true
+                        title: Vectorize innermost CPU maps with OpenMP simd
+                        description: >
+                            Runs ``MarkSIMDMaps`` before code generation, which sets
+                            ``Map.omp_simd`` on the innermost Sequential and CPU_Multicore maps
+                            whose body holds no further loop or map. Set false to emit no
+                            ``simd`` clause; maps already carrying ``omp_simd`` still render it.
 
                     openmp_sections:
                         type: bool
@@ -368,6 +500,199 @@ required:
                             CopyLibraryNode before expansion. An implicit copy is a write no node
                             performs, so an empty memlet ordering that write has nothing to point
                             at; giving the copy a node is what makes it orderable.
+
+                            Applies to the CLASSIC CPU generator only, and defaults ON there.
+                            Turning it off gives back output byte-identical to upstream, which is
+                            what makes the classic path an A/B reference for the new generators;
+                            the cost of off is that a dtype-converting copy has no lowering at all
+                            on that path and reaches the compiler as a CopyND template call whose
+                            source and destination types disagree. The experimental readable CPU
+                            generator and the experimental CUDA generator REQUIRE the lowering --
+                            every copy has to be a node an ordering edge can point at -- and run
+                            it regardless of this key.
+
+                    parallel_min_work_per_region:
+                        type: int
+                        default: 256
+                        title: Parallel region break-even iterations
+                        description: >
+                            Iterations a top-level map must have to pay for the fork/join of
+                            its own OpenMP region. The cpu_specialize band sequentializes a
+                            parallel map whose iteration count is PROVABLY below this. A
+                            symbolic count is assumed big enough and stays parallel. An
+                            enclosing loop is NOT a reason to sequentialize: it multiplies
+                            the parallel and the sequential cost alike. 0 disables the size
+                            rule, leaving only the nested-parallelism rule.
+
+                    implementation:
+                        type: str
+                        default: experimental_readable
+                        title: CPU code generator implementation
+                        description: >
+                            Selects the CPU code generator. ``legacy`` uses the classic
+                            connector-based tasklet codegen (copy-in / compute / copy-out
+                            blocks). ``experimental_readable`` emits human-readable code: one
+                            ``static constexpr``/``consteval`` ``<array>_idx(...)`` index
+                            function per array, connector-free tasklets that access arrays
+                            directly, and ``const``/``constexpr`` initialization for
+                            write-once data. This flag also governs GPU-kernel tasklets,
+                            which are emitted through the shared CPU generator instance.
+
+                    codegen_params:
+                        type: dict
+                        title: CPU codegen parameters
+                        description: >
+                            Tuning knobs for the CPU code generators. Each names a source-level form
+                            that is SEMANTICALLY NEUTRAL but can move backend decisions -- the
+                            published mean coefficient of variation across semantically-equivalent
+                            loop forms is ~17% for clang ("compiler instability", Gong et al.
+                            OOPSLA'18), and the sign of any given knob is target-, compiler- and
+                            kernel-dependent. So none of these is hardcoded: every default reproduces
+                            the legacy generator's existing output, and each knob exists to be SWEPT
+                            and MEASURED per target rather than argued from first principles.
+
+                            EVERY key here MUST state which generator(s) it affects, on an
+                            ``Applies to:`` line -- ``legacy``, ``experimental_readable``, or both
+                            (see ``compiler.cpu.implementation``). A knob that names only
+                            ``experimental_readable`` is a no-op under ``legacy``, whose output stays
+                            byte-identical.
+                        required:
+                            const_scalar_abi:
+                                type: str
+                                default: by_ref
+                                title: Read-only scalar calling convention
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy always binds by
+                                    reference and ignores this key).
+
+                                    How the readable generator binds a READ-ONLY scalar: ``by_ref``
+                                    emits ``const T& x`` (the legacy convention -- forming the
+                                    reference never copies), ``by_value`` emits ``const T x`` (a
+                                    copy). Semantically identical, and the faster one is NOT fixed:
+                                    LLVM #121262 is the same axis with the REFERENCE winning, while
+                                    Lemire measured by-reference 4.5x SLOWER on an aliasing-bound
+                                    loop. Measured here: on Neoverse-V2 + clang the two forms lower a
+                                    masked sum-reduction differently (``ld1w p/z`` + ``sel`` +
+                                    unpredicated ``fadd`` vs ``ldr z`` + merging-predicated ``fadd``),
+                                    correlating with ~17%. NOTE: Arm's Neoverse-V2 optimization guide
+                                    (Table 3-25) lists identical latency/throughput/pipelines for ALL
+                                    FADD forms, so that delta is NOT explained by published
+                                    instruction costs -- the mechanism is OPEN (a predicate-pipe
+                                    dependency in the accumulate chain is the leading candidate) and
+                                    code layout has not been excluded. Default ``by_ref`` matches
+                                    legacy.
+                            heap_ptr_restrict:
+                                type: str
+                                default: restrict
+                                title: __restrict__ on heap array pointers
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy does not emit the
+                                    fused ``T* ptr = alloc`` declaration this qualifies).
+
+                                    Whether a heap-allocated array pointer is declared
+                                    ``T* __restrict__ p`` (``restrict``, the default) or ``T* p``
+                                    (``none``). ``restrict`` promises the pointer does not alias, which
+                                    is what lets the vectorizer prove independence -- the default and
+                                    the faster bet. It is NEVER applied to a ``may_alias`` descriptor
+                                    regardless of this key: that array is deliberately reachable through
+                                    a second pointer, so promising no-alias would be a miscompile, not a
+                                    win. The effect is genuinely BIMODAL when it does apply (46 tests
+                                    faster / 18 slower in rust#82834; ``!noalias`` has even DISABLED
+                                    vectorization via GVN load-PRE in llvm#38583), which is why it is a
+                                    knob and not a hardcode. ``restrict`` reproduces today's output.
+                            split_nsdfg_translation_units:
+                                type: bool
+                                default: false
+                                title: Emit each top-level nested SDFG as its own translation unit
+                                description: >
+                                    Applies to: legacy AND experimental_readable.
+
+                                    Split codegen output so that each TOP-LEVEL nested SDFG becomes its
+                                    own ``.cpp``. When on, ``OutlineTopLevelNests`` first wraps every
+                                    top-level map-nest / loop region of the root SDFG in a ``no_inline``
+                                    nested SDFG, and each such nest is emitted to
+                                    ``src/cpu/nsdfg/<label>.cpp`` instead of being written into the one
+                                    frame ``.cpp``. The frame keeps a forward declaration and the call.
+
+                                    This is a BUILD-PARALLELISM tactic, not a codegen-quality one: one
+                                    huge TU is compiled by exactly one core, so a big SDFG serializes
+                                    the build. N translation units let the CMake Ninja generator (used
+                                    automatically when ``ninja`` is on PATH) compile them concurrently.
+
+                                    The nest function is called across the TU boundary as a normal
+                                    IN-BINARY function -- forward-declared, external linkage, and
+                                    ``DACE_HIDDEN`` (hidden visibility) so it stays out of the shared
+                                    library's public ABI. It is NOT a separate ``.so`` and is NOT
+                                    ``dlopen``ed; the static linker resolves the cross-object call.
+                                    (Unrelated to ``NestedSDFG.ext_sdfg_path``, which is a runtime lazy
+                                    LOADER and does not touch codegen.)
+
+                                    COST: splitting puts the nest body behind a TU boundary, so the
+                                    compiler can no longer inline it into the frame or specialize it on
+                                    the call site. Recover that with ThinLTO -- add ``-flto=thin`` to
+                                    ``compiler.cpu.args`` and to ``compiler.linker.args``, which keeps
+                                    the cross-TU inlining while staying parallel and bounded in memory.
+                                    NEVER use plain ``-flto`` (monolithic LTO): it merges every TU into
+                                    one serial link-time module, which both destroys the parallelism
+                                    this knob buys and can exhaust RAM on a small machine. ThinLTO is
+                                    strictly OPT-IN and CORRECTNESS DOES NOT DEPEND ON IT -- it only
+                                    affects whether the cross-TU call is re-inlined.
+
+                                    Default ``false`` reproduces today's output BYTE-IDENTICALLY for
+                                    both generators: every split path is gated on this key, so when it
+                                    is off the nest bodies are written inline into the single frame
+                                    ``.cpp`` exactly as before.
+                            external_translation_units:
+                                type: bool
+                                default: false
+                                title: Emit each top-level GPU nest as its own standalone SDFG + translation unit
+                                description: >
+                                    Applies to: legacy AND experimental cuda backends.
+
+                                    Model 2 of the per-translation-unit split, for GPU. Where
+                                    ``split_nsdfg_translation_units`` relocates a CPU-only nest's function
+                                    into its own ``.cpp`` (still one codegen pass, one ``.cu`` for the whole
+                                    program), THIS key lifts each top-level nest that contains GPU work into a
+                                    STANDALONE SDFG that is code-generated on its OWN -- a separate codegen
+                                    pass, hence its OWN ``.cu`` with only that nest's kernels. Both cuda
+                                    generators emit exactly one ``.cu`` per generate_code invocation, so one
+                                    ``.cu`` per top-level GPU kernel is only reachable this way; it needs no
+                                    change to either cuda backend.
+
+                                    The parent calls each child through the child SDFG's PUBLIC extern-C
+                                    handle ABI -- ``__dace_init_<child>`` / ``__program_<child>`` /
+                                    ``__dace_exit_<child>`` -- forward-declared and resolved in-binary by the
+                                    static linker (the same one-``.so`` contract as
+                                    ``split_nsdfg_translation_units``; NOT a separate library, NOT
+                                    ``dlopen``). Device pointers are passed straight through: parent and
+                                    child share the process's CUDA context, so a device allocation is valid
+                                    across the call.
+
+                                    DEPTH 1: a child is generated with this key forced off, so a nest inside
+                                    a child is not itself lifted again.
+
+                                    Default ``false`` reproduces today's output byte-identically: the lift
+                                    and the recursive per-child codegen are both gated on this key.
+                            scalar_decl:
+                                type: str
+                                default: eager
+                                title: Mutable scalar declaration placement
+                                description: >
+                                    Applies to: experimental_readable ONLY. Where a mutable scope-lifetime value scalar (a transient
+                                    ``dace.data.Scalar`` that is not an SDFG constant) is declared: ``eager`` (the default) emits ``T x;``
+                                    at the top of its scope; ``late`` emits ``T x;`` right before the first tasklet that uses it;
+                                    ``late_fused`` folds the declaration into that first write, ``T x = expr;``. ``late`` and
+                                    ``late_fused`` apply only where every use of the scalar is a direct-child tasklet of one scope;
+                                    any other scalar keeps the eager declaration. A readability / live-range form, not a speed lever.
+                            const_init:
+                                type: str
+                                default: 'on'
+                                title: constexpr constants for literal-only transients
+                                description: >
+                                    Applies to: experimental_readable ONLY. ``on`` (the default) runs
+                                    :class:`~dace.transformation.passes.promote_constant_transients.PromoteConstantTransients`,
+                                    which turns a transient whose writes all store literals into an SDFG constant
+                                    (``constexpr``) and removes those writes; ``off`` keeps the runtime writes.
 
             #############################################
             # GPU (CUDA/HIP) compiler
@@ -431,7 +756,7 @@ required:
                             Default thread-block size for GPU kernels when
                             explicit GPU block maps are not defined.
                             Can be set to 'max' to maximize occupancy.
-                        default: '32,1,1'
+                        default: '128,1,1'
 
                     chiplet_number:
                         type: int
@@ -511,7 +836,7 @@ required:
                             Maximum number of concurrent CUDA/HIP streams to
                             generate. Special values: -1 only uses the
                             default stream, 0 uses infinite concurrent streams.
-                        default: 0
+                        default: -1
 
                     syncdebug:
                         type: bool
@@ -548,6 +873,17 @@ required:
                             a specified overall larger block size. Default value is derived from hardware
                             limits on common GPUs.
 
+                    block_min_lanes:
+                        type: int
+                        title: Fewest threads on the coalesced axis of a domain-matched block
+                        default: 64
+                        description: >
+                            A multi-dimensional GPU kernel's domain-matched thread block (``SelectGPUDeviceBlockSize``)
+                            starts its coalesced axis (the one indexing the most accesses at unit stride) at this many
+                            threads, rounded up to a power of two, or the axis' extent if smaller. 64 is one CDNA
+                            wavefront (two NVIDIA warps); on MI300A it beat 32 and the plain 16 x 16 square on 20
+                            stencil / 2-D kernels. 1 gives the plain square / cube.
+
                     block_size_lastdim_limit:
                         type: int
                         title: Maximum last dimension thread-block size in code generation
@@ -568,6 +904,35 @@ required:
                             index types are needed to address memory offsets that are beyond the 32-bit
                             range, or to reduce memory usage.
 
+                    implementation:
+                        type: str
+                        title: CUDA codegen implementation
+                        description: >
+                            Choose between available CUDA code generation implementations.
+                            "legacy" is the stable implementation; "experimental" is a
+                            work-in-progress rewrite (ExperimentalCUDACodeGen).
+                        enum: [legacy, experimental]
+                        default: experimental
+
+                    tile_backend:
+                        type: str
+                        title: GPU tile kernel backend
+                        enum: [block, cuda_tile]
+                        default: block
+                        description: >
+                            How the experimental CUDA generator writes a GPU kernel over BLOCK tile nodes.
+                            ``block`` spreads each tile over the threads of a block (``ExpandTileBlock``).
+                            ``cuda_tile`` writes it as a CUDA Tile C++ ``__tile_global__`` kernel, one tile
+                            block per map iteration; it needs CUDA 13.3 or newer and sm_80 or newer.
+
+                    tile_args:
+                        type: str
+                        title: CUDA Tile C++ arguments
+                        default: '--enable-tile'
+                        description: >
+                            nvcc arguments added to a build only when it holds a CUDA Tile C++ kernel
+                            (``tile_backend: cuda_tile``), on top of ``compiler.cuda.args``.
+
                     allow_implicit_memlet_to_map:
                         type: bool
                         title: Allow the implicit conversion of Memlets to Maps during code generation.
@@ -578,6 +943,43 @@ required:
                             explicitly copy the data around. If this value is ``false`` the code generator
                             will raise an exception if such a Memlet is encountered. This allows the user
                             to have full control over all Maps in the SDFG.
+
+                    auto_syncthreads_insertion:
+                        type: bool
+                        title: Insert Default __syncthreads() Tasklets
+                        description: >
+                            If enabled, inserts default __syncthreads() tasklets during preprocessing
+                            in ExperimentalCUDACodeGen to ensure shared memory is ready before access.
+                            This is a simple safeguard for correctness - it may not be complete, but it
+                            does the job for basic SDFGs. Disable if you handle synchronization manually
+                            or use other mechanisms like async copies or pipelines.
+                        default: true
+
+                    synchronize_on_exit:
+                        type: bool
+                        title: Synchronize GPU stream at SDFG exit
+                        description: >
+                            If enabled (default), AutoGPUStreamScheduler appends a
+                            cudaStreamSynchronize at every GPU sink state, making each GPU SDFG
+                            synchronous on return. Disable only when the host application shares one
+                            GPU stream across all SDFG calls (so GPU->GPU hand-off is stream-ordered)
+                            and synchronizes at its own host-read boundaries -- this removes the
+                            per-SDFG host stall for GPU-resident pipelines (e.g. icon4py), which is
+                            the dominant cost on launch-bound stencils. Sink states that write
+                            host-visible (CPU) outputs are ALWAYS synchronized regardless of this
+                            setting, so numpy / copy-out SDFGs stay correct.
+                        default: true
+
+                    gpu_stream_name:
+                        type: str
+                        title: Name for the GPU stream object
+                        description: >
+                            GPU streams allow GPU operations, such as kernel execution or memory transfers, to run asynchronously
+                            and in parallel. This field specifies the naming convention for the GPU stream array and its connectors
+                            in the SDFG. For example: 'gpu_streams,gpu_stream' means 'gpu_streams' is the array containing the
+                            stream objects, and 'gpu_stream0' (prefix derived from the second name + stream id) is used as a
+                            connector for gpu_streams[0].
+                        default: gpu_streams,gpu_stream
 
             #############################################
             # MPI compiler
@@ -974,6 +1376,7 @@ required:
                 description: >
                     Check for potential race conditions during validation.
 
+
     #############################################
     # Features for unit testing
 
@@ -1005,6 +1408,43 @@ required:
                 description: >
                     If False (default), saving an SDFG keeps only the modified non-default properties. If True,
                     saves all fields.
+
+    #############################################
+    # Graph backend
+
+    graph:
+        type: dict
+        title: Graph
+        description: Settings for DaCe's internal graph representation and algorithms.
+        required:
+            backend:
+                type: str
+                default: 'networkx'
+                title: Graph backend
+                description: >
+                    Backend used for DaCe's internal graph data structures and algorithms
+                    ('networkx' for the reference/safe implementation, or 'rustworkx' for
+                    an accelerated, opt-in implementation -- requires the 'fastgraph' extra).
+                    Applies uniformly: algorithm calls made through an SDFG's or state's
+                    '.nx'/'._nx' escape hatch are also accelerated under 'rustworkx' (via an
+                    on-the-fly, currently uncached conversion), except for the couple of
+                    algorithms rustworkx has no implementation of at all (transitive closure,
+                    max-flow/min-cut), which always use networkx regardless of this setting;
+                    see dace/graphlib for details.
+
+    work_depth:
+        type: dict
+        title: Work-depth analysis
+        description: Settings of the work-depth analysis (dace/sdfg/performance_evaluation/work_depth.py).
+        required:
+            transcendental_cost:
+                type: str
+                default: 'unit'
+                title: Transcendental call cost
+                description: >
+                    Cost of a libm call (exp, log, sin, ...) in tasklet code. "unit" counts each call as
+                    one operation of depth one. "libm" uses the flop count and dependency depth of
+                    glibc's double-precision implementation (table lookup plus a short polynomial).
 
     #############################################
     # DaCe library settings

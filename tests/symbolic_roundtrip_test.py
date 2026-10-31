@@ -8,6 +8,7 @@ import sympy
 
 import dace
 from dace import subsets, symbolic
+from dace.frontend.python import astutils
 from dace.frontend.python.newast import _subset_has_indirection
 from dace.symbolic import arrays, bitwise_or, free_symbols_and_functions, pystr_to_symbolic, symstr
 
@@ -37,13 +38,14 @@ def test_ternary_roundtrip():
 
 
 def test_floordiv_roundtrip():
-    # ``//`` round-trips to ``//`` in Python and lowers to ``/`` in C++; an explicit
-    # int_floor(a, b) keeps its function spelling in Python.
+    # ``//`` round-trips to ``//`` in Python and lowers to the floored ``py_floor`` in C++, or to ``/`` where that
+    # agrees; an explicit int_floor(a, b) keeps its function spelling in Python.
     assert _roundtrip("a // b") == "(((a) // (b)))"
-    assert _roundtrip("a // b", cpp_mode=True) == "(((a) / (b)))"
+    assert _roundtrip("a // b", cpp_mode=True) == "(py_floor(a, b))"
+    assert _roundtrip("4 // b", cpp_mode=True) == "(py_floor(4, b))"
     assert _idempotent("a // b")
     assert _roundtrip("int_floor(a, b)") == "(int_floor(a, b))"
-    assert _roundtrip("int_floor(a, b)", cpp_mode=True) == "(((a) / (b)))"
+    assert _roundtrip("int_floor(a, b)", cpp_mode=True) == "(py_floor(a, b))"
 
 
 def test_cpp_lowering():
@@ -64,11 +66,60 @@ def test_operator_uses_internal_variant():
     assert isinstance(op, bitwise_or)
 
 
+def test_head_isinstance_is_backend_independent():
+    # A DaCe head class states a DaCe contract ("this is an ITE"), not a sympy implementation
+    # detail, so `isinstance` against it must answer the same whichever engine built the value.
+    # Getting this wrong is silent: a pass asking `isinstance(x, Subscript)` just takes its
+    # not-a-subscript branch, so the map-range array bound went un-hoisted rather than erroring.
+    import dace.symbolic as symbolic_module
+
+    internal_or = symbolic_module.__dict__["__bitwise_or"]
+    internal_floor = symbolic_module.__dict__["__int_floor"]
+    # Structural heads: the engine may hold `int_floor` as a division node rather than a named call.
+    assert isinstance(pystr_to_symbolic("int_floor(a, 8)"), symbolic.int_floor)
+    assert isinstance(pystr_to_symbolic("int_ceil(a, 8)"), symbolic.int_ceil)
+    assert isinstance(pystr_to_symbolic("ITE(c, a, b)"), symbolic.ITE)
+    # The operator spelling is an instance of BOTH; the function spelling only of the bare class.
+    assert isinstance(pystr_to_symbolic("a | b"), internal_or)
+    assert isinstance(pystr_to_symbolic("a | b"), bitwise_or)
+    assert not isinstance(pystr_to_symbolic("bitwise_or(a, b)"), internal_or)
+    assert isinstance(pystr_to_symbolic("a // 8"), internal_floor)
+    # Negatives stay negative -- the protocol widens what counts, it does not answer True broadly.
+    assert not isinstance(pystr_to_symbolic("a + b"), symbolic.ITE)
+    assert not isinstance(pystr_to_symbolic("a"), bitwise_or)
+    assert not isinstance(3, symbolic.ITE)
+
+
+def test_an_ite_unparses_without_recursing():
+    # ``astutils.unparse`` prints a sympy expression with sympy's Python code printer, which looks a
+    # printer method up by CLASS NAME: DaCe's ``ITE`` finds sympy's own ``_print_ITE``, whose body
+    # is "rewrite to a Piecewise and print that". DaCe's head does not rewrite, so the printer got
+    # the same expression back and recursed until the stack ended -- a hang-shaped crash on an
+    # interstate condition written as a conditional expression.
+    expr = pystr_to_symbolic("ITE(N > 5, N == 0, N == 1)")
+    assert isinstance(expr, symbolic.ITE)
+    printed = astutils.unparse(expr)
+    assert "ITE" in printed and "Piecewise" not in printed
+    assert pystr_to_symbolic(printed) == expr
+
+
 def test_explicit_function_name_preserved():
     # An explicit ``bitwise_or(a, b)`` keeps its spelling in Python but still lowers to
     # the operator in C++.
     assert symstr(pystr_to_symbolic("bitwise_or(a, b)")) == "(bitwise_or(a, b))"
     assert symstr(pystr_to_symbolic("bitwise_or(a, b)"), cpp_mode=True) == "(((a) | (b)))"
+
+
+def test_logical_shift_roundtrip():
+    # Logical (zero-fill) shifts have no plain C++ operator: unlike ``<<`` / ``>>``
+    # (which sign-extend a signed operand on the right shift) they lower to the
+    # ``dace::logical_left_shift`` / ``dace::logical_right_shift`` runtime helpers
+    # (dace/math.h), so the function spelling is kept in BOTH Python and C++ mode
+    # -- it must not collapse to an operator or to ``x * 2**y``.
+    assert _roundtrip("logical_left_shift(a, b)") == "(logical_left_shift(a, b))"
+    assert _roundtrip("logical_left_shift(a, b)", cpp_mode=True) == "(logical_left_shift(a, b))"
+    assert _roundtrip("logical_right_shift(a, b)") == "(logical_right_shift(a, b))"
+    assert _roundtrip("logical_right_shift(a, b)", cpp_mode=True) == "(logical_right_shift(a, b))"
 
 
 def test_subscript_roundtrip():
@@ -184,6 +235,25 @@ def test_float_precision_preserved():
         assert pystr_to_symbolic(huge) not in (sympy.oo, -sympy.oo)
 
 
+def test_integer_valued_float_not_collapsed():
+    # An integer-valued float (e.g. the ``1.0`` clamp in ``min(x, 1.0)``) keeps its
+    # ``.0`` and never collapses to an int: collapsing would mix int and float in a
+    # Min/Max and silently truncate the result after a serialization round-trip.
+    for src in ("0.0", "1.0", "2.0", "5.0", "100.0"):
+        assert _roundtrip(src) == src
+    # Genuine integers are left untouched.
+    for src in ("0", "1", "2", "42"):
+        assert _roundtrip(src) == src
+    # ``sympy_numeric_fix`` preserves a Python/numpy float as a sympy Float (the int
+    # collapse only ever applied to non-float inputs).
+    assert isinstance(symbolic.sympy_numeric_fix(1.0), sympy.Float)
+    assert isinstance(symbolic.sympy_numeric_fix(2.0), sympy.Float)
+    assert isinstance(symbolic.sympy_numeric_fix(1), int)
+    # Inside a Min the float clamp survives the parse -> print round-trip.
+    assert _idempotent("Min(x, 1.0)")
+    assert "1.0" in _roundtrip("Min(x, 1.0)")
+
+
 def test_integer_valued_float_stays_float():
     # ``min(x, 1.0)`` must not become a mixed int/double ``Min(x, 1)``
     assert symstr(1.0) == "1.0"
@@ -219,6 +289,51 @@ def test_infinity_cpp_lowering():
     assert _roundtrip("-inf", cpp_mode=True) == "-INFINITY"
 
 
+def test_fractional_power_cpp_lowering():
+    # ``1/2`` and ``1/3`` are integer division in C++: ``pow(M, 1/2)`` would be ``pow(M, 0)``
+    assert symstr(pystr_to_symbolic("sqrt(M)"), cpp_mode=True) == "(dace::math::sqrt(M))"
+    assert symstr(pystr_to_symbolic("M**(1/3)"), cpp_mode=True) == "(dace::math::pow(M, 1, 3))"
+    assert symstr(pystr_to_symbolic("M**(-2/3)"), cpp_mode=True) == "(dace::math::pow(M, -2, 3))"
+
+
+def test_symbolic_fractional_power_cpp_lowering():
+    # ``N/3`` in the exponent is integer division in C++ as well
+    assert symstr(pystr_to_symbolic("M**(N/3)"), cpp_mode=True) == "(dace::math::pow(M, N, 3))"
+    assert symstr(pystr_to_symbolic("M**(2*N/3)"), cpp_mode=True) == "(dace::math::pow(M, 2*N, 3))"
+    assert symstr(pystr_to_symbolic("M**(1/N)"), cpp_mode=True) == "(dace::math::pow(M, 1, N))"
+
+
+def test_equal_quotient_outside_an_exponent_stays_floored():
+    expr = pystr_to_symbolic("M**(N/3) + N/3")
+    assert symstr(expr) == "((M) ** (N/3) + int_floor(N, 3))"
+    assert symstr(expr, cpp_mode=True) == "(dace::math::pow(M, N, 3) + py_floor(N, 3))"
+
+
+def test_interstate_fractional_power_is_a_real_power():
+    # Interstate assignments lower through ``cppunparse``, not ``symstr``
+    sdfg = dace.SDFG("interstate_fractional_power")
+    for name in "MN":
+        sdfg.add_symbol(name, dace.int64)
+    for name in "rstu":
+        sdfg.add_symbol(name, dace.float64)
+    sdfg.add_array("out", [4], dace.float64)
+    first, second = sdfg.add_state(), sdfg.add_state()
+    assignments = {"r": "M**(1/3)", "s": "M**(N/3)", "t": "M**(-2/3)", "u": "M**-(N/3)"}
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments=assignments))
+    tasklet = second.add_tasklet("w", {}, {"a": None, "b": None, "c": None, "d": None}, "a = r; b = s; c = t; d = u")
+    out = second.add_access("out")
+    for i, conn in enumerate("abcd"):
+        second.add_edge(tasklet, conn, out, None, dace.Memlet(f"out[{i}]"))
+
+    code = sdfg.generate_code()[0].clean_code
+    for lowered in ("pow(M, 1, 3)", "pow(M, N, 3)", "pow(M, -2, 3)", "pow(M, -(N), 3)"):
+        assert f"dace::math::{lowered}" in code
+
+    result = numpy.zeros(4)
+    sdfg(out=result, M=27, N=2)
+    assert numpy.allclose(result, [3.0, 9.0, 1 / 9, 1 / 9])
+
+
 def test_nan_roundtrip():
     assert pystr_to_symbolic("nan") is sympy.nan
     assert _roundtrip("nan") == "nan"
@@ -231,7 +346,9 @@ def test_boolean_preserved_and_distinct_from_int():
     assert _roundtrip("False") == "False"
     assert _roundtrip("1") == "1"
     assert _roundtrip("0") == "0"
-    assert isinstance(pystr_to_symbolic("True"), sympy.logic.boolalg.BooleanTrue)
+    parsed = pystr_to_symbolic("True")
+    assert isinstance(parsed, symbolic.SymbolicBoolean) and bool(parsed) is True
+    assert parsed != pystr_to_symbolic("1")
     assert _roundtrip("True", cpp_mode=True) == "true"
 
 
@@ -327,7 +444,7 @@ def test_symbolic_expression_serialization_preserves_integerness():
     original = sdfg.arrays["A"].shape[0]
     restored = reloaded.arrays["A"].shape[0]
 
-    assert sympy.srepr(original) == sympy.srepr(restored)
+    assert symbolic.structural_repr(original) == symbolic.structural_repr(restored)
     assert original == restored
     assert original.is_integer == restored.is_integer
 
@@ -346,13 +463,18 @@ def test_symbolic_roundtrip_preserves_integerness():
         assert s1.is_integer == s2.is_integer
 
 
-def test_max_roundtrip_keeps_integer_assumptions():
+def test_max_roundtrip_is_lossless():
     expr = symbolic.pystr_to_symbolic("max(0, -__out_IDim_range_0 + __out_IDim_range_1)")
 
     rt = symbolic.pystr_to_symbolic(symbolic.symstr(expr))
 
-    assert expr.is_integer
-    assert rt.is_integer
+    assert rt == expr
+
+
+def test_integer_power_in_a_denominator_stays_one_operand():
+    expr = pystr_to_symbolic("x / N**2")
+    assert symstr(expr, cpp_mode=True) == "(x/((N) * (N)))"
+    assert eval(symstr(expr), {"x": 36.0, "N": 3.0}) == 4.0
 
 
 if __name__ == "__main__":
@@ -377,6 +499,10 @@ if __name__ == "__main__":
     test_symbolic_property_keeps_float_precision()
     test_infinity_roundtrip()
     test_infinity_cpp_lowering()
+    test_fractional_power_cpp_lowering()
+    test_symbolic_fractional_power_cpp_lowering()
+    test_equal_quotient_outside_an_exponent_stays_floored()
+    test_interstate_fractional_power_is_a_real_power()
     test_nan_roundtrip()
     test_boolean_preserved_and_distinct_from_int()
     test_map_range_array_bound_is_hoisted()
@@ -385,4 +511,5 @@ if __name__ == "__main__":
     test_interstate_edge_assignment_roundtrip()
     test_symbolic_expression_serialization_preserves_integerness()
     test_symbolic_roundtrip_preserves_integerness()
-    test_max_roundtrip_keeps_integer_assumptions()
+    test_max_roundtrip_is_lossless()
+    test_integer_power_in_a_denominator_stays_one_operand()

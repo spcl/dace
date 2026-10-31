@@ -8,7 +8,7 @@ Every transient ``GPU_Shared`` container of a kernel is placed either in static 
 static shared memory of a thread-block. Dynamic containers become views of a flat ``uint8`` buffer at their offsets, so
 the layout of dynamic shared memory is part of the SDFG.
 
-The passes run in this order: ``PrivatizeKernelSharedMemory``, ``LowerDynamicMapState``, ``PlanSharedMemory``,
+The passes run in this order: ``PrivatizeKernelSharedMemory``, ``PlanSharedMemory``,
 ``LowerDynamicSharedMemory``.
 """
 
@@ -16,10 +16,9 @@ import copy
 import warnings
 from dataclasses import dataclass, field
 
-from dace import config, dtypes, properties, subsets, symbolic
 from dace import data as dt
+from dace import dtypes, properties, subsets, symbolic
 from dace.codegen import common
-from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import gpu_helpers
@@ -54,21 +53,6 @@ def is_shared_container(desc: dt.Data) -> bool:
         and not isinstance(desc, dt.View)
         and desc.storage == dtypes.StorageType.GPU_Shared
     )
-
-
-def dynamic_map_state_elements(fine_grained: bool, block_size: int) -> int:
-    """
-    Returns the size of the shared scheduling state of ``dace::DynamicMap`` (``shared_type`` in ``dynmap.cuh``), in
-    elements of its index type: the union of four indices for thread-block scheduling, and either two arrays of
-    ``WARP_SIZE`` squared indices per warp (fine-grained) or two indices. The warp size is that of the GPU backend.
-
-    :param fine_grained: Whether the fine-grained schedule is used.
-    :param block_size: The total thread-block size.
-    :return: The number of index elements.
-    """
-    warp_size = common.gpu_warp_size()
-    fine_grained_elements = 2 * (block_size // warp_size) * warp_size * warp_size if fine_grained else 2
-    return max(4, fine_grained_elements)
 
 
 @properties.make_properties
@@ -117,70 +101,6 @@ class PrivatizeKernelSharedMemory(ppl.Pass):
         return copies or None
 
 
-@properties.make_properties
-class LowerDynamicMapState(ppl.Pass):
-    """
-    Adds the shared scheduling state of the dynamic thread-block maps (``dace::DynamicMap``) of each GPU kernel as a
-    ``GPU_Shared`` container, so that it is placed with the rest of the kernel's shared memory. One container is added
-    per SDFG that contains dynamic maps, which the maps of that SDFG share (they run one after the other). The name of
-    the container is stored in the ``_cuda_dynmap_state`` attribute of each dynamic map entry.
-    """
-
-    CATEGORY: str = "GPU"
-
-    def depends_on(self):
-        return {PrivatizeKernelSharedMemory}
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Edges
-
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return False
-
-    def apply_pass(self, sdfg: SDFG, pipeline_results) -> dict[str, int] | None:
-        fine_grained = config.Config.get_bool("compiler", "cuda", "dynamic_map_fine_grained")
-        elements = dynamic_map_state_elements(fine_grained, gpu_helpers.dynamic_map_block_size())
-        added = {}
-        for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
-            dynamic_maps = self._dynamic_maps(kernel_sdfg, kernel_state, kernel_state.scope_subgraph(kernel_entry))
-            if not dynamic_maps:
-                continue
-            index_type = common.gpu_dynamic_map_index_type(kernel_sdfg, kernel_state, kernel_entry)
-            state_names: dict[SDFG, str] = {}
-            for map_sdfg, map_state, map_entry in dynamic_maps:
-                if map_sdfg not in state_names:
-                    state_names[map_sdfg], _ = map_sdfg.add_array(
-                        "__dace_dynmap_state",
-                        [elements],
-                        index_type,
-                        storage=dtypes.StorageType.GPU_Shared,
-                        transient=True,
-                        find_new_name=True,
-                    )
-                    added[state_names[map_sdfg]] = elements
-                name = state_names[map_sdfg]
-
-                # An access node that precedes the dynamic map, in the scope that encloses it
-                parent = map_state.entry_node(map_entry)
-                access = map_state.add_access(name)
-                if parent is not None:
-                    map_state.add_nedge(parent, access, Memlet())
-                map_state.add_nedge(access, map_entry, Memlet())
-                map_entry._cuda_dynmap_state = name
-        return added or None
-
-    @staticmethod
-    def _dynamic_maps(sdfg: SDFG, state: SDFGState, graph) -> list[tuple[SDFG, SDFGState, nodes.MapEntry]]:
-        result = []
-        for node in graph.nodes():
-            if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
-                result.append((sdfg, state, node))
-            elif isinstance(node, nodes.NestedSDFG):
-                for nstate in node.sdfg.states():
-                    result.extend(LowerDynamicMapState._dynamic_maps(node.sdfg, nstate, nstate))
-        return result
-
-
 @dataclass
 class SharedMemoryLevel:
     """The dynamic shared memory of one SDFG within a GPU kernel."""
@@ -217,13 +137,13 @@ class PlanSharedMemory(ppl.Pass):
     each container. In dynamic shared memory, the containers of each SDFG are laid out contiguously, followed by those
     of its nested SDFGs; a nested SDFG receives the offset of its part as the symbol ``__dace_dynsmem_base`` unless the
     offset is a constant. The number of bytes to launch each kernel with is stored in the
-    ``_cuda_dynamic_shared_memory`` attribute of the kernel map entry.
+    ``_cuda_dynamic_shared_memory`` attribute of the kernel map entry, its static bytes in ``_cuda_static_shared_memory``.
     """
 
     CATEGORY: str = "GPU"
 
     def depends_on(self):
-        return {LowerDynamicMapState}
+        return {PrivatizeKernelSharedMemory}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Symbols
@@ -236,6 +156,7 @@ class PlanSharedMemory(ppl.Pass):
         for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
             plan = self._plan_kernel(kernel_sdfg, kernel_state, kernel_entry)
             kernel_entry._cuda_dynamic_shared_memory = plan.dynamic_bytes
+            kernel_entry._cuda_static_shared_memory = plan.static_bytes
             if plan.levels or plan.static_bytes:
                 result[kernel_entry] = plan
         return result or None
@@ -455,8 +376,6 @@ def plan_gpu_shared_memory(sdfg: SDFG) -> dict[nodes.MapEntry, KernelSharedMemor
     :param sdfg: The SDFG, modified in place.
     :return: The shared memory layout of each GPU kernel that uses shared memory.
     """
-    pipeline = ppl.Pipeline(
-        [PrivatizeKernelSharedMemory(), LowerDynamicMapState(), PlanSharedMemory(), LowerDynamicSharedMemory()]
-    )
+    pipeline = ppl.Pipeline([PrivatizeKernelSharedMemory(), PlanSharedMemory(), LowerDynamicSharedMemory()])
     results = pipeline.apply_pass(sdfg, {}) or {}
     return results.get(PlanSharedMemory.__name__) or {}

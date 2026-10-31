@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import numbers
 import warnings
 from copy import deepcopy as dc
 
@@ -8,7 +9,8 @@ from dace import data as dt
 from dace import dtypes, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import environments
+from dace.libraries import hip_dialect
+from dace.libraries.blas import environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import (
     check_access,
     check_one_device,
@@ -17,8 +19,83 @@ from dace.libraries.blas.blas_helpers import (
     to_cublas_computetype,
 )
 from dace.libraries.blas.nodes.matmul import _get_batchmm_opts, _get_codegen_gemm_opts, _get_matmul_operands
-from dace.symbolic import equal, symstr
+from dace.ordered import OrderedSet
+from dace.symbolic import equal, equal_valued, is_small_extent, symstr
 from dace.transformation.transformation import ExpandTransformation
+
+
+def refuse_broadcast_batches(node, state, sdfg) -> None:
+    """Refuse a broadcast batch dimension for the fixed-stride BLAS lowerings.
+
+    ``cublas*StridedBatched`` and ``*gemm_batch`` advance each operand by one matrix per batch
+    element. A dimension of extent 1 on one side must instead be re-read for every element, which
+    no single stride expresses, so such a call would read past the end of the smaller operand.
+    The pure expansion handles it by indexing that dimension at 0.
+
+    Refused on the dimensions where broadcasting is what the pairing MEANS: one side provably 1,
+    or the two provably different. Two dimensions whose equality is merely unprovable -- distinct
+    symbols, ``a: [B, M, K] @ b: [L, K, N]`` -- are not a broadcast. numpy pairs those only when
+    they are equal at run time, the same thing the frontend assumed when it gave the result its
+    batch shape; refusing them sends every symbolically-batched matmul to a failed expansion.
+
+    :param node: The library node being expanded.
+    :param state: The state the node lives in.
+    :param sdfg: The SDFG the state belongs to.
+    :raise ValueError: If either operand carries a batch dimension that must broadcast.
+    """
+    (_, _, shape_a, _, _, _), (_, _, shape_b, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
+    batch_a, batch_b = shape_a[:-2], shape_b[:-2]
+    if not batch_a or not batch_b:
+        return
+    offset = len(batch_a) - len(batch_b)
+    paired = zip(batch_a[offset:], batch_b) if offset >= 0 else zip(batch_a, batch_b[-offset:])
+    for d0, d1 in paired:
+        same = equal(d0, d1)
+        if same is True:
+            continue
+        if same is False or equal(d0, 1) is True or equal(d1, 1) is True:
+            raise ValueError(
+                f"{type(node).__name__} cannot broadcast batch dimensions {batch_a} against {batch_b}: "
+                'this expansion walks a fixed batch stride. Use the "pure" implementation, or '
+                "materialize both operands at the same batch shape."
+            )
+
+
+def shares_out_batch(node, state, sdfg) -> bool:
+    """Whether a CPU BLAS lowering runs its batch loop as an OpenMP team, one single-core GEMM per element.
+
+    Only a top-level node whose schedule is an OpenMP team does, and only over a batch that is not ``SMALL``: a
+    re-entered node or a ``SMALL`` batch keeps the loop sequential, each threaded BLAS call then the parallel axis.
+    Inside the team an OpenMP OpenBLAS runs each call on one thread (a pthreads build already does,
+    ``DeferOpenBlasThreadsToOpenMP``).
+
+    :param node: The library node being expanded.
+    :param state: The state the node lives in.
+    :param sdfg: The SDFG the state belongs to.
+    """
+    from dace.transformation.auto.auto_optimize import libnode_is_sequential, libnode_runs_multicore  # import cycle
+
+    if libnode_is_sequential(node, state, sdfg) or not libnode_runs_multicore(node):
+        return False
+    (_, _, shape_a, strides_a, _, _), (_, _, shape_b, strides_b, _, _), _ = _get_matmul_operands(node, state, sdfg)
+    cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
+    bopt = _get_batchmm_opts(shape_a, strides_a, shape_b, strides_b, cdesc.shape, cdesc.strides)
+    return bool(bopt) and not is_small_extent(bopt["b"], sdfg.facts())
+
+
+def format_scalar_literal(value, ctype: "dtypes.typeclass") -> str:
+    """Render a compile-time alpha/beta value as a DaCe-typed Python-tasklet literal.
+
+    :param value: The scalar property value (real or complex).
+    :param ctype: The DaCe typeclass the literal is cast to.
+    :return: A ``dace.<type>(...)`` constructor expression, valid inside a Python tasklet body.
+    """
+    if not isinstance(value, numbers.Number):
+        return f"dace.{ctype.to_string()}({value})"
+    if ctype.is_complex():
+        cvalue = complex(value)
+        return f"dace.{ctype.to_string()}({cvalue.real}, {cvalue.imag})"
+    return f"dace.{ctype.to_string()}({float(value)})"
 
 
 @dace.library.expansion
@@ -66,18 +143,36 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
         _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-3], storage=cdesc.storage)
 
-        # Add an initialization state
-        init_state = sdfg.add_state()
-        init_state.add_mapped_tasklet(
-            "batched_matmul_init",
-            {"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(shape_c)},
-            {},
-            "out = 0",
-            {"out": dace.Memlet.simple("_c", ",".join(["_o%d" % i for i in range(len(shape_c))]))},
-            external_edges=True,
-        )
-
-        state = sdfg.add_state_after(init_state, node.label + "_state")
+        # C is read and written in place through the sole "_c" connector -- BatchedMatMul carries
+        # no _cin, mirroring Gemm(cin=False). beta==1 leaves C for the WCR add below to accumulate
+        # onto directly (no init state at all); beta==0 zeroes it first; any other beta scales the
+        # existing value in an init state, reading and writing the same array.
+        c_dims = {"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(shape_c)}
+        c_full_index = ",".join(["_o%d" % i for i in range(len(shape_c))])
+        if equal_valued(1, node.beta):
+            state = sdfg.add_state(node.label + "_state")
+        else:
+            init_state = sdfg.add_state(node.label + "_initstate")
+            if equal_valued(0, node.beta):
+                init_state.add_mapped_tasklet(
+                    "batched_matmul_init",
+                    c_dims,
+                    {},
+                    "out = 0",
+                    {"out": dace.Memlet.simple("_c", c_full_index)},
+                    external_edges=True,
+                )
+            else:
+                beta_lit = format_scalar_literal(node.beta, dace.dtype_to_typeclass(dtype_c))
+                init_state.add_mapped_tasklet(
+                    "batched_matmul_beta_scale",
+                    c_dims,
+                    {"inp": dace.Memlet.simple("_c", c_full_index)},
+                    f"out = {beta_lit} * inp",
+                    {"out": dace.Memlet.simple("_c", c_full_index)},
+                    external_edges=True,
+                )
+            state = sdfg.add_state_after(init_state, node.label + "_state")
 
         # Calculate number of batch dimensions in output
         num_batch_dims = len(shape_c) - 2
@@ -92,30 +187,47 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         map_params["__in"] = f"0:{symstr(shape_b[-1])}"
         map_params["__ik"] = f"0:{symstr(shape_a[-1])}"
 
-        # Build memlet access patterns
+        def batch_indices(operand_shape) -> str:
+            """The operand's batch subscripts, following NumPy's broadcasting rules.
+
+            Batch dimensions align to the RIGHT against the output's, and a dimension of extent 1
+            broadcasts, so it is read at 0 for every output batch element. Taking the output index
+            for such a dimension -- or aligning from the left -- reads past the end of the operand.
+            """
+            num_operand_batch = len(operand_shape) - 2
+            offset = num_batch_dims - num_operand_batch
+            subscripts = []
+            for j, dim in enumerate(operand_shape[:-2]):
+                broadcast = equal(dim, 1) is True
+                subscripts.append("0" if broadcast else "__i%d" % (offset + j))
+            return ", ".join(subscripts)
+
         # For A: if 2D, use [M, K]; if 3D+, use [batch_indices..., M, K]
         if len(array_a.shape) == 2:
             memlet_a = "__im, __ik"
         else:
-            # Use output batch indices
-            a_batch_indices = ", ".join(["__i%d" % i for i in range(len(array_a.shape) - 2)])
-            memlet_a = f"{a_batch_indices}, __im, __ik"
+            memlet_a = f"{batch_indices(array_a.shape)}, __im, __ik"
 
         # For B: if 2D, use [K, N]; if 3D+, use [batch_indices..., K, N]
         if len(array_b.shape) == 2:
             memlet_b = "__ik, __in"
         else:
-            b_batch_indices = ", ".join(["__i%d" % i for i in range(len(array_b.shape) - 2)])
-            memlet_b = f"{b_batch_indices}, __ik, __in"
+            memlet_b = f"{batch_indices(array_b.shape)}, __ik, __in"
 
         # For C: always has batch dimensions
         c_indices = ", ".join(["__i%d" % i for i in range(num_batch_dims)]) + ", __im, __in"
+
+        # Each product is scaled by alpha, so the summed result is alpha * (A @ B).
+        product = "__a * __b"
+        if not equal_valued(1, node.alpha):
+            alpha_lit = format_scalar_literal(node.alpha, dace.dtype_to_typeclass(dtype_c))
+            product = f"{alpha_lit} * {product}"
 
         state.add_mapped_tasklet(
             "_BatchedMatMult_",
             map_params,
             {"__a": dace.Memlet.simple("_a", memlet_a), "__b": dace.Memlet.simple("_b", memlet_b)},
-            "__c = __a * __b",
+            f"__c = {product}",
             {"__c": dace.Memlet.simple("_c", c_indices, wcr_str="lambda x, y: x + y")},
             external_edges=True,
         )
@@ -135,6 +247,7 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+        refuse_broadcast_batches(node, state, sdfg)
         (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(
             node, state, sdfg
         )
@@ -142,42 +255,58 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + "gemm"
+        # ``?gemm_batch`` is the Fortran-style call: the coefficient and operand arrays hold MKL's own
+        # element type, so a complex one is MKL_Complex8/16 initialized by value, not dace::complex.
+        # Both structs are aggregates with no converting constructor, so a complex coefficient stays a
+        # brace literal. beta scales C in place -- there is no separate C read here, exactly like the
+        # pure expansion: ?gemm_batch reads and writes the same pointer, so beta != 0 is honored for
+        # free by passing node.beta through instead of hard-coding 0.
+        ctype = cdesc.dtype.ctype
+
+        def mkl_coeff(value) -> str:
+            if not isinstance(value, numbers.Number):
+                if dtype in (dace.float32, dace.float64):
+                    return f"({dtype.ctype})({value})"
+                return f"{{({dtype.base_type.ctype})({value}), 0}}"
+            if dtype == dace.float32:
+                return f"{float(value)}f"
+            if dtype == dace.float64:
+                return f"{float(value)}"
+            cvalue = complex(value)
+            suffix = "f" if dtype == dace.complex64 else ""
+            return f"{{{cvalue.real}{suffix}, {cvalue.imag}{suffix}}}"
+
         if dtype == dace.float32:
-            alpha = "1.0f"
-            beta = "0.0f"
             prefix = "s"
         elif dtype == dace.float64:
-            alpha = "1.0"
-            beta = "0.0"
             prefix = "d"
         elif dtype == dace.complex64:
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
             prefix = "c"
+            ctype = "MKL_Complex8"
         elif dtype == dace.complex128:
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
             prefix = "z"
+            ctype = "MKL_Complex16"
         else:
             raise ValueError("Unsupported type for BLAS dot product: " + str(dtype))
-        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdesc.dtype.ctype, func)
+        alpha = mkl_coeff(node.alpha)
+        beta = mkl_coeff(node.beta)
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, ctype, func)
 
         opt["prefix"] = prefix
-        opt["dtype"] = cdesc.dtype.ctype
 
         code = """
         const MKL_INT group_count = 1;
-        MKL_INT group_sizes[group_count] = {{ {BATCH} }};
-        MKL_INT m_array[group_count] = {{ {M} }};
-        MKL_INT n_array[group_count] = {{ {N} }};
-        MKL_INT k_array[group_count] = {{ {K} }};
+        MKL_INT group_sizes[group_count] = {{ (MKL_INT)({BATCH}) }};
+        MKL_INT m_array[group_count] = {{ (MKL_INT)({M}) }};
+        MKL_INT n_array[group_count] = {{ (MKL_INT)({N}) }};
+        MKL_INT k_array[group_count] = {{ (MKL_INT)({K}) }};
         char transa[group_count] = {{ '{ta}' }};
         char transb[group_count] = {{ '{tb}' }};
         {dtype} alpha_array[group_count] = {{ {alpha} }};
         {dtype} beta_array[group_count] = {{ {beta} }};
-        MKL_INT lda_array[group_count] = {{ {lda} }};
-        MKL_INT ldb_array[group_count] = {{ {ldb} }};
-        MKL_INT ldc_array[group_count] = {{ {ldc} }};
+        MKL_INT lda_array[group_count] = {{ (MKL_INT)({lda}) }};
+        MKL_INT ldb_array[group_count] = {{ (MKL_INT)({ldb}) }};
+        MKL_INT ldc_array[group_count] = {{ (MKL_INT)({ldc}) }};
 
         const {dtype}** __mkl_BMM_A = new const {dtype}*[{BATCH}];
         const {dtype}** __mkl_BMM_B = new const {dtype}*[{BATCH}];
@@ -208,6 +337,7 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+        refuse_broadcast_batches(node, state, sdfg)
         (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(
             node, state, sdfg
         )
@@ -215,28 +345,34 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + "gemm"
-        if dtype == dace.float32:
-            alpha = "1.0f"
-            beta = "0.0f"
-        elif dtype == dace.float64:
-            alpha = "1.0"
-            beta = "0.0"
-        elif dtype == dace.complex64:
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
-        elif dtype == dace.complex128:
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+        # cblas_[cz]gemm takes alpha/beta as ``const void*`` (see cblas.h), so a complex coefficient
+        # is materialized into a local and passed by address; the real ?gemm calls take them by
+        # value. beta scales C in place through the same pointer cblas already writes through, so
+        # passing node.beta needs no separate C read here (mirrors the pure expansion).
+        decls = ""
+        if dtype in (dace.float32, dace.float64):
+            alpha = f"{dtype.ctype}({node.alpha})"
+            beta = f"{dtype.ctype}({node.beta})"
+        elif dtype in (dace.complex64, dace.complex128):
+            calpha, cbeta = complex(node.alpha), complex(node.beta)
+            decls = (
+                f"{dtype.ctype} __bmm_alpha = {dtype.ctype}({calpha.real}, {calpha.imag});\n"
+                f"        {dtype.ctype} __bmm_beta = {dtype.ctype}({cbeta.real}, {cbeta.imag});\n        "
+            )
+            alpha = "(const void*)&__bmm_alpha"
+            beta = "(const void*)&__bmm_beta"
         else:
             raise ValueError("Unsupported type for BLAS dot product: " + str(dtype))
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdesc.dtype.ctype, func)
+        opt["decls"] = decls
 
         # Adaptations for MKL/BLAS API
         opt["ta"] = "CblasNoTrans" if opt["ta"] == "N" else "CblasTrans"
         opt["tb"] = "CblasNoTrans" if opt["tb"] == "N" else "CblasTrans"
+        opt["pragma"] = "#pragma omp parallel for\n        " if shares_out_batch(node, state, sdfg) else ""
 
         code = """
-        for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
+        {decls}{pragma}for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
             cblas_{func}(CblasColMajor, {ta}, {tb}, {M}, {N}, {K}, {alpha},
                          (({dtype}*){x}) + __ib*{stride_a}, {lda},
                          (({dtype}*){y}) + __ib*{stride_b}, {ldb},
@@ -251,12 +387,47 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
-    environments = [environments.cublas.cuBLAS]
+class ExpandBatchedMatMulLIBXSMM(ExpandTransformation):
+    """The OpenBLAS batch loop over ``libxsmm_?gemm``: a JIT kernel per small product, no per-call buffer allocation
+    (cp2k_trs4's 1.2M 5x5 block products). A complex batch takes the OpenBLAS calls."""
+
+    environments = [environments.libxsmm.LIBXSMM, environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+        refuse_broadcast_batches(node, state, sdfg)
+        (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
+        cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
+        dtype = cdesc.dtype.base_type
+        if dtype not in (dace.float32, dace.float64):
+            return ExpandBatchedMatMulOpenBLAS.expansion(node, state, sdfg)
+        check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
+        func = to_blastype(dtype.type).lower() + "gemm"
+        alpha, beta = f"{dtype.ctype}({node.alpha})", f"{dtype.ctype}({node.beta})"
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdesc.dtype.ctype, func)
+        opt["pragma"] = "#pragma omp parallel for\n        " if shares_out_batch(node, state, sdfg) else ""
+        code = """
+        const char __ta = '{ta}', __tb = '{tb}';
+        const libxsmm_blasint __m = {M}, __n = {N}, __k = {K}, __lda = {lda}, __ldb = {ldb}, __ldc = {ldc};
+        const {dtype} __alpha = {alpha}, __beta = {beta};
+        {pragma}for (int64_t __ib = 0; __ib < {BATCH}; ++__ib) {{
+            libxsmm_{func}(&__ta, &__tb, &__m, &__n, &__k, &__alpha, (({dtype}*){x}) + __ib*{stride_a}, &__lda,
+                           (({dtype}*){y}) + __ib*{stride_b}, &__ldb, &__beta, (({dtype}*)_c) + __ib*{stride_c}, &__ldc);
+        }}""".format_map(opt)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
+
+
+@dace.library.expansion
+class ExpandBatchedMatMulGPUBLAS(ExpandTransformation):
+    environments = []
+
+    @classmethod
+    def expansion(cls, node, state, sdfg):
+        node.validate(sdfg, state)
+        refuse_broadcast_batches(node, state, sdfg)
 
         # Find inputs and output
         adesc, bdesc, cdesc = None, None, None
@@ -301,35 +472,34 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             factort = "Complex128"
         else:
             raise ValueError("Unsupported type: " + str(dtype))
+        cdtype = cls.dialect.ctype(cdtype)
 
-        call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
+        call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ""
-        # Handle alpha / beta
-        constants = {
-            1.0: f"__state->cublas_handle.Constants().{factort}Pone()",
-            0.0: f"__state->cublas_handle.Constants().{factort}Zero()",
-        }
-        if node.alpha not in constants:
-            # Deal with complex input constants
-            if isinstance(node.alpha, complex):
-                alpha = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
-            else:
-                alpha = f"{dtype.ctype}({node.alpha})"
-
-            # Set pointer mode to host
-            call_prefix += f"""dace::blas::CheckCublasError(
-                cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST));
-                {dtype.ctype} alpha = {alpha};
-                {dtype.ctype} beta = 0;
-                """
-            call_suffix += """
-    dace::blas::CheckCublasError(cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE));
-                """
-            beta = f"({cdtype} *)&beta"
-            alpha = f"({cdtype} *)&alpha"
+        # Alpha and beta go in as host values, under host pointer mode for this call: under device mode rocBLAS
+        # copies both back to the host (a synchronizing copy each) to test for a quick return. cuBLAS reads and
+        # writes C in place through the one pointer this call already takes, so a nonzero beta needs no separate C
+        # connector here.
+        if isinstance(node.alpha, complex):
+            alpha_lit = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
         else:
-            alpha = constants[node.alpha]
-            beta = f"__state->cublas_handle.Constants().{factort}Zero()"
+            alpha_lit = f"{dtype.ctype}({node.alpha})"
+        if isinstance(node.beta, complex):
+            beta_lit = f"{dtype.ctype}({node.beta.real}, {node.beta.imag})"
+        else:
+            beta_lit = f"{dtype.ctype}({node.beta})"
+
+        # Set pointer mode to host
+        call_prefix += f"""{cls.dialect.check_error}(
+            {cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_host}));
+            {dtype.ctype} alpha = {alpha_lit};
+            {dtype.ctype} beta = {beta_lit};
+            """
+        call_suffix += f"""
+    {cls.dialect.check_error}({cls.dialect.set_pointer_mode}({cls.dialect.handle}, {cls.dialect.pointer_device}));
+            """
+        beta = f"({cdtype} *)&beta"
+        alpha = f"({cdtype} *)&alpha"
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
@@ -337,15 +507,15 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
 
         # Matrix multiplication
         if node.compute_type is None and node.accumulator_type is None and node.algorithm is None:
-            call = """dace::blas::CheckCublasError(cublas{func}StridedBatched(__dace_cublas_handle,
-                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-                {M}, {N}, {K},
-                {alpha},
-                ({dtype}*){array_prefix}{x}, {lda}, {stride_a},
-                ({dtype}*){array_prefix}{y}, {ldb}, {stride_b},
-                {beta},
-                ({dtype}*){array_prefix}_c, {ldc}, {stride_c},
-                {BATCH}));""".format_map(opt)
+            call = f"""{cls.dialect.check_error}({cls.dialect.strided_batched(func)}({cls.dialect.handle},
+                {cls.dialect.op(opt["ta"])}, {cls.dialect.op(opt["tb"])},
+                {opt["M"]}, {opt["N"]}, {opt["K"]},
+                {opt["alpha"]},
+                ({opt["dtype"]}*){opt["array_prefix"]}{opt["x"]}, {opt["lda"]}, {opt["stride_a"]},
+                ({opt["dtype"]}*){opt["array_prefix"]}{opt["y"]}, {opt["ldb"]}, {opt["stride_b"]},
+                {opt["beta"]},
+                ({opt["dtype"]}*){opt["array_prefix"]}_c, {opt["ldc"]}, {opt["stride_c"]},
+                {opt["BATCH"]}));"""
         else:
             if node.compute_type is not None:
                 acctype = node.compute_type
@@ -360,8 +530,8 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                 algorithm = node.algorithm
 
             call = f"""
-            dace::blas::CheckCublasError(cublasGemmStridedBatchedEx(__dace_cublas_handle,
-                CUBLAS_OP_{opt["ta"]}, CUBLAS_OP_{opt["tb"]},
+            {cls.dialect.check_error}(cublasGemmStridedBatchedEx({cls.dialect.handle},
+                {cls.dialect.op(opt["ta"])}, {cls.dialect.op(opt["tb"])},
                 {opt["M"]}, {opt["N"]}, {opt["K"]},
                 {alpha},
                 {opt["array_prefix"]}{opt["x"]},
@@ -406,7 +576,20 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                 dcopy_gpu.transient = True
                 dcopy_gpu.storage = dace.StorageType.GPU_Global
                 nsdfg.add_datadesc(name + "_gpu", dcopy_gpu)
-            nstate = nsdfg.add_state()
+
+            # A nonzero beta needs the host C staged into `_c_gpu` BEFORE the call -- unlike A/B, C is
+            # not otherwise copied in, so a fresh GPU allocation would read uninitialized memory as
+            # the prior value. A separate state (not a second edge into the same access node) avoids
+            # a write/write conflict with the tasklet's own write below; `_c_gpu` has Scope lifetime,
+            # so the value persists into the next state exactly like the pure expansion's init state.
+            if not equal_valued(0, node.beta):
+                copyin_state = nsdfg.add_state(node.label + "_c_copyin")
+                copyin_state.add_nedge(
+                    copyin_state.add_read("_c"), copyin_state.add_access("_c_gpu"), dace.Memlet.from_array("_c", cdesc)
+                )
+                nstate = nsdfg.add_state_after(copyin_state)
+            else:
+                nstate = nsdfg.add_state()
             a = nstate.add_read("_a")
             ga = nstate.add_access("_a_gpu")
             b = nstate.add_read("_b")
@@ -427,6 +610,17 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandBatchedMatMulCuBLAS(ExpandBatchedMatMulGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    dialect = gpu_dialect.CUBLAS
+
+
+ExpandBatchedMatMulHipBLAS = hip_dialect.hip_expansion(
+    ExpandBatchedMatMulCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS
+)
+
+
 @dace.library.node
 class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -434,7 +628,10 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         "pure": ExpandBatchedMatMulPure,
         "MKL": ExpandBatchedMatMulMKL,
         "OpenBLAS": ExpandBatchedMatMulOpenBLAS,
+        "LIBXSMM": ExpandBatchedMatMulLIBXSMM,
         "cuBLAS": ExpandBatchedMatMulCuBLAS,
+        "hipBLAS": ExpandBatchedMatMulHipBLAS,
+        "rocBLAS": ExpandBatchedMatMulHipBLAS,
     }
     transA = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose A before multiplying")
     transB = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose B before multiplying")
@@ -444,6 +641,10 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         category="Semantics",
         desc="A scalar which will be multiplied with A @ B before adding C",
     )
+
+    def folds_onto_output(self) -> bool:
+        return self.folds_by_beta(self.beta)
+
     beta = properties.Property(
         allow_none=False,
         default=0,
@@ -474,7 +675,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     def __init__(self, name, location=None):
-        super().__init__(name, location=location, inputs={"_a", "_b"}, outputs={"_c"})
+        super().__init__(name, location=location, inputs=OrderedSet(("_a", "_b")), outputs={"_c"})
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
@@ -512,6 +713,26 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
             raise ValueError(
                 "Batched matrix-matrix product requires at least one input to have batch dimensions (3D or higher)"
             )
+
+        # Batch dimensions follow NumPy's broadcasting rules: they align to the RIGHT, and a
+        # dimension of extent 1 stretches. Only a genuine mismatch is rejected here -- whether a
+        # given expansion can express a broadcast is the expansion's business, not the node's
+        # (the pure lowering indexes a broadcast dimension at 0; the BLAS ones walk a fixed batch
+        # stride and refuse, see ``refuse_broadcast_batches``).
+        # ``squeeze()`` drops EVERY extent-1 dimension and cannot tell an index singleton from a
+        # slice singleton, so a broadcast batch axis disappears from ``size0``/``size1`` before it
+        # can be examined -- ``(2,1,M,K) @ (1,3,K,N)`` arrives here looking like batch 2 vs batch 3.
+        # The batch analysis therefore reads the UNSQUEEZED extents.
+        batch0, batch1 = full0[:-2], full1[:-2]
+        if batch0 and batch1:
+            offset = len(batch0) - len(batch1)
+            paired = zip(batch0[offset:], batch1) if offset >= 0 else zip(batch0, batch1[-offset:])
+            for d0, d1 in paired:
+                if equal(d0, d1) is False and equal(d0, 1) is not True and equal(d1, 1) is not True:
+                    raise ValueError(
+                        f"Batch dimensions of the two inputs do not broadcast, got {batch0} and "
+                        f"{batch1}: {d0} and {d1} differ and neither is 1"
+                    )
 
         # Validate K-dimension compatibility
         res = equal(size0[-1], size1[-2])

@@ -17,6 +17,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutils
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -520,7 +521,6 @@ def _boundary_tree_control_flow() -> tn.ScheduleTreeRoot:
     return tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [10])},
-        symbols={"i": dace.int64},
         children=[
             _tasklet_node("out = 1", {}, {"out": "A[0]"}),
             _tasklet_node("out = 2", {}, {"out": "A[0]"}),
@@ -665,14 +665,23 @@ def test_create_tasklet_waw() -> None:
     )
 
     sdfg = stree.as_sdfg(validate=True)
-    assert sdfg.num_states() == 2
-    s1, s2 = sdfg.states()
+    # simplify()'s state fusion (StateFusionExtended) fuses the WAW pair into one state,
+    # ordering the writes with a happens-before (empty-memlet) edge instead of a state split.
+    # main splits them; the assertions below read the fused form this branch produces.
+    assert sdfg.num_states() == 1
+    (state,) = sdfg.states()
 
-    s1_tasklet, s1_anode = s1.nodes()
-    assert [(s1_tasklet, s1_anode)] == [(edge.src, edge.dst) for edge in s1.edges()]
+    bla, first_anode, bla2, second_anode = state.nodes()
+    assert bla.label == "bla"
+    assert bla2.label == "bla2"
+    assert isinstance(first_anode, nodes.AccessNode) and first_anode.data == "A"
+    assert isinstance(second_anode, nodes.AccessNode) and second_anode.data == "A"
 
-    s2_tasklet, s2_anode = s2.nodes()
-    assert [(s2_tasklet, s2_anode)] == [(edge.src, edge.dst) for edge in s2.edges()]
+    edges = {(edge.src, edge.dst): edge.data for edge in state.edges()}
+    assert set(edges.keys()) == {(bla, first_anode), (first_anode, bla2), (bla2, second_anode)}
+    assert edges[(bla, first_anode)].data == "A"
+    assert edges[(bla2, second_anode)].data == "A"
+    assert edges[(first_anode, bla2)].is_empty(), "Write order must be enforced by a happens-before edge"
 
 
 def test_create_tasklet_war() -> None:
@@ -731,12 +740,22 @@ def test_create_loop_for() -> None:
     assert loop.update_statement == CodeBlock("i = i+1")
 
     loop_states = list(filter(lambda x: isinstance(x, SDFGState), loop.nodes()))
-    assert len(loop_states) == 2, "Loop contains two states"
+    # simplify()'s state fusion (StateFusionExtended) fuses the WAW pair into one state,
+    # ordering the writes with a happens-before (empty-memlet) edge instead of a state split.
+    assert len(loop_states) == 1, "Loop contains one state"
 
-    tasklet_1: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[0].nodes()))[0]
-    assert tasklet_1.label == "assign_1"
-    tasklet_2: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[1].nodes()))[0]
-    assert tasklet_2.label == "assign_2"
+    body = loop_states[0]
+    tasklets: list[nodes.Tasklet] = [n for n in body.nodes() if isinstance(n, nodes.Tasklet)]
+    assert [t.label for t in tasklets] == ["assign_1", "assign_2"]
+    tasklet_1, tasklet_2 = tasklets
+
+    anodes: list[nodes.AccessNode] = [n for n in body.nodes() if isinstance(n, nodes.AccessNode)]
+    assert [n.data for n in anodes] == ["A", "A"]
+    first_anode, second_anode = anodes
+
+    edges = {(edge.src, edge.dst): edge.data for edge in body.edges()}
+    assert set(edges.keys()) == {(tasklet_1, first_anode), (first_anode, tasklet_2), (tasklet_2, second_anode)}
+    assert edges[(first_anode, tasklet_2)].is_empty(), "Write order must be enforced by a happens-before edge"
 
 
 def test_create_loop_for_same_name() -> None:
@@ -803,12 +822,22 @@ def test_create_loop_while() -> None:
     assert loop.update_statement == None
 
     loop_states = list(filter(lambda x: isinstance(x, SDFGState), loop.nodes()))
-    assert len(loop_states) == 2, "Loop contains two states"
+    # simplify()'s state fusion (StateFusionExtended) fuses the WAW pair into one state,
+    # ordering the writes with a happens-before (empty-memlet) edge instead of a state split.
+    assert len(loop_states) == 1, "Loop contains one state"
 
-    tasklet_1: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[0].nodes()))[0]
-    assert tasklet_1.label == "assign_1"
-    tasklet_2: nodes.Tasklet = list(filter(lambda x: isinstance(x, nodes.Tasklet), loop_states[1].nodes()))[0]
-    assert tasklet_2.label == "assign_2"
+    body = loop_states[0]
+    tasklets: list[nodes.Tasklet] = [n for n in body.nodes() if isinstance(n, nodes.Tasklet)]
+    assert [t.label for t in tasklets] == ["assign_1", "assign_2"]
+    tasklet_1, tasklet_2 = tasklets
+
+    anodes: list[nodes.AccessNode] = [n for n in body.nodes() if isinstance(n, nodes.AccessNode)]
+    assert [n.data for n in anodes] == ["A", "A"]
+    first_anode, second_anode = anodes
+
+    edges = {(edge.src, edge.dst): edge.data for edge in body.edges()}
+    assert set(edges.keys()) == {(tasklet_1, first_anode), (first_anode, tasklet_2), (tasklet_2, second_anode)}
+    assert edges[(first_anode, tasklet_2)].is_empty(), "Write order must be enforced by a happens-before edge"
 
 
 def test_create_if_else():
@@ -1739,7 +1768,6 @@ def test_create_loop_control_block(control_block: str) -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [10])},
-        symbols={"i": dace.int64},
         children=[
             tn.ForScope(
                 loop=LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1"),
@@ -1826,7 +1854,6 @@ def test_goto_exit_in_loop() -> None:
             "A": data.Array(dace.float64, [10]),
             "B": data.Array(dace.float64, [1]),
         },
-        symbols={"i": dace.int64},
         children=[
             tn.ForScope(
                 loop=LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1"),
@@ -1884,7 +1911,6 @@ def test_forward_goto_at_sdfg_end() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [10])},
-        symbols={"i": dace.int64},
         children=[
             tn.ForScope(
                 loop=LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1"),
@@ -2023,7 +2049,6 @@ def test_gblock_goto_to_loop() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [10])},
-        symbols={"i": dace.int64},
         children=[
             tn.GBlock(
                 children=[
@@ -2095,7 +2120,7 @@ def test_trailing_assignment_in_body(scope: str) -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={"A": data.Array(dace.float64, [1])},
-        symbols={"i": dace.int64, "k": dace.int64, "n": dace.int64},
+        symbols={"k": dace.int64, "n": dace.int64},
         children=[
             tn.AssignNode("k", CodeBlock("0"), dace.InterstateEdge(assignments={"k": "0"})),
             tn.StateBoundaryNode(),
@@ -2108,8 +2133,12 @@ def test_trailing_assignment_in_body(scope: str) -> None:
     # Convert without inserting state boundaries after assignments
     sdfg = dace.SDFG("tester")
     sdfg._arrays.update(copy.deepcopy(stree.containers))
-    sdfg.symbols.update(stree.symbols)
+    for name, dtype in stree.symbols.items():
+        sdfg.add_symbol(name, dtype)
     t2s._StreeToSDFG().visit(stree, sdfg=sdfg)
+    # The loop binds its counter; the tree also lists it among its symbols
+    for name in sorted(scope_bound_names(sdfg) & sdfg.symbols.keys()):
+        sdfg.remove_symbol(name)
     sdfg.validate()
 
     # With n=10, the body with the assignment is executed. With n=1, only the else branch is.

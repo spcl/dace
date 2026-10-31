@@ -5,7 +5,12 @@ from typing import TYPE_CHECKING
 
 import dace
 from dace import library, nodes
-from dace.libraries.standard.nodes.copy.common import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, _is_cross_cpu_gpu
+from dace.libraries.standard.nodes.copy.common import (
+    INPUT_CONNECTOR_NAME,
+    OUTPUT_CONNECTOR_NAME,
+    _is_cross_cpu_gpu,
+    copy_assignment_code,
+)
 from dace.libraries.standard.nodes.copy.node import CopyLibraryNode
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
@@ -48,6 +53,6 @@ class ExpandTasklet(ExpandTransformation):
             node.name,
             inputs={INPUT_CONNECTOR_NAME: inp.dtype},
             outputs={OUTPUT_CONNECTOR_NAME: out.dtype},
-            code=f"{OUTPUT_CONNECTOR_NAME} = {INPUT_CONNECTOR_NAME}",
+            code=copy_assignment_code(inp, out, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME),
             language=dace.Language.Python,
         )

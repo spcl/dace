@@ -5,9 +5,11 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
+from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -79,11 +81,16 @@ class ExpandGetrfMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGetrfCuSolverDn(ExpandTransformation):
-    environments = [environments.cusolverdn.cuSolverDn]
+class ExpandGetrfGPUSolver(ExpandTransformation):
+    """LU factorization on a vendor GPU solver.
 
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    cuSolverDn sizes and allocates a workspace first; hipSOLVER is the same call renamed.
+    """
+
+    environments = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x, rows_x, cols_x), desc_ipiv, desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
@@ -95,23 +102,7 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
         if veclen != 1:
             n /= veclen
 
-        code = (
-            environments.cusolverdn.cuSolverDn.handle_setup_code(node)
-            + f"""
-                int __dace_workspace_size = 0;
-                {cuda_type}* __dace_workspace;
-                cusolverDn{func}_bufferSize(
-                    __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
-                    {stride_x}, &__dace_workspace_size);
-                cudaMalloc<{cuda_type}>(
-                    &__dace_workspace,
-                    sizeof({cuda_type}) * __dace_workspace_size);
-                cusolverDn{func}(
-                    __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
-                    {stride_x}, __dace_workspace, _ipiv, _res);
-                cudaFree(__dace_workspace);
-                """
-        )
+        code = cls.environments[0].handle_setup_code(node) + cls.call(func, cuda_type, rows_x, cols_x, stride_x)
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
@@ -123,17 +114,46 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandGetrfCuSolverDn(ExpandGetrfGPUSolver):
+    environments = [environments.cusolverdn.cuSolverDn]
+
+    @classmethod
+    def call(cls, func, ctype, rows, cols, stride) -> str:
+        return f"""
+                int __dace_workspace_size = 0;
+                cusolverDn{func}_bufferSize(
+                    __dace_cusolverDn_handle, {rows}, {cols}, ({ctype}*)_xin,
+                    {stride}, &__dace_workspace_size);
+                {ctype}* __dace_workspace = static_cast<{ctype}*>(
+                    __state->cusolverDn_handle.Workspace(0, sizeof({ctype}) * __dace_workspace_size, __dace_current_stream));
+                cusolverDn{func}(
+                    __dace_cusolverDn_handle, {rows}, {cols}, ({ctype}*)_xin,
+                    {stride}, __dace_workspace, _ipiv, _res);
+                """
+
+
+ExpandGetrfHipSolverDn = hip_dialect.hip_expansion(
+    ExpandGetrfCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
+
+
 @dace.library.node
 class Getrf(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {"OpenBLAS": ExpandGetrfOpenBLAS, "MKL": ExpandGetrfMKL, "cuSolverDn": ExpandGetrfCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandGetrfOpenBLAS,
+        "MKL": ExpandGetrfMKL,
+        "cuSolverDn": ExpandGetrfCuSolverDn,
+        "hipSolverDn": ExpandGetrfHipSolverDn,
+    }
     default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_ipiv", "_res"}, **kwargs)
+        super().__init__(name, *args, inputs={"_xin"}, outputs=OrderedSet(("_xout", "_ipiv", "_res")), **kwargs)
 
     def validate(self, sdfg, state):
         """

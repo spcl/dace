@@ -47,7 +47,7 @@ def test_replace_renames_a_subscripted_container():
     for old, new in ((symbolic.symbol("idx"), symbolic.symbol("jdx")), ("idx", "jdx")):
         rng = subsets.Range.from_string("idx[i]:idx[i] + 4")
         rng.replace({old: new})
-        start, end, _ = rng.ndrange()[0]
+        start, end, step = rng.ndrange()[0]
         assert symbolic.arrays(start) == symbolic.arrays(end) == {"jdx"}
 
 

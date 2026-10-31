@@ -37,7 +37,7 @@ def chain(length: int) -> dace.SDFGState:
 def mutate_randomly(graph, new_node, steps: int, seed: int):
     """Interleaves adds, removes and lookups; the index must equal the scan after every step."""
     rng = random.Random(seed)
-    for _ in range(steps):
+    for step in range(steps):
         nodes = graph.nodes()
         if nodes and rng.random() < 0.4:
             graph.remove_node(rng.choice(nodes))

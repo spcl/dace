@@ -8,6 +8,7 @@ from typing import Any
 
 from dace import SDFG, properties
 from dace.sdfg import nodes
+from dace.sdfg.sdfg import memoize_facts
 from dace.sdfg.state import ConditionalBlock, FunctionCallRegion, LoopRegion, NamedRegion, UnstructuredControlFlow
 from dace.sdfg.utils import fuse_states, inline_control_flow_regions, inline_sdfgs
 from dace.transformation import pass_pipeline as ppl
@@ -27,6 +28,18 @@ class FuseStates(ppl.Pass):
     permissive = properties.Property(
         dtype=bool, default=False, category="Applicability", desc="If True, ignores some race condition checks."
     )
+    aggressive_merges = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="Passed to StateFusionExtended.aggressive_merges.",
+    )
+    order_array_seeds = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="Passed to StateFusionExtended.order_array_seeds.",
+    )
     progress = properties.Property(
         dtype=bool,
         default=None,
@@ -34,6 +47,11 @@ class FuseStates(ppl.Pass):
         category="Diagnostics",
         desc="Whether to print progress, or None for default (print after 5 seconds).",
     )
+
+    def __init__(self, aggressive_merges: bool = False, order_array_seeds: bool = False):
+        super().__init__()
+        self.aggressive_merges = aggressive_merges
+        self.order_array_seeds = order_array_seeds
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.States | ppl.Modifies.InterstateEdges)
@@ -49,7 +67,12 @@ class FuseStates(ppl.Pass):
 
         :return: The total number of states fused, or None if did not apply.
         """
-        fused = fuse_states(sdfg, self.permissive, self.progress)
+        # The probes resolve ``SDFG.facts()`` (a walk of every interstate edge and descriptor) per candidate pair. A
+        # fusion leaves them as they are: it touches no symbol or descriptor, and it moves the assignments of the
+        # fused edge onto the edges into the first block (or a new empty predecessor), so every SDFG assigns the same
+        # names.
+        with memoize_facts(sdfg):
+            fused = fuse_states(sdfg, self.permissive, self.progress, self.aggressive_merges, self.order_array_seeds)
         return fused or None
 
     def report(self, pass_retval: int) -> str:
@@ -176,10 +199,7 @@ class InlineControlFlowRegions(ppl.Pass):
                 break
             inlined += inlined_in_iteration
 
-        if inlined:
-            sdfg.reset_cfg_list()
-            return inlined
-        return None
+        return inlined or None
 
     def report(self, pass_retval: int) -> str:
         return f"Inlined {pass_retval} regions."

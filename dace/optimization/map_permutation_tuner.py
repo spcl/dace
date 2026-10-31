@@ -5,6 +5,7 @@ from collections.abc import Generator
 import dace
 from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
+from dace.optimization import utils as optim_utils
 from dace.sdfg.analysis.cutout import SDFGCutout
 from dace.transformation import helpers as xfh
 
@@ -50,7 +51,7 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
         map_entry.map.params = config
 
     def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> dict:
-        cutout.start_state.instrument = self.instrument
+        optim_utils.instrument_state(cutout.start_state, self.instrument)
 
         map_entry = None
         for node in cutout.start_state.nodes():

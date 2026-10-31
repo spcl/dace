@@ -1,10 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections
+import contextlib
 import copy
 import ctypes
 import functools
 import gzip
+import importlib.metadata
 import json
 import os
 import pathlib
@@ -12,11 +14,24 @@ import random
 import re
 import shutil
 import sys
+import time
+import types
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from hashlib import md5, sha256
 from numbers import Integral
-from typing import TYPE_CHECKING, Any, AnyStr, BinaryIO, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AnyStr,
+    BinaryIO,
+    Optional,
+    Union,
+)
+
+import numpy as np
+import sympy
 
 import dace
 import dace.serialize
@@ -41,9 +56,16 @@ from dace.properties import (
     make_properties,
 )
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import SubgraphView, generate_element_id
-from dace.sdfg.replace import replace_properties_dict
+from dace.sdfg.graph import (
+    SubgraphView,
+    copy_edge_index,
+    copy_graph_field,
+    copy_node_index,
+    generate_element_id,
+)
+from dace.sdfg.replace import replace_properties_dict, symbolic_replacements
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.symbol_repo import SymbolRepo, bound_names, scope_from_json, scope_owners
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
@@ -51,9 +73,24 @@ from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
 RankType = Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic
 
-#: How a launcher tells a task its rank, most specific first. Read instead of importing mpi4py,
-#: which is optional and initializes MPI. All are job-unique; node-local counters are not.
-LAUNCHER_RANK_VARS = (
+
+def normalize_shape_entry(entry: Integral | str | symbolic.SymbolicType) -> int | symbolic.SymbolicType:
+    """One shape entry as an ``int`` or a symbolic expression, never truncated: ``int(4.7)`` floors, so only
+    integers and integer strings go through ``int`` and the descriptor's integral check sees everything else."""
+    if isinstance(entry, Integral):
+        return int(entry)
+    if isinstance(entry, str):
+        try:
+            return int(entry)
+        except ValueError:
+            pass
+    return dace.symbolic.pystr_to_symbolic(entry)
+
+
+#: How an MPI launcher tells a rank its rank, most specific first. Read instead of importing
+#: mpi4py, which is optional and initializes MPI. All are job-unique; node-local counters are not.
+#: Only these mean "this process is a rank of an MPI job" -- a Slurm task is not.
+MPI_RANK_VARS = (
     "OMPI_COMM_WORLD_RANK",  # Open MPI and the vendor MPIs built on it
     "MV2_COMM_WORLD_RANK",  # MVAPICH2
     "PMIX_RANK",  # Open MPI 4+, Slurm pmix
@@ -62,8 +99,11 @@ LAUNCHER_RANK_VARS = (
     "FLUX_TASK_RANK",  # Flux
     "PALS_RANKID",  # HPE/Cray PALS
     "ALPS_APP_PE",  # Cray ALPS
-    "SLURM_PROCID",  # srun with no MPI
 )
+
+#: How any launcher tells a task its rank. Adds the Slurm task id, which srun sets whether or not
+#: the step runs MPI at all -- enough to name a build folder, not enough to call MPI_Init on.
+LAUNCHER_RANK_VARS = MPI_RANK_VARS + ("SLURM_PROCID",)  # srun with no MPI
 
 if TYPE_CHECKING:
     from dace.codegen.compiled_sdfg import CompiledSDFG
@@ -151,18 +191,104 @@ def _nested_arrays_from_json(obj, context=None):
     return NestedDict({k: dace.serialize.from_json(v, context) for k, v in obj.items()})
 
 
-def _replace_dict_keys(d, old, new):
-    # Keys are names, but a replacement may be given as a symbolic expression
-    old = str(old)
-    new = str(new)
-    if old == new:
-        warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
-        return
-    if old in d:
+# ``frontend_metadata`` carries values dace never interprets, so both directions are a plain deep copy: enough to
+# keep the stored dict and the emitted JSON from aliasing each other.
+def _frontend_metadata_to_json(meta):
+    return copy.deepcopy(meta) if meta else {}
+
+
+def _frontend_metadata_from_json(obj, context=None):
+    return copy.deepcopy(obj) if obj else {}
+
+
+class NameCollisionError(NameError):
+    """Raised when a new symbol or data descriptor takes a name the SDFG already uses for the other kind."""
+
+
+def scope_bound_names(sdfg: "SDFG") -> set[str]:
+    """The names a scope of ``sdfg`` binds (not those of its nested SDFGs): the variables of loops that initialize
+    them, map and consume parameters, and the dynamic connectors of scope entries. Such a name is never an SDFG
+    symbol. A loop without an initializer iterates a variable defined outside it."""
+    return {
+        name
+        for _, owner in scope_owners(sdfg)
+        if isinstance(owner, nd.EntryNode) or (isinstance(owner, LoopRegion) and owner.init_statement is not None)
+        for name in bound_names(owner)
+    }
+
+
+def is_scope_bound_name(sdfg: "SDFG", name: str) -> bool:
+    """Whether ``name in scope_bound_names(sdfg)``, walking only up to the first scope that binds it."""
+    for region in sdfg.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region.loop_variable == name and region.init_statement is not None:
+            return True
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.MapEntry):
+                if name in node.map.params:
+                    return True
+            elif isinstance(node, nd.ConsumeEntry) and node.consume.pe_index == name:
+                return True
+            if isinstance(node, nd.EntryNode) and name in node.in_connectors and not name.startswith("IN_"):
+                return True
+    return False
+
+
+def interstate_bound_names(sdfg: "SDFG") -> set[str]:
+    """The names the interstate edges of ``sdfg`` (not of its nested SDFGs) assign; an edge types them by inference."""
+    return {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
+
+
+def root_sdfg(anchor: Any) -> "SDFG":
+    """The outermost SDFG holding ``anchor``, an SDFG or a block of one."""
+    sdfg = anchor if isinstance(anchor, SDFG) else anchor.sdfg
+    while sdfg.parent_sdfg is not None:
+        sdfg = sdfg.parent_sdfg
+    return sdfg
+
+
+@contextlib.contextmanager
+def memoize_facts(anchor: Any, active: bool = True) -> Iterator[None]:
+    """Compute ``SDFG.facts()`` once per SDFG of ``anchor``'s SDFG tree inside the block, or, with ``active=False``,
+    suspend an enclosing memo. The memo lives on the root SDFG.
+
+    ``facts()`` walks every interstate edge and data descriptor of the SDFG, so a span probing one graph many times
+    pays it once per SDFG. The caller owns invalidation: it drops every SDFG it changes with :func:`forget_facts`,
+    and suspends the memo while a change is under way.
+    """
+    root = root_sdfg(anchor)
+    enclosing = root._facts_memo
+    root._facts_memo = {} if active else None
+    try:
+        yield
+    finally:
+        root._facts_memo = enclosing
+
+
+def forget_facts(sdfg: "SDFG") -> None:
+    """Drop the memoized facts of ``sdfg``, after a change to its symbols, data descriptors or interstate edges."""
+    memo = root_sdfg(sdfg)._facts_memo
+    if memo is not None:
+        memo.pop(sdfg, None)
+
+
+def forget_all_facts(anchor: Any) -> None:
+    """Drop every memoized fact of ``anchor``'s SDFG tree, after a change whose reach over the tree the caller does
+    not track."""
+    memo = root_sdfg(anchor)._facts_memo
+    if memo is not None:
+        memo.clear()
+
+
+def _replace_dict_keys(d, renames: Mapping) -> None:
+    """Renames the keys of ``d`` all at once, so that a swap (``a -> b``, ``b -> a``) keeps both values. Keys are names,
+    but a replacement may be given as a symbolic expression."""
+    renames = {str(old): str(new) for old, new in renames.items() if str(old) != str(new) and str(old) in d}
+    values = {old: d.pop(old) for old in renames}
+    for old, new in renames.items():
         if new in d:
             warnings.warn(f'"{new}" already exists in SDFG')
-        d[new] = d[old]
-        del d[old]
+        d[new] = values[old]
 
 
 def _remove_dict_keys(d, old):
@@ -170,10 +296,10 @@ def _remove_dict_keys(d, old):
         del d[old]
 
 
-def _replace_dict_values(d, old, new):
+def _replace_dict_values(d, renames: Mapping[str, str]) -> None:
     for k, v in d.items():
-        if v == old:
-            d[k] = new
+        if v in renames:
+            d[k] = renames[v]
 
 
 def _sdfg_build_folder_getter(sdfg: "SDFG") -> str:
@@ -199,9 +325,14 @@ def _sdfg_build_folder_getter(sdfg: "SDFG") -> str:
         # saving space and potentially build time
         return os.path.join(base_folder, "single_cache")
     elif cache_config == "hash":
-        # Any change to the SDFG will result in a new cache folder
-        md5_hash = md5(str(sdfg.to_json()).encode("utf-8")).hexdigest()
-        return os.path.join(base_folder, f"{sdfg.name}_{md5_hash}")
+        # Any change to the SDFG will result in a new cache folder. `hash_sdfg()`, not raw
+        # `to_json()`: every SDFG/state/node/edge gets a fresh `uuid4` `guid` at construction
+        # (`generate_element_id`), so `str(sdfg.to_json())` differs on every build of the SAME
+        # program and the folder name -- thus the cache -- would never hit. `hash_sdfg()` strips
+        # `guid` along with the other derived/non-identity keys (name, transformation history,
+        # instrumentation) before hashing, so it is stable across identical builds while still
+        # covering everything that can change the generated code (dataflow, symbols, constants).
+        return os.path.join(base_folder, f"{sdfg.name}_{sdfg.hash_sdfg()}")
     elif cache_config == "unique":
         # Base name on location in memory, so no caching is possible between
         # processes or subsequent invocations
@@ -332,7 +463,7 @@ class InterstateEdge:
     def __init__(
         self,
         condition: CodeBlock | str | ast.AST | list | None = None,
-        assignments: dict[str, str | ast.AST] | None = None,
+        assignments: Mapping[str, str | ast.AST] | None = None,
     ):
         if condition is None:
             condition = CodeBlock("1")
@@ -417,7 +548,11 @@ class InterstateEdge:
         #       excluding keys from being considered "defined" if they have been already read.
 
         # Symbols in conditions are always free, because the condition is executed before the assignments
-        cond_symbols = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
+        cond_code = self.condition.code[0]
+        if isinstance(cond_code, ast.Expr) and isinstance(cond_code.value, ast.Constant):
+            cond_symbols = set()  # An unconditional edge carries no names to walk for.
+        else:
+            cond_symbols = set(map(str, dace.symbolic.symbols_in_ast(cond_code)))
         # Symbols in assignment keys are candidate defined symbols
         lhs_symbols = set()
         # Symbols in assignment values are candidate free symbols
@@ -450,7 +585,7 @@ class InterstateEdge:
         assert all(isinstance(s, str) for s in real_symbol_names)
         return real_symbol_names
 
-    def used_arrays(self, arrays: dict[str, dt.Data], union_lhs_symbols: bool = False) -> set[str]:
+    def used_arrays(self, arrays: Mapping[str, dt.Data], union_lhs_symbols: bool = False) -> set[str]:
         """
         Returns a set of arrays used in this edge's properties (i.e., condition and assignments).
         :param arrays: A dictionary mapping names to their corresponding data descriptors (`sdfg.arrays`)
@@ -480,10 +615,8 @@ class InterstateEdge:
             return
 
         if replace_keys:
-            for name, new_name in repl.items():
-                # As for the SDFG's own keys, an expression replaces uses only and never becomes an assignment target
-                if validate_name(str(new_name)):
-                    _replace_dict_keys(self.assignments, name, new_name)
+            # As for the SDFG's own keys, an expression replaces uses only and never becomes an assignment target
+            _replace_dict_keys(self.assignments, {k: v for k, v in repl.items() if validate_name(str(v))})
 
         # Rewrite only what names a key: re-spelling the rest would drop the parsed condition and its caches.
         for k, v in self.assignments.items():
@@ -513,7 +646,10 @@ class InterstateEdge:
         Returns a mapping between symbols defined by this edge (i.e.,
         assignments) to their type.
         """
-
+        # An edge that assigns nothing defines nothing, and the type environment below is only ever
+        # read to infer an assignment's type. Building it first costs a dict over every array in the
+        # SDFG -- 4782 of them on CloudSC -- for a result that is empty by construction, and 45% of
+        # that graph's interstate edges are assignment-free.
         if not self.assignments:
             return {}
 
@@ -531,20 +667,25 @@ class InterstateEdge:
             alltypes = symbols
 
         inferred_lhs_symbols = {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
+        lhs_symbols = self.new_symbol_names()
+        return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
 
+    def new_symbol_names(self) -> dict[str, None]:
+        """
+        The symbols this edge defines -- the keys of :meth:`new_symbols` -- without inferring their types.
+        """
         # Symbols in assignment keys are candidate newly defined symbols
-        lhs_symbols = set()
+        lhs_symbols = {}
         # Symbols already defined
         rhs_symbols = set()
         for lhs, rhs in self.assignments.items():
             rhs_symbols |= symbolic.free_symbols_and_functions(rhs)
             # Only add LHS to the set of candidate newly defined symbols if it has not been defined yet
             if lhs not in rhs_symbols:
-                lhs_symbols.add(lhs)
+                lhs_symbols[lhs] = None
+        return lhs_symbols
 
-        return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
-
-    def get_read_memlets(self, arrays: dict[str, dt.Data], include_scalars: bool = False) -> list[mm.Memlet]:
+    def get_read_memlets(self, arrays: Mapping[str, dt.Data], include_scalars: bool = False) -> list[mm.Memlet]:
         """
         Returns a list of memlets (with data descriptors and subsets) used in this edge. This includes
         both reads in the condition and in every assignment.
@@ -582,16 +723,43 @@ class _UsedNames:
     :func:`dace.utils.find_new_name` only ever asks whether a candidate is taken, so this
     answers ``in`` from :meth:`SDFG.is_name_used` rather than materializing the union of
     arrays, constants and symbols on every mint. Not a container in any other sense --
-    it is deliberately not iterable, because there is no cheap order to iterate in.
+    it is deliberately not iterable, because there is no cheap order to iterate in. The names
+    scopes and interstate edges bind come from :meth:`SDFG.bound_names`.
+
+    ``include_connectors`` additionally rejects names in use as a tasklet connector, because a
+    connector may not share its name with a data descriptor, constant or symbol -- see
+    ``validation.py``, "Connector name '%s' is already used as a symbol, constant, or array name".
+    That answer costs a walk over every state and every node, so it is opt in, and
+    :meth:`SDFG.find_new_name_avoiding_connectors` is the caller-visible name for the cost. The
+    walk is memoised per instance, so a name needing several attempts (``tmp``, ``tmp_0``, ...)
+    still walks once. ``states()`` stays inside this SDFG's own namespace: it descends into
+    control flow regions but not into NestedSDFG nodes, which have namespaces of their own.
     """
 
-    __slots__ = ("sdfg",)
+    __slots__ = ("sdfg", "include_connectors", "connectors")
 
-    def __init__(self, sdfg: "SDFG") -> None:
+    def __init__(self, sdfg: "SDFG", include_connectors: bool = False) -> None:
         self.sdfg = sdfg
+        self.include_connectors = include_connectors
+        self.connectors: set[str] | None = None
 
     def __contains__(self, name: str) -> bool:
-        return self.sdfg.is_name_used(name)
+        if self.sdfg.is_name_declared(name):
+            return True
+        scoped, assigned = self.sdfg.bound_names()
+        if name in scoped or name in assigned:
+            return True
+        if not self.include_connectors:
+            return False
+        if self.connectors is None:
+            self.connectors = {
+                conn
+                for st in self.sdfg.states()
+                for n in st.nodes()
+                if isinstance(n, nd.CodeNode)
+                for conn in (n.in_connectors.keys() | n.out_connectors.keys())
+            }
+        return name in self.connectors
 
 
 @make_properties
@@ -628,7 +796,6 @@ class SDFG(ControlFlowRegion):
         to_json=_arrays_to_json,
         from_json=_nested_arrays_from_json,
     )
-    symbols = DictProperty(str, dtypes.typeclass, category="General", desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
@@ -661,6 +828,18 @@ class SDFG(ControlFlowRegion):
         desc="Whether to generate OpenMP sections in code",
     )
 
+    openmp_array_reductions = Property(
+        dtype=bool,
+        default=False,
+        category="Code Generation",
+        desc="Whether codegen may emit OpenMP array-section reduction clauses "
+        "(``reduction(op:A[0:n])``, plus ``#pragma omp declare reduction`` for complex "
+        "element types) for whole-buffer WCR accumulators of a parallel map, instead of "
+        "per-element atomics. Off by default (atomic path); the canonicalize pipeline turns "
+        "it on for its output. Only provably-safe contiguous cases take the clause; anything "
+        "else falls back to the atomic path.",
+    )
+
     debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
 
     callback_mapping = DictProperty(
@@ -675,6 +854,17 @@ class SDFG(ControlFlowRegion):
         dtype=bool, default=False, category="(Debug)", desc="Whether the SDFG contains explicit control flow constructs"
     )
 
+    # Opaque, JSON-safe payload a frontend attaches to describe how this SDFG maps back to its source program
+    # (dace-fortran keeps its frozen Fortran signature here), so it survives a save/load round-trip.
+    frontend_metadata = Property(
+        dtype=dict,
+        default={},
+        to_json=_frontend_metadata_to_json,
+        from_json=_frontend_metadata_from_json,
+        category="General",
+        desc="Frontend-owned, JSON-serializable metadata; opaque to dace",
+    )
+
     build_folder = Property(
         dtype=str,
         default=None,
@@ -686,6 +876,14 @@ class SDFG(ControlFlowRegion):
         getter=_sdfg_build_folder_getter,
         setter=_sdfg_build_folder_setter,
     )
+
+    @property
+    def build_folder_is_default(self) -> bool:
+        """Whether the build folder follows the ``cache`` policy rather than being assigned.
+
+        An assigned folder belongs to whoever assigned it, so nothing may reclaim it.
+        """
+        return self._build_folder is None
 
     def __init__(
         self, name: str, constants: dict[str, tuple[dt.Data, Any]] = None, propagate: bool = True, parent=None
@@ -714,11 +912,20 @@ class SDFG(ControlFlowRegion):
 
         self._propagate = propagate
         self._parent = parent
-        self.symbols = {}
+        self._symbol_repo = SymbolRepo()
+        self._bound_names: tuple[frozenset[str], frozenset[str]] | None = None
+        #: Per-state ``(len(symbols), defined_symbols())`` of one ``expand_library_nodes`` sweep; ``None`` outside it
+        self._expansion_symbols: dict[SDFGState, tuple[int, dict[str, dt.Data]]] | None = None
+        #: The ``CanonStats`` recording a ``canonicalize(stats=...)`` run of this root SDFG; ``None`` otherwise
+        self._canon_stats = None
+        #: SDFG of this tree -> its ``facts()``, while :func:`memoize_facts` is active on this root; ``None`` otherwise
+        self._facts_memo: dict[SDFG, symbolic.Facts] | None = None
+        # Symbols ``add_datadesc`` declared because a shape names them; a scope that binds one later takes it over
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
         self.arg_names = []
+        self.frontend_metadata = {}
         self._labels: set[str] = set()
         self.global_code = {"frame": CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {"frame": CodeBlock("", dtypes.Language.CPP)}
@@ -746,6 +953,7 @@ class SDFG(ControlFlowRegion):
         for k, v in self.__dict__.items():
             # Skip derivative attributes and GUID
             if k in (
+                "_start_block",
                 "_cached_start_block",
                 "_edges",
                 "_nodes",
@@ -755,12 +963,20 @@ class SDFG(ControlFlowRegion):
                 "_cfg_list",
                 "_transformation_hist",
                 "guid",
+                "_symbol_repo",
             ):
                 continue
-            setattr(result, k, copy.deepcopy(v, memo))
+            if k in ("_expansion_symbols", "_canon_stats", "_facts_memo"):
+                setattr(result, k, None)
+                continue
+            setattr(result, k, copy_graph_field(self, k, v, memo))
         # Copy edges and nodes
-        result._edges = copy.deepcopy(self._edges, memo)
-        result._nodes = copy.deepcopy(self._nodes, memo)
+        result._edges = copy_edge_index(self._edges, memo)
+        result._nodes = copy_node_index(self._nodes, memo)
+        # Both name a block, so they are copied with the nodes to land on the copies rather than the originals.
+        result._start_block = copy.deepcopy(self._start_block, memo)
+        # After the graph, so that the repository is keyed by the copied scope owners, each copied in its own graph
+        result._symbol_repo = copy.deepcopy(self._symbol_repo, memo)
         result._cached_start_block = copy.deepcopy(self._cached_start_block, memo)
         # Copy parent attributes
         result._parent = memo.get(id(self._parent))
@@ -861,6 +1077,7 @@ class SDFG(ControlFlowRegion):
         # restored on exit.
         with symbolic.serialization_symbol_dtypes(self.symbols):
             tmp = super().to_json()
+        tmp["attributes"]["symbol_repo"] = self._symbol_repo.to_json(self)
         if is_root:
             tmp["source_files"] = source_files
 
@@ -904,6 +1121,7 @@ class SDFG(ControlFlowRegion):
             raise TypeError("Class type mismatch")
 
         attrs = dict(json_obj["attributes"])
+        repo_json = attrs.pop("symbol_repo")
         json_obj = dict(json_obj)
         json_obj["attributes"] = attrs
         nodes = json_obj["nodes"]
@@ -920,27 +1138,41 @@ class SDFG(ControlFlowRegion):
             ret, json_obj, context=context, ignore_properties={"constants_prop", "name", "hash"}
         )
 
+        # The blocks parse their expressions under the symbols ``to_json`` wrote them under: ``s / 2`` of a
+        # float ``s`` read as an integer one is a floor division. The repository needs the blocks, so it follows.
         nodelist = []
-        for n in nodes:
-            nci = copy.copy(context)
-            nci["sdfg"] = ret
+        with symbolic.serialization_symbol_dtypes(scope_from_json(repo_json["params"], context).types):
+            for n in nodes:
+                nci = copy.copy(context)
+                nci["sdfg"] = ret
 
-            block = dace.serialize.from_json(n, context=nci)
-            # Resetting the CFG list walks the whole SDFG, so it is done once below rather than per region
-            ret.add_node(block, reset_cfg_list=False)
-            nodelist.append(block)
+                block = dace.serialize.from_json(n, context=nci)
+                ret.add_node(block)
+                nodelist.append(block)
 
-        for e in edges:
-            e = dace.serialize.from_json(e, context=context)
-            ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
+            for e in edges:
+                e = dace.serialize.from_json(e, context=context)
+                ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
-        if "start_block" in json_obj:
-            ret._start_block = json_obj["start_block"]
+        if json_obj.get("start_block") is not None:
+            # An INDEX into the node list, which is what ``to_json`` wrote and what the getter
+            # resolves through ``self.node()``. Storing the block here instead makes every read of
+            # a pinned entry raise on a deserialized SDFG.
+            ret._start_block = int(json_obj["start_block"])
 
+        ret._symbol_repo = SymbolRepo.from_json(repo_json, ret, context)
         ret.reset_cfg_list()
 
         if "source_files" in json_obj:  # This will only happen on the root SDFG, once deserialization is complete
             ret.rematerialize_debuginfo_files(json_obj["source_files"])
+
+        if ret.parent_sdfg is None:
+            # `to_json` rebuilds the CFG list before writing, but it is derived state that the JSON
+            # does not carry: on the way back in it is only whatever the nested `add_node` calls
+            # happened to accumulate. Left stale, `cfg_id` no longer round-trips, so every
+            # `PatternNode` lookup resolves against the wrong region and `can_be_applied` raises
+            # `NodeNotFoundError` -- which the matcher swallows, silently declining every match.
+            ret.reset_cfg_list()
 
         return ret
 
@@ -964,9 +1196,13 @@ class SDFG(ControlFlowRegion):
                 keys_to_delete = []
                 kv_to_recurse = []
                 for key, value in json_obj.items():
+                    # 'scope_dict' is a derived cache of scope_children() that to_json emits for
+                    # the viewer and from_json never reads back. It restates node ids the 'nodes'
+                    # list already carries, and being ordered first it masks the real divergence.
                     if isinstance(key, str) and (
                         key.startswith("_meta_")
-                        or key in ["name", "hash", "orig_sdfg", "transformation_hist", "instrument", "guid"]
+                        or key
+                        in ["name", "hash", "orig_sdfg", "transformation_hist", "instrument", "guid", "scope_dict"]
                     ):
                         keys_to_delete.append(key)
                     else:
@@ -1027,7 +1263,6 @@ class SDFG(ControlFlowRegion):
 
         :param name: Name to find.
         :param new_name: Name to replace.
-        :raise FileExistsError: If name and new_name already exist as data descriptors or symbols.
         """
         if name == new_name:
             return
@@ -1052,6 +1287,8 @@ class SDFG(ControlFlowRegion):
         """
 
         repldict = {k: v for k, v in repldict.items() if k != v}
+        # Renames map parameters and interstate assignments in place
+        self.forget_bound_names()
         if symrepl is None:
             symrepl = {
                 symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
@@ -1060,27 +1297,31 @@ class SDFG(ControlFlowRegion):
         else:
             symrepl = {k: v for k, v in symrepl.items() if str(k) != str(v)}
 
+        symrepl = symrepl or symbolic_replacements(repldict, self.symbols)
+
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:
             # Filter out nested data names, as we cannot and do not want to replace names in nested data descriptors
             repldict_filtered = {k: v for k, v in repldict.items() if "." not in k}
-            for name, new_name in repldict_filtered.items():
-                if validate_name(new_name):
-                    _replace_dict_keys(self._arrays, name, new_name)
-                    _replace_dict_keys(self.symbols, name, new_name)
-                    _replace_dict_keys(self.constants_prop, name, new_name)
-                    _replace_dict_keys(self.callback_mapping, name, new_name)
-                    _replace_dict_values(self.callback_mapping, name, new_name)
-                else:
-                    _remove_dict_keys(self._arrays, name)
-                    if name in self.symbols:
-                        old_sym = self.symbols[name]
-                        del self.symbols[name]
-                        new_syms = symrepl[symbolic.pystr_to_symbolic(name)].free_symbols
-                        self.symbols.update({str(s): old_sym for s in new_syms})
-
-                    _remove_dict_keys(self.constants_prop, name)
-                    _remove_dict_keys(self.callback_mapping, name)
+            # Only an expression declares names, and never those of data or of a scope
+            reserved = (
+                self.arrays.keys() | self.bound_names()[0] | self.bound_names()[1]
+                if not all(validate_name(new_name) for new_name in repldict_filtered.values())
+                else set()
+            )
+            self._symbol_repo.replace(
+                repldict_filtered,
+                {name: symrepl[symbolic.pystr_to_symbolic(name)] for name in repldict_filtered},
+                reserved,
+            )
+            renames = {name: new_name for name, new_name in repldict_filtered.items() if validate_name(str(new_name))}
+            for d in (self._arrays, self.constants_prop, self.callback_mapping):
+                _replace_dict_keys(d, renames)
+            _replace_dict_values(self.callback_mapping, renames)
+            for name in repldict_filtered.keys() - renames.keys():
+                _remove_dict_keys(self._arrays, name)
+                _remove_dict_keys(self.constants_prop, name)
+                _remove_dict_keys(self.callback_mapping, name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -1088,37 +1329,211 @@ class SDFG(ControlFlowRegion):
 
         super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
 
-    def add_symbol(self, name, stype, find_new_name: bool = False):
-        """Adds a symbol to the SDFG.
+    def add_symbol(
+        self,
+        name,
+        stype=None,
+        find_new_name: bool = False,
+        predicates: frozenset[symbolic.Predicate] = frozenset(),
+        scale: symbolic.Scale = symbolic.Scale.DEFAULT,
+        *,
+        scope_bound: AbstractSet[str] | None = None,
+    ):
+        """Adds a symbol to the SDFG. Adding a symbol again with the same type and predicates does nothing.
 
-        :param name: Symbol name.
+        :param name: Symbol name, or a symbol, whose declaration is taken.
         :param stype: Symbol type.
         :param find_new_name: Find a new name.
+        :param predicates: Sign predicates assumed for the symbol.
+        :param scale: ``Scale.SMALL`` makes the symbol much smaller than every default one; see ``set_symbol_scale``.
+        :param scope_bound: ``scope_bound_names(self)``, when the caller already holds it (it walks every node).
+        :raise NameCollisionError: If the name is used by a data descriptor.
+        :raise InconsistentAssumptionsError: If the symbol exists with another type or other predicates, or the
+                                             predicates contradict the SDFG's facts.
         """
+        if isinstance(name, symbolic.symbol):
+            name, stype, predicates, scale = (
+                name.name,
+                name.declaration.dtype,
+                name.declaration.predicates,
+                name.declaration.scale,
+            )
+        dtype = stype if isinstance(stype, dtypes.typeclass) else dtypes.dtype_to_typeclass(stype)
+        if not isinstance(dtype, dtypes.typeclass):
+            raise TypeError(f'Invalid type {stype} for symbol "{name}"')
         if find_new_name:
             name = self._find_new_name(name)
-        else:
-            # We do not check for data constant, because there is a link between the constants and
-            #  the data descriptors.
-            if name in self.symbols:
-                raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
-            if name in self.arrays:
-                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
-        if not isinstance(stype, dtypes.typeclass):
-            stype = dtypes.dtype_to_typeclass(stype)
-        self.symbols[name] = stype
+        elif name in self.arrays:
+            # Data constants are not checked, as they are linked to the data descriptors.
+            raise NameCollisionError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
+        elif name not in self.symbols and name in (scope_bound if scope_bound is not None else scope_bound_names(self)):
+            raise NameCollisionError(
+                f'Cannot create symbol "{name}", a loop or map scope binds it; its facts come from the scope.'
+            )
+        self._symbol_repo.add(name, dtype, predicates)
+        if scale is symbolic.Scale.SMALL:
+            self._symbol_repo.set_scale(name, scale)
         return name
+
+    def set_symbol_scale(self, name: str, scale: symbolic.Scale) -> None:
+        """Sets the scale of a declared symbol. Proofs may take every ``SMALL`` symbol to be much smaller than every
+        default one (``<<``, which implies ``<``); each order proven so is checked when the program is called.
+
+        :raise KeyError: If the symbol is not declared.
+        """
+        self._symbol_repo.set_scale(name, scale)
+
+    def set_symbol_assumptions(self, name: str, predicates: frozenset[symbolic.Predicate]) -> None:
+        """Replaces the sign predicates assumed for a declared symbol.
+
+        :raise KeyError: If the symbol is not declared.
+        :raise InconsistentAssumptionsError: If the predicates contradict the SDFG's facts.
+        """
+        self._symbol_repo.set_predicates(name, predicates)
+
+    def add_symbol_relation(self, relation: symbolic.Relation) -> None:
+        """Assumes a relation between declared symbols; adding a known relation again does nothing.
+
+        :raise KeyError: If the relation names an undeclared symbol.
+        :raise InconsistentAssumptionsError: If the relation contradicts the SDFG's facts.
+        """
+        self._symbol_repo.add_relation(relation)
+
+    def add_data_assumption(self, name: str, fact: symbolic.DataFact) -> None:
+        """Assumes ``fact`` of the contents of the non-transient container ``name`` when the program is called (see
+        :class:`~dace.symbolic_facts.DataFactKind`); adding a known fact again does nothing.
+
+        :raise KeyError: If the container does not exist.
+        :raise InconsistentAssumptionsError: If the fact cannot hold for the container (see :meth:`check_data_fact`).
+        """
+        self.check_data_fact(name, fact)
+        self._symbol_repo.add_data_fact(name, fact)
+
+    def set_data_assumptions(self, name: str, facts: Iterable[symbolic.DataFact]) -> None:
+        """Replaces the facts assumed of container ``name`` when the program is called.
+
+        :raise KeyError: If the container does not exist.
+        :raise InconsistentAssumptionsError: If a fact cannot hold for the container.
+        """
+        facts = list(facts)
+        for fact in facts:
+            self.check_data_fact(name, fact)
+        self._symbol_repo.set_data_facts(name, facts)
+
+    def check_data_fact(self, name: str, fact: symbolic.DataFact) -> None:
+        """Raises if ``fact`` cannot hold for container ``name``: a kind other than ``NONNEGATIVE`` on a container
+        that is not one-dimensional, segments naming no container, or a sentinel-free ``INJECTIVE`` whose value range
+        is provably smaller than the container's extent.
+
+        :raise KeyError: If the container does not exist.
+        :raise InconsistentAssumptionsError: If the fact cannot hold.
+        """
+        desc = self._arrays.get(name)
+        if desc is None:
+            raise KeyError(f'Container "{name}" does not exist')
+        problems = []
+        if fact.kind is not symbolic.DataFactKind.NONNEGATIVE and len(desc.shape) != 1:
+            problems.append(f"{fact.kind.name} needs a one-dimensional container, not shape {desc.shape}")
+        if fact.segments is not None and fact.segments not in self._arrays:
+            problems.append(f'segments "{fact.segments}" is not a container')
+        if (
+            fact.kind is symbolic.DataFactKind.INJECTIVE
+            and fact.sentinel is None
+            and fact.lo is not None
+            and len(desc.shape) == 1
+            and symbolic.holds(
+                symbolic.Relation(symbolic.RelationKind.LT, fact.hi - fact.lo + 1, desc.shape[0]), self.facts()
+            )
+        ):
+            problems.append(f"{desc.shape[0]} distinct entries cannot lie in [{fact.lo}, {fact.hi}]")
+        if problems:
+            raise symbolic.InconsistentAssumptionsError(name, [fact.text(name), *problems])
+
+    def data_assumptions(self, name: str) -> tuple[symbolic.DataFact, ...]:
+        """The facts assumed of the contents of container ``name`` when the program is called."""
+        return self._symbol_repo.data_facts(name)
+
+    def facts(self, assigned: AbstractSet[str] | None = None) -> symbolic.Facts:
+        """The facts assumed about this SDFG's symbols, and that a symbol a data descriptor's dimension is a positive
+        multiple of (``N``, ``2 * N``) is nonnegative, for explicit use in proofs. What is assumed of a symbol holds
+        for its value on entry only, so nothing is assumed of one an interstate edge assigns.
+
+        :param assigned: ``interstate_bound_names(self)``, when the caller keeps it up to date; walked otherwise.
+        """
+        memo = root_sdfg(self)._facts_memo
+        if memo is None:
+            return self.derive_facts(assigned)
+        facts = memo.get(self)
+        if facts is None:
+            facts = memo[self] = self.derive_facts(assigned)
+        return facts
+
+    def derive_facts(self, assigned: AbstractSet[str] | None = None) -> symbolic.Facts:
+        """``facts()``, computed from the graph regardless of an active :func:`memoize_facts`."""
+        own = self._symbol_repo.facts()
+        if assigned is None:
+            assigned = interstate_bound_names(self)
+        if assigned:
+            own = symbolic.Facts(
+                [relation for relation in own.relations if not symbolic.relation_names(relation) & assigned],
+                own.integers,
+                own.small - assigned,
+                own.parameters - assigned,
+                own.assumed,
+            )
+        declared = self._symbol_repo.params.types
+        extents = sorted(
+            {
+                name
+                for desc in self._arrays.values()
+                if isinstance(desc, dt.Data)
+                for name in desc.scaled_symbols()
+                if name in declared and name not in assigned
+            }
+        )
+        if not extents:
+            return own
+        nonnegative = [symbolic.predicate_relation(symbolic.Predicate.NONNEGATIVE, symbolic.symbol(n)) for n in extents]
+        return own.with_relations(nonnegative)
+
+    def bound_names(self) -> tuple[frozenset[str], frozenset[str]]:
+        """The names this SDFG's scopes bind (see ``scope_bound_names``) and those its interstate edges assign, for
+        picking names that clash with neither. Cached: an added scope entry or assigning interstate edge extends the
+        cache, an added region or state holding a scope entry, or any removal, drops it. A name bound by editing an
+        existing map or edge in place is seen after the next drop. Facts and validation walk the graph instead, as a
+        stale name there would be unsound."""
+        if self._bound_names is None:
+            self._bound_names = (frozenset(scope_bound_names(self)), frozenset(interstate_bound_names(self)))
+        return self._bound_names
+
+    @property
+    def symbol_repo(self) -> SymbolRepo:
+        """The dtypes and facts of this SDFG's symbols and of the names its scopes open."""
+        return self._symbol_repo
+
+    @property
+    def symbols(self) -> Mapping[str, dtypes.typeclass]:
+        """The symbols passed into this SDFG, by name: a read-only view of the parameters of its symbol repository,
+        which every change goes through."""
+        return types.MappingProxyType(self._symbol_repo.params.types)
 
     def remove_symbol(self, name):
         """Removes a symbol from the SDFG.
 
         :param name: Symbol name.
+        :raise ValueError: If an assumed relation still names the symbol.
         """
-        del self.symbols[name]
+        self._symbol_repo.remove(name)
         # Clean up from symbol mapping if this SDFG is nested
         nsdfg = self.parent_nsdfg_node
         if nsdfg is not None and name in nsdfg.symbol_mapping:
             del nsdfg.symbol_mapping[name]
+
+    def release_scope_bound_symbols(self, names: Iterable[str]) -> None:
+        """Removes the symbols a shape declared that a scope now binds: a loop or map iterator is never an SDFG
+        symbol. A symbol declared explicitly stays, so validation reports the collision."""
+        for name in sorted(self._symbol_repo.shape_declared.intersection(names)):
+            self.remove_symbol(name)
 
     @property
     def start_state(self):
@@ -1459,6 +1874,7 @@ class SDFG(ControlFlowRegion):
                         )
 
         del self._arrays[name]
+        self._symbol_repo.remove_data(name)
 
     def reset_sdfg_list(self):
         """
@@ -1619,10 +2035,14 @@ class SDFG(ControlFlowRegion):
         defined_syms |= set(self.constants_prop.keys())
 
         # Add used symbols from init and exit code
+        declared = set(self.symbols)
         for code in self.init_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            free_syms |= symbolic.symbols_in_code(code.as_string, declared)
         for code in self.exit_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            free_syms |= symbolic.symbols_in_code(code.as_string, declared)
+        # The program checks the orders it was optimized under, so it takes their symbols
+        for relation in self._symbol_repo.runtime_assumptions:
+            free_syms |= symbolic.relation_names(relation)
 
         # Snapshot the set so super() can filter array names out of
         # ``free_syms``; we re-extract them from internal references below.
@@ -1635,15 +2055,46 @@ class SDFG(ControlFlowRegion):
             with_contents=with_contents,
             partially_defined=partially_defined,
         )
-        # A used array needs its stride/shape/offset symbols in the free set; a merely-declared one
-        # must not leak its shape symbol into the signature (issue #2382). ``read_and_write_sets``
-        # counts an array referenced only by a code-block guard as used.
+        # A used array needs its stride/shape/offset symbols in the free set, but a
+        # merely-declared one must not leak its shape symbol into the signature
+        # (issue #2382). ``read_and_write_sets`` already reports exactly the arrays
+        # that are used -- read or written, including those referenced only by a
+        # code-block guard/condition -- so expand the extent symbols of those alone.
         res_free, res_defined, res_before = result
         if with_contents:
-            read_set, write_set = self.read_and_write_sets()
-            for name in (read_set | write_set) & self.arrays.keys():
-                res_free |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
-            res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
+            # Gate: the used arrays' extents are a subset of every array's, so when none of the
+            # latter is missing from ``res_free`` the read/write walk cannot add anything.
+            # ``symbol.name`` is what ``str`` prints, without the sympy printer.
+            array_names = self.arrays.keys()  # Hoisted: NestedDict.keys() rescans every entry.
+            per_array_extents = {}
+            all_extents = set()
+            for name in array_names:
+                desc = self.arrays[name]
+                # A Structure / Tensor member can be a SYMBOL rather than a descriptor -- a Tensor
+                # carries its ``value_count`` that way -- and a symbol has no extents of its own.
+                if not isinstance(desc, dt.Data):
+                    continue
+                syms = {s.name if isinstance(s, sympy.Symbol) else str(s) for s in desc.used_symbols(all_symbols)}
+                per_array_extents[name] = syms
+                all_extents |= syms
+            extents = set()
+            if all_extents - res_free:
+                read_set, write_set = self.read_and_write_sets()
+                for name in (read_set | write_set) & array_names:
+                    extents |= per_array_extents.get(name, set())
+                extents -= res_free
+            if extents:
+                # A transient sized by its enclosing map parameter (``t[_loop_it_0]`` under ``map
+                # _loop_it_0``) is allocated where that parameter is defined, so its extent is no
+                # argument; the block analysis already dropped it and this must not put it back.
+                scope_syms = set()
+                for state in self.states():
+                    for node in state.nodes():
+                        if isinstance(node, nd.EntryNode):
+                            scope_syms |= node.new_symbol_names(self, state)
+                res_free |= extents - scope_syms
+            # Drop symbols defined inside (e.g. loop variables) and those a scope binds (e.g. map parameters)
+            res_free -= res_defined | scope_bound_names(self)
         return res_free, res_defined, res_before
 
     def get_all_toplevel_symbols(self) -> set[str]:
@@ -1682,11 +2133,10 @@ class SDFG(ControlFlowRegion):
         read_set = set()
         write_set = set()
         for state in self.states():
-            # Get dictionaries of subsets read and written from each state
-            rs, ws = state._read_and_write_subsets()
-            # NOTE: ``set |= dict.keys()`` creates a new set, so the sets are updated in-place instead
-            read_set.update(rs.keys())
-            write_set.update(ws.keys())
+            # Name-level: only the keys were used, and the subset dicts cost a Range per edge.
+            rs, ws = state.read_and_write_sets()
+            read_set |= rs
+            write_set |= ws
 
         array_names = self.arrays.keys()
         for edge in self.all_interstate_edges():
@@ -1698,6 +2148,34 @@ class SDFG(ControlFlowRegion):
             read_set |= cfr.used_symbols(all_symbols=True, with_contents=False) & array_names
 
         return read_set, write_set
+
+    def interface_symbols(self) -> set[str]:
+        """Symbols the SDFG's own signature is described in: those in the shape, strides or offset
+        of a non-transient descriptor, and registered in :attr:`symbols`.
+
+        These belong to the ABI rather than to the body, so they must not come and go as passes
+        rewrite the code that happens to mention them.
+
+        Only a top-level SDFG has an ABI. A nested one is called through its symbol mapping, which
+        the parent resolves from its own defined symbols, so a name that only its shapes mention is
+        nothing a caller could pass. A compile-time constant and the undefined placeholder are no
+        arguments either: the first is baked into the code, the second has no value to pass.
+        """
+        if self.parent_sdfg is not None:
+            return set()
+        found: set[str] = set()
+        for desc in self.arrays.values():
+            if desc.transient:
+                continue
+            found |= {str(s) for s in desc.free_symbols}
+        return {
+            name
+            for name in found
+            if name in self.symbols
+            and name not in self.constants_prop
+            and name != symbolic.UNDEFINED_NAME
+            and not name.startswith("__dace")
+        }
 
     def arglist(self, scalars_only=False, free_symbols=None) -> dict[str, dt.Data]:
         """
@@ -1730,6 +2208,21 @@ class SDFG(ControlFlowRegion):
         # Add global free symbols used in the generated code to scalar arguments
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith("__dace")})
+
+        # A symbol in a NON-TRANSIENT descriptor's shape is part of the interface, so it stays in the
+        # signature whether or not the generated code still mentions it. Deriving the signature from
+        # the code alone made it depend on which passes ran: canonicalize removed the last use of an
+        # extent symbol and dropped it, then offloading reintroduced a use (the host-to-device copy
+        # needs the length) and brought it back, so one program had two signatures at two points in
+        # the same pipeline and a caller holding the earlier one could not call the later graph.
+        # An argument the code ignores costs nothing; a signature that moves under optimization does.
+        scalar_args.update(
+            {
+                name: dt.Scalar(self.symbols[name])
+                for name in self.interface_symbols()
+                if name not in scalar_args and name not in data_args
+            }
+        )
 
         # Fill up ordered dictionary
         result = collections.OrderedDict()
@@ -2023,19 +2516,55 @@ class SDFG(ControlFlowRegion):
         # instead of one set the size of every name in the SDFG per call.
         return utils.find_new_name(name, _UsedNames(self))
 
+    def find_new_name_avoiding_connectors(self, name: str) -> str:
+        """Like the private name minter, but also dodges names in use as a tasklet connector.
+
+        For a caller minting a GENERIC name (``tmp``, ``val``) into a graph whose connectors it did
+        not choose: an array named after an existing connector is a graph validation rejects
+        ("Connector name '%s' is already used as a symbol, constant, or array name").
+
+        Costs a walk over every state and every node, so it is separate from the ordinary minter
+        rather than folded into it -- the ordinary one runs thousands of times in a single parse.
+        """
+        return utils.find_new_name(name, _UsedNames(self, include_connectors=True))
+
+    def is_name_declared(self, name: str) -> bool:
+        """Checks if `name` is a data descriptor, symbol or constant of the SDFG."""
+        return name in self._arrays or name in self.symbols or name in self.constants_prop
+
     def is_name_used(self, name: str) -> bool:
         """Checks if `name` is already used inside the SDFG."""
-        if name in self._arrays:
-            return True
-        if name in self.symbols:
-            return True
-        if name in self.constants_prop:
-            return True
-        return False
+        # Loop variables, map parameters, dynamic connectors and interstate assignments bind their names without
+        # declaring them
+        return name in _UsedNames(self)
 
     def is_name_free(self, name: str) -> bool:
         """Test if `name` is free, i.e. is not used by anything else."""
         return not self.is_name_used(name)
+
+    def constant_declarations(self) -> dict[str, tuple[dt.Data, Any]]:
+        """The descriptor and value of every constant visible here, its own and its enclosing SDFGs': what
+        ``constants`` casts, the nearest declaration of a name winning."""
+        chain = []
+        sdfg = self
+        while sdfg is not None:
+            chain.append(sdfg)
+            sdfg = sdfg._parent_sdfg
+        result = {}
+        for sdfg in reversed(chain):
+            result.update(sdfg.constants_prop)
+        return result
+
+    def holds_constant(self, name: str, dtype: dt.Data, value: Any) -> bool:
+        """Whether the constant ``name`` visible here has the descriptor ``dtype`` and the value ``value``."""
+        sdfg = self
+        while sdfg is not None and name not in sdfg.constants_prop:
+            sdfg = sdfg._parent_sdfg
+        if sdfg is None:
+            return False
+        own_type, own_value = sdfg.constants_prop[name]
+        own_value, value = np.asarray(own_value), np.asarray(value)
+        return own_type == dtype and own_value.dtype == value.dtype and np.array_equal(own_value, value)
 
     def find_new_constant(self, name: str):
         """
@@ -2070,39 +2599,45 @@ class SDFG(ControlFlowRegion):
         find_new_name=False,
         alignment=0,
         may_alias=False,
+        assumptions: Iterable[symbolic.DataFact] = (),
     ) -> tuple[str, dt.Array]:
-        """Adds an array to the SDFG data descriptor store."""
+        """Adds an array to the SDFG data descriptor store; ``assumptions`` are facts assumed of its contents when the
+        program is called (:meth:`add_data_assumption`)."""
 
-        # convert strings to int if possible
-        newshape = []
-        for s in shape:
-            try:
-                newshape.append(int(s))
-            except:
-                newshape.append(dace.symbolic.pystr_to_symbolic(s))
-        shape = newshape
+        shape = [normalize_shape_entry(s) for s in shape]
         strides = strides or None
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.Array(
-            dtype,
-            shape,
-            storage=storage,
-            location=location,
-            allow_conflicts=allow_conflicts,
-            transient=transient,
-            strides=strides,
-            offset=offset,
-            lifetime=lifetime,
-            alignment=alignment,
-            debuginfo=debuginfo,
-            total_size=total_size,
-            may_alias=may_alias,
+        # The shape is validated against the types this SDFG declares: a symbol is its name, so an object found in a
+        # shape may be one another SDFG declared at another dtype (SymPy and the parse caches hand it back).
+        scope = (
+            symbolic.serialization_symbol_dtypes(self.symbols, inherit=True)
+            if any(symbolic.issymbolic(entry) for entry in shape)
+            else contextlib.nullcontext()
         )
+        with scope:
+            desc = dt.Array(
+                dtype,
+                shape,
+                storage=storage,
+                location=location,
+                allow_conflicts=allow_conflicts,
+                transient=transient,
+                strides=strides,
+                offset=offset,
+                lifetime=lifetime,
+                alignment=alignment,
+                debuginfo=debuginfo,
+                total_size=total_size,
+                may_alias=may_alias,
+            )
 
-        return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
+        name = self.add_datadesc(name, desc, find_new_name=find_new_name)
+        for fact in assumptions:
+            self.add_data_assumption(name, fact)
+        return name, desc
 
     def add_view(
         self,
@@ -2121,14 +2656,7 @@ class SDFG(ControlFlowRegion):
     ) -> tuple[str, dt.ArrayView]:
         """Adds a view to the SDFG data descriptor store."""
 
-        # convert strings to int if possible
-        newshape = []
-        for s in shape:
-            try:
-                newshape.append(int(s))
-            except:
-                newshape.append(dace.symbolic.pystr_to_symbolic(s))
-        shape = newshape
+        shape = [normalize_shape_entry(s) for s in shape]
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
@@ -2167,14 +2695,7 @@ class SDFG(ControlFlowRegion):
     ) -> tuple[str, dt.Reference]:
         """Adds a reference to the SDFG data descriptor store."""
 
-        # convert strings to int if possible
-        newshape = []
-        for s in shape:
-            try:
-                newshape.append(int(s))
-            except:
-                newshape.append(dace.symbolic.pystr_to_symbolic(s))
-        shape = newshape
+        shape = [normalize_shape_entry(s) for s in shape]
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
@@ -2363,6 +2884,16 @@ class SDFG(ControlFlowRegion):
         descriptor store."""
         debuginfo = debuginfo or desc.debuginfo
         dtype = dtype or desc.dtype
+        if isinstance(desc, dt.ArrayView):
+            # A new container views nothing: it is a contiguous array of the view's shape.
+            return self.add_transient(
+                name or self.temp_data_name(),
+                desc.shape,
+                dtype,
+                storage=desc.storage,
+                debuginfo=debuginfo,
+                find_new_name=True,
+            )
         newdesc = desc.clone()
         newdesc.dtype = dtype
         newdesc.transient = True
@@ -2371,7 +2902,9 @@ class SDFG(ControlFlowRegion):
             return self.add_datadesc(name, newdesc, find_new_name=True), newdesc
         return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
-    def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+    def add_datadesc(
+        self, name: str, datadesc: dt.Data, find_new_name=False, bound_names: AbstractSet[str] = frozenset()
+    ) -> str:
         """Adds an existing data descriptor to the SDFG array store.
 
         :param name: Name to use.
@@ -2393,26 +2926,51 @@ class SDFG(ControlFlowRegion):
             #   to create names that are formally invalid. The above code reproduces the exact
             #   same behavior and is maintained for compatibility. This behavior is
             #   triggered by tests/python_frontend/structures/structure_python_test.py::test_rgf`.
-            name = self._find_new_name(name)
-            name = name.replace(".", "_")
-            if self.is_name_used(name):
-                name = self._find_new_name(name)
+            used = _UsedNames(self)
+            name = utils.find_new_name(name, used).replace(".", "_")
+            if name in used:
+                name = utils.find_new_name(name, used)
         else:
             # We do not check for data constant, because there is a link between the constants and
             #  the data descriptors.
             if name in self.arrays:
                 raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
             if name in self.symbols:
-                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
+                raise NameCollisionError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
 
         def _add_symbols(sdfg: SDFG, desc: dt.Data):
             if isinstance(desc, dt.Structure):
                 for v in desc.members.values():
                     if isinstance(v, dt.Data):
                         _add_symbols(sdfg, v)
-            for sym in desc.free_symbols:
-                if sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names:
-                    sdfg.add_symbol(sym.name, sym.dtype)
+            new = [
+                sym
+                for sym in sorted(desc.free_symbols, key=str)
+                if isinstance(sym, symbolic.symbol) and sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names
+            ]
+            if not new:
+                return
+            # A shape may name a scoped symbol (e.g. a transient sized by a map parameter) or one an interstate edge
+            # assigns, which are not SDFG symbols
+            scoped = scope_bound_names(sdfg) | interstate_bound_names(sdfg) | bound_names
+            # The dtype comes with the symbol object. SymPy may build an expression from another object of the same name,
+            # so a symbol name has one dtype in a process.
+            for sym in new:
+                if sym.name in scoped:
+                    continue
+                if sym.name in sdfg.arrays:
+                    # The bare "name is used by a data descriptor" from ``add_symbol`` says nothing
+                    # about WHY a symbol was wanted. Here the reason is known -- an extent of the
+                    # descriptor being added -- and naming both sides turns the raise into the fix.
+                    raise FileExistsError(
+                        f'Cannot create symbol "{sym.name}" for shape {tuple(desc.shape)} of data '
+                        f'descriptor "{name}": "{sym.name}" is already a data descriptor '
+                        f"({sdfg.arrays[sym.name]}). An extent must be symbolic at parse time, so "
+                        f'declare "{sym.name}" as a dace.symbol instead of passing it as a scalar '
+                        f"argument."
+                    )
+                sdfg.add_symbol(sym.name, sym.declaration.dtype)
+                sdfg.symbol_repo.shape_declared.add(sym.name)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc
@@ -2772,7 +3330,9 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True, return_program_handle=True) -> "CompiledSDFG":
+    def compile(
+        self, output_file=None, validate=True, return_program_handle=True, stats: dict | None = None
+    ) -> "CompiledSDFG":
         """Compiles a runnable binary from this SDFG.
 
         :param output_file: If not None, copies the output library file to
@@ -2780,14 +3340,33 @@ class SDFG(ControlFlowRegion):
         :param validate: If True, validates the SDFG prior to generating
                          code.
         :param return_program_handle: If False, does not load the generated library.
+        :param stats: If given, filled with the wall-clock seconds of each step: ``codegen_seconds`` (copying the
+                      SDFG, generating and writing the code), ``compile_seconds`` (configuring and building the
+                      library) and ``load_seconds``; ``cached`` is True when a previously built library was loaded
+                      and nothing was generated or built.
         :return: A callable CompiledSDFG object, or None if ``return_program_handle=False``.
         """
+        stats = {} if stats is None else stats
+        stats.update(codegen_seconds=0.0, compile_seconds=0.0, load_seconds=0.0, cached=False)
+
+        plugin = Config.get("compiler", "build_plugin")
+        if plugin:
+            # An installed package builds the program its own way (config ``compiler.build_plugin``)
+            entries = importlib.metadata.entry_points(group="dace.build_plugins", name=plugin)
+            if not entries:
+                raise ValueError(
+                    f"compiler.build_plugin = {plugin!r}: no installed package registers it under "
+                    "the dace.build_plugins entry point group"
+                )
+            build = next(iter(entries)).load()
+            return build(self, output_file=output_file, validate=validate, return_program_handle=return_program_handle)
 
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
 
         # Compute build folder path before running codegen
         build_folder = self.build_folder
+        compiler.register_disposable_folder(self)
 
         # Get the folder mode, but if the folder already exists, then use the `FOLDER_MODE` file.
         folder_mode = compiler.get_folder_mode(build_folder, probe=True)
@@ -2800,6 +3379,7 @@ class SDFG(ControlFlowRegion):
                 object_folder=build_folder, sdfg_name=self.name, folder_mode=folder_mode
             )
             if lib_path.is_file():
+                stats["cached"] = True
                 if return_program_handle:
                     # NOTE: We should not pass `self` as `sdfg` argument, but instead deepcopy it.
                     #   The reason is that if code is generated the `CompiledSDFG.sdfg` attribute
@@ -2811,6 +3391,7 @@ class SDFG(ControlFlowRegion):
         ############################
         # DaCe Compilation Process #
 
+        start = time.perf_counter()
         if self.regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
             sdfg = copy.deepcopy(self)
@@ -2856,8 +3437,12 @@ class SDFG(ControlFlowRegion):
             # NOTE: See the note above about deepcopying.
             sdfg = self
 
+        stats["codegen_seconds"] = time.perf_counter() - start
+
         # Compile the code and get the shared library path
+        start = time.perf_counter()
         shared_library = compiler.configure_and_compile(program_folder, sdfg.name, folder_mode=folder_mode)
+        stats["compile_seconds"] = time.perf_counter() - start
 
         # If provided, save output to path or filename
         if output_file is not None:
@@ -2867,7 +3452,10 @@ class SDFG(ControlFlowRegion):
 
         # Get the function handle
         if return_program_handle:
-            return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=sdfg)
+            start = time.perf_counter()
+            handle = compiler.load_precompiled_sdfg(folder=build_folder, sdfg=sdfg)
+            stats["load_seconds"] = time.perf_counter() - start
+            return handle
 
     def argument_typecheck(self, args, kwargs, types_only=False):
         """Checks if arguments and keyword arguments match the SDFG
@@ -3116,10 +3704,10 @@ class SDFG(ControlFlowRegion):
         Examples::
 
                   # Applies MapTiling, then MapFusionVertical, followed by
-                  # GPUTransformSDFG, specifying parameters only for the
+                  # MapCollapse, specifying parameters only for the
                   # first transformation.
                   sdfg.apply_transformations(
-                    [MapTiling, MapFusionVertical, GPUTransformSDFG],
+                    [MapTiling, MapFusionVertical, MapCollapse],
                     options=[{'tile_size': 16}, {}, {}])
         """
         from dace.transformation.passes.pattern_matching import PatternMatchAndApply  # Avoid import loops
@@ -3248,63 +3836,77 @@ class SDFG(ControlFlowRegion):
             return 0
         return sum(len(v) for v in results.values())
 
-    def apply_gpu_transformations(
-        self,
-        states=None,
-        validate=True,
-        validate_all=False,
-        permissive=False,
-        sequential_innermaps=True,
-        register_transients=True,
-        simplify=True,
-        host_maps=None,
-        host_data=None,
-    ):
-        """Applies a series of transformations on the SDFG for it to
-        generate GPU code.
+    def apply_gpu_transformations(self, states=None, validate=True, validate_all=False, simplify=True, host_maps=False):
+        """Offloads the SDFG to the accelerator, inserting the copies that decision implies.
 
-        :param sequential_innermaps: Make all internal maps Sequential.
-        :param register_transients: Make all transients inside GPU maps registers.
-        :note: It is recommended to apply redundant array removal
-               transformation after this transformation. Alternatively,
-               you can ``simplify()`` after this transformation.
+        :param states: unused; kept so a caller passing it keeps working.
+        :param validate: validate the SDFG afterwards.
+        :param validate_all: as ``validate``.
+        :param simplify: simplify afterwards, folding the copy states the offloading inserted.
+        :param host_maps: which maps keep a HOST schedule, so the maps under them become the
+                          kernels. ``False`` (the default), ``None`` and ``[]`` name none and run
+                          no heuristics; ``True`` derives them; a list names them outright, each
+                          as a map label or as the ``MapEntry`` itself. A map holding a callback
+                          stays on the host whatever this says -- a kernel cannot issue one.
+        :return: the containers the offloading left on the device, or None if it placed none.
         :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
-        from dace.transformation.interstate import GPUTransformSDFG
+        from dace.transformation import pass_pipeline as ppl
+        from dace.transformation.passes.offloading import OffloadToAccelerator
 
-        self.apply_transformations(
-            GPUTransformSDFG,
-            options=dict(
-                sequential_innermaps=sequential_innermaps,
-                register_trans=register_transients,
-                simplify=simplify,
-                host_maps=host_maps,
-                host_data=host_data,
-            ),
-            validate=validate,
-            validate_all=validate_all,
-            permissive=permissive,
-            states=states,
-        )
+        # The pipeline runs ControlFlowRaising first, which the offloading depends on.
+        results = ppl.Pipeline([OffloadToAccelerator(host_maps=host_maps)]).apply_pass(self, {}) or {}
+        placed = results.get(OffloadToAccelerator.__name__)
+        # ``simplify`` is this method's contract: the offloading leaves the copy states it inserted
+        # unfused, so a caller that asked for a simplified graph has to get one.
+        if simplify:
+            self.simplify()
+        if validate or validate_all:
+            self.validate()
+        return placed
 
-    def expand_library_nodes(self, recursive=True):
+    def expand_library_nodes(self, recursive=True, predicate=None):
         """
         Recursively expand all unexpanded library nodes in the SDFG,
         resulting in a "pure" SDFG that the code generator can handle.
 
         :param recursive: If True, expands all library nodes recursively,
                           including library nodes that expand to library nodes.
+        :param predicate: Optional ``node -> bool``. When given, only library nodes for
+                          which it returns True are expanded; the rest are left in place
+                          (e.g. an opaque node whose expansion is deferred to a later
+                          stage). Nested SDFGs are still descended into either way.
         """
 
+        outermost = self._expansion_symbols is None
+        if outermost:
+            self._expansion_symbols = {}
+        try:
+            self._expand_library_nodes(recursive, predicate)
+        finally:
+            if outermost:
+                self._expansion_symbols = None
+
+    def _expand_library_nodes(self, recursive: bool, predicate: Callable[[nd.LibraryNode], bool] | None) -> None:
         states = list(self.states())
         while len(states) > 0:
             state = states.pop()
             expanded_something = False
-            for node in list(state.nodes()):  # Make sure we have a copy
+            # Expand ``expand_before_peers`` nodes first: their expansion inspects neighbouring
+            # library nodes and must see them un-expanded (``BackwardPass`` differentiates a
+            # ``Reduce`` via its registered backward rule, but only while it is still a library
+            # node -- once expanded it is an opaque C++ tasklet that autodiff cannot reverse).
+            # ``state.nodes()`` is otherwise in arbitrary graph order, so this was a coin flip.
+            for node in sorted(
+                state.nodes(),  # sorted() also gives us the required copy
+                key=lambda n: not (isinstance(n, nd.LibraryNode) and n.expand_before_peers),
+            ):
                 if isinstance(node, nd.NestedSDFG):
-                    node.sdfg.expand_library_nodes(recursive=recursive)  # Call recursively
+                    node.sdfg.expand_library_nodes(recursive=recursive, predicate=predicate)  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
+                    if predicate is not None and not predicate(node):
+                        continue
                     impl_name = node.expand(state)
                     if Config.get_bool("debugprint"):
                         print(f'Automatically expanded library node "{str(node)}" with implementation "{impl_name}".')

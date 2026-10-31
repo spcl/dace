@@ -1,5 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import sys
+from typing import TYPE_CHECKING
+
 from .version import __version__
 from . import attr_enum
 from .dtypes import *
@@ -16,11 +18,31 @@ from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
 from .memlet import Memlet
 from .symbolic import symbol
 
+if TYPE_CHECKING:
+    from .codegen.cpf import EntrySignature
+
 # Python frontend
 from .frontend.python.interface import *
 from .frontend.python.wrappers import *
 from .frontend.python.ndloop import ndrange
 from .frontend.operations import reduce, elementwise
+
+
+def cpf(sdfg: "SDFG", validate: bool = True, language: str = "c++", signature: "EntrySignature | None" = None) -> str:
+    """Render ``sdfg`` as one self-contained translation unit (see :func:`dace.codegen.cpf.cpf`).
+
+    ``language`` is ``'c++'`` (C++20, the default) or ``'c'`` (C23); both build with a bare host
+    compiler and no DaCe runtime. ``signature`` (a :class:`dace.codegen.cpf.EntrySignature`) fixes
+    the entry point's parameter order and adds a workspace pair; ``None`` keeps CPF's.
+
+    Imported on call rather than at module scope: the code generators pull in ``dace.nodes``, which
+    does not exist yet this early in ``dace/__init__``, and every ``import dace`` would otherwise
+    pay for a code generator most programs never run.
+    """
+    from dace.codegen.cpf import cpf as _cpf
+
+    return _cpf(sdfg, validate=validate, language=language, signature=signature)
+
 
 # Run Jupyter notebook code
 from .jupyter import *

@@ -6,11 +6,13 @@ import ctypes
 import inspect
 import json
 import re
+import types
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
-from functools import wraps
-from typing import TYPE_CHECKING, Any, Union
+from functools import lru_cache, wraps
+from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar, Union
 
 import ml_dtypes
 import numpy
@@ -96,6 +98,7 @@ class ScheduleType(ExtensibleAttributeEnum):
     GPU_ThreadBlock = auto()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = auto()  #: Allows rescheduling work within a block
     GPU_Persistent = auto()
+    GPU_Warp = auto()
 
     Snitch = auto()
     Snitch_Multicore = auto()
@@ -103,12 +106,45 @@ class ScheduleType(ExtensibleAttributeEnum):
     # No code generation yet
     GPU_Chiplet = auto()  #: AMD XCD
     GPU_ThreadBlockCluster = auto()
-    GPU_Warp = auto()
 
 
 GPU_KERNEL_SCHEDULES = [
     ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent,
+]
+
+# Coarsest first
+GPU_THREAD_SCHEDULES = [
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_ThreadBlock_Dynamic,
+    ScheduleType.GPU_Warp,
+]
+
+GPU_SCHEDULES_WITHOUT_CODEGEN = [
+    ScheduleType.GPU_Chiplet,
+    ScheduleType.GPU_ThreadBlockCluster,
+    ScheduleType.GPU_Warp,
+]
+
+GPU_SCHEDULES = GPU_KERNEL_SCHEDULES + [ScheduleType.GPU_Chiplet] + GPU_THREAD_SCHEDULES
+
+# Schedules the experimental CUDA code generator emits.
+EXPERIMENTAL_GPU_SCHEDULES = [
+    ScheduleType.GPU_Device,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_Warp,
+]
+
+# Every GPU schedule either CUDA code generator emits.
+ALL_GPU_SCHEDULES = list(dict.fromkeys(GPU_SCHEDULES + EXPERIMENTAL_GPU_SCHEDULES))
+
+# Storages a GPU kernel can address. Register is deliberately absent: outside a kernel it is a CPU
+# stack array. A list, like GPU_SCHEDULES above, because the codegen dispatchers register per list.
+GPU_KERNEL_ACCESSIBLE_STORAGES = [
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
+    StorageType.CPU_Pinned,
 ]
 
 # Coarsest first
@@ -231,6 +267,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_Warp: StorageType.Register,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM,
+    ScheduleType.GPU_Warp: StorageType.Register,
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -251,6 +288,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
 }
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.
@@ -364,6 +402,10 @@ class typeclass:
         2. Enabling declaration syntax: `dace.float32[M,N]`
         3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
+
+    #: Class-level default so `to_string`/`to_json` stay defined for the subclasses that build
+    #: themselves without `typeclass.__init__` (`struct`, `pointer`, `vector`).
+    typename: str | None = None
 
     def __init__(self, wrapped_type, typename=None):
         # Convert python basic types
@@ -534,7 +576,12 @@ def result_type_of(lhs, *rhs):
     according to C semantics.
     """
     if len(rhs) == 0:
-        rhs = None
+        # The largest among one type is that type. Extracting here mirrors what the two-operand
+        # path does below, so a lone symbol or Data answers its dtype rather than itself.
+        from dace.data import Data
+        from dace.symbolic import is_symbol_leaf
+
+        return lhs.dtype if (is_symbol_leaf(lhs) or isinstance(lhs, Data)) else lhs
     elif len(rhs) > 1:
         result = lhs
         for r in rhs:
@@ -545,9 +592,16 @@ def result_type_of(lhs, *rhs):
 
     # Extract the type if symbolic or data
     from dace.data import Data
+    from dace.symbolic import is_symbol_leaf
 
-    lhs = lhs.dtype if (type(lhs).__name__ == "symbol" or isinstance(lhs, Data)) else lhs
-    rhs = rhs.dtype if (type(rhs).__name__ == "symbol" or isinstance(rhs, Data)) else rhs
+    def type_of(operand: Any) -> Any:
+        if type(operand).__name__ == "symbol":
+            return operand.declaration.dtype  # A user's symbol object: the type it was declared with
+        if is_symbol_leaf(operand) or isinstance(operand, Data):
+            return operand.dtype  # A native backend's symbol carries its type
+        return operand
+
+    lhs, rhs = type_of(lhs), type_of(rhs)
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
@@ -572,6 +626,16 @@ def result_type_of(lhs, *rhs):
     # Extract data sizes (seems the type itself doesn't expose this)
     size_lhs = lhs_(0).itemsize
     size_rhs = rhs_(0).itemsize
+    # ``bool`` is NumPy's lowest-rank numeric operand: ``result_type(bool, X) == X`` for
+    # any numeric X, int OR float (e.g. ``np.bool_(True) * np.int32(3)`` is ``int32(3)``).
+    # ``bool`` is NOT ``issubdtype(_, integer)``, so without this the float-precedence
+    # fallthrough below treats it as the winning "float-like" side and returns ``bool`` --
+    # truncating ``bool * int`` to 0/1 (the nussinov fp_factor ``c*t + (1-c)*e`` miscompile).
+    # The both-bool case already returned above (``lhs == rhs``).
+    if numpy.issubdtype(lhs_, numpy.bool_):
+        return rhs
+    if numpy.issubdtype(rhs_, numpy.bool_):
+        return lhs
     # Both are integers
     if numpy.issubdtype(lhs_, numpy.integer) and numpy.issubdtype(rhs_, numpy.integer):
         # If one byte width is larger, use it
@@ -764,6 +828,9 @@ class struct(typeclass):
         # self._data = fields_and_types
         self.type = ctypes.Structure
         self.name = name
+        # `ctypes.Structure` is the same wrapped type for every struct, so the struct's own name is
+        # the only string that identifies it.
+        self.typename = name
         # TODO: Assuming no alignment! Get from ctypes
         # self.bytes = sum(t.bytes for t in fields_and_types.values())
         self.ctype = name
@@ -1271,6 +1338,7 @@ if TYPE_CHECKING:
     class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
     class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
     class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
+    class gpuStream_t(_DaCeArray, npt.NDArray[numpy.void]): ...
     # fmt: on
 else:
     # Runtime definitions
@@ -1299,42 +1367,54 @@ else:
     complex128 = typeclass(numpy.complex128)
     string = stringtype()
     MPI_Request = opaque("MPI_Request")
+    gpuStream_t = opaque("gpuStream_t")
 
 _bool = bool
 
 
+@lru_cache(maxsize=1, typed=True)
+def _dtype_to_typeclass_map() -> types.MappingProxyType:
+    """Built once. It was rebuilt -- 24 entries, 4 fresh `typeclass` objects -- on every call, which
+    measured 35.5k calls / 1.17s in one CloudSC load and 41% of every `symbol()` construction.
+    Handed out read-only, so the shared instance cannot be poisoned by a caller.
+    """
+    return types.MappingProxyType(
+        {
+            _bool: typeclass(_bool),
+            int: typeclass(int),
+            float: typeclass(float),
+            complex: typeclass(complex),
+            numpy.bool_: bool_,
+            numpy.int8: int8,
+            numpy.int16: int16,
+            numpy.int32: int32,
+            numpy.int64: int64,
+            numpy.intc: int32,
+            numpy.uint8: uint8,
+            numpy.uint16: uint16,
+            numpy.uint32: uint32,
+            numpy.uint64: uint64,
+            numpy.uintc: uint32,
+            numpy.float16: float16,
+            ml_dtypes.bfloat16: bfloat16,
+            ml_dtypes.float8_e4m3fn: float8_e4m3fn,
+            ml_dtypes.float8_e5m2: float8_e5m2,
+            numpy.float32: float32,
+            numpy.float64: float64,
+            numpy.complex64: complex64,
+            numpy.complex128: complex128,
+            # FIXME
+            numpy.longlong: int64,
+            numpy.ulonglong: uint64,
+        }
+    )
+
+
 def dtype_to_typeclass(dtype=None):
-    DTYPE_TO_TYPECLASS = {
-        _bool: typeclass(_bool),
-        int: typeclass(int),
-        float: typeclass(float),
-        complex: typeclass(complex),
-        numpy.bool_: bool_,
-        numpy.int8: int8,
-        numpy.int16: int16,
-        numpy.int32: int32,
-        numpy.int64: int64,
-        numpy.intc: int32,
-        numpy.uint8: uint8,
-        numpy.uint16: uint16,
-        numpy.uint32: uint32,
-        numpy.uint64: uint64,
-        numpy.uintc: uint32,
-        numpy.float16: float16,
-        ml_dtypes.bfloat16: bfloat16,
-        ml_dtypes.float8_e4m3fn: float8_e4m3fn,
-        ml_dtypes.float8_e5m2: float8_e5m2,
-        numpy.float32: float32,
-        numpy.float64: float64,
-        numpy.complex64: complex64,
-        numpy.complex128: complex128,
-        # FIXME
-        numpy.longlong: int64,
-        numpy.ulonglong: uint64,
-    }
+    mapping = _dtype_to_typeclass_map()
     if dtype is None:
-        return DTYPE_TO_TYPECLASS
-    return DTYPE_TO_TYPECLASS[dtype]
+        return mapping
+    return mapping[dtype]
 
 
 FLOAT_TYPES = {float64, float32, float16, bfloat16, float8_e4m3fn, float8_e5m2}
@@ -1398,6 +1478,9 @@ TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
     int64: "LL",
     uint64: "ULL",
 }
+
+#: Each typeclass by the name a program spells it with (``dace.int32``, ``dace.bool``).
+TYPECLASS_BY_NAME = {name.removeprefix("dace::"): t for t, name in TYPECLASS_TO_STRING.items()} | {"bool": bool_}
 
 TYPECLASS_STRINGS = [
     "int",
@@ -1577,7 +1660,13 @@ def json_to_typeclass(obj, context=None):
         raise ValueError(f"Cannot resolve: {obj}")
 
 
-def paramdec(dec):
+ParamsT = ParamSpec("ParamsT")
+ResultT = TypeVar("ResultT")
+
+
+def paramdec(
+    dec: Callable[Concatenate[Callable[..., Any], ParamsT], ResultT],
+) -> Callable[ParamsT, Callable[[Callable[..., Any]], ResultT]]:
     """Parameterized decorator meta-decorator. Enables using `@decorator`,
     `@decorator()`, and `@decorator(...)` with the same function."""
 
@@ -1634,7 +1723,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
         return True
 
     if schedule in GPU_SCHEDULES:
-        return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
+        return storage in GPU_KERNEL_ACCESSIBLE_STORAGES
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
         return storage in [
             StorageType.Default,

@@ -11,8 +11,8 @@ import sympy
 import dace
 from dace import SDFG, ControlFlowRegion, symbolic
 from dace.properties import CodeBlock
-from dace.sdfg.sdfg import ConditionalBlock
-from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock
+from dace.sdfg.sdfg import ConditionalBlock, forget_all_facts, memoize_facts
+from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.helpers import move_branch_cfg_up_discard_conditions
@@ -45,6 +45,16 @@ def _trivial_cond_check_cached(code_string: str, val: bool) -> bool:
         tokens = re.split(r"(\s+|[()\[\]])", code_string)
         replacements = {"True": "1", "False": "0", "and": "*", "or": "+"}
         rewritten = " ".join(replacements.get(t.strip(), t.strip()) for t in tokens).strip()
+        # Cheap screen before the sledgehammer. ``evaluate`` below only ever returns a verdict for a
+        # symbol-FREE expression, and ``sympy.simplify`` of a relational routes through
+        # ``equals``/``is_constant``, which samples numerically via mpmath PSLQ -- on CLOUDSC that is
+        # seconds spent proving that ``zqx_index_9 < yrecldp_rlmin`` is not a constant, once per
+        # truth value per distinct guard. ``expand`` settles the cancellations an SDFG guard can
+        # actually contain (polynomials over integer symbols, which sympy's own constructors already
+        # fold most of) for a fraction of the cost; whatever it leaves holding a free symbol cannot
+        # come back a literal, so there is nothing for the expensive path to find.
+        if sympy.expand(symbolic.pystr_to_symbolic(rewritten)).free_symbols:
+            return False
         simplified = dace.symbolic.SymExpr(rewritten).simplify()
         # symstr, not sympy's printer: this string is re-parsed by SymExpr, so it must stay in
         # DaCe's own vocabulary -- and sympy raises outright on int_floor/int_ceil, which the
@@ -123,12 +133,31 @@ class LiftTrivialIf(ppl.Pass):
     def _trivially_true(self, code: CodeBlock, cfb: ConditionalBlock | None = None) -> bool:
         if self._trivial_cond_check(code, True):
             return True
-        return cfb is not None and self._range_verdict(code, cfb) == "true"
+        return cfb is not None and (
+            self._range_verdict(code, cfb) == "true" or self._facts_verdict(code, cfb) is symbolic.Truth.TRUE
+        )
 
     def _trivially_false(self, code: CodeBlock, cfb: ConditionalBlock | None = None) -> bool:
         if self._trivial_cond_check(code, False):
             return True
-        return cfb is not None and self._range_verdict(code, cfb) == "false"
+        return cfb is not None and (
+            self._range_verdict(code, cfb) == "false" or self._facts_verdict(code, cfb) is symbolic.Truth.FALSE
+        )
+
+    @classmethod
+    def _facts_verdict(cls, code: CodeBlock, cfb: ConditionalBlock) -> symbolic.Truth:
+        """Whether a comparison guard (or its negation) holds under the facts at ``cfb``."""
+        if code is None or code.language != dace.dtypes.Language.Python:
+            return symbolic.Truth.UNKNOWN
+        condition = symbolic.pystr_to_symbolic(code.as_string)
+        negated = isinstance(condition, sympy.Not)
+        relation = symbolic.comparison_relation(condition.args[0] if negated else condition)
+        if relation is None:
+            return symbolic.Truth.UNKNOWN
+        truth = symbolic.ask(relation, SymbolResolver().facts_at(cfb))
+        if negated and truth is not symbolic.Truth.UNKNOWN:
+            return symbolic.Truth.FALSE if truth is symbolic.Truth.TRUE else symbolic.Truth.TRUE
+        return truth
 
     def _loop_iter_ranges(self, cfb: ConditionalBlock):
         """The ``(loop_variable, start, end)`` iteration range of every
@@ -147,18 +176,18 @@ class LiftTrivialIf(ppl.Pass):
                 end = loop_analysis.get_loop_end(graph)
                 if start is not None and end is not None:
                     ranges.append((graph.loop_variable, start, end))
-            graph = getattr(graph, "parent_graph", None)
+            graph = graph.parent_graph
         return ranges
 
     @staticmethod
-    def _cmp_verdict(opname: str, c, start, end) -> str:
+    def _cmp_verdict(opname: str, c, start, end, facts: symbolic.Facts) -> str:
         """Whether ``i <opname> c`` is ``'true'`` / ``'false'`` for every ``i`` in
         ``[start, end]``, or ``'unknown'`` when the bounds are too symbolic to
         decide. ``c``, ``start`` and ``end`` are symbolic; a verdict is only
         returned when the deciding difference reduces to a concrete number."""
 
         def num(x):
-            s = symbolic.simplify(x)
+            s = symbolic.simplify(x, facts)
             return s if s.is_number else None
 
         def pos(x):  # provably x > 0
@@ -233,22 +262,40 @@ class LiftTrivialIf(ppl.Pass):
             return n.id if isinstance(n, ast.Name) else None
 
         ivar_to_range = {iv: (s, e) for iv, s, e in ranges}
-        lname, rname = name_of(left), name_of(right)
-        if lname in ivar_to_range and rname not in ivar_to_range:
-            ivar, other = lname, right
-        elif rname in ivar_to_range and lname not in ivar_to_range:
-            ivar, other = rname, left
+
+        def ivar_in(n):
+            names = {sub.id for sub in ast.walk(n) if isinstance(sub, ast.Name)} & ivar_to_range.keys()
+            return next(iter(names)) if len(names) == 1 else None
+
+        lvar, rvar = ivar_in(left), ivar_in(right)
+        if lvar and not rvar:
+            ivar, varying, other = lvar, left, right
+        elif rvar and not lvar:
+            ivar, varying, other = rvar, right, left
             opname = {"Lt": "Gt", "LtE": "GtE", "Gt": "Lt", "GtE": "LtE"}.get(opname, opname)
         else:
             return "unknown"
         try:
             c = symbolic.pystr_to_symbolic(ast.unparse(other))
+            if name_of(varying) != ivar:
+                # An increasing guard ``g(i) < c`` is ``i < x`` at its crossing ``x`` (``i * 8192 < N``, ``i * i < N``
+                # over ``i >= 0``): the bare comparison the split that put ``x`` into the loop bounds decides.
+                if opname not in ("Lt", "LtE", "Gt", "GtE") or not symbolic.provably_nonnegative(
+                    ivar_to_range[ivar][0], cfb.sdfg.facts()
+                ):
+                    return "unknown"
+                c = symbolic.guard_crossing(
+                    ast.unparse(varying), ivar, c, strict=opname in ("Lt", "GtE"), facts=SymbolResolver().facts_at(cfb)
+                )
+                if c is None:
+                    return "unknown"
+                opname = {"Lt": "Lt", "LtE": "Lt", "Gt": "GtE", "GtE": "GtE"}[opname]
         except Exception:
             return "unknown"
         if symbolic.pystr_to_symbolic(ivar) in c.free_symbols:
             return "unknown"  # C must be loop-invariant
         start, end = ivar_to_range[ivar]
-        verdict = self._cmp_verdict(opname, c, start, end)
+        verdict = self._cmp_verdict(opname, c, start, end, cfb.sdfg.facts())
         if negate and verdict != "unknown":
             verdict = "false" if verdict == "true" else "true"
         return verdict
@@ -257,7 +304,7 @@ class LiftTrivialIf(ppl.Pass):
     def _is_conjunction(expr) -> bool:
         # ``pystr_to_symbolic`` yields dace's own conjunction operator (whose
         # ``func`` is named ``AND``), not ``sympy.And``; accept either.
-        return isinstance(expr, sympy.And) or getattr(getattr(expr, "func", None), "__name__", "") == "AND"
+        return isinstance(expr, sympy.And) or (isinstance(expr, sympy.Basic) and expr.func.__name__ == "AND")
 
     def _flatten_conjuncts(self, expr) -> list:
         """All conjuncts of a (possibly nested) conjunction, flattened.
@@ -295,13 +342,49 @@ class LiftTrivialIf(ppl.Pass):
                 return True
         return False
 
+    def dead_branch(self, cond: CodeBlock | None, cfb: ConditionalBlock) -> bool:
+        """Whether a branch of ``cfb`` guarded by ``cond`` can never run: a condition that is false (statically or over
+        the enclosing loop ranges) or a contradiction such as ``c and not c``. An else branch (``None``) always can."""
+        return cond is not None and (self._trivially_false(cond, cfb) or self._unsatisfiable(cond))
+
+    def taken_branch(self, cfb: ConditionalBlock) -> tuple[bool, ControlFlowRegion | None]:
+        """Whether the conditions of an ``if`` or ``if/else`` decide which of its branches runs.
+
+        :param cfb: A conditional with one branch, or two of which at most one has a condition.
+        :returns: ``(True, branch)`` when ``branch`` always runs and the other never does, ``(True, None)`` when no
+                  branch ever runs, and ``(False, None)`` when the conditions are not decided (or ``cfb`` has another
+                  shape).
+        """
+        branches = cfb.branches
+        if len(branches) == 1:
+            cond, cfg = branches[0]
+            if self._trivially_true(cond, cfb):
+                return True, cfg
+            if self._trivially_false(cond, cfb):
+                return True, None
+        elif len(branches) == 2:
+            (cond1, cfg1), (cond2, cfg2) = branches
+            # Either one of them must be none
+            if cond1 is not None and cond2 is not None:
+                return False, None
+            (not_none_cond, not_none_cfg), none_cfg = (
+                ((cond1, cfg1), cfg2) if cond1 is not None else ((cond2, cfg2), cfg1)
+            )
+            if self._trivially_true(not_none_cond, cfb):
+                return True, not_none_cfg
+            if self._trivially_false(not_none_cond, cfb):
+                return True, none_cfg
+        return False, None
+
     def _detect_and_remove_top_level_trivial_ifs(self, graph: ControlFlowRegion | SDFG) -> int:
         """Process the conditionals directly in ``graph`` (one level, no recursion).
 
         :param graph: Region or SDFG whose top-level conditionals are simplified.
         :returns: Number of branches/conditionals removed.
         """
-        cfb_to_rm_cfg_to_keep = set()
+        # Ordered, not a set: a set of blocks iterates by address, so the splice order -- and the labels the moved
+        # blocks are made unique with -- changed from run to run.
+        cfb_to_rm_cfg_to_keep: dict[tuple[ConditionalBlock, ControlFlowRegion], None] = {}
         rmed_count = 0
         for cfb in graph.nodes():
             if isinstance(cfb, ConditionalBlock):
@@ -317,44 +400,29 @@ class LiftTrivialIf(ppl.Pass):
                     for cnd, cfg in list(cfb.branches):
                         if len(cfb.branches) <= 2:
                             break
-                        if cnd is not None and (self._trivially_false(cnd, cfb) or self._unsatisfiable(cnd)):
+                        if self.dead_branch(cnd, cfb):
                             cfb.remove_branch(cfg)
+                            forget_all_facts(graph)  # The branch may have held interstate assignments
                             rmed_count += 1
 
                 # Supported variants:
-                # 1. if (cond) where cond is always true
-                # 2. if (cond) else ()
-                # 2.1 where cond is always true
-                # 2.2 cond is always false
-                conditions_and_cfgs = cfb.branches
-                if len(conditions_and_cfgs) == 1:
-                    cond, cfg = conditions_and_cfgs[0]
-                    if self._trivially_true(cond, cfb):
-                        cfb_to_rm_cfg_to_keep.add((cfb, cfg))
-                    elif self._trivially_false(cond, cfb):
-                        _cfg = ControlFlowRegion(label=f"empty_cfg_of_{cfb.label}", sdfg=cfb.sdfg, parent=cfb)
-                        _cfg.add_state(label="empty_placholder", is_start_block=True)
-                        cfb.add_branch(condition=None, branch=_cfg)
-                        cfb_to_rm_cfg_to_keep.add((cfb, _cfg))
-                elif len(conditions_and_cfgs) == 2:
-                    cond1, cfg1 = conditions_and_cfgs[0]
-                    cond2, cfg2 = conditions_and_cfgs[1]
-                    # Either one of them must be none
-                    if cond1 is not None and cond2 is not None:
-                        continue
-                    (not_none_cond, not_none_cfg), (none_cond, none_cfg) = (
-                        ((cond1, cfg1), (cond2, cfg2)) if cond1 is not None else ((cond2, cfg2), (cond1, cfg1))
-                    )
-
-                    if self._trivially_true(not_none_cond, cfb):  # 2.1
-                        cfb_to_rm_cfg_to_keep.add((cfb, not_none_cfg))
-                    elif self._trivially_false(not_none_cond, cfb):  # 2.2
-                        cfb_to_rm_cfg_to_keep.add((cfb, none_cfg))
+                # 1. if (cond) where cond is always true (its body is lifted) or always false (nothing is)
+                # 2. if (cond) else (), where cond is always true or always false (the taken side is lifted)
+                decided, taken = self.taken_branch(cfb)
+                if not decided:
+                    continue
+                if taken is None:
+                    taken = ControlFlowRegion(label=f"empty_cfg_of_{cfb.label}", sdfg=cfb.sdfg, parent=cfb)
+                    taken.add_state(label="empty_placholder", is_start_block=True)
+                    cfb.add_branch(condition=None, branch=taken)
+                    forget_all_facts(graph)
+                cfb_to_rm_cfg_to_keep[(cfb, taken)] = None
 
         for cfb, cfg in cfb_to_rm_cfg_to_keep:
             existing = {n.label for n in graph.nodes()}
             before = {id(n) for n in graph.nodes()}
             move_branch_cfg_up_discard_conditions(cfb, cfg)
+            forget_all_facts(graph)  # The discarded branches may have held interstate assignments
             assert cfb not in graph.nodes()
             # Bookkeep only the spliced-in subtree, not the whole SDFG -- the old whole-SDFG walk here
             # ran once per control-flow block and was quadratic (on CLOUDSC ~10s of a 15s run).
@@ -397,6 +465,20 @@ class LiftTrivialIf(ppl.Pass):
 
         return rmed_count
 
+    def lift_in_region(self, region, recursive: bool = True) -> int:
+        """Scoped entry point: collapse decidable conditionals inside ``region`` -- recursively by
+        default, one level only with ``recursive=False`` -- without walking the whole SDFG. For a
+        caller that just made a guard constant (TrivialLoopElimination substituting the iterator
+        into a spliced single-trip body) and wants the cleanup local to what it touched.
+
+        :param region: The control flow region to simplify in place.
+        :param recursive: Also descend into nested regions and SDFGs.
+        :returns: Number of branches/conditionals removed.
+        """
+        if recursive:
+            return self._detect_trivial_ifs_and_rm_cfg(region)
+        return self._detect_and_remove_top_level_trivial_ifs(region)
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, int] | None:
         """Collapse every statically-decidable conditional in ``sdfg`` into its taken branch.
 
@@ -406,11 +488,12 @@ class LiftTrivialIf(ppl.Pass):
                   nested-SDFG parent bookkeeping are done incrementally per splice, scoped to the moved
                   subtree, so a no-op invocation touches nothing and a ``FixedPointPipeline`` converges.
         """
-        rmed_count = self._detect_trivial_ifs_and_rm_cfg(sdfg)
+        # Every decided guard resolves the facts at its conditional, whose SDFG-wide part (``SDFG.facts()``) only a
+        # removal changes: share it between guards, drop it at every removal.
+        with memoize_facts(sdfg):
+            rmed_count = self._detect_trivial_ifs_and_rm_cfg(sdfg)
         if not rmed_count:
             return None
-        # Refresh the global CFG-list index once, only when regions actually changed. Parent references
-        # were already repaired incrementally per splice (scoped to the moved subtree) -- no whole-SDFG
-        # walk, and nothing to do when the pass removed nothing.
-        sdfg.reset_cfg_list()
+        # ``add_node`` / ``remove_node`` / ``remove_branch`` keep the CFG list exact per splice, and the
+        # parent references were repaired per splice too: nothing left to rebuild.
         return {"lifted_conditionals": rmed_count}

@@ -5,8 +5,7 @@ Analysis helpers for autodiff
 
 import collections
 
-import networkx as nx
-
+from dace import graphlib as nx
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdfg_utils
 from dace.sdfg.state import FunctionCallRegion

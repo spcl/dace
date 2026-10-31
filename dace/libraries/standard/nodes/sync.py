@@ -66,7 +66,8 @@ class Sync(nodes.LibraryNode):
     """A barrier among the threads of a warp, a thread block or the grid of a GPU kernel, or a host wait for a GPU
     stream or the whole device.
 
-    The node orders what runs before and after it in the control flow, so it is the only node of its state. Only a
+    The node orders what runs before and after it: through the (empty) edges of its state, or, as the only node of
+    its state, through the control flow. Only a
     stream barrier takes a connector: :data:`STREAM_CONNECTOR`, typed :data:`GPU_STREAM`, which the pass wiring the
     streams adds; without it, the barrier waits for the default stream.
     """
@@ -97,7 +98,7 @@ class Sync(nodes.LibraryNode):
             )
 
 
-def _expand(node: Sync, state: dace.SDFGState, backend: str) -> nodes.Tasklet:
+def expand_sync(node: Sync, state: dace.SDFGState, backend: str) -> nodes.Tasklet:
     wired = any(e.dst_conn == STREAM_CONNECTOR for e in state.in_edges(node))
     stream = STREAM_CONNECTOR if wired else "nullptr"
     tasklet = nodes.Tasklet(
@@ -117,7 +118,7 @@ class ExpandCUDA(ExpandTransformation):
 
     @staticmethod
     def expansion(node: Sync, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _expand(node, parent_state, "cuda")
+        return expand_sync(node, parent_state, "cuda")
 
 
 @library.register_expansion(Sync, "HIP")
@@ -126,7 +127,7 @@ class ExpandHIP(ExpandTransformation):
 
     @staticmethod
     def expansion(node: Sync, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _expand(node, parent_state, "hip")
+        return expand_sync(node, parent_state, "hip")
 
 
 @library.register_expansion(Sync, "Auto")
@@ -137,4 +138,4 @@ class ExpandAuto(ExpandTransformation):
 
     @staticmethod
     def expansion(node: Sync, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
-        return _expand(node, parent_state, get_gpu_backend())
+        return expand_sync(node, parent_state, get_gpu_backend())

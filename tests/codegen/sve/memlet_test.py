@@ -107,3 +107,21 @@ def test_indirect_load_implicit():
 
     # This is still an indirect load (uses Indirection tasklet)
     assert "svld1_gather_index" in code
+
+
+def test_an_indirect_read_lives_in_an_sve_register_declared_inside_the_loop():
+
+    @dace.program
+    def program(idx: dace.uint32[N], x: dace.float32[M], B: dace.float32[N]):
+        for j in dace.map[0:N]:
+            with dace.tasklet:
+                a << x[idx[j]]
+                b >> B[j]
+                b = a
+
+    code = get_code(program)
+
+    assert "dace::vec" not in code and "__dace_sve_len" not in code
+    declared = [line.strip() for line in code.splitlines() if line.strip().startswith("svfloat32_t __")]
+    loop = code.index("while(svptest_any")
+    assert declared and all(code.index(line) > loop for line in declared)

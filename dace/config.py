@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import contextlib
+import copy
 import io
 import os
 import platform
-import tempfile
 import threading
 import warnings
 from typing import Any
@@ -23,6 +23,8 @@ def set_temporary(*path, value):
             print(Config.get("compiler", "build_type")
         print(Config.get("compiler", "build_type")
     """
+    if len(path) == 1 and "." in path[0]:
+        path = tuple(path[0].split("."))
     old_value = Config.get(*path)
     Config.set(*path, value=value)
     try:
@@ -43,13 +45,13 @@ def temporary_config():
             Config.set("optimizer", "autooptimize", value=True)
             foo()
     """
-    with tempfile.TemporaryFile(mode="w+t") as fp:
-        Config.save(file=fp)
-        try:
-            yield Config
-        finally:
-            fp.seek(0)  # rewind to the beginning of the file.
-            Config.load(file=fp)
+    # Restore the exact values, not a save/load round trip: loading re-applies the ``DACE_*``
+    # environment, which would silently undo every value set before the context was entered.
+    saved = copy.deepcopy(Config._data._config)
+    try:
+        yield Config
+    finally:
+        Config._data._config = saved
 
 
 def _env2bool(envval):
@@ -83,7 +85,7 @@ class _ConfigData(threading.local):
         return self._cfg_filename
 
     @staticmethod
-    def _env_name_for(*key_hierarchy: str) -> str:
+    def env_name_for(*key_hierarchy: str) -> str:
         """
         Returns the environment variable name of a configuration key, e.g.
         ``DACE_compiler_build_type`` for ``('compiler', 'build_type')``.
@@ -94,7 +96,7 @@ class _ConfigData(threading.local):
         return "_".join(("DACE",) + key_hierarchy)
 
     @staticmethod
-    def _coerce_env_value(envval: str, metadata: dict[str, Any], envvar: str):
+    def coerce_env_value(envval: str, metadata: dict[str, Any], envvar: str):
         """
         Coerces an environment variable string to the schema-declared type of a
         configuration entry.
@@ -130,13 +132,13 @@ class _ConfigData(threading.local):
         # Strings (and 'any'-typed entries) are kept verbatim
         return envval
 
-    def _add_defaults(self, config, metadata):
+    def add_defaults(self, config, metadata):
         """
         Adds defaults to the configuration from metadata.
 
         Fills only the keys missing from ``config`` with their schema
         defaults; the environment is handled separately by
-        :func:`_apply_env` when the configuration is loaded.
+        :func:`apply_env` when the configuration is loaded.
 
         :param config: The (sub-)configuration dictionary to fill.
         :param metadata: The schema metadata of ``config``.
@@ -150,7 +152,7 @@ class _ConfigData(threading.local):
                 if k not in config:
                     modified = True
                     config[k] = {}
-                modified |= self._add_defaults(config[k], v["required"])
+                modified |= self.add_defaults(config[k], v["required"])
                 continue
             # Key already exists in configuration, nothing to add
             if k in config:
@@ -166,7 +168,7 @@ class _ConfigData(threading.local):
                 config[k] = v["default"]
         return modified
 
-    def _apply_env(self, config, metadata, key_path=()):
+    def apply_env(self, config, metadata, key_path=()):
         """
         Applies ``DACE_*`` environment variables onto the configuration.
 
@@ -180,7 +182,7 @@ class _ConfigData(threading.local):
         :func:`temporary_config`) have the highest priority, since the
         environment is never consulted again until the next load.
         Environment values are coerced to the schema-declared type (see
-        :func:`_coerce_env_value`); a value that cannot be coerced is
+        :func:`coerce_env_value`); a value that cannot be coerced is
         reported with a warning and ignored.
 
         :param config: The (sub-)configuration dictionary to modify.
@@ -189,12 +191,12 @@ class _ConfigData(threading.local):
         """
         for k, v in metadata.items():
             if v["type"] == "dict":
-                self._apply_env(config.setdefault(k, {}), v["required"], key_path + (k,))
+                self.apply_env(config.setdefault(k, {}), v["required"], key_path + (k,))
                 continue
-            envvar = self._env_name_for(*key_path, k)
+            envvar = self.env_name_for(*key_path, k)
             if envvar in os.environ:
                 try:
-                    config[k] = self._coerce_env_value(os.environ[envvar], v, envvar)
+                    config[k] = self.coerce_env_value(os.environ[envvar], v, envvar)
                 except (ValueError, yaml.YAMLError) as ex:
                     warnings.warn(f"Ignoring environment variable {envvar}: {ex}")
 
@@ -238,8 +240,8 @@ class _ConfigData(threading.local):
             # defaults first, then the environment on top.
             self._cfg_filename = None
             self._config = {}
-            self._add_defaults(self._config, self._config_metadata["required"])
-            self._apply_env(self._config, self._config_metadata["required"])
+            self.add_defaults(self._config, self._config_metadata["required"])
+            self.apply_env(self._config, self._config_metadata["required"])
 
         # Migration of very old-format configuration files: the legacy 'execution' entry marks a
         # `dace.conf` written by very old DaCe versions, which saved every configuration entry.
@@ -262,8 +264,8 @@ class _ConfigData(threading.local):
             self._config = {}
 
         # Add defaults from metadata, then apply the environment on top
-        self._add_defaults(self._config, self._config_metadata["required"])
-        self._apply_env(self._config, self._config_metadata["required"])
+        self.add_defaults(self._config, self._config_metadata["required"])
+        self.apply_env(self._config, self._config_metadata["required"])
 
     def load_schema(self, filename: str | None = None):
         if filename is None:
@@ -288,7 +290,7 @@ class _ConfigData(threading.local):
                     d1[k] = v
 
         merge_dicts(self._config_metadata["required"], new_metadata["required"])
-        self._add_defaults(self._config, new_metadata["required"])
+        self.add_defaults(self._config, new_metadata["required"])
 
     def save(self, path: str | None = None, all: bool = False, file: io.FileIO | None = None):
         what_to_save = self._config if all else self.nondefaults()
