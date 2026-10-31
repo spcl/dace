@@ -911,6 +911,10 @@ class Stream(Data):
     #: Out-connector of a stream access node that carries the element count of a dynamic copy out of it.
     NUM_POPPED_CONNECTOR = "num_popped"
 
+    #: Set by GPU code generation (not serialized): device code pops this stream while tasks may push
+    #: to it, so it is a ``dace::GPUQueue``, in which every push is visible on its own.
+    device_queue: bool = False
+
     # Properties
     offset = ListProperty(element_type=sp.Basic, category="Memory")
     buffer_size = SymbolicProperty(category="Memory", desc="Size of internal buffer.", default=0)
@@ -1021,6 +1025,9 @@ class Stream(Data):
     def as_arg(self, with_types=True, for_call=False, name=None):
         if not with_types or for_call:
             return name
+        if self.device_queue:
+            block = ", true" if self.storage == dtypes.StorageType.GPU_Shared else ""
+            return f"dace::GPUQueue<{self.dtype.ctype}{block}> {name}"
         if self.storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]:
             return "dace::GPUStream<{}, {}> {}".format(
                 str(self.dtype.ctype),

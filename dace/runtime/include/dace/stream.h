@@ -50,6 +50,26 @@ namespace dace {
         FreeGPUArrayStreamView(stream);
         gpuFree(stream.m_data);
     }
+
+    // Mirror of the device work queue (see cuda/stream.cuh), allocated by the GPU code
+    template<typename T, bool BLOCK = false>
+    class GPUQueue
+    {
+    public:
+        T* m_data;
+        uint32_t *m_seq, *m_counters;
+        uint32_t m_mask;
+
+        GPUQueue() : m_data(nullptr), m_seq(nullptr), m_counters(nullptr), m_mask(0) {}
+    };
+
+    template<typename T>
+    void FreeGPUStream(GPUQueue<T>& queue)
+    {
+        gpuFree(queue.m_data);
+        gpuFree(queue.m_seq);
+        gpuFree(queue.m_counters);
+    }
 }  // namespace dace
 #endif
 
