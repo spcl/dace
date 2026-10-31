@@ -167,7 +167,13 @@ def lower_consume(sdfg: SDFG, state: SDFGState, entry: nodes.ConsumeEntry) -> no
     # that is one PE shares its chunk.
     block_pes = block_level_pes(state, entry)
     chunk_storage = dtypes.StorageType.GPU_Shared if block_pes else dtypes.StorageType.Register
-    if consume.chunksize == 1:
+    # A nested SDFG reads the element as data of its own: an array, so that it can index it (``S[0]``)
+    nested_reader = any(
+        isinstance(e.dst, nodes.NestedSDFG)
+        for out_edge in state.out_edges_by_connector(entry, "OUT_stream")
+        for e in state.memlet_tree(out_edge).leaves()
+    )
+    if consume.chunksize == 1 and not nested_reader:
         chunk, chunk_desc = sdfg.add_scalar(
             chunk_name(consume), stream_desc.dtype, transient=True, storage=chunk_storage, find_new_name=True
         )
@@ -186,6 +192,11 @@ def lower_consume(sdfg: SDFG, state: SDFGState, entry: nodes.ConsumeEntry) -> no
                 _read_chunk_in_nested_sdfg(inner.dst, inner.dst_conn, chunk_desc)
         for inner in _subtree_edges(state, out_edge):
             inner.data.data = chunk
+        for inner in [out_edge] + _subtree_edges(state, out_edge):
+            if isinstance(inner.dst, nodes.NestedSDFG):
+                inner_desc = copy.deepcopy(chunk_desc)
+                inner_desc.transient = False
+                inner.dst.sdfg.arrays[inner.dst_conn] = inner_desc
         chunk_node = state.add_access(chunk)
         state.add_nedge(entry, chunk_node, Memlet())  # Keeps the chunk inside the scope
         memlet = copy.deepcopy(out_edge.data)

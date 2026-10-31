@@ -3449,6 +3449,10 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                 else:
                     callsite_stream.write("{", cfg, state_id, scope_entry)
 
+            # A map with fewer dimensions than the thread block runs on its first threads in the others
+            for i in self._unmapped_block_dims(scope_map):
+                callsite_stream.write(f"if (threadIdx.{_named_idx(i)} == 0) {{", cfg, state_id, scope_entry)
+
         ##########################################################
 
         # need to handle subgraphs appropriately if they contain
@@ -3615,7 +3619,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
 
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
             # Close block invocation conditions
-            for i in range(len(node.map.params)):
+            for i in range(len(node.map.params) + len(self._unmapped_block_dims(node.map))):
                 callsite_stream.write("}", cfg, state_id, node)
 
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
@@ -3626,6 +3630,10 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
             return
 
         self._cpu_codegen._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    def _unmapped_block_dims(self, block_map: nodes.Map) -> list[int]:
+        """The dimensions of the thread block (up to three) that a thread-block map does not span."""
+        return [i for i in range(len(block_map.params), 3) if self._block_dims[i] != 1]
 
     def _get_thread_id(self) -> str:
         result = "threadIdx.x"

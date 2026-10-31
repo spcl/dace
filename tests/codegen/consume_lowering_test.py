@@ -201,6 +201,33 @@ def test_lowering_leaves_no_consume_scope():
     assert any(isinstance(n, dace.sdfg.state.LoopRegion) for n in all_nodes)
 
 
+def test_scope_body_uses_element():
+    """A consume scope (not a single tasklet) uses the element as a symbol, in subscripts and control flow."""
+    N = dace.symbol("N")
+
+    @dace.program
+    def square_odd(values: dace.int32[N], out: dace.int32[N]):
+        S = dace.define_stream(dace.int32, N)
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                v << values[i]
+                s >> S
+                s = v
+
+        @dace.consumescope(S, 4)
+        def body(elem, p):
+            if elem % 2 == 1:
+                out[elem] = elem * elem
+            else:
+                out[elem : elem + 1] = -1
+
+    values = np.random.default_rng(0).permutation(20).astype(np.int32)
+    out = np.zeros(20, dtype=np.int32)
+    square_odd(values=values, out=out)
+    expected = np.arange(20, dtype=np.int32)
+    assert np.array_equal(out, np.where(expected % 2 == 1, expected * expected, -1))
+
+
 if __name__ == "__main__":
     test_recursive_pushes_with_several_pes()
     test_body_uses_pe_index()
@@ -209,3 +236,4 @@ if __name__ == "__main__":
     test_condition_holding_at_start()
     test_consume_in_map()
     test_lowering_leaves_no_consume_scope()
+    test_scope_body_uses_element()
