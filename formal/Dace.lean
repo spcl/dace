@@ -67,6 +67,8 @@ import Dace.SDFG.BEq
 import Dace.Equiv.Relabel
 import Dace.Equiv.StateLocal
 import Dace.Equiv.RegionRules
+import Dace.SDFG.Rename
+import Dace.Equiv.RenameRule
 import Dace.Equiv.SdfgCorr
 
 /-!

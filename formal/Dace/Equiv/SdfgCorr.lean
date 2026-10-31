@@ -2,6 +2,7 @@
 import Dace.Equiv.Relabel
 import Dace.Equiv.StateLocal
 import Dace.Equiv.RegionRules
+import Dace.Equiv.RenameRule
 import Dace.SDFG.BEq
 
 /-!
@@ -41,6 +42,9 @@ and interface, so that rule applications chain (`Equiv.trans_of_eq`).
   `Congr.removeEmpty`): insert an empty state `e` after block `j` of the
   region at path `p` as its last block (it takes over `j`'s out-edges), or
   remove such a state.
+* `swapNames t u` (`Congr.swapNames`): swap the container names `t` and `u`
+  (`SDFG.ren`) when no expression, shape or consumed stream reads them and
+  they are neither observable nor defined at the start (`renameOk?`).
 
 The permutation is built from the id pairs by swaps (`permOfPairs`); its
 correctness is never assumed: the replayed SDFG is compared with the target.
@@ -76,6 +80,8 @@ inductive Step where
   | insertEmpty (path : List PathStep) (idx : BlockId) (e : State)
   /-- Remove the last block of the region at `path`, an empty state after block `idx`. -/
   | removeEmpty (path : List PathStep) (idx : BlockId)
+  /-- Swap the container names `t` and `u`. -/
+  | swapNames (t u : Name)
   deriving Inhabited
 
 /-- Apply a rule, if its side condition holds. -/
@@ -111,6 +117,7 @@ def Step.apply? (g : SDFG) : Step → Option SDFG
         else none
       | none => none
     | none => none
+  | .swapNames t u => if renameOk? g t u then some (g.ren (Equiv.swap t u)) else none
 
 /-- What every rule guarantees: an equivalent SDFG with the same facts and
 interface. -/
@@ -185,6 +192,13 @@ theorem Step.apply?_sound {g g' : SDFG} {st : Step} (h : st.apply? g = some g') 
           exact ⟨Congr.removeEmpty hat (Region.beq_sound hchk.1.1).symm hchk.1.2 hchk.2 hs, rfl, rfl⟩
         · cases h
       · cases h
+    · cases h
+  | swapNames t u =>
+    simp only [Step.apply?] at h
+    split at h
+    · rename_i hchk
+      cases h
+      exact ⟨Congr.swapNames hchk hs, rfl, (renameOk?_sound hchk).interface⟩
     · cases h
 
 /-- Apply a list of rules in order. -/
@@ -288,8 +302,19 @@ end
 /-- The SDFG–SDFG check: `ok steps` when replaying the found rules turns `a`
 into `b` (then `checkBy_sound` applies), or a reason. -/
 def sdfgCheck (a b : SDFG) : Except String (List Step) := do
-  let sts ← findRegion [] a.top b.top
-  if checkBy a b sts then pure sts
-  else throw "the SDFGs differ beyond the rules (node relabeling, state replacement, block renumbering, empty states)"
+  -- containers renamed: match the descriptor lists position by position
+  let mut a' := a
+  let mut ren : List Step := []
+  if a.arrays.length = b.arrays.length then
+    for i in List.range b.arrays.length do
+      match a'.arrays[i]?, b.arrays[i]? with
+      | some (x, _), some (y, _) =>
+        if x ≠ y then
+          ren := ren ++ [.swapNames x y]
+          a' := a'.ren (Equiv.swap x y)
+      | _, _ => pure ()
+  let sts ← findRegion [] a'.top b.top
+  if checkBy a b (ren ++ sts) then pure (ren ++ sts)
+  else throw "the SDFGs differ beyond the rules (node relabeling, state replacement, block renumbering, empty states, container renaming)"
 
 end Dace

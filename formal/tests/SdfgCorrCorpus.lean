@@ -10,7 +10,9 @@ For every corpus SDFG, a variant with the nodes of every state renumbered
 with the node list of every state reordered (within components) must be
 certified, so must a variant with the blocks of every region in reverse
 order and a variant with an empty state after the start block of every
-region (both directions), and a variant with one edge reversed must not be. -/
+region (both directions), and a variant with every checkable transient
+renamed (both directions); variants with one edge reversed or an argument
+renamed must not be. -/
 
 open Dace
 
@@ -92,6 +94,12 @@ partial def flipFirstEdge (r : Region) : Option Region :=
     | b :: bs => (go bs).map (b :: ·)
   (go r.blocks).map fun bs => { r with blocks := bs }
 
+/-- Rename every transient `t` to `t_rn` when the rule's side condition
+holds; also return how many were renamed. -/
+def renameTransients (g : SDFG) : SDFG × Nat :=
+  g.arrays.foldl (init := (g, 0)) fun (h, k) (t, d) =>
+    if d.transient && renameOk? h t (t ++ "_rn") then (h.ren (Equiv.swap t (t ++ "_rn")), k + 1) else (h, k)
+
 /-- Reordered variants the rules do not certify: two independent views
 bound in the other order (ties in `State.viewOrder` follow the node list;
 when both bindings fail the reported error would differ). -/
@@ -108,6 +116,8 @@ def main : IO Unit := do
   let mut rok := 0
   let mut bok := 0
   let mut eok := 0
+  let mut nok := 0
+  let mut nren := 0
   for f in files.qsort (fun a b => a.toString < b.toString) do
     let name := (f.fileName.getD "").replace ".sdfg.json" ""
     match ← SDFG.Json.readSDFG f with
@@ -131,13 +141,25 @@ def main : IO Unit := do
       | .ok _, .ok _ => eok := eok + 1
       | .error m, _ => IO.println s!"UNKNOWN  {name} (empty state inserted): {m}"; bad := bad + 1
       | _, .error m => IO.println s!"UNKNOWN  {name} (empty state removed): {m}"; bad := bad + 1
+      let (gr, k) := renameTransients g
+      if k > 0 then
+        match sdfgCheck g gr, sdfgCheck gr g with
+        | .ok _, .ok _ => nok := nok + 1; nren := nren + k
+        | .error m, _ => IO.println s!"UNKNOWN  {name} (transients renamed): {m}"; bad := bad + 1
+        | _, .error m => IO.println s!"UNKNOWN  {name} (transients renamed back): {m}"; bad := bad + 1
+      match g.interface.head? with
+      | some x =>
+        if (sdfgCheck g (g.ren (Equiv.swap x (x ++ "_rn")))).toBool then
+          IO.println s!"WRONGLY EQUIVALENT {name} (argument renamed)"
+          bad := bad + 1
+      | none => pure ()
       match flipFirstEdge g.top with
       | some top =>
         if (sdfgCheck g { g with top }).toBool then
           IO.println s!"WRONGLY EQUIVALENT {name} (flipped edge)"
           bad := bad + 1
       | none => pure ()
-  IO.println s!"{ok} relabeled variants certified ({steps} rule applications), {rok} reordered, {bok} with blocks reversed, {eok} with empty states inserted and removed, {bad} failures"
+  IO.println s!"{ok} relabeled variants certified ({steps} rule applications), {rok} reordered, {bok} with blocks reversed, {eok} with empty states inserted and removed, {nok} with {nren} transients renamed, {bad} failures"
   if bad > 0 then throw <| IO.userError s!"{bad} failures"
 
 #eval main

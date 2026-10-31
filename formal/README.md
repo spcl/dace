@@ -90,9 +90,13 @@ representations:
   block renumbering of a region (`Congr.relabelBlocks`, from
   `Equiv/RegionRules.lean`, which also provides region-level congruence,
   `Congr.regionEquiv`); inserting or removing an empty state after a block
-  (`Congr.insertEmpty`, `Congr.removeEmpty`).
+  (`Congr.insertEmpty`, `Congr.removeEmpty`); swapping two container names
+  (`Congr.swapNames`, from `SDFG/Rename.lean` and `Equiv/RenameRule.lean`:
+  renaming containers that no expression, shape or consumed stream reads and
+  that are neither observable nor defined at the start, D69).
   `tests/SdfgCorrCorpus.lean` certifies a renumbered, a reordered, a
-  block-reversed and an empty-state variant of every corpus program (two reorderings of independent views are not).
+  block-reversed, an empty-state and a transient-renamed variant of every
+  corpus program (two reorderings of independent views are not).
 - `Dace/Decisions.md`: the semantic decision register (every ambiguity between
   documentation, code generator and model, with the chosen resolution).
 
