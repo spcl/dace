@@ -1,0 +1,33 @@
+variant  schedule     config             calls  call [ms]  compute [ms]   max rel  differ
+l0i1                  cpu-base               1       7.81           nan   0.0e+00       0
+l0i2                  cpu-base               7       5.54           nan   0.0e+00       0
+l1i1                  cpu-base               5       5.54           nan   0.0e+00       0
+variant  schedule     config             calls  call [ms]  compute [ms]   max rel  differ
+l0i1                  cpu-megakernel         1       7.45           nan   0.0e+00       0
+l0i1                  cpu-tuned              1      16.40           nan   0.0e+00       0
+l0i2                  cpu-megakernel         7       5.15           nan   0.0e+00       0
+l0i2                  cpu-tuned              7       7.56           nan   0.0e+00       0
+l1i1                  cpu-megakernel         5       4.93           nan   0.0e+00       0
+l1i1                  cpu-tuned              5       9.85           nan   0.0e+00       0
+variant  schedule     config             calls  call [ms]  compute [ms]   max rel  differ
+l0i1                  gpu-base               0        nan           nan   0.0e+00       0
+l0i2                  gpu-base               0        nan           nan   0.0e+00       0
+l1i1                  gpu-base               0        nan           nan   0.0e+00       0
+variant  schedule     config             calls  call [ms]  compute [ms]   max rel  differ
+l0i1                  gpu-megakernel         0        nan           nan   0.0e+00       0
+l0i1                  gpu-tuned              0        nan           nan   0.0e+00       0
+l0i2                  gpu-megakernel         0        nan           nan   0.0e+00       0
+l0i2                  gpu-tuned              0        nan           nan   0.0e+00       0
+l1i1                  gpu-megakernel         0        nan           nan   0.0e+00       0
+l1i1                  gpu-tuned              0        nan           nan   0.0e+00       0
+variant  schedule     config             calls  call [ms]  compute [ms]   max rel  differ
+l0i1                  gpu-base               1      19.67          0.95   0.0e+00       0
+l0i2                  gpu-base               7      13.51          1.00   0.0e+00       0
+l1i1                  gpu-base               5      17.17          0.86   0.0e+00       0
+variant  schedule     config             calls  call [ms]  compute [ms]   max rel  differ
+l0i1                  gpu-megakernel         1      22.38          3.18   0.0e+00       0
+l0i1                  gpu-tuned              1      20.43          1.16   0.0e+00       0
+l0i2                  gpu-megakernel         7      15.37          2.32   0.0e+00       0
+l0i2                  gpu-tuned              7      14.28          1.26   0.0e+00       0
+l1i1                  gpu-megakernel         5      18.63          2.20   0.0e+00       0
+l1i1                  gpu-tuned              5      17.48          0.91   0.0e+00       0
