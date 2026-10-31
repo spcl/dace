@@ -14,7 +14,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 KINDS = {"base": "#2a78d6", "megakernel": "#eb6834", "tuned": "#1baf7a"}
-LABELS = {"base": "base", "megakernel": "megakernel, all syncs", "tuned": "megakernel, dependent syncs"}
+LABELS = {"base": "Base", "megakernel": "Megakernel, All Syncs", "tuned": "Megakernel, Dependent Syncs"}
 DEVICES = ("cpu", "gpu")
 SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0"
 BAR_WIDTH = 0.26
@@ -34,7 +34,7 @@ def read(paths: list[Path], schedule: str) -> tuple[dict, list[str]]:
         runs += names
         for row in rows:
             if int(row["rep"]) > 1 and (row["device"] != "cpu" or row["schedule"] == schedule):
-                variant = f"lvn {row['lvn_only']}, istep {row['istep']}"
+                variant = f"LVN {row['lvn_only']}, Istep {row['istep']}"
                 key = (row["machine"], row["device"], variant, row["kind"])
                 samples[key].append(1e3 * float(row["compute_s"] or row["call_s"]))
     return samples, runs
@@ -111,7 +111,7 @@ def main() -> None:
     fig, axes = plt.subplots(
         len(devices),
         len(runs),
-        figsize=(max(5.2, 3.6 * len(runs)), 2.9 * len(devices) + 0.5),
+        figsize=(max(5.2, 4.2 * len(runs)), 2.9 * len(devices) + 0.5),
         squeeze=False,
         sharey="row",
         facecolor=SURFACE,
@@ -119,11 +119,12 @@ def main() -> None:
     for row, device in enumerate(devices):
         for column, run in enumerate(runs):
             draw(axes[row, column], samples, run, device, variants)
-        unit = "compute ms per call" if device == "gpu" else "ms per call"
+        unit = "Compute ms Per Call" if device == "gpu" else "ms Per Call"
         axes[row, 0].set_ylabel(f"{device.upper()}: {unit}", fontsize=8, color=MUTED)
         axes[row, 0].margins(y=0.14)
     for column, run in enumerate(runs):
-        axes[0, column].set_title(run, fontsize=9, color=INK, loc="left")
+        title = run.replace("-", " ").title().replace("Openacc", "OpenACC")
+        axes[0, column].set_title(title, fontsize=9, color=INK, loc="left")
     handles = {}
     for ax in axes.flat:
         handles |= {label: handle for handle, label in zip(*ax.get_legend_handles_labels())}
