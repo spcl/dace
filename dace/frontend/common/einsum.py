@@ -407,6 +407,7 @@ def _create_einsum_internal(
     init_output: bool = None,
     alpha: symbolic.SymbolicType | None = None,
     beta: symbolic.SymbolicType | None = None,
+    decompose: bool = True,
 ):
     # Infer shapes and strides of input/output arrays
     einsum = EinsumParser(einsum_string)
@@ -436,7 +437,7 @@ def _create_einsum_internal(
                 raise ValueError("Dimension mismatch in einsum expression")
             chardict[char] = shp
 
-    if optimize or len(einsum.inputs) > 2:
+    if decompose and (optimize or len(einsum.inputs) > 2):
         # More than two operands contract pairwise along opt_einsum's path, each pair a GEMM-shaped step: one fused
         # nest over every index costs the product of all extents (seissol's three-operand contraction, 8x the
         # multiply-adds). Symbolic extents get stand-in sizes (a SMALL symbol small, any other large) for the path.
@@ -455,14 +456,16 @@ def _create_einsum_internal(
         steps = path_info.contraction_list
         for step, (pair, _, expr, _, _) in enumerate(steps):
             last = step == len(steps) - 1
+            # The memory cap can leave a step with three or more operands: rebuild it whole, not as a pair.
+            operands = tuple(arrays[i] for i in pair)
             result, result_node = _create_einsum_internal(
                 sdfg,
                 state,
                 expr,
-                arrays[pair[0]],
-                arrays[pair[1]],
+                *operands,
                 dtype=dtype,
                 optimize=False,
+                decompose=False,
                 output=output if last else None,
                 output_name=output_name if last else None,
                 nodes=input_nodes,

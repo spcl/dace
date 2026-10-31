@@ -629,6 +629,25 @@ def test_a_contraction_in_no_gemm_order_transposes_the_small_operand():
     assert np.allclose(sdfg(T=T, I=I), np.einsum("qpkl,blq->bkp", T, I))
 
 
+def test_a_three_operand_contraction_step_matches_numpy():
+    """#2756: the memory cap leaves ``dkl,blq,dqp->bkp`` one three-operand opt_einsum step, not a pair."""
+
+    @dace.program
+    def einsumtest(
+        kDivM: dace.float64[2, 3, 4],
+        I: dace.float64[5, 4, 6],
+        star: dace.float64[2, 6, 7],
+        upd: dace.float64[5, 3, 7],
+    ):
+        upd[:] = np.einsum("dkl,blq,dqp->bkp", kDivM, I, star)
+
+    rng = np.random.default_rng(13)
+    kDivM, I, star = rng.random((2, 3, 4)), rng.random((5, 4, 6)), rng.random((2, 6, 7))
+    upd = np.zeros((5, 3, 7))
+    einsumtest(kDivM, I, star, upd)
+    assert np.allclose(upd, np.einsum("dkl,blq,dqp->bkp", kDivM, I, star))
+
+
 def test_a_contraction_whose_output_interleaves_the_operands_transposes_the_product():
     @dace.program
     def einsumtest(A: dace.float64[6, 7, 8], B: dace.float64[8, 9]):
@@ -723,5 +742,6 @@ if __name__ == "__main__":
     test_lift_einsum_leaves_a_copy_map_alone()
     test_contraction_with_summed_indices_in_different_orders_matches_numpy()
     test_a_contraction_in_no_gemm_order_transposes_the_small_operand()
+    test_a_three_operand_contraction_step_matches_numpy()
     test_a_contraction_whose_output_interleaves_the_operands_transposes_the_product()
     test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds_beta_into_the_transpose()
