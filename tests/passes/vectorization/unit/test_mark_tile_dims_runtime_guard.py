@@ -3,7 +3,7 @@
 
 The K-dim vectorization pipeline does NOT require ``trip >= W`` on a tiled
 inner dim. Under the unified "no-mask interior + w-mask remainder" model a
-short, symbolic, or per-iteration-varying (e.g. wavefront) trip is handled by
+symbolic, or per-iteration-varying (e.g. wavefront) trip is handled by
 masking -- or, under ``scalar_postamble``, by the scalar remainder loop. So:
 
 1. A symbolic trip ``N`` is classified (a spec is recorded) and NO runtime
@@ -12,7 +12,11 @@ masking -- or, under ``scalar_postamble``, by the scalar remainder loop. So:
    depend on an outer-loop iterator -- undefined at entry -- and is unnecessary
    because the mask/remainder already handle ``trip < W`` correctly.)
 2. A static trip == W is classified, no guard.
-3. A static trip < W is classified (masked-tail), no guard.
+3. A static trip < W is NOT classified: a constant extent below the vector
+   width can never fill a tile even at runtime, so the map stays scalar
+   instead of paying the interior/remainder split + mask machinery for a
+   width-8 tile on an extent-3 axis (gem). ``SplitMapForTileRemainder``
+   agrees: its constant-below-width class leaves the map whole and unmarked.
 4. End to end, a symbolic-trip kernel run with ``N < W`` produces CORRECT
    results (no trap) for BOTH the masking path (``full_mask``) and the scalar
    remainder path (``scalar_postamble``).
@@ -85,22 +89,33 @@ def test_mark_tile_dims_no_guard_for_static_trip_at_or_above_width():
     assert not _guard_states(sdfg)
 
 
-def test_mark_tile_dims_specs_static_trip_below_width_for_masked_tail():
-    """Static trip < W: under the unified model the dim is STILL tiled (single
-    masked remainder tile, empty interior), so a spec is recorded and no guard
-    is needed (the mask handles the short dim).
-
-    Regression contract: the prior design soft-skipped ``trip < W`` and returned
-    ``None``; the masked-tail model removed that skip -- a trip-4 / W-8 kernel
-    vectorises correctly via the masked tail rather than dropping to sequential
-    codegen."""
+def test_mark_tile_dims_skips_constant_trip_below_width():
+    """Static trip < W: NOT spec'd. A constant extent below the vector width can never fill a
+    tile even at runtime, so the map stays scalar instead of paying the split + mask machinery
+    for a width-8 tile on an extent-3 axis (gem). A symbolic trip stays tiled (the masked tail
+    handles a runtime short trip); see ``test_mark_tile_dims_no_guard_for_symbolic_trip``."""
     sdfg = _build_inner_map_sdfg("static_trip_below_w", 4)
     res = MarkTileDims(widths=(8,)).apply_pass(sdfg, {})
-    assert res is not None, "static trip < W must be spec'd (masked-tail), not soft-skipped"
-    specs = list(res.values())
-    assert len(specs) == 1, f"expected one spec for the single inner map, got {len(specs)}"
-    assert specs[0].iter_vars == ("i",) and specs[0].widths == (8,)
+    assert res is None, "a constant trip < W must stay scalar, not masked-tile"
     assert not _guard_states(sdfg)
+
+
+def test_split_map_agrees_a_constant_trip_below_width_stays_untiled():
+    """SplitMapForTileRemainder must leave the same map whole and unmarked, or the two passes
+    disagree about which maps are tiled and a strided map ends up with a scalar body."""
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
+        REGION_MARKERS,
+        SplitMapForTileRemainder,
+    )
+
+    sdfg = _build_inner_map_sdfg("static_trip_below_w_split", 4)
+    assert SplitMapForTileRemainder(widths=(8,), tail_mode="masked").apply_pass(sdfg, {}) is None
+    (state,) = sdfg.states()
+    (map_entry,) = (n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    assert not map_entry.map.label.endswith(REGION_MARKERS), (
+        f"the below-width map must stay whole, got {map_entry.map.label!r}"
+    )
+    assert [(r[0], r[1], r[2]) for r in map_entry.map.range.ranges] == [(0, 3, 1)], "the map range must be untouched"
 
 
 @pytest.mark.parametrize(
