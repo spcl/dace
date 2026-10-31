@@ -111,6 +111,23 @@ def _unique_connector_pair(node: nodes.EntryNode, base: str) -> str:
     return name
 
 
+def block_level_pes(state: SDFGState, entry: nodes.ConsumeEntry) -> bool:
+    """Whether each PE of a consume scope is a GPU thread block rather than a thread.
+
+    That is the case for a device-level consume whose body maps work to the threads of a block
+    (``GPU_ThreadBlock`` or ``GPU_ThreadBlock_Dynamic`` maps): the block pops a chunk together and
+    its threads share the task.
+    """
+    if entry.consume.schedule != dtypes.ScheduleType.GPU_Device:
+        return False
+    thread_block = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
+    for node in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes():
+        inner = [node] if not isinstance(node, nodes.NestedSDFG) else [n for n, _ in node.sdfg.all_nodes_recursive()]
+        if any(isinstance(n, nodes.MapEntry) and n.map.schedule in thread_block for n in inner):
+            return True
+    return False
+
+
 def lower_consume(sdfg: SDFG, state: SDFGState, entry: nodes.ConsumeEntry) -> nodes.MapEntry:
     """Lowers one consume scope in place (see :class:`LowerConsumeScopes`).
 
@@ -130,14 +147,13 @@ def lower_consume(sdfg: SDFG, state: SDFGState, entry: nodes.ConsumeEntry) -> no
     if stream_desc.is_stream_array():
         raise NotImplementedError(f'Consume "{consume.label}" reads from a stream array, which is unsupported')
 
-    # The chunk the body reads, in place of the stream the ``OUT_stream`` paths name
+    # The chunk the body reads, in place of the stream the ``OUT_stream`` paths name. A thread block
+    # that is one PE shares its chunk.
+    block_pes = block_level_pes(state, entry)
+    chunk_storage = dtypes.StorageType.GPU_Shared if block_pes else dtypes.StorageType.Register
     if consume.chunksize == 1:
         chunk, chunk_desc = sdfg.add_scalar(
-            chunk_name(consume),
-            stream_desc.dtype,
-            transient=True,
-            storage=dtypes.StorageType.Register,
-            find_new_name=True,
+            chunk_name(consume), stream_desc.dtype, transient=True, storage=chunk_storage, find_new_name=True
         )
     else:
         chunk, chunk_desc = sdfg.add_array(
@@ -145,7 +161,7 @@ def lower_consume(sdfg: SDFG, state: SDFGState, entry: nodes.ConsumeEntry) -> no
             [consume.chunksize],
             stream_desc.dtype,
             transient=True,
-            storage=dtypes.StorageType.Register,
+            storage=chunk_storage,
             find_new_name=True,
         )
     for out_edge in list(state.out_edges_by_connector(entry, "OUT_stream")):
@@ -250,7 +266,7 @@ def lower_consume(sdfg: SDFG, state: SDFGState, entry: nodes.ConsumeEntry) -> no
         for name in sorted(consume.condition.get_free_symbols() & sdfg.arrays.keys()):
             _connect_condition_input(sdfg, state, map_entry, nsdfg_node, name)
 
-    _build_pe_loop(nsdfg, consume, inner_stream, chunk, chunk_desc)
+    _build_pe_loop(nsdfg, consume, inner_stream, chunk, chunk_desc, block_pes)
     return map_entry
 
 
@@ -277,8 +293,15 @@ def _connect_condition_input(
     state.add_edge(map_entry, f"OUT_{conn}", nsdfg_node, inner, memlet)
 
 
-def _build_pe_loop(nsdfg: SDFG, consume: nodes.Consume, stream: str, chunk: str, chunk_desc: data.Data) -> None:
-    """Wraps the single body state of ``nsdfg`` in the loop one PE runs."""
+def _build_pe_loop(
+    nsdfg: SDFG, consume: nodes.Consume, stream: str, chunk: str, chunk_desc: data.Data, block_pes: bool
+) -> None:
+    """Wraps the single body state of ``nsdfg`` in the loop one PE runs.
+
+    With ``block_pes``, every thread of a block runs the loop, and the queue operations are the
+    block-collective ones, so the block agrees on each count.
+    """
+    method = "block_" if block_pes else ""
     (body_state,) = nsdfg.nodes()
     nsdfg.remove_node(body_state)
 
@@ -336,7 +359,7 @@ def _build_pe_loop(nsdfg: SDFG, consume: nodes.Consume, stream: str, chunk: str,
             f"pending_{consume.label}",
             {"__stream"},
             {"__pending"},
-            "__pending = __stream.pending();",
+            f"__pending = __stream.{method}pending();",
             language=dtypes.Language.CPP,
         )
         poll.add_edge(poll.add_read(stream), None, tasklet, "__stream", Memlet(data=stream, subset="0", dynamic=True))
@@ -349,7 +372,7 @@ def _build_pe_loop(nsdfg: SDFG, consume: nodes.Consume, stream: str, chunk: str,
         f"task_done_{consume.label}",
         {"__count"},
         {"__stream"},
-        "__stream.task_done(__count);",
+        f"__stream.{method}task_done(__count);",
         language=dtypes.Language.CPP,
     )
     done.add_edge(done.add_read(count), None, tasklet, "__count", Memlet(data=count, subset="0"))

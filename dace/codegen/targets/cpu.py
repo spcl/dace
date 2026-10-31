@@ -1521,7 +1521,10 @@ class CPUCodeGen(TargetCodeGenerator):
             target = dst_ptr
         else:
             target = f"{dst_ptr}[{cpp.cpp_offset_expr(dst_desc, array_subset)}]"
-        if num_elements == 1:
+        if dst_desc.storage == dtypes.StorageType.GPU_Shared:
+            # Into memory the thread block shares: the block pops once, and every thread sees the count
+            pop = f"{stream_ptr}.block_pop_try(&{target}, {cpp.sym2cpp(num_elements)}, true)"
+        elif num_elements == 1:
             pop = f"{stream_ptr}.pop_try({target}, true)"
         else:
             pop = f"{stream_ptr}.pop_try(&{target}, {cpp.sym2cpp(num_elements)}, true)"
