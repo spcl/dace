@@ -168,7 +168,7 @@ def test_power_bounds_declare_integer_parameters():
     assert all(h.startswith("for (int64_t j = 0;") for h in _loop_headers(sdfg, "j")), _loop_headers(sdfg, "j")
 
 
-def _consume_pe_header(num_pes: str, pe_type: dace.typeclass, lower: bool) -> str:
+def _consume_pe_header(num_pes: str, pe_type: dace.typeclass) -> str:
     sdfg = dace.SDFG("consume_pe_type")
     sdfg.add_symbol("P", pe_type)
     sdfg.add_stream("S", dace.int32, transient=True)
@@ -184,20 +184,14 @@ def _consume_pe_header(num_pes: str, pe_type: dace.typeclass, lower: bool) -> st
     state.add_edge(exit, "OUT_V", output, None, dace.Memlet("res[0]", wcr="lambda a, b: a + b"))
     exit.add_in_connector("IN_V")
     exit.add_out_connector("OUT_V")
-    with dace.config.set_temporary("compiler", "lower_consume", value=lower):
-        code = sdfg.generate_code()[0].clean_code
-    marker = "for (" if lower else "dace::Consume"
-    return next(line.strip() for line in code.splitlines() if marker in line and " p" in line)
+    code = sdfg.generate_code()[0].clean_code
+    return next(line.strip() for line in code.splitlines() if "for (" in line and " p" in line)
 
 
 def test_consume_pe_index_declares_inferred_type():
-    assert "[&](int p," in _consume_pe_header("4", dace.int32, lower=False)
-    assert "[&](int64_t p," in _consume_pe_header("P", dace.int64, lower=False)
-
-
-def test_lowered_consume_pe_index_declares_inferred_type():
-    assert _consume_pe_header("4", dace.int32, lower=True).startswith("for (int p = 0;")
-    assert _consume_pe_header("P", dace.int64, lower=True).startswith("for (int64_t p = 0;")
+    """A consume scope is a map over its processing elements, whose index has the type of the count."""
+    assert _consume_pe_header("4", dace.int32).startswith("for (int p = 0;")
+    assert _consume_pe_header("P", dace.int64).startswith("for (int64_t p = 0;")
 
 
 if __name__ == "__main__":
@@ -214,4 +208,3 @@ if __name__ == "__main__":
     test_frontend_map_parameter_beyond_32_bits()
     test_power_bounds_declare_integer_parameters()
     test_consume_pe_index_declares_inferred_type()
-    test_lowered_consume_pe_index_declares_inferred_type()
