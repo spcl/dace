@@ -1,17 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests consume scopes lowered to maps of processing-element loops, against the dedicated consume path."""
+"""Tests consume scopes, which code generation lowers to maps of processing-element loops."""
 
 import numpy as np
-import pytest
 
 import dace
 from dace.transformation.passes.lower_consume import LowerConsumeScopes
-
-
-def _run(sdfg: dace.SDFG, lower: bool, **arguments) -> None:
-    sdfg.name = f"{sdfg.name}_{'lowered' if lower else 'direct'}"
-    with dace.config.set_temporary("compiler", "lower_consume", value=lower):
-        sdfg(**arguments)
 
 
 def _fill_and_consume(
@@ -65,8 +58,7 @@ def _fibonacci(n: int) -> int:
     return n if n < 2 else _fibonacci(n - 1) + _fibonacci(n - 2)
 
 
-@pytest.mark.parametrize("lower", (False, True))
-def test_recursive_pushes_with_several_pes(lower: bool):
+def test_recursive_pushes_with_several_pes():
     """Tasks push back into the consumed stream; any PE may pop them, and all leave at quiescence."""
     sdfg, _, _ = _fill_and_consume(
         "consume_fib",
@@ -79,12 +71,11 @@ def test_recursive_pushes_with_several_pes(lower: bool):
     )
     values = np.array([15], dtype=np.int32)
     result = np.zeros(1, dtype=np.int64)
-    _run(sdfg, lower, V=values, R=result)
+    sdfg(V=values, R=result)
     assert result[0] == _fibonacci(15)
 
 
-@pytest.mark.parametrize("lower", (False, True))
-def test_body_uses_pe_index(lower: bool):
+def test_body_uses_pe_index():
     """Each PE counts its own tasks in its own slot; the slots add up to the number of elements."""
     num_pes = 3
     sdfg, state, _ = _fill_and_consume(
@@ -97,12 +88,11 @@ def test_body_uses_pe_index(lower: bool):
     )
     values = np.arange(100, dtype=np.int32)
     counts = np.zeros(num_pes, dtype=np.int64)
-    _run(sdfg, lower, V=values, C=counts)
+    sdfg(V=values, C=counts)
     assert counts.sum() == 100
 
 
-@pytest.mark.parametrize("lower", (False, True))
-def test_short_last_chunk(lower: bool):
+def test_short_last_chunk():
     """Chunks hold up to ``chunksize`` elements; the body sees how many through ``__dace_cons_numelems``."""
     sdfg, _, _ = _fill_and_consume(
         "consume_chunks",
@@ -119,13 +109,12 @@ def test_short_last_chunk(lower: bool):
     values = np.arange(1, 11, dtype=np.int32)
     total = np.zeros(1, dtype=np.int64)
     numelems = np.zeros(1, dtype=np.int64)
-    _run(sdfg, lower, V=values, T=total, N=numelems)
+    sdfg(V=values, T=total, N=numelems)
     assert total[0] == values.sum()
     assert numelems[0] == 10
 
 
-@pytest.mark.parametrize("lower", (False, True))
-def test_condition_stops_consumption(lower: bool):
+def test_condition_stops_consumption():
     """The condition is a stop condition: one PE stops after exactly five tasks of ten queued ones."""
     sdfg, _, _ = _fill_and_consume(
         "consume_cond",
@@ -138,12 +127,11 @@ def test_condition_stops_consumption(lower: bool):
     )
     values = np.arange(10, dtype=np.int32)
     counts = np.zeros(1, dtype=np.int64)
-    _run(sdfg, lower, V=values, C=counts)
+    sdfg(V=values, C=counts)
     assert counts[0] == 5
 
 
-@pytest.mark.parametrize("lower", (False, True))
-def test_condition_holding_at_start(lower: bool):
+def test_condition_holding_at_start():
     """A stop condition that holds from the start runs no task at all."""
     sdfg, _, _ = _fill_and_consume(
         "consume_cond_start",
@@ -156,16 +144,12 @@ def test_condition_holding_at_start(lower: bool):
     )
     values = np.arange(4, dtype=np.int32)
     counts = np.zeros(1, dtype=np.int64)
-    _run(sdfg, lower, V=values, C=counts)
+    sdfg(V=values, C=counts)
     assert counts[0] == 0
 
 
 def test_consume_in_map():
-    """Every iteration of an outer map fills and consumes a stream of its own.
-
-    Lowered only: the dedicated consume code generator loses the enclosing map scope here.
-    """
-    lower = True
+    """Every iteration of an outer map fills and consumes a stream of its own."""
     sdfg = dace.SDFG("consume_in_map")
     sdfg.add_array("V", [4, 8], dace.int32)
     sdfg.add_array("R", [4], dace.int64)
@@ -193,7 +177,7 @@ def test_consume_in_map():
     )
     values = np.arange(32, dtype=np.int32).reshape(4, 8).copy()
     result = np.zeros(4, dtype=np.int64)
-    _run(sdfg, lower, V=values, R=result)
+    sdfg(V=values, R=result)
     assert np.array_equal(result, values.sum(axis=1))
 
 
@@ -218,11 +202,10 @@ def test_lowering_leaves_no_consume_scope():
 
 
 if __name__ == "__main__":
-    for lower in (False, True):
-        test_recursive_pushes_with_several_pes(lower)
-        test_body_uses_pe_index(lower)
-        test_short_last_chunk(lower)
-        test_condition_stops_consumption(lower)
-        test_condition_holding_at_start(lower)
+    test_recursive_pushes_with_several_pes()
+    test_body_uses_pe_index()
+    test_short_last_chunk()
+    test_condition_stops_consumption()
+    test_condition_holding_at_start()
     test_consume_in_map()
     test_lowering_leaves_no_consume_scope()

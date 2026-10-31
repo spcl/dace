@@ -4,10 +4,7 @@
 
 #include "../../../external/moodycamel/blockingconcurrentqueue.h"
 
-// Consume
-#include <thread>
 #include <atomic>
-#include <vector>
 
 #include "vector.h"
 
@@ -365,98 +362,6 @@ namespace dace {
 
             std::copy(elements, elements + num_elements, (vec_t*)(m_array + m_elements));
             m_elements += num_elements * VECTOR_LEN;
-        }
-    };
-
-    template <int CHUNKSIZE = 1>
-    struct Consume;
-
-    template <int CHUNKSIZE>
-    struct Consume {
-        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
-                  typename Functor>
-        static void consume(StreamT<T, ALIGNED>& stream, unsigned num_threads,
-                            Functor&& contents) {
-            std::vector<std::thread> threads;
-            auto thread_contents = [&](int pe) {
-                T consumed_elements[CHUNKSIZE];
-                while (stream.m_elements > 0) {
-                    size_t elems = stream.pop_try(consumed_elements, CHUNKSIZE, true);
-                    if (elems > 0) {
-                        contents(pe, consumed_elements, elems);
-                        stream.m_elements -= elems;
-                    }
-                }
-            };
-            for (unsigned i = 0; i < num_threads; ++i)
-                threads.emplace_back(std::thread(thread_contents, i));
-
-            for (auto& t : threads) t.join();
-        }
-
-        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
-                  typename CondFunctor, typename Functor>
-        static void consume_cond(StreamT<T, ALIGNED>& stream, unsigned num_threads,
-                                 CondFunctor&& quiescence, Functor&& contents) {
-            std::vector<std::thread> threads;
-            auto thread_contents = [&](int pe) {
-                T consumed_elements[CHUNKSIZE];
-                while (!quiescence()) {
-                    size_t elems = stream.pop_try(consumed_elements, CHUNKSIZE, true);
-                    if (elems > 0) {
-                        contents(pe, consumed_elements, elems);
-                        stream.m_elements -= elems;
-                    }
-                }
-            };
-            for (unsigned i = 0; i < num_threads; ++i)
-                threads.emplace_back(std::thread(thread_contents, i));
-
-            for (auto& t : threads) t.join();
-        }
-    };
-
-    // Specialization for consumption of 1 element
-    template<>
-    struct Consume<1> {
-        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
-                  typename Functor>
-        static void consume(StreamT<T, ALIGNED>& stream, unsigned num_threads,
-                            Functor&& contents) {
-            std::vector<std::thread> threads;
-            auto thread_contents = [&](int pe) {
-                T consumed_element;
-                while (stream.m_elements > 0) {
-                    if (stream.pop_try(consumed_element, true)) {
-                        contents(pe, consumed_element);
-                        stream.m_elements--;
-                    }
-                }
-            };
-            for (unsigned i = 0; i < num_threads; ++i)
-                threads.emplace_back(std::thread(thread_contents, i));
-
-            for (auto& t : threads) t.join();
-        }
-
-        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
-                  typename CondFunctor, typename Functor>
-        static void consume_cond(StreamT<T, ALIGNED>& stream, unsigned num_threads,
-                                 CondFunctor&& quiescence, Functor&& contents) {
-            std::vector<std::thread> threads;
-            auto thread_contents = [&](int pe) {
-                T consumed_element;
-                while (!quiescence()) {
-                    if (stream.pop_try(consumed_element, true)) {
-                        contents(pe, consumed_element);
-                        stream.m_elements--;
-                    }
-                }
-            };
-            for (unsigned i = 0; i < num_threads; ++i)
-                threads.emplace_back(std::thread(thread_contents, i));
-
-            for (auto& t : threads) t.join();
         }
     };
 

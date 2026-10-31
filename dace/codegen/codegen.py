@@ -147,21 +147,12 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         # Instrumentation-related query
         if isinstance(node, SDFGState):
             disp.instrumentation[node.symbol_instrument] = provider_mapping[node.symbol_instrument]
-        # MapEntry and ConsumeEntry forward ``instrument`` to their Map/Consume object
+        # MapEntry forwards ``instrument`` to its Map
         if isinstance(
             node,
-            (
-                SDFGState,
-                dace.nodes.AccessNode,
-                dace.nodes.Tasklet,
-                dace.nodes.NestedSDFG,
-                dace.nodes.MapEntry,
-                dace.nodes.ConsumeEntry,
-            ),
+            (SDFGState, dace.nodes.AccessNode, dace.nodes.Tasklet, dace.nodes.NestedSDFG, dace.nodes.MapEntry),
         ):
             disp.instrumentation[node.instrument] = provider_mapping[node.instrument]
-        elif isinstance(node, dace.nodes.ConsumeExit):
-            disp.instrumentation[node.consume.instrument] = provider_mapping[node.consume.instrument]
         elif isinstance(node, dace.nodes.MapExit):
             disp.instrumentation[node.map.instrument] = provider_mapping[node.map.instrument]
 
@@ -224,8 +215,7 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
 
     # Consume scopes become maps over their processing elements, so they follow map code generation on
     # every target. Before type inference (the lowering adds tasklets) and before explicit copies.
-    if config.Config.get_bool("compiler", "lower_consume"):
-        LowerConsumeScopes().apply_pass(sdfg, {})
+    LowerConsumeScopes().apply_pass(sdfg, {})
 
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)
