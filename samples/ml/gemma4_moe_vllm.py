@@ -12,7 +12,8 @@ import types
 import gemma4_moe
 import torch
 from torch import nn
-from vllm.config import VllmConfig, set_current_vllm_config
+from vllm.config import CompilationConfig, VllmConfig, set_current_vllm_config
+from vllm.config.compilation import CompilationMode
 from vllm.distributed import init_distributed_environment, initialize_model_parallel
 from vllm.forward_context import set_forward_context
 from vllm.model_executor.layers.fused_moe.layer import FusedMoEFactory
@@ -82,13 +83,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     config = gemma4_moe.Config()
-    vllm_config = VllmConfig()
+    # Eager mode (as with ``enforce_eager``), with vLLM's own kernels (RMSNorm, GELU-and-multiply) rather than
+    # PyTorch fallbacks; decoding steps are then replayed from CUDA graphs below
+    vllm_config = VllmConfig(compilation_config=CompilationConfig(mode=CompilationMode.NONE, custom_ops=["all"]))
     with set_current_vllm_config(vllm_config):
         init_distributed_environment(
             world_size=1, rank=0, local_rank=0, distributed_init_method="tcp://127.0.0.1:29512", backend="gloo"
         )
         initialize_model_parallel(1, 1)
-        init_workspace_manager(torch.device("cuda"))  # As the GPU model runner does
+        init_workspace_manager(torch.device("cuda"))  # As vLLM's GPU worker does
+        vllm_config.kernel_config.ir_op_priority.set_default()
         torch.set_default_dtype(torch.bfloat16)
         with torch.device("cuda"):
             block = FeedForward(config)
