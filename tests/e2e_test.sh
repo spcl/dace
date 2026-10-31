@@ -45,6 +45,8 @@ runall() {
     runtest simple/mandelbrot.py $1
     runtest simple/spmv.py $1
     runtest explicit/fibonacci.py $1
+    runtest explicit/quadrature.py $1
+    runtest explicit/sssp.py $1
     runtest explicit/filter.py $1
     runtest explicit/histogram.py $1
     runtest optimization/matmul.py $1
