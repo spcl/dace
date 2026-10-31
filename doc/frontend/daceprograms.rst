@@ -420,6 +420,31 @@ and a write-conflicted memlet:
                 # One output, at index "i,j", write-conflict resolution is summation
                 c >> C(1, lambda a, b: a + b)[i, j]
 
+Atomic Updates
+~~~~~~~~~~~~~~
+
+With a dynamic memlet (a volume of ``-1``), every assignment to a write-conflict resolved connector is an atomic update,
+after which the connector holds the old value of the data. A tasklet can thus fetch and update a value in one step, for
+example to append to a list from many threads:
+
+.. code-block:: python
+
+    @dace.program
+    def append_positive(values: dace.float64[N], result: dace.float64[N], count: dace.int64[1]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                v << values[i]
+                c >> count(-1, lambda a, b: a + b)[0]  # Dynamic: zero or one update
+                out >> result(-1)[:]
+
+                if v > 0:
+                    slot = c = 1  # Claims a unique slot: the old value of the counter
+                    out[slot] = v
+
+An update whose old value is read orders memory accesses around it (it is *acquire-release*): for example, the tasklet
+that brings a counter down to zero sees everything the other tasklets wrote before decrementing it. See the
+write-conflict resolution part of :ref:`sdfg-memlet` for the exact guarantee.
+
 .. _calling_sdfgs:
 
 Calling SDFGs Directly

@@ -1045,14 +1045,22 @@ def unparse_tasklet(
         for n in ast.walk(stmt)
     ):
         struct_initializer = StructInitializer(sdfg, structs)
+    # The outputs with a write-conflict resolution that the tasklet reads: their old value (see DaCeKeywordRemover)
+    wcr_outputs = {conn for conn, (_, _, wcr, _) in memlets.items() if conn is not None and wcr is not None}
+    old_value_reads = {
+        n.id
+        for stmt in body
+        for n in ast.walk(stmt)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in wcr_outputs
+    }
     for stmt in body:
         stmt = copy.deepcopy(stmt)
         if struct_initializer is not None:
             struct_initializer.visit(stmt)
         if isinstance(stmt, ast.Expr):
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit_TopLevelExpr(stmt)
+            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen, old_value_reads).visit_TopLevelExpr(stmt)
         else:
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit(stmt)
+            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen, old_value_reads).visit(stmt)
 
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
@@ -1126,11 +1134,18 @@ class DaCeKeywordRemover(ExtNodeTransformer):
            Python frontend).
     """
 
-    def __init__(self, sdfg, memlets, constants, codegen):
+    def __init__(self, sdfg, memlets, constants, codegen, old_value_reads: set[str] | None = None):
+        """
+        :param old_value_reads: The connectors of dynamic write-conflict resolution outputs that the tasklet reads.
+                                Assigning such a connector updates the data atomically and stores the old value in
+                                the connector, so reading it (or ``old = conn = value``) observes the update, which
+                                is then acquire-release.
+        """
         self.sdfg = sdfg
         self.memlets = memlets
         self.constants = constants
         self.codegen = codegen
+        self.old_value_reads = old_value_reads or set()
         self.allow_casts = True
 
     def visit_TopLevelExpr(self, node):
@@ -1150,12 +1165,23 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
         raise SyntaxError("Augmented assignments (e.g. +=) not allowed on " + "array memlets")
 
-    def _replace_assignment(self, newnode: ast.AST, node: ast.Assign) -> ast.AST:
+    def _replace_assignment(self, newnode: ast.Name, node: ast.Assign) -> ast.AST | list[ast.AST]:
         locfix = ast.copy_location(newnode, node.value)
         if len(node.targets) == 1:
             return locfix
-        # More than one target, i.e., x = y = z
-        return ast.copy_location(ast.Assign(targets=node.targets[:-1], value=locfix), node)
+        # More than one target, i.e., x = y = z: the other targets receive the value of the last assignment (the
+        # old value for a write-conflict resolution)
+        declarations, _, expression = newnode.id.rstrip(";").rpartition("\n")
+        assign = ast.copy_location(ast.Assign(targets=node.targets[:-1], value=ast.Name(id=expression)), node)
+        return self._after_declarations(declarations, assign)
+
+    @staticmethod
+    def _after_declarations(declarations: str, stmt: ast.AST) -> ast.AST | list[ast.AST]:
+        """Places the declarations that a write-conflict resolution needs (the lambda of a custom reduction)
+        before the statement that uses it."""
+        if not declarations:
+            return stmt
+        return [ast.copy_location(ast.Expr(value=ast.Name(id=declarations.rstrip(";"))), stmt), stmt]
 
     def _subscript_expr(self, slicenode: ast.AST, target: str) -> symbolic.SymbolicType:
         visited_slice = self.visit(slicenode)
@@ -1228,18 +1254,19 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 if memlet and memlet.data and (memlet.dynamic or isinstance(desc, data.Stream)):
                     ptrname = ptr(memlet.data, desc, self.sdfg, self.codegen._frame)
                     if wcr is not None:
-                        newnode = ast.Name(
-                            id=self.codegen.write_and_resolve_expr(
-                                self.sdfg,
-                                memlet,
-                                nc,
-                                target,
-                                cppunparse.cppunparse(value, expr_semicolon=False),
-                                dtype=dtype,
-                            )
+                        code = self.codegen.write_and_resolve_expr(
+                            self.sdfg,
+                            memlet,
+                            nc,
+                            target,
+                            cppunparse.cppunparse(value, expr_semicolon=False),
+                            dtype=dtype,
+                            acq_rel=len(node.targets) > 1 or target in self.old_value_reads,
                         )
-                        node.value = ast.copy_location(newnode, node.value)
-                        return node
+                        # The connector receives the old value (and passes it on in ``old = conn = value``)
+                        declarations, _, expression = code.rpartition("\n")
+                        node.value = ast.copy_location(ast.Name(id=expression), node.value)
+                        return self._after_declarations(declarations, node)
                     elif isinstance(desc, data.Stream):
                         if desc.is_stream_array():
                             index = cpp_offset_expr(desc, memlet.subset)
@@ -1282,6 +1309,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                     cppunparse.cppunparse(value, expr_semicolon=False),
                     indices=sym2cpp(subscript),
                     dtype=dtype,
+                    acq_rel=len(node.targets) > 1,  # old = conn[i] = value
                 )
                 + ";"
             )
