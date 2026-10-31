@@ -176,10 +176,12 @@ def test_data_condition_still_rewritten():
 
 def test_no_enclosing_iteration_scope_still_rewritten():
     """Over-refusal control: a guard naming a plain SDFG symbol outside any loop/map is
-    not an iteration guard."""
+    not an iteration guard, and an arm on constant indices proves in range without any
+    scope facts -- both must stay if-convertible."""
     sdfg = dace.SDFG("no_scope")
-    sdfg.add_array("a", shape=(N,), dtype=dace.float64)
+    sdfg.add_array("a", shape=(4,), dtype=dace.float64)
     sdfg.add_array("s", shape=(1,), dtype=dace.float64)
+    sdfg.add_symbol("N", dace.int64)
     sdfg.add_symbol("k", dace.int64)
     sdfg.add_state("head", is_start_block=True)
     cb = ConditionalBlock("cb", sdfg=sdfg, parent=sdfg)
@@ -187,7 +189,7 @@ def test_no_enclosing_iteration_scope_still_rewritten():
     sdfg.add_edge(sdfg.start_block, cb, dace.InterstateEdge())
     _add_guarded_arm(sdfg, cb, "k < N - 1", "0")
     rewritten = SameWriteSetIfElseToITECFG().apply_pass(sdfg, {})
-    assert rewritten == 1, "non-iteration guard must still be if-converted"
+    assert rewritten == 1, "non-iteration guard with a constant-index arm must still be if-converted"
     assert not _conditional_blocks(sdfg)
 
 

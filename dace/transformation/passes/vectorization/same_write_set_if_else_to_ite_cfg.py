@@ -191,6 +191,10 @@ def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
     every access is checked as written: constant indices prove against the facts, and an index
     over an un-ranged loop variable stays symbolic and fails closed.
 
+    An access every arm performs identically (same array, same subset) needs no proof: the
+    scalar control flow performs it whichever branch is taken, so if-conversion fabricates
+    nothing. A single-arm block has no such exemption -- its accesses run only under the guard.
+
     :param cb: the candidate conditional block.
     :returns: ``True`` only if every arm access is provably in range without the guard.
     """
@@ -202,14 +206,30 @@ def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
     facts = SymbolResolver().facts_at(cb)
     corners = [dict(zip(ranges, combo)) for combo in itertools.product(*(ranges[n] for n in ranges))]
 
+    arm_access_sets: list[set[tuple[str, str]]] = []
     for _cond, body in cb.branches:
         if not isinstance(body, ControlFlowRegion):
             return False
+        arm_access_sets.append(
+            {
+                (edge.data.data, str(edge.data.subset))
+                for state in body.states()
+                for edge in state.edges()
+                if edge.data is not None and edge.data.data is not None and edge.data.subset is not None
+            }
+        )
+    # Identical-in-every-arm accesses only (requires a real choice of arms: a single arm's
+    # accesses are guard-dependent by definition).
+    common = set.intersection(*arm_access_sets) if len(cb.branches) > 1 else set()
+
+    for _cond, body in cb.branches:
         for state in body.states():
             for edge in state.edges():
                 memlet = edge.data
                 if memlet is None or memlet.data is None:
                     continue
+                if (memlet.data, str(memlet.subset)) in common:
+                    continue  # the taken branch performs this access in the scalar form too
                 desc = cb.sdfg.arrays.get(memlet.data)
                 if desc is None or memlet.subset is None:
                     return False

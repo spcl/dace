@@ -114,9 +114,12 @@ def test_branch_normalization_refuses_direct_iteration_guard():
     """Single-arm ``if i < N-1: b[i] = a[i+1]`` -- ``_normalize_single_arm`` must refuse it.
 
     Pre-fix ``BranchNormalization`` flattened it (returned ``1``, ``ConditionalBlock`` gone),
-    leaving lane ``i = N-1`` reading ``a[N]``. The refused SDFG still runs bit-exact.
+    leaving lane ``i = N-1`` reading ``a[N]``. The refused SDFG still runs bit-exact. ``a`` is
+    sized exactly ``N`` here: with the pre-B12 one-past sentinel the arm proves in range
+    unguarded (``a[N]`` is an allocated element), and the proof-based rule soundly converts.
     """
     sdfg, cb = build_loop_with_cb()
+    sdfg.arrays["a"].shape = (N,)
     add_copy_arm(sdfg, cb, "i < N - 1", "i + 1", "b", "i")
     assert len(conditional_blocks(sdfg)) == 1
 
@@ -128,7 +131,7 @@ def test_branch_normalization_refuses_direct_iteration_guard():
     assert len(conditional_blocks(sdfg)) == 1
 
     nval = 8
-    a = np.arange(100, 100 + nval + 1, dtype=np.float64)
+    a = np.arange(100, 100 + nval, dtype=np.float64)
     b = np.full(nval, 999.0, dtype=np.float64)
     ref = b.copy()
     for i in range(nval):
@@ -143,9 +146,11 @@ def test_branch_normalization_refuses_two_arm_iteration_guard():
 
     Pre-fix ``BranchNormalization`` split the disjoint arms into two single-arm blocks and
     flattened each (``ConditionalBlock`` gone), again fabricating the ``a[N]`` read in the
-    if-arm. The refused SDFG still runs bit-exact.
+    if-arm. The refused SDFG still runs bit-exact. ``a`` is sized exactly ``N`` so the if-arm's
+    ``a[i+1]`` genuinely needs the guard for its range.
     """
     sdfg, cb = build_loop_with_cb(extra_arrays=("c",))
+    sdfg.arrays["a"].shape = (N,)
     add_copy_arm(sdfg, cb, "i < N - 1", "i + 1", "b", "i")  # if-arm (has the OOB read)
     add_copy_arm(sdfg, cb, None, "i", "c", "i")  # bare else-arm (disjoint write)
     assert len(conditional_blocks(sdfg)) == 1
@@ -159,7 +164,7 @@ def test_branch_normalization_refuses_two_arm_iteration_guard():
     assert len(conditional_blocks(sdfg)) == 1
 
     nval = 8
-    a = np.arange(100, 100 + nval + 1, dtype=np.float64)
+    a = np.arange(100, 100 + nval, dtype=np.float64)
     b = np.full(nval, 999.0, dtype=np.float64)
     c = np.full(nval, 888.0, dtype=np.float64)
     ref_b, ref_c = b.copy(), c.copy()
