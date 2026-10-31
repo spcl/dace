@@ -18,6 +18,7 @@
 #define gpuFree hipFree
 #else
 #include <cooperative_groups.h>
+#include <cuda/atomic>
 #include <cuda_runtime.h>
 #define gpuLaunchKernel cudaLaunchKernel
 #define gpuMalloc cudaMalloc
@@ -180,10 +181,14 @@ class GPUStream {
  * ring whose cells carry sequence numbers: the cell of position ``pos`` is
  * free for that push when its sequence is ``pos``, and full when it is
  * ``pos + 1``. A push reserves a position, fills the cell, and then counts the
- * element as queued. A pop is admitted by that count first (a subtraction,
- * the excess given back), so every position it then takes from the head holds
- * an element or is about to; there is no compare-and-swap to retry. Pops never
- * block on an empty queue.
+ * element as queued. Pops never block on an empty queue.
+ *
+ * Where threads are scheduled independently (CUDA), a pop is admitted by the
+ * queued count first (a subtraction, the excess given back), so every position
+ * it then takes from the head holds an element or is about to; there is no
+ * compare-and-swap to retry. A thread may then wait for a push of its own warp.
+ * Where they are not (HIP wavefronts), such a wait never ends, so a pop claims
+ * only cells that are full already, with a compare-and-swap on the head.
  *
  * ``pending`` counts elements pushed and not yet retired: a push counts before
  * it publishes, and a pop with ``noupdate`` leaves its elements counted until
@@ -191,16 +196,19 @@ class GPUStream {
  * running, and then stays zero (only running tasks push).
  *
  * With ``BLOCK``, the queue lives in shared memory and serves the threads of
- * one block (see ``init_block``); its fences are block-scoped.
+ * one block (see ``init_block``); its atomics and fences are block-scoped.
  *
  * The capacity is a power of two. A push into a full queue waits for a pop,
- * so the capacity must hold every element that can be queued at once.
- * Waiting for a cell relies on independent thread scheduling (sm_70 and
- * newer) when the thread it waits for is in the same warp. Compile with
- * ``DACE_GPUQUEUE_DEBUG`` to trap with the queue state on a wait that does not
- * end (e.g., a full queue).
+ * so the capacity must hold every element that can be queued at once. Compile
+ * with ``DACE_GPUQUEUE_DEBUG`` to trap with the queue state on a wait that
+ * does not end (e.g., a full queue).
  */
 #ifdef DACE_GPUQUEUE_DEBUG
+#ifdef __HIPCC__
+#define DACE_GPUQUEUE_TRAP() __builtin_trap()
+#else
+#define DACE_GPUQUEUE_TRAP() __trap()
+#endif
 #define DACE_GPUQUEUE_WAIT(cond, what, pos, seq)                                  \
   do {                                                                           \
     unsigned long long __spins = 0;                                              \
@@ -208,23 +216,22 @@ class GPUStream {
       if (++__spins == (1ull << 24)) {                                           \
         printf("GPUQueue %s stuck: pos %u seq %u head %u tail %u queued %d "      \
                "pending %u\n", what, pos, seq, load(head()), load(tail()),        \
-               (int)load(queued()), load(pending_counter()));              \
-        __trap();                                                                \
+               (int)load(queued()), load(pending_counter()));                    \
+        DACE_GPUQUEUE_TRAP();                                                    \
       }                                                                          \
+      gpu_queue_yield();                                                         \
     }                                                                            \
   } while (0)
 #else
-// The thread waited for may be in the same warp: sleeping lets the warp
-// scheduler run it (a tight spin can starve it)
 #define DACE_GPUQUEUE_WAIT(cond, what, pos, seq) \
   do {                                          \
-    while (cond) {                              \
-      GPUQueue_yield();                         \
-    }                                           \
+    while (cond) gpu_queue_yield();             \
   } while (0)
 #endif
 
-__device__ __forceinline__ void GPUQueue_yield() {
+// The thread waited for may be in the same warp: sleeping lets the scheduler
+// run it (a tight spin can starve it)
+__device__ __forceinline__ void gpu_queue_yield() {
 #if defined(__HIPCC__)
   __builtin_amdgcn_s_sleep(1);
 #elif defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
@@ -232,8 +239,82 @@ __device__ __forceinline__ void GPUQueue_yield() {
 #endif
 }
 
+/*
+ * Scoped atomic accesses to a 32-bit counter or sequence number: libcu++ on
+ * CUDA, the scoped atomic builtins on HIP. ``BLOCK`` scopes them to the thread
+ * block (shared memory), otherwise to the device.
+ */
+template <bool BLOCK>
+struct GPUQueueAtomics {
+#ifdef __HIPCC__
+  static constexpr int SCOPE =
+      BLOCK ? __HIP_MEMORY_SCOPE_WORKGROUP : __HIP_MEMORY_SCOPE_AGENT;
+  static __device__ __forceinline__ uint32_t load(const uint32_t *ptr) {
+    return __hip_atomic_load(ptr, __ATOMIC_RELAXED, SCOPE);
+  }
+  static __device__ __forceinline__ uint32_t load_acquire(const uint32_t *ptr) {
+    return __hip_atomic_load(ptr, __ATOMIC_ACQUIRE, SCOPE);
+  }
+  static __device__ __forceinline__ void store(uint32_t *ptr, uint32_t value) {
+    __hip_atomic_store(ptr, value, __ATOMIC_RELAXED, SCOPE);
+  }
+  static __device__ __forceinline__ void store_release(uint32_t *ptr, uint32_t value) {
+    __hip_atomic_store(ptr, value, __ATOMIC_RELEASE, SCOPE);
+  }
+  static __device__ __forceinline__ uint32_t fetch_add(uint32_t *ptr, uint32_t value) {
+    return __hip_atomic_fetch_add(ptr, value, __ATOMIC_RELAXED, SCOPE);
+  }
+  static __device__ __forceinline__ bool compare_exchange(uint32_t *ptr, uint32_t expected,
+                                                          uint32_t desired) {
+    return __hip_atomic_compare_exchange_strong(ptr, &expected, desired, __ATOMIC_RELAXED,
+                                                __ATOMIC_RELAXED, SCOPE);
+  }
+  static __device__ __forceinline__ void fence_acq_rel() {
+    if (BLOCK)
+      __builtin_amdgcn_fence(__ATOMIC_ACQ_REL, "workgroup");
+    else
+      __builtin_amdgcn_fence(__ATOMIC_ACQ_REL, "agent");
+  }
+#else
+  static constexpr ::cuda::thread_scope SCOPE =
+      BLOCK ? ::cuda::thread_scope_block : ::cuda::thread_scope_device;
+  using ref = ::cuda::atomic_ref<uint32_t, SCOPE>;
+  static __device__ __forceinline__ uint32_t load(const uint32_t *ptr) {
+    return ref(*const_cast<uint32_t *>(ptr)).load(::cuda::memory_order_relaxed);
+  }
+  static __device__ __forceinline__ uint32_t load_acquire(const uint32_t *ptr) {
+    return ref(*const_cast<uint32_t *>(ptr)).load(::cuda::memory_order_acquire);
+  }
+  static __device__ __forceinline__ void store(uint32_t *ptr, uint32_t value) {
+    ref(*ptr).store(value, ::cuda::memory_order_relaxed);
+  }
+  static __device__ __forceinline__ void store_release(uint32_t *ptr, uint32_t value) {
+    ref(*ptr).store(value, ::cuda::memory_order_release);
+  }
+  static __device__ __forceinline__ uint32_t fetch_add(uint32_t *ptr, uint32_t value) {
+    return ref(*ptr).fetch_add(value, ::cuda::memory_order_relaxed);
+  }
+  static __device__ __forceinline__ bool compare_exchange(uint32_t *ptr, uint32_t expected,
+                                                          uint32_t desired) {
+    return ref(*ptr).compare_exchange_strong(expected, desired, ::cuda::memory_order_relaxed);
+  }
+  static __device__ __forceinline__ void fence_acq_rel() {
+    ::cuda::atomic_thread_fence(::cuda::memory_order_acq_rel, SCOPE);
+  }
+#endif
+};
+
 template <typename T, bool BLOCK = false>
-class GPUQueue {
+class GPUQueue : GPUQueueAtomics<BLOCK> {
+  using A = GPUQueueAtomics<BLOCK>;
+  using A::compare_exchange;
+  using A::fence_acq_rel;
+  using A::fetch_add;
+  using A::load;
+  using A::load_acquire;
+  using A::store;
+  using A::store_release;
+
  public:
   T *m_data;
   uint32_t *m_seq;
@@ -244,6 +325,14 @@ class GPUQueue {
   // Global counters 128 bytes apart, so that their atomics do not share a line
   static constexpr uint32_t COUNTER_STRIDE = BLOCK ? 1 : 32;
   static constexpr uint32_t NUM_COUNTERS = 4;
+
+  // Whether a pop may wait for a push of its own warp (independent thread
+  // scheduling); otherwise it claims only full cells
+#ifdef __HIPCC__
+  static constexpr bool WAITS_FOR_PUSHES = false;
+#else
+  static constexpr bool WAITS_FOR_PUSHES = true;
+#endif
 
   __host__ __device__ GPUQueue()
       : m_data(nullptr), m_seq(nullptr), m_counters(nullptr), m_mask(0) {}
@@ -265,13 +354,6 @@ class GPUQueue {
     __syncthreads();
   }
 
-  static __device__ __forceinline__ void fence() {
-    if (BLOCK)
-      __threadfence_block();
-    else
-      __threadfence();
-  }
-
   __device__ __forceinline__ uint32_t *head() const { return m_counters; }
   __device__ __forceinline__ uint32_t *tail() const {
     return m_counters + COUNTER_STRIDE;
@@ -282,92 +364,13 @@ class GPUQueue {
   __device__ __forceinline__ uint32_t *pending_counter() const {
     return m_counters + 3 * COUNTER_STRIDE;
   }
+  __device__ __forceinline__ uint32_t *seq(uint32_t pos) const {
+    return m_seq + (pos & m_mask);
+  }
 
-  // Memory ordering: counters are polled relaxed; a cell's sequence number is
-  // read with acquire and written with release, which orders the element
-  // itself. Scope is the block for shared-memory queues, the device otherwise.
-#if !defined(__HIPCC__) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
-  static __device__ __forceinline__ uint32_t load(const uint32_t *ptr) {
-    uint32_t value;
-    if (BLOCK)
-      asm volatile("ld.relaxed.cta.u32 %0, [%1];" : "=r"(value) : "l"(ptr) : "memory");
-    else
-      asm volatile("ld.relaxed.gpu.u32 %0, [%1];" : "=r"(value) : "l"(ptr) : "memory");
-    return value;
-  }
-  static __device__ __forceinline__ uint32_t load_acquire(const uint32_t *ptr) {
-    uint32_t value;
-    if (BLOCK)
-      asm volatile("ld.acquire.cta.u32 %0, [%1];" : "=r"(value) : "l"(ptr) : "memory");
-    else
-      asm volatile("ld.acquire.gpu.u32 %0, [%1];" : "=r"(value) : "l"(ptr) : "memory");
-    return value;
-  }
-  static __device__ __forceinline__ void store_release(uint32_t *ptr, uint32_t value) {
-    if (BLOCK)
-      asm volatile("st.release.cta.u32 [%0], %1;" : : "l"(ptr), "r"(value) : "memory");
-    else
-      asm volatile("st.release.gpu.u32 [%0], %1;" : : "l"(ptr), "r"(value) : "memory");
-  }
-  static __device__ __forceinline__ void store(uint32_t *ptr, uint32_t value) {
-    if (BLOCK)
-      asm volatile("st.relaxed.cta.u32 [%0], %1;" : : "l"(ptr), "r"(value) : "memory");
-    else
-      asm volatile("st.relaxed.gpu.u32 [%0], %1;" : : "l"(ptr), "r"(value) : "memory");
-  }
-  // With relaxed accesses around it, acquires what was read before and
-  // releases what is written after: one fence for a whole chunk of cells
-  static __device__ __forceinline__ void fence_acq_rel() {
-    if (BLOCK)
-      asm volatile("fence.acq_rel.cta;" : : : "memory");
-    else
-      asm volatile("fence.acq_rel.gpu;" : : : "memory");
-  }
-#else
-  static __device__ __forceinline__ uint32_t load(const uint32_t *ptr) {
-    return *(const volatile uint32_t *)ptr;
-  }
-  static __device__ __forceinline__ uint32_t load_acquire(const uint32_t *ptr) {
-    const uint32_t value = load(ptr);
-    fence();
-    return value;
-  }
-  static __device__ __forceinline__ void store_release(uint32_t *ptr, uint32_t value) {
-    fence();
-    *(volatile uint32_t *)ptr = value;
-  }
-  static __device__ __forceinline__ void store(uint32_t *ptr, uint32_t value) {
-    *(volatile uint32_t *)ptr = value;
-  }
-  static __device__ __forceinline__ void fence_acq_rel() { fence(); }
-#endif
-
-  // Counter atomics, relaxed: a cell's sequence number orders the element.
-  // Every thread issues its own; ptxas aggregates atomics on one address
-  // across the warp (one atomic for a whole warp), which also keeps the code
-  // free of warp primitives on run-time lane masks (calls into the device
-  // runtime under relocatable device code).
-#if !defined(__HIPCC__) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
-  static __device__ __forceinline__ uint32_t fetch_add(uint32_t *ptr, uint32_t value) {
-    uint32_t old;
-    if (BLOCK)
-      asm volatile("atom.relaxed.cta.add.u32 %0, [%1], %2;" : "=r"(old) : "l"(ptr), "r"(value) : "memory");
-    else
-      asm volatile("atom.relaxed.gpu.add.u32 %0, [%1], %2;" : "=r"(old) : "l"(ptr), "r"(value) : "memory");
-    return old;
-  }
-  static __device__ __forceinline__ void add(uint32_t *ptr, uint32_t value) {
-    if (BLOCK)
-      asm volatile("red.relaxed.cta.add.u32 [%0], %1;" : : "l"(ptr), "r"(value) : "memory");
-    else
-      asm volatile("red.relaxed.gpu.add.u32 [%0], %1;" : : "l"(ptr), "r"(value) : "memory");
-  }
-#else
-  static __device__ __forceinline__ uint32_t fetch_add(uint32_t *ptr, uint32_t value) {
-    return atomicAdd(ptr, value);
-  }
-  static __device__ __forceinline__ void add(uint32_t *ptr, uint32_t value) { atomicAdd(ptr, value); }
-#endif
+  // Counter updates are relaxed, and each thread issues its own: the compiler
+  // aggregates atomics on one address across the warp. A cell's sequence
+  // number orders the element itself.
 
   // Consume protocol: the number of elements queued or still being processed
   __device__ __forceinline__ uint32_t pending() const {
@@ -376,18 +379,17 @@ class GPUQueue {
 
   // Consume protocol: retires ``count`` elements popped with ``noupdate``
   __device__ __forceinline__ void task_done(uint32_t count) const {
-    if (count > 0) add(pending_counter(), 0u - count);
+    if (count > 0) fetch_add(pending_counter(), 0u - count);
   }
 
   __device__ __forceinline__ void push(const T &item) const {
-    add(pending_counter(), 1u);
+    fetch_add(pending_counter(), 1u);
     const uint32_t pos = fetch_add(tail(), 1u);
-    uint32_t *seq = m_seq + (pos & m_mask);
     // Full: wait for the pop of the previous lap
-    DACE_GPUQUEUE_WAIT(load_acquire(seq) != pos, "push", pos, load(seq));
+    DACE_GPUQUEUE_WAIT(load_acquire(seq(pos)) != pos, "push", pos, load(seq(pos)));
     m_data[pos & m_mask] = item;
-    store_release(seq, pos + 1);
-    add(queued(), 1u);
+    store_release(seq(pos), pos + 1);
+    fetch_add(queued(), 1u);
   }
 
   __device__ __forceinline__ void push(const T *items, int count) const {
@@ -398,55 +400,48 @@ class GPUQueue {
   __device__ __forceinline__ uint32_t pop_try(T *out, uint32_t max_count,
                                               bool noupdate = false) const {
     if ((int)load(queued()) <= 0) return 0;  // No atomic when empty
-#ifndef __HIPCC__
-    // Admitted to up to ``max_count`` of the queued elements, the excess given
-    // back; every position then claimed holds an element or is about to
-    const int before = (int)fetch_add(queued(), 0u - max_count);
-    const uint32_t mine = before >= (int)max_count ? max_count : (before > 0 ? before : 0);
-    if (mine < max_count) add(queued(), max_count - mine);
-    if (mine == 0) return 0;
-    const uint32_t first = fetch_add(head(), mine);
+    uint32_t first, mine;
+    if (WAITS_FOR_PUSHES) {
+      // Admitted to up to ``max_count`` of the queued elements, the excess
+      // given back; every position then claimed holds an element or is about to
+      const int before = (int)fetch_add(queued(), 0u - max_count);
+      mine = before >= (int)max_count ? max_count : (before > 0 ? before : 0);
+      if (mine < max_count) fetch_add(queued(), max_count - mine);
+      if (mine == 0) return 0;
+      first = fetch_add(head(), mine);
+    } else {
+      // Claim the run of full cells at the head
+      do {
+        first = load(head());
+        mine = 0;
+        while (mine < max_count && load(seq(first + mine)) == first + mine + 1) ++mine;
+        if (mine == 0) return 0;
+      } while (!compare_exchange(head(), first, first + mine));
+      fetch_add(queued(), 0u - mine);
+    }
+
     if (max_count <= 4) {
       // A few cells (a constant at the call site): acquire and release each
       for (uint32_t i = 0; i < mine; ++i) {
-        uint32_t *seq = m_seq + ((first + i) & m_mask);
-        // Admitted: the element is in or on its way
-        DACE_GPUQUEUE_WAIT(load_acquire(seq) != first + i + 1, "pop", first + i, load(seq));
+        DACE_GPUQUEUE_WAIT(load_acquire(seq(first + i)) != first + i + 1, "pop", first + i,
+                           load(seq(first + i)));
         out[i] = m_data[(first + i) & m_mask];
       }
       for (uint32_t i = 0; i < mine; ++i)  // Free the cells for the next lap
-        store_release(m_seq + ((first + i) & m_mask), first + i + m_mask + 1);
-      if (!noupdate) add(pending_counter(), 0u - mine);
-      return mine;
+        store_release(seq(first + i), first + i + m_mask + 1);
+    } else {
+      // A chunk: poll every cell, then one fence acquires them all and one
+      // releases them all
+      for (uint32_t i = 0; i < mine; ++i)
+        DACE_GPUQUEUE_WAIT(load(seq(first + i)) != first + i + 1, "pop", first + i,
+                           load(seq(first + i)));
+      fence_acq_rel();
+      for (uint32_t i = 0; i < mine; ++i) out[i] = m_data[(first + i) & m_mask];
+      fence_acq_rel();
+      for (uint32_t i = 0; i < mine; ++i)  // Free the cells for the next lap
+        store(seq(first + i), first + i + m_mask + 1);
     }
-    // A chunk: poll every cell, then one fence acquires them all
-    for (uint32_t i = 0; i < mine; ++i) {
-      const uint32_t pos = first + i;
-      DACE_GPUQUEUE_WAIT(load(m_seq + (pos & m_mask)) != pos + 1, "pop", pos,
-                         load(m_seq + (pos & m_mask)));
-    }
-    fence_acq_rel();
-    for (uint32_t i = 0; i < mine; ++i) out[i] = m_data[(first + i) & m_mask];
-#else
-    // Without independent thread scheduling a pop must not wait for a push of
-    // its own wavefront: claim only cells that are full already
-    uint32_t first, mine;
-    while (true) {
-      first = load(head());
-      mine = 0;
-      while (mine < max_count &&
-             load_acquire(m_seq + ((first + mine) & m_mask)) == first + mine + 1)
-        ++mine;
-      if (mine == 0) return 0;
-      if (atomicCAS(head(), first, first + mine) == first) break;
-    }
-    add(queued(), 0u - mine);
-    for (uint32_t i = 0; i < mine; ++i) out[i] = m_data[(first + i) & m_mask];
-#endif
-    fence_acq_rel();
-    for (uint32_t i = 0; i < mine; ++i)  // Free the cells for the next lap
-      store(m_seq + ((first + i) & m_mask), first + i + m_mask + 1);
-    if (!noupdate && mine > 0) add(pending_counter(), 0u - mine);
+    if (!noupdate) fetch_add(pending_counter(), 0u - mine);
     return mine;
   }
 
@@ -480,7 +475,7 @@ class GPUQueue {
 
   __device__ __forceinline__ void block_task_done(uint32_t count) const {
     __syncthreads();  // Every thread finished the task (and its pushes)
-    if (block_leader() && count > 0) add(pending_counter(), 0u - count);
+    if (block_leader()) task_done(count);
   }
 };
 
