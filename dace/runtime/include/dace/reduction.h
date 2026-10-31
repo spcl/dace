@@ -2,7 +2,9 @@
 #ifndef __DACE_REDUCTION_H
 #define __DACE_REDUCTION_H
 
+#include <atomic>
 #include <cstdint>
+#include <type_traits>
 
 #include "types.h"
 #include "vector.h"
@@ -23,6 +25,10 @@
     #include "../../../external/cub/cub/iterator/counting_input_iterator.cuh"
     #include "../../../external/cub/cub/iterator/transform_input_iterator.cuh"
 #endif
+#endif
+
+#if defined(__CUDACC__) && !defined(__HIPCC__)
+    #include <cuda/atomic>  // Acquire-release updates (wcr_acq_rel)
 #endif
 
 #ifdef __HIPCC__
@@ -588,6 +594,110 @@ namespace dace {
 
             return _wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, scal);
         }
+    };
+
+
+    /**
+     * Write-conflict resolutions whose old value the program reads, as acquire-release atomic updates.
+     *
+     * A thread that reads the old value of an update sees every write made before the updates it observed
+     * (by their threads), and its own writes made before its update are visible to the threads that observe
+     * it. This makes "the last thread to arrive continues the work of all" safe: e.g., the thread that brings
+     * a counter to zero may read what all other threads wrote before decrementing it. Updates whose old
+     * value is not read stay relaxed (atomic, but unordered).
+     *
+     * ``BLOCK`` limits the guarantee to the threads of one GPU thread block (data in shared memory).
+     */
+    template <bool BLOCK = false>
+    struct wcr_acq_rel {
+        static DACE_HDFI void release() {
+            #if defined(__CUDA_ARCH__)
+                ::cuda::atomic_thread_fence(::cuda::memory_order_release, SCOPE);
+            #elif defined(__HIP_DEVICE_COMPILE__)
+                if constexpr (BLOCK) __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");
+                else __builtin_amdgcn_fence(__ATOMIC_RELEASE, "agent");
+            #else
+                std::atomic_thread_fence(std::memory_order_release);
+            #endif
+        }
+
+        static DACE_HDFI void acquire() {
+            #if defined(__CUDA_ARCH__)
+                ::cuda::atomic_thread_fence(::cuda::memory_order_acquire, SCOPE);
+            #elif defined(__HIP_DEVICE_COMPILE__)
+                if constexpr (BLOCK) __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup");
+                else __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "agent");
+            #else
+                std::atomic_thread_fence(std::memory_order_acquire);
+            #endif
+        }
+
+        /// Any atomic update (a callable that performs it and returns the old value), between fences
+        template <typename UPDATE>
+        static DACE_HDFI auto fenced(UPDATE&& update) {
+            release();
+            auto old = update();
+            acquire();
+            return old;
+        }
+
+        /// A built-in reduction: one acquire-release atomic instruction where the GPU has it
+        template <ReductionType REDTYPE, typename T>
+        static DACE_HDFI T fixed(T *ptr, const T& value) {
+            #if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+                constexpr bool integer = std::is_integral<T>::value && !std::is_same<T, bool>::value &&
+                                         (sizeof(T) == 4 || sizeof(T) == 8);
+                constexpr bool floating = std::is_same<T, float>::value || std::is_same<T, double>::value;
+                if constexpr ((REDTYPE == ReductionType::Sum && (integer || floating)) ||
+                              (integer && (REDTYPE == ReductionType::Min || REDTYPE == ReductionType::Max ||
+                                           REDTYPE == ReductionType::Bitwise_And ||
+                                           REDTYPE == ReductionType::Bitwise_Or ||
+                                           REDTYPE == ReductionType::Bitwise_Xor ||
+                                           REDTYPE == ReductionType::Exchange))) {
+                    return native<REDTYPE>(ptr, value);
+                }
+            #endif
+            return fenced([&] { return wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, value); });
+        }
+
+    private:
+        #if defined(__CUDACC__) && !defined(__HIPCC__)
+            static constexpr ::cuda::thread_scope SCOPE = BLOCK ? ::cuda::thread_scope_block
+                                                                : ::cuda::thread_scope_device;
+        #endif
+
+        #if defined(__CUDA_ARCH__)
+            template <ReductionType REDTYPE, typename T>
+            static __device__ __forceinline__ T native(T *ptr, const T& value) {
+                ::cuda::atomic_ref<T, SCOPE> ref(*ptr);
+                constexpr auto order = ::cuda::memory_order_acq_rel;
+                if constexpr (REDTYPE == ReductionType::Sum) return ref.fetch_add(value, order);
+                else if constexpr (REDTYPE == ReductionType::Min) return ref.fetch_min(value, order);
+                else if constexpr (REDTYPE == ReductionType::Max) return ref.fetch_max(value, order);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_And) return ref.fetch_and(value, order);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_Or) return ref.fetch_or(value, order);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_Xor) return ref.fetch_xor(value, order);
+                else return ref.exchange(value, order);
+            }
+        #elif defined(__HIP_DEVICE_COMPILE__)
+            template <ReductionType REDTYPE, typename T>
+            static __device__ __forceinline__ T native(T *ptr, const T& value) {
+                constexpr int scope = BLOCK ? __HIP_MEMORY_SCOPE_WORKGROUP : __HIP_MEMORY_SCOPE_AGENT;
+                if constexpr (REDTYPE == ReductionType::Sum)
+                    return __hip_atomic_fetch_add(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else if constexpr (REDTYPE == ReductionType::Min)
+                    return __hip_atomic_fetch_min(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else if constexpr (REDTYPE == ReductionType::Max)
+                    return __hip_atomic_fetch_max(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_And)
+                    return __hip_atomic_fetch_and(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_Or)
+                    return __hip_atomic_fetch_or(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else if constexpr (REDTYPE == ReductionType::Bitwise_Xor)
+                    return __hip_atomic_fetch_xor(ptr, value, __ATOMIC_ACQ_REL, scope);
+                else return __hip_atomic_exchange(ptr, value, __ATOMIC_ACQ_REL, scope);
+            }
+        #endif
     };
 
 

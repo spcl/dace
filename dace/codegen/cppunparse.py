@@ -286,48 +286,52 @@ class CPPUnparser:
             self.write(")")
 
     def _Assign(self, t):
-        self.fill()
-
-        # Handle the case of a tuple output
+        # A chained assignment (``a = b = value``) assigns the value to the last target, then each target to the
+        # one before it. A target therefore passes on what it holds after its assignment, which is the old value
+        # for a write-conflict resolution (an atomic read-modify-write).
         if len(t.targets) > 1:
-            self.dispatch_lhs_tuple(t.targets)
-        else:
-            target = t.targets[0]
-            if isinstance(target, ast.Tuple):
-                if len(target.elts) > 1:
-                    self.dispatch_lhs_tuple(target.elts)
-                    target = None
+            self._Assign(ast.copy_location(ast.Assign(targets=[t.targets[-1]], value=t.value), t))
+            for target, source in zip(reversed(t.targets[:-1]), reversed(t.targets[1:])):
+                self._Assign(ast.copy_location(ast.Assign(targets=[target], value=source), t))
+            return
+
+        self.fill()
+        target = t.targets[0]
+        if isinstance(target, ast.Tuple):
+            if len(target.elts) > 1:
+                self.dispatch_lhs_tuple(target.elts)
+                target = None
+            else:
+                target = target.elts[0]
+
+        if (
+            target
+            and not isinstance(target, (ast.Subscript, ast.Attribute))
+            and not self.locals.is_defined(target.id, self._indent)
+        ):
+            # if the target is already defined, do not redefine it
+            if self.defined_symbols is None or target.id not in self.defined_symbols:
+                # we should try to infer the type
+                if self.type_inference is True:
+                    # Perform type inference
+                    # Build dictionary with symbols
+                    def_symbols = {}
+                    def_symbols.update(self.locals.get_name_type_associations())
+                    def_symbols.update(self.defined_symbols)
+                    inferred_symbols = type_inference.infer_types(t, def_symbols)
+                    inferred_type = inferred_symbols[target.id]
+                    if inferred_type is None:
+                        raise RuntimeError(f'Failed to infer type of "{target.id}".')
+
+                    self.locals.define(target.id, t.lineno, self._indent, inferred_type)
+                    self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                 else:
-                    target = target.elts[0]
+                    self.locals.define(target.id, t.lineno, self._indent)
+                    self.write("auto ")
 
-            if (
-                target
-                and not isinstance(target, (ast.Subscript, ast.Attribute))
-                and not self.locals.is_defined(target.id, self._indent)
-            ):
-                # if the target is already defined, do not redefine it
-                if self.defined_symbols is None or target.id not in self.defined_symbols:
-                    # we should try to infer the type
-                    if self.type_inference is True:
-                        # Perform type inference
-                        # Build dictionary with symbols
-                        def_symbols = {}
-                        def_symbols.update(self.locals.get_name_type_associations())
-                        def_symbols.update(self.defined_symbols)
-                        inferred_symbols = type_inference.infer_types(t, def_symbols)
-                        inferred_type = inferred_symbols[target.id]
-                        if inferred_type is None:
-                            raise RuntimeError(f'Failed to infer type of "{target.id}".')
-
-                        self.locals.define(target.id, t.lineno, self._indent, inferred_type)
-                        self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
-                    else:
-                        self.locals.define(target.id, t.lineno, self._indent)
-                        self.write("auto ")
-
-            # dispatch target
-            if target:
-                self.dispatch(target)
+        # dispatch target
+        if target:
+            self.dispatch(target)
 
         self.write(" = ")
         self.dispatch(t.value)

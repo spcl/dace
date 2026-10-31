@@ -571,6 +571,16 @@ WCR updates can be implemented in a platform-dependent way, for example using at
 or different kinds of accumulators on FPGAs. It is thus important to differentiate updates from a simple read+write, since
 it can yield faster, more analyzable code.
 
+**Reading the old value.** When a tasklet writes through a dynamic WCR memlet (one with a ``-1`` volume), every
+assignment to its connector is an atomic read-modify-write, after which the connector holds the value that the data had
+*before* the update. The tasklet may read it, either directly (``old = conn = value``) or by reading ``conn`` after
+assigning it, to coordinate with other tasklets: to claim a unique slot (``slot = count = 1``), or to let the last of
+many tasks continue the work of all of them (``remaining = pending = -1``, then ``if remaining == 1: ...``). Such an
+update is *acquire-release*: a tasklet that reads the old value sees every write that other tasklets made before their
+earlier updates of the same element, and its own writes made before the update are visible to the tasklets that update
+it later. An update whose old value is not read is relaxed: it is atomic, but orders no other memory access, which keeps
+reductions fast. On GPUs, the guarantee covers the whole device, or one thread block for data in shared memory.
+
 Like copies, WCR memlets are applied on the innermost scope of the memlet tree. This requires to exercise caution when
 using such memlets, as they can lead to excessive atomic operations or critical sections. There are, however, transformations
 that can be applied on the SDFG to change the schedule and, for example, add a buffer to accumulate locally and save on

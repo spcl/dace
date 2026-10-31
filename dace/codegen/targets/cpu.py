@@ -1130,12 +1130,22 @@ class CPUCodeGen(TargetCodeGenerator):
     # Memlet handling
 
     def write_and_resolve_expr(
-        self, sdfg: SDFG, memlet: mmlt.Memlet, nc: bool, outname: str, inname: str, indices=None, dtype=None
+        self,
+        sdfg: SDFG,
+        memlet: mmlt.Memlet,
+        nc: bool,
+        outname: str,
+        inname: str,
+        indices=None,
+        dtype=None,
+        acq_rel: bool = False,
     ):
         """
         Emits a conflict resolution call from a memlet.
-        """
 
+        :param acq_rel: Whether the program reads the old value that the update returns, which makes the atomic
+                        update acquire-release (see ``dace::wcr_acq_rel``). Otherwise, it is relaxed.
+        """
         redtype = operations.detect_reduction_type(memlet.wcr)
         atomic = "_atomic" if not nc else ""
         ptrname = self.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg)
@@ -1163,14 +1173,26 @@ class CPUCodeGen(TargetCodeGenerator):
                 dtype = dtype.base_type
         func = f"{vec_prefix}reduce{atomic}{vec_suffix}"
 
+        # An atomic update whose old value is read is acquire-release
+        acq_rel = acq_rel and not nc
+        if acq_rel:
+            block = sdfg.arrays[memlet.data].storage == dtypes.StorageType.GPU_Shared
+            ordered = f"dace::wcr_acq_rel<{'true' if block else 'false'}>"
+
         # Special call for detected reduction types
         if redtype != dtypes.ReductionType.Custom:
             credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1 :]
-            return f"dace::wcr_fixed<{credtype}, {dtype.ctype}>::{func}({ptr}, {inname})"
+            if acq_rel and not vec_prefix:
+                return f"{ordered}::fixed<{credtype}, {dtype.ctype}>({ptr}, {inname})"
+            update = f"dace::wcr_fixed<{credtype}, {dtype.ctype}>::{func}({ptr}, {inname})"
+            return f"{ordered}::fenced([&] {{ return {update}; }})" if acq_rel else update
 
         # General reduction
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
-        return f"const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})"
+        update = f"dace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})"
+        if acq_rel:
+            update = f"{ordered}::fenced([&] {{ return {update}; }})"
+        return f"const auto __dace__reduction_lambda = {custom_reduction};\n{update}"
 
     def process_out_memlets(
         self,
