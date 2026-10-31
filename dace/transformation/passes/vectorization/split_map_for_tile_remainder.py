@@ -263,12 +263,14 @@ class SplitMapForTileRemainder(ppl.Pass):
             if not map_entry.map.label.endswith(TILE_MAIN_MARKER):
                 map_entry.map.label = map_entry.map.label + TILE_MAIN_MARKER
             return True
-        # A dim provably shorter than its width leaves no interior: the whole map is the remainder.
+        # A CONSTANT dim shorter than its width can never fill a tile. MarkTileDims leaves such a
+        # map scalar on this path, so marking it here as a whole-map remainder would strand a
+        # marked map the tile passes then skip; leave it whole and untiled, agreeing with
+        # MarkTileDims.
         if any(
             self.trip_class(lb, ub, W, facts) == "below" for (lb, ub, _), W in zip(map_entry.map.range[-K:], widths)
         ):
-            self._mark_tail(map_entry)
-            return True
+            return False
         for d, W in zip(tiled_dims, widths):
             lb, ub, step = map_entry.map.range[d]
             if self.provably_divisible(lb, ub, W, facts):

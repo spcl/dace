@@ -17,6 +17,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
     SCALAR_TAIL_MARKER,
     TILE_K1_TAIL_MARKER,
+    TILE_MAIN_MARKER,
 )
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     check_tile_widths,
@@ -151,31 +152,51 @@ class MarkTileDims(ppl.Pass):
         # remainder loop under ``scalar_postamble``). No ``trip >= W`` precondition, no runtime
         # trap: too-small trip just runs fewer active lanes.
         even_widths = (self.even_widths or list(widths))[-K:]
-        for (lb, ub, step), iv, even in zip(slice_ranges, iter_vars, even_widths):
+        for (lb, ub, step), iv, w, even in zip(slice_ranges, iter_vars, widths, even_widths):
             if step != 1 and str(step) != "1":
                 return self._fail_or_skip(
                     f"map {map_entry.label!r} dim {iv!r} has step {step!r}; v2 requires step == 1"
                 )
             # A provably-too-small dim (extent < tile width) is tiled ONLY where a remainder exists
             # to cover it: the masked / scalar-tail models peel an empty interior plus one masked
-            # remainder tile, and the mask keeps the short dim in bounds, so a trip-4 map at W=8
-            # still vectorises. Under ``assume_even`` there is no remainder machinery at all and
-            # widening would read past the extent, so the map stays scalar -- which is also what
-            # ``SplitMapForTileRemainder`` decides on that path, and the two must agree or a strided
-            # map ends up with a scalar body. NOT an error either way (unlike step != 1). A symbolic
-            # extent stays tiled: the masked remainder / runtime guard handles a runtime trip < W.
+            # remainder tile, and the mask keeps the short dim in bounds. Under ``assume_even``
+            # there is no remainder machinery at all and widening would read past the extent, so
+            # the map stays scalar -- which is also what ``SplitMapForTileRemainder`` decides on
+            # that path, and the two must agree or a strided map ends up with a scalar body. NOT an
+            # error either way (unlike step != 1). A symbolic extent stays tiled under both models:
+            # at runtime it may be large, and masking / the runtime guard handles a short trip.
+            # A CONSTANT extent below the width can never fill a tile even at runtime, so an
+            # UNSPLIT map stays scalar -- a width-8 tile on an extent-3 axis would pay the split +
+            # mask machinery for nothing (gem). A below-width map that shares its state with a
+            # ``__tile_main`` interior is a remainder slab of a split the pipeline already
+            # committed to (in the masked model it keeps its original label, so the marker cannot
+            # distinguish it): its body is widened by marker/mask-driven passes and its mask
+            # handles the short extent, so it stays tiled -- skipping it would widen the body
+            # without striding/masking it.
+            try:
+                const_extent = int(as_expr(symbolic.simplify(ub - lb + 1)))
+            except (TypeError, ValueError):
+                const_extent = None
             if self.assume_even:
-                try:
-                    if int(as_expr(symbolic.simplify(ub - lb + 1))) < even:
-                        return None
-                except (TypeError, ValueError):
-                    pass
+                if const_extent is not None and const_extent < even:
+                    return None
+            elif const_extent is not None and const_extent < w:
+                if not self._state_has_tile_main(state):
+                    return None
             global_ubs.append(str(ub + 1))
         return TileDimSpec(
             iter_vars=iter_vars,
             widths=widths,
             global_ubs=tuple(global_ubs),
         )
+
+    @staticmethod
+    def _state_has_tile_main(state: dace.SDFGState) -> bool:
+        # Whether ``state`` holds a ``__tile_main`` interior map. Its presence means
+        # ``SplitMapForTileRemainder`` peeled this state, so a short-extent map here is a remainder
+        # slab of that split (kept, in the masked model, under its original label), not an unsplit
+        # original: the split committed the pipeline to widening/masking it.
+        return any(isinstance(n, MapEntry) and n.map.label.endswith(TILE_MAIN_MARKER) for n in state.nodes())
 
     def _fail_or_skip(self, msg: str) -> TileDimSpec | None:
         # Either raise or return ``None`` based on ``skip_ineligible``.
