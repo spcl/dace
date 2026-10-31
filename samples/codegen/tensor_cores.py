@@ -96,14 +96,14 @@ class TensorCoreCodegen(TargetCodeGenerator):
         # Majority is detected by the strides of the data
         maj = "row" if nodedesc.strides[-1] == 1 else "col"
 
-        # Write a fragment based on the storage type
+        # Write a fragment based on the storage type, with the element type of the data (e.g., half or bfloat16
+        # inputs, float accumulators)
         if nodedesc.storage == dace.StorageType.TensorCore_Accumulator:
-            ctype = "wmma::fragment<wmma::accumulator, 16, 16, 16, float>"
+            ctype = f"wmma::fragment<wmma::accumulator, 16, 16, 16, {nodedesc.dtype.ctype}>"
             declaration_stream.write(f"{ctype} {name};", cfg, state_id, node)
         else:
-            ctype = "wmma::fragment<wmma::matrix_{mat}, 16, 16, 16, half, wmma::{maj}_major>".format(
-                mat=("a" if "A" in nodedesc.storage.name else "b"), maj=maj
-            )
+            mat = "a" if "A" in nodedesc.storage.name else "b"
+            ctype = f"wmma::fragment<wmma::matrix_{mat}, 16, 16, 16, {nodedesc.dtype.ctype}, wmma::{maj}_major>"
             declaration_stream.write(f"{ctype} {name};", cfg, state_id, node)
 
         # Add the ctype to defined_vars so that the codegen can properly pass
@@ -173,7 +173,7 @@ class TensorCoreCodegen(TargetCodeGenerator):
         if "TensorCore" in dst_desc.storage.name:
             # GPU memory to Tensor Cores
             callsite_stream.write(
-                f"wmma::load_matrix_sync({dst_node.data}, &{other_expr}, {src_desc.strides[0 if row_major else 1]});",
+                f"wmma::load_matrix_sync({dst_node.data}, &{other_expr}, {src_desc.strides[-2 if row_major else -1]});",
                 cfg,
                 state_id,
                 [src_node, dst_node],
@@ -185,7 +185,7 @@ class TensorCoreCodegen(TargetCodeGenerator):
                     tc=src_node.data,
                     other=other_expr,
                     maj="row" if row_major else "col",
-                    stride=dst_desc.strides[0 if row_major else 1],
+                    stride=dst_desc.strides[-2 if row_major else -1],
                 ),
                 cfg,
                 state_id,
@@ -259,6 +259,17 @@ def wmma(a_frag, b_frag, c_frag):
         dfrag >> c_frag
         """
         wmma::mma_sync(dfrag, afrag, bfrag, cfrag);
+        """
+
+
+def warp_sync(tile):
+    # After a warp stores a fragment to memory, its lanes may read each other's elements only after the warp
+    # synchronizes. Reading and writing the tile orders this tasklet between the store and the reads.
+    with dace.tasklet(dace.Language.CPP):
+        inp << tile
+        out >> tile
+        """
+        __syncwarp();
         """
 
 
