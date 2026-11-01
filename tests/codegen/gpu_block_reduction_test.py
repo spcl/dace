@@ -173,6 +173,41 @@ def test_warp_aggregated_atomics_of_statements():
 
 
 @dace.program
+def publish_then_count(A: dace.int32[N, THREADS], counts: dace.int32[N]):
+    for i in dace.map[0:N]:
+        for th in dace.map[0:THREADS] @ TB:
+            A[i, th] = th + 1
+        # The next state: one thread reads what all threads wrote to global memory
+        for _ in dace.map[0:1] @ TB:
+            total = 0
+            for j in range(THREADS):
+                total += A[i, j]
+            counts[i] = total
+
+
+@pytest.mark.gpu
+def test_states_order_global_memory():
+    sdfg = publish_then_count.to_sdfg(simplify=False)  # Keeps the two maps in separate states
+    for desc in sdfg.arrays.values():
+        if not desc.transient:
+            desc.storage = dace.StorageType.GPU_Global
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry) and node.map.params == ["i"]:
+            node.map.schedule = dace.ScheduleType.GPU_Device
+    code = next(c for c in sdfg.generate_code() if c.language == "cu").clean_code
+    # The thread-block maps are in two states, with a barrier between them
+    first, second = code.index("int th = threadIdx.x"), code.index("int _ = threadIdx.x")
+    assert "__syncthreads();" in code[first:second]
+
+    import cupy as cp  # Only GPU tests use CuPy
+
+    rows = 32
+    counts = cp.zeros(rows, dtype=cp.int32)
+    sdfg(A=cp.zeros((rows, THREADS), dtype=cp.int32), counts=counts, N=rows)
+    assert np.array_equal(cp.asnumpy(counts), np.full(rows, THREADS * (THREADS + 1) // 2))
+
+
+@dace.program
 def broadcast_count(A: dace.int32[N, WIDTH], counts: dace.int32[N], out: dace.int32[N, THREADS]):
     for i in dace.map[0:N]:
         # One thread counts (long enough for the other threads to arrive at the synchronization first)
@@ -221,5 +256,6 @@ def test_global_memory_written_by_one_thread():
 if __name__ == "__main__":
     test_block_reduction_across_states()
     test_global_memory_written_by_one_thread()
+    test_states_order_global_memory()
     test_warp_aggregated_shared_atomics()
     test_warp_aggregated_atomics_of_statements()
