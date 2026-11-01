@@ -275,7 +275,7 @@ class map(metaclass=MapMetaclass):
     pass
 
 
-class consume:
+class consume(Generic[T]):
     def __init__(self, stream: deque[T], processing_elements: int = 1, condition: Callable[[], bool] | None = None):
         """
         Consume is a scope, like ``Map``, that creates parallel execution.
@@ -291,8 +291,9 @@ class consume:
         by other processing elements at the same time; that read is relaxed (it
         may see an older value) and only decides when an element stops.
 
-        In a program, ``for element, pe in dace.consume(S, num_pes): body`` (or ``for element in ...``) is the same
-        consume scope as a function decorated with ``@dace.consumescope(S, num_pes)``; ``S.append(value)`` pushes.
+        In a program, ``for element, pe in dace.consume(S, num_pes): body`` is the same consume scope as a function
+        decorated with ``@dace.consumescope(S, num_pes)``; ``S.append(value)`` pushes. Outside of programs, the
+        elements are processed one after the other, by the processing elements in turn.
 
         :param stream: The stream to pop from.
         :param processing_elements: The number of processing elements to use.
@@ -303,18 +304,19 @@ class consume:
         self.pes = processing_elements  # Ignored in Python mode
         self.condition = condition
 
-    def __iter__(self) -> Generator[T, None, None]:
+    def __iter__(self) -> Generator[tuple[T, int], None, None]:
         """
-        Consume stream (pop elements) until the condition holds, or until the
-        stream is empty, if no condition is given.
+        Consume stream (pop elements) until it is empty or the condition holds.
+        Nothing else pushes while the loop runs in Python, so an empty stream
+        stays empty, with or without a condition.
+
+        :return: Pairs of an element and the index of the processing element
+                 that processes it.
         """
-        if self.condition is None:
-            while len(self.stream) > 0:
-                yield self.stream.pop()
-            return
-        while not self.condition():
-            if len(self.stream) > 0:
-                yield self.stream.pop()
+        pe = 0
+        while len(self.stream) > 0 and (self.condition is None or not self.condition()):
+            yield self.stream.pop(), pe
+            pe = (pe + 1) % self.pes
 
 
 class TaskletMetaclass(type):
