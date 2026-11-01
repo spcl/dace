@@ -57,6 +57,38 @@ namespace dace {
     };
 
 
+#if __cplusplus >= 202002L
+    /// Whether the CPU updates ``T`` atomically without a lock (``std::atomic_ref`` needs a trivially copyable type)
+    template <typename T, bool = std::is_trivially_copyable<T>::value>
+    struct _cpu_lock_free : std::false_type {};
+    template <typename T>
+    struct _cpu_lock_free<T, true> : std::bool_constant<std::atomic_ref<T>::is_always_lock_free> {};
+#endif
+
+    /// An atomic update with ``wcr`` on the CPU: a compare-and-swap loop where the CPU updates ``T`` without a lock,
+    /// a critical section (one lock for all updates of the program) otherwise. Relaxed: acquire-release updates add
+    /// fences around it (``wcr_acq_rel``).
+    template <typename T, typename WCR>
+    inline T _cpu_atomic_update(WCR wcr, T *ptr, const T& value) {
+        #if __cplusplus >= 202002L
+            if constexpr (_cpu_lock_free<T>::value) {
+                std::atomic_ref<T> ref(*ptr);
+                T old = ref.load(std::memory_order_relaxed);
+                while (!ref.compare_exchange_weak(old, wcr(old, value), std::memory_order_relaxed)) {}
+                return old;
+            } else
+        #endif
+        {
+            T old;
+            #pragma omp critical
+            {
+                old = *ptr;
+                *ptr = wcr(old, value);
+            }
+            return old;
+        }
+    }
+
     // Custom reduction with a lambda function
     template <typename T>
     struct wcr_custom {
@@ -74,11 +106,7 @@ namespace dace {
                     old = atomicCAS(ptr, assumed, wcr(assumed, value));
                 } while (assumed != old);
             #else
-                #pragma omp critical
-                {
-                  old = *ptr;
-                  *ptr = wcr(old, value);
-                }
+                old = _cpu_atomic_update(wcr, ptr, value);
             #endif
 
             return old;
@@ -111,13 +139,7 @@ namespace dace {
                 } while (assumed != old);
                 return __int_as_float(old);
             #else
-                float old;
-                #pragma omp critical
-                {
-                    old = *ptr;
-                    *ptr = wcr(old, value);
-                }
-                return old;
+                return _cpu_atomic_update(wcr, ptr, value);
             #endif
         }
 
@@ -139,7 +161,7 @@ namespace dace {
             #ifdef DACE_USE_GPU_ATOMICS
                 // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
                 unsigned long long *iptr = (unsigned long long *)ptr;
-                unsigned long long old = *ptr, assumed;
+                unsigned long long old = *iptr, assumed;  // The bits of the double, not its value
                 do {
                     assumed = old;
                     old = atomicCAS(
@@ -150,13 +172,7 @@ namespace dace {
                 } while (assumed != old);
                 return __longlong_as_double(old);
             #else
-                double old;
-                #pragma omp critical
-                {
-                    old = *ptr;
-                    *ptr = wcr(old, value);
-                }
-                return old;
+                return _cpu_atomic_update(wcr, ptr, value);
             #endif
         }
 
@@ -540,13 +556,7 @@ namespace dace {
                 using A = typename _gpu_atomic<T>::bits;
                 return T(atomicExch(reinterpret_cast<A *>(ptr), A(value)));
             #else
-                T old;
-                #pragma omp critical
-                {
-                    old = *ptr;
-                    *ptr = value;
-                }
-                return old;
+                return _cpu_atomic_update([](const T &, const T &b) { return b; }, ptr, value);
             #endif
         }
 
