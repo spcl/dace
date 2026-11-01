@@ -142,6 +142,26 @@ def _is_op_boolean(op: str):
 def result_type(
     arguments: Sequence[str | Number | symbolic.symbol | sp.Basic], operator: str = None
 ) -> tuple[list[dtypes.typeclass] | dtypes.typeclass | str, ...]:
+    """The type of the result of ``operator`` on ``arguments``, and the casts of the arguments to it. A Python integer
+    adopts the type of the other operands (as in NumPy), unless it does not fit it: it is then a 64-bit operand (as a
+    C++ literal), rather than a value cast to a narrower type."""
+    restype, casting = _result_type(arguments, operator)
+    if isinstance(restype, dtypes.typeclass) and np.issubdtype(restype.type, np.integer):
+        limits = np.iinfo(restype.type)
+        widened = [
+            np.int64(arg)
+            if isinstance(arg, int) and not isinstance(arg, bool) and not limits.min <= arg <= limits.max
+            else arg
+            for arg in arguments
+        ]
+        if any(w is not a for w, a in zip(widened, arguments)):
+            return _result_type(widened, operator)
+    return restype, casting
+
+
+def _result_type(
+    arguments: Sequence[str | Number | symbolic.symbol | sp.Basic], operator: str = None
+) -> tuple[list[dtypes.typeclass] | dtypes.typeclass | str, ...]:
 
     datatypes = []
     dtypes_for_result = []
