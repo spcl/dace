@@ -7,6 +7,7 @@ import copy
 
 import sympy
 
+from dace import data as dt
 from dace import dtypes, nodes, symbolic
 from dace.memlet import Memlet
 from dace.properties import SymbolicProperty, make_properties
@@ -27,9 +28,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
     until all the input dependencies (memlets) of the second one are met.
     """
 
-    first_map_exit = transformation.PatternNode(nds.ExitNode)
+    first_map_exit = transformation.PatternNode(nds.MapExit)
     array = transformation.PatternNode(nds.AccessNode)
-    second_map_entry = transformation.PatternNode(nds.EntryNode)
+    second_map_entry = transformation.PatternNode(nds.MapEntry)
 
     identity = SymbolicProperty(category="Parameters", desc="Identity value to set", default=None, allow_none=True)
 
@@ -40,6 +41,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # General conditions
         if not sdfg.arrays[self.array.data].transient:
+            return False
+        # Stream elements are pushed and popped in order, not indexed, so they cannot be recomputed on the fly
+        if isinstance(sdfg.arrays[self.array.data], dt.Stream):
             return False
         if graph.out_degree(self.first_map_exit) > 1:
             return False
