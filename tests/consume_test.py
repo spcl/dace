@@ -141,7 +141,47 @@ def test_consume_body_nested_sdfg_reads_popped_element():
     assert output[0] == fibonacci(10)
 
 
+@dace.program
+def fib_loop(iv: dace.int32[1], res: dace.float32[1]):
+    """The recursion as a consume loop, which pushes with ``append`` and adds with an augmented assignment."""
+    S = dace.define_stream(dace.int32, 0)
+    S.append(iv[0])
+    for elem, p in dace.consume(S, 4):
+        if elem == 1:
+            res[0] += 1  # Processing elements add at once: a write-conflict resolution
+        elif elem > 1:
+            S.append(elem - 1)
+            S.append(elem - 2)
+
+
+def test_fibonacci_recursion_using_consume_loop():
+    output = np.zeros([1], np.float32)
+    fib_loop(np.array([10], np.int32), output)
+    assert output[0] == fibonacci(10)
+
+
+N = dace.symbol("N")
+
+
+@dace.program
+def doubled_sum(res: dace.int64[1]):
+    """Pushes symbolic values from a map, and consumes them in a loop that names the element alone."""
+    S = dace.define_stream(dace.int64, 0)
+    for i in dace.map[0:N]:
+        S.append(2 * i + 1)
+    for elem in dace.consume(S, 3):
+        res[0] += elem
+
+
+def test_consume_loop_of_elements():
+    output = np.zeros([1], np.int64)
+    doubled_sum(output, N=100)
+    assert output[0] == 100**2
+
+
 if __name__ == "__main__":
     test_fibonacci_recursion_using_consume()
     test_fibonacci_recursion_using_consume_program()
     test_consume_body_nested_sdfg_reads_popped_element()
+    test_fibonacci_recursion_using_consume_loop()
+    test_consume_loop_of_elements()

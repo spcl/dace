@@ -1619,6 +1619,49 @@ class MPIResolver(ast.NodeTransformer):
         return node
 
 
+class ConsumeLoopConverter(ast.NodeTransformer):
+    """Rewrites a consume loop into the consume scope it stands for.
+
+    ``for element, pe in dace.consume(S, num_pes, ...): body`` becomes ``@dace.consumescope(S, num_pes, ...)``
+    ``def consume_S(element, pe): body``. A loop that names the element alone gets an unused processing element index.
+    Runs after ``ModuleResolver``, so that the iterator reads ``dace.consume`` under any import name.
+    """
+
+    def visit_For(self, node: ast.For) -> ast.AST:
+        node = self.generic_visit(node)
+        if not isinstance(node.iter, ast.Call) or astutils.rname(node.iter.func) != "dace.consume":
+            return node
+        if node.orelse:
+            raise DaceSyntaxError(None, node, "A consume loop cannot have an else clause")
+        if isinstance(node.target, ast.Tuple) and len(node.target.elts) == 2:
+            element, pe = node.target.elts
+        elif isinstance(node.target, ast.Name):
+            element, pe = node.target, ast.Name(id=f"__consume_pe_{node.lineno}", ctx=ast.Store())
+        else:
+            raise DaceSyntaxError(
+                None, node, "A consume loop iterates over an element, or an element and a processing element index"
+            )
+        if not isinstance(element, ast.Name) or not isinstance(pe, ast.Name):
+            raise DaceSyntaxError(None, node, "The targets of a consume loop must be names")
+        stream = node.iter.args[0] if node.iter.args else None
+        label = f"consume_{stream.id}" if isinstance(stream, ast.Name) else f"consume_{node.lineno}"
+        decorator = ast.Call(
+            func=ast.Attribute(value=ast.Name(id="dace", ctx=ast.Load()), attr="consumescope", ctx=ast.Load()),
+            args=node.iter.args,
+            keywords=node.iter.keywords,
+        )
+        arguments = ast.arguments(
+            posonlyargs=[],
+            args=[ast.arg(arg=element.id), ast.arg(arg=pe.id)],
+            kwonlyargs=[],
+            kw_defaults=[],
+            defaults=[],
+        )
+        function = ast.FunctionDef(name=label, args=arguments, body=node.body, decorator_list=[decorator], returns=None)
+        function.type_params = []
+        return ast.copy_location(ast.fix_missing_locations(ast.copy_location(function, node)), node)
+
+
 class ModuloConverter(ast.NodeTransformer):
     """Rewrites Python's ``a % b`` to ``PyMod(a, b)``, since a bare ``%`` in an SDFG is C's."""
 
@@ -1670,6 +1713,7 @@ def preprocess_dace_program(
     src_ast = StructTransformer(global_vars).visit(src_ast)
 
     src_ast = ModuleResolver(modules).visit(src_ast)
+    src_ast = ConsumeLoopConverter().visit(src_ast)
     # Convert modules after resolution
     for mod, modval in modules.items():
         if mod == "builtins":
