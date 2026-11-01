@@ -2262,9 +2262,20 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             prototype_kernel_args[aname] = arg
 
-        kernel_args_typed = [
-            ("const " if k in const_params else "") + v.as_arg(name=k) for k, v in prototype_kernel_args.items()
-        ]
+        # In a kernel whose threads synchronize (thread-block maps, grid barriers, persistent kernels such as consume
+        # scopes), data that the kernel writes may be read by other threads after the synchronization. "__restrict__"
+        # would let the compiler read it before the synchronization (it promises that nothing else modifies the data
+        # while the kernel runs), so only the arguments that the kernel only reads keep it.
+        synchronizes = tbmap or dtbmap or is_persistent or create_grid_barrier
+
+        def typed_argument(name: str, desc: dt.Data) -> str:
+            if name in const_params:
+                return "const " + desc.as_arg(name=name)
+            if synchronizes and isinstance(desc, dt.Array):
+                return f"{desc.dtype.ctype} * {name}"
+            return desc.as_arg(name=name)
+
+        kernel_args_typed = [typed_argument(k, v) for k, v in prototype_kernel_args.items()]
 
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(
@@ -3546,8 +3557,25 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label):
+        # Other threads of the kernel may write global memory that this function only reads (e.g., before a
+        # __syncthreads, or in another task of a persistent kernel): "const __restrict__" would let the compiler read
+        # it through the non-coherent read-only cache, or move the reads across the synchronization. Data that the
+        # whole kernel only reads keeps the qualifiers of the kernel's arguments.
+        in_global_memory = {
+            name
+            for name, desc in node.sdfg.arrays.items()
+            if desc.storage not in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register)
+        }
         return "DACE_DFI " + self._cpu_codegen.generate_nsdfg_header(
-            sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=False
+            sdfg,
+            cfg,
+            state,
+            state_id,
+            node,
+            memlet_references,
+            sdfg_label,
+            state_struct=False,
+            may_alias=in_global_memory,
         )
 
     def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label):
