@@ -35,8 +35,14 @@ def _stream_append(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, stream: str
         code = f"__out = {symbolic.symstr(value)}"
     else:
         raise DaceSyntaxError(pv, None, f"Unsupported argument {value} for {stream}.append")
+    # A push publishes what was written before it (the consumer may read it): it is not moved or fused with the writes
     tasklet = state.add_tasklet(
-        f"{stream}_append", dict.fromkeys(inputs), dict.fromkeys(["__out"]), code, debuginfo=pv.current_lineinfo
+        f"{stream}_append",
+        dict.fromkeys(inputs),
+        dict.fromkeys(["__out"]),
+        code,
+        debuginfo=pv.current_lineinfo,
+        side_effects=True,
     )
     for conn, memlet in inputs.items():
         state.add_edge(state.add_read(memlet.data), None, tasklet, conn, memlet)
@@ -81,6 +87,7 @@ def _atomic_add(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, array: str, in
         dict.fromkeys(["__target", "__old"]),
         f"__old = {element} = {addend}",
         debuginfo=pv.current_lineinfo,
+        side_effects=True,  # Ordered after the writes before it (acquire-release): not moved or fused with them
     )
     for conn, memlet in inputs.items():
         state.add_edge(state.add_read(memlet.data), None, tasklet, conn, memlet)
