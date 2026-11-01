@@ -10,9 +10,14 @@ Bellman-Ford or of a level-by-level breadth-first search, nothing waits for all 
 elements pop vertices in any order, and a distance that one task lowers is used by the next task that reads it.
 
 Distances are lowered with ``dace.atomic.min``, which returns the old distance: concurrent improvements of one vertex
-are merged rather than lost, and only a task that lowered ``dist[v]`` pushes ``v``. Tasks also *read* the distance of
-``u``, which other tasks may lower at the same time. That read may see an older, larger value, which is harmless: a
-task that lowered ``dist[u]`` pushes ``u`` again, so ``u`` is relaxed with its final distance eventually.
+are merged rather than lost, and only a task that lowered ``dist[v]`` pushes ``v``. A vertex is in the worklist at most
+once at a time (``queued``, set and cleared with ``dace.atomic.exch``): lowering a vertex that is already queued does
+not queue it again, as its task has yet to read its distance. This avoids relaxing the same edges for every
+improvement, and bounds the worklist by the number of vertices.
+
+Tasks also *read* the distance of ``u``, which other tasks may lower at the same time. That read may see an older,
+larger value, which is harmless: ``u`` leaves the worklist before its distance is read, so a task that lowers
+``dist[u]`` afterwards queues ``u`` again, and ``u`` is relaxed with its final distance eventually.
 """
 
 import argparse
@@ -30,19 +35,25 @@ E = dace.symbol("E")  # Edges
 def sssp(
     row: dace.int32[V + 1], col: dace.int32[E], weight: dace.float64[E], dist: dace.float64[V], source: dace.int32
 ):
-    # The vertices whose distance went down and whose edges need relaxing (on a GPU, a queue of this capacity)
-    S = dace.define_stream(dace.int32, 1 << 20)
+    # The vertices whose distance went down and whose edges need relaxing. A vertex is queued at most once at a time,
+    # so the worklist never holds more than V vertices (on a GPU, a queue of this capacity).
+    S = dace.define_stream(dace.int32, V)
+    queued = np.zeros([V], dtype=np.int32)  # Whether a vertex is in the worklist
 
-    for _ in dace.map[0:1]:  # A map rather than a lone push, so that it also runs on a GPU
+    for _ in dace.map[0:1]:  # A map rather than lone statements, so that it also runs on a GPU
+        queued[source] = 1
         S.append(source)
 
     for u, _ in dace.consume(S, 8):
-        for e in range(row[u], row[u + 1]):
+        dace.atomic.exch(queued, u, 0)  # Out of the worklist: lowering dist[u] from now on queues u again
+        through_u = dist[u]
+        for e in dace.map[row[u] : row[u + 1]]:  # The edges of u, in any order
             v = col[e]
-            candidate = dist[u] + weight[e]
+            candidate = through_u + weight[e]
             # Lowers dist[v] to the candidate if it is shorter, and returns the distance before
             if dace.atomic.min(dist, v, candidate) > candidate:
-                S.append(v)  # Lowered: the edges of v must be relaxed again
+                if dace.atomic.exch(queued, v, 1) == 0:  # Lowered, and not in the worklist yet
+                    S.append(v)
 
 
 def random_graph(num_vertices: int, degree: int, seed: int = 0):
@@ -71,16 +82,20 @@ def dijkstra(row: np.ndarray, col: np.ndarray, weight: np.ndarray, source: int) 
 
 
 def to_gpu(sdfg: dace.SDFG) -> None:
-    """Runs the same program on a GPU: one GPU thread per processing element."""
+    """Runs the same program on a GPU: one GPU thread per processing element. Only the outermost scopes become
+    kernels; the map over the edges of a vertex stays a loop of its processing element."""
     for desc in sdfg.arrays.values():
         if not isinstance(desc, dace.data.Scalar):
             desc.storage = dace.StorageType.GPU_Global
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.MapEntry):
-            node.map.schedule = dace.ScheduleType.GPU_Device
-        elif isinstance(node, dace.nodes.ConsumeEntry):
-            node.consume.schedule = dace.ScheduleType.GPU_Device
-            node.consume.num_pes = 4096
+    for state in sdfg.states():
+        for node, scope in state.scope_dict().items():
+            if scope is not None:
+                continue
+            if isinstance(node, dace.nodes.MapEntry):
+                node.map.schedule = dace.ScheduleType.GPU_Device
+            elif isinstance(node, dace.nodes.ConsumeEntry):
+                node.consume.schedule = dace.ScheduleType.GPU_Device
+                node.consume.num_pes = 4096
 
 
 if __name__ == "__main__":
@@ -99,10 +114,17 @@ if __name__ == "__main__":
 
         to_gpu(sdfg)
         gpu_dist = cupy.asarray(dist)
-        sdfg(row=cupy.asarray(row), col=cupy.asarray(col), weight=cupy.asarray(weight), dist=gpu_dist, source=0)
+        sdfg(
+            row=cupy.asarray(row),
+            col=cupy.asarray(col),
+            weight=cupy.asarray(weight),
+            dist=gpu_dist,
+            source=0,
+            V=args.vertices,
+        )
         dist = gpu_dist.get()
     else:
-        sdfg(row=row, col=col, weight=weight, dist=dist, source=0)
+        sdfg(row=row, col=col, weight=weight, dist=dist, source=0, V=args.vertices)
 
     reference = dijkstra(row, col, weight, 0)
     reached = np.isfinite(reference)
