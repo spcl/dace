@@ -102,6 +102,22 @@ def _subtree_edges(state: SDFGState, edge: MultiConnectorEdge) -> list[MultiConn
     return [t.edge for t in root.traverse_children()]
 
 
+def _read_chunk_in_nested_sdfg(nsdfg_node: nodes.NestedSDFG, conn: str, chunk_desc: data.Data) -> None:
+    """A nested SDFG that read the consumed stream through ``conn`` now reads the popped chunk, so its
+    descriptor for ``conn`` becomes the chunk's (a scalar or an array) instead of a stream."""
+    nsdfg = nsdfg_node.sdfg
+    if not isinstance(nsdfg.arrays[conn], data.Stream):
+        return
+    if conn in nsdfg_node.out_connectors:
+        raise NotImplementedError(
+            f'Nested SDFG "{nsdfg_node.label}" both reads the consumed element and pushes through "{conn}"'
+        )
+    desc = copy.deepcopy(chunk_desc)
+    desc.transient = False
+    nsdfg.remove_data(conn, validate=False)
+    nsdfg.add_datadesc(conn, desc)
+
+
 def _unique_connector_pair(node: nodes.EntryNode, base: str) -> str:
     name = base
     index = 0
@@ -165,6 +181,9 @@ def lower_consume(sdfg: SDFG, state: SDFGState, entry: nodes.ConsumeEntry) -> no
             find_new_name=True,
         )
     for out_edge in list(state.out_edges_by_connector(entry, "OUT_stream")):
+        for inner in [out_edge] + _subtree_edges(state, out_edge):
+            if isinstance(inner.dst, nodes.NestedSDFG):
+                _read_chunk_in_nested_sdfg(inner.dst, inner.dst_conn, chunk_desc)
         for inner in _subtree_edges(state, out_edge):
             inner.data.data = chunk
         chunk_node = state.add_access(chunk)
