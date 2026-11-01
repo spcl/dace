@@ -35,10 +35,58 @@ def _stream_append(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, stream: str
         code = f"__out = {symbolic.symstr(value)}"
     else:
         raise DaceSyntaxError(pv, None, f"Unsupported argument {value} for {stream}.append")
-    tasklet = state.add_tasklet(f"{stream}_append", set(inputs), {"__out"}, code, debuginfo=pv.current_lineinfo)
+    tasklet = state.add_tasklet(
+        f"{stream}_append", dict.fromkeys(inputs), dict.fromkeys(["__out"]), code, debuginfo=pv.current_lineinfo
+    )
     for conn, memlet in inputs.items():
         state.add_edge(state.add_read(memlet.data), None, tasklet, conn, memlet)
     state.add_edge(tasklet, "__out", state.add_write(stream), None, Memlet(data=stream, subset="0"))
+
+
+@oprepo.replaces("dace.atomic.add")
+@oprepo.replaces("dace.frontend.python.interface.atomic.add")
+def _atomic_add(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, array: str, index, value) -> str:
+    """``old = dace.atomic.add(array, index, value)``: an atomic update whose old value is read (see ``dace.atomic``).
+    The index and the value are scalars, constants or symbolic expressions."""
+    if not isinstance(array, str) or array not in sdfg.arrays:
+        raise DaceSyntaxError(pv, None, f"dace.atomic.add updates an array, got {array}")
+    inputs = {}
+
+    def operand(name: str, operand) -> str:
+        if isinstance(operand, str) and operand in sdfg.arrays:
+            if sdfg.arrays[operand].total_size != 1:
+                raise DaceSyntaxError(pv, None, f"dace.atomic.add takes scalar indices and values, got {operand}")
+            inputs[name] = Memlet(data=operand, subset="0")
+            return name
+        if isinstance(operand, (Number, symbolic.SymExpr)) or symbolic.issymbolic(operand):
+            return symbolic.symstr(operand)
+        raise DaceSyntaxError(pv, None, f"Unsupported operand {operand} for dace.atomic.add")
+
+    indices = index if isinstance(index, (tuple, list)) else (index,)
+    subscript = [operand(f"__index{i}", idx) for i, idx in enumerate(indices)]
+    addend = operand("__value", value)
+    desc = sdfg.arrays[array]
+    if any(conn in inputs for conn in subscript):  # An index read from data: the tasklet addresses the array
+        target = Memlet.from_array(array, desc, wcr="lambda a, b: a + b")
+        element = f"__target[{', '.join(subscript)}]"
+    else:  # The memlet addresses the element
+        target = Memlet(data=array, subset=", ".join(subscript), wcr="lambda a, b: a + b")
+        element = "__target"
+    target.dynamic = True
+    old, _ = sdfg.add_scalar("atomic_old", desc.dtype, transient=True, find_new_name=True)
+    # Assigning the connector of a dynamic write-conflict resolution updates atomically; reading it gives the old value
+    tasklet = state.add_tasklet(
+        "atomic_add",
+        dict.fromkeys(inputs),
+        dict.fromkeys(["__target", "__old"]),
+        f"__old = {element} = {addend}",
+        debuginfo=pv.current_lineinfo,
+    )
+    for conn, memlet in inputs.items():
+        state.add_edge(state.add_read(memlet.data), None, tasklet, conn, memlet)
+    state.add_edge(tasklet, "__target", state.add_write(array), None, target)
+    state.add_edge(tasklet, "__old", state.add_write(old), None, Memlet(data=old, subset="0"))
+    return old
 
 
 @oprepo.replaces_operator("Array", "MatMult", otherclass="StorageType")

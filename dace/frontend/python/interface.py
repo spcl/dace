@@ -501,6 +501,22 @@ def ai(description: str, *inputs, **kwargs):
     )
 
 
+class atomic:
+    """Atomic updates of one element of an array, which return the element's old value (as ``numba.cuda.atomic``).
+
+    In a program, ``old = dace.atomic.add(array, index, value)`` is a write-conflict resolution whose old value is read:
+    its memory ordering is acquire-release, so the processing element that sees a counter reach its last value also
+    sees what the others wrote before they updated it.
+    """
+
+    @staticmethod
+    def add(array, index, value):
+        """Adds ``value`` to ``array[index]``; returns the old ``array[index]``."""
+        old = array[index]
+        array[index] = old + value
+        return old
+
+
 class named:
     """
     Creates a `NamedRegion` with the given label.
