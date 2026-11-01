@@ -908,7 +908,11 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
                 )
             if nodedesc.start_offset != 0:
                 raise NotImplementedError("Start offset unsupported for shared memory")
-            result_decl.write(f"__shared__ {nodedesc.dtype.ctype} {dataname}[{sym2cpp(arrsize)}];\n")
+            # Aligned as in dynamic shared memory, for vector and asynchronous copies (e.g., ``cp.async``, ``ldmatrix``)
+            result_decl.write(
+                f"__shared__ __align__({gpu_shared_memory.DYNAMIC_SHARED_MEMORY_ALIGNMENT}) {nodedesc.dtype.ctype} "
+                f"{dataname}[{sym2cpp(arrsize)}];\n"
+            )
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
             if node.setzero:
                 self._reset_shared(dataname, nodedesc, cfg, state_id, node, result_alloc)
@@ -1965,16 +1969,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ) -> None:
-        # Special case: if this is a GPU grid state and something is reading
-        # from a possible result of a collaborative write, sync first
+        # Special case: if this is a GPU grid state that accesses shared memory, which the threads of the block may
+        # have accessed in a previous state (e.g., read the result of a collaborative write, or update a value one
+        # thread initialized), sync first
         if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device:
             for node in state.nodes():
-                if (
-                    isinstance(node, nodes.AccessNode)
-                    and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
-                    and state.in_degree(node) == 0
-                    and state.out_degree(node) > 0
-                ):
+                if isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared:
                     if not self._scope_has_collaborative_copy:
                         callsite_stream.write("__syncthreads();", cfg, state.block_id)
                     break
@@ -2370,6 +2370,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # The bytes of dynamic shared memory the kernel uses (see ``gpu_shared_memory.PlanSharedMemory``)
         dynsmem_size = getattr(scope_entry, "_cuda_dynamic_shared_memory", 0)
+        static_smem_size = getattr(scope_entry, "_cuda_static_shared_memory", 0)
 
         max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
         if max_streams >= 0:
@@ -2426,14 +2427,15 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 scope_entry,
             )
 
-        # Beyond the limit, devices only grant dynamic shared memory to kernels that opt in
+        # Beyond the limit (of static and dynamic shared memory together), devices only grant dynamic shared memory
+        # to kernels that opt in
         limit = common.gpu_max_static_shared_memory()
-        if (dynsmem_size > limit) != False:
+        if (static_smem_size + dynsmem_size > limit) != False:
             request = (
                 f'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY({kernel_name}, "{kernel_name}", {_topy(dynsmem_size)});'
             )
             if symbolic.issymbolic(dynsmem_size):
-                request = f"if (({_topy(dynsmem_size)}) > {limit}) {{\n{request}\n}}"
+                request = f"if (({_topy(dynsmem_size)}) > {limit - static_smem_size}) {{\n{request}\n}}"
             self._localcode.write(request, cfg, state_id, scope_entry)
 
         self._localcode.write(
@@ -2765,6 +2767,9 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         kernel_stream: CodeIOStream,
     ) -> None:
         node = dfg_scope.source_nodes()[0]
+
+        # Thread-block-level information of another kernel does not apply to this one
+        self._scope_has_collaborative_copy = False
 
         # Get the thread/block index types
         index_types = common.gpu_map_index_types(sdfg, cfg.node(state_id), node)

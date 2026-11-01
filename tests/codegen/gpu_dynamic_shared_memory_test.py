@@ -110,6 +110,17 @@ def three_arrays(A: dace.float64[N] @ S.GPU_Global, B: dace.float64[N] @ S.GPU_G
 
 
 @dace.program
+def static_and_dynamic(A: dace.float64[N] @ S.GPU_Global, B: dace.float64[N] @ S.GPU_Global):
+    for i in dace.map[0:N:32] @ dace.ScheduleType.GPU_Device:
+        s1 = dace.define_local([KIB32], dace.float64, storage=S.GPU_Shared)
+        s2 = dace.define_local([KIB32], dace.float64, storage=S.GPU_Shared)
+        for j in dace.map[0:32] @ dace.ScheduleType.GPU_ThreadBlock:
+            s1[j] = A[i + j]
+            s2[j] = s1[j] * 2
+            B[i + j] = s2[j] + 1
+
+
+@dace.program
 def symbolic_size(A: dace.float64[N] @ S.GPU_Global, B: dace.float64[N] @ S.GPU_Global):
     for i in dace.map[0:N:32] @ dace.ScheduleType.GPU_Device:
         s = dace.define_local([M], dace.float64, storage=S.GPU_Shared)
@@ -248,7 +259,7 @@ def test_fitting_containers_stay_static():
     code, shared_warnings = _generate(sdfg)
     assert not shared_warnings
     assert _placement(sdfg, "s1") is False and _placement(sdfg, "s2") is False
-    assert "__shared__ double s1[2048];" in code and "__shared__ double s2[2048];" in code
+    assert "__shared__ __align__(16) double s1[2048];" in code and "__shared__ __align__(16) double s2[2048];" in code
     assert "extern __shared__" not in code
     assert "DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY" not in code
 
@@ -259,7 +270,7 @@ def test_overflow_is_placed_dynamically():
     assert len(shared_warnings) == 2 and all("does not fit in the static shared memory" in w for w in shared_warnings)
     assert _placement(sdfg, "s1") is False
     assert _placement(sdfg, "s2") is True and _placement(sdfg, "s3") is True
-    assert "__shared__ double s1[4096];" in code
+    assert "__shared__ __align__(16) double s1[4096];" in code
     assert "extern __shared__ __align__(16) uint8_t __dace_dynsmem_extern[];" in code
     assert re.search(r"s2 = \(double\*\)\(&__dace_dynsmem\w*\[0\]\);", code)
     assert re.search(r"s3 = \(double\*\)\(&__dace_dynsmem\w*\[32768\]\);", code)
@@ -269,6 +280,25 @@ def test_overflow_is_placed_dynamically():
     sdfg.validate()
 
 
+def test_static_and_dynamic_beyond_the_default_limit():
+    """32 KiB of static and 32 KiB of dynamic shared memory: each fits in the default limit, together they do not."""
+    sdfg = static_and_dynamic.to_sdfg(simplify=False)
+    code, _ = _generate(sdfg)
+    assert _placement(sdfg, "s1") is False and _placement(sdfg, "s2") is True
+    assert re.search(r'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY\((\w+), "\1", 32768\);', code)
+
+
+def test_static_containers_are_aligned():
+    """Static containers are aligned as dynamic ones, for vector copies (here, two bytes would suffice)."""
+    sdfg = two_arrays.to_sdfg(simplify=False)
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        for desc in nsdfg.arrays.values():
+            if desc.storage == S.GPU_Shared:
+                desc.dtype = dace.int16
+    code, _ = _generate(sdfg)
+    assert "__shared__ __align__(16) int16_t s1[2048];" in code
+
+
 def test_explicit_placement():
     sdfg = two_arrays.to_sdfg(simplify=False)
     _set_storage(sdfg, "s1", S.GPU_Shared(dynamic=True))
@@ -276,7 +306,7 @@ def test_explicit_placement():
     code, shared_warnings = _generate(sdfg)
     assert not shared_warnings
     assert _placement(sdfg, "s1") is True and _placement(sdfg, "s2") is False
-    assert "__shared__ double s2[2048];" in code
+    assert "__shared__ __align__(16) double s2[2048];" in code
     assert re.search(r"s1 = \(double\*\)\(&__dace_dynsmem\w*\[0\]\);", code)
     # Within the limit, no request is needed
     assert "DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY" not in code
@@ -356,7 +386,7 @@ def test_placement_is_per_kernel():
     code, shared_warnings = _generate(sdfg)
     assert len(shared_warnings) == 1 and '"s_0"' in shared_warnings[0]
     assert _placement(sdfg, "s") is False and _placement(sdfg, "a") is False and _placement(sdfg, "s_0") is True
-    assert "__shared__ double s[4096];" in code and "__shared__ double a[4096];" in code
+    assert "__shared__ __align__(16) double s[4096];" in code and "__shared__ __align__(16) double a[4096];" in code
     assert re.search(r"\bs_0 = \(double\*\)\(&__dace_dynsmem\w*\[0\]\);", code)
 
 
@@ -375,12 +405,13 @@ def test_dynamic_map_state_follows_the_warp_size(backend: str, warp_size: int):
 
 
 def test_hip_limit():
-    """HIP allows 64 KiB of static shared memory, so two of the three containers are static and none is requested."""
+    """HIP allows 64 KiB of static shared memory, so two of the three containers are static. With the third, the kernel
+    uses more than that, and requests its dynamic shared memory."""
     sdfg = three_arrays.to_sdfg(simplify=False)
     code, shared_warnings = _generate(sdfg, backend="hip")
     assert len(shared_warnings) == 1
     assert _placement(sdfg, "s1") is False and _placement(sdfg, "s2") is False and _placement(sdfg, "s3") is True
-    assert "DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY" not in code
+    assert re.search(r'DACE_KERNEL_REQUEST_DYNAMIC_SHARED_MEMORY\((\w+), "\1", 32768\);', code)
     assert re.search(r"LaunchKernel\(.*, 32768, ", code)
 
 
@@ -409,6 +440,12 @@ def _run(program, simplify: bool = False, size: int = 1024, **symbols) -> np.nda
 @pytest.mark.gpu
 def test_dynamic_shared_memory_beyond_the_default_limit():
     B = _run(three_arrays)
+    assert np.array_equal(B, np.arange(1024, dtype=np.float64) * 2 + 1)
+
+
+@pytest.mark.gpu
+def test_static_and_dynamic_shared_memory_beyond_the_default_limit():
+    B = _run(static_and_dynamic)
     assert np.array_equal(B, np.arange(1024, dtype=np.float64) * 2 + 1)
 
 
@@ -453,6 +490,8 @@ if __name__ == "__main__":
         test_storage_type_serialization(storage)
     test_fitting_containers_stay_static()
     test_overflow_is_placed_dynamically()
+    test_static_and_dynamic_beyond_the_default_limit()
+    test_static_containers_are_aligned()
     test_explicit_placement()
     test_static_placement_of_symbolic_size_raises()
     test_symbolic_size_is_placed_dynamically()
@@ -465,6 +504,7 @@ if __name__ == "__main__":
     test_hip_limit()
     test_configured_limit()
     test_dynamic_shared_memory_beyond_the_default_limit()
+    test_static_and_dynamic_shared_memory_beyond_the_default_limit()
     test_symbolic_size()
     test_nested_sdfg_offset()
     test_kernels_with_separate_containers()
