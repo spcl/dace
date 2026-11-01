@@ -1,8 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+
 import numpy as np
 
 import dace
 import dace as dp
+from dace.transformation.passes.lower_consume import LowerConsumeScopes
 
 
 def setup_sdfg() -> dp.SDFG:
@@ -114,6 +117,31 @@ def test_fibonacci_recursion_using_consume_program():
     assert diff <= 1e-5
 
 
+def test_consume_body_nested_sdfg_reads_popped_element():
+    """Without simplification the consume body is a nested SDFG that reads the element as a stream. After
+    lowering, it reads the popped element, so its descriptor must change from a stream to a scalar."""
+    sdfg = fib_program.to_sdfg(simplify=False)
+    body = next(
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG) and "S" in n.in_connectors
+    )
+    assert isinstance(body.sdfg.arrays["S"], dace.data.Stream)
+
+    lowered = copy.deepcopy(sdfg)
+    LowerConsumeScopes().apply_pass(lowered, {})
+    lowered.validate()
+    assert isinstance(body.sdfg.arrays["S"], dace.data.Stream)  # The original is untouched
+    lowered_body = next(
+        n for n, _ in lowered.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG) and n.label == body.label
+    )
+    assert isinstance(lowered_body.sdfg.arrays["S"], dace.data.Scalar)
+
+    input = np.array([10], np.int32)
+    output = np.zeros([1], np.float32)
+    sdfg(iv=input, res=output)
+    assert output[0] == fibonacci(10)
+
+
 if __name__ == "__main__":
     test_fibonacci_recursion_using_consume()
     test_fibonacci_recursion_using_consume_program()
+    test_consume_body_nested_sdfg_reads_popped_element()
