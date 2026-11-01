@@ -991,7 +991,7 @@ class SDFG(ControlFlowRegion):
         return hsh.hexdigest()
 
     @property
-    def arrays(self):
+    def arrays(self) -> dict[str, dt.Data]:
         """Returns a dictionary of data descriptors (`Data` objects) used
         in this SDFG, with an extra `None` entry for empty memlets.
         """
