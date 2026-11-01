@@ -1,15 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The Gemma 4 mixture-of-experts feed-forward block (see ``gemma4_moe.py``) as one persistent DaCe GPU kernel.
 
-After a few small kernels that route the tokens, a single consume scope runs all the matrix products of the block as
-tasks on a queue. Every processing element is a GPU thread block that pops a task and computes a 16 x 64 tile of
-one product with tensor cores (four warps, one 16 x 16 tile each). There are four kinds of tasks:
+After a few small kernels that normalize and route the tokens (one thread block per token), a single consume scope
+runs all the matrix products of the block as tasks on a queue. Every processing element is a GPU thread block that
+pops a task and computes a 64 x 128 tile of one product with tensor cores (the ``tile_matmul`` library node), followed
+by an epilogue on the tile. There are four kinds of tasks:
 
-* expert gate/up: 16 rows of an expert (tokens routed to it) times 64 columns of its gate and up projections,
-  followed by GELU(gate) * up;
-* expert down: the same 16 rows times 64 output columns of the expert's down projection, scaled by each token's
-  routing weight and added to the token's output (an atomic write-conflict resolution);
-* dense gate/up and dense down: the same for 16 tokens in the dense MLP that runs in parallel.
+* expert gate/up: 64 rows of an expert (pairs of tokens routed to it) times 128 columns of its gate and up projections,
+  interleaved in chunks of 64, followed by GELU(gate) * up;
+* expert down: the same rows times 128 output columns of the expert's down projection, scaled by each pair's routing
+  weight and added to the token's output (an atomic write-conflict resolution);
+* dense gate/up and dense down: the same for 64 tokens in the dense MLP that runs in parallel.
 
 Down tasks depend on all the gate/up tasks of their rows. The gate/up task that finishes last (it reads the old
 value of a counter it decrements, an acquire-release update) pushes the down tasks of its rows, so the queue never
@@ -17,39 +18,41 @@ waits for a whole projection to finish, and dense and expert tasks fill each oth
 """
 
 import math
-import sys
+import time
 
 import gemma4_moe
+import tile_matmul as tm
 import torch
 
 import dace
 
-sys.path.insert(0, f"{__file__.rsplit('/', 2)[0]}/codegen")
-import tensor_cores as tc  # noqa: E402  (Tensor core fragments: storage types and code generation)
-
-tc.extend_dace()
-
-TC_A, TC_B, TC_C = (
-    dace.StorageType.TensorCore_A,
-    dace.StorageType.TensorCore_B,
-    dace.StorageType.TensorCore_Accumulator,
-)
-WARPS = 4  # Warps per thread block (task), one 16 x 16 tile each
-COLUMNS = 16 * WARPS  # Columns of a task
-KIND = 2**40  # A task is ``kind * KIND + a * FIELD + b``
+TB = dace.ScheduleType.GPU_ThreadBlock
+SHARED = dace.StorageType.GPU_Shared
+WARPS = 4  # Warps per thread block
+THREADS = 32 * WARPS
+BM, BN = 64, 128  # Rows and columns of a tile
+K_STEP, STAGES = 32, 2  # Slices of the inner dimension that tile_matmul stages in shared memory
+WORKSPACE = tm.workspace_shape(BM, BN, K_STEP, STAGES)
+KIND = 2**40  # A task is ``kind * KIND + tile * FIELD + chunk``
 FIELD = 2**20
 EXPERT_GATE_UP, EXPERT_DOWN, DENSE_GATE_UP, DENSE_DOWN = range(4)
 
 T = dace.symbol("T")  # Tokens
-TP = dace.symbol("TP")  # Tokens, padded to a multiple of 16
-NT = dace.symbol("NT")  # The most expert tiles there can be: T * top_k / 16 + num_experts
+TP = dace.symbol("TP")  # Tokens, padded to a multiple of BM
+NT = dace.symbol("NT")  # The most expert tiles there can be: T * top_k / BM + num_experts
 
 
-def col_major(*shape) -> dace.data.Array:
-    """A bfloat16 matrix (or batch of them) stored column-major: the transpose of a row-major weight."""
-    *batch, rows, cols = shape
-    strides = [rows * cols] * len(batch) + [1, rows]
-    return dace.data.Array(dace.bfloat16, list(shape), strides=strides)
+def packed(*shape) -> dace.data.Array:
+    """A weight matrix ``W[N, K]`` (or a batch of them), packed for ``tile_matmul``: as ``W[N / BN, K / K_STEP, BN,
+    K_STEP]``, so that the slices of the weight that a tile reads are contiguous (see ``pack``)."""
+    *batch, n, k = shape
+    return dace.data.Array(dace.bfloat16, [*batch, n // BN, k // K_STEP, BN, K_STEP])
+
+
+def pack(weight: torch.Tensor) -> torch.Tensor:
+    """Packs a weight matrix ``[..., N, K]`` (see ``packed``): a copy."""
+    *batch, n, k = weight.shape
+    return weight.reshape(*batch, n // BN, BN, k // K_STEP, K_STEP).transpose(-2, -3).contiguous()
 
 
 def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
@@ -62,10 +65,11 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
         config.num_experts,
         config.top_k,
     )
-    assert D % COLUMNS == 0 and DI % COLUMNS == 0 and I % COLUMNS == 0 and E % COLUMNS == 0
+    assert D % BN == 0 and (2 * DI) % BN == 0 and (2 * I) % BN == 0 and E == BN
     eps = config.eps
     root = D**-0.5
     gelu_c = math.sqrt(2 / math.pi)
+    HALF = BN // 2  # Gate (and up) columns of a gate/up task
 
     @dace.program
     def moe_block(
@@ -73,37 +77,38 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
         pre_norm: dace.float32[D],
         post_norm_1: dace.float32[D],
         router_scale: dace.float32[D],
-        router_t: col_major(D, E),
+        router_p: packed(E, D),
         per_expert_scale: dace.float32[E],
         pre_norm_2: dace.float32[D],
         post_norm_2: dace.float32[D],
         post_norm: dace.float32[D],
-        gate_t: col_major(D, DI),
-        up_t: col_major(D, DI),
-        down_t: col_major(DI, D),
-        expert_gate_up_t: col_major(E, D, 2 * I),
-        expert_down_t: col_major(E, I, D),
+        dense_gate_up_p: packed(2 * DI, D),
+        down_p: packed(D, DI),
+        expert_gate_up_p: packed(E, 2 * I, D),
+        expert_down_p: packed(E, D, I),
         out: dace.bfloat16[T, D],
         # Scratch
         inv_rms: dace.float32[T],
         x_router: dace.bfloat16[TP, D],
-        logits: dace.float32[TP, E],
+        logits: dace.bfloat16[TP, E],
         count: dace.int32[E],
         pair_expert: dace.int32[T, K],
         pair_slot: dace.int32[T, K],
         pair_weight: dace.float32[T, K],
         tile_start: dace.int32[E],
         tile_expert: dace.int32[NT],
+        tile_rows: dace.int32[NT],
+        dense_rows: dace.int32[TP // BM],
         num_tiles: dace.int32[1],
-        row_token: dace.int32[NT * 16],
-        row_weight: dace.float32[NT * 16],
+        row_token: dace.int32[NT * BM],
+        row_weight: dace.float32[NT * BM],
         x_dense: dace.bfloat16[TP, D],
-        x_expert: dace.bfloat16[NT * 16, D],
+        x_expert: dace.bfloat16[NT * BM, D],
         h_dense: dace.bfloat16[TP, DI],
-        h_expert: dace.bfloat16[NT * 16, I],
+        h_expert: dace.bfloat16[NT * BM, I],
         gate_up_left: dace.int32[NT],
-        dense_gate_up_left: dace.int32[TP // 16],
-        dense_acc: dace.float32[TP, D],
+        dense_gate_up_left: dace.int32[TP // BM],
+        dense_out: dace.bfloat16[TP, D],
         expert_acc: dace.float32[T, D],
     ):
         S = dace.define_stream(dace.int64, queue_size)
@@ -113,7 +118,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
             with dace.tasklet:
                 c >> count[e]
                 c = 0
-        for r in dace.map[0 : NT * 16]:
+        for r in dace.map[0 : NT * BM]:
             with dace.tasklet:
                 rt >> row_token[r]
                 rt = -1
@@ -121,86 +126,113 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
             with dace.tasklet:
                 a >> expert_acc[t, d]
                 a = 0
+        for g in dace.map[0 : TP // BM]:
+            with dace.tasklet:
+                dr >> dense_rows[g]
+                dr = min(BM, T - g * BM)
 
-        # RMS of every token (all the pre-norms normalize the same residual)
+        # RMS of every token (all the pre-norms normalize the same residual), and the inputs of the dense branch and
+        # of the router: the normalized input (bfloat16, as the model rounds it), scaled
         for t in dace.map[0:T]:
-            with dace.tasklet:
-                xs << x[t, :]
-                inv >> inv_rms[t]
-                ss = dace.float32(0)
-                for d in range(D):
-                    v = dace.float32(xs[d])
-                    ss = ss + v * v
-                inv = 1.0 / math.sqrt(ss / D + eps)
+            ss = dace.ndarray([1], dtype=dace.float32, storage=SHARED)
+            for _ in dace.map[0:1] @ TB:
+                with dace.tasklet:
+                    s >> ss[0]
+                    s = 0
+            for th in dace.map[0:THREADS] @ TB:
+                with dace.tasklet:
+                    xs << x[t, :]
+                    s >> ss(1, lambda a, b: a + b)[0]
+                    part = dace.float32(0)
+                    for d in range(th, D, THREADS):
+                        v = dace.float32(xs[d])
+                        part = part + v * v
+                    s = part
+            for th in dace.map[0:THREADS] @ TB:
+                with dace.tasklet:
+                    s << ss[0]
+                    xs << x[t, :]
+                    w1 << pre_norm[:]
+                    rs << router_scale[:]
+                    inv >> inv_rms(-1)[t]
+                    xd >> x_dense[t, :]
+                    xr >> x_router[t, :]
+                    v = 1.0 / math.sqrt(s / D + eps)
+                    if th == 0:
+                        inv = v
+                    for d in range(th, D, THREADS):
+                        n = dace.float32(xs[d]) * v
+                        xd[d] = dace.bfloat16(n * w1[d])
+                        xr[d] = dace.bfloat16(dace.float32(dace.bfloat16(n)) * rs[d] * root)
 
-        # Dense branch input
-        for t, d in dace.map[0:T, 0:D]:
-            with dace.tasklet:
-                xv << x[t, d]
-                inv << inv_rms[t]
-                w << pre_norm[d]
-                xd >> x_dense[t, d]
-                xd = dace.bfloat16(dace.float32(xv) * inv * w)
+        # Router logits, a tile of 64 tokens per thread block (the projection rounds them to bfloat16)
+        for g in dace.map[0 : TP // BM]:
+            work = dace.ndarray(WORKSPACE, dtype=dace.bfloat16, storage=SHARED)
+            tile = dace.ndarray([BM, BN], dtype=dace.bfloat16, storage=SHARED)
+            nr = dense_rows[g]
+            tm.tile_matmul(x_router[g * BM : g * BM + BM, :], router_p[0], tile, work, nr)
+            for w, lane in dace.map[0:WARPS, 0:32] @ TB:
+                for q in range(BM * BN // THREADS):
+                    with dace.tasklet:
+                        lv << tile[(q * THREADS + w * 32 + lane) // BN, (q * THREADS + w * 32 + lane) % BN]
+                        lg >> logits[g * BM + (q * THREADS + w * 32 + lane) // BN, (q * THREADS + w * 32 + lane) % BN]
+                        lg = lv
 
-        # Router logits: the RMS-normalized input (bfloat16, as the model rounds it), scaled, then projected (with
-        # tensor cores, a 16 x 64 tile per thread block)
-        for t, d in dace.map[0:T, 0:D]:
-            with dace.tasklet:
-                xv << x[t, d]
-                inv << inv_rms[t]
-                rs << router_scale[d]
-                xr >> x_router[t, d]
-                xr = dace.bfloat16(dace.float32(dace.bfloat16(dace.float32(xv) * inv)) * rs * root)
-        for g, ch in dace.map[0 : TP // 16, 0 : E // COLUMNS]:
-            for w, lane in dace.map[0:WARPS, 0:32]:
-                acc = dace.ndarray([16, 16], dtype=dace.float32, storage=TC_C)
-                tc.frag_fill(acc, 0.0)
-                for k in range(0, D, 16):
-                    a = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_A)
-                    b = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_B)
-                    a[:] = x_router[g * 16 : g * 16 + 16, k : k + 16]
-                    b[:] = router_t[k : k + 16, ch * COLUMNS + w * 16 : ch * COLUMNS + w * 16 + 16]
-                    tc.wmma(a, b, acc)
-                logits[g * 16 : g * 16 + 16, ch * COLUMNS + w * 16 : ch * COLUMNS + w * 16 + 16] = acc
-
-        # Softmax over all experts, top-k, renormalize, scale; claim a row of every chosen expert
+        # Softmax over all experts, top-k (ties: lowest index first), renormalize, scale; claim a row of every chosen
+        # expert. A thread per expert.
         for t in dace.map[0:T]:
-            with dace.tasklet:
-                lgs << logits[t, :]
-                pes << per_expert_scale[:]
-                c >> count(-1, lambda a, b: a + b)[:]
-                pe >> pair_expert[t, :]
-                ps >> pair_slot[t, :]
-                pw >> pair_weight[t, :]
-                # The model's projection rounds the logits to bfloat16
-                top = dace.float32(-1e30)
-                for e in range(E):
-                    top = max(top, dace.float32(dace.bfloat16(lgs[e])))
-                total = dace.float32(0)
-                for e in range(E):
-                    total = total + math.exp(dace.float32(dace.bfloat16(lgs[e])) - top)
-                chosen_sum = dace.float32(0)
-                previous = dace.float32(1e30)
-                previous_e = -1
-                for j in range(K):
-                    best = dace.float32(-1e30)
-                    best_e = 0
-                    for e in range(E):
-                        # The largest logit below the previous pick (ties: lowest index first)
-                        v = dace.float32(dace.bfloat16(lgs[e]))
-                        below = v < previous or (v == previous and e > previous_e)
-                        if below and (v > best or (v == best and e < best_e)):
-                            best = v
-                            best_e = e
-                    previous = best
-                    previous_e = best_e
-                    p = math.exp(best - top) / total
-                    pe[j] = best_e
-                    pw[j] = p
-                    chosen_sum = chosen_sum + p
-                for j in range(K):
-                    pw[j] = pw[j] / chosen_sum * pes[pe[j]]
-                    ps[j] = c[pe[j]] = 1
+            red = dace.ndarray([3], dtype=dace.float32, storage=SHARED)  # Largest logit, softmax sum, chosen sum
+            chosen = dace.ndarray([K], dtype=dace.int32, storage=SHARED)
+            chosen_p = dace.ndarray([K], dtype=dace.float32, storage=SHARED)
+            for _ in dace.map[0:1] @ TB:
+                with dace.tasklet:
+                    r >> red[:]
+                    r[0] = -1e30
+                    r[1] = 0
+                    r[2] = 0
+            for e in dace.map[0:E] @ TB:
+                with dace.tasklet:
+                    lg << logits[t, e]
+                    m >> red(1, lambda a, b: max(a, b))[0]
+                    m = dace.float32(lg)
+            for e in dace.map[0:E] @ TB:
+                with dace.tasklet:
+                    lgs << logits[t, :]
+                    top << red[0]
+                    tot >> red(1, lambda a, b: a + b)[1]
+                    v = dace.float32(lgs[e])
+                    tot = math.exp(v - top)
+            for e in dace.map[0:E] @ TB:
+                with dace.tasklet:
+                    lgs << logits[t, :]
+                    r << red[0:2]
+                    cs >> red(-1, lambda a, b: a + b)[2]
+                    ch >> chosen(-1)[:]
+                    cp >> chosen_p(-1)[:]
+                    v = dace.float32(lgs[e])
+                    rank = 0
+                    for e2 in range(E):
+                        v2 = dace.float32(lgs[e2])
+                        if v2 > v or (v2 == v and e2 < e):
+                            rank = rank + 1
+                    if rank < K:
+                        p = math.exp(v - r[0]) / r[1]
+                        ch[rank] = e
+                        cp[rank] = p
+                        cs = p
+            for j in dace.map[0:K] @ TB:
+                with dace.tasklet:
+                    ce << chosen[j]
+                    p << chosen_p[j]
+                    total << red[2]
+                    pes << per_expert_scale[:]
+                    c >> count(-1, lambda a, b: a + b)[:]
+                    pe >> pair_expert[t, j]
+                    ps >> pair_slot[t, j]
+                    pw >> pair_weight[t, j]
+                    pe = ce
+                    pw = p / total * pes[ce]
+                    ps = c[ce] = 1
 
         # Every expert's rows start at a whole tile
         for _ in dace.map[0:1]:
@@ -208,13 +240,15 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 cnt << count[:]
                 ts >> tile_start[:]
                 te >> tile_expert(-1)[:]
+                tr >> tile_rows(-1)[:]
                 nt >> num_tiles[0]
                 start = 0
                 for e in range(E):
                     ts[e] = start
-                    tiles = (cnt[e] + 15) // 16
+                    tiles = (cnt[e] + BM - 1) // BM
                     for g in range(tiles):
                         te[start + g] = e
+                        tr[start + g] = min(BM, cnt[e] - g * BM)
                     start = start + tiles
                 nt = start
 
@@ -227,7 +261,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 ts << tile_start[:]
                 rt >> row_token(-1)[:]
                 rw >> row_weight(-1)[:]
-                row = ts[pe] * 16 + ps
+                row = ts[pe] * BM + ps
                 rt[row] = t
                 rw[row] = pw
         for t, j, d in dace.map[0:T, 0:K, 0:D]:
@@ -237,182 +271,171 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 ts << tile_start[:]
                 xv << x[t, d]
                 inv << inv_rms[t]
-                w << pre_norm_2[d]
+                w2 << pre_norm_2[d]
                 xe >> x_expert(-1)[:, :]
-                xe[ts[pe] * 16 + ps, d] = dace.bfloat16(dace.float32(xv) * inv * w)
+                xe[ts[pe] * BM + ps, d] = dace.bfloat16(dace.float32(xv) * inv * w2)
 
         # Seed the gate/up tasks (the down tasks follow them)
-        for g, ch in dace.map[0:NT, 0 : I // COLUMNS]:
+        for g, ch in dace.map[0:NT, 0 : I // HALF]:
             with dace.tasklet:
                 nt << num_tiles[0]
                 left >> gate_up_left(-1)[g]
                 task >> S(-1)
                 if g < nt:
-                    left = I // COLUMNS
+                    left = I // HALF
                     task = EXPERT_GATE_UP * KIND + g * FIELD + ch
-        for g, ch in dace.map[0 : TP // 16, 0 : DI // COLUMNS]:
+        for g, ch in dace.map[0 : TP // BM, 0 : DI // HALF]:
             with dace.tasklet:
                 left >> dense_gate_up_left[g]
                 task >> S(-1)
-                left = DI // COLUMNS
+                left = DI // HALF
                 task = DENSE_GATE_UP * KIND + g * FIELD + ch
 
         @dace.consumescope(S, num_pes)
         def worker(task, p):
             kind = task // KIND
-            r0 = ((task // FIELD) % FIELD) * 16  # First row of the tile
-            c0 = (task % FIELD) * COLUMNS  # First column of the task
-            scratch = dace.ndarray([WARPS, 2, 16, 16], dtype=dace.float32, storage=dace.StorageType.GPU_Shared)
-            if kind == EXPERT_GATE_UP:
-                e = tile_expert[r0 // 16]
-                for w, lane in dace.map[0:WARPS, 0:32]:
-                    gate = dace.ndarray([16, 16], dtype=dace.float32, storage=TC_C)
-                    up = dace.ndarray([16, 16], dtype=dace.float32, storage=TC_C)
-                    tc.frag_fill(gate, 0.0)
-                    tc.frag_fill(up, 0.0)
-                    for k in range(0, D, 16):
-                        a = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_A)
-                        bg = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_B)
-                        bu = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_B)
-                        a[:] = x_expert[r0 : r0 + 16, k : k + 16]
-                        bg[:] = expert_gate_up_t[e, k : k + 16, c0 + w * 16 : c0 + w * 16 + 16]
-                        bu[:] = expert_gate_up_t[e, k : k + 16, I + c0 + w * 16 : I + c0 + w * 16 + 16]
-                        tc.wmma(a, bg, gate)
-                        tc.wmma(a, bu, up)
-                    scratch[w, 0] = gate
-                    scratch[w, 1] = up
-                    tc.warp_sync(scratch[w])
-                    for i in range(8):
+            g = (task // FIELD) % FIELD  # Tile of rows
+            ch = task % FIELD  # Chunk of columns
+            r0 = g * BM
+            work = dace.ndarray(WORKSPACE, dtype=dace.bfloat16, storage=SHARED)
+            tile = dace.ndarray([BM, BN], dtype=dace.bfloat16, storage=SHARED)
+            if kind == EXPERT_GATE_UP or kind == DENSE_GATE_UP:
+                if kind == EXPERT_GATE_UP:
+                    e = tile_expert[g]
+                    nr = tile_rows[g]
+                    tm.tile_matmul(x_expert[r0 : r0 + BM, :], expert_gate_up_p[e, ch], tile, work, nr)
+                else:
+                    nr = dense_rows[g]
+                    tm.tile_matmul(x_dense[r0 : r0 + BM, :], dense_gate_up_p[ch], tile, work, nr)
+                # GELU(gate) * up, where the columns of the tile are 64 of the gate projection, then 64 of the up one
+                for w, lane in dace.map[0:WARPS, 0:32] @ TB:
+                    for q in range(BM * HALF // THREADS):
                         with dace.tasklet:
-                            gv << scratch[w, 0, (lane * 8 + i) // 16, (lane * 8 + i) % 16]
-                            uv << scratch[w, 1, (lane * 8 + i) // 16, (lane * 8 + i) % 16]
-                            row0 << r0
-                            col0 << c0
-                            hv >> h_expert(-1)[:, :]
-                            gb = dace.float32(dace.bfloat16(gv))
-                            gl = 0.5 * gb * (1.0 + math.tanh(gelu_c * (gb + 0.044715 * gb * gb * gb)))
-                            hv[row0 + (lane * 8 + i) // 16, col0 + w * 16 + (lane * 8 + i) % 16] = dace.bfloat16(
-                                dace.float32(dace.bfloat16(gl)) * dace.float32(dace.bfloat16(uv))
+                            gv << tile[(q * THREADS + w * 32 + lane) // HALF, (q * THREADS + w * 32 + lane) % HALF]
+                            (
+                                uv
+                                << tile[
+                                    (q * THREADS + w * 32 + lane) // HALF, HALF + (q * THREADS + w * 32 + lane) % HALF
+                                ]
                             )
-                for _ in dace.map[0:1]:  # One thread
-                    with dace.tasklet:
-                        row0 << r0
-                        _published << h_expert(-1)[:, :]  # After the block wrote its part (release)
-                        gl >> gate_up_left(-1, lambda a, b: a + b)[:]
-                        dn >> S(-1)
-                        left = gl[row0 // 16] = -1
-                        if left == 1:  # The last gate/up task of these rows
-                            for ch in range(D // COLUMNS):
-                                dn = EXPERT_DOWN * KIND + (row0 // 16) * FIELD + ch
-            elif kind == EXPERT_DOWN:
-                e = tile_expert[r0 // 16]
-                for w, lane in dace.map[0:WARPS, 0:32]:
-                    acc = dace.ndarray([16, 16], dtype=dace.float32, storage=TC_C)
-                    tc.frag_fill(acc, 0.0)
-                    for k in range(0, I, 16):
-                        a = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_A)
-                        b = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_B)
-                        a[:] = h_expert[r0 : r0 + 16, k : k + 16]
-                        b[:] = expert_down_t[e, k : k + 16, c0 + w * 16 : c0 + w * 16 + 16]
-                        tc.wmma(a, b, acc)
-                    scratch[w, 0] = acc
-                    tc.warp_sync(scratch[w])
-                    for i in range(8):
-                        with dace.tasklet:
-                            yv << scratch[w, 0, (lane * 8 + i) // 16, (lane * 8 + i) % 16]
+                            k << kind
                             row0 << r0
-                            col0 << c0
+                            col0 << ch
+                            he >> h_expert(-1)[:, :]
+                            hd >> h_dense(-1)[:, :]
+                            gb = dace.float32(gv)
+                            gl = 0.5 * gb * (1.0 + math.tanh(gelu_c * (gb + 0.044715 * gb * gb * gb)))
+                            hv = dace.bfloat16(dace.float32(dace.bfloat16(gl)) * dace.float32(uv))
+                            i = q * THREADS + w * 32 + lane
+                            if k == EXPERT_GATE_UP:
+                                he[row0 + i // HALF, col0 * HALF + i % HALF] = hv
+                            else:
+                                hd[row0 + i // HALF, col0 * HALF + i % HALF] = hv
+                # The last gate/up task of these rows pushes their down tasks
+                for _ in dace.map[0:1] @ TB:
+                    with dace.tasklet:
+                        k << kind
+                        tile_index << g
+                        _published_e << h_expert(-1)[:, :]  # After the block wrote its part (release)
+                        _published_d << h_dense(-1)[:, :]
+                        gl >> gate_up_left(-1, lambda a, b: a + b)[:]
+                        dl >> dense_gate_up_left(-1, lambda a, b: a + b)[:]
+                        dn >> S(-1)
+                        if k == EXPERT_GATE_UP:
+                            left = gl[tile_index] = -1
+                            if left == 1:
+                                for c in range(D // BN):
+                                    dn = EXPERT_DOWN * KIND + tile_index * FIELD + c
+                        else:
+                            left = dl[tile_index] = -1
+                            if left == 1:
+                                for c in range(D // BN):
+                                    dn = DENSE_DOWN * KIND + tile_index * FIELD + c
+            elif kind == EXPERT_DOWN:
+                e = tile_expert[g]
+                nr = tile_rows[g]
+                tm.tile_matmul(h_expert[r0 : r0 + BM, :], expert_down_p[e, ch], tile, work, nr)
+                for w, lane in dace.map[0:WARPS, 0:32] @ TB:
+                    for q in range(BM * BN // THREADS):
+                        with dace.tasklet:
+                            yv << tile[(q * THREADS + w * 32 + lane) // BN, (q * THREADS + w * 32 + lane) % BN]
+                            row0 << r0
+                            col0 << ch
                             tok << row_token(-1)[:]
                             rw << row_weight(-1)[:]
                             o >> expert_acc(-1, lambda a, b: a + b)[:, :]
-                            row = row0 + (lane * 8 + i) // 16
+                            row = row0 + (q * THREADS + w * 32 + lane) // BN
                             if tok[row] >= 0:
-                                o[tok[row], col0 + w * 16 + (lane * 8 + i) % 16] = (
-                                    dace.float32(dace.bfloat16(yv)) * rw[row]
-                                )
-            elif kind == DENSE_GATE_UP:
-                for w, lane in dace.map[0:WARPS, 0:32]:
-                    gate = dace.ndarray([16, 16], dtype=dace.float32, storage=TC_C)
-                    up = dace.ndarray([16, 16], dtype=dace.float32, storage=TC_C)
-                    tc.frag_fill(gate, 0.0)
-                    tc.frag_fill(up, 0.0)
-                    for k in range(0, D, 16):
-                        a = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_A)
-                        bg = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_B)
-                        bu = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_B)
-                        a[:] = x_dense[r0 : r0 + 16, k : k + 16]
-                        bg[:] = gate_t[k : k + 16, c0 + w * 16 : c0 + w * 16 + 16]
-                        bu[:] = up_t[k : k + 16, c0 + w * 16 : c0 + w * 16 + 16]
-                        tc.wmma(a, bg, gate)
-                        tc.wmma(a, bu, up)
-                    scratch[w, 0] = gate
-                    scratch[w, 1] = up
-                    tc.warp_sync(scratch[w])
-                    for i in range(8):
-                        with dace.tasklet:
-                            gv << scratch[w, 0, (lane * 8 + i) // 16, (lane * 8 + i) % 16]
-                            uv << scratch[w, 1, (lane * 8 + i) // 16, (lane * 8 + i) % 16]
-                            row0 << r0
-                            col0 << c0
-                            hv >> h_dense(-1)[:, :]
-                            gb = dace.float32(dace.bfloat16(gv))
-                            gl = 0.5 * gb * (1.0 + math.tanh(gelu_c * (gb + 0.044715 * gb * gb * gb)))
-                            hv[row0 + (lane * 8 + i) // 16, col0 + w * 16 + (lane * 8 + i) % 16] = dace.bfloat16(
-                                dace.float32(dace.bfloat16(gl)) * dace.float32(dace.bfloat16(uv))
-                            )
-                for _ in dace.map[0:1]:
-                    with dace.tasklet:
-                        row0 << r0
-                        _published << h_dense(-1)[:, :]  # After the block wrote its part (release)
-                        gl >> dense_gate_up_left(-1, lambda a, b: a + b)[:]
-                        dn >> S(-1)
-                        left = gl[row0 // 16] = -1
-                        if left == 1:
-                            for ch in range(D // COLUMNS):
-                                dn = DENSE_DOWN * KIND + (row0 // 16) * FIELD + ch
+                                o[tok[row], col0 * BN + (q * THREADS + w * 32 + lane) % BN] = dace.float32(yv) * rw[row]
             else:  # DENSE_DOWN
-                for w, lane in dace.map[0:WARPS, 0:32]:
-                    acc = dace.ndarray([16, 16], dtype=dace.float32, storage=TC_C)
-                    tc.frag_fill(acc, 0.0)
-                    for k in range(0, DI, 16):
-                        a = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_A)
-                        b = dace.ndarray([16, 16], dtype=dace.bfloat16, storage=TC_B)
-                        a[:] = h_dense[r0 : r0 + 16, k : k + 16]
-                        b[:] = down_t[k : k + 16, c0 + w * 16 : c0 + w * 16 + 16]
-                        tc.wmma(a, b, acc)
-                    dense_acc[r0 : r0 + 16, c0 + w * 16 : c0 + w * 16 + 16] = acc
+                nr = dense_rows[g]
+                tm.tile_matmul(h_dense[r0 : r0 + BM, :], down_p[ch], tile, work, nr)
+                for w, lane in dace.map[0:WARPS, 0:32] @ TB:
+                    for q in range(BM * BN // THREADS):
+                        with dace.tasklet:
+                            yv << tile[(q * THREADS + w * 32 + lane) // BN, (q * THREADS + w * 32 + lane) % BN]
+                            row0 << r0
+                            col0 << ch
+                            o >> dense_out(-1)[:, :]
+                            o[
+                                row0 + (q * THREADS + w * 32 + lane) // BN,
+                                col0 * BN + (q * THREADS + w * 32 + lane) % BN,
+                            ] = yv
 
         # Output: normalize both branches, add, normalize, add the residual (in bfloat16, as the model)
         for t in dace.map[0:T]:
-            with dace.tasklet:
-                xs << x[t, :]
-                dn << dense_acc[t, :]
-                ex << expert_acc[t, :]
-                p1 << post_norm_1[:]
-                p2 << post_norm_2[:]
-                po << post_norm[:]
-                o >> out[t, :]
-                ss1 = dace.float32(0)
-                ss2 = dace.float32(0)
-                for d in range(D):
-                    v1 = dace.float32(dace.bfloat16(dn[d]))
-                    v2 = dace.float32(dace.bfloat16(ex[d]))
-                    ss1 = ss1 + v1 * v1
-                    ss2 = ss2 + v2 * v2
-                inv1 = 1.0 / math.sqrt(ss1 / D + eps)
-                inv2 = 1.0 / math.sqrt(ss2 / D + eps)
-                ss = dace.float32(0)
-                for d in range(D):
-                    a1 = dace.float32(dace.bfloat16(dace.float32(dace.bfloat16(dn[d])) * inv1 * p1[d]))
-                    a2 = dace.float32(dace.bfloat16(dace.float32(dace.bfloat16(ex[d])) * inv2 * p2[d]))
-                    s = dace.float32(dace.bfloat16(a1 + a2))
-                    ss = ss + s * s
-                inv = 1.0 / math.sqrt(ss / D + eps)
-                for d in range(D):
-                    a1 = dace.float32(dace.bfloat16(dace.float32(dace.bfloat16(dn[d])) * inv1 * p1[d]))
-                    a2 = dace.float32(dace.bfloat16(dace.float32(dace.bfloat16(ex[d])) * inv2 * p2[d]))
-                    s = dace.float32(dace.bfloat16(a1 + a2))
-                    o[d] = dace.bfloat16(dace.float32(xs[d]) + dace.float32(dace.bfloat16(s * inv * po[d])))
+            sums = dace.ndarray([3], dtype=dace.float32, storage=SHARED)
+            mixed = dace.ndarray([D], dtype=dace.float32, storage=SHARED)
+            for _ in dace.map[0:1] @ TB:
+                with dace.tasklet:
+                    s >> sums[:]
+                    s[0] = 0
+                    s[1] = 0
+                    s[2] = 0
+            for th in dace.map[0:THREADS] @ TB:
+                with dace.tasklet:
+                    dn << dense_out[t, :]
+                    ex << expert_acc[t, :]
+                    s1 >> sums(1, lambda a, b: a + b)[0]
+                    s2 >> sums(1, lambda a, b: a + b)[1]
+                    a1 = dace.float32(0)
+                    a2 = dace.float32(0)
+                    for d in range(th, D, THREADS):
+                        v1 = dace.float32(dn[d])
+                        v2 = dace.float32(dace.bfloat16(ex[d]))
+                        a1 = a1 + v1 * v1
+                        a2 = a2 + v2 * v2
+                    s1 = a1
+                    s2 = a2
+            for th in dace.map[0:THREADS] @ TB:
+                with dace.tasklet:
+                    sm << sums[0:2]
+                    dn << dense_out[t, :]
+                    ex << expert_acc[t, :]
+                    p1 << post_norm_1[:]
+                    p2 << post_norm_2[:]
+                    mx >> mixed(-1)[:]
+                    s3 >> sums(1, lambda a, b: a + b)[2]
+                    inv1 = 1.0 / math.sqrt(sm[0] / D + eps)
+                    inv2 = 1.0 / math.sqrt(sm[1] / D + eps)
+                    a3 = dace.float32(0)
+                    for d in range(th, D, THREADS):
+                        b1 = dace.float32(dace.bfloat16(dace.float32(dn[d]) * inv1 * p1[d]))
+                        b2 = dace.float32(dace.bfloat16(dace.float32(dace.bfloat16(ex[d])) * inv2 * p2[d]))
+                        v = dace.float32(dace.bfloat16(b1 + b2))
+                        mx[d] = v
+                        a3 = a3 + v * v
+                    s3 = a3
+            for th in dace.map[0:THREADS] @ TB:
+                with dace.tasklet:
+                    s << sums[2]
+                    mxs << mixed[:]
+                    xs << x[t, :]
+                    po << post_norm[:]
+                    o >> out[t, :]
+                    inv = 1.0 / math.sqrt(s / D + eps)
+                    for d in range(th, D, THREADS):
+                        o[d] = dace.bfloat16(dace.float32(xs[d]) + dace.float32(dace.bfloat16(mxs[d] * inv * po[d])))
 
     sdfg = moe_block.to_sdfg(simplify=True)
     to_gpu(sdfg)
@@ -433,39 +456,39 @@ def to_gpu(sdfg: dace.SDFG) -> None:
         if isinstance(node, dace.nodes.MapEntry):
             if parent.parent is sdfg and parent.entry_node(node) is None:
                 node.map.schedule = dace.ScheduleType.GPU_Device
-            elif node.map.params in (["w", "lane"], ["_"]):
-                node.map.schedule = dace.ScheduleType.GPU_ThreadBlock
         elif isinstance(node, dace.nodes.ConsumeEntry):
             node.consume.schedule = dace.ScheduleType.GPU_Device
-    for nested in sdfg.all_sdfgs_recursive():
-        for desc in nested.arrays.values():
-            if desc.storage == TC_B:
-                desc.strides = (1, 16)  # Column-major fragments
 
 
 def arguments(w: gemma4_moe.Weights) -> dict[str, torch.Tensor]:
-    """The weights as the program takes them: projections transposed (column-major views, no copies)."""
+    """The weights as the program takes them (copies, made once): the gate and up projections interleaved in chunks of
+    64 rows, so that a tile of 128 output columns holds matching gate and up columns, and all projections packed."""
+    E, I2, D = w.expert_gate_up.shape
+    DI = w.gate_proj.shape[0]
+    half = BN // 2
+    expert_gate_up = w.expert_gate_up.view(E, 2, I2 // 2 // half, half, D).transpose(1, 2).reshape(E, I2, D)
+    dense_gate_up = torch.stack([w.gate_proj, w.up_proj]).view(2, DI // half, half, D).transpose(0, 1)
+    dense_gate_up = dense_gate_up.reshape(2 * DI, D)
     return dict(
         pre_norm=w.pre_norm,
         post_norm_1=w.post_norm_1,
         router_scale=w.router_scale,
-        router_t=w.router_proj.T,
+        router_p=pack(w.router_proj),
         per_expert_scale=w.per_expert_scale,
         pre_norm_2=w.pre_norm_2,
         post_norm_2=w.post_norm_2,
         post_norm=w.post_norm,
-        gate_t=w.gate_proj.T,
-        up_t=w.up_proj.T,
-        down_t=w.down_proj.T,
-        expert_gate_up_t=w.expert_gate_up.transpose(1, 2),
-        expert_down_t=w.expert_down.transpose(1, 2),
+        dense_gate_up_p=pack(dense_gate_up),
+        down_p=pack(w.down_proj),
+        expert_gate_up_p=pack(expert_gate_up),
+        expert_down_p=pack(w.expert_down),
     )
 
 
 def workspace(config: gemma4_moe.Config, tokens: int) -> dict:
     """Scratch buffers and symbol values for ``tokens`` tokens."""
-    padded = (tokens + 15) // 16 * 16
-    tiles = tokens * config.top_k // 16 + config.num_experts
+    padded = (tokens + BM - 1) // BM * BM
+    tiles = tokens * config.top_k // BM + config.num_experts
     E, K, D = config.num_experts, config.top_k, config.hidden
 
     def zeros(*shape, dtype=torch.float32):
@@ -474,28 +497,44 @@ def workspace(config: gemma4_moe.Config, tokens: int) -> dict:
     return dict(
         inv_rms=zeros(tokens),
         x_router=zeros(padded, D, dtype=torch.bfloat16),
-        logits=zeros(padded, E),
+        logits=zeros(padded, E, dtype=torch.bfloat16),
         count=zeros(E, dtype=torch.int32),
         pair_expert=zeros(tokens, K, dtype=torch.int32),
         pair_slot=zeros(tokens, K, dtype=torch.int32),
         pair_weight=zeros(tokens, K),
         tile_start=zeros(E, dtype=torch.int32),
         tile_expert=zeros(tiles, dtype=torch.int32),
+        tile_rows=zeros(tiles, dtype=torch.int32),
+        dense_rows=zeros(padded // BM, dtype=torch.int32),
         num_tiles=zeros(1, dtype=torch.int32),
-        row_token=zeros(tiles * 16, dtype=torch.int32),
-        row_weight=zeros(tiles * 16),
+        row_token=zeros(tiles * BM, dtype=torch.int32),
+        row_weight=zeros(tiles * BM),
         x_dense=zeros(padded, D, dtype=torch.bfloat16),
-        x_expert=zeros(tiles * 16, D, dtype=torch.bfloat16),
+        x_expert=zeros(tiles * BM, D, dtype=torch.bfloat16),
         h_dense=zeros(padded, config.dense_intermediate, dtype=torch.bfloat16),
-        h_expert=zeros(tiles * 16, config.expert_intermediate, dtype=torch.bfloat16),
+        h_expert=zeros(tiles * BM, config.expert_intermediate, dtype=torch.bfloat16),
         gate_up_left=zeros(tiles, dtype=torch.int32),
-        dense_gate_up_left=zeros(padded // 16, dtype=torch.int32),
-        dense_acc=zeros(padded, D),
+        dense_gate_up_left=zeros(padded // BM, dtype=torch.int32),
+        dense_out=zeros(padded, D, dtype=torch.bfloat16),
         expert_acc=zeros(tokens, D),
         T=tokens,
         TP=padded,
         NT=tiles,
     )
+
+
+def wall_ms(function, repetitions: int = 20) -> float:
+    """Median wall-clock time of ``function()`` until the GPU is idle, in milliseconds. (DaCe runs on its own
+    streams, which events on PyTorch's stream do not wait for.)"""
+    function()
+    torch.cuda.synchronize()
+    times = []
+    for _ in range(repetitions):
+        start = time.perf_counter()
+        function()
+        torch.cuda.synchronize()
+        times.append(time.perf_counter() - start)
+    return sorted(times)[repetitions // 2] * 1e3
 
 
 if __name__ == "__main__":
@@ -504,11 +543,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--tokens", type=int, nargs="+", default=[1, 8, 64, 512, 2048])
     parser.add_argument("--small", action="store_true", help="a small configuration, for testing")
-    parser.add_argument("--pes", type=int, default=46 * 4, help="processing elements (thread blocks)")
+    parser.add_argument("--pes", type=int, default=46 * 2, help="processing elements (thread blocks)")
     args = parser.parse_args()
 
     config = (
-        gemma4_moe.Config(hidden=256, dense_intermediate=128, num_experts=64, top_k=4, expert_intermediate=128)
+        gemma4_moe.Config(hidden=256, dense_intermediate=128, num_experts=128, top_k=4, expert_intermediate=128)
         if args.small
         else gemma4_moe.Config()
     )
@@ -529,5 +568,7 @@ if __name__ == "__main__":
         assert error < 2e-2, f"DaCe differs from the reference (relative error {error:.2e})"
         # Time the generated code alone (as a replayed CUDA graph would run), not Python's argument conversion
         callargs, initargs = program.construct_arguments(x=x, out=out, **weights, **scratch)
-        time = gemma4_moe.time_ms(lambda: program.fast_call(callargs, initargs))
-        print(f"{tokens:5d} tokens: DaCe {time:8.3f} ms (error {error:.1e}, {int((~alike).sum())} routed differently)")
+        time_ms = wall_ms(lambda: program.fast_call(callargs, initargs))
+        print(
+            f"{tokens:5d} tokens: DaCe {time_ms:8.3f} ms (error {error:.1e}, {int((~alike).sum())} routed differently)"
+        )
