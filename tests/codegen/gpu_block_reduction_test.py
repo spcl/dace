@@ -208,6 +208,40 @@ def test_states_order_global_memory():
 
 
 @dace.program
+def flag_then_branch(A: dace.int32[N, THREADS], flags: dace.int32[N]):
+    for i in dace.map[0:N]:
+        for _ in dace.map[0:1] @ TB:
+            flags[i] = i % 2
+        if flags[i] == 1:  # Every thread of the block reads the flag that one thread wrote
+            for th in dace.map[0:THREADS] @ TB:
+                A[i, th] = th
+
+
+@pytest.mark.gpu
+def test_transitions_read_after_thread_block_maps():
+    """A condition (or assignment) of a transition that reads what a thread-block map wrote waits for the map."""
+    sdfg = flag_then_branch.to_sdfg(simplify=True)
+    for desc in sdfg.arrays.values():
+        if not desc.transient:
+            desc.storage = dace.StorageType.GPU_Global
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry) and node.map.params == ["i"]:
+            node.map.schedule = dace.ScheduleType.GPU_Device
+    code = next(c for c in sdfg.generate_code() if c.language == "cu").clean_code
+    write, read = code.index("flags[i] = "), code.index("= flags[i];")
+    assert "__syncthreads();" in code[write:read]
+
+    import cupy as cp  # Only GPU tests use CuPy
+
+    rows = 32
+    A = cp.full((rows, THREADS), -1, dtype=cp.int32)
+    sdfg(A=A, flags=cp.zeros(rows, dtype=cp.int32), N=rows)
+    expected = np.full((rows, THREADS), -1, dtype=np.int32)
+    expected[1::2] = np.arange(THREADS)
+    assert np.array_equal(cp.asnumpy(A), expected)
+
+
+@dace.program
 def broadcast_count(A: dace.int32[N, WIDTH], counts: dace.int32[N], out: dace.int32[N, THREADS]):
     for i in dace.map[0:N]:
         # One thread counts (long enough for the other threads to arrive at the synchronization first)
@@ -257,5 +291,6 @@ if __name__ == "__main__":
     test_block_reduction_across_states()
     test_global_memory_written_by_one_thread()
     test_states_order_global_memory()
+    test_transitions_read_after_thread_block_maps()
     test_warp_aggregated_shared_atomics()
     test_warp_aggregated_atomics_of_statements()

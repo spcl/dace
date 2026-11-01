@@ -1215,13 +1215,20 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Every thread of every warp of the enclosing thread-block map writes back the results of this node: threads
         # that update the same location may combine their values first (see ``_write_warp_updates``). The map may
-        # enclose the nested SDFG of this node; whether the warp's threads arrive together is checked when they run.
+        # enclose the nested SDFG of this node, or loops; whether the warp's threads arrive together is checked when
+        # they run.
+        # Sequential maps (e.g., the loop of a block-strided map) are loops of each thread.
         scope = scope_dict[node]
         scope_state = state
-        while scope is None and scope_state.sdfg.parent_nsdfg_node is not None:
-            nsdfg_node = scope_state.sdfg.parent_nsdfg_node
-            scope_state = scope_state.sdfg.parent
-            scope = scope_state.scope_dict()[nsdfg_node]
+        while True:
+            if isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.Sequential:
+                scope = scope_state.entry_node(scope)
+            elif scope is None and scope_state.sdfg.parent_nsdfg_node is not None:
+                nsdfg_node = scope_state.sdfg.parent_nsdfg_node
+                scope_state = scope_state.sdfg.parent
+                scope = scope_state.scope_dict()[nsdfg_node]
+            else:
+                break
         whole_warps = (
             isinstance(node, nodes.CodeNode)
             and isinstance(scope, nodes.MapEntry)

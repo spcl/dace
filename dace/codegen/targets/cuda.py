@@ -50,6 +50,7 @@ from dace.transformation import helpers as xfh
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes import analysis as ap
 from dace.transformation.passes import gpu_shared_memory
+from dace.transformation.passes.gpu_strided_maps import LowerStridedGPUMaps
 
 if TYPE_CHECKING:
     from dace.codegen.targets.cpu import CPUCodeGen
@@ -172,8 +173,8 @@ class CUDACodeGen(TargetCodeGenerator):
         self._scope_has_collaborative_copy = False
         # Thread-block maps whose body every thread of the block runs (no guard)
         self._whole_warp_scopes: set[nodes.EntryNode] = set()
-        # Whether the current kernel ran thread-block maps (see ``generate_devicelevel_state``)
-        self._block_ran_tb_maps = False
+        # Whether the current kernel synchronizes its grid: only then is it launched cooperatively
+        self._kernel_syncs_grid = False
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
         self._initcode = CodeIOStream()
@@ -256,6 +257,9 @@ class CUDACodeGen(TargetCodeGenerator):
         self._codeobject = CodeObject(
             sdfg.name + "_" + "cuda", "", self.language, CUDACodeGen, "CUDA", target_type=target_type
         )
+
+        # Maps that run in strides of the thread block or the grid become loops in maps of the block or grid
+        LowerStridedGPUMaps().apply_pass(sdfg, {})
 
         # TODO: Below implementation is a bit wasteful to iterate over all nodes.
         # Better: Do this in a dedicated pass and do not e.g. recurse further into
@@ -1975,23 +1979,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
     ) -> None:
         # A state of a thread block's code follows the previous one for the whole block: sync first if it accesses
         # shared memory, which the threads of the block may have accessed in a previous state (e.g., read the result
-        # of a collaborative write, or update a value one thread initialized), or once thread-block maps ran (their
-        # threads may also communicate through global memory, e.g., one thread updates a counter after all threads
-        # wrote their part)
+        # of a collaborative write, or update a value one thread initialized). A state that runs thread-block maps
+        # also syncs at its end (see below).
         if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device:
-            accesses_shared = any(
-                isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
-                for node in state.nodes()
-            )
-            if (accesses_shared or (self._block_ran_tb_maps and state.number_of_nodes() > 0)) and (
-                not self._scope_has_collaborative_copy
-            ):
-                callsite_stream.write("__syncthreads();", cfg, state.block_id)
-            if any(
-                isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
-                for node in state.nodes()
-            ):
-                self._block_ran_tb_maps = True
+            for node in state.nodes():
+                if isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared:
+                    if not self._scope_has_collaborative_copy:
+                        callsite_stream.write("__syncthreads();", cfg, state.block_id)
+                    break
 
         # In GPU_Persistent scopes, states need global barriers between them,
         # the DFGs inside of a state are independent, so they don't need
@@ -2028,6 +2023,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # slots are handed out twice, while the consumer's count keeps counting every push.
             if streams_to_reset and can_sync:
                 callsite_stream.write(sync_code(SyncScope.GRID, self.backend), cfg, state.block_id)
+                self._kernel_syncs_grid = True
 
             components = dace.sdfg.concurrent_subgraphs(state)
             for c in components:
@@ -2077,11 +2073,21 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             if can_sync:
                 callsite_stream.write(sync_code(SyncScope.GRID, self.backend), cfg, state.block_id)
+                self._kernel_syncs_grid = True
 
             # done here, code is generated
             return
 
         self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream)
+
+        # The threads of thread-block maps finish them before the block goes on: what follows, the next state or the
+        # condition or assignments of a transition, may read what other threads wrote, also in global memory (e.g., one
+        # thread updates a counter after all threads wrote their part, or all threads read a flag one thread set)
+        if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device and any(
+            isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+            for node in state.nodes()
+        ):
+            callsite_stream.write("__syncthreads();", cfg, state.block_id)
 
     # NOTE: This function is ONLY called from the CPU side. Therefore, any
     # schedule that is out of the ordinary will raise an exception
@@ -2372,7 +2378,30 @@ void __dace_runkernel_{fname}({fargs})
             node,
         )
 
-        if is_persistent:
+        # The bytes of dynamic shared memory the kernel uses (see ``gpu_shared_memory.PlanSharedMemory``)
+        dynsmem_size = getattr(scope_entry, "_cuda_dynamic_shared_memory", 0)
+        static_smem_size = getattr(scope_entry, "_cuda_static_shared_memory", 0)
+
+        if is_persistent and scope_entry.map.gpu_strided:
+            # A grid-strided map (see ``LowerStridedGPUMaps``): as many blocks as fit on the device at once
+            self._localcode.write(
+                f"""
+int dace_number_SMs, dace_blocks_per_SM;
+DACE_GPU_CHECK({self.backend}DeviceGetAttribute(&dace_number_SMs, {
+                    "hipDeviceAttributeMultiprocessorCount"
+                    if self.backend == "hip"
+                    else "cudaDevAttrMultiProcessorCount"
+                }, 0));
+DACE_GPU_CHECK({self.backend}OccupancyMaxActiveBlocksPerMultiprocessor(&dace_blocks_per_SM, {kernel_name}, {
+                    _topy(functools.reduce(sympy.Mul, block_dims, 1))
+                }, {_topy(dynsmem_size)}));
+int dace_number_blocks = ((int) ceil({
+                    Config.get("compiler", "cuda", "persistent_map_SM_fraction")
+                } * dace_number_SMs)) *
+                         (dace_blocks_per_SM > 0 ? dace_blocks_per_SM : 1);
+"""
+            )
+        elif is_persistent:
             # NOTE: The number of blocks assumes they are all resident at once, which a grid barrier requires. Static
             #       or dynamic shared memory can lower how many blocks fit on a multiprocessor below the configured
             #       occupancy, and the cooperative launch of a kernel with a grid barrier then fails.
@@ -2392,10 +2421,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     ),
                 )
             )
-
-        # The bytes of dynamic shared memory the kernel uses (see ``gpu_shared_memory.PlanSharedMemory``)
-        dynsmem_size = getattr(scope_entry, "_cuda_dynamic_shared_memory", 0)
-        static_smem_size = getattr(scope_entry, "_cuda_static_shared_memory", 0)
 
         max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
         if max_streams >= 0:
@@ -2468,8 +2493,9 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 void  *{kname}_args[] = {{ {kargs} }};
 gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});""".format(
                 kname=kernel_name,
-                # A grid barrier needs every block resident at once, which only a cooperative launch guarantees
-                launch="LaunchCooperativeKernel" if create_grid_barrier else "LaunchKernel",
+                # A grid barrier needs every block resident at once, which only a cooperative launch guarantees (a
+                # kernel that does not synchronize its grid, e.g., a grid-strided map, is launched as any other)
+                launch="LaunchCooperativeKernel" if self._kernel_syncs_grid else "LaunchKernel",
                 kargs=", ".join(["(void *)&" + arg for arg in prototype_kernel_args] + extra_kernel_args),
                 gdims=gdims,
                 bdims=bdims,
@@ -2795,7 +2821,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
 
         # Thread-block-level information of another kernel does not apply to this one
         self._scope_has_collaborative_copy = False
-        self._block_ran_tb_maps = False
+        self._kernel_syncs_grid = False
 
         # Get the thread/block index types
         index_types = common.gpu_map_index_types(sdfg, cfg.node(state_id), node)
@@ -3542,6 +3568,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
 
                 # Synchronize entire grid
                 callsite_stream.write(sync_code(SyncScope.GRID, self.backend), cfg, state_id, scope_entry)
+                self._kernel_syncs_grid = True
 
                 # Rewrite grid conditions
                 for cond in self._kernel_grid_conditions:
