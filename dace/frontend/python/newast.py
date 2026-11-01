@@ -4001,8 +4001,9 @@ class ProgramVisitor(ExtNodeVisitor):
     def _parse_function_arg(self, arg: ast.AST):
         # Obtain a string representation
         result = self.visit(arg)
-        if isinstance(result, (list, tuple)):
-            if len(result) == 1 and isinstance(result[0], (str, slice)):
+        if isinstance(result, (list, tuple)) and len(result) == 1:
+            # The value of an expression (e.g., a constant that ``i % 1`` folds to), not a list or tuple argument
+            if isinstance(result[0], (str, slice)) or not isinstance(arg, (ast.List, ast.Tuple)):
                 return result[0]
         return result
 
@@ -4230,7 +4231,12 @@ class ProgramVisitor(ExtNodeVisitor):
         required_args = dtypes.deduplicate(required_args)
         gargs = {a[0] for a in args}
         for rarg in required_args:
-            if rarg not in gargs and rarg in self.sdfg.symbols:
+            if rarg in gargs:
+                continue
+            if rarg not in self.sdfg.symbols and rarg in symbols and rarg in sdfg.symbols:
+                # A free symbol of the callee only (e.g., a global symbol): one of the caller too
+                self.sdfg.add_symbol(rarg, sdfg.symbols[rarg])
+            if rarg in self.sdfg.symbols:
                 args.append((rarg, rarg))
 
         # Argument checks
