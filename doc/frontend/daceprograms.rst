@@ -446,8 +446,9 @@ that brings a counter down to zero sees everything the other tasklets wrote befo
 write-conflict resolution part of :ref:`sdfg-memlet` for the exact guarantee.
 
 Outside of tasklets, ``dace.atomic`` makes the same updates as functions of one element, which return its old value
-(as ``numba.cuda.atomic``). ``dace.atomic.add`` adds, and ``dace.atomic.custom`` updates with a lambda of the old and the
-new value. The index and the value are scalars, constants or symbolic expressions:
+(as ``numba.cuda.atomic``): ``add``, ``sub``, ``prod``, ``min``, ``max``, the bitwise ``and_``, ``or_`` and ``xor``, and
+``exch`` (exchange), as well as ``custom``, which updates with a lambda of the old and the new value. Each takes the
+array, the index of the element and the value; the index and the value are scalars, constants or symbolic expressions:
 
 .. code-block:: python
 
@@ -467,11 +468,16 @@ new value. The index and the value are scalars, constants or symbolic expression
     @dace.program
     def running_maximum(values: dace.float32[N], peak: dace.float32[1], before: dace.float32[N]):
         for i in dace.map[0:N]:
-            before[i] = dace.atomic.custom(lambda a, b: max(a, b), peak, 0, values[i])
+            before[i] = dace.atomic.max(peak, 0, values[i])
 
-These updates are acquire-release as well. A lambda that is a known reduction (a sum, product, minimum, maximum or
-bitwise operation) uses the atomic instruction of the target if there is one; any other lambda becomes a
-compare-and-swap loop. Outside of programs, the functions update the array in plain Python.
+    @dace.program
+    def scaled_sums(values: dace.float64[N], sums: dace.float64[2]):
+        for i in dace.map[0:N]:
+            dace.atomic.custom(lambda a, b: a + 2 * b, sums, i % 2, values[i])
+
+These updates are acquire-release as well. Updates that the target has an atomic instruction for use it (on GPUs, for
+example, integer minimum and maximum); others become compare-and-swap loops, as do lambdas that are not a known
+reduction. Outside of programs, the functions update the array in plain Python.
 
 .. _calling_sdfgs:
 

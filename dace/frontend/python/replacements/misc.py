@@ -14,6 +14,7 @@ from dace.frontend.python.common import DaceSyntaxError
 
 import ast
 import functools
+from collections.abc import Callable
 from numbers import Number
 
 
@@ -49,12 +50,36 @@ def _stream_append(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, stream: str
     state.add_edge(tasklet, "__out", state.add_write(stream), None, Memlet(data=stream, subset="0"))
 
 
-@oprepo.replaces("dace.atomic.add")
-@oprepo.replaces("dace.frontend.python.interface.atomic.add")
-def _atomic_add(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, array: str, index, value) -> str:
-    """``old = dace.atomic.add(array, index, value)``: an atomic addition whose old value is read (see
-    ``dace.atomic``)."""
-    return _atomic_update(pv, sdfg, state, "dace.atomic.add", "lambda a, b: a + b", array, index, value)
+# The updates of ``dace.atomic`` (see there), as write-conflict resolutions. A subtraction adds the negated value, which
+# targets have an atomic instruction for.
+_ATOMIC_UPDATES = {
+    "add": "lambda a, b: a + b",
+    "sub": "lambda a, b: a + b",
+    "prod": "lambda a, b: a * b",
+    "min": "lambda a, b: min(a, b)",
+    "max": "lambda a, b: max(a, b)",
+    "and_": "lambda a, b: a & b",
+    "or_": "lambda a, b: a | b",
+    "xor": "lambda a, b: a ^ b",
+    "exch": "lambda a, b: b",
+}
+
+
+def _atomic_function(name: str) -> Callable[..., str]:
+    """The replacement of ``old = dace.atomic.<name>(array, index, value)``: an atomic update whose old value is
+    read."""
+
+    def update(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, array: str, index, value) -> str:
+        return _atomic_update(
+            pv, sdfg, state, f"dace.atomic.{name}", _ATOMIC_UPDATES[name], array, index, value, negate=name == "sub"
+        )
+
+    return update
+
+
+for _name in _ATOMIC_UPDATES:
+    oprepo.replaces(f"dace.atomic.{_name}")(_atomic_function(_name))
+    oprepo.replaces(f"dace.frontend.python.interface.atomic.{_name}")(_atomic_function(_name))
 
 
 @oprepo.replaces("dace.atomic.custom")
@@ -74,12 +99,21 @@ def _atomic_custom(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op, array: 
 
 
 def _atomic_update(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, function: str, wcr: str, array: str, index, value
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    function: str,
+    wcr: str,
+    array: str,
+    index,
+    value,
+    negate: bool = False,
 ) -> str:
     """An atomic update of ``array[index]`` with ``value`` through the write-conflict resolution ``wcr``, whose old
     value is read. The index and the value are scalars, constants or symbolic expressions.
 
     :param function: The name of the program function, for errors.
+    :param negate: Updates with the negated value.
     :return: The name of the scalar that holds the old value.
     """
     if not isinstance(array, str) or array not in sdfg.arrays:
@@ -101,6 +135,8 @@ def _atomic_update(
     indices = [idx[0] if isinstance(idx, list) and len(idx) == 1 else idx for idx in indices]
     subscript = [operand(f"__index{i}", idx) for i, idx in enumerate(indices)]
     update = operand("__value", value)
+    if negate:
+        update = f"-({update})"
     desc = sdfg.arrays[array]
     if any(conn in inputs for conn in subscript):  # An index read from data: the tasklet addresses the array
         target = Memlet.from_array(array, desc, wcr=wcr)
@@ -112,7 +148,7 @@ def _atomic_update(
     old, _ = sdfg.add_scalar("atomic_old", desc.dtype, transient=True, find_new_name=True)
     # Assigning the connector of a dynamic write-conflict resolution updates atomically; reading it gives the old value
     tasklet = state.add_tasklet(
-        function.replace("dace.", "").replace(".", "_"),
+        function.replace("dace.", "").replace(".", "_").rstrip("_"),
         dict.fromkeys(inputs),
         dict.fromkeys(["__target", "__old"]),
         f"__old = {element} = {update}",
