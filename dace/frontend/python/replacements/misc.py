@@ -9,15 +9,36 @@ from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor
-from dace import Memlet, SDFG, SDFGState, dtypes
+from dace import Memlet, SDFG, SDFGState, dtypes, symbolic
+from dace.frontend.python.common import DaceSyntaxError
 
 import ast
 import functools
+from numbers import Number
 
 
 @oprepo.replaces("slice")
 def _slice(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
     return (slice(*args, **kwargs),)
+
+
+@oprepo.replaces_method("Stream", "append")
+def _stream_append(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, stream: str, value) -> None:
+    """``S.append(value)`` pushes one element (a scalar, a constant or a symbolic expression) onto stream ``S``."""
+    if isinstance(value, str) and value in sdfg.arrays:
+        if sdfg.arrays[value].total_size != 1:
+            raise DaceSyntaxError(pv, None, f"{stream}.append takes one element, got {value}")
+        inputs = {"__inp": Memlet(data=value, subset="0")}
+        code = "__out = __inp"
+    elif isinstance(value, (Number, symbolic.SymExpr)) or symbolic.issymbolic(value):
+        inputs = {}
+        code = f"__out = {symbolic.symstr(value)}"
+    else:
+        raise DaceSyntaxError(pv, None, f"Unsupported argument {value} for {stream}.append")
+    tasklet = state.add_tasklet(f"{stream}_append", set(inputs), {"__out"}, code, debuginfo=pv.current_lineinfo)
+    for conn, memlet in inputs.items():
+        state.add_edge(state.add_read(memlet.data), None, tasklet, conn, memlet)
+    state.add_edge(tasklet, "__out", state.add_write(stream), None, Memlet(data=stream, subset="0"))
 
 
 @oprepo.replaces_operator("Array", "MatMult", otherclass="StorageType")
