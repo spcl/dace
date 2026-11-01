@@ -1213,6 +1213,17 @@ class CPUCodeGen(TargetCodeGenerator):
         state: SDFGState = cfg.nodes()[state_id]
         scope_dict = state.scope_dict()
 
+        # Every thread of every warp of the enclosing thread-block map writes back the results of this node: threads
+        # that update the same location may combine their values first (see ``_write_warp_updates``)
+        scope = scope_dict[node]
+        whole_warps = (
+            isinstance(node, nodes.CodeNode)
+            and isinstance(scope, nodes.MapEntry)
+            and scope.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+            and self._dispatcher.get_scope_dispatcher(scope.map.schedule).runs_on_whole_warps(scope)
+        )
+        warp_updates: list[tuple[str, str, str, str]] = []
+
         for edge in dfg.out_edges(node):
             _, uconn, v, _, memlet = edge
             if skip_wcr and memlet.wcr is not None:
@@ -1268,6 +1279,14 @@ class CPUCodeGen(TargetCodeGenerator):
 
                     if memlet.wcr is not None:
                         nc = not cpp.is_write_conflicted(dfg, edge, sdfg_schedule=self._toplevel_schedule)
+                        combinable = (
+                            self._warp_combinable_update(sdfg, memlet, nc, node.out_connectors[uconn])
+                            if locals_defined and whole_warps
+                            else None
+                        )
+                        if combinable is not None:
+                            warp_updates.append((*combinable, in_local_name))
+                            continue
                         write_expr = (
                             codegen.write_and_resolve_expr(
                                 sdfg, memlet, nc, out_local_name, in_local_name, dtype=node.out_connectors[uconn]
@@ -1319,6 +1338,58 @@ class CPUCodeGen(TargetCodeGenerator):
                         function_stream,
                         result,
                     )
+
+        if warp_updates:
+            result.write(self._write_warp_updates(warp_updates), cfg, state_id, node)
+
+    def _warp_combinable_update(
+        self, sdfg: SDFG, memlet: mmlt.Memlet, nc: bool, dtype: dtypes.typeclass
+    ) -> tuple[str, str, str] | None:
+        """
+        Returns the location, reduction type and value type (in C++) of an atomic update of GPU memory that the
+        threads of a warp may combine before one of them applies it: a built-in, commutative reduction of
+        floating-point values. Contending atomic floating-point updates are slow (in shared memory, they are
+        compare-and-swap loops); the compiler already combines integer ones. Returns None for any other update.
+        """
+        storage = sdfg.arrays[memlet.data].storage
+        if nc or storage not in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global):
+            return None
+        if isinstance(dtype, dtypes.pointer):
+            dtype = dtype.base_type
+        if dtype not in (dtypes.float32, dtypes.float64):
+            return None
+        redtype = operations.detect_reduction_type(memlet.wcr)
+        if redtype in (
+            dtypes.ReductionType.Custom,
+            dtypes.ReductionType.Exchange,
+            dtypes.ReductionType.Min_Location,
+            dtypes.ReductionType.Max_Location,
+        ):
+            return None
+        ptrname = self.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg)
+        defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
+        ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)
+        return ptr, "dace::ReductionType::" + redtype.name, dtype.ctype
+
+    @staticmethod
+    def _write_warp_updates(updates: list[tuple[str, str, str, str]]) -> str:
+        """
+        Returns the code of atomic updates (location, reduction type, value type, value) that the threads of a warp
+        combine first if they all update the same locations, in one branch for all of them (with a branch per
+        update, the compiler cannot tell that the warp is whole at the next update's shuffles, and adds calls to
+        out-of-line fallbacks).
+        """
+        locations = " & ".join(f"dace::warp_same_location({ptr})" for ptr, _, _, _ in updates)
+        combine = "\n".join(
+            f"{value} = dace::wcr_fixed<{red}, {ctype}>::warp_combine({value});" for _, red, ctype, value in updates
+        )
+        apply = "\n".join(
+            f"dace::wcr_fixed<{red}, {ctype}>::reduce_atomic({ptr}, {value});" for ptr, red, ctype, value in updates
+        )
+        return (
+            f"if (dace::warp_whole() && ({locations})) {{\n{combine}\nif (dace::warp_leader()) {{\n{apply}\n}}\n"
+            f"}} else {{\n{apply}\n}}\n"
+        )
 
     def make_ptr_assignment(self, src_expr, src_dtype, dst_expr, dst_dtype, codegen=None):
         """

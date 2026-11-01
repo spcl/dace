@@ -589,6 +589,49 @@ namespace dace {
         }
     };
 
+    /*
+     * Updates that the threads of a warp combine before one of them applies the result (floating-point reductions,
+     * whose contending atomic updates are slow: in shared memory, they are compare-and-swap loops). The code
+     * generator emits, for the updates of a scope that every thread of the warp runs:
+     *
+     *     if (warp_whole() && (warp_same_location(p0) & warp_same_location(p1) & ...)) {
+     *         v0 = wcr_fixed<...>::warp_combine(v0); ...
+     *         if (warp_leader()) { <atomic updates of p0, p1, ...> }
+     *     } else { <atomic updates of p0, p1, ...> }
+     *
+     * One condition for all of a scope's updates keeps the compiler from adding out-of-line fallbacks to their
+     * shuffles. Without warp shuffles (host code, HIP), warp_whole() is false.
+     */
+    static DACE_HDFI bool warp_whole() {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700 && !defined(__HIPCC__)
+        return __activemask() == 0xffffffffu;
+#else
+        return false;
+#endif
+    }
+
+    // Whether every thread of the (whole) warp updates the same location
+    static DACE_HDFI bool warp_same_location(const void *ptr) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700 && !defined(__HIPCC__)
+        int same = 0;
+        __match_all_sync(0xffffffffu, reinterpret_cast<unsigned long long>(ptr), &same);
+        return same != 0;
+#else
+        return false;
+#endif
+    }
+
+    // Whether this thread applies the combined updates of its warp
+    static DACE_HDFI bool warp_leader() {
+#if defined(__CUDA_ARCH__)
+        unsigned lane;
+        asm volatile("mov.u32 %0, %%laneid;" : "=r"(lane));
+        return lane == 0;
+#else
+        return true;
+#endif
+    }
+
     // When atomics are supported, use _wcr_fixed normally
     template <ReductionType REDTYPE, typename T>
     struct wcr_fixed<REDTYPE, T, EnableIfScalar<T> >
@@ -603,6 +646,20 @@ namespace dace {
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value)
         {
             return _wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, value);
+        }
+
+        /**
+         * The reduction of ``value`` over the threads of a warp (all of them active), for updates that the threads
+         * combine before one of them applies the result (see ``warp_whole``).
+         */
+        static DACE_HDFI T warp_combine(T value)
+        {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700 && !defined(__HIPCC__)
+            __DACE_UNROLL
+            for (int offset = 16; offset > 0; offset >>= 1)
+                value = _wcr_fixed<REDTYPE, T>()(value, __shfl_xor_sync(0xffffffffu, value, offset));
+#endif
+            return value;
         }
 
         DACE_HDFI T operator()(const T &a, const T &b) const

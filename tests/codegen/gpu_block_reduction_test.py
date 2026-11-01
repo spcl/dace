@@ -76,6 +76,69 @@ def test_block_reduction_across_states():
 
 
 @dace.program
+def warp_aggregation(A: dace.float64[N, 64], out: dace.float64[N, 5], grand_total: dace.float64[1]):
+    for i in dace.map[0:N]:
+        acc = dace.ndarray([5], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
+        for _ in dace.map[0:1] @ TB:
+            with dace.tasklet:
+                a >> acc[:]
+                a[0] = 0
+                a[1] = 1e30
+                a[2] = 0
+                a[3] = 0
+                a[4] = 0
+        for th in dace.map[0:64] @ TB:
+            with dace.tasklet:
+                v << A[i, th]
+                total >> acc(1, lambda a, b: a + b)[0]  # Every lane of every warp: combined per warp
+                everything >> grand_total(1, lambda a, b: a + b)[0]  # Also in global memory
+                least >> acc(1, lambda a, b: min(a, b))[1]
+                parity >> acc(1, lambda a, b: a + b)[:]  # Two locations per warp: not combined
+                total = v
+                everything = v
+                least = v
+                parity[2 + th % 2] = v
+        for th in dace.map[0:40] @ TB:  # The second warp is partial: not combined
+            with dace.tasklet:
+                v << A[i, th]
+                some >> acc(1, lambda a, b: a + b)[4]
+                some = v
+        for th in dace.map[0:5] @ TB:
+            with dace.tasklet:
+                a << acc[th]
+                o >> out[i, th]
+                o = a
+
+
+@pytest.mark.gpu
+def test_warp_aggregated_shared_atomics():
+    sdfg = warp_aggregation.to_sdfg(simplify=True)
+    for desc in sdfg.arrays.values():
+        if not desc.transient:
+            desc.storage = dace.StorageType.GPU_Global
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry) and node.map.params == ["i"]:
+            node.map.schedule = dace.ScheduleType.GPU_Device
+    code = next(c for c in sdfg.generate_code() if c.language == "cu").clean_code
+    # The sum and the minimum over all threads; not the updates in tasklet code, nor those of the partial map
+    # One combined branch for the three updates
+    assert code.count("dace::warp_same_location(") == 3 and code.count("warp_combine(") == 3
+
+    import cupy as cp  # Only GPU tests use CuPy
+
+    rows = 32
+    A = np.random.default_rng(0).random((rows, 64))
+    out = cp.zeros((rows, 5))
+    grand_total = cp.zeros(1)
+    sdfg(A=cp.asarray(A), out=out, grand_total=grand_total, N=rows)
+    assert np.allclose(cp.asnumpy(grand_total), A.sum())
+    expected = np.stack(
+        [A.sum(axis=1), A.min(axis=1), A[:, 0::2].sum(axis=1), A[:, 1::2].sum(axis=1), A[:, :40].sum(axis=1)], axis=1
+    )
+    assert np.allclose(cp.asnumpy(out), expected)
+
+
+@dace.program
 def broadcast_count(A: dace.int32[N, WIDTH], counts: dace.int32[N], out: dace.int32[N, THREADS]):
     for i in dace.map[0:N]:
         # One thread counts (long enough for the other threads to arrive at the synchronization first)
@@ -124,3 +187,4 @@ def test_global_memory_written_by_one_thread():
 if __name__ == "__main__":
     test_block_reduction_across_states()
     test_global_memory_written_by_one_thread()
+    test_warp_aggregated_shared_atomics()
