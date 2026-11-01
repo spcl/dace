@@ -797,6 +797,13 @@ _pyop2symtype = {
     "<": sp.StrictLessThan,
     # Binary ops
     "//": symbolic.int_floor,
+    # Bitwise ops (the variants that print as the operators, as parsed from strings)
+    "<<": symbolic._SERIALIZED_OPERATOR_FUNCTIONS["__left_shift"],
+    ">>": symbolic._SERIALIZED_OPERATOR_FUNCTIONS["__right_shift"],
+    "&": symbolic._SERIALIZED_OPERATOR_FUNCTIONS["__bitwise_and"],
+    "|": symbolic._SERIALIZED_OPERATOR_FUNCTIONS["__bitwise_or"],
+    "^": symbolic._SERIALIZED_OPERATOR_FUNCTIONS["__bitwise_xor"],
+    "~": symbolic._SERIALIZED_OPERATOR_FUNCTIONS["__bitwise_invert"],
 }
 
 

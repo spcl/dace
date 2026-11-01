@@ -590,7 +590,9 @@ class ASTFindReplace(ast.NodeTransformer):
             if isinstance(val, ast.AST):
                 new_node = ast.copy_location(val, node)
             else:
-                new_node = ast.copy_location(ast.parse(str(self.repldict[node.id])).body[0].value, node)
+                # Symbolic expressions as Python (``str`` writes some operators, such as shifts, as function calls)
+                text = symbolic.symstr(val) if isinstance(val, sympy.Basic) else str(val)
+                new_node = ast.copy_location(ast.parse(text).body[0].value, node)
             self.replace_count += 1
             return new_node
 
