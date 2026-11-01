@@ -172,6 +172,8 @@ class CUDACodeGen(TargetCodeGenerator):
         self._scope_has_collaborative_copy = False
         # Thread-block maps whose body every thread of the block runs (no guard)
         self._whole_warp_scopes: set[nodes.EntryNode] = set()
+        # Whether the current kernel ran thread-block maps (see ``generate_devicelevel_state``)
+        self._block_ran_tb_maps = False
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
         self._initcode = CodeIOStream()
@@ -1971,15 +1973,25 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ) -> None:
-        # Special case: if this is a GPU grid state that accesses shared memory, which the threads of the block may
-        # have accessed in a previous state (e.g., read the result of a collaborative write, or update a value one
-        # thread initialized), sync first
+        # A state of a thread block's code follows the previous one for the whole block: sync first if it accesses
+        # shared memory, which the threads of the block may have accessed in a previous state (e.g., read the result
+        # of a collaborative write, or update a value one thread initialized), or once thread-block maps ran (their
+        # threads may also communicate through global memory, e.g., one thread updates a counter after all threads
+        # wrote their part)
         if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device:
-            for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared:
-                    if not self._scope_has_collaborative_copy:
-                        callsite_stream.write("__syncthreads();", cfg, state.block_id)
-                    break
+            accesses_shared = any(
+                isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
+                for node in state.nodes()
+            )
+            if (accesses_shared or (self._block_ran_tb_maps and state.number_of_nodes() > 0)) and (
+                not self._scope_has_collaborative_copy
+            ):
+                callsite_stream.write("__syncthreads();", cfg, state.block_id)
+            if any(
+                isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+                for node in state.nodes()
+            ):
+                self._block_ran_tb_maps = True
 
         # In GPU_Persistent scopes, states need global barriers between them,
         # the DFGs inside of a state are independent, so they don't need
@@ -2783,6 +2795,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
 
         # Thread-block-level information of another kernel does not apply to this one
         self._scope_has_collaborative_copy = False
+        self._block_ran_tb_maps = False
 
         # Get the thread/block index types
         index_types = common.gpu_map_index_types(sdfg, cfg.node(state_id), node)
