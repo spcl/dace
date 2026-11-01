@@ -270,9 +270,29 @@ class map(metaclass=MapMetaclass):
     an integer set (Python range) for which its contents are run
     concurrently. Written in Python as a loop with the following
     syntax: `for i, j in dace.map[1:20, 0:N]:`.
+
+    As a decorator, ``@dace.map(_[0:M, 0:N])`` on ``def body(i, j)`` is a map whose body is a tasklet, with memlets as
+    in ``with dace.tasklet`` (``@dace.mapscope`` takes statements instead). The ranges are slices: ``_`` is any object
+    whose subscript returns them, such as ``numpy.s_`` outside of programs.
     """
 
-    pass
+    def __init__(self, *ranges: slice | tuple[slice, ...]):
+        self.ranges = ranges[0] if len(ranges) == 1 else ranges
+
+    def __call__(self, body: Callable[..., None]) -> None:
+        """Runs the tasklet for every point of the ranges, one after the other."""
+        tasklet = tasklet_runner.TaskletFunction(body)
+        for point in ndloop.ndrange(self.ranges):
+            tasklet(*(point if isinstance(point, tuple) else (point,)))
+
+
+class mapscope(map):
+    """A map scope whose body is a program (statements, maps, tasklets): ``@dace.mapscope(_[0:M, 0:N])`` on
+    ``def body(i, j)``. Outside of programs, the body runs for every point of the ranges, one after the other."""
+
+    def __call__(self, body: Callable[..., None]) -> None:
+        for point in ndloop.ndrange(self.ranges):
+            body(*(point if isinstance(point, tuple) else (point,)))
 
 
 class consume(Generic[T]):
@@ -317,6 +337,26 @@ class consume(Generic[T]):
         while len(self.stream) > 0 and (self.condition is None or not self.condition()):
             yield self.stream.pop(), pe
             pe = (pe + 1) % self.pes
+
+    def __call__(self, body: Callable[[T, int], None]) -> None:
+        """
+        The decorator form: ``@dace.consume(S, num_pes)`` on ``def body(element, pe)`` is a consume scope whose body
+        is a tasklet, with memlets as in ``with dace.tasklet`` (``@dace.consumescope`` takes statements instead).
+        Outside of programs, runs the tasklet for every element, as the loop does.
+        """
+        tasklet = tasklet_runner.TaskletFunction(body)
+        for element, pe in self:
+            tasklet(element, pe)
+
+
+class consumescope(consume[T]):
+    """A consume scope whose body is a program (statements, maps, tasklets): ``@dace.consumescope(S, num_pes)`` on
+    ``def body(element, pe)``, the same scope as ``for element, pe in dace.consume(S, num_pes)``. Outside of programs,
+    the body runs for every element, as the loop does."""
+
+    def __call__(self, body: Callable[[T, int], None]) -> None:
+        for element, pe in self:
+            body(element, pe)
 
 
 class TaskletMetaclass(type):
