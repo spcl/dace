@@ -2,20 +2,22 @@
 """The Gemma 4 mixture-of-experts feed-forward block (see ``gemma4_moe.py``) as one persistent DaCe GPU kernel.
 
 After a kernel that normalizes the tokens (one thread block per token), a single consume scope runs the rest of the
-block as tasks on a queue, and a last kernel normalizes and adds the outputs. Every processing element is a GPU thread
+block as tasks on a queue. Every processing element is a GPU thread
 block that pops a task, mostly a 64 x 128 tile of one matrix product with tensor cores (the ``tile_matmul`` library
 node) followed by an epilogue on the tile. The tasks are:
 
 * router: the logits of 64 tokens for a slice of the input (the router's inner dimension is split, so that routing is
   done quickly while the dense tasks start);
-* top-k: once all slices of 64 tokens are done, their softmax and top-k, claiming a row of every chosen expert;
+* top-k: once all slices of 64 tokens are done, the softmax and top-k of each of them (a task per token, so that
+  tokens are routed in parallel), claiming a row of every chosen expert;
 * scan: once all tokens are routed, the tiles of every expert's rows (pairs of a token and an expert); it pushes the
   expert gate/up tasks;
 * expert gate/up: 64 rows of an expert (reading the rows of their tokens) times 128 columns of its gate and up
   projections, interleaved in chunks of 64, followed by GELU(gate) * up;
 * expert down: the same rows times 128 output columns of the expert's down projection, scaled by each pair's routing
   weight and added to the token's output (an atomic write-conflict resolution);
-* dense gate/up and dense down: the same for 64 tokens in the dense MLP that runs in parallel.
+* dense gate/up and dense down: the same for 64 tokens in the dense MLP that runs in parallel;
+* output: once all down tiles of a token are added, both branches normalized, added, and added to the residual.
 
 A task that depends on others is pushed by the last of them to finish: each decrements a counter, reading its old
 value (an acquire-release update). So the queue never waits for a whole stage to finish, and dense and expert tasks
@@ -169,7 +171,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                             rl[g] = RP
                             dl[g] = DI // HALF
                         if th == 0:
-                            tl = TP // BM
+                            tl = T  # A top-k task per token
             for th in dace.map[0:THREADS] @ TB:
                 with dace.tasklet:
                     s << ss[0]
@@ -248,7 +250,8 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                                 he[row0 + i // HALF, col0 * HALF + i % HALF] = hv
                             else:
                                 hd[row0 + i // HALF, col0 * HALF + i % HALF] = hv
-                # The last gate/up task of these rows pushes their down tasks
+                # The last gate/up task of these rows pushes their down tasks (a thread each)
+                last = dace.ndarray([1], dtype=dace.int32, storage=SHARED)
                 for _ in dace.map[0:1] @ TB:
                     with dace.tasklet:
                         k << kind
@@ -257,17 +260,24 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                         _published_d << h_dense(-1)[:, :]
                         gl >> gate_up_left(-1, lambda a, b: a + b)[:]
                         dl >> dense_gate_up_left(-1, lambda a, b: a + b)[:]
-                        dn >> S(-1)
+                        is_last >> last[0]
+                        left = 0
                         if k == EXPERT_GATE_UP:
                             left = gl[tile_index] = -1
-                            if left == 1:
-                                for c in range(D // BN):
-                                    dn = EXPERT_DOWN | tile_index << FIELD | c
                         else:
                             left = dl[tile_index] = -1
-                            if left == 1:
-                                for c in range(D // BN):
-                                    dn = DENSE_DOWN | tile_index << FIELD | c
+                        is_last = left == 1
+                for w, lane in dace.map[0:WARPS, 0:32] @ TB:
+                    with dace.tasklet:
+                        k << kind
+                        tile_index << g
+                        is_last << last[0]
+                        dn >> S(-1)
+                        if is_last and w * 32 + lane < D // BN:
+                            if k == EXPERT_GATE_UP:
+                                dn = EXPERT_DOWN | tile_index << FIELD | w * 32 + lane
+                            else:
+                                dn = DENSE_DOWN | tile_index << FIELD | w * 32 + lane
             elif kind == EXPERT_DOWN:
                 e = tile_expert[g]
                 nr = tile_rows[g]
@@ -333,76 +343,73 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                     work,
                     nr,
                 )
+                # The last part of these tokens pushes their top-k tasks (a thread each)
+                last = dace.ndarray([1], dtype=dace.int32, storage=SHARED)
                 for _ in dace.map[0:1] @ TB:
                     with dace.tasklet:
                         tile_index << g
                         _published << route_partial(-1)[:, :]
                         rl >> route_left(-1, lambda a, b: a + b)[:]
-                        nxt >> S(-1)
+                        is_last >> last[0]
                         left = rl[tile_index] = -1
-                        if left == 1:  # The last part of these tokens
-                            nxt = TOP_K | tile_index << FIELD
-            elif kind == TOP_K:
-                chosen = dace.ndarray([BM, K], dtype=dace.int32, storage=SHARED)
-                # The logits of 64 tokens (the projection rounds them to bfloat16), in the tile
-                for w, lane in dace.map[0:WARPS, 0:32] @ TB:
-                    for q in range(BM * BN // THREADS):
-                        with dace.tasklet:
-                            parts << route_partial(-1)[:, :]
-                            nrows << dense_rows[g]
-                            row0 << r0
-                            lg >> tile[(q * THREADS + w * 32 + lane) // BN, (q * THREADS + w * 32 + lane) % BN]
-                            r = (q * THREADS + w * 32 + lane) // BN
-                            if r < nrows:
-                                total = dace.float32(0)
-                                for part in range(RP):
-                                    total = total + parts[part * TP + row0 + r, (q * THREADS + w * 32 + lane) % BN]
-                                lg = dace.bfloat16(total)
-                            else:
-                                lg = dace.bfloat16(0)
-                # The rank of every logit among its token's (ties: lowest index first): the top k are chosen. A thread
-                # per expert.
+                        is_last = left == 1
                 for w, lane in dace.map[0:WARPS, 0:32] @ TB:
                     with dace.tasklet:
-                        lgs << tile[:, :]
-                        nrows << dense_rows[g]
-                        cho >> chosen(-1)[:, :]
-                        ex = w * 32 + lane
-                        for r in range(nrows):
-                            v = dace.float32(lgs[r, ex])
-                            rank = 0
-                            for e2 in range(E):
-                                v2 = dace.float32(lgs[r, e2])
-                                if v2 > v or (v2 == v and e2 < ex):
-                                    rank = rank + 1
-                            if rank < K:
-                                cho[r, rank] = ex
-                # The softmax probabilities of the chosen experts, renormalized (the softmax denominator cancels) and
-                # scaled; claim a row of every chosen expert. A thread per pair of a token and an expert.
-                for w, lane in dace.map[0:WARPS, 0:32] @ TB:
-                    with dace.tasklet:
-                        lgs << tile[:, :]
-                        chs << chosen[:, :]
-                        nrows << dense_rows[g]
+                        is_last << last[0]
+                        nrows << nr
                         row0 << r0
+                        nxt >> S(-1)
+                        if is_last and w * 32 + lane < nrows:
+                            nxt = TOP_K | (row0 + w * 32 + lane) << FIELD
+            elif kind == TOP_K:
+                # The experts of token g. A thread per expert, then per chosen expert.
+                chosen = dace.ndarray([K], dtype=dace.int32, storage=SHARED)
+                # The token's router logits (the projection rounds them to bfloat16), in the tile
+                for w, lane in dace.map[0:WARPS, 0:32] @ TB:
+                    with dace.tasklet:
+                        parts << route_partial(-1)[:, :]
+                        tok << g
+                        lg >> tile[0, w * 32 + lane]
+                        total = dace.float32(0)
+                        for part in range(RP):
+                            total = total + parts[part * TP + tok, w * 32 + lane]
+                        lg = dace.bfloat16(total)
+                # The rank of every logit (ties: lowest index first): the top k are chosen
+                for w, lane in dace.map[0:WARPS, 0:32] @ TB:
+                    with dace.tasklet:
+                        lgs << tile[0, :]
+                        cho >> chosen(-1)[:]
+                        ex = w * 32 + lane
+                        v = dace.float32(lgs[ex])
+                        rank = 0
+                        for e2 in range(E):
+                            v2 = dace.float32(lgs[e2])
+                            if v2 > v or (v2 == v and e2 < ex):
+                                rank = rank + 1
+                        if rank < K:
+                            cho[rank] = ex
+                # The softmax probabilities of the chosen experts, renormalized (the softmax denominator cancels) and
+                # scaled; claim a row of every chosen expert
+                for w, lane in dace.map[0:WARPS, 0:32] @ TB:
+                    with dace.tasklet:
+                        lgs << tile[0, :]
+                        chs << chosen[:]
+                        tok << g
                         pes << per_expert_scale[:]
                         c >> count(-1, lambda a, b: a + b)[:]
                         pe >> pair_expert(-1)[:, :]
                         ps >> pair_slot(-1)[:, :]
                         pw >> pair_weight(-1)[:, :]
-                        for i in range(w * 32 + lane, nrows * K, THREADS):
-                            r = i // K
-                            j = i % K
-                            first = chs[r, 0]
-                            top = dace.float32(lgs[r, first])
+                        j = w * 32 + lane
+                        if j < K:
+                            top = dace.float32(lgs[chs[0]])
                             total = dace.float32(0)
                             for j2 in range(K):
-                                other = chs[r, j2]
-                                total = total + math.exp(dace.float32(lgs[r, other]) - top)
-                            ex = chs[r, j]
-                            pe[row0 + r, j] = ex
-                            pw[row0 + r, j] = math.exp(dace.float32(lgs[r, ex]) - top) / total * pes[ex]
-                            ps[row0 + r, j] = c[ex] = 1
+                                total = total + math.exp(dace.float32(lgs[chs[j2]]) - top)
+                            ex = chs[j]
+                            pe[tok, j] = ex
+                            pw[tok, j] = math.exp(dace.float32(lgs[ex]) - top) / total * pes[ex]
+                            ps[tok, j] = c[ex] = 1
                 for _ in dace.map[0:1] @ TB:
                     with dace.tasklet:
                         _published_e << pair_expert(-1)[:, :]
@@ -411,7 +418,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                         tl >> top_k_left(-1, lambda a, b: a + b)[0]
                         nxt >> S(-1)
                         left = tl = -1
-                        if left == 1:  # The last tile of tokens
+                        if left == 1:  # The last token
                             nxt = SCAN
             elif kind == OUTPUT:
                 # Normalize both branches of token g, add, normalize, add the residual (in bfloat16, as the model)
