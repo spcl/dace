@@ -54,7 +54,8 @@ def test_block_strided_maps():
     _mark_strided(sdfg, ["k"])
     code = _code(sdfg)
     assert "dim3(64, 1, 1)" in code  # The thread block of the kernel, not the width of the maps
-    assert "warp_combine(" in code  # The loop of each thread still combines a warp's updates
+    assert "total_acc[" in code  # Each thread accumulates in a register...
+    assert "warp_combine(" in code  # ...and the threads of a warp combine their updates of the total
 
     import cupy as cp  # Only GPU tests use CuPy
 
@@ -97,6 +98,65 @@ def test_block_strided_dynamic_range():
 
 
 @dace.program
+def two_norms(A: dace.float64[N, WIDTH], B: dace.float64[N, WIDTH], norms: dace.float64[N, 2]):
+    for i in dace.map[0:N]:
+        sums = dace.ndarray([2], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
+        sums[0] = 0
+        sums[1] = 0
+        for j in dace.map[0:WIDTH] @ TB:
+            a = A[i, j]
+            b = B[i, j]
+            sums[0] += a * a
+            sums[1] += b * b
+        norms[i, 0] = sums[0]
+        norms[i, 1] = sums[1]
+
+
+@pytest.mark.gpu
+def test_block_strided_accumulates_per_thread():
+    """Updates of the same locations in every iteration accumulate in registers, and update memory once per thread:
+    both locations in one branch of warp-combined updates."""
+    sdfg = two_norms.to_sdfg(simplify=True)
+    _to_gpu(sdfg, ["i"], [64, 1, 1])
+    _mark_strided(sdfg, ["j"])
+    code = _code(sdfg)
+    assert "sums_acc[" in code
+    assert ") & dace::warp_same_location(" in code
+    assert code.count("reduce_atomic(") == 4  # Both locations, combined or not: none in the loop
+
+    import cupy as cp  # Only GPU tests use CuPy
+
+    rng = np.random.default_rng(5)
+    A, B = rng.random((20, WIDTH)), rng.random((20, WIDTH))
+    norms = cp.zeros((20, 2))
+    sdfg(A=cp.asarray(A), B=cp.asarray(B), norms=norms, N=20)
+    assert np.allclose(cp.asnumpy(norms), np.stack([(A * A).sum(axis=1), (B * B).sum(axis=1)], axis=1))
+
+
+@dace.program
+def strided_bins(A: dace.float64[N, WIDTH], bins: dace.float64[N, 4]):
+    for i in dace.map[0:N]:
+        for j in dace.map[0:WIDTH] @ TB:
+            bins[i, j % 4] += A[i, j]
+
+
+@pytest.mark.gpu
+def test_block_strided_moving_updates():
+    """Updates of a location that changes with the iteration stay updates of memory."""
+    sdfg = strided_bins.to_sdfg(simplify=True)
+    _to_gpu(sdfg, ["i"], [64, 1, 1])
+    _mark_strided(sdfg, ["j"])
+    assert "_acc[" not in _code(sdfg)
+
+    import cupy as cp  # Only GPU tests use CuPy
+
+    A = np.random.default_rng(6).random((20, WIDTH))
+    bins = cp.zeros((20, 4))
+    sdfg(A=cp.asarray(A), bins=bins, N=20)
+    assert np.allclose(cp.asnumpy(bins), A.reshape(20, WIDTH // 4, 4).sum(axis=1))
+
+
+@dace.program
 def axpy(x: dace.float64[N], y: dace.float64[N]):
     for i in dace.map[0:N]:
         y[i] = 2 * x[i] + y[i]
@@ -133,5 +193,7 @@ def test_strided_map_outside_gpu_raises():
 if __name__ == "__main__":
     test_block_strided_maps()
     test_block_strided_dynamic_range()
+    test_block_strided_accumulates_per_thread()
+    test_block_strided_moving_updates()
     test_grid_strided_map()
     test_strided_map_outside_gpu_raises()
