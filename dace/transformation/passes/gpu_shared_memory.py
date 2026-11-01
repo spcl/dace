@@ -35,6 +35,11 @@ DYNAMIC_SHARED_MEMORY_BASE = "__dace_dynsmem_base"
 DYNAMIC_SHARED_MEMORY_BUFFER = "__dace_dynsmem"
 
 
+def _aligned(size: int) -> int:
+    """The bytes a static shared memory container of ``size`` bytes occupies (they are aligned like dynamic ones)."""
+    return -(-size // DYNAMIC_SHARED_MEMORY_ALIGNMENT) * DYNAMIC_SHARED_MEMORY_ALIGNMENT
+
+
 def _nested_sdfg_nodes(sdfg: SDFG) -> list[nodes.NestedSDFG]:
     """Returns the nested SDFG nodes directly in ``sdfg``, in a deterministic order."""
     return [n for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
@@ -217,7 +222,8 @@ class PlanSharedMemory(ppl.Pass):
     each container. In dynamic shared memory, the containers of each SDFG are laid out contiguously, followed by those
     of its nested SDFGs; a nested SDFG receives the offset of its part as the symbol ``__dace_dynsmem_base`` unless the
     offset is a constant. The number of bytes to launch each kernel with is stored in the
-    ``_cuda_dynamic_shared_memory`` attribute of the kernel map entry.
+    ``_cuda_dynamic_shared_memory`` attribute of the kernel map entry, and its static shared memory in
+    ``_cuda_static_shared_memory``.
     """
 
     CATEGORY: str = "GPU"
@@ -236,6 +242,7 @@ class PlanSharedMemory(ppl.Pass):
         for kernel_sdfg, kernel_state, kernel_entry in gpu_helpers.gpu_kernels(sdfg):
             plan = self._plan_kernel(kernel_sdfg, kernel_state, kernel_entry)
             kernel_entry._cuda_dynamic_shared_memory = plan.dynamic_bytes
+            kernel_entry._cuda_static_shared_memory = plan.static_bytes
             if plan.levels or plan.static_bytes:
                 result[kernel_entry] = plan
         return result or None
@@ -274,11 +281,11 @@ class PlanSharedMemory(ppl.Pass):
                             "`StorageType.GPU_Shared(dynamic=True)`, or leave the placement to the code "
                             "generator with `StorageType.GPU_Shared`."
                         )
-                    plan.static_bytes += int(symbolic.evaluate(size, level_sdfg.constants))
+                    plan.static_bytes += _aligned(int(symbolic.evaluate(size, level_sdfg.constants)))
                 elif placement is True or is_symbolic:
                     dynamic.add((level_sdfg, name))
                 else:
-                    candidates.append((level_sdfg, name, int(symbolic.evaluate(size, level_sdfg.constants))))
+                    candidates.append((level_sdfg, name, _aligned(int(symbolic.evaluate(size, level_sdfg.constants)))))
 
         for level_sdfg, name, size in candidates:
             if plan.static_bytes + size <= limit:

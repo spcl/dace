@@ -131,7 +131,7 @@ def test_block_pes_pop_collectively():
     sdfg = _fibonacci_sdfg("consume_block_code", 16, 64, block_pes=True)
     code = _cuda_code(sdfg)
     assert ".block_pop_try(" in code and ".block_task_done(" in code and ".block_pending()" in code
-    assert "__shared__ int __dace_cons_elements[64];" in code
+    assert "__shared__ __align__(16) int __dace_cons_elements[64];" in code
 
 
 @pytest.mark.gpu

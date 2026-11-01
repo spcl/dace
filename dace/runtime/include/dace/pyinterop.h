@@ -19,8 +19,12 @@ public:
         DACE_HDFI const iterator &operator ++() { i_ += s_; return *this; }
         DACE_HDFI iterator operator ++(int) { iterator copy(*this); i_ += s_; return copy; }
 
-        DACE_HDFI bool operator ==(const iterator &other) const { return i_ == other.i_; }
-        DACE_HDFI bool operator !=(const iterator &other) const { return i_ != other.i_; }
+        // As in Python, the iteration ends once the index reaches or passes the end (in the direction of the
+        // step), which it need not hit exactly
+        DACE_HDFI bool operator ==(const iterator &other) const { return !(*this != other); }
+        DACE_HDFI bool operator !=(const iterator &other) const {
+            return s_ > 0 ? i_ < other.i_ : i_ > other.i_;
+        }
 
     protected:
         DACE_HDFI iterator(int start, int skip = 1) : i_(start), s_(skip) { }
