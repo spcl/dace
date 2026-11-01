@@ -52,40 +52,70 @@ def _stream_append(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, stream: str
 @oprepo.replaces("dace.atomic.add")
 @oprepo.replaces("dace.frontend.python.interface.atomic.add")
 def _atomic_add(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, array: str, index, value) -> str:
-    """``old = dace.atomic.add(array, index, value)``: an atomic update whose old value is read (see ``dace.atomic``).
-    The index and the value are scalars, constants or symbolic expressions."""
+    """``old = dace.atomic.add(array, index, value)``: an atomic addition whose old value is read (see
+    ``dace.atomic``)."""
+    return _atomic_update(pv, sdfg, state, "dace.atomic.add", "lambda a, b: a + b", array, index, value)
+
+
+@oprepo.replaces("dace.atomic.custom")
+@oprepo.replaces("dace.frontend.python.interface.atomic.custom")
+def _atomic_custom(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op, array: str, index, value) -> str:
+    """``old = dace.atomic.custom(lambda a, b: ..., array, index, value)``: an atomic update with a function of the old
+    and the new value, whose old value is read (see ``dace.atomic``)."""
+    if isinstance(op, StringLiteral):
+        op = op.value
+    try:
+        function = ast.parse(op).body[0].value if isinstance(op, str) else None
+    except SyntaxError:
+        function = None
+    if not isinstance(function, ast.Lambda) or len(function.args.args) != 2:
+        raise DaceSyntaxError(pv, None, f"dace.atomic.custom updates with a lambda of two arguments, got {op}")
+    return _atomic_update(pv, sdfg, state, "dace.atomic.custom", op, array, index, value)
+
+
+def _atomic_update(
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, function: str, wcr: str, array: str, index, value
+) -> str:
+    """An atomic update of ``array[index]`` with ``value`` through the write-conflict resolution ``wcr``, whose old
+    value is read. The index and the value are scalars, constants or symbolic expressions.
+
+    :param function: The name of the program function, for errors.
+    :return: The name of the scalar that holds the old value.
+    """
     if not isinstance(array, str) or array not in sdfg.arrays:
-        raise DaceSyntaxError(pv, None, f"dace.atomic.add updates an array, got {array}")
+        raise DaceSyntaxError(pv, None, f"{function} updates an array, got {array}")
     inputs = {}
 
     def operand(name: str, operand) -> str:
         if isinstance(operand, str) and operand in sdfg.arrays:
             if sdfg.arrays[operand].total_size != 1:
-                raise DaceSyntaxError(pv, None, f"dace.atomic.add takes scalar indices and values, got {operand}")
+                raise DaceSyntaxError(pv, None, f"{function} takes scalar indices and values, got {operand}")
             inputs[name] = Memlet(data=operand, subset="0")
             return name
         if isinstance(operand, (Number, symbolic.SymExpr)) or symbolic.issymbolic(operand):
             return symbolic.symstr(operand)
-        raise DaceSyntaxError(pv, None, f"Unsupported operand {operand} for dace.atomic.add")
+        raise DaceSyntaxError(pv, None, f"Unsupported operand {operand} for {function}")
 
     indices = index if isinstance(index, (tuple, list)) else (index,)
+    # The elements of a tuple of expressions are the values of the expressions (lists of one result)
+    indices = [idx[0] if isinstance(idx, list) and len(idx) == 1 else idx for idx in indices]
     subscript = [operand(f"__index{i}", idx) for i, idx in enumerate(indices)]
-    addend = operand("__value", value)
+    update = operand("__value", value)
     desc = sdfg.arrays[array]
     if any(conn in inputs for conn in subscript):  # An index read from data: the tasklet addresses the array
-        target = Memlet.from_array(array, desc, wcr="lambda a, b: a + b")
+        target = Memlet.from_array(array, desc, wcr=wcr)
         element = f"__target[{', '.join(subscript)}]"
     else:  # The memlet addresses the element
-        target = Memlet(data=array, subset=", ".join(subscript), wcr="lambda a, b: a + b")
+        target = Memlet(data=array, subset=", ".join(subscript), wcr=wcr)
         element = "__target"
     target.dynamic = True
     old, _ = sdfg.add_scalar("atomic_old", desc.dtype, transient=True, find_new_name=True)
     # Assigning the connector of a dynamic write-conflict resolution updates atomically; reading it gives the old value
     tasklet = state.add_tasklet(
-        "atomic_add",
+        function.replace("dace.", "").replace(".", "_"),
         dict.fromkeys(inputs),
         dict.fromkeys(["__target", "__old"]),
-        f"__old = {element} = {addend}",
+        f"__old = {element} = {update}",
         debuginfo=pv.current_lineinfo,
         side_effects=True,  # Ordered after the writes before it (acquire-release): not moved or fused with them
     )
