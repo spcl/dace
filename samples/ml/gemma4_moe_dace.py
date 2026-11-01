@@ -71,7 +71,14 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
         config.num_experts,
         config.top_k,
     )
-    assert D % BN == 0 and (2 * DI) % BN == 0 and (2 * I) % BN == 0 and E == BN == THREADS and D % ROUTE_STEP == 0
+    assert (
+        D % BN == 0
+        and (2 * DI) % BN == 0
+        and (2 * I) % BN == 0
+        and E == BN == THREADS
+        and D % ROUTE_STEP == 0
+        and D % THREADS == 0
+    )
     RP = D // ROUTE_STEP  # Router tasks per tile of tokens
     RS = ROUTE_STEP // K_STEP  # Packed slices of the router weight per router task
     eps = config.eps
@@ -131,16 +138,15 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
         # the model does, and scaled). The blocks also reset the scratch memory, and the first block queues the first
         # tasks: the router's (tiles of tokens times slices of the input), whose last one pushes the top-k task of the
         # tile, whose last one pushes the scan that pushes the expert tasks; then the dense gate/up tasks.
+        #
+        # Block-wide sums are of per-thread partial sums in shared memory, added up by every thread (an atomic addition
+        # of floats to shared memory is a compare-and-swap loop, which threads contending for one value serialize).
         for t in dace.map[0:T]:
-            ss = dace.ndarray([1], dtype=dace.float32, storage=SHARED)
-            for _ in dace.map[0:1] @ TB:
-                with dace.tasklet:
-                    s >> ss[0]
-                    s = 0
+            partial = dace.ndarray([THREADS], dtype=dace.float32, storage=SHARED)
             for th in dace.map[0:THREADS] @ TB:
                 with dace.tasklet:
                     xs << x[t, :]
-                    s >> ss(1, lambda a, b: a + b)[0]
+                    s >> partial[th]
                     rt >> row_token(-1)[:]
                     ea >> expert_acc(-1)[t, :]
                     tkl >> token_left(-1)[t]
@@ -150,7 +156,8 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                     dl >> dense_gate_up_left(-1)[:]
                     tl >> top_k_left(-1)[0]
                     part = dace.float32(0)
-                    for d in range(th, D, THREADS):
+                    for kd in range(D // THREADS):  # A constant count, so that the loop unrolls
+                        d = kd * THREADS + th
                         v = dace.float32(xs[d])
                         part = part + v * v
                         ea[d] = 0
@@ -170,7 +177,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                             tl = TP // BM
             for th in dace.map[0:THREADS] @ TB:
                 with dace.tasklet:
-                    s << ss[0]
+                    parts << partial[:]
                     xs << x[t, :]
                     w1 << pre_norm[:]
                     rs << router_scale[:]
@@ -182,10 +189,14 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                     xr >> x_router[t, :]
                     xe >> x_expert[t, :]
                     task >> S(-1)
+                    s = dace.float32(0)
+                    for src in range(THREADS):
+                        s = s + parts[src]
                     v = dace.float32(1) / math.sqrt(s / D + dace.float32(eps))
                     if th == 0:
                         inv = v
-                    for d in range(th, D, THREADS):
+                    for kd in range(D // THREADS):  # A constant count, so that the loop unrolls
+                        d = kd * THREADS + th
                         n = dace.float32(xs[d]) * v
                         xd[d] = dace.bfloat16(n * w1[d])
                         xr[d] = dace.bfloat16(dace.float32(dace.bfloat16(n)) * rs[d] * dace.float32(root))
@@ -410,23 +421,19 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                             nxt = SCAN
             elif kind == OUTPUT:
                 # Normalize both branches of token g, add, normalize, add the residual (in bfloat16, as the model)
-                sums = dace.ndarray([3], dtype=dace.float32, storage=SHARED)
-                for _ in dace.map[0:1] @ TB:
-                    with dace.tasklet:
-                        sm >> sums[:]
-                        sm[0] = 0
-                        sm[1] = 0
-                        sm[2] = 0
+                partial_12 = dace.ndarray([2, THREADS], dtype=dace.float32, storage=SHARED)
+                partial_3 = dace.ndarray([THREADS], dtype=dace.float32, storage=SHARED)
                 for w, lane in dace.map[0:WARPS, 0:32] @ TB:
                     with dace.tasklet:
                         tk << g
                         dn << dense_out(-1)[:, :]
                         ex << expert_acc(-1)[:, :]
-                        s1 >> sums(1, lambda a, b: a + b)[0]
-                        s2 >> sums(1, lambda a, b: a + b)[1]
+                        s1 >> partial_12[0, w * 32 + lane]
+                        s2 >> partial_12[1, w * 32 + lane]
                         a1 = dace.float32(0)
                         a2 = dace.float32(0)
-                        for d in range(w * 32 + lane, D, THREADS):
+                        for kd in range(D // THREADS):  # A constant count, so that the loop unrolls
+                            d = kd * THREADS + w * 32 + lane
                             v1 = dace.float32(dn[tk, d])
                             v2 = dace.float32(dace.bfloat16(ex[tk, d]))
                             a1 = a1 + v1 * v1
@@ -435,17 +442,23 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                         s2 = a2
                 for w, lane in dace.map[0:WARPS, 0:32] @ TB:
                     with dace.tasklet:
-                        sm << sums[0:2]
+                        parts << partial_12[:, :]
                         tk << g
                         dn << dense_out(-1)[:, :]
                         ex << expert_acc(-1)[:, :]
                         p1 << post_norm_1[:]
                         p2 << post_norm_2[:]
-                        s3 >> sums(1, lambda a, b: a + b)[2]
-                        inv1 = dace.float32(1) / math.sqrt(sm[0] / D + dace.float32(eps))
-                        inv2 = dace.float32(1) / math.sqrt(sm[1] / D + dace.float32(eps))
+                        s3 >> partial_3[w * 32 + lane]
+                        n1 = dace.float32(0)
+                        n2 = dace.float32(0)
+                        for src in range(THREADS):
+                            n1 = n1 + parts[0, src]
+                            n2 = n2 + parts[1, src]
+                        inv1 = dace.float32(1) / math.sqrt(n1 / D + dace.float32(eps))
+                        inv2 = dace.float32(1) / math.sqrt(n2 / D + dace.float32(eps))
                         a3 = dace.float32(0)
-                        for d in range(w * 32 + lane, D, THREADS):
+                        for kd in range(D // THREADS):  # A constant count, so that the loop unrolls
+                            d = kd * THREADS + w * 32 + lane
                             b1 = dace.float32(dace.bfloat16(dace.float32(dn[tk, d]) * inv1 * p1[d]))
                             b2 = dace.float32(dace.bfloat16(dace.float32(dace.bfloat16(ex[tk, d])) * inv2 * p2[d]))
                             v = dace.float32(dace.bfloat16(b1 + b2))
@@ -453,7 +466,8 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                         s3 = a3
                 for w, lane in dace.map[0:WARPS, 0:32] @ TB:
                     with dace.tasklet:
-                        sm << sums[:]
+                        parts << partial_12[:, :]
+                        parts3 << partial_3[:]
                         tk << g
                         dn << dense_out(-1)[:, :]
                         ex << expert_acc(-1)[:, :]
@@ -462,10 +476,19 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                         xs << x(-1)[:, :]
                         po << post_norm[:]
                         o >> out(-1)[:, :]
-                        inv1 = dace.float32(1) / math.sqrt(sm[0] / D + dace.float32(eps))
-                        inv2 = dace.float32(1) / math.sqrt(sm[1] / D + dace.float32(eps))
-                        inv = dace.float32(1) / math.sqrt(sm[2] / D + dace.float32(eps))
-                        for d in range(w * 32 + lane, D, THREADS):
+                        n1 = dace.float32(0)
+                        n2 = dace.float32(0)
+                        for src in range(THREADS):
+                            n1 = n1 + parts[0, src]
+                            n2 = n2 + parts[1, src]
+                        inv1 = dace.float32(1) / math.sqrt(n1 / D + dace.float32(eps))
+                        inv2 = dace.float32(1) / math.sqrt(n2 / D + dace.float32(eps))
+                        n3 = dace.float32(0)
+                        for src in range(THREADS):
+                            n3 = n3 + parts3[src]
+                        inv = dace.float32(1) / math.sqrt(n3 / D + dace.float32(eps))
+                        for kd in range(D // THREADS):  # A constant count, so that the loop unrolls
+                            d = kd * THREADS + w * 32 + lane
                             b1 = dace.float32(dace.bfloat16(dace.float32(dn[tk, d]) * inv1 * p1[d]))
                             b2 = dace.float32(dace.bfloat16(dace.float32(dace.bfloat16(ex[tk, d])) * inv2 * p2[d]))
                             v = dace.float32(dace.bfloat16(b1 + b2))
