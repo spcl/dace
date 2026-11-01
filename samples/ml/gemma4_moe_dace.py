@@ -69,6 +69,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
     eps = config.eps
     root = D**-0.5
     gelu_c = math.sqrt(2 / math.pi)
+    # Python float literals are double precision in tasklets, which GPUs compute slowly: constants are float32
     HALF = BN // 2  # Gate (and up) columns of a gate/up task
 
     @dace.program
@@ -157,13 +158,13 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                     inv >> inv_rms(-1)[t]
                     xd >> x_dense[t, :]
                     xr >> x_router[t, :]
-                    v = 1.0 / math.sqrt(s / D + eps)
+                    v = dace.float32(1) / math.sqrt(s / D + dace.float32(eps))
                     if th == 0:
                         inv = v
                     for d in range(th, D, THREADS):
                         n = dace.float32(xs[d]) * v
                         xd[d] = dace.bfloat16(n * w1[d])
-                        xr[d] = dace.bfloat16(dace.float32(dace.bfloat16(n)) * rs[d] * root)
+                        xr[d] = dace.bfloat16(dace.float32(dace.bfloat16(n)) * rs[d] * dace.float32(root))
 
         # Router logits, a tile of 64 tokens per thread block (the projection rounds them to bfloat16)
         for g in dace.map[0 : TP // BM]:
@@ -275,7 +276,13 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 xe >> x_expert(-1)[:, :]
                 xe[ts[pe] * BM + ps, d] = dace.bfloat16(dace.float32(xv) * inv * w2)
 
-        # Seed the gate/up tasks (the down tasks follow them)
+        # Seed the gate/up tasks (the down tasks follow them); the dense ones first, as their chain is the longest
+        for g, ch in dace.map[0 : TP // BM, 0 : DI // HALF]:
+            with dace.tasklet:
+                left >> dense_gate_up_left[g]
+                task >> S(-1)
+                left = DI // HALF
+                task = DENSE_GATE_UP * KIND + g * FIELD + ch
         for g, ch in dace.map[0:NT, 0 : I // HALF]:
             with dace.tasklet:
                 nt << num_tiles[0]
@@ -284,12 +291,6 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 if g < nt:
                     left = I // HALF
                     task = EXPERT_GATE_UP * KIND + g * FIELD + ch
-        for g, ch in dace.map[0 : TP // BM, 0 : DI // HALF]:
-            with dace.tasklet:
-                left >> dense_gate_up_left[g]
-                task >> S(-1)
-                left = DI // HALF
-                task = DENSE_GATE_UP * KIND + g * FIELD + ch
 
         @dace.consumescope(S, num_pes)
         def worker(task, p):
@@ -324,7 +325,8 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                             he >> h_expert(-1)[:, :]
                             hd >> h_dense(-1)[:, :]
                             gb = dace.float32(gv)
-                            gl = 0.5 * gb * (1.0 + math.tanh(gelu_c * (gb + 0.044715 * gb * gb * gb)))
+                            inner = dace.float32(gelu_c) * (gb + dace.float32(0.044715) * gb * gb * gb)
+                            gl = dace.float32(0.5) * gb * (dace.float32(1) + math.tanh(inner))
                             hv = dace.bfloat16(dace.float32(dace.bfloat16(gl)) * dace.float32(uv))
                             i = q * THREADS + w * 32 + lane
                             if k == EXPERT_GATE_UP:
@@ -416,8 +418,8 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                     p2 << post_norm_2[:]
                     mx >> mixed(-1)[:]
                     s3 >> sums(1, lambda a, b: a + b)[2]
-                    inv1 = 1.0 / math.sqrt(sm[0] / D + eps)
-                    inv2 = 1.0 / math.sqrt(sm[1] / D + eps)
+                    inv1 = dace.float32(1) / math.sqrt(sm[0] / D + dace.float32(eps))
+                    inv2 = dace.float32(1) / math.sqrt(sm[1] / D + dace.float32(eps))
                     a3 = dace.float32(0)
                     for d in range(th, D, THREADS):
                         b1 = dace.float32(dace.bfloat16(dace.float32(dn[d]) * inv1 * p1[d]))
@@ -433,7 +435,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                     xs << x[t, :]
                     po << post_norm[:]
                     o >> out[t, :]
-                    inv = 1.0 / math.sqrt(s / D + eps)
+                    inv = dace.float32(1) / math.sqrt(s / D + dace.float32(eps))
                     for d in range(th, D, THREADS):
                         o[d] = dace.bfloat16(dace.float32(xs[d]) + dace.float32(dace.bfloat16(mxs[d] * inv * po[d])))
 
