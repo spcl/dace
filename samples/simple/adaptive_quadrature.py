@@ -31,23 +31,16 @@ NUM_SEEDS = dace.symbol("NUM_SEEDS")  # The initial tasks: the intervals of dept
 
 @dace.program
 def integrate(result: dace.float64[1], seed_depth: dace.int64):
-    # The tasks in flight: an unbounded stream (on a GPU, a queue of this capacity)
+    # The tasks in flight (on a GPU, a queue of this capacity)
     S = dace.define_stream(dace.int64, 1 << 20)
 
     # Start from a few equal intervals, so that every processing element has work at once
     for i in dace.map[0:NUM_SEEDS]:
-        with dace.tasklet:
-            sd << seed_depth
-            seed >> S
-            seed = sd * DEPTH_SHIFT + i
+        S.append(seed_depth * DEPTH_SHIFT + i)
 
-    # Every processing element pops tasks; a task may push more. Without a condition, consumption ends once
-    # the stream is empty and no task is running (that could still push).
-    @dace.consume(S, 8)
-    def refine(task, p):
-        halves >> S(-1)  # Dynamic volume: a task pushes zero or two halves
-        total >> result(-1, lambda a, b: a + b)  # Estimates are summed (no data race)
-
+    # Every processing element pops tasks, and a task may push more. Consumption ends once the stream is empty and no
+    # task is running (that could still push).
+    for task, _ in dace.consume(S, 8):
         depth = task // DEPTH_SHIFT
         index = task - depth * DEPTH_SHIFT
         width = (B - A) / (2.0**depth)
@@ -66,10 +59,11 @@ def integrate(result: dace.float64[1], seed_depth: dace.int64):
         error = abs(halved - whole)
 
         if error <= 15.0 * TOLERANCE * width / (B - A) or depth >= MAX_DEPTH:
-            total = halved + (halved - whole) / 15.0  # Richardson extrapolation
-        else:
-            halves = (depth + 1) * DEPTH_SHIFT + 2 * index
-            halves = (depth + 1) * DEPTH_SHIFT + 2 * index + 1
+            # Richardson extrapolation. Processing elements add at once: an augmented assignment is an atomic update
+            result[0] += halved + (halved - whole) / 15.0
+        else:  # Split into the two halves
+            S.append((depth + 1) * DEPTH_SHIFT + 2 * index)
+            S.append((depth + 1) * DEPTH_SHIFT + 2 * index + 1)
 
 
 def exact() -> float:
