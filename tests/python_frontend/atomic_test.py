@@ -205,6 +205,30 @@ def test_gpu_updates(name):
 
 
 @dace.program
+def first_occurrences(items: dace.int32[N], first: dace.int32[N]):
+    seen = np.zeros([4], dtype=np.int32)
+    for i in dace.map[0:N]:
+        if dace.atomic.exch(seen, items[i], 1) == 0:
+            first[i] = 1
+
+
+def test_old_value_reads_initialization():
+    """The old value of an update reads the array: the initialization before the updates is not dead dataflow."""
+    sdfg = first_occurrences.to_sdfg(simplify=True)
+    assert any(  # Zeros written to the whole array, not only updates
+        isinstance(node, dace.nodes.AccessNode)
+        and node.data == "seen"
+        and any(edge.data.wcr is None for edge in state.in_edges(node))
+        for state in sdfg.states()
+        for node in state.nodes()
+    )
+    items = np.random.default_rng(10).integers(0, 4, 64).astype(np.int32)
+    first = np.zeros(64, np.int32)
+    sdfg(items=items, first=first, N=64)
+    assert np.array_equal(np.sort(items[first == 1]), np.unique(items))
+
+
+@dace.program
 def high_water_marks(values: dace.int32[N], mark: dace.int32[1], before: dace.int32[N]):
     for i in dace.map[0:N]:
         before[i] = dace.atomic.custom(lambda a, b: max(a, b), mark, 0, values[i])
@@ -273,6 +297,7 @@ if __name__ == "__main__":
     for name in ["min", "and_", "exch", "prod"]:
         test_gpu_updates(name)
     test_exchange()
+    test_old_value_reads_initialization()
     test_custom_maximum()
     test_custom_product()
     test_custom_requires_lambda()
