@@ -199,11 +199,11 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                         for i in range(th, num_router + TP // BM * (DI // HALF), THREADS):
                             if i < num_router:
                                 task = ROUTE | (i // RP) << FIELD | i % RP
-                            else:
+                            else:  # The tiles of a chunk of the weight one after the other: they read it from L2
                                 task = (
                                     DENSE_GATE_UP
-                                    | ((i - num_router) // (DI // HALF)) << FIELD
-                                    | (i - num_router) % (DI // HALF)
+                                    | ((i - num_router) % (TP // BM)) << FIELD
+                                    | (i - num_router) // (TP // BM)
                                 )
 
         @dace.consumescope(S, num_pes)
