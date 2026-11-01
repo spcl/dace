@@ -115,7 +115,7 @@ class ExpandPure(ExpandTransformation):
         rows = "_rows" if "_rows" in sdfg.arrays else str(m)
         state = sdfg.add_state(node.label)
         code = f"""
-for idx in range(w * {WARP_SIZE} + lane, {m} * {n}, {threads}):
+for idx in range(tid, {m} * {n}, {threads}):
     i = idx // {n}
     j = idx % {n}
     s = dace.float32(0)
@@ -136,7 +136,7 @@ for idx in range(w * {WARP_SIZE} + lane, {m} * {n}, {threads}):
         c_memlet.dynamic = True
         state.add_mapped_tasklet(
             f"{node.label}_pure",
-            {"w": f"0:{node.warps}", "lane": f"0:{WARP_SIZE}"},
+            {"tid": f"0:{threads}"},
             inputs,
             code,
             {"c": c_memlet},
@@ -196,7 +196,7 @@ class ExpandMMA(ExpandTransformation):
         code = f"""
 constexpr int M = {m}, N = {n}, K = {k}, KS = {k_step}, STAGES = {stages}, CHUNKS = {chunks};
 constexpr int THREADS = {warps * WARP_SIZE}, WN = N / {warps}, MF = M / 16, NF = WN / 8;
-const int tid = w * {WARP_SIZE} + lane;
+const int w = tid / {WARP_SIZE}, lane = tid % {WARP_SIZE};
 const int nrows = {nrows.format(m=m)};
 const uint32_t smem = (uint32_t) __cvta_generic_to_shared(work);
 #define DACE_TM_SWZ(r, c) ((c) ^ ({swizzle}))
@@ -307,8 +307,8 @@ __syncthreads();  // The product is complete for every thread of the block
 """
         state = sdfg.add_state(node.label)
         entry, exit_ = state.add_map(
-            f"{node.label}_warps",
-            {"w": f"0:{warps}", "lane": f"0:{WARP_SIZE}"},
+            f"{node.label}_threads",
+            {"tid": f"0:{warps * WARP_SIZE}"},
             schedule=dtypes.ScheduleType.GPU_ThreadBlock,
         )
         inputs = {"a", "b"} | ({"_rows_in"} if "_rows" in sdfg.arrays else set()) | ({"a_index"} if gather else set())
@@ -405,18 +405,11 @@ if __name__ == "__main__":
             staging = dace.ndarray([STAGING], dtype=dace.bfloat16, storage=dace.StorageType.GPU_Shared(dynamic=True))
             in_staging = staging[0 : BM * BN].reshape([BM, BN])
             tm.tile_matmul(a[i * BM : i * BM + BM, :], b_packed[j], in_staging, staging.reshape(WORKSPACE), nr)
-            for w, lane in dace.map[0:4, 0:32] @ dace.ScheduleType.GPU_ThreadBlock:
-                for q in range(BM * BN // 128):
-                    with dace.tasklet:
-                        t << in_staging[(q * 128 + w * 32 + lane) // BN, (w * 32 + lane) % BN]
-                        o >> c[TILES, i * BM + (q * 128 + w * 32 + lane) // BN, j * BN + (w * 32 + lane) % BN]
-                        o = t
-            for w, lane in dace.map[0:4, 0:32] @ dace.ScheduleType.GPU_ThreadBlock:
-                for q in range(TILES * BM * BN // 128):
-                    with dace.tasklet:
-                        t << tile[q // 64, (q % 64 * 128 + w * 32 + lane) // BN, (w * 32 + lane) % BN]
-                        o >> c[q // 64, i * BM + (q % 64 * 128 + w * 32 + lane) // BN, j * BN + (w * 32 + lane) % BN]
-                        o = t
+            for col in dace.map[0:BN] @ dace.ScheduleType.GPU_ThreadBlock:  # A thread per column
+                for r in range(BM):
+                    c[TILES, i * BM + r, j * BN + col] = in_staging[r, col]
+                    for f in range(TILES):
+                        c[f, i * BM + r, j * BN + col] = tile[f, r, col]
 
     a = torch.randn(M, K, device="cuda").to(torch.bfloat16)
     b_t = torch.randn(N, K, device="cuda").to(torch.bfloat16)
