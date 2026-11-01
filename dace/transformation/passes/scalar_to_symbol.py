@@ -681,6 +681,10 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: dict[str, str]):
 
                         # Set symbol mapping
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
+                        # The remaining uses of the scalar's name are symbolic (e.g., in the symbol mapping of an
+                        # SDFG nested further, or in a memlet): they now refer to the symbol
+                        if e.dst_conn != tmp_symname:
+                            dst.sdfg.replace_dict({e.dst_conn: tmp_symname}, replace_keys=False)
                         dst.remove_in_connector(e.dst_conn)
                         dst.sdfg.symbols[tmp_symname] = sdfg.arrays[node.data].dtype
                         dst.symbol_mapping[tmp_symname] = symname
