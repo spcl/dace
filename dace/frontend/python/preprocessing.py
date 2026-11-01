@@ -1623,7 +1623,7 @@ class ConsumeLoopConverter(ast.NodeTransformer):
     """Rewrites a consume loop into the consume scope it stands for.
 
     ``for element, pe in dace.consume(S, num_pes, ...): body`` becomes ``@dace.consumescope(S, num_pes, ...)``
-    ``def consume_S(element, pe): body``. A loop that names the element alone gets an unused processing element index.
+    ``def consume_S(element, pe): body``.
     Runs after ``ModuleResolver``, so that the iterator reads ``dace.consume`` under any import name.
     """
 
@@ -1633,14 +1633,11 @@ class ConsumeLoopConverter(ast.NodeTransformer):
             return node
         if node.orelse:
             raise DaceSyntaxError(None, node, "A consume loop cannot have an else clause")
-        if isinstance(node.target, ast.Tuple) and len(node.target.elts) == 2:
-            element, pe = node.target.elts
-        elif isinstance(node.target, ast.Name):
-            element, pe = node.target, ast.Name(id=f"__consume_pe_{node.lineno}", ctx=ast.Store())
-        else:
+        if not isinstance(node.target, ast.Tuple) or len(node.target.elts) != 2:
             raise DaceSyntaxError(
-                None, node, "A consume loop iterates over an element, or an element and a processing element index"
+                None, node, "A consume loop iterates over an element and a processing element index: for x, pe in ..."
             )
+        element, pe = node.target.elts
         if not isinstance(element, ast.Name) or not isinstance(pe, ast.Name):
             raise DaceSyntaxError(None, node, "The targets of a consume loop must be names")
         stream = node.iter.args[0] if node.iter.args else None

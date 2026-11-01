@@ -2,6 +2,7 @@
 import copy
 
 import numpy as np
+import pytest
 
 import dace
 import dace as dp
@@ -165,11 +166,11 @@ N = dace.symbol("N")
 
 @dace.program
 def doubled_sum(res: dace.int64[1]):
-    """Pushes symbolic values from a map, and consumes them in a loop that names the element alone."""
+    """Pushes symbolic values from a map, and consumes them in a loop that does not use the processing element."""
     S = dace.define_stream(dace.int64, 0)
     for i in dace.map[0:N]:
         S.append(2 * i + 1)
-    for elem in dace.consume(S, 3):
+    for elem, _ in dace.consume(S, 3):
         res[0] += elem
 
 
@@ -179,9 +180,24 @@ def test_consume_loop_of_elements():
     assert output[0] == 100**2
 
 
+def test_consume_loop_needs_processing_element():
+    """A consume loop names both the element and the processing element index."""
+
+    @dace.program
+    def elements_only(res: dace.int64[1]):
+        S = dace.define_stream(dace.int64, 0)
+        S.append(1)
+        for elem in dace.consume(S, 2):
+            res[0] += elem
+
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match="for x, pe in"):
+        elements_only.to_sdfg()
+
+
 if __name__ == "__main__":
     test_fibonacci_recursion_using_consume()
     test_fibonacci_recursion_using_consume_program()
     test_consume_body_nested_sdfg_reads_popped_element()
     test_fibonacci_recursion_using_consume_loop()
     test_consume_loop_of_elements()
+    test_consume_loop_needs_processing_element()
