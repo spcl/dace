@@ -142,13 +142,10 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
         for t in dace.map[0:T]:
             sum_of_squares = dace.ndarray([1], dtype=dace.float32, storage=SHARED)
             sum_of_squares[0] = 0
-            for th in dace.map[0:THREADS] @ TB:  # A partial sum per thread, then one update of the block's
-                part = dace.float32(0)
-                for d in range(th, D, THREADS):
-                    v = dace.float32(x[t, d])
-                    part += v * v
-                    expert_acc[t, d] = 0
-                sum_of_squares[0] += part
+            for d in dace.map[0:D] @ TB:
+                v = dace.float32(x[t, d])
+                sum_of_squares[0] += v * v
+                expert_acc[t, d] = 0
             for r in dace.map[t : NT * BM : T] @ TB:  # The blocks reset the rows of the expert tiles together
                 row_token[r] = -1
             token_left[t] = (K + 1) * (D // BN)  # The down tiles that add to the token: its experts', and the dense
@@ -300,29 +297,21 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 # The sum of the branches stays in the staging memory.
                 sums = dace.ndarray([3], dtype=dace.float32, storage=SHARED)
                 sums[:] = 0
-                for th in dace.map[0:THREADS] @ TB:  # Partial sums per thread, then one update of the block's
-                    dense_part = dace.float32(0)
-                    expert_part = dace.float32(0)
-                    for d in range(th, D, THREADS):
-                        v1 = dace.float32(dense_out[g, d])
-                        v2 = dace.float32(dace.bfloat16(expert_acc[g, d]))
-                        dense_part += v1 * v1
-                        expert_part += v2 * v2
-                    sums[0] += dense_part
-                    sums[1] += expert_part
+                for d in dace.map[0:D] @ TB:
+                    v1 = dace.float32(dense_out[g, d])
+                    v2 = dace.float32(dace.bfloat16(expert_acc[g, d]))
+                    sums[0] += v1 * v1
+                    sums[1] += v2 * v2
                 inv1 = dace.float32(1) / math.sqrt(sums[0] / D + dace.float32(eps))
                 inv2 = dace.float32(1) / math.sqrt(sums[1] / D + dace.float32(eps))
-                for th in dace.map[0:THREADS] @ TB:
-                    part = dace.float32(0)
-                    for d in range(th, D, THREADS):
-                        b1 = dace.float32(dace.bfloat16(dace.float32(dense_out[g, d]) * inv1 * post_norm_1[d]))
-                        b2 = dace.float32(
-                            dace.bfloat16(dace.float32(dace.bfloat16(expert_acc[g, d])) * inv2 * post_norm_2[d])
-                        )
-                        v = dace.bfloat16(b1 + b2)
-                        staging[d] = v
-                        part += dace.float32(v) * dace.float32(v)
-                    sums[2] += part
+                for d in dace.map[0:D] @ TB:
+                    b1 = dace.float32(dace.bfloat16(dace.float32(dense_out[g, d]) * inv1 * post_norm_1[d]))
+                    b2 = dace.float32(
+                        dace.bfloat16(dace.float32(dace.bfloat16(expert_acc[g, d])) * inv2 * post_norm_2[d])
+                    )
+                    v = dace.bfloat16(b1 + b2)
+                    staging[d] = v
+                    sums[2] += dace.float32(v) * dace.float32(v)
                 inv = dace.float32(1) / math.sqrt(sums[2] / D + dace.float32(eps))
                 for d in dace.map[0:D] @ TB:
                     normalized = dace.float32(dace.bfloat16(dace.float32(staging[d]) * inv * post_norm[d]))
