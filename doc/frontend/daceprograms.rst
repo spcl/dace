@@ -445,6 +445,34 @@ An update whose old value is read orders memory accesses around it (it is *acqui
 that brings a counter down to zero sees everything the other tasklets wrote before decrementing it. See the
 write-conflict resolution part of :ref:`sdfg-memlet` for the exact guarantee.
 
+Outside of tasklets, ``dace.atomic`` makes the same updates as functions of one element, which return its old value
+(as ``numba.cuda.atomic``). ``dace.atomic.add`` adds, and ``dace.atomic.custom`` updates with a lambda of the old and the
+new value. The index and the value are scalars, constants or symbolic expressions:
+
+.. code-block:: python
+
+    @dace.program
+    def append_positive(values: dace.float64[N], result: dace.float64[N], count: dace.int64[1]):
+        for i in dace.map[0:N]:
+            if values[i] > 0:
+                slot = dace.atomic.add(count, 0, 1)
+                result[slot] = values[i]
+
+    @dace.program
+    def last_arrivers(groups: dace.int32[N], left: dace.int32[G], last: dace.int32[N]):
+        for i in dace.map[0:N]:
+            if dace.atomic.add(left, groups[i], -1) == 1:  # The last update of its group
+                last[i] = 1
+
+    @dace.program
+    def running_maximum(values: dace.float32[N], peak: dace.float32[1], before: dace.float32[N]):
+        for i in dace.map[0:N]:
+            before[i] = dace.atomic.custom(lambda a, b: max(a, b), peak, 0, values[i])
+
+These updates are acquire-release as well. A lambda that is a known reduction (a sum, product, minimum, maximum or
+bitwise operation) uses the atomic instruction of the target if there is one; any other lambda becomes a
+compare-and-swap loop. Outside of programs, the functions update the array in plain Python.
+
 .. _calling_sdfgs:
 
 Calling SDFGs Directly

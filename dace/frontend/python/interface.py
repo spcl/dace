@@ -11,6 +11,7 @@ from typing import (
     overload,
 )
 
+import numpy
 from typing_extensions import Self
 
 from dace import dtypes
@@ -506,14 +507,35 @@ class atomic:
 
     In a program, ``old = dace.atomic.add(array, index, value)`` is a write-conflict resolution whose old value is read:
     its memory ordering is acquire-release, so the processing element that sees a counter reach its last value also
-    sees what the others wrote before they updated it.
+    sees what the others wrote before they updated it. ``dace.atomic.custom`` updates with any function of the old and
+    the new value, e.g., ``dace.atomic.custom(lambda a, b: max(a, b), array, index, value)``. Outside of programs, the
+    updates are plain Python.
     """
 
     @staticmethod
-    def add(array, index, value):
-        """Adds ``value`` to ``array[index]``; returns the old ``array[index]``."""
+    def add(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Adds ``value`` to ``array[index]``.
+
+        :param array: The array to update.
+        :param index: The index of the element: an integer or a tuple of integers.
+        :param value: The value to add.
+        :return: The old value of ``array[index]``.
+        """
+        return atomic.custom(lambda a, b: a + b, array, index, value)
+
+    @staticmethod
+    def custom(op: Callable[[Any, Any], Any], array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to ``op(array[index], value)``.
+
+        :param op: The update, a function of the old and the new value (a lambda in programs). It should be
+                   associative and commutative, as the order of concurrent updates is arbitrary.
+        :param array: The array to update.
+        :param index: The index of the element: an integer or a tuple of integers.
+        :param value: The value to combine with the element.
+        :return: The old value of ``array[index]``.
+        """
         old = array[index]
-        array[index] = old + value
+        array[index] = op(old, value)
         return old
 
 
