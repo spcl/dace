@@ -483,24 +483,14 @@ def _handle_connectors(
             node.add_in_connector(cname)
         else:
             node.add_out_connector(cname)
-        # Add new edge
+        # Add new edge (an update keeps its write-conflict resolution, and a dynamic access stays dynamic)
         orig_edge = orig_edges[orig]
+        memlet = mm.Memlet(data=orig_edge.data.data, subset=subset, wcr=orig_edge.data.wcr)
+        memlet.dynamic = orig_edge.data.dynamic
         if in_edges:
-            state.add_edge(
-                orig_edge.src,
-                orig_edge.src_conn,
-                orig_edge.dst,
-                cname,
-                mm.Memlet(data=orig_edge.data.data, subset=subset),
-            )
+            state.add_edge(orig_edge.src, orig_edge.src_conn, orig_edge.dst, cname, memlet)
         else:
-            state.add_edge(
-                orig_edge.src,
-                cname,
-                orig_edge.dst,
-                orig_edge.dst_conn,
-                mm.Memlet(data=orig_edge.data.data, subset=subset),
-            )
+            state.add_edge(orig_edge.src, cname, orig_edge.dst, orig_edge.dst_conn, memlet)
     # Remove connectors and edges
     conns_to_remove = {v[0] for v in mapping.values()} - ignore
     for conn in conns_to_remove:
