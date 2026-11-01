@@ -22,11 +22,14 @@ node) followed by an epilogue on the tile. The tasks are:
 A task that depends on others is pushed by the last of them to finish: each decrements a counter, reading its old
 value (an acquire-release update). So the queue never waits for a whole stage to finish, and dense and expert tasks
 fill each other's gaps.
+
+Every task is a DaCe program of its own, which DaCe inlines into the consume scope.
 """
 
 import math
 
 import gemma4_moe
+import numpy as np
 import tile_matmul as tm
 import torch
 
@@ -40,7 +43,8 @@ BM, BN = 64, 128  # Rows and columns of a tile
 K_STEP, STAGES = 32, 2  # Slices of the inner dimension that tile_matmul stages in shared memory
 WORKSPACE = tm.workspace_shape(BM, BN, K_STEP, STAGES)
 STAGING = math.prod(WORKSPACE)  # Elements of the workspace
-# A task is ``kind | tile << FIELD | chunk``, where the kinds are multiples of ``1 << KIND`` (64-bit constants)
+# The kinds of tasks, multiples of ``1 << KIND`` (64-bit constants): a task is its kind, a tile and a chunk (see
+# ``append_to_stream``)
 KIND, FIELD = 40, 20
 MASK = (1 << (KIND - FIELD)) - 1  # Of a tile or chunk
 EXPERT_GATE_UP, EXPERT_DOWN, DENSE_GATE_UP, DENSE_DOWN, ROUTE, TOP_K, SCAN, OUTPUT = (k << KIND for k in range(8))
@@ -82,10 +86,290 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
     assert BM * BN <= STAGING  # The product of a tile fits where its operands are staged
     RP = D // ROUTE_STEP  # Router tasks per tile of tokens
     RS = ROUTE_STEP // K_STEP  # Packed slices of the router weight per router task
-    eps = config.eps
-    root = D**-0.5
-    gelu_c = math.sqrt(2 / math.pi)
     HALF = BN // 2  # Gate (and up) columns of a gate/up task
+    # Constants in single precision (a Python float is a double on the GPU, which computes in double precision slowly)
+    EPS = np.float32(config.eps)
+    ROOT = np.float32(D**-0.5)
+    GELU_C = np.float32(math.sqrt(2 / math.pi))
+    GELU_A = np.float32(0.044715)
+    ONE_HALF = np.float32(0.5)
+
+    # Helpers
+
+    @dace.program
+    def append_to_stream(S, kind: dace.int64, tile: dace.int64, chunk: dace.int64):
+        """Queues a task: ``kind | tile << FIELD | chunk``."""
+        S.append(kind | tile << FIELD | chunk)
+
+    @dace.program
+    def is_last(counter, index):
+        """Counts down ``counter[index]`` once for the thread block: whether this was its last count (an
+        acquire-release update, so that the last block sees what the others wrote)."""
+        last = dace.ndarray([1], dtype=dace.int32, storage=SHARED)
+        for _ in dace.map[0:1] @ TB:
+            last[0] = dace.atomic.add(counter, index, -1) == 1
+        return last[0] == 1
+
+    @dace.program
+    def bf16(v: dace.float32):
+        """``v`` rounded to bfloat16, as the model rounds it."""
+        return dace.float32(dace.bfloat16(v))
+
+    @dace.program
+    def inverse_rms(sum_of_squares: dace.float32):
+        """The inverse root mean square of a token, from the sum of the squares of its values."""
+        return 1 / math.sqrt(sum_of_squares / D + EPS)
+
+    # The prologue, a thread block per token
+
+    @dace.program
+    def prologue(
+        t, x, pre_norm, pre_norm_2, router_scale, inv_rms, x_dense, x_expert, x_router, expert_acc, row_token, token_left
+    ):  # fmt: skip
+        """The RMS of token ``t`` (all the pre-norms normalize the same residual) and the inputs of the dense branch,
+        the experts and the router (the normalized input, rounded to bfloat16 as the model does, and scaled). Also
+        resets the token's scratch memory."""
+        sum_of_squares = dace.ndarray([1], dtype=dace.float32, storage=SHARED)
+        sum_of_squares[0] = 0
+        for d in dace.map[0:D] @ TB:
+            v = dace.float32(x[t, d])
+            sum_of_squares[0] += v * v
+            expert_acc[t, d] = 0
+        for r in dace.map[t : NT * BM : T] @ TB:  # The blocks reset the rows of the expert tiles together
+            row_token[r] = -1
+        token_left[t] = (K + 1) * (D // BN)  # The down tiles that add to the token: its experts', and the dense
+        inv = inverse_rms(sum_of_squares[0])
+        inv_rms[t] = inv
+        for d in dace.map[0:D] @ TB:
+            n = dace.float32(x[t, d]) * inv
+            x_dense[t, d] = n * pre_norm[d]
+            x_router[t, d] = bf16(n) * router_scale[d] * ROOT
+            x_expert[t, d] = n * pre_norm_2[d]
+
+    @dace.program
+    def first_tasks(S, count, dense_rows, route_left, dense_gate_up_left, top_k_left):
+        """Resets the counters and queues the first tasks: the router's (tiles of tokens times slices of the input),
+        whose last one pushes the top-k tasks of the tile, whose last one pushes the scan that pushes the expert tasks;
+        then the dense gate/up tasks of the first DT tiles of tokens (see ``DT``), the tiles of a chunk of the weight
+        one after the other: they read it from L2."""
+        for ex in dace.map[0:E] @ TB:
+            count[ex] = 0
+        for g in dace.map[0 : TP // BM] @ TB:
+            dense_rows[g] = min(BM, T - g * BM)
+            route_left[g] = RP
+            dense_gate_up_left[g] = DI // HALF
+        top_k_left[0] = T  # A top-k task per token
+        for i in dace.map[0 : TP // BM * RP + DT * (DI // HALF)] @ TB:
+            if i < TP // BM * RP:
+                append_to_stream(S, ROUTE, i // RP, i % RP)
+            else:
+                j = i - TP // BM * RP
+                append_to_stream(S, DENSE_GATE_UP, j % DT, j // DT)
+
+    # The tasks. ``g`` is a tile of rows (BM tokens or rows of experts), ``ch`` a chunk of columns.
+
+    @dace.program
+    def gelu_times_up(tile, nr, h, r0, ch):
+        """GELU(gate) * up of ``nr`` rows, where the columns of the tile are HALF of the gate projection, then HALF of
+        the up one: into rows ``r0`` of ``h``, chunk ``ch``."""
+        for i in dace.map[0 : nr * HALF] @ TB:
+            gate = dace.float32(tile[i // HALF, i % HALF])
+            gelu = ONE_HALF * gate * (1 + math.tanh(GELU_C * (gate + GELU_A * gate * gate * gate)))
+            h[r0 + i // HALF, ch * HALF + i % HALF] = bf16(gelu) * dace.float32(tile[i // HALF, HALF + i % HALF])
+
+    @dace.program
+    def expert_gate_up(
+        S, g, ch, staging, x_expert, expert_gate_up_p, tile_expert, tile_rows, tile_start, row_token, count,
+        gate_up_left, h_expert
+    ):  # fmt: skip
+        """A tile of an expert's rows (read from the rows of their tokens) times a chunk of its gate and up
+        projections. The last gate/up task of the expert (of all its tiles) pushes its down tasks, the tiles of a chunk
+        one after the other: they read it from L2."""
+        work = staging.reshape(WORKSPACE)
+        tile = staging[0 : BM * BN].reshape([BM, BN])
+        e = tile_expert[g]
+        nr = tile_rows[g]
+        r0 = g * BM
+        tm.tile_matmul(x_expert, expert_gate_up_p[e, ch], tile, work, nr, row_token[r0 : r0 + BM])
+        gelu_times_up(tile, nr, h_expert, r0, ch)
+        if is_last(gate_up_left, e):
+            n = (count[e] + BM - 1) // BM  # Tiles of the expert
+            for i in dace.map[0 : n * (D // BN)] @ TB:
+                append_to_stream(S, EXPERT_DOWN, tile_start[e] + i % n, i // n)
+
+    @dace.program
+    def dense_gate_up(S, g, ch, staging, x_dense, dense_gate_up_p, dense_rows, dense_gate_up_left, h_dense):
+        """BM tokens times a chunk of the dense gate and up projections. The last of the tokens pushes their down
+        tasks."""
+        work = staging.reshape(WORKSPACE)
+        tile = staging[0 : BM * BN].reshape([BM, BN])
+        nr = dense_rows[g]
+        r0 = g * BM
+        tm.tile_matmul(x_dense[r0 : r0 + BM, :], dense_gate_up_p[ch], tile, work, nr)
+        gelu_times_up(tile, nr, h_dense, r0, ch)
+        if is_last(dense_gate_up_left, g):
+            for c in dace.map[0 : D // BN] @ TB:
+                append_to_stream(S, DENSE_DOWN, g, c)
+
+    @dace.program
+    def expert_down(
+        S, g, ch, staging, h_expert, expert_down_p, tile_expert, tile_rows, row_token, row_weight, expert_acc,
+        token_left
+    ):  # fmt: skip
+        """A tile of an expert's rows times a chunk of its down projection, scaled by each row's routing weight and
+        added to the output of the row's token. The last tile that adds to a token pushes its output task."""
+        work = staging.reshape(WORKSPACE)
+        tile = staging[0 : BM * BN].reshape([BM, BN])
+        e = tile_expert[g]
+        nr = tile_rows[g]
+        r0 = g * BM
+        tm.tile_matmul(h_expert[r0 : r0 + BM, :], expert_down_p[e, ch], tile, work, nr)
+        for r, col in dace.map[0:nr, 0:BN] @ TB:
+            expert_acc[row_token[r0 + r], ch * BN + col] += dace.float32(tile[r, col]) * row_weight[r0 + r]
+        for r in dace.map[0:nr] @ TB:
+            token = row_token[r0 + r]
+            if dace.atomic.add(token_left, token, -1) == 1:
+                append_to_stream(S, OUTPUT, token, 0)
+
+    @dace.program
+    def dense_down(S, g, ch, staging, h_dense, down_p, dense_rows, dense_out, token_left):
+        """BM tokens times a chunk of the dense down projection."""
+        work = staging.reshape(WORKSPACE)
+        tile = staging[0 : BM * BN].reshape([BM, BN])
+        nr = dense_rows[g]
+        r0 = g * BM
+        tm.tile_matmul(h_dense[r0 : r0 + BM, :], down_p[ch], tile, work, nr)
+        for r, col in dace.map[0:nr, 0:BN] @ TB:
+            dense_out[r0 + r, ch * BN + col] = tile[r, col]
+        for r in dace.map[0:nr] @ TB:
+            if dace.atomic.add(token_left, r0 + r, -1) == 1:
+                append_to_stream(S, OUTPUT, r0 + r, 0)
+
+    @dace.program
+    def route(S, g, ch, staging, x_router, router_p, route_partial, dense_rows, route_left):
+        """Part of the router logits of BM tokens: a slice of the input times the router weight. The last part of
+        these tokens pushes their top-k tasks."""
+        work = staging.reshape(WORKSPACE)
+        nr = dense_rows[g]
+        r0 = g * BM
+        tm.tile_matmul(
+            x_router[r0 : r0 + BM, ch * ROUTE_STEP : ch * ROUTE_STEP + ROUTE_STEP],
+            router_p[0, ch * RS : ch * RS + RS],
+            route_partial[ch * TP + r0 : ch * TP + r0 + BM, :],
+            work,
+            nr,
+        )
+        if is_last(route_left, g):
+            for r in dace.map[0:nr] @ TB:
+                append_to_stream(S, TOP_K, r0 + r, 0)
+
+    @dace.program
+    def top_k(S, g, staging, route_partial, per_expert_scale, count, pair_expert, pair_slot, pair_weight, top_k_left):
+        """The experts of token ``g``: a thread per expert, then per chosen expert. The last token pushes the scan."""
+        tile = staging[0 : BM * BN].reshape([BM, BN])
+        chosen = dace.ndarray([K], dtype=dace.int32, storage=SHARED)
+        # The token's router logits (the projection rounds them to bfloat16)
+        for expert in dace.map[0:E] @ TB:
+            total = dace.float32(0)
+            for part in range(RP):
+                total += route_partial[part * TP + g, expert]
+            tile[0, expert] = total
+        # The rank of every logit (ties: lowest index first): the top k are chosen
+        for expert in dace.map[0:E] @ TB:
+            v = dace.float32(tile[0, expert])
+            rank = 0
+            for other in range(E):
+                v2 = dace.float32(tile[0, other])
+                if v2 > v or (v2 == v and other < expert):
+                    rank += 1
+            if rank < K:
+                chosen[rank] = expert
+        # The softmax probabilities of the chosen experts, renormalized (the softmax denominator cancels) and scaled;
+        # claim a row of every chosen expert
+        for j in dace.map[0:K] @ TB:
+            top = dace.float32(tile[0, chosen[0]])
+            total = dace.float32(0)
+            for j2 in range(K):
+                total += math.exp(dace.float32(tile[0, chosen[j2]]) - top)
+            c = chosen[j]
+            pair_expert[g, j] = c
+            pair_weight[g, j] = math.exp(dace.float32(tile[0, c]) - top) / total * per_expert_scale[c]
+            pair_slot[g, j] = dace.atomic.add(count, c, 1)
+        if is_last(top_k_left, 0):
+            for _ in dace.map[0:1] @ TB:
+                append_to_stream(S, SCAN, 0, 0)
+
+    @dace.program
+    def output(g, staging, x, dense_out, expert_acc, post_norm_1, post_norm_2, post_norm, out):
+        """Normalizes both branches of token ``g``, adds them, normalizes, and adds the residual (in bfloat16, as the
+        model). The sum of the branches stays in the staging memory."""
+        sums = dace.ndarray([3], dtype=dace.float32, storage=SHARED)
+        sums[:] = 0
+        for d in dace.map[0:D] @ TB:
+            v1 = dace.float32(dense_out[g, d])
+            v2 = bf16(expert_acc[g, d])
+            sums[0] += v1 * v1
+            sums[1] += v2 * v2
+        inv1 = inverse_rms(sums[0])
+        inv2 = inverse_rms(sums[1])
+        for d in dace.map[0:D] @ TB:
+            b1 = bf16(dace.float32(dense_out[g, d]) * inv1 * post_norm_1[d])
+            b2 = bf16(bf16(expert_acc[g, d]) * inv2 * post_norm_2[d])
+            v = dace.bfloat16(b1 + b2)
+            staging[d] = v
+            sums[2] += dace.float32(v) * dace.float32(v)
+        inv = inverse_rms(sums[2])
+        for d in dace.map[0:D] @ TB:
+            out[g, d] = dace.float32(x[g, d]) + bf16(dace.float32(staging[d]) * inv * post_norm[d])
+
+    @dace.program
+    def scan(
+        S, count, pair_expert, pair_slot, pair_weight, tile_start, tile_expert, tile_rows, num_tiles, row_token,
+        row_weight, gate_up_left
+    ):  # fmt: skip
+        """The tiles of every expert's rows (pairs of a token and an expert), and the expert gate/up tasks."""
+        # Every expert's rows start at a whole tile. A thread per expert.
+        tiles_of = dace.ndarray([E], dtype=dace.int32, storage=SHARED)
+        for expert in dace.map[0:E] @ TB:
+            tiles_of[expert] = (count[expert] + BM - 1) // BM
+        for expert in dace.map[0:E] @ TB:
+            start = 0
+            for other in range(expert):
+                start += tiles_of[other]
+            tile_start[expert] = start
+            for g2 in range(tiles_of[expert]):
+                tile_expert[start + g2] = expert
+                tile_rows[start + g2] = min(BM, count[expert] - g2 * BM)
+            gate_up_left[expert] = tiles_of[expert] * (I // HALF)
+            if expert == E - 1:
+                num_tiles[0] = start + tiles_of[expert]
+        # The rows of every expert, sorted by expert: their tokens and routing weights
+        for j, tok in dace.map[0:K, 0:T] @ TB:  # A thread per token (the last parameter strides)
+            row = tile_start[pair_expert[tok, j]] * BM + pair_slot[tok, j]
+            row_token[row] = tok
+            row_weight[row] = pair_weight[tok, j]
+        # The expert gate/up tasks, alternating with the dense gate/up tasks that the prologue left (as many of each
+        # as there are, then the rest), so that the dense products overlap the expert ones. The tasks of an expert are
+        # those of its tiles (j // (I // HALF) is one of them).
+        num_expert = num_tiles[0] * (I // HALF)
+        num_dense = (TP // BM - DT) * (DI // HALF)
+        both = 2 * min(num_expert, num_dense)
+        for i in dace.map[0 : num_expert + num_dense] @ TB:
+            dense = False
+            j = i - num_dense
+            if i < both:
+                dense = i % 2 == 1
+                j = i // 2
+            elif num_dense > num_expert:
+                dense = True
+                j = i - num_expert
+            if dense:
+                append_to_stream(S, DENSE_GATE_UP, DT + j % (TP // BM - DT), j // (TP // BM - DT))
+            else:  # The tiles of an expert's chunk one after the other: they read it from L2
+                te = tile_expert[j // (I // HALF)]
+                local = j - tile_start[te] * (I // HALF)
+                n = (count[te] + BM - 1) // BM
+                append_to_stream(S, EXPERT_GATE_UP, tile_start[te] + local % n, local // n)
 
     @dace.program
     def moe_block(
@@ -132,233 +416,58 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
     ):
         S = dace.define_stream(dace.int64, queue_size)
 
-        # Python float literals are double precision on the GPU, which computes them slowly: constants are float32.
-        #
-        # The prologue, a thread block per token: the RMS of the token (all the pre-norms normalize the same residual)
-        # and the inputs of the dense branch, the experts and the router (the normalized input, rounded to bfloat16 as
-        # the model does, and scaled). The blocks also reset the scratch memory, and the first block queues the first
-        # tasks: the router's (tiles of tokens times slices of the input), whose last one pushes the top-k tasks of the
-        # tile, whose last one pushes the scan that pushes the expert tasks; then the dense gate/up tasks.
         for t in dace.map[0:T]:
-            sum_of_squares = dace.ndarray([1], dtype=dace.float32, storage=SHARED)
-            sum_of_squares[0] = 0
-            for d in dace.map[0:D] @ TB:
-                v = dace.float32(x[t, d])
-                sum_of_squares[0] += v * v
-                expert_acc[t, d] = 0
-            for r in dace.map[t : NT * BM : T] @ TB:  # The blocks reset the rows of the expert tiles together
-                row_token[r] = -1
-            token_left[t] = (K + 1) * (D // BN)  # The down tiles that add to the token: its experts', and the dense
+            prologue(
+                t, x, pre_norm, pre_norm_2, router_scale, inv_rms, x_dense, x_expert, x_router, expert_acc, row_token,
+                token_left
+            )  # fmt: skip
             if t == 0:
-                for ex in dace.map[0:E] @ TB:
-                    count[ex] = 0
-                for g in dace.map[0 : TP // BM] @ TB:
-                    dense_rows[g] = min(BM, T - g * BM)
-                    route_left[g] = RP
-                    dense_gate_up_left[g] = DI // HALF
-                top_k_left[0] = T  # A top-k task per token
-            inv = dace.float32(1) / math.sqrt(sum_of_squares[0] / D + dace.float32(eps))
-            inv_rms[t] = inv
-            for d in dace.map[0:D] @ TB:
-                n = dace.float32(x[t, d]) * inv
-                x_dense[t, d] = dace.bfloat16(n * pre_norm[d])
-                x_router[t, d] = dace.bfloat16(dace.float32(dace.bfloat16(n)) * router_scale[d] * dace.float32(root))
-                x_expert[t, d] = dace.bfloat16(n * pre_norm_2[d])
-            if t == 0:
-                # The router tasks, and the dense gate/up tasks of the first DT tiles of tokens (see ``DT``), the tiles
-                # of a chunk of the weight one after the other: they read it from L2
-                for i in dace.map[0 : TP // BM * RP + DT * (DI // HALF)] @ TB:
-                    if i < TP // BM * RP:
-                        S.append(ROUTE | (i // RP) << FIELD | i % RP)
-                    else:
-                        S.append(DENSE_GATE_UP | ((i - TP // BM * RP) % DT) << FIELD | (i - TP // BM * RP) // DT)
+                first_tasks(S, count, dense_rows, route_left, dense_gate_up_left, top_k_left)
 
         for task, p in dace.consume(S, num_pes):
+            # The fields of the task (see ``append_to_stream``), as symbols: they offset the operands of the task
             kind = task >> KIND << KIND
-            g = (task >> FIELD) & MASK  # Tile of rows
-            ch = task & MASK  # Chunk of columns
-            r0 = g * BM
+            g = (task >> FIELD) & MASK
+            ch = task & MASK
             # The product of a tile overwrites the operands that tile_matmul staged: sharing their memory leaves room for
             # a third thread block on each multiprocessor (whose loads cover the gaps between the tasks of the others)
             staging = dace.ndarray([STAGING], dtype=dace.bfloat16, storage=SHARED)
-            work = staging.reshape(WORKSPACE)
-            tile = staging[0 : BM * BN].reshape([BM, BN])
-            last = dace.ndarray([1], dtype=dace.int32, storage=SHARED)  # Whether a task is the last of a group
-            if kind == EXPERT_GATE_UP or kind == DENSE_GATE_UP:
-                if kind == EXPERT_GATE_UP:
-                    e = tile_expert[g]
-                    nr = tile_rows[g]
-                    tm.tile_matmul(x_expert, expert_gate_up_p[e, ch], tile, work, nr, row_token[r0 : r0 + BM])
-                else:
-                    nr = dense_rows[g]
-                    tm.tile_matmul(x_dense[r0 : r0 + BM, :], dense_gate_up_p[ch], tile, work, nr)
-                # GELU(gate) * up, where the columns of the tile are 64 of the gate projection, then 64 of the up one (of
-                # the rows that the down tasks read)
-                for i in dace.map[0 : nr * HALF] @ TB:
-                    gate = dace.float32(tile[i // HALF, i % HALF])
-                    inner = dace.float32(gelu_c) * (gate + dace.float32(0.044715) * gate * gate * gate)
-                    gelu = dace.float32(0.5) * gate * (dace.float32(1) + math.tanh(inner))
-                    h = dace.bfloat16(
-                        dace.float32(dace.bfloat16(gelu)) * dace.float32(tile[i // HALF, HALF + i % HALF])
-                    )
-                    if kind == EXPERT_GATE_UP:
-                        h_expert[r0 + i // HALF, ch * HALF + i % HALF] = h
-                    else:
-                        h_dense[r0 + i // HALF, ch * HALF + i % HALF] = h
-                # The last gate/up task of an expert (all its tiles), or of 64 dense rows, pushes their down tasks (the
-                # tiles of an expert's chunk one after the other: they read it from L2)
-                for _ in dace.map[0:1] @ TB:
-                    if kind == EXPERT_GATE_UP:
-                        left = dace.atomic.add(gate_up_left, e, -1)
-                    else:
-                        left = dace.atomic.add(dense_gate_up_left, g, -1)
-                    last[0] = left == 1
-                if last[0] == 1:
-                    if kind == EXPERT_GATE_UP:
-                        n = (count[e] + BM - 1) // BM  # Tiles of the expert
-                        for i in dace.map[0 : n * (D // BN)] @ TB:
-                            S.append(EXPERT_DOWN | (tile_start[e] + i % n) << FIELD | i // n)
-                    else:
-                        for c in dace.map[0 : D // BN] @ TB:
-                            S.append(DENSE_DOWN | g << FIELD | c)
+            if kind == EXPERT_GATE_UP:
+                expert_gate_up(
+                    S, g, ch, staging, x_expert, expert_gate_up_p, tile_expert, tile_rows, tile_start, row_token,
+                    count, gate_up_left, h_expert
+                )  # fmt: skip
+            elif kind == DENSE_GATE_UP:
+                dense_gate_up(S, g, ch, staging, x_dense, dense_gate_up_p, dense_rows, dense_gate_up_left, h_dense)
             elif kind == EXPERT_DOWN:
-                e = tile_expert[g]
-                nr = tile_rows[g]
-                tm.tile_matmul(h_expert[r0 : r0 + BM, :], expert_down_p[e, ch], tile, work, nr)
-                # Scaled by the routing weight, added to the output of the row's token
-                for r, col in dace.map[0:nr, 0:BN] @ TB:
-                    expert_acc[row_token[r0 + r], ch * BN + col] += dace.float32(tile[r, col]) * row_weight[r0 + r]
-                for r in dace.map[0:nr] @ TB:
-                    left = dace.atomic.add(token_left, row_token[r0 + r], -1)
-                    if left == 1:  # The last tile that adds to the token
-                        S.append(OUTPUT | row_token[r0 + r] << FIELD)
+                expert_down(
+                    S, g, ch, staging, h_expert, expert_down_p, tile_expert, tile_rows, row_token, row_weight,
+                    expert_acc, token_left
+                )  # fmt: skip
             elif kind == DENSE_DOWN:
-                nr = dense_rows[g]
-                tm.tile_matmul(h_dense[r0 : r0 + BM, :], down_p[ch], tile, work, nr)
-                for r, col in dace.map[0:nr, 0:BN] @ TB:
-                    dense_out[r0 + r, ch * BN + col] = tile[r, col]
-                for r in dace.map[0:nr] @ TB:
-                    left = dace.atomic.add(token_left, r0 + r, -1)
-                    if left == 1:
-                        S.append(OUTPUT | (r0 + r) << FIELD)
+                dense_down(S, g, ch, staging, h_dense, down_p, dense_rows, dense_out, token_left)
             elif kind == ROUTE:
-                # Part of the router logits of 64 tokens: a slice of the input times the router weight
-                nr = dense_rows[g]
-                tm.tile_matmul(
-                    x_router[r0 : r0 + BM, ch * ROUTE_STEP : ch * ROUTE_STEP + ROUTE_STEP],
-                    router_p[0, ch * RS : ch * RS + RS],
-                    route_partial[ch * TP + r0 : ch * TP + r0 + BM, :],
-                    work,
-                    nr,
-                )
-                # The last part of these tokens pushes their top-k tasks
-                for _ in dace.map[0:1] @ TB:
-                    left = dace.atomic.add(route_left, g, -1)
-                    last[0] = left == 1
-                if last[0] == 1:
-                    for r in dace.map[0:nr] @ TB:
-                        S.append(TOP_K | (r0 + r) << FIELD)
+                route(S, g, ch, staging, x_router, router_p, route_partial, dense_rows, route_left)
             elif kind == TOP_K:
-                # The experts of token g. A thread per expert, then per chosen expert.
-                chosen = dace.ndarray([K], dtype=dace.int32, storage=SHARED)
-                # The token's router logits (the projection rounds them to bfloat16)
-                for expert in dace.map[0:E] @ TB:
-                    total = dace.float32(0)
-                    for part in range(RP):
-                        total += route_partial[part * TP + g, expert]
-                    tile[0, expert] = dace.bfloat16(total)
-                # The rank of every logit (ties: lowest index first): the top k are chosen
-                for expert in dace.map[0:E] @ TB:
-                    v = dace.float32(tile[0, expert])
-                    rank = 0
-                    for other in range(E):
-                        v2 = dace.float32(tile[0, other])
-                        if v2 > v or (v2 == v and other < expert):
-                            rank += 1
-                    if rank < K:
-                        chosen[rank] = expert
-                # The softmax probabilities of the chosen experts, renormalized (the softmax denominator cancels) and
-                # scaled; claim a row of every chosen expert
-                for j in dace.map[0:K] @ TB:
-                    top = dace.float32(tile[0, chosen[0]])
-                    total = dace.float32(0)
-                    for j2 in range(K):
-                        total += math.exp(dace.float32(tile[0, chosen[j2]]) - top)
-                    c = chosen[j]
-                    pair_expert[g, j] = c
-                    pair_weight[g, j] = math.exp(dace.float32(tile[0, c]) - top) / total * per_expert_scale[c]
-                    pair_slot[g, j] = dace.atomic.add(count, c, 1)
-                for _ in dace.map[0:1] @ TB:
-                    left = dace.atomic.add(top_k_left, 0, -1)
-                    if left == 1:  # The last token
-                        S.append(SCAN)
+                top_k(
+                    S,
+                    g,
+                    staging,
+                    route_partial,
+                    per_expert_scale,
+                    count,
+                    pair_expert,
+                    pair_slot,
+                    pair_weight,
+                    top_k_left,
+                )
             elif kind == OUTPUT:
-                # Normalize both branches of token g, add, normalize, add the residual (in bfloat16, as the model).
-                # The sum of the branches stays in the staging memory.
-                sums = dace.ndarray([3], dtype=dace.float32, storage=SHARED)
-                sums[:] = 0
-                for d in dace.map[0:D] @ TB:
-                    v1 = dace.float32(dense_out[g, d])
-                    v2 = dace.float32(dace.bfloat16(expert_acc[g, d]))
-                    sums[0] += v1 * v1
-                    sums[1] += v2 * v2
-                inv1 = dace.float32(1) / math.sqrt(sums[0] / D + dace.float32(eps))
-                inv2 = dace.float32(1) / math.sqrt(sums[1] / D + dace.float32(eps))
-                for d in dace.map[0:D] @ TB:
-                    b1 = dace.float32(dace.bfloat16(dace.float32(dense_out[g, d]) * inv1 * post_norm_1[d]))
-                    b2 = dace.float32(
-                        dace.bfloat16(dace.float32(dace.bfloat16(expert_acc[g, d])) * inv2 * post_norm_2[d])
-                    )
-                    v = dace.bfloat16(b1 + b2)
-                    staging[d] = v
-                    sums[2] += dace.float32(v) * dace.float32(v)
-                inv = dace.float32(1) / math.sqrt(sums[2] / D + dace.float32(eps))
-                for d in dace.map[0:D] @ TB:
-                    normalized = dace.float32(dace.bfloat16(dace.float32(staging[d]) * inv * post_norm[d]))
-                    out[g, d] = dace.bfloat16(dace.float32(x[g, d]) + normalized)
-            else:  # SCAN
-                # Every expert's rows start at a whole tile. A thread per expert.
-                tiles_of = dace.ndarray([E], dtype=dace.int32, storage=SHARED)
-                for expert in dace.map[0:E] @ TB:
-                    tiles_of[expert] = (count[expert] + BM - 1) // BM
-                for expert in dace.map[0:E] @ TB:
-                    start = 0
-                    for other in range(expert):
-                        start += tiles_of[other]
-                    tile_start[expert] = start
-                    for g2 in range(tiles_of[expert]):
-                        tile_expert[start + g2] = expert
-                        tile_rows[start + g2] = min(BM, count[expert] - g2 * BM)
-                    gate_up_left[expert] = tiles_of[expert] * (I // HALF)
-                    if expert == E - 1:
-                        num_tiles[0] = start + tiles_of[expert]
-                # The rows of every expert, sorted by expert: their tokens and routing weights
-                for j, tok in dace.map[0:K, 0:T] @ TB:  # A thread per token (the last parameter strides)
-                    row = tile_start[pair_expert[tok, j]] * BM + pair_slot[tok, j]
-                    row_token[row] = tok
-                    row_weight[row] = pair_weight[tok, j]
-                # The expert gate/up tasks, alternating with the dense gate/up tasks that the prologue left (as many of
-                # each as there are, then the rest), so that the dense products overlap the expert ones. The tasks of
-                # an expert are those of its tiles (j // (I // HALF) is one of them).
-                num_expert = num_tiles[0] * (I // HALF)
-                num_dense = (TP // BM - DT) * (DI // HALF)
-                both = 2 * min(num_expert, num_dense)
-                for i in dace.map[0 : num_expert + num_dense] @ TB:
-                    dense = False
-                    j = i - num_dense
-                    if i < both:
-                        dense = i % 2 == 1
-                        j = i // 2
-                    elif num_dense > num_expert:
-                        dense = True
-                        j = i - num_expert
-                    if dense:
-                        S.append(DENSE_GATE_UP | (DT + j % (TP // BM - DT)) << FIELD | j // (TP // BM - DT))
-                    else:  # The tiles of an expert's chunk one after the other: they read it from L2
-                        te = tile_expert[j // (I // HALF)]
-                        local = j - tile_start[te] * (I // HALF)
-                        n = (count[te] + BM - 1) // BM
-                        S.append(EXPERT_GATE_UP | (tile_start[te] + local % n) << FIELD | local // n)
+                output(g, staging, x, dense_out, expert_acc, post_norm_1, post_norm_2, post_norm, out)
+            else:
+                scan(
+                    S, count, pair_expert, pair_slot, pair_weight, tile_start, tile_expert, tile_rows, num_tiles,
+                    row_token, row_weight, gate_up_left
+                )  # fmt: skip
 
     sdfg = moe_block.to_sdfg(simplify=True)
     to_gpu(sdfg)
