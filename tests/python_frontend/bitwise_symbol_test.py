@@ -1,5 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Bitwise operators on symbols (e.g., map parameters) in programs: bit fields packed into one integer."""
+"""Bitwise operators on symbols (e.g., map parameters) in programs: bit fields packed into one integer; integer
+expressions of symbols and constants."""
+
+import math
 
 import numpy as np
 
@@ -56,7 +59,54 @@ def test_bitwise_functions_fold_and_print_as_operators():
     assert symbolic.pystr_to_symbolic("~t").subs(t, 5) == -6
 
 
+@dace.program
+def first_part(out: dace.int64[N]):
+    for i in range(N):
+        if i < N // 4 * 2:  # A symbolic condition with an integer division
+            out[i] = 1
+
+
+def test_integer_division_in_symbolic_condition():
+    out = np.zeros(10, dtype=np.int64)
+    first_part(out=out, N=10)
+    assert np.array_equal(out, (np.arange(10) < 10 // 4 * 2).astype(np.int64))
+
+
+KIND = 7 << 40  # A tag above 32 bits
+
+
+@dace.program
+def tagged(values: dace.int32[N], out: dace.int64[N]):
+    for i in dace.map[0:N]:
+        v = values[i]
+        out[i] = KIND | v << 4
+
+
+def test_wide_constant_with_narrow_scalar():
+    """A Python integer that does not fit the other operand's type widens the result (it is not cast down)."""
+    values = np.arange(1, 9, dtype=np.int32)
+    out = np.zeros(8, dtype=np.int64)
+    tagged(values=values, out=out, N=8)
+    assert np.array_equal(out, KIND | values.astype(np.int64) << 4)
+
+
+@dace.program
+def gelu_tanh(x: dace.float32[N], y: dace.float32[N]):
+    for i in dace.map[0:N]:
+        y[i] = math.tanh(x[i])
+
+
+def test_math_tanh():
+    x = np.linspace(-3, 3, 16, dtype=np.float32)
+    y = np.zeros_like(x)
+    gelu_tanh(x=x, y=y, N=16)
+    assert np.allclose(y, np.tanh(x), atol=1e-6)
+
+
 if __name__ == "__main__":
     test_bitwise_operators_on_symbols()
     test_bitwise_symbol_in_tasklet()
     test_bitwise_functions_fold_and_print_as_operators()
+    test_integer_division_in_symbolic_condition()
+    test_wide_constant_with_narrow_scalar()
+    test_math_tanh()
