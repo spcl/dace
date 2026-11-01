@@ -19,6 +19,7 @@
 #else
 #include <cooperative_groups.h>
 #include <cuda/atomic>
+#include <cuda/std/chrono>
 #include <cuda_runtime.h>
 #define gpuLaunchKernel cudaLaunchKernel
 #define gpuMalloc cudaMalloc
@@ -199,35 +200,55 @@ class GPUStream {
  * one block (see ``init_block``); its atomics and fences are block-scoped.
  *
  * The capacity is a power of two. A push into a full queue waits for a pop,
- * so the capacity must hold every element that can be queued at once. Compile
- * with ``DACE_GPUQUEUE_DEBUG`` to trap with the queue state on a wait that
- * does not end (e.g., a full queue).
+ * so the capacity must hold every element that can be queued at once: when
+ * every processing element waits to push, none pops. A wait that lasts
+ * ``DACE_GPUQUEUE_TIMEOUT_NS`` nanoseconds (10 s by default; 0 waits forever)
+ * prints the queue state and stops the kernel, which fails with an error.
  */
-#ifdef DACE_GPUQUEUE_DEBUG
+#ifndef DACE_GPUQUEUE_TIMEOUT_NS
+#define DACE_GPUQUEUE_TIMEOUT_NS 10000000000ull
+#endif
 #ifdef __HIPCC__
 #define DACE_GPUQUEUE_TRAP() __builtin_trap()
 #else
 #define DACE_GPUQUEUE_TRAP() __trap()
 #endif
+// Waits while ``cond`` holds; reads the clock only once waiting
 #define DACE_GPUQUEUE_WAIT(cond, what, pos, seq)                                  \
   do {                                                                           \
-    unsigned long long __spins = 0;                                              \
-    while (cond) {                                                               \
-      if (++__spins == (1ull << 24)) {                                           \
-        printf("GPUQueue %s stuck: pos %u seq %u head %u tail %u queued %d "      \
-               "pending %u\n", what, pos, seq, load(head()), load(tail()),        \
-               (int)load(queued()), load(pending_counter()));                    \
-        DACE_GPUQUEUE_TRAP();                                                    \
+    if (cond) {                                                                  \
+      const unsigned long long __start = gpu_queue_now_ns();                     \
+      while (cond) {                                                             \
+        /* The first wait that times out reports and stops the kernel */         \
+        if (DACE_GPUQUEUE_TIMEOUT_NS > 0 &&                                      \
+            gpu_queue_now_ns() - __start > DACE_GPUQUEUE_TIMEOUT_NS &&           \
+            atomicExch(&gpu_queue_timed_out, 1u) == 0u) {                        \
+          printf("GPUQueue %s waited for %llu ms: pos %u seq %u head %u tail %u " \
+                 "queued %d pending %u capacity %u. A push that waits is a "     \
+                 "full queue: give the stream a larger buffer size.\n", what,    \
+                 DACE_GPUQUEUE_TIMEOUT_NS / 1000000ull, pos, seq, load(head()),   \
+                 load(tail()), (int)load(queued()), load(pending_counter()),      \
+                 m_mask + 1);                                                    \
+          DACE_GPUQUEUE_TRAP();                                                  \
+        }                                                                        \
+        gpu_queue_yield();                                                       \
       }                                                                          \
-      gpu_queue_yield();                                                         \
     }                                                                            \
   } while (0)
+
+// Whether a wait of the kernel timed out (each compiled program has its own)
+static __device__ unsigned int gpu_queue_timed_out = 0;
+
+// Wall-clock time in nanoseconds (the clock rate of the GPU varies)
+__device__ __forceinline__ unsigned long long gpu_queue_now_ns() {
+#if defined(__HIPCC__)
+  return wall_clock64() * 10ull;  // A constant 100 MHz clock
 #else
-#define DACE_GPUQUEUE_WAIT(cond, what, pos, seq) \
-  do {                                          \
-    while (cond) gpu_queue_yield();             \
-  } while (0)
+  return ::cuda::std::chrono::duration_cast<::cuda::std::chrono::nanoseconds>(
+             ::cuda::std::chrono::system_clock::now().time_since_epoch())
+      .count();
 #endif
+}
 
 // The thread waited for may be in the same warp: sleeping lets the scheduler
 // run it (a tight spin can starve it)

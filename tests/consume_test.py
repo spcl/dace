@@ -1,5 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import subprocess
+import sys
+import textwrap
 
 import numpy as np
 import pytest
@@ -194,6 +197,43 @@ def test_consume_loop_needs_processing_element():
         elements_only.to_sdfg()
 
 
+# One processing element pushes two elements into a queue of one: the second push waits for a pop that never comes
+_OVERFLOWING_QUEUE = textwrap.dedent("""
+    import dace
+
+    @dace.program
+    def overflowing():
+        S = dace.define_stream(dace.int32, 1)
+        for _ in dace.map[0:1]:
+            S.append(1)
+        for x, _ in dace.consume(S, 1):
+            S.append(x)
+            S.append(x)
+
+    sdfg = overflowing.to_sdfg(simplify=True)
+    for desc in sdfg.arrays.values():
+        desc.storage = dace.StorageType.GPU_Global
+    for state in sdfg.states():
+        for node, scope in state.scope_dict().items():
+            if scope is None and isinstance(node, dace.nodes.MapEntry):
+                node.map.schedule = dace.ScheduleType.GPU_Device
+            elif scope is None and isinstance(node, dace.nodes.ConsumeEntry):
+                node.consume.schedule = dace.ScheduleType.GPU_Device
+                node.consume.num_pes = 1
+    sdfg()
+""")
+
+
+@pytest.mark.gpu
+def test_full_gpu_queue_fails():
+    """A push that waits on a full GPU queue for too long stops the kernel with the queue state, rather than hanging.
+    The failed kernel leaves the GPU context of the process unusable, hence a process of its own."""
+    child = subprocess.run([sys.executable, "-c", _OVERFLOWING_QUEUE], capture_output=True, text=True, timeout=300)
+    assert child.returncode != 0
+    assert "GPUQueue push waited for" in child.stdout + child.stderr
+    assert "larger buffer size" in child.stdout + child.stderr
+
+
 if __name__ == "__main__":
     test_fibonacci_recursion_using_consume()
     test_fibonacci_recursion_using_consume_program()
@@ -201,3 +241,4 @@ if __name__ == "__main__":
     test_fibonacci_recursion_using_consume_loop()
     test_consume_loop_of_elements()
     test_consume_loop_needs_processing_element()
+    test_full_gpu_queue_fails()
