@@ -93,7 +93,9 @@ if(DACE_ENABLE_CUDA)
   # Device code follows the host standard: the two share headers, so a mismatch is an ODR violation.
   set(CMAKE_CUDA_STANDARD ${DACE_CPP_STANDARD})
   set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-  set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+  # Whole-program device compilation: with relocatable device code (-rdc), ptxas adds out-of-line fallbacks (calls)
+  # to warp-synchronous operations whose convergence it cannot prove
+  set(CMAKE_CUDA_SEPARABLE_COMPILATION OFF)
   # Device code calls host constexpr functions (std::numeric_limits and friends). Here rather than in
   # the configurable nvcc arguments, since overriding those must not turn it off.
   string(APPEND CMAKE_CUDA_FLAGS " --expt-relaxed-constexpr")
