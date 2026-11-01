@@ -13,6 +13,7 @@ from dace import Memlet, SDFG, SDFGState, dtypes, symbolic
 from dace.frontend.python.common import DaceSyntaxError
 
 import ast
+import copy
 import functools
 from collections.abc import Callable
 from numbers import Number
@@ -145,6 +146,9 @@ def _atomic_update(
         target = Memlet(data=array, subset=", ".join(subscript), wcr=wcr)
         element = "__target"
     target.dynamic = True
+    # The old value is a read of the element, which the tasklet takes from its output connector: an input edge of the
+    # element (unused in the code) shows the read to analyses, so that the writes before the update stay live
+    inputs["__element"] = Memlet(data=array, subset=copy.deepcopy(target.subset), dynamic=True)
     old, _ = sdfg.add_scalar("atomic_old", desc.dtype, transient=True, find_new_name=True)
     # Assigning the connector of a dynamic write-conflict resolution updates atomically; reading it gives the old value
     tasklet = state.add_tasklet(
