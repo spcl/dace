@@ -120,7 +120,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
         x_expert: dace.bfloat16[T, D],
         h_dense: dace.bfloat16[TP, DI],
         h_expert: dace.bfloat16[NT * BM, I],
-        gate_up_left: dace.int32[NT],
+        gate_up_left: dace.int32[E],  # Of every expert's gate/up tasks
         dense_gate_up_left: dace.int32[TP // BM],
         dense_out: dace.bfloat16[TP, D],
         expert_acc: dace.float32[T, D],
@@ -252,12 +252,14 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                                 he[row0 + r, col0 * HALF + col] = hv
                             else:
                                 hd[row0 + r, col0 * HALF + col] = hv
-                # The last gate/up task of these rows pushes their down tasks (a thread each)
+                # The last gate/up task of an expert (all its tiles), or of 64 dense rows, pushes their down tasks (the
+                # tiles of an expert's chunk one after the other: they read it from L2)
                 last = dace.ndarray([1], dtype=dace.int32, storage=SHARED)
                 for _ in dace.map[0:1] @ TB:
                     with dace.tasklet:
                         k << kind
                         tile_index << g
+                        te << tile_expert(-1)[:]
                         _published_e << h_expert(-1)[:, :]  # After the block wrote its part (release)
                         _published_d << h_dense(-1)[:, :]
                         gl >> gate_up_left(-1, lambda a, b: a + b)[:]
@@ -265,7 +267,8 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                         is_last >> last[0]
                         left = 0
                         if k == EXPERT_GATE_UP:
-                            left = gl[tile_index] = -1
+                            ex = te[tile_index]
+                            left = gl[ex] = -1
                         else:
                             left = dl[tile_index] = -1
                         is_last = left == 1
@@ -273,12 +276,18 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                     with dace.tasklet:
                         k << kind
                         tile_index << g
+                        te << tile_expert(-1)[:]
+                        ts << tile_start(-1)[:]
+                        cnt << count(-1)[:]
                         is_last << last[0]
                         dn >> S(-1)
-                        if is_last and w * 32 + lane < D // BN:
+                        if is_last:
                             if k == EXPERT_GATE_UP:
-                                dn = EXPERT_DOWN | tile_index << FIELD | w * 32 + lane
-                            else:
+                                ex = te[tile_index]
+                                n = (cnt[ex] + BM - 1) // BM
+                                for i in range(w * 32 + lane, n * (D // BN), THREADS):
+                                    dn = EXPERT_DOWN | (ts[ex] + i % n) << FIELD | i // n
+                            elif w * 32 + lane < D // BN:
                                 dn = DENSE_DOWN | tile_index << FIELD | w * 32 + lane
             elif kind == EXPERT_DOWN:
                 e = tile_expert[g]
@@ -517,7 +526,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                         ps << pair_slot(-1)[:, :]
                         pw << pair_weight(-1)[:, :]
                         ts << tile_start[:]
-                        ntl << num_tiles[0]
+                        tos << tiles_of[:]
                         rt >> row_token(-1)[:]
                         rw >> row_weight(-1)[:]
                         gl >> gate_up_left(-1)[:]
@@ -528,8 +537,8 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                             row = ts[ex] * BM + ps[tok, j]
                             rt[row] = tok
                             rw[row] = pw[tok, j]
-                        for g2 in range(w * 32 + lane, ntl, THREADS):
-                            gl[g2] = I // HALF
+                        for ex in range(w * 32 + lane, E, THREADS):
+                            gl[ex] = tos[ex] * (I // HALF)
                 # The expert gate/up tasks, alternating with the dense gate/up tasks that the prologue left (as many of
                 # each as there are, then the rest), so that the dense products overlap the expert ones. The tasks of
                 # an expert are those of its tiles (j // (I // HALF) is one of them).
@@ -646,7 +655,7 @@ def workspace(config: gemma4_moe.Config, tokens: int) -> dict:
         x_expert=zeros(tokens, D, dtype=torch.bfloat16),
         h_dense=zeros(padded, config.dense_intermediate, dtype=torch.bfloat16),
         h_expert=zeros(tiles * BM, config.expert_intermediate, dtype=torch.bfloat16),
-        gate_up_left=zeros(tiles, dtype=torch.int32),
+        gate_up_left=zeros(config.num_experts, dtype=torch.int32),
         dense_gate_up_left=zeros(padded // BM, dtype=torch.int32),
         dense_out=zeros(padded, D, dtype=torch.bfloat16),
         expert_acc=zeros(tokens, D),
