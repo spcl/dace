@@ -225,31 +225,28 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 else:
                     nr = dense_rows[g]
                     tm.tile_matmul(x_dense[r0 : r0 + BM, :], dense_gate_up_p[ch], tile, work, nr)
-                # GELU(gate) * up, where the columns of the tile are 64 of the gate projection, then 64 of the up one
+                # GELU(gate) * up, where the columns of the tile are 64 of the gate projection, then 64 of the up one (of
+                # the rows that the down tasks read)
                 for w, lane in dace.map[0:WARPS, 0:32] @ TB:
-                    for q in range(BM * HALF // THREADS):
-                        with dace.tasklet:
-                            gv << tile[(q * THREADS + w * 32 + lane) // HALF, (q * THREADS + w * 32 + lane) % HALF]
-                            (
-                                uv
-                                << tile[
-                                    (q * THREADS + w * 32 + lane) // HALF, HALF + (q * THREADS + w * 32 + lane) % HALF
-                                ]
-                            )
-                            k << kind
-                            row0 << r0
-                            col0 << ch
-                            he >> h_expert(-1)[:, :]
-                            hd >> h_dense(-1)[:, :]
-                            gb = dace.float32(gv)
+                    with dace.tasklet:
+                        tl_in << tile[:, :]
+                        nrows << nr
+                        k << kind
+                        row0 << r0
+                        col0 << ch
+                        he >> h_expert(-1)[:, :]
+                        hd >> h_dense(-1)[:, :]
+                        for i in range(w * 32 + lane, nrows * HALF, THREADS):
+                            r = i // HALF
+                            col = i % HALF
+                            gb = dace.float32(tl_in[r, col])
                             inner = dace.float32(gelu_c) * (gb + dace.float32(0.044715) * gb * gb * gb)
                             gl = dace.float32(0.5) * gb * (dace.float32(1) + math.tanh(inner))
-                            hv = dace.bfloat16(dace.float32(dace.bfloat16(gl)) * dace.float32(uv))
-                            i = q * THREADS + w * 32 + lane
+                            hv = dace.bfloat16(dace.float32(dace.bfloat16(gl)) * dace.float32(tl_in[r, HALF + col]))
                             if k == EXPERT_GATE_UP:
-                                he[row0 + i // HALF, col0 * HALF + i % HALF] = hv
+                                he[row0 + r, col0 * HALF + col] = hv
                             else:
-                                hd[row0 + i // HALF, col0 * HALF + i % HALF] = hv
+                                hd[row0 + r, col0 * HALF + col] = hv
                 # The last gate/up task of these rows pushes their down tasks (a thread each)
                 last = dace.ndarray([1], dtype=dace.int32, storage=SHARED)
                 for _ in dace.map[0:1] @ TB:
@@ -283,17 +280,17 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 nr = tile_rows[g]
                 tm.tile_matmul(h_expert[r0 : r0 + BM, :], expert_down_p[e, ch], tile, work, nr)
                 for w, lane in dace.map[0:WARPS, 0:32] @ TB:
-                    for q in range(BM * BN // THREADS):
-                        with dace.tasklet:
-                            yv << tile[(q * THREADS + w * 32 + lane) // BN, (q * THREADS + w * 32 + lane) % BN]
-                            row0 << r0
-                            col0 << ch
-                            tok << row_token(-1)[:]
-                            rw << row_weight(-1)[:]
-                            o >> expert_acc(-1, lambda a, b: a + b)[:, :]
-                            row = row0 + (q * THREADS + w * 32 + lane) // BN
-                            if tok[row] >= 0:
-                                o[tok[row], col0 * BN + (q * THREADS + w * 32 + lane) % BN] = dace.float32(yv) * rw[row]
+                    with dace.tasklet:
+                        yt << tile[:, :]
+                        nrows << nr
+                        row0 << r0
+                        col0 << ch
+                        tok << row_token(-1)[:]
+                        rw << row_weight(-1)[:]
+                        o >> expert_acc(-1, lambda a, b: a + b)[:, :]
+                        for i in range(w * 32 + lane, nrows * BN, THREADS):
+                            row = row0 + i // BN
+                            o[tok[row], col0 * BN + i % BN] = dace.float32(yt[i // BN, i % BN]) * rw[row]
                 for w, lane in dace.map[0:WARPS, 0:32] @ TB:
                     with dace.tasklet:
                         row0 << r0
@@ -311,16 +308,14 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 nr = dense_rows[g]
                 tm.tile_matmul(h_dense[r0 : r0 + BM, :], down_p[ch], tile, work, nr)
                 for w, lane in dace.map[0:WARPS, 0:32] @ TB:
-                    for q in range(BM * BN // THREADS):
-                        with dace.tasklet:
-                            yv << tile[(q * THREADS + w * 32 + lane) // BN, (q * THREADS + w * 32 + lane) % BN]
-                            row0 << r0
-                            col0 << ch
-                            o >> dense_out(-1)[:, :]
-                            o[
-                                row0 + (q * THREADS + w * 32 + lane) // BN,
-                                col0 * BN + (q * THREADS + w * 32 + lane) % BN,
-                            ] = yv
+                    with dace.tasklet:
+                        yt << tile[:, :]
+                        nrows << nr
+                        row0 << r0
+                        col0 << ch
+                        o >> dense_out(-1)[:, :]
+                        for i in range(w * 32 + lane, nrows * BN, THREADS):
+                            o[row0 + i // BN, col0 * BN + i % BN] = yt[i // BN, i % BN]
                 for w, lane in dace.map[0:WARPS, 0:32] @ TB:
                     with dace.tasklet:
                         row0 << r0
