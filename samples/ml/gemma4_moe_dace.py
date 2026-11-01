@@ -23,7 +23,6 @@ fill each other's gaps.
 """
 
 import math
-import time
 
 import gemma4_moe
 import tile_matmul as tm
@@ -547,6 +546,9 @@ def to_gpu(sdfg: dace.SDFG) -> None:
             # The task queue: allocated once (it is empty again after every call)
             desc.storage = dace.StorageType.GPU_Global
             desc.lifetime = dace.AllocationLifetime.Persistent
+    # Without synchronizing the host at the end: on PyTorch's (default) stream, the caller synchronizes when it needs to
+    for state in sdfg.states():
+        state.nosync = True
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.MapEntry):
             if parent.parent is sdfg and parent.entry_node(node) is None:
@@ -621,20 +623,6 @@ def workspace(config: gemma4_moe.Config, tokens: int) -> dict:
     )
 
 
-def wall_ms(function, repetitions: int = 20) -> float:
-    """Median wall-clock time of ``function()`` until the GPU is idle, in milliseconds. (DaCe runs on its own
-    streams, which events on PyTorch's stream do not wait for.)"""
-    function()
-    torch.cuda.synchronize()
-    times = []
-    for _ in range(repetitions):
-        start = time.perf_counter()
-        function()
-        torch.cuda.synchronize()
-        times.append(time.perf_counter() - start)
-    return sorted(times)[repetitions // 2] * 1e3
-
-
 if __name__ == "__main__":
     import argparse
 
@@ -651,13 +639,12 @@ if __name__ == "__main__":
     )
     w = gemma4_moe.random_weights(config)
     program = build(config, args.pes)
-    # One stream: the kernels follow each other without the host synchronizing between them
-    with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=1):
+    # The default stream, as PyTorch's (see ``to_gpu``)
+    with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1):
         program = program.compile()
     weights = arguments(w)
     for tokens in args.tokens:
-        x = torch.randn(tokens, config.hidden, device="cuda", generator=torch.Generator("cuda").manual_seed(tokens))
-        x = x.to(torch.bfloat16)
+        x = gemma4_moe.random_input(config, tokens)
         out = torch.empty_like(x)
         scratch = workspace(config, tokens)
         program(x=x, out=out, **weights, **scratch)
@@ -668,9 +655,9 @@ if __name__ == "__main__":
         expected = gemma4_moe.reference(x, w, config).float()[alike]
         error = ((out.float()[alike] - expected).norm() / expected.norm()).item()
         assert error < 2e-2, f"DaCe differs from the reference (relative error {error:.2e})"
-        # Time the generated code alone (as a replayed CUDA graph would run), not Python's argument conversion
+        # The time of the kernels, by events on the stream they run on (without Python's argument conversion)
         callargs, initargs = program.construct_arguments(x=x, out=out, **weights, **scratch)
-        time_ms = wall_ms(lambda: program.fast_call(callargs, initargs))
+        time_ms = gemma4_moe.time_ms(lambda: program.fast_call(callargs, initargs))
         print(
             f"{tokens:5d} tokens: DaCe {time_ms:8.3f} ms (error {error:.1e}, {int((~alike).sum())} routed differently)"
         )

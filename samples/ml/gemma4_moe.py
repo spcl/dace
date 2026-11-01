@@ -83,6 +83,13 @@ def random_weights(config: Config, device: str = "cuda", seed: int = 0) -> Weigh
     )
 
 
+def random_input(config: Config, tokens: int, device: str = "cuda") -> torch.Tensor:
+    """The residual stream of ``tokens`` tokens, the same for every run (which experts the tokens pick, and so how
+    much of the weights a block reads, depends on it)."""
+    generator = torch.Generator(device).manual_seed(tokens)
+    return torch.randn(tokens, config.hidden, device=device, generator=generator).to(torch.bfloat16)
+
+
 def rms_norm(x: torch.Tensor, weight: torch.Tensor | None, eps: float) -> torch.Tensor:
     """Gemma 4's RMSNorm: normalizes in float32, then scales by ``weight`` (if any)."""
     y = x.float()
@@ -215,7 +222,7 @@ if __name__ == "__main__":
     config = Config()
     w = random_weights(config)
     for tokens in args.tokens:
-        x = torch.randn(tokens, config.hidden, device="cuda").to(torch.bfloat16)
+        x = random_input(config, tokens)
         expected = reference(x, w, config).float()
         for variant in (grouped, padded):
             if variant is padded:

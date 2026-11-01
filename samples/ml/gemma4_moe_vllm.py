@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
         with set_forward_context(None, vllm_config), torch.inference_mode():
             for tokens in args.tokens:
-                x = torch.randn(tokens, config.hidden, device="cuda").to(torch.bfloat16)
+                x = gemma4_moe.random_input(config, tokens)
                 # vLLM normalizes the router input in bfloat16 (the reference in float32), which can flip near-ties
                 # between the k-th and the next expert: compare the tokens that both route alike
                 _, chosen = block.router.routing_function(x, block.router(x), config.top_k, True)
