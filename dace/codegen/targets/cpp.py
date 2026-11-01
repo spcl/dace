@@ -1147,6 +1147,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         self.codegen = codegen
         self.old_value_reads = old_value_reads or set()
         self.allow_casts = True
+        self._slice_depth = 0
+        self._nested_subscripts: dict[str, str] = {}
 
     def visit_TopLevelExpr(self, node):
         # This is a DaCe shift, omit it
@@ -1173,7 +1175,12 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         # old value for a write-conflict resolution)
         declarations, _, expression = newnode.id.rstrip(";").rpartition("\n")
         assign = ast.copy_location(ast.Assign(targets=node.targets[:-1], value=ast.Name(id=expression)), node)
-        return self._after_declarations(declarations, assign)
+        # The other targets may be connectors too (e.g., ``out[i, j] = conn[k] = value``)
+        rest = self.visit(assign)
+        rest = rest if isinstance(rest, list) else [rest]
+        if not declarations:
+            return rest if len(rest) > 1 else rest[0]
+        return [ast.copy_location(ast.Expr(value=ast.Name(id=declarations.rstrip(";"))), node)] + rest
 
     @staticmethod
     def _after_declarations(declarations: str, stmt: ast.AST) -> ast.AST | list[ast.AST]:
@@ -1184,7 +1191,11 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         return [ast.copy_location(ast.Expr(value=ast.Name(id=declarations.rstrip(";"))), stmt), stmt]
 
     def _subscript_expr(self, slicenode: ast.AST, target: str) -> symbolic.SymbolicType:
-        visited_slice = self.visit(slicenode)
+        self._slice_depth += 1
+        try:
+            visited_slice = self.visit(slicenode)
+        finally:
+            self._slice_depth -= 1
 
         if isinstance(visited_slice, ast.Index):
             visited_slice = visited_slice.value
@@ -1307,7 +1318,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                     nc,
                     target,
                     cppunparse.cppunparse(value, expr_semicolon=False),
-                    indices=sym2cpp(subscript),
+                    indices=self._expand_nested(sym2cpp(subscript)),
                     dtype=dtype,
                     acq_rel=len(node.targets) > 1,  # old = conn[i] = value
                 )
@@ -1315,7 +1326,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             )
         else:
             newnode = ast.Name(
-                id=f"{target}[{sym2cpp(subscript)}] = {cppunparse.cppunparse(value, expr_semicolon=False)};"
+                id=f"{target}[{self._expand_nested(sym2cpp(subscript))}] = {cppunparse.cppunparse(value, expr_semicolon=False)};"
             )
 
         return self._replace_assignment(newnode, node)
@@ -1331,9 +1342,22 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         # subscript), as otherwise the visitor will recursively descend into
         # the new expression and modify it erroneously.
         defined = set(self.memlets.keys()) | set(self.constants.keys())
-        newnode = ast.Name(id=f"{target}[{sym2cpp(subscript, defined)}]")
+        text = f"{target}[{self._expand_nested(sym2cpp(subscript, defined))}]"
+        if self._slice_depth > 0:
+            # Nested in another subscript's index: the text is already C++ (e.g., ``/`` is integer division), so hide
+            # it behind an opaque symbol that the enclosing index expression will not re-parse as Python
+            placeholder = f"__dace_nested_subscript_{len(self._nested_subscripts)}"
+            self._nested_subscripts[placeholder] = text
+            text = placeholder
+        newnode = ast.Name(id=text)
 
         return ast.copy_location(newnode, node)
+
+    def _expand_nested(self, cpp_text: str) -> str:
+        """Replaces opaque placeholders of nested subscripts with their generated C++ text."""
+        if not self._nested_subscripts:
+            return cpp_text
+        return re.sub(r"__dace_nested_subscript_\d+", lambda m: self._nested_subscripts[m.group(0)], cpp_text)
 
     def visit_Call(self, node: ast.Call):
         # A callback is a symbol, so only a bare name can be one; ``(a * b).real()`` calls a method of an expression
