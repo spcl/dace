@@ -1692,7 +1692,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 (stream_name, stream_elem, PE_tuple, condition, chunksize) = self._parse_consume_inputs(node)
                 params = [PE_tuple, (stream_elem, self.sdfg.arrays[stream_name].dtype)]
                 map_inputs = {}
-                map_symbols = set()
+                # Processing elements run at once: an augmented assignment is a write-conflict resolution unless it
+                # addresses what only its processing element writes
+                map_symbols = {PE_tuple[0]}
                 entry, exit = state.add_consume(
                     node.name, PE_tuple, condition, chunksize=chunksize, debuginfo=self.current_lineinfo
                 )

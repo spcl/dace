@@ -290,6 +290,9 @@ class consume:
         by other processing elements at the same time; that read is relaxed (it
         may see an older value) and only decides when an element stops.
 
+        In a program, ``for element, pe in dace.consume(S, num_pes): body`` (or ``for element in ...``) is the same
+        consume scope as a function decorated with ``@dace.consumescope(S, num_pes)``; ``S.append(value)`` pushes.
+
         :param stream: The stream to pop from.
         :param processing_elements: The number of processing elements to use.
         :param condition: A custom condition for stopping to consume. If None,
