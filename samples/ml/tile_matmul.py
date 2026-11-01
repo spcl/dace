@@ -8,7 +8,8 @@ matrix is). ``b`` may also be given in slices of ``K``, as a ``K / k_step x N x 
 computed, the others are zero. With ``a_index``, row ``i`` of the product is row ``a_index[i]`` of ``a`` (a gather;
 rows whose index is negative are zero), and ``M`` is the length of ``a_index``. ``work`` is shared memory for the node
 to stage its operands in, which the caller provides so that several products in one kernel can share it (see
-``workspace_shape``). When the node finishes, ``c`` is complete for every thread of the block.
+``workspace_shape``). ``c`` may be a view of ``work``: the node writes it once it is done with its operands. When
+the node finishes, ``c`` is complete for every thread of the block.
 
 Expansions:
 
@@ -20,6 +21,7 @@ Expansions:
 """
 
 import copy
+import math
 
 import dace
 import dace.library
@@ -41,10 +43,8 @@ def _operands(node: "TileMatmul", sdfg: SDFG, state: SDFGState) -> dict[str, tup
     """The memlet and data descriptor of every connector of ``node``."""
     result = {}
     for e in state.in_edges(node):
-        if e.dst_conn == "_work":
-            continue  # The same container as the output
         result[e.dst_conn] = (e.data, sdfg.arrays[e.data.data])
-    for e in state.out_edges(node):
+    for e in state.out_edges(node):  # The workspace as written, unless no one reads it later (dead dataflow)
         result[e.src_conn] = (e.data, sdfg.arrays[e.data.data])
     return result
 
@@ -288,6 +288,7 @@ for (int kt = 0; kt < KT; ++kt) {{
     }}
 }}
 asm volatile("cp.async.wait_group 0;\\n" ::);
+__syncthreads();  // Every warp is done with the workspace, which c may alias
 #undef DACE_TM_ADDR
 #undef DACE_TM_SWZ
 
@@ -370,14 +371,17 @@ def tile_matmul(a, b, c, work, rows=None, a_index=None, warps: int = 4):
 
 if __name__ == "__main__":
     # Checks both expansions against PyTorch on tiles of a 256 x 512 x 1024 product: with b column-major, with b packed,
-    # and with gathered rows of a; for all rows, and for the first five of every tile
+    # with gathered rows of a, and with the product in the memory of the workspace; for all rows, and for the first five
+    # of every tile
     import tile_matmul as tm  # This file as a module: the frontend finds replacements by the name of their module
     import torch
 
     BM, BN, KS, STAGES = 64, 128, 32, 2
     M, N, K = 256, 512, 1024
     WORKSPACE = workspace_shape(BM, BN, KS, STAGES)
-    FORMS = 3
+    FORMS = 4
+    TILES = 3  # Of the forms, those with their own tile
+    STAGING = math.prod(WORKSPACE)
 
     b_column_major = dace.data.Array(dace.bfloat16, [K, N], strides=[1, K])
 
@@ -393,13 +397,22 @@ if __name__ == "__main__":
         for i, j in dace.map[0 : M // BM, 0 : N // BN]:
             work = dace.ndarray(WORKSPACE, dtype=dace.bfloat16, storage=dace.StorageType.GPU_Shared)
             # Beyond the static shared memory of a thread block, together with the workspace
-            tile = dace.ndarray([FORMS, BM, BN], dtype=dace.bfloat16, storage=dace.StorageType.GPU_Shared(dynamic=True))
+            tile = dace.ndarray([TILES, BM, BN], dtype=dace.bfloat16, storage=dace.StorageType.GPU_Shared(dynamic=True))
             nr = rows[0]
             tm.tile_matmul(a[i * BM : i * BM + BM, :], b[:, j * BN : j * BN + BN], tile[0], work, nr)
             tm.tile_matmul(a[i * BM : i * BM + BM, :], b_packed[j], tile[1], work, nr)
             tm.tile_matmul(a, b_packed[j], tile[2], work, nr, index[i * BM : i * BM + BM])
+            staging = dace.ndarray([STAGING], dtype=dace.bfloat16, storage=dace.StorageType.GPU_Shared(dynamic=True))
+            in_staging = staging[0 : BM * BN].reshape([BM, BN])
+            tm.tile_matmul(a[i * BM : i * BM + BM, :], b_packed[j], in_staging, staging.reshape(WORKSPACE), nr)
             for w, lane in dace.map[0:4, 0:32] @ dace.ScheduleType.GPU_ThreadBlock:
-                for q in range(FORMS * BM * BN // 128):
+                for q in range(BM * BN // 128):
+                    with dace.tasklet:
+                        t << in_staging[(q * 128 + w * 32 + lane) // BN, (w * 32 + lane) % BN]
+                        o >> c[TILES, i * BM + (q * 128 + w * 32 + lane) // BN, j * BN + (w * 32 + lane) % BN]
+                        o = t
+            for w, lane in dace.map[0:4, 0:32] @ dace.ScheduleType.GPU_ThreadBlock:
+                for q in range(TILES * BM * BN // 128):
                     with dace.tasklet:
                         t << tile[q // 64, (q % 64 * 128 + w * 32 + lane) // BN, (w * 32 + lane) % BN]
                         o >> c[q // 64, i * BM + (q % 64 * 128 + w * 32 + lane) // BN, j * BN + (w * 32 + lane) % BN]

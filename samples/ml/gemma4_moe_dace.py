@@ -37,6 +37,7 @@ THREADS = 32 * WARPS
 BM, BN = 64, 128  # Rows and columns of a tile
 K_STEP, STAGES = 32, 2  # Slices of the inner dimension that tile_matmul stages in shared memory
 WORKSPACE = tm.workspace_shape(BM, BN, K_STEP, STAGES)
+STAGING = math.prod(WORKSPACE)  # Elements of the workspace
 # A task is ``kind | tile << FIELD | chunk``, where the kinds are multiples of ``1 << KIND`` (64-bit constants)
 KIND, FIELD = 40, 20
 MASK = (1 << (KIND - FIELD)) - 1  # Of a tile or chunk
@@ -72,6 +73,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
         config.top_k,
     )
     assert D % BN == 0 and (2 * DI) % BN == 0 and (2 * I) % BN == 0 and E == BN == THREADS and D % ROUTE_STEP == 0
+    assert BM * BN <= STAGING  # The product of a tile fits where its operands are staged
     RP = D // ROUTE_STEP  # Router tasks per tile of tokens
     RS = ROUTE_STEP // K_STEP  # Packed slices of the router weight per router task
     eps = config.eps
@@ -208,8 +210,11 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
             g = (task >> FIELD) & MASK  # Tile of rows
             ch = task & MASK  # Chunk of columns
             r0 = g * BM
-            work = dace.ndarray(WORKSPACE, dtype=dace.bfloat16, storage=SHARED)
-            tile = dace.ndarray([BM, BN], dtype=dace.bfloat16, storage=SHARED)
+            # The product of a tile overwrites the operands that tile_matmul staged: sharing their memory leaves room for
+            # a third thread block on each multiprocessor (whose loads cover the gaps between the tasks of the others)
+            staging = dace.ndarray([STAGING], dtype=dace.bfloat16, storage=SHARED)
+            work = staging.reshape(WORKSPACE)
+            tile = staging[0 : BM * BN].reshape([BM, BN])
             if kind == EXPERT_GATE_UP or kind == DENSE_GATE_UP:
                 if kind == EXPERT_GATE_UP:
                     e = tile_expert[g]
@@ -629,7 +634,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--tokens", type=int, nargs="+", default=[1, 8, 64, 512, 2048])
     parser.add_argument("--small", action="store_true", help="a small configuration, for testing")
-    parser.add_argument("--pes", type=int, default=46 * 2, help="processing elements (thread blocks)")
+    # Three thread blocks per multiprocessor of an RTX 3070 (as many as the registers of the workers allow)
+    parser.add_argument("--pes", type=int, default=46 * 3, help="processing elements (thread blocks)")
     args = parser.parse_args()
 
     config = (
