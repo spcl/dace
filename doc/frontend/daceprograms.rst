@@ -98,7 +98,7 @@ Another form of iteration is the dynamic producer/consumer construct :class:`~da
 
 .. code-block:: python
 
-    for value in dace.consume(S, 4):  # 4-threaded consumption of stream ``S``
+    for value, pe in dace.consume(S, 4):  # 4-threaded consumption of stream ``S``; ``pe`` is the thread
         print(value)
 
 
