@@ -8,7 +8,7 @@ matrix is). ``b`` may also be given in slices of ``K``, as a ``K / k_step x N x 
 computed, the others are zero. With ``a_index``, row ``i`` of the product is row ``a_index[i]`` of ``a`` (a gather;
 rows whose index is negative are zero), and ``M`` is the length of ``a_index``. ``work`` is shared memory for the node
 to stage its operands in, which the caller provides so that several products in one kernel can share it (see
-``workspace_shape``).
+``workspace_shape``). When the node finishes, ``c`` is complete for every thread of the block.
 
 Expansions:
 
@@ -302,6 +302,7 @@ for (int i = 0; i < MF; ++i)
             c[row * ({cpp.sym2cpp(sc[0])}) + col * ({cpp.sym2cpp(sc[1])})] = ({ctype}) acc[i][j][2 * h];
             c[row * ({cpp.sym2cpp(sc[0])}) + (col + 1) * ({cpp.sym2cpp(sc[1])})] = ({ctype}) acc[i][j][2 * h + 1];
         }}
+__syncthreads();  // The product is complete for every thread of the block
 """
         state = sdfg.add_state(node.label)
         entry, exit_ = state.add_map(
@@ -377,7 +378,6 @@ if __name__ == "__main__":
     M, N, K = 256, 512, 1024
     WORKSPACE = workspace_shape(BM, BN, KS, STAGES)
     FORMS = 3
-    DYNAMIC_SHARED = dace.StorageType.GPU_Shared(dynamic=True)
 
     b_column_major = dace.data.Array(dace.bfloat16, [K, N], strides=[1, K])
 
@@ -393,7 +393,7 @@ if __name__ == "__main__":
         for i, j in dace.map[0 : M // BM, 0 : N // BN]:
             work = dace.ndarray(WORKSPACE, dtype=dace.bfloat16, storage=dace.StorageType.GPU_Shared)
             # Beyond the static shared memory of a thread block, together with the workspace
-            tile = dace.ndarray([FORMS, BM, BN], dtype=dace.bfloat16, storage=DYNAMIC_SHARED)
+            tile = dace.ndarray([FORMS, BM, BN], dtype=dace.bfloat16, storage=dace.StorageType.GPU_Shared(dynamic=True))
             nr = rows[0]
             tm.tile_matmul(a[i * BM : i * BM + BM, :], b[:, j * BN : j * BN + BN], tile[0], work, nr)
             tm.tile_matmul(a[i * BM : i * BM + BM, :], b_packed[j], tile[1], work, nr)
