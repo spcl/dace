@@ -464,6 +464,16 @@ def _array_array_binop(
     return out_operand
 
 
+def _constant_code(value) -> str:
+    """
+    The code of a constant operand in a tasklet. A NumPy floating-point scalar narrower than double precision keeps its
+    type: a bare literal is a double in C++, which would compute the operation in double precision.
+    """
+    if isinstance(value, (np.float16, np.float32)) and np.isfinite(value):
+        return f"dace.{np.dtype(type(value)).name}({float(value)!r})"
+    return str(value)
+
+
 def _array_const_binop(
     visitor: ProgramVisitor,
     sdfg: SDFG,
@@ -486,7 +496,7 @@ def _array_const_binop(
         right_type = dtypes.dtype_to_typeclass(type(right_operand))
         right_shape = [1]
         arguments = [left_arr, right_operand]
-        tasklet_args = ["__in1", f"({str(right_operand)})"]
+        tasklet_args = ["__in1", f"({_constant_code(right_operand)})"]
     else:
         left_arr = None
         left_type = dtypes.dtype_to_typeclass(type(left_operand))
@@ -496,7 +506,7 @@ def _array_const_binop(
         right_shape = right_arr.shape
         storage = right_arr.storage
         arguments = [left_operand, right_arr]
-        tasklet_args = [f"({str(left_operand)})", "__in2"]
+        tasklet_args = [f"({_constant_code(left_operand)})", "__in2"]
 
     restype, casting = result_type(arguments, operator)
     left_cast = casting[0]
@@ -694,13 +704,13 @@ def _scalar_const_binop(
         storage = left_scal.storage
         right_scal = None
         arguments = [left_scal, right_operand]
-        tasklet_args = ["__in1", f"({str(right_operand)})"]
+        tasklet_args = ["__in1", f"({_constant_code(right_operand)})"]
     else:
         left_scal = None
         right_scal = sdfg.arrays[right_operand]
         storage = right_scal.storage
         arguments = [left_operand, right_scal]
-        tasklet_args = [f"({str(left_operand)})", "__in2"]
+        tasklet_args = [f"({_constant_code(left_operand)})", "__in2"]
 
     restype, casting = result_type(arguments, operator)
     left_cast = casting[0]
