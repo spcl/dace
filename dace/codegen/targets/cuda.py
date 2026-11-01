@@ -170,6 +170,8 @@ class CUDACodeGen(TargetCodeGenerator):
         self._kernel_state = None
         self._kernel_grid_conditions: list[str] = []
         self._scope_has_collaborative_copy = False
+        # Thread-block maps whose body every thread of the block runs (no guard)
+        self._whole_warp_scopes: set[nodes.EntryNode] = set()
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
         self._initcode = CodeIOStream()
@@ -3427,6 +3429,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
             # element, e.g. skipping out-of-bounds threads in trailing block
             minels = brange.min_element()
             maxels = brange.max_element()
+            guarded = False
             for i, (v, minel, maxel) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
                 condition = ""
 
@@ -3452,12 +3455,16 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                 # Emit condition in code
                 if len(condition) > 0:
                     callsite_stream.write(f"if ({condition}) {{", cfg, state_id, scope_entry)
+                    guarded = True
                 else:
                     callsite_stream.write("{", cfg, state_id, scope_entry)
 
             # A map with fewer dimensions than the thread block runs on its first threads in the others
             for i in self._unmapped_block_dims(scope_map):
                 callsite_stream.write(f"if (threadIdx.{_named_idx(i)} == 0) {{", cfg, state_id, scope_entry)
+                guarded = True
+            if not guarded:
+                self._whole_warp_scopes.add(scope_entry)
 
         ##########################################################
 
@@ -3555,6 +3562,9 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
             return  # skip
 
         self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    def runs_on_whole_warps(self, scope_entry: nodes.EntryNode) -> bool:
+        return scope_entry in self._whole_warp_scopes
 
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label):
         # Other threads of the kernel may write global memory that this function only reads (e.g., before a

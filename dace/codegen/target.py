@@ -31,6 +31,16 @@ class TargetCodeGenerator:
     #: Targets set it in their constructor; use ``get_framecode_generator`` to access it.
     _frame: Optional["DaCeCodeGenerator"] = None
 
+    def runs_on_whole_warps(self, scope_entry: nodes.EntryNode) -> bool:
+        """
+        Returns whether every thread of every warp (or SIMD group) runs the body of a scope that this target
+        generates, without conditions that only some of them meet (e.g., for updates combined across a warp).
+
+        :param scope_entry: The entry node of the scope.
+        :return: False unless the target knows so.
+        """
+        return False
+
     def get_generated_codeobjects(self) -> list[CodeObject]:
         """
         Returns a list of generated ``CodeObject`` classes corresponding
