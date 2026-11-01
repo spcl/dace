@@ -2,6 +2,7 @@
 import functools
 import itertools
 import warnings
+from collections.abc import Collection
 from copy import deepcopy
 from typing import TYPE_CHECKING, Optional
 
@@ -1778,7 +1779,23 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             callsite_stream.write(f"{cdtype.ctype} {edge.src_conn};", cfg, state_id, src_node)
 
-    def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
+    def generate_nsdfg_header(
+        self,
+        sdfg,
+        cfg,
+        state,
+        state_id,
+        node,
+        memlet_references,
+        sdfg_label,
+        state_struct=True,
+        may_alias: Collection[str] = (),
+    ):
+        """
+        Returns the signature of the function of a nested SDFG.
+
+        :param may_alias: Arguments that are not ``__restrict__``, in addition to the data marked ``may_alias``.
+        """
         arguments = []
 
         if state_struct:
@@ -1796,7 +1813,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 else:
                     return ""
 
-            if aname in node.sdfg.arrays and not node.sdfg.arrays[aname].may_alias:
+            if aname in node.sdfg.arrays and not node.sdfg.arrays[aname].may_alias and aname not in may_alias:
                 restrict_args.append(make_restrict(atype))
             else:
                 restrict_args.append("")

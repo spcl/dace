@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Thread-block reductions into shared memory across the states of a kernel: one thread initializes the result, all
-threads add to it, then the threads read it. The threads of the block synchronize between the states."""
+"""Communication between the threads of a block: thread-block reductions into shared memory across the states of a
+kernel (one thread initializes the result, all threads add to it, then the threads read it), and global memory that
+one thread writes and the others read after synchronizing."""
 
 import numpy as np
 import pytest
@@ -74,5 +75,52 @@ def test_block_reduction_across_states():
     assert np.allclose(cp.asnumpy(out), np.broadcast_to(expected, (rows, WIDTH)))
 
 
+@dace.program
+def broadcast_count(A: dace.int32[N, WIDTH], counts: dace.int32[N], out: dace.int32[N, THREADS]):
+    for i in dace.map[0:N]:
+        # One thread counts (long enough for the other threads to arrive at the synchronization first)
+        for _ in dace.map[0:1] @ TB:
+            with dace.tasklet:
+                row << A[i, :]
+                c >> counts[i]
+                total = 0
+                for j in range(WIDTH):
+                    if row[j] > 0:
+                        total = total + 1
+                c = total
+        # Every thread reads the count that thread wrote
+        for th in dace.map[0:THREADS] @ TB:
+            with dace.tasklet:
+                c << counts[i]
+                o >> out[i, th]
+                o = c
+
+
+@pytest.mark.gpu
+def test_global_memory_written_by_one_thread():
+    sdfg = broadcast_count.to_sdfg(simplify=True)
+    for desc in sdfg.arrays.values():
+        if not desc.transient:
+            desc.storage = dace.StorageType.GPU_Global
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry) and node.map.params == ["i"]:
+            node.map.schedule = dace.ScheduleType.GPU_Device
+    code = next(c for c in sdfg.generate_code() if c.language == "cu").clean_code
+    # The threads communicate through "counts", which the compiler must then not assume is modified by nobody else
+    kernel = code[code.index("__global__") :]
+    kernel = kernel[: kernel.index("{")]
+    assert "int * counts" in kernel and "__restrict__ counts" not in kernel
+    assert "const int * __restrict__ A" in kernel  # Only read: keeps its qualifiers
+
+    import cupy as cp  # Only GPU tests use CuPy
+
+    rows = 64
+    A = np.random.default_rng(0).integers(-5, 5, (rows, WIDTH)).astype(np.int32)
+    out = cp.zeros((rows, THREADS), dtype=cp.int32)
+    sdfg(A=cp.asarray(A), counts=cp.zeros(rows, dtype=cp.int32), out=out, N=rows)
+    assert np.array_equal(cp.asnumpy(out), np.repeat((A > 0).sum(axis=1, keepdims=True), THREADS, axis=1))
+
+
 if __name__ == "__main__":
     test_block_reduction_across_states()
+    test_global_memory_written_by_one_thread()
