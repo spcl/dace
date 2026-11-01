@@ -65,6 +65,146 @@ def test_index_from_data():
 
 
 @dace.program
+def atomic_add(values: dace.int64[N], target: dace.int64[1], old: dace.int64[N]):
+    for i in dace.map[0:N]:
+        old[i] = dace.atomic.add(target, 0, values[i])
+
+
+@dace.program
+def atomic_sub(values: dace.int64[N], target: dace.int64[1], old: dace.int64[N]):
+    for i in dace.map[0:N]:
+        old[i] = dace.atomic.sub(target, 0, values[i])
+
+
+@dace.program
+def atomic_min(values: dace.int64[N], target: dace.int64[1], old: dace.int64[N]):
+    for i in dace.map[0:N]:
+        old[i] = dace.atomic.min(target, 0, values[i])
+
+
+@dace.program
+def atomic_max(values: dace.int64[N], target: dace.int64[1], old: dace.int64[N]):
+    for i in dace.map[0:N]:
+        old[i] = dace.atomic.max(target, 0, values[i])
+
+
+@dace.program
+def atomic_and(values: dace.int64[N], target: dace.int64[1], old: dace.int64[N]):
+    for i in dace.map[0:N]:
+        old[i] = dace.atomic.and_(target, 0, values[i])
+
+
+@dace.program
+def atomic_or(values: dace.int64[N], target: dace.int64[1], old: dace.int64[N]):
+    for i in dace.map[0:N]:
+        old[i] = dace.atomic.or_(target, 0, values[i])
+
+
+@dace.program
+def atomic_xor(values: dace.int64[N], target: dace.int64[1], old: dace.int64[N]):
+    for i in dace.map[0:N]:
+        old[i] = dace.atomic.xor(target, 0, values[i])
+
+
+@dace.program
+def atomic_exch(values: dace.int64[N], target: dace.int64[1], old: dace.int64[N]):
+    for i in dace.map[0:N]:
+        old[i] = dace.atomic.exch(target, 0, values[i])
+
+
+@dace.program
+def atomic_prod(values: dace.float64[N], target: dace.float64[1], old: dace.float64[N]):
+    for i in dace.map[0:N]:
+        old[i] = dace.atomic.prod(target, 0, values[i])
+
+
+# Programs in which every iteration updates one element and keeps its old value
+UPDATING_PROGRAMS = {
+    "add": atomic_add,
+    "sub": atomic_sub,
+    "min": atomic_min,
+    "max": atomic_max,
+    "and_": atomic_and,
+    "or_": atomic_or,
+    "xor": atomic_xor,
+    "exch": atomic_exch,
+    "prod": atomic_prod,
+}
+
+
+@pytest.mark.parametrize(
+    "name, initial, fold",
+    [
+        ("add", 3, lambda t, v: t + v.sum()),
+        ("sub", 3, lambda t, v: t - v.sum()),
+        ("min", 50, lambda t, v: min(t, v.min())),
+        ("max", -50, lambda t, v: max(t, v.max())),
+        ("and_", -1, lambda t, v: np.bitwise_and.reduce(v, initial=t)),
+        ("or_", 0, lambda t, v: np.bitwise_or.reduce(v, initial=t)),
+        ("xor", 5, lambda t, v: np.bitwise_xor.reduce(v, initial=t)),
+    ],
+)
+def test_standard_updates(name, initial, fold):
+    """Every old value is the element before some update, and the final element combines all updates."""
+    values = np.random.default_rng(7).integers(-40, 40, 64)
+    target = np.array([initial])
+    old = np.zeros(64, np.int64)
+    UPDATING_PROGRAMS[name](values=values, target=target, old=old, N=64)
+    assert target[0] == fold(initial, values)
+    assert old[0] == initial or initial in old  # The first update sees the initial value
+
+    python_target, python_old = np.array([initial]), np.zeros(64, np.int64)  # The same updates in plain Python
+    for i in range(64):
+        python_old[i] = vars(dace.atomic)[name].__func__(python_target, 0, values[i])
+    assert python_target[0] == target[0]
+
+
+def test_product():
+    values = np.random.default_rng(8).uniform(0.9, 1.1, 32)
+    target, old = np.ones(1), np.zeros(32)
+    UPDATING_PROGRAMS["prod"](values=values, target=target, old=old, N=32)
+    assert np.isclose(target[0], values.prod())
+    assert 1.0 in old
+
+
+def test_exchange():
+    """Exchanges pass the element along: the old values and the final one are the initial value and all the others."""
+    values = np.arange(1, 33, dtype=np.int64)
+    target, old = np.zeros(1, np.int64), np.zeros(32, np.int64)
+    UPDATING_PROGRAMS["exch"](values=values, target=target, old=old, N=32)
+    assert sorted([*old, target[0]]) == list(range(33))
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("name", ["min", "and_", "exch", "prod"])
+def test_gpu_updates(name):
+    """On GPUs: 64-bit integers, which atomic functions take as ``long long``, and products, which compare and swap."""
+    sdfg = UPDATING_PROGRAMS[name].to_sdfg(simplify=True)
+    sdfg.name = f"gpu_{sdfg.name}"
+    sdfg.apply_gpu_transformations()
+    n = 4096
+    rng = np.random.default_rng(9)
+    if name == "prod":
+        values, target = rng.uniform(0.999, 1.001, n), np.ones(1)
+    elif name == "exch":
+        values, target = np.arange(1, n + 1, dtype=np.int64), np.zeros(1, np.int64)
+    else:
+        values, target = rng.integers(1, 1 << 40, n), np.array([(1 << 41) if name == "min" else -1], np.int64)
+    initial = target[0]
+    old = np.zeros(n, values.dtype)
+    sdfg(values=values, target=target, old=old, N=n)
+    if name == "exch":
+        assert sorted([*old, target[0]]) == list(range(n + 1))
+    elif name == "prod":
+        assert np.isclose(target[0], values.prod())
+        assert len(set(old.tolist())) == n  # No update is lost: each sees the element after the ones before it
+    elif name == "min":
+        assert target[0] == values.min() and initial in old
+    else:
+        assert target[0] == np.bitwise_and.reduce(values, initial=initial) and initial in old
+
+
+@dace.program
 def high_water_marks(values: dace.int32[N], mark: dace.int32[1], before: dace.int32[N]):
     for i in dace.map[0:N]:
         before[i] = dace.atomic.custom(lambda a, b: max(a, b), mark, 0, values[i])
@@ -113,7 +253,9 @@ def test_python_semantics():
     counters = np.array([5, 7])
     assert dace.atomic.add(counters, 1, -2) == 7
     assert dace.atomic.custom(lambda a, b: a * b, counters, 0, 3) == 5
-    assert np.array_equal(counters, [15, 5])
+    assert dace.atomic.min(counters, 0, 20) == 15
+    assert dace.atomic.exch(counters, 1, 9) == 5
+    assert np.array_equal(counters, [15, 9])
 
 
 def test_defined_statically():
@@ -125,6 +267,12 @@ if __name__ == "__main__":
     test_last_arriver()
     test_tickets_from_scalars()
     test_index_from_data()
+    for name, initial, fold in [("add", 3, lambda t, v: t + v.sum()), ("min", 50, lambda t, v: min(t, v.min()))]:
+        test_standard_updates(name, initial, fold)
+    test_product()
+    for name in ["min", "and_", "exch", "prod"]:
+        test_gpu_updates(name)
+    test_exchange()
     test_custom_maximum()
     test_custom_product()
     test_custom_requires_lambda()

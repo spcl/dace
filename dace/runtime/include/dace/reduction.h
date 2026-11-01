@@ -170,6 +170,31 @@ namespace dace {
     };
     // End of specialization
 
+#if defined(DACE_USE_GPU_ATOMICS)
+    /// The types that GPU atomic functions take for ``T``: they have ``long long`` and ``unsigned long long`` overloads,
+    /// but not ``long`` and ``unsigned long`` (``int64_t`` and ``uint64_t`` on Linux)
+    template <typename T>
+    struct _gpu_atomic {
+        using type = T;  // For minimum and maximum
+        using bits = T;  // For bitwise operations and exchange, which have no signed 64-bit overloads
+    };
+    template <>
+    struct _gpu_atomic<long> {
+        using type = std::conditional_t<sizeof(long) == 8, long long, int>;
+        using bits = std::conditional_t<sizeof(long) == 8, unsigned long long, int>;
+    };
+    template <>
+    struct _gpu_atomic<unsigned long> {
+        using type = std::conditional_t<sizeof(long) == 8, unsigned long long, unsigned int>;
+        using bits = type;
+    };
+    template <>
+    struct _gpu_atomic<long long> {
+        using type = long long;
+        using bits = unsigned long long;
+    };
+#endif
+
     template <typename T>
     struct _wcr_fixed<ReductionType::Sum, T> {
 
@@ -245,7 +270,7 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return wcr_custom<T>::reduce(
+                return wcr_custom<T>::reduce_atomic(
                     _wcr_fixed<ReductionType::Product, T>(), ptr, value);
             #elif defined (_OPENMP) && _OPENMP >= 201107
                 T old;
@@ -271,7 +296,8 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicMin(ptr, value);
+                using A = typename _gpu_atomic<T>::type;
+                return T(atomicMin(reinterpret_cast<A *>(ptr), A(value)));
             #else
                 return wcr_custom<T>::reduce_atomic(
                     _wcr_fixed<ReductionType::Min, T>(), ptr, value);
@@ -287,7 +313,8 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicMax(ptr, value);
+                using A = typename _gpu_atomic<T>::type;
+                return T(atomicMax(reinterpret_cast<A *>(ptr), A(value)));
             #else
                 return wcr_custom<T>::reduce_atomic(
                     _wcr_fixed<ReductionType::Max, T>(), ptr, value);
@@ -378,7 +405,8 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicAnd(ptr, value);
+                using A = typename _gpu_atomic<T>::bits;
+                return T(atomicAnd(reinterpret_cast<A *>(ptr), A(value)));
             #elif defined (_OPENMP) && _OPENMP >= 201107
                 T old;
                 #pragma omp atomic capture
@@ -430,7 +458,8 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicOr(ptr, value);
+                using A = typename _gpu_atomic<T>::bits;
+                return T(atomicOr(reinterpret_cast<A *>(ptr), A(value)));
             #elif defined (_OPENMP) && _OPENMP >= 201107
                 T old;
                 #pragma omp atomic capture
@@ -482,7 +511,8 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicXor(ptr, value);
+                using A = typename _gpu_atomic<T>::bits;
+                return T(atomicXor(reinterpret_cast<A *>(ptr), A(value)));
             #elif defined (_OPENMP) && _OPENMP >= 201107
                 T old;
                 #pragma omp atomic capture
@@ -507,7 +537,8 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
-                return atomicExch(ptr, value);
+                using A = typename _gpu_atomic<T>::bits;
+                return T(atomicExch(reinterpret_cast<A *>(ptr), A(value)));
             #else
                 T old;
                 #pragma omp critical

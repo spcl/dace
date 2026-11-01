@@ -509,21 +509,58 @@ class atomic:
 
     In a program, ``old = dace.atomic.add(array, index, value)`` is a write-conflict resolution whose old value is read:
     its memory ordering is acquire-release, so the processing element that sees a counter reach its last value also
-    sees what the others wrote before they updated it. ``dace.atomic.custom`` updates with any function of the old and
-    the new value, e.g., ``dace.atomic.custom(lambda a, b: max(a, b), array, index, value)``. Outside of programs, the
-    updates are plain Python.
+    sees what the others wrote before they updated it. Updates that the target has an atomic instruction for use it;
+    others (such as ``prod`` on GPUs) are compare-and-swap loops. ``dace.atomic.custom`` updates with any function of
+    the old and the new value. Outside of programs, the updates are plain Python.
+
+    Every function takes the array to update, the index of the element (an integer or a tuple of integers) and the
+    value to update it with, and returns the old value of the element.
     """
 
     @staticmethod
     def add(array: numpy.ndarray, index: Any, value: Any) -> Any:
-        """Adds ``value`` to ``array[index]``.
-
-        :param array: The array to update.
-        :param index: The index of the element: an integer or a tuple of integers.
-        :param value: The value to add.
-        :return: The old value of ``array[index]``.
-        """
+        """Adds ``value`` to ``array[index]``; returns the old value."""
         return atomic.custom(lambda a, b: a + b, array, index, value)
+
+    @staticmethod
+    def sub(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Subtracts ``value`` from ``array[index]``; returns the old value."""
+        return atomic.custom(lambda a, b: a - b, array, index, value)
+
+    @staticmethod
+    def prod(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Multiplies ``array[index]`` by ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: a * b, array, index, value)
+
+    @staticmethod
+    def min(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to the minimum of it and ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: b if b < a else a, array, index, value)
+
+    @staticmethod
+    def max(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to the maximum of it and ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: b if b > a else a, array, index, value)
+
+    @staticmethod
+    def and_(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to its bitwise AND with ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: a & b, array, index, value)
+
+    @staticmethod
+    def or_(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to its bitwise OR with ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: a | b, array, index, value)
+
+    @staticmethod
+    def xor(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to its bitwise XOR with ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: a ^ b, array, index, value)
+
+    @staticmethod
+    def exch(array: numpy.ndarray, index: Any, value: Any) -> Any:
+        """Sets ``array[index]`` to ``value``; returns the old value."""
+        return atomic.custom(lambda a, b: b, array, index, value)
 
     @staticmethod
     def custom(op: Callable[[Any, Any], Any], array: numpy.ndarray, index: Any, value: Any) -> Any:
