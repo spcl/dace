@@ -531,10 +531,14 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                         for g2 in range(w * 32 + lane, ntl, THREADS):
                             gl[g2] = I // HALF
                 # The expert gate/up tasks, alternating with the dense gate/up tasks that the prologue left (as many of
-                # each as there are, then the rest), so that the dense products overlap the expert ones
+                # each as there are, then the rest), so that the dense products overlap the expert ones. The tasks of
+                # an expert are those of its tiles (j // (I // HALF) is one of them).
                 for w, lane in dace.map[0:WARPS, 0:32] @ TB:
                     with dace.tasklet:
                         ntl << num_tiles[0]
+                        te << tile_expert(-1)[:]
+                        ts << tile_start(-1)[:]
+                        cnt << count(-1)[:]
                         _published_t << row_token(-1)[:]
                         _published_w << row_weight(-1)[:]
                         _published_l << gate_up_left(-1)[:]
@@ -555,8 +559,11 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                                 j = i - num_expert
                             if dense:
                                 nxt = DENSE_GATE_UP | (1 + j % (TP // BM - 1)) << FIELD | j // (TP // BM - 1)
-                            else:
-                                nxt = EXPERT_GATE_UP | (j // (I // HALF)) << FIELD | j % (I // HALF)
+                            else:  # The tiles of an expert's chunk one after the other: they read it from L2
+                                ex = te[j // (I // HALF)]
+                                local = j - ts[ex] * (I // HALF)
+                                n = (cnt[ex] + BM - 1) // BM
+                                nxt = EXPERT_GATE_UP | (ts[ex] + local % n) << FIELD | local // n
 
     sdfg = moe_block.to_sdfg(simplify=True)
     to_gpu(sdfg)
