@@ -1298,6 +1298,21 @@ class Map:
         dtype=bool, category="Scheduling", desc="Force a call to the __syncthreads for the map", default=False
     )
 
+    gpu_strided = Property(
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="Run the map in strides of the thread block (GPU_ThreadBlock: each thread loops over the iterations "
+        "``thread, thread + block size, ...``), or of the grid (GPU_Device: as many blocks as fit on the device at "
+        "once loop over the iterations), so that its range is independent of the block or grid size (it may be "
+        "larger, or depend on data). Lowered before code generation (see ``LowerStridedGPUMaps``), into a "
+        "GPU_Persistent map for a device map, which this property then sizes by occupancy.",
+        serialize_if=lambda m: (
+            m.schedule
+            in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_Persistent)
+        ),
+    )
+
     allow_chiplet_threadblock_distribution = Property(
         dtype=bool,
         default=True,
