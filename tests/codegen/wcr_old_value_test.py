@@ -134,6 +134,29 @@ def test_claim_slots():
     assert np.array_equal(np.sort(result[: count[0]]), np.sort(values[values > 0]))
 
 
+def test_chained_into_connectors():
+    """The old values go to other connectors: an element of a two-dimensional array, through a chain."""
+
+    @dace.program
+    def claim_slots(keys: dace.int32[N, 2], count: dace.int32[4], slots: dace.int32[N, 2]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                k << keys[i, :]
+                c >> count(-1, lambda a, b: a + b)[:]
+                s >> slots(-1)[:, :]
+                for j in range(2):
+                    s[i, j] = c[k[j]] = 1
+
+    n = 100
+    keys = np.random.default_rng(0).integers(0, 4, (n, 2), dtype=np.int32)
+    count = np.zeros(4, np.int32)
+    slots = np.full((n, 2), -1, np.int32)
+    claim_slots(keys=keys, count=count, slots=slots)
+    assert np.array_equal(count, np.bincount(keys.ravel(), minlength=4))
+    for key in range(4):  # Every key's slots are 0, 1, ..., its count - 1
+        assert np.array_equal(np.sort(slots[keys == key]), np.arange(count[key]))
+
+
 @dace.program
 def last_arriver(data: dace.int32[P], counters: dace.int32[R], errors: dace.int32[1]):
     """In every round, each producer reads all data (caching it), writes its own element, and decrements the counter
@@ -191,5 +214,6 @@ if __name__ == "__main__":
     test_custom_reduction()
     test_unread_update_is_relaxed()
     test_claim_slots()
+    test_chained_into_connectors()
     test_last_arriver_sees_all_writes()
     test_last_arriver_sees_all_writes_gpu()
