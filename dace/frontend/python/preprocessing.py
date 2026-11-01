@@ -15,6 +15,7 @@ import sympy
 
 import dace
 from dace import data, dtypes, symbolic, utils
+from dace.attr_enum import ExtensibleAttributeEnum
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.common import DaceSyntaxError, SDFGClosure, SDFGConvertible, StringLiteral
@@ -772,7 +773,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 return node
 
             always_inline = is_always_inline(global_func)
-            if self.resolve_functions or always_inline:
+            if self.resolve_functions or always_inline or is_value_type(global_func):
                 global_val = astutils.evalnode(node, self.globals)
             else:
                 global_val = node
@@ -791,8 +792,13 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         if global_val is not node:
             # Without this check, casts don't generate code
             if not isinstance(global_val, dtypes.typeclass):
+                # Values that are not literals (e.g., attribute enum members) are kept in the globals
                 newnode = self.global_value_to_node(
-                    global_val, parent_node=node, qualname=astutils.unparse(node), recurse=True
+                    global_val,
+                    parent_node=node,
+                    qualname=astutils.unparse(node.func if is_value_type(global_func) else node),
+                    recurse=True,
+                    keep_object=is_value_type(global_func),
                 )
                 if newnode is not None:
                     return newnode
@@ -1305,6 +1311,16 @@ class ExpressionInliner(ast.NodeTransformer):
         return _convert_to_ast(contents)
 
 
+def is_value_type(func: Any) -> bool:
+    """
+    Returns True if ``func`` constructs an immutable value from constants, such as an attribute enum template
+    (e.g., ``dace.StorageType.GPU_Shared``), so that calls to it can be evaluated at parse time.
+
+    :param func: The evaluated callee.
+    """
+    return isinstance(func, ExtensibleAttributeEnum) and func.is_template
+
+
 class CallTreeResolver(ast.NodeVisitor):
     def __init__(self, closure: SDFGClosure, globals: dict[str, Any]) -> None:
         self.closure = closure
@@ -1753,6 +1769,9 @@ def preprocess_dace_program(
 
     # Filter remaining global variables according to type and scoping rules
     program_globals = {k: v for k, v in global_vars.items() if k not in argtypes}
+
+    # Objects kept by the resolver (``keep_object``) live only in the resolved globals
+    program_globals.update({k: v for k, v in resolved.items() if k not in global_vars})
 
     # Fill in data descriptors from closure arrays
     argtypes.update({arrname: v[1] for arrname, v in closure_resolver.closure.closure_arrays.items()})

@@ -484,6 +484,21 @@ def test_request_beyond_the_device_raises(capfd):
     )
 
 
+def test_inline_storage_constructor():
+    """A storage type can be instantiated inside a program, without binding it to a global first."""
+
+    @dace.program
+    def prog(A: dace.float64[32] @ S.GPU_Global):
+        for _ in dace.map[0:1] @ dace.ScheduleType.GPU_Device:
+            s = dace.ndarray([32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared(dynamic=True))
+            s[:] = 1
+            A[:] = s
+
+    sdfg = prog.to_sdfg()
+    assert _placement(sdfg, "s") is True
+    assert sdfg.arrays["s"].storage == S.GPU_Shared(dynamic=True)
+
+
 if __name__ == "__main__":
     test_storage_type_attribute()
     for storage in (S.GPU_Shared, S.GPU_Shared(dynamic=True), S.GPU_Shared(dynamic=False)):
@@ -493,6 +508,7 @@ if __name__ == "__main__":
     test_static_and_dynamic_beyond_the_default_limit()
     test_static_containers_are_aligned()
     test_explicit_placement()
+    test_inline_storage_constructor()
     test_static_placement_of_symbolic_size_raises()
     test_symbolic_size_is_placed_dynamically()
     test_size_known_only_in_kernel_raises()
