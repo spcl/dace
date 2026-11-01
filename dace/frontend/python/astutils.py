@@ -254,9 +254,9 @@ def unparse(node):
         v = StringIO()
         ExtUnparser(node, file=v)
         return v.getvalue().strip()
-    # Support for SymPy expressions
+    # Support for SymPy expressions (with DaCe's functions, such as integer division and bitwise operators)
     if isinstance(node, sympy.Basic):
-        return sympy.printing.pycode(node)
+        return symbolic.symstr(node)
     # Support for numerical constants
     if isinstance(node, (numbers.Number, numpy.bool_)):
         return str(node)
