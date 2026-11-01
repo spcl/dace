@@ -139,6 +139,40 @@ def test_warp_aggregated_shared_atomics():
 
 
 @dace.program
+def strided_sums(A: dace.float64[N, WIDTH], out: dace.float64[N]):
+    for i in dace.map[0:N]:
+        total = dace.ndarray([1], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
+        total[0] = 0
+        for th in dace.map[0:THREADS] @ TB:
+            part = dace.float64(0)
+            for j in range(th, WIDTH, THREADS):
+                part += A[i, j]
+            total[0] += part  # In a nested SDFG of the thread-block map
+        out[i] = total[0]
+
+
+@pytest.mark.gpu
+def test_warp_aggregated_atomics_of_statements():
+    sdfg = strided_sums.to_sdfg(simplify=True)
+    for desc in sdfg.arrays.values():
+        if not desc.transient:
+            desc.storage = dace.StorageType.GPU_Global
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry) and node.map.params == ["i"]:
+            node.map.schedule = dace.ScheduleType.GPU_Device
+    code = next(c for c in sdfg.generate_code() if c.language == "cu").clean_code
+    assert code.count("warp_combine(") == 1
+
+    import cupy as cp  # Only GPU tests use CuPy
+
+    rows = 16
+    A = np.random.default_rng(0).random((rows, WIDTH))
+    out = cp.zeros(rows)
+    sdfg(A=cp.asarray(A), out=out, N=rows)
+    assert np.allclose(cp.asnumpy(out), A.sum(axis=1))
+
+
+@dace.program
 def broadcast_count(A: dace.int32[N, WIDTH], counts: dace.int32[N], out: dace.int32[N, THREADS]):
     for i in dace.map[0:N]:
         # One thread counts (long enough for the other threads to arrive at the synchronization first)
@@ -188,3 +222,4 @@ if __name__ == "__main__":
     test_block_reduction_across_states()
     test_global_memory_written_by_one_thread()
     test_warp_aggregated_shared_atomics()
+    test_warp_aggregated_atomics_of_statements()
