@@ -1364,16 +1364,9 @@ def weakly_connected_component(dfg, node_in_component: Node) -> StateSubgraphVie
         if node in seen:
             continue
         seen.add(node)
+        # Follow edges in both directions, so that, e.g., the other inputs of a successor are included
         to_search.extend(dfg.successors(node))
-    to_search = [node_in_component]
-    seen.remove(node_in_component)
-    while to_search:
-        node = to_search.pop()
-        if node in seen:
-            continue
-        seen.add(node)
-        for succ in dfg.predecessors(node):
-            to_search.append(succ)
+        to_search.extend(dfg.predecessors(node))
     subgraph = StateSubgraphView(dfg, seen)
     return subgraph
 
