@@ -5,7 +5,8 @@
 in which ``K`` is the contiguous dimension of both (``a`` row-major, ``b`` column-major, as the transpose of a weight
 matrix is). ``b`` may also be given in slices of ``K``, as a ``K / k_step x N x k_step`` array (``b[k, n]`` is
 ``b[k // k_step, n, k % k_step]``): weights packed so, once, are read contiguously. The first ``rows`` rows of ``c`` are
-computed, the others are zero. ``work`` is shared memory for the node
+computed, the others are zero. With ``a_index``, row ``i`` of the product is row ``a_index[i]`` of ``a`` (a gather;
+rows whose index is negative are zero), and ``M`` is the length of ``a_index``. ``work`` is shared memory for the node
 to stage its operands in, which the caller provides so that several products in one kernel can share it (see
 ``workspace_shape``).
 
@@ -82,10 +83,17 @@ def _nested_sdfg(node: "TileMatmul", parent_sdfg: SDFG, parent_state: SDFGState)
         info[conn] = (shape, strides, desc.dtype)
     if "_rows" in operands:
         sdfg.add_scalar("_rows", operands["_rows"][1].dtype, storage=operands["_rows"][1].storage)
+    if "_a_index" in operands:
+        memlet, desc = operands["_a_index"]
+        sdfg.add_array("_a_index", memlet.subset.size(), desc.dtype, storage=desc.storage, strides=desc.strides[-1:])
+        info["_a_index"] = (memlet.subset.size(), desc.strides[-1:], desc.dtype)
     (m, k), (m2, n2) = info["_a"][0], info["_c"][0]
+    if "_a_index" in info:
+        m = info["_a_index"][0][0]
     k2, n, _ = _b_matrix(info["_b"][0])
     if (k != k2) == True or (m != m2) == True or (n != n2) == True:
         raise ValueError(f"tile_matmul shapes do not match: {info['_a'][0]} @ {info['_b'][0]} -> {info['_c'][0]}")
+    info["m"] = m
     return sdfg, info
 
 
@@ -99,9 +107,10 @@ class ExpandPure(ExpandTransformation):
     @staticmethod
     def expansion(node: "TileMatmul", parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
         sdfg, info = _nested_sdfg(node, parent_sdfg, parent_state)
-        (m, k) = info["_a"][0]
+        m, k = info["m"], info["_a"][0][1]
         _, n, slice_width = _b_matrix(info["_b"][0])
         b_element = "b[kk, j]" if slice_width is None else f"b[kk // {slice_width}, j, kk % {slice_width}]"
+        gather = "_a_index" in sdfg.arrays
         threads = node.warps * WARP_SIZE
         rows = "_rows" if "_rows" in sdfg.arrays else str(m)
         state = sdfg.add_state(node.label)
@@ -110,12 +119,15 @@ for idx in range(w * {WARP_SIZE} + lane, {m} * {n}, {threads}):
     i = idx // {n}
     j = idx % {n}
     s = dace.float32(0)
-    if i < nrows:
+    row = {"a_index[i]" if gather else "i"}
+    if i < nrows and row >= 0:
         for kk in range({k}):
-            s = s + dace.float32(a[i, kk]) * dace.float32({b_element})
+            s = s + dace.float32(a[row, kk]) * dace.float32({b_element})
     c[i, j] = s
 """
         inputs = {"a": Memlet.from_array("_a", sdfg.arrays["_a"]), "b": Memlet.from_array("_b", sdfg.arrays["_b"])}
+        if gather:
+            inputs["a_index"] = Memlet.from_array("_a_index", sdfg.arrays["_a_index"])
         if "_rows" in sdfg.arrays:
             inputs["nrows"] = Memlet("_rows[0]")
         else:
@@ -143,7 +155,8 @@ class ExpandMMA(ExpandTransformation):
     @staticmethod
     def expansion(node: "TileMatmul", parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
         sdfg, info = _nested_sdfg(node, parent_sdfg, parent_state)
-        (m, k), sa = info["_a"][0], info["_a"][1]
+        m, k, sa = info["m"], info["_a"][0][1], info["_a"][1]
+        gather = "_a_index" in sdfg.arrays
         _, n, slice_width = _b_matrix(info["_b"][0])
         sb = info["_b"][1]
         sc, ctype = info["_c"][1], info["_c"][2].ctype
@@ -171,10 +184,10 @@ class ExpandMMA(ExpandTransformation):
             )
         if slice_width is not None and slice_width != k_step:
             raise ValueError(f"The slices of operand b ({slice_width}) must be as wide as the workspace's ({k_step})")
-        if slice_width is None:  # Column n, from row k0
-            b_address = f"b + (r - M) * ({cpp.sym2cpp(sb[1])}) + k0 + c * 8"
-        else:  # Slice k0 / KS, row n
-            b_address = f"b + (k0 / KS) * ({cpp.sym2cpp(sb[0])}) + (r - M) * ({cpp.sym2cpp(sb[1])}) + c * 8"
+        # A slice from k0 starts k0 elements into a row of a, and k0 elements (or k0 / KS slices) into b
+        a_row = "a_index[r]" if gather else "r"
+        b_offset = "k0" if slice_width is None else f"(k0 / KS) * ({cpp.sym2cpp(sb[0])})"
+        b_column = cpp.sym2cpp(sb[1])
         # A row of a slice is ``k_step`` elements, i.e., ``chunks`` 16-byte chunks. Chunks are swizzled (XOR with the
         # row) so that the eight rows ``ldmatrix`` reads at once, and the rows ``cp.async`` writes, hit distinct banks.
         chunks = k_step // 8
@@ -189,20 +202,38 @@ const uint32_t smem = (uint32_t) __cvta_generic_to_shared(work);
 #define DACE_TM_SWZ(r, c) ((c) ^ ({swizzle}))
 #define DACE_TM_ADDR(s, r, c) (smem + ((((s) * (M + N) + (r)) * CHUNKS + DACE_TM_SWZ(r, c)) << 4))
 
-// Copies the slice of A and B starting at k0 into stage s (rows of A beyond nrows are zero-filled, without reading)
+// The chunks of every slice this thread copies: where they start in A and B (null for rows of A that are
+// zero-filled: beyond nrows, or with a negative index)
+constexpr int A_COPIES = (M * CHUNKS + THREADS - 1) / THREADS, B_COPIES = (N * CHUNKS + THREADS - 1) / THREADS;
+const {info["_a"][2].ctype} *a_src[A_COPIES];
+const {info["_b"][2].ctype} *b_src[B_COPIES];
+#pragma unroll
+for (int j = 0; j < A_COPIES; ++j) {{
+    const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
+    const int row = (i < M * CHUNKS && r < nrows) ? (int)({a_row}) : -1;
+    a_src[j] = row >= 0 ? a + row * ({cpp.sym2cpp(sa[0])}) + c * 8 : nullptr;
+}}
+#pragma unroll
+for (int j = 0; j < B_COPIES; ++j) {{
+    const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
+    b_src[j] = b + r * ({b_column}) + c * 8;
+}}
+
+// Copies the slice of A and B starting at k0 into stage s
 auto load_stage = [&](int s, int k0) {{
     #pragma unroll
-    for (int i = tid; i < (M + N) * CHUNKS; i += THREADS) {{
-        const int r = i / CHUNKS, c = i % CHUNKS;
-        const void *src;
-        int bytes = 16;
-        if (r < M) {{
-            src = a + r * ({cpp.sym2cpp(sa[0])}) + k0 + c * 8;
-            if (r >= nrows) {{ src = a; bytes = 0; }}
-        }} else {{
-            src = {b_address};
-        }}
-        asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\\n" :: "r"(DACE_TM_ADDR(s, r, c)), "l"(src), "r"(bytes));
+    for (int j = 0; j < A_COPIES; ++j) {{
+        const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
+        if (M * CHUNKS % THREADS == 0 || i < M * CHUNKS)
+            asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\\n"
+                         :: "r"(DACE_TM_ADDR(s, r, c)), "l"(a_src[j] ? a_src[j] + k0 : a), "r"(a_src[j] ? 16 : 0));
+    }}
+    #pragma unroll
+    for (int j = 0; j < B_COPIES; ++j) {{
+        const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
+        if (N * CHUNKS % THREADS == 0 || i < N * CHUNKS)
+            asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\\n"
+                         :: "r"(DACE_TM_ADDR(s, M + r, c)), "l"(b_src[j] + {b_offset}));
     }}
 }};
 
@@ -278,9 +309,9 @@ for (int i = 0; i < MF; ++i)
             {"w": f"0:{warps}", "lane": f"0:{WARP_SIZE}"},
             schedule=dtypes.ScheduleType.GPU_ThreadBlock,
         )
-        inputs = {"a", "b"} | ({"_rows_in"} if "_rows" in sdfg.arrays else set())
+        inputs = {"a", "b"} | ({"_rows_in"} if "_rows" in sdfg.arrays else set()) | ({"a_index"} if gather else set())
         tasklet = state.add_tasklet(f"{node.label}_mma", inputs, {"c", "work"}, code, language=dtypes.Language.CPP)
-        for conn, name in (("a", "_a"), ("b", "_b"), ("_rows_in", "_rows")):
+        for conn, name in (("a", "_a"), ("b", "_b"), ("_rows_in", "_rows"), ("a_index", "_a_index")):
             if conn in inputs:
                 state.add_memlet_path(
                     state.add_read(name),
@@ -306,41 +337,47 @@ class TileMatmul(nodes.LibraryNode):
 
     warps = properties.Property(dtype=int, default=4, desc="Warps of the thread block that computes the product")
 
-    def __init__(self, name: str, warps: int = 4, rows: bool = False, **kwargs):
+    def __init__(self, name: str, warps: int = 4, rows: bool = False, gather: bool = False, **kwargs):
         # The workspace is scratch memory, read and written (an output alone would be dead to dataflow analysis)
-        inputs = {"_a", "_b", "_work"} | ({"_rows"} if rows else set())
+        inputs = {"_a", "_b", "_work"} | ({"_rows"} if rows else set()) | ({"_a_index"} if gather else set())
         super().__init__(name, inputs=inputs, outputs={"_c", "_work"}, **kwargs)
         self.warps = warps
 
 
 @oprepo.replaces("tile_matmul.tile_matmul")
-def tile_matmul_libnode(pv, sdfg: SDFG, state: SDFGState, a: str, b: str, c: str, work: str, rows=None, warps=4):
+def tile_matmul_libnode(
+    pv, sdfg: SDFG, state: SDFGState, a: str, b: str, c: str, work: str, rows=None, a_index=None, warps=4
+):
     """Frontend replacement of ``tile_matmul``."""
     if rows is not None and not isinstance(rows, str):
         raise TypeError("tile_matmul takes the number of rows as a scalar container (or None, for all rows)")
-    node = TileMatmul("tile_matmul", warps=warps, rows=rows is not None)
+    node = TileMatmul("tile_matmul", warps=warps, rows=rows is not None, gather=a_index is not None)
     state.add_node(node)
-    for conn, name in (("_a", a), ("_b", b), ("_work", work)) + ((("_rows", rows),) if rows is not None else ()):
+    optional = (("_rows", rows), ("_a_index", a_index))
+    for conn, name in (("_a", a), ("_b", b), ("_work", work)) + tuple(o for o in optional if o[1] is not None):
         state.add_edge(state.add_read(name), None, node, conn, Memlet.from_array(name, sdfg.arrays[name]))
     for conn, name in (("_c", c), ("_work", work)):
         state.add_edge(node, conn, state.add_write(name), None, Memlet.from_array(name, sdfg.arrays[name]))
     return []
 
 
-def tile_matmul(a, b, c, work, rows=None, warps: int = 4):
-    """``c = a @ b`` for the first ``rows`` rows of ``a``, computed by the whole thread block (see the module
-    documentation). For use in DaCe programs, inside GPU kernels."""
+def tile_matmul(a, b, c, work, rows=None, a_index=None, warps: int = 4):
+    """``c = a @ b`` (or ``a[a_index] @ b``) for the first ``rows`` rows, computed by the whole thread block (see the
+    module documentation). For use in DaCe programs, inside GPU kernels."""
     raise NotImplementedError("tile_matmul is only available in DaCe programs")
 
 
 if __name__ == "__main__":
-    # Checks both expansions and both forms of b against PyTorch, on tiles of a 256 x 512 x 1024 product
+    # Checks both expansions against PyTorch on tiles of a 256 x 512 x 1024 product: with b column-major, with b packed,
+    # and with gathered rows of a; for all rows, and for the first five of every tile
     import tile_matmul as tm  # This file as a module: the frontend finds replacements by the name of their module
     import torch
 
     BM, BN, KS, STAGES = 64, 128, 32, 2
     M, N, K = 256, 512, 1024
     WORKSPACE = workspace_shape(BM, BN, KS, STAGES)
+    FORMS = 3
+    DYNAMIC_SHARED = dace.StorageType.GPU_Shared(dynamic=True)
 
     b_column_major = dace.data.Array(dace.bfloat16, [K, N], strides=[1, K])
 
@@ -349,17 +386,20 @@ if __name__ == "__main__":
         a: dace.bfloat16[M, K],
         b: b_column_major,
         b_packed: dace.bfloat16[N // BN, K // KS, BN, KS],
+        index: dace.int32[M],
         rows: dace.int32[1],
-        c: dace.bfloat16[2, M, N],
+        c: dace.bfloat16[FORMS, M, N],
     ):
         for i, j in dace.map[0 : M // BM, 0 : N // BN]:
             work = dace.ndarray(WORKSPACE, dtype=dace.bfloat16, storage=dace.StorageType.GPU_Shared)
-            tile = dace.ndarray([2, BM, BN], dtype=dace.bfloat16, storage=dace.StorageType.GPU_Shared)
+            # Beyond the static shared memory of a thread block, together with the workspace
+            tile = dace.ndarray([FORMS, BM, BN], dtype=dace.bfloat16, storage=DYNAMIC_SHARED)
             nr = rows[0]
             tm.tile_matmul(a[i * BM : i * BM + BM, :], b[:, j * BN : j * BN + BN], tile[0], work, nr)
             tm.tile_matmul(a[i * BM : i * BM + BM, :], b_packed[j], tile[1], work, nr)
+            tm.tile_matmul(a, b_packed[j], tile[2], work, nr, index[i * BM : i * BM + BM])
             for w, lane in dace.map[0:4, 0:32] @ dace.ScheduleType.GPU_ThreadBlock:
-                for q in range(2 * BM * BN // 128):
+                for q in range(FORMS * BM * BN // 128):
                     with dace.tasklet:
                         t << tile[q // 64, (q % 64 * 128 + w * 32 + lane) // BN, (w * 32 + lane) % BN]
                         o >> c[q // 64, i * BM + (q % 64 * 128 + w * 32 + lane) // BN, j * BN + (w * 32 + lane) % BN]
@@ -368,6 +408,7 @@ if __name__ == "__main__":
     a = torch.randn(M, K, device="cuda").to(torch.bfloat16)
     b_t = torch.randn(N, K, device="cuda").to(torch.bfloat16)
     b_packed = b_t.view(N // BN, BN, K // KS, KS).transpose(1, 2).contiguous()
+    index = torch.randint(-1, M, (M,), dtype=torch.int32, device="cuda")  # -1: a missing row
     for implementation in tm.TileMatmul.implementations:
         sdfg = product.to_sdfg(simplify=True)
         for desc in sdfg.arrays.values():
@@ -379,12 +420,14 @@ if __name__ == "__main__":
             elif isinstance(node, tm.TileMatmul):
                 node.implementation = implementation
         for rows in (BM, 5):
-            c = torch.zeros(2, M, N, device="cuda", dtype=torch.bfloat16)
-            sdfg(a=a, b=b_t.T, b_packed=b_packed, rows=torch.tensor([rows], dtype=torch.int32, device="cuda"), c=c)
-            expected = (a.float() @ b_t.float().T).view(M // BM, BM, N)
-            expected[:, rows:] = 0
-            expected = expected.view(M, N)
-            for layout in range(2):
-                error = ((c[layout].float() - expected).norm() / expected.norm()).item()
-                assert error < 1e-2, f"{implementation}, {rows} rows, layout {layout}: relative error {error:.2e}"
+            c = torch.zeros(FORMS, M, N, device="cuda", dtype=torch.bfloat16)
+            nrows = torch.tensor([rows], dtype=torch.int32, device="cuda")
+            sdfg(a=a, b=b_t.T, b_packed=b_packed, index=index, rows=nrows, c=c)
+            gathered = torch.where(index[:, None] >= 0, a[index.clamp(min=0).long()], 0)
+            for form in range(FORMS):
+                expected = ((gathered if form == 2 else a).float() @ b_t.float().T).view(M // BM, BM, N)
+                expected[:, rows:] = 0
+                expected = expected.view(M, N)
+                error = ((c[form].float() - expected).norm() / expected.norm()).item()
+                assert error < 1e-2, f"{implementation}, {rows} rows, form {form}: relative error {error:.2e}"
         print(f"{implementation}: correct")

@@ -104,7 +104,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
         row_token: dace.int32[NT * BM],
         row_weight: dace.float32[NT * BM],
         x_dense: dace.bfloat16[TP, D],
-        x_expert: dace.bfloat16[NT * BM, D],
+        x_expert: dace.bfloat16[T, D],
         h_dense: dace.bfloat16[TP, DI],
         h_expert: dace.bfloat16[NT * BM, I],
         gate_up_left: dace.int32[NT],
@@ -132,8 +132,8 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 dr >> dense_rows[g]
                 dr = min(BM, T - g * BM)
 
-        # RMS of every token (all the pre-norms normalize the same residual), and the inputs of the dense branch and
-        # of the router: the normalized input (bfloat16, as the model rounds it), scaled
+        # RMS of every token (all the pre-norms normalize the same residual), and the inputs of the dense branch, the
+        # experts and the router: the normalized input (bfloat16, as the model rounds it), scaled
         for t in dace.map[0:T]:
             ss = dace.ndarray([1], dtype=dace.float32, storage=SHARED)
             for _ in dace.map[0:1] @ TB:
@@ -155,9 +155,11 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                     xs << x[t, :]
                     w1 << pre_norm[:]
                     rs << router_scale[:]
+                    w2 << pre_norm_2[:]
                     inv >> inv_rms(-1)[t]
                     xd >> x_dense[t, :]
                     xr >> x_router[t, :]
+                    xe >> x_expert[t, :]
                     v = dace.float32(1) / math.sqrt(s / D + dace.float32(eps))
                     if th == 0:
                         inv = v
@@ -165,6 +167,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                         n = dace.float32(xs[d]) * v
                         xd[d] = dace.bfloat16(n * w1[d])
                         xr[d] = dace.bfloat16(dace.float32(dace.bfloat16(n)) * rs[d] * dace.float32(root))
+                        xe[d] = dace.bfloat16(n * w2[d])
 
         # Router logits, a tile of 64 tokens per thread block (the projection rounds them to bfloat16)
         for g in dace.map[0 : TP // BM]:
@@ -253,7 +256,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                     start = start + tiles
                 nt = start
 
-        # Gather the expert input rows, sorted by expert
+        # The rows of every expert (tiles of pairs), sorted by expert: their tokens and routing weights
         for t, j in dace.map[0:T, 0:K]:
             with dace.tasklet:
                 pe << pair_expert[t, j]
@@ -265,16 +268,6 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 row = ts[pe] * BM + ps
                 rt[row] = t
                 rw[row] = pw
-        for t, j, d in dace.map[0:T, 0:K, 0:D]:
-            with dace.tasklet:
-                pe << pair_expert[t, j]
-                ps << pair_slot[t, j]
-                ts << tile_start[:]
-                xv << x[t, d]
-                inv << inv_rms[t]
-                w2 << pre_norm_2[d]
-                xe >> x_expert(-1)[:, :]
-                xe[ts[pe] * BM + ps, d] = dace.bfloat16(dace.float32(xv) * inv * w2)
 
         # Seed the gate/up tasks (the down tasks follow them); the dense ones first, as their chain is the longest
         for g, ch in dace.map[0 : TP // BM, 0 : DI // HALF]:
@@ -304,7 +297,7 @@ def build(config: gemma4_moe.Config, num_pes: int, queue_size: int = 1 << 18) ->
                 if kind == EXPERT_GATE_UP:
                     e = tile_expert[g]
                     nr = tile_rows[g]
-                    tm.tile_matmul(x_expert[r0 : r0 + BM, :], expert_gate_up_p[e, ch], tile, work, nr)
+                    tm.tile_matmul(x_expert, expert_gate_up_p[e, ch], tile, work, nr, row_token[r0 : r0 + BM])
                 else:
                     nr = dense_rows[g]
                     tm.tile_matmul(x_dense[r0 : r0 + BM, :], dense_gate_up_p[ch], tile, work, nr)
@@ -512,7 +505,7 @@ def workspace(config: gemma4_moe.Config, tokens: int) -> dict:
         row_token=zeros(tiles * BM, dtype=torch.int32),
         row_weight=zeros(tiles * BM),
         x_dense=zeros(padded, D, dtype=torch.bfloat16),
-        x_expert=zeros(tiles * BM, D, dtype=torch.bfloat16),
+        x_expert=zeros(tokens, D, dtype=torch.bfloat16),
         h_dense=zeros(padded, config.dense_intermediate, dtype=torch.bfloat16),
         h_expert=zeros(tiles * BM, config.expert_intermediate, dtype=torch.bfloat16),
         gate_up_left=zeros(tiles, dtype=torch.int32),
