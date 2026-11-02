@@ -1401,9 +1401,9 @@ class Map:
         dtype=bool,
         default=False,
         category="Semantics",
-        desc="Lifted on a proof ``LoopToMap`` cannot redo (wavefront, stream compaction, a guard or contract): "
-        "canonicalization keeps this map instead of lowering it to a loop nothing would lift again. It adds no "
-        "parallelism: a map is independent whether or not this is set.",
+        desc="Left by a finished canonicalization, some on a proof ``LoopToMap`` cannot redo (wavefront, stream "
+        "compaction, a guard or contract): canonicalization keeps this map instead of lowering it to a loop. It adds "
+        "no parallelism: a map is independent whether or not this is set.",
         serialize_if=lambda m: m.proven_parallel,
     )
 
