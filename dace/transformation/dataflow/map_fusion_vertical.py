@@ -2091,6 +2091,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         params = [(param, begin, end) for param, (begin, end, step) in zip(first_map.params, first_map.range)]
         if any(step != 1 for _, _, step in first_map.range):
             return False
+        # The sweep of one parameter below cannot see another's bound that names it
+        if first_map.range.free_symbols & set(first_map.params):
+            return False
         for param, begin, end in params:
             here = symbolic.symbol(param)
             for lo, hi in ((begin, here - 1), (here + 1, end)):
