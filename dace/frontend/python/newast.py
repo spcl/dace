@@ -4159,9 +4159,9 @@ class ProgramVisitor(ExtNodeVisitor):
     def _has_sdfg(self, value: Any) -> bool:
         return isinstance(value, SDFG) or hasattr(value, "__sdfg__")
 
-    def _eval_arg(self, arg: str | Any) -> Any:
+    def _eval_arg(self, arg: str | Any, constant: bool = False) -> Any:
         if not isinstance(arg, str):
-            if symbolic.issymbolic(arg) and not isinstance(arg, symbolic.symbol):
+            if not constant and symbolic.issymbolic(arg) and not isinstance(arg, symbolic.symbol):
                 # The callee sees an expression as a scalar typed by its symbols, which only this program types
                 return data.Scalar(symbolic.symtype(arg, self.symbol_types()))
             return arg
@@ -4228,13 +4228,15 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # fcopy = copy.copy(func)
             fcopy = func
-            if hasattr(fcopy, "global_vars"):
-                fcopy.global_vars = {**self.globals, **func.global_vars}
+            own_globals = func.global_vars if hasattr(fcopy, "global_vars") else None
+            if own_globals is not None:
+                fcopy.global_vars = {**self.globals, **own_globals}
 
             cnt = self.progress_count()
             try:
-                fargs = tuple(self._eval_arg(arg) for _, arg in posargs)
-                fkwargs = {k: self._eval_arg(arg) for k, arg in kwargs}
+                # A compile-time argument stays the expression it is
+                fargs = tuple(self._eval_arg(arg, k in constant_args) for k, arg in posargs)
+                fkwargs = {k: self._eval_arg(arg, k in constant_args) for k, arg in kwargs}
 
                 if isinstance(fcopy, DaceProgram):
                     fcopy.signature = copy.deepcopy(func.signature)
@@ -4264,6 +4266,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     if Config.get_bool("frontend", "raise_nested_parsing_errors"):
                         ex.__noskipcall__ = True
                     raise ex
+            finally:
+                # This call's names, iterators included, are not the callee's globals
+                if own_globals is not None:
+                    fcopy.global_vars = own_globals
 
             funcname = sdfg.name
             all_args = required_args
@@ -4355,8 +4361,9 @@ class ProgramVisitor(ExtNodeVisitor):
             required_args.extend(symbols)
         required_args = dtypes.deduplicate(required_args)
         gargs = {a[0] for a in args}
+        readable = self.symbol_types()
         for rarg in required_args:
-            if rarg not in gargs and rarg in self.sdfg.symbols:
+            if rarg not in gargs and rarg in readable:
                 args.append((rarg, rarg))
 
         # Argument checks
@@ -5666,6 +5673,8 @@ class ProgramVisitor(ExtNodeVisitor):
         sym = dace.symbol(name, dtype=desc.dtype)
         # Nested scopes resolve free symbols through globals
         self.globals[name] = sym
+        # The loop body works on a copy of the globals
+        self.promoted_scalars[name] = sym
         state = self._add_state(f"promote_{scalar}_to_{name}")
         # A size-1 array reads by subscript, or the assignment would take its pointer
         rhs = scalar if isinstance(desc, data.Scalar) else f"{scalar}[{', '.join(['0'] * len(desc.shape))}]"

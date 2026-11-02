@@ -840,13 +840,15 @@ def _split_core(
                 raise ValueError(
                     "Array split does not result in an equal division. Consider using numpy.array_split instead."
                 )
-        if indices_or_sections > desc.shape[axis]:
+        facts = visitor.facts()
+        too_many = symbolic.Relation(symbolic.RelationKind.LT, desc.shape[axis], indices_or_sections)
+        if symbolic.holds(too_many, facts):
             raise ValueError("Cannot compile array split as it will result in empty arrays.")
 
         # Sequence is not given, compute sections
         # Mimic behavior of array_split in numpy: Sections are [s+1 x N%s], s, ..., s
         size = symbolic.int_floor(desc.shape[axis], indices_or_sections)
-        remainder = desc.shape[axis] % indices_or_sections
+        remainder = symbolic.simplify(desc.shape[axis] % indices_or_sections, facts)
         sections = []
         offset = 0
         for _ in range(min(remainder, indices_or_sections)):
