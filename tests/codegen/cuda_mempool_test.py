@@ -10,11 +10,12 @@ from dace.sdfg.state import LoopRegion
 
 
 def count_frees_on_stream_zero(code: str, name: str) -> int:
-    """``<backend>FreeAsync`` calls of ``name`` on stream 0, spelled any way the two codegens name it: their stream 0,
-    or ``nullptr`` -- the default stream every stream is under ``max_concurrent_streams = -1``."""
+    """``<backend>FreeAsync`` calls of ``name``, plain or as a Persistent state field, on stream 0, spelled any way the
+    two codegens name it: their stream 0, or ``nullptr`` -- the default stream every stream is under
+    ``max_concurrent_streams = -1``."""
     return len(
         re.findall(
-            rf"{common.get_gpu_backend()}FreeAsync\({name}, (?:__state->gpu_context->streams\[0\]|gpu_stream0|nullptr)",
+            rf"{common.get_gpu_backend()}FreeAsync\((?:__state->__\d+_)?{name}, (?:__state->gpu_context->streams\[0\]|gpu_stream0|nullptr)",
             code,
         )
     )
