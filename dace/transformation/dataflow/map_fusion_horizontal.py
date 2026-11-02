@@ -4,7 +4,7 @@ from typing import Any
 
 import dace
 from dace import properties, transformation
-from dace.sdfg import SDFG, nodes
+from dace.sdfg import SDFG, nodes, propagation
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 
 
@@ -95,11 +95,12 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         desc="Only consolidate if this does not lead to an extension of the subset.",
     )
 
-    #: Nested SDFGs already propagated and unchanged since, and the last propagation onto each external
-    #:  scope edge, kept by a driving pass (`FuseMaps`) across its fusions; see
-    #:  `map_fusion_helper.propagate_fused_map_scope()`. `None` propagates everything.
-    propagated_nsdfgs: dict[SDFG, None] | None = None
-    scope_records: mfhelper.ScopeRecords | None = None
+    #: Set by a driving pass (`FuseMaps`): propagate the connectors a fusion changed instead of the whole Map scope, see
+    #:  `map_fusion_helper.propagate_connectors()`.
+    changed_connectors_only: bool = False
+    #: What the probes share while the SDFG is unchanged, replaced by the driving pass at every rewrite. `None` derives
+    #:  it per probe.
+    probe: mfhelper.FusionProbe | None = None
 
     def __init__(
         self,
@@ -226,25 +227,26 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         #  connector without an edge (or a data edge without a connector) breaks it half way
         #  through; and `apply()` is the one that calls `Memlet.try_initialize()`, which raises
         #  for a Memlet naming an array whose descriptor is gone.
+        probe = mfhelper.FusionProbe() if self.probe is None else self.probe
         for map_entry, map_exit in [(first_map_entry, first_map_exit), (second_map_entry, second_map_exit)]:
             if not mfhelper.scope_connectors_are_sound(graph, map_entry):
                 return False
             if not mfhelper.scope_connectors_are_sound(graph, map_exit):
                 return False
-            if not mfhelper.map_scope_data_is_known(graph, sdfg, map_entry, map_exit):
+            if not probe.scope_data_is_known(graph, sdfg, map_entry, map_exit):
                 return False
 
         # The fused Map runs after the predecessors of both: neither Map's reads may move past a write.
         if mfhelper.read_overtaken_by_write(
-            graph, first_map_entry, first_map_exit, second_map_entry
-        ) or mfhelper.read_overtaken_by_write(graph, second_map_entry, second_map_exit, first_map_entry):
+            graph, first_map_entry, first_map_exit, second_map_entry, probe
+        ) or mfhelper.read_overtaken_by_write(graph, second_map_entry, second_map_exit, first_map_entry, probe):
             return False
 
         # Maps that are only ordered by happens-before edges, the shape `StateFusionExtended`
         #  produces for a WAR/WAW hazard, are not parallel but can still be fused if no
         #  iteration can collide with a different one. See `analyze_happens_before_fusion()`.
         # The two reachability walks are paid only here, where the answer is actually read.
-        if not mfhelper.is_parallel(graph=graph, node1=first_map_entry, node2=second_map_entry):
+        if not probe.is_parallel(graph, first_map_entry, second_map_entry):
             return (
                 mfhelper.analyze_happens_before_fusion(
                     state=graph,
@@ -326,11 +328,12 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
 
         # Now we relocate all connectors from the second to the first Map and remove
         #  the respective node of the second Map.
+        reused = []
         for to_node, from_node in [
             (first_map_entry, second_map_entry),
             (first_map_exit, second_map_exit),
         ]:
-            mfhelper.relocate_nodes(
+            reused += mfhelper.relocate_nodes(
                 from_node=from_node,
                 to_node=to_node,
                 state=graph,
@@ -351,5 +354,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         #  of that might have expanded, thus we have to propagate them. However,
         #  in case we never consolidated, i.e. all edges were preserved, then we
         #  can skip that step.
-        if not self.never_consolidate_edges:
-            mfhelper.propagate_fused_map_scope(sdfg, graph, first_map_entry, self.propagated_nsdfgs, self.scope_records)
+        if self.changed_connectors_only:
+            mfhelper.propagate_connectors(graph, first_map_entry, reused)
+        elif not self.never_consolidate_edges:
+            propagation.propagate_memlets_map_scope(sdfg, graph, first_map_entry)

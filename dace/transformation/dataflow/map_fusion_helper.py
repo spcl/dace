@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import dataclasses
 import itertools
 from collections.abc import Iterable
 from typing import Any
@@ -11,7 +12,6 @@ from dace import subsets, symbolic
 from dace.sdfg import graph, propagation, validation
 from dace.sdfg import nodes as nodes
 from dace.sdfg import utils as sdutils
-from dace.sdfg.scope import ScopeTree
 from dace.sdfg.state import SymbolResolver
 from dace.transformation import helpers
 
@@ -278,7 +278,7 @@ def relocate_nodes(
     scope_dict: dict,
     never_consolidate_edges: bool = False,
     consolidate_edges_only_if_not_extending: bool = True,
-) -> None:
+) -> list[str]:
     """Move the connectors and edges from `from_node` to `to_nodes` node.
 
     This function will only rewire the edges, it does not remove the nodes
@@ -292,6 +292,8 @@ def relocate_nodes(
     :param to_node: Node to which the edges should reconnect.
     :param state: The state in which the operation happens.
     :param sdfg: The SDFG that is modified.
+    :return: The connectors of `to_node`, without prefix, that now also carry what `from_node` carried: only their
+        outer memlets can have to grow, a relocated connector keeps its memlet.
 
     :note: After the relocation Memlet propagation should be run.
     """
@@ -321,6 +323,7 @@ def relocate_nodes(
     # Relocation of the edges that carry data. A passthrough connector may carry several edges, all of which are
     #  relocated together, so each connector is handled once.
     relocated_connectors: set[str] = set()
+    reused_connectors: list[str] = []
     for edge_to_move in list(state.in_edges(from_node)):
         assert isinstance(edge_to_move.dst_conn, str)
 
@@ -379,7 +382,9 @@ def relocate_nodes(
                 helpers.redirect_edge(state, e, new_src=to_node, new_src_conn=dst_out_conn)
 
             # If we have used new connectors we must add the new connector names.
-            if not conn_was_reused:
+            if conn_was_reused:
+                reused_connectors.append(new_conn)
+            else:
                 to_node.add_in_connector(dst_in_conn)
                 to_node.add_out_connector(dst_out_conn)
 
@@ -402,246 +407,46 @@ def relocate_nodes(
         )
     assert len(from_node.in_connectors) == 0
     assert len(from_node.out_connectors) == 0
+    return reused_connectors
 
 
-#: What one memlet propagation through a scope connector read: the objects, and their text.
-PropagationInputs = tuple[tuple[Any, ...], tuple[str, ...]]
+def propagate_connectors(state: dace.SDFGState, node: nodes.MapEntry | nodes.MapExit, connectors: list[str]) -> None:
+    """`propagation.propagate_node()` of `connectors`, given without prefix, only.
 
-#: One propagation out of a scope connector: what it read, the memlet it wrote, and that memlet as text.
-ScopeRecord = tuple[PropagationInputs, dace.Memlet, str]
-
-#: Scope records by the `id()` of the memlet they wrote, which each record keeps alive. Keyed by the memlet,
-#:  not the edge: relocating an edge onto the fused Map's scope node keeps its memlet but makes a new edge.
-ScopeRecords = dict[int, ScopeRecord]
-
-
-def propagate_fused_map_scope(
-    sdfg: dace.SDFG,
-    state: dace.SDFGState,
-    map_entry: nodes.MapEntry,
-    propagated_nsdfgs: dict[dace.SDFG, None] | None = None,
-    scope_records: ScopeRecords | None = None,
-) -> None:
-    """`propagation.propagate_memlets_map_scope()` of the fused Map, minus the work that rewrites nothing.
-
-    A nested SDFG in `propagated_nsdfgs` was propagated in full and has not changed since, so propagating
-    its inside again would rewrite every memlet to itself; it is skipped. Every nested SDFG propagated here
-    is added. The caller owns the invariant: it drops an SDFG, and all SDFGs enclosing it, when it mutates
-    one. `scope_records` holds, per propagated memlet, what its propagation read; an external scope edge
-    whose memlet and inputs are those very objects, unchanged, is not propagated again, see
-    `propagate_scope_node()`. `None` for both is exactly `propagate_memlets_map_scope()`.
+    A fusion moves a connector with its memlet, which stays right: both Maps iterate the same range. The memlets it
+    changes are those of a connector that now also carries the other Map's edges, and of an intermediate rebuilt behind
+    the fused Map.
     """
-    if propagated_nsdfgs is None and scope_records is None:
-        propagation.propagate_memlets_map_scope(sdfg, state, map_entry)
+    if not connectors:
         return
-
-    # Read once: propagation rewrites memlets only, never the symbols, descriptors and interstate edges
-    #  this table is built from, and `symbols_defined_at` otherwise rebuilds it per nested SDFG.
+    sdfg = state.sdfg
+    entry_node = node if isinstance(node, nodes.EntryNode) else state.entry_node(node)
+    use_dst = not isinstance(node, nodes.EntryNode)
+    outer_prefix, inner_prefix = ("OUT_", "IN_") if use_dst else ("IN_", "OUT_")
     scope_symbols = dace.sdfg.state.sdfg_scope_symbols(sdfg)
     symbols = SymbolResolver(sdfg, scope_symbols)
-    for node in state.scope_subgraph(map_entry).nodes():
-        if not isinstance(node, nodes.NestedSDFG):
+    defined_variables = state.symbols_defined_at(entry_node, scope_symbols).keys() | sdfg.constants.keys()
+    for connector in connectors:
+        if use_dst:
+            outer_edges = state.out_edges_by_connector(node, outer_prefix + connector)
+            inner_edges = state.in_edges_by_connector(node, inner_prefix + connector)
+        else:
+            outer_edges = state.in_edges_by_connector(node, outer_prefix + connector)
+            inner_edges = state.out_edges_by_connector(node, inner_prefix + connector)
+        inner_edge = next((e for e in inner_edges if not e.data.is_empty()), None)
+        if inner_edge is None:
             continue
-        # A nested SDFG recorded as propagated had its outer memlets propagated with it, under a Map of the same
-        #  range: a fusion renames them with the parameters, so they are current
-        if propagated_nsdfgs is not None and node.sdfg in propagated_nsdfgs:
-            continue
-        propagation.propagate_memlets_sdfg(node.sdfg)
-        if propagated_nsdfgs is not None:
-            propagated_nsdfgs[node.sdfg] = None
-        propagation.propagate_memlets_nested_sdfg(sdfg, state, node, symbols)
-
-    # Only the scopes on the walk up from the leaves inside `map_entry` are built, not the whole state's
-    #  `scope_tree()`, which every fusion invalidates.
-    leaves = scope_leaves_below(state, map_entry)
-    if scope_records is None:
-        propagation.propagate_memlets_scope(sdfg, state, leaves, symbols=symbols)
-        return
-    # `propagate_memlets_scope()`'s frontier walk; each scope's last visit comes after all of its children's.
-    #  One resolver for the walk, as `propagate_memlets_scope()` does: the facts of a scope are derived once,
-    #  not once per propagated edge, and nothing the walk rewrites (memlets) is read by them.
-    frontier: dict[ScopeTree, None] = dict.fromkeys(leaves)
-    while frontier:
-        parents: dict[ScopeTree, None] = {}
-        for scope in frontier:
-            if scope.entry is None:
-                continue
-            propagate_scope_node(state, scope.entry, scope_symbols, scope_records, symbols)
-            propagate_scope_node(state, scope.exit, scope_symbols, scope_records, symbols)
-            parents[scope.parent] = None
-        frontier = parents
-
-
-def scope_leaves_below(state: dace.SDFGState, map_entry: nodes.EntryNode) -> list[ScopeTree]:
-    """The leaf `ScopeTree`s at or below `map_entry`, linked through their parents up to the top level."""
-    children = state.scope_children()
-    parent = ScopeTree(None, None)
-    enclosing: list[nodes.EntryNode] = []
-    outer = state.entry_node(map_entry)
-    while outer is not None:
-        enclosing.append(outer)
-        outer = state.entry_node(outer)
-    for entry in reversed(enclosing):
-        tree = ScopeTree(entry, state.exit_node(entry))
-        tree.parent = parent
-        parent = tree
-
-    leaves: list[ScopeTree] = []
-    pending: list[tuple[nodes.EntryNode, ScopeTree]] = [(map_entry, parent)]
-    while pending:
-        entry, parent = pending.pop()
-        tree = ScopeTree(entry, state.exit_node(entry))
-        tree.parent = parent
-        inner = [node for node in children[entry] if isinstance(node, nodes.EntryNode)]
-        if not inner:
-            leaves.append(tree)
-        pending.extend((node, tree) for node in reversed(inner))
-    return leaves
-
-
-def memlet_text(memlet: dace.Memlet) -> str:
-    """Every field of `memlet` that memlet propagation reads, as text."""
-    return (
-        f"{memlet.data}|{memlet._is_data_src}|{memlet.subset}|{memlet.other_subset}|{memlet.volume}|"
-        f"{memlet.dynamic}|{memlet.wcr}|{memlet.wcr_nonatomic}|{memlet.allow_oob}"
-    )
-
-
-def propagate_scope_node(
-    state: dace.SDFGState,
-    node: nodes.EntryNode | nodes.ExitNode,
-    scope_symbols: dict[str, dace.dtypes.typeclass],
-    scope_records: ScopeRecords,
-    symbols: SymbolResolver | None = None,
-) -> None:
-    """`propagation.propagate_node()`, skipping each external edge whose propagation would rewrite nothing.
-
-    An edge is skipped when its memlet is one a propagation wrote, unchanged, and that propagation read the
-    same objects (entry node, Map, range, descriptor, every internal memlet of the connector with its subsets
-    and volume) with the same text and the same defined symbols. The result is a function of exactly these, so
-    propagating again would write an equal memlet. Any other edge is propagated as `propagate_node()`
-    does and its record replaced. `symbols` is the `SymbolResolver` of the ongoing propagation, built from
-    `scope_symbols`; one is made per propagated edge if it is not given.
-    """
-    entry_node = node if isinstance(node, nodes.EntryNode) else state.entry_node(node)
-    if not isinstance(entry_node, nodes.MapEntry):
-        # Not memoized: only a Map is read through `entry_node.map` below.
-        lone_scope = ScopeTree(entry_node, state.exit_node(entry_node))
-        lone_scope.parent = ScopeTree(None, None)
-        propagation.propagate_memlets_scope(
-            state.parent,
-            state,
-            [lone_scope],
-            propagate_entry=node is entry_node,
-            propagate_exit=node is not entry_node,
-            symbols=symbols if symbols is not None else SymbolResolver(state.parent, scope_symbols),
-        )
-        return
-    if isinstance(node, nodes.EntryNode):
-        internal_edges = [e for e in state.out_edges(node) if e.src_conn and e.src_conn.startswith("OUT_")]
-        external_edges = [e for e in state.in_edges(node) if e.dst_conn and e.dst_conn.startswith("IN_")]
-        internal_conn = lambda e: e.src_conn[4:]  # noqa: E731 [lambda-assignment]
-        external_conn = lambda e: e.dst_conn[3:]  # noqa: E731 [lambda-assignment]
-        neighbors = [e for e in state.out_edges(node) if e.src_conn]
-        use_dst = False
-    else:
-        internal_edges = [e for e in state.in_edges(node) if e.dst_conn and e.dst_conn.startswith("IN_")]
-        external_edges = [e for e in state.out_edges(node) if e.src_conn and e.src_conn.startswith("OUT_")]
-        internal_conn = lambda e: e.dst_conn[3:]  # noqa: E731 [lambda-assignment]
-        external_conn = lambda e: e.src_conn[4:]  # noqa: E731 [lambda-assignment]
-        neighbors = [e for e in state.in_edges(node) if e.dst_conn]
-        use_dst = True
-
-    defined_variables = None
-    for edge in external_edges:
-        if edge.data.is_empty():
-            edge.data = dace.Memlet()
-            continue
-        if defined_variables is None:
-            defined_variables = (
-                state.symbols_defined_at(entry_node, scope_symbols).keys() | state.parent.constants.keys()
+        aligned_memlet = propagation.align_memlet(state, inner_edge, dst=use_dst)
+        for edge in list(outer_edges):
+            edge.data = propagation.propagate_memlet(
+                state,
+                aligned_memlet,
+                node,
+                True,
+                connector=connector,
+                defined_variables=defined_variables,
+                symbols=symbols,
             )
-        connector = external_conn(edge)
-        internal_edge = next(
-            (e for e in internal_edges if internal_conn(e) == connector and not e.data.is_empty()), None
-        )
-        if internal_edge is None:
-            continue
-        aligned_memlet = propagation.align_memlet(state, internal_edge, dst=use_dst)
-        inputs = propagation_inputs(
-            state,
-            entry_node,
-            use_dst,
-            aligned_memlet,
-            [e.data for e in neighbors if internal_conn(e) == connector],
-            defined_variables,
-        )
-        record = scope_records.get(id(edge.data))
-        if (
-            record is not None
-            and record[1] is edge.data
-            and same_inputs(record[0], inputs)
-            and record[2] == memlet_text(edge.data)
-        ):
-            continue
-        edge.data = propagation.propagate_memlet(
-            state,
-            aligned_memlet,
-            node,
-            True,
-            connector=connector,
-            defined_variables=defined_variables,
-            symbols=symbols,
-        )
-        scope_records[id(edge.data)] = (inputs, edge.data, memlet_text(edge.data))
-
-
-def propagation_inputs(
-    state: dace.SDFGState,
-    entry_node: nodes.MapEntry,
-    use_dst: bool,
-    aligned_memlet: dace.Memlet,
-    connector_memlets: list[dace.Memlet],
-    defined_variables: Iterable[str],
-) -> PropagationInputs:
-    """What `propagate_memlet()` reads to propagate `aligned_memlet` out of the scope of `entry_node`.
-
-    The scope node itself is not read beyond its connector's memlets, `connector_memlets`.
-    """
-    scope_map = entry_node.map
-    desc = state.parent.arrays.get(aligned_memlet.data)
-    objects: list[Any] = [entry_node, scope_map, scope_map.params, scope_map.range, desc]
-    texts: list[str] = [
-        str(use_dst),
-        str(scope_map.params),
-        str(scope_map.range),
-        str([conn for conn in entry_node.in_connectors if not conn.startswith("IN_")]),
-        str(sorted(defined_variables)),
-    ]
-    if desc is not None:
-        texts.append(f"{type(desc).__name__}|{desc.dtype}|{desc.shape}|{desc.strides}|{desc.offset}|{desc.total_size}")
-    for memlet in [aligned_memlet] + connector_memlets:
-        objects.extend((memlet, memlet.subset, memlet.other_subset, memlet.volume))
-        texts.append(memlet_text(memlet))
-    return tuple(objects), tuple(texts)
-
-
-def same_inputs(recorded: PropagationInputs, current: PropagationInputs) -> bool:
-    """`True` if both read the very same objects with the same text."""
-    return (
-        len(recorded[0]) == len(current[0])
-        and all(a is b for a, b in zip(recorded[0], current[0]))
-        and recorded[1] == current[1]
-    )
-
-
-def forget_propagated(propagated_nsdfgs: dict[dace.SDFG, None] | None, sdfg: dace.SDFG) -> None:
-    """Drop `sdfg` and every SDFG enclosing it from `propagated_nsdfgs`: `sdfg` is about to change."""
-    if propagated_nsdfgs is None:
-        return
-    while sdfg is not None:
-        propagated_nsdfgs.pop(sdfg, None)
-        sdfg = sdfg.parent_sdfg
 
 
 def safe_exit_node(
@@ -817,11 +622,84 @@ def is_parallel(
     return True
 
 
+@dataclasses.dataclass(slots=True)
+class FusionProbe:
+    """What the probes of one unchanged state share. Nothing here is a verdict: the driving pass makes a new one at
+    every fusion, and each probe outside such a pass makes its own."""
+
+    #: The resolver the probes of the unchanged SDFG share.
+    symbols: SymbolResolver = dataclasses.field(default_factory=SymbolResolver)
+    #: The nodes with a path to each node asked about, itself included.
+    ancestors: dict[nodes.Node, set[nodes.Node]] = dataclasses.field(default_factory=dict)
+    #: Per state, the writing access nodes of each container; a View binding writes nothing.
+    writers: dict[dace.SDFGState, dict[str, list[nodes.AccessNode]]] = dataclasses.field(default_factory=dict)
+    #: The Maps whose scope was seen to have only known data.
+    known_scopes: set[nodes.MapEntry] = dataclasses.field(default_factory=set)
+    #: The Maps whose boundary memlets are initialized.
+    initialized: set[nodes.MapEntry] = dataclasses.field(default_factory=set)
+
+    def scope_data_is_known(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, map_entry: nodes.MapEntry, map_exit: nodes.MapExit
+    ) -> bool:
+        """`map_scope_data_is_known()`, once per Map."""
+        if map_entry in self.known_scopes:
+            return True
+        if not map_scope_data_is_known(state, sdfg, map_entry, map_exit):
+            return False
+        self.known_scopes.add(map_entry)
+        return True
+
+    def initialize_boundary(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, map_entry: nodes.MapEntry, map_exit: nodes.MapExit
+    ) -> None:
+        """Set `{src,dst}_subset` of the memlets through the scope nodes, the ones a probe reads. See
+        [issue 1708](https://github.com/spcl/dace/issues/1703)."""
+        if map_entry in self.initialized:
+            return
+        self.initialized.add(map_entry)
+        for edge in itertools.chain(
+            state.in_edges(map_entry), state.out_edges(map_entry), state.in_edges(map_exit), state.out_edges(map_exit)
+        ):
+            edge.data.try_initialize(sdfg, state, edge)
+
+    def upstream(self, state: dace.SDFGState, node: nodes.Node) -> set[nodes.Node]:
+        known = self.ancestors.get(node)
+        if known is None:
+            known = self.ancestors[node] = {node}
+            pending = [node]
+            while pending:
+                for edge in state.in_edges(pending.pop()):
+                    if edge.src not in known:
+                        known.add(edge.src)
+                        pending.append(edge.src)
+        return known
+
+    def reaches(self, state: dace.SDFGState, begin: nodes.Node, end: nodes.Node) -> bool:
+        """`is_node_reachable_from()`, sharing the walk between the questions about one `end`."""
+        return begin in self.upstream(state, end)
+
+    def is_parallel(self, state: dace.SDFGState, node1: nodes.Node, node2: nodes.Node) -> bool:
+        """`is_parallel()`, see `reaches()`."""
+        return not (self.reaches(state, node1, node2) or self.reaches(state, node2, node1))
+
+    def written(self, state: dace.SDFGState, name: str) -> list[nodes.AccessNode]:
+        index = self.writers.get(state)
+        if index is None:
+            index = self.writers[state] = {}
+            for node in state.data_nodes():
+                if not isinstance(node.desc(state.sdfg), dace.data.View) and any(
+                    not e.data.is_empty() for e in state.in_edges(node)
+                ):
+                    index.setdefault(node.data, []).append(node)
+        return index.get(name, [])
+
+
 def read_overtaken_by_write(
     state: dace.SDFGState,
     reader_entry: nodes.MapEntry,
     reader_exit: nodes.MapExit,
     later_entry: nodes.MapEntry,
+    probe: FusionProbe,
 ) -> bool:
     """Whether a container the Map ``reader_entry`` reads is written before ``later_entry`` by a node that does not
     precede ``reader_entry``. Fused, the reader runs where ``later_entry`` does and would see that write.
@@ -833,8 +711,9 @@ def read_overtaken_by_write(
     :param reader_entry: The entry of the Map whose reads move.
     :param reader_exit: Its exit; what it writes itself is not another writer.
     :param later_entry: The entry of the Map the reader is fused into.
+    :param probe: What the probes of this state share.
     """
-    read: set[str] = set()
+    read: dict[str, None] = {}
     for edge in state.in_edges(reader_entry):
         if edge.data.is_empty():
             continue
@@ -842,27 +721,24 @@ def read_overtaken_by_write(
         name = _dealias(state, source) if isinstance(source, nodes.AccessNode) else edge.data.data
         if name is None:
             return True
-        read.add(name)
+        read[name] = None
+    # A write through a View is the write into the node it views
+    candidates = [node for name in read for node in probe.written(state, name)]
+    if not candidates:
+        return False
     own = set(state.successors(reader_exit))
-    # A View binding writes nothing: a write through a View is the write into the node it views
-    writers = [
-        node
-        for node in state.data_nodes()
-        if node.data in read
-        and node not in own
-        and not isinstance(node.desc(state.sdfg), dace.data.View)
-        and any(not e.data.is_empty() for e in state.in_edges(node))
-    ]
+    writers = [node for node in candidates if node not in own]
     if not writers:
         return False
-    before_later = sdutils.find_upstream_nodes(later_entry, state)
-    before_reader = sdutils.find_upstream_nodes(reader_entry, state)
 
-    def written_within(writer: nodes.AccessNode, upstream: set) -> bool:
+    def written_before(writer: nodes.AccessNode, entry: nodes.MapEntry) -> bool:
         # The node itself or what writes it, so a written sink counts at its producer
-        return writer in upstream or any(e.src in upstream for e in state.in_edges(writer) if not e.data.is_empty())
+        upstream = probe.upstream(state, entry)
+        return writer in upstream or any(
+            e.src is not entry and e.src in upstream for e in state.in_edges(writer) if not e.data.is_empty()
+        )
 
-    return any(written_within(w, before_later) and not written_within(w, before_reader) for w in writers)
+    return any(written_before(w, later_entry) and not written_before(w, reader_entry) for w in writers)
 
 
 def anti_dependences(
