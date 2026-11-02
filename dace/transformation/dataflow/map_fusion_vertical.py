@@ -124,6 +124,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
 
+    relaxed_dataflow = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="If `True` both Maps may update one container in place and a shared intermediate may be accessed further "
+        "down its dataflow, whatever `strict_dataflow` says.",
+    )
     assume_always_shared = properties.Property(
         dtype=bool,
         default=False,
@@ -174,6 +181,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         only_inner_maps: bool | None = None,
         only_toplevel_maps: bool | None = None,
         strict_dataflow: bool | None = None,
+        relaxed_dataflow: bool | None = None,
         assume_always_shared: bool | None = None,
         require_exclusive_intermediates: bool | None = None,
         require_all_intermediates: bool | None = None,
@@ -197,6 +205,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             self.only_inner_maps = only_inner_maps
         if strict_dataflow is not None:
             self.strict_dataflow = strict_dataflow
+        if relaxed_dataflow is not None:
+            self.relaxed_dataflow = relaxed_dataflow
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
         if require_exclusive_intermediates is not None:
@@ -474,6 +484,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             graph,
             sdfg,
             first_map_entry,
+            second_map_exit,
             {e.dst.data for e in graph.out_edges(first_map_exit) if isinstance(e.dst, nodes.AccessNode)},
             symbols.facts_at(graph, first_map_exit),
         )
@@ -661,6 +672,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             graph,
             sdfg,
             first_map_entry,
+            second_map_exit,
             {e.dst.data for e in graph.out_edges(first_map_exit) if isinstance(e.dst, nodes.AccessNode)},
             facts,
         )
@@ -676,6 +688,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assert output_partition is not None  # Make MyPy happy.
         pure_outputs, exclusive_outputs, shared_outputs = output_partition
         assert (not self.require_exclusive_intermediates) or (len(shared_outputs) == 0)
+
+        # See `partition_first_outputs()`: moved behind the fused Map it would close a cycle
+        for edge in list(pure_outputs):
+            if edge.data.is_empty() and any(e.dst is second_map_entry for e in graph.out_edges(edge.dst)):
+                graph.remove_edge(edge)
+                pure_outputs.remove(edge)
 
         # Also before the rewiring: the reads of the first Map the second Map's writes must stay behind
         anti_dependences = mfhelper.anti_dependences(graph, first_map_entry, second_map_exit)
@@ -770,6 +788,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         second_map_exit.map = first_map_entry.map
 
         mfhelper.keep_anti_dependences(graph, anti_dependences)
+        self.join_in_place_outputs(graph, second_map_exit, in_place)
 
         # Put back the happens-before the rewrite took out of the graph, see
         #  `ordering_sources_of_intermediates`.
@@ -886,7 +905,16 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # Empty Memlets are only allowed if they are in `\mathbb{P}`, which
             #  is also the only place they really make sense (for a MapExit).
             #  Thus if we now found an empty Memlet we reject it.
+            #  One that only orders the first Map before the second, the sole reader of the node, says what the
+            #  fused body does anyway: the fused Map runs in place of both, and `apply()` drops the edge.
             if out_edge.data.is_empty():
+                if (
+                    self.relaxed_dataflow
+                    and all(e.dst is second_map_entry for e in state.out_edges(intermediate_node))
+                    and all(e.data.is_empty() for e in state.edges_between(first_map_exit, intermediate_node))
+                ):
+                    pure_outputs.add(out_edge)
+                    continue
                 return None
 
             # For us an intermediate node must always be an access node, because
@@ -1140,7 +1168,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     return None
 
                 # What a conditional write skips keeps its old value here, which a buffer would not hold.
-                if conditional_write:
+                if conditional_write and reduced:
                     return None
 
                 # The intermediate data is used somewhere else, either in this or another state.
@@ -1152,7 +1180,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #   if the intermediate is used further down in the same datadflow,
                 #   then we consider that the maps can not be fused. But we only
                 #   do this in the strict data flow mode.
-                if self.strict_dataflow:
+                if self.strict_dataflow and not self.relaxed_dataflow:
                     if self._is_data_accessed_downstream(
                         data=intermediate_node.data,
                         graph=state,
@@ -1193,8 +1221,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             else:
                 # An element a conditional write skips has no value the buffer could lose: this Map is the only
                 #  writer, so reading it is undefined either way, unless an earlier execution wrote it.
-                if conditional_write and (
-                    intermediate_desc.lifetime != dtypes.AllocationLifetime.Scope or self._in_a_cycle(state)
+                if (
+                    conditional_write
+                    and reduced
+                    and (intermediate_desc.lifetime != dtypes.AllocationLifetime.Scope or self._in_a_cycle(state))
                 ):
                     return None
                 # The intermediate can be removed, as it is not used anywhere else.
@@ -1925,10 +1955,21 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Relaxed for data neither Map reads and whose written regions are disjoint: every element of it then has
         # one writer, so the fused Map writes the same values in any order (bout_elm_pb's ``ddt_P``, one z plane
         # from the first Map and the others from the second).
+        # Relaxed for data a Map reads as well if no iteration touches what another writes: each iteration then runs
+        #  the first Map's accesses and the second's in order, in place (cloudsc's ``zsolqa[i, 1, 4]`` updated twice).
         for name in real_write_map_1 & real_write_map_2:
             if name in real_read_map_1 or name in real_read_map_2:
-                return True
-            if not self.written_disjointly(name, first_map_exit, second_map_exit, state, facts):
+                if not self.relaxed_dataflow or any(self.is_view(s[name], sdfg) for s in access_sets if name in s):
+                    return True
+                accesses = self.map_accesses(name, access_sets, first_map_entry, second_map_entry, param_repl, state)
+                if accesses is None or not self.other_iterations_miss(
+                    first_map_entry.map,
+                    accesses[1] + accesses[3],
+                    accesses[0] + accesses[2] + accesses[1] + accesses[3],
+                    facts,
+                ):
+                    return True
+            elif not self.written_disjointly(name, first_map_exit, second_map_exit, state, facts):
                 return True
 
         # These are the names (unresolved) and the access nodes of the data that is used
@@ -1936,6 +1977,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  these nodes are directly connected to the two maps.
         exchange_names: set[str] = set(write_map_1.keys()).intersection(read_map_2.keys())
         exchange_nodes: set[nodes.AccessNode] = set(write_map_1.values()).intersection(read_map_2.values())
+
+        # A read of the node ahead of the first Map's write exchanges nothing if that write misses it.
+        apart = [n for n in exchange_names if self.relaxed_dataflow and write_map_1[n] is not read_map_2[n]]
+        for name in apart:
+            if self.is_view(write_map_1[name], sdfg) or self.is_view(read_map_2[name], sdfg):
+                continue
+            accesses = self.map_accesses(name, access_sets, first_map_entry, second_map_entry, param_repl, state)
+            if accesses is not None and self.apart_in_every_iteration(first_map_entry.map, accesses, facts):
+                exchange_names.remove(name)
 
         # If the number are different then a data is accessed through different
         #  AccessNodes. We could analyse this, but we will consider this as a data race.
@@ -1965,14 +2015,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if any(self.is_view(read_map_1[name], sdfg) for name in fused_inout_data_names):
             return True
 
-        # A data container can not be used as output (of the second as well as the
-        #  combined Map) and as intermediate. If we would allow that the Map would
-        #  have two output nodes one the original one and the second is the created
-        #  node that is created because the intermediate is shared.
-        # TODO(phimuell): Handle this case.
-        if not fused_inout_data_names.isdisjoint(exchange_names):
-            return True
-
         # The intermediate orders the first Map's reads before the second Map's writes only for a write that depends
         #  on it: an independent one runs in no fixed order with the reads in the fused body.
         if fused_inout_data_names and not mfhelper.writes_follow(
@@ -1983,6 +2025,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if fused_inout_data_names and not mfhelper.reads_precede(
             state, first_map_entry, first_map_exit, exchange_nodes, fused_inout_data_names
         ):
+            return True
+
+        # A data container can not be used as output (of the second as well as the
+        #  combined Map) and as intermediate. If we would allow that the Map would
+        #  have two output nodes one the original one and the second is the created
+        #  node that is created because the intermediate is shared. `relaxed_dataflow` handles it, in place.
+        if not self.relaxed_dataflow and not fused_inout_data_names.isdisjoint(exchange_names):
             return True
 
         # While it is forbidden that a data container, used as intermediate, is also
@@ -2080,6 +2129,84 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         return False
 
     @staticmethod
+    def join_in_place_outputs(state: SDFGState, map_exit: nodes.MapExit, names: AbstractSet[str]) -> None:
+        """Give an intermediate fused in place one output node: the node rebuilt behind the fused Map and that of the
+        second Map's write, which would make the next fusion see one container through two nodes."""
+        seen: dict[str, nodes.AccessNode] = {}
+        for edge in list(state.out_edges(map_exit)):
+            other = edge.dst
+            if not isinstance(other, nodes.AccessNode) or other.data not in names:
+                continue
+            keep = seen.setdefault(other.data, other)
+            if keep is other or other not in state.nodes():
+                continue
+            if mfhelper.is_node_reachable_from(state, keep, other) or mfhelper.is_node_reachable_from(
+                state, other, keep
+            ):
+                continue
+            for in_edge in state.in_edges(other):
+                state.add_edge(in_edge.src, in_edge.src_conn, keep, in_edge.dst_conn, in_edge.data)
+            for out_edge in state.out_edges(other):
+                state.add_edge(keep, out_edge.src_conn, out_edge.dst, out_edge.dst_conn, out_edge.data)
+            state.remove_node(other)
+            # The rebuilt write of what the second Map overwrites anyway copies an element onto itself
+            into_exit = [e for e in state.in_edges(map_exit) if e.data.data == other.data]
+            written = [e.data.subset for e in into_exit if not isinstance(e.src, nodes.AccessNode)]
+            for inner in into_exit:
+                if (
+                    isinstance(inner.src, nodes.AccessNode)
+                    and inner.src.data == other.data
+                    and inner.data.subset in written
+                ):
+                    for outer in state.out_edges_by_connector(map_exit, "OUT_" + inner.dst_conn[3:]):
+                        state.remove_edge(outer)
+                    map_exit.remove_out_connector("OUT_" + inner.dst_conn[3:])
+                    state.remove_edge(inner)
+                    map_exit.remove_in_connector(inner.dst_conn)
+
+    def map_accesses(
+        self,
+        name: str,
+        access_sets: list[dict[str, nodes.AccessNode]],
+        first_map_entry: nodes.MapEntry,
+        second_map_entry: nodes.MapEntry,
+        param_repl: dict[str, str],
+        state: SDFGState,
+    ) -> list[list[subsets.Subset]] | None:
+        """What the first Map reads and writes of ``name``, then the second, all in the first Map's parameters; None
+        for an access no subset describes."""
+        sdfg = state.sdfg
+        scopes = (
+            first_map_entry,
+            state.exit_node(first_map_entry),
+            second_map_entry,
+            state.exit_node(second_map_entry),
+        )
+        accesses: list[list[subsets.Subset]] = []
+        for index, (scope_node, access_set) in enumerate(zip(scopes, access_sets)):
+            found: list[subsets.Subset] | None = []
+            if name in access_set:
+                repl = param_repl if index >= 2 else None
+                found = self.find_subsets(access_set[name], scope_node, state, sdfg, repl)
+            if found is None:
+                return None
+            accesses.append(found)
+        return accesses
+
+    def apart_in_every_iteration(
+        self, first_map: nodes.Map, accesses: list[list[subsets.Subset]], facts: symbolic.Facts
+    ) -> bool:
+        """Whether, of the ``accesses`` of :meth:`map_accesses`, the writes of one Map miss all the other Map touches,
+        in this iteration and the others."""
+        reads_1, writes_1, reads_2, writes_2 = accesses
+        for writes, touched in ((writes_1, reads_2 + writes_2), (writes_2, reads_1 + writes_1)):
+            if not self.other_iterations_miss(first_map, writes, touched, facts):
+                return False
+            if any(a.intersects(b, facts) is not symbolic.Truth.FALSE for a in writes for b in touched):
+                return False
+        return True
+
+    @staticmethod
     def other_iterations_miss(
         first_map: nodes.Map, writes: list[subsets.Subset], reads: list[subsets.Subset], facts: symbolic.Facts
     ) -> bool:
@@ -2109,14 +2236,21 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         return True
 
     def in_place_intermediates(
-        self, state: SDFGState, sdfg: SDFG, first_map_entry: nodes.MapEntry, names: set[str], facts: symbolic.Facts
+        self,
+        state: SDFGState,
+        sdfg: SDFG,
+        first_map_entry: nodes.MapEntry,
+        second_map_exit: nodes.MapExit,
+        names: set[str],
+        facts: symbolic.Facts,
     ) -> set[str]:
-        """The intermediates of ``names`` the first Map reads and writes other than point-wise: they are fused in
-        place, see ``has_read_write_dependency()``."""
+        """The intermediates of ``names`` the first Map reads and writes other than point-wise, or the second Map writes
+        as well (a buffer's write-back would undo that write): they are fused in place, see
+        ``has_read_write_dependency()``."""
         first_map_exit = state.exit_node(first_map_entry)
         reads = {node.data: node for node in self.get_access_set(first_map_entry, state)}
         writes = {node.data: node for node in self.get_access_set(first_map_exit, state)}
-        in_place = set()
+        in_place = {e.dst.data for e in state.out_edges(second_map_exit) if isinstance(e.dst, nodes.AccessNode)} & names
         for name in names & reads.keys() & writes.keys():
             accessed = [
                 self.find_subsets(node=node, scope_node=scope_node, state=state, sdfg=sdfg, param_repl=None)

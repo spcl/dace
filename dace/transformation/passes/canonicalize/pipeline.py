@@ -974,7 +974,11 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
             DetachDisjointReads(),
             ppl.Pipeline(
                 [
-                    FuseMaps(allow_intermediates_with_symbolic_size=True, partial_reduce_fusion=True),
+                    FuseMaps(
+                        allow_intermediates_with_symbolic_size=True,
+                        partial_reduce_fusion=True,
+                        relaxed_dataflow=True,
+                    ),
                     # A producer over more axes than its consumer fuses in as an inner map over the rest
                     FuseMapsAtSharedAxes(),
                 ]
