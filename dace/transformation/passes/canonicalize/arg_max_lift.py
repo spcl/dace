@@ -1372,9 +1372,9 @@ class ArgMaxLift(ppl.Pass):
         return None, None
 
     def _extract_singleton_state(self, branch: ControlFlowBlock) -> SDFGState | None:
-        if not isinstance(branch, ControlFlowRegion):
+        if not isinstance(branch, ControlFlowRegion) or not all(isinstance(n, SDFGState) for n in branch.nodes()):
             return None
-        content_states = [n for n in branch.nodes() if isinstance(n, SDFGState) and len(n.nodes()) > 0]
+        content_states = [n for n in branch.nodes() if n.number_of_nodes() > 0]
         if len(content_states) != 1:
             return None
         return content_states[0]

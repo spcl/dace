@@ -2165,5 +2165,19 @@ def test_an_else_assignment_keeps_the_loop():
     assert not ArgMaxLift().apply_pass(sdfg, {})
 
 
+def test_a_block_beside_the_carrier_write_keeps_the_loop():
+    sdfg, _, _, taken = guarded_scan_sdfg("guarded_scan_beside")
+    extra = ConditionalBlock("extra", sdfg=sdfg, parent=taken)
+    taken.add_node(extra)
+    taken.add_edge(taken.start_block, extra, dace.InterstateEdge())
+    inner = ControlFlowRegion("inner", sdfg=sdfg, parent=extra)
+    extra.add_branch(CodeBlock("i > 0"), inner)
+    store = inner.add_state("store", is_start_block=True)
+    seven = store.add_tasklet("seven", {}, {"o"}, "o = 7.0")
+    store.add_edge(seven, "o", store.add_write("O"), None, dace.Memlet("O[1]"))
+    sdfg.reset_cfg_list()
+    assert not ArgMaxLift().apply_pass(sdfg, {})
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
