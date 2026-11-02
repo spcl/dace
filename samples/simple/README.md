@@ -12,6 +12,15 @@ The examples found in this folder are:
    parallel scope (nested SDFGs).
 * `spmv.py`: Sparse matrix-vector multiplication, demonstrating dynamic-range
   map scopes and indirect memory access.
+* `adaptive_quadrature.py`: Adaptive quadrature, demonstrating consume loops
+  (`dace.consume`) for tasks that split themselves until they are accurate
+  enough, so that work concentrates where the integrand needs it. Runs on GPUs
+  with `--gpu`.
+* `sssp.py`: Single-source shortest paths as a worklist of vertices to relax,
+  an asynchronous (not bulk-synchronous) algorithm, demonstrating consume loops
+  with atomic updates that return the old value (`dace.atomic`), and reasoning
+  about a benign race (reading values that only decrease). Runs on GPUs with
+  `--gpu`.
 
 An example of how to use the transformation API can be found in the
 tutorials and in the [Matrix-Matrix Multiplication sample](samples/optimization/matmul.py).

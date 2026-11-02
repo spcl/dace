@@ -2,7 +2,7 @@
 from dace import dtypes, registry
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
-from dace.sdfg.nodes import CodeNode, ConsumeEntry, ConsumeExit
+from dace.sdfg.nodes import CodeNode
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.Timer)
@@ -59,8 +59,6 @@ __state->report.add_completion("{timer_name}", "Timer", __dace_ts_start_{idstr},
 
     def _get_sobj(self, node):
         # Get object behind scope
-        if isinstance(node, (ConsumeEntry, ConsumeExit)):
-            return node.consume
         return node.map
 
     def on_scope_entry(self, sdfg, cfg, state, node, outer_stream, inner_stream, global_stream):

@@ -1,8 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+import subprocess
+import sys
+import textwrap
+
 import numpy as np
+import pytest
 
 import dace
 import dace as dp
+from dace.transformation.passes.lower_consume import LowerConsumeScopes
 
 
 def setup_sdfg() -> dp.SDFG:
@@ -114,6 +121,124 @@ def test_fibonacci_recursion_using_consume_program():
     assert diff <= 1e-5
 
 
+def test_consume_body_nested_sdfg_reads_popped_element():
+    """Without simplification the consume body is a nested SDFG that reads the element as a stream. After
+    lowering, it reads the popped element, so its descriptor must change from a stream to a scalar."""
+    sdfg = fib_program.to_sdfg(simplify=False)
+    body = next(
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG) and "S" in n.in_connectors
+    )
+    assert isinstance(body.sdfg.arrays["S"], dace.data.Stream)
+
+    lowered = copy.deepcopy(sdfg)
+    LowerConsumeScopes().apply_pass(lowered, {})
+    lowered.validate()
+    assert isinstance(body.sdfg.arrays["S"], dace.data.Stream)  # The original is untouched
+    lowered_body = next(
+        n for n, _ in lowered.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG) and n.label == body.label
+    )
+    assert isinstance(lowered_body.sdfg.arrays["S"], (dace.data.Scalar, dace.data.Array))
+
+    input = np.array([10], np.int32)
+    output = np.zeros([1], np.float32)
+    sdfg(iv=input, res=output)
+    assert output[0] == fibonacci(10)
+
+
+@dace.program
+def fib_loop(iv: dace.int32[1], res: dace.float32[1]):
+    """The recursion as a consume loop, which pushes with ``append`` and adds with an augmented assignment."""
+    S = dace.define_stream(dace.int32, 0)
+    S.append(iv[0])
+    for elem, p in dace.consume(S, 4):
+        if elem == 1:
+            res[0] += 1  # Processing elements add at once: a write-conflict resolution
+        elif elem > 1:
+            S.append(elem - 1)
+            S.append(elem - 2)
+
+
+def test_fibonacci_recursion_using_consume_loop():
+    output = np.zeros([1], np.float32)
+    fib_loop(np.array([10], np.int32), output)
+    assert output[0] == fibonacci(10)
+
+
+N = dace.symbol("N")
+
+
+@dace.program
+def doubled_sum(res: dace.int64[1]):
+    """Pushes symbolic values from a map, and consumes them in a loop that does not use the processing element."""
+    S = dace.define_stream(dace.int64, 0)
+    for i in dace.map[0:N]:
+        S.append(2 * i + 1)
+    for elem, _ in dace.consume(S, 3):
+        res[0] += elem
+
+
+def test_consume_loop_of_elements():
+    output = np.zeros([1], np.int64)
+    doubled_sum(output, N=100)
+    assert output[0] == 100**2
+
+
+def test_consume_loop_needs_processing_element():
+    """A consume loop names both the element and the processing element index."""
+
+    @dace.program
+    def elements_only(res: dace.int64[1]):
+        S = dace.define_stream(dace.int64, 0)
+        S.append(1)
+        for elem in dace.consume(S, 2):
+            res[0] += elem
+
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match="for x, pe in"):
+        elements_only.to_sdfg()
+
+
+# One processing element pushes two elements into a queue of one: the second push waits for a pop that never comes
+_OVERFLOWING_QUEUE = textwrap.dedent("""
+    import dace
+
+    @dace.program
+    def overflowing():
+        S = dace.define_stream(dace.int32, 1)
+        for _ in dace.map[0:1]:
+            S.append(1)
+        for x, _ in dace.consume(S, 1):
+            S.append(x)
+            S.append(x)
+
+    sdfg = overflowing.to_sdfg(simplify=True)
+    for desc in sdfg.arrays.values():
+        desc.storage = dace.StorageType.GPU_Global
+    for state in sdfg.states():
+        for node, scope in state.scope_dict().items():
+            if scope is None and isinstance(node, dace.nodes.MapEntry):
+                node.map.schedule = dace.ScheduleType.GPU_Device
+            elif scope is None and isinstance(node, dace.nodes.ConsumeEntry):
+                node.consume.schedule = dace.ScheduleType.GPU_Device
+                node.consume.num_pes = 1
+    sdfg()
+""")
+
+
+@pytest.mark.gpu
+def test_full_gpu_queue_fails():
+    """A push that waits on a full GPU queue for too long stops the kernel with the queue state, rather than hanging.
+    The failed kernel leaves the GPU context of the process unusable, hence a process of its own."""
+    child = subprocess.run([sys.executable, "-c", _OVERFLOWING_QUEUE], capture_output=True, text=True, timeout=300)
+    assert child.returncode != 0
+    assert "GPUQueue push waited for" in child.stdout + child.stderr
+    assert "larger buffer size" in child.stdout + child.stderr
+
+
 if __name__ == "__main__":
     test_fibonacci_recursion_using_consume()
     test_fibonacci_recursion_using_consume_program()
+    test_consume_body_nested_sdfg_reads_popped_element()
+    test_fibonacci_recursion_using_consume_loop()
+    test_consume_loop_of_elements()
+    test_consume_loop_needs_processing_element()
+    test_full_gpu_queue_fails()

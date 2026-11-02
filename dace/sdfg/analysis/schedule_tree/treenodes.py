@@ -808,9 +808,10 @@ class ConsumeScope(DataflowScope):
 
     def as_string(self, indent: int = 0):
         node: nodes.ConsumeEntry = self.node
-        cond = "stream not empty" if node.consume.condition is None else node.consume.condition.as_string
+        # The condition is a stop condition; without one, consumption ends at quiescence
+        cond = "quiescence" if node.consume.condition is None else node.consume.condition.as_string
         result = (
-            indent * INDENTATION + f"consume (PE {node.consume.pe_index} out of {node.consume.num_pes}) while {cond}:\n"
+            indent * INDENTATION + f"consume (PE {node.consume.pe_index} out of {node.consume.num_pes}) until {cond}:\n"
         )
         return result + super().as_string(indent)
 

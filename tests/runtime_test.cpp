@@ -4,6 +4,8 @@
 #include <cassert>
 #include <cstring>
 #include <iostream>
+#include <thread>
+#include <vector>
 
 #include <dace/dace.h>
 
@@ -47,15 +49,27 @@ int main(int, char **)
     s.push(1);
     std::atomic<uint64_t> result (0ULL);
 
-    // Stream consume (async, but useless operation)
-    dace::Consume<1>::consume(s, 8, [&](int /*pe*/, uint64_t& u)
-    {
-        if (u < 256ULL) {
-            result += u;
-            s.push(2 * u);
-            s.push(2 * u + 1);
-        }
-    });
+    // Consume protocol (what a lowered consume scope runs per processing element): a popped
+    // element stays pending until its task is done, so no thread leaves while another may push
+    std::vector<std::thread> pes;
+    for (int pe = 0; pe < 8; ++pe) {
+        pes.emplace_back([&]() {
+            uint64_t u;
+            size_t popped;
+            do {
+                popped = s.pop_try(u, true);
+                if (popped > 0) {
+                    if (u < 256ULL) {
+                        result += u;
+                        s.push(2 * u);
+                        s.push(2 * u + 1);
+                    }
+                    s.task_done(popped);
+                }
+            } while (popped > 0 || s.pending() > 0);
+        });
+    }
+    for (auto& pe : pes) pe.join();
 
     assert(result == 255 * 128);
 

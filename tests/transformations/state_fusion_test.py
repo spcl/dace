@@ -616,6 +616,37 @@ def test_a_read_behind_an_ordering_edge_is_a_read():
     assert not StateFusion.can_be_applied_to(sdfg, first_state=first, second_state=second)
 
 
+def test_side_effects_are_not_fused():
+    """A tasklet that declares side effects (e.g., an atomic update that publishes what was written before it) stays
+    in its own state, so that it runs after the previous state rather than concurrently with it."""
+    sdfg = dace.SDFG("side_effects_not_fused")
+    sdfg.add_array("data", [4], dace.float64)
+    sdfg.add_array("counter", [1], dace.int32)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second")
+    t1 = first.add_tasklet("write", {}, {"o"}, "o = 1")
+    first.add_edge(t1, "o", first.add_write("data"), None, dace.Memlet("data[0]"))
+    t2 = second.add_tasklet("publish", {}, {"o"}, "o = 1", side_effects=True)
+    second.add_edge(t2, "o", second.add_write("counter"), None, dace.Memlet("counter[0]"))
+    assert sdfg.apply_transformations(StateFusion) == 0
+    t2.side_effects = None  # Without the declaration, the independent states fuse
+    assert sdfg.apply_transformations(StateFusion) == 1
+
+
+@dace.program
+def publishes(data: dace.float64[4], counter: dace.int32[1]):
+    data[:] = 1
+    left = dace.atomic.add(counter, 0, -1)
+    S = dace.define_stream(dace.int32, 4)
+    S.append(left)
+
+
+def test_atomics_and_pushes_declare_side_effects():
+    sdfg = publishes.to_sdfg(simplify=True)
+    tasklets = {n.label: n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)}
+    assert tasklets["atomic_add"].side_effects and tasklets["S_append"].side_effects
+
+
 if __name__ == "__main__":
     test_fuse_assignments()
     test_fuse_assignments_2()
@@ -640,3 +671,5 @@ if __name__ == "__main__":
     test_copy_without_other_subset_is_compared_at_its_destination()
     test_one_writer_ordered_through_a_match_does_not_order_its_sibling()
     test_a_read_behind_an_ordering_edge_is_a_read()
+    test_side_effects_are_not_fused()
+    test_atomics_and_pushes_declare_side_effects()

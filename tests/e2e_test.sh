@@ -44,6 +44,8 @@ runall() {
     runtest simple/laplace.py $1
     runtest simple/mandelbrot.py $1
     runtest simple/spmv.py $1
+    runtest simple/adaptive_quadrature.py $1
+    runtest simple/sssp.py $1
     runtest explicit/fibonacci.py $1
     runtest explicit/filter.py $1
     runtest explicit/histogram.py $1

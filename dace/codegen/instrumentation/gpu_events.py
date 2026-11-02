@@ -36,8 +36,6 @@ class GPUEventProvider(InstrumentationProvider):
 
     def _get_sobj(self, node: nodes.EntryNode | nodes.ExitNode):
         # Get object behind scope
-        if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
-            return node.consume
         return node.map
 
     def _create_event(self, id):

@@ -98,7 +98,7 @@ Another form of iteration is the dynamic producer/consumer construct :class:`~da
 
 .. code-block:: python
 
-    for value in dace.consume(S, 4):  # 4-threaded consumption of stream ``S``
+    for value, pe in dace.consume(S, 4):  # 4-threaded consumption of stream ``S``; ``pe`` is the thread
         print(value)
 
 
@@ -419,6 +419,65 @@ and a write-conflicted memlet:
 
                 # One output, at index "i,j", write-conflict resolution is summation
                 c >> C(1, lambda a, b: a + b)[i, j]
+
+Atomic Updates
+~~~~~~~~~~~~~~
+
+With a dynamic memlet (a volume of ``-1``), every assignment to a write-conflict resolved connector is an atomic update,
+after which the connector holds the old value of the data. A tasklet can thus fetch and update a value in one step, for
+example to append to a list from many threads:
+
+.. code-block:: python
+
+    @dace.program
+    def append_positive(values: dace.float64[N], result: dace.float64[N], count: dace.int64[1]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                v << values[i]
+                c >> count(-1, lambda a, b: a + b)[0]  # Dynamic: zero or one update
+                out >> result(-1)[:]
+
+                if v > 0:
+                    slot = c = 1  # Claims a unique slot: the old value of the counter
+                    out[slot] = v
+
+An update whose old value is read orders memory accesses around it (it is *acquire-release*): for example, the tasklet
+that brings a counter down to zero sees everything the other tasklets wrote before decrementing it. See the
+write-conflict resolution part of :ref:`sdfg-memlet` for the exact guarantee.
+
+Outside of tasklets, ``dace.atomic`` makes the same updates as functions of one element, which return its old value
+(as ``numba.cuda.atomic``): ``add``, ``sub``, ``prod``, ``min``, ``max``, the bitwise ``and_``, ``or_`` and ``xor``, and
+``exch`` (exchange), as well as ``custom``, which updates with a lambda of the old and the new value. Each takes the
+array, the index of the element and the value; the index and the value are scalars, constants or symbolic expressions:
+
+.. code-block:: python
+
+    @dace.program
+    def append_positive(values: dace.float64[N], result: dace.float64[N], count: dace.int64[1]):
+        for i in dace.map[0:N]:
+            if values[i] > 0:
+                slot = dace.atomic.add(count, 0, 1)
+                result[slot] = values[i]
+
+    @dace.program
+    def last_arrivers(groups: dace.int32[N], left: dace.int32[G], last: dace.int32[N]):
+        for i in dace.map[0:N]:
+            if dace.atomic.add(left, groups[i], -1) == 1:  # The last update of its group
+                last[i] = 1
+
+    @dace.program
+    def running_maximum(values: dace.float32[N], peak: dace.float32[1], before: dace.float32[N]):
+        for i in dace.map[0:N]:
+            before[i] = dace.atomic.max(peak, 0, values[i])
+
+    @dace.program
+    def scaled_sums(values: dace.float64[N], sums: dace.float64[2]):
+        for i in dace.map[0:N]:
+            dace.atomic.custom(lambda a, b: a + 2 * b, sums, i % 2, values[i])
+
+These updates are acquire-release as well. Updates that the target has an atomic instruction for use it (on GPUs, for
+example, integer minimum and maximum); others become compare-and-swap loops, as do lambdas that are not a known
+reduction. Outside of programs, the functions update the array in plain Python.
 
 .. _calling_sdfgs:
 

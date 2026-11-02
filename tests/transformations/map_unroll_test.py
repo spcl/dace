@@ -46,5 +46,39 @@ def test_map_unroll():
             assert input_array[i, k, 0] + 1 == output_array[0, k, i]
 
 
+def test_map_unroll_keeps_inputs_of_downstream_nodes():
+    """A node after the map that also reads data the map does not read is in the same component."""
+    sdfg = dace.SDFG("unroll_downstream_inputs")
+    sdfg.add_array("A", [1], dace.int32)
+    sdfg.add_array("B", [1], dace.int32)
+    sdfg.add_array("C", [1], dace.int32)
+    sdfg.add_transient("T", [1], dace.int32)
+    state = sdfg.add_state()
+    t = state.add_access("T")
+    state.add_mapped_tasklet(
+        "first",
+        {"i": "0:1"},
+        {"a": dace.Memlet("A[i]")},
+        "t = a + 1",
+        {"t": dace.Memlet("T[i]")},
+        external_edges=True,
+        output_nodes={"T": t},
+    )
+    second = state.add_tasklet("second", {"t", "b"}, {"c"}, "c = t + b")
+    state.add_edge(t, None, second, "t", dace.Memlet("T[0]"))
+    state.add_edge(state.add_read("B"), None, second, "b", dace.Memlet("B[0]"))
+    state.add_edge(second, "c", state.add_write("C"), None, dace.Memlet("C[0]"))
+
+    assert sdfg.apply_transformations(MapUnroll) == 1
+    sdfg.validate()
+
+    A = np.array([3], dtype=np.int32)
+    B = np.array([5], dtype=np.int32)
+    C = np.zeros(1, dtype=np.int32)
+    sdfg(A=A, B=B, C=C)
+    assert C[0] == 9
+
+
 if __name__ == "__main__":
     test_map_unroll()
+    test_map_unroll_keeps_inputs_of_downstream_nodes()
