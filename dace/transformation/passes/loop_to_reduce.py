@@ -453,10 +453,10 @@ def only_read_modify_written(loop: ControlFlowRegion, name: str) -> bool:
     if name not in names:
         return False
     accesses = [(state, node) for state in states for node in state.data_nodes() if node.data == name]
+    if any(id(e) not in writes and e.data.wcr is None for state, node in accesses for e in data_in_edges(state, node)):
+        return False
     stored = [e.data.get_dst_subset(e, state) for state, node in accesses for e in data_in_edges(state, node)]
     for state, node in accesses:
-        if any(id(e) not in writes and e.data.wcr is None for e in data_in_edges(state, node)):
-            return False
         for read in data_out_edges(state, node):
             if id(read) in reads and read_by_its_update(state, read, name):
                 continue
@@ -483,14 +483,18 @@ def apart_across_iterations(loop: ControlFlowRegion, read: subsets.Subset, store
 
 
 def read_by_its_update(state: SDFGState, read: gr.MultiConnectorEdge[mm.Memlet], name: str) -> bool:
-    """Whether the tasklet ``read`` reaches, past a staging copy of the load, writes ``name`` back, past one of the
-    store (``staging_successor``); a nested SDFG reached is an update if its body only updates the connector."""
-    last = state.memlet_path(read)[-1]
-    reader = last.dst
+    """Whether everything ``read`` reaches, a map fanning it out included, is an update of ``name``: a tasklet that,
+    past a staging copy of the load, writes ``name`` back, past one of the store (``staging_successor``), or a nested
+    SDFG whose body only updates the connector."""
+    return all(leaf_updates(state, leaf, name) for leaf in state.memlet_tree(read).leaves())
+
+
+def leaf_updates(state: SDFGState, leaf: gr.MultiConnectorEdge[mm.Memlet], name: str) -> bool:
+    reader = leaf.dst
     if isinstance(reader, nodes.NestedSDFG):
-        return last.dst_conn in reader.out_connectors and only_read_modify_written(reader.sdfg, last.dst_conn)
+        return leaf.dst_conn in reader.out_connectors and only_read_modify_written(reader.sdfg, leaf.dst_conn)
     # One element only: a staged slab is the operand of whatever reads it, householder's ``V @ Q[k:, :]``
-    if isinstance(reader, nodes.AccessNode) and state.out_degree(reader) == 1 and read.data.num_elements() == 1:
+    if isinstance(reader, nodes.AccessNode) and state.out_degree(reader) == 1 and leaf.data.num_elements() == 1:
         reader = state.memlet_path(state.out_edges(reader)[0])[-1].dst
     if not isinstance(reader, nodes.Tasklet):
         return False
