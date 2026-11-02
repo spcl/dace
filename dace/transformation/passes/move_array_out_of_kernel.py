@@ -919,6 +919,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
             if e.data.wcr is not None
         )
         handled = 0
+        moved: OrderedSet = OrderedSet()
         for name, desc, owner, kernels in candidates:
             if name not in accumulated and fits_registers(desc, self.register_limit):
                 desc.storage = dtypes.StorageType.Register
@@ -929,9 +930,11 @@ class MoveArrayOutOfKernel(ppl.Pass):
                 continue
             desc.storage = dtypes.StorageType.GPU_Global
             move_array(plan)
-            # Nests now take one slice of the lifted array; restate them as the whole array they are connected to.
-            dealias.convert_legacy_nested_sdfgs(plan.kernel[1].sdfg)
+            moved.add(plan.kernel[1].sdfg)
             handled += 1
+        # Nests now take one slice of the lifted arrays; restate them as the whole arrays they are connected to.
+        for kernel_sdfg in moved:
+            dealias.convert_legacy_nested_sdfgs(kernel_sdfg)
         if self.raise_on_unsupported:
             check_no_global_copy_in_kernel(sdfg)
         return handled or None
