@@ -25,6 +25,35 @@ from dace.transformation import transformation
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 
 
+def per_iter_axes(subset, loop_var: str | None, extra_index=None) -> frozenset[int]:
+    """The axes ``subset`` indexes at exactly ``loop_var``, empty unless it is :func:`_is_per_iter_subset`.
+
+    Two per-iteration accesses meet in one iteration only when they share such an axis: ``A[i, j]`` and ``A[j, i]`` are
+    both per-iteration, yet ``A[j, i]`` reads what later iterations of the first one write.
+    """
+    if loop_var is None or subset is None:
+        return frozenset()
+    try:
+        loop_sym = symbolic.pystr_to_symbolic(loop_var)
+    except Exception:
+        return frozenset()
+    axes: list[int] = []
+    extra = [] if extra_index is None else [(extra_index, extra_index, 1)]
+    for axis, (rb, re_, _) in enumerate([*subset.ndrange(), *extra]):
+        if rb != re_:
+            return frozenset()
+        try:
+            expr = symbolic.pystr_to_symbolic(str(rb))
+        except Exception:
+            return frozenset()
+        if loop_sym in expr.free_symbols:
+            offset = symbolic.simplify(as_expr(expr) - as_expr(loop_sym))
+            if not (isinstance(offset, sympy.Basic) and offset.is_number and offset == 0):
+                return frozenset()
+            axes.append(axis)
+    return frozenset(axes)
+
+
 def _is_per_iter_subset(subset, loop_var: str | None, extra_index=None) -> bool:
     """``True`` iff every dimension of ``subset`` is a single-point access at
     the loop variable with offset zero (or loop-invariant).
@@ -42,26 +71,6 @@ def _is_per_iter_subset(subset, loop_var: str | None, extra_index=None) -> bool:
     Cross-iteration subsets like ``a[i - 1]`` break this property and force
     the producer / consumer to stay in the same fission group.
     """
-    if loop_var is None or subset is None:
-        return False
-    try:
-        loop_sym = symbolic.pystr_to_symbolic(loop_var)
-    except Exception:
-        return False
-    saw_loop_var = False
-    extra = [] if extra_index is None else [(extra_index, extra_index, 1)]
-    for rb, re_, _ in [*subset.ndrange(), *extra]:
-        if rb != re_:
-            return False
-        try:
-            expr = symbolic.pystr_to_symbolic(str(rb))
-        except Exception:
-            return False
-        if loop_sym in expr.free_symbols:
-            offset = symbolic.simplify(as_expr(expr) - as_expr(loop_sym))
-            if not (isinstance(offset, sympy.Basic) and offset.is_number and offset == 0):
-                return False
-            saw_loop_var = True
     # A subset that NEVER references the loop variable is a constant slot in
     # this loop's scope (e.g. ``a[i]`` inside an inner ``for j``). Constant
     # slots are NOT per-iteration: a write-then-read in the body forms an
@@ -70,7 +79,7 @@ def _is_per_iter_subset(subset, loop_var: str | None, extra_index=None) -> bool:
     # only the final write instead of the per-iter intermediates. TSVC s257
     # ``a[i] = aa[j,i] - a[i-1]; aa[j,i] = a[i] + bb[j,i]`` inside the
     # inner ``j`` loop is the canonical regression.
-    return saw_loop_var
+    return bool(per_iter_axes(subset, loop_var, extra_index))
 
 
 def _subsets_at_node(node: nodes.AccessNode, state: SDFGState):
@@ -151,12 +160,15 @@ def _fissions_after_bridge_rewrite(loop: LoopRegion, sdfg: SDFG) -> bool:
 
 
 def _container_per_iter_only(state: SDFGState, data: str, loop_var: str | None) -> bool:
-    """``True`` iff every memlet referencing ``data`` in ``state`` is per-iter."""
+    """``True`` iff every memlet referencing ``data`` in ``state`` is per-iter, all on one shared axis."""
+    shared: frozenset[int] | None = None
     for n in state.nodes():
         if not (isinstance(n, nodes.AccessNode) and n.data == data):
             continue
         for sub, _ in _subsets_at_node(n, state):
-            if not _is_per_iter_subset(sub, loop_var):
+            axes = per_iter_axes(sub, loop_var)
+            shared = axes if shared is None else shared & axes
+            if not shared:
                 return False
     return True
 

@@ -36,12 +36,12 @@ of child A before ALL of child B, which is legal exactly when nothing depends
 backwards -- B(i') must not feed or clobber A(i) for any ``i' > i``.
 
 The condition is discharged per ACCESS rather than by unioning footprints:
-``_is_per_iter_subset`` asks whether an access names one element whose
-``loop_var`` coordinate IS ``loop_var``, with the remaining coordinates free.
-Every access that answers yes lies in the hyperplane of its own parent
-iteration, so the children's per-iteration footprints are pairwise disjoint
-across ``i`` and only A(i) can reach what B(i) reads -- which is the same before
-and after the split. Any access it cannot pin that way -- a range, a fixed slot,
+``per_iter_axes`` asks on which axes an access names one element whose
+coordinate IS ``loop_var``, with the remaining coordinates free. Accesses that
+share such an axis lie in the hyperplane of their parent iteration, so the
+children's per-iteration footprints are pairwise disjoint across ``i`` and only
+A(i) can reach what B(i) reads -- which is the same before and after the split.
+Row ``A[i, j]`` against column ``A[j, i]`` share none. Any access it cannot pin that way -- a range, a fixed slot,
 a read one parent iteration behind, a subset the memlets do not describe --
 answers no and the two blocks MERGE. Nothing is ever assumed disjoint; the
 over-approximation refuses. That is why a sibling pair sharing only a READ-ONLY
@@ -203,17 +203,17 @@ def level_parallel(blocks: list[ControlFlowBlock], loop_var: str | None, arrays:
     :param loop_var: The enclosing loop's iteration variable.
     :param arrays: The owning SDFG's data descriptors, to tell a transient from a real container.
     """
-    writes: dict[str, bool] = {}
-    reads: dict[str, bool] = {}
+    writes: dict[str, frozenset[int]] = {}
+    reads: dict[str, frozenset[int]] = {}
     for block in blocks:
         block_writes, block_reads = _rw_subsets(block, loop_var)
-        for name, aligned in block_writes.items():
-            writes[name] = writes.get(name, True) and aligned
-        for name, aligned in block_reads.items():
-            reads[name] = reads.get(name, True) and aligned
+        for name, axes in block_writes.items():
+            writes[name] = writes[name] & axes if name in writes else axes
+        for name, axes in block_reads.items():
+            reads[name] = reads[name] & axes if name in reads else axes
     return all(
-        aligned and reads.get(name, True)
-        for name, aligned in writes.items()
+        axes & reads.get(name, axes)
+        for name, axes in writes.items()
         if name in arrays and not arrays[name].transient
     )
 
