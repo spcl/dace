@@ -221,9 +221,55 @@ def test_a_guard_computed_by_a_state_moves_in_and_the_levels_collapse_into_one_m
     assert np.array_equal(got, np.where(levmask[:, None] != 0, 2 * a, -1.0))
 
 
+def _guarded_map_nest(body_of_branch, condition: str, assignments: dict | None = None, mapping: dict | None = None):
+    """``map i: nested { [assignments] if condition: <body_of_branch(state)> }`` writing ``B``, with symbol ``s = 1``."""
+    sdfg = dace.SDFG("guarded_nest")
+    sdfg.add_array("B", [3, 2], dace.float64)
+    sdfg.add_symbol("s", dace.int64)
+    first = sdfg.add_state("first", is_start_block=True)
+    state = sdfg.add_state("outer")
+    sdfg.add_edge(first, state, InterstateEdge(assignments={"s": "1"}))
+    inner = dace.SDFG("inner")
+    inner.add_array("B", [3, 2], dace.float64)
+    inner.add_symbol("i", dace.int64)
+    inner.add_symbol("s", dace.int64)
+    block = ConditionalBlock("guard")
+    if assignments:
+        head = inner.add_state("head", is_start_block=True)
+        inner.add_node(block)
+        inner.add_edge(head, block, InterstateEdge(assignments=assignments))
+    else:
+        inner.add_node(block, is_start_block=True)
+    branch = ControlFlowRegion("then", sdfg=inner)
+    body_of_branch(branch.add_state("body", is_start_block=True))
+    block.add_branch(CodeBlock(condition), branch)
+    me, mx = state.add_map("outer", {"i": "0:3"})
+    n = state.add_nested_sdfg(inner, {}, {"B": None}, symbol_mapping={"i": "i", "s": "s"})
+    state.add_edge(me, None, n, None, dace.Memlet())
+    state.add_memlet_path(n, mx, state.add_write("B"), src_conn="B", memlet=dace.Memlet("B[0:3, 0:2]"))
+    return sdfg
+
+
+def _write_ones(state):
+    state.add_mapped_tasklet("m", {"k": "0:2"}, {}, "o = 1.0", {"o": dace.Memlet("B[i, k]")}, external_edges=True)
+
+
+def test_a_copy_beside_the_inner_map_is_refused():
+    """The copy is no map to move the guard into, and would run unguarded."""
+
+    def body(state):
+        _write_ones(state)
+        state.add_edge(
+            state.add_read("B"), None, state.add_write("B"), None, dace.Memlet(data="B", subset="0, 0", other_subset="1, 0")
+        )
+
+    assert not _apply(_guarded_map_nest(body, "i > 5"))
+
+
 if __name__ == "__main__":
     test_a_guard_over_a_map_nest_moves_under_the_innermost_map()
     test_data_dependent_guard_does_not_produce_an_invalid_sdfg()
     test_guard_symbol_defined_on_two_edges_is_refused()
     test_guard_symbol_used_by_a_map_range_is_not_deleted()
     test_a_guard_computed_by_a_state_moves_in_and_the_levels_collapse_into_one_map()
+    test_a_copy_beside_the_inner_map_is_refused()

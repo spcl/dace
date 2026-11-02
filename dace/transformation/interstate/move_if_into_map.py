@@ -50,12 +50,15 @@ def single_meaningful_state(region: ControlFlowRegion) -> SDFGState | None:
 
 
 def sibling_maps(state: SDFGState) -> list[MapEntry] | None:
-    """The top-level maps of ``state`` when everything else at the top level is an access node, else ``None``."""
+    """The top-level maps of ``state`` when everything else at the top level is an access node, else ``None``. A copy
+    between two access nodes is no map, and would run unguarded."""
     scope = state.scope_dict()
     top = [n for n in state.nodes() if scope[n] is None]
     entries = [n for n in top if isinstance(n, MapEntry)]
     exits = {state.exit_node(me) for me in entries}
     if not entries or any(not isinstance(n, AccessNode) for n in top if n not in exits and n not in entries):
+        return None
+    if any(isinstance(e.src, AccessNode) and isinstance(e.dst, AccessNode) for e in state.edges()):
         return None
     if any(all(isinstance(n, AccessNode) for n in state.all_nodes_between(me, state.exit_node(me))) for me in entries):
         return None
