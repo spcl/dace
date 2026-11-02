@@ -1107,7 +1107,7 @@ class ArgMaxLift(ppl.Pass):
             inside = m.shape[t + 1 :]
             stride = symbolic.symstr(symbolic.simplify(functools.reduce(operator.mul, inside))) if inside else None
             position = f"int_floor({flat}, {stride})" if stride is not None else flat
-            assignments[name] = position if t == 0 else f"({position} % ({symbolic.symstr(dim)}))"
+            assignments[name] = position if t == 0 else f"py_mod({position}, {symbolic.symstr(dim)})"
         bind_state = m.parent.add_state(outer_loop.label + "_argreduce2d_bind")
         m.parent.add_edge(argmax_state, bind_state, dace.InterstateEdge(assignments=assignments))
         for oe in list(m.parent.out_edges(outer_loop)):
