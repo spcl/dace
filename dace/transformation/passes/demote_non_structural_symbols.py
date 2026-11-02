@@ -201,35 +201,48 @@ def loop_carried_symbols(sd: SDFG) -> OrderedSet[str]:
     return carried
 
 
-def fuse_into_successor(states: Iterable[SDFGState]) -> None:
-    """Fuse each state a demotion added (it loads the demoted value) into the state it leads to, where legal.
+def fuse_with_neighbour(states: Iterable[SDFGState]) -> None:
+    """Fuse each state a demotion added into the state it leads to and the one leading to it, where legal.
 
-    The load of an integer accumulator is an interstate assignment, so its demoted form sits in a state of its own, apart
-    from the store: ``o[b] = o[b] + 1`` became a read state and a write state, and ``AugAssignToWCR``, which matches one
-    state, never saw it as an accumulation. A float accumulator is never a symbol and kept its single state.
+    An accumulator symbol's load and store are interstate assignments, so their demoted forms sit in states of their
+    own: ``o[b] = o[b] + 1`` became a read state and a write state, and a sum a later branch reads (bicgstab's stop
+    test) a compute state and a store state, and ``AugAssignToWCR``, which matches one state, never saw an accumulation
+    in either. A float accumulator that is no symbol kept its single state.
     """
     # The fusion canonicalization runs everywhere else (``FuseStates``): one canon fuses by one rule.
     from dace.transformation.interstate import StateFusionExtended
 
-    for state in states:
-        graph = state.parent_graph
-        successors = graph.out_edges(state)
-        if len(successors) != 1 or not successors[0].data.is_unconditional() or successors[0].data.assignments:
-            continue
-        follower = successors[0].dst
-        if not isinstance(follower, SDFGState) or graph.in_degree(follower) != 1:
-            continue
+    def fuse(first: SDFGState, second: SDFGState, graph: AbstractControlFlowRegion) -> bool:
         fusion = StateFusionExtended()
         fusion.setup_match(
-            state.sdfg,
+            first.sdfg,
             graph.cfg_id,
             -1,
-            {StateFusionExtended.first_state: state, StateFusionExtended.second_state: follower},
+            {StateFusionExtended.first_state: first, StateFusionExtended.second_state: second},
             0,
             override=True,
         )
-        if fusion.can_be_applied(graph, 0, state.sdfg):
-            fusion.apply(graph, state.sdfg)
+        if not fusion.can_be_applied(graph, 0, first.sdfg):
+            return False
+        fusion.apply(graph, first.sdfg)
+        return True
+
+    def plain(edge) -> bool:
+        return edge.data.is_unconditional() and not edge.data.assignments
+
+    for state in states:
+        graph = state.parent_graph
+        if state not in graph.nodes():
+            continue  # fused into an earlier neighbour
+        after = graph.out_edges(state)
+        if len(after) == 1 and plain(after[0]) and isinstance(after[0].dst, SDFGState):
+            follower = after[0].dst
+            if graph.in_degree(follower) == 1 and fuse(state, follower, graph) and state not in graph.nodes():
+                state = follower
+        before = graph.in_edges(state)
+        if len(before) == 1 and plain(before[0]) and isinstance(before[0].src, SDFGState):
+            if graph.out_degree(before[0].src) == 1:
+                fuse(before[0].src, state, graph)
 
 
 @properties.make_properties
@@ -254,7 +267,7 @@ class DemoteNonStructuralSymbols(ppl.Pass):
         before = {id(state) for state in sdfg.states()}
         demoted = demote_symbols(sdfg, loop_carried_symbols)
         if demoted:
-            fuse_into_successor([state for state in sdfg.states() if id(state) not in before])
+            fuse_with_neighbour([state for state in sdfg.states() if id(state) not in before])
         return demoted or None
 
     def report(self, pass_retval: int) -> str:

@@ -190,6 +190,9 @@ class AccumulatorCopyChainToWCR(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> int | None:
         """:returns: The number of rewrites, or ``None`` if the SDFG was left untouched."""
         count = collapse_accumulator_chains(sdfg) + (retarget_wcr_accumulators(sdfg) or 0)
+        # After the chain matchers, which read the staging scalars this folds
+        if forward_element_stores(sdfg):
+            count += 1 + _augassign_to_wcr_per_state(sdfg) + (retarget_wcr_accumulators(sdfg) or 0)
         return count or None
 
 
@@ -300,6 +303,44 @@ def forward_element_loads(sdfg: SDFG) -> int:
                     mm.Memlet(data=source.data, subset=copy.deepcopy(element)),
                 )
                 state.remove_edge(edge)
+            state.remove_node(scalar)
+            owner.remove_data(scalar.data, validate=False)
+            forwarded += 1
+    return forwarded
+
+
+def forward_element_stores(sdfg: SDFG) -> int:
+    """Write the element a transient scalar is only copied into from the tasklet computing it: the store half of
+    :func:`forward_element_loads`. A symbol accumulator demoted to a scalar reaches its store through such a scalar,
+    ``s -> (s + x) -> t -> s`` (bicgstab's ``__cb9``, a sum a break reads), which no ``AugAssignToWCR`` shape matches.
+
+    :returns: how many scalars were forwarded.
+    """
+    forwarded = 0
+    for state in sdfg.states():
+        owner = state.sdfg
+        for scalar in [n for n in state.data_nodes() if isinstance(owner.arrays[n.data], data.Scalar)]:
+            desc = owner.arrays[scalar.data]
+            if not desc.transient or state.in_degree(scalar) != 1 or state.out_degree(scalar) != 1:
+                continue
+            compute, store = state.in_edges(scalar)[0], state.out_edges(scalar)[0]
+            if not (isinstance(compute.src, nodes.Tasklet) and isinstance(store.dst, nodes.AccessNode)):
+                continue
+            element = store.data.get_dst_subset(store, state)
+            target = owner.arrays[store.dst.data]
+            if element is None or element.num_elements() != 1 or store.data.wcr is not None or compute.data.wcr:
+                continue
+            if target.dtype != desc.dtype or isinstance(target, data.View):
+                continue
+            # The update of that element, not any store
+            if not any(e.data.data == store.dst.data and e.data.subset == element for e in state.in_edges(compute.src)):
+                continue
+            if any(n is not scalar and n.data == scalar.data for s in owner.states() for n in s.data_nodes()):
+                continue
+            if scalar.data in {str(s) for e in owner.all_interstate_edges() for s in e.data.free_symbols}:
+                continue
+            memlet = mm.Memlet(data=store.dst.data, subset=copy.deepcopy(element))
+            state.add_edge(compute.src, compute.src_conn, store.dst, store.dst_conn, memlet)
             state.remove_node(scalar)
             owner.remove_data(scalar.data, validate=False)
             forwarded += 1

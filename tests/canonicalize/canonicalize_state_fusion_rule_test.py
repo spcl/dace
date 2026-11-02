@@ -3,7 +3,7 @@
 drives everywhere else in it, not with plain ``StateFusion``.
 
 ``DemoteNonStructuralSymbols`` puts the load of a demoted symbol accumulator in a state of its own and then fuses it
-into the state that stores it (``fuse_into_successor``). Plain ``StateFusion`` refuses what the extended rule orders
+into the state that stores it (``fuse_with_neighbour``). Plain ``StateFusion`` refuses what the extended rule orders
 and decides hazards differently, so one canonicalization judged two states by two rules.
 """
 
@@ -11,7 +11,7 @@ import pytest
 
 import dace
 from dace.transformation.interstate.state_fusion import StateFusion
-from dace.transformation.passes.demote_non_structural_symbols import fuse_into_successor
+from dace.transformation.passes.demote_non_structural_symbols import fuse_with_neighbour
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ def load_then_store() -> tuple[dace.SDFG, dace.SDFGState]:
 
 def test_a_demoted_load_is_fused_by_the_extended_rule(plain_state_fusion_forbidden):
     sdfg, load = load_then_store()
-    fuse_into_successor([load])
+    fuse_with_neighbour([load])
     assert len(list(sdfg.states())) == 1, "the load state must be fused into its store"
     sdfg.validate()
 
