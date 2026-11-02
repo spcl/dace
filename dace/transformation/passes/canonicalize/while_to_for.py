@@ -12,6 +12,7 @@ is replaced by its expression when nothing outside the loop reads that symbol. `
 symbol and, when read after the loop, ends at its exit value, the first that fails the condition.
 """
 
+import re
 from typing import Any
 
 import sympy
@@ -134,11 +135,24 @@ def convert(loop: LoopRegion) -> bool:
     exits = loop.parent_graph.out_edges(loop)
     for name in sorted(str(s) for s in cond.free_symbols):
         found = bump(loop, name, cond_symbol)
+        # A bound the body moves, or a condition assigned ahead of the bump, is no fixed condition of the counter
+        moved = {k for e in loop.all_interstate_edges() for k in e.data.assignments} - {name, cond_symbol}
+        if found is not None and {str(s) for s in cond.free_symbols} & moved:
+            continue
+        if found is not None and cond_symbol is not None:
+            if body_edges(loop, cond_symbol)[0].src not in later_blocks(loop, found[0].dst):
+                continue
         # The counter starts from a value an edge before the loop gives it: a loop counter cannot read itself.
         defining = start_edge(loop, name) if found is not None else None
         if defining is None:
             continue
         start = symbolic.pystr_to_symbolic(defining.data.assignments[name])
+        # The condition is first read at entry: it must hold there what the body assigns it, at the counter's start
+        if cond_symbol is not None:
+            entry = start_edge(loop, cond_symbol)
+            value = None if entry is None else symbolic.pystr_to_symbolic(entry.data.assignments[cond_symbol])
+            if str(value) not in (str(cond), str(cond.subs(symbolic.pystr_to_symbolic(name), start))):
+                continue
         bounded = solved_for(cond, name)
         last = None
         if read_outside(loop, name, skip_body=True):
@@ -165,7 +179,8 @@ def start_edge(loop: LoopRegion, name: str):
         edge = ins[0]
         if name in edge.data.assignments:
             value = symbolic.pystr_to_symbolic(edge.data.assignments[name])
-            return None if changed.intersection(str(s) for s in value.free_symbols) else edge
+            # By its text: an array the value subscripts is no free symbol
+            return None if changed.intersection(re.findall(r"[A-Za-z_]\w*", str(edge.data.assignments[name]))) else edge
         changed.update(edge.data.assignments)
         block = edge.src
         if not isinstance(block, SDFGState):

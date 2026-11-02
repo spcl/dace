@@ -40,6 +40,7 @@ on any other carried writes to non-transient arrays.
 
 import ast
 import copy
+import re
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
@@ -1188,6 +1189,13 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
     # iterations that never had one.
     if any(not _sibling_branches_hold_the_carry(s, loop) for s in matched):
         return []
+    # The multi-slot rewrite has no identity fill for an iteration a mask skips
+    if len(matched) > 1 and any(_enclosing_masked_conditional(s.body_state) is not None for s in matched):
+        return []
+    # An index the body assigns is no invariant of the post-loop seed
+    assigned = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
+    if assigned and any(assigned & set(re.findall(r"[A-Za-z_]\w*", str(s.other_indices))) for s in matched):
+        return []
     severed = [
         _carrier_read_edge(
             s.body_state,
@@ -1207,6 +1215,14 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
     ]
     if _read_survives_rewrite(loop, sdfg, carrier_set, severed, holds):
         return []
+    # A carry read of what this iteration wrote is no recurrence
+    for s, read in zip(matched, severed):
+        if any(
+            str(w.data.subset) == str(read.data.subset)
+            for w in s.body_state.in_edges(read.src)
+            if not w.data.is_empty()
+        ):
+            return []
     return matched
 
 
@@ -1243,6 +1259,8 @@ def _writes_only_the_carry_slot(state: SDFGState, write_an: nodes.AccessNode, in
                 return False  # a source that is not data cannot be the held carrier
             roots.append(cur)
             continue
+        if isinstance(cur, nodes.Tasklet) and not isinstance(ast.parse(cur.code.as_string).body[0].value, ast.Name):
+            return False  # computes a value of its own
         worklist.extend(e.src for e in in_edges)
     if not roots:
         return False
@@ -2222,7 +2240,7 @@ def _match_scalar_carry(loop: LoopRegion, sdfg: SDFG) -> _ScalarCarryScan | None
         return None
 
     state, inner_loop = _descend_to_content_state(loop)
-    if state is None or inner_loop is not None:
+    if state is None or inner_loop is not None or _enclosing_masked_conditional(state) is not None:
         return None  # v1 keeps narrow on flat bodies; nested-scalar-carry is a follow-up.
     for n in state.nodes():
         if not isinstance(n, (nodes.Tasklet, nodes.AccessNode)):
@@ -2988,7 +3006,7 @@ def stride_guard_is_statically_dischargeable(infos: list["_Scan"], facts: symbol
     for info in infos:
         s = as_basic(info.scan_stride) if isinstance(info.scan_stride, symbolic.SymExpr) else info.scan_stride
         if not (isinstance(s, sympy.Basic) and not s.is_Integer and not loop_analysis._provably_le(1, s, facts)):
-            continue
+            return False  # a true scan beside it: the loop is no DOALL
         guarded = True
         if info.iter_start is None or info.iter_end is None:
             return False
@@ -3068,6 +3086,10 @@ def _find_scan_update_tasklet(
         # would degenerate to ``out[i] = max(out[start], literal)`` which is
         # better lifted as a plain reduction, not a scan.
         if len(in_edges) not in (1, 2):
+            continue
+        # The rewrite replaces the whole expression: both operands must be the bare inputs
+        operands = (rhs.left, rhs.right) if isinstance(rhs, ast.BinOp) else rhs.args
+        if len(in_edges) == 2 and not all(isinstance(operand, ast.Name) for operand in operands):
             continue
         literal_delta = None
         if len(in_edges) == 1:

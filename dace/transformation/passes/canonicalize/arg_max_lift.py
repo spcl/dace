@@ -646,6 +646,15 @@ class ArgMaxLift(ppl.Pass):
 
         if self._contains_break(loop):
             return None
+        # An assignment nothing in the body reads updates a value the rewrite would drop with the loop
+        assigned = {
+            name: set(re.findall(r"[A-Za-z_]\w*", str(v)))
+            for e in loop.edges()
+            for name, v in e.data.assignments.items()
+        }
+        read = {str(s) for s in cond_block.free_symbols}.union(*(v for name, v in assigned.items() if name not in v))
+        if any(name not in read for name in assigned):
+            return None
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
         stride = loop_analysis.get_loop_stride(loop)
@@ -937,6 +946,14 @@ class ArgMaxLift(ppl.Pass):
         idx_names = self._match_2d_true_branch(true_branch, carrier_name, gather_sym, array, loop_vars, sdfg)
         if idx_names is None:
             return None
+        # The rewrite drops the seeds: the carrier must start at the array's first element, each index at zero
+        preloop = self._collect_preloop_assignments(outer_loop, sdfg)
+        seed = preloop.get(carrier_name, "")
+        origin = f"{array}[{', '.join('0' * len(loops))}]"
+        if preloop.get(seed, seed).replace(" ", "") != origin.replace(" ", ""):
+            return None
+        if any(preloop.get(name) != "0" for name in idx_names):
+            return None
 
         # Contiguity: the nested iteration must visit EXACTLY the whole array, in
         # C-contiguous memory order, so a flat 1-D arg-reduce is equivalent.
@@ -1133,6 +1150,8 @@ class ArgMaxLift(ppl.Pass):
     def _branch_has_content(self, branch: ControlFlowBlock) -> bool:
         if not isinstance(branch, ControlFlowRegion):
             return False
+        if any(e.data.assignments for e in branch.edges()):
+            return True
         for n in branch.nodes():
             if isinstance(n, SDFGState) and len(n.nodes()) > 0:
                 return True
@@ -1361,7 +1380,7 @@ class ArgMaxLift(ppl.Pass):
         return None, None
 
     def _extract_singleton_state(self, branch: ControlFlowBlock) -> SDFGState | None:
-        if not isinstance(branch, ControlFlowRegion):
+        if not isinstance(branch, ControlFlowRegion) or not all(isinstance(n, SDFGState) for n in branch.nodes()):
             return None
         content_states = [n for n in branch.nodes() if isinstance(n, SDFGState) and len(n.nodes()) > 0]
         if len(content_states) != 1:
@@ -1593,7 +1612,10 @@ class ArgMaxLift(ppl.Pass):
                 if lhs not in preloop:  # closest-to-loop wins
                     staged = staged_iedge_rhs(str(rhs), e.src, sdfg)
                     preloop[lhs] = str(rhs) if staged is None else symbolic.symstr(staged)
-            if e.src in seen or not isinstance(e.src, (SDFGState, ControlFlowRegion)):
+            if e.src in seen or not isinstance(e.src, SDFGState):
+                break
+            # A binding further up reads a value this write may have changed
+            if any(s.in_degree(n) > 0 and not n.desc(sdfg).transient for s in [e.src] for n in s.data_nodes()):
                 break
             seen[e.src] = None
             cur = e.src
