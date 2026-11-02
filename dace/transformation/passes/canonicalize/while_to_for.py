@@ -147,6 +147,10 @@ def convert(loop: LoopRegion) -> bool:
         return False
     cond, cond_symbol = inlined
     exits = loop.parent_graph.out_edges(loop)
+    bumped = [str(s) for s in cond.free_symbols if body_edges(loop, str(s))]
+    # A second name the body changes moves the bound: no count to speak of
+    if len(bumped) != 1:
+        return False
     for name in sorted(str(s) for s in cond.free_symbols):
         found = bump(loop, name, cond_symbol)
         # The counter starts from a value an edge before the loop gives it: a loop counter cannot read itself.

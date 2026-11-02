@@ -179,6 +179,19 @@ def test_while_to_for_keeps_a_start_value_read_from_an_array_written_before_the_
     assert WhileToFor().apply_pass(sdfg, {}) is None
 
 
+def test_while_to_for_keeps_a_bound_the_body_moves():
+    sdfg = int_program("moving_bound", o=[1])
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_symbol("m", dace.int64)
+    head = sdfg.add_state("head", is_start_block=True)
+    loop = LoopRegion("loop", "i < m")
+    sdfg.add_node(loop)
+    sdfg.add_edge(head, loop, InterstateEdge(assignments={"i": "0", "m": "N"}))
+    body, tail = loop.add_state("body", is_start_block=True), loop.add_state("tail")
+    loop.add_edge(body, tail, InterstateEdge(assignments={"m": "m - 2", "i": "i + 1"}))
+    assert WhileToFor().apply_pass(sdfg, {}) is None
+
+
 def flag_loop(name, entry_flag, flag_first):
     """``i = 0; flag = entry_flag; while flag: ...``, the body assigning ``flag = i < N`` around ``i = i + 1``."""
     sdfg = int_program(name, o=[1])
@@ -280,4 +293,5 @@ if __name__ == "__main__":
     test_iterator_exit_value_of_a_loop_that_runs_no_iteration()
     test_while_to_for_keeps_a_start_value_changed_before_the_loop()
     test_while_to_for_keeps_a_start_value_read_from_an_array_written_before_the_loop()
+    test_while_to_for_keeps_a_bound_the_body_moves()
     test_while_to_for_needs_the_condition_symbol_to_enter_and_stay_as_its_expression()
