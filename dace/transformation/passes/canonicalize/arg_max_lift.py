@@ -496,9 +496,11 @@ class ArgMaxLift(ppl.Pass):
         "index is tracked: the extreme VALUE is the same either way.",
     )
 
-    def __init__(self, tie_break: str = "infer") -> None:
+    def __init__(self, tie_break: str = "infer", only: list | None = None) -> None:
         super().__init__()
         self.tie_break = tie_break
+        # When given, only these loops are candidates (the segments a split left behind).
+        self._only = only
 
     def _resolve_last_wins(self, op_ast: CompareOp, has_index: bool) -> bool:
         """The tie rule for this match: True -> keep the LAST occurrence of the
@@ -549,10 +551,15 @@ class ArgMaxLift(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         rewritten = 0
+        only = None if self._only is None else {id(loop) for loop in self._only}
+        if only is not None and not only:
+            return None
         for sd in sdfg.all_sdfgs_recursive():
             replaced: set[int] = set()  # every region under a loop a rewrite removed
             for region in list(sd.all_control_flow_regions()):
                 if not (isinstance(region, LoopRegion) and region.loop_variable):
+                    continue
+                if only is not None and id(region) not in only:
                     continue
                 # Stale-snapshot guard: a previous rewrite may have removed this
                 # LoopRegion from its parent, or the loop around it.

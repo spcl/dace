@@ -855,6 +855,7 @@ def recurrence_lifts(interchange_carry_with_map: bool, target: str, only: list |
         LoopToReduce(only=only),
         LoopToScan(interchange_carry_with_map=interchange_carry_with_map, target=target, only=only),
         LoopToStateScan(only=only),
+        ArgMaxLift(only=only),
         LoopToConditionalReduce(only=only),
         LiftLoopCarriedReduction(only=only),
     ]
