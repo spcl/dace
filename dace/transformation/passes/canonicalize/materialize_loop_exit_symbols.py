@@ -38,6 +38,7 @@ Out of scope:
 
 * Symbols whose update isn't ``sym = sym OP c`` (compound updates, conditional
   updates, data-array reads in the increment expression).
+* Symbols assigned again after the loop: a reader there may not see the exit value.
 * Loops where the symbol is *also* read on the SAME interstate edge that
   writes it (true loop-carried dependence -- closed form is still valid but the
   in-loop reader must see the per-iteration value, which a single materialisation
@@ -232,6 +233,15 @@ def reiterated_names(
                 ]
             names.update((name, None) for name in found)
     return names
+
+
+def reassigned_after(parent: ControlFlowRegion, loop: LoopRegion, post_blocks: dict[ControlFlowBlock, None], name: str) -> bool:
+    """Whether ``name`` is assigned again past ``loop``: a reader there may see that value, not the exit value."""
+    for block in (loop, *post_blocks):
+        if any(name in edge.data.assignments for edge in parent.out_edges(block)):
+            return True
+    regions = (block for block in post_blocks if isinstance(block, AbstractControlFlowRegion))
+    return any(name in loop_analysis.written_names(region) for region in regions)
 
 
 def _rewrite_post_loop_readers(
@@ -429,6 +439,8 @@ class MaterializeLoopExitSymbols(ppl.Pass):
                 continue  # a later loop rebinds it: its readers there never see this exit value
             # Check this symbol is actually READ in the post-loop region.
             if not _is_read_in(sym_name, post_blocks, parent, state_reads, edge_texts, block_states):
+                continue
+            if reassigned_after(parent, loop, post_blocks, sym_name):
                 continue
             # The seed is the pre-loop value: a body symbol's own name, read on an edge BEFORE the loop (after
             # it the name already holds the exit value), or the iterator's init expression.
