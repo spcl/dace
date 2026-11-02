@@ -1214,14 +1214,19 @@ class StateFusionExtended(StateFusion):
                     rewrites = [
                         n for n in second_state.data_nodes() if n.data == node.data and second_state.in_degree(n)
                     ]
+                    # A source in its own state stopped being a source through an ordering edge alone, and so missed the
+                    # merge with the last instance not ahead of it, which the check counted on
+                    counted = (
+                        next((c for c in candidates if not nx.has_path(first_state._nx, c, node)), None)
+                        if second_state.in_degree(node) == 0
+                        else None
+                    )
                     writers = [
                         c
                         for c in candidates
                         if first_state.in_degree(c) > 0
                         and (
-                            # A source in its own state stopped being a source through an ordering edge alone, and so
-                            # missed the merge the check counted on
-                            second_state.in_degree(node) == 0
+                            c is counted
                             or StateFusionExtended.memlets_intersect(
                                 first_state, [c], False, second_state, rewrites, False, facts
                             )
