@@ -857,11 +857,8 @@ def _expand_over_loop(
     if not isinstance(subset, subsets.Range):
         return None
     loop_var_name = str(loop_var)
-    # Two dimensions on the loop variable walk a diagonal, which no box of the two widened axes is
-    starts = [{str(s) for s in symbolic.pystr_to_symbolic(str(r[0])).free_symbols} for r in subset.ndrange()]
-    if sum(loop_var_name in names for names in starts) > 1:
-        return None
     ranges = []
+    widened = False
     for rb, re_, rs in subset.ndrange():
         if rb != re_ or rs != 1:
             return None
@@ -870,6 +867,9 @@ def _expand_over_loop(
         if ivar is None:
             ranges.append((rb, re_, 1))  # axis independent of reduction
             continue
+        if widened:
+            return None  # a[i, i] is a diagonal, not the box of its two axes
+        widened = True
         # read index = coeff*loop_var + off (affine)
         coeff = symbolic.simplify(sympy.diff(rb_sym, ivar), facts)
         off = symbolic.simplify(rb_sym - coeff * ivar, facts)
@@ -1207,6 +1207,10 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
 
         expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end, facts, stride)
         if expanded is None:
+            return None
+        # An input wider than the accumulator would be truncated before the fold, not after each update
+        acc_dtype = sdfg.arrays[accum].dtype
+        if dtypes.result_type_of(acc_dtype, sdfg.arrays[array].dtype) != acc_dtype:
             return None
         return _Reduction(wcr, accum, write_subset, array, expanded)
 

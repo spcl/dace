@@ -157,6 +157,29 @@ def test_cross_array_copy_not_lifted():
     assert np.allclose(got, exp)
 
 
+K = dace.symbol("K")
+
+
+@dace.program
+def symmetrize_band(X: dace.float64[M, M]):
+    for i in range(M - K):
+        for j in range(i + 1, i + K):
+            X[j, i] = X[i, j]
+
+
+def test_a_band_stays_a_loop_and_mirrors_only_the_band():
+    sdfg = symmetrize_band.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    assert not any(isinstance(n, Symmetrize) for st in sdfg.states() for n in st.nodes())
+    X = np.random.default_rng(3).random((6, 6))
+    want = X.copy()
+    for i in range(6 - 3):
+        for j in range(i + 1, i + 3):
+            want[j, i] = want[i, j]
+    sdfg(X=X, M=6, K=3)
+    assert np.array_equal(X, want)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

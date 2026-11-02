@@ -584,5 +584,28 @@ def test_a_coefficient_read_from_the_output_is_no_contraction():
     assert _n_einsum(sdfg) == 0
 
 
+def test_a_copy_above_the_innermost_map_keeps_the_nest():
+    """``tmp = B[i, :]`` beside ``for j: y[i] += C[i, j] * tmp[j]`` must not vanish with the lift."""
+    sdfg = dace.SDFG("einsum_outer_copy")
+    for name, shape in (("B", [3, 3]), ("C", [3, 3]), ("y", [3])):
+        sdfg.add_array(name, shape, dace.float64)
+    sdfg.add_transient("tmp", [3], dace.float64)
+    loop = LoopRegion("outer", "i < 3", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tmp = body.add_access("tmp")
+    body.add_edge(body.add_read("B"), None, tmp, None, dace.Memlet("B[i, 0:3] -> [0:3]"))
+    body.add_mapped_tasklet(
+        "contract",
+        {"j": "0:3"},
+        {"a": dace.Memlet("C[i, j]"), "b": dace.Memlet("tmp[j]")},
+        "o = a * b",
+        {"o": dace.Memlet("y[i]", wcr="lambda x, y: x + y")},
+        external_edges=True,
+        input_nodes={"tmp": tmp},
+    )
+    assert not LoopToEinsum().apply_pass(sdfg, {})
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v", "-p", "no:cacheprovider"]))
