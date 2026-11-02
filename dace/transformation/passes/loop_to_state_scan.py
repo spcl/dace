@@ -38,6 +38,7 @@ from dace.transformation.passes.analysis.finite_state import (
     finite_state,
     names,
     step_sdfg,
+    step_slices,
     straight_chain,
 )
 
@@ -76,13 +77,21 @@ def folds_only(loop: LoopRegion, symbol: str) -> bool:
 
 
 def scan_node(loop: LoopRegion) -> tuple[StateScan, StepSlice] | None:
-    """A :class:`StateScan` for ``loop``'s carried state, finite if it is, else GF(2)-affine, or ``None``."""
-    finite = finite_state(loop)
+    """A :class:`StateScan` for ``loop``'s carried state, finite if it is, else GF(2)-affine, or ``None``. The structural
+    conditions go first: the proofs copy the body and ask z3."""
+    steps = [
+        step
+        for step in step_slices(loop)
+        if rest_is_parallel(loop, step.symbol) and not folds_only(loop, step.symbol)
+    ]
+    if not steps:
+        return None
+    finite = finite_state(loop, steps)
     if finite is not None:
         node = StateScan(f"{loop.label}_state_scan", tuple(sorted(finite.step.tables)))
         node.kind, node.base, node.count = StateScanKind.FINITE, finite.base, finite.count
         return node, finite.step
-    affine = gf2_state(loop)
+    affine = gf2_state(loop, steps)
     if affine is not None:
         node = StateScan(f"{loop.label}_state_scan", tuple(sorted(affine.step.tables)))
         node.kind, node.bits = StateScanKind.GF2_AFFINE, affine.bits
@@ -161,7 +170,7 @@ class LoopToStateScan(ppl.Pass):
             loops = [loop for loop in loops if id(loop) in only]
         for loop in loops:
             made = scan_node(loop)
-            if made is None or not rest_is_parallel(loop, made[1].symbol) or folds_only(loop, made[1].symbol):
+            if made is None:
                 continue
             lift(loop, made[0], made[1])
             lifted += 1
