@@ -38,6 +38,7 @@ import copy
 from dace import SDFG, properties, subsets, symbolic
 from dace import data as dt
 from dace.optionals import required
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
@@ -524,28 +525,26 @@ class LoopFusion(transformation.MultiStateTransformation):
         the fusion already happened; contraction is opportunistic cleanup that never changes a value.
         """
         body_states = _linear_blocks(loop) or [_single_compute_state(loop)]
-        body_states = [s for s in body_states if s is not None]
-        if not body_states:
-            return
-        body_set = set(body_states)
+        body_states = [s for s in body_states if isinstance(s, SDFGState)]
         ivar = loop.loop_variable
-        for arr in list(sdfg.arrays.keys()):
-            desc = sdfg.arrays[arr]
-            # Only a genuine internal 1-D array is a contraction target: a Scalar is already minimal, a
-            # non-transient is a program in/out, a multi-dim carries per-map footprint (v1 skips it).
-            if not desc.transient or not isinstance(desc, dt.Array) or len(desc.shape) != 1:
-                continue
-            # Exclusive: any access outside the fused loop's body means the buffer outlives one iteration.
-            if any(
-                isinstance(n, nodes.AccessNode) and n.data == arr
-                for s in sdfg.states()
-                if s not in body_set
-                for n in s.nodes()
-            ):
-                continue
-            point = self._localized_point(arr, body_states, ivar)
-            if point is not None:
-                self._rewrite_array_to_scalar(sdfg, body_states, arr, desc)
+        # Only a genuine internal 1-D array is a contraction target: a Scalar is already minimal, a non-transient is
+        # a program in/out, a multi-dim carries per-map footprint (v1 skips it).
+        candidates = OrderedSet(
+            n.data
+            for s in body_states
+            for n in s.data_nodes()
+            if n.desc(sdfg).transient and isinstance(n.desc(sdfg), dt.Array) and len(n.desc(sdfg).shape) == 1
+        )
+        candidates = [arr for arr in candidates if self._localized_point(arr, body_states, ivar) is not None]
+        if not candidates:
+            return
+        # Exclusive: any access outside the fused body's states, or any control-flow read, outlives one iteration.
+        body_set = set(body_states)
+        outside = {n.data for s in sdfg.states() if s not in body_set for n in s.data_nodes()}
+        outside |= loop_analysis.control_reads(sdfg)
+        for arr in candidates:
+            if arr not in outside:
+                self._rewrite_array_to_scalar(sdfg, body_states, arr, sdfg.arrays[arr])
 
     @staticmethod
     def _localized_point(arr: str, body_states: list[SDFGState], ivar: str) -> object | None:
@@ -611,9 +610,13 @@ class LoopFusion(transformation.MultiStateTransformation):
                     continue
                 n.data = local
                 for e in s.all_edges(n):
-                    if e.data is not None and e.data.data == arr:
+                    if e.data.is_empty():
+                        continue
+                    if e.data.data == arr:
                         e.data.data = local
                         e.data.subset = copy.deepcopy(zero)
+                    else:  # a copy named after its other end indexes this one in ``other_subset``
+                        e.data.other_subset = copy.deepcopy(zero)
         try:
             sdfg.remove_data(arr, validate=False)
         except ValueError:
