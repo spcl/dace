@@ -64,8 +64,8 @@ def _enclosing_map_params(state: SDFGState, node: nodes.Node) -> list[str]:
     return params
 
 
-def _index_syms_across_nesting(sdfg: SDFG, write_subset) -> set:
-    """Every symbol NAME the write index depends on, in ``sdfg``'s namespace AND in each
+def _index_syms_across_nesting(sdfg: SDFG, names: set) -> set:
+    """Every symbol NAME the write index names ``names`` depend on, in ``sdfg``'s namespace AND in each
     enclosing parent SDFG's namespace, following the nested-SDFG ``symbol_mapping`` chain
     outward.
 
@@ -78,10 +78,10 @@ def _index_syms_across_nesting(sdfg: SDFG, write_subset) -> set:
     match the outer param regardless of which nesting level named it.
 
     :param sdfg: The SDFG whose namespace ``write_subset`` is expressed in (an inner body NSDFG).
-    :param write_subset: The WCR write's subset.
+    :param names: The symbol names of the WCR write's subset.
     :returns: The set of symbol names the write index depends on across the nesting chain.
     """
-    syms = {str(s) for s in write_subset.free_symbols}
+    syms = set(names)
     cur = sdfg
     while cur.parent_nsdfg_node is not None:
         mapping = cur.parent_nsdfg_node.symbol_mapping
@@ -92,6 +92,21 @@ def _index_syms_across_nesting(sdfg: SDFG, write_subset) -> set:
         syms |= outer
         cur = cur.parent_sdfg
     return syms
+
+
+def outer_maps_vary_index(sdfg: SDFG, write_subset, data_name: str, outer_params: set) -> bool:
+    """Whether every map parameter of ``outer_params``, outside ``sdfg``, varies the index of a write to
+    ``data_name``, one to one wherever ``write_subset`` names it: ``int_floor(i, 1000)`` names ``i`` and repeats."""
+    names = {str(s) for s in write_subset.free_symbols}
+    index_syms = _index_syms_across_nesting(sdfg, names) | boundary_write_index_syms(sdfg, data_name)
+    if any(str(it) not in index_syms for it in outer_params):
+        return False
+    params = {str(it) for it in outer_params}
+    varying = [name for name in names if params & _index_syms_across_nesting(sdfg, {name})]
+    # Avoid import loop: the vectorization package imports this module.
+    from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
+
+    return not varying or write_subset_is_injective(write_subset, varying)
 
 
 def boundary_write_index_syms(sdfg: SDFG, data_name: str) -> set:
@@ -1139,9 +1154,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                 if isinstance(scope, nodes.MapEntry):
                     outer_map_params |= set(scope.map.params)
             outer_map_params -= set(params)
-            index_syms = _index_syms_across_nesting(sdfg, sub)
-            index_syms |= boundary_write_index_syms(sdfg, self.output.data)
-            if any(str(it) not in index_syms for it in outer_map_params):
+            if not outer_maps_vary_index(sdfg, sub, self.output.data, outer_map_params):
                 return False
         # The tasklet must already READ BACK the destination element (same data, same subset), so
         # ``__out`` already equals ``dest <op> incoming`` and dropping the WCR keeps the accumulate.
@@ -1313,9 +1326,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # (``_loop_it_1`` -> body ``_loop_it_2``) is still recognised as varying the write
             # (an injective per-element in-place RMW like s212 ``b[i] += a[i+1]*d[i]``), not a
             # cross-iteration reduction that must keep its WCR.
-            index_syms = _index_syms_across_nesting(sdfg, edge.data.subset)
-            index_syms |= boundary_write_index_syms(sdfg, edge.data.data)
-            if any(str(it) not in index_syms for it in outer_map_params):
+            if not outer_maps_vary_index(sdfg, edge.data.subset, edge.data.data, outer_map_params):
                 return False
 
         return True
