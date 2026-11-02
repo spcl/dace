@@ -802,6 +802,40 @@ def test_a_read_write_element_shared_by_an_outer_map_keeps_its_wcr():
     assert next(e for e in state.out_edges(n) if e.src_conn == "oc").data.wcr is not None
 
 
+def test_a_seed_keeps_the_value_a_caller_wrote_into_its_transient():
+    wcr = "lambda a, b: a + b"
+    sdfg = dace.SDFG("caller_transient_" + uuid.uuid4().hex[:8])
+    sdfg.add_array("x", [4], dace.float64)
+    sdfg.add_array("out", [4], dace.float64)
+    sdfg.add_transient("T", [4], dace.float64)
+    fill = sdfg.add_state("fill", is_start_block=True)
+    fill.add_mapped_tasklet("fill", {"k": "0:4"}, {}, "o = 100.0", {"o": dace.Memlet("T[k]")}, external_edges=True)
+    call = sdfg.add_state_after(fill, "call")
+    body = dace.SDFG("body_caller_transient")
+    body.add_array("x", [4], dace.float64)
+    body.add_array("oc", [4], dace.float64)
+    inner = body.add_state("c", is_start_block=True)
+    inner.add_mapped_tasklet(
+        "acc",
+        {"j": "0:4"},
+        {"_d": dace.Memlet("x[j]")},
+        "o = _d",
+        {"o": dace.Memlet(data="oc", subset="j", wcr=wcr)},
+        external_edges=True,
+    )
+    n = call.add_nested_sdfg(body, {"x": None}, {"oc": None})
+    written = call.add_access("T")
+    call.add_edge(call.add_read("x"), None, n, "x", dace.Memlet("x[0:4]"))
+    call.add_edge(n, "oc", written, None, dace.Memlet(data="T", subset="0:4", wcr=wcr))
+    call.add_edge(written, None, call.add_write("out"), None, dace.Memlet(data="T", subset="0:4", other_subset="0:4"))
+    sdfg.validate()
+
+    NormalizeWCR().apply_pass(sdfg, {})
+    out = np.zeros(4)
+    sdfg(x=np.arange(4.0), out=out)
+    assert out.tolist() == [100.0, 101.0, 102.0, 103.0]
+
+
 if __name__ == "__main__":
     import sys
 
@@ -813,3 +847,4 @@ if __name__ == "__main__":
     test_a_wcr_leaving_an_inner_map_stays_seeded()
     test_a_min_over_a_caller_array_starts_from_its_value()
     test_a_read_write_element_shared_by_an_outer_map_keeps_its_wcr()
+    test_a_seed_keeps_the_value_a_caller_wrote_into_its_transient()

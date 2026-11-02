@@ -884,8 +884,8 @@ class NormalizeWCR(ppl.Pass):
     @staticmethod
     def is_fresh_storage(sd: SDFG, name: str, desc: data.Data) -> bool:
         """``name`` is DaCe-owned scratch safe to seed: a transient, or an out-only nested connector every caller binds
-        to a transient, and no enclosing map iteration folds into the same caller slots (an out-only connector may
-        alias a live caller array: gramschmidt's ``__tmp_78 -> &A[j]``)."""
+        to a transient the caller writes no value into, and no enclosing map iteration folds into the same caller slots
+        (an out-only connector may alias a live caller array: gramschmidt's ``__tmp_78 -> &A[j]``)."""
         if desc.transient:
             return True
         parent = sd.parent_nsdfg_node
@@ -906,7 +906,7 @@ class NormalizeWCR(ppl.Pass):
             scope = parent_state.entry_node(scope)
         for oe in bound:
             cdesc = parent_sdfg.arrays.get(oe.data.data)
-            if cdesc is None or not cdesc.transient:
+            if cdesc is None or not cdesc.transient or oe.data.data in NormalizeWCR.plain_written(parent_sdfg):
                 return False
             if oe.data.wcr is not None and params and not {str(sym) for sym in oe.data.subset.free_symbols} & params:
                 return False
