@@ -1073,7 +1073,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             changed = True
             while changed:
                 changed = False
-                for loop in [r for r in nsdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]:
+                # Each SDFG walks its own loops: the device-level test below climbs from the SDFG it is given.
+                for loop in [r for r in nsdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]:
                     for is_memset in (False, True):
                         detected = self._detect_loop_transfer(loop, is_memset)
                         if detected is None:
