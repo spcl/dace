@@ -799,8 +799,18 @@ class StateFusionExtended(StateFusion):
                         if isinstance(x, nodes.AccessNode):
                             first_instances.setdefault(x.data, []).append(x)
                 # The same choice as ``fuse``, whose order this check proves through that node
-                instances = first_instances[name][:1] if name in second_output_by_data else first_instances[name]
-                return StateFusionExtended.merge_instance(instances, first_state, second_state, read, facts)
+                instances = first_instances[name]
+                if name in second_output_by_data:
+                    return instances[0]
+                # A read held apart by an ordering edge merges with no instance that edge would close a cycle through
+                holders = [
+                    holder
+                    for kind, firsts, seconds in self.connections_to_make
+                    if kind in ("war", "waw") and any(nx.has_path(second_state._nx, read, n) for n in seconds)
+                    for holder in firsts
+                ]
+                free = [i for i in instances if not any(nx.has_path(first_state._nx, i, h) for h in holders)]
+                return StateFusionExtended.merge_instance(free or instances, first_state, second_state, read, facts)
 
             # NOTE: parallel resulting components used to re-ask "does either state hold a Tasklet
             #  with ordered side effects" here. ``state_has_side_effect_node`` above already
