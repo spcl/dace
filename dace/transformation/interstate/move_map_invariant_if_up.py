@@ -469,7 +469,9 @@ def _split_off_first_map(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
                 for n in sdutil.find_upstream_nodes(first, st)
                 if n is not first and not isinstance(n, AccessNode) and st.entry_node(n) is None
             ]
-            if upstream:
+            exit_node = st.exit_node(first)
+            # state_fission keeps every writer of a node together: a sibling writing the same node moves along
+            if upstream or any(e.src is not exit_node for o in st.out_edges(exit_node) for e in st.in_edges(o.dst)):
                 continue
             scope = st.scope_subgraph(first, include_entry=True, include_exit=True).nodes()
             readers = [e.src for e in st.in_edges(first) if isinstance(e.src, AccessNode)]
