@@ -45,7 +45,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import Edge
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.transformation import explicit_cf_compatible
@@ -353,7 +353,7 @@ class FuseConsecutiveLoops(ppl.Pass):
         :param link: The ``first -> second`` sequencing edge (removed with ``second``).
         """
         var = first.loop_variable
-        facts = first.sdfg.facts()
+        facts = SymbolResolver().facts_at(first.parent_graph)
         start = symbolic.pystr_to_symbolic(loop_analysis.get_init_assignment(first))
         adjacent = symbolic.pystr_to_symbolic(loop_analysis.get_init_assignment(second))
         new_end_excl = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(second))) + 1)
@@ -480,7 +480,7 @@ def plan_guarded_fusion(region: ControlFlowRegion) -> GuardedFusionPlan | None:
         if not _symbolically_equal(symbolic.simplify(prev_end + 1), nxt_start):
             return None
     # The guards partition the union only when no sibling's range is inverted.
-    facts = region.sdfg.facts()
+    facts = SymbolResolver().facts_at(region)
     if not all(provably_ordered(lo, hi + 1, facts) for lo, hi in bounds):
         return None
 
