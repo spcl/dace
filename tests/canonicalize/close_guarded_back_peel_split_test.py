@@ -7,12 +7,11 @@ A back-conflict loop whose two tail iterations write conflicting elements is spl
 ``start <= x <= end``; the end side ``x <= end`` is ``LEN_1D - 2 <= LEN_1D - 1`` (trivially true),
 and the start side ``start <= x`` is ``0 <= LEN_1D - 2``.
 
-Pure symbol-nonnegativity cannot decide ``LEN_1D - 2 >= 0``, so historically the split was emitted
-under a runtime guard ``if (0 <= LEN_1D - 2) { map } else { sequential loop }``. But the same
-large-trip-count assumption the modulo splits already lean on -- a symbolic loop being peeled/split
-by ``k <= peel_limit`` iterations runs MORE than ``peel_limit`` times, so its trip count
-``LEN_1D > peel_limit`` -- proves ``LEN_1D - 2 = trip - 2 >= 0`` statically. The guard is then
-always-true: the pinned sequential fallback is dropped and the loop is UNCONDITIONALLY a map.
+Symbol nonnegativity cannot decide ``LEN_1D - 2 >= 0``, and it is false for a short loop: at ``LEN_1D = 0`` a bare
+``after`` segment would begin at ``i = -1`` and run an iteration the loop never had. So the ``after`` side is
+clamped, ``i = max(x + 1, start)``: the split is total, needs no runtime guard, and the
+guard the split exists for still folds, because ``LiftTrivialIf`` reads a range through the clamp. Historically this
+was a runtime ``if (0 <= LEN_1D - 2) { map } else { sequential loop }``, later dropped by assuming a long loop.
 
 The two guard-preserving companions (a free ``K`` split point, an out-of-range one) live in
 ``strengthen2_parallelization_prep_test.py``; this file pins the newly-CLOSED case.
@@ -69,9 +68,8 @@ def _guarded_fallback_loops(sdfg) -> int:
     return n
 
 
-def test_split_range_relations_are_discharged_under_the_large_trip_assumption():
-    """The start-side membership ``0 <= LEN_1D - 2`` must be proven statically, so the index-set
-    split emits NO runtime guard (empty relation set)."""
+def test_the_near_end_split_clamps_its_unproven_side_and_emits_no_runtime_guard():
+    """``0 <= LEN_1D - 2`` is unproven, not assumed: the search picks the clamped split, never the guarded one."""
     sdfg = back_peel_multi.to_sdfg(simplify=True)
     loops = _loops(sdfg)
     assert len(loops) == 1
@@ -79,7 +77,7 @@ def test_split_range_relations_are_discharged_under_the_large_trip_assumption():
     peel = BestEffortLoopPeeling(peel_limit=4)
     found = peel._best_split_for(loop, sdfg)
     assert found is not None, "expected an index-set split point for the back-conflict loop"
-    x, middle_singleton, _guarded = found
+    x, middle_singleton, guarded = found
     # An `i == end` / `i == end - 1` equality guard is one iteration wide, so this is the
     # carve-a-singleton family, not the two-way range-guard split (715dfeb83).
     assert middle_singleton is True, "back-conflict split must carve the single conflicting iteration"
@@ -87,8 +85,8 @@ def test_split_range_relations_are_discharged_under_the_large_trip_assumption():
     # own bound symbols so the assumption-tagged copies cancel).
     end = loop_analysis.get_loop_end(loop)
     assert dace.symbolic.simplify(x - (end - 1)) == 0, f"split point should be end - 1, got {x}"
-    relations = peel._split_range_relations(loop, x)
-    assert relations == frozenset(), f"both membership sides must be provable, got guard {relations}"
+    assert peel._split_sides_needing_clamp(loop, x) == frozenset({"after"})
+    assert guarded is False, "the clamped segments must map as well as bare ones, so no guard is worth its fallback"
 
 
 def test_back_peel_split_drops_the_pinned_sequential_fallback():

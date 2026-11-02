@@ -473,10 +473,14 @@ def test_loop_peeling_front_range_guard_knob_parallelizes():
     # separate decision, deliberately not made here.
     survivors = [r for r in on.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
     assert len(survivors) == 1, f"expected only the guarded prefix loop, got {[r.label for r in survivors]}"
-    trip = (
-        int(loop_analysis.get_loop_end(survivors[0])) - int(loop_analysis.get_init_assignment(survivors[0]))
-    ) // int(loop_analysis.get_loop_stride(survivors[0])) + 1
-    assert trip == 2, f"the prefix loop must cover exactly the guarded iterations i<2, got {trip}"
+    # Its bound is clamped to the loop's own: a bare ``i < 2`` would run past an ``N < 2`` loop.
+    stride = int(loop_analysis.get_loop_stride(survivors[0]))
+    for extent, expected in ((1, 1), (2, 2), (8, 2)):
+        at_extent = {"N": extent}
+        last = dace.symbolic.evaluate(loop_analysis.get_loop_end(survivors[0]), at_extent)
+        first = dace.symbolic.evaluate(loop_analysis.get_init_assignment(survivors[0]), at_extent)
+        trip = (int(last) - int(first)) // stride + 1
+        assert trip == expected, f"the prefix loop must cover exactly the guarded iterations i<2, got {trip}"
 
     A = np.arange(1, 9, dtype=np.float64)
     B = np.arange(8, dtype=np.float64) + 0.5
@@ -485,6 +489,11 @@ def test_loop_peeling_front_range_guard_knob_parallelizes():
     got = A.copy()
     on(A=got, B=B.copy(), N=8)
     assert np.allclose(got, ref_A)
+
+    got, ref_A = A.copy(), A.copy()
+    _front_range_guard.to_sdfg(simplify=True)(A=ref_A, B=B.copy(), N=1)
+    on(A=got, B=B.copy(), N=1)
+    assert np.array_equal(got, ref_A), "a loop shorter than the guard must gain no iteration"
 
 
 if __name__ == "__main__":
