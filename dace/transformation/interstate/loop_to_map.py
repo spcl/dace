@@ -851,20 +851,20 @@ def read_before_written(
                     forget(guarded, changed_by(block))
                 continue
             if isinstance(block, SDFGState):
-                for dn in block.data_nodes():
-                    if dn.data not in candidates or block.out_degree(dn) == 0:
+                accessed = [dn for dn in block.data_nodes() if dn.data in candidates]
+                stored = written.union(*(stored_by(block, dn) for dn in accessed if block.in_degree(dn) > 0))
+                for dn in accessed:
+                    if block.out_degree(dn) == 0:
                         continue
-                    # What flows out of a written node saw that write
-                    stored = written | stored_by(block, dn) if block.in_degree(dn) > 0 else written
-                    if not read_covered(block, dn, stored) and not any(
+                    # A node with an in-edge runs after a store or an ordering edge: it sees this state's stores
+                    seen = stored if block.in_degree(dn) > 0 else written
+                    if not read_covered(block, dn, seen) and not any(
                         read_covered(block, dn, guarded[key][1])
                         for key in nested_read_guards(block, dn)
                         if key in guarded
                     ):
                         carried.add(dn.data)
-                for dn in block.data_nodes():
-                    if dn.data in candidates and block.in_degree(dn) > 0:
-                        written |= stored_by(block, dn)
+                written |= stored
             elif isinstance(block, ConditionalBlock):
                 per_branch = []
                 recorded = {}
