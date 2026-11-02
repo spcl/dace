@@ -431,6 +431,29 @@ def test_prune_connectors_with_dependencies():
     assert np.allclose(np_d, np_d_)
 
 
+def test_pruning_the_only_input_keeps_the_body_in_its_map():
+    inner = dace.SDFG("prune_only_input_inner")
+    inner.add_array("unused", [4], dace.float64)
+    inner.add_array("out", [4], dace.float64)
+    inner.add_symbol("i", dace.int64)
+    body = inner.add_state()
+    body.add_edge(body.add_tasklet("one", {}, {"o"}, "o = 1.0"), "o", body.add_write("out"), None, dace.Memlet("out[i]"))
+
+    sdfg = dace.SDFG("prune_only_input")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("m", dict(i="0:4"))
+    nsdfg = state.add_nested_sdfg(inner, {"unused": None}, {"out": None}, symbol_mapping={"i": "i"})
+    state.add_memlet_path(state.add_read("A"), entry, nsdfg, dst_conn="unused", memlet=dace.Memlet("A[0:4]"))
+    state.add_memlet_path(nsdfg, exit_node, state.add_write("B"), src_conn="out", memlet=dace.Memlet("B[0:4]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(PruneConnectors) == 1
+    assert state.scope_dict()[nsdfg] is entry
+    sdfg.validate()
+
+
 def test_read_write():
     sdfg, nsdfg = _make_read_write_sdfg(True)
     assert not PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
@@ -657,3 +680,4 @@ if __name__ == "__main__":
     test_prune_connectors_keeps_memlet_subset_index()
     test_prune_connectors_keeps_tasklet_code_reference()
     test_prune_connectors_drops_input_the_body_only_writes()
+    test_pruning_the_only_input_keeps_the_body_in_its_map()
