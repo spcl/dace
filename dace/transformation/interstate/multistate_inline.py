@@ -75,18 +75,26 @@ def outer_names(sdfg: SDFG) -> tuple[dict[str, Any], set[str], set[str]]:
     labels: set[str] = set()
     # A region reached through a nested SDFG only contributes labels.
     for region, own in listed_subtree(sdfg).items():
-        labels.update([block.label for block in region.nodes()])
-        if not own:
-            continue
-        # A loop ``sdfg`` owns is a block of a region it owns. A while loop's ``loop_variable`` is ``""``: no name.
-        if isinstance(region, LoopRegion) and region.loop_variable:
-            assignments.add(region.loop_variable)
-        for ise in region.edges():
-            if ise.data.assignments:
-                assignments |= ise.data.assignments.keys()
+        labels.update([block._label for block in region.nodes()])
+        if own:
+            assigned_in_region(region, assignments, symbols)
+    return symbols, assignments, labels
+
+
+def assigned_in_region(
+    region: AbstractControlFlowRegion, assignments: set[str], symbols: dict[str, Any] | None = None
+) -> None:
+    """Add what ``region`` itself binds: its loop variable and interstate assignment targets, and to ``symbols`` the
+    names its edges define."""
+    # A loop is a block of the region owning it. A while loop's ``loop_variable`` is ``""``: no name.
+    if isinstance(region, LoopRegion) and region.loop_variable:
+        assignments.add(region.loop_variable)
+    for ise in region.edges():
+        if ise.data.assignments:
+            assignments |= ise.data.assignments.keys()
+            if symbols is not None:
                 # Only the names are ever read, so the types ``new_symbols`` would infer are not.
                 symbols.update(ise.data.new_symbol_names())
-    return symbols, assignments, labels
 
 
 def _disambiguate_code_connectors(nsdfg: SDFG, reserved_names: set[str]) -> None:
@@ -300,14 +308,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # connector, according to match)
         inputs: dict[str, MultiConnectorEdge] = {}
         outputs: dict[str, MultiConnectorEdge] = {}
-        input_set: dict[str, str] = {}
-        output_set: dict[str, str] = {}
         for e in nsdfg_state.in_edges(nsdfg_node):
             inputs[e.dst_conn] = e
-            input_set[e.data.data] = e.dst_conn
         for e in nsdfg_state.out_edges(nsdfg_node):
             outputs[e.src_conn] = e
-            output_set[e.data.data] = e.src_conn
 
         # Replace symbols using invocation symbol mapping.
         #
@@ -327,7 +331,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # propagate, and the inlined descriptors become constant-sized --
         # unless the nested SDFG assigns the symbol, whose later values the
         # constant would overwrite (a loop counter it seeds).
-        _, nested_assigned, _ = outer_names(nsdfg)
+        nested_assigned: set[str] = set()
+        for region in nsdfg.all_control_flow_regions():
+            assigned_in_region(region, nested_assigned)
         identity_mapping: dict[Any, Any] = {}
         constant_mapping: dict[Any, Any] = {}
         non_identity_mapping: dict[str, str] = {}
