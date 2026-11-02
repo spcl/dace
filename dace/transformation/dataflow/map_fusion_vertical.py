@@ -2218,17 +2218,30 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # The sweep of one parameter below cannot see another's bound that names it
         if first_map.range.free_symbols & set(first_map.params):
             return False
+
+        def indexed_by(write: subsets.Range, read: subsets.Range, param: str) -> bool:
+            # One index both name, one to one in ``param`` alone: the cheap answer for all but offset accesses
+            for (begin, end, _), (read_begin, read_end, _) in zip(write.ranges, read.ranges):
+                if begin == end and read_begin == read_end and str(begin) == str(read_begin):
+                    names = {symbol.name: symbol for symbol in begin.free_symbols}
+                    if param in names and names.keys().isdisjoint(set(first_map.params) - {param}):
+                        return abs(begin.diff(names[param])) == 1
+            return False
+
         for param, begin, end in params:
             here = symbolic.symbol(param)
-            for lo, hi in ((begin, here - 1), (here + 1, end)):
-                for write in writes:
+            for write in writes:
+                left = [read for read in reads if not indexed_by(write, read, param)]
+                if not left:
+                    continue
+                for lo, hi in ((begin, here - 1), (here + 1, end)):
                     swept = helpers.swept_range(write, param, lo, hi)
                     for other, other_begin, other_end in params:
                         if other != param:
                             swept = helpers.swept_range(swept, other, other_begin, other_end)
                     if swept is None:
                         return False
-                    if any(swept.intersects(read, facts) is not symbolic.Truth.FALSE for read in reads):
+                    if any(swept.intersects(read, facts) is not symbolic.Truth.FALSE for read in left):
                         return False
         return True
 
