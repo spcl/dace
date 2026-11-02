@@ -296,8 +296,10 @@ class NormalizeWCR(ppl.Pass):
         if out_edge.data.wcr is not None and _op_from_wcr(out_edge.data.wcr) != op:
             return False
         # The rewrite buffers the whole connector per iteration; a frontend connector is the outer container, so
-        # only a single-element one is the accumulator itself.
-        if out_edge.data.wcr is not None and symbolic.equal(oc_desc.total_size, 1) is not True:
+        # only a single-element one is the accumulator itself. A plain boundary naming one element still says which.
+        if symbolic.equal(oc_desc.total_size, 1) is not True and (
+            out_edge.data.wcr is not None or out_edge.data.subset.num_elements() != 1
+        ):
             return False
 
         # (c) The map-level private buffer mirrors `oc`'s inner descriptor. If that

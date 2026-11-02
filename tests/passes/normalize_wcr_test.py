@@ -712,6 +712,39 @@ def test_a_tasklet_subscripting_its_wcr_output_keeps_its_index():
     assert np.allclose(X, ref)
 
 
+def _map_over_nested_wcr(acc_size: int, element: str, boundary: str, wcr: str) -> dace.SDFG:
+    """``map i: nested { acc_out[element] (wcr)= x[i] }`` over a write-only connector, boundary memlet plain."""
+    sdfg = dace.SDFG("nested_wcr_" + uuid.uuid4().hex[:8])
+    sdfg.add_array("x", [4], dace.float64)
+    sdfg.add_array("acc", [acc_size], dace.float64)
+    state = sdfg.add_state("map", is_start_block=True)
+
+    body = dace.SDFG("body_map_over_nested_wcr")
+    body.add_array("x", [4], dace.float64)
+    body.add_array("acc_out", [acc_size], dace.float64)
+    body.add_symbol("i", dace.int64)
+    inner = body.add_state("c", is_start_block=True)
+    t = inner.add_tasklet("t", {"_d"}, {"__out"}, "__out = _d")
+    inner.add_edge(inner.add_read("x"), None, t, "_d", dace.Memlet("x[i]"))
+    inner.add_edge(t, "__out", inner.add_write("acc_out"), None, dace.Memlet(data="acc_out", subset=element, wcr=wcr))
+
+    me, mx = state.add_map("m", {"i": "0:4"})
+    n = state.add_nested_sdfg(body, {"x": None}, {"acc_out": None}, symbol_mapping={"i": "i"})
+    state.add_memlet_path(state.add_read("x"), me, n, dst_conn="x", memlet=dace.Memlet("x[0:4]"))
+    state.add_memlet_path(n, mx, state.add_write("acc"), src_conn="acc_out", memlet=dace.Memlet(boundary))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_plain_boundary_over_many_elements_keeps_the_elements_no_iteration_wrote():
+    """The per-iteration whole-connector buffer would copy back elements this iteration never wrote."""
+    sdfg = _map_over_nested_wcr(4, "i", "acc[0:4]", "lambda a, b: a + b")
+    NormalizeWCR().apply_pass(sdfg, {})
+    acc = np.full(4, 5.0)
+    sdfg(x=np.arange(1.0, 5.0), acc=acc)
+    assert acc.tolist() == [6.0, 7.0, 8.0, 9.0]
+
+
 if __name__ == "__main__":
     import sys
 
@@ -719,3 +752,4 @@ if __name__ == "__main__":
     test_a_masked_count_two_map_levels_deep_keeps_its_accumulator_path_named()
     test_a_masked_subtraction_in_a_nested_body_keeps_its_sign()
     test_a_tasklet_subscripting_its_wcr_output_keeps_its_index()
+    test_a_plain_boundary_over_many_elements_keeps_the_elements_no_iteration_wrote()
