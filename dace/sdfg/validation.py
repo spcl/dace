@@ -679,7 +679,12 @@ def validate_state(
 
     # Unreachable
     ########################################
-    if sdfg.number_of_nodes() > 1 and sdfg.in_degree(state) == 0 and sdfg.out_degree(state) == 0:
+    if (
+        state.parent_graph is sdfg
+        and sdfg.number_of_nodes() > 1
+        and sdfg.in_degree(state) == 0
+        and sdfg.out_degree(state) == 0
+    ):
         raise InvalidSDFGError("Unreachable state", state.parent_graph, state_id)
 
     if state_has_reachable_cycle(state):
