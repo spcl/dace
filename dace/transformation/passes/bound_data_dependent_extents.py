@@ -124,7 +124,7 @@ def state_relations(state: SDFGState, ranges: dict[str, Interval], nonempty: set
                 continue
             memlet = edge.data
             subset = memlet.get_src_subset(edge, state) if edge.src is node else memlet.get_dst_subset(edge, state)
-            for (low, high, _), extent in zip(subset, node.desc(sdfg).shape):
+            for (low, high, _), extent in zip(subset or (), node.desc(sdfg).shape):
                 relations += within(low, high, 0, extent - 1, ranges)
     return relations
 
