@@ -25,30 +25,35 @@ REUSABLE_LIFETIMES = (
 
 @dataclass(slots=True)
 class StateOrder:
-    """Happens-before of the top-level nodes of one state, every map scope collapsed onto its entry."""
+    """Happens-before of the nodes directly in scope ``within`` of one state (the top level if None), every map scope
+    below it collapsed onto its entry."""
 
     succ: dict[nodes.Node, OrderedSet] = field(default_factory=dict)
     pred: dict[nodes.Node, OrderedSet] = field(default_factory=dict)
     below: dict[nodes.Node, OrderedSet] = field(default_factory=dict)
+    scope: dict[nodes.Node, nodes.EntryNode | None] = field(default_factory=dict)
+    entry_of: dict[nodes.Node, nodes.EntryNode] = field(default_factory=dict)
+    within: nodes.EntryNode | None = None
 
     @staticmethod
-    def of(state: SDFGState) -> "StateOrder":
-        scope = state.scope_dict()
-        entry_of = {state.exit_node(n): n for n in state.nodes() if isinstance(n, nodes.EntryNode)}
-
-        def top(node: nodes.Node) -> nodes.Node:
-            node = entry_of.get(node, node)
-            while scope[node] is not None:
-                node = scope[node]
-            return node
-
-        order = StateOrder()
+    def of(state: SDFGState, within: nodes.EntryNode | None = None) -> "StateOrder":
+        order = StateOrder(scope=state.scope_dict(), within=within)
+        order.entry_of = {state.exit_node(n): n for n in state.nodes() if isinstance(n, nodes.EntryNode)}
         for edge in state.edges():
-            src, dst = top(edge.src), top(edge.dst)
-            if src is not dst:
+            src, dst = order.top(edge.src), order.top(edge.dst)
+            if src is not dst and src is not None and dst is not None:
                 order.succ.setdefault(src, OrderedSet()).add(dst)
                 order.pred.setdefault(dst, OrderedSet()).add(src)
         return order
+
+    def top(self, node: nodes.Node) -> nodes.Node | None:
+        """The node directly in ``within`` holding ``node``, None if ``node`` is outside ``within``."""
+        node = self.entry_of.get(node, node)
+        while self.scope[node] is not self.within:
+            node = self.scope[node]
+            if node is None:
+                return None
+        return node
 
     def descendants(self, node: nodes.Node) -> OrderedSet:
         """Every node reachable from ``node``, without ``node`` itself."""

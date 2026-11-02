@@ -101,9 +101,55 @@ def test_copy_out_next_to_another_write_of_the_target_stays():
     assert MinimizeTransients().apply_pass(sdfg, {}) is None
 
 
+def test_transient_computed_from_its_target_region_stays():
+    """``a[1:7] = 0.5 * (a[:-2] + a[2:])``: the writes of a stencil must not overtake its reads."""
+    sdfg = dace.SDFG("minimize_transients_stencil")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("t", [6], dace.float64, transient=True)
+    state = sdfg.add_state()
+    t = state.add_access("t")
+    state.add_mapped_tasklet(
+        "stencil",
+        {"i": "1:7"},
+        {"l": dace.Memlet("a[i - 1]"), "r": dace.Memlet("a[i + 1]")},
+        "y = 0.5 * (l + r)",
+        {"y": dace.Memlet("t[i - 1]")},
+        external_edges=True,
+        output_nodes={"t": t},
+    )
+    state.add_nedge(t, state.add_write("a"), dace.Memlet("t[0:6] -> [1:7]"))
+    assert MinimizeTransients().apply_pass(sdfg, {}) is None
+    a = np.arange(8, dtype=np.float64) ** 2
+    expected = a.copy()
+    expected[1:7] = 0.5 * (a[:-2] + a[2:])
+    sdfg(a=a)
+    np.testing.assert_array_equal(a, expected)
+
+
+def test_copy_in_read_after_a_second_reader_overwrites_it_stays():
+    """``b[1, :]`` is overwritten by one reader of the copy while the other reader may still run."""
+    sdfg = scaled_rows_sdfg("minimize_transients_reader_race", copy_out=False)
+    state = sdfg.start_state
+    t = next(n for n in state.data_nodes() if n.data == "t")
+    fill = state.add_write("b")
+    state.add_mapped_tasklet(
+        "negate",
+        {"i": "0:8"},
+        {"x": dace.Memlet("t[i]")},
+        "y = -x",
+        {"y": dace.Memlet("b[1, i]")},
+        external_edges=True,
+        input_nodes={"t": t},
+        output_nodes={"b": fill},
+    )
+    assert MinimizeTransients().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_copied_out_transient_is_its_target_region()
     test_copied_in_transient_reads_its_source_region()
     test_snapshot_of_a_region_written_concurrently_stays()
     test_transient_copied_to_two_regions_of_one_node_stays()
     test_copy_out_next_to_another_write_of_the_target_stays()
+    test_transient_computed_from_its_target_region_stays()
+    test_copy_in_read_after_a_second_reader_overwrites_it_stays()
