@@ -634,6 +634,27 @@ def test_library_node_is_costed_by_its_parallel_algorithm(case: str):
     assert_symbolically_equal(result[1], sp.sympify(depth))
 
 
+def test_a_map_depth_is_its_deepest_iteration_not_the_map_parameter() -> None:
+    """spcl/dace#2754: a map over ``i`` whose body scans the prefix ``x[0:i+1]`` (a triangular recurrence after the
+    scan lifting). The work sums over ``i``; the depth is the deepest iteration's, with no ``i`` left free."""
+    sdfg = dace.SDFG("prefix_scans")
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_array("y", [N, N], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("rows", {"i": "0:N"})
+    scan = Scan("scan")
+    state.add_memlet_path(state.add_read("x"), entry, scan, dst_conn="_scan_in", memlet=dace.Memlet("x[0:i+1]"))
+    state.add_memlet_path(scan, exit_, state.add_write("y"), src_conn="_scan_out", memlet=dace.Memlet("y[i, 0:i+1]"))
+    w_d_map: dict[str, sp.Expr] = {}
+
+    analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, ["N>4"])
+
+    work, depth = w_d_map[get_uuid(sdfg)]
+    assert pystr_to_symbolic("i") not in depth.free_symbols
+    assert_symbolically_equal(work, N * (N - 1))
+    assert_symbolically_equal(depth, 2 * log2N)
+
+
 @pytest.mark.parametrize("model,work,depth", [("unit", 2, 2), ("libm", 21, 14)])
 def test_an_exp_costs_its_libm_flops_only_under_the_libm_model(model: str, work: int, depth: int):
     with dace.config.set_temporary("work_depth", "transcendental_cost", value=model):

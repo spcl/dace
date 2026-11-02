@@ -1352,6 +1352,20 @@ def accumulate_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: 
     return sp.Sum(expr, (var, pystr_to_symbolic(0), shifted_hi)).doit()
 
 
+def maximize_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: sp.Expr, step: sp.Expr) -> sp.Expr:
+    """The largest value of ``expr`` while ``var`` runs over ``lower:upper:step`` (``upper`` inclusive).
+
+    Every iteration of a map runs in parallel, so the map's depth is its deepest iteration, not a sum. Taken at the
+    first and the last iteration, which is exact for a body depth monotone in ``var`` (a triangular nest's column
+    length, a scan over a prefix), the cases depth formulas produce.
+    """
+    if var not in expr.free_symbols:
+        return expr
+    lower, upper, step = pystr_to_symbolic(lower), pystr_to_symbolic(upper), pystr_to_symbolic(step)
+    last = lower + sp.Abs(step) * int_floor(upper - lower, sp.Abs(step))
+    return sp.Max(expr.subs(var, lower), expr.subs(var, last))
+
+
 def scope_work_depth(
     state: SDFGState,
     w_d_map: dict[str, sp.Expr],
@@ -1549,6 +1563,12 @@ def scope_work_depth(
 
         for uuid in wcr_depth_map:
             w_d_map[uuid] = (w_d_map[uuid][0], w_d_map[uuid][1] + wcr_depth_map[uuid])
+        # A body depth that varies with a map parameter (a scan over a prefix of length ``i``) is the deepest
+        # iteration's: the parameter must not stay free in the result (spcl/dace#2754)
+        if isinstance(entry, nd.MapEntry):
+            for param, (begin, end, step) in zip(entry.map.params, entry.map.range):
+                max_depth = maximize_over_range(max_depth, pystr_to_symbolic(param), begin, end, step)
+            max_depth = simplify(max_depth, context.facts)
     # summarise work / depth of the whole scope in the dictionary
     scope_result = (work, max_depth)
     w_d_map[get_uuid(state)] = scope_result
