@@ -1007,9 +1007,7 @@ def state_matches(
 def match_authority(sdfg: SDFG) -> Any:
     """The symbol-dtype authority :func:`_try_to_match_transformation` parses a probe of ``sdfg`` under -- the
     enclosing one with ``sdfg``'s own symbols on top -- prepared to be pushed without rebuilding it per probe."""
-    # pylint: disable=protected-access
-    enclosing = symbolic._SERIALIZATION_SYMBOL_DTYPES.get()
-    return symbolic.prepare_serialization_symbol_dtypes({**enclosing, **sdfg.symbols})
+    return symbolic.prepare_serialization_symbol_dtypes(sdfg.symbols)
 
 
 def enumerate_matches(
