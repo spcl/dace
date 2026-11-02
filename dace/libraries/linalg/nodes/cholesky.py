@@ -37,7 +37,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         "_uzero_",
         dict(__i=f"0:{out_shape[0]}", __j=f"0:{out_shape[1]}"),
         dict(_inp=Memlet.simple("_b", "__i, __j")),
-        "_out = (__i < __j) ? 0 : _inp;",
+        f"_out = ({'__i < __j' if node.lower else '__i > __j'}) ? 0 : _inp;",
         dict(_out=Memlet.simple("_b", "__i, __j")),
         language=dace.dtypes.Language.CPP,
         external_edges=True,
