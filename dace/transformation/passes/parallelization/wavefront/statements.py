@@ -441,7 +441,8 @@ def extract_body(outer: LoopRegion, sdfg: SDFG, occurrences: dict[str, set[SDFGS
     for block in chain:
         if isinstance(block, LoopRegion):
             vb = unit_loop_bounds(block)
-            if vb is None:
+            # A jump ends the loop early, and tiling would only end one tile's piece of it
+            if vb is None or not loop_analysis.fixed_iteration_space(block):
                 return None
             statements.append(Statement(order, "loop", block, block.loop_variable, vb[0], vb[1]))
             order += 1
