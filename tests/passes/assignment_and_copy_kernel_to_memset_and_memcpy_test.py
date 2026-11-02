@@ -1316,5 +1316,31 @@ def test_a_loop_in_a_nested_sdfg_of_a_gpu_map_stays_a_loop():
     assert any(isinstance(r, LoopRegion) for r in inner.all_control_flow_regions())
 
 
+def test_a_flattened_index_is_not_a_copy():
+    """``dst[ii, jj] = src[3 * jj + ii]`` reads column-major: the dense box and the volume match a row-major copy."""
+    sdfg = dace.SDFG("flattened_index")
+    sdfg.add_array("src", [12], dace.float64)
+    sdfg.add_array("dst", [3, 4], dace.float64)
+    sdfg.add_state(is_start_block=True).add_mapped_tasklet(
+        "cp",
+        {"ii": "0:3", "jj": "0:4"},
+        {"i": dace.Memlet("src[jj * 3 + ii]")},
+        "o = i",
+        {"o": dace.Memlet("dst[ii, jj]")},
+        external_edges=True,
+    )
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    assert _get_num_memcpy_library_nodes(sdfg) == 0
+
+
+def test_a_callback_tasklet_with_no_edges_survives_the_sweep():
+    sdfg = dace.SDFG("orphan_callback")
+    sdfg.add_symbol("callback_fn", dace.callback(None))
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("call", {}, {}, "callback_fn()")
+    AssignmentAndCopyKernelToMemsetAndMemcpy.remove_orphans(state)
+    assert tasklet in state.nodes()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

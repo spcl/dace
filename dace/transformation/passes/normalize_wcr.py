@@ -66,6 +66,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.symbolic import symbol
+from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow.wcr_conversion import wcr_operator
@@ -296,8 +297,10 @@ class NormalizeWCR(ppl.Pass):
         if out_edge.data.wcr is not None and _op_from_wcr(out_edge.data.wcr) != op:
             return False
         # The rewrite buffers the whole connector per iteration; a frontend connector is the outer container, so
-        # only a single-element one is the accumulator itself.
-        if out_edge.data.wcr is not None and symbolic.equal(oc_desc.total_size, 1) is not True:
+        # only a single-element one is the accumulator itself. A plain boundary naming one element still says which.
+        if symbolic.equal(oc_desc.total_size, 1) is not True and (
+            out_edge.data.wcr is not None or out_edge.data.subset.num_elements() != 1
+        ):
             return False
 
         # (c) The map-level private buffer mirrors `oc`'s inner descriptor. If that
@@ -380,15 +383,18 @@ class NormalizeWCR(ppl.Pass):
 
         Requires (both, else the seeded path is the sound choice):
 
-        * No enclosing :class:`ConditionalBlock` or :class:`LoopRegion` between the write
-          state and the NestedSDFG. A surviving ConditionalBlock means the reduction is
+        * No enclosing map, :class:`ConditionalBlock` or :class:`LoopRegion` between the write
+          and the NestedSDFG. A surviving ConditionalBlock means the reduction is
           STILL masked (``PredicateMaskedReduction`` did not fold the guard into the
-          addend); an enclosing loop means the write fires several times per invocation.
+          addend); an enclosing map or loop means the write fires several times per invocation.
           In either case ``oc = addend`` (drop-WCR) would be wrong -- a masked lane would
           execute unconditionally, or only the last loop write would survive.
         * ``oc`` has no OTHER writer in the body: the single WCR write is its sole
           definition, so dropping the WCR leaves exactly one plain write of ``oc``.
         """
+        # A write leaving a map fires once per iteration of that map.
+        if isinstance(wcr_edge.src, nodes.ExitNode):
+            return False
         block = wcr_state.parent_graph
         while block is not None and not isinstance(block, SDFG):
             if isinstance(block, (ConditionalBlock, LoopRegion)):
@@ -415,7 +421,7 @@ class NormalizeWCR(ppl.Pass):
         from an uninitialized slot, so an identity-writing state is prepended.
         """
         desc = sdfg.arrays.get(acc)
-        if desc is None:
+        if desc is None or not self.is_fresh_storage(sdfg, acc, desc):
             return
         for st in sdfg.states():
             for e in st.edges():
@@ -650,15 +656,12 @@ class NormalizeWCR(ppl.Pass):
         if {str(s) for s in oc_desc.free_symbols} - set(state.sdfg.symbols.keys()):
             return False
 
-        # A plain read-modify-write is only race-free when each map iteration updates its own element. An
-        # element no map parameter selects is a reduction across the iterations, and keeps its WCR.
-        params = set(state.entry_node(nsdfg).map.params)
-        selecting = {
-            inner
-            for inner, outer in nsdfg.symbol_mapping.items()
-            if {str(s) for s in symbolic.pystr_to_symbolic(str(outer)).free_symbols} & params
-        }
-        if not {str(s) for s in wcr_edge.data.subset.free_symbols} & selecting:
+        # A plain read-modify-write is only race-free when each map iteration updates its own element: every enclosing
+        # map parameter is an index of the element. Any other element is a reduction across them, and keeps its WCR.
+        index = {str(i) for i in out_edge.data.subset.min_element()}
+        if not self.enclosing_map_params(state, out_edge, state.scope_dict()) <= index:
+            return False
+        if xfh.get_parent_map(state) is not None:
             return False
 
         # Rewrite the body: explicit plain read-modify-write of the one element the WCR updates. The connector
@@ -881,8 +884,8 @@ class NormalizeWCR(ppl.Pass):
     @staticmethod
     def is_fresh_storage(sd: SDFG, name: str, desc: data.Data) -> bool:
         """``name`` is DaCe-owned scratch safe to seed: a transient, or an out-only nested connector every caller binds
-        to a transient, and no enclosing map iteration folds into the same caller slots (an out-only connector may
-        alias a live caller array: gramschmidt's ``__tmp_78 -> &A[j]``)."""
+        to a transient the caller writes no value into, and no enclosing map iteration folds into the same caller slots
+        (an out-only connector may alias a live caller array: gramschmidt's ``__tmp_78 -> &A[j]``)."""
         if desc.transient:
             return True
         parent = sd.parent_nsdfg_node
@@ -901,9 +904,10 @@ class NormalizeWCR(ppl.Pass):
         while scope is not None:
             params |= set(scope.map.params)
             scope = parent_state.entry_node(scope)
+        written = NormalizeWCR.plain_written(parent_sdfg)
         for oe in bound:
             cdesc = parent_sdfg.arrays.get(oe.data.data)
-            if cdesc is None or not cdesc.transient:
+            if cdesc is None or not cdesc.transient or oe.data.data in written:
                 return False
             if oe.data.wcr is not None and params and not {str(sym) for sym in oe.data.subset.free_symbols} & params:
                 return False

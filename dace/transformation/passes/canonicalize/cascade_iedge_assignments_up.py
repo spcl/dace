@@ -60,13 +60,14 @@ sees a clean shape.
 import ast
 from typing import Any
 
-from dace import SDFG
+from dace import SDFG, data
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.analysis.loop_analysis import loop_header_names
 
 
 class HoistAnalysisCache:
@@ -146,6 +147,9 @@ def _region_writes(region: ControlFlowRegion) -> tuple[dict[str, None], dict[str
     wdata: dict[str, None] = {}
     for e in region.all_interstate_edges():
         asyms.update(dict.fromkeys(e.data.assignments.keys()))
+    for inner in region.all_control_flow_regions():
+        if isinstance(inner, LoopRegion) and inner.loop_variable:
+            asyms[str(inner.loop_variable)] = None
     for st in region.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
@@ -235,38 +239,36 @@ def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> dict
     return out
 
 
-def _block_reads_symbols(block: ControlFlowBlock) -> dict[str, None] | None:
-    """All symbols read anywhere inside a block (state, region, etc.).
+def _read_after(parent: ControlFlowRegion, child: ControlFlowBlock, key: str, cache: HoistAnalysisCache) -> bool:
+    """True iff something after ``child`` in ``parent`` reads the value of ``key`` that ``child`` leaves.
 
-    This is a legality predicate, so it fails CLOSED: an unreadable ``free_symbols`` or condition
-    yields ``None`` rather than a partial set, because a partial set silently drops the very read
-    the caller is looking for and lets an illegal hoist through.
+    :param parent: The region whose edges are walked.
+    :param child: The block to start after.
+    :param key: The symbol name.
+    :param cache: Per-round memo of the blocks' reads.
+    :returns: ``True`` if a later block or edge reads ``key``, or what a block reads is unknown.
+    """
+    for e in parent.dfs_edges(child):
+        reads = cache.block_reads(e.dst)
+        if reads is None or key in e.data.read_symbols() or key in reads and key not in e.data.assignments:
+            return True
+    return False
+
+
+def _block_reads_symbols(block: ControlFlowBlock) -> dict[str, None] | None:
+    """The symbols a block reads from outside it (state, region, etc.).
+
+    This is a legality predicate, so it fails CLOSED: an unreadable ``free_symbols`` yields ``None``
+    rather than a partial set, because a partial set silently drops the very read the caller is
+    looking for and lets an illegal hoist through.
 
     :param block: The state or region to scan.
     :returns: The names of symbols read inside ``block``, or ``None`` if it cannot be determined.
     """
-    syms: dict[str, None] = {}
-    if isinstance(block, SDFGState):
-        try:
-            syms.update(dict.fromkeys(str(s) for s in block.free_symbols))
-        except Exception:
-            return None
-        return syms
-    if isinstance(block, ControlFlowRegion):
-        for st in block.states():
-            try:
-                syms.update(dict.fromkeys(str(s) for s in st.free_symbols))
-            except Exception:
-                return None
-        for e in block.all_interstate_edges():
-            for rhs in e.data.assignments.values():
-                syms.update(names_read_by(rhs))
-            if not e.data.is_unconditional():
-                try:
-                    syms.update(dict.fromkeys(str(s) for s in e.data.condition.get_free_symbols()))
-                except Exception:
-                    return None
-    return syms
+    try:
+        return dict.fromkeys(str(s) for s in block.free_symbols)
+    except Exception:
+        return None
 
 
 def _block_writes(block: ControlFlowBlock) -> tuple[dict[str, None], dict[str, None]]:
@@ -278,7 +280,7 @@ def _block_writes(block: ControlFlowBlock) -> tuple[dict[str, None], dict[str, N
     :param block: The state or region to scan.
     :returns: ``(assigned_symbols, written_data)``.
     """
-    if isinstance(block, ControlFlowRegion):
+    if isinstance(block, (ControlFlowRegion, ConditionalBlock)):
         return _region_writes(block)
     asyms: dict[str, None] = {}
     wdata: dict[str, None] = {}
@@ -333,6 +335,12 @@ def _legal_to_hoist_into(
     # and let ``count`` grow unbounded across iterations -> an out-of-bounds compaction.
     if isinstance(child, LoopRegion) and _key_has_other_writer(cache, child, key, rhs):
         return False
+    # The loop's own header runs ahead of the assignment on the first iteration.
+    if isinstance(child, LoopRegion) and key in loop_header_names(child):
+        return False
+    # A loop may run no iteration: an array read in the rhs would then be an access the program never made.
+    if isinstance(child, LoopRegion) and any(isinstance(sdfg.arrays.get(name), data.Array) for name in rhs_syms):
+        return False
     inner_asyms, inner_wdata = cache.block_writes(child)
     inner_asyms = dict(inner_asyms)
     inner_asyms.pop(key, None)  # discount the assignment we're moving
@@ -342,9 +350,8 @@ def _legal_to_hoist_into(
         return False  # a tasklet inside child writes to a container our rhs reads
 
     # L2/L3/L4: examine strict predecessors of ``child`` in ``parent``.
-    # The new iedge will sit on ``child``'s in-edges; only blocks that can
-    # execute BEFORE ``child`` could observe a difference. Blocks after
-    # ``child`` saw the assignment via the original edge anyway.
+    # The new iedge will sit on ``child``'s in-edges; blocks that execute
+    # BEFORE ``child`` would observe a difference. L7 below covers the blocks after it.
     preds = cache.predecessors(parent, child)
     for b in preds:
         reads = cache.block_reads(b)
@@ -373,7 +380,10 @@ def _legal_to_hoist_into(
                 return False
             if lhs in rhs_syms:
                 return False
-    return True
+
+    # L7: ``child`` need not run the assignment (no iteration, a break), and whatever follows it
+    # then reads the value from before ``child``, not the moved one.
+    return not _read_after(parent, child, key, cache)
 
 
 def _find_destination(
@@ -395,6 +405,9 @@ def _find_destination(
     for b in dict.fromkeys([*cache.predecessors(edge_region, origin), origin]):
         reads = cache.block_reads(b)
         if reads is None or key in reads:
+            return None
+        # L5, for the edges of the region itself: an assignment behind a condition does not always run
+        if any(not e.data.is_unconditional() for e in edge_region.out_edges(b)):
             return None
     dest: ControlFlowRegion = edge_region
     walker: ControlFlowRegion = edge_region
@@ -565,7 +578,13 @@ def _hoist_to_body_head(sdfg: SDFG) -> int:
         if not isinstance(loop, LoopRegion):
             continue
         first = loop.start_block
-        if not isinstance(first, SDFGState) or loop.in_degree(first) != 0 or loop.out_degree(first) != 1:
+        # An empty ``first`` is the head this hoist left: nothing is kept apart, and moving on would never settle
+        if (
+            not isinstance(first, SDFGState)
+            or first.is_empty()
+            or loop.in_degree(first) != 0
+            or loop.out_degree(first) != 1
+        ):
             continue
         edge = loop.out_edges(first)[0]
         if not edge.data.assignments or not edge.data.is_unconditional():

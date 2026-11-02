@@ -76,7 +76,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return edges
 
     @staticmethod
-    def _subset_param_order(subset, map_params: list[str]) -> list[str]:
+    def _subset_param_order(subset, map_params: list[str]) -> list[str] | None:
         """Per-dimension list of which map parameter the subset uses.
 
         Dimensions that don't reference any map param drop out. Used to compare
@@ -84,7 +84,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         :param subset: Memlet subset to inspect.
         :param map_params: Names of the enclosing map's parameters.
-        :returns: One map-parameter name per dimension that references exactly one.
+        :returns: One map-parameter name per dimension that references exactly one; ``None`` if a dimension mixes
+                  several (a flattened index), which has no per-dimension order.
         """
         param_set = set(map_params)
         order = []
@@ -96,6 +97,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             free = set()
             for expr in (b, e):
                 free |= {str(s) for s in dace.symbolic.symlist(expr).keys()} & param_set
+            if len(free) > 1:
+                return None
             if len(free) == 1:
                 order.append(next(iter(free)))
         return order
@@ -115,6 +118,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         """
         in_order = self._subset_param_order(in_subset, map_params)
         out_order = self._subset_param_order(out_subset, map_params)
+        if in_order is None or out_order is None:
+            return False
         shared = set(in_order) & set(out_order)
         if not shared:
             return True
@@ -838,7 +843,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 # side-effecting precisely so it is not dead-code-eliminated -- the
                 # snapshot rename it guards is only sound when that check runs. Honour
                 # that contract; only genuinely-orphaned nodes are removed here.
-                if isinstance(n, dace.nodes.Tasklet) and n.side_effects:
+                if isinstance(n, dace.nodes.CodeNode) and n.has_side_effects(state.sdfg):
                     continue
                 state.remove_node(n)
                 removed += 1

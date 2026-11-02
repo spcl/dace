@@ -334,6 +334,9 @@ def updates_in_place(
     """Whether ``temp``'s only producer is a map whose tasklets read ``read`` exactly at the element they write into
     ``temp``, once ``temp_subset`` is shifted onto ``target_subset`` (``Q[k:M] = Q[k:M] - X``). Writing such a map
     straight into the container it reads keeps every iteration on its own element, so it cannot race."""
+    # A shift only lines two subsets up when neither strides
+    if any(step != 1 for subset in (temp_subset, target_subset) for _, _, step in subset):
+        return False
     writes = state.in_edges(temp)
     # An empty memlet out of the map (ls3df_scf's ordering edge) carries no element the map writes
     if len(writes) != 1 or not isinstance(writes[0].src, nodes.MapExit) or writes[0].src_conn is None:
