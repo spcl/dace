@@ -616,35 +616,28 @@ class BranchElimination(transformation.MultiStateTransformation):
 
     def ignored_accesses_are_reused(self, states: set[dace.SDFGState]):
         """
-        Check if ignored write accesses are used elsewhere in the SDFG.
-        Implement it by remove the state and then running and checking the
-        read write sets of the SDFG
+        Check if ignored write accesses are used outside ``states``, on any access, interstate edge or region header.
 
         Returns:
             True if any ignored data is later read or written in another state.
         """
-        ignored_accesses: set[dace.nodes.AccessNode] = set()
-        for state in states:
-            ignored_accesses = ignored_accesses.union(self.collect_ignored_write_accesses(state))
-        ignored_data = {a.data for a in ignored_accesses}
+        ignored_data = set().union(*(self.collect_ignored_writes(state) for state in states))
+        if not ignored_data:
+            return False, ignored_data
 
-        # Work on a copy to safely remove nodes
-        copy_sdfg = copy.deepcopy(state.sdfg)
-        sdutil.set_nested_sdfg_parent_references(copy_sdfg)
+        sdfg = next(iter(states)).sdfg
+        reused = set()
+        for state in sdfg.states():
+            if state not in states:
+                for node in state.data_nodes():
+                    if node.data in ignored_data and any(not e.data.is_empty() for e in state.all_edges(node)):
+                        reused.add(node.data)
+        for edge in sdfg.all_interstate_edges():
+            reused |= edge.data.free_symbols & ignored_data
+        for cfr in sdfg.all_control_flow_regions():
+            reused |= cfr.used_symbols(all_symbols=True, with_contents=False) & ignored_data
 
-        # Remove all nodes from the target state in the copy
-        labels = {(s.label, s.parent_graph.label, s.sdfg.label) for s in states}
-        for st in copy_sdfg.states():
-            label_tuple = (st.label, st.parent_graph.label, st.sdfg.label)
-            if label_tuple in labels:
-                for n in list(st.nodes()):
-                    st.remove_node(n)
-
-        read_set, write_set = copy_sdfg.read_and_write_sets()
-        ignored_in_read = read_set & ignored_data
-        ignored_in_write = write_set & ignored_data
-
-        return bool(ignored_in_read or ignored_in_write), ignored_in_read.union(ignored_in_write)
+        return bool(reused), reused
 
     def symbol_reused_outside_conditional(self, sym_name: str):
         copy_sdfg = copy.deepcopy(self.conditional.sdfg)
