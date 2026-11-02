@@ -635,6 +635,28 @@ def assign_strides(plan: LiftPlan, own: dt.Array, coalesced: bool) -> None:
         hop.desc.set_shape(hop.desc.shape, strides=strides[len(shape) - len(hop.desc.shape) :], total_size=total_size)
 
 
+def walked_by_pointer(sdfg: SDFG, name: str) -> bool:
+    """Whether a tasklet reaches ``name``, through nests and views, by a pointer connector: it walks the slice by
+    strides fixed in its text, which hold only while the slice stays consecutive."""
+    pending, seen = [(sdfg, name)], set()
+    while pending:
+        sdfg, name = pending.pop()
+        seen.add((sdfg, name))
+        for edge in (e for state in sdfg.states() for e in state.edges() if e.data.data == name):
+            for node, conn, connectors in (
+                (edge.src, edge.src_conn, edge.src.out_connectors),
+                (edge.dst, edge.dst_conn, edge.dst.in_connectors),
+            ):
+                if isinstance(node, nodes.Tasklet) and isinstance(connectors[conn], dtypes.pointer):
+                    return True
+                if isinstance(node, nodes.NestedSDFG) and conn in node.sdfg.arrays:
+                    pending.append((node.sdfg, conn))
+                elif isinstance(node, nodes.AccessNode) and isinstance(node.desc(sdfg), dt.View):
+                    pending.append((sdfg, node.data))
+        pending = [found for found in pending if found not in seen]
+    return False
+
+
 def plan_lift(name: str, owner: SDFG, kernel: Scope, coalesced: bool) -> LiftPlan | None:
     """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if its size is only known inside the kernel.
 
@@ -680,7 +702,7 @@ def plan_lift(name: str, owner: SDFG, kernel: Scope, coalesced: bool) -> LiftPla
     apply_layout(lifted, plan.layout)
     if not plan_hops(plan, lifted, kernel_sdfg):
         return None
-    assign_strides(plan, desc, coalesced)
+    assign_strides(plan, desc, coalesced and not walked_by_pointer(owner, name))
     return plan
 
 
