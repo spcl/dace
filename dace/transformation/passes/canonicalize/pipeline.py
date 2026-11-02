@@ -579,8 +579,8 @@ FIND_FIRST_CHUNK: dict[str, int] = {"cpu": 1 << 20, "gpu": 1 << 21}
 # Phases (mpr paper, Fig. "phases"): normalize statements, lift semantics, derive parallelism, then recompose
 # (fusion and the final tidy). Specialization is a separate call (``finalize_for_target``).
 #
-# - ``StructuralCleanup`` runs at the start, after lowering, before derivation and before fusion, whose rounds run
-#   it too; nowhere else is it the reason a phase ends.
+# - ``StructuralCleanup`` runs at the start, after lowering, before derivation, before fusion, whose rounds run it
+#   too, and at the head of ``finish``; nowhere else is it the reason a phase ends.
 # - ``SimplifyPass`` (itself a fixpoint) runs twice: on the raised input, and once after normalization.
 # - A fixpoint of several passes (:class:`PhaseFixpoint`) is allowed inside a phase.
 # - Guards are pushed inward (``MoveIfIntoLoop``, ``MoveIfIntoMap``) and never hoisted here: how far up an invariant
@@ -1056,10 +1056,11 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
 
 def finish() -> Stages:
     """The terminal bookkeeping: symbols, derived annotations, assumption guard, hints; the views inlining minted."""
+    s: Stages = [(FINISH, StructuralCleanup())]
     # On the settled form: a loop over the segments of a pointer array is lifted behind the entry guard that checks
-    # the data facts its segment confinement rests on (nfa_frontier's components). Fusion's cleanups settled the
-    # symbols of everything else.
-    s: Stages = [(FINISH, _ThenIfChanged([(SegmentConfinedLoops(), True)], symbol_phase()))]
+    # the data facts its segment confinement rests on (nfa_frontier's components). The cleanup settled the symbols of
+    # everything else.
+    s += [(FINISH, _ThenIfChanged([(SegmentConfinedLoops(), True)], symbol_phase()))]
     s += [
         (FINISH, OptionalArrayInference()),
         (FINISH, ConvertLengthOneArraysToScalars()),
