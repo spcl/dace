@@ -490,7 +490,8 @@ def extent_bounds(desc: dt.Array, hierarchy: list[SDFG], kernel: Scope) -> list[
         ):
             return None
         bound = f"{sym}_max"
-        if bound in kernel_sdfg.symbols and not any(b.bound == bound for b in result):
+        into_kernel = state.parent_graph.in_edges(state)
+        if any(bound in e.data.assignments for e in into_kernel) and not any(b.bound == bound for b in result):
             # Already folded for an array this kernel lifted before
             result.append(ExtentBound(sym, bound, container, index, ctype, on_device, list(reads), folded=True))
             continue

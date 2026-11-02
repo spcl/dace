@@ -1227,6 +1227,12 @@ def test_an_extent_shrinking_with_a_thread_count_is_not_sized_by_its_maximum():
     assert not any("_fold" in name for name in sdfg.arrays)
 
 
+def test_two_kernels_reading_one_count_name_fold_their_own_bound():
+    sdfg = kernels_over_per_thread_counts(("first", "second"))
+    assert lift(sdfg) == 2
+    assert sum(name.endswith("_fold") or "_fold_" in name for name in sdfg.arrays) == 2
+
+
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)
