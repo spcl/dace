@@ -26,6 +26,7 @@ from dace.libraries.blas.indexed import (
     indexed_size,
     operand_edges,
 )
+from dace.libraries.blas.nodes.gemm_thread_block import ExpandGemmThreadBlock, ExpandGemmThreadBlockMMA
 from dace.libraries.blas.nodes.matmul import (
     _get_codegen_gemm_opts,
     _get_matmul_operands,
@@ -575,6 +576,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "cuBLAS": ExpandGemmCuBLAS,
         "rocBLAS": ExpandGemmRocBLAS,
         "PBLAS": ExpandGemmPBLAS,
+        "ThreadBlock": ExpandGemmThreadBlock,
+        "ThreadBlockMMA": ExpandGemmThreadBlockMMA,
     }
     default_implementation = None
 

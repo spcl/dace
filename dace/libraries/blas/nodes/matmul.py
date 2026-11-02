@@ -13,6 +13,7 @@ from dace.libraries.blas.indexed import (
     indexed_size,
     specialized_index_connectors,
 )
+from dace.libraries.blas.nodes.gemm_thread_block import thread_block_implementation
 
 
 def _matrix_subset_size(subset):
@@ -274,6 +275,10 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                 transB=node.transB,
             )
             specialized_index_connectors(node, gemm, renames)
+            # A product in a kernel that the threads of a block compute together
+            implementation = thread_block_implementation(node, state, sdfg)
+            if implementation is not None:
+                gemm.implementation = implementation
             return gemm
         elif is_batched and len(size_a) >= 2 and len(size_b) >= 2:
             # Batched matrix multiplication with broadcasting support
