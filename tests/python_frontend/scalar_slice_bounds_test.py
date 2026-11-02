@@ -51,6 +51,24 @@ def test_slice_in_nested_scope():
     assert np.allclose(out, expected)
 
 
+def test_slice_of_scalar_size_before_nested_scope():
+    """A container whose size is a data-dependent scalar (``A[0:n] * 2``), followed by a nested scope (a map): the
+    nested scope knows the symbol of the size."""
+
+    @dace.program
+    def scaled_prefix(A: dace.float64[N], sizes: dace.int64[1], out: dace.float64[N]):
+        n = sizes[0]
+        out[0:n] = A[0:n] * 2
+        for i in dace.map[0:N]:
+            out[i] += 1
+
+    A = np.random.rand(10)
+    out = np.zeros(10)
+    scaled_prefix(A=A, sizes=np.array([6]), out=out)
+    assert np.allclose(out, np.concatenate([A[:6] * 2, np.zeros(4)]) + 1)
+
+
 if __name__ == "__main__":
     test_slice_of_scalar_offset()
     test_slice_in_nested_scope()
+    test_slice_of_scalar_size_before_nested_scope()

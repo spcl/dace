@@ -1417,10 +1417,10 @@ class ProgramVisitor(ExtNodeVisitor):
         # If the name is invalid, use temp_data_name (__tmp*)
         return default or self.sdfg.temp_data_name()
 
-    def get_target_storage(self) -> dtypes.StorageType | None:
+    def get_target_descriptor(self) -> data.Array | None:
         """
-        The storage of the array that the current expression is assigned to, if it is assigned to a known array or a
-        subscript of one; None otherwise.
+        The array that the current expression is assigned to, if it is assigned to a known array or a subscript of one;
+        None otherwise.
 
         THIS METHOD IS ONLY VALID WHEN CALLED DURING PARSING.
         """
@@ -1433,7 +1433,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return None
         name = {**self.variables, **self.scope_vars}.get(target.id)
         desc = {**self.sdfg.arrays, **self.scope_arrays}.get(name) if name is not None else None
-        return desc.storage if isinstance(desc, data.Array) else None
+        return desc if isinstance(desc, data.Array) else None
 
     def _get_name_from_node(self, node: ast.AST) -> str:
         """Helper method to extract a simple name from an AST node."""
@@ -1565,6 +1565,8 @@ class ProgramVisitor(ExtNodeVisitor):
         map_symbols = self.map_symbols.union(extra_map_symbols)
         local_vars = {}
         local_vars.update(self.globals)
+        # The symbols promoted from scalars here, which the shapes of containers (e.g., ``x[0:n]``) may use
+        local_vars.update({str(sym): sym for sym in self.promoted_scalars.values()})
         local_vars.update(extra_symbols)
         pv = ProgramVisitor(
             name=name,
