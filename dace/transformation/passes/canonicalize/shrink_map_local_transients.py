@@ -61,8 +61,21 @@ def map_local_accesses(sdfg: SDFG, name: str) -> tuple[SDFGState, list[gr.MultiC
         scopes.update(sdict[e.dst] for e in edges)
         if len(scopes) != 1 or not isinstance(next(iter(scopes)), nodes.MapEntry):
             return None
+        if named_by_other_side(state, name):
+            return None
         found = (state, edges)
     return found
+
+
+def named_by_other_side(state: SDFGState, name: str) -> bool:
+    """Whether an edge at an access node of ``name`` in ``state`` is a copy whose memlet names the other container: its
+    subset of ``name`` is implicit or an ``other_subset``, out of what the box is read from and what is rewritten."""
+    return any(
+        e.data.data != name and not e.data.is_empty()
+        for node in state.data_nodes()
+        if node.data == name
+        for e in state.all_edges(node)
+    )
 
 
 def uniform_subset(edges: list[gr.MultiConnectorEdge[Memlet]]) -> subsets.Range | None:
@@ -118,6 +131,8 @@ def nest_invariant_accesses(sdfg: SDFG, name: str) -> list[tuple[SDFGState, gr.M
     for state in sdfg.states():
         sdict = state.scope_dict()
         if any(sdict[n] is not None for n in state.data_nodes() if n.data == name):
+            return None
+        if named_by_other_side(state, name):
             return None
         for edge in state.edges():
             if edge.data.data != name:
