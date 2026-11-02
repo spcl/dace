@@ -4,10 +4,11 @@
 import os
 
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg.state import ConditionalBlock
-from dace.transformation.passes.config_propagation import ConfigPropagation
+from dace.transformation.passes.config_propagation import ConfigPropagation, specialize_config
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 
 N = dace.symbol("N")
@@ -124,3 +125,14 @@ def test_staged_argument_takes_the_value(tmp_path):
         b = np.zeros_like(a)
         root(a=a, b=b, lvn_only=np.array([lvn_only], dtype=np.int32), istep=np.int32(1), ldeep=0, N=16)
         np.testing.assert_allclose(b, reference(a, lvn_only, 1, 0), rtol=0, atol=0)
+
+
+def test_written_configuration_is_refused():
+    sdfg = dace.SDFG("written_flag")
+    sdfg.add_scalar("flag", dace.int32)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("bump", {}, {"o": None}, "o = 1")
+    state.add_edge(tasklet, "o", state.add_write("flag"), None, dace.Memlet("flag"))
+
+    with pytest.raises(ValueError, match="flag"):
+        specialize_config(sdfg, {"flag": 0})

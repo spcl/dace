@@ -2769,33 +2769,49 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
         # Whole identifiers only (`o = _in*3`), not attributes (`x._in`)
         return re.sub(r"(?<![A-Za-z0-9_.])" + re.escape(src) + r"(?![A-Za-z0-9_])", dst, code).strip()
 
-    def _token_replace_all(code: str, repl: dict[str, str]) -> str:
-        for src, dst in repl.items():
-            code = _token_replace(code, src, dst)
-        return code
-
     def _scalar_literal(value: float | int | str, dtype) -> str:
         # An integer replacing a floating-point scalar stays a float literal: `_in / 2` must not become `5 / 2`
+        floating = dtype is not None and numpy.issubdtype(dtype.as_numpy_dtype(), numpy.floating)
         if isinstance(value, str):
-            return value
-        if isinstance(value, float):
-            return repr(value)
-        if dtype is not None and numpy.issubdtype(dtype.as_numpy_dtype(), numpy.floating):
-            return repr(float(value))
-        return str(value)
+            if not floating:
+                return value
+            try:
+                value = float(value)
+            except ValueError:
+                return value
+        if floating:
+            # At the scalar's width: 0.1 stored in a float32 is not the double 0.1
+            return repr(float(dtype.type(value)))
+        return repr(value) if isinstance(value, float) else str(value)
 
-    def repl_code_block_or_str(input: CodeBlock | str | None, repl: dict[str, str]):
-        if input is None:  # A while loop has no init or update statement
+    def rewrite_code(code: CodeBlock | None, repl: dict[str, str]) -> CodeBlock | None:
+        if code is None:  # A while loop has no init or update statement
             return None
-        if isinstance(input, CodeBlock):
-            return CodeBlock(_token_replace_all(input.as_string, repl))
-        return _token_replace_all(input, repl)
+        if code.language == dace.dtypes.Language.Python:
+            # On the AST: precedence holds, and a sympy round-trip loses float64 digits and turns 1/3 into int division
+            replacer = astutils.ASTFindReplace(dict(repl))
+            body = CodeBlock(code.as_string, dace.dtypes.Language.Python).code
+            new_body = [ast.fix_missing_locations(replacer.visit(stmt)) for stmt in body]
+            return CodeBlock(code=new_body, language=dace.dtypes.Language.Python)
+        text = code.as_string
+        for src, dst in repl.items():
+            # A negative or compound value keeps its own parentheses: `y-x` must not become `y--1.5`
+            text = _token_replace(text, src, dst if re.fullmatch(r"[\w.]+", dst) else f"({dst})")
+        return CodeBlock(code=text, language=code.language)
 
-    subs = dict(scalars)
-    strvals = {name: str(val) for name, val in scalars.items()}
+    def carried_scalar(edge: "dace.sdfg.graph.MultiConnectorEdge") -> str | None:
+        # A copy's memlet may name either endpoint
+        for node in (edge.src, edge.dst):
+            if isinstance(node, nd.AccessNode) and node.data in scalars:
+                return node.data
+        return edge.data.data if edge.data is not None and edge.data.data in scalars else None
+
+    def removable(node: nd.Node) -> bool:
+        return not isinstance(node, nd.CodeNode) or not node.has_side_effects(sdfg)
 
     # Captured before the descriptors are removed below (see _scalar_literal).
     scalar_dtypes = {name: (sdfg.arrays[name].dtype if name in sdfg.arrays else None) for name in scalars}
+    literals = {name: _scalar_literal(val, scalar_dtypes[name]) for name, val in scalars.items()}
 
     # Before replacing anything collect all nested SDFGs and their in-out edges for recursion
     nsdfgs = [
@@ -2820,88 +2836,72 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
         for e in state.edges():
             if e not in state.edges():
                 continue
-            if e.data is None or e.data.data not in scalars:
+            scalar_name = carried_scalar(e)
+            if scalar_name is None:
                 continue
-
-            scalar_name = e.data.data
-            scalar_val = scalars[scalar_name]
-            scalar_dtype = scalar_dtypes[scalar_name]
+            literal = literals[scalar_name]
 
             src = e.src
             dst = e.dst
+            # What a map entry keeps an edge to once the scalar's path through it is gone
+            scope_target = dst
 
-            if isinstance(e.dst, nd.Tasklet):
-                in_tasklet_name = e.dst_conn
-                if e.dst.code.language == dace.dtypes.Language.Python:
-                    # On the AST: a sympy round-trip loses float64 digits and turns 1/3 into integer division
-                    replacer = astutils.ASTFindReplace({in_tasklet_name: _scalar_literal(scalar_val, scalar_dtype)})
-                    body = CodeBlock(e.dst.code.as_string, dace.dtypes.Language.Python).code
-                    new_body = [ast.fix_missing_locations(replacer.visit(stmt)) for stmt in body]
-                    e.dst.code = CodeBlock(code=new_body, language=dace.dtypes.Language.Python)
-                else:
-                    new_code = CodeBlock(
-                        code=_token_replace(
-                            e.dst.code.as_string, in_tasklet_name, _scalar_literal(scalar_val, scalar_dtype)
-                        ),
-                        language=e.dst.code.language,
-                    )
-                    e.dst.code = new_code
-                state.remove_edge(e)
-                if e.src_conn is not None:
-                    src.remove_out_connector(e.src_conn)
-                if e.dst_conn is not None:
-                    dst.remove_in_connector(e.dst_conn)
-            elif isinstance(src, nd.AccessNode) and isinstance(dst, nd.AccessNode) and dst.data not in scalars:
+            if isinstance(dst, nd.Tasklet) and e.dst_conn is not None:
+                dst.code = rewrite_code(dst.code, {e.dst_conn: literal})
+                dst.remove_in_connector(e.dst_conn)
+            elif isinstance(dst, nd.AccessNode) and dst.data not in scalars and not e.data.is_empty():
                 # A copy out of the scalar: its target still needs the value
-                value = state.add_tasklet(
-                    f"{scalar_name}_value", {}, {"__out"}, f"__out = {_scalar_literal(scalar_val, scalar_dtype)}"
+                scope_target = state.add_tasklet(f"{scalar_name}_value", {}, {"__out": None}, f"__out = {literal}")
+                subset = e.data.get_dst_subset(e, state) or dace.subsets.Range.from_array(sdfg.arrays[dst.data])
+                dst_memlet = dace.Memlet(data=dst.data, subset=copy.deepcopy(subset), wcr=e.data.wcr)
+                state.add_edge(scope_target, "__out", dst, e.dst_conn, dst_memlet)
+            elif isinstance(dst, nd.LibraryNode) and e.dst_conn is not None:
+                # The expansion reads the connector, so it keeps it
+                scope_target = state.add_tasklet(f"{scalar_name}_value", {}, {"__out": None}, f"__out = {literal}")
+                name, desc = sdfg.add_scalar(
+                    f"__{scalar_name}_value", scalar_dtypes[scalar_name], transient=True, find_new_name=True
                 )
-                dst_memlet = dace.Memlet(data=dst.data, subset=e.data.get_dst_subset(e, state))
-                state.add_edge(value, "__out", dst, e.dst_conn, dst_memlet)
-                state.remove_edge(e)
-            else:
-                state.remove_edge(e)
-                if e.src_conn is not None:
-                    src.remove_out_connector(e.src_conn)
-                if e.dst_conn is not None:
-                    dst.remove_in_connector(e.dst_conn)
+                access = state.add_access(name)
+                state.add_edge(scope_target, "__out", access, None, dace.Memlet.from_array(name, desc))
+                state.add_edge(access, None, dst, e.dst_conn, dace.Memlet.from_array(name, desc))
+            elif e.dst_conn is not None:
+                dst.remove_in_connector(e.dst_conn)
 
-            if state.out_degree(src) == 0:
-                if isinstance(src, nd.MapEntry):
-                    # Add a dep edge, to not invalidate the map
-                    state.add_edge(src, None, dst, None, dace.memlet.Memlet())
-                elif state.degree(src) == 0:
-                    state.remove_node(src)
+            state.remove_edge(e)
+            if e.src_conn is not None:
+                src.remove_out_connector(e.src_conn)
+
+            if isinstance(src, nd.MapEntry) and (state.out_degree(src) == 0 or state.in_degree(scope_target) == 0):
+                # Add a dep edge, to not invalidate the map
+                state.add_edge(src, None, scope_target, None, dace.memlet.Memlet())
+            elif state.degree(src) == 0 and removable(src):
+                state.remove_node(src)
             if state.in_degree(dst) == 0:
                 if isinstance(dst, nd.MapExit):
                     state.add_edge(src, None, dst, None, dace.memlet.Memlet())
-                elif state.degree(dst) == 0:
+                elif state.degree(dst) == 0 and removable(dst):
                     state.remove_node(dst)
 
-        for node in state.nodes():
-            if isinstance(node, nd.MapEntry):
-                new_range_list = []
-
-                for b, e, s in node.map.range:
-                    new_range_list.append((b.subs(subs), e.subs(subs), s.subs(subs)))
-                node.map.range = dace.subsets.Range(new_range_list)
+        # Uses as a free name: map ranges, memlet subsets, tasklet code, nested symbol mappings
+        state.replace_dict(literals)
 
     # Replace on for CFGs as
     for cfg in sdfg.all_control_flow_regions():
         if isinstance(cfg, LoopRegion):
-            cfg.loop_condition = repl_code_block_or_str(cfg.loop_condition, strvals)
-            cfg.init_statement = repl_code_block_or_str(cfg.init_statement, strvals)
-            cfg.update_statement = repl_code_block_or_str(cfg.update_statement, strvals)
+            cfg.loop_condition = rewrite_code(cfg.loop_condition, literals)
+            cfg.init_statement = rewrite_code(cfg.init_statement, literals)
+            cfg.update_statement = rewrite_code(cfg.update_statement, literals)
             assert cfg.loop_variable not in scalars, (
                 f"Loop variable {cfg.loop_variable} cannot be the same as a specialized scalar"
             )
         if isinstance(cfg, ConditionalBlock):
             for i, (n_cond, n_body) in enumerate(cfg.branches):
                 if n_cond is not None:
-                    cfg.branches[i] = (repl_code_block_or_str(n_cond, strvals), n_body)
+                    cfg.branches[i] = (rewrite_code(n_cond, literals), n_body)
 
-    for edge in sdfg.all_interstate_edges(recursive=True):
-        edge.data.replace_dict(strvals)
+    # Not recursive: a nested SDFG binds names of its own and is reached through its connectors below
+    for edge in sdfg.all_interstate_edges():
+        edge.data.replace_dict(literals, replace_keys=False)
 
     if root != sdfg:
         for scalar_name in scalars:
@@ -2980,24 +2980,41 @@ def specialize_symbols(sdfg: "dace.SDFG", values: dict[str, float | int | str]) 
         for name, value in values.items():
             specialize_symbols(sdfg, {name: value})
         return
-    vals = {name: str(value) for name, value in values.items()}
-    for sd in list(sdfg.all_sdfgs_recursive()):
-        # Drop their interstate definitions first: replace_dict would turn the key into a literal (`5 = ...`)
-        for e in sd.all_interstate_edges(recursive=False):
-            for name in vals:
-                e.data.assignments.pop(name, None)
-        free = {str(s) for s in sd.free_symbols}
-        present = {name: val for name, val in vals.items() if name in sd.symbols or name in free}
-        if present:
-            sd.replace_dict(present)
+    bake_symbols(sdfg, {name: str(value) for name, value in values.items()})
+
+
+def nested_bindings(sdfg: "dace.SDFG") -> set[str]:
+    """Names ``sdfg`` binds itself, which a value mapped in from outside cannot replace."""
+    bound = {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
+    return bound | {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
+
+
+def bake_symbols(sdfg: "dace.SDFG", vals: dict[str, str]) -> None:
+    loop_vars = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
+    vals = {name: val for name, val in vals.items() if name not in loop_vars}
+    # Drop their interstate definitions first: replace_dict would turn the key into a literal (`5 = ...`)
+    for e in sdfg.all_interstate_edges():
         for name in vals:
-            if name in sd.symbols:
-                sd.remove_symbol(name)
-    # Strip the symbols from any nested SDFG node's symbol_mapping that still maps them.
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, NestedSDFG):
-            for name in vals:
-                node.symbol_mapping.pop(name, None)
+            e.data.assignments.pop(name, None)
+    free = {str(s) for s in sdfg.free_symbols}
+    present = {name: val for name, val in vals.items() if name in sdfg.symbols or name in free}
+    if present:
+        sdfg.replace_dict(present)
+    for name in vals:
+        if name in sdfg.symbols:
+            sdfg.remove_symbol(name)
+    # Inside a nest a name means its symbol_mapping value: `foo(n + 1)` bakes the nested `n` to the constant it became
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not isinstance(node, NestedSDFG):
+                continue
+            bound = nested_bindings(node.sdfg)
+            mapped = {name: dace.symbolic.pystr_to_symbolic(str(val)) for name, val in node.symbol_mapping.items()}
+            inner = {name: str(val) for name, val in mapped.items() if not val.free_symbols and name not in bound}
+            for name in inner:
+                del node.symbol_mapping[name]
+            if inner:
+                bake_symbols(node.sdfg, inner)
 
 
 def in_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:

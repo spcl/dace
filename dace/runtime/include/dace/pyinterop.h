@@ -45,33 +45,22 @@ typedef void *pyobject;
 template <typename T>
 inline constexpr bool dace_is_float_v = std::is_floating_point_v<T> || std::is_same_v<T, dace::float16>;
 
-// True if any argument is a dace::float16: Min/Max then compare in the common type
-// instead of the first argument's type, so Min(h, 1e-20) is not rounded to half.
-template <typename... Ts>
-struct _dace_has_half : std::disjunction<std::is_same<Ts, dace::float16>...> {};
-
 // Sympy functions
+// Min/Max compare in the common type: the first argument's type would wrap Max(1, N) on an int64 N
+// and round Min(h, 1e-20) to half.
 template <typename U, typename... T>
 static DACE_HDFI auto Min(U val, T... vals) {
     static_assert(((dace_is_float_v<U> == dace_is_float_v<T>) && ...),
                   "Min: integer and floating-point arguments mixed; cast them to one type, e.g. Min(x, 1.0)");
-    if constexpr (_dace_has_half<U, T...>::value) {
-        using R = typename std::common_type<U, T...>::type;
-        return min(R(val), R(vals)...);
-    } else {
-        return U(min(val, vals...));
-    }
+    using R = typename std::common_type<U, T...>::type;
+    return min(R(val), R(vals)...);
 }
 template <typename U, typename... T>
 static DACE_HDFI auto Max(U val, T... vals) {
     static_assert(((dace_is_float_v<U> == dace_is_float_v<T>) && ...),
                   "Max: integer and floating-point arguments mixed; cast them to one type, e.g. Max(x, 1.0)");
-    if constexpr (_dace_has_half<U, T...>::value) {
-        using R = typename std::common_type<U, T...>::type;
-        return max(R(val), R(vals)...);
-    } else {
-        return U(max(val, vals...));
-    }
+    using R = typename std::common_type<U, T...>::type;
+    return max(R(val), R(vals)...);
 }
 // Deduced, not ``T``: ``abs`` of a complex value is real, so pinning the return to the argument
 // type turns ``Abs(z)`` back into a complex and every comparison on it loses its candidate.

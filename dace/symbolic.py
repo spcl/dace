@@ -1454,10 +1454,6 @@ class right_shift(sympy.Function):
             return x >> y
 
 
-class conj(sympy.Function):
-    pass
-
-
 # Internal variants for the Python operators: ``a | b`` parses to ``__bitwise_or``, etc.
 # ``symstr`` prints these as the operator, while the bare ``bitwise_or`` etc. print as
 # ``func(a, b)`` (both lower to the operator in C++). They subclass the bare classes so
@@ -2581,7 +2577,6 @@ _PYSTR2SYM_locals = {
     "float32": float32,
     "float64": float64,
     "Attr": Attr,
-    "conj": conj,
     "Subscript": Subscript,
     "id": sympy.Symbol("id"),
     "diag": sympy.Symbol("diag"),
@@ -2739,8 +2734,6 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return "((%s) / (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
         if self.cpp_mode and str(expr.func) in TYPECAST_CPP:
             return f"{TYPECAST_CPP[str(expr.func)]}({self._print(expr.args[0])})"
-        if self.cpp_mode and str(expr.func) in ("conj", "conjugate"):
-            return "dace::math::conj(%s)" % self._print(expr.args[0])
         if str(expr.func) == "AND":
             return f"(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))"
         if str(expr.func) == "OR":
