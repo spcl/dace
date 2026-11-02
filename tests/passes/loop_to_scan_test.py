@@ -2737,3 +2737,87 @@ def test_loop_to_scan_doesnt_lift_break_loop():
     res = LoopToScan().apply_pass(sdfg, {})
     assert res is None
     assert sdfg.to_json() == before, "LoopToScan refused the loop but still mutated the SDFG"
+
+
+def test_a_carrier_read_left_in_the_body_is_not_lifted():
+    """The body runs before the scan, so a read the rewrite does not remove would see the pre-loop carrier."""
+
+    @dace.program
+    def guard_reads_carrier(a: dace.float64[N], b: dace.float64[N]):
+        for i in range(1, N):
+            if a[i - 1] > 0.5:
+                a[i] = a[i - 1] + b[i]
+            else:
+                a[i] = a[i - 1]
+
+    @dace.program
+    def later_read(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+        for i in range(1, N):
+            c[0] = a[i - 1]
+            a[i] = a[i - 1] + b[i] * 2.0
+
+    @dace.program
+    def composite_read(p: dace.float64[N, 6], q: dace.float64[N, 6], r: dace.float64[N, 6]):
+        for k in range(1, 6):
+            for l in range(N):
+                p[l, k] = p[l, k - 1]
+            for l in range(N):
+                p[l, k] = p[l, k] + q[l, k]
+            for l in range(N):
+                r[l, k] = p[l, k] * 2.0
+
+    @dace.program
+    def affine_live_out(a: dace.float64[N], b: dace.float64[N], o: dace.float64[1]):
+        x = 0.0
+        for i in range(1, N):
+            a[i] = a[i - 1] + b[i]
+            x = a[i]
+        o[0] = x
+
+    for program in (guard_reads_carrier, later_read, composite_read, affine_live_out):
+        sdfg = program.to_sdfg(simplify=True)
+        LiftPreprocess().apply_pass(sdfg, {})
+        assert LoopToScan().apply_pass(sdfg, {}) is None, program.name
+
+
+def test_an_in_place_running_sum_reads_only_what_it_has_not_stored():
+    """``a[i]`` is folded before it is overwritten, ``a[i-1]`` after."""
+
+    @dace.program
+    def same_slot(a: dace.float64[N]):
+        s = 0.0
+        for i in range(N):
+            s = s + a[i]
+            a[i] = s
+
+    @dace.program
+    def earlier_slot(a: dace.float64[N]):
+        s = 0.0
+        for i in range(1, N):
+            s = s + a[i - 1]
+            a[i] = s
+
+    sdfg = same_slot.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert LoopToScan().apply_pass(sdfg, {}) == 1
+    sdfg = earlier_slot.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert LoopToScan().apply_pass(sdfg, {}) is None
+
+
+def test_a_scalar_scan_keeps_a_transient_its_loop_also_fills():
+    """The rewrite drops the loop, and with it every other store in the body."""
+
+    @dace.program
+    def side_store(a: dace.float64[N], b: dace.float64[N], o: dace.float64[N]):
+        t = np.zeros(N)
+        s = 0.0
+        for i in range(N):
+            s = s + a[i]
+            b[i] = s
+            t[i] = a[i] * 2.0
+        o[:] = t
+
+    sdfg = side_store.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert LoopToScan().apply_pass(sdfg, {}) is None

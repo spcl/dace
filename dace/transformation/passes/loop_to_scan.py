@@ -935,6 +935,47 @@ def _merge_state_into(s1: SDFGState, s2: SDFGState):
         s1.add_edge(src, e.src_conn, dst, e.dst_conn, e.data)
 
 
+def _carrier_read_edge(state: SDFGState, sdfg: SDFG, edge) -> Any:
+    """The edge leaving the carrier's AccessNode that ``edge`` is fed by, through the transient wires
+    :func:`_resolve_input` walks."""
+    while sdfg.arrays[edge.src.data].transient:
+        edge = state.in_edges(edge.src)[0]
+    return edge
+
+
+def _read_survives_rewrite(
+    loop: LoopRegion, sdfg: SDFG, carriers: Any, severed: list[Any], rewritten: Sequence[SDFGState] = ()
+) -> bool:
+    """Whether anything in ``loop`` still reads a carrier once the rewrite has run.
+
+    The rewrite turns the loop into a build the scan runs AFTER, so the only reads it may keep are none: a read of a
+    carrier left in the body sees the values from before the loop. ``severed`` are the read edges the rewrite removes,
+    and ``rewritten`` the states it drops the carrier from.
+
+    :param loop: The matched loop.
+    :param sdfg: SDFG owning ``loop``.
+    :param carriers: Names of the arrays the scans write.
+    :param severed: The read edges the rewrite removes.
+    :param rewritten: States whose carrier accesses the rewrite removes altogether.
+    :returns: ``True`` when a read would observe the stale carrier.
+    """
+    gone = {id(edge) for edge in severed}
+    for state in loop.states():
+        if state in rewritten:
+            continue
+        for node in state.data_nodes():
+            if node.data in carriers and any(
+                not e.data.is_empty() and id(e) not in gone for e in state.out_edges(node)
+            ):
+                return True
+    for region in loop.all_control_flow_regions():
+        meta = region.get_meta_read_memlets(sdfg.arrays) if isinstance(region, ConditionalBlock) else []
+        for memlet in [*meta, *(m for e in region.edges() for m in e.data.get_read_memlets(sdfg.arrays))]:
+            if memlet.data in carriers:
+                return True
+    return False
+
+
 def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> list[_Scan]:
     """Match every independent scan recurrence in ``loop``.
 
@@ -1146,6 +1187,25 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
     # value of its own would lose it, and the scan would carry a running sum through
     # iterations that never had one.
     if any(not _sibling_branches_hold_the_carry(s, loop) for s in matched):
+        return []
+    severed = [
+        _carrier_read_edge(
+            s.body_state,
+            sdfg,
+            next(e for e in s.body_state.in_edges(s.scan_update_tasklet) if e.dst_conn == s.carry_in_conn),
+        )
+        for s in matched
+    ]
+    # A hold branch is dropped whole by :func:`_mutate_sibling_branches_to_zero_delta`.
+    holds = [
+        state
+        for s in matched
+        if (cond := _enclosing_masked_conditional(s.body_state)) is not None
+        for _, branch in cond.branches
+        for state in branch.states()
+        if state is not s.body_state
+    ]
+    if _read_survives_rewrite(loop, sdfg, carrier_set, severed, holds):
         return []
     return matched
 
@@ -1752,7 +1812,7 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> _CompositeBodyScan | 
     if not loop_var:
         return None
     # Per-carrier collection of write sites with their classification.
-    # write_sites[carrier] = [(state, primary_tasklet, w_axis, w_others, kind, in_conn, carry_anchor)]
+    # write_sites[carrier] = [(state, primary_tasklet, w_axis, w_others, kind, in_conn, carry_anchor, carry_read)]
     # kind: 'carry_copy' if the chain into the carrier resolves to a pure read of
     #       carrier at offset -1 (no binop -- identity assign)
     #       'accumulate'  if the chain has a binop tasklet whose carry input
@@ -1811,8 +1871,9 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> _CompositeBodyScan | 
                         # AN-source with a tasklet emitting 0.
                         carry_anchor = primary_carry_in_edge.src
                 if kind is not None:
+                    read = _carrier_read_edge(state, sdfg, primary_carry_in_edge)
                     write_sites.setdefault(carrier, []).append(
-                        (state, primary, w_axis, w_others, kind, in_conn, carry_anchor)
+                        (state, primary, w_axis, w_others, kind, in_conn, carry_anchor, read)
                     )
                 continue
             # Parse the primary tasklet's body.
@@ -1823,6 +1884,7 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> _CompositeBodyScan | 
             if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
                 continue
             rhs = tree.body[0].value
+            carry_read = None
             # Identity-assign primary: the chain into the carrier is a pure
             # read of carrier at SOME subset. Walk back from primary's input to
             # find the source AccessNode subset.
@@ -1840,6 +1902,7 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> _CompositeBodyScan | 
                             kind = "carry_copy"
                             in_conn = ie.dst_conn
                             carry_anchor = ie.src
+                            carry_read = ie
             # BinOp primary tasklet (the accumulate): two inputs, one is the
             # carrier at offset 0.
             if kind is None and isinstance(rhs, ast.BinOp) and len(primary_in_edges) == 2:
@@ -1852,10 +1915,14 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> _CompositeBodyScan | 
                         r_axis, k_r, r_others, r_coef = _classify_subset(src_subset, loop_var)
                         if r_axis == w_axis and r_coef == 1 and _same_other_indices(r_others, w_others) and k_r == k_w:
                             kind = "accumulate"
+                            carry_read = ie
                             break
             if kind is None:
                 continue
-            write_sites.setdefault(carrier, []).append((state, primary, w_axis, w_others, kind, in_conn, carry_anchor))
+            read = _carrier_read_edge(state, sdfg, carry_read)
+            write_sites.setdefault(carrier, []).append(
+                (state, primary, w_axis, w_others, kind, in_conn, carry_anchor, read)
+            )
 
     # Look for a carrier with EXACTLY one carry-copy + at least one accumulate.
     for carrier, sites in write_sites.items():
@@ -1863,7 +1930,7 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> _CompositeBodyScan | 
         accumulates = [s for s in sites if s[4] == "accumulate"]
         if len(carry_copies) != 1 or not accumulates:
             continue
-        cc_state, cc_tasklet, w_axis, w_others, _, cc_in_conn, cc_anchor = carry_copies[0]
+        cc_state, cc_tasklet, w_axis, w_others, _, cc_in_conn, cc_anchor, _ = carry_copies[0]
         cc_out_edges = [e for e in cc_state.out_edges(cc_tasklet) if e.data is not None and not e.data.is_empty()]
         if len(cc_out_edges) != 1:
             continue
@@ -1872,6 +1939,9 @@ def _match_composite_body(loop: LoopRegion, sdfg: SDFG) -> _CompositeBodyScan | 
         # (same axis assignments). Composite bodies that write different slots
         # would need per-slot handling; out of scope.
         if not all(_same_other_indices(s[3], w_others) and s[2] == w_axis for s in accumulates):
+            continue
+        # The accumulates keep adding onto the slot, but into the delta buffer: its other reads would see the delta.
+        if _read_survives_rewrite(loop, sdfg, {carrier}, [s[7] for s in sites]):
             continue
         return _CompositeBodyScan(
             out_name=carrier,
@@ -2170,14 +2240,13 @@ def _match_scalar_carry(loop: LoopRegion, sdfg: SDFG) -> _ScalarCarryScan | None
         return None
     info = candidates[0]
 
-    # 2. Body must not write any non-transient array other than ``info.out_name``.
+    # 2. Body must not write any non-transient array other than ``info.out_name``. The rewrite drops the loop, so a
+    # transient it fills besides the scan is lost too, unless nothing reads it afterwards.
     for n in state.data_nodes():
-        if state.in_degree(n) == 0:
+        if state.in_degree(n) == 0 or n.data in (info.acc_name, info.out_name):
             continue
         desc = sdfg.arrays.get(n.data)
-        if desc is None or desc.transient:
-            continue
-        if n.data != info.out_name:
+        if desc is None or not desc.transient or _acc_used_outside_body(sdfg, n.data, state):
             return None
     return info
 
@@ -2282,6 +2351,17 @@ def _match_one_scalar_carry(
     if out_info is None:
         return None
     out_name, out_axis, out_offset, out_others = out_info
+    if delta_name == out_name:
+        # In place: the scan reads the array as it was before the loop, so no iteration may read a slot an earlier one
+        # (or, exclusively, the same one) has stored to. ``delta_axis``/``delta_others`` say which slots those are.
+        ahead = symbolic.simplify(delta_offset - out_offset)
+        if (
+            delta_axis != out_axis
+            or not _same_other_indices(delta_others, out_others)
+            or not as_basic(ahead).is_Integer
+            or int(as_expr(ahead)) < (1 if exclusive else 0)
+        ):
+            return None
 
     # Check if ``acc`` is read outside this loop's body (any other state of any
     # nested SDFG, or any interstate edge condition/assignments). When true the
@@ -3145,6 +3225,20 @@ def _chain_to_store(state: SDFGState, tasklet, write_edge):
     return list(chain.values())
 
 
+def _transient_is_a_wire(state: SDFGState, node: nodes.AccessNode) -> bool:
+    """Whether ``node`` is a transient nothing observes but its one consumer. On the way to the carrier it holds the
+    scan's value, which the rewrite replaces by the delta: another reader, a later iteration or the code after the
+    loop would get the delta (``s = s + a[i-1]; a[i] = s``)."""
+    desc = state.sdfg.arrays.get(node.data)
+    return (
+        desc is not None
+        and desc.transient
+        and state.out_degree(node) == 1
+        and not any(n.data == node.data and n is not node for n in state.data_nodes())
+        and not _acc_used_outside_body(state.sdfg, node.data, state)
+    )
+
+
 def _stores_scan_result(state: SDFGState, write_edge, tasklet, op) -> bool:
     """Whether what ``write_edge`` stores is the scan update's value under the SAME associative op.
 
@@ -3169,8 +3263,7 @@ def _stores_scan_result(state: SDFGState, write_edge, tasklet, op) -> bool:
         return False
     for node in chain:
         if isinstance(node, nodes.AccessNode):
-            desc = state.sdfg.arrays.get(node.data)
-            if desc is None or not desc.transient:
+            if not _transient_is_a_wire(state, node):
                 return False
         elif not _is_pure_copy_tasklet(node) and _tasklet_scan_op(node) is not op:
             return False
@@ -4945,15 +5038,17 @@ def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, l
     :param out_name: The carrier array.
     :param loop_var: The loop iteration variable.
     :param k_w: Constant offset of the carrier write.
-    :returns: ``(expr, leaves, chain, carry_name, k_r)``, or ``None`` when not liftable.
+    :returns: ``(expr, leaves, chain, carry_name, k_r, reads)``, or ``None`` when not liftable.
     """
     leaves: dict[str, _AffineLeaf] = {}
     chain: list[Any] = []
     carry: list[Any] = []  # single-slot: [(name, k_r)] once the carry leaf is seen
+    reads: list[Any] = []  # every edge the value reads the carrier through
 
     def leaf_for(edge) -> Any:
         subset = edge.data.subset
         if isinstance(edge.src, nodes.AccessNode) and edge.src.data == out_name:
+            reads.append(edge)
             axis, k_r, others, coef = _classify_subset(subset, loop_var)
             # The shape checks come first and short-circuit: a subset this does not classify hands
             # back ``k_r = None``, and the distance below would raise on it rather than refuse.
@@ -5037,7 +5132,7 @@ def affine_value_walk(state: SDFGState, sdfg: SDFG, write_edge, out_name: str, l
         return None
     if not carry:
         return None
-    return expr, leaves, chain, carry[0][0], carry[0][1]
+    return expr, leaves, chain, carry[0][0], carry[0][1], reads
 
 
 def split_linear_in_carry(expr: Any, carry: str) -> tuple | None:
@@ -5121,7 +5216,7 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
     walked = affine_value_walk(state, sdfg, write_edge, out_name, loop_var, k_w)
     if walked is None:
         return None
-    expr, leaves, chain, carry_name, k_r = walked
+    expr, leaves, chain, carry_name, k_r, reads = walked
     split = split_linear_in_carry(expr, carry_name)
     if split is None:
         return None
@@ -5129,6 +5224,10 @@ def match_affine_scan(loop: LoopRegion, sdfg: SDFG) -> _AffineScan | None:
     if coef_code is None or delta_code is None:
         return None
     if not carrier_reads_admissible(state, out_name, loop_var, 0, [], k_w, k_r, 1):
+        return None
+    if _read_survives_rewrite(loop, sdfg, {out_name}, reads):
+        return None
+    if not all(_transient_is_a_wire(state, n) for n in chain if isinstance(n, nodes.AccessNode)):
         return None
     return _AffineScan(
         out_name=out_name,
