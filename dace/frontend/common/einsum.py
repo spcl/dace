@@ -231,6 +231,15 @@ def _bmm_orders(einsum_string: str, sizes: dict[str, int]) -> tuple[int, int, tu
     return best and best[1:]
 
 
+def is_broadcast_matmul(einsum: "EinsumParser") -> bool:
+    """numpy's ``[m, k] @ [b, k, n]`` or ``[b, m, k] @ [k, n]``: ``ij,bjk->bik`` or ``bij,jk->bik``, no transpose."""
+    if len(einsum.inputs) != 2 or sorted(map(len, einsum.inputs)) != [2, 3]:
+        return False
+    a, b = einsum.inputs
+    out = (a if len(a) == 3 else b)[0] + a[-2] + b[-1]
+    return a[-1] == b[-2] and a[-1] not in out and len(set(out)) == 3 and einsum.output == out
+
+
 def _batched_dot_index(einsum: "EinsumParser") -> str | None:
     """The one summed index of a batched dot ``bk,bk->b``: both operands index the batch in the output's order, then
     the summed index last; ``None`` for any other contraction."""
@@ -563,6 +572,19 @@ def _create_einsum_internal(
         for node, conn in zip((input_nodes[arrays[0]], input_nodes[arrays[1]]), ("_left_tensor", "_right_tensor")):
             state.add_edge(node, None, tensordot, conn, Memlet.from_array(node.data, sdfg.arrays[node.data]))
         state.add_edge(tensordot, "_out_tensor", c, None, Memlet.from_array(output, sdfg.arrays[output]))
+    elif (
+        is_broadcast_matmul(einsum)
+        and all(sdfg.arrays[array].dtype == dtype for array in arrays)
+        and _lowering_reads_directly(sdfg.arrays[output])
+        and not is_devicelevel_gpu(sdfg, state, input_nodes[arrays[0]])
+    ):
+        from dace.libraries.blas.nodes.matmul import MatMul  # Avoid import loop
+
+        matmul = MatMul("einsum_matmul", alpha=plain_coefficient(alpha), beta=plain_coefficient(beta))
+        c = state.add_write(output)
+        for array, conn in zip(arrays, ("_a", "_b")):
+            state.add_edge(input_nodes[array], None, matmul, conn, Memlet.from_array(array, sdfg.arrays[array]))
+        state.add_edge(matmul, "_c", c, None, Memlet.from_array(output, sdfg.arrays[output]))
     # GEMM reads every operand at the output's dtype; mixed operands (float64 x complex128) take the maps.
     elif (
         len(arrays) == 2
