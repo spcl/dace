@@ -331,6 +331,26 @@ def test_small_lanes_stay_a_host_loop():
     assert lane_maps(sdfg)[0].map.schedule == dace.ScheduleType.Sequential
 
 
+def test_the_outermost_of_nested_host_maps_is_the_kernel_whatever_the_node_order():
+    """Added first, the inner map is visited first. Promoted then, it would be a wide kernel that refuses the outer."""
+    sdfg = dace.SDFG("nested_host_maps")
+    sdfg.add_array("a", [256, 256, 4], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    inner_entry, inner_exit = state.add_map("inner", {"j": "0:256"}, schedule=dace.ScheduleType.Sequential)
+    outer_entry, outer_exit = state.add_map("outer", {"i": "0:256"}, schedule=dace.ScheduleType.Sequential)
+    dev_entry, dev_exit = state.add_map("dev", {"k": "0:4"}, schedule=dace.ScheduleType.GPU_Device)
+    tasklet = state.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    state.add_nedge(outer_entry, inner_entry, dace.Memlet())
+    state.add_nedge(inner_entry, dev_entry, dace.Memlet())
+    state.add_nedge(dev_entry, tasklet, dace.Memlet())
+    state.add_memlet_path(
+        tasklet, dev_exit, inner_exit, outer_exit, state.add_write("a"), src_conn="o", memlet=dace.Memlet("a[i, j, k]")
+    )
+    assert PromoteHostMapsToKernels().apply_pass(sdfg, {}) == 1
+    assert outer_entry.map.schedule == dace.ScheduleType.GPU_Device
+    assert inner_entry.map.schedule == dace.ScheduleType.Sequential
+
+
 def test_a_host_map_launching_a_wide_kernel_stays_on_the_host():
     """``for i in map(0:256): kernel over 0:N``: the wide kernel amortizes its launch, and inside one kernel each
     thread would run it serially."""
