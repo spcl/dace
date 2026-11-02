@@ -433,6 +433,59 @@ def test_hoisting_through_every_map_level_keeps_the_cfg_list_of_a_fresh_reset(mo
     sdfg.validate()
 
 
+def test_guard_lifted_between_maps_keeps_the_type_of_its_symbol():
+    """``g = a[0]`` of a float ``a``: an integer symbol at the new level would truncate 0.7 and flip ``g > 0.5``."""
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ControlFlowRegion
+
+    def build(name: str) -> dace.SDFG:
+        inner = dace.SDFG(f"{name}_body")
+        inner.add_array("a", [1], dace.float64)
+        inner.add_array("b", [3, 3], dace.int64)
+        inner.add_symbol("i", dace.int64)
+        inner.add_symbol("j", dace.int64)
+        prep = inner.add_state("prep", is_start_block=True)
+        guard = ConditionalBlock("guard")
+        inner.add_node(guard)
+        inner.add_edge(prep, guard, dace.InterstateEdge(assignments={"g": "a[0]"}))
+        arm = ControlFlowRegion("arm", sdfg=inner)
+        guard.add_branch(CodeBlock("g > 0.5"), arm)
+        write = arm.add_state("write", is_start_block=True)
+        tasklet = write.add_tasklet("one", {}, {"y"}, "y = 1")
+        write.add_edge(tasklet, "y", write.add_write("b"), None, dace.Memlet("b[i, j]"))
+
+        sdfg = dace.SDFG(name)
+        sdfg.add_array("a", [1], dace.float64)
+        sdfg.add_array("b", [3, 3], dace.int64)
+        state = sdfg.add_state("state", is_start_block=True)
+        outer_entry, outer_exit = state.add_map("outer", dict(i="0:3"))
+        inner_entry, inner_exit = state.add_map("inner", dict(j="0:3"))
+        body = state.add_nested_sdfg(inner, {"a": None}, {"b": None}, symbol_mapping={"i": "i", "j": "j"})
+        state.add_memlet_path(
+            state.add_read("a"), outer_entry, inner_entry, body, memlet=dace.Memlet("a[0]"), dst_conn="a"
+        )
+        state.add_memlet_path(
+            body, inner_exit, outer_exit, state.add_write("b"), memlet=dace.Memlet("b[i, j]"), src_conn="b"
+        )
+        return sdfg
+
+    sdfg = build("float_guard_lifted")
+    assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is not None
+    b = np.zeros((3, 3), dtype=np.int64)
+    sdfg(a=np.array([0.7]), b=b)
+    assert (b == 1).all()
+
+
+def test_swapped_symbols_resolve_simultaneously():
+    """Inner ``i``, ``j`` bound to outer ``j``, ``i``: resolving one name must not rewrite the other a second time."""
+    from dace.properties import CodeBlock
+    from dace.transformation.interstate.move_map_invariant_if_up import _resolve_through_mapping
+
+    resolved, free = _resolve_through_mapping(CodeBlock("i < j + 1"), {"i": "j", "j": "i"})
+    assert dace.symbolic.guards_equal(resolved, "j < i + 1")
+    assert free == {"i", "j"}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

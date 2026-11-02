@@ -18,7 +18,8 @@ Contract, per ``ConditionalBlock`` with an ``if`` and an ``else`` branch:
   no copy beside it;
 * the two maps have equal ranges (up to parameter names) and write the same arrays at the same subsets;
 * the condition reads symbols, none a map parameter, and one-element containers neither branch writes;
-* both bodies together have at most ``MAX_TASKLETS`` tasklets: each element computes both;
+* both bodies together have at most ``MAX_TASKLETS`` tasklets: each element computes both, so every access outside
+  the other branch stays in range without the guard, and no tasklet divides integers;
 * a map over the same range elsewhere in the block's region produces one of the branch inputs or reads one of its
   outputs, so the merged map has a fusion partner.
 """
@@ -31,7 +32,8 @@ from dace import SDFG, dtypes, properties, symbolic
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState, SymbolResolver
+from dace.sdfg.tasklet_utils import integer_division
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -89,6 +91,34 @@ def fusion_partner(block: ConditionalBlock, rng, reads: set[str], writes: set[st
             if ins & writes or outs & reads:
                 return True
     return False
+
+
+def map_accesses(state: SDFGState, entry: nodes.MapEntry) -> set[tuple[str, str]]:
+    """``(container, subset)`` of what the map at ``entry`` reads and writes, over its whole range."""
+    edges = (*state.in_edges(entry), *state.out_edges(state.exit_node(entry)))
+    return {(e.data.data, str(e.data.subset)) for e in edges if not e.data.is_empty()}
+
+
+def safe_unguarded(block: ConditionalBlock, arms: list[tuple[SDFGState, nodes.MapEntry]]) -> bool:
+    """Whether both maps may run on every path: what only one of them accesses is in range there without the guard (a
+    guard can be what keeps it in range), and neither divides integers (a guard can keep the divisor from zero)."""
+    (state, entry), (other, entry_other) = arms
+    only_one = map_accesses(state, entry) ^ map_accesses(other, entry_other)
+    facts = SymbolResolver().facts_at(block)
+    for st, en in arms:
+        scope = st.scope_subgraph(en).nodes()
+        if any(isinstance(n, nodes.Tasklet) and integer_division(st, n) for n in scope):
+            return False
+        for e in (*st.in_edges(en), *st.out_edges(st.exit_node(en))):
+            if e.data.is_empty() or (e.data.data, str(e.data.subset)) not in only_one:
+                continue
+            shape = st.sdfg.arrays[e.data.data].shape
+            for (begin, end, _step), extent in zip(e.data.subset.ndrange(), shape):
+                if not symbolic.provably_nonnegative(begin, facts):
+                    return False
+                if not symbolic.provably_nonnegative(extent - 1 - end, facts):
+                    return False
+    return True
 
 
 @properties.make_properties
@@ -162,6 +192,8 @@ class SelectBranchMaps(ppl.Pass):
             return 0
         reads = {e.data.data for st, en in ((state, entry), (other, entry_f)) for e in st.in_edges(en) if e.data.data}
         if not fusion_partner(block, entry.map.range, reads, set(outs_t)):
+            return 0
+        if not safe_unguarded(block, [found_t, found_f]):
             return 0
 
         # The else body, copied into the if map with its parameters renamed and its scalars given fresh names

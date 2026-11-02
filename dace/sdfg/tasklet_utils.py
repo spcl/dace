@@ -104,6 +104,28 @@ def is_abort_guard(node: dace.nodes.Node) -> bool:
     )
 
 
+def integer_division(state: "dace.SDFGState", tasklet: dace.nodes.Tasklet) -> bool:
+    """Whether ``tasklet`` may divide integers: run for a lane its guard excludes, that divides by zero and traps.
+
+    :param state: The state holding ``tasklet``.
+    :param tasklet: The tasklet to inspect.
+    :returns: ``True`` for a division or remainder next to an integer connector, whatever the language.
+    """
+    if not any(
+        state.sdfg.arrays[edge.data.data].dtype in dace.dtypes.INTEGER_TYPES
+        for edge in (*state.in_edges(tasklet), *state.out_edges(tasklet))
+        if not edge.data.is_empty()
+    ):
+        return False
+    if tasklet.code.language != dace.dtypes.Language.Python:
+        return bool(re.search(r"[/%]", tasklet.code.as_string))
+    return any(
+        isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod))
+        for statement in tasklet.code.code
+        for node in ast.walk(statement)
+    )
+
+
 def token_replace_dict(code: str, repldict: dict[str, str]) -> str:
     """
     Replaces exact token matches in a code string using a replacement dictionary.

@@ -5,7 +5,9 @@ import numpy as np
 
 import dace
 from dace.codegen.cpf import cpf
+from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock
+from dace.sdfg.tasklet_utils import integer_division
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
@@ -99,6 +101,21 @@ def test_nested_unequal_arms_become_selects_and_compute_the_reference():
         np.testing.assert_allclose(arrays[name], value, rtol=1e-14, atol=0.0)
 
 
+def test_an_integer_division_is_recognized():
+    """As a select the division would run for ``b[i] == 0`` too, and trap."""
+    sdfg = dace.SDFG("ifconv_integer_division")
+    sdfg.add_array("b", [4], dace.int64)
+    sdfg.add_array("x", [4], dace.int64)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("divide", {"p", "q"}, {"r"}, "r = p // q")
+    state.add_edge(state.add_read("x"), None, tasklet, "p", dace.Memlet("x[0]"))
+    state.add_edge(state.add_read("b"), None, tasklet, "q", dace.Memlet("b[0]"))
+    state.add_edge(tasklet, "r", state.add_write("x"), None, dace.Memlet("x[0]"))
+    assert integer_division(state, tasklet)
+    tasklet.code = CodeBlock("r = p + q")
+    assert not integer_division(state, tasklet)
+
+
 def test_a_guarded_gather_keeps_its_branch():
     sdfg = canonical(guarded_gather, "ifconv_guarded_gather")
     assert conditionals(sdfg) == 1
@@ -123,5 +140,6 @@ def test_a_switch_whose_arms_read_their_own_arrays_keeps_its_branches():
 
 if __name__ == "__main__":
     test_nested_unequal_arms_become_selects_and_compute_the_reference()
+    test_an_integer_division_is_recognized()
     test_a_guarded_gather_keeps_its_branch()
     test_a_switch_whose_arms_read_their_own_arrays_keeps_its_branches()

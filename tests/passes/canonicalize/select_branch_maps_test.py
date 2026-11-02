@@ -53,6 +53,36 @@ def lone_branches(a: dace.float64[N], out: dace.float64[N]):
             out[i] = a[i] - 1.0
 
 
+@dace.program
+def divisor_guarded_by_the_branch(a: dace.int64[N], b: dace.int64[N], out: dace.int64[N]):
+    bl = a - b
+    br = a + b
+    if M == 5:
+        for i in dace.map[0:N]:
+            out[i] = bl[i] // br[i]
+    else:
+        for i in dace.map[0:N]:
+            out[i] = bl[i] - br[i]
+
+
+@dace.program
+def read_kept_in_range_by_the_branch(a: dace.float64[N], c: dace.float64[N], out: dace.float64[N]):
+    bl = a + 1.0
+    if M == 5:
+        for i in dace.map[0:N]:
+            out[i] = bl[i] * c[i + M]
+    else:
+        for i in dace.map[0:N]:
+            out[i] = bl[i] - 1.0
+
+
+def test_a_branch_the_guard_protects_stays_a_branch():
+    """Merged, every element would compute the guarded arm: a division by zero, a read past the end of ``c``."""
+    for program in (divisor_guarded_by_the_branch, read_kept_in_range_by_the_branch):
+        sdfg = program.to_sdfg(simplify=True)
+        assert SelectBranchMaps().apply_pass(sdfg, {}) is None
+
+
 def test_branch_maps_without_a_fusion_partner_stay_apart():
     """Merged, each element would compute both arms with nothing to fuse with: the branch stays."""
     sdfg = lone_branches.to_sdfg(simplify=True)
@@ -114,6 +144,7 @@ def test_a_condition_on_a_scalar_is_handed_to_the_select():
 
 
 if __name__ == "__main__":
+    test_a_branch_the_guard_protects_stays_a_branch()
     test_branch_maps_without_a_fusion_partner_stay_apart()
     test_the_two_branch_maps_become_one_selecting_map()
     test_a_branch_copying_beside_its_map_stays_a_branch()
