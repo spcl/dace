@@ -250,6 +250,8 @@ def lane_signature(
     edges: dict[SDFGState, list[MultiConnectorEdge[Memlet]]],
     aliases: dict[str, str],
     sym_offset: dict[str, int],
+    gathers: dict[str, str],
+    written: set[str],
     ids: ValueIds,
 ) -> list | None:
     """What lane ``lane`` hands out, spelled as lane 0 would: equal signatures mean one value computed one offset apart.
@@ -258,16 +260,11 @@ def lane_signature(
     :param edges: Per state, the edges at the lane's offset.
     :param aliases: The lane-private carried containers of all lanes, by the name lanes share for them.
     :param sym_offset: The per-lane interstate symbols and their offsets.
+    :param gathers: Per lane symbol, what it is read from.
+    :param written: The transients the body writes.
     :returns: The sorted keys, or ``None`` if a node's meaning is not in its key.
     """
     var = loop.loop_variable
-    gathers = {
-        sym: str(rhs)[: str(rhs).rindex("[")] if "[" in str(rhs) else ""
-        for edge in loop.edges()
-        for sym, rhs in edge.data.assignments.items()
-        if sym in sym_offset
-    }
-    written = {n.data for st in states for n in st.data_nodes() if st.in_degree(n) > 0 and n.desc(st.sdfg).transient}
     stored: dict[str, int] = {}
 
     def name(data: str | None) -> str:
@@ -427,16 +424,18 @@ class RerollUnrolledLoops(ppl.Pass):
     def _edge_offset(self, subset: Subset | None, loop_var: str, sym_offset: dict[str, int]) -> tuple[int | None, bool]:
         """Lane offset of a memlet subset, and whether it is a lane edge at all.
 
-        A subset indexed by ``loop_var + k`` has offset ``k``; a subset indexed by
-        a per-lane symbol (e.g. ``b[ip_index]``) inherits that symbol's offset.
+            A subset indexed by ``loop_var + k`` has offset ``k``; a subset indexed by
+            a per-lane symbol (e.g. ``b[ip_index]``) inherits that symbol's offset.
 
-        :param subset: The memlet subset.
-        :param loop_var: The loop variable name.
-        :param sym_offset: The per-lane interstate symbols and their offsets.
-        :returns: ``(offset, ok)``. ``ok`` is ``False`` only when the subset
-                  references the loop variable or multiple lane symbols but cannot
-                  be reduced to one clean offset (the caller then refuses). A
-                  non-lane (shared/constant) subset returns ``(None, True)``.
+            :param subset: The memlet subset.
+            :param loop_var: The loop variable name.
+            :param sym_offset: The per-lane interstate symbols and their offsets.
+        :param gathers: Per lane symbol, what it is read from.
+        :param written: The transients the body writes.
+            :returns: ``(offset, ok)``. ``ok`` is ``False`` only when the subset
+                      references the loop variable or multiple lane symbols but cannot
+                      be reduced to one clean offset (the caller then refuses). A
+                      non-lane (shared/constant) subset returns ``(None, True)``.
         """
         if subset is None:
             return None, True
@@ -1136,7 +1135,19 @@ class RerollUnrolledLoops(ppl.Pass):
     ) -> bool:
         """Whether all lanes have lane 0's non-empty :func:`lane_signature`."""
         ids: ValueIds = {}
-        sigs = [lane_signature(loop, states, d, private[d], edges[d], aliases, sym_offset, ids) for d in private]
+        gathers = {
+            sym: str(rhs)[: str(rhs).rindex("[")] if "[" in str(rhs) else ""
+            for edge in loop.edges()
+            for sym, rhs in edge.data.assignments.items()
+            if sym in sym_offset
+        }
+        written = {
+            n.data for st in states for n in st.data_nodes() if st.in_degree(n) > 0 and n.desc(st.sdfg).transient
+        }
+        sigs = [
+            lane_signature(loop, states, d, private[d], edges[d], aliases, sym_offset, gathers, written, ids)
+            for d in private
+        ]
         return bool(sigs[0]) and all(sig == sigs[0] for sig in sigs[1:])
 
     def _scratch(self, private: dict[int, dict]) -> set[str]:
