@@ -18,8 +18,10 @@ def transpose_and_dot(a: dace.float64[Lb**3, P], b: dace.float64[P, Lb**3], x: d
     r[0] = np.dot(x, x)
 
 
-@pytest.mark.skipif(openblas.exports_symbol("cblas_domatcopy") is False, reason="needs OpenBLAS")
 def test_blas_extents_are_cpp():
+    # Asked here, not in a skipif: that runs at collection, and this question loads OpenBLAS's OpenMP runtime
+    if openblas.exports_symbol("cblas_domatcopy") is False:
+        pytest.skip("needs OpenBLAS")
     sdfg = transpose_and_dot.to_sdfg()
     for node, state in list(sdfg.all_nodes_recursive()):
         if isinstance(node, nodes.LibraryNode):
