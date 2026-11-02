@@ -16,6 +16,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.symbol_propagation import loop_bound_symbols
 
 
 class _UnknownValue:
@@ -56,6 +57,11 @@ def _free_symbols(value: Any) -> frozenset[str]:
     if isinstance(value, (str, sympy.Basic)):
         return _free_symbols_cached(value)
     return frozenset(symbolic.free_symbols_and_functions(value))
+
+
+def _value_names(value: Any, names: set[str]) -> bool:
+    """Whether a tracked ``value`` reads one of ``names``; an ambiguous value reads nothing."""
+    return value is not _UnknownValue and not names.isdisjoint(_free_symbols(value))
 
 
 @lru_cache(maxsize=16384, typed=True)
@@ -408,14 +414,6 @@ class ConstantPropagation(ppl.Pass):
                     out_consts[k] = _UnknownValue
             out_const_dict[conditional] = out_consts
 
-    def _assignments_in_loop(self, loop: LoopRegion) -> set[str]:
-        assignments_within = set()
-        for e in loop.all_interstate_edges():
-            assignments_within.update(e.data.assignments.keys())
-        if loop.loop_variable is not None:
-            assignments_within.add(loop.loop_variable)
-        return assignments_within
-
     def _collect_constants_for_region(
         self,
         cfg: ControlFlowRegion,
@@ -463,8 +461,11 @@ class ConstantPropagation(ppl.Pass):
                 # In the case of a loop, the 'pre constants' are equivalent to the 'in constants', with the exception
                 # of values that may at any point be re-assigned inside the loop, since that assignment would carry over
                 # into the next iteration (including increments to the loop variable, if present).
-                assigned_in_loop = self._assignments_in_loop(cfg)
-                pre_const = {k: (v if k not in assigned_in_loop else _UnknownValue) for k, v in in_const.items()}
+                assigned_in_loop = loop_bound_symbols(cfg)
+                pre_const = {
+                    k: _UnknownValue if k in assigned_in_loop or _value_names(v, assigned_in_loop) else v
+                    for k, v in in_const.items()
+                }
             else:
                 # In any other case, the 'pre constants' are equivalent to the 'in constants'.
                 pre_const = {}
@@ -537,11 +538,11 @@ class ConstantPropagation(ppl.Pass):
                             assignments[aname] = _UnknownValue
 
                 if isinstance(block, LoopRegion):
-                    # Any constants before a loop that may be overwritten inside the loop cannot be assumed as constants
-                    # for the loop itself.
-                    assigned_in_loop = self._assignments_in_loop(block)
-                    for k in assignments.keys():
-                        if k in assigned_in_loop:
+                    # Any constants before a loop that may be overwritten inside the loop, or whose value names a symbol
+                    # overwritten there, cannot be assumed as constants for the loop itself.
+                    assigned_in_loop = loop_bound_symbols(block)
+                    for k, v in assignments.items():
+                        if k in assigned_in_loop or _value_names(v, assigned_in_loop):
                             assignments[k] = _UnknownValue
 
                 if block not in in_const_dict:

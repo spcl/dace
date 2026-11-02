@@ -174,14 +174,11 @@ def loop_bound_symbols(loop: LoopRegion) -> set[str]:
     return bound
 
 
-def provably_free_symbols(sd: SDFG) -> set[str]:
-    """Declared symbols ``sd.free_symbols`` must report without walking a block: the walk adds every
-    declared symbol and removes only what a descriptor, a constant, an interstate assignment or a
-    loop variable defines, so a declared name that is none of those survives it."""
-    defined = set(sd.arrays.keys()) | set(sd.constants_prop.keys())
-    defined |= {lhs for e in sd.all_interstate_edges() for lhs in e.data.assignments}
-    defined |= {blk.loop_variable for blk in sd.all_control_flow_blocks() if isinstance(blk, LoopRegion)}
-    return set(sd.symbols.keys()) - defined
+def rebound_names(sd: SDFG) -> set[str]:
+    """The names ``sd``'s control flow assigns, on an interstate edge or as a loop variable."""
+    rebound = {lhs for e in sd.all_interstate_edges() for lhs in e.data.assignments}
+    rebound |= {blk.loop_variable for blk in sd.all_control_flow_blocks() if isinstance(blk, LoopRegion)}
+    return rebound
 
 
 def unread_names(sd: SDFG, names: set[str]) -> set[str]:
@@ -460,7 +457,9 @@ class SymbolPropagation(ppl.Pass):
 
     def _eliminate_round(self, sd: SDFG) -> set[str]:
         """One sweep across ``sd`` (not its nested SDFGs); descriptors go first, since
-        ``free_symbols`` pulls shape symbols through the access nodes."""
+        ``free_symbols`` pulls shape symbols through the access nodes.
+
+        :returns: The symbols it substituted into a descriptor or dropped an assignment of."""
         # Nothing binds a symbol here: there is neither a substitution to make nor an
         # assignment to drop, and both whole-SDFG walks below would be pure overhead.
         if not any(e.data.assignments for e in sd.all_interstate_edges()):
@@ -470,14 +469,20 @@ class SymbolPropagation(ppl.Pass):
         # ``replace_dict`` also rewrites descriptor shapes, which live at SDFG scope, so
         # ``K = i + 1`` would size a transient by a loop variable and allocate it outside.
         candidates = {sym: rhs for sym, rhs in bindings.items() if rhs is not None and not is_array_access(rhs)}
+        # The substitution reaches descriptors only, so a key none of them names rewrites nothing.
+        if candidates:
+            shape_names = {str(s) for desc in sd.arrays.values() for s in desc.free_symbols}
+            candidates = {sym: rhs for sym, rhs in candidates.items() if sym in shape_names}
         safe_subs = {}
         if candidates:
             constants = set(sd.constants_prop.keys())
             rhs_names = {sym: free_symbol_names(rhs) for sym, rhs in candidates.items()}
-            # The whole-SDFG walk only settles a name the declaration check cannot.
-            invariant = provably_free_symbols(sd) | constants
+            # A descriptor sees one value of a name, so a name the control flow rebinds never qualifies, free or not.
+            rebound = rebound_names(sd)
+            # Declared and neither data nor rebound is free without a walk; only what that leaves open pays for one.
+            invariant = (set(sd.symbols.keys()) - sd.arrays.keys() - rebound) | constants
             if not all(names <= invariant for names in rhs_names.values()):
-                invariant = {str(s) for s in sd.free_symbols} | constants
+                invariant = ({str(s) for s in sd.free_symbols} - rebound) | constants
             safe_subs = {sym: candidates[sym] for sym, names in rhs_names.items() if names <= invariant}
 
         if safe_subs:
@@ -501,7 +506,7 @@ class SymbolPropagation(ppl.Pass):
             for name in sd_eliminated:
                 if name in sd.symbols and name not in still_bound:
                     sd.symbol_repo.remove(name)
-        return sd_eliminated
+        return sd_eliminated | safe_subs.keys()
 
     # Given a cfg_blk, builds the incoming set of symbols
     def _execution_order(self, sdfg: SDFG, all_cfg_blks: dict[ControlFlowBlock, ControlFlowRegion]):
@@ -639,10 +644,7 @@ class SymbolPropagation(ppl.Pass):
                 new_in_syms = in_syms[parent]
 
             if isinstance(parent, LoopRegion):
-                new_in_syms = dict(new_in_syms)
-                for sym in self._loop_bound_symbols(parent):
-                    if sym in new_in_syms:
-                        new_in_syms[sym] = None
+                new_in_syms = self._without_loop_bound(new_in_syms, parent)
 
         return new_in_syms
 
@@ -655,11 +657,7 @@ class SymbolPropagation(ppl.Pass):
         out_syms: dict[ControlFlowBlock, dict[str, Any]],
     ) -> dict[str, Any]:
         if isinstance(cfg_blk, LoopRegion):
-            new_out_syms = dict(in_syms[cfg_blk])
-            for sym in self._loop_bound_symbols(cfg_blk):
-                if sym in new_out_syms:
-                    new_out_syms[sym] = None
-            return new_out_syms
+            return self._without_loop_bound(in_syms[cfg_blk], cfg_blk)
 
         elif isinstance(cfg_blk, ConditionalBlock):
             new_out_syms = dict(out_syms[cfg_blk.sub_regions()[0]])
@@ -698,6 +696,11 @@ class SymbolPropagation(ppl.Pass):
             bound = loop_bound_symbols(loop)
             cache[id(loop)] = bound
         return bound
+
+    def _without_loop_bound(self, table: dict[str, Any], loop: LoopRegion) -> dict[str, Any]:
+        """``table`` past ``loop``'s entry: neither a symbol the loop rebinds nor a value naming one stays known."""
+        bound = self._loop_bound_symbols(loop)
+        return {k: None if k in bound or (v is not None and free_symbol_names(v) & bound) else v for k, v in table.items()}
 
     # Given a cfg_blk, updates the symbols in the cfg_blk
     def _update_syms(
@@ -756,7 +759,11 @@ class SymbolPropagation(ppl.Pass):
             replace = None
             if isinstance(cfg_blk, LoopRegion):
                 meta_read = meta_read_symbols(cfg_blk)
-                blk_subs = {s: v for s, v in new_in_syms.items() if s in meta_read and s not in loop_carried}
+                blk_subs = {
+                    s: v
+                    for s, v in new_in_syms.items()
+                    if s in meta_read and s not in loop_carried and not free_symbol_names(v) & loop_carried
+                }
                 replace = cfg_blk.replace_meta_accesses
             elif isinstance(cfg_blk, ConditionalBlock):
                 meta_read = meta_read_symbols(cfg_blk)
