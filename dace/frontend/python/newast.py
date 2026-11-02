@@ -30,6 +30,7 @@ from dace.frontend.python.common import (
     inverse_dict_lookup,
 )
 from dace.frontend.python.memlet_parser import DaceSyntaxError, MemletExpr, ParseMemlet, inner_eval_ast, parse_memlet
+from dace.libraries.standard.nodes.gather import Gather
 from dace.memlet import Memlet
 from dace.properties import CodeBlock, LambdaProperty
 from dace.sdfg import SDFG, SDFGState, dealias, nodes
@@ -6012,6 +6013,25 @@ class ProgramVisitor(ExtNodeVisitor):
             index_memlets,
         )
 
+    def _gather_axis(self, expr: MemletExpr, output_shape: list) -> int | None:
+        """The dimension of an advanced indexing that a ``Gather`` performs: one array of integers indexing one
+        dimension, without new axes, every other dimension a range. None for every other advanced indexing."""
+        if len(expr.arrdims) != 1 or expr.new_axes:
+            return None
+        axis, index = next(iter(expr.arrdims.items()))
+        if not isinstance(index, str) or index not in self.sdfg.arrays:
+            return None
+        dtype = self.sdfg.arrays[index].dtype
+        if dtype not in dtypes.INTEGER_TYPES or dtype in (dtypes.bool, dtypes.bool_):
+            return None
+        size = expr.subset.size()
+        expected = size[:axis] + list(self.sdfg.arrays[index].shape) + size[axis + 1 :]
+        if len(expected) != len(output_shape) or any(
+            symbolic.equal(e, o) is not True for e, o in zip(expected, output_shape)
+        ):
+            return None
+        return axis
+
     def _array_indirection_subgraph(self, rnode: nodes.AccessNode, expr: MemletExpr) -> str:
         aname = rnode.data
         idesc = self.sdfg.arrays[aname]
@@ -6023,8 +6043,30 @@ class ProgramVisitor(ExtNodeVisitor):
         )
 
         # Create an output array with the right shape
-        outname, _ = self.add_temp_transient(output_shape, idesc.dtype)
+        outname, outdesc = self.add_temp_transient(output_shape, idesc.dtype)
         output_memlet.data = outname
+
+        # One array of integers indexing one dimension, the others ranges: a Gather library node
+        axis = self._gather_axis(expr, output_shape)
+        if axis is not None:
+            index = expr.arrdims[axis]
+            gather = Gather("gather", axis=axis)
+            gather.debuginfo = self.current_lineinfo
+            self.current_state.add_node(gather)
+            self.current_state.add_edge(
+                rnode, None, gather, "_inp", Memlet(data=aname, subset=copy.deepcopy(expr.subset))
+            )
+            self.current_state.add_edge(
+                self.current_state.add_read(index),
+                None,
+                gather,
+                "_index",
+                Memlet.from_array(index, self.sdfg.arrays[index]),
+            )
+            self.current_state.add_edge(
+                gather, "_out", self.current_state.add_write(outname), None, Memlet.from_array(outname, outdesc)
+            )
+            return outname
 
         # Make slice subgraph - a mapped tasklet with the proper dimensions
 

@@ -5,6 +5,7 @@ from .code import CodeLibraryNode
 from .copy import CopyLibraryNode
 from .cshift import CShift, ShiftDirection
 from .fill import FillLibraryNode
+from .gather import Gather
 from .gearbox import Gearbox
 from .mask_reduction import AllNode, AnyNode, CountLibraryNode
 from .merge_node import MergeLibraryNode
