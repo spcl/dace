@@ -708,6 +708,15 @@ def test_a_counter_of_a_loop_that_does_not_run_keeps_its_entry_value():
         assert out[0] == expected
 
 
+def test_a_derived_symbol_of_a_loop_that_does_not_run_keeps_its_entry_value():
+    sdfg = counter_after_loop_sdfg("derived_zero_trip", "5", "0", "i")
+    assert InductionVariableSubstitution().apply_pass(sdfg, {})
+    for n, expected in ((0, 5.0), (3, 2.0)):
+        out = np.zeros(1)
+        sdfg(O=out, n=n)
+        assert out[0] == expected
+
+
 if __name__ == "__main__":
     test_arithmetic_iv_scalar_slot_collapses_to_closed_form()
     test_geometric_iv_scalar_slot_collapses_to_closed_form()
@@ -724,3 +733,4 @@ if __name__ == "__main__":
     test_array_load_not_inlined_as_iv_program()
     test_array_load_not_inlined_as_iv_handbuilt()
     test_a_counter_of_a_loop_that_does_not_run_keeps_its_entry_value()
+    test_a_derived_symbol_of_a_loop_that_does_not_run_keeps_its_entry_value()

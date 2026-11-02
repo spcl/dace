@@ -1095,7 +1095,23 @@ def _try_substitute_derived_symbol(
             for oe in list(parent.out_edges(loop)):
                 parent.add_edge(dsym_post, oe.dst, oe.data)
                 parent.remove_edge(oe)
-            parent.add_edge(loop, dsym_post, InterstateEdge(assignments={sym: post_val}))
+            spare = None if start is None or stride is None else trip_count(loop, start, end, stride, loop.sdfg) - 1
+            if (
+                spare is None
+                or symbolic.provably_nonnegative(symbolic.simplify(spare), loop.sdfg.facts())
+                or not loop_analysis.read_outside(loop.sdfg, loop, {sym}, set())
+            ):
+                parent.add_edge(loop, dsym_post, InterstateEdge(assignments={sym: post_val}))
+                return True
+            # A loop that does not run leaves the value from before it
+            ran = ConditionalBlock(loop.label + "_dsym_ran")
+            branch = ControlFlowRegion(loop.label + "_dsym_set")
+            first = branch.add_state(is_start_block=True)
+            branch.add_edge(first, branch.add_state(), InterstateEdge(assignments={sym: post_val}))
+            ran.add_branch(properties.CodeBlock(f"({symbolic.symstr(spare)}) >= 0"), branch)
+            parent.add_node(ran)
+            parent.add_edge(loop, ran, InterstateEdge())
+            parent.add_edge(ran, dsym_post, InterstateEdge())
         return True
     return False
 
