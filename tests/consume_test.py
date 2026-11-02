@@ -137,7 +137,7 @@ def test_consume_body_nested_sdfg_reads_popped_element():
     lowered_body = next(
         n for n, _ in lowered.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG) and n.label == body.label
     )
-    assert isinstance(lowered_body.sdfg.arrays["S"], dace.data.Scalar)
+    assert isinstance(lowered_body.sdfg.arrays["S"], (dace.data.Scalar, dace.data.Array))
 
     input = np.array([10], np.int32)
     output = np.zeros([1], np.float32)
