@@ -361,6 +361,16 @@ def matrix_layout(*matrices: Operand) -> MatrixLayout | None:
     return None
 
 
+def stepped_strides(desc: "dace.data.Array", subset: "dace.subsets.Range") -> list:
+    """The strides ``subset`` walks ``desc`` by: a memlet step scales them."""
+    return [stride * rng[2] for stride, rng in zip(desc.strides, subset.ranges)]
+
+
+def lapack_order(desc: "dace.data.Array") -> str:
+    """The LAPACKE layout constant of the matrix ``desc``."""
+    return "LAPACK_ROW_MAJOR" if desc.strides[-1] == 1 else "LAPACK_COL_MAJOR"
+
+
 def blas_prefix(dtype: dtypes.typeclass) -> str | None:
     """The BLAS letter of ``dtype`` (``D`` for ``double``), or ``None`` if BLAS has no routines for it."""
     try:

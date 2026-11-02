@@ -41,7 +41,8 @@ class ExpandPotrfOpenBLAS(ExpandTransformation):
 
         n = n or node.n
         uplo = "'L'" if node.lower else "'U'"
-        code = f"_res = LAPACKE_{lapack_dtype}potrf(LAPACK_ROW_MAJOR, {uplo}, {rows_x}, {cast}_xin, {stride_x});"
+        order = blas_helpers.lapack_order(desc_x)
+        code = f"_res = LAPACKE_{lapack_dtype}potrf({order}, {uplo}, {rows_x}, {cast}_xin, {stride_x});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -171,7 +172,10 @@ class Potrf(dace.sdfg.nodes.LibraryNode):
         if desc_xin.dtype.base_type != desc_xout.dtype.base_type:
             raise ValueError("Basetype of input and output must be equal!")
 
-        stride_x = desc_xin.strides[sqdims1[0]]
+        layout = blas_helpers.matrix_layout(blas_helpers.operand(self, state, sdfg, "_xin"))
+        if layout is None:
+            raise ValueError("Matrix must be contiguous along one dimension")
+        stride_x = layout.leading[0]
         shape_x = squeezed1.size()
         rows_x = shape_x[0]
         cols_x = shape_x[1]
