@@ -1617,7 +1617,7 @@ def slot_accessed_besides(
                     ).subset
                 if subsets.intersects(subset, accum_subset, facts) is not symbolic.Truth.FALSE:
                     return True
-    return accum_name in control_flow_reads(loop)
+    return accum_name in loop_analysis.control_reads(loop)
 
 
 def staged_elsewhere(sdfg: SDFG, loop: LoopRegion, staged: list[nodes.AccessNode]) -> bool:
@@ -1631,22 +1631,6 @@ def staged_elsewhere(sdfg: SDFG, loop: LoopRegion, staged: list[nodes.AccessNode
     if any(n.data in names and n not in staged for st in loop.states() for n in st.data_nodes()):
         return True
     return loop_analysis.read_outside(sdfg, loop, names, names)
-
-
-def control_flow_reads(loop: LoopRegion) -> set[str]:
-    """Every name ``loop`` reads outside its dataflow: interstate edges, branch conditions, and the
-    condition, init and update of ``loop`` and of every loop nested in it."""
-    names: set[str] = set()
-    for edge in loop.all_interstate_edges(recursive=True):
-        names |= edge.data.read_symbols()
-    for block in [loop, *loop.all_control_flow_blocks(recursive=True)]:
-        if isinstance(block, LoopRegion):
-            for code in (block.loop_condition, block.init_statement, block.update_statement):
-                if code is not None:
-                    names |= code.get_free_symbols()
-        elif isinstance(block, ConditionalBlock):
-            names |= {sym for cond, _ in block.branches if cond is not None for sym in cond.get_free_symbols()}
-    return names
 
 
 def _lift_wcr_scalar_retarget(
