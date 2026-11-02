@@ -765,10 +765,8 @@ class StateFusionExtended(StateFusion):
             first_output_names = {node.data for node in first_output}
             second_input_names = {node.data for node in second_input}
 
-            # If any second input appears more than once, fail. An aggressive merge only asks it of a name the first
-            # state writes: the other instances bind to nothing
-            names = second_input_names & first_output_names if self.aggressive_merges else second_input_names
-            if any(sum(n.data == name for n in second_input) > 1 for name in names):
+            # If any second input appears more than once, fail
+            if len(second_input) > len(second_input_names):
                 return False
 
             # If any first output that is an input to the second state
