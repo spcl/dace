@@ -36,6 +36,7 @@ Names absent from all three tables are NOT silently passed through: see :func:`l
 """
 
 import contextlib
+import ctypes.util
 import enum
 import functools
 import os
@@ -3747,6 +3748,13 @@ __attribute__((constructor)) static void cpf_defer_openblas_threads(void) {
 """
 
 
+def openblas_link(code: str) -> tuple[str, ...]:
+    """OpenBLAS, after the separate LAPACKE of a distro that packages it apart (Debian, Ubuntu: liblapacke); an OpenBLAS
+    that bundles LAPACKE has no such library."""
+    calls_lapacke = re.search(r"\bLAPACKE_\w+\s*\(", code) is not None
+    return ("-llapacke", "-lopenblas") if calls_lapacke and ctypes.util.find_library("lapacke") else ("-lopenblas",)
+
+
 def fftw3_link(code: str) -> tuple[str, ...]:
     """The FFTW3 libraries ``code`` calls: ``libfftw3`` for double precision, ``libfftw3f`` for single. Never a
     threaded companion: CPF expands for the single-threaded planner
@@ -3765,7 +3773,7 @@ FFT_PLANS_WRAPPER = "libraries/fft/include/dace_fft.h"
 #: and LAPACKE) and FFTW3 on the host, the toolkit's own libraries on CUDA and ROCm.
 VENDOR_LIBRARIES: dict[str, VendorLibrary] = {
     "OpenBLAS": VendorLibrary(
-        ("<cblas.h>", "<lapacke.h>"), ("-lopenblas",), OPENBLAS_THREADS_DEFINITION, families=("blas", "lapack")
+        ("<cblas.h>", "<lapacke.h>"), openblas_link, OPENBLAS_THREADS_DEFINITION, families=("blas", "lapack")
     ),
     # The expansion refuses an unplannable layout by throwing.
     "FFTW3": VendorLibrary(

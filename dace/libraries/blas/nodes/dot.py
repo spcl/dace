@@ -386,8 +386,8 @@ class Dot(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Output of dot product must be a single element")
 
         # We are guaranteed that there is only one non-squeezed dimension
-        stride_x = desc_x.strides[sqdims1[0]]
-        stride_y = desc_y.strides[sqdims2[0]]
+        stride_x = blas_helpers.stepped_strides(desc_x, in_memlets[0].subset)[sqdims1[0]]
+        stride_y = blas_helpers.stepped_strides(desc_y, in_memlets[1].subset)[sqdims2[0]]
         n = squeezed1.num_elements()
         if symbolic.inequal_symbols(squeezed1.num_elements(), squeezed2.num_elements()):
             raise ValueError("Size mismatch in inputs")

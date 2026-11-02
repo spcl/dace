@@ -8,10 +8,13 @@ library on :attr:`~dace.codegen.cpf.Rendering.link` and by family on :attr:`~dac
 Each case is built against that link line and computes what numpy does.
 """
 
+import ctypes.util
+
 import numpy as np
 import pytest
 
 import dace
+from dace import cpf_lowering
 from dace.codegen.cpf import render
 from dace.libraries.blas.environments.openblas import OpenBLAS
 from dace.libraries.fft.environments.fftw3 import FFTW3
@@ -187,3 +190,13 @@ if __name__ == "__main__":
         test_a_product_that_falls_back_to_the_pure_expansion_names_no_vendor_library(lang)
     for lang in ("c++", "c"):
         test_a_product_whose_operand_no_blas_call_addresses_keeps_its_loops(lang)
+
+
+def test_a_unit_that_calls_lapacke_links_the_lapacke_this_machine_packages_apart():
+    """Debian and Ubuntu ship LAPACKE as its own library; libopenblas there has no ``LAPACKE_*``."""
+    packaged_apart = ctypes.util.find_library("lapacke") is not None
+
+    assert (
+        "-llapacke" in cpf_lowering.openblas_link("LAPACKE_dpotrf(LAPACK_COL_MAJOR, 'L', n, a, n);")
+    ) is packaged_apart
+    assert cpf_lowering.openblas_link("cblas_ddot(n, x, 1, y, 1);") == ("-lopenblas",)

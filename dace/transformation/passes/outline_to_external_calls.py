@@ -59,7 +59,10 @@ def replace_with_external_call(state: SDFGState, nsdfg: nodes.NestedSDFG, name: 
         conn = None if edge.src_conn is None else external_call.out_conn(edge.src_conn)
         state.add_edge(node, conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
     # reserved symbols (__dace_num_threads) are defined by the region's frame code, never passed (SDFG.arglist's rule)
-    symbols = [str(s) for s in nsdfg.sdfg.free_symbols if not str(s).startswith("__dace")]
+    # the kernel's entry takes what its body uses and what its arguments' shapes name, not all the program's symbols
+    shapes = {str(s) for desc in nsdfg.sdfg.arrays.values() if not desc.transient for s in desc.free_symbols}
+    used = {str(s) for s in nsdfg.sdfg.used_symbols(all_symbols=False)} | (shapes & set(nsdfg.sdfg.free_symbols))
+    symbols = [s for s in sorted(used) if not s.startswith("__dace")]
     state.remove_node(nsdfg)
     node.symbol = name
     node.abi_order = external_call.nested_sdfg_order(node, state, symbols)

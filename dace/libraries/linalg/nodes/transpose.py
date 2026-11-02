@@ -24,7 +24,12 @@ def _get_transpose_input(node, state, sdfg):
         if edge.dst_conn == "_inp":
             size, idx = blas_helpers.matrix_view(edge.data.subset)
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
-            return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
+            return (
+                edge,
+                outer_array,
+                (size[0], size[1]),
+                tuple(blas_helpers.stepped_strides(outer_array, edge.data.subset)[d] for d in idx[:2]),
+            )
     raise ValueError('Transpose input connector "_inp" not found.')
 
 
@@ -34,7 +39,12 @@ def _get_transpose_output(node, state, sdfg):
         if edge.src_conn == "_out":
             size, idx = blas_helpers.matrix_view(edge.data.subset)
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
-            return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
+            return (
+                edge,
+                outer_array,
+                (size[0], size[1]),
+                tuple(blas_helpers.stepped_strides(outer_array, edge.data.subset)[d] for d in idx[:2]),
+            )
     raise ValueError('Transpose output connector "_out" not found.')
 
 
