@@ -2178,6 +2178,12 @@ class LoopLift:
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
+        # A symbol that varies inside an iteration is no offset: ``A[i + j]`` under a loop over ``j`` overlaps across ``i``
+        varying = {e for edge in self.loop.all_interstate_edges() for e in edge.data.assignments}
+        varying |= {r.loop_variable for r in self.loop.all_control_flow_regions() if isinstance(r, LoopRegion)}
+        varying.discard(itervar)
+        if varying:
+            b = sp.Wild("b", exclude=[itersym], properties=[lambda e: not varying & {str(s) for s in e.free_symbols}])
 
         for state in loop_states:
             for dn in state.data_nodes():
