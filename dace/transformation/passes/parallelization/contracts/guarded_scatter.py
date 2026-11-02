@@ -288,7 +288,9 @@ class ScatterToGuardedMaps(ppl.Pass):
                 # safe; we OR the counts together so any positive count routes
                 # to the sequential branch.
                 loop_idx = _scatter_idx_arrays_for_loop(loop, owner_sdfg)
-                loop_idx_syms = [dup_count_syms[i] for i in loop_idx if i in dup_count_syms]
+                loop_idx_syms = [
+                    dup_count_syms[i] for i in loop_idx if i in dup_count_syms and (id(loop), i) not in sliced_dup_syms
+                ]
                 # A hoisted guard binds its count in the root; a dispatcher in a nested owner reads it passed down
                 for sym in loop_idx_syms:
                     pass_symbol_down_to(owner_sdfg, sdfg, sym)
