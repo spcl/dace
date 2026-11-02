@@ -5,6 +5,8 @@ import itertools
 from copy import deepcopy as dc
 from typing import Any
 
+import sympy
+
 from dace import Memlet, data, dtypes, symbolic, utils
 from dace.properties import CodeBlock, make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
@@ -237,8 +239,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # A block no edge surely leaves can run off the callee and back to the caller; spliced, it would end the caller.
         callee = nested_sdfg.sdfg
         for block in callee.nodes():
-            if callee.out_degree(block) and not any(e.data.is_unconditional() for e in callee.out_edges(block)):
-                return False
+            exits = callee.out_edges(block)
+            if exits and not any(e.data.is_unconditional() for e in exits):
+                if len(exits) != 2 or sympy.Not(exits[0].data.condition_sympy()) != exits[1].data.condition_sympy():
+                    return False
 
         # Must be
         # - connected to access nodes only

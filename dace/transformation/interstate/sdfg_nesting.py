@@ -311,19 +311,13 @@ class InlineSDFG(transformation.SingleStateTransformation):
         if len(nested_sdfg.sdfg.nodes()) != 1 or not isinstance(nested_sdfg.sdfg.nodes()[0], SDFGState):
             return False
 
-        # A mapped value naming an inner map's parameter would be captured by that map
-        mapped = {
-            str(s)
-            for k, v in nested_sdfg.symbol_mapping.items()
-            if str(k) != str(v)
-            for s in symbolic.pystr_to_symbolic(v).free_symbols
-        }
-        if mapped and any(
-            mapped.intersection(n.map.params)
-            for n in nested_sdfg.sdfg.nodes()[0].nodes()
-            if isinstance(n, nodes.MapEntry)
-        ):
-            return False
+        # A mapped value naming an inner map's parameter would be captured by that map, unless the name means nothing here
+        nested_state = nested_sdfg.sdfg.nodes()[0]
+        params = {p for n in nested_state.nodes() if isinstance(n, nodes.MapEntry) for p in n.map.params}
+        for k, v in nested_sdfg.symbol_mapping.items():
+            captured = params & {str(s) for s in symbolic.pystr_to_symbolic(v).free_symbols} - {str(k)}
+            if captured and captured & graph.symbols_defined_at(nested_sdfg).keys():
+                return False
 
         # Ensure every connector has one incoming/outgoing edge and that it
         # is not empty
