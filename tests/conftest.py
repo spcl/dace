@@ -3,7 +3,10 @@
 pytest configuration file.
 """
 
+import importlib.metadata
 import os
+import platform
+import shutil
 
 # Disable hwloc's GL/X11 topology backend before anything imports ``mpi4py``.
 # ``from mpi4py import MPI`` auto-calls ``MPI_Init``; OpenMPI 5.x asks hwloc to
@@ -253,8 +256,108 @@ _CORPUS_FILES = (
 )
 
 
+#: Tests only an NVIDIA device can run, skipped on any other node: a library named by its NVIDIA implementation, nvcc,
+#: CUDA Tile C++, cuTile, Triton, or torch's own CUDA device (the installed torch has no other). A substring of the test
+#: id, and the files holding such ids; an empty substring is the whole file. HIP's vendor libraries run under other names.
+_NVIDIA_ONLY = {
+    "": (
+        "cuda_host_compiler_cudatest.py",
+        "cuda_tile_cpp_test.py",
+        "fft_cufft_extended_test.py",
+        "fft_gpu_extended_test.py",
+        "matmul_cudatest.py",
+    ),
+    "cuBLAS": ("batched_matmul_test.py", "blas_dot_test.py", "blas_nodes_test.py", "gemm_test.py"),
+    "cublas": ("gemm_runtime_coeff_test.py", "test_library_lowering.py"),
+    "cusolver": ("lapack_getrf_nopivot_test.py",),
+    "preallocate_transients": ("parse_state_struct_test.py",),
+    "nested_gpu_scalar_expanded": ("ai_node_contexts_cudatest.py",),
+    "beyond": ("gpu_dynamic_shared_memory_test.py",),
+    "heat3d_sass": ("half_shifted_load_cudatest.py",),
+    "symbolic_heat3d": ("half_shifted_load_cudatest.py",),
+    "naked_sqrt": ("gpu_fp16_math_header_test.py",),
+    "cuSolverDn": (
+        "lapack_getrf_test.py",
+        "lapack_getrs_test.py",
+        "lapack_potrf_test.py",
+        "linalg_cholesky_test.py",
+        "linalg_solve_test.py",
+    ),
+    "cuSPARSE": ("csrmm_test.py", "csrmv_test.py"),
+    "libnode_gpu": ("test_cusolver_gpu.py",),
+    "cutile": ("tile_kernels_test.py",),
+    "triton": ("tile_kernels_test.py",),
+    "gpu": (
+        "test_attn.py",
+        "test_bert.py",
+        "test_bert_subgraphs.py",
+        "test_conv2d.py",
+        "test_cpp_extension.py",
+        "test_debug_transients.py",
+        "test_dont_compute_input_grads.py",
+        "test_dropout.py",
+        "test_img_op_implementations.py",
+        "test_lenet.py",
+        "test_llama_decoder_backward.py",
+        "test_llama_for_causalLM_backward.py",
+        "test_module_dace_program.py",
+        "test_multi_output.py",
+        "test_multi_output_ad.py",
+        "test_onnx_return_scalars.py",
+        "test_pytorch.py",
+        "test_reshape.py",
+        "test_training.py",
+    ),
+    "test_module[gpu]": ("test_full_training_graph.py",),
+    "test_bn_in_import[gpu]": ("test_shared_input_output.py",),
+    "test_scalar_output_ptr_access": ("scalar_output_cudatest.py",),
+}
+
+
+#: Tests of hipTENSOR's lowering, for a node whose ROCm has no hipTENSOR.
+_HIPTENSOR_FILES = (
+    "cutensor_ttranspose_test.py",
+    "nest_to_contraction_test.py",
+    "tensordot_vendor_modes_test.py",
+    "tensordot_vendor_output_init_test.py",
+)
+
+
+def has_module(name: str) -> bool:
+    """Whether ``name`` is an installed distribution; asks the metadata, as collection imports no heavy package."""
+    return any(True for _ in importlib.metadata.distributions(name=name))
+
+
+#: Markers a host may lack the means for, each with the check. Called once per session, at collection.
+_MARKER_NEEDS = {
+    "ai": lambda: "ANTHROPIC_API_KEY" in os.environ,
+    "arm_cross": lambda: platform.machine() == "aarch64" or shutil.which("aarch64-linux-gnu-g++") is not None,
+    "mlir": lambda: shutil.which("mlir-opt") is not None,
+    "scalapack": lambda: int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1")) > 1,
+    "sve": lambda: platform.machine() == "aarch64",
+    "tensorflow": lambda: has_module("tensorflow"),
+    "tilelang": lambda: has_module("tilelang"),
+}
+
+
+def skip_what_this_host_cannot_run(items) -> None:
+    """Skip the tests that need an NVIDIA device or a marker's means, naming what is missing."""
+    missing = {mark for mark, available in _MARKER_NEEDS.items() if not available()}
+    nvidia = os.path.exists("/dev/nvidiactl")
+    hiptensor = os.path.exists(os.path.join(os.environ.get("ROCM_PATH", "/opt/rocm"), "include/hiptensor/hiptensor.h"))
+    for item in items:
+        name = os.path.basename(str(getattr(item, "fspath", "")))
+        if not nvidia and any(name in files and part in item.nodeid for part, files in _NVIDIA_ONLY.items()):
+            item.add_marker(pytest.mark.skip(reason="needs an NVIDIA device"))
+        elif not nvidia and not hiptensor and name in _HIPTENSOR_FILES and item.get_closest_marker("gpu"):
+            item.add_marker(pytest.mark.skip(reason="needs hipTENSOR"))
+        for mark in missing.intersection(m.name for m in item.iter_markers()):
+            item.add_marker(pytest.mark.skip(reason=f"this host cannot run '{mark}' tests"))
+
+
 def pytest_collection_modifyitems(config, items):
-    """Mark the vectorization / canonicalization suites by path."""
+    """Skip what this host cannot run; mark the vectorization / canonicalization suites by path."""
+    skip_what_this_host_cannot_run(items)
     for item in items:
         path = str(getattr(item, "fspath", ""))
         name = os.path.basename(path)

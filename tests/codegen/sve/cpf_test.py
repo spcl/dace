@@ -9,6 +9,8 @@ import dace
 from dace.codegen import cpf
 from tests.codegen.sve import common
 
+pytestmark = pytest.mark.arm_cross
+
 N = dace.symbol("N")
 M = dace.symbol("M")
 
