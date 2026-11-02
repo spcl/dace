@@ -49,7 +49,7 @@ def _internal_replace(sym, symrepl):
     if not newrepl:
         return sym
 
-    return sym.subs(newrepl)
+    return symbolic.subs_folded(sym, newrepl)
 
 
 def _replsym(symlist, symrepl):

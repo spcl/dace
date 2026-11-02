@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``LiftTrivialIf`` simplification pass."""
 
+import ast
+
 import pytest
 
 import dace
@@ -40,6 +42,22 @@ _CANT_EVAL = ["a < 5", "c == 0", "d >= 1"]
 _DYNAMIC_RUNTIME_COND = ["A[0]", "tmp_r[0]", "x", "x[0] + 1", "A[i, j]"]
 
 
+def _declare_condition_names(sdfg: dace.SDFG, *conditions: str) -> None:
+    """Declare the names the conditions read: subscripted ones as arrays, the others as symbols."""
+    for condition in conditions:
+        tree = ast.parse(condition)
+        data = {
+            node.value.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+        }
+        for name in sorted({node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} - sdfg.arrays.keys()):
+            if name in data:
+                sdfg.add_array(name, [5], dace.float64)
+            elif name not in sdfg.symbols:
+                sdfg.add_symbol(name, dace.int64)
+
+
 def _get_sdfg(condition: str):
     """Build a one-state SDFG inside a single-branch ``ConditionalBlock``.
 
@@ -63,6 +81,7 @@ def _get_sdfg(condition: str):
         dtype=dace.float64,
         transient=False,
     )
+    _declare_condition_names(sdfg, condition)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg = ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)
@@ -144,6 +163,7 @@ def _get_nested_sdfg(condition1: str, condition2: str):
         dtype=dace.float64,
         transient=False,
     )
+    _declare_condition_names(sdfg, condition1, condition2)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg1 = ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)
@@ -411,13 +431,13 @@ def test_iteration_range_symbolic_upper_bound():
     ``i == 0`` a contradiction and ``not(i == 1)`` a tautology, regardless of ``N``."""
     N = dace.symbol("N")
     contra = _get_loop_with_conditional("i == 0", cond="i < N")
-    contra.add_symbol("N", N.dtype)
+    contra.add_symbol("N", N.declaration.dtype)
     LiftTrivialIf().apply_pass(contra, {})
     contra.validate()
     assert _num_conditionals(contra) == 0
 
     tauto = _get_loop_with_conditional("not (i == 1)", cond="i < N")
-    tauto.add_symbol("N", N.dtype)
+    tauto.add_symbol("N", N.declaration.dtype)
     LiftTrivialIf().apply_pass(tauto, {})
     tauto.validate()
     assert _num_conditionals(tauto) == 0
@@ -498,6 +518,24 @@ def test_should_reapply_only_on_block_count_change():
     assert not p.should_reapply(ppl.Modifies.Symbols | ppl.Modifies.Memlets)
 
 
+def test_a_condition_the_parser_rejects_stays_a_branch():
+    """A Python condition need not be a symbolic expression: ``np.abs(x) > 1`` is simply not decided."""
+    sdfg = dace.SDFG("unparsable_condition")
+    sdfg.add_symbol("x", dace.float64)
+    sdfg.add_array("A", [1], dace.float64)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    guard = ConditionalBlock("guard", sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(guard)
+    sdfg.add_edge(entry, guard, dace.InterstateEdge())
+    branch = ControlFlowRegion("branch", sdfg=sdfg, parent=guard)
+    state = branch.add_state("write", is_start_block=True)
+    tasklet = state.add_tasklet("fill", {}, {"o"}, "o = 1")
+    state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
+    guard.add_branch(CodeBlock("np.abs(x) > 1"), branch)
+    assert LiftTrivialIf().apply_pass(sdfg, {}) is None
+    assert guard in sdfg.nodes()
+
+
 if __name__ == "__main__":
     for c in _ALWAYS_TRUE:
         test_single_condition(c)
@@ -518,3 +556,4 @@ if __name__ == "__main__":
     test_trivial_if_with_nested_sdfg_reparents_correctly()
     test_trivial_cond_check_is_cached()
     test_should_reapply_only_on_block_count_change()
+    test_a_condition_the_parser_rejects_stays_a_branch()

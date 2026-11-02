@@ -28,9 +28,9 @@ def getAcc(pos: dc.float64[N, 3], mass: dc.float64[N], G: dc.float64, softening:
     z = pos[:, 2:3]
 
     # matrix that stores all pairwise particle separations: r_j - r_i
-    dx = np.add.outer(-x, x)
-    dy = np.add.outer(-y, y)
-    dz = np.add.outer(-z, z)
+    dx = x.T - x
+    dy = y.T - y
+    dz = z.T - z
 
     # matrix that stores 1/r^3 for all particle pairwise particle separations
     inv_r3 = dx**2 + dy**2 + dz**2 + softening**2
@@ -75,9 +75,9 @@ def getEnergy(pos: dc.float64[N, 3], vel: dc.float64[N, 3], mass: dc.float64[N],
     z = pos[:, 2:3]
 
     # matrix that stores all pairwise particle separations: r_j - r_i
-    dx = np.add.outer(-x, x)
-    dy = np.add.outer(-y, y)
-    dz = np.add.outer(-z, z)
+    dx = x.T - x
+    dy = y.T - y
+    dz = z.T - z
 
     # matrix that stores 1/r for all particle pairwise particle separations
     inv_r = np.sqrt(dx**2 + dy**2 + dz**2)

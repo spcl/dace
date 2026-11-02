@@ -1550,6 +1550,7 @@ def implement_ufunc(
     result_type, casting = result_type(
         [sdfg.arrays[arg] if isinstance(arg, str) and arg in sdfg.arrays else arg for arg in inputs],
         ufunc_impl["operator"],
+        symbols=visitor.symbol_types(),
     )
     if "dtype" in kwargs.keys():
         dtype = kwargs["dtype"]
@@ -1776,7 +1777,7 @@ def implement_ufunc_reduce(
     elif isinstance(arg, (Number, np.bool_)):
         result_type = dtypes.dtype_to_typeclass(type(arg))
     elif isinstance(arg, sp.Basic):
-        result_type = sym_type(arg)
+        result_type = sym_type(arg, visitor.symbol_types())
 
     # Create output data (if needed)
     outputs = _create_output(
@@ -2104,6 +2105,7 @@ def implement_ufunc_outer(
     result_type, casting = result_type(
         [sdfg.arrays[arg] if isinstance(arg, str) and arg in sdfg.arrays else arg for arg in inputs],
         ufunc_impl["operator"],
+        symbols=visitor.symbol_types(),
     )
     if "dtype" in kwargs.keys():
         dtype = kwargs["dtype"]

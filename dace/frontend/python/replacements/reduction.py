@@ -194,7 +194,7 @@ def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, i
         read_b = None
         conn_b = symbolic.symstr(b)
 
-    dtype_c, [cast_a, cast_b] = result_type([desc_a, desc_b])
+    dtype_c, [cast_a, cast_b] = result_type([desc_a, desc_b], symbols=pv.symbol_types())
     arg_a, arg_b = f"{conn_a}", f"{conn_b}"
     if cast_a:
         arg_a = "{ca}({in1})".format(ca=str(cast_a).replace("::", "."), in1=conn_a)

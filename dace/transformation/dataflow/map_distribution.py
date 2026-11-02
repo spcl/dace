@@ -102,7 +102,8 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
 
-        sz = dace.symbol("commsize", dtype=dace.int32)
+        sz = dace.symbol("commsize", dtype=dace.int32, positive=True)
+        sdfg.add_symbol(sz)
 
         def _prod(sequence):
             return reduce(lambda a, b: a * b, sequence, 1)
@@ -312,9 +313,11 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
 
-        sz = dace.symbol("commsize", dtype=dace.int32, integer=True, positive=True)
-        Px = dace.symbol("Px", dtype=dace.int32, integer=True, positive=True)
-        Py = dace.symbol("Py", dtype=dace.int32, integer=True, positive=True)
+        sz = dace.symbol("commsize", dtype=dace.int32, positive=True)
+        Px = dace.symbol("Px", dtype=dace.int32, positive=True)
+        Py = dace.symbol("Py", dtype=dace.int32, positive=True)
+        sdfg.add_symbol(Px)
+        sdfg.add_symbol(Py)
 
         from dace.utils import prod as _prod
 
@@ -331,6 +334,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
             params = ["__iflat"]
             sizes = map_entry.map.range.size_exact()
             total_size = _prod(sizes)
+            sdfg.add_symbol(sz)
             ranges = [(0, (total_size) / sz - 1, 1)]
             strides = [_prod(sizes[i + 1 :]) for i in range(len(sizes))]
 

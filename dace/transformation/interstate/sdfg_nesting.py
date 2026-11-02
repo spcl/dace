@@ -461,6 +461,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
         symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+        sdfg.symbol_repo.runtime_assumptions.update(nsdfg.symbol_repo.runtime_assumptions)
 
         # The replacement restates the descriptors of this SDFG and the symbol mappings of the nested SDFGs within,
         # but not the connector descriptors inside those. Symbol mapping entries that are not plain symbols (e.g.,
@@ -1318,10 +1319,14 @@ class NestSDFG(transformation.MultiStateTransformation):
         defined_syms |= set(nested_sdfg.constants.keys())
 
         for s in defined_syms:
-            type = outer_sdfg.symbols.pop(s, None)
+            type = outer_sdfg.symbols.get(s)
             if type is not None:
+                outer_sdfg.symbol_repo.remove(s)
                 # update or add the symbol in the nested sdfg
-                nested_sdfg.symbols[s] = type
+                if s in nested_sdfg.symbols:
+                    nested_sdfg.symbol_repo.set_type(s, type)
+                else:
+                    nested_sdfg.symbol_repo.add(s, type)
 
         # Add the nested SDFG to the parent state and connect it
         nested_node = outer_state.add_nested_sdfg(nested_sdfg, set(inputs.values()), set(outputs.values()))

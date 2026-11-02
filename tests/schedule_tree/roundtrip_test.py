@@ -6,6 +6,7 @@ Tests conversion of schedule trees to SDFGs.
 import networkx as nx
 import numpy as np
 import pytest
+import sympy
 
 import dace
 from dace import library
@@ -14,6 +15,7 @@ from dace.sdfg import dealias
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion, NamedRegion, ReturnBlock
+from dace.sdfg.symbol_repo import program_assumptions
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.transformation import ExpandTransformation
@@ -309,7 +311,8 @@ def _inverted_loop_sdfg(name: str, loop: LoopRegion) -> dace.SDFG:
     """
     sdfg = dace.SDFG(name)
     sdfg.add_array("A", [10], dace.float64)
-    sdfg.add_symbol("i", dace.int64)
+    if not loop.loop_variable:
+        sdfg.add_symbol("i", dace.int64)
     init = sdfg.add_state("init", is_start_block=True)
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={} if loop.loop_variable else {"i": "0"}))
@@ -532,9 +535,9 @@ def _nested_return_sdfg(in_map: bool, in_loop: bool) -> dace.SDFG:
     increment = dace.SDFGState("increment")
     if in_loop:
         # for j in range(3): if j >= N: return; X[0] += 1
-        inner.add_symbol("j", dace.int64)
         loop = LoopRegion("loop", "j < 3", "j", "j = 0", "j = j + 1")
         inner.add_node(loop, is_start_block=True)
+        inner.symbol_repo.add("j", dace.int64, at=loop)
         loop.add_node(increment)
         _add_conditional_return(loop, "j >= N", increment)
     else:
@@ -1269,6 +1272,25 @@ def test_roundtrip_empty_memlet_boundaries(name: str):
     )
 
 
+def test_roundtrip_keeps_what_the_program_checks_on_entry():
+    """Code proven from a declared sign or a scale is only sound while the call checks them."""
+    sdfg = dace.SDFG("entry_checks")
+    sdfg.add_symbol("K", dace.int64, predicates=frozenset({dace.symbolic.Predicate.POSITIVE}))
+    sdfg.add_symbol("N", dace.int64, scale=dace.symbolic.Scale.SMALL)
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("A", [1], dace.int64)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("use", {}, {"o"}, "o = K + N + M")
+    state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
+    n, m = dace.symbolic.symbol("N"), dace.symbolic.symbol("M")
+    assert dace.symbolic.simplify(sympy.Min(n, m), sdfg.facts()) == n
+    checked = program_assumptions(sdfg)
+    assert len(checked) == 2
+
+    roundtripped = t2s.from_schedule_tree(sdfg.as_schedule_tree())
+    assert set(program_assumptions(roundtripped)) == set(checked)
+
+
 if __name__ == "__main__":
     test_implicit_inline_and_constants()
     test_name_propagation()
@@ -1319,3 +1341,4 @@ if __name__ == "__main__":
     test_sdfg_metadata()
     for name in _EMPTY_MEMLET_ROUNDTRIPS:
         test_roundtrip_empty_memlet_boundaries(name)
+    test_roundtrip_keeps_what_the_program_checks_on_entry()

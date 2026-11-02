@@ -759,6 +759,17 @@ namespace dace
         {
             return dace::float16(std::pow(float(a), float(b)));
         }
+        // ``a ** (p / q)`` computed in F (float for a half, double for an integral base) and returned as R (the base's
+        // type, double for an integral base as ``int ** float`` in NumPy). Dividing in F avoids integer division and
+        // half overflow.
+        template<typename T, typename P, typename Q>
+        DACE_HDFI auto pow(const T& a, const P& p, const Q& q)
+        {
+            using R = typename std::conditional<std::is_integral<T>::value, double, T>::type;
+            using F = typename std::conditional<std::is_integral<T>::value, double, decltype(a + 0.0f)>::type;
+            const F e = F(p) / F(q);
+            return R(pow(F(a), e));
+        }
 
         template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI T ifloor(const T& a)

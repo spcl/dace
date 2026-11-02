@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import sympy as sp
 
-from dace import config, dtypes, symbolic
+from dace import config, dtypes
 
 if TYPE_CHECKING:
     from dace.data import Data
@@ -100,7 +100,6 @@ def make_ctypes_argument(
         not isinstance(argtype, (Array, Structure))
         and not isinstance(argtype.dtype, dtypes.callback)
         and not isinstance(arg, (argtype.dtype.type, sp.Basic))
-        and not (isinstance(arg, symbolic.symbol) and arg.dtype == argtype.dtype)
     ):
         is_int = isinstance(arg, int)
         if is_int and argtype.dtype.type == np.int64:
