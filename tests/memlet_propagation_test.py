@@ -14,7 +14,7 @@ from dace.sdfg.propagation import (
     propagate_subset,
 )
 from dace.sdfg.state import SymbolResolver
-from dace.symbolic import same_value
+from dace.symbolic import Facts, same_value
 
 
 def test_conditional():
@@ -501,6 +501,45 @@ def test_ascending_range_ends_on_the_last_index():
     assert ascending_range(9, 0, -1) == (0, 9, 1)
 
 
+def nest_reading_on_an_edge(also_in_a_state: bool) -> dace.Memlet:
+    """The propagated memlet of ``x`` into a nest that reads ``x[i + 1]`` on its interstate edge."""
+    nest = dace.SDFG("reads_on_edge")
+    nest.add_symbol("i", dace.int32)
+    nest.add_array("x", (10,), dace.int32)
+    nest.add_array("y", (10,), dace.float64)
+    first = nest.add_state(is_start_block=True)
+    second = nest.add_state_after(first, assignments={"k": "x[i + 1]"})
+    second.add_edge(
+        second.add_tasklet("t", {"a"} if also_in_a_state else {}, {"b"}, "b = k"),
+        "b",
+        second.add_write("y"),
+        None,
+        dace.Memlet("y[i]"),
+    )
+    if also_in_a_state:
+        tasklet = second.nodes()[0]
+        second.add_edge(second.add_read("x"), None, tasklet, "a", dace.Memlet("x[i]"))
+
+    sdfg = dace.SDFG(f"reads_on_edge_outer_{also_in_a_state}")
+    sdfg.add_array("x", (10,), dace.int32)
+    sdfg.add_array("y", (10,), dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    entry, exit_node = state.add_map("m", {"i": "0:9"})
+    node = state.add_nested_sdfg(nest, {"x"}, {"y"}, {"i": "i"})
+    state.add_memlet_path(state.add_read("x"), entry, node, dst_conn="x", memlet=dace.Memlet("x[0:10]"))
+    state.add_memlet_path(node, exit_node, state.add_write("y"), src_conn="y", memlet=dace.Memlet("y[0:10]"))
+    propagate_memlets_sdfg(sdfg)
+    return state.in_edges(node)[0].data
+
+
+def test_a_read_on_a_nests_interstate_edge_bounds_its_connector():
+    assert nest_reading_on_an_edge(False).subset == dace.subsets.Range.from_string("i + 1")
+
+
+def test_a_read_on_a_nests_interstate_edge_joins_the_reads_of_its_states():
+    assert nest_reading_on_an_edge(True).subset.covers(dace.subsets.Range.from_string("i:i + 1"), Facts.none())
+
+
 if __name__ == "__main__":
     test_undefined_symbol_propagation()
     test_conditional()
@@ -523,3 +562,5 @@ if __name__ == "__main__":
     test_propagated_extent("50 - i", 60, (10, 0, -4), (40, 48, 1))
     test_propagated_extent("i % 4", 8, (10, 3, -1), (0, 3, 1))
     test_ascending_range_ends_on_the_last_index()
+    test_a_read_on_a_nests_interstate_edge_bounds_its_connector()
+    test_a_read_on_a_nests_interstate_edge_joins_the_reads_of_its_states()
