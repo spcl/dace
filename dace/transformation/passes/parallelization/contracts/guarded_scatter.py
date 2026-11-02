@@ -67,6 +67,7 @@ from dace.transformation.passes.scatter_conflict_guard import (
     ScatterIndexSlice,
     build_guard_states,
     insert_scatter_guard,
+    value_is_injective_affine,
 )
 from dace.transformation.passes.vectorization.utils.map_predicates import NO_VECTORIZE_MARKER
 
@@ -623,6 +624,8 @@ def _scatter_idx_targets_for_loop(
                 # Form 4: a tasklet writing through its index input.
                 for arr, dim_nodes in _tasklet_indexed_write(state, e, loop_var, sdfg).items():
                     found.setdefault(arr, dim_nodes)
+                if not slot_follows_index(e.data.subset, bindings.keys() | chained.keys()):
+                    return {}
                 for arr, dim_nodes in found.items():
                     loop_arrays.setdefault(arr, set()).add(node.data)
                     if dim_nodes is not None:
@@ -636,6 +639,8 @@ def _scatter_idx_targets_for_loop(
         desc = sdfg.arrays[arr]
         one_dim = len(desc.shape) == 1
         dim_nodes = dim_nodes_by_arr.get(arr)
+        if one_dim and dim_nodes is not None and not index_read_injective(dim_nodes[0], region):
+            return {}
         if one_dim and scratch_scatter(sdfg, arr, tgts):
             # The window the loop reads, right before it: the rest of a local index array may hold nothing yet
             window = None if dim_nodes is None else _classify_index_slice(desc, dim_nodes, region)
@@ -651,6 +656,30 @@ def _scatter_idx_targets_for_loop(
         if index_slice is not None or one_dim:
             result[arr] = (tgts, index_slice)
     return result
+
+
+def slot_follows_index(subset: subsets.Subset, names: set[str]) -> bool:
+    """Whether the slot of ``subset`` is one-to-one in each loaded index of ``names`` it reads: distinct indices say
+    nothing of ``out[k % 4]``."""
+    return all(
+        value_is_injective_affine(str(begin), str(sym))
+        for begin, _, _ in subset.ndrange()
+        for sym in symbolic.pystr_to_symbolic(begin).free_symbols
+        if str(sym) in names
+    )
+
+
+def index_read_injective(subscript: ast.AST, region: LoopRegion) -> bool:
+    """Whether ``idx[subscript]`` reads a new element every iteration, so that distinct elements of ``idx`` give
+    distinct slots. A symbolic scale counts when the loop's end divides by it, or it is known nonzero."""
+    coefficients = symbolic.affine_coefficients(astutils.unparse(subscript), region.loop_variable)
+    if coefficients is None:
+        return False
+    scale = coefficients[0]
+    if scale.is_nonzero:
+        return True
+    end = loop_analysis.get_loop_end(region)
+    return end is not None and any(str(call.args[1]) == str(scale) for call in end.atoms(symbolic.int_floor))
 
 
 def _classify_index_slice(desc: data.Array, dim_nodes: list[ast.AST], region: LoopRegion) -> ScatterIndexSlice | None:
