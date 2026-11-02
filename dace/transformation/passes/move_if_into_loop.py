@@ -36,6 +36,8 @@ The pass therefore refuses (no-op) on any region carrying an interstate-edge
 assignment and emits a loud warning so the dropped opportunity is visible.
 """
 
+import re
+
 import copy
 import warnings
 from typing import Any
@@ -59,10 +61,7 @@ from dace.transformation.passes.loop_fission import _linear_blocks
 
 def _free(expr: str) -> set:
     """Free symbol names of a Python/condition expression string."""
-    try:
-        return {str(s) for s in dace.symbolic.pystr_to_symbolic(expr).free_symbols}
-    except Exception:
-        return set()
+    return set(re.findall(r"[A-Za-z_]\w*", str(expr)))
 
 
 def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
@@ -77,7 +76,8 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
     if cond is None or not isinstance(region, ControlFlowRegion):
         return None  # single branch, real condition, no else
     order = _linear_blocks(region, allow_assignments=True)
-    if order is None or not isinstance(order[-1], LoopRegion):
+    # A while loop's exit reads what its body changes: a false guard would leave it spinning
+    if order is None or not isinstance(order[-1], LoopRegion) or not order[-1].loop_variable:
         return None
     loop = order[-1]
     prep = order[:-1]

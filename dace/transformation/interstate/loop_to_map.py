@@ -2181,6 +2181,8 @@ class LoopLift:
         # A symbol that varies inside an iteration is no offset: ``A[i + j]`` under a loop over ``j`` overlaps across ``i``
         varying = {e for edge in self.loop.all_interstate_edges() for e in edge.data.assignments}
         varying |= {r.loop_variable for r in self.loop.all_control_flow_regions() if isinstance(r, LoopRegion)}
+        if itervar in {e for edge in self.loop.all_interstate_edges() for e in edge.data.assignments}:
+            return refuse(Refusal.CARRIED_SYMBOL, f"the body assigns the iterator {itervar}", symbols={itervar})
         varying.discard(itervar)
         if varying:
             b = sp.Wild("b", exclude=[itersym], properties=[lambda e: not varying & {str(s) for s in e.free_symbols}])
