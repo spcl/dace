@@ -21,7 +21,8 @@ import pytest
 import dace
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_to_map import (
     LiftContext,
     LoopLift,
@@ -1074,6 +1075,55 @@ def gather_then_scale(A: dace.float64[GATHER_LEN], idx: dace.int64[GATHER_LEN], 
         C[k] = gathered[k] * 2.0
 
 
+def iota_loop(name: str, init: str, condition: str, update: str) -> tuple[dace.SDFG, dace.SDFGState]:
+    """A loop over ``i`` storing 1 at ``a[i]``, and an empty state before it."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", (16,), dace.int64)
+    sdfg.add_array("b", (16,), dace.int64)
+    sdfg.add_symbol("N", dace.int64)
+    first = sdfg.add_state("first", is_start_block=True)
+    loop = LoopRegion("loop", condition, "i", init, update)
+    sdfg.add_node(loop)
+    sdfg.add_edge(first, loop, dace.InterstateEdge())
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("store", {}, {"o"}, "o = 1")
+    body.add_edge(tasklet, "o", body.add_write("a"), None, dace.Memlet("a[i]"))
+    return sdfg, first
+
+
+def stored(sdfg: dace.SDFG, name: str = "a", N: int = 5) -> list[int]:
+    arrays = {"a": np.zeros(16, dtype=np.int64), "b": np.zeros(16, dtype=np.int64)}
+    sdfg(**arrays, N=N)
+    return np.nonzero(arrays[name])[0].tolist()
+
+
+def test_a_downward_strided_lift_visits_the_loops_iterates():
+    sdfg, _ = iota_loop("downward_strided_lift", "i = 10", "i > -1", "i = i - 3")
+    assert ParallelizeLoops().apply_pass(sdfg, {}) == 1
+    assert stored(sdfg) == [1, 4, 7, 10]
+
+
+def test_a_strided_lift_leaves_a_map_over_the_same_name_alone():
+    sdfg, first = iota_loop("strided_lift_same_name_map", "i = 0", "i < N + 1", "i = i + 4")
+    first.add_mapped_tasklet(
+        "other", {"i": "1:N+1:4"}, {}, "o = 1", {"o": dace.Memlet("b[i]")}, external_edges=True
+    )
+    assert ParallelizeLoops().apply_pass(sdfg, {}) == 1
+    assert stored(sdfg, "b") == [1, 5]
+
+
+def test_a_header_reading_another_iterations_store_stays_a_loop():
+    sdfg, _ = iota_loop("header_reads_a_later_store", "i = 0", "i < 8", "i = i + 1")
+    loop = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
+    guard = ConditionalBlock("guard")
+    loop.add_node(guard)
+    loop.add_edge(loop.start_block, guard, dace.InterstateEdge())
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    guard.add_branch(CodeBlock("a[i + 1] > 0"), branch)
+    branch.add_state("taken", is_start_block=True)
+    assert ParallelizeLoops().apply_pass(sdfg, {}) is None
+
+
 def test_a_gather_lifted_through_a_loop_fuses_into_its_consumer():
     """Canonicalize turns the gather map into a loop and back; the lifted body's nested SDFG must keep its
     per-iteration ``gathered[k]`` connector, or fusion sees all of it written and keeps two kernels."""
@@ -1200,6 +1250,9 @@ if __name__ == "__main__":
     with pytest.MonkeyPatch.context() as mp:
         test_a_declared_body_symbol_has_the_type_the_parent_walk_gives(mp)
     test_a_strided_lift_ends_at_its_last_iterate()
+    test_a_downward_strided_lift_visits_the_loops_iterates()
+    test_a_strided_lift_leaves_a_map_over_the_same_name_alone()
+    test_a_header_reading_another_iterations_store_stays_a_loop()
     test_a_gather_lifted_through_a_loop_fuses_into_its_consumer()
     test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop()
     test_a_container_assumed_private_is_left_out_of_the_dependence_test()

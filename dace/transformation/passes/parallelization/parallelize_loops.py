@@ -28,6 +28,7 @@ from dace.transformation.interstate.loop_to_map import (
     build_lift_invariants,
     index_block_symbols,
     index_flow_region,
+    last_iteration,
     spans_small_symbols,
     unindex_flow_region,
 )
@@ -114,15 +115,6 @@ class LiftSite:
             inner_loops=[r for r in candidate_loops(loop) if r is not loop],
             loop_regions=list(loop.all_control_flow_regions()),
         )
-
-
-def last_iteration(loop: LoopRegion) -> symbolic.SymbolicType | None:
-    """The iteration variable's value in the last iteration: the loop's inclusive end moved onto its stride."""
-    end = loop_analysis.get_loop_end(loop)
-    start, step = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_stride(loop)
-    if end is None or start is None or step is None or step in (1, -1):
-        return end
-    return symbolic.simplify(start + symbolic.int_floor(end - start, step) * step)
 
 
 def lifted_blocks(site: LiftSite, loop: LoopRegion, region: ControlFlowRegion) -> list[SDFGState] | None:
@@ -334,7 +326,6 @@ class ParallelizeLoops(ppl.Pass):
         :returns: whether ``loop`` was lifted.
         """
         sd = loop.sdfg
-        graph = loop.parent_graph
         xform.loop = loop
         facts: list[array_facts.ArrayFact] = []
         expanded: list[str] | None = None
@@ -355,6 +346,7 @@ class ParallelizeLoops(ppl.Pass):
             # The expansion rewrote the loop's subsets and the buffers' shapes: what was derived from them is stale.
             if xform.lift_context is not None:
                 xform.lift_context.loop_facts.pop(loop, None)
+                xform.lift_context.extent_types = None
             if xform.symbol_resolver is not None:
                 xform.symbol_resolver.forget_within(sd)
         # A proof of independence replaces the dependence test, not the scale rule: a SMALL loop stays sequential.
@@ -363,8 +355,6 @@ class ParallelizeLoops(ppl.Pass):
         if before_apply is not None:
             before_apply()
         end, last = loop_analysis.get_loop_end(loop), last_iteration(loop)
-        itervar = loop.loop_variable
-        existing = {n for st in graph.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)} if facts else set()
         # The lifted states are propagated below, whole: the rewrite need not propagate each memlet it routes.
         propagate_edges, xform.propagate_edges = xform.propagate_edges, False
         try:
@@ -380,29 +370,22 @@ class ParallelizeLoops(ppl.Pass):
         resolver = xform.symbol_resolver
         if resolver is not None:
             resolver.forget_within(sd)
-        for state in graph.states():
-            over_itervar = [
-                node for node in state.nodes() if isinstance(node, nodes.MapEntry) and node.map.params == [itervar]
-            ]
-            lifted = [node for node in over_itervar if node.map.range[0][1] == end]
-            for node in lifted:
-                if last is not None and last != end:
-                    # LoopToMap ends the map at the loop bound; a strided map ends at its last iterate, or the memlets
-                    # propagated over it reach past the array (s351: ``range(0, 4 * N, 4)`` reading ``b[i + 3]``).
-                    rb, _, rs = node.map.range[0]
-                    node.map.range = subsets.Range([(rb, last, rs)])
-            for node in lifted:
-                if facts and node not in existing:
-                    note = FACTS_NOTE.format(facts="; ".join(f.describe() for f in facts))
-                    node.specialization_hint = "\n".join(h for h in (node.specialization_hint, note) if h)
-            if over_itervar:
-                # LoopToMap connects the body's nested SDFG through whole arrays; its per-iteration accesses
-                # (``T[k]``) are what lets a later fusion see one element per iteration. Only this state, so the
-                # cost stays independent of ``propagate``; in a sweep, once it ends.
-                if unpropagated is None:
-                    propagate_memlets_state(sd, state, resolver)
-                else:
-                    unpropagated.append(state)
+        node, state = xform.lifted_entry, xform.lifted_state
+        rb, re_, rs = node.map.range[0]
+        if last is not None and last != end and re_ == end:
+            # LoopToMap ends the map at the loop bound; a strided map ends at its last iterate, or the memlets
+            # propagated over it reach past the array (s351: ``range(0, 4 * N, 4)`` reading ``b[i + 3]``).
+            node.map.range = subsets.Range([(rb, last, rs)])
+        if facts:
+            note = FACTS_NOTE.format(facts="; ".join(f.describe() for f in facts))
+            node.specialization_hint = "\n".join(h for h in (node.specialization_hint, note) if h)
+        # LoopToMap connects the body's nested SDFG through whole arrays; its per-iteration accesses
+        # (``T[k]``) are what lets a later fusion see one element per iteration. Only this state, so the
+        # cost stays independent of ``propagate``; in a sweep, once it ends.
+        if unpropagated is None:
+            propagate_memlets_state(sd, state, resolver)
+        else:
+            unpropagated.append(state)
         return True
 
     def rescuing_buffers(

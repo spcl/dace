@@ -364,6 +364,18 @@ def with_integers(expr: sympy.Expr, integers: frozenset[str]) -> sympy.Expr:
     )
 
 
+def linear_in(difference: sympy.Expr, free: sympy.Symbol) -> bool:
+    """Whether ``difference`` is of degree 1 in ``free``, with a numeric coefficient. A term of ``free`` alone settles
+    it, without the ``Poly`` of ``as_poly``, most of a solve."""
+    coefficient = cast(sympy.Expr, difference.coeff(free))
+    if not coefficient.is_number:
+        return False
+    if coefficient != 0 and difference.as_independent(free, as_Add=True)[1] == coefficient * free:
+        return True
+    poly = difference.as_poly(free)
+    return poly is not None and poly.degree() == 1
+
+
 def linear_slacks(difference: sympy.Expr) -> list[sympy.Dummy]:
     """The slacks ``difference`` is linear in, with a numeric coefficient, in creation order."""
     return sorted(
@@ -372,9 +384,7 @@ def linear_slacks(difference: sympy.Expr) -> list[sympy.Dummy]:
             for free in difference.free_symbols
             if isinstance(free, sympy.Dummy)
             and free.is_nonnegative  # A slack, not the quotient of a divisibility fact
-            and cast(sympy.Expr, difference.coeff(free)).is_number
-            and (poly := difference.as_poly(free)) is not None
-            and poly.degree() == 1
+            and linear_in(difference, free)
         ),
         key=lambda free: free.dummy_index,
     )
@@ -386,13 +396,7 @@ def linear_symbols(difference: sympy.Expr) -> list[sympy.Symbol]:
         free for free in difference.free_symbols if isinstance(free, sympy.Symbol) and not isinstance(free, sympy.Dummy)
     ]
     return sorted(
-        (
-            free
-            for free in symbols
-            if cast(sympy.Expr, difference.coeff(free)).is_number
-            and (poly := difference.as_poly(free)) is not None
-            and poly.degree() == 1
-        ),
+        (free for free in symbols if linear_in(difference, free)),
         key=lambda free: free.name,
     )
 
