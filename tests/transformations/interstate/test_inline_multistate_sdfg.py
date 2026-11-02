@@ -525,6 +525,32 @@ def test_a_mapped_symbol_a_parent_scope_binds_is_renamed():
     assert w[0] == 4.0
 
 
+def test_a_persistent_transient_sized_by_a_mapped_symbol_is_sized_from_outside():
+    """A persistent array is allocated ahead of the edge binding the inner symbol, so its shape names the outer one."""
+    sdfg = dace.SDFG("persistent_sized_by_mapped_symbol")
+    sdfg.add_array("y", [8], dace.float64)
+    sdfg.add_symbol("M", dace.int64)
+    state = sdfg.add_state("outer", is_start_block=True)
+    inner = dace.SDFG("persistent_sized_by_mapped_symbol_inner")
+    inner.add_array("z", [8], dace.float64)
+    inner.add_symbol("k", dace.int64)
+    inner.add_transient("t", ["k"], dace.float64, lifetime=dace.AllocationLifetime.Persistent)
+    fill = inner.add_state("fill", is_start_block=True)
+    fill.add_mapped_tasklet("f", {"j": "0:k"}, {}, "o = j + 1", {"o": dace.Memlet("t[j]")}, external_edges=True)
+    copy_out = inner.add_state_after(fill, "copy_out")
+    copy_out.add_mapped_tasklet(
+        "g", {"j": "0:k"}, {"q": dace.Memlet("t[j]")}, "o = q", {"o": dace.Memlet("z[j]")}, external_edges=True
+    )
+    nest = state.add_nested_sdfg(inner, {}, {"z": None}, symbol_mapping={"k": "M"})
+    state.add_edge(nest, "z", state.add_write("y"), None, dace.Memlet("y[0:8]"))
+
+    InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nest)
+
+    y = np.zeros(8)
+    sdfg(y=y, M=4)
+    assert np.array_equal(y, [1, 2, 3, 4, 0, 0, 0, 0])
+
+
 if __name__ == "__main__":
     test_inline_preserves_pre_and_post_numerics()
     test_inline_lowers_non_identity_symbol_mapping_to_iedge_assignment()
@@ -538,5 +564,6 @@ if __name__ == "__main__":
     test_outer_names_stay_exact_across_lowered_maps()
     test_inline_keeps_a_constant_mapped_symbol_the_nested_loop_reassigns()
     test_inline_nested_while_loop_into_sdfg_with_a_while_loop()
-    print("all ok")
     test_a_mapped_symbol_a_parent_scope_binds_is_renamed()
+    test_a_persistent_transient_sized_by_a_mapped_symbol_is_sized_from_outside()
+    print("all ok")

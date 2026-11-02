@@ -466,6 +466,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         ):
                             new_name = utils.find_new_name(f"{nsdfg.label}_{node.data}", connectors)
 
+                        # Allocated before the entry edge binds the mapped symbols its shape names
+                        if datadesc.lifetime is dtypes.AllocationLifetime.Persistent:
+                            mapped = {sym_replacements.get(k, k): v for k, v in non_identity_mapping.items()}
+                            symbolic.safe_replace(mapped, lambda m: replace_properties_dict(datadesc, m))
                         name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True, bound_names=bound)
                         transients[node.data] = name
 
