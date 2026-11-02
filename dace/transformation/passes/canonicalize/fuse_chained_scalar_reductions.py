@@ -57,7 +57,6 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
-from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import _copy_input_connector
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -115,7 +114,7 @@ def _chase_write_to_accum(
             continue
         if not isinstance(nxt.dst, nodes.Tasklet):
             return node, intermediates, copies
-        copy_conn = _copy_input_connector(nxt.dst)
+        copy_conn = AugAssignToWCR.copied_input(nxt.dst)
         if copy_conn is None or nxt.dst_conn != copy_conn:
             return node, intermediates, copies
         copy_tasklet = nxt.dst

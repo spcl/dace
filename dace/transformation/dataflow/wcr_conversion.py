@@ -434,6 +434,16 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         assign = AugAssignToWCR.assignment(tasklet, target)
         return assign is not None and isinstance(assign.value, ast.Name) and assign.value.id == source
 
+    @staticmethod
+    def copied_input(tasklet: nodes.Tasklet) -> str | None:
+        """The input connector of the copy ``out = in`` the tasklet is; ``None`` if it is no copy."""
+        if len(tasklet.out_connectors) != 1:
+            return None
+        assign = AugAssignToWCR.assignment(tasklet, next(iter(tasklet.out_connectors)))
+        if assign is None or not isinstance(assign.value, ast.Name) or assign.value.id not in tasklet.in_connectors:
+            return None
+        return assign.value.id
+
     @classmethod
     def expressions(cls):
         return [
@@ -452,7 +462,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if expr_index == 3:
             return self._can_be_applied_combine_copyback(graph, sdfg)
         if expr_index == 4:
-            return self._can_be_applied_combine_copyback_map(graph, sdfg)
+            return self._can_be_applied_combine_copyback_map(graph, sdfg, permissive)
 
         inarr = self.input
         tasklet = self.tasklet
@@ -805,14 +815,17 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             return None
         return acc_reads[0], combine_store[0], copy_load[0], store[0], map_out[0]
 
-    def _can_be_applied_combine_copyback_map(self, graph, sdfg):
+    def _can_be_applied_combine_copyback_map(self, graph, sdfg, permissive=False):
         """Match the in-map combine-then-copyback reduction
         ``arr[S] -> map_entry -> combine -> slice -> copyback -> map_exit -> arr[S]`` where ``arr[S]``
         is a LOOP-INVARIANT accumulator (write subset independent of the map params, so every lane
         writes the SAME element -- a genuine reduction, unlike a per-lane disjoint scatter). This is
         the map-scoped mirror of the free combine-copyback (:meth:`_can_be_applied_combine_copyback`);
         the ``dace.map`` form of ``acc = max(acc, x)`` lands here (the frontend emits the combine +
-        private slice + trivial copyback inside the map), which the free pattern misses."""
+        private slice + trivial copyback inside the map), which the free pattern misses.
+
+        ``permissive``: the caller knows an enclosing loop repeats the update, so a lane may own its element
+        and any operator is a reduction."""
         me, mx = self.map_entry, self.map_exit
         inp, combine, mid, cpy, out = (self.input, self.tasklet, self.combine_out, self.copyback, self.output)
         if inp.data != out.data:
@@ -837,11 +850,11 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             return False
         # Reduction, not scatter: the element written OUT of the map must be loop-invariant
         # (independent of every map param) so all lanes conflict on the same slot.
-        acc_subset = map_out.data.get_dst_subset(map_out, graph)
+        acc_subset = store.data.subset
         load_subset = acc_read.data.get_src_subset(acc_read, graph)
         if acc_subset is None or load_subset is None or acc_subset != load_subset:
             return False
-        if len(acc_subset.free_symbols & set(me.map.params)) != 0:
+        if not permissive and len(acc_subset.free_symbols & set(me.map.params)) != 0:
             return False
 
         # copyback must be a trivial single-in / single-out copy ``<store_conn> = <copy_load_conn>``.
@@ -864,9 +877,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # combine-copyback in a map is a vectorizer intermediate (a NormalizeWCR seeded accumulator
         # whose copyback WidenAccesses folds); converting it here would strip that copyback. Sum/prod
         # reductions reach WCR via the direct augmented-assign (expr_index 1) instead.
-        if op not in self._FUNCTIONS:
-            return False
-        return True
+        return permissive or op in self._FUNCTIONS
 
     def _apply_combine_copyback_map(self, state: SDFGState, sdfg: SDFG):
         """Rewrite the in-map combine-then-copyback into a map-exit WCR write: the combine emits
@@ -883,7 +894,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # Collapse ``combine -> combine_out -> copyback -> map_exit`` into ``combine -> map_exit``,
         # carrying the reduction WCR into the map exit (propagation carries it out to the accumulator).
-        acc_subset = map_out.data.get_dst_subset(map_out, state)
+        acc_subset = store.data.subset
         mx_in_conn = store.dst_conn
         state.remove_edge(combine_store)
         state.remove_edge(copy_load)
