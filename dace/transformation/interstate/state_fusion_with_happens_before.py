@@ -765,8 +765,10 @@ class StateFusionExtended(StateFusion):
             first_output_names = {node.data for node in first_output}
             second_input_names = {node.data for node in second_input}
 
-            # If any second input appears more than once, fail
-            if len(second_input) > len(second_input_names):
+            # If any second input appears more than once, fail. An aggressive merge only asks it of a name the first
+            # state writes: the other instances bind to nothing
+            names = second_input_names & first_output_names if self.aggressive_merges else second_input_names
+            if any(sum(n.data == name for n in second_input) > 1 for name in names):
                 return False
 
             # If any first output that is an input to the second state
@@ -837,7 +839,10 @@ class StateFusionExtended(StateFusion):
                     if not self._check_paths(
                         first_state, second_state, match_nodes, nodes_first, nodes_second, False, False
                     ):
-                        return False
+                        if not self.aggressive_merges:
+                            return False
+                        # Last writer (second) wins: the first writers go before the second's, past the match nodes
+                        self.connections_to_make.append(("read_before", nodes_first, nodes_second))
                 # A second-state read of a first-state output merges with one first-state instance: it orders a
                 # first-state writer upstream of that instance before a second-state writer downstream of the read,
                 # and no other pair. Refuse when an unordered pair overlaps.

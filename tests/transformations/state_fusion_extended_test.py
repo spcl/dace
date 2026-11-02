@@ -334,6 +334,32 @@ def test_a_read_the_merge_point_does_not_follow_still_precedes_the_overwrite():
         )
 
 
+def test_aggressive_fusion_orders_a_write_write_past_a_shared_value():
+    """Both states read one value the first writes and write ``A`` at may-overlapping indices (``k - 1`` vs 2)."""
+    sdfg = SDFG("aggressive_same_component_waw")
+    sdfg.add_symbol("k", dtypes.typeclass(int))
+    sdfg.add_array("A", [K], dtypes.typeclass(float))
+    sdfg.add_scalar("t", dtypes.typeclass(float), transient=True)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second")
+
+    def write(state, value, index, reader):
+        tasklet = state.add_tasklet("w", {"i"} if reader else {}, {"o"}, f"o = {'i * ' if reader else ''}{value}")
+        if reader:
+            state.add_edge(reader, None, tasklet, "i", Memlet("t"))
+        state.add_edge(tasklet, "o", state.add_write("A"), None, Memlet(f"A[{index}]"))
+
+    source = first.add_tasklet("v", {}, {"o"}, "o = 3.0")
+    value = first.add_write("t")
+    first.add_edge(source, "o", value, None, Memlet("t"))
+    write(first, 1.0, "2", value)
+    write(second, 2.0, "k - 1", second.add_read("t"))
+    ref = _run(sdfg, "ref", A=np.zeros(K))
+    sdfg.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    assert sdfg.number_of_nodes() == 1
+    assert np.array_equal(_run(sdfg, "fused", A=np.zeros(K))["A"], ref["A"])
+
+
 def test_war_write_after_read():
     """first: B[k] = A[k];  second: A[k] = 9.  B must get the OLD A[k].
 
@@ -2077,3 +2103,4 @@ if __name__ == "__main__":
     test_extended_fusion_keeps_a_sliced_transient_the_second_state_reads()
     test_a_scope_reading_what_the_first_state_wrote_stays_behind_it()
     test_permissive_fusion_keeps_the_other_predecessor_of_the_second_state()
+    test_aggressive_fusion_orders_a_write_write_past_a_shared_value()
