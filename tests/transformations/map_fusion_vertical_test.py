@@ -13,9 +13,11 @@ from dace import data as dace_data
 from dace import symbolic as dace_symbolic
 from dace.sdfg import nodes
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
-from dace.sdfg.state import LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.dataflow import MapExpansion, MapFusion, MapFusionVertical
 from dace.transformation.dataflow.map_fusion_helper import is_node_reachable_from
+from dace.transformation.passes import FuseMaps
 
 
 def count_nodes(
@@ -4399,3 +4401,60 @@ def test_maps_accumulating_into_one_output_stay_apart():
         if edge.data.data == "B":
             edge.data.wcr = "lambda a, b: a + b"
     assert sdfg.apply_transformations_repeated(MapFusionVertical(), validate=True) == 0
+
+
+def test_map_fusion_conditional_write_of_a_shared_element_not_fused():
+    """A one-element claim is no proof of a write: ``if (c[k]) t[k] = 1`` leaves the old value in the shared array, and
+    a privatized buffer would hand the consumer (and the write back) an undefined element instead."""
+    n = 6
+
+    def run(fuse: bool) -> np.ndarray:
+        sdfg = dace.SDFG(unique_name("conditional_write_of_shared_element"))
+        sdfg.add_array("C", (n,), dace.float64)
+        sdfg.add_array("B", (n,), dace.float64)
+        sdfg.add_array("T", (n,), dace.float64, transient=True)
+        init = sdfg.add_state(is_start_block=True)
+        init.add_mapped_tasklet(
+            "seed", {"i": f"0:{n}"}, {}, "_b = 7.0", {"_b": dace.Memlet("T[i]")}, external_edges=True
+        )
+        state = sdfg.add_state_after(init)
+
+        inner = dace.SDFG("conditional_write")
+        inner.add_array("c", (n,), dace.float64)
+        inner.add_array("t", (n,), dace.float64)
+        inner.add_symbol("k", dace.int64)
+        guard = ConditionalBlock("guard", sdfg=inner)
+        inner.add_node(guard, is_start_block=True)
+        branch = ControlFlowRegion("then", sdfg=inner)
+        guard.add_branch(CodeBlock("c[k] > 0"), branch)
+        write = branch.add_state("write", is_start_block=True)
+        tasklet = write.add_tasklet("one", {}, {"_o": dace.float64}, "_o = 1.0")
+        write.add_edge(tasklet, "_o", write.add_write("t"), None, dace.Memlet("t[k]"))
+
+        entry, exit_node = state.add_map("mark", {"i": f"0:{n}"})
+        nsdfg = state.add_nested_sdfg(
+            inner, {"c": dace.pointer(dace.float64)}, {"t": dace.pointer(dace.float64)}, symbol_mapping={"k": "i"}
+        )
+        intermediate = state.add_access("T")
+        state.add_memlet_path(state.add_read("C"), entry, nsdfg, dst_conn="c", memlet=dace.Memlet(f"C[0:{n}]"))
+        state.add_memlet_path(nsdfg, exit_node, intermediate, src_conn="t", memlet=dace.Memlet("T[i]"))
+        state.add_mapped_tasklet(
+            "read",
+            {"j": f"0:{n}"},
+            {"_a": dace.Memlet("T[j]")},
+            "_b = _a",
+            {"_b": dace.Memlet("B[j]")},
+            external_edges=True,
+            input_nodes={"T": intermediate},
+        )
+        sdfg.validate()
+        if fuse:
+            FuseMaps().apply_pass(sdfg, {})
+        c = np.array([1.0, -1.0] * (n // 2))
+        b = np.zeros(n)
+        sdfg(C=c, B=b)
+        return b
+
+    expected = np.array([1.0, 7.0] * (n // 2))
+    assert np.array_equal(run(False), expected)
+    assert np.array_equal(run(True), expected)

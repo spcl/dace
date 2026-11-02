@@ -1180,9 +1180,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #  would be copied back over the shared data (and read by the consumer).
                 #  The claim-based coverage test above cannot see this, because it compares
                 #  the widened connector Memlets, which trivially cover each other. Refuse
-                #  the fusion in that case (CloudSC `llindex1`/`iorder` selection sort).
+                #  the fusion in that case (CloudSC `llindex1`/`iorder` selection sort). Fused in
+                #  place, nothing is privatized and an unwritten element keeps its value.
                 for nsdfg_producer, producer_leaf_edge in nsdfg_producer_leaves:
-                    if not self._nsdfg_producer_fully_defines_intermediate(
+                    if reduced and not self._nsdfg_producer_fully_defines_intermediate(
                         nsdfg=nsdfg_producer,
                         producer_leaf_edge=producer_leaf_edge,
                         intermediate_node=intermediate_node,
@@ -2662,14 +2663,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         by the NestedSDFG's body -- otherwise undefined data is read back and copied over
         the shared intermediate.
 
-        This check is only applied when the claimed write covers the *whole*
-        intermediate (the case in which inner and outer coordinates coincide, because
-        the connector passes the full array). Partial claims are left to the regular
-        claim-based machinery. For a whole-array claim at least one inner write --
-        translated through the NestedSDFG's symbol mapping -- must cover the whole
-        intermediate. Subsets referencing anything but outer symbols and Map
-        parameters (e.g. a data container used as index) make coverage undecidable
-        and are refused.
+        At least one inner write -- translated through the NestedSDFG's symbol mapping --
+        must cover the claim, in the coordinates of the intermediate: a connector passes
+        the whole array, so inner and outer coordinates coincide. A claim of one element
+        is no exception: `if (c) t[k] = v` leaves that element undefined in the buffer.
+        Subsets referencing anything but outer symbols, the Map parameters and the symbols
+        of the claim (e.g. a data container used as index) make coverage undecidable and
+        are refused.
 
         Only writes that happen on *every* execution of the nest count as evidence, see
         `_unconditionally_executed_states()`, and every subset comparison that cannot be
@@ -2686,34 +2686,19 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         claimed = producer_leaf_edge.data.dst_subset
         if claimed is None:
             return False
-        full_range = subsets.Range.from_array(intermediate_desc)
-
-        # Only whole-array claims are handled here; partial claims use the regular machinery.
-        #  The two `covers()` uses of this function point in OPPOSITE directions, and
-        #  `Subset.covers()` answers a rank mismatch by RETURNING a (truthy) `ValueError`
-        #  instance instead of raising, so no result may be used as a plain bool; see
-        #  `_subset_definitely_covers()`. Here an undecidable answer must not reach the
-        #  permissive `return True` below, so the "partial claim" exit is taken only when the
-        #  ranks match AND the claim is positively shown not to be the whole array. An inner
-        #  descriptor of a different rank -- a Scalar or a shape-(1,) Array against a 2D
-        #  intermediate -- therefore falls through into the strict body check, which can only
-        #  succeed on positive evidence. In the loop below the direction is reversed: an
-        #  undecidable answer must not reach the accepting `return True`, so only a proven
-        #  cover ends the search and everything else keeps looking (and finally refuses).
-        if claimed.dims() == full_range.dims():
-            if not (
-                self._subset_definitely_covers(full_range, claimed, sdfg.facts())
-                and self._subset_definitely_covers(claimed, full_range, sdfg.facts())
-            ):
-                return True
-
         inner_sdfg = nsdfg.sdfg
         inner_data = producer_leaf_edge.src_conn
         if inner_sdfg is None or inner_data not in inner_sdfg.arrays:
             return False
+        # Another shape has other coordinates, unless it holds a one-element claim whole.
+        holds_claim = not inner_sdfg.arrays[inner_data].is_equivalent(intermediate_desc)
+        if holds_claim and claimed.num_elements() != 1:
+            return False
 
         # Symbols a translated inner write may legitimately reference.
-        allowed_symbols = set(map(str, sdfg.symbols)) | set(map(str, first_map_exit.map.params))
+        allowed_symbols = (
+            set(map(str, sdfg.symbols)) | set(map(str, first_map_exit.map.params)) | set(map(str, claimed.free_symbols))
+        )
 
         for inner_state in self._unconditionally_executed_states(inner_sdfg):
             for inner_node in inner_state.nodes():
@@ -2740,11 +2725,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         #  `None` for a perfectly ordinary single element write. Neither proves
                         #  anything about coverage, so this edge is simply not evidence.
                         continue
+                    if holds_claim:
+                        return True
                     write_subset = copy.deepcopy(write_subset)
                     symbolic.safe_replace(mapping=nsdfg.symbol_mapping, replace_callback=write_subset.replace)
                     if not set(map(str, write_subset.free_symbols)).issubset(allowed_symbols):
                         return False
-                    if self._subset_definitely_covers(write_subset, full_range, sdfg.facts()):
+                    if self._subset_definitely_covers(write_subset, claimed, sdfg.facts()):
                         return True
         return False
 
