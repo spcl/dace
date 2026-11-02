@@ -99,7 +99,7 @@ class PowerRelaxer:
             lambda node: (
                 isinstance(node, (sympy.ceiling, sympy.floor))
                 and node.args[0].has(ipow)
-                and symbolic._integral(node.args[0])
+                and symbolic_facts.with_integers(node.args[0], facts.integers).is_integer is True
             ),
             lambda node: node.args[0],
         )

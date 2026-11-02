@@ -353,6 +353,36 @@ def test_overwrite_elimination_loop_dep2():
     _test_for_unchanged_behavior(tester, 2, 2)
 
 
+def two_inner_loops_on_one_iterator() -> tuple[dace.SDFG, LoopRegion]:
+    """Each ``i`` reads ``A[i + 15]`` where ``j <= 9``, then writes ``A[j]`` where ``j`` reaches 25."""
+    sdfg = dace.SDFG("two_inner_loops")
+    sdfg.add_array("A", [100], dace.float64)
+    sdfg.add_array("B", [100], dace.float64)
+    loop = LoopRegion("outer", "i < 5", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = LoopRegion("first", "j < 10", "j", "j = 0", "j = j + 1")
+    second = LoopRegion("second", "j < 26", "j", "j = 10", "j = j + 1")
+    loop.add_node(first, is_start_block=True)
+    loop.add_node(second)
+    loop.add_edge(first, second, dace.InterstateEdge())
+    read = first.add_state("read", is_start_block=True)
+    copy_tasklet = read.add_tasklet("copy", {"a"}, {"b"}, "b = a")
+    read.add_edge(read.add_read("A"), None, copy_tasklet, "a", dace.Memlet("A[i + 15]"))
+    read.add_edge(copy_tasklet, "b", read.add_write("B"), None, dace.Memlet("B[j]"))
+    write = second.add_state("write", is_start_block=True)
+    fill = write.add_tasklet("fill", {}, {"o"}, "o = 1.0")
+    write.add_edge(fill, "o", write.add_write("A"), None, dace.Memlet("A[j]"))
+    return sdfg, loop
+
+
+def test_a_write_in_a_sibling_loop_is_not_judged_by_the_facts_of_the_read():
+    """``i = 4`` reads ``A[19]``, which ``i = 0`` wrote: the facts at the read bound the other loop's ``j`` by 9."""
+    sdfg, loop = two_inner_loops_on_one_iterator()
+    transformation = LoopOverwriteElimination()
+    transformation.loop = loop
+    assert not transformation.can_be_applied(sdfg, 0, sdfg, False)
+
+
 if __name__ == "__main__":
     test_overwrite_elimination_basic()
     test_overwrite_elimination_basic2()
@@ -381,3 +411,4 @@ if __name__ == "__main__":
     test_overwrite_elimination_tmp2()
     test_overwrite_elimination_loop_dep()
     test_overwrite_elimination_loop_dep2()
+    test_a_write_in_a_sibling_loop_is_not_judged_by_the_facts_of_the_read()

@@ -161,8 +161,8 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
 
                     src_subset = copy.deepcopy(e.data.get_src_subset(e, state))
                     src_subset.replace({self.loop.loop_variable: end})
-                    # None of write_subsets should lie within the new subset
-                    facts = SymbolResolver().facts_at(state, dn)
+                    # None of write_subsets should lie within the new subset; the facts hold at the read and every write
+                    facts = SymbolResolver().facts_at(self.loop)
                     if any(
                         intersects(ws_ss, src_subset, facts) is not symbolic.Truth.FALSE
                         for ws_ss in write_subsets[dn.data]
