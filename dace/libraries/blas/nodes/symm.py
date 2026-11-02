@@ -101,6 +101,7 @@ class Symm(nodes.LibraryNode):
         **vendor.vendor_expansions("Symm", symm_call),
     }
     default_implementation = None
+    matrix_connectors = ("_A", "_B", "_Cin", "_Cout")
 
     side = properties.Property(dtype=bool, default=False, desc="Multiply _A from the right instead of the left.")
     uplo = properties.Property(dtype=bool, default=False, desc="Read the upper triangle of _A instead of the lower.")
@@ -113,17 +114,19 @@ class Symm(nodes.LibraryNode):
 
     def validate(self, sdfg, state):
         blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_B", "_Cin", "_Cout")
+        blas_helpers.reject_overlapping_output(self, state, "_Cout", accumulator="_Cin")
         a, b, cin, cout = (operand(self, state, sdfg, c).shape for c in ("_A", "_B", "_Cin", "_Cout"))
-        if len(cin) != 2 or not b == cin == cout:
+        if len(cin) != 2 or not blas_helpers.extents_agree(b, cin, cout):
             raise ValueError(f"{self.label}: _B, _Cin and _Cout must be matrices of one shape")
         k = cin[1] if self.side else cin[0]
-        if a != [k, k]:
+        if not blas_helpers.extents_agree(a, [k, k]):
             raise ValueError(f"{self.label}: _A must be a {k} x {k} matrix")
 
 
 @oprepo.replaces("dace.libraries.blas.symm")
 @oprepo.replaces("dace.libraries.blas.Symm")
 def symm_libnode(pv, sdfg: SDFG, state: SDFGState, A, B, C, result=None, side=False, uplo=False, alpha=1, beta=0):
+    """Adds a :class:`Symm` writing ``alpha * A @ B + beta * C`` to ``result``, by default ``C``."""
     result = result if result is not None else C
     node = Symm("symm", side=side, uplo=uplo, alpha=alpha, beta=beta)
     for name, connector in ((A, "_A"), (B, "_B"), (C, "_Cin")):

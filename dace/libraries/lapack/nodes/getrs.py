@@ -198,7 +198,7 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
         stride_rhs = desc_rhs.strides[sqdims2[0]]
         shape_rhs = squeezed2.size()
         rows_rhs = shape_rhs[0]
-        if len(desc_rhs.shape) < 2:
+        if len(shape_rhs) < 2:
             cols_rhs = 1
         else:
             cols_rhs = shape_rhs[1]

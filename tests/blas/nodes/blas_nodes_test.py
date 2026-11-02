@@ -4,6 +4,7 @@ import pytest
 
 import dace
 from dace.libraries import blas
+from dace.libraries.blas.nodes import Axpy, Gemm, Gemv, Ger, MatMul, Scal, Symm, Symv, Syrk
 from dace.transformation.dataflow import RedundantSecondArray
 
 M = dace.symbol("M")
@@ -114,6 +115,138 @@ def test_transpose_strided_columns(implementation):
     assert np.allclose(sdfg(pos=pos, N=25), pos[:, 0:2].T)
 
 
+def wired_sdfg(name: str, node, inputs: dict[str, str], outputs: dict[str, str], arrays: dict) -> dace.SDFG:
+    """``node`` between one access node per memlet of ``inputs`` and ``outputs``."""
+    sdfg = dace.SDFG(name)
+    state = sdfg.add_state()
+    for array_name, (shape, dtype, strides) in arrays.items():
+        sdfg.add_array(array_name, shape, dtype, strides=strides)
+    state.add_node(node)
+    for connector, text in inputs.items():
+        memlet = dace.Memlet(text)
+        state.add_edge(state.add_read(memlet.data), None, node, connector, memlet)
+    for connector, text in outputs.items():
+        memlet = dace.Memlet(text)
+        state.add_edge(node, connector, state.add_write(memlet.data), None, memlet)
+    return sdfg
+
+
+MATRIX = ([2, 2], dace.float64, None)
+VECTOR = ([2], dace.float64, None)
+
+
+def test_gemv_scales_by_the_whole_expression():
+    """``alpha * A`` without parentheses bound as ``s + (1 * A)``."""
+    node = Gemv("gemv", alpha="s + 1", beta="s - 3")
+    node.implementation = "pure"
+    arrays = {"A": MATRIX, "x": VECTOR, "y": VECTOR}
+    sdfg = wired_sdfg("gemv_expression", node, {"_A": "A", "_x": "x", "_y": "y"}, {"_y": "y"}, arrays)
+    sdfg.add_symbol("s", dace.float64)
+
+    a, x, y = np.full((2, 2), 5.0), np.full(2, 7.0), np.full(2, 11.0)
+    sdfg(A=a, x=x, y=y, s=2.0)
+
+    np.testing.assert_allclose(y, 3.0 * a @ x - 11.0)
+
+
+def test_axpy_scales_by_the_whole_expression():
+    node = Axpy("axpy", a="s + 1", n=2)
+    node.implementation = "pure"
+    arrays = {"x": VECTOR, "y": VECTOR, "res": VECTOR}
+    sdfg = wired_sdfg("axpy_expression", node, {"_x": "x", "_y": "y"}, {"_res": "res"}, arrays)
+    sdfg.add_symbol("s", dace.float64)
+
+    x, y, res = np.full(2, 2.0), np.ones(2), np.zeros(2)
+    sdfg(x=x, y=y, res=res, s=2.0)
+
+    np.testing.assert_allclose(res, 3.0 * x + y)
+
+
+def test_openblas_gemv_prints_a_symbolic_extent_as_cpp():
+    """``N**2`` in the call is not C++."""
+    extent = dace.symbol("E", dace.int64)
+    node = Gemv("gemv")
+    node.implementation = "OpenBLAS"
+    arrays = {
+        "A": ([extent**2, extent], dace.float64, None),
+        "x": ([extent], dace.float64, None),
+        "y": ([extent**2], dace.float64, None),
+    }
+    sdfg = wired_sdfg("gemv_power_extent", node, {"_A": "A", "_x": "x"}, {"_y": "y"}, arrays)
+
+    a, x, y = np.arange(8.0).reshape(4, 2).copy(), np.ones(2), np.zeros(4)
+    sdfg(A=a, x=x, y=y, E=2)
+
+    np.testing.assert_allclose(y, a @ x)
+
+
+def test_openblas_gemm_of_integers_falls_back_to_pure():
+    """BLAS has no integer routine, and Gemv, Dot and the new nodes all route such a type to pure."""
+    node = Gemm("gemm")
+    node.implementation = "OpenBLAS"
+    arrays = {name: ([2, 2], dace.int32, None) for name in ("a", "b", "c")}
+    sdfg = wired_sdfg("gemm_integers", node, {"_a": "a", "_b": "b"}, {"_c": "c"}, arrays)
+
+    a, c = np.arange(4, dtype=np.int32).reshape(2, 2).copy(), np.zeros((2, 2), dtype=np.int32)
+    sdfg(a=a, b=a, c=c)
+
+    np.testing.assert_array_equal(c, a @ a)
+
+
+def test_a_scaled_matmul_of_two_vectors_is_refused():
+    """Dot has no scale, so ``alpha`` vanished from the result."""
+    arrays = {"x": VECTOR, "y": VECTOR, "out": ([1], dace.float64, None)}
+    sdfg = wired_sdfg(
+        "matmul_scaled_dot", MatMul("matmul", alpha=2.0), {"_a": "x", "_b": "y"}, {"_c": "out[0]"}, arrays
+    )
+    with pytest.raises(NotImplementedError, match="alpha"):
+        sdfg.expand_library_nodes()
+
+
+ALIASED_OUTPUTS = {
+    "symv": (lambda: Symv("symv", beta=0), {"_A": "A", "_x": "y", "_yin": "y"}, {"_yout": "y"}),
+    "symm": (lambda: Symm("symm"), {"_A": "A", "_B": "B", "_Cin": "B"}, {"_Cout": "B"}),
+    "syrk": (lambda: Syrk("syrk"), {"_A": "B", "_Cin": "B"}, {"_Cout": "B"}),
+    "ger": (lambda: Ger("ger"), {"_A": "A", "_x": "A[0, 0:2]", "_y": "y"}, {"_res": "A"}),
+    "gemv": (lambda: Gemv("gemv"), {"_A": "A", "_x": "y"}, {"_y": "y"}),
+    "gemm": (lambda: Gemm("gemm"), {"_a": "A", "_b": "B"}, {"_c": "A"}),
+    "scal": (lambda: Scal("scal"), {"_x": "z[0:2]"}, {"_res": "z[1:3]"}),
+}
+
+
+@pytest.mark.parametrize("name", list(ALIASED_OUTPUTS))
+def test_an_output_proved_to_overlap_an_input_is_refused(name):
+    """``symv(A, y, y, beta=0)`` zeroed ``y`` before reading it as ``x``, and BLAS forbids the overlap."""
+    make, inputs, outputs = ALIASED_OUTPUTS[name]
+    arrays = {"A": MATRIX, "B": MATRIX, "y": VECTOR, "z": ([3], dace.float64, None)}
+    sdfg = wired_sdfg(f"aliased_{name}", make(), inputs, outputs, arrays)
+    with pytest.raises(dace.sdfg.InvalidSDFGNodeError, match="overlaps"):
+        sdfg.validate()
+
+
+def test_outputs_not_proved_to_overlap_stay_allowed():
+    """Disjoint columns of one array, and windows only the run-time values of ``s`` and ``t`` place, are valid calls."""
+    arrays = {"A": MATRIX, "yin": VECTOR, "B": ([2, 3], dace.float64, None)}
+    node = Symv("symv", beta=0)
+    node.implementation = "pure"
+    columns = {"_A": "A", "_x": "B[0:2, 0]", "_yin": "yin"}
+    sdfg = wired_sdfg("disjoint_columns", node, columns, {"_yout": "B[0:2, 1]"}, arrays)
+    a, b = np.array([[2.0, 1.0], [1.0, 3.0]]), np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    sdfg(A=a, B=b, yin=np.zeros(2))
+    np.testing.assert_allclose(b[:, 1], a @ b[:, 0])
+
+    node = Symv("symv", beta=0)
+    node.implementation = "pure"
+    arrays = {"A": MATRIX, "yin": VECTOR, "z": ([5], dace.float64, None)}
+    windows = {"_A": "A", "_x": "z[s:s + 2]", "_yin": "yin"}
+    sdfg = wired_sdfg("unproved_windows", node, windows, {"_yout": "z[t:t + 2]"}, arrays)
+    sdfg.add_symbol("s", dace.int64)
+    sdfg.add_symbol("t", dace.int64)
+    z = np.array([1.0, 2.0, 0.0, 0.0, 0.0])
+    sdfg(A=a, z=z, yin=np.zeros(2), s=0, t=2)
+    np.testing.assert_allclose(z[2:4], a @ z[:2])
+
+
 if __name__ == "__main__":
     implementations = ["pure", "MKL", "cuBLAS"]
     for implementation in implementations:
@@ -123,3 +256,11 @@ if __name__ == "__main__":
         test_dot_strided(implementation)
     for implementation in ["pure", "MKL", "OpenBLAS"]:
         test_transpose_strided_columns(implementation)
+    test_gemv_scales_by_the_whole_expression()
+    test_axpy_scales_by_the_whole_expression()
+    test_openblas_gemv_prints_a_symbolic_extent_as_cpp()
+    test_openblas_gemm_of_integers_falls_back_to_pure()
+    test_a_scaled_matmul_of_two_vectors_is_refused()
+    for name in ALIASED_OUTPUTS:
+        test_an_output_proved_to_overlap_an_input_is_refused(name)
+    test_outputs_not_proved_to_overlap_stay_allowed()

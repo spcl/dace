@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import itertools
 import warnings
-from copy import deepcopy as dc
 
 import numpy as np
 
@@ -14,9 +13,12 @@ from dace.frontend.common import op_repository as oprepo
 from dace.libraries import hip_dialect
 from dace.libraries.blas import environments
 from dace.libraries.blas.blas_helpers import (
+    blas_prefix,
     check_access,
     dtype_to_cudadatatype,
     matrix_view,
+    packed_unit_extent,
+    reject_overlapping_output,
     stepped_strides,
     to_blastype,
     to_cublas_computetype,
@@ -203,7 +205,11 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), cdata = _get_matmul_operands(node, state, sdfg)
+        # BLAS has no such type, or writes along one unit stride and a dense copy would have to read back C for beta
+        _, _, cshape, cstrides = _matrix_operand(cdata)
+        if blas_prefix(adesc.dtype.base_type) is None or 1 not in packed_unit_extent(cshape, cstrides)[-2:]:
+            return ExpandGemmPure.make_sdfg(node, state, sdfg)
         dtype = adesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + "gemm"
         alpha = f"{dtype.ctype}({node.alpha})"
@@ -240,13 +246,10 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
             "_c, {ldc});"
         ).format_map(opt)
 
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-        )
+        # Pointers even for one element, whose memlet would bind a value
+        inputs = {connector: dtypes.pointer(dtype) for connector in node.in_connectors}
+        outputs = {connector: dtypes.pointer(dtype) for connector in node.out_connectors}
+        tasklet = dace.sdfg.nodes.Tasklet(node.name, inputs, outputs, code, language=dace.dtypes.Language.CPP)
         return tasklet
 
 
@@ -412,18 +415,21 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
         # If buffers are not on the GPU, copy them
         if needs_copy:
             nsdfg = dace.SDFG("nested_gemm")
-            for name, desc in [("_a", adesc), ("_b", bdesc), ("_c", cdesc)]:
-                if isinstance(desc, dt.View):
-                    dcopy = desc.as_array()
-                else:
-                    dcopy = dc(desc)
-                dcopy.lifetime = dtypes.AllocationLifetime.Scope
-                dcopy_gpu = dc(dcopy)
-                dcopy.transient = False
-                nsdfg.add_datadesc(name, dcopy)
-                dcopy_gpu.transient = True
-                dcopy_gpu.storage = dace.StorageType.GPU_Global
-                nsdfg.add_datadesc(name + "_gpu", dcopy_gpu)
+            lifetime = dtypes.AllocationLifetime.Scope
+            # Each connector points at its operand's window, and densification may have rewired the edges
+            for name, operand in zip(("_a", "_b", "_c"), _get_matmul_operands(node, state, sdfg)):
+                edge, desc, shape, strides = _matrix_operand(operand)
+                window, window_strides, _ = _operand_window(edge, desc, shape, strides)
+                nsdfg.add_array(name, window, desc.dtype, desc.storage, strides=window_strides, lifetime=lifetime)
+                nsdfg.add_array(
+                    name + "_gpu",
+                    window,
+                    desc.dtype,
+                    dace.StorageType.GPU_Global,
+                    transient=True,
+                    strides=window_strides,
+                    lifetime=lifetime,
+                )
             nstate = nsdfg.add_state()
             a = nstate.add_read("_a")
             ga = nstate.add_access("_a_gpu")
@@ -441,13 +447,13 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 tasklet.remove_in_connector("_conn_c")
 
             nstate.add_node(tasklet)
-            nstate.add_nedge(a, ga, dace.Memlet.from_array("_a", adesc))
-            nstate.add_nedge(b, gb, dace.Memlet.from_array("_b", bdesc))
+            nstate.add_nedge(a, ga, dace.Memlet("_a"))
+            nstate.add_nedge(b, gb, dace.Memlet("_b"))
 
-            nstate.add_edge(ga, None, tasklet, "_conn_a", dace.Memlet.from_array("_a_gpu", adesc))
-            nstate.add_edge(gb, None, tasklet, "_conn_b", dace.Memlet.from_array("_b_gpu", bdesc))
-            nstate.add_edge(tasklet, "_conn_c", gc, None, dace.Memlet.from_array("_c_gpu", cdesc))
-            nstate.add_nedge(gc, c, dace.Memlet.from_array("_c", cdesc))
+            nstate.add_edge(ga, None, tasklet, "_conn_a", dace.Memlet("_a_gpu"))
+            nstate.add_edge(gb, None, tasklet, "_conn_b", dace.Memlet("_b_gpu"))
+            nstate.add_edge(tasklet, "_conn_c", gc, None, dace.Memlet("_c_gpu"))
+            nstate.add_nedge(gc, c, dace.Memlet("_c"))
 
             if not equal_valued(0, node.beta):
                 rc = nstate.add_read("_c")
@@ -616,6 +622,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from matrix-matrix product")
+        reject_overlapping_output(self, state, "_c", accumulator="_c")
         out_memlet = out_edges[0].data
         # Function is symmetric, edge order does not matter
         if len(size0) != 2 or len(size1) != 2:

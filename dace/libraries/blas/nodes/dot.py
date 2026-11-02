@@ -79,8 +79,8 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        # This expansion emits ?dotu only
-        if node.conjugate and desc_x.dtype.is_complex():
+        # There is no ?dot for complex data, which returns through ?dotu and ?dotc, nor for half precision
+        if desc_x.dtype.is_complex() or dtype == dace.dtypes.float16:
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         try:
@@ -123,8 +123,8 @@ class ExpandDotCuBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        # This expansion emits ?dotu only
-        if node.conjugate and desc_x.dtype.is_complex():
+        # There is no ?dot for complex data, which returns through ?dotu and ?dotc, nor for half precision
+        if desc_x.dtype.is_complex() or dtype == dace.dtypes.float16:
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         try:
@@ -172,6 +172,8 @@ ExpandDotHipBLAS = hip_dialect.hip_expansion(ExpandDotCuBLAS, environments.hipbl
 
 @dace.library.node
 class Dot(dace.sdfg.nodes.LibraryNode):
+    """BLAS dot product of ``_x`` and ``_y``, conjugating ``_x`` if ``conjugate``."""
+
     # Global properties
     implementations = {
         "pure": ExpandDotPure,

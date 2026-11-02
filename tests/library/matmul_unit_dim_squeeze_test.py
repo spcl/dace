@@ -76,8 +76,45 @@ def test_unit_batch_keeps_alpha():
     assert np.allclose(c[0], 2.0 * (a[0] @ bmat))
 
 
+UNIT_OPERANDS = [
+    ((4, 1), "0:4, 0:1", (5, 5), "0:1, 0:1", (4, 1)),
+    ((4, 1), "0:4, 0:1", (1,), "0:1", (4,)),
+    ((3,), "0:1", (3, 3), "0:1, 0:3", (3,)),
+]
+
+
+@pytest.mark.parametrize("left_shape,left,right_shape,right,out_shape", UNIT_OPERANDS)
+def test_only_a_one_element_result_is_a_dot_product(left_shape, left, right_shape, right, out_shape):
+    """``(N, 1) @ (1, 1)`` squeezes to two vectors, which took Dot for a result of ``N`` elements."""
+    sdfg = dace.SDFG(f"unit_operands_{len(left_shape)}_{len(right_shape)}_{len(out_shape)}")
+    state = sdfg.add_state()
+    sdfg.add_array("A", list(left_shape), dace.float64)
+    sdfg.add_array("B", list(right_shape), dace.float64)
+    sdfg.add_array("C", list(out_shape), dace.float64)
+    node = MatMul("matmul")
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_a", mm.Memlet(f"A[{left}]"))
+    state.add_edge(state.add_read("B"), None, node, "_b", mm.Memlet(f"B[{right}]"))
+    state.add_edge(node, "_c", state.add_write("C"), None, mm.Memlet.from_array("C", sdfg.arrays["C"]))
+
+    rng = np.random.default_rng(0)
+    a, b, c = rng.random(left_shape), rng.random(right_shape), np.zeros(out_shape)
+    sdfg(A=a, B=b, C=c)
+
+    selected_a = a[tuple(subset_slice(r) for r in left.split(", "))]
+    selected_b = b[tuple(subset_slice(r) for r in right.split(", "))]
+    assert np.allclose(c, selected_a @ selected_b)
+
+
+def subset_slice(text: str) -> slice:
+    start, stop = text.split(":")
+    return slice(int(start), int(stop))
+
+
 if __name__ == "__main__":
     for opt in (False, True):
         for sz in SIZES:
             test_reshape_unit_dim_matmul(opt, sz)
     test_unit_batch_keeps_alpha()
+    for case in UNIT_OPERANDS:
+        test_only_a_one_element_result_is_a_dot_product(*case)
