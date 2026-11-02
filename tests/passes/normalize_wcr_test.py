@@ -745,6 +745,30 @@ def test_a_plain_boundary_over_many_elements_keeps_the_elements_no_iteration_wro
     assert acc.tolist() == [6.0, 7.0, 8.0, 9.0]
 
 
+def test_a_wcr_leaving_an_inner_map_stays_seeded():
+    """Only the last edge of a write through an inner map could drop its WCR; the rest accumulate into the buffer."""
+    sdfg = dace.SDFG("inner_map_wcr_" + uuid.uuid4().hex[:8])
+    sdfg.add_array("acc", [1], dace.float64)
+    state = sdfg.add_state("map", is_start_block=True)
+    body = dace.SDFG("body_inner_map_wcr")
+    body.add_array("oc", [1], dace.float64)
+    inner = body.add_state("c", is_start_block=True)
+    ime, imx = inner.add_map("in", {"j": "0:3"})
+    t = inner.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    inner.add_edge(ime, None, t, None, dace.Memlet())
+    inner.add_memlet_path(
+        t, imx, inner.add_write("oc"), src_conn="o", memlet=dace.Memlet(data="oc", subset="0", wcr="lambda a, b: a + b")
+    )
+    me, mx = state.add_map("m", {"i": "0:4"})
+    n = state.add_nested_sdfg(body, {}, {"oc": None})
+    state.add_edge(me, None, n, None, dace.Memlet())
+    state.add_memlet_path(n, mx, state.add_write("acc"), src_conn="oc", memlet=dace.Memlet("acc[0]"))
+    sdfg.validate()
+
+    NormalizeWCR().apply_pass(sdfg, {})
+    assert any(name.startswith("_nnr_priv_oc") for name in body.arrays)
+
+
 if __name__ == "__main__":
     import sys
 
@@ -753,3 +777,4 @@ if __name__ == "__main__":
     test_a_masked_subtraction_in_a_nested_body_keeps_its_sign()
     test_a_tasklet_subscripting_its_wcr_output_keeps_its_index()
     test_a_plain_boundary_over_many_elements_keeps_the_elements_no_iteration_wrote()
+    test_a_wcr_leaving_an_inner_map_stays_seeded()

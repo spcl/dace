@@ -382,15 +382,18 @@ class NormalizeWCR(ppl.Pass):
 
         Requires (both, else the seeded path is the sound choice):
 
-        * No enclosing :class:`ConditionalBlock` or :class:`LoopRegion` between the write
-          state and the NestedSDFG. A surviving ConditionalBlock means the reduction is
+        * No enclosing map, :class:`ConditionalBlock` or :class:`LoopRegion` between the write
+          and the NestedSDFG. A surviving ConditionalBlock means the reduction is
           STILL masked (``PredicateMaskedReduction`` did not fold the guard into the
-          addend); an enclosing loop means the write fires several times per invocation.
+          addend); an enclosing map or loop means the write fires several times per invocation.
           In either case ``oc = addend`` (drop-WCR) would be wrong -- a masked lane would
           execute unconditionally, or only the last loop write would survive.
         * ``oc`` has no OTHER writer in the body: the single WCR write is its sole
           definition, so dropping the WCR leaves exactly one plain write of ``oc``.
         """
+        # A write leaving a map fires once per iteration of that map.
+        if isinstance(wcr_edge.src, nodes.ExitNode):
+            return False
         block = wcr_state.parent_graph
         while block is not None and not isinstance(block, SDFG):
             if isinstance(block, (ConditionalBlock, LoopRegion)):
