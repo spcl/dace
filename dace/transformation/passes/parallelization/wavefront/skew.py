@@ -54,7 +54,6 @@ from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suff
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import privatize_reduction_accumulator
 from dace.transformation.passes.parallelization.wavefront import polyhedron as poly
 from dace.transformation.passes.parallelization.wavefront.dependences import Dependences, provably, subset_params
-from dace.transformation.passes.unique_loop_iterators import SKEW_T_PREFIX
 from dace.transformation.passes.parallelization.wavefront.statements import (
     Body,
     Statement,
@@ -65,6 +64,7 @@ from dace.transformation.passes.parallelization.wavefront.statements import (
     occurrence_index,
     unit_loop_bounds,
 )
+from dace.transformation.passes.unique_loop_iterators import SKEW_T_PREFIX
 
 SKEW_P_PREFIX = "_skew_p_"
 
