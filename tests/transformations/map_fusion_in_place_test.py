@@ -101,7 +101,60 @@ def test_maps_whose_bodies_are_nested_sdfgs_fuse_through_an_array_the_first_upda
     assert np.allclose(B, expected)
 
 
+def updates_of_one_column(name: str, shift: int) -> dace.SDFG:
+    """Two Maps updating ``a[i, 1]``, the second reading ``a[i + shift, 1]``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [SIZE + 1, 3], dace.float64)
+    sdfg.add_array("c", [SIZE], dace.float64)
+    state = sdfg.add_state()
+    chain = [state.add_access("a") for _ in range(3)]
+    state.add_mapped_tasklet(
+        "first",
+        {"i": f"0:{SIZE}"},
+        {"p": dace.Memlet("a[i, 1]"), "q": dace.Memlet("c[i]")},
+        "o = p * q + 1",
+        {"o": dace.Memlet("a[i, 1]")},
+        input_nodes={"a": chain[0]},
+        output_nodes={"a": chain[1]},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "second",
+        {"j": f"0:{SIZE}"},
+        {"p": dace.Memlet(f"a[j + {shift}, 1]")},
+        "o = p * 2",
+        {"o": dace.Memlet("a[j, 1]")},
+        input_nodes={"a": chain[1]},
+        output_nodes={"a": chain[2]},
+        external_edges=True,
+    )
+    return sdfg
+
+
+def relaxed_fusion() -> MapFusionVertical:
+    return MapFusionVertical(relaxed_dataflow=True)
+
+
+def test_two_updates_of_one_container_fuse_in_place():
+    sdfg = updates_of_one_column("two_updates", 0)
+    assert sdfg.apply_transformations_repeated(relaxed_fusion()) == 1
+    sdfg.validate()
+    assert top_level_maps(sdfg) == 1
+    array, factor = np.arange(3.0 * (SIZE + 1)).reshape(SIZE + 1, 3), np.arange(1.0, SIZE + 1)
+    expected = array.copy()
+    expected[:-1, 1] = (expected[:-1, 1] * factor + 1) * 2
+    sdfg(a=array, c=factor)
+    assert np.array_equal(array, expected)
+
+
+def test_an_update_reading_another_iteration_stays_apart():
+    sdfg = updates_of_one_column("shifted_updates", 1)
+    assert sdfg.apply_transformations_repeated(relaxed_fusion()) == 0
+
+
 if __name__ == "__main__":
     test_a_row_recurrence_and_its_reader_fuse_in_place()
     test_a_reader_of_another_iterations_row_is_refused()
     test_maps_whose_bodies_are_nested_sdfgs_fuse_through_an_array_the_first_updates_point_wise()
+    test_two_updates_of_one_container_fuse_in_place()
+    test_an_update_reading_another_iteration_stays_apart()
