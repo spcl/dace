@@ -1008,7 +1008,8 @@ class SplitStatements(ppl.Pass):
         from dace.transformation.passes.simplify import SimplifyPass
 
         count = 0
-        for nsdfg in list(sdfg.all_sdfgs_recursive()):
+        # Innermost first: splitting a node retires its whole nested SDFG tree, the clones hold copies of it
+        for nsdfg in reversed(list(sdfg.all_sdfgs_recursive())):
             for state in list(nsdfg.states()):
                 for node in [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]:
                     groups = self._independent_output_groups(state, node)

@@ -2,6 +2,7 @@
 import re
 
 from dace import SDFG, SDFGState, dtypes, properties, symbolic
+from dace.memlet import Memlet
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
@@ -133,7 +134,8 @@ class PruneConnectors(pm.SingleStateTransformation):
         prune_in, prune_out, all_data_used = self._get_prune_sets(state)
 
         # If the nested SDFG is at global scope, check if it can be isolated.
-        if state.scope_dict()[nsdfg] is None:
+        scope = state.scope_dict()[nsdfg]
+        if scope is None:
             _, nsdfg_state, _ = helpers.isolate_nested_sdfg(state=state, nsdfg_node=nsdfg)
         else:
             nsdfg_state = state
@@ -141,6 +143,10 @@ class PruneConnectors(pm.SingleStateTransformation):
         for conn in prune_in:
             for e in nsdfg_state.in_edges_by_connector(nsdfg, conn):
                 nsdfg_state.remove_memlet_path(e, remove_orphans=True)
+
+        # The node's only tie to its scope may be the edge just removed
+        if scope is not None and nsdfg_state.in_degree(nsdfg) == 0:
+            nsdfg_state.add_nedge(scope, nsdfg, Memlet())
 
         for conn in prune_out:
             for e in nsdfg_state.out_edges_by_connector(nsdfg, conn):
