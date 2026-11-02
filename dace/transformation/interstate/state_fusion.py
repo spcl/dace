@@ -318,6 +318,23 @@ class StateFusion(transformation.MultiStateTransformation):
                     return True
         return False
 
+    @classmethod
+    def merge_instance(
+        cls,
+        instances: list[nodes.AccessNode],
+        first_state: SDFGState,
+        second_state: SDFGState,
+        read: nodes.AccessNode,
+        facts: symbolic.Facts | None = None,
+    ) -> nodes.AccessNode:
+        """The node of ``instances`` (topologically last first) a second-state ``read`` merges with: the first that
+        intersects it, else the last. Fusion proves its order through this node, so the check and ``apply`` share it."""
+        if len(instances) > 1:
+            for cand in instances:
+                if cls.memlets_intersect(first_state, [cand], False, second_state, [read], True, facts):
+                    return cand
+        return instances[0]
+
     def has_path(
         self,
         first_state: SDFGState,
@@ -581,12 +598,11 @@ class StateFusion(transformation.MultiStateTransformation):
                     if isinstance(x, nodes.AccessNode) and x.data in fused_cc.first_outputs
                 ]
                 # Those nodes will be the connection points upon fusion
-                match_nodes: dict[nodes.AccessNode, nodes.AccessNode] = {
-                    next(n for n in order if n.data == match): next(
-                        n for n in fused_cc.second_input_nodes if n.data == match
-                    )
-                    for match in (fused_cc.first_outputs & fused_cc.second_inputs)
-                }
+                match_nodes: dict[nodes.AccessNode, nodes.AccessNode] = {}
+                for match in fused_cc.first_outputs & fused_cc.second_inputs:
+                    read = next(n for n in fused_cc.second_input_nodes if n.data == match)
+                    instances = [n for n in order if n.data == match]
+                    match_nodes[StateFusion.merge_instance(instances, first_state, second_state, read)] = read
 
                 # If we have potential candidates, check if there is a
                 # path from the first write to the second write (in that
@@ -843,17 +859,7 @@ class StateFusion(transformation.MultiStateTransformation):
 
             if len(candidates) == 0:
                 continue
-            elif len(candidates) == 1:
-                n = candidates[0]
-            else:
-                # Choose first candidate that intersects memlets
-                for cand in candidates:
-                    if StateFusion.memlets_intersect(first_state, [cand], False, second_state, [node], True):
-                        n = cand
-                        break
-                else:
-                    # No node intersects, use topologically-last node
-                    n = candidates[0]
+            n = StateFusion.merge_instance(candidates, first_state, second_state, node)
 
             sdutil.change_edge_src(first_state, node, n)
             sdutil.change_edge_dest(first_state, node, n)

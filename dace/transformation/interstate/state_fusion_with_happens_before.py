@@ -789,16 +789,18 @@ class StateFusionExtended(StateFusion):
             # Hoisted: the leaf (topological) instance of a name depends only on ``first_state``,
             # but was recomputed for every connected component below. Lazy so a probe that never
             # reaches the loop does not pay for it.
-            first_leaf_by_data: dict[str, nodes.AccessNode] | None = None
+            first_instances: dict[str, list[nodes.AccessNode]] | None = None
 
-            def leaf_instance(name: str) -> nodes.AccessNode:
-                nonlocal first_leaf_by_data
-                if first_leaf_by_data is None:
-                    first_leaf_by_data = {}
+            def merged_instance(name: str, read: nodes.AccessNode) -> nodes.AccessNode:
+                nonlocal first_instances
+                if first_instances is None:
+                    first_instances = {}
                     for x in reversed(list(nx.topological_sort(first_state._nx))):
-                        if isinstance(x, nodes.AccessNode) and x.data not in first_leaf_by_data:
-                            first_leaf_by_data[x.data] = x
-                return first_leaf_by_data[name]
+                        if isinstance(x, nodes.AccessNode):
+                            first_instances.setdefault(x.data, []).append(x)
+                # The same choice as ``fuse``, whose order this check proves through that node
+                instances = first_instances[name][:1] if name in second_output_by_data else first_instances[name]
+                return StateFusionExtended.merge_instance(instances, first_state, second_state, read, facts)
 
             # NOTE: parallel resulting components used to re-ask "does either state hold a Tasklet
             #  with ordered side effects" here. ``state_has_side_effect_node`` above already
@@ -821,9 +823,10 @@ class StateFusionExtended(StateFusion):
                 cc_second_inputs = (
                     in_state_order(second_state, fused_cc.second_input_nodes, second_order) if cc_matches else []
                 )
-                match_nodes: dict[nodes.AccessNode, nodes.AccessNode] = {
-                    leaf_instance(match): next(n for n in cc_second_inputs if n.data == match) for match in cc_matches
-                }
+                match_nodes: dict[nodes.AccessNode, nodes.AccessNode] = {}
+                for match in cc_matches:
+                    read = next(n for n in cc_second_inputs if n.data == match)
+                    match_nodes[merged_instance(match, read)] = read
 
                 # If we have potential candidates, check if there is a
                 # path from the first write to the second write (in that
@@ -1216,21 +1219,12 @@ class StateFusionExtended(StateFusion):
 
             if len(candidates) == 0:
                 continue
-            elif len(candidates) == 1 or node.data in second_writes:
+            elif node.data in second_writes:
                 # When the second state also writes the container, the WAW check orders the first state's writers
                 # through the topologically last instance, so the read has to merge with that one
                 n = candidates[0]
             else:
-                # Choose first candidate that intersects memlets
-                for cand in candidates:
-                    if StateFusionExtended.memlets_intersect(
-                        first_state, [cand], False, second_state, [node], True, facts
-                    ):
-                        n = cand
-                        break
-                else:
-                    # No node intersects, use topologically-last node
-                    n = candidates[0]
+                n = StateFusionExtended.merge_instance(candidates, first_state, second_state, node, facts)
 
             sdutil.change_edge_src(first_state, node, n)
             sdutil.change_edge_dest(first_state, node, n)

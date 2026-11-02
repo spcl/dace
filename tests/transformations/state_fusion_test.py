@@ -1,9 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import networkx as nx
 import numpy as np
+import pytest
 
 import dace
 from dace.transformation.interstate import StateFusion
+from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
 
 # Inter-state condition tests
@@ -728,6 +730,32 @@ def test_a_read_behind_an_ordering_edge_is_a_read():
     assert not StateFusion.can_be_applied_to(sdfg, first_state=first, second_state=second)
 
 
+@pytest.mark.parametrize("fusion", [StateFusion, StateFusionExtended])
+def test_a_write_ordered_only_through_the_instance_a_read_skips_keeps_the_states(fusion):
+    """``c[0]`` reaches the second state's write through ``x[1]``, but the read of ``x[0]`` merges with the instance
+    written first, off that path: fused, nothing orders the two stores to ``c[0]``."""
+    sdfg = dace.SDFG(f"instance_skipped_{fusion.__name__}")
+    sdfg.add_array("x", [2], dace.float64)
+    sdfg.add_array("c", [2], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    x_first, c_first = first.add_access("x"), first.add_access("c")
+    store_x = first.add_tasklet("store_x", {}, {"o": None}, "o = 1")
+    first.add_edge(store_x, "o", x_first, None, dace.Memlet("x[0]"))
+    store_c = first.add_tasklet("store_c", {}, {"o": None}, "o = 2")
+    first.add_edge(store_c, "o", c_first, None, dace.Memlet("c[0]"))
+    combine = first.add_tasklet("combine", {"a": None, "b": None}, {"o": None}, "o = a + b")
+    first.add_edge(x_first, None, combine, "a", dace.Memlet("x[0]"))
+    first.add_edge(c_first, None, combine, "b", dace.Memlet("c[1]"))
+    first.add_edge(combine, "o", first.add_write("x"), None, dace.Memlet("x[1]"))
+    second = sdfg.add_state_after(first, "second")
+    update = second.add_tasklet("update", {"q": None}, {"o": None}, "o = q + 50")
+    second.add_edge(second.add_read("x"), None, update, "q", dace.Memlet("x[0]"))
+    second.add_edge(update, "o", second.add_write("c"), None, dace.Memlet("c[0]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated([fusion], validate=False) == 0
+
+
 if __name__ == "__main__":
     test_state_fusion_leaves_a_derivable_region_entry_implicit()
     test_state_fusion_pins_the_region_entry_the_region_cannot_derive()
@@ -756,3 +784,5 @@ if __name__ == "__main__":
     test_copy_without_other_subset_is_compared_at_its_destination()
     test_one_writer_ordered_through_a_match_does_not_order_its_sibling()
     test_a_read_behind_an_ordering_edge_is_a_read()
+    test_a_write_ordered_only_through_the_instance_a_read_skips_keeps_the_states(StateFusion)
+    test_a_write_ordered_only_through_the_instance_a_read_skips_keeps_the_states(StateFusionExtended)
