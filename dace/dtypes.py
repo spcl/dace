@@ -528,6 +528,8 @@ def max_value(dtype: typeclass):
         return numpy.iinfo(nptype).max
     elif numpy.issubdtype(nptype, numpy.floating):
         return numpy.finfo(nptype).max
+    elif dtype in FLOAT_TYPES:
+        return ml_dtypes.finfo(nptype).max
 
     raise TypeError(f'Unsupported type "{dtype}" for maximum')
 
@@ -541,6 +543,8 @@ def min_value(dtype: typeclass):
         return numpy.iinfo(nptype).min
     elif numpy.issubdtype(nptype, numpy.floating):
         return numpy.finfo(nptype).min
+    elif dtype in FLOAT_TYPES:
+        return ml_dtypes.finfo(nptype).min
 
     raise TypeError(f'Unsupported type "{dtype}" for minimum')
 
