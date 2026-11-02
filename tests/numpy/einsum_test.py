@@ -698,6 +698,30 @@ def test_an_interleaving_contraction_of_device_tensors_keeps_its_product_on_the_
     assert set(tensors.values()) == {gpu}, tensors
 
 
+def test_a_three_operand_contraction_whose_path_step_is_not_a_pair() -> None:
+    """spcl/dace#2756: under ``memory_limit="max_input"`` opt_einsum may contract three operands in one step, when
+    every pairwise intermediate outgrows the largest operand (seissol's ``dkl,blq,dqp->bkp``). That step is one nest
+    over its operands, not a pair."""
+    NB, NBF, NQ, ND = (dace.symbol(s, positive=True) for s in ("NB", "NBF", "NQ", "ND"))
+
+    @dace.program
+    def three_operands(
+        kDivM: dace.float64[ND, NBF, NBF],
+        I: dace.float64[NB, NBF, NQ],
+        star: dace.float64[ND, NQ, NQ],
+        upd: dace.float64[NB, NBF, NQ],
+    ):
+        upd[:] = np.einsum("dkl,blq,dqp->bkp", kDivM, I, star)
+
+    sdfg = three_operands.to_sdfg()
+    sdfg.validate()
+    rng = np.random.default_rng(5)
+    kDivM, I, star = rng.random((3, 4, 4)), rng.random((6, 4, 5)), rng.random((3, 5, 5))
+    upd = np.zeros((6, 4, 5))
+    sdfg(kDivM=kDivM, I=I, star=star, upd=upd, NB=6, NBF=4, NQ=5, ND=3)
+    assert np.allclose(upd, np.einsum("dkl,blq,dqp->bkp", kDivM, I, star))
+
+
 if __name__ == "__main__":
     test_an_interleaving_contraction_of_device_tensors_keeps_its_product_on_the_device()
     test_general_einsum()
@@ -725,3 +749,4 @@ if __name__ == "__main__":
     test_a_contraction_in_no_gemm_order_transposes_the_small_operand()
     test_a_contraction_whose_output_interleaves_the_operands_transposes_the_product()
     test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds_beta_into_the_transpose()
+    test_a_three_operand_contraction_whose_path_step_is_not_a_pair()
