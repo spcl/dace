@@ -67,7 +67,7 @@ def test_config_propagation_prunes_every_config_branch(tmp_path):
     dispatch = [b for b in root.nodes() if isinstance(b, ConditionalBlock)]
     # One branch per variant, then the generic fallback for values outside the domains
     assert len(dispatch) == 1 and len(dispatch[0].branches) == len(MAPS) + 1
-    variants = sorted(f"velocity_tendencies_lvn_only_{l}_istep_{s}.sdfgz" for l, s in MAPS)
+    variants = sorted(f"velocity_tendencies_lvn_only_{l}_istep_{s}_ldeepatmo_0_lextra_diffu_1.sdfgz" for l, s in MAPS)
     assert sorted(p.name for p in out.iterdir()) == sorted(variants + ["velocity_tendencies_generic.sdfgz"])
     for name in variants:
         variant = dace.SDFG.from_file(str(out / name))

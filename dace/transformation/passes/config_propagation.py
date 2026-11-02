@@ -9,13 +9,14 @@ returned root SDFG keeps the original signature and calls the matching variant, 
 import copy
 import itertools
 import os
+import re
 from collections.abc import Sequence
 from typing import Any
 
 from dace import SDFG, data, nodes, properties
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
-from dace.sdfg.utils import specialize_scalars, specialize_symbols
+from dace.sdfg.utils import nested_bindings, specialize_scalars, specialize_symbols
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
@@ -34,9 +35,8 @@ def staged_copies(sdfg: SDFG, names: dict[str, Value]) -> dict[str, Value]:
         for node in state.data_nodes():
             for edge in state.in_edges(node):
                 src = edge.src
-                if isinstance(src, nodes.AccessNode) and src.data in names:
-                    copied.setdefault(node.data, names[src.data])
-                else:
+                plain = isinstance(src, nodes.AccessNode) and src.data in names and edge.data.wcr is None
+                if not plain or copied.setdefault(node.data, names[src.data]) != names[src.data]:
                     other_writes.add(node.data)
     return {
         name: val
@@ -52,12 +52,19 @@ def specialize_config(sdfg: SDFG, values: dict[str, Value]) -> None:
     array argument stays on the signature, since callers pass its buffer; its reads go through a staged scalar, and
     that scalar -- like any transient a frontend already staged from a configuration container -- takes the value.
 
-    :raises ValueError: If the SDFG writes a configuration container, whose value would be lost.
+    :raises ValueError: If a value would be lost: the SDFG writes a container or assigns a symbol, or a container
+                        holds more than one element.
     """
     containers = {name: val for name, val in values.items() if name in sdfg.arrays}
     written = sorted(containers.keys() & sdfg.read_and_write_sets()[1])
     if written:
         raise ValueError(f"Configuration containers are not constant, the SDFG writes {written}")
+    too_big = sorted(name for name in containers if sdfg.arrays[name].total_size != 1)
+    if too_big:
+        raise ValueError(f"Configuration containers hold more than one element: {too_big}")
+    rebound = sorted((values.keys() - containers.keys()) & nested_bindings(sdfg))
+    if rebound:
+        raise ValueError(f"Configuration symbols are not constant, the SDFG assigns {rebound}")
     specialize_symbols(sdfg, {name: val for name, val in values.items() if name not in containers})
     arrays = {name for name in containers if isinstance(sdfg.arrays[name], data.Array)}
     if arrays:
@@ -116,9 +123,10 @@ class ConfigPropagation(ppl.Pass):
         names = list(self.domains)
         return [dict(zip(names, combo)) for combo in itertools.product(*(self.domains[n] for n in names))]
 
-    def build_variant(self, sdfg: SDFG, values: dict[str, Value], selecting: list[str]) -> SDFG:
+    def build_variant(self, sdfg: SDFG, values: dict[str, Value]) -> SDFG:
         variant = copy.deepcopy(sdfg)
-        variant.name = "_".join([sdfg.name] + [f"{name}_{values[name]}" for name in selecting])
+        # Singletons too: two runs into one directory must not overwrite each other's variants
+        variant.name = re.sub(r"\W", "_", "_".join([sdfg.name] + [f"{name}_{val}" for name, val in values.items()]))
         specialize_variant(variant, values)
         return variant
 
@@ -148,7 +156,6 @@ class ConfigPropagation(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> SDFG:
         """:return: The dispatcher SDFG; the variants are written to ``output_dir``."""
-        selecting = [name for name, vals in self.domains.items() if len(vals) > 1]
         root = SDFG(sdfg.name)
         for name, desc in sdfg.arrays.items():
             if not desc.transient:
@@ -160,10 +167,7 @@ class ConfigPropagation(ppl.Pass):
         cond = ConditionalBlock("config_dispatch")
         root.add_node(cond, is_start_block=True)
         # Every domain is tested, singletons too: a variant is only correct for the values baked into it
-        calls = [
-            (self.build_variant(sdfg, values, selecting), config_condition(sdfg, values))
-            for values in self.variant_values()
-        ]
+        calls = [(self.build_variant(sdfg, values), config_condition(sdfg, values)) for values in self.variant_values()]
         generic = copy.deepcopy(sdfg)
         generic.name = f"{sdfg.name}_generic"
         calls.append((generic, None))

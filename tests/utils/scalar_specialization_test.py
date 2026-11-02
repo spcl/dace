@@ -516,6 +516,21 @@ def test_interacting_values_reach_a_folded_tasklet():
     assert tasklet.code.as_string.strip() == "o = 2.0"
 
 
+def test_map_parameter_shadows_the_symbol():
+    sdfg = dace.SDFG("map_parameter_name")
+    sdfg.add_symbol("k", dace.int32)
+    sdfg.add_array("out", [3], dace.int32)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet, entry, exit_node = state.add_mapped_tasklet(
+        "loop", {"k": "0:3"}, {}, "o = k", {"o": dace.Memlet("out[k]")}, external_edges=True
+    )
+
+    specialize_symbols(sdfg, {"k": 5})
+
+    sdfg.validate()
+    assert entry.map.params == ["k"] and "k" in tasklet.code.as_string
+
+
 if __name__ == "__main__":
     test_nested_sdfg()
     test_integer_value_keeps_floating_point_division()
@@ -544,3 +559,4 @@ if __name__ == "__main__":
     test_float32_value_keeps_its_width()
     test_scalar_used_as_a_subscript_inside_a_nest()
     test_interacting_values_reach_a_folded_tasklet()
+    test_map_parameter_shadows_the_symbol()

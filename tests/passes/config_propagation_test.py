@@ -8,7 +8,7 @@ import pytest
 
 import dace
 from dace.sdfg.state import ConditionalBlock
-from dace.transformation.passes.config_propagation import ConfigPropagation, specialize_config
+from dace.transformation.passes.config_propagation import ConfigPropagation, specialize_config, staged_copies
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 
 N = dace.symbol("N")
@@ -55,7 +55,7 @@ def test_variants_and_dispatcher(tmp_path):
 
     generic = f"{sdfg.name}_generic.sdfgz"
     files = sorted(os.listdir(tmp_path))
-    variants = sorted(f"{sdfg.name}_lvn_only_{l}_istep_{s}.sdfgz" for l in (0, 1) for s in (1, 2))
+    variants = sorted(f"{sdfg.name}_lvn_only_{l}_istep_{s}_ldeep_0.sdfgz" for l in (0, 1) for s in (1, 2))
     assert files == sorted(variants + [generic])
     for f in variants:
         variant = dace.SDFG.from_file(str(tmp_path / f))
@@ -95,7 +95,8 @@ def test_singleton_domains_call_one_variant(tmp_path):
     """With nothing left to choose, the dispatcher has one variant and the generic fallback."""
     sdfg = tendencies.to_sdfg(simplify=True)
     root = ConfigPropagation({"lvn_only": [1], "istep": [2], "ldeep": [1]}, str(tmp_path)).apply_pass(sdfg, {})
-    assert sorted(os.listdir(tmp_path)) == sorted([f"{sdfg.name}.sdfgz", f"{sdfg.name}_generic.sdfgz"])
+    only = f"{sdfg.name}_lvn_only_1_istep_2_ldeep_1.sdfgz"
+    assert sorted(os.listdir(tmp_path)) == sorted([only, f"{sdfg.name}_generic.sdfgz"])
     (dispatch,) = [b for b in root.nodes() if isinstance(b, ConditionalBlock)]
     assert len(dispatch.branches) == 2 and dispatch.branches[-1][0] is None
 
@@ -136,3 +137,61 @@ def test_written_configuration_is_refused():
 
     with pytest.raises(ValueError, match="flag"):
         specialize_config(sdfg, {"flag": 0})
+
+
+def flag_copied_to_transient(two_sources: bool) -> dace.SDFG:
+    sdfg = dace.SDFG("staged_mixed")
+    for name in ("x", "y", "res"):
+        sdfg.add_array(name, [1], dace.int32)
+    sdfg.add_scalar("t", dace.int32, transient=True)
+    state = sdfg.add_state(is_start_block=True)
+    held = state.add_access("t")
+    state.add_edge(state.add_read("x"), None, held, None, dace.Memlet("x[0] -> [0]"))
+    if two_sources:
+        state.add_edge(state.add_read("y"), None, held, None, dace.Memlet("y[0] -> [0]"))
+    tasklet = state.add_tasklet("use", {"a": None}, {"o": None}, "o = a")
+    state.add_edge(held, None, tasklet, "a", dace.Memlet("t"))
+    state.add_edge(tasklet, "o", state.add_write("res"), None, dace.Memlet("res[0]"))
+    return sdfg
+
+
+def test_staged_copy_of_two_values_is_not_baked():
+    assert staged_copies(flag_copied_to_transient(True), {"x": 0, "y": 1}) == {}
+    assert staged_copies(flag_copied_to_transient(False), {"x": 0}) == {"t": 0}
+
+
+def test_staged_reduction_is_not_baked():
+    sdfg = flag_copied_to_transient(False)
+    for edge in sdfg.start_block.edges():
+        if edge.data.data == "x":
+            edge.data.wcr = "lambda a, b: a + b"
+
+    assert staged_copies(sdfg, {"x": 0}) == {}
+
+
+def test_multi_element_configuration_is_refused():
+    sdfg = dace.SDFG("element_flag")
+    sdfg.add_array("cfg", [3], dace.int32)
+    sdfg.add_state(is_start_block=True)
+
+    with pytest.raises(ValueError, match="cfg"):
+        specialize_config(sdfg, {"cfg": 7})
+
+
+def test_reassigned_symbol_is_refused():
+    sdfg = dace.SDFG("reassigned_symbol")
+    sdfg.add_symbol("k", dace.int32)
+    first = sdfg.add_state(is_start_block=True)
+    sdfg.add_state_after(first, assignments={"k": "k + 1"})
+
+    with pytest.raises(ValueError, match="k"):
+        specialize_config(sdfg, {"k": 1})
+
+
+def test_singleton_values_name_the_variant(tmp_path):
+    sdfg = tendencies.to_sdfg()
+    ConfigPropagation({"ldeep": [0]}, str(tmp_path)).apply_pass(sdfg, {})
+    ConfigPropagation({"ldeep": [1]}, str(tmp_path)).apply_pass(sdfg, {})
+
+    names = sorted(os.listdir(tmp_path))
+    assert f"{sdfg.name}_ldeep_0.sdfgz" in names and f"{sdfg.name}_ldeep_1.sdfgz" in names
