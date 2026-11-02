@@ -5523,8 +5523,15 @@ class ProgramVisitor(ExtNodeVisitor):
         # Nested scopes resolve free symbols through globals
         self.globals[name] = sym
         state = self._add_state(f"promote_{scalar}_to_{name}")
-        # A size-1 array reads by subscript, or the assignment would take its pointer
-        rhs = scalar if isinstance(desc, data.Scalar) else f"{scalar}[{', '.join(['0'] * len(desc.shape))}]"
+        rhs = scalar
+        if not isinstance(desc, data.Scalar):
+            # A size-1 array reads by subscript, or the assignment would take its pointer. Only an access node binds a
+            # view, so an edge reads the array behind it.
+            subset = subsets.Range([(0, 0, 1)] * len(desc.shape))
+            while scalar in self.views:
+                scalar, memlet = self.views[scalar]
+                subset = memlet.subset.compose(subset)
+            rhs = f"{scalar}[{', '.join(map(str, subset.min_element()))}]"
         state.parent_graph.in_edges(state)[0].data.assignments = {name: rhs}
         return sym
 
