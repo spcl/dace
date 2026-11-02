@@ -15,7 +15,7 @@ from .optional_arrays import OptionalArrayInference
 from .persistent_transients import MakeTransientsPersistent
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
 from .prune_symbols import RemoveUnusedSymbols
-from .scalar_fission import ArrayFission, PrivatizeArrays, PrivatizeScalars, ScalarFission
+from .scalar_fission import ArrayFission, PrivatizeArrays, PrivatizeScalars, PrivatizeScalarsAndArrays, ScalarFission
 from .region_boundary_states import RegionBoundaryStates
 from .scalar_to_symbol import ScalarToSymbolPromotion
 from .length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays

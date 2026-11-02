@@ -623,7 +623,7 @@ def test_an_access_in_two_write_scopes_leaves_the_scalar_whole():
     end.add_edge(tasklet, "o", end.add_write("R"), None, dace.Memlet("R[0]"))
     scopes = {"t": {writes[0]: {writes[0], (end, read)}, writes[1]: {writes[1], (end, read)}}}
 
-    renamed = ScalarFission().apply_pass(sdfg, {"ScalarWriteShadowScopes": {sdfg.cfg_id: scopes}})
+    renamed = ScalarFission().apply_pass(sdfg, {"FissionableScalarWriteShadowScopes": {sdfg.cfg_id: scopes}})
     assert not renamed, f"an access shared by two scopes must not be versioned, got {renamed}"
     assert read.data == "t" and all(node.data == "t" for _, node in writes)
 

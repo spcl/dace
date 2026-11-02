@@ -1658,6 +1658,17 @@ def fully_overwritten_arrays(sdfg: SDFG) -> set[str]:
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
+class FissionableScalarWriteShadowScopes(ScalarWriteShadowScopes):
+    """Write-shadow scopes of the size-1 transients only, the containers ``ScalarFission`` may touch."""
+
+    CATEGORY: str = "Analysis"
+
+    def shadow_candidates(self, sdfg: SDFG) -> Iterable[str]:
+        return [name for name, desc in sdfg.arrays.items() if desc.transient and desc.total_size == 1]
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
 class ArrayWriteShadowScopes(ScalarWriteShadowScopes):
     """
     Write-shadow scopes for transient arrays that every write provably overwrites in full.

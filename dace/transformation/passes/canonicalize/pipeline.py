@@ -149,7 +149,7 @@ from dace.transformation.passes.promote_constant_index_access import PromoteCons
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
-from dace.transformation.passes.scalar_fission import PrivatizeArrays, PrivatizeScalars
+from dace.transformation.passes.scalar_fission import PrivatizeScalars, PrivatizeScalarsAndArrays
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -692,8 +692,7 @@ def clean_anti_dependency_units() -> list[ppl.Pass]:
     made by the lift (``ParallelizeLoops.expand_buffers``), for the loops refused on it. The read-ahead WAR a snapshot breaks is the other half, ``BreakAntiDependence`` in :func:`derive_parallelism`: its
     offset proof reads guard symbols that only SymbolSSA and propagation there settle."""
     return [
-        PrivatizeScalars(),
-        PrivatizeArrays(),
+        PrivatizeScalarsAndArrays(),
         PromoteConstantIndexAccess(),
     ]
 
@@ -902,7 +901,7 @@ def derive_parallelism(
             (label, BestEffortLoopPeeling(peel_limit, segments=segments, validate=validate)),
         ]
     s += [(label, unit) for unit in dead_dataflow_units()]
-    s += [(label, PrivatizeScalars()), (label, PrivatizeArrays())]
+    s += [(label, PrivatizeScalarsAndArrays())]
     s += [(label, PropagateSymbols())]
     # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted copy's
     # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
@@ -923,8 +922,7 @@ def derive_parallelism(
         (label, FuseChainedScalarReductions()),
         (label, AccumulatorCopyChainToWCR()),
         (label, ParallelizeLoops(propagate=False, hold_sibling_chains=True)),
-        (label, PrivatizeScalars()),
-        (label, PrivatizeArrays()),
+        (label, PrivatizeScalarsAndArrays()),
     ]
     # Inlined bodies show their in-place accumulations; as WCR they let a loop refused on them map, ahead of the
     # guarded-scatter versioning below. Either rewrite, the inlining or the WCR, can leave a loop that now maps.
@@ -942,8 +940,7 @@ def derive_parallelism(
                 ],
                 [
                     ParallelizeLoops(propagate=False, hold_sibling_chains=True),
-                    PrivatizeScalars(),
-                    PrivatizeArrays(),
+                    PrivatizeScalarsAndArrays(),
                 ],
             ),
         )
@@ -1215,7 +1212,7 @@ SETTLED_UNITS: tuple[type[ppl.Pass], ...] = (
     PropagateAndPrune,
     SymbolDedup,
     PrivatizeScalars,
-    PrivatizeArrays,
+    PrivatizeScalarsAndArrays,
 )
 
 
