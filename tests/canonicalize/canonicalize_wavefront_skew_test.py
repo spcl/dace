@@ -1287,6 +1287,28 @@ def test_wavefront_skew_assumes_a_relation_between_symbols(related):
         assert np.allclose(a, ref)
 
 
+def test_wavefront_skew_refuses_a_symbol_one_instance_hands_to_the_next():
+    """``s = f(s)`` per statement instance carries no memory access, yet orders the whole nest."""
+    sdfg = dace.SDFG("wavefront_carried_symbol")
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    sdfg.add_array("A", ["M", "M"], dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    outer = LoopRegion("outer", "u < M", "u", "u = 1", "u = u + 1")
+    sdfg.add_node(outer)
+    sdfg.add_edge(init, outer, dace.InterstateEdge(assignments={"s": "0"}))
+    inner = LoopRegion("inner", "v < M", "v", "v = 1", "v = v + 1")
+    outer.add_node(inner, is_start_block=True)
+    head = inner.add_state("head", is_start_block=True)
+    body = inner.add_state("body")
+    inner.add_edge(head, body, dace.InterstateEdge(assignments={"s": "(s * 3 + 1) % 1000"}))
+    tasklet = body.add_tasklet("t", {"x", "y"}, {"o"}, "o = x + y + s")
+    body.add_edge(body.add_read("A"), None, tasklet, "x", dace.Memlet("A[u - 1, v]"))
+    body.add_edge(body.add_read("A"), None, tasklet, "y", dace.Memlet("A[u, v - 1]"))
+    body.add_edge(tasklet, "o", body.add_write("A"), None, dace.Memlet("A[u, v]"))
+    assert WavefrontSkew().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_wavefront_skew_rewrites_to_skewed_iterators_modified_inner_lifted_to_map()
     test_wavefront_skew_value_preserving()
@@ -1333,3 +1355,4 @@ if __name__ == "__main__":
         test_lu_family_ij_wavefront_is_detected(program, with_scalar_accumulator, label)
     for related in (False, True):
         test_wavefront_skew_assumes_a_relation_between_symbols(related)
+    test_wavefront_skew_refuses_a_symbol_one_instance_hands_to_the_next()

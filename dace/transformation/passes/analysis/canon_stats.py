@@ -101,6 +101,13 @@ def remaining_outcome(loop: Any) -> str:
         return "guarded_fallback"
     if kinds.NEVER_EXAMINED in hint:
         return "never_examined"
+    # Decided, not open: a pass keeps the order on purpose, a canon rule keeps a small loop, an exit needs the order
+    if loop.pinned_sequential:
+        return "pinned"
+    if "spans SMALL symbols" in hint:
+        return "small"
+    if "loop body contains a" in hint and "StructureView" not in hint:
+        return "early_exit"
     if hint.startswith("unsure"):
         refusal = kinds.refusal_reason(loop)
         return "small" if getattr(refusal, "kind", None) is loop_to_map.Refusal.SMALL else "unknown"

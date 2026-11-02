@@ -127,12 +127,13 @@ class ParallelizeUnderConstraint(ppl.Pass):
                 condition = self.symbolic_stride_condition(loop, sd, facts)
                 if condition is None:
                     continue
-                # Confirm the only blocker is the constrained condition: LoopToMap
-                # refuses it outright but accepts permissively.
+                # Confirm the only blocker is the constrained condition: LoopToMap refuses it outright but accepts
+                # with conflicts waived on the strided targets alone; any other write or read must prove itself.
                 probe = LoopToMap()
                 if refusal is None and ParallelizeLoops().accepts(loop, probe):
                     continue
-                if not probe.can_be_applied(parent, 0, owner, permissive=True):
+                probe.contract_arrays = frozenset(self.strided_targets(loop, sd, facts))
+                if not ParallelizeLoops().accepts(loop, probe):
                     continue
 
                 # Specialize: the true branch is the loop lifted to a plain
@@ -172,6 +173,22 @@ class ParallelizeUnderConstraint(ppl.Pass):
         :param facts: Cached whole-SDFG facts of an unmutated ``sdfg``; ``None`` builds fresh ones.
         :returns: The parallel-validity condition string, or ``None``.
         """
+        found = self.stride_coefficients(loop, sdfg, facts)
+        if found is None or len(set(found.values())) != 1:
+            return None
+        return f"({next(iter(found.values()))}) != 0"
+
+    def strided_targets(self, loop: LoopRegion, sdfg: SDFG, facts: ScopeFacts | None = None) -> set[str]:
+        """The arrays :meth:`symbolic_stride_condition` proves injective: the only ones whose conflicts it answers for."""
+        return set(self.stride_coefficients(loop, sdfg, facts) or ())
+
+    def stride_coefficients(
+        self, loop: LoopRegion, sdfg: SDFG, facts: ScopeFacts | None = None
+    ) -> dict[str, str] | None:
+        """Array -> symbolic coefficient of every injective symbolic-stride write of ``loop``, keyed by SPELLING: two
+        writes can carry the same coefficient as two symbol instances. ``None`` when a write fails closed."""
+        from dace.transformation.interstate.loop_to_map import loop_varying_symbols  # avoid an import cycle
+
         if facts is None:
             facts = ScopeFacts(sdfg)
         loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
@@ -197,7 +214,8 @@ class ParallelizeUnderConstraint(ppl.Pass):
         # Symbols bound outside the loop -- a subset built only from these is genuinely
         # loop-invariant, and anything else is a relation the matcher failed to resolve.
         # Names, not symbol objects: ``SDFG.free_symbols`` is a set of strings. Built on first need.
-        coeffs: set[str] = set()
+        coeffs: dict[str, str] = {}
+        varying = loop_varying_symbols(loop)
         for (arr, key), subset in writes.items():
             # Admit an injective write: either a same-subset read-modify-write
             # (``key`` is among the array's read subsets) or a plain store (the
@@ -232,17 +250,20 @@ class ParallelizeUnderConstraint(ppl.Pass):
                     if {str(sym) for sym in expr.free_symbols} - facts.invariant_names():
                         return None
                     continue
-                coeff = as_expr(expr).coeff(as_expr(lvar))
+                # Injective for ``c != 0`` only when affine in the loop variable: ``c*i + i**2`` is not.
+                affine = symbolic.affine_coefficients(as_expr(expr), as_expr(lvar))
+                if affine is None:
+                    return None
+                coeff = affine[0]
                 # Symbolic (not provably numeric) nonzero coefficient only.
                 if coeff == 0 or not required(coeff).free_symbols:
                     continue
-                # Keyed by SPELLING: two writes can carry the same coefficient as two symbol
-                # instances (one stamped with assumptions, one not), and a set of objects would
-                # then hold "two" coefficients and refuse a loop that has exactly one.
-                coeffs.add(symbolic.symstr(coeff))
-        if len(coeffs) != 1:
-            return None
-        return f"({next(iter(coeffs))}) != 0"
+                # The guard runs before the loop, so ``c`` must hold still in it; and a second subset of the array can
+                # land on this one under ``c != 0``: ``a[c*i]`` and ``a[c*i + 1]`` collide at ``c == 1``.
+                if symbolic.free_symbol_names([coeff]).keys() & varying or sum(a == arr for a, _ in writes) > 1:
+                    return None
+                coeffs.setdefault(arr, symbolic.symstr(coeff))
+        return coeffs
 
 
 __all__ = ["ParallelizeUnderConstraint"]

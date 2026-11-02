@@ -3,7 +3,7 @@
 
 import dace
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, ReturnBlock
 from dace.sdfg.symbol_repo import program_assumptions
 from dace.transformation.passes.canonicalize.in_bounds_facts import declare_in_bounds_extents
 
@@ -35,4 +35,17 @@ def test_an_access_in_a_branch_bounds_nothing():
     arm = ControlFlowRegion("arm", sdfg=sdfg)
     guard.add_branch(CodeBlock("NZ > 3"), arm)
     write_at(arm, "NZ - 2")
+    assert declare_in_bounds_extents(sdfg) == {}
+
+
+def test_an_access_after_a_possible_return_bounds_nothing():
+    sdfg = sdfg_over("after_return")
+    guard = ConditionalBlock("guard")
+    sdfg.add_node(guard, is_start_block=True)
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    arm.add_node(ReturnBlock("leave"), is_start_block=True)
+    guard.add_branch(CodeBlock("NZ > 3"), arm)
+    after = sdfg.add_state_after(guard, "after")
+    tasklet = after.add_tasklet("one", {}, {"o"}, "o = 1")
+    after.add_edge(tasklet, "o", after.add_write("A"), None, dace.Memlet("A[NZ - 2]"))
     assert declare_in_bounds_extents(sdfg) == {}

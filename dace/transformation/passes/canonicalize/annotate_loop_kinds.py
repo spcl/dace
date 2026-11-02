@@ -304,8 +304,8 @@ def nested_bindings(
 def loop_header_names(loop: LoopRegion, mapping: dict[str, sympy.Expr]) -> set[str]:
     """The names ``loop``'s initialization, condition and update read, in the outer loop's names."""
     names: set[str] = set()
-    for code in (loop.init_statement, loop.loop_condition, loop.update_statement):
-        for name in code.get_free_symbols() if code is not None else ():  # A while loop has neither init nor update.
+    for code in loop.get_meta_codeblocks():
+        for name in code.get_free_symbols():
             names.update(s.name for s in mapping[name].free_symbols) if name in mapping else names.add(name)
     return names
 

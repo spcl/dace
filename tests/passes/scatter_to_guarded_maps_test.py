@@ -23,6 +23,7 @@ from dace.transformation.passes.parallelization.contracts.guarded_scatter import
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 N = dace.symbol("N")
+K = dace.symbol("K")
 
 # TSVC scatter kernels
 
@@ -814,6 +815,55 @@ def test_an_index_rebuilt_every_round_is_guarded_before_each_scatter(dispatch: b
     assert np.allclose(a, ref)
 
 
+@dace.program
+def scatter_columns_through_local_map(src: dace.float64[K, N], base: dace.int64[N], out: dace.float64[K, N]):
+    local = base + 1
+    box = np.zeros((K, N + 1))
+    for i in range(N):
+        box[:, local[i]] = src[:, i]
+    out[:, :] = box[:, 1:]
+
+
+@dace.program
+def fancy_scatter(src: dace.float64[N], idx: dace.int64[N], out: dace.float64[N]):
+    box = np.zeros(N)
+    box[idx] = src
+    out[:] = box * 2.0
+
+
+def test_one_index_over_fixed_slabs_is_guarded_on_the_local_index_where_it_is_used():
+    """``box[:, local[i]]``: a program-filled index between local buffers; duplicates keep the last store."""
+    sdfg = scatter_columns_through_local_map.to_sdfg(simplify=True)
+    canonicalize(sdfg)
+    checks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ScatterConflictCheck)]
+    assert len(checks) == 1, "the local index is checked once, before its loop"
+    n, k = 16, 3
+    src = np.random.default_rng(0).random((k, n))
+    for base in (np.roll(np.arange(n), 3), np.zeros(n, np.int64)):
+        expected = np.zeros((k, n + 1))
+        for i in range(n):
+            expected[:, base[i] + 1] = src[:, i]
+        out = np.zeros((k, n))
+        sdfg(src=src, base=base.astype(np.int64), out=out, N=n, K=k)
+        assert np.allclose(out, expected[:, 1:])
+
+
+def test_a_fancy_index_store_is_guarded():
+    """``box[idx] = src`` lowers to a tasklet writing through its index input."""
+    sdfg = fancy_scatter.to_sdfg(simplify=True)
+    canonicalize(sdfg)
+    assert any(isinstance(n, ScatterConflictCheck) for n, _ in sdfg.all_nodes_recursive())
+    n = 16
+    src = np.random.default_rng(0).random(n)
+    for idx in (np.roll(np.arange(n), 5), np.full(n, 2)):
+        expected = np.zeros(n)
+        for i in range(n):
+            expected[idx[i]] = src[i]
+        out = np.zeros(n)
+        sdfg(src=src, idx=idx.astype(np.int64), out=out, N=n)
+        assert np.allclose(out, 2.0 * expected)
+
+
 if __name__ == "__main__":
     test_detect_finds_single_scatter()
     test_detect_finds_each_distinct_idx_array()
@@ -873,3 +923,5 @@ def test_a_transient_scattered_through_an_index_of_an_index_is_guarded_on_both()
         out = np.zeros(n)
         sdfg(c=c, nl=nl.astype(np.int64), igk=igk.astype(np.int64), out=out, N=n)
         assert np.allclose(out, 2.0 * expected)
+    test_one_index_over_fixed_slabs_is_guarded_on_the_local_index_where_it_is_used()
+    test_a_fancy_index_store_is_guarded()

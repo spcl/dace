@@ -198,10 +198,10 @@ class ScatterToGuardedMaps(ppl.Pass):
         hoisted_names = set()
         for loop in scatter_loops:
             owner_sdfg = _owning_sdfg(sdfg, loop)
-            for idx_name, (targets, window) in _scatter_idx_targets_for_loop(loop, owner_sdfg, window_1d=True).items():
+            for idx_name, (_targets, window) in _scatter_idx_targets_for_loop(loop, owner_sdfg, window_1d=True).items():
                 if idx_name not in idx_arrays:
                     continue
-                if index_rebuilt_around(owner_sdfg, loop, idx_name):
+                if scratch_scatter(owner_sdfg, idx_name, _targets) or index_rebuilt_around(owner_sdfg, loop, idx_name):
                     rebuilt_guards.append((loop, idx_name, window))
                 else:
                     hoisted_names.add(idx_name)
@@ -499,6 +499,24 @@ def used_outside(sdfg: SDFG, region: LoopRegion) -> set[str]:
     return names
 
 
+def rediscovered_per_iteration(window: ScatterIndexSlice, region: LoopRegion) -> bool:
+    """Whether an enclosing loop computes the extent of ``window`` per iteration: a sparse row, too short to pay for a
+    check each time it runs (amg_setup's ``agg[s_indices[j]]``)."""
+    names = {str(sym) for sym in symbolic.pystr_to_symbolic(window.extent).free_symbols}
+    outer = region.parent_graph
+    while outer is not None and not isinstance(outer, SDFG):
+        if isinstance(outer, LoopRegion) and names & region_assigned_symbols(outer):
+            return True
+        outer = outer.parent_graph
+    return False
+
+
+def scratch_scatter(sdfg: SDFG, idx_name: str, targets: set[str]) -> bool:
+    """Whether a transient index array scatters into a transient: a program-filled map between local buffers, checked
+    where it is used since a guard at the entry would read it before it is filled (nfa_frontier's frontier)."""
+    return sdfg.arrays[idx_name].transient and any(sdfg.arrays[t].transient for t in targets)
+
+
 def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> set[str]:
     """Return the scatter index-array names driving an indirect WRITE in ``region``.
 
@@ -528,6 +546,8 @@ def _scatter_idx_targets_for_loop(
        non-transient array with a data-dependent (fewer accesses than the subset
        spans) memlet whose write index traces back to an integer array read at
        ``[f(i)]`` (``ext_scatter_store``, lowered from a ``dace.map`` scatter).
+    4. **Tasklet indexed write** -- ``__out[__ind] = v`` with ``__ind`` read from ``idx[f(i)]``, the index
+       remap of a NumPy ``a[idx] = v`` (vexx_k's ``facb[nl] = ...``).
 
     A 1-D index array is always included (``index slice = None`` -- the guard scans the whole
     declared array; with ``window_1d``, the window the loop reads when it classifies). A rank>=2 index array (forms 1/2 only -- form 3 has no subscript AST to
@@ -582,10 +602,9 @@ def _scatter_idx_targets_for_loop(
                 # Form 2: index array inline-subscripted inside the write subset.
                 for arr, dim_nodes in _inline_indirect_idx_arrays(e.data.subset, loop_var, sdfg).items():
                     found.setdefault(arr, dim_nodes)
-                # A transient target is guarded through arguments only: a transient index array is filled by the
-                # program, and a guard hoisted to the entry would read it before it is (nfa_frontier's frontier)
-                if desc.transient and any(sdfg.arrays[arr].transient for arr in found):
-                    continue
+                # Form 4: a tasklet writing through its index input.
+                for arr, dim_nodes in _tasklet_indexed_write(state, e, loop_var, sdfg).items():
+                    found.setdefault(arr, dim_nodes)
                 for arr, dim_nodes in found.items():
                     loop_arrays.setdefault(arr, set()).add(node.data)
                     if dim_nodes is not None:
@@ -599,6 +618,12 @@ def _scatter_idx_targets_for_loop(
         desc = sdfg.arrays[arr]
         one_dim = len(desc.shape) == 1
         dim_nodes = dim_nodes_by_arr.get(arr)
+        if one_dim and scratch_scatter(sdfg, arr, tgts):
+            # The window the loop reads, right before it: the rest of a local index array may hold nothing yet
+            window = None if dim_nodes is None else _classify_index_slice(desc, dim_nodes, region)
+            if window is not None and not rediscovered_per_iteration(window, region):
+                result[arr] = (tgts, window if window_1d else None)
+            continue
         if one_dim and (not window_1d or dim_nodes is None):
             result[arr] = (tgts, None)
             continue
@@ -901,6 +926,8 @@ def joint_scatter_writes_for_loop(region: LoopRegion, sdfg: SDFG) -> list[JointS
                     or _inline_indirect_idx_arrays(subset, loop_var, sdfg)
                 ):
                     continue  # a plain affine write -- the existing rules decide it
+                if one_index_over_fixed_slabs(subset, bindings, loop_var, varying, sdfg):
+                    continue  # one index picks the slab: the per-index guard is the exact question
                 raw = point_index_expressions(subset)
                 if raw is None:
                     return None
@@ -912,6 +939,24 @@ def joint_scatter_writes_for_loop(region: LoopRegion, sdfg: SDFG) -> list[JointS
                     return None
                 writes.append(JointScatterWrite(target=node.data, dim_exprs=tuple(exprs), mask_expr=mask))
     return writes
+
+
+def one_index_over_fixed_slabs(subset, bindings: dict, loop_var: str, varying: set[str], sdfg: SDFG) -> bool:
+    """Whether exactly one dimension of the indirect write ``subset`` depends on the iteration, as a point: every other
+    dimension is the same range in all iterations (``psic[0:nvec, gmap[i]]``), so two iterations collide exactly when
+    their indices do."""
+    moving, spanning = 0, 0
+    for begin, end, _step in subset.ndrange():
+        names = symbolic.free_symbol_names([begin, end]).keys()
+        if not names & (set(bindings) | varying | {loop_var}) and not (
+            _inline_indirect_idx_arrays(begin, loop_var, sdfg) or _inline_indirect_idx_arrays(end, loop_var, sdfg)
+        ):
+            spanning += begin != end
+            continue
+        moving += 1
+        if begin != end:
+            return False
+    return moving == 1 and spanning > 0
 
 
 def replicate_read(sdfg: SDFG, region: LoopRegion, state: SDFGState, name: str) -> nodes.AccessNode:
@@ -1368,6 +1413,33 @@ def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> dict[str, 
             idx = idx.value
         if loop_var in {n.id for n in ast.walk(idx) if isinstance(n, ast.Name)}:
             arrays.setdefault(arr, _subscript_dims(idx))
+    return arrays
+
+
+def _tasklet_indexed_write(
+    state: SDFGState, edge: MultiConnectorEdge[mm.Memlet], loop_var: str, sdfg: SDFG
+) -> dict[str, list[ast.AST]]:
+    """``{index array: subscript}`` when ``edge`` leaves a tasklet that writes ``out[conn] = ...``, ``conn`` an input
+    fed by an integer array read at ``[f(loop_var)]``."""
+    from dace.libraries.sort.nodes._helpers import is_integer_dtype
+
+    tasklet = edge.src
+    if not isinstance(tasklet, nodes.Tasklet) or tasklet.language is not dtypes.Language.Python:
+        return {}
+    code = tasklet.code.code
+    statements = code if isinstance(code, list) else []
+    connectors: set[str] = set()
+    for statement in statements:
+        for target in statement.targets if isinstance(statement, ast.Assign) else []:
+            if isinstance(target, ast.Subscript) and getattr(target.value, "id", None) == edge.src_conn:
+                connectors |= {n.id for n in ast.walk(target.slice) if isinstance(n, ast.Name)}
+    arrays: dict[str, list[ast.AST]] = {}
+    for read in state.in_edges(tasklet):
+        desc = sdfg.arrays.get(read.data.data) if not read.data.is_empty() else None
+        if read.dst_conn not in connectors or not isinstance(desc, data.Array) or not is_integer_dtype(desc.dtype):
+            continue
+        if loop_var in {str(sym) for sym in read.data.subset.free_symbols}:
+            arrays[read.data.data] = _subscript_dims(ast.parse(str(read.data.subset), mode="eval").body)
     return arrays
 
 

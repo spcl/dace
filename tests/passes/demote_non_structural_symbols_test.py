@@ -221,6 +221,34 @@ def test_a_value_assigned_once_stays_a_symbol():
     assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)) == tasklets
 
 
+def test_a_sum_a_later_branch_reads_folds_into_its_compute_state():
+    """A float accumulator a stop test reads is a symbol; demoted, its store must rejoin the sum for a reduction."""
+    sdfg = dace.SDFG("sum_then_stop")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("s", dace.float64)
+    sdfg.add_array("r", ["N"], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    sdfg.add_array("out", [1], dace.float64)
+    start = sdfg.add_state("start", is_start_block=True)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(start, loop, dace.InterstateEdge(assignments={"s": "0.0"}))
+    body = loop.add_state("body", is_start_block=True)
+    tail = loop.add_state_after(body, "tail")
+    task = body.add_tasklet("square", {"x"}, {"y"}, "y = x * x + s")
+    body.add_edge(body.add_read("r"), None, task, "x", dace.Memlet("r[i]"))
+    body.add_edge(task, "y", body.add_write("t"), None, dace.Memlet("t[0]"))
+    loop.edges_between(body, tail)[0].data.assignments["s"] = "t"
+    after = sdfg.add_state_after(loop, "after")
+    done = after.add_tasklet("store", {}, {"y"}, "y = s")
+    after.add_edge(done, "y", after.add_write("out"), None, dace.Memlet("out[0]"))
+    sdfg.validate()
+
+    assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) == 1
+    states = [b for b in loop.nodes() if isinstance(b, dace.SDFGState)]
+    assert len(states) == 1, "the load, the sum and the store of the accumulator sit in one state"
+
+
 if __name__ == "__main__":
     test_a_counter_becomes_a_scalar_and_its_loop_maps()
     test_a_demoted_value_keeps_its_arithmetic_as_written()
@@ -233,3 +261,4 @@ if __name__ == "__main__":
     test_an_index_read_inside_a_branch_condition_stays_a_symbol()
     test_a_boolean_guard_stays_a_symbol()
     test_a_float_guard_becomes_a_scalar_read_before_the_guarded_write()
+    test_a_sum_a_later_branch_reads_folds_into_its_compute_state()

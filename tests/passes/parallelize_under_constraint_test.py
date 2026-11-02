@@ -146,6 +146,28 @@ def test_symbolic_stride_condition_matches_store_and_rmw_excludes_recurrence():
     )
 
 
+@dace.program
+def strided_store_and_other_write(a: dace.float64[N], last: dace.float64[N], b: dace.float64[N]):
+    for i in range(N):
+        a[i * S] = b[i]
+        last[0] = b[i]
+
+
+@dace.program
+def two_strided_stores(a: dace.float64[N], b: dace.float64[N], d: dace.float64[N]):
+    for i in range(N):
+        a[i * S] = b[i]
+        a[i * S + 1] = d[i]
+
+
+def test_constraint_answers_only_for_its_strided_write():
+    """``S != 0`` makes ``a[S*i]`` injective; it says nothing of ``last[0]``, nor of ``a[S*i + 1]`` at ``S == 1``."""
+    for program in (strided_store_and_other_write, two_strided_stores):
+        sdfg = program.to_sdfg(simplify=True)
+        ParallelizeUnderConstraint().apply_pass(sdfg, {})
+        assert not _has_map(sdfg), f"{program.name}: the constraint does not cover this conflict"
+
+
 def test_symbolic_stride_store_specializes_if_par_else_seq():
     sdfg = symbolic_stride_store.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
@@ -219,6 +241,7 @@ if __name__ == "__main__":
     test_symbolic_stride_specializes_if_par_else_seq()
     test_value_preserving_under_nonzero_stride()
     test_symbolic_stride_condition_matches_store_and_rmw_excludes_recurrence()
+    test_constraint_answers_only_for_its_strided_write()
     test_symbolic_stride_store_specializes_if_par_else_seq()
     test_value_preserving_symbolic_stride_store()
     test_assume_constraint_emits_only_map()
