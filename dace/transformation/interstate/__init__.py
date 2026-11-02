@@ -24,3 +24,4 @@ from .move_if_into_map import MoveIfIntoMap
 from .trivial_loop_elimination import TrivialLoopElimination
 from .multistate_inline import InlineMultistateSDFG
 from .move_assignment_outside_if import MoveAssignmentOutsideIf
+from .if_extraction import IfExtraction
