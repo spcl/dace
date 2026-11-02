@@ -11,8 +11,8 @@ plain :class:`~dace.transformation.pass_pipeline.Pass` objects so the
 - :class:`BestEffortLoopPeeling` -- index-set-split a loop at a point DERIVED from its body
   (an ``if i == x`` guard, a broadcast read's conflicting index), and peel a wrapping body
   modulo to its floor-correct affine form, pruning the now-dead boundary guard from each
-  segment. ``peel_limit`` bounds the modulo peel and underwrites the large-trip-count
-  assumption the split's range proofs lean on (0 disables the pass).
+  segment. ``peel_limit`` bounds the modulo peel and its large-trip-count assumption (0
+  disables the pass).
 
 Transformation classes are imported lazily inside the methods: importing them at
 module load would cycle (this package is imported by the transformations those
@@ -489,8 +489,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         dtype=int,
         default=DEFAULT_PEEL_LIMIT,
         desc="Bounds the wrapping-modulo peel to 1..peel_limit iterations (front/back/both), keeping "
-        "the smallest peel that folds the wrap away. Also underwrites the split range proofs: a loop "
-        "worth peeling by k <= peel_limit is assumed to run more than peel_limit times (0 disables).",
+        "the smallest peel that folds the wrap away: a loop worth peeling by k <= peel_limit is assumed to "
+        "run more than peel_limit times (0 disables).",
     )
 
     validate = properties.Property(
@@ -1130,42 +1130,19 @@ class BestEffortLoopPeeling(ppl.Pass):
         if start is None or end is None:
             return None
         sides = set()
-        if symbolic.simplify(x - start) != 0 and not self._nonneg_in_loop(loop, end + 1 - x, start, end):
+        if symbolic.simplify(x - start) != 0 and not self._nonneg_in_loop(loop, end + 1 - x):
             sides.add("before")
-        if symbolic.simplify(x - end) != 0 and not self._nonneg_in_loop(loop, x - start, start, end):
+        if symbolic.simplify(x - end) != 0 and not self._nonneg_in_loop(loop, x - start):
             sides.add("after")
         return frozenset(sides)
 
-    def _nonneg_in_loop(self, loop: LoopRegion, expr, start, end) -> bool:
-        """Whether ``expr >= 0`` holds -- either unconditionally
-        (:meth:`_provably_nonneg`) or under the same large-trip-count assumption
-        :meth:`_nonneg_assuming_large_modulus` already encodes: a symbolic loop
-        being peeled/split by ``k <= peel_limit`` iterations presupposes it runs
-        more than ``peel_limit`` times, so its trip count ``end - start + 1``
-        exceeds ``peel_limit``.
-
-        A near-boundary split point ``x`` carving off ``c <= peel_limit`` tail
-        iterations has ``x - start = trip - 1 - c``, non-negative once
-        ``trip > peel_limit`` -- so its range-membership is statically true and
-        needs no ``if start <= x`` runtime guard (the ext_peel_multi_back back-peel
-        at ``x = LEN_1D - 2``: ``x - start = LEN_1D - 2 = trip - 2 >= 0`` for
-        ``trip = LEN_1D > peel_limit``). Applying the assumption with the trip
-        count as the modulus (and NO wrap offsets, so no offset facts are relied
-        on) proves only such affine-in-trip boundary points; a point leaning on a
-        free offset (``N - K``) is left guarded. A non-affine floor/ceil point
-        (``N // 2``) falls through to :meth:`provably_nonneg_symbolic`, which
-        bounds it from the nonnegative-symbol contract."""
+    def _nonneg_in_loop(self, loop: LoopRegion, expr) -> bool:
+        """Whether ``expr >= 0`` holds, unconditionally (:meth:`_provably_nonneg`) or from the
+        nonnegative-symbol contract and floor/ceil bounds (:meth:`provably_nonneg_symbolic`, the ``x =
+        int_floor(N, 2)`` split points). A large trip count is not assumed: a split point ``N - 3`` lies below
+        the start of a loop that runs once, and ``[x + 1, end]`` would then run an iteration the loop never had."""
         if self._provably_nonneg(expr):
             return True
-        import sympy
-
-        trip = symbolic.simplify(end - start + 1)
-        if isinstance(trip, sympy.Symbol) and self._nonneg_assuming_large_modulus(expr, trip) is not None:
-            return True
-        # Floor/ceil-of-a-nonnegative-bound split points (``x = int_floor(N, 2)``) are not affine in
-        # the trip count, so the large-modulus path leaves them guarded; the symbolic nonnegativity
-        # prover discharges them from the canonicalization nonnegative-symbol contract + floor/ceil
-        # bounds. See :meth:`provably_nonneg_symbolic`.
         return self.provably_nonneg_symbolic(expr, SymbolResolver().facts_at(loop.parent_graph))
 
     def _specialize_index_set_split(
@@ -1928,8 +1905,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         and ``_split_loop_at`` drops whichever side is empty -- so a point ON a boundary yields
         a peel of one, which is why there is no separate peel stage. The carve regroups the
         loop's own iterations only while ``start <= x <= end``, and a loop-invariant ``x`` need
-        not satisfy it (a free ``K`` in ``if i == K``), so an unprovable membership is emitted
-        as ``if (start <= x <= end) { split } else { original loop }`` rather than assumed.
+        not satisfy it (a free ``K`` in ``if i == K``), so an unproven side is clamped to the loop's
+        own bound, or the split guarded when only bare bounds map, rather than assumed.
 
         Next a wrapping-modulo peel fixes a boundary that reads/writes the wrong element under
         C's truncated ``%`` -- a correctness fix, so it runs even when the loop already maps.
@@ -1947,8 +1924,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         applied = 0
         # 1. Index-set splitting for interior equality guards. The split only regroups the loop's
         #    own iterations while the split point lies inside the range, which a loop-invariant
-        #    point does not have to (``if i == K`` with a free ``K``), so an unprovable membership
-        #    becomes the `if in-range: split else: original loop` branch condition.
+        #    point does not have to (``if i == K`` with a free ``K``): see _specialize_index_set_split.
         for loop in list(_loops(sdfg)):
             found = self._best_split_for(loop, sdfg)
             if found is None:
