@@ -616,6 +616,13 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         self._scope_dict_tochildren_cached = None
         self._scope_tree_cached = None
         self._scope_leaves_cached = None
+        self._entry_nodes_cached = None
+
+    def entry_nodes(self) -> list[nd.EntryNode]:
+        """The scope entries of this state, in node order. Cached with the scope dict: do not modify the result."""
+        if self._entry_nodes_cached is None:
+            self._entry_nodes_cached = [node for node in self.nodes() if isinstance(node, nd.EntryNode)]
+        return self._entry_nodes_cached
 
     def scope_tree(self) -> dict[None | nd.Node, "dace.sdfg.scope.ScopeTree"]:
         """Get the scope trees.
