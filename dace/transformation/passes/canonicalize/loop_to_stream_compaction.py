@@ -359,7 +359,8 @@ class LoopToStreamCompaction(ppl.Pass):
                 if not (isinstance(blk, SDFGState) and blk.number_of_nodes() == 0):
                     return None  # a non-empty tail would run before phase 3's guard on the copy
             levels.append(NestLevel(loop=cur, start=start, trip=trip, preamble=chain[:pos], child=child))
-            outer_vars.append(cur.loop_variable)
+            # A bound assigned in this level's preamble varies per iteration just as its iterator does
+            outer_vars += [cur.loop_variable, *(k for e in cur.edges() for k in e.data.assignments)]
             if isinstance(child, ConditionalBlock):
                 return tuple(levels), child
             cur = child
