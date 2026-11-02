@@ -112,6 +112,7 @@ from dace.libraries.standard.nodes import FillLibraryNode, MergeLibraryNode
 from dace.sdfg import memlet_utils, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
+from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     BreakBlock,
@@ -281,17 +282,30 @@ def fill_as_one_map(entry: nodes.MapEntry, state: SDFGState) -> nodes.MapEntry |
 
 
 def reads_by_data(sdfg: SDFG) -> dict[str, list[subsets.Subset | None]]:
-    """Every read of every data container of ``sdfg`` (not of its nests), as the subset it reads; an
-    accumulating write reads too."""
+    """Every read of every data container of ``sdfg`` (not of its nests), as the subset it reads over the
+    maps around it; an accumulating write reads too."""
     reads: dict[str, list[subsets.Subset | None]] = {}
+    facts = sdfg.facts()
+
+    def over_scopes(subset: subsets.Subset | None, node: nodes.AccessNode, scope: dict) -> subsets.Subset | None:
+        memlet = Memlet(data=node.data, subset=subset)
+        entry = scope[node]
+        while entry is not None and subset is not None:
+            memlet = propagate_subset([memlet], node.desc(sdfg), entry.map.params, entry.map.range, facts)
+            entry = scope[entry]
+        return memlet.subset
+
     for state in sdfg.states():
+        scope = state.scope_dict()
         for node in state.data_nodes():
             for edge in state.out_edges(node):
                 if not edge.data.is_empty():
-                    reads.setdefault(node.data, []).append(edge.data.get_src_subset(edge, state))
+                    subset = edge.data.get_src_subset(edge, state)
+                    reads.setdefault(node.data, []).append(over_scopes(subset, node, scope))
             for edge in state.in_edges(node):
                 if edge.data.wcr is not None:
-                    reads.setdefault(node.data, []).append(edge.data.get_dst_subset(edge, state))
+                    subset = edge.data.get_dst_subset(edge, state)
+                    reads.setdefault(node.data, []).append(over_scopes(subset, node, scope))
     return reads
 
 

@@ -36,7 +36,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNumThreads
-from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion
+from dace.transformation.passes.cpu_specialization.hoist_parallel_region import HoistParallelRegion, narrow_whole_fills
 from dace.transformation.passes.cpu_specialization.strip_mine_interchange import StripMineInterchange
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 from tests.corpus.tsvc import tsvc
@@ -336,6 +336,31 @@ def test_sequential_map_around_a_parallel_map_is_refused():
     outer.add_edge(outer.nodes()[0], nest, dace.InterstateEdge())
     sdfg.validate()
     assert_declined(sdfg, "a Sequential map with a parallel map inside breaks replication-freedom (H)")
+
+
+def test_a_read_inside_a_map_narrows_a_whole_fill_over_the_map_range():
+    """A node inside a map (an in-place fusion leaves them) reads ``t[i]``: the hull is the map's range, not ``i``."""
+    from dace.libraries.standard.nodes.fill import FillLibraryNode
+
+    sdfg = dace.SDFG("fill_read_in_scope")
+    sdfg.add_transient("t", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    fill_state = sdfg.add_state("fill")
+    fill = FillLibraryNode("fill_t", value=3.0)
+    fill_state.add_node(fill)
+    written = fill_state.add_edge(
+        fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, fill_state.add_access("t"), None, dace.Memlet("t[0:N]")
+    )
+    state = sdfg.add_state_after(fill_state, "read")
+    entry, exit_node = state.add_map("read", {"i": "K:N - 1"})
+    inner = state.add_access("t")
+    state.add_nedge(entry, inner, dace.Memlet())
+    copy_value = state.add_tasklet("copy_value", {"x"}, {"y"}, "y = x")
+    state.add_edge(inner, None, copy_value, "x", dace.Memlet("t[i]"))
+    state.add_memlet_path(copy_value, exit_node, state.add_access("b"), src_conn="y", memlet=dace.Memlet("b[i]"))
+    sdfg.validate()
+    narrow_whole_fills(sdfg)
+    assert str(written.data.subset) == "K:N - 1"
 
 
 def test_top_level_fill_in_the_loop_is_expanded_and_shared_out():
@@ -1346,6 +1371,7 @@ if __name__ == "__main__":
     test_nested_sdfg_inside_the_map_keeps_its_parent_pointers(pytest.MonkeyPatch())
     test_top_level_sequential_map_in_the_loop_is_shared_out()
     test_sequential_map_around_a_parallel_map_is_refused()
+    test_a_read_inside_a_map_narrows_a_whole_fill_over_the_map_range()
     test_top_level_fill_in_the_loop_is_expanded_and_shared_out()
     test_a_fill_expanding_to_a_map_nest_shares_out_only_its_outer_map()
     test_a_loop_over_small_maps_only_gets_no_team()

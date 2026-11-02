@@ -170,8 +170,8 @@ class FuseMaps(ppl.Pass):
     relaxed_dataflow = properties.Property(
         dtype=bool,
         default=False,
-        desc="If `True` both Maps may update one container in place and a shared intermediate may be accessed further "
-        "down its dataflow, whatever `strict_dataflow` says.",
+        desc="If `True` both Maps may update one container in place, and an ordering edge may join them, "
+        "whatever `strict_dataflow` says.",
     )
     assume_always_shared = properties.Property(
         dtype=bool,
