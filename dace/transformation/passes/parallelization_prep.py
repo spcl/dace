@@ -1765,9 +1765,11 @@ class BestEffortLoopPeeling(ppl.Pass):
                     peeled = count * len(self._peel_sides(loop, count, direction))
                     distance = _as_symbolic(loop_analysis.get_loop_end(loop)) - _as_symbolic(start)
                     trip = symbolic.simplify(distance / loop_analysis.get_loop_stride(loop) + 1)
+                    # Below a single peeled iteration the loop runs nothing, so only a fold's relation needs it.
+                    needs_fallback = bool(relations) or peeled > 1
                     if not self._provably_nonneg(trip - peeled):
                         relations.add(sympy.LessThan(peeled, trip))
-                    return count, direction, frozenset(relations)
+                    return count, direction, frozenset(relations), needs_fallback
         return None
 
     def _peel_segments(self, loop: LoopRegion, count: int, direction: str) -> list[tuple[str | None, str | None, bool]]:
@@ -1956,10 +1958,12 @@ class BestEffortLoopPeeling(ppl.Pass):
         for loop in list(_loops(sdfg)):
             best = self._best_modulo_peel_for(loop, sdfg)
             if best is not None:
-                count, direction, relations = best
-                self._specialize_modulo_rewrite(
+                count, direction, relations, needs_fallback = best
+                conditional = self._specialize_modulo_rewrite(
                     sdfg, loop, lambda target: self._peel_one_loop(sdfg, target, count, direction), relations
                 )
+                if conditional is not None and not needs_fallback:
+                    conditional.remove_branch(conditional.branches[-1][1])
                 rewritten.append(loop)
                 applied += 1
         # 2b. Specialize a symbolic-boundary wrap the constant peel could not reach
@@ -1996,7 +2000,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             sdfg.validate()
         return applied or None
 
-    def _specialize_modulo_rewrite(self, sdfg: SDFG, loop: LoopRegion, rewrite, relations) -> None:
+    def _specialize_modulo_rewrite(self, sdfg: SDFG, loop: LoopRegion, rewrite, relations):
         """Replace ``loop`` with ``if (offset < modulus) { band split into affine
         maps } else { original modular loop }``.
 
@@ -2019,4 +2023,4 @@ class BestEffortLoopPeeling(ppl.Pass):
             if rewrite(par_loop):
                 self._clean_peeled_remainder(par_region)
 
-        specialize_loop_under_condition(loop, condition, _parallelize, sdfg)
+        return specialize_loop_under_condition(loop, condition, _parallelize, sdfg)
