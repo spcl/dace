@@ -264,17 +264,34 @@ def test_a_nested_argument_without_storage_of_its_own_does_not_block_the_kernel(
     assert lane_maps(sdfg)[0].map.schedule == dace.ScheduleType.GPU_Device
 
 
+def lanes_reading(name: str, desc: dace.data.Data) -> dace.SDFG:
+    """:func:`offloaded_loop_over_maps` interchanged, its lane body also reading ``t`` of ``desc``."""
+    sdfg = offloaded_loop_over_maps(name)
+    assert MoveLoopIntoMapGated(target="gpu").apply_pass(sdfg, {})
+    nested = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    nested.sdfg.add_datadesc("t", desc)
+    state = next(st for st in nested.sdfg.states() if any(isinstance(n, dace.nodes.Tasklet) for n in st.nodes()))
+    tasklet = next(n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet))
+    tasklet.add_in_connector("_t")
+    state.add_edge(state.add_read("t"), None, tasklet, "_t", dace.Memlet("t[0]"))
+    return sdfg
+
+
 def test_a_host_scalar_the_body_only_reads_does_not_block_the_kernel():
     """A kernel takes a scalar it only reads by value: one in host memory does not keep the lane map off the device
     (cloudsc's ``zqtmst``)."""
-    sdfg = offloaded_loop_over_maps("lanes_host_scalar")
-    assert MoveLoopIntoMapGated(target="gpu").apply_pass(sdfg, {})
-    nested = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
-    nested.sdfg.add_scalar("s", dace.float64, storage=dace.StorageType.CPU_Heap)
-    state = next(st for st in nested.sdfg.states() if any(isinstance(n, dace.nodes.Tasklet) for n in st.nodes()))
-    tasklet = next(n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet))
-    tasklet.add_in_connector("_s")
-    state.add_edge(state.add_read("s"), None, tasklet, "_s", dace.Memlet("s[0]"))
+    sdfg = lanes_reading("lanes_host_scalar", dace.data.Scalar(dace.float64, storage=dace.StorageType.CPU_Heap))
+    assert PromoteHostMapsToKernels().apply_pass(sdfg, {}) == 1
+    assert lane_maps(sdfg)[0].map.schedule == dace.ScheduleType.GPU_Device
+
+
+def test_a_constant_in_host_storage_does_not_block_the_kernel():
+    """A constant is written into the code that reads it; the same array as a host transient keeps the lane map off the
+    device (cloudsc_monolith's ``loop_body_iphase``)."""
+    table = dace.data.Array(dace.int32, [5], transient=True, storage=dace.StorageType.CPU_Heap)
+    sdfg = lanes_reading("lanes_constant_table", table)
+    assert PromoteHostMapsToKernels().apply_pass(sdfg, {}) is None
+    sdfg.add_constant("t", np.array([1, 2, 1, 2, 0], dtype=np.int32), table)
     assert PromoteHostMapsToKernels().apply_pass(sdfg, {}) == 1
     assert lane_maps(sdfg)[0].map.schedule == dace.ScheduleType.GPU_Device
 

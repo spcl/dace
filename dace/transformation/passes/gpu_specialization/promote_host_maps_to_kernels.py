@@ -42,8 +42,10 @@ def device_capable(node: nodes.Node, state: SDFGState, owned: bool) -> bool:
         if owned and not desc.transient and desc.storage == dtypes.StorageType.Default:
             # A nested SDFG's argument has no storage of its own: it is the caller's array, checked out there.
             return True
-        return desc.storage in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES or (
-            owned and desc.transient and desc.storage in BODY_LOCAL
+        return (
+            desc.storage in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES
+            or (owned and desc.transient and desc.storage in BODY_LOCAL)
+            or node.data in state.sdfg.constants  # Written into the code that reads it: no storage to refuse
         )
     if isinstance(node, nodes.Tasklet):
         return node.language is dtypes.Language.Python
