@@ -15,6 +15,7 @@ from typing import Any, Literal, NamedTuple
 
 import numpy
 import sympy
+from ordered_set import OrderedSet
 
 import dace
 from dace import data, dtypes, subsets, symbolic, utils
@@ -1183,7 +1184,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Tmp fix for missing state symbol propagation
         self.symbols = dict()
         # Loop iterators whose loop has ended (Python keeps them readable), and the copies read in their place
-        self.ended_loops: dict[str, tuple[LoopRegion, sympy.Expr, sympy.Expr, sympy.Expr]] = {}
+        self.ended_loops: dict[str, list[tuple[LoopRegion, sympy.Expr, sympy.Expr, sympy.Expr]]] = {}
         self.iterator_copies: dict[str, symbolic.symbol] = {}
 
         # Indirections
@@ -1540,28 +1541,32 @@ class ProgramVisitor(ExtNodeVisitor):
         """What holds where the program is being parsed: the SDFG's facts and the ranges of the enclosing loops."""
         return SymbolResolver().facts_at(self.cfg_target)
 
-    def _copy_out_iterator(self, name: str, node: ast.AST) -> symbolic.symbol:
-        """Makes a loop iterator readable after its loop, as in Python: the loop body copies it at the start of every
-        iteration, so the copy holds the last iterated value, also after a ``break``. A loop that never runs leaves
-        the iterator unbound, so it is refused; one that may not run leaves the copy undefined, as Python leaves the
-        iterator unbound."""
-        loop, start, stop, step = self.ended_loops[name]
+    def _loop_never_runs(self, start: sympy.Expr, stop: sympy.Expr, step: sympy.Expr) -> bool:
         zero = sympy.Integer(0)
         facts = self.facts()
         if symbolic.holds(symbolic.Relation(symbolic.RelationKind.LT, zero, step), facts):
-            runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, start, stop), facts)
-        elif symbolic.holds(symbolic.Relation(symbolic.RelationKind.LT, step, zero), facts):
-            runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, stop, start), facts)
-        else:
-            runs = symbolic.Truth.UNKNOWN
-        if runs is symbolic.Truth.FALSE:
+            return symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, start, stop), facts) is symbolic.Truth.FALSE
+        if symbolic.holds(symbolic.Relation(symbolic.RelationKind.LT, step, zero), facts):
+            return symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, stop, start), facts) is symbolic.Truth.FALSE
+        return False
+
+    def _copy_out_iterator(self, name: str, node: ast.AST) -> symbolic.symbol:
+        """Makes a loop iterator readable after its loops, as in Python: the body of each loop that bound the name
+        copies it at the start of every iteration, so the copy holds the last iterated value, also after a ``break``.
+        If none of them can run, the iterator is unbound, so it is refused; if none did, the copy is undefined, as
+        Python leaves the iterator unbound."""
+        ended = self.ended_loops[name]
+        if all(self._loop_never_runs(*bounds) for _, *bounds in ended):
             raise DaceSyntaxError(
                 self, node, f'Loop iterator "{name}" is read after a loop that never runs, which leaves it unbound'
             )
-        copy = symbolic.symbol(self.sdfg.find_new_symbol(f"{name}_last"), loop.new_symbols(self.sdfg.symbols)[name])
-        first = loop.start_block
-        entry = loop.add_state(f"{name}_copy", is_start_block=True)
-        loop.add_edge(entry, first, dace.InterstateEdge(assignments={copy.name: name}))
+        first_type, *others = (loop.new_symbols(self.sdfg.symbols)[name] for loop, *_ in ended)
+        dtype = dtypes.result_type_of(first_type, first_type, *others)
+        copy = symbolic.symbol(self.sdfg.find_new_symbol(f"{name}_last"), dtype)
+        for loop, *_ in ended:
+            first = loop.start_block
+            entry = loop.add_state(f"{name}_copy", is_start_block=True)
+            loop.add_edge(entry, first, dace.InterstateEdge(assignments={copy.name: name}))
         self.iterator_copies[name] = copy
         return copy
 
@@ -2595,7 +2600,8 @@ class ProgramVisitor(ExtNodeVisitor):
             sym_name = indices[0]
             # A loop over an existing Python variable binds a fresh name: the variable keeps its container and is
             # written at the start of every iteration, so after the loop it holds the last value, as in Python
-            variable = self.variables.pop(sym_name) if self.variables.get(sym_name) in self.sdfg.arrays else None
+            shadowed = self.variables.pop(sym_name) if self.variables.get(sym_name) in self.sdfg.arrays else None
+            variable = shadowed
             loop_var = sym_name if variable is None else self.sdfg.find_new_symbol(sym_name)
             integer = True
             nonnegative = None
@@ -2630,7 +2636,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 positive=positive,
             )
 
-            extra_syms = {sym_name: sym_obj}
+            # By-name lookups read the fresh name too
+            extra_syms = {sym_name: sym_obj, loop_var: sym_obj}
+            # The write-back needs a scalar of its own, which the bounds do not read
+            bound_names = {str(s) for rng in ranges[0] for s in pystr_to_symbolic(rng).free_symbols}
+            if variable is not None and (
+                variable in bound_names
+                or not isinstance(self.sdfg.arrays[variable], data.Scalar)
+                or not self.sdfg.arrays[variable].transient
+            ):
+                variable, _ = self.sdfg.add_scalar(
+                    f"{sym_name}_value", sym_obj.declaration.dtype, transient=True, find_new_name=True
+                )
 
             self.symbols[sym_obj] = subsets.Range([(start, stop + eoff, step)])
 
@@ -2681,19 +2698,24 @@ class ProgramVisitor(ExtNodeVisitor):
             loop_region.start_block = loop_region.node_id(first_subblock)
             self._connect_break_blocks(loop_region)
             if variable is None:
-                self.ended_loops[sym_name] = (loop_region, start, stop, step)
+                self.ended_loops.setdefault(sym_name, []).append((loop_region, start, stop, step))
                 self.iterator_copies.pop(sym_name, None)
             else:
-                self.variables[sym_name] = variable
+                # As in Python, the name ends up as the body left it, and as it was if the loop does not run
+                self.variables.setdefault(sym_name, variable)
                 write_back = loop_region.add_state(f"{sym_name}_write_back")
-                tasklet = write_back.add_tasklet("write_back", {}, {"out"}, f"out = {loop_var}")
-                write_back.add_edge(
-                    tasklet,
-                    "out",
-                    write_back.add_write(variable),
-                    None,
-                    Memlet.from_array(variable, self.sdfg.arrays[variable]),
-                )
+                kept = self.cfg_target.add_state_before(loop_region, f"{sym_name}_keep")
+                for target in OrderedSet([variable, self.variables[sym_name]]):
+                    if not isinstance(self.sdfg.arrays[target], data.Scalar):
+                        continue
+                    tasklet = write_back.add_tasklet("write_back", {}, {"out"}, f"out = {loop_var}")
+                    write_back.add_edge(
+                        tasklet, "out", write_back.add_write(target), None, Memlet(data=target, subset="0")
+                    )
+                    if target != shadowed and isinstance(self.sdfg.arrays[shadowed], data.Scalar):
+                        kept.add_nedge(
+                            kept.add_read(shadowed), kept.add_write(target), Memlet(data=shadowed, subset="0")
+                        )
                 loop_region.add_edge(write_back, first_subblock, dace.InterstateEdge())
                 loop_region.start_block = loop_region.node_id(write_back)
             # Handle else clause
