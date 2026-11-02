@@ -45,11 +45,13 @@ def _get_transpose_output(node, state, sdfg):
 def _leading_dimensions(node, state, sdfg):
     """The row strides of the row-major input and output, which BLAS takes as their leading dimensions, or ``None``
     if a row is not contiguous (a vendor transpose cannot read it; the pure expansion can)."""
-    _, _, _, (in_row, in_col) = _get_transpose_input(node, state, sdfg)
-    _, _, _, (out_row, out_col) = _get_transpose_output(node, state, sdfg)
-    if in_col != 1 or out_col != 1:
+    _, in_desc, in_shape, in_strides = _get_transpose_input(node, state, sdfg)
+    _, out_desc, out_shape, out_strides = _get_transpose_output(node, state, sdfg)
+    if in_strides[1] != 1 or out_strides[1] != 1:
         return None
-    return sym2cpp(in_row), sym2cpp(out_row)
+    source = blas_helpers.Operand(in_desc, in_shape, in_strides)
+    target = blas_helpers.Operand(out_desc, out_shape, out_strides)
+    return sym2cpp(blas_helpers.leading_dimension(source, 0)), sym2cpp(blas_helpers.leading_dimension(target, 0))
 
 
 @dace.library.expansion

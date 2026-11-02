@@ -5,6 +5,7 @@ import pytest
 import dace
 from dace.libraries import blas
 from dace.libraries.blas.nodes import Axpy, Gemm, Gemv, Ger, MatMul, Scal, Symm, Symv, Syrk
+from dace.libraries.linalg import Transpose
 from dace.transformation.dataflow import RedundantSecondArray
 
 M = dace.symbol("M")
@@ -203,6 +204,19 @@ def test_a_scaled_matmul_of_two_vectors_is_refused():
         sdfg.expand_library_nodes()
 
 
+def test_openblas_transpose_of_a_single_row_passes_a_valid_leading_dimension():
+    """``lda = 1 < 4`` made ``domatcopy`` refuse the call and leave the output unwritten."""
+    node = Transpose("transpose", dtype=dace.float64)
+    node.implementation = "OpenBLAS"
+    arrays = {"a": ([1, 4], dace.float64, [1, 1]), "b": ([4, 1], dace.float64, [1, 1])}
+    sdfg = wired_sdfg("transpose_single_row", node, {"_inp": "a[0:1, 0:4]"}, {"_out": "b[0:4, 0:1]"}, arrays)
+
+    a, b = np.arange(1.0, 5.0).reshape(1, 4).copy(), np.zeros((4, 1))
+    sdfg(a=a, b=b)
+
+    np.testing.assert_allclose(b, a.T)
+
+
 ALIASED_OUTPUTS = {
     "symv": (lambda: Symv("symv", beta=0), {"_A": "A", "_x": "y", "_yin": "y"}, {"_yout": "y"}),
     "symm": (lambda: Symm("symm"), {"_A": "A", "_B": "B", "_Cin": "B"}, {"_Cout": "B"}),
@@ -261,6 +275,7 @@ if __name__ == "__main__":
     test_openblas_gemv_prints_a_symbolic_extent_as_cpp()
     test_openblas_gemm_of_integers_falls_back_to_pure()
     test_a_scaled_matmul_of_two_vectors_is_refused()
+    test_openblas_transpose_of_a_single_row_passes_a_valid_leading_dimension()
     for name in ALIASED_OUTPUTS:
         test_an_output_proved_to_overlap_an_input_is_refused(name)
     test_outputs_not_proved_to_overlap_stay_allowed()
