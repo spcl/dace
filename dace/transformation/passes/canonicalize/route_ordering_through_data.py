@@ -78,9 +78,11 @@ def viewed_data(state: SDFGState) -> dict[str, str | None]:
 
 def accesses(state: SDFGState, node: nodes.Node, roots: dict[str, str | None]) -> tuple[set[str], set[str]] | None:
     """``(touched, written)`` data of ``node``, views resolved to what they alias; ``None`` where a view
-    does not resolve. An access node touches its own data and the source of a copy into it, and writes its
+    does not resolve or the node has an ordered side effect, which no data shows. An access node touches its own data and the source of a copy into it, and writes its
     data where a data edge other than a view's binding comes in; a map entry only reads (its out-edges carry its inputs into the scope); any
     other node writes along its out-edges."""
+    if isinstance(node, nodes.CodeNode) and node.has_ordered_side_effects(state.sdfg):
+        return None
     if isinstance(node, nodes.AccessNode):
         binding = sdutil.get_view_edge(state, node) if node.data in roots else None
         carrying = [e for e in state.all_edges(node) if not e.data.is_empty()]
