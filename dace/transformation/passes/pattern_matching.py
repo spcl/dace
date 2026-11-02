@@ -477,7 +477,7 @@ class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
         return self._apply_pass(sdfg, pipeline_results, apply_once=True)
 
 
-def collapse_multigraph_to_nx(graph: gr.MultiDiGraph | gr.OrderedMultiDiGraph) -> nx.DiGraph:
+def collapse_multigraph_to_nx(graph: gr.MultiDiGraph | gr.OrderedMultiDiGraph, edges: bool = True) -> nx.DiGraph:
     """Collapses a directed multigraph into a networkx directed graph.
 
     In the output directed graph, each node is a number, which contains
@@ -485,6 +485,7 @@ def collapse_multigraph_to_nx(graph: gr.MultiDiGraph | gr.OrderedMultiDiGraph) -
     data from the original edges as its attribute (edge_data[0...N]).
 
     :param graph: Directed multigraph object to be collapsed.
+    :param edges: Whether to collapse the edges too; a one-node pattern reads the nodes alone.
     :return: Collapsed directed graph object.
     """
 
@@ -497,7 +498,7 @@ def collapse_multigraph_to_nx(graph: gr.MultiDiGraph | gr.OrderedMultiDiGraph) -
 
     # Create the digraph edges.
     digraph_edges = {}
-    for edge in graph.edges():
+    for edge in graph.edges() if edges else ():
         src = node_id[edge.src]
         dest = node_id[edge.dst]
 
@@ -975,7 +976,7 @@ def state_matches(
             return
 
     # Collapse multigraph into directed graph in order to use VF2
-    digraph = collapse_multigraph_to_nx(state)
+    digraph = collapse_multigraph_to_nx(state, edges=any(entry[3] is not _node_matcher for entry in candidates))
 
     # Every probe parses under the same authority; prepare it once per run of probes. A consumer may apply a match
     # (and change the symbols) once one is yielded, so it is prepared again after each.
