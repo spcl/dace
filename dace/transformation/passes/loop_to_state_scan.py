@@ -58,14 +58,6 @@ def is_reduction(loop: LoopRegion, symbol: str) -> bool:
     return len(carried) == 1 and all(symbol not in names(ast.unparse(side)) for side in others)
 
 
-def rest_is_parallel(loop: LoopRegion, symbol: str) -> bool:
-    """Whether every symbol ``loop`` carries besides ``symbol`` is a reduction."""
-    chain = straight_chain(loop)
-    return chain is not None and all(
-        is_reduction(loop, name) for name in carried_symbols(loop, chain) if name != symbol
-    )
-
-
 def folds_only(loop: LoopRegion, symbol: str) -> bool:
     """Whether ``symbol`` is a sum or product reduction nothing else in ``loop`` reads: only its exit value is
     used, which is the loop's closed form, not a scan."""
@@ -79,8 +71,15 @@ def folds_only(loop: LoopRegion, symbol: str) -> bool:
 def scan_node(loop: LoopRegion) -> tuple[StateScan, StepSlice] | None:
     """A :class:`StateScan` for ``loop``'s carried state, finite if it is, else GF(2)-affine, or ``None``. The structural
     conditions go first: the proofs copy the body and ask z3."""
+    chain = straight_chain(loop)
+    if chain is None:
+        return None
+    carried = carried_symbols(loop, chain)
+    reductions = {name for name in carried if is_reduction(loop, name)}
     steps = [
-        step for step in step_slices(loop) if rest_is_parallel(loop, step.symbol) and not folds_only(loop, step.symbol)
+        step
+        for step in step_slices(loop)
+        if set(carried) - reductions <= {step.symbol} and not folds_only(loop, step.symbol)
     ]
     if not steps:
         return None
