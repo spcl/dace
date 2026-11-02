@@ -184,6 +184,22 @@ def test_a_nested_scratch_whose_symbol_is_reassigned_keeps_its_extent():
     assert tuple(str(s) for s in nest.sdfg.arrays["scratch"].shape) == ("N",)
 
 
+def test_a_copy_naming_the_other_container_keeps_the_extent():
+    """``x[i] -> t[i]`` is a memlet of ``x``: shrinking ``t`` would leave the copy writing ``t[i]`` out of bounds."""
+    sdfg = dace.SDFG("map_local_copy_in")
+    sdfg.add_array("x", [6], dace.float64)
+    sdfg.add_array("y", [6], dace.float64)
+    sdfg.add_transient("t", [6], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("m", {"i": "0:6"})
+    t = state.add_access("t")
+    tasklet = state.add_tasklet("inc", {"a": None}, {"b": None}, "b = a + 1")
+    state.add_memlet_path(state.add_read("x"), entry, t, memlet=dace.Memlet("x[i]", other_subset="i"))
+    state.add_edge(t, None, tasklet, "a", dace.Memlet("t[i]"))
+    state.add_memlet_path(tasklet, exit_node, state.add_write("y"), src_conn="b", memlet=dace.Memlet("y[i]"))
+    assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_map_body_local_transient_shrinks_to_the_box_it_names()
     test_finalize_leaves_no_symbolically_sized_stack_array()
@@ -191,3 +207,4 @@ if __name__ == "__main__":
     test_a_host_map_leaves_its_device_scratch_alone()
     test_a_nested_body_scratch_shrinks_to_the_box_its_symbol_names()
     test_a_nested_scratch_whose_symbol_is_reassigned_keeps_its_extent()
+    test_a_copy_naming_the_other_container_keeps_the_extent()

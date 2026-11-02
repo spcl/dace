@@ -7,7 +7,7 @@ from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.transient_reuse import BufferSharing, inside_map
+from dace.transformation.passes.transient_reuse import BufferSharing, StateOrder, inside_parallel_map
 from dace.transformation.transformation import explicit_cf_compatible
 
 #: Storages a coalesced pair may mix: all of them are plain host memory the other side's code can address.
@@ -41,8 +41,9 @@ class Placement:
 class Coalescing:
     """One SDFG's copy coalescing: a transient whose whole life is one state and that is copied whole to or from
     a region of another container is renamed onto that region, and the copy goes. Copy related, the two hold the
-    same values wherever both are live; the rename is exact when no other access of the container falls between
-    the transient's accesses and the copy."""
+    same values wherever both are live; the rename is exact when no access of the container that sees the
+    difference runs while the transient lives: copied out, the region takes its values at the transient's first
+    write instead of at the copy; copied in, it must hold them until the transient's last read."""
 
     sdfg: SDFG
     #: Per container, the states holding an access node of it and how many.
@@ -83,7 +84,7 @@ class Coalescing:
             return False
         for transient, other, into in ((dst, src, False), (src, dst, True)):
             placement = self.placement(state, edge, transient, other)
-            if placement is None or not self.isolated(state, transient, other, into):
+            if placement is None or not self.isolated(state, edge, transient, other, into, placement):
                 continue
             self.rename(state, edge, transient, other, placement)
             return True
@@ -125,14 +126,23 @@ class Coalescing:
             for e in state.all_edges(node):
                 for tree in state.memlet_tree(e).traverse_children(include_self=True):
                     for end in (tree.edge.src, tree.edge.dst):
-                        if isinstance(end, nodes.NestedSDFG) or (isinstance(end, nodes.LibraryNode) and not laid_out):
+                        if isinstance(end, nodes.NestedSDFG):
+                            return None
+                        # So do tasklets taking more than one element: a pointer they index linearly.
+                        addressed = isinstance(end, nodes.LibraryNode) or (
+                            isinstance(end, nodes.Tasklet)
+                            and symbolic.equal(tree.edge.data.num_elements(), 1) is not True
+                        )
+                        if addressed and not laid_out:
                             return None
         return Placement(other.data, theirs, dims, unit)
 
-    def isolated(self, state: SDFGState, transient: nodes.AccessNode, other: nodes.AccessNode, into: bool) -> bool:
+    def isolated(
+        self, state: SDFGState, edge, transient: nodes.AccessNode, other: nodes.AccessNode, into: bool, at: Placement
+    ) -> bool:
         """Whether the transient's values are exactly the copied region's while it lives: copied out (``into``),
-        every access of it precedes the copy; copied in, the copy is its only write. Every other access of the
-        container precedes, or follows, all of the transient's accesses and the copy."""
+        every access of it precedes the copy; copied in, the copy is its only write. No access of the container
+        that overlaps the region runs while the two differ, see :class:`Coalescing`."""
         mine = [n for n in state.data_nodes() if n.data == transient.data]
         # An accumulation starts from the transient's own value, which the container does not hold.
         if any(e.data.wcr is not None for n in mine for e in state.in_edges(n)):
@@ -144,15 +154,11 @@ class Coalescing:
         if into:
             if any(n is not transient and n not in before for n in mine):
                 return False
-            # Copying out a transient this state never writes copies what an earlier run or the allocation left.
-            if not any(not e.data.is_empty() for n in mine for e in state.in_edges(n)):
-                return False
             # The copy is the container's only write here: another one is ordered against the copy, not the producers.
             if any(n is not other and n.data == other.data and state.in_degree(n) > 0 for n in state.data_nodes()):
                 return False
-        else:
-            if any(not e.data.is_empty() for n in mine for e in state.in_edges(n) if e.src is not other):
-                return False
+        elif any(not e.data.is_empty() for n in mine for e in state.in_edges(n) if e.src is not other):
+            return False
         # The transient's edges move onto the container's node: none may join the two or close a cycle through it.
         if len(state.edges_between(transient, other)) + len(state.edges_between(other, transient)) != 1:
             return False
@@ -161,15 +167,68 @@ class Coalescing:
             return False
         if any(e.dst is not other and other in state_downstream(state, e.dst) for e in state.out_edges(transient)):
             return False
-        group = [*mine, other]
-        upstream = [state_upstream(state, n) for n in group]
-        downstream = [state_downstream(state, n) for n in group]
-        for node in state.data_nodes():
-            if node.data != other.data or node is other:
+        order = StateOrder.of(state, scope[transient])
+        written = [n for n in mine if any(not e.data.is_empty() for e in state.in_edges(n))]
+        # Copying a transient this state never writes copies what an earlier run or the allocation left, and a read
+        # before the state's first write takes that value too: the container does not hold it.
+        if not written:
+            return False
+        for node in mine:
+            read = any(not e.data.is_empty() for e in state.out_edges(node))
+            if read and node not in written and not any(node in order.descendants(w) for w in written):
+                return False
+        writers = [order.top(e.src) for n in written for e in state.in_edges(n) if not e.data.is_empty()]
+        readers = [
+            order.top(e.dst) for n in mine for e in state.out_edges(n) if e is not edge and not e.data.is_empty()
+        ]
+        for where, writes, subset in self.accesses(state, order, other, edge, into):
+            if subset is not None and subsets.intersects(subset, at.subset, self.facts) is symbolic.Truth.FALSE:
                 continue
-            if not (all(node in up for up in upstream) or all(node in down for down in downstream)):
+            if into:
+                # Copied out: reads all finish before the region starts to change, or see it complete.
+                if writes or not (
+                    all(w in order.descendants(where) for w in writers) or where in order.descendants(other)
+                ):
+                    return False
+            elif writes and not (
+                other in order.descendants(where) or all(where in order.descendants(r) for r in readers)
+            ):
                 return False
         return True
+
+    def accesses(
+        self, state: SDFGState, order: StateOrder, other: nodes.AccessNode, copy_edge, into: bool
+    ) -> list[tuple[nodes.Node, bool, subsets.Subset | None]]:
+        """Who touches ``other``'s container in ``order``'s scope, apart from the copy: ``(node, writes, subset)``,
+        ``node`` directly in that scope. ``other``'s readers run after the copy, so they count only copied in."""
+        found = []
+        name = other.data
+        for node in state.data_nodes():
+            if node.data != name:
+                continue
+            place = order.top(node)
+            # Ordered around the whole scope; through the scope's connectors its accesses are listed below.
+            if place is None:
+                if not (order.within in state_upstream(state, node) or order.within in state_downstream(state, node)):
+                    found.append((order.within, True, None))
+                continue
+            found.extend(
+                (order.top(e.src) or place, True, e.data.get_dst_subset(e, state))
+                for e in state.in_edges(node)
+                if e is not copy_edge and not e.data.is_empty()
+            )
+            if node is other and into:
+                continue
+            found.extend(
+                (order.top(e.dst) or place, False, e.data.get_src_subset(e, state))
+                for e in state.out_edges(node)
+                if e is not copy_edge and not e.data.is_empty()
+            )
+        if order.within is not None:
+            found.extend(
+                (order.top(e.dst), False, e.data.subset) for e in state.out_edges(order.within) if e.data.data == name
+            )
+        return found
 
     def rename(self, state: SDFGState, edge, transient: nodes.AccessNode, other: nodes.AccessNode, at: Placement):
         old = transient.data
@@ -253,7 +312,7 @@ class MinimizeTransients(ppl.Pass):
 
     1. Coalesce, in every SDFG: a transient living in one state and copied whole to or from a region of another
        container is that region (:class:`Coalescing`).
-    2. Share and lift, in SDFGs outside every map scope: transients whose uses never overlap share one buffer, and
+    2. Share and lift, in SDFGs outside every parallel map scope: transients whose uses never overlap share one buffer, and
        every buffer sized by symbols bound on entry is ``Persistent``
        (:class:`~dace.transformation.passes.transient_reuse.BufferSharing`).
 
@@ -277,7 +336,7 @@ class MinimizeTransients(ppl.Pass):
         changed = 0
         for sd in sdfg.all_sdfgs_recursive():
             changed += Coalescing(sd).run()
-            # A buffer inside a map scope is per iteration: sharing it would share it between iterations.
-            if not inside_map(sd):
+            # A buffer inside a parallel map scope is per iteration: sharing it would share it between iterations.
+            if not inside_parallel_map(sd):
                 changed += len(BufferSharing(sd, tuple(storages)).run())
         return changed or None

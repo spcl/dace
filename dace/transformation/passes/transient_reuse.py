@@ -1,16 +1,25 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Sharing one buffer between transient arrays whose uses never overlap."""
 
+import re
 from dataclasses import dataclass, field
 
-from dace import SDFG, SDFGState, dtypes, properties, subsets, symbolic
+import sympy
+
+from dace import SDFG, Memlet, SDFGState, dtypes, properties, subsets, symbolic
 from dace import data as dt
-from dace import graphlib as nx
 from dace.config import Config
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.replace import replace_in_codeblock
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    LoopRegion,
+    ReturnBlock,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -25,30 +34,35 @@ REUSABLE_LIFETIMES = (
 
 @dataclass(slots=True)
 class StateOrder:
-    """Happens-before of the top-level nodes of one state, every map scope collapsed onto its entry."""
+    """Happens-before of the nodes directly in scope ``within`` of one state (the top level if None), every map scope
+    below it collapsed onto its entry."""
 
     succ: dict[nodes.Node, OrderedSet] = field(default_factory=dict)
     pred: dict[nodes.Node, OrderedSet] = field(default_factory=dict)
     below: dict[nodes.Node, OrderedSet] = field(default_factory=dict)
+    scope: dict[nodes.Node, nodes.EntryNode | None] = field(default_factory=dict)
+    entry_of: dict[nodes.Node, nodes.EntryNode] = field(default_factory=dict)
+    within: nodes.EntryNode | None = None
 
     @staticmethod
-    def of(state: SDFGState) -> "StateOrder":
-        scope = state.scope_dict()
-        entry_of = {state.exit_node(n): n for n in state.nodes() if isinstance(n, nodes.EntryNode)}
-
-        def top(node: nodes.Node) -> nodes.Node:
-            node = entry_of.get(node, node)
-            while scope[node] is not None:
-                node = scope[node]
-            return node
-
-        order = StateOrder()
+    def of(state: SDFGState, within: nodes.EntryNode | None = None) -> "StateOrder":
+        order = StateOrder(scope=state.scope_dict(), within=within)
+        order.entry_of = {state.exit_node(n): n for n in state.nodes() if isinstance(n, nodes.EntryNode)}
         for edge in state.edges():
-            src, dst = top(edge.src), top(edge.dst)
-            if src is not dst:
+            src, dst = order.top(edge.src), order.top(edge.dst)
+            if src is not dst and src is not None and dst is not None:
                 order.succ.setdefault(src, OrderedSet()).add(dst)
                 order.pred.setdefault(dst, OrderedSet()).add(src)
         return order
+
+    def top(self, node: nodes.Node) -> nodes.Node | None:
+        """The node directly in ``within`` holding ``node``, None if ``node`` is outside ``within``."""
+        node = self.entry_of.get(node, node)
+        while self.scope[node] is not self.within:
+            node = self.scope[node]
+            if node is None:
+                return None
+        return node
 
     def descendants(self, node: nodes.Node) -> OrderedSet:
         """Every node reachable from ``node``, without ``node`` itself."""
@@ -64,34 +78,42 @@ class StateOrder:
 
     def before(self, first: list[nodes.AccessNode], second: list[nodes.AccessNode]) -> bool:
         """Whether every access through ``first`` completes before ``second`` is first written: each writer of a
-        ``second`` node is reached from every reader of every ``first`` node (from the node itself if unread)."""
-        writers = [w for b in second for w in self.pred.get(b, ())]
-        if not writers or any(not self.pred.get(b) for b in second):
-            return False
-        return all(
-            w in self.descendants(reader) for a in first for reader in (self.succ.get(a) or (a,)) for w in writers
-        )
+        ``second`` node is reached from every reader of every ``first`` node (from the node itself if unread). A node
+        inside a map stands for that whole map."""
+        ends, starts = [], []
+        for a in first:
+            ends.extend(self.succ.get(a) or (a,) if self.scope[a] is None else (self.top(a),))
+        for b in second:
+            found = self.pred.get(b) if self.scope[b] is None else (self.top(b),)
+            if not found:
+                return False
+            starts.extend(found)
+        return all(w in self.descendants(end) for end in ends for w in starts)
 
 
 @properties.make_properties
 @explicit_cf_compatible
 class TransientReuse(ppl.Pass):
     """
-    Lets transient arrays whose uses never overlap share one buffer, the largest of the group, by renaming them to it.
+    Lets transient arrays whose values are never live together share one buffer, the largest of the group, by renaming
+    them to it.
 
-    Two transients overlap unless, in the lowest control flow region holding the uses of both, they sit in different
-    branches of a conditional or in disjoint ranges of the region's block order, or both are used in one state only
-    and every reader of the first precedes every writer of the second there. In a region that may run more than once
-    (inside a loop) each must also be fully written before it is read in every run, so neither is live across the back
-    edge.
+    Liveness runs over the control flow graph of each SDFG, loops and branches flattened, so one array may have several
+    live ranges. A write of the whole array ends a range; a partial write does not. Two arrays interfere where both are
+    live on entry to a state, both on exit, one all through it, or within it unless the accesses of the one dying or
+    local to it all finish before the first write of the other. An array read where no path holds a write before it
+    carries a value from an earlier run and shares nothing.
+
+    A whole-array copy hands a dying array over to one born there: the two do not interfere and the copy goes.
 
     Only plain heap / GPU global arrays qualify, not read by control flow, not viewed or referenced, no WCR target and
-    not ``may_alias``; one used inside a map scope only if it is allocated outside it (SDFG or Persistent lifetime, or
-    also accessed outside every map in each state using it), and never ordered within a state. A shared buffer has the
-    same dtype, storage, pooling and strides as its members, is provably at least as large in every dimension, and is
-    allocated once: Persistent if any member is, else SDFG lifetime. At the root SDFG every candidate sized only by
-    symbols bound on entry becomes Persistent, shared or not. GPU arrays share only when all device work runs
-    on one stream (``compiler.cuda.max_concurrent_streams == -1``), so device accesses run in program order.
+    not ``may_alias``; one used inside a map scope only if it is allocated outside it (SDFG or Persistent lifetime, or also
+    accessed outside every map in each state using it). SDFGs nested in a parallel map are left alone: their buffers are
+    per iteration. A shared buffer has the same dtype, storage, pooling and strides as its members, is provably at least
+    as large in every dimension, and is allocated once: Persistent if any member is, else SDFG lifetime. At the root
+    SDFG every candidate sized only by symbols bound on entry becomes Persistent, shared or not. GPU arrays share only
+    when all device work runs on one stream (``compiler.cuda.max_concurrent_streams == -1``), so device accesses run in
+    program order.
     """
 
     CATEGORY: str = "Memory Footprint Reduction"
@@ -119,7 +141,7 @@ class TransientReuse(ppl.Pass):
             storages.append(dtypes.StorageType.GPU_Global)
         result: dict[int, dict[str, str]] = {}
         for sd in sdfg.all_sdfgs_recursive():
-            if inside_map(sd):
+            if inside_parallel_map(sd):
                 continue
             before = sum(desc.total_size_in_bytes for desc in sd.arrays.values()) if self.verbose else 0
             renamed = BufferSharing(sd, tuple(storages)).run()
@@ -131,11 +153,14 @@ class TransientReuse(ppl.Pass):
         return result or None
 
 
-def inside_map(sdfg: SDFG) -> bool:
-    """Whether ``sdfg`` runs inside a map scope of some enclosing SDFG."""
+def inside_parallel_map(sdfg: SDFG) -> bool:
+    """Whether ``sdfg`` runs inside a map scope of some enclosing SDFG that is not ``Sequential``."""
     while sdfg.parent_nsdfg_node is not None:
-        if sdfg.parent.entry_node(sdfg.parent_nsdfg_node) is not None:
-            return True
+        entry = sdfg.parent.entry_node(sdfg.parent_nsdfg_node)
+        while entry is not None:
+            if not isinstance(entry, nodes.MapEntry) or entry.map.schedule != dtypes.ScheduleType.Sequential:
+                return True
+            entry = sdfg.parent.entry_node(entry)
         sdfg = sdfg.parent_sdfg
     return False
 
@@ -147,29 +172,107 @@ class Group:
 
 
 @dataclass(slots=True)
+class ControlFlow:
+    """One SDFG's control flow as a plain graph: a vertex per state, per jump and per region's head and tail. A loop or
+    a conditional may always be bypassed, which only adds paths."""
+
+    succ: list[list[int]] = field(default_factory=list)
+    vertex: dict[SDFGState, int] = field(default_factory=dict)
+    start: int = 0
+    stop: int = 0
+
+    @staticmethod
+    def of(sdfg: SDFG) -> "ControlFlow":
+        flow = ControlFlow()
+        flow.stop = flow.new()
+        flow.start, tail = flow.flatten(sdfg, None)
+        flow.succ[tail].append(flow.stop)
+        return flow
+
+    def new(self) -> int:
+        self.succ.append([])
+        return len(self.succ) - 1
+
+    def flatten(self, region: AbstractControlFlowRegion, loop: tuple[int, int] | None) -> tuple[int, int]:
+        """The head and tail of ``region``; ``loop`` is the head and tail of the loop around it."""
+        head, tail = self.new(), self.new()
+        if isinstance(region, ConditionalBlock):
+            self.succ[head].append(tail)
+            for _, branch in region.branches:
+                first, last = self.flatten(branch, loop)
+                self.succ[head].append(first)
+                self.succ[last].append(tail)
+            return head, tail
+        end = tail
+        if isinstance(region, LoopRegion):
+            loop, end = (head, tail), head
+            self.succ[head].append(tail)
+        ends: dict = {}
+        for block in region.nodes():
+            first = last = None
+            if isinstance(block, AbstractControlFlowRegion):
+                first, last = self.flatten(block, loop)
+            else:
+                first = last = self.new()
+                if isinstance(block, SDFGState):
+                    self.vertex[block] = first
+                elif isinstance(block, ContinueBlock):
+                    self.succ[first].append(loop[0])
+                elif isinstance(block, BreakBlock):
+                    self.succ[first].append(loop[1])
+                elif isinstance(block, ReturnBlock):
+                    self.succ[first].append(self.stop)
+            ends[block] = (first, last)
+        self.succ[head].append(ends[region.start_block][0])
+        for edge in region.edges():
+            self.succ[ends[edge.src][1]].append(ends[edge.dst][0])
+        for block in region.nodes():
+            if region.out_degree(block) == 0 and not isinstance(block, (ContinueBlock, BreakBlock, ReturnBlock)):
+                self.succ[ends[block][1]].append(end)
+        return head, tail
+
+    def postorder(self) -> list[int]:
+        """Every vertex reachable from the start, each after its successors, the first successor last."""
+        seen, order, stack = {self.start}, [], [(self.start, reversed(self.succ[self.start]))]
+        while stack:
+            vertex, rest = stack[-1]
+            for nxt in rest:
+                if nxt not in seen:
+                    seen.add(nxt)
+                    stack.append((nxt, reversed(self.succ[nxt])))
+                    break
+            else:
+                order.append(vertex)
+                stack.pop()
+        return order
+
+
+@dataclass(slots=True)
 class BufferSharing:
-    """One SDFG's candidates, their uses, and the greedy grouping into shared buffers. A state's path is the chain of
-    blocks from the SDFG's root region down to it; a cyclic region counts as a loop and orders nothing."""
+    """One SDFG's candidates, their live ranges, and the greedy grouping into shared buffers."""
 
     sdfg: SDFG
     storages: tuple
     uses: dict[str, dict[SDFGState, list[nodes.AccessNode]]] = field(default_factory=dict)
-    #: Candidates with an access node inside a map scope: their order within a state is not tracked.
+    #: Candidates with an access node inside a map scope.
     scoped: OrderedSet = field(default_factory=OrderedSet)
-    paths: dict[SDFGState, tuple] = field(default_factory=dict)
-    prefix: dict[str, tuple] = field(default_factory=dict)
-    rank: dict[ControlFlowBlock, int] = field(default_factory=dict)
-    #: Block positions in topological order per acyclic region; cyclic regions are in ``cyclic`` instead.
-    positions: dict[ControlFlowRegion, dict[ControlFlowBlock, int]] = field(default_factory=dict)
-    cyclic: OrderedSet = field(default_factory=OrderedSet)
-    idoms: dict[ControlFlowRegion, dict] = field(default_factory=dict)
+    rank: dict[SDFGState, int] = field(default_factory=dict)
     orders: dict[SDFGState, StateOrder] = field(default_factory=dict)
-    locals: dict[tuple[SDFGState, str], bool] = field(default_factory=dict)
+    #: Per state, as a bit per candidate: live on entry and live on exit, both only once written on some path.
+    live_in: dict[SDFGState, int] = field(default_factory=dict)
+    live_out: dict[SDFGState, int] = field(default_factory=dict)
+    bit: dict[str, int] = field(default_factory=dict)
+    #: Per candidate, the states where it is accessed or live, which it may interfere in.
+    active: dict[str, OrderedSet] = field(default_factory=dict)
     hoistable_names: OrderedSet | None = None
     #: Candidates a nested SDFG's connector is bound to: its descriptor must keep matching the array's.
     nested: OrderedSet = field(default_factory=OrderedSet)
     #: The SDFG's facts, derived once: nothing changes until the renaming at the end.
     facts: symbolic.Facts | None = None
+    #: Per candidate, the candidates a whole-array copy connects it to.
+    partners: dict[str, OrderedSet] = field(default_factory=dict)
+    equalities: dict[tuple, bool] = field(default_factory=dict)
+    bounds: dict[tuple, bool] = field(default_factory=dict)
 
     def run(self) -> dict[str, str]:
         self.facts = self.sdfg.facts()
@@ -197,8 +300,12 @@ class BufferSharing:
                     node.data = renamed[node.data]
                 # A Python tasklet may name a container in its code (``InlineTaskletConnectors``), not by connector
                 elif isinstance(node, nodes.Tasklet) and node.language is dtypes.Language.Python:
-                    names = renamed.keys() - node.in_connectors.keys() - node.out_connectors.keys()
-                    code_repl = {name: renamed[name] for name in names if name in node.code.as_string}
+                    named = re.findall(r"\w+", node.code.as_string)
+                    code_repl = {
+                        name: renamed[name]
+                        for name in named
+                        if name in renamed and name not in node.in_connectors and name not in node.out_connectors
+                    }
                     if code_repl:
                         replace_in_codeblock(node.code, code_repl, node, self.sdfg)
             # Scope connectors passing a renamed array through are named after it, unless a scope already has that
@@ -238,6 +345,15 @@ class BufferSharing:
                     node.add_in_connector(f"IN_{renamed[old]}", node.in_connectors.pop(f"IN_{old}"), force=True)
                 if f"OUT_{old}" in node.out_connectors:
                     node.add_out_connector(f"OUT_{renamed[old]}", node.out_connectors.pop(f"OUT_{old}"), force=True)
+        for state in self.sdfg.states():
+            for edge in state.edges():
+                if (
+                    isinstance(edge.src, nodes.AccessNode)
+                    and isinstance(edge.dst, nodes.AccessNode)
+                    and edge.src.data == edge.dst.data in renamed.values()
+                    and not edge.data.is_empty()
+                ):
+                    edge.data = Memlet()
         for name in renamed:
             self.sdfg.remove_data(name, validate=False)
         return renamed
@@ -285,44 +401,120 @@ class BufferSharing:
         excluded.update(n for n in self.scoped if not state_level[n] and sd.arrays[n].lifetime not in once)
         for name in excluded:
             self.uses.pop(name, None)
-        self.order_blocks(sd, ())
+        self.liveness()
         for name, states in self.uses.items():
-            paths = [self.paths[s] for s in states]
-            depth = 0
-            while all(len(p) > depth and p[depth] is paths[0][depth] for p in paths):
-                depth += 1
-            self.prefix[name] = paths[0][:depth]
+            for state, accessed in states.items():
+                for node in accessed:
+                    for edge in state.out_edges(node):
+                        other = edge.dst
+                        if isinstance(other, nodes.AccessNode) and other.data in self.uses and other.data != name:
+                            self.partners.setdefault(name, OrderedSet()).add(other.data)
+                            self.partners.setdefault(other.data, OrderedSet()).add(name)
 
-    def order_blocks(self, region: ControlFlowRegion, path: tuple) -> None:
-        """Record every state's path and rank below ``region``, and each region's topological positions."""
-        if isinstance(region, ConditionalBlock):
-            blocks = region.nodes()
-        elif nx.is_directed_acyclic_graph(region.nx):
-            blocks = list(nx.topological_sort(region.nx))
-            self.positions[region] = {block: i for i, block in enumerate(blocks)}
-        else:
-            blocks = region.nodes()
-            self.cyclic.add(region)
-        for block in blocks:
-            self.rank[block] = len(self.rank)
-            if isinstance(block, SDFGState):
-                self.paths[block] = (*path, block)
-            elif isinstance(block, AbstractControlFlowRegion):
-                self.order_blocks(block, (*path, block))
+    def liveness(self) -> None:
+        """Live ranges of every candidate over the control flow graph, as bits per vertex: ``uses`` is read before any
+        whole-array write of the state, ``kills`` written whole, ``writes`` written at all, ``exposed`` read before any
+        write of the state. A value is live between a write that may reach a read and that read."""
+        flow = ControlFlow.of(self.sdfg)
+        self.bit = {name: 1 << i for i, name in enumerate(self.uses)}
+        size = len(flow.succ)
+        uses, kills, writes, exposed, touched = [0] * size, [0] * size, [0] * size, [0] * size, [0] * size
+        for name, states in self.uses.items():
+            bit = self.bit[name]
+            for state, accessed in states.items():
+                vertex = flow.vertex[state]
+                use, kill, wrote, early = self.summary(state, name, accessed)
+                touched[vertex] |= bit
+                uses[vertex] |= bit if use else 0
+                kills[vertex] |= bit if kill else 0
+                writes[vertex] |= bit if wrote else 0
+                exposed[vertex] |= bit if early else 0
+        order = flow.postorder()
+        position = {vertex: size - i for i, vertex in enumerate(order)}
+        self.rank = {state: position.get(vertex, size) for state, vertex in flow.vertex.items()}
+        pred: list[list[int]] = [[] for _ in range(size)]
+        for vertex in order:
+            for nxt in flow.succ[vertex]:
+                pred[nxt].append(vertex)
+        live, written = [0] * size, [0] * size
+        changed = True
+        while changed:
+            changed = False
+            for vertex in order:
+                out = 0
+                for nxt in flow.succ[vertex]:
+                    out |= live[nxt]
+                new = uses[vertex] | (out & ~kills[vertex])
+                if new != live[vertex]:
+                    live[vertex], changed = new, True
+        changed = True
+        while changed:
+            changed = False
+            for vertex in reversed(order):
+                seen = writes[vertex]
+                for prev in pred[vertex]:
+                    seen |= written[prev]
+                if seen != written[vertex]:
+                    written[vertex], changed = seen, True
+        carried = 0
+        for vertex in order:
+            before = 0
+            for prev in pred[vertex]:
+                before |= written[prev]
+            carried |= exposed[vertex] & ~before
+        for name, bit in list(self.bit.items()):
+            if carried & bit:
+                del self.bit[name], self.uses[name]
+        self.active = {name: OrderedSet() for name in self.uses}
+        names = list(self.bit.items())
+        for state, vertex in flow.vertex.items():
+            entered = 0
+            for prev in pred[vertex]:
+                entered |= written[prev]
+            leaving = 0
+            for nxt in flow.succ[vertex]:
+                leaving |= live[nxt]
+            self.live_in[state] = live[vertex] & entered
+            self.live_out[state] = leaving & written[vertex]
+            here = self.live_in[state] | self.live_out[state] | touched[vertex]
+            if here:
+                for name, bit in names:
+                    if here & bit:
+                        self.active[name].add(state)
 
-    def region_at(self, path: tuple, depth: int) -> ControlFlowRegion:
-        return path[depth - 1] if depth else self.sdfg
+    def summary(self, state: SDFGState, name: str, accessed: list[nodes.AccessNode]) -> tuple[bool, bool, bool, bool]:
+        """Whether ``state`` reads ``name`` before writing all of it, writes all of it, writes it at all, reads it
+        before any write. Inside a map the order within the state is unknown: any read there takes the old value too."""
+        order = self.order(state)
+        desc = self.sdfg.arrays[name]
+        full = subsets.Range.from_array(desc)
+        written, killers, read = [], [], []
+        for node in accessed:
+            into = [e for e in state.in_edges(node) if not e.data.is_empty()]
+            if into:
+                written.append(node)
+                if order.scope[node] is None and any(self.full_write(state, e, full) for e in into):
+                    killers.append(node)
+            if any(not e.data.is_empty() for e in state.out_edges(node)):
+                read.append(node)
 
-    def children(self, states, depth: int) -> dict[ControlFlowBlock, list[SDFGState]]:
-        """``states`` grouped by the block at ``depth`` of their paths."""
-        groups: dict[ControlFlowBlock, list[SDFGState]] = {}
-        for state in states:
-            groups.setdefault(self.paths[state][depth], []).append(state)
-        return groups
+        def after(node: nodes.AccessNode, sources: list[nodes.AccessNode]) -> bool:
+            if order.scope[node] is not None:
+                return False
+            return node in sources or any(node in order.descendants(s) for s in sources)
 
-    def looped(self, path: tuple, depth: int) -> bool:
-        """Whether the region at ``depth`` of ``path`` may run more than once per run of the SDFG."""
-        return any(isinstance(b, LoopRegion) or b in self.cyclic for b in (self.sdfg, *path[:depth]))
+        use = not all(after(node, killers) for node in read)
+        # A map writing what it reads may write first: only the order inside it could tell.
+        makers: OrderedSet = OrderedSet()
+        for node in written:
+            makers.update(order.pred.get(node, ()) if order.scope[node] is None else (order.top(node),))
+        early = not all(
+            after(node, written)
+            or (order.scope[node] is None and any(s in makers for s in order.succ.get(node, ())))
+            or (order.scope[node] is not None and order.top(node) in makers)
+            for node in read
+        )
+        return use, bool(killers), bool(written), early
 
     def candidate(self, desc: dt.Data) -> bool:
         return (
@@ -335,120 +527,108 @@ class BufferSharing:
         )
 
     def place(self, name: str, groups: list[Group]) -> Group | None:
-        """Add ``name`` to the first group it fits, one with the same shape first."""
+        """Add ``name`` to the first group it fits: one holding a copy partner, the copy going with it, then one with
+        the same shape."""
         shape = self.sdfg.arrays[name].shape
-        for same_shape in (True, False):
-            for group in groups:
-                if (self.sdfg.arrays[group.rep].shape == shape) != same_shape:
-                    continue
-                rep = self.joined_rep(group, name)
-                if rep is not None and all(self.disjoint(name, m) for m in group.members):
-                    group.rep = rep
-                    group.members.append(name)
-                    return group
+        partners = self.partners.get(name, ())
+
+        def preference(group: Group) -> tuple[bool, bool]:
+            return not any(m in partners for m in group.members), self.sdfg.arrays[group.rep].shape != shape
+
+        for group in sorted(groups, key=preference):
+            rep = self.joined_rep(group, name)
+            if rep is not None and all(self.disjoint(name, m) for m in group.members):
+                group.rep = rep
+                group.members.append(name)
+                return group
         return None
 
     def disjoint(self, a: str, b: str) -> bool:
-        path_a, path_b = self.prefix[a], self.prefix[b]
-        depth = 0
-        while depth < min(len(path_a), len(path_b)) and path_a[depth] is path_b[depth]:
-            depth += 1
-        looped = self.looped(path_a, depth)
-        if depth == len(path_a) == len(path_b) and depth and isinstance(path_a[-1], SDFGState):
-            state = path_a[-1]
-            if a in self.scoped or b in self.scoped:
-                return False
-            if looped and not (self.state_local(state, a) and self.state_local(state, b)):
-                return False
-            order = self.order(state)
-            return order.before(self.uses[a][state], self.uses[b][state]) or order.before(
-                self.uses[b][state], self.uses[a][state]
-            )
-        region = self.region_at(path_a, depth)
-        blocks_a, blocks_b = self.children(self.uses[a], depth), self.children(self.uses[b], depth)
-        if isinstance(region, ConditionalBlock):
-            if any(block in blocks_b for block in blocks_a):
-                return False
-        else:
-            if region in self.cyclic:
-                return False
-            index = self.positions[region]
-            pos_a, pos_b = [index[x] for x in blocks_a], [index[x] for x in blocks_b]
-            if not (max(pos_a) < min(pos_b) or max(pos_b) < min(pos_a)):
-                return False
-        return not looped or (self.covered(a, list(self.uses[a]), depth) and self.covered(b, list(self.uses[b]), depth))
+        return all(self.ordered(state, a, b) for state in self.active[a] & self.active[b])
 
-    def covered(self, name: str, states: list[SDFGState], depth: int) -> bool:
-        """Whether every run of the region at ``depth`` holding ``states`` writes all of ``name`` before reading it."""
-        groups = self.children(states, depth)
-        region = self.region_at(self.paths[states[0]], depth)
-        if isinstance(region, ConditionalBlock):
-            return all(self.covered(name, sub, depth + 1) for sub in groups.values())
-        if len(groups) == 1:
-            block, sub = next(iter(groups.items()))
-            if isinstance(block, SDFGState):
-                return self.state_local(block, name)
-            return self.covered(name, sub, depth + 1)
-        if region in self.cyclic:
+    def ordered(self, state: SDFGState, a: str, b: str) -> bool:
+        """Whether one of ``a`` and ``b`` is over in ``state`` before the other is first written there."""
+        in_a, in_b = self.live_in[state] & self.bit[a], self.live_in[state] & self.bit[b]
+        out_a, out_b = self.live_out[state] & self.bit[a], self.live_out[state] & self.bit[b]
+        order = self.order(state)
+        uses_a, uses_b = self.uses[a].get(state), self.uses[b].get(state)
+        if uses_a is None or uses_b is None:
             return False
-        first = min(groups, key=self.positions[region].__getitem__)
-        return (
-            isinstance(first, SDFGState)
-            and self.state_local(first, name)
-            and self.kills(first, name)
-            and all(self.dominates(region, first, block) for block in groups if block is not first)
-        )
+        if not (in_b or out_a) and (order.before(uses_a, uses_b) or self.handed_over(state, uses_a, uses_b)):
+            return True
+        return not (in_a or out_b) and (order.before(uses_b, uses_a) or self.handed_over(state, uses_b, uses_a))
 
-    def dominates(self, region: ControlFlowRegion, first: ControlFlowBlock, block: ControlFlowBlock) -> bool:
-        if region not in self.idoms:
-            self.idoms[region] = nx.immediate_dominators(region.nx, region.start_block)
-        idom = self.idoms[region]
-        while block in idom and idom[block] is not block:
-            block = idom[block]
-            if block is first:
-                return True
+    def handed_over(self, state: SDFGState, first: list[nodes.AccessNode], second: list[nodes.AccessNode]) -> bool:
+        """Whether the last access through ``first`` is a whole-array copy that is the first access through ``second``:
+        in one buffer the copy reads and writes the same elements, and :meth:`run` drops it."""
+        order = self.order(state)
+        for edge in state.edges():
+            source, target = edge.src, edge.dst
+            if not (source in first and target in second) or edge.data.wcr is not None or edge.data.is_empty():
+                continue
+            if state.out_degree(source) != 1 or state.in_degree(target) != 1 or not self.whole_copy(state, edge):
+                continue
+            return all(n is source or source in order.descendants(n) for n in first) and all(
+                n is target or n in order.descendants(target) for n in second
+            )
         return False
+
+    def whole_copy(self, state: SDFGState, edge) -> bool:
+        desc, other = self.sdfg.arrays[edge.src.data], self.sdfg.arrays[edge.dst.data]
+        read, written = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
+        # A copy memlet without an other subset uses its one subset on both sides.
+        read, written = read or written, written or read
+        return (
+            read is not None
+            and len(desc.shape) == len(other.shape)
+            and all(self.equal(x, y) for x, y in zip(desc.shape, other.shape))
+            and read.covers_precise(subsets.Range.from_array(desc), self.facts)
+            and written.covers_precise(subsets.Range.from_array(other), self.facts)
+        )
 
     def order(self, state: SDFGState) -> StateOrder:
         if state not in self.orders:
             self.orders[state] = StateOrder.of(state)
         return self.orders[state]
 
-    def kills(self, state: SDFGState, name: str) -> bool:
-        """Whether ``state`` writes all of ``name``."""
-        full = subsets.Range.from_array(self.sdfg.arrays[name])
-        return any(self.full_write(state, e, full) for node in self.uses[name][state] for e in state.in_edges(node))
-
-    def state_local(self, state: SDFGState, name: str) -> bool:
-        """Whether every read of ``name`` in ``state`` follows a write of the whole array in ``state``."""
-        if name in self.scoped:
-            return False
-        key = (state, name)
-        if key not in self.locals:
-            order = self.order(state)
-            full = subsets.Range.from_array(self.sdfg.arrays[name])
-            killers = [
-                node
-                for node in self.uses[name][state]
-                if any(self.full_write(state, edge, full) for edge in state.in_edges(node))
-            ]
-            self.locals[key] = all(
-                node in killers or any(node in order.descendants(k) for k in killers)
-                for node in self.uses[name][state]
-                if state.out_degree(node) > 0
-            )
-        return self.locals[key]
-
     def full_write(self, state: SDFGState, edge, full: subsets.Range) -> bool:
+        """Whether ``edge``, into an access node, stores every element of ``full``: the propagated memlet alone says
+        which elements may be written."""
         if edge.data.is_empty() or edge.data.wcr is not None or edge.data.dynamic:
             return False
-        if any(
-            leaf.data.dynamic or isinstance(leaf.src, nodes.NestedSDFG)
-            for leaf in state.memlet_tree(edge).root().leaves()
-        ):
-            return False
+        for leaf in state.memlet_tree(edge).root().leaves():
+            if leaf.data.dynamic or leaf.data.wcr is not None or isinstance(leaf.src, nodes.NestedSDFG):
+                return False
+            if isinstance(leaf.src, nodes.LibraryNode) and leaf.src.folds_onto_output():
+                return False
+            if not self.one_to_one(state, leaf):
+                return False
         written = edge.data.get_dst_subset(edge, state)
         return written is not None and written.covers_precise(full, self.facts)
+
+    def one_to_one(self, state: SDFGState, leaf) -> bool:
+        """Whether the map parameters around ``leaf`` index its subset by unit steps, each in one axis alone."""
+        subset = leaf.data.get_dst_subset(leaf, state)
+        if not isinstance(subset, subsets.Range):
+            return False
+        params: OrderedSet = OrderedSet()
+        entry = self.order(state).scope[self.order(state).entry_of.get(leaf.src, leaf.src)]
+        while entry is not None:
+            params.update(entry.map.params if isinstance(entry, nodes.MapEntry) else ())
+            entry = self.order(state).scope[entry]
+        seen: OrderedSet = OrderedSet()
+        for begin, end, _ in subset.ranges:
+            names = OrderedSet()
+            for bound in (begin, end):
+                bound = bound.expr if isinstance(bound, symbolic.SymExpr) else bound
+                found = [s for s in sympy.sympify(bound).free_symbols if s.name in params]
+                if len(found) > 1 or (found and abs(sympy.diff(bound, found[0])) != 1):
+                    return False
+                names.update(s.name for s in found)
+            if len(names) > 1 or names & seen:
+                return False
+            seen |= names
+        return True
 
     def joined_rep(self, group: Group, name: str) -> str | None:
         """The buffer ``group`` shares once ``name`` joins it, or None if ``name`` cannot join."""
@@ -461,9 +641,9 @@ class BufferSharing:
             and len(rep.shape) == len(new.shape)
             and rep.alignment == new.alignment
             and rep.pool == new.pool
-            and all(symbolic.equal(x, y) is True for x, y in zip(rep.strides, new.strides))
-            and all(symbolic.equal(x, y) is True for x, y in zip(rep.offset, new.offset))
-            and symbolic.equal(rep.start_offset, new.start_offset) is True
+            and all(self.equal(x, y) for x, y in zip(rep.strides, new.strides))
+            and all(self.equal(x, y) for x, y in zip(rep.offset, new.offset))
+            and self.equal(rep.start_offset, new.start_offset)
         ):
             return None
         persistent = dtypes.AllocationLifetime.Persistent
@@ -479,8 +659,7 @@ class BufferSharing:
             if m == chosen or m not in self.nested:
                 continue
             if not (
-                len(arrays[m].shape) == len(shape)
-                and all(symbolic.equal(x, y) is True for x, y in zip(arrays[m].shape, shape))
+                len(arrays[m].shape) == len(shape) and all(self.equal(x, y) for x, y in zip(arrays[m].shape, shape))
             ):
                 return None
         if arrays[chosen].lifetime == persistent:
@@ -489,12 +668,19 @@ class BufferSharing:
             return None
         return chosen
 
+    def equal(self, x, y) -> bool:
+        """``symbolic.equal`` once per pair: few distinct extents recur across all candidates."""
+        if (x, y) not in self.equalities:
+            self.equalities[(x, y)] = symbolic.equal(x, y) is True
+        return self.equalities[(x, y)]
+
+    def at_least(self, x, y) -> bool:
+        if (x, y) not in self.bounds:
+            self.bounds[(x, y)] = symbolic.provably_nonnegative(symbolic.simplify(x - y), self.facts)
+        return self.bounds[(x, y)]
+
     def covers(self, big: dt.Array, small: dt.Array) -> bool:
-        facts = self.facts
-        return all(
-            symbolic.provably_nonnegative(symbolic.simplify(x - y), facts)
-            for x, y in zip((*big.shape, big.total_size), (*small.shape, small.total_size))
-        )
+        return all(self.at_least(x, y) for x, y in zip((*big.shape, big.total_size), (*small.shape, small.total_size)))
 
     def hoistable(self, desc: dt.Array) -> bool:
         """Whether ``desc`` can be allocated on entry to the SDFG: its size reads only symbols bound on entry and

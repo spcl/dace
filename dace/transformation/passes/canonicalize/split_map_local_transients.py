@@ -7,8 +7,8 @@ is inside a map body, that one buffer is shared by the threads of a parallel map
 clones a loop into both branches of a guard and leaves exactly that (velocity_tendencies' ``lvn_only``).
 
 Contract: a transient (not a view, not ``Persistent``/``Global``, not named in control flow) whose every
-access node is inside a map scope, in two or more ``(state, outermost map)`` scopes, each of which writes it
-before reading it, gets a fresh descriptor per scope after the first. Values never flow between the scopes,
+access node is inside a map scope, in two or more ``(state, outermost map)`` scopes, each of which writes what it
+reads before reading it, gets a fresh descriptor per scope after the first. Values never flow between the scopes,
 so renaming keeps the semantics; each instance is then allocated inside its own map.
 """
 
@@ -50,7 +50,13 @@ def _written_before_read(state: SDFGState, group: list[nodes.AccessNode]) -> boo
     for w in writes:
         if w not in reached:
             reached.update(state.bfs_nodes(w))
-    return all(n in reached for n in group if any(not e.data.is_empty() for e in state.out_edges(n)))
+    if not all(n in reached for n in group if any(not e.data.is_empty() for e in state.out_edges(n))):
+        return False
+    # A read of what no write of the scope covers takes its value from another scope.
+    written = [e.data.get_dst_subset(e, state) for w in writes for e in state.in_edges(w) if not e.data.is_empty()]
+    facts = state.sdfg.facts()
+    reads = [e.data.get_src_subset(e, state) for n in group for e in state.out_edges(n) if not e.data.is_empty()]
+    return all(r is not None and any(w is not None and w.covers_precise(r, facts) for w in written) for r in reads)
 
 
 @properties.make_properties
