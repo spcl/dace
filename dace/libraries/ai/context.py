@@ -15,8 +15,8 @@ from typing import Any
 # environment listing, and so the answer cache key, must not depend on what the program imported
 # or compiled before.
 import dace.codegen.instrumentation  # noqa: F401
+import dace.libraries.comm  # noqa: F401
 import dace.libraries.fft  # noqa: F401
-import dace.libraries.mpi  # noqa: F401
 import dace.libraries.pblas  # noqa: F401
 import dace.libraries.sparse  # noqa: F401
 import dace.library

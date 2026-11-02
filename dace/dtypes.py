@@ -1271,6 +1271,7 @@ if TYPE_CHECKING:
     class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
     class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
     class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
+    class gpuStream_t(_DaCeArray, npt.NDArray[numpy.void]): ...
     # fmt: on
 else:
     # Runtime definitions
@@ -1299,6 +1300,7 @@ else:
     complex128 = typeclass(numpy.complex128)
     string = stringtype()
     MPI_Request = opaque("MPI_Request")
+    gpuStream_t = opaque("gpuStream_t")
 
 _bool = bool
 

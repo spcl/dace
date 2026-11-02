@@ -270,6 +270,33 @@ def test_nested_sdfg_connector_offset():
         assert edge.data.subset == dace.subsets.Range([(1, 2, 1)]), edge.data.subset
 
 
+def test_a_nested_symbol_named_like_an_outer_one_widens_the_border_memlet():
+    """The nest assigns its own ``k``; the parent's ``k`` (assigned before the nest) never reaches it, because the
+    nest maps no symbols. The border memlet must not name ``k``: it covers the whole array."""
+    inner = dace.SDFG("writes_at_own_k")
+    inner.add_array("a", [10], dace.float64)
+    inner.add_symbol("k", dace.int64)
+    first = inner.add_state("first", is_start_block=True)
+    write = inner.add_state("write")
+    inner.add_edge(first, write, dace.InterstateEdge(assignments={"k": "3"}))
+    tasklet = write.add_tasklet("one", {}, {"o": None}, "o = 1.0")
+    write.add_edge(tasklet, "o", write.add_write("a"), None, dace.Memlet("a[k]"))
+
+    sdfg = dace.SDFG("outer_k")
+    sdfg.add_array("a", [10], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    start = sdfg.add_state("start", is_start_block=True)
+    host = sdfg.add_state("host")
+    sdfg.add_edge(start, host, dace.InterstateEdge(assignments={"k": "5"}))
+    nest = host.add_nested_sdfg(inner, {}, {"a": None}, symbol_mapping={})
+    host.add_edge(nest, "a", host.add_write("a"), None, dace.Memlet("a[0:10]"))
+
+    propagate_memlets_sdfg(sdfg)
+
+    (border,) = host.out_edges(nest)
+    assert border.data.subset == dace.subsets.Range([(0, 9, 1)])
+
+
 if __name__ == "__main__":
     test_conditional()
     test_conditional_nested()
@@ -280,3 +307,4 @@ if __name__ == "__main__":
     test_typed_parameter_symbol()
     test_nested_sdfg_connector_in_mapped_symbols()
     test_nested_sdfg_connector_offset()
+    test_a_nested_symbol_named_like_an_outer_one_widens_the_border_memlet()

@@ -55,7 +55,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
         vec_map_entry, vec_map_exit = axpy_state.add_map("axpy", {"i": f"0:{n}"}, schedule=schedule)
 
         axpy_tasklet = axpy_state.add_tasklet(
-            "axpy", ["x_conn", "y_conn"], ["z_conn"], f"z_conn = {a} * x_conn + y_conn"
+            "axpy", ["x_conn", "y_conn"], ["z_conn"], f"z_conn = ({a}) * x_conn + y_conn"
         )
 
         # Access container either as an array or as a stream

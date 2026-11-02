@@ -60,6 +60,20 @@ static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
   return exponent;
 }
 
+// Fortran SCALE(x, n): x * 2^n.
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T ldexp(const T& x, int n) {
+    return std::ldexp(x, n);
+}
+
+// Fortran EXPONENT(x): e with x = m * 2^e and 0.5 <= |m| < 1 (frexp's exponent), one above C's ilogb.
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI int ftn_exponent(const T& x) {
+    int e = 0;
+    std::frexp(x, &e);
+    return e;
+}
+
 // Implement to support Fortran's intrinsic NINT - round, but return an integer
 template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int iround(const T& a) {
@@ -374,6 +388,7 @@ template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_flo
 static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
     return (T)std::floor(numerator / denominator);
 }
+// Mixed operand types promote to their common type.
 template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI auto py_floor(const T1& numerator, const T2& denominator) -> decltype(numerator + denominator) {
     using T = decltype(numerator + denominator);
@@ -401,10 +416,16 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<double> np_float_pow(const std::com
 // Formula: num - (num // den) * den
 // NOTE: This is different than Python math.remainder and C remainder,
 // which are equivalent to the IEEE remainder: num - round(num / den) * den
-template<typename T>
+template<typename T, std::enable_if_t<!std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominator) {
     T quotient = py_floor(numerator, denominator);
     return (T)(numerator - quotient * denominator);
+}
+// fmod is exact; the formula above rounds the division first (1.0 % 0.1, 1e20 % 3, 5 % inf)
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominator) {
+    const T remainder = (T)std::fmod(numerator, denominator);
+    return (remainder != 0 && (remainder < 0) != (denominator < 0)) ? remainder + denominator : remainder;
 }
 
 template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
@@ -438,6 +459,16 @@ static DACE_CONSTEXPR DACE_HDFI auto ftn_mod(const T1& numerator, const T2& deno
 template<typename T1, typename T2>
 static DACE_CONSTEXPR DACE_HDFI auto ftn_modulo(const T1& numerator, const T2& denominator) -> decltype(py_mod(numerator, denominator)) {
     return py_mod(numerator, denominator);
+}
+
+// Fortran ISHFT: shifts on the unsigned bit pattern, so the right shift zero-fills (C++ >> sign-extends).
+template<typename T, typename TShift>
+static DACE_CONSTEXPR DACE_HDFI T logical_left_shift(const T& x, const TShift& n) {
+    return (T)(((typename std::make_unsigned<T>::type)x) << n);
+}
+template<typename T, typename TShift>
+static DACE_CONSTEXPR DACE_HDFI T logical_right_shift(const T& x, const TShift& n) {
+    return (T)(((typename std::make_unsigned<T>::type)x) >> n);
 }
 
 // Computes C/C++ divmod (std::div)
@@ -678,6 +709,19 @@ namespace dace
         static DACE_CONSTEXPR_HOSTDEV typeless_pi pi{};
         static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
+
+        // Real and imaginary part of a std::complex or thrust::complex (tasklet re(z) / im(z)).
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI auto re(const T& z) -> decltype(z.real())
+        {
+            return z.real();
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI auto im(const T& z) -> decltype(z.imag())
+        {
+            return z.imag();
+        }
+
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T exp(const T& a)
         {

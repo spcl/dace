@@ -126,9 +126,30 @@ def test_getrs(implementation, dtype, storage):
 
 ###############################################################################
 
+
+def test_cusolver_nrhs_counts_the_right_hand_sides():
+    sdfg = dace.SDFG("solve_two_right_hand_sides")
+    state = sdfg.add_state()
+    sdfg.add_array("ain", [4, 4], dace.float64)
+    sdfg.add_array("bin", [4, 2], dace.float64)
+    sdfg.add_array("bout", [4, 2], dace.float64)
+    node = linalg.Solve("solve")
+    node.implementation = "cuSolverDn"
+    state.add_memlet_path(state.add_read("ain"), node, dst_conn="_ain", memlet=Memlet("ain[0:4, 0:4]"))
+    state.add_memlet_path(state.add_read("bin"), node, dst_conn="_bin", memlet=Memlet("bin[0:4, 0:2]"))
+    state.add_memlet_path(node, state.add_write("bout"), src_conn="_bout", memlet=Memlet("bout[0:4, 0:2]"))
+
+    sdfg.expand_library_nodes(recursive=True)
+
+    code = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    (call,) = [c for c in code if "getrs" in c]
+    assert "CUBLAS_OP_N, 4, 2," in call
+
+
 if __name__ == "__main__":
     test_getrs("MKL", dace.float32)
     test_getrs("MKL", dace.float64)
     test_getrs("cuSolverDn", dace.float32, dace.StorageType.GPU_Global)
     test_getrs("cuSolverDn", dace.float64, dace.StorageType.GPU_Global)
-###############################################################################
+    ###############################################################################
+    test_cusolver_nrhs_counts_the_right_hand_sides()
