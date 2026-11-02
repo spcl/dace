@@ -53,7 +53,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import SubgraphView, generate_element_id
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg.symbol_repo import SymbolRepo, bound_names, scope_owners
+from dace.sdfg.symbol_repo import SymbolRepo, bound_names, integer_names, scope_owners
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
@@ -962,7 +962,8 @@ class SDFG(ControlFlowRegion):
             raise TypeError("Class type mismatch")
 
         attrs = dict(json_obj["attributes"])
-        repo_json = attrs.pop("symbol_repo")
+        # An SDFG saved before the repository has a plain table of symbols
+        repo_json = attrs.pop("symbol_repo", None) or {"params": {"types": attrs.get("symbols", {})}}
         json_obj = dict(json_obj)
         json_obj["attributes"] = attrs
         nodes = json_obj["nodes"]
@@ -1145,11 +1146,15 @@ class SDFG(ControlFlowRegion):
                 _remove_dict_keys(self.constants_prop, name)
                 _remove_dict_keys(self.callback_mapping, name)
 
-        # Replace inside data descriptors
-        for array in self.arrays.values():
-            replace_properties_dict(array, repldict, symrepl)
+        token = symbolic.substituted_integers.set(integer_names(self._symbol_repo.params.types))
+        try:
+            # Replace inside data descriptors
+            for array in self.arrays.values():
+                replace_properties_dict(array, repldict, symrepl)
 
-        super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
+            super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
+        finally:
+            symbolic.substituted_integers.reset(token)
 
     def add_symbol(
         self,
@@ -2598,12 +2603,15 @@ class SDFG(ControlFlowRegion):
             # A shape may name a scoped symbol (e.g. a transient sized by a map parameter) or one an interstate edge
             # assigns, which are not SDFG symbols
             scoped = scope_bound_names(sdfg) | interstate_bound_names(sdfg) | bound_names
-            # The dtype comes with the symbol object. SymPy may build an expression from another object of the same name,
-            # so a symbol name has one dtype in a process.
+            # SymPy may build an expression from another object of the same name, so the object says nothing of the dtype
             for sym in new:
                 if sym.name in scoped:
                     continue
-                sdfg.add_symbol(sym.name, sym.declaration.dtype)
+                warnings.warn(
+                    f'Symbol "{sym.name}" of data descriptor "{name}" is not declared, so it gets the default type '
+                    f"{symbolic.DEFAULT_SYMBOL_TYPE}; declare it with add_symbol first."
+                )
+                sdfg.add_symbol(sym.name, symbolic.DEFAULT_SYMBOL_TYPE)
                 sdfg.symbol_repo.shape_declared.add(sym.name)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.

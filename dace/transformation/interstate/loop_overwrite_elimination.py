@@ -57,6 +57,15 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
         if start is None or end is None or stride is None:
             return False
 
+        # The body runs exactly once afterwards, so the loop has to run
+        facts = SymbolResolver().facts_at(graph)
+        if not any(
+            symbolic.provably_nonnegative(sign * stride, facts)
+            and symbolic.provably_le(sign * start, sign * end, facts)
+            for sign in (1, -1)
+        ):
+            return False
+
         # Check if any continue, break, or return statements are present in the loop.
         if self.loop.has_break or self.loop.has_continue or self.loop.has_return:
             return False
@@ -161,8 +170,8 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
 
                     src_subset = copy.deepcopy(e.data.get_src_subset(e, state))
                     src_subset.replace({self.loop.loop_variable: end})
-                    # None of write_subsets should lie within the new subset
-                    facts = SymbolResolver().facts_at(state, dn)
+                    # None of write_subsets should lie within the new subset; the facts hold at the read and every write
+                    facts = SymbolResolver().facts_at(self.loop)
                     if any(
                         intersects(ws_ss, src_subset, facts) is not symbolic.Truth.FALSE
                         for ws_ss in write_subsets[dn.data]

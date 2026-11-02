@@ -102,13 +102,15 @@ def bound_names(owner: ScopeOwner) -> set[str]:
     return {*params, *(connector for connector in owner.in_connectors if not connector.startswith("IN_"))}
 
 
+def integer_names(types: dict[str, dtypes.typeclass]) -> frozenset[str]:
+    return frozenset(name for name, dtype in types.items() if dtype in dtypes.INTEGER_TYPES and dtype != dtypes.bool_)
+
+
 def symbol_facts(
     types: dict[str, dtypes.typeclass], predicates: dict[str, frozenset[Predicate]], relations: Iterable[Relation]
 ) -> Facts:
     """The facts of a symbol table; raises ``InconsistentAssumptionsError`` if they contradict."""
-    integers = frozenset(
-        name for name, dtype in types.items() if dtype in dtypes.INTEGER_TYPES and dtype != dtypes.bool_
-    )
+    integers = integer_names(types)
     # An unsigned type is a sign fact of its own
     unsigned = {name: frozenset({Predicate.NONNEGATIVE}) for name, dtype in types.items() if dtype in UNSIGNED_TYPES}
     signs = [

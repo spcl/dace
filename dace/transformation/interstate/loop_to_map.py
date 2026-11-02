@@ -698,8 +698,8 @@ class LoopToMap(xf.MultiStateTransformation):
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
         data = mmlt.data
-        # Inside the body (an inter-state edge read has no state): a dependence only exists if the loop runs
-        facts = SymbolResolver().facts_at(state if state is not None else self.loop)
+        # Holds at the read and at every write: a dependence only exists if the loop runs
+        facts = SymbolResolver().facts_at(self.loop)
 
         if mmlt.dynamic and mmlt.src_subset.num_elements() != 1:
             # If pointers are involved, give up

@@ -19,7 +19,7 @@ from dace.sdfg import scope as sdscope
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.sdfg.symbol_repo import assumption_check, program_assumptions
-from dace.sdfg.type_inference import infer_expr_type
+from dace.sdfg.type_inference import infer_expr_type, infer_iteration_symbol_type
 from dace.sdfg.validation import validate_declared_symbols
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
@@ -1138,12 +1138,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         l_end = loop_analysis.get_loop_end(cfr)
                         l_start = loop_analysis.get_init_assignment(cfr)
                         l_step = loop_analysis.get_loop_stride(cfr)
-                        sym_type = dtypes.result_type_of(
-                            infer_expr_type(l_start, global_symbols),
-                            infer_expr_type(l_step, global_symbols),
-                            infer_expr_type(l_end, global_symbols),
+                        interstate_symbols[cfr.loop_variable] = infer_iteration_symbol_type(
+                            l_start, l_end, l_step, symbols=global_symbols
                         )
-                        interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
                 # Further loop-carried symbols defined by the init statement (e.g. address cursors)

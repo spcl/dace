@@ -279,10 +279,26 @@ def test_symbol_removed_through_the_repository_is_no_longer_shape_declared():
     assert "i" not in sdfg.symbols
 
 
-def test_shape_declares_a_symbol_with_its_dtype():
+def test_an_undeclared_shape_symbol_gets_the_default_type_and_a_warning():
+    """Only a declaration gives a dtype: the object in a shape may be any symbol of its name."""
     sdfg = dace.SDFG("shape_symbol_dtype")
-    sdfg.add_array("A", [dace.symbol("L", dace.int64)], dace.float64)
-    assert sdfg.symbols["L"] == dace.int64
+    with pytest.warns(UserWarning, match='"L" of data descriptor "A" is not declared.*add_symbol'):
+        sdfg.add_array("A", [dace.symbol("L", dace.int64)], dace.float64)
+    assert sdfg.symbols["L"] == symbolic.DEFAULT_SYMBOL_TYPE
+
+
+def test_an_earlier_expression_does_not_type_a_shape_symbol():
+    """SymPy's cache hands back the first ``2*N`` built, so the signature used to depend on what the process built."""
+    first = dace.symbol("Nhist", dace.int32)
+    assert 2 * first == 2 * first
+    declared = dace.SDFG("declared_extent")
+    declared.add_symbol("Nhist", dace.int64)
+    declared.add_array("A", [2 * dace.symbol("Nhist", dace.int64)], dace.float64)
+    assert declared.symbols["Nhist"] == dace.int64
+    undeclared = dace.SDFG("undeclared_extent")
+    with pytest.warns(UserWarning, match="add_symbol"):
+        undeclared.add_array("A", [2 * dace.symbol("Nhist", dace.int64)], dace.float64)
+    assert undeclared.symbols["Nhist"] == symbolic.DEFAULT_SYMBOL_TYPE
 
 
 def test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_names():
@@ -297,7 +313,8 @@ def test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_name
 
 
 def test_type_inference_takes_the_declared_type_of_a_symbol():
-    assert infer_types(dace.symbol("L", dace.int64), {}) == {"L": dace.int64}
+    assert infer_types(dace.symbol("L", dace.int64), {"L": dace.int32}) == {"L": dace.int32}
+    assert infer_types(dace.symbol("L", dace.int64), {}) == {}
     assert dace.dtypes.result_type_of(dace.symbol("L", dace.int64), dace.int64) == dace.int64
 
 
@@ -335,6 +352,78 @@ def test_new_names_avoid_names_bound_after_the_last_lookup():
     assert sdfg.add_transient("y", [1], dace.float64, find_new_name=True)[0] != "y"
 
 
+def test_simplify_keeps_a_symbol_a_relation_names():
+    """No graph reads ``a``, but removing it would leave the relation naming nothing."""
+    sdfg = dace.SDFG("related")
+    sdfg.add_symbol("a", dace.int64)
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol_relation(symbolic.Relation(symbolic.RelationKind.LT, symbolic.symbol("a"), symbolic.symbol("N")))
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("fill", {}, {"o"}, "o = 1")
+    state.add_edge(tasklet, "o", state.add_write("B"), None, dace.Memlet("B[0]"))
+    sdfg.simplify()
+    assert "a" in sdfg.symbols
+
+
+def test_an_sdfg_saved_without_a_repository_loads_its_symbols():
+    sdfg = dace.SDFG("saved_before")
+    sdfg.add_symbol("N", dace.int64)
+    saved = sdfg.to_json()
+    del saved["attributes"]["symbol_repo"]
+    saved["attributes"]["symbols"] = {"N": "int64"}
+    assert dict(dace.SDFG.from_json(saved).symbols) == {"N": dace.int64}
+
+
+def test_arglist_passes_a_scalar_argument_a_shape_names():
+    sdfg = dace.SDFG("scalar_extent")
+    sdfg.add_scalar("n", dace.int32)
+    sdfg.arg_names = ["n"]
+    sdfg.add_array("A", [4, symbolic.symbol("n")], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("use", {"a"}, {}, "pass")
+    state.add_edge(state.add_read("A"), None, tasklet, "a", dace.Memlet("A[0, 0]"))
+    assert isinstance(state.arglist()["n"], dace.data.Scalar)
+
+
+def strided_copy(tmp_size) -> dace.SDFG:
+    n, s = symbolic.symbol("N", dace.int64), symbolic.symbol("s", dace.int64)
+    sdfg = dace.SDFG("strided_copy")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    sdfg.add_symbol("R", dace.float64)
+    sdfg.add_array("A", [n], dace.float64)
+    sdfg.add_transient("tmp", [tmp_size(n, s)], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    memlet = dace.Memlet(data="A", subset="0:N:s", other_subset="0:ceiling(N/s)")
+    state.add_edge(state.add_read("A"), None, state.add_write("tmp"), None, memlet)
+    return sdfg
+
+
+def test_a_rounding_folds_once_substitution_leaves_an_integer():
+    """Both ``ceiling_div`` and a parsed ``ceiling(N/s)`` become ``N`` at ``s = 1``, as dtypes prove ``N`` an integer."""
+    n = symbolic.symbol("N", dace.int64)
+    for tmp_size in (symbolic.ceiling_div, lambda n, s: symbolic.pystr_to_symbolic("ceiling(N/s)")):
+        sdfg = strided_copy(tmp_size)
+        sdfg.replace("s", "1")
+        assert sdfg.arrays["tmp"].shape == (n,)
+        sdfg.validate()
+
+        by_expression = strided_copy(tmp_size)
+        by_expression.replace_dict({"s": "1", "N": "2*K"})
+        assert not by_expression.arrays["tmp"].shape[0].has(sympy.ceiling)
+
+
+def test_a_rounding_of_a_float_or_a_fraction_stays():
+    x, n = symbolic.pystr_to_symbolic("ceiling(R/s)"), symbolic.pystr_to_symbolic("ceiling(N/s)")
+    sdfg = strided_copy(lambda *_: x)
+    sdfg.replace("s", "1")
+    assert sdfg.arrays["tmp"].shape[0].has(sympy.ceiling)
+    sdfg = strided_copy(lambda *_: n)
+    sdfg.replace("s", "2")
+    assert sdfg.arrays["tmp"].shape[0].has(sympy.ceiling)
+
+
 if __name__ == "__main__":
     test_loop_variable_cannot_be_added_as_symbol()
     test_scope_takes_over_a_symbol_a_shape_declared()
@@ -361,9 +450,15 @@ if __name__ == "__main__":
     test_validation_rejects_facts_on_undeclared_symbols()
     test_only_the_frontend_boundary_reads_symbol_declarations()
     test_symbol_removed_through_the_repository_is_no_longer_shape_declared()
-    test_shape_declares_a_symbol_with_its_dtype()
+    test_an_undeclared_shape_symbol_gets_the_default_type_and_a_warning()
+    test_an_earlier_expression_does_not_type_a_shape_symbol()
     test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_names()
     test_type_inference_takes_the_declared_type_of_a_symbol()
     test_swapping_two_names_keeps_both()
     test_renaming_into_a_declared_name_keeps_its_declaration()
     test_new_names_avoid_names_bound_after_the_last_lookup()
+    test_simplify_keeps_a_symbol_a_relation_names()
+    test_an_sdfg_saved_without_a_repository_loads_its_symbols()
+    test_arglist_passes_a_scalar_argument_a_shape_names()
+    test_a_rounding_folds_once_substitution_leaves_an_integer()
+    test_a_rounding_of_a_float_or_a_fraction_stays()

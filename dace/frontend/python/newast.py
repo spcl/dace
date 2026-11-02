@@ -15,6 +15,7 @@ from typing import Any, Literal, NamedTuple
 
 import numpy
 import sympy
+from ordered_set import OrderedSet
 
 import dace
 from dace import data, dtypes, subsets, symbolic, utils
@@ -823,6 +824,10 @@ class TaskletTransformer(ExtNodeTransformer):
         for stmt in _DISALLOWED_STMTS:
             setattr(self, "visit_" + stmt, lambda n: _disallow_stmt(self, n))
 
+    def facts(self) -> symbolic.Facts:
+        """What holds where the tasklet is being parsed."""
+        return self.visitor.facts()
+
     def parse_tasklet(self, tasklet_ast: TaskletType, name: str | None = None):
         """
         Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets.
@@ -1179,7 +1184,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Tmp fix for missing state symbol propagation
         self.symbols = dict()
         # Loop iterators whose loop has ended (Python keeps them readable), and the copies read in their place
-        self.ended_loops: dict[str, tuple[LoopRegion, sympy.Expr, sympy.Expr, sympy.Expr]] = {}
+        self.ended_loops: dict[str, list[tuple[LoopRegion, sympy.Expr, sympy.Expr, sympy.Expr]]] = {}
         self.iterator_copies: dict[str, symbolic.symbol] = {}
 
         # Indirections
@@ -1536,28 +1541,32 @@ class ProgramVisitor(ExtNodeVisitor):
         """What holds where the program is being parsed: the SDFG's facts and the ranges of the enclosing loops."""
         return SymbolResolver().facts_at(self.cfg_target)
 
-    def _copy_out_iterator(self, name: str, node: ast.AST) -> symbolic.symbol:
-        """Makes a loop iterator readable after its loop, as in Python: the loop body copies it at the start of every
-        iteration, so the copy holds the last iterated value, also after a ``break``. A loop that never runs leaves
-        the iterator unbound, so it is refused; one that may not run leaves the copy undefined, as Python leaves the
-        iterator unbound."""
-        loop, start, stop, step = self.ended_loops[name]
+    def _loop_never_runs(self, start: sympy.Expr, stop: sympy.Expr, step: sympy.Expr) -> bool:
         zero = sympy.Integer(0)
         facts = self.facts()
         if symbolic.holds(symbolic.Relation(symbolic.RelationKind.LT, zero, step), facts):
-            runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, start, stop), facts)
-        elif symbolic.holds(symbolic.Relation(symbolic.RelationKind.LT, step, zero), facts):
-            runs = symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, stop, start), facts)
-        else:
-            runs = symbolic.Truth.UNKNOWN
-        if runs is symbolic.Truth.FALSE:
+            return symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, start, stop), facts) is symbolic.Truth.FALSE
+        if symbolic.holds(symbolic.Relation(symbolic.RelationKind.LT, step, zero), facts):
+            return symbolic.ask(symbolic.Relation(symbolic.RelationKind.LT, stop, start), facts) is symbolic.Truth.FALSE
+        return False
+
+    def _copy_out_iterator(self, name: str, node: ast.AST) -> symbolic.symbol:
+        """Makes a loop iterator readable after its loops, as in Python: the body of each loop that bound the name
+        copies it at the start of every iteration, so the copy holds the last iterated value, also after a ``break``.
+        If none of them can run, the iterator is unbound, so it is refused; if none did, the copy is undefined, as
+        Python leaves the iterator unbound."""
+        ended = self.ended_loops[name]
+        if all(self._loop_never_runs(*bounds) for _, *bounds in ended):
             raise DaceSyntaxError(
                 self, node, f'Loop iterator "{name}" is read after a loop that never runs, which leaves it unbound'
             )
-        copy = symbolic.symbol(self.sdfg.find_new_symbol(f"{name}_last"), loop.new_symbols(self.sdfg.symbols)[name])
-        first = loop.start_block
-        entry = loop.add_state(f"{name}_copy", is_start_block=True)
-        loop.add_edge(entry, first, dace.InterstateEdge(assignments={copy.name: name}))
+        first_type, *others = (loop.new_symbols(self.sdfg.symbols)[name] for loop, *_ in ended)
+        dtype = dtypes.result_type_of(first_type, first_type, *others)
+        copy = symbolic.symbol(self.sdfg.find_new_symbol(f"{name}_last"), dtype)
+        for loop, *_ in ended:
+            first = loop.start_block
+            entry = loop.add_state(f"{name}_copy", is_start_block=True)
+            loop.add_edge(entry, first, dace.InterstateEdge(assignments={copy.name: name}))
         self.iterator_copies[name] = copy
         return copy
 
@@ -2591,7 +2600,8 @@ class ProgramVisitor(ExtNodeVisitor):
             sym_name = indices[0]
             # A loop over an existing Python variable binds a fresh name: the variable keeps its container and is
             # written at the start of every iteration, so after the loop it holds the last value, as in Python
-            variable = self.variables.pop(sym_name) if self.variables.get(sym_name) in self.sdfg.arrays else None
+            shadowed = self.variables.pop(sym_name) if self.variables.get(sym_name) in self.sdfg.arrays else None
+            variable = shadowed
             loop_var = sym_name if variable is None else self.sdfg.find_new_symbol(sym_name)
             integer = True
             nonnegative = None
@@ -2605,9 +2615,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 eoff = 1
             try:
                 conditions = [s >= 0 for s in (start, stop, step)]
-                if conditions == [True, True, True] or (start > stop and step < 0):
+                ascending = conditions == [True, True, True]
+                # A descending loop's last value is above ``stop``, the first one it never reaches
+                if ascending or (start > stop and step < 0 and stop >= -1):
                     nonnegative = True
-                    if start != 0:
+                    if start != 0 and (ascending or stop >= 0):
                         positive = True
             except:
                 pass
@@ -2626,7 +2638,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 positive=positive,
             )
 
-            extra_syms = {sym_name: sym_obj}
+            # By-name lookups read the fresh name too
+            extra_syms = {sym_name: sym_obj, loop_var: sym_obj}
+            # The write-back needs a scalar of its own, which the bounds do not read
+            bound_names = {str(s) for rng in ranges[0] for s in pystr_to_symbolic(rng).free_symbols}
+            if variable is not None and (
+                variable in bound_names
+                or not isinstance(self.sdfg.arrays[variable], data.Scalar)
+                or not self.sdfg.arrays[variable].transient
+            ):
+                variable, _ = self.sdfg.add_scalar(
+                    f"{sym_name}_value", sym_obj.declaration.dtype, transient=True, find_new_name=True
+                )
 
             self.symbols[sym_obj] = subsets.Range([(start, stop + eoff, step)])
 
@@ -2677,19 +2700,24 @@ class ProgramVisitor(ExtNodeVisitor):
             loop_region.start_block = loop_region.node_id(first_subblock)
             self._connect_break_blocks(loop_region)
             if variable is None:
-                self.ended_loops[sym_name] = (loop_region, start, stop, step)
+                self.ended_loops.setdefault(sym_name, []).append((loop_region, start, stop, step))
                 self.iterator_copies.pop(sym_name, None)
             else:
-                self.variables[sym_name] = variable
+                # As in Python, the name ends up as the body left it, and as it was if the loop does not run
+                self.variables.setdefault(sym_name, variable)
                 write_back = loop_region.add_state(f"{sym_name}_write_back")
-                tasklet = write_back.add_tasklet("write_back", {}, {"out"}, f"out = {loop_var}")
-                write_back.add_edge(
-                    tasklet,
-                    "out",
-                    write_back.add_write(variable),
-                    None,
-                    Memlet.from_array(variable, self.sdfg.arrays[variable]),
-                )
+                kept = self.cfg_target.add_state_before(loop_region, f"{sym_name}_keep")
+                for target in OrderedSet([variable, self.variables[sym_name]]):
+                    if not isinstance(self.sdfg.arrays[target], data.Scalar):
+                        continue
+                    tasklet = write_back.add_tasklet("write_back", {}, {"out"}, f"out = {loop_var}")
+                    write_back.add_edge(
+                        tasklet, "out", write_back.add_write(target), None, Memlet(data=target, subset="0")
+                    )
+                    if target != shadowed and isinstance(self.sdfg.arrays[shadowed], data.Scalar):
+                        kept.add_nedge(
+                            kept.add_read(shadowed), kept.add_write(target), Memlet(data=shadowed, subset="0")
+                        )
                 loop_region.add_edge(write_back, first_subblock, dace.InterstateEdge())
                 loop_region.start_block = loop_region.node_id(write_back)
             # Handle else clause
@@ -4133,9 +4161,9 @@ class ProgramVisitor(ExtNodeVisitor):
     def _has_sdfg(self, value: Any) -> bool:
         return isinstance(value, SDFG) or hasattr(value, "__sdfg__")
 
-    def _eval_arg(self, arg: str | Any) -> Any:
+    def _eval_arg(self, arg: str | Any, constant: bool = False) -> Any:
         if not isinstance(arg, str):
-            if symbolic.issymbolic(arg) and not isinstance(arg, symbolic.symbol):
+            if not constant and symbolic.issymbolic(arg) and not isinstance(arg, symbolic.symbol):
                 # The callee sees an expression as a scalar typed by its symbols, which only this program types
                 return data.Scalar(symbolic.symtype(arg, self.symbol_types()))
             return arg
@@ -4202,13 +4230,15 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # fcopy = copy.copy(func)
             fcopy = func
-            if hasattr(fcopy, "global_vars"):
-                fcopy.global_vars = {**self.globals, **func.global_vars}
+            own_globals = func.global_vars if hasattr(fcopy, "global_vars") else None
+            if own_globals is not None:
+                fcopy.global_vars = {**self.globals, **own_globals}
 
             cnt = self.progress_count()
             try:
-                fargs = tuple(self._eval_arg(arg) for _, arg in posargs)
-                fkwargs = {k: self._eval_arg(arg) for k, arg in kwargs}
+                # A compile-time argument stays the expression it is
+                fargs = tuple(self._eval_arg(arg, k in constant_args) for k, arg in posargs)
+                fkwargs = {k: self._eval_arg(arg, k in constant_args) for k, arg in kwargs}
 
                 if isinstance(fcopy, DaceProgram):
                     fcopy.signature = copy.deepcopy(func.signature)
@@ -4238,6 +4268,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     if Config.get_bool("frontend", "raise_nested_parsing_errors"):
                         ex.__noskipcall__ = True
                     raise ex
+            finally:
+                # This call's names, iterators included, are not the callee's globals
+                if own_globals is not None:
+                    fcopy.global_vars = own_globals
 
             funcname = sdfg.name
             all_args = required_args
@@ -4329,8 +4363,9 @@ class ProgramVisitor(ExtNodeVisitor):
             required_args.extend(symbols)
         required_args = dtypes.deduplicate(required_args)
         gargs = {a[0] for a in args}
+        readable = self.symbol_types()
         for rarg in required_args:
-            if rarg not in gargs and rarg in self.sdfg.symbols:
+            if rarg not in gargs and rarg in readable:
                 args.append((rarg, rarg))
 
         # Argument checks
@@ -5640,6 +5675,8 @@ class ProgramVisitor(ExtNodeVisitor):
         sym = dace.symbol(name, dtype=desc.dtype)
         # Nested scopes resolve free symbols through globals
         self.globals[name] = sym
+        # The loop body works on a copy of the globals
+        self.promoted_scalars[name] = sym
         state = self._add_state(f"promote_{scalar}_to_{name}")
         # A size-1 array reads by subscript, or the assignment would take its pointer
         rhs = scalar if isinstance(desc, data.Scalar) else f"{scalar}[{', '.join(['0'] * len(desc.shape))}]"

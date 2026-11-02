@@ -139,7 +139,10 @@ class LiftTrivialIf(ppl.Pass):
         """Whether a comparison guard (or its negation) holds under the facts at ``cfb``."""
         if code is None or code.language != dace.dtypes.Language.Python:
             return symbolic.Truth.UNKNOWN
-        condition = symbolic.pystr_to_symbolic(code.as_string)
+        try:
+            condition = symbolic.pystr_to_symbolic(code.as_string)
+        except Exception:
+            return symbolic.Truth.UNKNOWN
         negated = isinstance(condition, sympy.Not)
         relation = symbolic.comparison_relation(condition.args[0] if negated else condition)
         if relation is None:

@@ -5,6 +5,7 @@ import pickle
 import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
+from contextvars import ContextVar
 from functools import cache, lru_cache
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias, Union
 
@@ -34,6 +35,7 @@ from dace.symbolic_facts import (  # noqa: F401
     provably_le,
     provably_nonnegative,
     relation_names,
+    with_integers,
 )
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
@@ -90,7 +92,7 @@ else:
 class SymbolDeclaration(NamedTuple):
     """What ``dace.symbol(name, dtype, **assumptions)`` declares. Only the creator of the object reads it (the
     frontend, from the program's own symbols): an object found inside an expression may be any symbol of its name,
-    so the type of a name comes from the SDFG's symbols."""
+    so the type of a name comes from the SDFG's symbols, and a name no one declared is ``DEFAULT_SYMBOL_TYPE``."""
 
     dtype: dtypes.typeclass
     predicates: frozenset[Predicate]
@@ -1030,7 +1032,26 @@ def subs_reachable(expr, repl_dict: dict, keys_by_name: dict[str, list]):
                 pending.extend(substitutable_names(repl_dict[key]))
     if not reachable:
         return expr
-    return expr.subs({key: value for key, value in repl_dict.items() if key in reachable})
+    return subs_folded(expr, {key: value for key, value in repl_dict.items() if key in reachable})
+
+
+#: The names an SDFG knows to be integers while it substitutes; symbols carry no integrality of their own
+substituted_integers: ContextVar[frozenset[str]] = ContextVar("substituted_integers", default=frozenset())
+
+
+def subs_folded(expr: sympy.Basic, repl_dict: dict) -> sympy.Basic:
+    """``expr.subs(repl_dict)``, dropping a ``floor`` or ``ceiling`` left around an integer (``ceiling(N/s)`` with
+    ``s = 1``), which SymPy cannot see over symbols without integrality; see :data:`substituted_integers`."""
+    result = expr.subs(repl_dict)
+    integers = substituted_integers.get()
+    if not integers or not result.has(sympy.floor, sympy.ceiling):
+        return result
+    return result.replace(
+        lambda node: (
+            isinstance(node, (sympy.floor, sympy.ceiling)) and with_integers(node.args[0], integers).is_integer is True
+        ),
+        lambda node: node.args[0],
+    )
 
 
 def is_undefined(expr: SymbolicType | str) -> bool:
@@ -1108,6 +1129,7 @@ def _integral(quotient: sympy.Expr) -> bool:
 
 def ceiling_div(numerator: sympy.Expr, step: sympy.Expr) -> sympy.Expr:
     """``ceil(numerator / step)`` for an integer numerator and step, such as the element count of a range."""
+    numerator, step = sympy.sympify(numerator), sympy.sympify(step)
     if step == 1 and _integral(numerator):
         return numerator
     quotient = numerator / step
@@ -1490,6 +1512,14 @@ def sympy_intdiv_fix(expr):
     processed = 1
     while processed > 0:
         processed = 0
+        # One division over one positive denominator: C would truncate each term of a sum on its own, and ``int_ceil``
+        # (``(x + y - 1) / y``) is right for ``y > 0`` only
+        for rounded in nexpr.find(lambda k: isinstance(k, (sympy.floor, sympy.ceiling))):
+            numerator, denominator = sympy.fraction(sympy.together(rounded.args[0]))
+            if denominator != 1 and not rounded.has(sympy.Float):
+                lowered = int_floor if isinstance(rounded, sympy.floor) else int_ceil
+                nexpr = nexpr.subs(rounded, lowered(numerator, denominator))
+                processed += 1
         for ceil in nexpr.find(sympy.ceiling):
             # Simple ceiling
             m = ceil.match(sympy.ceiling(a / b))

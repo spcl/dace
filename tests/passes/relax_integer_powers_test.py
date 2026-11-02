@@ -409,6 +409,28 @@ def test_a_nested_argument_with_no_access_node_is_relaxed_like_its_outer_descrip
     assert symstr(middle.arrays["y"].total_size) == symstr(outer.arrays["y"].total_size)
 
 
+def test_a_rounding_of_a_float_keeps_rounding():
+    """``ceiling(R**2)`` at ``R = 1.5`` is 3; without the rounding it is 2.25: ``ipow`` is an integer of integers only."""
+    sdfg = dace.SDFG("float_rounding")
+    sdfg.add_symbol("R", dace.float64)
+    sdfg.add_array("A", [64], dace.float64)
+    state = sdfg.add_state("body", is_start_block=True)
+    R = symbolic.symbol("R")
+    state.add_mapped_tasklet(
+        "fill",
+        {"j": dace.subsets.Range([(0, sympy.ceiling(R**2) - 1, 1)])},
+        {},
+        "o = 1.0",
+        {"o": dace.Memlet("A[j]")},
+        external_edges=True,
+    )
+
+    RelaxIntegerPowers().apply_pass(sdfg, {})
+
+    (entry,) = [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]
+    assert entry.map.range[0][1].has(sympy.ceiling)
+
+
 if __name__ == "__main__":
     test_ipow_lowers_to_cpp_ipow()
     test_ipow_roundtrips_through_serialization()
@@ -434,3 +456,4 @@ if __name__ == "__main__":
     test_a_relaxed_power_inside_a_rounding_loses_the_rounding()
     test_interstate_assignment_keeps_array_access_and_evaluation_order()
     test_a_nested_argument_with_no_access_node_is_relaxed_like_its_outer_descriptor()
+    test_a_rounding_of_a_float_keeps_rounding()

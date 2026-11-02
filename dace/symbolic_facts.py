@@ -500,8 +500,9 @@ def division_types() -> tuple[type, ...]:
 
 
 def division_operands(atom: sympy.Expr) -> tuple[sympy.Expr, sympy.Expr]:
-    """Numerator and denominator; a ``floor`` of a quotient divides like ``int_floor``, as the code it emits does."""
-    if isinstance(atom, sympy.floor):
+    """Numerator and denominator; a ``floor`` or ``ceiling`` of a quotient divides like ``int_floor`` or ``int_ceil``,
+    as the code it emits does."""
+    if isinstance(atom, (sympy.floor, sympy.ceiling)):
         return sympy.fraction(sympy.together(atom.args[0]))
     return (*atom.args, sympy.Integer(1))[:2]
 
@@ -510,7 +511,7 @@ def division_kind(atom: sympy.Expr) -> DivisionKind:
     if isinstance(atom, sympy.floor):
         return DivisionKind.REAL_FLOOR if division_operands(atom)[1] == 1 else DivisionKind.FLOOR
     if isinstance(atom, sympy.ceiling):
-        return DivisionKind.REAL_CEIL
+        return DivisionKind.REAL_CEIL if division_operands(atom)[1] == 1 else DivisionKind.CEIL
     if isinstance(atom, symbolic.int_floor):
         return DivisionKind.FLOOR
     if isinstance(atom, symbolic.int_ceil):
@@ -575,21 +576,20 @@ def proves_sign(expr: sympy.Expr, divisions: dict[sympy.Symbol, Division], stric
         return (expr.is_positive if strict else expr.is_nonnegative) is True
     division = divisions[placeholder]
     poly = expr.as_poly(placeholder)
-    if (
-        poly is None
-        or poly.degree() != 1
-        or not (
-            division.kind.exact
-            or (
-                proves_sign(division.numerator, divisions, False) and proves_sign(division.denominator, divisions, True)
-            )
-        )
-    ):
+    if poly is None or poly.degree() != 1:
         return False
+    positive = proves_sign(division.denominator, divisions, True)
+    known = division.kind.exact or (positive and proves_sign(division.numerator, divisions, False))
     coefficient = cast(sympy.Expr, poly.coeff_monomial(placeholder))
     if proves_sign(coefficient, divisions, False):
-        bounds = division.bounds(lower=True)
-    elif proves_sign(-coefficient, divisions, False):
+        # Truncation only raises ``int_ceil``: ``x / y`` bounds it from below for every ``x``
+        if known:
+            bounds = division.bounds(lower=True)
+        elif positive and division.kind is DivisionKind.CEIL:
+            bounds = (division.numerator / division.denominator,)
+        else:
+            return False
+    elif known and proves_sign(-coefficient, divisions, False):
         bounds = division.bounds(lower=False)
     else:
         return False

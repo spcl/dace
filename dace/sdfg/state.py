@@ -53,7 +53,7 @@ from dace.sdfg.graph import (
     generate_element_id,
 )
 from dace.sdfg.replace import replace_in_codeblock
-from dace.sdfg.type_inference import infer_expr_type
+from dace.sdfg.type_inference import infer_expr_type, infer_iteration_symbol_type
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
 
@@ -1067,7 +1067,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         for arg in data_args.values():
             scalar_args.update(
                 {
-                    str(k): dt.Scalar(defined_syms[str(k)])
+                    str(k): dt.Scalar(defined_syms[str(k)]) if str(k) in defined_syms else sdfg.arrays[str(k)]
                     for k in arg.used_symbols(all_symbols=False)
                     if not str(k).startswith("__dace") and str(k) not in sdfg.constants
                 }
@@ -2956,6 +2956,8 @@ class SymbolResolver:
         relations += [
             symbolic.Relation(symbolic.RelationKind.EQ, symbolic.symbol(name), symbolic.replace_symbols(value, renamed))
             for name, value in mapped.items()
+            # Each ``?`` is a value of its own
+            if not value.atoms(symbolic.UndefinedSymbol)
         ]
         return relations, {f"outer:{name}" for name in outer.integers}, small, unreadable
 
@@ -4357,9 +4359,7 @@ class LoopRegion(ControlFlowRegion):
             l_end = loop_analysis.get_loop_end(self)
             l_start = loop_analysis.get_init_assignment(self)
             l_step = loop_analysis.get_loop_stride(self)
-            inferred_type = dtypes.result_type_of(
-                infer_expr_type(l_start, alltypes), infer_expr_type(l_step, alltypes), infer_expr_type(l_end, alltypes)
-            )
+            inferred_type = infer_iteration_symbol_type(l_start, l_end, l_step, symbols=alltypes)
             init_rhs = loop_analysis.get_init_assignment(self)
             if self.loop_variable not in symbolic.free_symbols_and_functions(init_rhs):
                 self._new_symbols_value = {self.loop_variable: inferred_type}

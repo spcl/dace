@@ -60,8 +60,125 @@ def test_iterator_after_loop_that_never_runs_raises():
         empty.to_sdfg()
 
 
+def test_iterator_of_every_loop_that_bound_the_name_is_read():
+
+    @dace.program
+    def branches(A: dace.float64[5], c: dace.int64):
+        if c > 0:
+            for i in range(3):
+                A[i] = 1
+        else:
+            for i in range(4):
+                A[i] = 2
+        return i
+
+    @dace.program
+    def in_sequence(A: dace.float64[5], n: dace.int64):
+        for i in range(3):
+            A[i] = 1
+        for i in range(n):
+            A[i] = 2
+        return i
+
+    @dace.program
+    def last_never_runs(A: dace.float64[5]):
+        for i in range(3):
+            A[i] = 1
+        for i in range(0):
+            A[i] = 2
+        return i
+
+    assert branches(np.zeros(5), 1)[0] == 2
+    assert branches(np.zeros(5), 0)[0] == 3
+    assert in_sequence(np.zeros(5), 0)[0] == 2
+    assert last_never_runs(np.zeros(5))[0] == 2
+
+
+def test_variable_reused_as_iterator_reads_symbolically():
+
+    @dace.program
+    def indexed(A: dace.float64[5]):
+        x = 0
+        for x in range(1, 3):
+            A[x - 1] = x
+
+    A = np.zeros(5)
+    indexed(A)
+    assert np.array_equal(A, [1, 2, 0, 0, 0])
+
+
+def test_variable_reused_as_iterator_keeps_what_the_body_bound():
+
+    @dace.program
+    def rebound(n: dace.int64):
+        x = 5
+        for x in range(n):
+            x = 7
+        return x
+
+    assert rebound(2)[0] == 7
+    assert rebound(0)[0] == 5
+
+
+def test_variable_reused_as_iterator_leaves_its_bound_alone():
+
+    @dace.program
+    def own_bound(m: dace.int64, A: dace.float64[5]):
+        x = m + 2
+        for x in range(x):
+            A[x] = 1
+        return x
+
+    A = np.zeros(5)
+    assert own_bound(1, A)[0] == 2
+    assert np.array_equal(A, [1, 1, 1, 0, 0])
+    assert own_bound(-5, np.zeros(5))[0] == -3
+
+
+def test_view_reused_as_iterator_is_not_written_through():
+
+    @dace.program
+    def viewed(A: dace.float64[5]):
+        v = A[1:3]
+        for v in range(3):
+            pass
+        return A
+
+    assert np.array_equal(viewed(np.arange(5.0)), np.arange(5.0))
+
+
+def test_iterator_type_comes_from_the_range_as_a_whole():
+    """A literal widens an iterator only if it does not fit the default, and then to signed 64 bits: bound by bound,
+    ``-8589934592`` makes ``k`` unsigned (``k < 0`` never holds) and ``2**3``, which is ``8.0``, a double."""
+
+    @dace.program
+    def too_wide(A: dace.float64[1]):
+        for k in range(-8589934592, 0):
+            A[0] = 1
+
+    @dace.program
+    def power(A: dace.float64[8]):
+        for k in range(2**3):
+            A[k] = 1
+
+    @dace.program
+    def default_symbol(A: dace.float64[8]):
+        for k in range(N):
+            A[k] = 1
+
+    assert "int64_t k;" in too_wide.to_sdfg(simplify=False).generate_code()[0].clean_code
+    assert "int k;" in power.to_sdfg(simplify=False).generate_code()[0].clean_code
+    assert "int k;" in default_symbol.to_sdfg(simplify=False).generate_code()[0].clean_code
+
+
 if __name__ == "__main__":
     test_iterator_after_loop_holds_last_value()
     test_iterator_after_break_holds_break_value()
     test_iterator_after_loop_that_may_not_run_holds_last_value()
     test_iterator_after_loop_that_never_runs_raises()
+    test_iterator_of_every_loop_that_bound_the_name_is_read()
+    test_variable_reused_as_iterator_reads_symbolically()
+    test_variable_reused_as_iterator_keeps_what_the_body_bound()
+    test_variable_reused_as_iterator_leaves_its_bound_alone()
+    test_view_reused_as_iterator_is_not_written_through()
+    test_iterator_type_comes_from_the_range_as_a_whole()
