@@ -188,7 +188,10 @@ def meet_within_one_iteration(first: subsets.Subset, second: subsets.Subset, ite
     return any(
         low == high
         and other_low == other_high
-        and (_same_injective_index(low, other_low, itersym) or _dim_provably_disjoint(low, other_low, itersym, step, start))
+        and (
+            _same_injective_index(low, other_low, itersym)
+            or _dim_provably_disjoint(low, other_low, itersym, step, start)
+        )
         for (low, high, _), (other_low, other_high, _) in zip(first.ndrange(), second.ndrange())
     )
 

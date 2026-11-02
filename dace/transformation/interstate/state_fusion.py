@@ -629,7 +629,9 @@ class StateFusion(transformation.MultiStateTransformation):
                                 nodes_second = [n for n in second_output if n.data == d]
                                 # Read-Write race: an output node passes data on as well
                                 nodes_first = [n for n in first_input if n.data == d]
-                                nodes_first += [n for n in first_output if n.data == d and first_state.out_degree(n) > 0]
+                                nodes_first += [
+                                    n for n in first_output if n.data == d and first_state.out_degree(n) > 0
+                                ]
                                 for n2 in nodes_second:
                                     for e in second_state.in_edges(n2):
                                         path = second_state.memlet_path(e)

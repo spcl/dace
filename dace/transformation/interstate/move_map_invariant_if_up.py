@@ -331,7 +331,9 @@ def _equal_guards_at(st: SDFGState, me: MapEntry) -> list[NestedSDFG] | None:
     for ns in guards:
         # The arm without the guards drops them, and what the body reads of their value with them
         for e in st.out_edges(ns):
-            if isinstance(e.dst, AccessNode) and any(o.dst is not mx and o.dst not in guards for o in st.out_edges(e.dst)):
+            if isinstance(e.dst, AccessNode) and any(
+                o.dst is not mx and o.dst not in guards for o in st.out_edges(e.dst)
+            ):
                 return None
         cond = _single_meaningful_conditional(ns.sdfg).branches[0][0]
         if not _condition_invariant(cond, ns, st, map_params, allow_inner_defs=False):
