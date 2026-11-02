@@ -474,7 +474,8 @@ def _split_off_first_map(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
             scope = st.scope_subgraph(first, include_entry=True, include_exit=True).nodes()
             readers = [e.src for e in st.in_edges(first) if isinstance(e.src, AccessNode)]
             state_fission(SubgraphView(st, list(scope) + readers))
-            return True
+            # It moves what shares a written node with this map as well, up to all of ``st``: no split, and no end
+            return bool(st.nodes())
     return False
 
 
