@@ -87,6 +87,7 @@ def loops_of(sdfg: Any) -> dict[int, Any]:
 def remaining_outcome(loop: Any) -> str:
     """The class of a loop left after canonicalization, as the CPF rendering labels it."""
     from dace.sdfg.state import ConditionalBlock
+    from dace.transformation.interstate import loop_to_map
     from dace.transformation.passes.canonicalize import annotate_loop_kinds as kinds
 
     note = (loop.specialization_hint or "").splitlines()
@@ -101,7 +102,8 @@ def remaining_outcome(loop: Any) -> str:
     if kinds.NEVER_EXAMINED in hint:
         return "never_examined"
     if hint.startswith("unsure"):
-        return "unknown"
+        refusal = kinds.refusal_reason(loop)
+        return "small" if getattr(refusal, "kind", None) is loop_to_map.Refusal.SMALL else "unknown"
     return "parallel_unlifted"
 
 

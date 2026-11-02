@@ -43,6 +43,7 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     UNSURE,
     WAVEFRONT_FRONT,
     AnnotateLoopKinds,
+    loop_header_names,
     proven_carrying_access,
 )
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -97,6 +98,10 @@ def test_a_map_hint_is_rendered_one_comment_line_per_line():
     rendered = comment_lines(render(sdfg).code)
     assert "// traded a tiled map for a flat one." in rendered
     assert "// CPU: the tiles are worth trying." in rendered
+
+
+def test_a_while_loop_header_reads_only_its_condition():
+    assert loop_header_names(LoopRegion("while_loop", "i < N"), {}) == {"i", "N"}
 
 
 def test_a_loop_hint_is_rendered():
@@ -829,6 +834,7 @@ def test_an_unknown_hint_detail_is_refused():
 if __name__ == "__main__":
     test_the_rendering_states_which_verdicts_are_settled_and_which_are_open()
     test_a_map_hint_is_rendered_one_comment_line_per_line()
+    test_a_while_loop_header_reads_only_its_condition()
     test_a_loop_hint_is_rendered()
     test_a_scan_states_its_trade_although_the_expansion_consumes_the_node()
     test_a_scan_hint_follows_the_expansion_that_ran("pure", SEQUENTIAL_SCAN_HINT)
