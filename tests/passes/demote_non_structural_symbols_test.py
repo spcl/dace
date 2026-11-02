@@ -261,3 +261,4 @@ if __name__ == "__main__":
     test_an_index_read_inside_a_branch_condition_stays_a_symbol()
     test_a_boolean_guard_stays_a_symbol()
     test_a_float_guard_becomes_a_scalar_read_before_the_guarded_write()
+    test_a_sum_a_later_branch_reads_folds_into_its_compute_state()

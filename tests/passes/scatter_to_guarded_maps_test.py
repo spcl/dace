@@ -831,10 +831,6 @@ def fancy_scatter(src: dace.float64[N], idx: dace.int64[N], out: dace.float64[N]
     out[:] = box * 2.0
 
 
-def _maps_of(sdfg):
-    return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-
-
 def test_one_index_over_fixed_slabs_is_guarded_on_the_local_index_where_it_is_used():
     """``box[:, local[i]]``: a program-filled index between local buffers; duplicates keep the last store."""
     sdfg = scatter_columns_through_local_map.to_sdfg(simplify=True)
@@ -927,3 +923,5 @@ def test_a_transient_scattered_through_an_index_of_an_index_is_guarded_on_both()
         out = np.zeros(n)
         sdfg(c=c, nl=nl.astype(np.int64), igk=igk.astype(np.int64), out=out, N=n)
         assert np.allclose(out, 2.0 * expected)
+    test_one_index_over_fixed_slabs_is_guarded_on_the_local_index_where_it_is_used()
+    test_a_fancy_index_store_is_guarded()
