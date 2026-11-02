@@ -518,7 +518,6 @@ def test_interacting_values_reach_a_folded_tasklet():
 
 def test_map_parameter_shadows_the_symbol():
     sdfg = dace.SDFG("map_parameter_name")
-    sdfg.add_symbol("k", dace.int32)
     sdfg.add_array("out", [3], dace.int32)
     state = sdfg.add_state(is_start_block=True)
     tasklet, entry, exit_node = state.add_mapped_tasklet(
