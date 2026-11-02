@@ -80,9 +80,7 @@ def scan_node(loop: LoopRegion) -> tuple[StateScan, StepSlice] | None:
     """A :class:`StateScan` for ``loop``'s carried state, finite if it is, else GF(2)-affine, or ``None``. The structural
     conditions go first: the proofs copy the body and ask z3."""
     steps = [
-        step
-        for step in step_slices(loop)
-        if rest_is_parallel(loop, step.symbol) and not folds_only(loop, step.symbol)
+        step for step in step_slices(loop) if rest_is_parallel(loop, step.symbol) and not folds_only(loop, step.symbol)
     ]
     if not steps:
         return None
