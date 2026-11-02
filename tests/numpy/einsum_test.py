@@ -722,6 +722,24 @@ def test_a_three_operand_contraction_whose_path_step_is_not_a_pair() -> None:
     assert np.allclose(upd, np.einsum("dkl,blq,dqp->bkp", kDivM, I, star))
 
 
+def test_a_nest_reads_a_repeated_operand_once_per_term() -> None:
+    @dace.program
+    def two_terms(A: dace.float64[3, 3], out: dace.float64[3]):
+        out[:] = np.einsum("ij,ji->i", A, A)
+
+    @dace.program
+    def three_terms(A: dace.float64[3, 4, 4], I: dace.float64[6, 4, 4], out: dace.float64[6, 4, 4]):
+        out[:] = np.einsum("dkl,blq,dqp->bkp", A, I, A)
+
+    rng = np.random.default_rng(6)
+    A, B, I = rng.random((3, 3)), rng.random((3, 4, 4)), rng.random((6, 4, 4))
+    pair, triple = np.zeros(3), np.zeros((6, 4, 4))
+    two_terms(A, pair)
+    three_terms(B, I, triple)
+    assert np.allclose(pair, np.einsum("ij,ji->i", A, A))
+    assert np.allclose(triple, np.einsum("dkl,blq,dqp->bkp", B, I, B))
+
+
 if __name__ == "__main__":
     test_an_interleaving_contraction_of_device_tensors_keeps_its_product_on_the_device()
     test_general_einsum()
@@ -750,3 +768,4 @@ if __name__ == "__main__":
     test_a_contraction_whose_output_interleaves_the_operands_transposes_the_product()
     test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds_beta_into_the_transpose()
     test_a_three_operand_contraction_whose_path_step_is_not_a_pair()
+    test_a_nest_reads_a_repeated_operand_once_per_term()

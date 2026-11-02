@@ -691,11 +691,12 @@ def _create_einsum_internal(
         state.add_mapped_tasklet(
             "einsum",
             {param[k]: "0:%s" % v for k, v in chardict.items()},
+            # One connector per term: an operand may repeat under other indices (``ij,ji->i``).
             {
-                "inp_%s" % arr: Memlet.simple(arr, ",".join(param[c] for c in inp))
-                for inp, arr in zip(einsum.inputs, arrays)
+                f"inp_{i}": Memlet.simple(arr, ",".join(param[c] for c in inp))
+                for i, (inp, arr) in enumerate(zip(einsum.inputs, arrays))
             },
-            "out_%s = %s%s" % (output, alphacode, " * ".join("inp_%s" % arr for arr in arrays)),
+            "out_%s = %s%s" % (output, alphacode, " * ".join(f"inp_{i}" for i in range(len(arrays)))),
             {"out_%s" % output: Memlet.simple(output, output_index, wcr_str=wcr)},
             input_nodes=input_nodes,
             output_nodes={output: c},
