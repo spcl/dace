@@ -177,6 +177,7 @@ class Ger(LibraryNode):
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from ger rank 1 operation.")
+        blas_helpers.reject_overlapping_output(self, state, "_res", accumulator="_A")
         out_memlet = out_edges[0].data
 
         size_out, _ = blas_helpers.matrix_view(out_memlet.subset)

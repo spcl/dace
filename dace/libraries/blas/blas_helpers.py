@@ -6,7 +6,7 @@ from typing import Any, NamedTuple
 import numpy as np
 
 import dace
-from dace import data, dtypes, symbolic
+from dace import data, dtypes, subsets, symbolic
 from dace.codegen.common import sym2cpp
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -321,6 +321,26 @@ def scalar_arguments(dtype: dtypes.typeclass, **values: Any) -> tuple[str, dict[
     if dtype in (dtypes.complex64, dtypes.complex128):
         return declarations, {name: f"&__{name}" for name in values}
     return declarations, {name: f"__{name}" for name in values}
+
+
+def reject_overlapping_output(
+    node: nodes.LibraryNode, state: "dace.SDFGState", output: str, accumulator: str | None = None
+) -> None:
+    """Raise if ``output`` provably overlaps an input: expansions write it before reading that input, and BLAS forbids
+    the overlap. An overlap the subsets cannot prove stays allowed.
+
+    :param node: The node.
+    :param state: The state of the node.
+    :param output: The output connector.
+    :param accumulator: The input the node updates in place, legal on exactly the output's subset.
+    """
+    write = sdutil.out_edge_with_name(node, state, output).data
+    for edge in state.in_edges(node):
+        read = edge.data
+        if read.data != write.data or (edge.dst_conn == accumulator and read.subset == write.subset):
+            continue
+        if subsets.intersects(read.subset, write.subset) is True:
+            raise ValueError(f"{node.label}: {output} overlaps {edge.dst_conn} on {read.data}")
 
 
 def connector_sdfg(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG") -> "dace.SDFG":

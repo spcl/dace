@@ -68,6 +68,7 @@ class Scal(nodes.LibraryNode):
 
     def validate(self, sdfg, state):
         blas_helpers.require_one_dtype(self, state, sdfg, "_x", "_res")
+        blas_helpers.reject_overlapping_output(self, state, "_res", accumulator="_x")
         x, res = operand(self, state, sdfg, "_x").shape, operand(self, state, sdfg, "_res").shape
         if len(x) != 1 or not blas_helpers.extents_agree(x, res):
             raise ValueError(f"{self.label}: _x and _res must be vectors of one length")

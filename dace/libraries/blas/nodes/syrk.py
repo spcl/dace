@@ -114,6 +114,7 @@ class Syrk(nodes.LibraryNode):
 
     def validate(self, sdfg, state):
         blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_Cin", "_Cout")
+        blas_helpers.reject_overlapping_output(self, state, "_Cout", accumulator="_Cin")
         a, cin, cout = (operand(self, state, sdfg, c).shape for c in ("_A", "_Cin", "_Cout"))
         if len(a) != 2:
             raise ValueError(f"{self.label}: _A must be a matrix")
