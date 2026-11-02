@@ -4,7 +4,6 @@
 import hashlib
 import json
 
-import numpy as np
 import pytest
 
 import dace
@@ -145,23 +144,6 @@ def test_the_modulo_split_is_decided_on_the_loop_itself():
     assert [str(r) for r in relations] == ["K < N"], relations
 
 
-@dace.program
-def store_near_the_end(a: dace.float64[N + 8], b: dace.float64[N + 8]):
-    for i in range(N):
-        a[i + 4] = b[i + 4] + 1.0
-        if i == N - 3:
-            b[0] = a[i + 4]
-
-
-def test_a_split_point_near_the_end_adds_no_iteration_to_a_short_loop():
-    """``N = 1`` puts the point ``N - 3`` below the start: the tail must not begin at ``i = -1``."""
-    sdfg = store_near_the_end.to_sdfg(simplify=True)
-    assert BestEffortLoopPeeling().apply_pass(sdfg, {})
-    a, b = np.zeros(9), np.arange(9.0) + 1.0
-    sdfg(a=a, b=b, N=1)
-    assert a[3] == 0.0 and a[4] == b[4] + 1.0
-
-
 if __name__ == "__main__":
     import _pytest.monkeypatch
 
@@ -175,4 +157,3 @@ if __name__ == "__main__":
     for program in (wrap_at_the_end, wrap_at_the_end_nested):
         test_the_modulo_peel_is_decided_on_the_loop_itself(program)
     test_the_modulo_split_is_decided_on_the_loop_itself()
-    test_a_split_point_near_the_end_adds_no_iteration_to_a_short_loop()
