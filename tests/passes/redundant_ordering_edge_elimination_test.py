@@ -81,6 +81,38 @@ def test_redundant_ordering_edge_is_removed():
     sdfg.validate()
 
 
+def two_outputs_of_one_tasklet(name: str, second_writer: bool) -> tuple[dace.SDFG, dace.sdfg.SDFGState]:
+    """``t`` writes ``U`` and ``V``, ordered ``U -> V``; with ``second_writer`` a tasklet ``w`` writes ``U`` as well."""
+    sdfg = dace.SDFG(name)
+    for array in "UVW":
+        sdfg.add_array(array, (1,), dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    t = state.add_tasklet("t", {}, {"u", "v"}, "u = 1\nv = 2")
+    u, v = state.add_access("U"), state.add_access("V")
+    state.add_edge(t, "u", u, None, dace.Memlet("U[0]"))
+    state.add_edge(t, "v", v, None, dace.Memlet("V[0]"))
+    state.add_edge(v, None, state.add_tasklet("r", {"a"}, {"b"}, "b = a"), "a", dace.Memlet("V[0]"))
+    reader = state.out_edges(v)[0].dst
+    state.add_edge(reader, "b", state.add_write("W"), None, dace.Memlet("W[0]"))
+    if second_writer:
+        state.add_edge(state.add_tasklet("w", {}, {"o"}, "o = 3"), "o", u, None, dace.Memlet("U[0]"))
+    state.add_nedge(u, v, dace.Memlet())
+    sdfg.validate()
+    return sdfg, state
+
+
+def test_ordering_edge_between_outputs_of_their_only_writer_is_removed():
+    sdfg, state = two_outputs_of_one_tasklet("roee_same_writer", False)
+    assert RedundantOrderingEdgeElimination().apply_pass(sdfg, {}) == 1
+    assert not any(e.data.is_empty() for e in state.edges())
+
+
+def test_ordering_edge_behind_a_writer_of_its_own_is_kept():
+    sdfg, state = two_outputs_of_one_tasklet("roee_other_writer", True)
+    assert RedundantOrderingEdgeElimination().apply_pass(sdfg, {}) is None
+    assert any(e.data.is_empty() for e in state.edges())
+
+
 def test_only_path_ordering_edge_is_kept():
     sdfg, state = build_two_chains("roee_only_path")
     ordering = state.add_nedge(tasklet_named(state, "t1"), tasklet_named(state, "t2"), dace.Memlet())
@@ -290,3 +322,5 @@ if __name__ == "__main__":
     test_pipeline_kernel_is_still_correct()
     test_removed_node_leaves_one_order_hub_that_dissolves_once_implied()
     test_nested_sdfg_ordering_edges_that_guard_nothing_are_removed()
+    test_ordering_edge_between_outputs_of_their_only_writer_is_removed()
+    test_ordering_edge_behind_a_writer_of_its_own_is_kept()
