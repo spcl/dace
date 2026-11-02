@@ -131,8 +131,23 @@ def test_a_symbol_read_round_the_enclosing_loop_stays_live():
     assert inner in list(outer.nodes())
 
 
+@dace.program
+def counter_from_stored_value(a: dace.float64[8], b: dace.int64[1], n: dace.int64):
+    i = b[0]
+    b[0] = 5
+    while i < n:
+        a[i] = 1.0
+        i = i + 1
+
+
+def test_a_while_counter_keeps_the_value_read_before_a_store():
+    arrays = {"a": np.zeros(8), "b": np.ones(1, dtype=np.int64)}
+    _assert_canon_keeps(counter_from_stored_value, "counter_from_stored_value", arrays, n=8)
+
+
 if __name__ == "__main__":
     test_a_write_offset_by_an_inner_iterator_stays_ordered()
+    test_a_while_counter_keeps_the_value_read_before_a_store()
     test_a_symbol_read_round_the_enclosing_loop_stays_live()
     test_a_max_seeded_above_the_data_keeps_its_seed()
     test_a_seed_read_before_a_store_is_not_the_stored_value()

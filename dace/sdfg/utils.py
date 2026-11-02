@@ -3333,6 +3333,9 @@ def subscript_index_symbols(code: ast.AST | list[ast.AST], containers: Container
     """
     names: set[str] = set()
     for tree in code if isinstance(code, list) else [code]:
+        if isinstance(tree, str):  # C++ has no AST here: every name of the text may index
+            names.update(re.findall(r"[A-Za-z_]\w*", tree))
+            continue
         for node in ast.walk(tree):
             if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id in containers:
                 names.update(n.id for n in ast.walk(node.slice) if isinstance(n, ast.Name))
