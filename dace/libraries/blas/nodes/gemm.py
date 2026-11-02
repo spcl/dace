@@ -13,6 +13,7 @@ from dace.frontend.common import op_repository as oprepo
 from dace.libraries import hip_dialect
 from dace.libraries.blas import environments
 from dace.libraries.blas.blas_helpers import (
+    blas_prefix,
     check_access,
     dtype_to_cudadatatype,
     matrix_view,
@@ -204,9 +205,9 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
         (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), cdata = _get_matmul_operands(node, state, sdfg)
-        # BLAS writes along one unit stride, and a dense copy would have to read back C for beta
+        # BLAS has no such type, or writes along one unit stride and a dense copy would have to read back C for beta
         _, _, cshape, cstrides = _matrix_operand(cdata)
-        if 1 not in packed_unit_extent(cshape, cstrides)[-2:]:
+        if blas_prefix(adesc.dtype.base_type) is None or 1 not in packed_unit_extent(cshape, cstrides)[-2:]:
             return ExpandGemmPure.make_sdfg(node, state, sdfg)
         dtype = adesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + "gemm"

@@ -318,6 +318,8 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             # Vector and vector -> dot product
             from dace.libraries.blas.nodes.dot import Dot
 
+            if not (symbolic.equal_valued(1, node.alpha) and symbolic.equal_valued(0, node.beta)):
+                raise NotImplementedError(f"{node.label}: Dot takes no alpha or beta")
             # Rename inputs to match dot naming
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_y"

@@ -8,6 +8,7 @@ import dace.library
 import dace.sdfg.nodes
 from dace import memlet as mm
 from dace import properties, symbolic
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
@@ -70,7 +71,7 @@ class ExpandGemvPure(ExpandTransformation):
         _, array_x = sdfg.add_array("_x", shape_x, dtype_x, strides=strides_x, storage=outer_array_x.storage)
         _, array_y = sdfg.add_array("_y", shape_y, dtype_y, strides=strides_y, storage=outer_array_y.storage)
 
-        mul_program = f"__out = {node.alpha} * __A * __x"
+        mul_program = f"__out = ({node.alpha}) * __A * __x"
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
@@ -110,7 +111,7 @@ class ExpandGemvPure(ExpandTransformation):
             output_nodes=output_nodes,
         )
 
-        add_program = f"__y_out = ({node.beta} * __y_in) + __tmp"
+        add_program = f"__y_out = (({node.beta}) * __y_in) + __tmp"
 
         memlet_idx = "__i"
 
@@ -300,8 +301,8 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
             alpha = "&__alpha"
             beta = "&__beta"
 
-        code += f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, _A, {lda},
-                                _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});"""
+        code += f"""cblas_{func}({layout}, {trans}, {sym2cpp(m)}, {sym2cpp(n)}, {alpha}, _A, {sym2cpp(lda)},
+                                _x, {sym2cpp(strides_x[0])}, {beta}, _y, {sym2cpp(strides_y[0])});"""
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
