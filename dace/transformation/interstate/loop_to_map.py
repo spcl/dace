@@ -2814,13 +2814,13 @@ class LoopLift:
         # Create NestedSDFG and add the loop contents to it. Gather symbols defined in it.
         # Same value, without the whole-SDFG walk, when a pass already has it (see LiftContext).
         fsymbols = set(lift_ctx.sdfg_free_symbols) if lift_ctx is not None else set(sdfg.free_symbols)
-        # A lift can only stop DEFINING what the loop itself defines: its iterate (the map defines
-        # it afterwards, but not at this level) and the symbols the body assigns on its interstate
-        # edges (they move inside the nested SDFG). Every other symbol keeps its definition exactly
-        # where it was, so nothing else can become free. When none of those is a DECLARED symbol of
-        # this SDFG, ``sdfg.free_symbols`` cannot move and the two whole-graph walks below have
-        # nothing to find. Read off the loop HERE, while it is still intact.
-        loop_defined = {self.loop.loop_variable}
+        # A lift can only stop DEFINING what the body assigns on its interstate edges (they move inside
+        # the nested SDFG): the iterate stays bound at this level, by the map instead of the loop
+        # (``scope_bound_names``), and every other symbol keeps its definition exactly where it was, so
+        # nothing else can become free. When none of those is a DECLARED symbol of this SDFG,
+        # ``sdfg.free_symbols`` cannot move and the two whole-graph walks below have nothing to find.
+        # Read off the loop HERE, while it is still intact.
+        loop_defined: set[str] = set()
         for region in self.loop.all_control_flow_regions(recursive=True):
             for e in region.edges():
                 loop_defined |= e.data.assignments.keys()
