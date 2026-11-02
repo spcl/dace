@@ -390,6 +390,30 @@ def test_an_inner_loop_shadowing_the_outer_iterator_keeps_its_own_iterator():
     assert np.allclose(A, 6.0)
 
 
+def test_exit_value_of_a_loop_that_runs_no_iteration_is_its_init():
+    sdfg = dace.SDFG("zero_trip_exit")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_array("out", (1,), dace.int64)
+    loop = LoopRegion("loop", "i <= n", "i", "i = 5", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state("body", is_start_block=True)
+    after = sdfg.add_state_after(loop, "after")
+    tasklet = after.add_tasklet("read", {}, {"o"}, "o = i")
+    after.add_edge(tasklet, "o", after.add_write("out"), None, dace.Memlet("out[0]"))
+
+    UniqueLoopIterators().apply_pass(sdfg, None)
+    assert len(post_value_states(sdfg)) == 1
+    assert "Max(0" in next(iter(sdfg.out_edges(loop))).data.assignments["i"]
+
+    out = np.zeros(1, dtype=np.int64)
+    compiled = sdfg.compile()
+    compiled(out=out, n=3)
+    assert out[0] == 5
+    compiled(out=out, n=7)
+    assert out[0] == 8
+
+
 if __name__ == "__main__":
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
@@ -402,3 +426,4 @@ if __name__ == "__main__":
     test_negative_step_loop_value_preserving()
     test_seeds_counter_past_existing_map_params()
     test_an_inner_loop_shadowing_the_outer_iterator_keeps_its_own_iterator()
+    test_exit_value_of_a_loop_that_runs_no_iteration_is_its_init()

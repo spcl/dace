@@ -101,6 +101,7 @@ class Syrk(nodes.LibraryNode):
         **vendor.vendor_expansions("Syrk", syrk_call),
     }
     default_implementation = None
+    matrix_connectors = ("_A", "_Cin", "_Cout")
 
     uplo = properties.Property(dtype=bool, default=False, desc="Update the upper triangle of C instead of the lower.")
     transA = properties.Property(dtype=bool, default=False, desc="Compute _A^T @ _A instead of _A @ _A^T.")
@@ -113,17 +114,19 @@ class Syrk(nodes.LibraryNode):
 
     def validate(self, sdfg, state):
         blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_Cin", "_Cout")
+        blas_helpers.reject_overlapping_output(self, state, "_Cout", accumulator="_Cin")
         a, cin, cout = (operand(self, state, sdfg, c).shape for c in ("_A", "_Cin", "_Cout"))
         if len(a) != 2:
             raise ValueError(f"{self.label}: _A must be a matrix")
         n = a[1] if self.transA else a[0]
-        if not cin == cout == [n, n]:
+        if not blas_helpers.extents_agree(cin, cout, [n, n]):
             raise ValueError(f"{self.label}: _Cin and _Cout must be {n} x {n} matrices")
 
 
 @oprepo.replaces("dace.libraries.blas.syrk")
 @oprepo.replaces("dace.libraries.blas.Syrk")
 def syrk_libnode(pv, sdfg: SDFG, state: SDFGState, A, C, result=None, uplo=False, transA=False, alpha=1, beta=0):
+    """Adds a :class:`Syrk` writing ``alpha * A @ A^T + beta * C`` to ``result``, by default ``C``."""
     result = result if result is not None else C
     node = Syrk("syrk", uplo=uplo, transA=transA, alpha=alpha, beta=beta)
     for name, connector in ((A, "_A"), (C, "_Cin")):

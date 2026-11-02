@@ -253,6 +253,6 @@ class Solve(dace.sdfg.nodes.LibraryNode):
             desc_out.dtype,
             strides_out,
             shape_out[0],
-            shape_out[1],
+            shape_out[1] if len(shape_out) > 1 else 1,
             desc_ain.storage,
         )

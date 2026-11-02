@@ -16,6 +16,8 @@ import pytest
 
 import dace
 import dace.data as dd
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
@@ -489,6 +491,60 @@ def test_control_flow_only_gate_gets_a_copyin():
     )
     assert writers > 0, f"{scal} is read from control flow but has no writer: the copy-in was dropped"
     sdfg.validate()
+
+
+def conditional_write(sdfg: dace.SDFG, subset: str) -> None:
+    """``if c > 0: x = 1``: the write does not dominate the copy-out."""
+    guard = ConditionalBlock("guard")
+    sdfg.add_node(guard, is_start_block=True)
+    branch = ControlFlowRegion("write", sdfg=sdfg)
+    guard.add_branch(CodeBlock("c > 0.0"), branch)
+    state = branch.add_state("write", is_start_block=True)
+    tasklet = state.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    state.add_edge(tasklet, "o", state.add_write("x"), None, dace.Memlet(subset))
+
+
+def assert_copied_in(sdfg: dace.SDFG, source: str) -> None:
+    copyin = next(s for s in sdfg.states() if s.label.startswith("stage_copyin"))
+    assert source in [n.data for n in copyin.source_nodes()]
+
+
+def test_conditional_write_keeps_the_value_on_the_path_that_does_not_write():
+    sdfg = dace.SDFG("staged_conditional_write")
+    sdfg.add_scalar("c", dace.float64)
+    sdfg.add_array("x", [1], dace.float64)
+    conditional_write(sdfg, "x[0]")
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+    assert_copied_in(sdfg, "x")
+
+    x = np.array([5.0])
+    sdfg(c=-1.0, x=x)
+    assert x[0] == 5.0
+    sdfg(c=1.0, x=x)
+    assert x[0] == 1.0
+
+
+def test_arrayized_conditional_write_keeps_the_value_on_the_path_that_does_not_write():
+    inner = dace.SDFG("arrayized_conditional_write_inner")
+    inner.add_scalar("c", dace.float64)
+    inner.add_scalar("x", dace.float64)
+    conditional_write(inner, "x")
+
+    ConvertScalarsToLengthOneArrays(preserve_abi=True).apply_pass(inner, {})
+    assert_copied_in(inner, "x")
+
+    sdfg = dace.SDFG("arrayized_conditional_write")
+    sdfg.add_scalar("c", dace.float64)
+    sdfg.add_array("x", [1], dace.float64)
+    state = sdfg.add_state("call")
+    call = state.add_nested_sdfg(inner, {"c": None}, {"x": None})
+    state.add_edge(state.add_read("c"), None, call, "c", dace.Memlet("c"))
+    state.add_edge(call, "x", state.add_write("x"), None, dace.Memlet("x[0]"))
+
+    x = np.array([5.0])
+    sdfg(c=-1.0, x=x)
+    assert x[0] == 5.0
 
 
 if __name__ == "__main__":

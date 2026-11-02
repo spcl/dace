@@ -4,7 +4,7 @@ the namelist configuration into one external SDFG per combination, and each vari
 for bit against the gfortran build of the same source.
 
 Needs a dace-fortran checkout in ``DACE_FORTRAN_ROOT`` (its velocity translation unit and its e2e harness), with
-dace-fortran installed over this DaCe. The ``dace-fortran`` workflow provides both.
+dace-fortran installed over this DaCe. The ``fortran`` workflow provides both.
 """
 
 import importlib.util
@@ -18,7 +18,7 @@ import dace
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.config_propagation import ConfigPropagation
 
-pytestmark = pytest.mark.long
+pytestmark = pytest.mark.fortran
 
 ENTRY = "mo_velocity_advection::velocity_tendencies"
 DOMAINS = {"lvn_only": [0, 1], "istep": [1, 2], "ldeepatmo": [0], "lextra_diffu": [1]}

@@ -141,6 +141,19 @@ def test_a_tasklet_modulo_computes_what_its_spelling_names(label, code, types, r
     assert np.array_equal(out, reference(a, b))
 
 
+@pytest.mark.parametrize("label,code", (("pymod", "z = PyMod(x, y)"), ("ftnmodulo", "z = FtnModulo(x, y)")))
+def test_a_floored_modulo_stays_exact_where_the_quotient_rounds(label, code):
+    """``a - floor(a / b) * b`` rounds the division first: ``1.0 % 0.1`` left the range and ``5 % inf`` was NaN."""
+    a = np.array([1.0, 1e17, 1e20, -1.0, 5.0, -5.0])
+    b = np.array([0.1, 7.0, 3.0, 0.1, np.inf, np.inf])
+    sdfg = elementwise_tasklet_sdfg(f"floored_modulo_exact_{label}", code, dace.float64)
+
+    out = np.zeros(a.shape, dtype=np.float64)
+    sdfg(a=a, b=b, out=out, N=a.shape[0])
+
+    assert np.array_equal(out, np.mod(a, b))
+
+
 def interstate_modulo_sdfg(name: str, assignment: str) -> dace.SDFG:
     """Assigns ``k = <assignment>`` on an inter-state edge and stores ``k``."""
     sdfg = dace.SDFG(name)
@@ -253,6 +266,8 @@ if __name__ == "__main__":
     test_a_symbolic_modulo_reads_back_from_its_string_with_its_own_rounding()
     for label, code, types, reference in TASKLET_CASES:
         test_a_tasklet_modulo_computes_what_its_spelling_names(label, code, types, reference)
+    test_a_floored_modulo_stays_exact_where_the_quotient_rounds("pymod", "z = PyMod(x, y)")
+    test_a_floored_modulo_stays_exact_where_the_quotient_rounds("ftnmodulo", "z = FtnModulo(x, y)")
     for label, assignment, value in (("percent", "(I - 7) % 3", -1), ("pymod", "PyMod(I - 7, 3)", 2)):
         test_an_interstate_edge_modulo_computes_what_its_spelling_names(label, assignment, value)
     test_a_python_program_modulo_in_a_subscript_floors()

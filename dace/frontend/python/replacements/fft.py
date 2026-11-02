@@ -37,17 +37,17 @@ def scalar_argument(value):
     return value[0] if isinstance(value, (list, tuple)) and len(value) == 1 else value
 
 
-def fft_norm_factor(norm: StringLiteral, size: symbolic.SymbolicType, inverse: bool) -> symbolic.SymbolicType:
+def fft_norm_factor(norm: StringLiteral | None, size: symbolic.SymbolicType, inverse: bool) -> symbolic.SymbolicType:
     """The factor numpy scales a transform by.
 
-    :param norm: ``"backward"``, ``"ortho"`` or ``"forward"``.
+    :param norm: ``"backward"`` (or ``None``), ``"ortho"`` or ``"forward"``.
     :param size: The number of transformed elements.
     :param inverse: Whether the transform is the inverse one.
     :return: The scaling factor.
     """
     if norm == "forward":
         return 1 if inverse else 1 / size
-    if norm == "backward":
+    if norm is None or norm == "backward":
         return 1 / size if inverse else 1
     if norm == "ortho":
         return sp.sqrt(1 / size)
@@ -66,11 +66,14 @@ def crop_or_zero_pad(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, s
     index = ", ".join(f"__i{d}" for d in range(len(shape)))
     padded = [d for d, (new, old) in enumerate(zip(shape, desc.shape)) if symbolic.equal(new, old) is not True]
     inside = " and ".join(f"__i{d} < {symbolic.symstr(desc.shape[d])}" for d in padded)
+    # The whole-array connector squeezes unit dimensions, so the read names only the others
+    kept = ", ".join(f"__i{d}" for d, old in enumerate(desc.shape) if not symbolic.equal_valued(1, old))
+    read = f"i[{kept}]" if kept else "i"
     exit_node = state.add_mapped_tasklet(
         "resize",
         {f"__i{d}": f"0:{symbolic.symstr(extent)}" for d, extent in enumerate(shape)},
         {"i": Memlet.from_array(a, desc)},
-        f"o = i[{index}] if {inside} else 0" if inside else f"o = i[{index}]",
+        f"o = {read} if {inside} else 0" if inside else f"o = {read}",
         {"o": Memlet(data=name, subset=index)},
         external_edges=True,
     )[2]
@@ -117,7 +120,7 @@ def add_fft_node(
             lengths[-1] = 2 * (desc.shape[transformed[-1]] - 1)
     elif len(lengths) != len(transformed):
         raise ValueError(f"{len(lengths)} transform lengths for {len(transformed)} axes")
-    lengths = [symbolic.pystr_to_symbolic(str(n)) for n in lengths]
+    lengths = [symbolic.pystr_to_symbolic(n) for n in lengths]
     stored = symbolic.int_floor(lengths[-1], 2) + 1
 
     in_shape, out_shape = list(desc.shape), list(desc.shape)
@@ -296,7 +299,7 @@ def add_fft_frequencies(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, n, d, 
     """
     if isinstance(d, str):
         raise NotImplementedError("numpy.fft.fftfreq with a spacing computed at runtime")
-    n = symbolic.pystr_to_symbolic(str(scalar_argument(n)))
+    n = symbolic.pystr_to_symbolic(scalar_argument(n))
     count = symbolic.int_floor(n, 2) + 1 if half_spectrum else n
     name = pv.add_temp_transient([count], dtypes.float64)[0]
     total = f"({float(d)!r} * {sym2cpp(n)})"

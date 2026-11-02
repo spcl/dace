@@ -1,8 +1,9 @@
-name: dace-fortran
+name: fortran
 
-# ICON velocity tendencies end to end on the CPU: dace-fortran parses the Fortran, ConfigPropagation bakes the
+# DaCe through its Fortran frontend, the separate dace-fortran package: the tests marked `fortran`. tests/fortran holds
+# small programs; tests/corpus/velocity runs ICON velocity tendencies end to end on the CPU: ConfigPropagation bakes the
 # namelist configuration into one external SDFG per combination, every variant is parallelized and compared bit for
-# bit against gfortran (tests/corpus/velocity). The pipeline stops before GPU offloading.
+# bit against gfortran. The pipeline stops before GPU offloading.
 
 on:
   push:
@@ -29,7 +30,7 @@ env:
   HWLOC_COMPONENTS: -gl
 
 jobs:
-  velocity-tendencies:
+  fortran:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -70,11 +71,11 @@ jobs:
         echo "DACE_FORTRAN_BUILD_DIR=$RUNNER_TEMP/bridge" >> "$GITHUB_ENV"
     - name: Build the HLFIR bridge
       run: uv run python -c "import dace_fortran; dace_fortran.SDFGBuilder"
-    - name: Velocity tendencies pipeline
+    - name: Fortran tests
       run: |
         export NOSTATUSBAR=1
         export DACE_cache=unique
         export DACE_FORTRAN_ROOT="$PWD/dace-fortran"
         ulimit -s 65536 || true
-        uv run pytest --tb=short --timeout_method thread --timeout=3600 -p no:cacheprovider \
-          tests/corpus/velocity/velocity_pipeline_test.py
+        uv run pytest --tb=short --timeout_method thread --timeout=3600 -p no:cacheprovider -m fortran \
+          tests/fortran tests/corpus/velocity

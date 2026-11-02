@@ -416,10 +416,16 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<double> np_float_pow(const std::com
 // Formula: num - (num // den) * den
 // NOTE: This is different than Python math.remainder and C remainder,
 // which are equivalent to the IEEE remainder: num - round(num / den) * den
-template<typename T>
+template<typename T, std::enable_if_t<!std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominator) {
     T quotient = py_floor(numerator, denominator);
     return (T)(numerator - quotient * denominator);
+}
+// fmod is exact; the formula above rounds the division first (1.0 % 0.1, 1e20 % 3, 5 % inf)
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominator) {
+    const T remainder = (T)std::fmod(numerator, denominator);
+    return (remainder != 0 && (remainder < 0) != (denominator < 0)) ? remainder + denominator : remainder;
 }
 
 template<typename T1, typename T2, std::enable_if_t<!std::is_same<T1, T2>::value>* = nullptr>
