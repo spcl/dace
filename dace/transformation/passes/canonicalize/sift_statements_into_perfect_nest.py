@@ -64,7 +64,13 @@ from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.subsets import Subset
-from dace.transformation.passes.analysis.loop_analysis import get_init_assignment, get_loop_end, get_loop_stride
+from dace.transformation.passes.analysis.loop_analysis import (
+    get_init_assignment,
+    get_loop_end,
+    get_loop_stride,
+    loop_header_names,
+    loop_jumps,
+)
 from dace.transformation.passes.loop_fission import _linear_blocks
 from dace.transformation.passes.move_if_into_loop import provably_nonempty
 
@@ -224,7 +230,7 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
             continue  # pre/post must be plain statements, not loops/conditionals
         if not inner.loop_variable:
             continue
-        if not provably_nonempty(inner):  # S1
+        if not provably_nonempty(inner) or loop_jumps(inner):  # S1: the guarded post must run
             continue
         if get_init_assignment(inner) is None or _last_reached_iterate(inner) is None:
             continue
@@ -245,6 +251,10 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
             if e is not None:
                 sifted_lhs.update(dict.fromkeys(e.data.assignments.keys()))
         if any(s in sifted_lhs for s in _body_written_names(inner)):
+            continue
+        # The inner header runs before any sifted statement, so it must not read what ``pre`` produces.
+        pre_written = {n.data for st in pre for n in st.data_nodes() if st.in_degree(n) > 0}
+        if loop_header_names(inner) & (pre_written | sifted_lhs.keys()):
             continue
         return outer, inner, pre, post
     return None
