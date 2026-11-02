@@ -360,7 +360,11 @@ def is_reentered_cpu_transfer(
                 return True
         elif isinstance(scope, LoopRegion) and not is_short_loop(scope, cache=loop_cache):
             # A loop of an enclosing SDFG sees the size through a symbol mapping: counted as before.
-            if size_symbols is None or scope.sdfg is not state.sdfg or size_symbols & symbols_varying_in(scope, varying_cache):
+            if (
+                size_symbols is None
+                or scope.sdfg is not state.sdfg
+                or size_symbols & symbols_varying_in(scope, varying_cache)
+            ):
                 return True
     return False
 

@@ -20,7 +20,6 @@ from dace.sdfg.nodes import MapEntry, Tasklet
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
-    SCALAR_TAIL_MARKER,
     SplitMapForTileRemainder,
 )
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
