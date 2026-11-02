@@ -129,12 +129,8 @@ def relaxed_bounds(bound, clamp: type) -> list:
     Dropping an argument of the clamp only widens the range, which holds wherever the clamp enters with a coefficient
     of 1, the form an index-set split writes (``i < min(x, N)``).
     """
-    relaxed = [bound]
-    for applied in bound.atoms(clamp):
-        if (bound - applied).has(applied):
-            continue
-        relaxed += [bound.subs(applied, argument) for argument in applied.args]
-    return relaxed
+    clamps = [c for c in bound.atoms(clamp) if not (bound - c).has(c)]
+    return [bound, *(bound.subs(c, argument) for c in clamps for argument in c.args)]
 
 
 @transformation.explicit_cf_compatible
