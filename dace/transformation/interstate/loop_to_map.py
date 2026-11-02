@@ -731,7 +731,7 @@ def read_before_written(
         interstate assignments and loop variables inside it."""
         names = changes.get(block)
         if names is None:
-            states = [block] if isinstance(block, SDFGState) else block.all_control_flow_blocks()
+            states = block.all_control_flow_blocks() if isinstance(block, AbstractControlFlowRegion) else [block]
             names = {
                 dn.data for st in states if isinstance(st, SDFGState) for dn in st.data_nodes() if st.in_degree(dn) > 0
             }

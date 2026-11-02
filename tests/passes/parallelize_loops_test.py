@@ -22,7 +22,7 @@ import dace
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_to_map import (
     LiftContext,
     LoopLift,
@@ -1328,6 +1328,32 @@ def test_a_container_assumed_private_is_left_out_of_the_dependence_test():
     assert sdfg.hash_sdfg() == before
 
 
+def test_a_break_under_a_guarded_branch_does_not_stop_the_read_order_walk():
+    sdfg = dace.SDFG("break_under_a_guard")
+    sdfg.add_symbol("c", dace.int64)
+    sdfg.add_transient("t", [1], dace.float64)
+    loop = LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    filling = ConditionalBlock("filling")
+    loop.add_node(filling, is_start_block=True)
+    fill = ControlFlowRegion("fill", sdfg=sdfg)
+    filling.add_branch(CodeBlock("c > 0"), fill)
+    state = fill.add_state("write", is_start_block=True)
+    state.add_edge(state.add_tasklet("put", {}, {"o"}, "o = 1"), "o", state.add_write("t"), None, dace.Memlet("t[0]"))
+    leaving = ConditionalBlock("leaving")
+    loop.add_node(leaving)
+    loop.add_edge(filling, leaving, dace.InterstateEdge())
+    leave = ControlFlowRegion("leave", sdfg=sdfg)
+    leaving.add_branch(CodeBlock("c < 0"), leave)
+    state = leave.add_state("read", is_start_block=True)
+    sink = state.add_tasklet("take", {"v"}, {}, "pass", side_effects=True)
+    state.add_edge(state.add_read("t"), None, sink, "v", dace.Memlet("t[0]"))
+    stop = BreakBlock("stop")
+    leave.add_node(stop)
+    leave.add_edge(state, stop, dace.InterstateEdge())
+    assert read_before_written(loop, {"t"}) == {"t"}
+
+
 if __name__ == "__main__":
     test_lift_never_changes_a_surviving_blocks_free_symbols()
     test_reused_analysis_costs_no_maps_against_the_matcher()
@@ -1391,3 +1417,4 @@ if __name__ == "__main__":
     test_a_gather_lifted_through_a_loop_fuses_into_its_consumer()
     test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop()
     test_a_container_assumed_private_is_left_out_of_the_dependence_test()
+    test_a_break_under_a_guarded_branch_does_not_stop_the_read_order_walk()
