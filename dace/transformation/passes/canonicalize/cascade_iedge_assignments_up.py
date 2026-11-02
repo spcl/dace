@@ -60,7 +60,7 @@ sees a clean shape.
 import ast
 from typing import Any
 
-from dace import SDFG
+from dace import SDFG, data
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
@@ -239,6 +239,22 @@ def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> dict
     return out
 
 
+def _read_after(parent: ControlFlowRegion, child: ControlFlowBlock, key: str, cache: HoistAnalysisCache) -> bool:
+    """True iff something after ``child`` in ``parent`` reads the value of ``key`` that ``child`` leaves.
+
+    :param parent: The region whose edges are walked.
+    :param child: The block to start after.
+    :param key: The symbol name.
+    :param cache: Per-round memo of the blocks' reads.
+    :returns: ``True`` if a later block or edge reads ``key``, or what a block reads is unknown.
+    """
+    for e in parent.dfs_edges(child):
+        reads = cache.block_reads(e.dst)
+        if reads is None or key in e.data.read_symbols() or key in reads and key not in e.data.assignments:
+            return True
+    return False
+
+
 def _block_reads_symbols(block: ControlFlowBlock) -> dict[str, None] | None:
     """The symbols a block reads from outside it (state, region, etc.).
 
@@ -334,9 +350,8 @@ def _legal_to_hoist_into(
         return False  # a tasklet inside child writes to a container our rhs reads
 
     # L2/L3/L4: examine strict predecessors of ``child`` in ``parent``.
-    # The new iedge will sit on ``child``'s in-edges; only blocks that can
-    # execute BEFORE ``child`` could observe a difference. Blocks after
-    # ``child`` saw the assignment via the original edge anyway.
+    # The new iedge will sit on ``child``'s in-edges; blocks that execute
+    # BEFORE ``child`` would observe a difference. L7 below covers the blocks after it.
     preds = cache.predecessors(parent, child)
     for b in preds:
         reads = cache.block_reads(b)
@@ -365,7 +380,10 @@ def _legal_to_hoist_into(
                 return False
             if lhs in rhs_syms:
                 return False
-    return True
+
+    # L7: ``child`` need not run the assignment (no iteration, a break), and whatever follows it
+    # then reads the value from before ``child``, not the moved one.
+    return not _read_after(parent, child, key, cache)
 
 
 def _find_destination(
