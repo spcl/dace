@@ -1165,11 +1165,12 @@ def test_fission_keeps_copy_into_a_wider_array_valid():
     assert np.allclose(dqdt, expected)
 
 
-def fission_copy_between_widened_transients_sdfg() -> dace.SDFG:
+def fission_copy_between_widened_transients_sdfg(name: str, other_subset: str | None) -> dace.SDFG:
     """A map over a nested SDFG whose three states are joined by two transients, ``t1`` and ``t2``.
 
     The middle state holds a nested SDFG that copies ``t1`` into ``t2``: one memlet names ``t1`` in ``subset`` and
-    ``t2`` in ``other_subset``. Fission widens both transients, so both sides of that copy need the map index.
+    ``t2`` in ``other_subset``, or in no subset for the whole of ``t2``. Fission widens both transients, so both sides
+    of that copy need the map index.
     """
     N = dace.symbol("N")
     copier = dace.SDFG("copier")
@@ -1177,7 +1178,7 @@ def fission_copy_between_widened_transients_sdfg() -> dace.SDFG:
     copier.add_array("t2", [2], dace.float64)
     cstate = copier.add_state()
     cstate.add_nedge(
-        cstate.add_read("t1"), cstate.add_write("t2"), dace.Memlet(data="t1", subset="0:2", other_subset="0:2")
+        cstate.add_read("t1"), cstate.add_write("t2"), dace.Memlet(data="t1", subset="0:2", other_subset=other_subset)
     )
 
     body = dace.SDFG("body")
@@ -1206,7 +1207,7 @@ def fission_copy_between_widened_transients_sdfg() -> dace.SDFG:
     use.add_edge(t2, None, tasklet, "hi", dace.Memlet("t2[1]"))
     use.add_edge(tasklet, "y", use.add_write("b"), None, dace.Memlet("b[i]"))
 
-    sdfg = dace.SDFG("fission_copy_between_widened_transients")
+    sdfg = dace.SDFG(name)
     sdfg.add_array("A", [N], dace.float64)
     sdfg.add_array("B", [N], dace.float64)
     state = sdfg.add_state()
@@ -1217,10 +1218,11 @@ def fission_copy_between_widened_transients_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def test_fission_widens_both_sides_of_a_copy_between_widened_transients() -> None:
-    """NestForge#55: fission used to widen only the ``subset`` side of a copy whose ``other_subset`` names a
-    widened container as well, leaving memlets of unequal dimension."""
-    sdfg = fission_copy_between_widened_transients_sdfg()
+@pytest.mark.parametrize("name, other_subset", [("copy_names_both_sides", "0:2"), ("copy_names_one_side", None)])
+def test_fission_widens_both_sides_of_a_copy_between_widened_transients(name: str, other_subset: str | None) -> None:
+    """NestForge#55: fission used to widen only the ``subset`` side of a copy whose other end is a widened container
+    as well, leaving memlets of unequal dimension, or a copy of every iteration's slot."""
+    sdfg = fission_copy_between_widened_transients_sdfg(name, other_subset)
     sdfg.validate()
     assert sdfg.apply_transformations(MapFission) == 1
     sdfg.validate()
@@ -1564,3 +1566,5 @@ if __name__ == "__main__":
     test_fission_folds_a_reduction_whose_memlet_names_the_folded_transient()
     test_fission_declines_a_nested_body_with_a_dead_transient_output()
     test_fission_declines_a_reduction_the_body_writes_twice()
+    test_fission_widens_both_sides_of_a_copy_between_widened_transients("copy_names_both_sides", "0:2")
+    test_fission_widens_both_sides_of_a_copy_between_widened_transients("copy_names_one_side", None)
