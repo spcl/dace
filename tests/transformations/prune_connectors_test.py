@@ -437,7 +437,9 @@ def test_pruning_the_only_input_keeps_the_body_in_its_map():
     inner.add_array("out", [4], dace.float64)
     inner.add_symbol("i", dace.int64)
     body = inner.add_state()
-    body.add_edge(body.add_tasklet("one", {}, {"o"}, "o = 1.0"), "o", body.add_write("out"), None, dace.Memlet("out[i]"))
+    body.add_edge(
+        body.add_tasklet("one", {}, {"o"}, "o = 1.0"), "o", body.add_write("out"), None, dace.Memlet("out[i]")
+    )
 
     sdfg = dace.SDFG("prune_only_input")
     sdfg.add_array("A", [4], dace.float64)
