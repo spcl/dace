@@ -100,8 +100,8 @@ class TransientReuse(ppl.Pass):
     Liveness runs over the control flow graph of each SDFG, loops and branches flattened, so one array may have several
     live ranges. A write of the whole array ends a range; a partial write does not. Two arrays interfere where both are
     live on entry to a state, both on exit, one all through it, or within it unless the accesses of the one dying or
-    local to it all finish before the first write of the other. An array read on a path no write precedes carries a
-    value from an earlier run and shares nothing.
+    local to it all finish before the first write of the other. An array read where no path holds a write before it
+    carries a value from an earlier run and shares nothing.
 
     Only plain heap / GPU global arrays qualify, not read by control flow, not viewed or referenced, no WCR target and
     not ``may_alias``; one used inside a map scope only if it is allocated outside it (SDFG or Persistent lifetime, or also
@@ -408,7 +408,7 @@ class BufferSharing:
         for vertex in order:
             for nxt in flow.succ[vertex]:
                 pred[nxt].append(vertex)
-        live, written, must = [0] * size, [0] * size, [~0] * size
+        live, written = [0] * size, [0] * size
         changed = True
         while changed:
             changed = False
@@ -423,19 +423,16 @@ class BufferSharing:
         while changed:
             changed = False
             for vertex in reversed(order):
-                seen, sure = 0, 0 if vertex == flow.start else ~0
+                seen = writes[vertex]
                 for prev in pred[vertex]:
                     seen |= written[prev]
-                    sure &= must[prev]
-                seen |= writes[vertex]
-                sure |= writes[vertex]
-                if seen != written[vertex] or sure != must[vertex]:
-                    written[vertex], must[vertex], changed = seen, sure, True
+                if seen != written[vertex]:
+                    written[vertex], changed = seen, True
         carried = 0
         for vertex in order:
-            before = 0 if vertex == flow.start else ~0
+            before = 0
             for prev in pred[vertex]:
-                before &= must[prev]
+                before |= written[prev]
             carried |= exposed[vertex] & ~before
         for name, bit in list(self.bit.items()):
             if carried & bit:
@@ -473,13 +470,22 @@ class BufferSharing:
             if any(not e.data.is_empty() for e in state.out_edges(node)):
                 read.append(node)
 
-        def after(node: nodes.AccessNode, sources: list[nodes.AccessNode], inside: bool) -> bool:
+        def after(node: nodes.AccessNode, sources: list[nodes.AccessNode]) -> bool:
             if order.scope[node] is not None:
-                return inside
+                return False
             return node in sources or any(node in order.descendants(s) for s in sources)
 
-        use = not all(after(node, killers, False) for node in read)
-        early = not all(after(node, written, bool(written)) for node in read)
+        use = not all(after(node, killers) for node in read)
+        # A map writing what it reads may write first: only the order inside it could tell.
+        makers: OrderedSet = OrderedSet()
+        for node in written:
+            makers.update(order.pred.get(node, ()) if order.scope[node] is None else (order.top(node),))
+        early = not all(
+            after(node, written)
+            or (order.scope[node] is None and any(s in makers for s in order.succ.get(node, ())))
+            or (order.scope[node] is not None and order.top(node) in makers)
+            for node in read
+        )
         return use, bool(killers), bool(written), early
 
     def candidate(self, desc: dt.Data) -> bool:
