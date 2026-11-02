@@ -434,16 +434,6 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         assign = AugAssignToWCR.assignment(tasklet, target)
         return assign is not None and isinstance(assign.value, ast.Name) and assign.value.id == source
 
-    @staticmethod
-    def copied_input(tasklet: nodes.Tasklet) -> str | None:
-        """The input connector of the copy ``out = in`` the tasklet is; ``None`` if it is no copy."""
-        if len(tasklet.out_connectors) != 1:
-            return None
-        assign = AugAssignToWCR.assignment(tasklet, next(iter(tasklet.out_connectors)))
-        if assign is None or not isinstance(assign.value, ast.Name) or assign.value.id not in tasklet.in_connectors:
-            return None
-        return assign.value.id
-
     @classmethod
     def expressions(cls):
         return [

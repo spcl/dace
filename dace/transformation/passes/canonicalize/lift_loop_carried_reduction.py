@@ -80,6 +80,7 @@ needs concrete extents: with a SYMBOLIC size (the common case) the decision is u
 substituted) with a small inner map is the case that still lifts.
 """
 
+import ast
 from typing import Any
 
 from dace import SDFG, nodes, properties, symbolic
@@ -90,6 +91,18 @@ from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.loop_to_reduce import map_tasklet_augassign_candidates, only_read_modify_written
 from dace.transformation.transformation import explicit_cf_compatible
+
+
+def _copy_input_connector(tasklet: nodes.Tasklet) -> str | None:
+    """The input connector of the pure copy ``__out = __inp`` the tasklet is, else ``None``."""
+    if tasklet.language.name != "Python" or len(tasklet.code.code) != 1:
+        return None
+    stmt = tasklet.code.code[0]
+    if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+        return None
+    if isinstance(stmt.value, ast.Name) and stmt.value.id in tasklet.in_connectors:
+        return stmt.value.id
+    return None
 
 
 def bounds_are_concrete(loop: LoopRegion) -> bool:

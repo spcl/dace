@@ -32,8 +32,8 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import _copy_input_connector
 
 
 def _control_flow_reads(sdfg: SDFG) -> tuple[set[str], dict[str, list[tuple[Any, Range]]]]:
@@ -81,7 +81,7 @@ def _store_source(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> nodes.A
     """The one-element access node the store ``edge`` copies, directly or through a copy tasklet."""
     src = edge.src
     if isinstance(src, nodes.Tasklet):
-        conn = AugAssignToWCR.copied_input(src)
+        conn = _copy_input_connector(src)
         if conn is None or state.in_degree(src) != 1 or state.out_degree(src) != 1:
             return None
         src_edge = state.in_edges(src)[0]
