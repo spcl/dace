@@ -50,7 +50,7 @@ from typing import Any
 
 import dace
 from dace import SDFG, properties, symbolic
-from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.sdfg import InterstateEdge, forget_facts, memoize_facts
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -354,26 +354,28 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         or ``None`` if nothing matched."""
         materialised = 0
         resolver = scopes.ScopedSymbolResolver()
-        for sd in sdfg.all_sdfgs_recursive():
-            # ``sd.free_symbols`` walks the entire SDFG on every access. It is
-            # invariant across the per-loop scan below -- only our own
-            # materialisations mutate ``sd`` -- so compute it once here and refresh
-            # it only after a loop is actually materialised (which is rare).
-            sd_free_symbols = sd.free_symbols
-            # What a state or an interstate edge reads does not depend on which loop asks, so each is
-            # read once per SDFG instead of once per loop before it; a materialisation clears both.
-            state_reads: dict[SDFGState, set[str]] = {}
-            edge_texts: dict[int, str] = {}
-            # What each region holds (its states, its loops' iterators), until a materialisation
-            held: tuple[dict, dict] = ({}, {})
-            for cfg in list(sd.all_control_flow_regions()):
-                if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
-                    continue
-                count = self._try_materialise(cfg, sd, sd_free_symbols, resolver, state_reads, edge_texts, held)
-                if count:
-                    materialised += count
-                    sd_free_symbols = sd.free_symbols
-                    resolver.invalidate_sdfg(sd)  # new symbols, states and interstate edges
+        with memoize_facts(sdfg):
+            for sd in sdfg.all_sdfgs_recursive():
+                # ``sd.free_symbols`` walks the entire SDFG on every access. It is
+                # invariant across the per-loop scan below -- only our own
+                # materialisations mutate ``sd`` -- so compute it once here and refresh
+                # it only after a loop is actually materialised (which is rare).
+                sd_free_symbols = sd.free_symbols
+                # What a state or an interstate edge reads does not depend on which loop asks, so each is
+                # read once per SDFG instead of once per loop before it; a materialisation clears both.
+                state_reads: dict[SDFGState, set[str]] = {}
+                edge_texts: dict[int, str] = {}
+                # What each region holds (its states, its loops' iterators), until a materialisation
+                held: tuple[dict, dict] = ({}, {})
+                for cfg in list(sd.all_control_flow_regions()):
+                    if not (isinstance(cfg, LoopRegion) and cfg.loop_variable):
+                        continue
+                    count = self._try_materialise(cfg, sd, sd_free_symbols, resolver, state_reads, edge_texts, held)
+                    if count:
+                        materialised += count
+                        sd_free_symbols = sd.free_symbols
+                        resolver.invalidate_sdfg(sd)  # new symbols, states and interstate edges
+                        forget_facts(sd)
         return materialised or None
 
     def exit_value_dtype(

@@ -6,6 +6,7 @@ from typing import Any
 
 from dace import data, properties, subsets, symbolic
 from dace.sdfg import SDFG, nodes
+from dace.sdfg.sdfg import memoize_facts
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -34,9 +35,10 @@ class DetachDisjointReads(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """:return: the number of maps detached, or None if there is none."""
         detached = 0
-        for nsdfg in sdfg.all_sdfgs_recursive():
-            for state in nsdfg.states():
-                detached += detach_in_state(state)
+        with memoize_facts(sdfg):
+            for nsdfg in sdfg.all_sdfgs_recursive():
+                for state in nsdfg.states():
+                    detached += detach_in_state(state)
         return detached or None
 
 
