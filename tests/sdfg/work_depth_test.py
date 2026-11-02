@@ -9,6 +9,7 @@ from pytest import raises
 import dace
 from dace import symbolic
 from dace.frontend.python.parser import DaceProgram
+from dace.libraries.linalg import TensorTranspose
 from dace.libraries.sort import IntegerSort, ScatterConflictCheck
 from dace.libraries.standard import ArgMax, CountLibraryNode, CShift, FindFirst, Norm2, Scan, ScanOp
 from dace.libraries.standard.nodes.find_first import INDEX_NAME as FIND_FIRST_INDEX
@@ -595,6 +596,28 @@ library_node_cases = {
         2 + log2N,
     ),
     "cshift": (lambda: CShift("cshift", shift=1), {"_x": "x[0:N]"}, {"_out": "y[0:N]"}, 0, 0),
+    # spcl/dace#2753: a plain permutation moves data like a copy; alpha and beta add their flops per element
+    "tensor_transpose": (
+        lambda: TensorTranspose("transpose", axes=[0]),
+        {"_inp_tensor": "x[0:N]"},
+        {"_out_tensor": "y[0:N]"},
+        0,
+        0,
+    ),
+    "tensor_transpose_accumulates": (
+        lambda: TensorTranspose("transpose", axes=[0], beta=1),
+        {"_inp_tensor": "x[0:N]"},
+        {"_out_tensor": "y[0:N]"},
+        N,
+        1,
+    ),
+    "tensor_transpose_scales": (
+        lambda: TensorTranspose("transpose", axes=[0], alpha=2, beta=3),
+        {"_inp_tensor": "x[0:N]"},
+        {"_out_tensor": "y[0:N]"},
+        3 * N,
+        2,
+    ),
 }
 
 
