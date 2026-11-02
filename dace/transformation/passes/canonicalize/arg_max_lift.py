@@ -1147,12 +1147,9 @@ class ArgMaxLift(ppl.Pass):
     def _branch_has_content(self, branch: ControlFlowBlock) -> bool:
         if not isinstance(branch, ControlFlowRegion):
             return False
-        for n in branch.nodes():
-            if isinstance(n, SDFGState) and len(n.nodes()) > 0:
-                return True
-            if isinstance(n, (LoopRegion, ConditionalBlock)):
-                return True
-        return False
+        if any(e.data.assignments for e in branch.edges()):
+            return True
+        return any(not isinstance(n, SDFGState) or len(n.nodes()) > 0 for n in branch.nodes())
 
     def _parse_compare_node(self, tree: ast.expr) -> tuple[CompareOp | None, str | None, str | None, str | None]:
         """Extract ``(op_cls, gather_name, carrier_name, transform)`` from a

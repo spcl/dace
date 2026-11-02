@@ -2155,5 +2155,15 @@ def test_a_loop_edge_binding_what_the_guard_ignores_keeps_the_loop():
     assert not ArgMaxLift().apply_pass(sdfg, {})
 
 
+def test_an_else_assignment_keeps_the_loop():
+    sdfg, _, block, _ = guarded_scan_sdfg("guarded_scan_else")
+    other = ControlFlowRegion("other", sdfg=sdfg, parent=block)
+    block.add_branch(None, other)
+    first = other.add_state("first", is_start_block=True)
+    other.add_edge(first, other.add_state("second"), dace.InterstateEdge(assignments={"c": "c + 1"}))
+    sdfg.reset_cfg_list()
+    assert not ArgMaxLift().apply_pass(sdfg, {})
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
