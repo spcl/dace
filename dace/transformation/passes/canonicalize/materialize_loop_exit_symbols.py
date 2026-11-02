@@ -110,7 +110,7 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free
         and name not in scopes.enclosing_loop_iterators(loop)
     ):
         return False
-    for e in loop.edges():
+    for e in loop.all_interstate_edges():
         if e.data.assignments and name in e.data.assignments:
             return False
     return True
