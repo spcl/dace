@@ -2443,6 +2443,25 @@ def test_a_sibling_computing_from_the_carry_is_no_hold():
     assert_canon_matches_the_program(sibling_computes_from_the_carry, args, N=8)
 
 
+@dace.program
+def disjoint_half_beside_a_scan(a: dace.float64[2 * N], b: dace.float64[N], c: dace.float64[N + 1], d: dace.float64[N]):
+    for i in range(N):
+        a[i + N] = a[i] + b[i]
+        c[i + 1] = c[i] + d[i]
+
+
+def test_a_recurrence_beside_a_discharged_guard_stays_ordered():
+    sdfg = disjoint_half_beside_a_scan.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    n = 16
+    a, b, c, d = np.zeros(2 * n), np.ones(n), np.zeros(n + 1), np.ones(n)
+    sdfg(a=a, b=b, c=c, d=d, N=n)
+    assert np.array_equal(c, np.arange(n + 1.0))
+    assert any(isinstance(node, Scan) for st in sdfg.states() for node in st.nodes()) or any(
+        isinstance(block, LoopRegion) for block in sdfg.all_control_flow_blocks()
+    )
+
+
 if __name__ == "__main__":
     import sys
 

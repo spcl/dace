@@ -2997,7 +2997,7 @@ def stride_guard_is_statically_dischargeable(infos: list["_Scan"], facts: symbol
     for info in infos:
         s = as_basic(info.scan_stride) if isinstance(info.scan_stride, symbolic.SymExpr) else info.scan_stride
         if not (isinstance(s, sympy.Basic) and not s.is_Integer and not loop_analysis._provably_le(1, s, facts)):
-            continue
+            return False  # a real recurrence beside the guarded one: no bare Map
         guarded = True
         if info.iter_start is None or info.iter_end is None:
             return False
