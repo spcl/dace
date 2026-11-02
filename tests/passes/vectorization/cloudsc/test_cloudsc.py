@@ -33,19 +33,18 @@ def cloudsc_snippet_one(
     za: dace.float64[kfdia, klev],
     zliqfrac: dace.float64[kfdia, klev],
     zicefrac: dace.float64[kfdia, klev],
-    zqx: dace.float64[5, klev + 1, kfdia + 1],
+    zqx: dace.float64[5, kfdia + 1, klev + 1],
     zli: dace.float64[kfdia, klev],
     rlmin: dace.float64,
-    z1: dace.int64,
 ):
     # note: outer loop over j (kfdia) first, then i (klev) to match column-major
     for j in range(kfdia):
         for i in range(klev):
             zaji = za[j, i]
             za[j, i] = 2.0 * zaji - 5
-            cond1 = rlmin > 0.5 * (zqx[z1, i, j] + zqx[z1, j + 1, i + 1])
+            cond1 = rlmin > 0.5 * (zqx[1, j, i] + zqx[1, j + 1, i + 1])
             if cond1:
-                zliqfrac[j, i] = zqx[z1, j, i] * zli[j, i]
+                zliqfrac[j, i] = zqx[1, j, i] * zli[j, i]
                 zicefrac[j, i] = 1 - zliqfrac[j, i]
             else:
                 zliqfrac[j, i] = 0
@@ -168,7 +167,6 @@ def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy, emission_styl
     zli = numpy.random.random((kfdia, klev))
 
     rlmin = 0.1
-    z1 = 1
 
     run_vectorization_test(
         dace_func=cloudsc_snippet_one,
@@ -181,7 +179,6 @@ def test_snippet_from_cloudsc_one(branch_mode, remainder_strategy, emission_styl
         },
         params={
             "rlmin": rlmin,
-            "z1": z1,
             "kfdia": kfdia,
             "klev": klev,
         },

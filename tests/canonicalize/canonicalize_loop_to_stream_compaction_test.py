@@ -968,3 +968,28 @@ def test_a_range_past_its_end_compacts_nothing():
     out, cnt = np.zeros(8), np.full(1, -1, dtype=np.int64)
     sdfg(a=a, out=out, cnt=cnt, LO=5, HI=2)
     assert cnt[0] == 0 and np.array_equal(out, np.zeros(8))
+
+
+M_ = dace.symbol("M_")
+N_ = dace.symbol("N_")
+
+
+@dace.program
+def compact_per_row_bound(b: dace.float64[N_, M_], ns: dace.int64[N_], a: dace.float64[N_ * M_]):
+    j = -1
+    for i in range(N_):
+        n = ns[i]
+        for k in range(n):
+            if b[i, k] > 0.5:
+                j = j + 1
+                a[j] = b[i, k]
+
+
+def test_a_per_row_bound_is_no_rectangular_mask():
+    sdfg = compact_per_row_bound.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    b = np.array([[0.9, 0.1, 0.8], [0.7, 0.9, 0.9]])
+    ns = np.array([1, 3], dtype=np.int64)
+    a = np.zeros(6)
+    sdfg(b=b, ns=ns, a=a, N_=2, M_=3)
+    assert a.tolist() == [0.9, 0.7, 0.9, 0.9, 0.0, 0.0]

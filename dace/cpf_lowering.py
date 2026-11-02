@@ -946,9 +946,10 @@ ARG_INDEX_CTYPES: tuple[str, ...] = ("int32_t", "int64_t")
 def arg_pair_declare(op: str) -> str:
     """The ``arg_<op>_pair`` reduction over every pair :data:`ARG_VALUE_CTYPES` x :data:`ARG_INDEX_CTYPES` names."""
     pairs = ", ".join(f"arg_pair<{v}, {i}>" for i in ARG_INDEX_CTYPES for v in ARG_VALUE_CTYPES)
+    lowest = "true" if op == "max" else "false"
     return (
         f"#pragma omp declare reduction(arg_{op}_pair : {pairs} : omp_out = arg_{op}_combine(omp_out, omp_in)) "
-        "initializer(omp_priv = omp_orig)"
+        f"initializer(arg_seed(omp_priv, {lowest}))"
     )
 
 
@@ -981,6 +982,21 @@ ARG_REDUCTION_CPP: dict[str, str] = {
             "static inline arg_pair<V, I> arg_min_combine(const arg_pair<V, I> &out, const arg_pair<V, I> &in) {",
             "    return (arg_greater(out.__ar_v, in.__ar_v) || (in.__ar_v == out.__ar_v && in.__ar_i < out.__ar_i)) "
             "? in : out;",
+            "}",
+            "template <typename V>",
+            "static inline V arg_bound(bool lowest) {",
+            "    if constexpr (arg_is_complex<V>::value) {",
+            "        const typename V::value_type part = arg_bound<typename V::value_type>(lowest);",
+            "        return V(part, part);",
+            "    } else if constexpr (std::numeric_limits<V>::has_infinity) {",
+            "        return lowest ? -std::numeric_limits<V>::infinity() : std::numeric_limits<V>::infinity();",
+            "    } else {",
+            "        return lowest ? std::numeric_limits<V>::lowest() : std::numeric_limits<V>::max();",
+            "    }",
+            "}",
+            "template <typename V, typename I>",
+            "static inline void arg_seed(arg_pair<V, I> &priv, bool lowest) {",
+            "    priv = arg_pair<V, I>{arg_bound<V>(lowest), std::numeric_limits<I>::max()};",
             "}",
             arg_pair_declare("max"),
             arg_pair_declare("min"),
@@ -1136,7 +1152,7 @@ DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
 DEFINITION_HEADERS: dict[str, tuple[str, ...]] = {
     "cpf_lowp_base": ("<type_traits>",),
     **{f"cpf_lowp_{name}": ("<cmath>", "<type_traits>", "<utility>") for name in LOW_PRECISION_MATH},
-    "arg_pair": ("<complex>", "<type_traits>", "<utility>"),
+    "arg_pair": ("<complex>", "<limits>", "<type_traits>", "<utility>"),
     **{reduce_name(operation, True): ("<complex>",) for operation in COMPLEX_REDUCE_COMBINERS},
     "ifloor": ("<type_traits>",),
     "cpf_narrow": ("<type_traits>",),
@@ -3064,6 +3080,23 @@ C_ARG_INSTANCE_NAME: "re.Pattern" = re.compile(
 )
 
 
+#: What no element of a dace type is worse than and what none is better than: the seeds of a C arg reduction.
+C_ARG_BOUNDS: dict[str, tuple[str, str]] = {
+    "int8": ("INT8_MIN", "INT8_MAX"),
+    "int16": ("INT16_MIN", "INT16_MAX"),
+    "int32": ("INT32_MIN", "INT32_MAX"),
+    "int64": ("INT64_MIN", "INT64_MAX"),
+    "uint8": ("0", "UINT8_MAX"),
+    "uint16": ("0", "UINT16_MAX"),
+    "uint32": ("0", "UINT32_MAX"),
+    "uint64": ("0", "UINT64_MAX"),
+    "float32": ("-INFINITY", "INFINITY"),
+    "float64": ("-INFINITY", "INFINITY"),
+    "complex64": ("CMPLXF(-INFINITY, -INFINITY)", "CMPLXF(INFINITY, INFINITY)"),
+    "complex128": ("CMPLX(-INFINITY, -INFINITY)", "CMPLX(INFINITY, INFINITY)"),
+}
+
+
 def c_arg_pair_definition(value: str, index: str) -> str:
     """The (value, index) pair of ``value`` x ``index`` in C: its struct, constructor, combiners and the two
     ``arg_max_pair`` / ``arg_min_pair`` OpenMP reductions over it, as ``dace/arg_reduction.h`` declares them. A
@@ -3079,16 +3112,17 @@ def c_arg_pair_definition(value: str, index: str) -> str:
         f"static inline int cpf_arg_greater_{tag}({v} a, {v} b) {{ return {greater}; }}",
         f"static inline {pair} cpf_arg_pair_of_{tag}({v} v, {i} i) {{ {pair} p = {{v, i}}; return p; }}",
     ]
-    for op, better in (
-        ("max", "cpf_arg_greater_%s(in.__ar_v, out.__ar_v)"),
-        ("min", "cpf_arg_greater_%s(out.__ar_v, in.__ar_v)"),
+    lowest, highest = C_ARG_BOUNDS[value]
+    for op, better, seed in (
+        ("max", "cpf_arg_greater_%s(in.__ar_v, out.__ar_v)", lowest),
+        ("min", "cpf_arg_greater_%s(out.__ar_v, in.__ar_v)", highest),
     ):
         lines += [
             f"static inline {pair} cpf_arg_{op}_combine_{tag}({pair} out, {pair} in) {{",
             f"    return ({better % tag} || (in.__ar_v == out.__ar_v && in.__ar_i < out.__ar_i)) ? in : out;",
             "}",
             f"#pragma omp declare reduction(arg_{op}_pair : {pair} : omp_out = cpf_arg_{op}_combine_{tag}(omp_out, omp_in)) "
-            "initializer(omp_priv = omp_orig)",
+            f"initializer(omp_priv = cpf_arg_pair_of_{tag}({seed}, {index.upper()}_MAX))",
         ]
     return "\n".join(lines)
 

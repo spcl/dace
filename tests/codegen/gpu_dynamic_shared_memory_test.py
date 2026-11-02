@@ -11,6 +11,7 @@ The tests that only inspect the generated code run without a GPU; the ones marke
 """
 
 import json
+import os
 import re
 import warnings
 
@@ -21,6 +22,9 @@ import dace
 from dace import data as dt
 from dace import nodes
 from dace.transformation.passes import gpu_shared_memory
+
+#: AMD devices fault above their 64 KiB group segment, and report no limit to compare a request with.
+NVIDIA_ONLY = pytest.mark.skipif(not os.path.exists("/dev/nvidiactl"), reason="needs an NVIDIA device")
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -406,12 +410,14 @@ def _run(program, simplify: bool = False, size: int = 1024, **symbols) -> np.nda
 
 
 @pytest.mark.gpu
+@NVIDIA_ONLY
 def test_dynamic_shared_memory_beyond_the_default_limit():
     B = _run(three_arrays)
     assert np.array_equal(B, np.arange(1024, dtype=np.float64) * 2 + 1)
 
 
 @pytest.mark.gpu
+@NVIDIA_ONLY
 def test_static_and_dynamic_beyond_the_limit():
     B = _run(two_large_arrays)
     assert np.array_equal(B, np.arange(1024, dtype=np.float64) * 2 + 1)
@@ -442,6 +448,7 @@ def test_kernels_with_separate_containers():
 
 
 @pytest.mark.gpu
+@NVIDIA_ONLY
 def test_request_beyond_the_device_raises(capfd):
     """No GPU grants 16 MiB of shared memory per thread-block; the launch fails with the request and the limit."""
     with pytest.raises(RuntimeError, match="symbolic_size"):

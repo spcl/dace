@@ -33,6 +33,8 @@ import ast
 import copy
 from typing import Any, NamedTuple
 
+import sympy
+
 from dace import SDFG, InterstateEdge, Memlet, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import tasklet_utils as tutil
@@ -176,7 +178,11 @@ class SegmentLoop:
             kind = Range("other", "", None)
             if start is not None and end is not None and stride == 1:
                 low = str(start)
-                high = str(self.resolve(symbolic.simplify(end + 1), region.parent_graph))
+                count = self.resolve(symbolic.simplify(end + 1), region.parent_graph)
+                # A loop from 0 is empty either way: the closed form of a counter guards its own zero-trip case
+                if low == "0" and isinstance(count, sympy.Max) and 0 in count.args:
+                    count = sympy.Max(*(arg for arg in count.args if arg != 0))
+                high = str(count)
                 low_ptr, high_ptr = self.pointer_binding(low), self.pointer_binding(high)
                 if low_ptr and high_ptr and low_ptr[0] == high_ptr[0] and (low_ptr[1], high_ptr[1]) == (0, 1):
                     kind = Range("segment", low_ptr[0], None)

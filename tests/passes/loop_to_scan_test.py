@@ -10,6 +10,7 @@ import pytest
 import dace
 from dace.libraries.standard.nodes.scan import Scan, ScanOp, in_connector, init_connector, out_connector
 from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
@@ -826,10 +827,11 @@ def test_v5_multi_write_an_per_carrier_in_fused_body():
     fails even though the carry is structurally valid. state 1 writes ``out[i]``
     (side-effect), state 2 writes ``out[i+1]`` (scan carry). The matcher must pick the
     scan-carry write (loop-var-indexed subset matching the recurrence) and ignore the
-    side-effect write.
+    side-effect write, which lands past the carry: on ``out[i]`` the read would see it,
+    and the loop would be no recurrence (``test_a_carry_read_of_this_iterations_write_is_no_scan``).
     """
     sdfg = dace.SDFG("multi_write_an_fused")
-    sdfg.add_array("out", [N + 1], dace.float64)
+    sdfg.add_array("out", [2 * N + 2], dace.float64)
     sdfg.add_array("delta", [N], dace.float64)
     init = sdfg.add_state("init", is_start_block=True)
     loop = LoopRegion("loop", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1", loop_var="i")
@@ -840,12 +842,12 @@ def test_v5_multi_write_an_per_carrier_in_fused_body():
     s2 = loop.add_state("scan_step")
     loop.add_edge(s1, s2, dace.InterstateEdge())
 
-    # State 1: write a side-effect to out[i] (mimics the cloudsc pre-scan compute).
+    # State 1: write a side-effect beside the carry (mimics the cloudsc pre-scan compute).
     t1 = s1.add_tasklet("side", {"_d"}, {"_o"}, "_o = _d * 0.5")
     dd = s1.add_read("delta")
     ow1 = s1.add_write("out")
     s1.add_edge(dd, None, t1, "_d", dace.Memlet(data="delta", subset="i"))
-    s1.add_edge(t1, "_o", ow1, None, dace.Memlet(data="out", subset="i"))
+    s1.add_edge(t1, "_o", ow1, None, dace.Memlet(data="out", subset="N + 1 + i"))
 
     # State 2: the scan step. Reads out[i], writes out[i+1].
     rd = s2.add_read("out")
@@ -865,6 +867,38 @@ def test_v5_multi_write_an_per_carrier_in_fused_body():
         f"carry write (out[i+1]) and ignore the side-effect write (out[i]); got {res}"
     )
     assert _num_scan_nodes(sdfg) == 1
+
+
+def test_a_carry_read_of_this_iterations_write_is_no_scan():
+    """``a[i] = x[i]; a[i + 1] = a[i] + y[i]``: the read sees this iteration's own write, not a running value."""
+
+    @dace.program
+    def overwritten_carry(a: dace.float64[N], x: dace.float64[N], y: dace.float64[N]):
+        for i in range(N - 1):
+            a[i] = x[i]
+            a[i + 1] = a[i] + y[i]
+
+    sdfg = overwritten_carry.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert not LoopToScan().apply_pass(sdfg, {})
+
+
+def test_a_scalar_carry_under_a_branch_is_no_scan():
+    """The update and the output sit in one branch: the rewrite would delete the branch's sibling with the loop."""
+
+    @dace.program
+    def masked_carry(a: dace.float64[N], m: dace.float64[N], out: dace.float64[N]):
+        acc = 0.0
+        for i in range(N):
+            if m[i] > 0.5:
+                acc = acc + a[i]
+                out[i] = acc
+            else:
+                out[i] = -1.0
+
+    sdfg = masked_carry.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert not LoopToScan().apply_pass(sdfg, {})
 
 
 def test_v6_negative_write_offset_scan_with_outer_axis():
@@ -2352,6 +2386,163 @@ def test_delta_may_be_a_computed_expression():
     got = seed.copy()
     sdfg(out=got, x=x, y=y, z=z, N=n)
     assert np.allclose(got, want), f"max|diff| = {np.max(np.abs(got - want)):.3e}"
+
+
+def assert_canon_matches_the_program(program, args: dict, **symbols):
+    """Canonicalization keeps what the unoptimized program computes."""
+    reference = {name: value.copy() for name, value in args.items()}
+    plain = program.to_sdfg(simplify=False)
+    plain.name += "_plain"
+    plain(**reference, **symbols)
+    sdfg = program.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    sdfg(**args, **symbols)
+    for name, value in args.items():
+        assert np.allclose(value, reference[name]), name
+
+
+@dace.program
+def scalar_carry_in_a_branch(a: dace.float64[N], m: dace.float64[N], out: dace.float64[N]):
+    acc = 0.0
+    for i in range(N):
+        if m[i] > 0.5:
+            acc = acc + a[i]
+            out[i] = acc
+        else:
+            out[i] = -1.0
+
+
+def test_a_scalar_carry_inside_a_branch_keeps_the_branch():
+    args = dict(a=np.arange(1.0, 11.0), m=np.array([0.1, 0.9] * 5), out=np.zeros(10))
+    assert_canon_matches_the_program(scalar_carry_in_a_branch, args, N=10)
+
+
+@dace.program
+def scaled_carry(a: dace.float64[N], d: dace.float64[N]):
+    for i in range(1, N):
+        with dace.tasklet:
+            c << a[i - 1]
+            x << d[i]
+            o >> a[i]
+            o = 0.5 * c + x
+
+
+def test_a_scaled_carry_is_no_scan():
+    rng = np.random.default_rng(5)
+    assert_canon_matches_the_program(scaled_carry, dict(a=rng.random(8), d=rng.random(8)), N=8)
+
+
+M = dace.symbol("M")
+
+
+@dace.program
+def scalar_carry_from_m(a: dace.float64[N], s: dace.float64[1], out: dace.float64[N]):
+    acc = s[0]
+    for i in range(M, N):
+        acc = acc + a[i]
+        out[i] = acc
+    s[0] = acc
+
+
+def test_a_loop_that_does_not_run_keeps_the_accumulator_seed():
+    args = dict(a=np.ones(8), s=np.array([5.0]), out=np.arange(8.0))
+    assert_canon_matches_the_program(scalar_carry_from_m, args, N=8, M=8)
+
+
+@dace.program
+def carry_on_a_body_slot(a: dace.float64[3, N], idx: dace.int64[N], d: dace.float64[N]):
+    for i in range(1, N):
+        j = idx[i]
+        a[j, i] = a[j, i - 1] + d[i]
+
+
+def test_a_slot_chosen_per_iteration_is_no_scan():
+    idx = np.array([0, 1, 0, 2, 1, 0, 2, 1], dtype=np.int64)
+    args = dict(a=np.ones((3, 8)), idx=idx, d=np.arange(1.0, 9.0))
+    assert_canon_matches_the_program(carry_on_a_body_slot, args, N=8)
+
+
+@dace.program
+def sibling_computes_from_the_carry(a: dace.float64[N], m: dace.float64[N], d: dace.float64[N]):
+    for i in range(1, N):
+        if m[i] > 0.5:
+            a[i] = a[i - 1] + d[i]
+        else:
+            a[i] = a[i - 1] * 2.0
+
+
+def test_a_sibling_computing_from_the_carry_is_no_hold():
+    args = dict(a=np.ones(8), m=np.array([0.1, 0.9] * 4), d=np.arange(1.0, 9.0))
+    assert_canon_matches_the_program(sibling_computes_from_the_carry, args, N=8)
+
+
+@dace.program
+def disjoint_half_beside_a_scan(a: dace.float64[2 * N], b: dace.float64[N], c: dace.float64[N + 1], d: dace.float64[N]):
+    for i in range(N):
+        a[i + N] = a[i] + b[i]
+        c[i + 1] = c[i] + d[i]
+
+
+def test_a_recurrence_beside_a_discharged_guard_stays_ordered():
+    sdfg = disjoint_half_beside_a_scan.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    n = 16
+    a, b, c, d = np.zeros(2 * n), np.ones(n), np.zeros(n + 1), np.ones(n)
+    sdfg(a=a, b=b, c=c, d=d, N=n)
+    assert np.array_equal(c, np.arange(n + 1.0))
+    assert any(isinstance(node, Scan) for st in sdfg.states() for node in st.nodes()) or any(
+        isinstance(block, LoopRegion) for block in sdfg.all_control_flow_blocks()
+    )
+
+
+@dace.program
+def masked_two_slots(a: dace.float64[2, N], m: dace.float64[N], d: dace.float64[N], e: dace.float64[N]):
+    for i in range(1, N):
+        if m[i] > 0.5:
+            a[0, i] = a[0, i - 1] * d[i]
+            a[1, i] = a[1, i - 1] * e[i]
+        else:
+            a[0, i] = a[0, i - 1]
+            a[1, i] = a[1, i - 1]
+
+
+def test_masked_slots_hold_their_skipped_iterations():
+    args = dict(a=np.ones((2, 8)), m=np.array([0.1, 0.9] * 4), d=np.arange(2.0, 10.0), e=np.arange(3.0, 11.0))
+    assert_canon_matches_the_program(masked_two_slots, args, N=8)
+
+
+@dace.program
+def carry_repeated_by_a_loop(a: dace.float64[N], out: dace.float64[N]):
+    acc = 0.0
+    for t in range(3):
+        for i in range(N):
+            acc = acc + a[i]
+            out[i] = acc
+
+
+def test_an_accumulator_survives_the_next_run_of_its_loop():
+    sdfg = carry_repeated_by_a_loop.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    LoopToScan().apply_pass(sdfg, {})
+    a, out = np.arange(1.0, 9.0), np.zeros(8)
+    sdfg(a=a, out=out, N=8)
+    assert np.allclose(out, 2 * a.sum() + np.cumsum(a))
+
+
+K = dace.symbol("K")
+
+
+@dace.program
+def backward_nested_scan(a: dace.float64[K, N], b: dace.float64[K, N]):
+    for k in range(K - 2, -1, -1):
+        for j in range(N):
+            a[k, j] = a[k + 1, j] + b[k, j]
+
+
+def test_a_backward_nested_scan_is_not_vector_lifted():
+    sdfg = backward_nested_scan.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert not LoopToScan(lift_nested_scan=True).apply_pass(sdfg, {})
 
 
 if __name__ == "__main__":

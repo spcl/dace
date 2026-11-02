@@ -6,7 +6,7 @@ import numpy as np
 
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
 from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
 from dace.transformation.passes.canonicalize import canonicalize
@@ -171,6 +171,45 @@ def test_guards_not_provably_equal_stay_in_the_map():
     assert_same_outputs(sdfg, unequal_guards_in_map, values=(2, 1, 0))
 
 
+def test_work_reading_a_guards_in_place_value_keeps_the_guard_in_the_map():
+    """The arm without the guard would have to route ``x`` around the removed nest; the guard stays in the map."""
+    inner = dace.SDFG("in_place_guard_inner")
+    inner.add_scalar("x", dace.float64)
+    inner.add_symbol("c", dace.int64)
+    branch = ControlFlowRegion("taken")
+    state = branch.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("double", {"q": None}, {"o": None}, "o = q * 2")
+    state.add_edge(state.add_read("x"), None, tasklet, "q", dace.Memlet("x[0]"))
+    state.add_edge(tasklet, "o", state.add_write("x"), None, dace.Memlet("x[0]"))
+    guard = ConditionalBlock("guard")
+    guard.add_branch(dace.properties.CodeBlock("c > 0"), branch)
+    inner.add_node(guard, is_start_block=True)
+
+    sdfg = dace.SDFG("in_place_guard")
+    sdfg.add_array("a", [4], dace.float64)
+    sdfg.add_array("b", [4], dace.float64)
+    sdfg.add_scalar("x", dace.float64, transient=True)
+    sdfg.add_symbol("c", dace.int64)
+    state = sdfg.add_state(is_start_block=True)
+    entry, exit_node = state.add_map("m", {"i": "0:4"})
+    first = state.add_tasklet("first", {"q": None}, {"o": None}, "o = q + 1")
+    state.add_memlet_path(state.add_read("a"), entry, first, dst_conn="q", memlet=dace.Memlet("a[i]"))
+    before, after = state.add_access("x"), state.add_access("x")
+    state.add_edge(first, "o", before, None, dace.Memlet("x[0]"))
+    nest = state.add_nested_sdfg(inner, {"x": None}, {"x": None}, symbol_mapping={"c": "c"})
+    state.add_edge(before, None, nest, "x", dace.Memlet("x[0]"))
+    state.add_edge(nest, "x", after, None, dace.Memlet("x[0]"))
+    last = state.add_tasklet("last", {"q": None}, {"o": None}, "o = q + 100")
+    state.add_edge(after, None, last, "q", dace.Memlet("x[0]"))
+    state.add_memlet_path(last, exit_node, state.add_write("b"), src_conn="o", memlet=dace.Memlet("b[i]"))
+    sdfg.validate()
+
+    MoveMapInvariantIfUp().apply_pass(sdfg, {})
+
+    sdfg.validate()
+    assert state in sdfg.nodes()
+
+
 if __name__ == "__main__":
     test_two_equal_invariant_guards_unswitch_out_of_a_loop()
     test_three_equal_invariant_guards_unswitch_out_of_a_loop()
@@ -179,3 +218,4 @@ if __name__ == "__main__":
     test_guards_reading_the_same_unwritten_element_unswitch_out_of_a_loop()
     test_equal_invariant_guards_unswitch_out_of_a_map()
     test_guards_not_provably_equal_stay_in_the_map()
+    test_work_reading_a_guards_in_place_value_keeps_the_guard_in_the_map()

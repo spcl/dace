@@ -26,7 +26,7 @@ DOMAINS = {"lvn_only": [0, 1], "istep": [1, 2], "ldeepatmo": [0], "lextra_diffu"
 CONFIG_NAMES = tuple(DOMAINS)
 #: Maps after parallelization per (lvn_only, istep); the unspecialized kernel has 61. Fewer maps is what
 #: pruning the configuration branches buys, so a change here is a change in what the pipeline removes.
-MAPS = {(0, 1): 51, (0, 2): 38, (1, 1): 38, (1, 2): 26}
+MAPS = {(0, 1): 34, (0, 2): 26, (1, 1): 27, (1, 2): 19}
 #: Block maps kept on the host and the kernels they launch, per (lvn_only, istep).
 OFFLOADED = {(0, 1): (8, 28), (0, 2): (7, 22), (1, 1): (6, 21), (1, 2): (5, 15)}
 
@@ -131,7 +131,7 @@ def test_gpu_offload_launches_from_the_block_loops(lvn_only, istep, tmp_path):
     hosts = block_maps(sdfg)
     assert (len(hosts), kernels(sdfg)) == OFFLOADED[lvn_only, istep]
     assert all(entry.map.schedule == dace.ScheduleType.Sequential for entry in hosts)
-    assert any(code.language == "cu" for code in sdfg.generate_code())
+    assert any(code.title == "CUDA" for code in sdfg.generate_code())
 
 
 @pytest.mark.gpu

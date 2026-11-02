@@ -77,7 +77,8 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
     if cond is None or not isinstance(region, ControlFlowRegion):
         return None  # single branch, real condition, no else
     order = _linear_blocks(region, allow_assignments=True)
-    if order is None or not isinstance(order[-1], LoopRegion):
+    # A while loop's exit reads what its body changes: a false guard would leave it spinning
+    if order is None or not isinstance(order[-1], LoopRegion) or not order[-1].loop_variable:
         return None
     loop = order[-1]
     prep = order[:-1]
@@ -118,6 +119,9 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
                 bad = True
             if lhs in _free(rhs):
                 bad = True  # self-referential: accumulates over iterations
+        # The edge runs once ahead of the loop now, and in every iteration afterwards
+        if any(body_may_overwrite(region, loop, r) for r in e.data.get_read_memlets(cb.sdfg.arrays)):
+            bad = True
     if bad:
         return None
     # The prep now runs under the guard in every iteration, so what it writes must leave the guard's value alone, and
@@ -125,6 +129,9 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
     prep_written = {name for p in prep for name in _state_writes(p)}
     prep_written.update(lhs for e in region.edges() for lhs in e.data.assignments)
     if prep_written & cfree or read_when_loop_is_empty(cb, loop, prep_written):
+        return None
+    # The moved loop runs under a false guard too: its counter must not leak where the old value was read
+    if loop_analysis.counter_used_outside_loop(lvar, loop, cb.sdfg):
         return None
     return cb, cond, region
 
@@ -356,7 +363,9 @@ def splice_empty_prep_states(parent: ControlFlowRegion, block: ControlFlowBlock)
         pass
 
 
-def match_imperfect(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
+def match_imperfect(
+    cb: ConditionalBlock, use_index: dict[SDFG, tuple]
+) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
     """Match ``cb`` as a guard over a *heterogeneous* body: a linear chain of ``LoopRegion`` and bare ``SDFGState``
     blocks with at least one of each (a frontend imperfect nest, e.g. ``if c: { for j: body1 ; s }``).
 
@@ -368,6 +377,7 @@ def match_imperfect(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, 
     it would run unconditionally) and a loud warning is emitted.
 
     :param cb: The conditional block to match.
+    :param use_index: Per SDFG, its :func:`symbol_use_sites` and :func:`rebinding_loops`; filled on first need.
     :returns: ``(cb, condition, region)`` or ``None``.
     """
     if len(cb.branches) != 1:
@@ -406,6 +416,11 @@ def match_imperfect(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, 
     if any(str(lp.loop_variable) in cfree or (cfree & loop_analysis.written_names(lp)) for lp in loops):
         return None
     if any(cfree & _state_writes(st) for st in states):
+        return None
+    sdfg = cb.sdfg
+    if sdfg not in use_index:
+        use_index[sdfg] = (*loop_analysis.symbol_use_sites(sdfg), loop_analysis.rebinding_loops(sdfg))
+    if any(loop_analysis.counter_used_outside_loop(str(lp.loop_variable), lp, sdfg, *use_index[sdfg]) for lp in loops):
         return None
     return cb, cond, region
 
@@ -483,8 +498,10 @@ class MoveIfIntoLoop(ppl.Pass):
                     self._move(*m)
                     moved += 1
             if not moved:
+                # A move hoists the loops whole and adds no use of their counters, so one index serves the sweep
+                use_index: dict[SDFG, tuple] = {}
                 for cb in guards:
-                    m = match_imperfect(cb)
+                    m = match_imperfect(cb, use_index)
                     if m is not None:
                         self._move_imperfect(*m)
                         moved += 1

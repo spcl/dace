@@ -225,8 +225,10 @@ def prefix_memlet(edge: MultiConnectorEdge, name: str, prefix: Prefix) -> None:
     memlet = edge.data
     if memlet.data == name:
         memlet.subset = subsets.Range(prefix + memlet.subset.ndrange())
-    elif isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name and memlet.dst_subset is not None:
-        memlet.dst_subset = subsets.Range(prefix + memlet.dst_subset.ndrange())
+    elif isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name:
+        # A copy naming its source and no destination writes the start of the array
+        written = memlet.dst_subset or subsets.Range([(0, size - 1, 1) for size in memlet.subset.size()])
+        memlet.dst_subset = subsets.Range(prefix + written.ndrange())
     elif isinstance(edge.src, nodes.AccessNode) and edge.src.data == name and memlet.src_subset is not None:
         memlet.src_subset = subsets.Range(prefix + memlet.src_subset.ndrange())
 
@@ -478,6 +480,10 @@ def extent_bounds(desc: dt.Array, hierarchy: list[SDFG], kernel: Scope) -> list[
     for sym in sorted({str(s) for d in desc.shape for s in symbolic.pystr_to_symbolic(d).free_symbols}):
         if not any(assigns_symbol(sdfg, sym) for sdfg in hierarchy[:-1]):
             continue
+        # The maximum of ``sym`` bounds only an extent that grows with it
+        for extent in map(symbolic.pystr_to_symbolic, desc.shape):
+            if any(str(s) == sym and not sympy.diff(extent, s).is_nonnegative for s in extent.free_symbols):
+                return None
         read = kernel_assigned_read(hierarchy, sym)
         located = read and read_in_kernel_sdfg(hierarchy, *read)
         inlined = located and inline_kernel_reads(hierarchy, located[1])
@@ -492,8 +498,13 @@ def extent_bounds(desc: dt.Array, hierarchy: list[SDFG], kernel: Scope) -> list[
             kernel_sdfg.arrays[name].storage not in readable for name in (container, *reads)
         ):
             return None
+        # A fold before the launch cannot see what the kernel itself stores
+        in_kernel = state.scope_subgraph(entry).data_nodes()
+        if any(state.in_degree(n) > 0 and n.data in (container, *reads) for n in in_kernel):
+            return None
         bound = f"{sym}_max"
-        if bound in kernel_sdfg.symbols and not any(b.bound == bound for b in result):
+        into_kernel = state.parent_graph.in_edges(state)
+        if any(bound in e.data.assignments for e in into_kernel) and not any(b.bound == bound for b in result):
             # Already folded for an array this kernel lifted before
             result.append(ExtentBound(sym, bound, container, index, ctype, on_device, list(reads), folded=True))
             continue
@@ -769,7 +780,9 @@ def restride_connected_nests(
             for conn in dict.fromkeys(c for c, e in edges if c is not None and e.data.data == name):
                 inner = node.sdfg.arrays[conn]
                 if list(inner.strides) == old:
-                    if list(inner.shape) == list(outer.shape):
+                    mapping = symbolic.symbol_replacements(node.symbol_mapping)
+                    shape = [symbolic.replace_symbols(extent, mapping) for extent in inner.shape]
+                    if len(shape) == len(outer.shape) and all(map(dt.core.same_extent, shape, outer.shape)):
                         for c, edge in edges:
                             if c == conn and edge.data.data == name:
                                 edge.data.subset = subsets.Range.from_array(outer)

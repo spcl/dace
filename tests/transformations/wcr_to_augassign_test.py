@@ -687,6 +687,28 @@ def test_a_symbolic_volume_bounding_the_write_by_the_sdfg_facts_reverts():
     assert np.allclose(a, expected)
 
 
+def test_a_nested_write_repeating_across_the_outer_map_keeps_its_reduction():
+    """``oc[i // 1000]`` names the map parameter of the parent but repeats over it: a revert races."""
+    body = dace.SDFG("repeating_write_body")
+    body.add_array("oc", [4], dace.int64)
+    body.add_symbol("i", dace.int64)
+    inner = body.add_state("write")
+    one = inner.add_tasklet("one", {}, {"o"}, "o = 1")
+    inner.add_edge(
+        one, "o", inner.add_write("oc"), None, dace.Memlet("oc[int_floor(i, 1000)]", wcr="lambda a, b: a + b")
+    )
+    sdfg = dace.SDFG("repeating_write")
+    sdfg.add_array("oc", [4], dace.int64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("m", {"i": "0:4000"})
+    nest = state.add_nested_sdfg(body, {}, {"oc": None}, symbol_mapping={"i": "i"})
+    state.add_nedge(entry, nest, dace.Memlet())
+    state.add_memlet_path(
+        nest, exit_node, state.add_write("oc"), src_conn="oc", memlet=dace.Memlet("oc[0:4]", wcr="lambda a, b: a + b")
+    )
+    assert PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(body, {}) is None
+
+
 if __name__ == "__main__":
     test_tasklet()
     test_mapped_tasklet()
@@ -706,3 +728,4 @@ if __name__ == "__main__":
     test_a_read_back_enters_through_the_outer_map_the_output_sits_in()
     test_a_wcr_into_a_view_reads_back_through_a_bound_view()
     test_a_symbolic_volume_bounding_the_write_by_the_sdfg_facts_reverts()
+    test_a_nested_write_repeating_across_the_outer_map_keeps_its_reduction()

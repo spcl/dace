@@ -50,6 +50,7 @@ def assert_self_contained(code: str) -> None:
     assert "dace::" not in code and "dace/" not in code and "#define" not in code
 
 
+@pytest.mark.arm_cross
 @pytest.mark.parametrize("language", ["c++", "c"])
 def test_an_sve_map_renders_as_a_predicated_loop_an_sve_compiler_accepts(language):
     sut = cpf.render(common.vectorize(axpy), language=language)
@@ -58,6 +59,7 @@ def test_an_sve_map_renders_as_a_predicated_loop_an_sve_compiler_accepts(languag
     assert "svwhilele_b64" in sut.code and "svcntd()" in sut.code
 
 
+@pytest.mark.arm_cross
 @pytest.mark.parametrize("language", ["c++", "c"])
 def test_a_gather_and_a_reduction_render_without_the_runtime(language):
     sut = cpf.render(common.vectorize(gathered_sum), language=language)

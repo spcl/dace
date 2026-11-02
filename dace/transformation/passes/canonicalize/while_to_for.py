@@ -84,6 +84,17 @@ def inlined_condition(loop: LoopRegion) -> tuple[sympy.Basic, str | None] | None
     return symbolic.pystr_to_symbolic(edges[0].data.assignments[name]), name
 
 
+def enters_as(loop: LoopRegion, cond_symbol: str, cond, name: str, start) -> bool:
+    """Whether the condition symbol enters ``loop`` holding ``cond`` at the counter's start: the loop head evaluates
+    ``cond`` in place of the symbol from then on, so the first test must agree with it."""
+    entry = start_edge(loop, cond_symbol)
+    if entry is None:
+        return False
+    at_start = {s: start for s in cond.free_symbols if str(s) == name}
+    value = symbolic.pystr_to_symbolic(entry.data.assignments[cond_symbol])
+    return value.subs({s: start for s in value.free_symbols if str(s) == name}) == cond.subs(at_start)
+
+
 def later_blocks(region: ControlFlowRegion, start: ControlFlowBlock) -> list[ControlFlowBlock]:
     """``start`` and every block of ``region`` reachable from it."""
     seen, stack = [], [start]
@@ -109,7 +120,11 @@ def bump(loop: LoopRegion, name: str, cond_symbol: str | None):
     step = value - symbolic.pystr_to_symbolic(name)
     if not (step.is_Integer and step != 0):
         return None
-    for block in later_blocks(loop, edge.dst):
+    after = later_blocks(loop, edge.dst)
+    if cond_symbol is not None and body_edges(loop, cond_symbol)[0] is not edge:
+        if body_edges(loop, cond_symbol)[0].src not in after:
+            return None  # the condition symbol holds the value from before the bump
+    for block in after:
         if reads_symbol(block, name):
             return None
         for out in loop.out_edges(block):
@@ -132,6 +147,10 @@ def convert(loop: LoopRegion) -> bool:
         return False
     cond, cond_symbol = inlined
     exits = loop.parent_graph.out_edges(loop)
+    bumped = [str(s) for s in cond.free_symbols if body_edges(loop, str(s))]
+    # A second name the body changes moves the bound: no count to speak of
+    if len(bumped) != 1:
+        return False
     for name in sorted(str(s) for s in cond.free_symbols):
         found = bump(loop, name, cond_symbol)
         # The counter starts from a value an edge before the loop gives it: a loop counter cannot read itself.
@@ -139,6 +158,8 @@ def convert(loop: LoopRegion) -> bool:
         if defining is None:
             continue
         start = symbolic.pystr_to_symbolic(defining.data.assignments[name])
+        if cond_symbol is not None and not enters_as(loop, cond_symbol, cond, name, start):
+            continue
         bounded = solved_for(cond, name)
         last = None
         if read_outside(loop, name, skip_body=True):
@@ -165,7 +186,8 @@ def start_edge(loop: LoopRegion, name: str):
         edge = ins[0]
         if name in edge.data.assignments:
             value = symbolic.pystr_to_symbolic(edge.data.assignments[name])
-            return None if changed.intersection(str(s) for s in value.free_symbols) else edge
+            reads = symbolic.free_symbols_and_functions(value) | set(symbolic.arrays(value))
+            return None if changed & reads else edge
         changed.update(edge.data.assignments)
         block = edge.src
         if not isinstance(block, SDFGState):

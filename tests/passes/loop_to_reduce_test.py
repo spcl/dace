@@ -19,6 +19,7 @@ from dace.libraries.standard.nodes.reduce import Reduce
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.loop_to_reduce import (
     LoopToReduce,
     augassign_to_wcr_in_state,
@@ -1575,6 +1576,36 @@ def test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_array
     assert np.allclose(t[0], x @ y), "retargeted nested dot product diverged from the sequential oracle"
 
 
+@dace.program
+def diagonal_sum(m: dace.float64[N, N], out: dace.float64[1]):
+    s = 0.0
+    for i in range(N):
+        s = s + m[i, i]
+    out[0] = s
+
+
+def test_a_diagonal_read_folds_the_diagonal_only():
+    sdfg = diagonal_sum.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    m, out = np.random.default_rng(4).random((6, 6)), np.zeros(1)
+    sdfg(m=m, out=out, N=6)
+    assert out[0] == pytest.approx(np.trace(m))
+
+
+def test_an_input_wider_than_the_accumulator_stays_a_loop():
+    sdfg = dace.SDFG("reduce_wider_input")
+    sdfg.add_array("acc", [1], dace.int64)
+    sdfg.add_array("a", [4], dace.float64)
+    loop = LoopRegion("scale", "i < 4", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    update = body.add_tasklet("update", {"c", "x"}, {"o"}, "o = c * x")
+    body.add_edge(body.add_read("acc"), None, update, "c", dace.Memlet("acc[0]"))
+    body.add_edge(body.add_read("a"), None, update, "x", dace.Memlet("a[i]"))
+    body.add_edge(update, "o", body.add_write("acc"), None, dace.Memlet("acc[0]"))
+    assert not LoopToReduce().apply_pass(sdfg, {})
+
+
 if __name__ == "__main__":
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()
@@ -2284,3 +2315,5 @@ def test_a_staging_copy_read_after_the_loop_is_kept():
     a, out = np.arange(1.0, 5.0), np.zeros(2)
     sdfg(a=a, out=out, N=4)
     assert np.allclose(out, [11.0, 11.0])
+    test_a_diagonal_read_folds_the_diagonal_only()
+    test_an_input_wider_than_the_accumulator_stays_a_loop()

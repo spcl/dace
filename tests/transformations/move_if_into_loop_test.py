@@ -13,7 +13,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop, upward_exposed_reads
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
@@ -305,6 +306,56 @@ def test_push_refuses_a_guard_that_reads_the_loop_variable():
 
     assert not MoveIfIntoLoop.push(cond)
     assert sdfg.to_json() == before
+
+
+def guarded_prep_sdfg(name: str) -> tuple[dace.SDFG, ConditionalBlock, ControlFlowRegion, LoopRegion]:
+    """``if c > 0: for i in 0..4: <body>`` over ``x[4]`` and ``A[1]``, the loop still empty."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("x", [4], dace.float64)
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_symbol("c", dace.int32)
+    guard = ConditionalBlock("guard")
+    region = ControlFlowRegion("taken")
+    guard.add_branch(CodeBlock("c > 0"), region)
+    sdfg.add_node(guard, is_start_block=True)
+    loop = LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1")
+    region.add_node(loop, is_start_block=True)
+    return sdfg, guard, region, loop
+
+
+def test_a_prep_reading_the_slot_the_loop_updates_stays_ahead_of_the_loop():
+    """``g = A[0]`` once before the loop, not once per iteration of a loop that bumps ``A[0]``."""
+    sdfg, guard, region, loop = guarded_prep_sdfg("prep_reads_updated_slot")
+    sdfg.add_symbol("g", dace.float64)
+    prep = region.add_state("prep", is_start_block=True)
+    region.add_edge(prep, loop, dace.InterstateEdge(assignments={"g": "A[0]"}))
+    body = loop.add_state("body", is_start_block=True)
+    store = body.add_tasklet("store", {}, {"o": None}, "o = g")
+    body.add_edge(store, "o", body.add_write("x"), None, dace.Memlet("x[i]"))
+    bump = body.add_tasklet("bump", {"q": None}, {"o": None}, "o = q + 1")
+    body.add_edge(body.add_read("A"), None, bump, "q", dace.Memlet("A[0]"))
+    body.add_edge(bump, "o", body.add_write("A"), None, dace.Memlet("A[0]"))
+    sdfg.validate()
+
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is None
+    assert guard in sdfg.nodes()
+
+
+def test_a_counter_read_past_a_false_guard_keeps_the_guard_around_the_loop():
+    """``i`` keeps its value under a false guard; a loop outside the guard would leave its exit value there."""
+    sdfg, guard, region, loop = guarded_prep_sdfg("counter_read_past_guard")
+    sdfg.add_array("y", [1], dace.float64)
+    body = loop.add_state("body", is_start_block=True)
+    store = body.add_tasklet("store", {}, {"o": None}, "o = 1")
+    body.add_edge(store, "o", body.add_write("x"), None, dace.Memlet("x[i]"))
+    sdfg.add_state_before(guard, "start", is_start_block=True, assignments={"i": "5"})
+    after = sdfg.add_state_after(guard, "after")
+    use = after.add_tasklet("use", {}, {"o": None}, "o = i")
+    after.add_edge(use, "o", after.add_write("y"), None, dace.Memlet("y[0]"))
+    sdfg.validate()
+
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is None
+    assert guard in sdfg.nodes()
 
 
 if __name__ == "__main__":

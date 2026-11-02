@@ -37,7 +37,16 @@ from dace import memlet as mm
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    BreakBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+    SDFGState,
+)
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 
@@ -368,6 +377,8 @@ class IterationEvaluator:
             return [w for b in block.nodes() for w in self.writes(b, array, bind, inner)]
         if not isinstance(block, AbstractControlFlowRegion) or array in written_arrays(block):
             raise Refused(f"{array} written under {type(block).__name__}")
+        if any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in block.all_control_flow_blocks()):
+            raise Refused(f"{type(block).__name__} may leave the iteration early")
         return []
 
     def state_write(

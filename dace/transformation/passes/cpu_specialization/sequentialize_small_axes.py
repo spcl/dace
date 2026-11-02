@@ -339,6 +339,7 @@ class SequentializeSmallAxes(ppl.Pass):
         # LoopRegion's bounds, so a verdict computed under one scope stays valid for a sibling
         # transfer under the same loop.
         self.loop_cache: dict[int, bool] = {}
+        self.varying_cache: dict[int, set[str]] = {}
         self.visit_region(sdfg, False)
         resolver = SymbolResolver()
         candidates = [
@@ -409,7 +410,7 @@ class SequentializeSmallAxes(ppl.Pass):
         from dace.transformation.auto.auto_optimize import libnode_reads_data_segment  # Avoid an import cycle
 
         if isinstance(node, (CopyLibraryNode, FillLibraryNode)):
-            return is_reentered_cpu_transfer(node, state, loop_cache=self.loop_cache)
+            return is_reentered_cpu_transfer(node, state, self.loop_cache, self.varying_cache)
         return libnode_reads_data_segment(node, state)
 
     def decide_map(

@@ -279,5 +279,25 @@ def test_a_zero_extent_transpose_is_a_no_op():
     sdfg(A=np.zeros((0, 3)), B=np.zeros((3, 0)), N=0, M=3)
 
 
+@dace.program
+def transpose_scratch_read_after(A: dace.float64[N, M], B: dace.float64[M, N], out: dace.float64[1]):
+    t = 0.0
+    for i in range(M):
+        for j in range(N):
+            t = A[j, i]
+            B[i, j] = t
+    out[0] = t
+
+
+def test_a_scratch_read_after_the_nest_keeps_the_nest():
+    sdfg = transpose_scratch_read_after.to_sdfg(simplify=True)
+    Pipeline([LoopToTranspose()]).apply_pass(sdfg, {})
+    assert not any(isinstance(n, Transpose) for st in sdfg.states() for n in st.nodes())
+    A, B, out = np.arange(12.0).reshape(4, 3).copy(), np.zeros((3, 4)), np.zeros(1)
+    sdfg(A=A, B=B, out=out, N=4, M=3)
+    assert np.array_equal(B, A.T) and out[0] == A[3, 2]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+    test_a_scratch_read_after_the_nest_keeps_the_nest()

@@ -64,8 +64,8 @@ def _enclosing_map_params(state: SDFGState, node: nodes.Node) -> list[str]:
     return params
 
 
-def _index_syms_across_nesting(sdfg: SDFG, write_subset) -> set:
-    """Every symbol NAME the write index depends on, in ``sdfg``'s namespace AND in each
+def _index_syms_across_nesting(sdfg: SDFG, names: set) -> set:
+    """Every symbol NAME the write index names ``names`` depend on, in ``sdfg``'s namespace AND in each
     enclosing parent SDFG's namespace, following the nested-SDFG ``symbol_mapping`` chain
     outward.
 
@@ -78,10 +78,10 @@ def _index_syms_across_nesting(sdfg: SDFG, write_subset) -> set:
     match the outer param regardless of which nesting level named it.
 
     :param sdfg: The SDFG whose namespace ``write_subset`` is expressed in (an inner body NSDFG).
-    :param write_subset: The WCR write's subset.
+    :param names: The symbol names of the WCR write's subset.
     :returns: The set of symbol names the write index depends on across the nesting chain.
     """
-    syms = {str(s) for s in write_subset.free_symbols}
+    syms = set(names)
     cur = sdfg
     while cur.parent_nsdfg_node is not None:
         mapping = cur.parent_nsdfg_node.symbol_mapping
@@ -92,6 +92,21 @@ def _index_syms_across_nesting(sdfg: SDFG, write_subset) -> set:
         syms |= outer
         cur = cur.parent_sdfg
     return syms
+
+
+def outer_maps_vary_index(sdfg: SDFG, write_subset, data_name: str, outer_params: set) -> bool:
+    """Whether every map parameter of ``outer_params``, outside ``sdfg``, varies the index of a write to
+    ``data_name``, one to one wherever ``write_subset`` names it: ``int_floor(i, 1000)`` names ``i`` and repeats."""
+    names = {str(s) for s in write_subset.free_symbols}
+    index_syms = _index_syms_across_nesting(sdfg, names) | boundary_write_index_syms(sdfg, data_name)
+    if any(str(it) not in index_syms for it in outer_params):
+        return False
+    params = {str(it) for it in outer_params}
+    varying = [name for name in names if params & _index_syms_across_nesting(sdfg, {name})]
+    # Avoid import loop: the vectorization package imports this module.
+    from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
+
+    return not varying or write_subset_is_injective(write_subset, varying)
 
 
 def boundary_write_index_syms(sdfg: SDFG, data_name: str) -> set:
@@ -287,6 +302,17 @@ def reads_written_element(read, write) -> bool:
     return read.data.data == write.data.data and read.data.subset == write.data.subset
 
 
+def sole_access(sdfg: SDFG, node: nodes.AccessNode) -> bool:
+    """Whether ``node`` is the only access node of its container in ``sdfg`` and no control flow names it."""
+    name = node.data
+    if any(other is not node and other.data == name for state in sdfg.states() for other in state.data_nodes()):
+        return False
+    for region in sdfg.all_control_flow_regions():
+        if any(name in code.get_free_symbols() for code in region.get_meta_codeblocks()):
+            return False
+    return not any(name in edge.data.free_symbols for edge in sdfg.all_interstate_edges())
+
+
 def reads_container(sdfg: SDFG, name: str) -> bool:
     """Whether ``sdfg`` reads ``name``: an access node of it with a successor, or an interstate edge, loop
     statement or branch condition naming it."""
@@ -404,6 +430,21 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if tasklet.language is not dtypes.Language.Python:
             return None
         return AugAssignToWCR.update(tasklet, inedges, outedge)
+
+    @staticmethod
+    def another_writer(graph: SDFGState, out: nodes.AccessNode) -> bool:
+        """Whether a node other than ``out`` writes its container in this state. ``apply`` drops the load edge and
+        lets the WCR read the destination at write time instead -- but that load is what orders the RMW behind the
+        other write. A scan seeds ``a[k+1] = a[k]`` through its own access node and then accumulates into
+        ``a[k+1]``; without the load the WCR is unordered against the seed and the increment is applied to whichever
+        value happens to be there. (CloudSC's vertical flux band, and TSVC's recurrences, are exactly this shape.)"""
+        return any(
+            other is not out
+            and isinstance(other, nodes.AccessNode)
+            and other.data == out.data
+            and graph.in_degree(other) > 0
+            for other in graph.nodes()
+        )
 
     @staticmethod
     def write_increment(tasklet: nodes.Tasklet, target: str, op: str, inc: ast.expr) -> str:
@@ -560,8 +601,14 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             name = outedge.data.data
             # The update no longer reads the accumulator; a read connector left for it is a stale read of the
             # outer array, which keeps a loop around the nest refused on a read-after-write.
-            if name in nsdfg.in_connectors and not reads_container(sd, name):
-                for read in list(nstate.in_edges_by_connector(nsdfg, name)):
+            # A read of a node written in that state stays: it orders the nest behind the write.
+            reads = list(nstate.in_edges_by_connector(nsdfg, name))
+            if (
+                name in nsdfg.in_connectors
+                and not reads_container(sd, name)
+                and not any(nstate.in_degree(nstate.memlet_path(read)[0].src) for read in reads)
+            ):
+                for read in reads:
                     nstate.remove_memlet_path(read)
                 nsdfg.remove_in_connector(name)
             sd = sd.parent_sdfg
@@ -625,21 +672,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if self.name_increment(tlet, oute.src_conn, ine.dst_conn) is None:
             return False
 
-        # Another writer of the accumulator in this state forbids the rewrite. ``apply`` drops the
-        # load edge and lets the WCR read the destination at write time instead -- but that load is
-        # what orders the RMW behind the other write. A scan seeds ``a[k+1] = a[k]`` through its own
-        # access node and then accumulates into ``a[k+1]``; without the load the WCR is unordered
-        # against the seed and the increment is applied to whichever value happens to be there.
-        # (CloudSC's vertical flux band, and TSVC's recurrences, are exactly this shape.)
-        if any(
-            other is not out
-            and isinstance(other, nodes.AccessNode)
-            and other.data == out.data
-            and graph.in_degree(other) > 0
-            for other in graph.nodes()
-        ):
-            return False
-        return True
+        return not self.another_writer(graph, out) and sole_access(sdfg, cin) and sole_access(sdfg, cout)
 
     def _apply_rmw_copy(self, state: SDFGState, sdfg: SDFG):
         """Rewrite the copy-wrapped RMW into a WCR write: drop the accumulator
@@ -744,7 +777,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if len(data_in) != 2 or len(data_out) != 1:
             return False
 
-        return self.name_increment(combine, combine_store.src_conn, acc_read.dst_conn) is not None
+        if self.name_increment(combine, combine_store.src_conn, acc_read.dst_conn) is None:
+            return False
+        return not self.another_writer(graph, out) and sole_access(sdfg, mid)
 
     def _apply_combine_copyback(self, state: SDFGState, sdfg: SDFG):
         """Rewrite the combine-then-copyback RMW into a WCR write: drop the
@@ -872,7 +907,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # combine-copyback in a map is a vectorizer intermediate (a NormalizeWCR seeded accumulator
         # whose copyback WidenAccesses folds); converting it here would strip that copyback. Sum/prod
         # reductions reach WCR via the direct augmented-assign (expr_index 1) instead.
-        return permissive or op in self._FUNCTIONS
+        return (permissive or op in self._FUNCTIONS) and sole_access(sdfg, mid)
 
     def _apply_combine_copyback_map(self, state: SDFGState, sdfg: SDFG):
         """Rewrite the in-map combine-then-copyback into a map-exit WCR write: the combine emits
@@ -917,6 +952,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 for e in list(state.in_edges_by_connector(me, in_conn)):
                     state.remove_edge(e)
                 me.remove_in_connector(in_conn)
+                # The dropped read ordered the map behind a write of the accumulator
+                if state.in_degree(inp) > 0:
+                    state.add_nedge(inp, me, Memlet())
         if state.degree(inp) == 0:
             state.remove_node(inp)
 
@@ -1139,9 +1177,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                 if isinstance(scope, nodes.MapEntry):
                     outer_map_params |= set(scope.map.params)
             outer_map_params -= set(params)
-            index_syms = _index_syms_across_nesting(sdfg, sub)
-            index_syms |= boundary_write_index_syms(sdfg, self.output.data)
-            if any(str(it) not in index_syms for it in outer_map_params):
+            if not outer_maps_vary_index(sdfg, sub, self.output.data, outer_map_params):
                 return False
         # The tasklet must already READ BACK the destination element (same data, same subset), so
         # ``__out`` already equals ``dest <op> incoming`` and dropping the WCR keeps the accumulate.
@@ -1313,9 +1349,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # (``_loop_it_1`` -> body ``_loop_it_2``) is still recognised as varying the write
             # (an injective per-element in-place RMW like s212 ``b[i] += a[i+1]*d[i]``), not a
             # cross-iteration reduction that must keep its WCR.
-            index_syms = _index_syms_across_nesting(sdfg, edge.data.subset)
-            index_syms |= boundary_write_index_syms(sdfg, edge.data.data)
-            if any(str(it) not in index_syms for it in outer_map_params):
+            if not outer_maps_vary_index(sdfg, edge.data.subset, edge.data.data, outer_map_params):
                 return False
 
         return True
