@@ -883,6 +883,26 @@ def test_combine_copyback_after_a_write_keeps_the_load_ordering_it():
     assert combine_copyback_sdfg("combine_seeded", True).apply_transformations_repeated(AugAssignToWCR) == 0
 
 
+def test_aug_assign_in_a_nested_body_keeps_a_read_ordering_it_behind_a_write():
+    body = dace.SDFG("ordered_nest_body")
+    body.add_array("A", [1], dace.float64)
+    inner = body.add_state()
+    double = inner.add_tasklet("double", {"a"}, {"b"}, "b = a * 2")
+    inner.add_edge(inner.add_read("A"), None, double, "a", dace.Memlet("A[0]"))
+    inner.add_edge(double, "b", inner.add_write("A"), None, dace.Memlet("A[0]"))
+    sdfg = dace.SDFG("ordered_nest")
+    sdfg.add_array("A", [1], dace.float64)
+    state = sdfg.add_state()
+    acc = state.add_access("A")
+    nest = state.add_nested_sdfg(body, {"A": None}, {"A": None})
+    state.add_edge(acc, None, nest, "A", dace.Memlet("A[0]"))
+    state.add_edge(nest, "A", state.add_write("A"), None, dace.Memlet("A[0]"))
+    seed = state.add_tasklet("seed", {}, {"o"}, "o = 3.0")
+    state.add_edge(seed, "o", acc, None, dace.Memlet("A[0]"))
+    assert body.apply_transformations_repeated(AugAssignToWCR) == 1
+    assert state.in_edges(nest), "the seed must stay ordered before the nest"
+
+
 def test_aug_assign_fission_moves_the_whole_map_of_a_multi_tasklet_update():
     """warpx's ``Jx[...] += djr * xy`` after map fusion: the accumulator is written by an earlier map of the state and
     the updating map holds the delta's tasklet next to the update, so the fission moves the whole map."""
@@ -1020,6 +1040,7 @@ if __name__ == "__main__":
     test_isolating_an_accumulate_read_through_a_shared_view_keeps_the_views_source()
     test_aug_assign_python_after_a_write_fissions_the_state()
     test_combine_copyback_after_a_write_keeps_the_load_ordering_it()
+    test_aug_assign_in_a_nested_body_keeps_a_read_ordering_it_behind_a_write()
     test_aug_assign_fission_moves_the_whole_map_of_a_multi_tasklet_update()
     test_aug_assign_python_min_max("max(a, k)", np.maximum)
     test_aug_assign_python_min_max("min(k, a)", np.minimum)

@@ -590,8 +590,14 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             name = outedge.data.data
             # The update no longer reads the accumulator; a read connector left for it is a stale read of the
             # outer array, which keeps a loop around the nest refused on a read-after-write.
-            if name in nsdfg.in_connectors and not reads_container(sd, name):
-                for read in list(nstate.in_edges_by_connector(nsdfg, name)):
+            # A read of a node written in that state stays: it orders the nest behind the write.
+            reads = list(nstate.in_edges_by_connector(nsdfg, name))
+            if (
+                name in nsdfg.in_connectors
+                and not reads_container(sd, name)
+                and not any(nstate.in_degree(nstate.memlet_path(read)[0].src) for read in reads)
+            ):
+                for read in reads:
                     nstate.remove_memlet_path(read)
                 nsdfg.remove_in_connector(name)
             sd = sd.parent_sdfg
