@@ -3160,7 +3160,7 @@ class SymbolResolver:
         ] = {}
         self._facts: dict[tuple[ControlFlowBlock, nd.EntryNode | None], symbolic.Facts] = {}
         #: Per loop, what ``derive_facts`` reads of it: the loop, the names it binds and its range, if that holds.
-        self._loop_scopes: dict["LoopRegion", tuple[Any, dict[str, Any], list[tuple[str, Any, Any, Any]]]] = {}
+        self._loop_scopes: dict[LoopRegion, tuple[Any, dict[str, Any], list[tuple[str, Any, Any, Any]]]] = {}
         self._data_facts: dict[tuple[ControlFlowBlock, str], tuple[symbolic.DataFact, ...]] = {}
         #: Per SDFG, the scope resolved last and the symbols every node directly inside it sees.
         self._per_scope: dict[SDFG, tuple[SDFGState, nd.EntryNode, dict[str, dtypes.typeclass]]] = {}
