@@ -452,9 +452,11 @@ def refused_on(loop: LoopRegion, names: set[str], refusals: dict[LoopRegion, Any
 
 
 def only_read_modify_written(loop: LoopRegion, name: str) -> bool:
-    """Whether every access of ``name`` in ``loop`` is a read-modify-write
-    (:func:`~dace.transformation.interstate.loop_to_map.rmw_edges`) or already a WCR write, and no condition or
-    interstate edge reads it: a WCR then leaves it without a conflict."""
+    """Whether every access of ``name`` in ``loop`` is an update's own read-modify-write
+    (:func:`~dace.transformation.interstate.loop_to_map.rmw_edges`, :func:`read_by_its_update`) or already a WCR write,
+    and no condition or interstate edge reads it: a WCR then leaves it without a conflict. Any other reader (a term of
+    the increment, householder's ``V @ Q[k:, :]`` beside ``Q[k:, :] -= ...``) sees the accumulated value, which a WCR
+    does not order."""
     from dace.transformation.interstate.loop_to_map import rmw_edges
 
     if name in loop_analysis.control_reads(loop):
@@ -467,11 +469,35 @@ def only_read_modify_written(loop: LoopRegion, name: str) -> bool:
         for node in state.data_nodes():
             if node.data != name:
                 continue
-            if any(
-                id(e) not in writes and e.data.wcr is None for e in state.in_edges(node) if not e.data.is_empty()
-            ) or any(id(e) not in reads for e in state.out_edges(node) if not e.data.is_empty()):
+            if any(id(e) not in writes and e.data.wcr is None for e in data_in_edges(state, node)):
+                return False
+            if any(id(e) not in reads or not read_by_its_update(state, e, name) for e in data_out_edges(state, node)):
                 return False
     return True
+
+
+def read_by_its_update(state: SDFGState, read: gr.MultiConnectorEdge[mm.Memlet], name: str) -> bool:
+    """Whether the tasklet ``read`` reaches, past a staging copy of the load, writes ``name`` back, past one of the
+    store (``staging_successor``)."""
+    reader = state.memlet_path(read)[-1].dst
+    if isinstance(reader, nodes.AccessNode) and state.out_degree(reader) == 1:
+        reader = state.memlet_path(state.out_edges(reader)[0])[-1].dst
+    if not isinstance(reader, nodes.Tasklet):
+        return False
+    written = [state.memlet_path(e)[-1].dst for e in data_out_edges(state, reader)]
+    for _ in range(3):  # ``tasklet -> tmp -> copy -> tmp -> name`` at most
+        if any(isinstance(n, nodes.AccessNode) and n.data == name for n in written):
+            return True
+        staged = [e for n in written if isinstance(n, nodes.AccessNode) for e in data_out_edges(state, n)]
+        staged += [
+            e
+            for n in written
+            if isinstance(n, nodes.Tasklet) and len(data_in_edges(state, n)) == 1
+            for e in data_out_edges(state, n)
+            if AugAssignToWCR.is_copy(n, e.src_conn, data_in_edges(state, n)[0].dst_conn)
+        ]
+        written = [state.memlet_path(e)[-1].dst for e in staged]
+    return False
 
 
 def names_across_nesting(state: SDFGState, name: str) -> dict[SDFG, set[str]]:

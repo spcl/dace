@@ -112,6 +112,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.loop_to_reduce import only_read_modify_written
 from dace.transformation.transformation import explicit_cf_compatible
 
 
@@ -243,15 +244,12 @@ class LiftLoopCarriedReduction(ppl.Pass):
         candidates = self._collect_candidates(body_states, itervar)
         if not candidates:
             return 0
-        # Per-array purity gate: the accumulator must be read in the loop body ONLY as the
-        # read-back of its own reduction (never to compute an increment or anything else),
-        # else it is a recurrence and the WCR would change the value.
-        reads_by_array = self._accumulator_reads(body_states)
-        controls = loop_analysis.control_reads(loop)
         lifted = 0
         for cand in candidates:
-            if any(e != cand.read_edge for e in reads_by_array.get(cand.array, {})) or cand.array in controls:
-                continue  # array read elsewhere in the loop, or by its control flow -> not a pure accumulator
+            # Purity gate: the accumulator is read only as the read-back of its own reduction, else it is a
+            # recurrence and the WCR would change the value.
+            if not only_read_modify_written(loop, cand.array):
+                continue
             if not self._sizes_are_concrete(loop, cand):
                 continue  # symbolic extents -> cost undecidable, refuse (see module docstring)
             self._apply_lift(cand)
@@ -349,16 +347,6 @@ class LiftLoopCarriedReduction(ppl.Pass):
         return _AccumulatorCandidate(
             st, me, mx, tasklet, array, op, acc_conn, read_edges[0], entry_out, mx_in, exit_out
         )
-
-    def _accumulator_reads(self, body_states: list[SDFGState]) -> dict[str, dict[MultiConnectorEdge[Memlet], None]]:
-        """Every ``AccessNode(A) -> *`` read edge of each array A across the loop body."""
-        reads: dict[str, dict[MultiConnectorEdge[Memlet], None]] = {}
-        for st in body_states:
-            for n in st.nodes():
-                if isinstance(n, nodes.AccessNode):
-                    for e in st.out_edges(n):
-                        reads.setdefault(n.data, {})[e] = None
-        return reads
 
     def _apply_lift(self, c: _AccumulatorCandidate) -> None:
         st = c.state

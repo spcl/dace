@@ -27,6 +27,7 @@ from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import Refusal
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
+from dace.transformation.passes.loop_to_reduce import only_read_modify_written
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 
@@ -113,27 +114,6 @@ def convert_updates(loop: LoopRegion, name: str) -> int:
             return converted
 
 
-def read_only_by_updates(loop: LoopRegion, name: str) -> bool:
-    """Whether every read of ``name`` in ``loop`` is a tasklet that writes ``name`` back: an update's own
-    read. Any other reader (householder's ``V @ Q[k:, :]`` beside ``Q[k:, :] -= ...``, a branch
-    condition) sees the accumulated value, which a WCR does not order."""
-    for block in loop.all_control_flow_blocks():
-        if not isinstance(block, SDFGState):
-            continue
-        for node in block.data_nodes():
-            if node.data != name:
-                continue
-            for edge in block.out_edges(node):
-                if edge.data.is_empty():
-                    continue
-                reader = block.memlet_path(edge)[-1].dst
-                if not isinstance(reader, nodes.Tasklet):
-                    return False
-                if not any(not e.data.is_empty() and e.data.data == name for e in block.out_edges(reader)):
-                    return False
-    return name not in loop_analysis.control_reads(loop)
-
-
 def writes_move_with_the_iteration(loop: LoopRegion, name: str) -> bool:
     """Whether every write of ``name`` in ``loop`` addresses through the loop variable or a symbol the body defines:
     a scatter whose iterations mostly write apart. A write of the same elements every iteration (``out += w[r] *
@@ -185,7 +165,7 @@ class CarriedAccumulationToWCR(ppl.Pass):
                         r.kind is Refusal.NON_UNIQUE_WRITE
                         and r.container in updated
                         and writes_move_with_the_iteration(loop, r.container)
-                        and read_only_by_updates(loop, r.container)
+                        and only_read_modify_written(loop, r.container)
                     ),
                 )
                 if not names or not all_convertible(loop, names):
