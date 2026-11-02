@@ -76,6 +76,7 @@ class Scal(nodes.LibraryNode):
 @oprepo.replaces("dace.libraries.blas.scal")
 @oprepo.replaces("dace.libraries.blas.Scal")
 def scal_libnode(pv, sdfg: SDFG, state: SDFGState, a, x, result=None):
+    """Adds a :class:`Scal` writing ``a * x`` to ``result``, by default ``x``."""
     result = result if result is not None else x
     node = Scal("scal", a=a)
     state.add_edge(state.add_read(x), None, node, "_x", mm.Memlet(x))

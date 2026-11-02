@@ -191,6 +191,7 @@ class Ger(LibraryNode):
 @oprepo.replaces("dace.libraries.blas.ger")
 @oprepo.replaces("dace.libraries.blas.Ger")
 def ger_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, A, x, y, output, alpha):
+    """Adds a :class:`Ger` writing ``alpha * x * y^T + A`` to ``output``."""
     # Add nodes
     A_in, x_in, y_in = (state.add_read(name) for name in (A, x, y))
     out = state.add_write(output)
