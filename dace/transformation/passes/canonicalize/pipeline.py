@@ -47,7 +47,6 @@ from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import
 )
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
-from dace.transformation.passes.canonicalize.dead_loop_initialization import DeadLoopInitialization
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
 from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
@@ -869,7 +868,7 @@ def derive_parallelism(
     s += [(label, DeadCarriedStoreElimination())]
     # Before the lift: a workspace whose pre-loop fill no iteration observes is then the loop's own, privatized per
     # iteration
-    s += [(label, DeadLoopInitialization())]
+    s += [(label, DeadFillElimination())]
     s += [(label, first_lift())]
     # Rescue: each rewrite acts only on a loop LoopToMap refuses.
     segments: list = []

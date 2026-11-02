@@ -11,7 +11,7 @@ from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
     AssignmentAndCopyKernelToMemsetAndMemcpy,
 )
-from dace.transformation.passes.canonicalize.dead_loop_initialization import DeadLoopInitialization
+from dace.transformation.passes.dead_fill_elimination import DeadFillElimination
 from dace.transformation.passes.simplify import SimplifyPass
 
 NE, NB, BS = dace.symbol("NE"), dace.symbol("NB"), dace.symbol("BS")
@@ -71,7 +71,7 @@ def test_a_workspace_tiled_every_iteration_loses_its_fill_and_the_loop_maps():
     reference = dace.SDFG.from_json(sdfg.to_json())
     reference.name = "sweeps_reference"
     assert fills(sdfg) == 1
-    assert DeadLoopInitialization().apply_pass(sdfg, {}) == 1
+    assert DeadFillElimination().apply_pass(sdfg, {}) == 1
     assert fills(sdfg) == 0
     outer = next(r for r in sdfg.nodes() if isinstance(r, LoopRegion))
     xform = LoopToMap()
@@ -89,14 +89,14 @@ def test_a_fill_an_unwritten_row_shows_stays():
     """Row 0 is never written in the loop: its zeros reach ``out``."""
     sdfg = prepared(partial_rows)
     assert fills(sdfg) == 1
-    assert DeadLoopInitialization().apply_pass(sdfg, {}) is None
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
     assert fills(sdfg) == 1
 
 
 def test_a_fill_the_first_iteration_reads_stays():
     sdfg = prepared(read_first)
     assert fills(sdfg) == 1
-    assert DeadLoopInitialization().apply_pass(sdfg, {}) is None
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
     assert fills(sdfg) == 1
 
 
@@ -104,7 +104,7 @@ def test_a_fill_read_after_the_loop_stays():
     """A zero-trip loop leaves the fill as the result."""
     sdfg = prepared(read_after)
     assert fills(sdfg) == 1
-    assert DeadLoopInitialization().apply_pass(sdfg, {}) is None
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
     assert fills(sdfg) == 1
 
 
