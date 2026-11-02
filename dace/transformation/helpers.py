@@ -392,6 +392,19 @@ def nest_state_subgraph(
     # Create the nested SDFG
     nsdfg = SDFG(name or "nested_" + state.label)
 
+    # Add scope symbols to the nested SDFG with their original data types, before the
+    # descriptors that name them
+    symbols_at_top = state.symbols_defined_at(top_scopenode)
+    if isinstance(top_scopenode, nodes.EntryNode):
+        symbols_at_top.update(top_scopenode.new_symbols(sdfg, state, symbols_at_top))
+    for v in symbols_at_top.keys() | sdfg.symbols.keys():
+        if v in nsdfg.symbols or v in bound_inside:
+            continue
+        if v in sdfg.symbols:
+            nsdfg.add_symbol(v, sdfg.symbols[v].dtype)
+        elif v in symbols_at_top:
+            nsdfg.add_symbol(v, symbols_at_top[v].dtype)
+
     # Transients are added to the nested graph as-is
     for name in subgraph_transients:
         nsdfg.add_datadesc(name, sdfg.arrays[name])
@@ -429,18 +442,6 @@ def nest_state_subgraph(
         new_name = nested_names[name]
         output_names[edge] = new_name
     ###################
-
-    # Add scope symbols to the nested SDFG with their original data types
-    symbols_at_top = state.symbols_defined_at(top_scopenode)
-    if isinstance(top_scopenode, nodes.EntryNode):
-        symbols_at_top.update(top_scopenode.new_symbols(sdfg, state, symbols_at_top))
-    for v in symbols_at_top.keys() | sdfg.symbols.keys():
-        if v in nsdfg.symbols or v in bound_inside:
-            continue
-        if v in sdfg.symbols:
-            nsdfg.add_symbol(v, sdfg.symbols[v].dtype)
-        elif v in symbols_at_top:
-            nsdfg.add_symbol(v, symbols_at_top[v].dtype)
 
     # Add constants to nested SDFG
     for cstname, cstval in sdfg.constants.items():

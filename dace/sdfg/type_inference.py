@@ -85,8 +85,6 @@ def infer_types(code, symbols=None):
     elif isinstance(code, symbol):
         if code.name in symbols:
             inferred_symbols[code.name] = symbols[code.name]
-        else:
-            inferred_symbols[code.name] = code.declaration.dtype
     elif isinstance(code, sympy.Basic) or isinstance(code, SymExpr):
         _dispatch(ast.parse(symstr(code)), symbols, inferred_symbols)
     elif isinstance(code, list):

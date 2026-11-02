@@ -279,10 +279,26 @@ def test_symbol_removed_through_the_repository_is_no_longer_shape_declared():
     assert "i" not in sdfg.symbols
 
 
-def test_shape_declares_a_symbol_with_its_dtype():
+def test_an_undeclared_shape_symbol_gets_the_default_type_and_a_warning():
+    """Only a declaration gives a dtype: the object in a shape may be any symbol of its name."""
     sdfg = dace.SDFG("shape_symbol_dtype")
-    sdfg.add_array("A", [dace.symbol("L", dace.int64)], dace.float64)
-    assert sdfg.symbols["L"] == dace.int64
+    with pytest.warns(UserWarning, match='"L" of data descriptor "A" is not declared.*add_symbol'):
+        sdfg.add_array("A", [dace.symbol("L", dace.int64)], dace.float64)
+    assert sdfg.symbols["L"] == symbolic.DEFAULT_SYMBOL_TYPE
+
+
+def test_an_earlier_expression_does_not_type_a_shape_symbol():
+    """SymPy's cache hands back the first ``2*N`` built, so the signature used to depend on what the process built."""
+    first = dace.symbol("Nhist", dace.int32)
+    assert 2 * first == 2 * first
+    declared = dace.SDFG("declared_extent")
+    declared.add_symbol("Nhist", dace.int64)
+    declared.add_array("A", [2 * dace.symbol("Nhist", dace.int64)], dace.float64)
+    assert declared.symbols["Nhist"] == dace.int64
+    undeclared = dace.SDFG("undeclared_extent")
+    with pytest.warns(UserWarning, match="add_symbol"):
+        undeclared.add_array("A", [2 * dace.symbol("Nhist", dace.int64)], dace.float64)
+    assert undeclared.symbols["Nhist"] == symbolic.DEFAULT_SYMBOL_TYPE
 
 
 def test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_names():
@@ -297,7 +313,8 @@ def test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_name
 
 
 def test_type_inference_takes_the_declared_type_of_a_symbol():
-    assert infer_types(dace.symbol("L", dace.int64), {}) == {"L": dace.int64}
+    assert infer_types(dace.symbol("L", dace.int64), {"L": dace.int32}) == {"L": dace.int32}
+    assert infer_types(dace.symbol("L", dace.int64), {}) == {}
     assert dace.dtypes.result_type_of(dace.symbol("L", dace.int64), dace.int64) == dace.int64
 
 
@@ -433,7 +450,8 @@ if __name__ == "__main__":
     test_validation_rejects_facts_on_undeclared_symbols()
     test_only_the_frontend_boundary_reads_symbol_declarations()
     test_symbol_removed_through_the_repository_is_no_longer_shape_declared()
-    test_shape_declares_a_symbol_with_its_dtype()
+    test_an_undeclared_shape_symbol_gets_the_default_type_and_a_warning()
+    test_an_earlier_expression_does_not_type_a_shape_symbol()
     test_replacing_by_expression_keeps_declared_types_and_declares_no_scope_names()
     test_type_inference_takes_the_declared_type_of_a_symbol()
     test_swapping_two_names_keeps_both()

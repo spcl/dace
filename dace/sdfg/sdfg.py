@@ -2582,12 +2582,15 @@ class SDFG(ControlFlowRegion):
             # A shape may name a scoped symbol (e.g. a transient sized by a map parameter) or one an interstate edge
             # assigns, which are not SDFG symbols
             scoped = scope_bound_names(sdfg) | interstate_bound_names(sdfg) | bound_names
-            # The dtype comes with the symbol object. SymPy may build an expression from another object of the same name,
-            # so a symbol name has one dtype in a process.
+            # SymPy may build an expression from another object of the same name, so the object says nothing of the dtype
             for sym in new:
                 if sym.name in scoped:
                     continue
-                sdfg.add_symbol(sym.name, sym.declaration.dtype)
+                warnings.warn(
+                    f'Symbol "{sym.name}" of data descriptor "{name}" is not declared, so it gets the default type '
+                    f"{symbolic.DEFAULT_SYMBOL_TYPE}; declare it with add_symbol first."
+                )
+                sdfg.add_symbol(sym.name, symbolic.DEFAULT_SYMBOL_TYPE)
                 sdfg.symbol_repo.shape_declared.add(sym.name)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.

@@ -92,7 +92,7 @@ else:
 class SymbolDeclaration(NamedTuple):
     """What ``dace.symbol(name, dtype, **assumptions)`` declares. Only the creator of the object reads it (the
     frontend, from the program's own symbols): an object found inside an expression may be any symbol of its name,
-    so the type of a name comes from the SDFG's symbols."""
+    so the type of a name comes from the SDFG's symbols, and a name no one declared is ``DEFAULT_SYMBOL_TYPE``."""
 
     dtype: dtypes.typeclass
     predicates: frozenset[Predicate]
