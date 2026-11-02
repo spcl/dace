@@ -992,6 +992,28 @@ class StateFusionExtended(StateFusion):
                                         # No path: ambiguous match
                                         return False
                                 found = outnode
+
+            # A happens-before edge that lands on a second-state read keeps it a non-source, which merges only with a
+            # first-state instance it intersects; one the first state reaches by ordering edges alone then stays apart,
+            # though the WAW checks above order a container both states write through that merge
+            # A rewrite fed by a read of its own data is ordered through that read's merge instead
+            rewritten = [
+                n
+                for n in second_output
+                if n.data in first_out_data
+                and not any(i.data == n.data and nx.has_path(second_state._nx, i, n) for i in second_input)
+            ]
+            for kind, _, targets in self.connections_to_make:
+                if kind not in ("war", "waw"):
+                    continue
+                for source in second_input:
+                    if (
+                        source.data in first_output_by_data
+                        and source.data not in first_out_data
+                        and any(source is t or nx.has_path(second_state._nx, source, t) for t in targets)
+                        and any(nx.has_path(second_state._nx, source, w) for w in rewritten)
+                    ):
+                        return False
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg):
