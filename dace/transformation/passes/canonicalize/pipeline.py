@@ -148,7 +148,7 @@ from dace.transformation.passes.promote_constant_index_access import PromoteCons
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
-from dace.transformation.passes.scalar_fission import PrivatizeArrays, PrivatizeScalars
+from dace.transformation.passes.scalar_fission import PrivatizeScalars, PrivatizeScalarsAndArrays
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -184,8 +184,7 @@ def disable_openmp_sections(sdfg: SDFG) -> None:
 def _structural_cleanup(label: str) -> list[tuple[str, ppl.Pass]]:
     """Tidy symbols, then the state machine, between phases; never ``SimplifyPass`` mid-pipeline.
 
-    Symbol phase: ``SymbolDedup``, ``SymbolPropagation``, ``ConstantPropagation``,
-    ``RemoveUnusedSymbols``, then ``SymbolDedup`` again LAST (propagation and the prune both mint
+    Symbol phase: :func:`symbol_phase`, then ``SymbolDedup`` again LAST (propagation and the prune both mint
     new mergeable pairs; 7 kernels kept one otherwise). It runs at every boundary because two
     names for one address make syntactic subset tests (``AugAssignToWCR``) silently decline; that
     once turned an indirect accumulate into a scatter that aborted at run time
@@ -203,6 +202,33 @@ def _structural_cleanup(label: str) -> list[tuple[str, ppl.Pass]]:
     :returns: ``(stage_label, pass)`` pairs, in order.
     """
     return [(label, StructuralCleanup())]
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class PropagateSymbols(ppl.Pass):
+    """``SymbolPropagation`` then ``ConstantPropagation``, the order the recipe always wants them in, as one unit."""
+
+    CATEGORY: str = "Canonicalization"
+
+    def modifies(self) -> ppl.Modifies:
+        return SymbolPropagation().modifies() | ConstantPropagation().modifies()
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified != ppl.Modifies.Nothing
+
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
+        return []
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> bool | None:
+        symbols = SymbolPropagation().apply_pass(sdfg, {})
+        constants = ConstantPropagation().apply_pass(sdfg, {})
+        return True if symbols is not None or constants is not None else None
+
+
+def symbol_phase() -> list[ppl.Pass]:
+    """Merge the symbols that are one value, fold what is known, drop what that left unread."""
+    return [SymbolDedup(), PropagateSymbols(), RemoveUnusedSymbols()]
 
 
 @properties.make_properties
@@ -231,21 +257,15 @@ class PropagateAndPrune(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         changed = 0
-        for round_index in range(self.ROUNDS):
+        for _ in range(self.ROUNDS):
             # A Pipeline per round, not bare passes: DeadDataflowElimination declares a
             # ControlFlowBlockReachability dependency that only a Pipeline resolves.
-            members = [SymbolPropagation(), ConstantPropagation(), DeadDataflowElimination()]
-            result = ppl.Pipeline(members).apply_pass(sdfg, {})
-            if result:
-                changed += 1
-            # The results dict also holds the resolved analyses, so only the members' own keys say the round
-            # modified the graph. A round that did not hands every later round the identical graph, which it would
-            # repeat verbatim with the same report: count those rounds, skip the work (CloudSC: 2.0s of 5.3s).
-            if result and any(type(member).__name__ in result for member in members):
-                continue
-            if result:
-                changed += self.ROUNDS - 1 - round_index
-            break
+            pipeline = ppl.Pipeline([PropagateSymbols(), DeadDataflowElimination()])
+            # A round that modified nothing hands every later round the identical graph (CloudSC: 2.0s of 5.3s). The
+            # results dict also holds the resolved analyses, so only the members' own keys say it did.
+            if not changed_the_graph(pipeline, pipeline.apply_pass(sdfg, {})):
+                break
+            changed += 1
         return changed or None
 
 
@@ -287,10 +307,7 @@ class StructuralCleanup(ppl.Pass):
         walk_fuse.progress = False
         return [
             EqualizeSymbolDtypes(),
-            SymbolDedup(),
-            SymbolPropagation(),
-            ConstantPropagation(),
-            RemoveUnusedSymbols(),
+            *symbol_phase(),
             SymbolDedup(),
             FoldScalarReadCopies(),
             walk_fuse,
@@ -506,12 +523,13 @@ class _ThenIfChanged(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> bool | None:
-        changed = False
+        rewrote = run_then = False
         for unit, watched in self.first:
-            result = unit.apply_pass(sdfg, {})
-            changed = changed or (watched and result is not None)
-        if not changed:
-            return None
+            unit_changed = changed_the_graph(unit, unit.apply_pass(sdfg, {}))
+            rewrote = rewrote or unit_changed
+            run_then = run_then or (watched and unit_changed)
+        if not run_then:
+            return True if rewrote else None
         for unit in self.then:
             unit.apply_pass(sdfg, {})
         return True
@@ -668,8 +686,7 @@ def clean_anti_dependency_units() -> list[ppl.Pass]:
     made by the lift (``ParallelizeLoops.expand_buffers``), for the loops refused on it. The read-ahead WAR a snapshot breaks is the other half, ``BreakAntiDependence`` in :func:`derive_parallelism`: its
     offset proof reads guard symbols that only SymbolSSA and propagation there settle."""
     return [
-        PrivatizeScalars(),
-        PrivatizeArrays(),
+        PrivatizeScalarsAndArrays(),
         PromoteConstantIndexAccess(),
     ]
 
@@ -859,7 +876,7 @@ def derive_parallelism(
     s: Stages = [(label, SymbolSSA())]
     # SSA leaves one definition per name, which is when propagation can substitute it (``j = j_0 + 1`` into
     # ``b[j]``); demoted first, its operand is a scalar read and the symbol stays.
-    s += [(label, SymbolPropagation()), (label, ConstantPropagation())]
+    s += [(label, PropagateSymbols())]
     # Before demotion: the anti-dependence proof reads a guard's symbols (``A[P]`` under ``P > i`` reads ahead), which
     # a demoted guard turns into opaque scalar reads.
     s += [(label, BreakAntiDependence(forward_reads=True)), (label, BreakAntiDependence())]
@@ -877,8 +894,8 @@ def derive_parallelism(
             (label, BestEffortLoopPeeling(peel_limit, segments=segments, validate=validate)),
         ]
     s += [(label, unit) for unit in dead_dataflow_units()]
-    s += [(label, PrivatizeScalars()), (label, PrivatizeArrays())]
-    s += [(label, SymbolPropagation()), (label, ConstantPropagation())]
+    s += [(label, PrivatizeScalarsAndArrays())]
+    s += [(label, PropagateSymbols())]
     # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted copy's
     # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
     s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, unique_iterators()), (label, SymbolSSA())]
@@ -898,8 +915,7 @@ def derive_parallelism(
         (label, FuseChainedScalarReductions()),
         (label, AccumulatorCopyChainToWCR()),
         (label, ParallelizeLoops(propagate=False, hold_sibling_chains=True)),
-        (label, PrivatizeScalars()),
-        (label, PrivatizeArrays()),
+        (label, PrivatizeScalarsAndArrays()),
     ]
     # Inlined bodies show their in-place accumulations; as WCR they let a loop refused on them map, ahead of the
     # guarded-scatter versioning below. Either rewrite, the inlining or the WCR, can leave a loop that now maps.
@@ -917,8 +933,7 @@ def derive_parallelism(
                 ],
                 [
                     ParallelizeLoops(propagate=False, hold_sibling_chains=True),
-                    PrivatizeScalars(),
-                    PrivatizeArrays(),
+                    PrivatizeScalarsAndArrays(),
                 ],
             ),
         )
@@ -1027,11 +1042,10 @@ def finish() -> Stages:
     """The terminal bookkeeping: symbols, derived annotations, assumption guard, hints; the views inlining minted."""
     s: Stages = [(FINISH, StructuralCleanup())]
     # On the settled form: a loop over the segments of a pointer array is lifted behind the entry guard that checks
-    # the data facts its segment confinement rests on (nfa_frontier's components).
-    s += [(FINISH, SegmentConfinedLoops())]
-    s += [(FINISH, SymbolDedup()), (FINISH, SymbolPropagation()), (FINISH, ConstantPropagation())]
+    # the data facts its segment confinement rests on (nfa_frontier's components). The cleanup settled the symbols of
+    # everything else.
+    s += [(FINISH, _ThenIfChanged([(SegmentConfinedLoops(), True)], symbol_phase()))]
     s += [
-        (FINISH, RemoveUnusedSymbols()),
         (FINISH, OptionalArrayInference()),
         (FINISH, ConvertLengthOneArraysToScalars()),
         (FINISH, DeadFillElimination()),
@@ -1191,7 +1205,7 @@ SETTLED_UNITS: tuple[type[ppl.Pass], ...] = (
     PropagateAndPrune,
     SymbolDedup,
     PrivatizeScalars,
-    PrivatizeArrays,
+    PrivatizeScalarsAndArrays,
 )
 
 

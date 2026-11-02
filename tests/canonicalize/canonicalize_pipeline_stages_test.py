@@ -26,6 +26,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
 from dace.transformation.passes.canonicalize.pipeline import PhaseFixpoint, PropagateAndPrune, build_stages, prepared
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.pattern_matching import PatternMatchAndApply
@@ -112,7 +113,7 @@ def copy_through_tasklet(state, read_subset):
     state.add_edge(tasklet, "y", state.add_write("b"), None, Memlet("b[0]"))
 
 
-def test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_every_round():
+def test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_no_change():
     sdfg = dace.SDFG("nothing_to_fold")
     sdfg.add_array("a", [8], dace.float64)
     sdfg.add_array("b", [8], dace.float64)
@@ -122,7 +123,7 @@ def test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_eve
 
     reported = PropagateAndPrune().apply_pass(sdfg, {})
 
-    assert reported == PropagateAndPrune.ROUNDS
+    assert reported is None
     assert sdfg.to_json() == before, "a round with nothing to fold mutated the SDFG"
 
 
@@ -291,8 +292,32 @@ def test_canonicalize_stage_units_leave_validation_to_the_pipeline():
     assert all(not unit.validate and not unit.validate_all for unit in units)
 
 
+def test_then_if_changed_reports_a_rewrite_of_an_unwatched_unit():
+    """An unwatched unit does not earn the ``then`` units, but its rewrite must still reach the change clock."""
+
+    class Rewrites(ppl.Pass):
+        def modifies(self):
+            return ppl.Modifies.Everything
+
+        def should_reapply(self, modified):
+            return False
+
+        def apply_pass(self, sdfg, _):
+            return 1
+
+    ran = []
+
+    class Then(Rewrites):
+        def apply_pass(self, sdfg, _):
+            ran.append(True)
+
+    unit = canon_pipeline._ThenIfChanged([(Rewrites(), False)], [Then()])
+    assert unit.apply_pass(dace.SDFG("unwatched"), {}) is True
+    assert not ran
+
+
 if __name__ == "__main__":
-    test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_every_round()
+    test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_no_change()
     test_propagate_and_prune_folds_a_constant_bound_symbol_into_the_memlet()
     test_canonicalize_accumulator_reduction()
     test_canonicalize_perfect_loop_nesting()
@@ -303,3 +328,4 @@ if __name__ == "__main__":
     test_canonicalize_guarded_two_stencils(1)
     test_canonicalize_guarded_two_stencils(0)
     test_canonicalize_stage_units_leave_validation_to_the_pipeline()
+    test_then_if_changed_reports_a_rewrite_of_an_unwatched_unit()

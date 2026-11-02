@@ -596,7 +596,7 @@ class ScalarFission(ppl.Pass):
 
         :returns: The analysis ``Pass`` subclass to read ``pipeline_results`` from.
         """
-        return ap.ScalarWriteShadowScopes
+        return ap.FissionableScalarWriteShadowScopes
 
     def accepts(self, desc) -> bool:
         """Whether ``desc`` is a container this pass may fission.
@@ -913,3 +913,16 @@ class PrivatizeArrays(PrivatizeScalars):
 
     def fission(self) -> ScalarFission:
         return ArrayFission()
+
+
+@transformation.explicit_cf_compatible
+class PrivatizeScalarsAndArrays(PrivatizeScalars):
+    """:class:`PrivatizeScalars` then :class:`PrivatizeArrays` as one pipeline, which recomputes the analyses both
+    depend on only when the scalars' renames touched them."""
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
+        sdfg.reset_cfg_list()
+        fissions = [ScalarFission(), ArrayFission()]
+        result = ppl.Pipeline(fissions).apply_pass(sdfg, {}) or {}
+        renames = {type(f).__name__: result[type(f).__name__] for f in fissions if result.get(type(f).__name__)}
+        return renames or None

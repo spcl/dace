@@ -234,7 +234,7 @@ def condensed_reach(
 
 
 class BlockReachability:
-    """Reach sets of every control flow block below one top-level SDFG, as :class:`ReachSet` s.
+    """Reach sets of every control flow block of ``sdfgs``, a whole SDFG tree, as :class:`ReachSet` s.
 
     Mirrors :class:`~dace.transformation.passes.analysis.analysis.ControlFlowBlockReachability`: the
     single-level set of a block holds what its own region's graph reaches from it (plus the region's
@@ -242,7 +242,7 @@ class BlockReachability:
     enclosing region up to the SDFG.
     """
 
-    def __init__(self, top_sdfg: SDFG) -> None:
+    def __init__(self, sdfgs: Iterable[SDFG]) -> None:
         self.nodes: dict[AbstractControlFlowRegion, list[ControlFlowBlock]] = {}
         self.successors: dict[AbstractControlFlowRegion, dict[ControlFlowBlock, list[ControlFlowBlock]]] = {}
         self.parents: dict[AbstractControlFlowRegion, AbstractControlFlowRegion | None] = {}
@@ -252,7 +252,7 @@ class BlockReachability:
         self.loop_region_bits: dict[LoopRegion, int] = {}
         self.closure_items: dict[AbstractControlFlowRegion, list[ControlFlowBlock]] = {}
         self.below_items: dict[AbstractControlFlowRegion, list[ControlFlowBlock]] = {}
-        for sdfg in top_sdfg.all_sdfgs_recursive():
+        for sdfg in sdfgs:
             numbering = BlockNumbering(sdfg)
             for region in sdfg.all_control_flow_regions():
                 graph = region.nx
