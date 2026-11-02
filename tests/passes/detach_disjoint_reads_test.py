@@ -80,7 +80,91 @@ def test_a_map_ordered_only_by_the_chain_on_another_container_keeps_the_order():
     assert DetachDisjointReads().apply_pass(sdfg, {}) is None
 
 
+def chain(name: str, *extra: str) -> tuple[dace.SDFG, dace.SDFGState, list[nodes.AccessNode]]:
+    """Three access nodes of ``t``, and one of each ``extra`` vector."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("t", [N, 8], dace.float64)
+    for vector in extra:
+        sdfg.add_array(vector, [N], dace.float64)
+    state = sdfg.add_state()
+    return sdfg, state, [state.add_access("t") for _ in range(3)]
+
+
+def add_map(state: dace.SDFGState, label: str, reads: dict[str, nodes.AccessNode], write: str, sink: nodes.AccessNode):
+    state.add_mapped_tasklet(
+        label,
+        {"i": f"0:{N}"},
+        {f"a{k}": dace.Memlet(memlet) for k, memlet in enumerate(reads)},
+        "b = " + " + ".join(f"a{k}" for k in range(len(reads))),
+        {"b": dace.Memlet(write)},
+        input_nodes={memlet.split("[")[0]: source for memlet, source in reads.items()},
+        output_nodes={sink.data: sink},
+        external_edges=True,
+    )
+
+
+def test_a_map_also_ordered_through_a_sibling_cannot_join_its_write_to_the_chain():
+    sdfg, state, (first, between, last) = chain("detach_cycle", "u")
+    vector = state.add_access("u")
+    add_map(state, "writer", {"t[i, 0]": first}, "t[i, 6]", between)
+    add_map(state, "sibling", {"t[i, 6]": between}, "u[i]", vector)
+    add_map(state, "reader", {"t[i, 1]": between, "u[i]": vector}, "t[i, 7]", last)
+
+    assert DetachDisjointReads().apply_pass(sdfg, {}) is None
+
+    sdfg.validate()
+
+
+def test_a_read_ahead_of_the_writer_stays_ahead_of_the_reader_write():
+    """``load`` reads ``t[i, 7]`` before ``reader`` overwrites it, only because it feeds ``other``."""
+    sdfg, state, (first, between, last) = chain("detach_load", "u")
+    vector = state.add_access("u")
+    add_map(state, "load", {"t[i, 7]": first}, "u[i]", vector)
+    add_map(state, "other", {"u[i]": vector}, "t[i, 6]", between)
+    add_map(state, "writer", {"t[i, 0]": first}, "t[i, 5]", between)
+    add_map(state, "reader", {"t[i, 1]": between}, "t[i, 7]", last)
+
+    assert DetachDisjointReads().apply_pass(sdfg, {}) is None
+
+
+def test_a_copy_is_a_write_of_its_destination():
+    sdfg, state, (first, between, last) = chain("detach_copy_write", "s", "y")
+    copied, again = state.add_access("s"), state.add_access("s")
+    state.add_nedge(state.add_access("y"), copied, dace.Memlet(f"y[0:{N}]"))
+    add_map(state, "writer", {"t[i, 0]": first, "s[i]": copied}, "t[i, 6]", between)
+    add_map(state, "reader", {"t[i, 1]": between, "s[i]": again}, "t[i, 7]", last)
+
+    assert DetachDisjointReads().apply_pass(sdfg, {}) is None
+
+
+def test_a_copy_memlet_naming_its_destination_still_reads_the_source():
+    sdfg, state, (first, between, last) = chain("detach_copy_read")
+    sdfg.add_array("y", [N, 8], dace.float64)
+    add_map(state, "writer", {"t[i, 0]": first}, "t[i, 6]", between)
+    state.add_edge(between, None, state.add_access("y"), None, dace.Memlet(f"y[0:{N}, 7]"))
+    add_map(state, "reader", {"t[i, 1]": between}, "t[i, 7]", last)
+
+    assert DetachDisjointReads().apply_pass(sdfg, {}) is None
+
+
+def test_a_write_a_detach_moved_in_need_not_come_from_a_map():
+    sdfg, state, (first, between, last) = chain("detach_moved_write")
+    add_map(state, "writer", {"t[i, 0]": first}, "t[i, 6]", between)
+    add_map(state, "reader", {"t[i, 1]": between}, "t[i, 7]", last)
+    add_map(state, "second_reader", {"t[i, 2]": between}, "t[i, 3]", state.add_access("t"))
+    state.add_edge(state.add_tasklet("one", {}, {"x"}, "x = 1.0"), "x", last, None, dace.Memlet("t[0, 5]"))
+
+    assert DetachDisjointReads().apply_pass(sdfg, {}) == 1
+
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_a_read_a_write_misses_detaches_and_computes_the_same()
     test_a_read_of_the_write_keeps_the_order()
     test_a_map_ordered_only_by_the_chain_on_another_container_keeps_the_order()
+    test_a_map_also_ordered_through_a_sibling_cannot_join_its_write_to_the_chain()
+    test_a_read_ahead_of_the_writer_stays_ahead_of_the_reader_write()
+    test_a_copy_is_a_write_of_its_destination()
+    test_a_copy_memlet_naming_its_destination_still_reads_the_source()
+    test_a_write_a_detach_moved_in_need_not_come_from_a_map()

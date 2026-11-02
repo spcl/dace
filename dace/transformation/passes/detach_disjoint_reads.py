@@ -57,12 +57,17 @@ def detach_in_state(state: SDFGState) -> int:
 
 
 def stored(state: SDFGState, writes: Iterable[Any]) -> list[subsets.Subset]:
-    return [e.data.get_dst_subset(e, state) for e in writes]
+    return [e.data.get_dst_subset(e, state) for e in writes if not e.data.is_empty()]
 
 
 def miss(first: list[subsets.Subset], second: list[subsets.Subset], facts: symbolic.Facts) -> bool:
-    """Whether nothing of ``first`` overlaps anything of ``second``, provably."""
-    return all(subsets.intersects(a, b, facts) is symbolic.Truth.FALSE for a in first for b in second)
+    """Whether nothing of ``first`` overlaps anything of ``second``, provably. A copy's memlet may name only the
+    far side: a subset of None here is one we were not told, not an empty one."""
+    return all(
+        a is not None and b is not None and subsets.intersects(a, b, facts) is symbolic.Truth.FALSE
+        for a in first
+        for b in second
+    )
 
 
 def detach(state: SDFGState, node: nodes.AccessNode, reader: nodes.Node) -> bool:
@@ -72,6 +77,9 @@ def detach(state: SDFGState, node: nodes.AccessNode, reader: nodes.Node) -> bool
         return False
     name = node.data
     writes = state.in_edges(node)
+    # What an earlier detach of this node moved in from its target need not come from a map
+    if not all(isinstance(e.src, nodes.MapExit) for e in writes):
+        return False
     writers = list(dict.fromkeys(state.entry_node(e.src) for e in writes))
     if any(w.map.range != reader.map.range for w in writers) or any(e.data.wcr is not None for e in writes):
         return False
@@ -106,7 +114,7 @@ def detach(state: SDFGState, node: nodes.AccessNode, reader: nodes.Node) -> bool
         loads += [e for e in state.out_edges(node) if e.dst is not reader]
         if not miss([e.data.get_src_subset(e, state) for e in loads if not e.data.is_empty()], reader_writes, facts):
             return False
-    if not lost_order_is_free(state, node, reader, target, before[0] if before else None, reads, stores):
+    if not lost_order_is_free(state, node, writers, reader, target, before[0] if before else None, reads, stores):
         return False
     source = before[0] if before else state.add_access(name)
     for edge in reads:
@@ -140,6 +148,7 @@ def closure(state: SDFGState, start: Iterable[nodes.Node], backward: bool, skip:
 def lost_order_is_free(
     state: SDFGState,
     node: nodes.AccessNode,
+    writers: list[nodes.MapEntry],
     reader: nodes.MapEntry,
     target: nodes.AccessNode | None,
     before: nodes.AccessNode | None,
@@ -147,15 +156,19 @@ def lost_order_is_free(
     stores: list[Any],
 ) -> bool:
     """Whether what ran before ``reader`` only through ``node`` shares nothing with what then ran after it, other than
-    the accesses of ``node``'s container :func:`detach` proved apart."""
+    the accesses of ``node``'s container :func:`detach` proved apart; and ``target`` can join ``node`` without a cycle."""
     removed = {id(e) for e in reads}
+    after_node = closure(state, [node], False, removed)
+    if target in after_node:
+        return False
     earlier = closure(state, [node], True, removed)
-    if before is not None:
-        earlier -= closure(state, [before], True, removed)
+    earlier -= closure(state, [reader] + ([before] if before is not None else []), True, removed)
     later = closure(state, [reader], False, removed)
-    later -= closure(state, [node] + ([target] if target is not None else []), False, removed)
+    later -= after_node
+    if target is not None:
+        later -= closure(state, [target], False, removed)
     exempt = removed | {id(e) for e in stores} | {id(e) for e in state.in_edges(node)}
-    exempt |= {id(e) for w in earlier if isinstance(w, nodes.MapEntry) for e in state.in_edges(w) if e.src is before}
+    exempt |= {id(e) for w in writers for e in state.in_edges(w) if e.src is before}
     first_reads, first_writes = footprint(state, earlier, exempt)
     second_reads, second_writes = footprint(state, later, exempt)
     if first_reads is None or second_reads is None:
@@ -173,14 +186,13 @@ def footprint(state: SDFGState, among: set[nodes.Node], exempt: set[int]) -> tup
     for edge in state.edges():
         if id(edge) in exempt or edge.data.is_empty():
             continue
+        ends = []
         if isinstance(edge.src, nodes.AccessNode) and edge.dst in among:
             reads.add(edge.src.data)
-            view = edge.src
-        elif isinstance(edge.dst, nodes.AccessNode) and edge.src in among:
+            ends.append(edge.src)
+        if isinstance(edge.dst, nodes.AccessNode) and edge.src in among:
             writes.add(edge.dst.data)
-            view = edge.dst
-        else:
-            continue
-        if isinstance(view.desc(state.sdfg), data.View):
+            ends.append(edge.dst)
+        if any(isinstance(end.desc(state.sdfg), data.View) for end in ends):
             return None, writes
     return reads, writes
