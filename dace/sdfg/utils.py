@@ -2784,12 +2784,12 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
             return repr(float(value))
         return str(value)
 
-    def repl_code_block_or_str(input: CodeBlock | str, repl: dict[str, str]):
+    def repl_code_block_or_str(input: CodeBlock | str | None, repl: dict[str, str]):
+        if input is None:  # A while loop has no init or update statement
+            return None
         if isinstance(input, CodeBlock):
             return CodeBlock(_token_replace_all(input.as_string, repl))
-        for src, dst in repl.items():
-            input = input.replace(src, dst)
-        return input
+        return _token_replace_all(input, repl)
 
     subs = dict(scalars)
     strvals = {name: str(val) for name, val in scalars.items()}
@@ -2911,10 +2911,9 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
         # Captured before the loop above, which may have deleted the nest
         if nsdfg_node not in state.nodes():
             continue
-        in_data_mapping = {ie.data.data: ie.dst_conn for ie in in_edges if ie.data.data is not None}
-        out_data_mapping = {oe.data.data: oe.src_conn for oe in out_edges if oe.data.data is not None}
-        assert not (scalars.keys() & out_data_mapping.keys())
-        inner = {in_data_mapping[n]: v for n, v in scalars.items() if n in in_data_mapping}
+        assert not any(oe.data.data in scalars for oe in out_edges)
+        # By connector: one scalar can feed several
+        inner = {ie.dst_conn: scalars[ie.data.data] for ie in in_edges if ie.data.data in scalars}
         if inner:
             _specialize_scalar_impl(root, nsdfg_node.sdfg, inner)
 

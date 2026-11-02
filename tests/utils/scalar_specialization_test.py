@@ -5,6 +5,7 @@ import re
 import numpy as np
 
 import dace
+from dace.sdfg.state import LoopRegion
 from dace.sdfg.utils import specialize_scalar, specialize_scalars, specialize_symbols
 
 Y = dace.symbolic.symbol("Y")
@@ -180,6 +181,49 @@ def test_copy_out_of_the_scalar_keeps_the_value():
     assert out[0] == 8
 
 
+def test_while_loop_keeps_its_missing_statements():
+    sdfg = dace.SDFG("specialize_while")
+    sdfg.add_scalar("limit", dace.int32)
+    sdfg.add_symbol("i", dace.int32)
+    loop = LoopRegion("while_loop", "i < limit", None, None, None)
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state("body", is_start_block=True)
+
+    specialize_scalars(sdfg, {"limit": 3})
+
+    assert loop.loop_condition.as_string == "(i < 3)"
+    assert loop.init_statement is None and loop.update_statement is None
+
+
+def test_one_scalar_feeding_two_nested_connectors():
+    inner = dace.SDFG("two_connectors_inner")
+    for name in ("a", "b", "r"):
+        inner.add_scalar(name, dace.int32)
+    inner_state = inner.add_state(is_start_block=True)
+    tasklet = inner_state.add_tasklet("add", {"x": None, "y": None}, {"o": None}, "o = x + 2 * y")
+    inner_state.add_edge(inner_state.add_read("a"), None, tasklet, "x", dace.Memlet("a"))
+    inner_state.add_edge(inner_state.add_read("b"), None, tasklet, "y", dace.Memlet("b"))
+    inner_state.add_edge(tasklet, "o", inner_state.add_write("r"), None, dace.Memlet("r"))
+
+    outer = dace.SDFG("two_connectors_outer")
+    outer.add_scalar("v", dace.int32)
+    outer.add_array("res", [1], dace.int32)
+    state = outer.add_state(is_start_block=True)
+    nested = state.add_nested_sdfg(inner, {"a": None, "b": None}, {"r": None})
+    read = state.add_read("v")
+    state.add_edge(read, None, nested, "a", dace.Memlet("v"))
+    state.add_edge(read, None, nested, "b", dace.Memlet("v"))
+    state.add_edge(nested, "r", state.add_write("res"), None, dace.Memlet("res[0]"))
+
+    specialize_scalars(outer, {"v": 5})
+
+    outer.validate()
+    assert "a" not in inner.arrays and "b" not in inner.arrays
+    res = np.zeros(1, dtype=np.int32)
+    outer(res=res, v=5)
+    assert res[0] == 15
+
+
 if __name__ == "__main__":
     test_nested_sdfg()
     test_integer_value_keeps_floating_point_division()
@@ -189,3 +233,6 @@ if __name__ == "__main__":
     test_interacting_values_keep_sequential_meaning()
     test_specialize_symbols_bakes_and_removes()
     test_specialize_symbols_batched()
+    test_copy_out_of_the_scalar_keeps_the_value()
+    test_while_loop_keeps_its_missing_statements()
+    test_one_scalar_feeding_two_nested_connectors()

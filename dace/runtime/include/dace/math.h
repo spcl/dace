@@ -66,9 +66,9 @@ static DACE_CONSTEXPR DACE_HDFI T ldexp(const T& x, int n) {
     return std::ldexp(x, n);
 }
 
-// Fortran EXPONENT(x): e with x = m * 2^e and 0.5 <= |m| < 1 (frexp's exponent).
+// Fortran EXPONENT(x): e with x = m * 2^e and 0.5 <= |m| < 1 (frexp's exponent), one above C's ilogb.
 template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI int ilogb(const T& x) {
+static DACE_CONSTEXPR DACE_HDFI int ftn_exponent(const T& x) {
     int e = 0;
     std::frexp(x, &e);
     return e;
@@ -456,12 +456,12 @@ static DACE_CONSTEXPR DACE_HDFI auto ftn_modulo(const T1& numerator, const T2& d
 }
 
 // Fortran ISHFT: shifts on the unsigned bit pattern, so the right shift zero-fills (C++ >> sign-extends).
-template<typename T>
-static DACE_CONSTEXPR DACE_HDFI T logical_left_shift(const T& x, const T& n) {
+template<typename T, typename TShift>
+static DACE_CONSTEXPR DACE_HDFI T logical_left_shift(const T& x, const TShift& n) {
     return (T)(((typename std::make_unsigned<T>::type)x) << n);
 }
-template<typename T>
-static DACE_CONSTEXPR DACE_HDFI T logical_right_shift(const T& x, const T& n) {
+template<typename T, typename TShift>
+static DACE_CONSTEXPR DACE_HDFI T logical_right_shift(const T& x, const TShift& n) {
     return (T)(((typename std::make_unsigned<T>::type)x) >> n);
 }
 
