@@ -3694,7 +3694,8 @@ def fold_grid_x(backend: str, grid_size: list, block_size: list, allowed: bool) 
         return grid_size, False
     if symbolic.issymbolic(block_size[0]):
         return grid_size, False
-    cap = HIP_GRID_THREADS_LIMIT // int(block_size[0])
+    # Below ``2**31``: the literal stays signed, like the grid size that ``Min`` and ``int_ceil`` meet it with.
+    cap = min(HIP_GRID_THREADS_LIMIT // int(block_size[0]), 2**31 - 1)
     if (grid_size[0] > cap) == False:
         return grid_size, False
     return [sympy.Min(grid_size[0], cap), symbolic.int_ceil(grid_size[0], cap), 1], True
