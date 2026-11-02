@@ -662,13 +662,18 @@ def carried_local_transients(loop: LoopRegion, candidates: set[str], ctx: Option
     :func:`observable_locals`: dead scratch left behind by an earlier rewrite would otherwise
     cost the loop its lift.
     """
-    carried = read_before_written(loop, candidates)
+    carried = read_before_written(loop, candidates, ctx=ctx)
     if not carried:
         return carried
     return carried & observable_locals(loop, candidates, ctx)
 
 
-def read_before_written(loop: LoopRegion, candidates: set[str], holders: Iterable[SDFGState] | None = None) -> set[str]:
+def read_before_written(
+    loop: LoopRegion,
+    candidates: set[str],
+    holders: Iterable[SDFGState] | None = None,
+    ctx: Optional["LiftContext"] = None,
+) -> set[str]:
     """Among ``candidates``, the containers an iteration of ``loop`` can read before it writes them (see
     :func:`carried_local_transients`). Each name's verdict depends on its own accesses alone, so asking about one
     name gives that name's verdict of the whole set.
@@ -682,6 +687,16 @@ def read_before_written(loop: LoopRegion, candidates: set[str], holders: Iterabl
             for block in loop.all_control_flow_blocks()
             if isinstance(block, SDFGState) and any(dn.data in candidates for dn in block.data_nodes())
         ]
+    # A branch condition, nested loop header or interstate edge can read a candidate without an access node.
+    flow_read = control_flow_reads(loop, ctx) & candidates
+
+    def flow_reads(block: ControlFlowBlock) -> set[str]:
+        reads = set() if isinstance(block, SDFGState) else own_reads(block, ctx)
+        reads.update(*(edge_read_symbols(e.data, ctx) for e in block.parent_graph.in_edges(block)))
+        return reads & flow_read
+
+    if flow_read:
+        holders = [*holders, *filter(flow_reads, loop.all_control_flow_blocks())]
     # The blocks on a path from ``loop`` down to an access: everything else neither reads nor writes a candidate.
     relevant: set[ControlFlowBlock] = set()
     for state in holders:
@@ -728,6 +743,8 @@ def read_before_written(loop: LoopRegion, candidates: set[str], holders: Iterabl
                 for edge in region.in_edges(block):
                     if edge.data.assignments:
                         forget(guarded, set(edge.data.assignments))
+            if flow_read:
+                carried.update(flow_reads(block) - written)
             if block not in relevant:
                 if guarded:
                     forget(guarded, changed_by(block))
@@ -2185,13 +2202,13 @@ class LoopLift:
         # A transient living ONLY in the loop is exempt from the analysis below because ``apply``
         # gives every iteration a private copy -- sound only while each iteration writes it before
         # reading it (see :func:`carried_local_transients`). The whole loop-local set is the
-        # analysis universe; a pure-read access node among them is the cheap trigger that keeps the
-        # block-order walk off most loops.
+        # analysis universe; a pure-read access node or control-flow read among them is the cheap
+        # trigger that keeps the block-order walk off most loops.
         if any(
             n.data in local_transients and state.in_degree(n) == 0 and state.out_degree(n) > 0
             for state in loop_states
             for n in state.data_nodes()
-        ):
+        ) or (local_transients & control_flow_reads(self.loop, ctx)):
             cached_carried = None if facts is None else facts.carried
             if cached_carried is UNCOMPUTED or cached_carried is None or cached_carried[0] != local_transients:
                 carried = carried_local_transients(self.loop, local_transients, ctx)
@@ -2529,7 +2546,7 @@ class LoopLift:
         The loop enclosing many lifts is typically refused on such a carrier (CloudSC's level loop on
         ``zcovptot``), and the full analysis behind it walks the whole body once per lift."""
         holders = [st for st in ctx.access_states.get(name, ()) if st in loop_states]
-        if name not in read_before_written(self.loop, {name}, holders):
+        if name not in read_before_written(self.loop, {name}, holders, ctx):
             return False
         _, local_transients = split_loop_containers(sdfg, loop_states, ctx)
         local_transients -= flow_read_outside(sdfg, self.loop, local_transients, ctx)

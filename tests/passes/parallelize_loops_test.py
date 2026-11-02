@@ -891,6 +891,31 @@ def test_an_elif_arm_does_not_cover_a_later_branch_on_its_condition() -> None:
     assert read_before_written(loop, {"t"}) == {"t"}
 
 
+def test_a_condition_reading_a_loop_local_before_its_write_refuses_the_lift() -> None:
+    sdfg = dace.SDFG("condition_reads_local")
+    sdfg.add_array("o", [8], dace.float64)
+    sdfg.add_array("x", [8], dace.float64)
+    sdfg.add_array("t", [1], dace.float64, transient=True)
+    loop = LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    write = ConditionalBlock("write", sdfg=sdfg, parent=loop)
+    loop.add_node(write, is_start_block=True)
+    arm = ControlFlowRegion("store", sdfg=sdfg, parent=write)
+    write.add_branch(CodeBlock("i % 3 == 0"), arm)
+    store = arm.add_state("store", is_start_block=True)
+    store.add_nedge(store.add_read("x"), store.add_write("t"), dace.Memlet("x[i] -> [0]"))
+    read = ConditionalBlock("read", sdfg=sdfg, parent=loop)
+    arm = ControlFlowRegion("reader", sdfg=sdfg, parent=read)
+    read.add_branch(CodeBlock("t[0] > 3"), arm)
+    use = arm.add_state("use", is_start_block=True)
+    tasklet = use.add_tasklet("one", {}, {"o": None}, "o = 1")
+    use.add_edge(tasklet, "o", use.add_write("o"), None, dace.Memlet("o[i]"))
+    loop.add_edge(write, read, dace.InterstateEdge())
+    xform = LoopToMap()
+    xform.setup_match(sdfg, sdfg.cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
+    assert not xform.can_be_applied(sdfg, 0, sdfg)
+
+
 @dace.program
 def carried_rows_beside_parallel_rows(
     a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N], d: dace.float64[N, N], e: dace.float64[N]
@@ -1344,6 +1369,7 @@ if __name__ == "__main__":
     test_a_body_reassigning_the_iterator_refuses_the_lift()
     test_two_copies_into_one_array_are_compared_at_their_destinations()
     test_an_elif_arm_does_not_cover_a_later_branch_on_its_condition()
+    test_a_condition_reading_a_loop_local_before_its_write_refuses_the_lift()
     test_every_lift_of_a_sweep_leaves_the_nested_references_exact()
     test_a_lift_never_changes_what_a_surviving_edge_or_header_reads()
     test_the_memoized_control_flow_reads_are_the_walked_ones()
