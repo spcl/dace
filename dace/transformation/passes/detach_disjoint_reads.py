@@ -82,7 +82,9 @@ def detach(state: SDFGState, node: nodes.AccessNode, reader: nodes.Node, facts: 
     if not all(isinstance(e.src, nodes.MapExit) for e in writes):
         return False
     writers = list(dict.fromkeys(state.entry_node(e.src) for e in writes))
-    if any(w.map.range != reader.map.range for w in writers) or any(e.data.wcr is not None for e in writes):
+    if any(w is None or w.map.range != reader.map.range for w in writers) or any(
+        e.data.wcr is not None for e in writes
+    ):
         return False
     reads = [e for e in state.in_edges(reader) if e.data.data == name]
     if any(e.src is not node for e in reads):

@@ -129,6 +129,10 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # Everything below is the canonicalization PREFERENCE, not legality -- see
         # ``keep_reductions_parallel``.
         if self.keep_reductions_parallel:
+            # A map lifted on a proof the dependence test cannot redo: as a loop it would stay sequential.
+            if self.map_entry.map.proven_parallel:
+                return False
+
             # Refuse a map that still has a WCR (reduction) output. By this point
             # WCRToAugAssign has rewritten every conflict-free (injective) WCR into an
             # explicit RMW, so a surviving WCR output is a genuine parallel reduction.

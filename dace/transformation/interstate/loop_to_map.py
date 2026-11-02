@@ -2346,6 +2346,10 @@ class LoopLift:
                         if e.data is None or e.data.is_empty() or id(e) in rmw_reads:
                             continue
 
+                        # Lowering a map scope leaves a copy of a container onto itself: it moves nothing.
+                        if isinstance(e.dst, nodes.AccessNode) and e.dst.data == data and e.data.other_subset is None:
+                            continue
+
                         # Container read AND written: match only if the locations can't race.
                         src_subset = in_closed_form(e.data.get_src_subset(e, state), closed_forms)
                         if not self.test_read_memlet(
@@ -2837,8 +2841,9 @@ class LoopLift:
         # Find NestedSDFG's / Loop's unique data
         rw_set = read_set | write_set
         # A constant array is declared in every nested SDFG it inherits ``constants_prop`` into: copied
-        # in, never a connector, never moved out of the parent (other blocks may still read it).
-        constant_set = {name for name in rw_set if name in sdfg.constants_prop}
+        # in, never a connector, never moved out of the parent (other blocks may still read it). One this SDFG receives
+        # through a connector is an argument here, and stays one.
+        constant_set = {name for name in rw_set if name in sdfg.constants_prop and sdfg.arrays[name].transient}
         unique_set = set()
         outside_reads: set[str] | None = None
         for name in rw_set - constant_set:

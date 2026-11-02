@@ -620,6 +620,8 @@ def add_entry_guard(sdfg: SDFG, loop: LoopRegion, proof: Proof) -> None:
 
     # Chain the checks in front of the loop.
     predecessors = list(parent.in_edges(loop))
+    # Before the first check joins ``parent``: with two source blocks the start block is ambiguous.
+    was_start = parent.start_block is loop
     previous = None
     for region in checks:
         parent.add_node(region)
@@ -627,7 +629,7 @@ def add_entry_guard(sdfg: SDFG, loop: LoopRegion, proof: Proof) -> None:
             for edge in predecessors:
                 parent.add_edge(edge.src, region, copy.deepcopy(edge.data))
                 parent.remove_edge(edge)
-            if parent.start_block is loop:
+            if was_start:
                 parent.start_block = parent.node_id(region)
         else:
             parent.add_edge(previous, region, InterstateEdge())

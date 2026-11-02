@@ -5,7 +5,7 @@ import numpy as np
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.passes.detach_disjoint_reads import DetachDisjointReads
+from dace.transformation.passes.detach_disjoint_reads import DetachDisjointReads, detach
 
 N = 6
 
@@ -159,6 +159,20 @@ def test_a_write_a_detach_moved_in_need_not_come_from_a_map():
     sdfg.validate()
 
 
+def test_a_writer_outside_any_map_keeps_the_reader():
+    sdfg = dace.SDFG("detach_top_level_writer")
+    sdfg.add_array("a", [4], dace.float64)
+    sdfg.add_array("b", [4], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    written = state.add_access("a")
+    state.add_edge(state.add_tasklet("w", {}, {"o"}, "o = 1.0"), "o", written, None, dace.Memlet("a[0]"))
+    entry, exit_ = state.add_map("reader", {"i": "1:3"})
+    tasklet = state.add_tasklet("t", {"x"}, {"y"}, "y = x")
+    state.add_memlet_path(written, entry, tasklet, dst_conn="x", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(tasklet, exit_, state.add_write("b"), src_conn="y", memlet=dace.Memlet("b[i]"))
+    assert not detach(state, written, entry)
+
+
 if __name__ == "__main__":
     test_a_read_a_write_misses_detaches_and_computes_the_same()
     test_a_read_of_the_write_keeps_the_order()
@@ -168,3 +182,4 @@ if __name__ == "__main__":
     test_a_copy_is_a_write_of_its_destination()
     test_a_copy_memlet_naming_its_destination_still_reads_the_source()
     test_a_write_a_detach_moved_in_need_not_come_from_a_map()
+    test_a_writer_outside_any_map_keeps_the_reader()

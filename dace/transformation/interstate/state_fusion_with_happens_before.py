@@ -1194,7 +1194,20 @@ class StateFusionExtended(StateFusion):
                 if took:
                     absorbed.setdefault(node.data, []).append(node)
                 elif second_state.out_degree(node) > 0:
-                    for m in absorbed.get(node.data, []) + candidates[:1]:
+                    # An unmerged read of a container the second state rewrites stays behind the first-state writers
+                    # that rewrite overlaps: the WAW check counted on the merge to order them
+                    rewrites = [
+                        n for n in second_state.data_nodes() if n.data == node.data and second_state.in_degree(n)
+                    ]
+                    writers = [
+                        c
+                        for c in candidates
+                        if first_state.in_degree(c) > 0
+                        and StateFusionExtended.memlets_intersect(
+                            first_state, [c], False, second_state, rewrites, False, facts
+                        )
+                    ]
+                    for m in [*absorbed.get(node.data, []), *writers]:
                         if not nx.has_path(first_state._nx, node, m) and not nx.has_path(first_state._nx, m, node):
                             first_state.add_nedge(m, node, memlet.Memlet())
                 continue

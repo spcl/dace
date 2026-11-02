@@ -47,6 +47,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import dataflow as dftrans
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.interstate.loop_fusion import LoopFusion
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.loop_fission import _single_compute_state
 
 from .map_fusion_hazard_test import (
@@ -734,6 +735,26 @@ def test_scatter_then_interstate_edge_read_is_not_fused():
     assert "perm" in LoopFusion._body_accesses(second)[0], "the edge read of perm must be a read of the body"
     assert not LoopFusion.can_be_applied_to(sdfg, first=first, second=second)
     assert np.array_equal(run(sdfg), oracle)
+
+
+def test_inner_iterators_over_overlapping_segments_can_meet():
+    n = dace.symbol("n", dace.int64, positive=True)
+    m = dace.symbol("m", dace.int64, positive=True)
+
+    @dace.program
+    def segments(x: dace.float64[n], y: dace.float64[n], z: dace.float64[n], st: dace.int64[m + 1]):
+        for g in range(m):
+            for j in range(st[g], st[g + 1]):
+                z[j] = z[st[g]] + y[j]
+        for g in range(m):
+            for j in range(st[g], st[g + 1]):
+                y[j] = y[st[g]] + x[j]
+
+    sdfg = segments.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="cpu")
+    z = np.zeros(4)
+    sdfg(x=np.full(4, 2.0), y=np.ones(4), z=z, st=np.array([0, 3, 1, 4]), n=4, m=3)
+    assert np.array_equal(z, [1.0, 3.0, 4.0, 4.0])
 
 
 if __name__ == "__main__":

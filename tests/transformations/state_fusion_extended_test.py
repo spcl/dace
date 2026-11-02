@@ -4,9 +4,11 @@ import copy
 import networkx as nx
 import numpy as np
 
+import dace
 from dace import SDFG, InterstateEdge, Memlet, dtypes
 from dace.sdfg import nodes as dnodes
 from dace.transformation.interstate import StateFusionExtended
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 # Classical data hazards across the two fused states (first state -> second):
 #   RAW (read-after-write, true dep)   : first writes X, second reads X
@@ -2062,6 +2064,26 @@ def test_extended_fusion_orders_a_read_held_apart_after_the_leaf_instance():
     assert nx.has_path(first.nx, overwritten, written)
 
 
+def test_reader_of_a_rewritten_container_stays_ordered_after_its_writer():
+    n = dace.symbol("n", dace.int64, positive=True)
+
+    @dace.program
+    def rewritten_twice(a: dace.float64[n, n], y: dace.float64[n], z: dace.float64[n]):
+        for _ in range(2):
+            for i in range(1, n):
+                z[i] = 0.5 * z[i - 1] + y[i]
+        for i in range(1, n):
+            z[i] = 0.5 * z[i - 1] + y[i]
+        a[1, :] = a[0, :] + 1.0
+        z[:] = a[1, :] * 0.5
+
+    sdfg = rewritten_twice.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="cpu")
+    z = np.ones(6)
+    sdfg(a=np.zeros((6, 6)), y=np.arange(1.0, 7.0), z=z, n=6)
+    assert np.array_equal(z, np.full(6, 0.5))
+
+
 if __name__ == "__main__":
     test_a_read_the_merge_point_does_not_follow_still_precedes_the_overwrite()
     test_extended_fusion()
@@ -2106,3 +2128,4 @@ if __name__ == "__main__":
     test_a_scope_reading_what_the_first_state_wrote_stays_behind_it()
     test_permissive_fusion_keeps_the_other_predecessor_of_the_second_state()
     test_extended_fusion_orders_a_read_held_apart_after_the_leaf_instance()
+    test_reader_of_a_rewritten_container_stays_ordered_after_its_writer()
