@@ -1417,6 +1417,24 @@ class ProgramVisitor(ExtNodeVisitor):
         # If the name is invalid, use temp_data_name (__tmp*)
         return default or self.sdfg.temp_data_name()
 
+    def get_target_storage(self) -> dtypes.StorageType | None:
+        """
+        The storage of the array that the current expression is assigned to, if it is assigned to a known array or a
+        subscript of one; None otherwise.
+
+        THIS METHOD IS ONLY VALID WHEN CALLED DURING PARSING.
+        """
+        if len(self.current_ast_stack) < 2 or not isinstance(self.current_ast_stack[-2], ast.Assign):
+            return None
+        target = self.current_ast_stack[-2].targets[0]
+        while isinstance(target, ast.Subscript):
+            target = target.value
+        if not isinstance(target, ast.Name):
+            return None
+        name = {**self.variables, **self.scope_vars}.get(target.id)
+        desc = {**self.sdfg.arrays, **self.scope_arrays}.get(name) if name is not None else None
+        return desc.storage if isinstance(desc, data.Array) else None
+
     def _get_name_from_node(self, node: ast.AST) -> str:
         """Helper method to extract a simple name from an AST node."""
         if isinstance(node, ast.Name):

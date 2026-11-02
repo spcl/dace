@@ -94,7 +94,12 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
     type2 = arr2.dtype.type
     restype = dtypes.dtype_to_typeclass(np.result_type(type1, type2).type)
 
-    op3, arr3 = sdfg.add_transient(visitor.get_target_name(), output_shape, restype, arr1.storage, find_new_name=True)
+    # A product assigned to memory that only exists in a GPU kernel (shared memory, registers) is computed there too
+    storage = arr1.storage
+    target_storage = visitor.get_target_storage()
+    if target_storage in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register):
+        storage = target_storage
+    op3, arr3 = sdfg.add_transient(visitor.get_target_name(), output_shape, restype, storage, find_new_name=True)
 
     acc1 = state.add_read(op1)
     acc2 = state.add_read(op2)
