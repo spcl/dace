@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""FuseMaps propagates the inside of a nested SDFG once per change, not once per fusion of its scope."""
+"""FuseMaps propagates only the connectors a fusion changed, and that leaves what propagating the whole Map scope would."""
 
 import copy
 import json
@@ -123,14 +123,13 @@ def map_chain_with_side_inputs(inner_map: bool = False) -> dace.SDFG:
 
 
 def fuse_counting_propagations(
-    sdfg: dace.SDFG, monkeypatch: pytest.MonkeyPatch, use_cache: bool
+    sdfg: dace.SDFG, monkeypatch: pytest.MonkeyPatch, whole_scope: bool
 ) -> tuple[list[dace.SDFG], int]:
     """Run FuseMaps; the nested SDFGs whose inside it propagated, and how many memlets it propagated."""
     propagated: list[dace.SDFG] = []
     memlets = [0]
     original_sdfg_propagation = propagation.propagate_memlets_sdfg
     original_memlet_propagation = propagation.propagate_memlet
-    original_scope_propagation = mfhelper.propagate_fused_map_scope
 
     def counting_sdfg_propagation(nested: dace.SDFG, symbols=None) -> None:
         propagated.append(nested)
@@ -140,14 +139,15 @@ def fuse_counting_propagations(
         memlets[0] += 1
         return original_memlet_propagation(*args, **kwargs)
 
-    def uncached_scope_propagation(outer, state, map_entry, propagated_nsdfgs=None, scope_records=None):
-        original_scope_propagation(outer, state, map_entry, None, None)
+    def whole_scope_propagation(state, node, connectors):
+        if isinstance(node, nodes.MapEntry):
+            propagation.propagate_memlets_map_scope(state.sdfg, state, node)
 
     with monkeypatch.context() as patch:
         patch.setattr(propagation, "propagate_memlets_sdfg", counting_sdfg_propagation)
         patch.setattr(propagation, "propagate_memlet", counting_memlet_propagation)
-        if not use_cache:
-            patch.setattr(mfhelper, "propagate_fused_map_scope", uncached_scope_propagation)
+        if whole_scope:
+            patch.setattr(mfhelper, "propagate_connectors", whole_scope_propagation)
         FuseMaps(validate=True, strict_dataflow=False).apply_pass(sdfg, {})
     return propagated, memlets[0]
 
@@ -160,46 +160,37 @@ FIXTURES = {
 }
 
 
-def test_fuse_maps_propagates_each_nested_sdfg_of_a_chain_once(monkeypatch: pytest.MonkeyPatch):
+def test_fuse_maps_leaves_a_nested_sdfg_it_did_not_change_alone(monkeypatch: pytest.MonkeyPatch):
     sdfg = map_chain_with_nested_sdfgs()
 
-    propagated, _ = fuse_counting_propagations(sdfg, monkeypatch, use_cache=True)
+    propagated, _ = fuse_counting_propagations(sdfg, monkeypatch, whole_scope=False)
 
     assert count_maps(sdfg) == 1
-    assert len(propagated) == CHAIN_LENGTH
-    assert len({id(nested) for nested in propagated}) == CHAIN_LENGTH
-
-
-def test_fuse_maps_without_the_cache_repropagates_nested_sdfgs_per_fusion(monkeypatch: pytest.MonkeyPatch):
-    sdfg = map_chain_with_nested_sdfgs()
-
-    propagated, _ = fuse_counting_propagations(sdfg, monkeypatch, use_cache=False)
-
-    assert count_maps(sdfg) == 1
-    assert len(propagated) > CHAIN_LENGTH
+    assert not propagated
 
 
 @pytest.mark.parametrize("fixture", sorted(FIXTURES))
-def test_fuse_maps_with_the_cache_builds_the_same_sdfg_as_without(monkeypatch: pytest.MonkeyPatch, fixture: str):
-    cached = FIXTURES[fixture]()
-    uncached = copy.deepcopy(cached)
+def test_changed_connectors_leave_what_the_whole_scope_would(monkeypatch: pytest.MonkeyPatch, fixture: str):
+    changed = FIXTURES[fixture]()
+    propagation.propagate_memlets_sdfg(changed)
+    whole = copy.deepcopy(changed)
 
-    fuse_counting_propagations(cached, monkeypatch, use_cache=True)
-    fuse_counting_propagations(uncached, monkeypatch, use_cache=False)
+    fuse_counting_propagations(changed, monkeypatch, whole_scope=False)
+    fuse_counting_propagations(whole, monkeypatch, whole_scope=True)
 
-    assert serialized(cached) == serialized(uncached)
+    assert serialized(changed) == serialized(whole)
 
 
 @pytest.mark.parametrize("inner_map", [False, True])
 def test_fuse_maps_propagates_only_the_connectors_a_fusion_changed(monkeypatch: pytest.MonkeyPatch, inner_map: bool):
-    cached = map_chain_with_side_inputs(inner_map)
-    uncached = copy.deepcopy(cached)
+    changed = map_chain_with_side_inputs(inner_map)
+    whole = copy.deepcopy(changed)
 
-    _, cached_memlets = fuse_counting_propagations(cached, monkeypatch, use_cache=True)
-    _, uncached_memlets = fuse_counting_propagations(uncached, monkeypatch, use_cache=False)
+    _, changed_memlets = fuse_counting_propagations(changed, monkeypatch, whole_scope=False)
+    _, whole_memlets = fuse_counting_propagations(whole, monkeypatch, whole_scope=True)
 
-    assert count_maps(cached) == 1 + inner_map
-    assert cached_memlets < uncached_memlets
+    assert count_maps(changed) == 1 + inner_map
+    assert changed_memlets < whole_memlets
 
 
 @pytest.mark.parametrize("fixture", sorted(FIXTURES))
@@ -240,17 +231,3 @@ def test_fused_chain_with_side_inputs_computes_the_chain(inner_map: bool):
     expected = arrays["arr_0"] + sum(arrays[f"side_{k}"] for k in range(1, CHAIN_LENGTH + 1))
     columns = slice(None) if inner_map else slice(0, 1)
     assert np.allclose(arrays[f"arr_{CHAIN_LENGTH}"][:, columns], expected[:, columns])
-
-
-def test_forget_propagated_drops_the_sdfg_and_every_enclosing_sdfg_only():
-    sdfg = map_chain_with_nested_sdfgs()
-    first, second = [node.sdfg for node in sdfg.start_block.nodes() if isinstance(node, nodes.NestedSDFG)][:2]
-    cache = dict.fromkeys([sdfg, first, second])
-
-    mfhelper.forget_propagated(cache, first)
-
-    assert list(cache) == [second]
-
-
-def test_forget_propagated_accepts_no_cache():
-    mfhelper.forget_propagated(None, map_chain_with_nested_sdfgs())

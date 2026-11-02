@@ -8,7 +8,7 @@ from dace import SDFG, SDFGState, properties, transformation
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import forget_all_facts, memoize_facts
-from dace.sdfg.state import ControlFlowRegion, SymbolResolver
+from dace.sdfg.state import ControlFlowRegion
 from dace.sdfg.validation import validate_state
 from dace.transformation import dataflow as dftrans
 from dace.transformation import pass_pipeline as ppl
@@ -89,6 +89,11 @@ def _induced_matches(
                 images.pop()
 
     yield from extend(0, [])
+
+
+def iteration_space(map_node: nodes.Map) -> tuple[Any, frozenset]:
+    """What two Maps need in common for `find_parameter_remapping()` to exist: their schedule and their ranges."""
+    return map_node.schedule, frozenset(collections.Counter(tuple(r) for r in map_node.range.ranges).items())
 
 
 def align_step_equivalent_candidates(state: SDFGState) -> int:
@@ -387,22 +392,14 @@ class FuseMaps(ppl.Pass):
                 continue
             units.append((xform, _pattern_shapes(xform)))
 
-        # Nested SDFGs whose inside is propagated and unchanged since, shared by the fusions so a nested SDFG
-        #  is propagated again only after something inside it changed, not once per fusion of its scope.
-        propagated: dict[SDFG, None] = {}
-        # The last propagation onto each external scope edge, so a fusion re-propagates only the connectors whose
-        #  memlets it changed; `propagate_scope_node()` checks every record against the graph before trusting it.
-        scope_records: mfhelper.ScopeRecords = {}
-        for xform, _ in units:
-            if isinstance(xform, (dftrans.MapFusionVertical, dftrans.MapFusionHorizontal)):
-                xform.propagated_nsdfgs = propagated
-                xform.scope_records = scope_records
-
-        vertical = [xform for xform, _ in units if isinstance(xform, dftrans.MapFusionVertical)]
+        fusions = [x for x, _ in units if isinstance(x, (dftrans.MapFusionVertical, dftrans.MapFusionHorizontal))]
+        for xform in fusions:
+            xform.changed_connectors_only = True
 
         def forget_probes() -> None:
-            for xform in vertical:
-                xform.probe_symbols = SymbolResolver()
+            probe = mfhelper.FusionProbe()
+            for xform in fusions:
+                xform.probe = probe
 
         forget_probes()
         applied: AppliedMap = collections.defaultdict(list)
@@ -416,7 +413,6 @@ class FuseMaps(ppl.Pass):
                         if self.align_step_equivalent_maps and align_step_equivalent_candidates(state):
                             forget_all_facts(sdfg)
                             forget_probes()
-                            propagated.clear()
                         for xform, shapes in units:
                             self._drain(
                                 xform,
@@ -426,11 +422,10 @@ class FuseMaps(ppl.Pass):
                                 state_id,
                                 pipeline_results,
                                 applied,
-                                propagated,
                                 forget_probes,
                             )
-        for xform in vertical:
-            xform.probe_symbols = None
+        for xform in fusions:
+            xform.probe = None
 
         # Nothing fused means the SDFG is the one the caller passed in; validating THAT is the caller's
         #  contract (canonicalize: its own validate / validate_all), not a check of this pass's work.
@@ -448,7 +443,6 @@ class FuseMaps(ppl.Pass):
         state_id: int,
         pipeline_results: dict[str, Any],
         applied: AppliedMap,
-        propagated: dict[SDFG, None],
         forget_probes: Callable[[], None],
     ) -> None:
         """Apply ``xform`` in ``state`` until nothing matches there any more.
@@ -459,6 +453,16 @@ class FuseMaps(ppl.Pass):
         """
         name = type(xform).__name__
         owner = cfg.sdfg
+        # The structural refusal of nearly every candidate, ahead of the match it would set up.
+        spaces: dict[nodes.Map, tuple[Any, frozenset]] = {}
+        is_fusion = isinstance(xform, (dftrans.MapFusionVertical, dftrans.MapFusionHorizontal))
+
+        def same_space(first: nodes.Map, second: nodes.Map) -> bool:
+            for map_node in (first, second):
+                if map_node not in spaces:
+                    spaces[map_node] = iteration_space(map_node)
+            return spaces[first] == spaces[second]
+
         progress = True
         while progress:
             progress = False
@@ -466,6 +470,8 @@ class FuseMaps(ppl.Pass):
             cfg_id = cfg.cfg_id
             for expr_index, (pnodes, pedges) in enumerate(shapes):
                 for images in _induced_matches(state, pnodes, pedges):
+                    if is_fusion and not same_space(images[0].map, images[-1].map):
+                        continue
                     # Matched by node OBJECT: `PatternNode.__get__` returns a non-int as-is, so there is no
                     #  per-sweep node index, no `expressions()` rebuild and no O(index) node walk per read.
                     xform.setup_match(owner, cfg_id, state_id, dict(zip(pnodes, images)), expr_index, override=True)
@@ -484,12 +490,6 @@ class FuseMaps(ppl.Pass):
                         continue
                     if not matched:
                         continue
-                    if isinstance(xform, (dftrans.MapFusionVertical, dftrans.MapFusionHorizontal)):
-                        # A fusion rewrites `state`, so `owner` and every SDFG enclosing it change.
-                        mfhelper.forget_propagated(propagated, owner)
-                    else:
-                        # Any other fusion is not known to leave nested SDFGs untouched.
-                        propagated.clear()
                     with memoize_facts(state, active=False):
                         applied[name].append(xform.apply(state, owner))
                     forget_all_facts(state)

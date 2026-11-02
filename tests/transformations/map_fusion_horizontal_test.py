@@ -862,6 +862,36 @@ def test_horizontal_fusion_keeps_what_ordered_a_reused_read():
     sdfg.validate()
 
 
+def test_a_write_through_a_view_conflicts_with_a_read_of_the_viewed_container():
+    """The write's subset addresses the View, so comparing it with the read's says nothing: ``V[0]`` is ``X[1]``."""
+    sdfg = dace.SDFG(unique_name("horizontal_write_through_view"))
+    sdfg.add_array("X", (6,), dace.float64)
+    sdfg.add_array("A", (1,), dace.float64)
+    sdfg.add_array("B", (1,), dace.float64)
+    sdfg.add_view("V", (5,), dace.float64)
+    state = sdfg.add_state()
+    view = state.add_access("V")
+    state.add_nedge(view, state.add_write("X"), dace.Memlet("X[1:6]"))
+    _, writer_entry, writer_exit = state.add_mapped_tasklet(
+        "writer",
+        {"i": "0:1"},
+        {"_a": dace.Memlet("A[0]")},
+        "_b = _a",
+        {"_b": dace.Memlet("V[i]")},
+        external_edges=True,
+        output_nodes={"V": view},
+    )
+    _, reader_entry, reader_exit = state.add_mapped_tasklet(
+        "reader",
+        {"j": "1:2"},
+        {"_a": dace.Memlet("X[j]")},
+        "_b = _a",
+        {"_b": dace.Memlet("B[0]")},
+        external_edges=True,
+    )
+    assert mfhelper.conflicting_accesses(state, (writer_entry, writer_exit), (reader_entry, reader_exit))
+
+
 if __name__ == "__main__":
     test_horizontal_fusion_keeps_what_ordered_a_reused_read()
     test_horizontal_fusion_refuses_an_inner_shared_transient()
@@ -889,3 +919,4 @@ if __name__ == "__main__":
     test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range_through_views("same_view")
     test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range_through_views("two_views")
     test_horizontal_fusion_of_maps_sharing_a_dynamic_map_range_through_views("written_through_view")
+    test_a_write_through_a_view_conflicts_with_a_read_of_the_viewed_container()

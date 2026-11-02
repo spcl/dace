@@ -524,6 +524,79 @@ def test_vertical_fusion_must_not_move_a_side_read_past_the_in_place_write():
     assert not xform.can_be_applied(state, 0, sdfg)
 
 
+def _fused_shift(fuse: bool) -> np.ndarray:
+    """``T[i] = V[i]; X[i + 1] = T[i]`` with ``V`` a View of ``X``: the first Map reads what the second writes."""
+    sdfg = dace.SDFG(unique_name("view_hidden_read_write"))
+    sdfg.add_array("X", (N,), dace.float64)
+    sdfg.add_array("T", (N - 1,), dace.float64, transient=True)
+    sdfg.add_view("V", (N - 1,), dace.float64)
+    state = sdfg.add_state()
+    view, intermediate = state.add_access("V"), state.add_access("T")
+    state.add_edge(state.add_read("X"), None, view, None, dace.Memlet(f"X[0:{N - 1}]"))
+    state.add_mapped_tasklet(
+        "read",
+        {"i": f"0:{N - 1}"},
+        {"_a": dace.Memlet("V[i]")},
+        "_b = _a",
+        {"_b": dace.Memlet("T[i]")},
+        external_edges=True,
+        input_nodes={"V": view},
+        output_nodes={"T": intermediate},
+    )
+    state.add_mapped_tasklet(
+        "write",
+        {"j": f"0:{N - 1}"},
+        {"_a": dace.Memlet("T[j]")},
+        "_b = _a",
+        {"_b": dace.Memlet("X[j + 1]")},
+        external_edges=True,
+        input_nodes={"T": intermediate},
+        schedule=dace.ScheduleType.CPU_Multicore,
+    )
+    if fuse:
+        sdfg.apply_transformations_repeated(dftrans.MapFusionVertical)
+    sdfg.validate()
+    x = np.arange(N, dtype=np.float64)
+    sdfg(X=x)
+    return x
+
+
+def test_vertical_fusion_sees_a_read_through_a_view_of_what_the_second_map_writes():
+    """The read and write name different containers (View and viewed), so the point-wise test never ran on them."""
+    expected = np.concatenate(([0.0], np.arange(N - 1, dtype=np.float64)))
+    assert np.array_equal(_fused_shift(False), expected)
+    assert np.array_equal(_fused_shift(True), expected)
+
+
+def test_writes_through_a_view_do_not_count_as_written_disjointly():
+    """A View's edges name the View, so a comparison over the container's edges was an empty ``all()``."""
+    sdfg = dace.SDFG(unique_name("view_written_disjointly"))
+    sdfg.add_array("X", (N,), dace.float64)
+    sdfg.add_view("V", (N,), dace.float64)
+    state = sdfg.add_state()
+    view, written = state.add_access("V"), state.add_write("X")
+    state.add_nedge(view, written, dace.Memlet(f"X[0:{N}]"))
+    _, _, first = state.add_mapped_tasklet(
+        "first",
+        {"i": f"0:{N}"},
+        {},
+        "_b = 1.0",
+        {"_b": dace.Memlet("V[i]")},
+        external_edges=True,
+        output_nodes={"V": view},
+    )
+    _, _, second = state.add_mapped_tasklet(
+        "second",
+        {"i": f"0:{N}"},
+        {},
+        "_b = 2.0",
+        {"_b": dace.Memlet("X[i]")},
+        external_edges=True,
+        output_nodes={"X": written},
+    )
+    assert not dftrans.MapFusionVertical.written_disjointly("X", first, second, state, sdfg.facts())
+
+
 if __name__ == "__main__":
     test_copy_memlet_naming_the_inner_container_hides_the_write()
     test_view_of_the_same_array_is_not_a_different_array()
@@ -536,3 +609,5 @@ if __name__ == "__main__":
     test_horizontal_fusion_must_not_move_a_read_past_a_write()
     test_horizontal_fusion_must_not_merge_a_read_with_an_unordered_in_place_update()
     test_vertical_fusion_must_not_move_a_side_read_past_the_in_place_write()
+    test_vertical_fusion_sees_a_read_through_a_view_of_what_the_second_map_writes()
+    test_writes_through_a_view_do_not_count_as_written_disjointly()

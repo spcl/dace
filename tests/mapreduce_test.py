@@ -486,6 +486,39 @@ def test_a_reduction_into_an_offset_slice_keeps_the_offset():
     assert np.allclose(out, ref), out
 
 
+def test_a_map_reading_the_reduction_output_is_not_fused():
+    """Fused, the identity seed lands ahead of the map, which then reads it instead of the output's old value."""
+
+    def run(fuse: bool) -> np.ndarray:
+        sdfg = dace.SDFG(f"reduce_reads_output_{fuse}")
+        sdfg.add_array("O", (1,), dace.float64)
+        sdfg.add_array("A", (4,), dace.float64)
+        sdfg.add_array("T", (4,), dace.float64, transient=True)
+        state = sdfg.add_state()
+        intermediate = state.add_access("T")
+        state.add_mapped_tasklet(
+            "scale",
+            {"i": "0:4"},
+            {"_a": dace.Memlet("A[i]"), "_o": dace.Memlet("O[0]")},
+            "_b = _a * _o",
+            {"_b": dace.Memlet("T[i]")},
+            external_edges=True,
+            output_nodes={"T": intermediate},
+        )
+        reduction = stdlib.Reduce("sum", "lambda a, b: a + b", axes=None, identity=0)
+        state.add_node(reduction)
+        state.add_nedge(intermediate, reduction, dace.Memlet("T[0:4]"))
+        state.add_edge(reduction, None, state.add_write("O"), None, dace.Memlet("O[0]"))
+        if fuse:
+            FuseMaps().apply_pass(sdfg, {})
+        out = np.array([3.0])
+        sdfg(A=np.ones(4), O=out)
+        return out
+
+    assert run(False)[0] == 12.0
+    assert run(True)[0] == 12.0
+
+
 if __name__ == "__main__":
     test_basic()
     test_mmm()
@@ -499,3 +532,4 @@ if __name__ == "__main__":
     test_a_reduction_inside_an_outer_map_is_reinitialized_every_outer_iteration()
     test_a_reduction_written_straight_into_the_outer_map_exit_fuses()
     test_a_reduction_into_an_offset_slice_keeps_the_offset()
+    test_a_map_reading_the_reduction_output_is_not_fused()

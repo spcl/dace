@@ -3163,7 +3163,7 @@ class SymbolResolver:
         """The facts that hold inside ``block`` (inside the body, for a loop), or at ``node`` of the state ``block``: the
         SDFG's own facts, the ranges of the enclosing loops and maps whose step has a known sign, and the facts of an
         enclosing SDFG, translated through the nested SDFG node's symbol mapping."""
-        return self.facts_in_scope(block, block.scope_dict()[node] if node is not None else None)
+        return self.facts_in_scope(block, block.entry_node(node) if node is not None else None)
 
     def facts_in_scope(self, block: "ControlFlowBlock", entry: nd.EntryNode | None) -> symbolic.Facts:
         """The facts that hold inside the scope ``entry`` opens in the state ``block``, or inside ``block`` when it is

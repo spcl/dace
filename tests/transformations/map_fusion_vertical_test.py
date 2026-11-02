@@ -11,11 +11,13 @@ import dace
 from dace import SDFG, SDFGState
 from dace import data as dace_data
 from dace import symbolic as dace_symbolic
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.dataflow import MapExpansion, MapFusion, MapFusionVertical
 from dace.transformation.dataflow.map_fusion_helper import is_node_reachable_from
+from dace.transformation.passes import FuseMaps
 
 
 def count_nodes(
@@ -4280,6 +4282,158 @@ def test_fusion_rebases_a_nested_producer_below_an_inner_map():
     assert np.allclose(b, 2.0 * a + 1.0)
 
 
+@pytest.mark.parametrize("looped", [False, True])
+def test_a_conditional_write_fuses_only_into_an_intermediate_nothing_else_keeps_alive(looped: bool):
+    """An element skipped on this execution holds nothing a reader may rely on, unless an earlier loop trip wrote it."""
+    sdfg = dace.SDFG(unique_name(f"conditional_producer_{looped}"))
+    for name in "AB":
+        sdfg.add_array(name, (10,), dace.float64)
+    sdfg.add_array("T", (10,), dace.float64, transient=True)
+    if looped:
+        loop = LoopRegion("loop", "t < 2", "t", "t = 0", "t = t + 1")
+        sdfg.add_node(loop, is_start_block=True)
+        state = loop.add_state(is_start_block=True)
+    else:
+        state = sdfg.add_state(is_start_block=True)
+    intermediate = state.add_access("T")
+    state.add_mapped_tasklet(
+        "maybe",
+        {"i": "0:10"},
+        {"_a": dace.Memlet("A[i]")},
+        "if _a > 0:\n\t_b = _a",
+        {"_b": dace.Memlet("T[i]", dynamic=True)},
+        external_edges=True,
+        output_nodes={"T": intermediate},
+    )
+    state.add_mapped_tasklet(
+        "read",
+        {"j": "0:10"},
+        {"_a": dace.Memlet("T[j]")},
+        "_b = _a",
+        {"_b": dace.Memlet("B[j]")},
+        external_edges=True,
+        input_nodes={"T": intermediate},
+    )
+
+    FuseMaps().apply_pass(sdfg, {})
+
+    assert count_nodes(state, nodes.MapEntry) == (2 if looped else 1)
+
+
+def _two_maps_writing_out(second_column: int) -> tuple[SDFG, SDFGState]:
+    """``for i: T[i] = 2 * A[i]; B[i, 0] = A[i]`` then ``for i: B[i, c] = T[i] + 1`` (bout_elm_pb's ``ddt_P`` planes)."""
+    sdfg = SDFG(f"two_maps_writing_out_{second_column}")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    sdfg.add_array("B", ["N", 2], dace.float64)
+    sdfg.add_transient("T", ["N"], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    a, t, b = state.add_read("A"), state.add_access("T"), state.add_write("B")
+    _, first_entry, first_exit = state.add_mapped_tasklet(
+        "first",
+        {"i": "0:N"},
+        {"x": dace.Memlet("A[i]")},
+        "t = 2 * x\nb = x",
+        {"t": dace.Memlet("T[i]"), "b": dace.Memlet("B[i, 0]")},
+        input_nodes={"A": a},
+        output_nodes={"T": t, "B": b},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "second",
+        {"j": "0:N"},
+        {"y": dace.Memlet("T[j]")},
+        "b = y + 1",
+        {"b": dace.Memlet(f"B[j, {second_column}]")},
+        input_nodes={"T": t},
+        output_nodes={"B": b},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg, state
+
+
+@pytest.mark.parametrize("second_column, fuses", [(1, True), (0, False)])
+def test_maps_writing_one_output_fuse_only_where_their_writes_are_disjoint(second_column: int, fuses: bool):
+    """Each element of ``B`` has one writer when the columns differ, so the fused map writes the same values; the
+    same column is a write-write conflict the program order decides, and stays two maps."""
+    sdfg, _ = _two_maps_writing_out(second_column)
+    applied = sdfg.apply_transformations_repeated(MapFusionVertical(), validate=True)
+    assert (applied == 1) == fuses
+    if fuses:
+        n = 5
+        a = np.random.default_rng(0).random(n)
+        b = np.zeros((n, 2))
+        sdfg(A=a, B=b, N=n)
+        assert np.allclose(b[:, 0], a) and np.allclose(b[:, 1], 2 * a + 1)
+
+
+def test_maps_accumulating_into_one_output_stay_apart():
+    """Two reductions into disjoint columns of ``B`` are a reduction each (a Gemv each, for nbody); fused they are not."""
+    sdfg, state = _two_maps_writing_out(1)
+    for edge in state.edges():
+        if edge.data.data == "B":
+            edge.data.wcr = "lambda a, b: a + b"
+    assert sdfg.apply_transformations_repeated(MapFusionVertical(), validate=True) == 0
+
+
+def test_map_fusion_conditional_write_of_a_shared_element_not_fused():
+    """A one-element claim is no proof of a write: ``if (c[k]) t[k] = 1`` leaves the old value in the shared array, and
+    a privatized buffer would hand the consumer (and the write back) an undefined element instead."""
+    n = 6
+
+    def run(fuse: bool) -> np.ndarray:
+        sdfg = dace.SDFG(unique_name("conditional_write_of_shared_element"))
+        sdfg.add_array("C", (n,), dace.float64)
+        sdfg.add_array("B", (n,), dace.float64)
+        sdfg.add_array("T", (n,), dace.float64, transient=True)
+        init = sdfg.add_state(is_start_block=True)
+        init.add_mapped_tasklet(
+            "seed", {"i": f"0:{n}"}, {}, "_b = 7.0", {"_b": dace.Memlet("T[i]")}, external_edges=True
+        )
+        state = sdfg.add_state_after(init)
+
+        inner = dace.SDFG("conditional_write")
+        inner.add_array("c", (n,), dace.float64)
+        inner.add_array("t", (n,), dace.float64)
+        inner.add_symbol("k", dace.int64)
+        guard = ConditionalBlock("guard", sdfg=inner)
+        inner.add_node(guard, is_start_block=True)
+        branch = ControlFlowRegion("then", sdfg=inner)
+        guard.add_branch(CodeBlock("c[k] > 0"), branch)
+        write = branch.add_state("write", is_start_block=True)
+        tasklet = write.add_tasklet("one", {}, {"_o": dace.float64}, "_o = 1.0")
+        write.add_edge(tasklet, "_o", write.add_write("t"), None, dace.Memlet("t[k]"))
+
+        entry, exit_node = state.add_map("mark", {"i": f"0:{n}"})
+        nsdfg = state.add_nested_sdfg(
+            inner, {"c": dace.pointer(dace.float64)}, {"t": dace.pointer(dace.float64)}, symbol_mapping={"k": "i"}
+        )
+        intermediate = state.add_access("T")
+        state.add_memlet_path(state.add_read("C"), entry, nsdfg, dst_conn="c", memlet=dace.Memlet(f"C[0:{n}]"))
+        state.add_memlet_path(nsdfg, exit_node, intermediate, src_conn="t", memlet=dace.Memlet("T[i]"))
+        state.add_mapped_tasklet(
+            "read",
+            {"j": f"0:{n}"},
+            {"_a": dace.Memlet("T[j]")},
+            "_b = _a",
+            {"_b": dace.Memlet("B[j]")},
+            external_edges=True,
+            input_nodes={"T": intermediate},
+        )
+        sdfg.validate()
+        if fuse:
+            FuseMaps().apply_pass(sdfg, {})
+        c = np.array([1.0, -1.0] * (n // 2))
+        b = np.zeros(n)
+        sdfg(C=c, B=b)
+        return b
+
+    expected = np.array([1.0, 7.0] * (n // 2))
+    assert np.array_equal(run(False), expected)
+    assert np.array_equal(run(True), expected)
+
+
 if __name__ == "__main__":
     test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in_place()
     test_fusion_intrinsic_memlet_direction()
@@ -4342,60 +4496,9 @@ if __name__ == "__main__":
     test_ordering_edge_beside_an_inout_read()
     test_ordering_edge_beside_an_inout_read_computes_the_fused_values()
     test_fusion_rebases_a_nested_producer_below_an_inner_map()
-
-
-def _two_maps_writing_out(second_column: int) -> tuple[SDFG, SDFGState]:
-    """``for i: T[i] = 2 * A[i]; B[i, 0] = A[i]`` then ``for i: B[i, c] = T[i] + 1`` (bout_elm_pb's ``ddt_P`` planes)."""
-    sdfg = SDFG(f"two_maps_writing_out_{second_column}")
-    sdfg.add_symbol("N", dace.int64)
-    sdfg.add_array("A", ["N"], dace.float64)
-    sdfg.add_array("B", ["N", 2], dace.float64)
-    sdfg.add_transient("T", ["N"], dace.float64)
-    state = sdfg.add_state(is_start_block=True)
-    a, t, b = state.add_read("A"), state.add_access("T"), state.add_write("B")
-    _, first_entry, first_exit = state.add_mapped_tasklet(
-        "first",
-        {"i": "0:N"},
-        {"x": dace.Memlet("A[i]")},
-        "t = 2 * x\nb = x",
-        {"t": dace.Memlet("T[i]"), "b": dace.Memlet("B[i, 0]")},
-        input_nodes={"A": a},
-        output_nodes={"T": t, "B": b},
-        external_edges=True,
-    )
-    state.add_mapped_tasklet(
-        "second",
-        {"j": "0:N"},
-        {"y": dace.Memlet("T[j]")},
-        "b = y + 1",
-        {"b": dace.Memlet(f"B[j, {second_column}]")},
-        input_nodes={"T": t},
-        output_nodes={"B": b},
-        external_edges=True,
-    )
-    sdfg.validate()
-    return sdfg, state
-
-
-@pytest.mark.parametrize("second_column, fuses", [(1, True), (0, False)])
-def test_maps_writing_one_output_fuse_only_where_their_writes_are_disjoint(second_column: int, fuses: bool):
-    """Each element of ``B`` has one writer when the columns differ, so the fused map writes the same values; the
-    same column is a write-write conflict the program order decides, and stays two maps."""
-    sdfg, _ = _two_maps_writing_out(second_column)
-    applied = sdfg.apply_transformations_repeated(MapFusionVertical(), validate=True)
-    assert (applied == 1) == fuses
-    if fuses:
-        n = 5
-        a = np.random.default_rng(0).random(n)
-        b = np.zeros((n, 2))
-        sdfg(A=a, B=b, N=n)
-        assert np.allclose(b[:, 0], a) and np.allclose(b[:, 1], 2 * a + 1)
-
-
-def test_maps_accumulating_into_one_output_stay_apart():
-    """Two reductions into disjoint columns of ``B`` are a reduction each (a Gemv each, for nbody); fused they are not."""
-    sdfg, state = _two_maps_writing_out(1)
-    for edge in state.edges():
-        if edge.data.data == "B":
-            edge.data.wcr = "lambda a, b: a + b"
-    assert sdfg.apply_transformations_repeated(MapFusionVertical(), validate=True) == 0
+    test_maps_writing_one_output_fuse_only_where_their_writes_are_disjoint(1, True)
+    test_maps_writing_one_output_fuse_only_where_their_writes_are_disjoint(0, False)
+    test_maps_accumulating_into_one_output_stay_apart()
+    test_map_fusion_conditional_write_of_a_shared_element_not_fused()
+    test_a_conditional_write_fuses_only_into_an_intermediate_nothing_else_keeps_alive(False)
+    test_a_conditional_write_fuses_only_into_an_intermediate_nothing_else_keeps_alive(True)
