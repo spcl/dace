@@ -69,6 +69,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.helpers import nest_state_subgraph, state_fission
+from dace.transformation.passes.analysis.analysis import names_read_by_text
 
 
 def _identifiers(expr: str) -> set[str]:
@@ -81,15 +82,6 @@ def _identifiers(expr: str) -> set[str]:
     :returns: The identifier names it mentions.
     """
     return set(re.findall(r"\b[A-Za-z_]\w*\b", expr))
-
-
-def _is_predicate(expr: str) -> bool:
-    """Report whether an expression source is a boolean predicate.
-
-    :param expr: The expression source.
-    :returns: ``True`` if it reads as a comparison or logical combination.
-    """
-    return bool(re.search(r"[<>]|==|!=|\band\b|\bor\b|\bnot\b", expr))
 
 
 def _single_meaningful_conditional(inner: SDFG) -> ConditionalBlock | None:
@@ -119,13 +111,13 @@ def _resolve_through_mapping(cond: CodeBlock, symbol_mapping: dict[str, Any]) ->
     :returns: ``(resolved_condition_string, resolved_free_symbol_names)``.
     """
     expr = symbolic.pystr_to_symbolic(cond.as_string)
-    free = {str(s) for s in expr.free_symbols}
+    # Simultaneous: the outer names may swap the inner ones (``{i: j, j: i}``).
     repl = {
-        symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v))
-        for k, v in symbol_mapping.items()
-        if k in free and str(v) != k
+        s: symbolic.pystr_to_symbolic(str(symbol_mapping[str(s)]))
+        for s in expr.free_symbols
+        if str(s) in symbol_mapping and str(symbol_mapping[str(s)]) != str(s)
     }
-    resolved = expr.subs(repl) if repl else expr
+    resolved = expr.subs(repl, simultaneous=True) if repl else expr
     return symbolic.symstr(resolved), {str(s) for s in resolved.free_symbols}
 
 
@@ -253,13 +245,13 @@ def _condition_invariant(
     return all(qualifies(s, 0) for s in {str(x) for x in cond.get_free_symbols()})
 
 
-def _free_names(expr: str) -> set[str]:
-    """Free symbol names of an interstate-assignment right-hand side.
+def _free_names(expr: str) -> frozenset[str]:
+    """The names an interstate-assignment right-hand side reads, containers it subscripts (``a`` in ``a[i]``) included.
 
     :param expr: The expression source.
     :returns: The set of names it reads.
     """
-    return {str(s) for s in symbolic.pystr_to_symbolic(expr).free_symbols}
+    return names_read_by_text(expr)
 
 
 def _match(
@@ -360,8 +352,9 @@ def _outer_condition(st: SDFGState, ns: NestedSDFG, cond: CodeBlock) -> str:
     for e in st.in_edges(ns):
         if e.dst_conn is not None and not e.data.is_empty() and e.dst_conn in _identifiers(resolved):
             outer = e.data.data
-            element = outer if isinstance(st.sdfg.arrays[outer], Scalar) else f"{outer}[{e.data.subset}]"
-            resolved = _substitute_name(resolved, e.dst_conn, element)
+            # A subscripted connector is the whole outer array: its own subscript already names the element.
+            whole = isinstance(st.sdfg.arrays[outer], Scalar) or e.dst_conn in symbolic.arrays(resolved)
+            resolved = _substitute_name(resolved, e.dst_conn, outer if whole else f"{outer}[{e.data.subset}]")
     return resolved
 
 
@@ -572,7 +565,8 @@ def _liftable_prelude(ns: NestedSDFG, state: SDFGState, map_params: set[str]) ->
         if names & map_params:
             return None
         expr = rhs
-        for name in names:
+        # A subscripted connector stays: it is the whole array, and the subscript already names the element.
+        for name in names - symbolic.arrays(rhs):
             if name in conn_expr:
                 expr = _substitute_name(expr, name, conn_expr[name])
             elif name in ns.symbol_mapping:
@@ -763,14 +757,17 @@ class MoveMapInvariantIfUp(ppl.Pass):
         lifted = _liftable_prelude(inner_ns, inner_st, map_params)
         if lifted is None:
             return False
+        lifted_types: dict[str, dtypes.typeclass] = {}
         for e in inner_ns.sdfg.all_interstate_edges():
+            new_symbols = e.data.new_symbols(inner_ns.sdfg, inner_ns.sdfg.symbols)
             for lhs in list(e.data.assignments.keys()):
                 if lhs in lifted:
+                    lifted_types[lhs] = inner_ns.sdfg.symbols.get(lhs, new_symbols.get(lhs))
                     del e.data.assignments[lhs]
         for lhs in lifted:
             inner_ns.symbol_mapping[lhs] = symbolic.pystr_to_symbolic(lhs)
             if lhs not in inner_ns.sdfg.symbols:
-                inner_ns.sdfg.add_symbol(lhs, dtypes.bool_ if _is_predicate(lifted[lhs]) else dtypes.int64)
+                inner_ns.sdfg.add_symbol(lhs, lifted_types[lhs])
 
         if not lifted:
             return True  # nothing to lift; isolating the map was the whole job
@@ -781,7 +778,7 @@ class MoveMapInvariantIfUp(ppl.Pass):
         wrapper.sdfg.add_edge(pre, inner_st, InterstateEdge(assignments=lifted))
         for lhs in lifted:
             if lhs not in wrapper.sdfg.symbols:
-                wrapper.sdfg.add_symbol(lhs, dtypes.bool_ if _is_predicate(lifted[lhs]) else dtypes.int64)
+                wrapper.sdfg.add_symbol(lhs, lifted_types[lhs])
 
         # The lifted expressions were written in the *outer* scope's names, so
         # any symbol they read (the parent map's parameter in ``a[i]``) has to
