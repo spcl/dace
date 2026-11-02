@@ -52,7 +52,8 @@ from dace.transformation import transformation
 
 # Shared soundness kernel for the loop distribution below -- the same import route
 # ``fuse_loops.py`` uses, so fission, fusion and this hoist can never disagree.
-from dace.transformation.passes.loop_fission import LoopFission, _independent_block_groups
+from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.loop_fission import LoopFission, _independent_block_groups, _linear_blocks
 
 
 def _free(expr: str) -> set[str]:
@@ -65,46 +66,6 @@ def _free(expr: str) -> set[str]:
         return {str(s) for s in symbolic.pystr_to_symbolic(expr).free_symbols}
     except Exception:
         return set()
-
-
-def _written(region: ControlFlowRegion) -> set[str]:
-    """Data containers and interstate-assigned symbols written inside ``region``.
-
-    :param region: The region to scan (recursively).
-    :returns: The set of written data-container and symbol names.
-    """
-    written: set[str] = set()
-    for e in region.all_interstate_edges():
-        written |= set(e.data.assignments.keys())
-    for st in region.states():
-        for n in st.nodes():
-            if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
-                written.add(n.data)
-    return written
-
-
-def _linear_order(region: ControlFlowRegion) -> list | None:
-    """Order the blocks of ``region`` iff it is a plain linear chain.
-
-    Edges must be unconditional (assignments are allowed -- they carry the
-    condition prep).
-
-    :param region: The region to linearize.
-    :returns: The blocks in execution order, or ``None`` if ``region`` is not
-        a plain linear chain of unconditional edges.
-    """
-    blocks = list(region.nodes())
-    edges = list(region.edges())
-    if not blocks or len(edges) != len(blocks) - 1:
-        return None
-    for e in edges:
-        if e.data.condition.as_string not in ("1", "True", "(1)"):
-            return None
-    succ = {e.src: e.dst for e in edges}
-    order = [region.start_block]
-    while order[-1] in succ:
-        order.append(succ[order[-1]])
-    return order if len(order) == len(blocks) else None
 
 
 def _is_empty_state(b: ControlFlowRegion) -> bool:
@@ -236,7 +197,7 @@ def _hoistable(
 
     lvar = str(loop.loop_variable)
     if loop_w is None:
-        loop_w = _written(loop)
+        loop_w = loop_analysis.written_names(loop)
     outside_reads = _reads_outside(loop, cb)
     # Interstate-edge assignments on the loop's own chain. Split into:
     #   - invariant: hoist with the guard;
@@ -270,7 +231,7 @@ def _hoistable(
     if require_full_hoist:
         for anc in _enclosing_loops(loop, sdfg):
             avar = str(anc.loop_variable)
-            aw = _written(anc)
+            aw = loop_analysis.written_names(anc)
             # The guard clears ``anc`` only if both the condition AND
             # every chain assignment it carries are invariant w.r.t.
             # ``anc`` -- a chain assignment whose RHS reads ``anc``'s
@@ -297,7 +258,7 @@ def match_loop(
     :param require_full_hoist: See :func:`_hoistable`.
     :returns: ``(loop, cond_block, cond, hoist_assignments)`` or ``None``.
     """
-    order = _linear_order(loop)
+    order = _linear_blocks(loop, allow_assignments=True)
     if order is None:
         return None
     cbs = [b for b in order if isinstance(b, ConditionalBlock)]
@@ -321,7 +282,7 @@ def match_equal_guards(
 ) -> tuple[LoopRegion, list[ConditionalBlock], list[tuple[str, str]]] | None:
     """``(loop, guards, hoist_assignments)`` when the body chain of ``loop`` holds two or more single-branch guards
     with provably equal conditions, each invariant by :func:`_hoistable`; else ``None``."""
-    order = _linear_order(loop)
+    order = _linear_blocks(loop, allow_assignments=True)
     if order is None:
         return None
     guards = [b for b in order if isinstance(b, ConditionalBlock)]
@@ -329,7 +290,7 @@ def match_equal_guards(
         return None
     if len({g.label for g in guards}) != len(guards):
         return None
-    written = _written(loop)
+    written = loop_analysis.written_names(loop)
     hoisted: list[tuple[str, str]] = []
     for guard in guards:
         verdict = _hoistable(sdfg, loop, guard, require_full_hoist, written)
@@ -383,7 +344,7 @@ def _split_guard_loop(sdfg: SDFG, require_full_hoist: bool) -> bool:
         if not isinstance(loop, LoopRegion):
             continue
         cbs = [b for b in loop.nodes() if isinstance(b, ConditionalBlock)]
-        if len(cbs) != 1 or _linear_order(loop) is None:
+        if len(cbs) != 1 or _linear_blocks(loop, allow_assignments=True) is None:
             continue
         if _hoistable(sdfg, loop, cbs[0], require_full_hoist) is None:
             continue

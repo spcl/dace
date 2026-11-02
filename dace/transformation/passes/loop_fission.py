@@ -19,7 +19,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
@@ -564,17 +564,17 @@ def edge_data_by_ends(region) -> dict:
     return {(e.src, e.dst): e.data for e in region.edges()}
 
 
-def _linear_blocks(loop: LoopRegion, allow_assignments: bool = False) -> list | None:
+def _linear_blocks(loop: ControlFlowRegion, allow_assignments: bool = False) -> list | None:
     """Return ``loop``'s body blocks in execution order if it is a simple
     linear chain of unconditional edges, assignment-free unless ``allow_assignments``; else ``None``.
 
-    :param loop: The loop whose body CFG is inspected.
+    :param loop: The loop or other region whose CFG is inspected.
     :param allow_assignments: Accept edges that assign symbols; the caller keeps each such edge inside one group.
     :returns: The ordered block list, or ``None`` if not a plain chain.
     """
     blocks = list(loop.nodes())
     edges = list(loop.edges())
-    if len(edges) != len(blocks) - 1:
+    if not blocks or len(edges) != len(blocks) - 1:
         return None
     if not all(plain_edge(e, allow_assignments) for e in edges):
         return None
