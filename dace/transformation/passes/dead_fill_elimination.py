@@ -239,9 +239,9 @@ def narrow_fill_map(state: SDFGState, entry: nodes.MapEntry, zeroed: nodes.Acces
     exit_node = state.exit_node(entry)
     inner = next(iter(state.in_edges(exit_node)))
     param = str(inner.data.subset.ranges[axis][0])
-    entry.map.range.ranges[entry.map.params.index(param)] = kept
+    entry.map.range[entry.map.params.index(param)] = kept
     outer = state.out_edges(exit_node)[0]
-    outer.data.subset.ranges[axis] = kept
+    outer.data.subset[axis] = kept
 
 
 def drop_fill(state: SDFGState, fill: FillLibraryNode, zeroed: nodes.AccessNode) -> None:
