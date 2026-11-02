@@ -694,7 +694,9 @@ def test_a_nested_write_repeating_across_the_outer_map_keeps_its_reduction():
     body.add_symbol("i", dace.int64)
     inner = body.add_state("write")
     one = inner.add_tasklet("one", {}, {"o"}, "o = 1")
-    inner.add_edge(one, "o", inner.add_write("oc"), None, dace.Memlet("oc[int_floor(i, 1000)]", wcr="lambda a, b: a + b"))
+    inner.add_edge(
+        one, "o", inner.add_write("oc"), None, dace.Memlet("oc[int_floor(i, 1000)]", wcr="lambda a, b: a + b")
+    )
     sdfg = dace.SDFG("repeating_write")
     sdfg.add_array("oc", [4], dace.int64)
     state = sdfg.add_state()

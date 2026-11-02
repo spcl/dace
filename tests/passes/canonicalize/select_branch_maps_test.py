@@ -5,8 +5,8 @@ becomes one map selecting per element, which then fuses with its producer."""
 import numpy as np
 
 import dace
-from dace.sdfg import nodes
 from dace.properties import CodeBlock
+from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.select_branch_maps import SelectBranchMaps
@@ -153,8 +153,9 @@ def guarded_arm_sdfg(name: str, cond: str, flag: bool) -> dace.SDFG:
     block = ConditionalBlock("branch", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(block, is_start_block=True)
     after = sdfg.add_state_after(block, "after")
-    after.add_mapped_tasklet("use", {"i": "0:4"}, {"q": dace.Memlet("y[i]")}, "o = q + 1", {"o": dace.Memlet("z[i]")},
-                             external_edges=True)
+    after.add_mapped_tasklet(
+        "use", {"i": "0:4"}, {"q": dace.Memlet("y[i]")}, "o = q + 1", {"o": dace.Memlet("z[i]")}, external_edges=True
+    )
     for code, tag, arm in (("o = q * 3", "t", cond), ("o = q * 2", "f", None)):
         region = ControlFlowRegion(tag, sdfg=sdfg, parent=block)
         block.add_branch(CodeBlock(arm) if arm else None, region)
@@ -163,8 +164,9 @@ def guarded_arm_sdfg(name: str, cond: str, flag: bool) -> dace.SDFG:
         if flag and tag == "f":
             state = region.add_state("guarded")
             region.add_edge(first, state, dace.InterstateEdge("d > 0"))
-        state.add_mapped_tasklet(tag, {"i": "0:4"}, {"q": dace.Memlet("a[i]")}, code, {"o": dace.Memlet("y[i]")},
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            tag, {"i": "0:4"}, {"q": dace.Memlet("a[i]")}, code, {"o": dace.Memlet("y[i]")}, external_edges=True
+        )
     sdfg.reset_cfg_list()
     return sdfg
 

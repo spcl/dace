@@ -1205,13 +1205,23 @@ def kernels_over_per_thread_counts(names: tuple[str, ...], shape: str = "cnt + 1
         fill = body.add_state("fill")
         body.add_edge(bind, fill, dace.InterstateEdge(assignments={"cnt": f"{name}[b]"}))
         fill.add_mapped_tasklet(
-            "fill", {"k": f"0:{shape}"}, {}, "o = k", {"o": dace.Memlet("buf[k]")}, schedule=SEQUENTIAL,
-            external_edges=True
+            "fill",
+            {"k": f"0:{shape}"},
+            {},
+            "o = k",
+            {"o": dace.Memlet("buf[k]")},
+            schedule=SEQUENTIAL,
+            external_edges=True,
         )
         read = body.add_state_after(fill, "read")
         read.add_mapped_tasklet(
-            "read", {"k": "0:1"}, {"q": dace.Memlet("buf[0]")}, "o = q", {"o": dace.Memlet("o[b]")},
-            schedule=SEQUENTIAL, external_edges=True
+            "read",
+            {"k": "0:1"},
+            {"q": dace.Memlet("buf[0]")},
+            "o = q",
+            {"o": dace.Memlet("o[b]")},
+            schedule=SEQUENTIAL,
+            external_edges=True,
         )
         nest = state.add_nested_sdfg(body, {name: None}, {"o": None}, symbol_mapping={"b": "b", "NX": "NX"})
         state.add_memlet_path(state.add_read(name), entry, nest, dst_conn=name, memlet=dace.Memlet(f"{name}[0:NX]"))

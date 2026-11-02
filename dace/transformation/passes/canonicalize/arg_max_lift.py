@@ -1609,7 +1609,11 @@ class ArgMaxLift(ppl.Pass):
                 break
             e = ins[0]
             for lhs, rhs in (e.data.assignments or {}).items():
-                if lhs not in preloop and lhs not in overwritten and overwritten.isdisjoint(re.findall(r"\w+", str(rhs))):
+                if (
+                    lhs not in preloop
+                    and lhs not in overwritten
+                    and overwritten.isdisjoint(re.findall(r"\w+", str(rhs)))
+                ):
                     staged = staged_iedge_rhs(str(rhs), e.src, sdfg)
                     preloop[lhs] = str(rhs) if staged is None else symbolic.symstr(staged)
             overwritten.update(e.data.assignments or {})  # a farther binding of it is shadowed

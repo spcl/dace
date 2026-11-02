@@ -64,8 +64,8 @@ from dace.libraries.standard.nodes.scan import (
     out_connector,
 )
 from dace.optionals import required
-from dace.properties import CodeBlock
 from dace.ordered import OrderedSet
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_basic, as_expr, as_loop, as_state, free_symbols
 from dace.sdfg.sdfg import InterstateEdge
