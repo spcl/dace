@@ -5444,7 +5444,7 @@ class ProgramVisitor(ExtNodeVisitor):
         length = len(other_subset)
         # Squeeze only scalar-index dims; a length-1 slice keeps its axis. Shift slice_dims past inserted new axes.
         keep = set(new_axes)
-        for dim in expr.slice_dims or []:
+        for dim in expr.slice_dims:
             for inserted in sorted(new_axes):
                 dim += inserted <= dim
             keep.add(dim)
