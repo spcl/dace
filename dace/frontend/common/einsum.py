@@ -231,6 +231,20 @@ def _bmm_orders(einsum_string: str, sizes: dict[str, int]) -> tuple[int, int, tu
     return best and best[1:]
 
 
+def broadcast_matmul_batch(einsum: "EinsumParser") -> str | None:
+    """The index mapped around a broadcast ``matmul``, ``""`` for none, ``None`` for any other contraction. numpy's
+    ``[m, k] @ [b, k, n]`` needs no transpose: ``ij,bjk->bik``, ``bij,jk->bik``, under a map ``mij,mbjk->mbik``."""
+    if len(einsum.inputs) != 2:
+        return None
+    (a, b), out, batch = einsum.inputs, einsum.output, ""
+    if len(out) == 4 and a[:1] == b[:1] == out[:1]:
+        a, b, out, batch = a[1:], b[1:], out[1:], out[0]
+    if sorted((len(a), len(b))) != [2, 3]:
+        return None
+    wanted = (a if len(a) == 3 else b)[0] + a[-2] + b[-1]
+    return batch if a[-1] == b[-2] and a[-1] not in wanted and len(set(wanted)) == 3 and out == wanted else None
+
+
 def _batched_dot_index(einsum: "EinsumParser") -> str | None:
     """The one summed index of a batched dot ``bk,bk->b``: both operands index the batch in the output's order, then
     the summed index last; ``None`` for any other contraction."""
@@ -563,6 +577,39 @@ def _create_einsum_internal(
         for node, conn in zip((input_nodes[arrays[0]], input_nodes[arrays[1]]), ("_left_tensor", "_right_tensor")):
             state.add_edge(node, None, tensordot, conn, Memlet.from_array(node.data, sdfg.arrays[node.data]))
         state.add_edge(tensordot, "_out_tensor", c, None, Memlet.from_array(output, sdfg.arrays[output]))
+    elif (
+        (batch := broadcast_matmul_batch(einsum)) is not None
+        and all(sdfg.arrays[array].dtype == dtype for array in arrays)
+        and _lowering_reads_directly(sdfg.arrays[output])
+        and sdfg.arrays[output].storage != dtypes.StorageType.GPU_Global
+        and not is_devicelevel_gpu(sdfg, state, input_nodes[arrays[0]])
+    ):
+        c = state.add_write(output)
+        if batch:
+            from dace.libraries.blas.nodes.einsum import Einsum  # Avoid import loop
+
+            inner = Einsum("einsum_batch")
+            inner.alpha, inner.beta = alpha, beta
+            inner.einsum_str = einsum_string.replace(batch, "")
+            inner.add_out_connector("_out")
+            entry, exit_ = state.add_map("einsum_batch", {param[batch]: f"0:{chardict[batch]}"})
+
+            def slice_of(name: str, term: str) -> Memlet:
+                return Memlet(f"{name}[{','.join(param[i] if i == batch else f'0:{chardict[i]}' for i in term)}]")
+
+            for index, (array, term) in enumerate(zip(arrays, einsum.inputs)):
+                inner.add_in_connector(f"_ein{index}")
+                state.add_memlet_path(
+                    input_nodes[array], entry, inner, dst_conn=f"_ein{index}", memlet=slice_of(array, term)
+                )
+            state.add_memlet_path(inner, exit_, c, src_conn="_out", memlet=slice_of(output, einsum.output))
+        else:
+            from dace.libraries.blas.nodes.matmul import MatMul  # Avoid import loop
+
+            matmul = MatMul("einsum_matmul", alpha=plain_coefficient(alpha), beta=plain_coefficient(beta))
+            for array, conn in zip(arrays, ("_a", "_b")):
+                state.add_edge(input_nodes[array], None, matmul, conn, Memlet.from_array(array, sdfg.arrays[array]))
+            state.add_edge(matmul, "_c", c, None, Memlet.from_array(output, sdfg.arrays[output]))
     # GEMM reads every operand at the output's dtype; mixed operands (float64 x complex128) take the maps.
     elif (
         len(arrays) == 2
@@ -597,7 +644,7 @@ def _create_einsum_internal(
         product, product_node = _create_einsum_internal(
             sdfg, state, bmm, a.data, b.data, dtype=dtype, nodes={a.data: a, b.data: b}, alpha=alpha, beta=0.0
         )
-        # ``C = perm(A B) + beta C``: the transpose folds the output's own term (cp2k_trs4's ``ijk,ilkm->iljm``
+        # ``C = perm(A B) + beta C``: the transpose folds the output's own term (``ijk,lkm->iljm``
         # accumulating into its product buffer ran as an atomic scalar nest).
         # The node's beta is a plain number: a sympy value does not serialize into its numeric property.
         folded = sympy.sympify(beta)
