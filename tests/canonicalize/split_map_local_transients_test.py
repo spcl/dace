@@ -69,6 +69,32 @@ def test_a_scratch_read_before_its_write_in_a_scope_is_kept():
     assert _scratch_names(sdfg) == {"t"}
 
 
+def test_a_scratch_read_beyond_what_its_scope_writes_is_kept():
+    """The second map writes ``t[0]`` but reads ``t[i]``, which the first map left."""
+    sdfg = dace.SDFG("shared_scratch_partial")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_transient("t", [N], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    entry, exit_node = first.add_map("fill", {"i": f"0:{N}"}, schedule=dtypes.ScheduleType.Sequential)
+    fill = first.add_tasklet("fill", {"x": None}, {"y": None}, "y = x")
+    first.add_memlet_path(first.add_read("A"), entry, fill, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    t = first.add_access("t")
+    first.add_edge(fill, "y", t, None, dace.Memlet("t[i]"))
+    first.add_edge(t, None, exit_node, None, dace.Memlet())
+    second = sdfg.add_state_after(first, "second")
+    entry, exit_node = second.add_map("use", {"i": f"0:{N}"}, schedule=dtypes.ScheduleType.Sequential)
+    seed = second.add_tasklet("seed", {}, {"y": None}, "y = 1.0")
+    second.add_nedge(entry, seed, dace.Memlet())
+    t = second.add_access("t")
+    second.add_edge(seed, "y", t, None, dace.Memlet("t[0]"))
+    use = second.add_tasklet("use", {"x": None}, {"z": None}, "z = x")
+    second.add_edge(t, None, use, "x", dace.Memlet("t[i]"))
+    second.add_memlet_path(use, exit_node, second.add_write("B"), src_conn="z", memlet=dace.Memlet("B[i]"))
+    assert SplitMapLocalTransients().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_shared_scratch_is_split_per_map_and_allocated_inside_it()
     test_a_scratch_read_before_its_write_in_a_scope_is_kept()
+    test_a_scratch_read_beyond_what_its_scope_writes_is_kept()
