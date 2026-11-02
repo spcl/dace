@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Privatize WCR-on-array-element reductions to a scalar accumulator.
+"""Privatize a WCR-on-array-element reduction to a scalar accumulator.
 
 After ``AugAssignToWCR + LoopToMap`` (the canonicalize reduction-to-WCR-map
 stage), a scalar-reduction loop becomes a parallel map with a WCR write
@@ -8,7 +8,7 @@ to ``reduce_atomic`` on the array slot -- correct but contended, and
 OpenMP's ``reduction(...)`` clause is most portable with a true scalar
 variable.
 
-This pass rewrites the shape::
+:func:`privatize_reduction_accumulator` rewrites the shape::
 
     ... -> Map (parallel) -> body { acc WCR-+= val } -> MapExit
                                                         |
@@ -32,47 +32,13 @@ The init's seed-read AND the writeback are unconditional, so this stays
 value-preserving even if zero iterations of the map run.
 """
 
-from typing import Any
-
-from dace import SDFG, data, properties, subsets
+from dace import data, subsets
 from dace import memlet as mm
 from dace.optionals import required
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.state import ControlFlowRegion
-from dace.transformation import pass_pipeline as ppl
-from dace.transformation import transformation as xf
-
-
-@properties.make_properties
-@xf.explicit_cf_compatible
-class PrivatizeReductionAccumulator(ppl.Pass):
-    """Convert WCR-on-array-element reductions to WCR-on-scalar + init + writeback."""
-
-    def modifies(self) -> ppl.Modifies:
-        return (
-            ppl.Modifies.CFG
-            | ppl.Modifies.Nodes
-            | ppl.Modifies.Memlets
-            | ppl.Modifies.States
-            | ppl.Modifies.Descriptors
-        )
-
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return bool(modified & ppl.Modifies.CFG)
-
-    def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> int | None:
-        count = 0
-        for state in list(sdfg.states()):
-            for map_exit in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
-                # WCR writes are on the MapExit's IN-edges (tasklet -> MapExit
-                # IN_<name> connector); the matching OUT-edge then forwards the
-                # value out of the scope to the eventual array AccessNode.
-                for iedge in list(state.in_edges(map_exit)):
-                    if privatize_reduction_accumulator(state, map_exit, iedge):
-                        count += 1
-        return count or None
 
 
 def privatize_reduction_accumulator(
