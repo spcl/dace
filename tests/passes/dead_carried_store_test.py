@@ -12,6 +12,7 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
 from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, record_tree_resets
 
@@ -218,6 +219,22 @@ def test_a_sibling_reading_BEFORE_the_store_is_still_dead():
     assert applied, "s244's own read-modify-write read precedes its store and must stay liftable"
 
 
+def test_copy_store_is_read_at_its_destination_index():
+    """``a[i] = b[i + 1]`` then ``a[i + 5] = c[i]``, copies whose memlets name the SOURCE: no store kills the other."""
+    sdfg = dace.SDFG("copy_store_destination_index")
+    for name in "abc":
+        sdfg.add_array(name, [N + 8], dace.float64)
+    loop = LoopRegion("l", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state_after(first, "second")
+    first.add_nedge(first.add_read("b"), first.add_write("a"), dace.Memlet(data="b", subset="i + 1", other_subset="i"))
+    second.add_nedge(second.add_read("c"), second.add_write("a"), dace.Memlet(data="c", subset="i", other_subset="i + 5"))
+    sdfg.validate()
+    assert DeadCarriedStoreElimination().apply_pass(sdfg, {}) is None
+    assert stores_of(sdfg, "a") == 2
+
+
 if __name__ == "__main__":
     test_s244_is_rewritten_and_still_computes()
     test_s244_parallelizes_through_the_pipeline()
@@ -229,3 +246,4 @@ if __name__ == "__main__":
     test_a_kill_by_a_lower_offset_is_still_a_kill()
     test_a_sibling_consuming_the_store_refuses()
     test_a_sibling_reading_BEFORE_the_store_is_still_dead()
+    test_copy_store_is_read_at_its_destination_index()

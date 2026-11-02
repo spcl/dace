@@ -155,10 +155,11 @@ def find_killed_store(loop: LoopRegion, body: list[SDFGState], stride: int) -> t
             if state.sdfg.arrays[node.data].transient:
                 ambiguous.add(node.data)
             for edge in state.in_edges(node):
-                if edge.data.wcr is not None or edge.data.subset is None:
+                written = edge.data.get_dst_subset(edge, state)
+                if edge.data.wcr is not None or written is None:
                     ambiguous.add(node.data)
                     continue
-                spot = constant_offset_on_axis(edge.data.subset, loop.loop_variable)
+                spot = constant_offset_on_axis(written, loop.loop_variable)
                 if spot is None:
                     ambiguous.add(node.data)
                     continue
@@ -210,9 +211,10 @@ def reads_are_clear(
             if not isinstance(node, nodes.AccessNode) or node.data != name:
                 continue
             for edge in state.out_edges(node):
-                if edge.data.subset is None:
+                read = edge.data.get_src_subset(edge, state)
+                if read is None:
                     return False
-                spot = constant_offset_on_axis(edge.data.subset, loop_var)
+                spot = constant_offset_on_axis(read, loop_var)
                 if spot is None or spot[0] != axis:
                     return False
                 if kill_off < spot[1] < dead_off:
@@ -244,9 +246,10 @@ def reads_are_clear(
             if not isinstance(node, nodes.AccessNode) or node.data != name:
                 continue
             for edge in state.out_edges(node):
-                if edge.data.subset is None:
+                read = edge.data.get_src_subset(edge, state)
+                if read is None:
                     return False
-                spot = constant_offset_on_axis(edge.data.subset, loop_var)
+                spot = constant_offset_on_axis(read, loop_var)
                 if spot is None or spot[0] != axis or spot[1] != dead_off:
                     continue
                 order = body.index(state) - body.index(dead_state)
