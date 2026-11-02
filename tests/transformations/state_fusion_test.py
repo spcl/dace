@@ -756,6 +756,52 @@ def test_a_write_ordered_only_through_the_instance_a_read_skips_keeps_the_states
     assert sdfg.apply_transformations_repeated([fusion], validate=False) == 0
 
 
+def test_a_read_kept_apart_by_an_ordering_edge_stays_behind_the_writer_it_would_have_merged_with():
+    """``update`` reads ``x`` and rewrites ``d`` and ``z``. The edge ordering it behind ``use_z`` keeps its ``x`` from
+    merging, which was also what kept it behind ``use_d``."""
+    sdfg = dace.SDFG("ordering_edge_blocks_merge")
+    for name, size in (("d", 1), ("x", 2), ("z", 1), ("y", 1)):
+        sdfg.add_array(name, [size], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    use_d = first.add_tasklet("use_d", {"q": None}, {"o": None}, "o = q")
+    first.add_edge(first.add_read("d"), None, use_d, "q", dace.Memlet("d[0]"))
+    first.add_edge(use_d, "o", first.add_write("x"), None, dace.Memlet("x[1]"))
+    use_z = first.add_tasklet("use_z", {"q": None}, {"o": None}, "o = q")
+    first.add_edge(first.add_read("z"), None, use_z, "q", dace.Memlet("z[0]"))
+    first.add_edge(use_z, "o", first.add_write("y"), None, dace.Memlet("y[0]"))
+    second = sdfg.add_state_after(first, "second")
+    update = second.add_tasklet("update", {"q": None}, {"o": None, "p": None}, "o = q\np = q")
+    second.add_edge(second.add_read("x"), None, update, "q", dace.Memlet("x[0]"))
+    second.add_edge(update, "o", second.add_write("d"), None, dace.Memlet("d[0]"))
+    second.add_edge(update, "p", second.add_write("z"), None, dace.Memlet("z[0]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated([StateFusionExtended], validate=False) == 1
+    fused = sdfg.start_block
+    assert nx.has_path(fused._nx, use_d, update) and nx.has_path(fused._nx, use_z, update)
+
+
+def test_a_read_of_a_written_node_is_not_overwritten_out_of_order():
+    """``a`` is written and then read in the first state, so it is no input there; the second state still overwrites
+    what it read."""
+    sdfg = dace.SDFG("read_of_written_node")
+    sdfg.add_array("a", [2], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    written = first.add_access("a")
+    store = first.add_tasklet("store", {}, {"o": None}, "o = 1")
+    first.add_edge(store, "o", written, None, dace.Memlet("a[0]"))
+    read = first.add_tasklet("read", {"q": None}, {"o": None}, "o = q")
+    first.add_edge(written, None, read, "q", dace.Memlet("a[1]"))
+    first.add_edge(read, "o", first.add_write("b"), None, dace.Memlet("b[0]"))
+    second = sdfg.add_state_after(first, "second")
+    overwrite = second.add_tasklet("overwrite", {}, {"o": None}, "o = 9")
+    second.add_edge(overwrite, "o", second.add_write("a"), None, dace.Memlet("a[1]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations_repeated([StateFusion], validate=False) == 0
+
+
 if __name__ == "__main__":
     test_state_fusion_leaves_a_derivable_region_entry_implicit()
     test_state_fusion_pins_the_region_entry_the_region_cannot_derive()
@@ -786,3 +832,5 @@ if __name__ == "__main__":
     test_a_read_behind_an_ordering_edge_is_a_read()
     test_a_write_ordered_only_through_the_instance_a_read_skips_keeps_the_states(StateFusion)
     test_a_write_ordered_only_through_the_instance_a_read_skips_keeps_the_states(StateFusionExtended)
+    test_a_read_kept_apart_by_an_ordering_edge_stays_behind_the_writer_it_would_have_merged_with()
+    test_a_read_of_a_written_node_is_not_overwritten_out_of_order()

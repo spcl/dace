@@ -1208,8 +1208,13 @@ class StateFusionExtended(StateFusion):
                         c
                         for c in candidates
                         if first_state.in_degree(c) > 0
-                        and StateFusionExtended.memlets_intersect(
-                            first_state, [c], False, second_state, rewrites, False, facts
+                        and (
+                            # A source in its own state stopped being a source through an ordering edge alone, and so
+                            # missed the merge the check counted on
+                            second_state.in_degree(node) == 0
+                            or StateFusionExtended.memlets_intersect(
+                                first_state, [c], False, second_state, rewrites, False, facts
+                            )
                         )
                     ]
                     for m in [*absorbed.get(node.data, []), *writers]:
