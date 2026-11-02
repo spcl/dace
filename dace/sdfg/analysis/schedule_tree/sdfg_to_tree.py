@@ -35,6 +35,7 @@ from dace.sdfg.state import (
     SDFGState,
     UnstructuredControlFlow,
 )
+from dace.sdfg.symbol_repo import program_assumptions
 from dace.transformation.passes.analysis import StateReachability
 
 NODE_TO_SCOPE_TYPE = {
@@ -799,6 +800,8 @@ def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = Tru
     _prepare_sdfg_for_conversion(sdfg, toplevel=toplevel)
 
     if toplevel:
+        # What the program checks on entry, nested SDFGs' included, as the tree has no other place for it
+        sdfg.symbol_repo.runtime_assumptions.update(program_assumptions(sdfg))
         result = tn.ScheduleTreeRoot(name=sdfg.name, children=[], facts=sdfg.facts())
         _create_unified_descriptor_repository(sdfg, result)
         result.add_children(_block_schedule_tree(sdfg))

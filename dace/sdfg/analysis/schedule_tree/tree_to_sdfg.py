@@ -1397,6 +1397,7 @@ def from_schedule_tree(
         if not isinstance(dtype, dtypes.typeclass):
             raise TypeError(f'Symbol "{name}" of the schedule tree has no type')
         result.symbol_repo.add(name, dtype)
+    result.symbol_repo.runtime_assumptions.update(stree.facts.assumed or ())
     result.callback_mapping = copy.deepcopy(stree.callback_mapping)
     for code, tree_code in (
         (result.global_code, stree.global_code),

@@ -6,6 +6,7 @@ Tests conversion of schedule trees to SDFGs.
 import networkx as nx
 import numpy as np
 import pytest
+import sympy
 
 import dace
 from dace import library
@@ -14,6 +15,7 @@ from dace.sdfg import dealias
 from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion, NamedRegion, ReturnBlock
+from dace.sdfg.symbol_repo import program_assumptions
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.transformation import ExpandTransformation
@@ -1270,6 +1272,25 @@ def test_roundtrip_empty_memlet_boundaries(name: str):
     )
 
 
+def test_roundtrip_keeps_what_the_program_checks_on_entry():
+    """Code proven from a declared sign or a scale is only sound while the call checks them."""
+    sdfg = dace.SDFG("entry_checks")
+    sdfg.add_symbol("K", dace.int64, predicates=frozenset({dace.symbolic.Predicate.POSITIVE}))
+    sdfg.add_symbol("N", dace.int64, scale=dace.symbolic.Scale.SMALL)
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("A", [1], dace.int64)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("use", {}, {"o"}, "o = K + N + M")
+    state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
+    n, m = dace.symbolic.symbol("N"), dace.symbolic.symbol("M")
+    assert dace.symbolic.simplify(sympy.Min(n, m), sdfg.facts()) == n
+    checked = program_assumptions(sdfg)
+    assert len(checked) == 2
+
+    roundtripped = t2s.from_schedule_tree(sdfg.as_schedule_tree())
+    assert set(program_assumptions(roundtripped)) == set(checked)
+
+
 if __name__ == "__main__":
     test_implicit_inline_and_constants()
     test_name_propagation()
@@ -1320,3 +1341,4 @@ if __name__ == "__main__":
     test_sdfg_metadata()
     for name in _EMPTY_MEMLET_ROUNDTRIPS:
         test_roundtrip_empty_memlet_boundaries(name)
+    test_roundtrip_keeps_what_the_program_checks_on_entry()
