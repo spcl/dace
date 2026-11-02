@@ -1081,6 +1081,7 @@ def finish() -> Stages:
         (FINISH, NormalizeFloorDivision()),
         # Fusion leaves plain copies through its intermediates
         (FINISH, EliminateTrivialTasklets()),
+        (FINISH, FoldScalarReadCopies()),
         # A staging copy sits in its readers' map scope, fed from the map entry, only once the terminal inlining has
         # run; the reclaim stays last for the arrays the fold leaves.
         (FINISH, PatternApplyOnceEverywhere([RedundantMapReadCopy()])),
