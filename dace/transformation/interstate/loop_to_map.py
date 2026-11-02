@@ -175,18 +175,37 @@ def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span, star
                 found = True
                 # ``b[i]`` and ``b[i + 1]`` are each one-to-one, and meet across two iterations
                 if str(outer) not in written and not all(
-                    any(
-                        lo == hi and other_lo == other_hi and _dim_provably_disjoint(lo, other_lo, itersym, step, start)
-                        for (lo, hi, _), (other_lo, other_hi, _) in zip(outer.ndrange(), other.ndrange())
-                    )
-                    for other in written.values()
+                    meet_within_one_iteration(outer, other, itersym, step, start) for other in written.values()
                 ):
                     return False
                 written[str(outer)] = outer
     return found
 
 
-def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
+def meet_within_one_iteration(first: subsets.Subset, second: subsets.Subset, itersym, step, start=0) -> bool:
+    """Whether two subsets of one body never share an element across two iterations: some dimension is the same
+    one-to-one index in both, or keeps them apart in any iteration pair."""
+    return any(
+        low == high
+        and other_low == other_high
+        and (_same_injective_index(low, other_low, itersym) or _dim_provably_disjoint(low, other_low, itersym, step, start))
+        for (low, high, _), (other_low, other_high, _) in zip(first.ndrange(), second.ndrange())
+    )
+
+
+def nested_write_subsets(nsdfg_node, conn) -> list[subsets.Subset]:
+    """The writes to ``conn``'s array in ``nsdfg_node``'s own states, through its symbol mapping."""
+    return [
+        through_symbol_mapping(e.data.get_dst_subset(e, state), nsdfg_node)
+        for state in nsdfg_node.sdfg.states()
+        for dn in state.data_nodes()
+        if dn.data == conn
+        for e in state.in_edges(dn)
+        if not e.data.is_empty() and not isinstance(e.src, nodes.NestedSDFG)
+    ]
+
+
+def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step, writes=(), start=0) -> bool:
     """Whether every read of ``conn``'s array INSIDE ``nsdfg_node`` matches the SAME ``a*i+b``
     pattern as the writes, or is loop-invariant.
 
@@ -195,6 +214,7 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
     races: iteration ``i`` reads ``a[i+1]`` while ``i+1`` writes it. Conservative: each inner read
     must match ``a*i+b`` OR be loop-invariant (no outer ``itersym``). Nested NestedSDFGs recurse.
 
+    :param writes: The subsets written in the body: an itersym-dependent read must stay clear of them across iterations.
     :returns: True if no carried-read pattern found; False if any inner read hits the carrier
               array outside the write's affine form.
     """
@@ -208,7 +228,7 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
                     continue
                 if isinstance(e.dst, nodes.NestedSDFG):
                     # The read enters another nested SDFG; descend.
-                    if not nested_reads_match_writes(e.dst, e.dst_conn, itersym, a, b, step):
+                    if not nested_reads_match_writes(e.dst, e.dst_conn, itersym, a, b, step, writes, start):
                         return False
                     continue
                 src_subset = e.data.get_src_subset(e, state)
@@ -225,6 +245,8 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
                     continue
                 # itersym-dependent read: must match the writes' a*i+b, else it's a carried read.
                 if not _check_range(outer, a, itersym, b, step):
+                    return False
+                if not all(meet_within_one_iteration(outer, write, itersym, step, start) for write in writes):
                     return False
     return True
 
@@ -598,7 +620,10 @@ def write_refusal(
             # DIFFERENT iter position (``a[i+1]`` while writing ``a[i]``) is a
             # forward/backward dependence that races. Require every inner read
             # of ``conn`` to match the writes' ``a*i+b`` (or be loop-invariant).
-            if ok and not nested_reads_match_writes(e.src, e.src_conn, itersym, a, b, step):
+            # The same array can enter on a connector of its own.
+            read_as = {e.src_conn, *(r.dst_conn for r in state.in_edges(e.src) if r.data.data == dn.data)}
+            writes = nested_write_subsets(e.src, e.src_conn) if ok else []
+            if ok and not all(nested_reads_match_writes(e.src, c, itersym, a, b, step, writes, start) for c in read_as):
                 ok = False
         if not ok and not permissive:
             verdicts = None if ctx is None else ctx.invariants.smt_injective
