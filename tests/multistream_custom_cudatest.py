@@ -50,15 +50,16 @@ sdfg = dp.SDFG("gpu_blas_multistream_test")
 state = sdfg.add_state()
 
 # Add arrays
-sdfg.add_array("A", [N, N], dtype=dp.float64)
-sdfg.add_array("B", [N, N], dtype=dp.float64)
-sdfg.add_array("C", [N, N], dtype=dp.float64)
+# Column-major, as the vendor BLAS and the arrays passed below
+sdfg.add_array("A", [N, N], dtype=dp.float64, strides=[1, N])
+sdfg.add_array("B", [N, N], dtype=dp.float64, strides=[1, N])
+sdfg.add_array("C", [N, N], dtype=dp.float64, strides=[1, N])
 
 # Add transient GPU arrays
-sdfg.add_transient("gA", [N, N], dp.float64, dp.StorageType.GPU_Global)
-sdfg.add_transient("gB", [N, N], dp.float64, dp.StorageType.GPU_Global)
-sdfg.add_transient("gC", [N, N], dp.float64, dp.StorageType.GPU_Global)
-sdfg.add_transient("gTmp", [N, N], dp.float64, dp.StorageType.GPU_Global)
+sdfg.add_transient("gA", [N, N], dp.float64, dp.StorageType.GPU_Global, strides=[1, N])
+sdfg.add_transient("gB", [N, N], dp.float64, dp.StorageType.GPU_Global, strides=[1, N])
+sdfg.add_transient("gC", [N, N], dp.float64, dp.StorageType.GPU_Global, strides=[1, N])
+sdfg.add_transient("gTmp", [N, N], dp.float64, dp.StorageType.GPU_Global, strides=[1, N])
 
 # Add custom C++ tasklet to graph
 tasklet = state.add_tasklet(

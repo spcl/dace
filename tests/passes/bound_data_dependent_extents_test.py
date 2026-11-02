@@ -104,6 +104,25 @@ def test_a_nonnegative_data_symbol_subtracted_from_an_extent_bounds_it_by_zero()
     assert np.allclose(got, expected)
 
 
+def test_a_nest_the_bound_names_a_new_symbol_for_is_given_it():
+    """The nest's ``win[W]``, ``W = N - lo``, takes ``N``, which it was never given."""
+    sdfg = per_row_window(-1)
+    body = dace.SDFG("nested_fill")
+    body.add_array("win", ["W"], dace.float64)
+    inner = body.add_state("write", is_start_block=True)
+    tasklet = inner.add_tasklet("one", {}, {"o"}, "o = 1.0")
+    inner.add_edge(tasklet, "o", inner.add_write("win"), None, dace.Memlet("win[0]"))
+    last = next(state for state in sdfg.states() if state.label == "acc")
+    state = last.parent_graph.add_state_after(last, "nested")
+    nest = state.add_nested_sdfg(body, set(), {"win"}, symbol_mapping={"W": "N - lo"})
+    state.add_edge(nest, "win", state.add_write("win"), None, dace.Memlet("win[0]"))
+
+    assert BoundDataDependentExtents().apply_pass(sdfg, {}) == 1
+    assert [str(extent) for extent in body.arrays["win"].shape] == ["N"]
+    assert str(nest.symbol_mapping["N"]) == "N"
+    sdfg.validate()
+
+
 def test_an_extent_growing_with_the_data_symbol_is_left_alone():
     sdfg = per_row_window(1)
     assert BoundDataDependentExtents().apply_pass(sdfg, {}) is None

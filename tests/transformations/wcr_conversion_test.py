@@ -552,6 +552,9 @@ def test_aug_assign_combine_copyback_map():
         if e.data is not None and e.data.wcr is not None
     ]
     assert wcrs and all("max" in w for w in wcrs), f"expected a max map-exit WCR, got {wcrs}"
+    seeded = [st for st in sdfg.states() for n in st.nodes() if isinstance(n, dace.nodes.MapEntry)][0]
+    entry = [n for n in seeded.nodes() if isinstance(n, dace.nodes.MapEntry)][0]
+    assert any(e.data.is_empty() for e in seeded.in_edges(entry)), "the seed of the accumulator stays ordered first"
     a = np.random.rand(64)
     res = np.zeros(1)
     sdfg(A=a, res=res)
@@ -853,6 +856,60 @@ def test_aug_assign_python_after_a_write_fissions_the_state():
     assert A[0] == 3.0
 
 
+def combine_copyback_sdfg(name: str, seeded: bool) -> dace.SDFG:
+    """``mid = max(A[1], X); A[1] = mid`` through a copy tasklet, after ``A[1] = 1`` when ``seeded``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [2], dace.float64)
+    sdfg.add_array("X", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_transient("mid", [1], dace.float64)
+    state = sdfg.add_state("update")
+    acc = state.add_access("A")
+    if seeded:
+        seed = state.add_tasklet("seed", {}, {"o"}, "o = 1.0")
+        state.add_edge(seed, "o", acc, None, dace.Memlet("A[1]"))
+    mid = state.add_access("mid")
+    combine = state.add_tasklet("combine", {"q", "x"}, {"o"}, "o = max(q, x)")
+    state.add_edge(acc, None, combine, "q", dace.Memlet("A[1]"))
+    state.add_edge(state.add_read("X"), None, combine, "x", dace.Memlet("X[0]"))
+    state.add_edge(combine, "o", mid, None, dace.Memlet("mid[0]"))
+    copy_back = state.add_tasklet("copy_back", {"q"}, {"o"}, "o = q")
+    state.add_edge(mid, None, copy_back, "q", dace.Memlet("mid[0]"))
+    state.add_edge(copy_back, "o", state.add_write("A"), None, dace.Memlet("A[1]"))
+    return sdfg
+
+
+def test_combine_copyback_after_a_write_keeps_the_load_ordering_it():
+    assert combine_copyback_sdfg("combine_seeded", True).apply_transformations_repeated(AugAssignToWCR) == 0
+
+
+def test_combine_copyback_keeps_a_slice_another_state_reads():
+    sdfg = combine_copyback_sdfg("combine_read_later", False)
+    later = sdfg.add_state_after(sdfg.start_state, "later")
+    later.add_nedge(later.add_read("mid"), later.add_write("B"), dace.Memlet("mid[0] -> [0]"))
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
+
+
+def test_aug_assign_in_a_nested_body_keeps_a_read_ordering_it_behind_a_write():
+    body = dace.SDFG("ordered_nest_body")
+    body.add_array("A", [1], dace.float64)
+    inner = body.add_state()
+    double = inner.add_tasklet("double", {"a"}, {"b"}, "b = a * 2")
+    inner.add_edge(inner.add_read("A"), None, double, "a", dace.Memlet("A[0]"))
+    inner.add_edge(double, "b", inner.add_write("A"), None, dace.Memlet("A[0]"))
+    sdfg = dace.SDFG("ordered_nest")
+    sdfg.add_array("A", [1], dace.float64)
+    state = sdfg.add_state()
+    acc = state.add_access("A")
+    nest = state.add_nested_sdfg(body, {"A": None}, {"A": None})
+    state.add_edge(acc, None, nest, "A", dace.Memlet("A[0]"))
+    state.add_edge(nest, "A", state.add_write("A"), None, dace.Memlet("A[0]"))
+    seed = state.add_tasklet("seed", {}, {"o"}, "o = 3.0")
+    state.add_edge(seed, "o", acc, None, dace.Memlet("A[0]"))
+    assert body.apply_transformations_repeated(AugAssignToWCR) == 1
+    assert state.in_edges(nest), "the seed must stay ordered before the nest"
+
+
 def test_aug_assign_fission_moves_the_whole_map_of_a_multi_tasklet_update():
     """warpx's ``Jx[...] += djr * xy`` after map fusion: the accumulator is written by an earlier map of the state and
     the updating map holds the delta's tasklet next to the update, so the fission moves the whole map."""
@@ -989,6 +1046,9 @@ if __name__ == "__main__":
     test_aug_assign_fission_keeps_the_binding_of_a_view_left_behind()
     test_isolating_an_accumulate_read_through_a_shared_view_keeps_the_views_source()
     test_aug_assign_python_after_a_write_fissions_the_state()
+    test_combine_copyback_after_a_write_keeps_the_load_ordering_it()
+    test_combine_copyback_keeps_a_slice_another_state_reads()
+    test_aug_assign_in_a_nested_body_keeps_a_read_ordering_it_behind_a_write()
     test_aug_assign_fission_moves_the_whole_map_of_a_multi_tasklet_update()
     test_aug_assign_python_min_max("max(a, k)", np.maximum)
     test_aug_assign_python_min_max("min(k, a)", np.minimum)

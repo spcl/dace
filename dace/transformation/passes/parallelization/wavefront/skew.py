@@ -64,8 +64,8 @@ from dace.transformation.passes.parallelization.wavefront.statements import (
     occurrence_index,
     unit_loop_bounds,
 )
+from dace.transformation.passes.unique_loop_iterators import SKEW_T_PREFIX
 
-SKEW_T_PREFIX = "_skew_t_"
 SKEW_P_PREFIX = "_skew_p_"
 
 #: Tile extent per axis. CPU: 64x64 doubles measured 2.04-2.16x over the sequential nest at N=768 on 4

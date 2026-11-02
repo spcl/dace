@@ -43,7 +43,7 @@ MAX_TASKLETS = 64
 
 def branch_map(region: ControlFlowRegion) -> tuple[SDFGState, nodes.MapEntry] | None:
     """The one non-empty state of ``region`` and its single top-level map, when the contract admits them."""
-    if any(e.data.assignments for e in region.edges()):
+    if any(e.data.assignments or not e.data.is_unconditional() for e in region.edges()):
         return None
     states = [b for b in region.nodes() if isinstance(b, SDFGState)]
     if len(states) != len(region.nodes()):
@@ -239,7 +239,7 @@ class SelectBranchMaps(ppl.Pass):
         code_cond = cond.as_string
         cond_conns = {name: f"__cond{i}" for i, name in enumerate(cond_data)}
         for name, conn in cond_conns.items():
-            code_cond = re.sub(rf"\b{re.escape(name)}\b", conn, code_cond)
+            code_cond = re.sub(rf"\b{re.escape(name)}\b(?:\[[0,\s]*\])?", conn, code_cond)
         cond_inputs: dict[str, str] = {}
         for name in cond_data:
             outer = entry.next_connector(name)

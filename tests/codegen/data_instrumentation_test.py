@@ -64,9 +64,10 @@ def test_dump_gpu():
     assert dreport.keys() == {"A", "tmp", "__return"}
     assert np.allclose(dreport["A"], A)
     assert np.allclose(dreport["tmp"], A + 1)
-    # GPU offloading inserts extra copy states; the last saved __return is the
+    # GPU offloading may insert extra copy states; the last saved __return is the
     # correct host-side result.
-    assert np.allclose(dreport["__return"][-1], A + 6)
+    saved = dreport["__return"]
+    assert np.allclose(saved[-1] if isinstance(saved, list) else saved, A + 6)
 
 
 def test_dump_gpu_synchronizes():

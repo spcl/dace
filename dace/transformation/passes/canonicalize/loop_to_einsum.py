@@ -191,6 +191,13 @@ def _descend_maps(state: SDFGState, axes: list[_Axis], entry: nodes.MapEntry | N
             return _Nest(axes, state, entry)
         if len(inner) != 1 or any(isinstance(n, (nodes.Tasklet, nodes.NestedSDFG, nodes.LibraryNode)) for n in level):
             return None
+        # A copy at this level is compute too; only the body's own reads and writes go with the nest
+        if any(
+            isinstance(n, nodes.AccessNode)
+            and (entry is not None or any(isinstance(e.dst, nodes.AccessNode) for e in state.out_edges(n)))
+            for n in level
+        ):
+            return None
         entry = inner[0]
 
 

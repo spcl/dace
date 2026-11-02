@@ -25,13 +25,10 @@ Covered:
     and the 2D fp16 stencil under the plain default);
   * a ``np.where(cond, <literal>, A)`` blend's literal arm is typed fp16 (never a bare ``double``)
     in BOTH the tiled interior's ``TileITE`` and the non-divisible extent's scalar remainder.
-
-GPU-executing tests fork before any CUDA use so a device fault cannot crash the pytest parent.
 """
 
 import os
 import shutil
-import traceback
 
 import numpy as np
 import pytest
@@ -133,22 +130,6 @@ def _conditionals(sdfg):
     return [
         b for sd in sdfg.all_sdfgs_recursive() for b in sd.all_control_flow_blocks() if isinstance(b, ConditionalBlock)
     ]
-
-
-def _run_in_fork(work) -> int:
-    """Run ``work()`` (GPU compile + execute + assert) in a child; fork BEFORE any CUDA use so a
-    device-side fault cannot crash the pytest parent. Returns the child's exit status (0 == pass)."""
-    pid = os.fork()
-    if pid == 0:  # child
-        code = 0
-        try:
-            work()
-        except BaseException:  # noqa: BLE001 - report + non-zero exit, never raise past the fork
-            traceback.print_exc()
-            code = 1
-        os._exit(code)
-    _, status = os.waitpid(pid, 0)
-    return status
 
 
 # Structural / gating tests (no GPU device needed)
@@ -476,7 +457,7 @@ def test_branched_tail_elementwise_bitexact(width):
         exp[1 : n - 1] = A[1 : n - 1] + B[1 : n - 1]
         assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
 
-    assert _run_in_fork(work) == 0
+    work()
 
 
 @pytest.mark.gpu
@@ -509,7 +490,7 @@ def test_branched_tail_neighbor_stencil_bitexact(width):
         exp[1 : n - 1] = A[0 : n - 2] + A[2:n]
         assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
 
-    assert _run_in_fork(work) == 0
+    work()
 
 
 @pytest.mark.gpu
@@ -548,7 +529,7 @@ def test_branched_tail_outer_param_bitexact(width):
         exp[:, 1 : n - 1] = A[:, 1 : n - 1] + B[:, 1 : n - 1]
         assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
 
-    assert _run_in_fork(work) == 0
+    work()
 
 
 @pytest.mark.gpu
@@ -585,7 +566,7 @@ def test_default_masked_tail_stencil_bitexact(width):
         exp[1 : m - 1, 1 : n - 2] = (A[1 : m - 1, 0 : n - 3] + A[1 : m - 1, 2 : n - 1]) * np.float16(0.5)
         assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
 
-    assert _run_in_fork(work) == 0
+    work()
 
 
 @pytest.mark.gpu
@@ -620,7 +601,7 @@ def test_branched_tail_where_literal_arm_bitexact():
         assert got.dtype == np.float16
         assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
 
-    assert _run_in_fork(work) == 0
+    work()
 
 
 if __name__ == "__main__":

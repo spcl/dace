@@ -84,7 +84,8 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
             # if the relation can't be determined it's not a trivial loop
             return False
 
-        return True
+        # A spliced ``break`` or ``continue`` would be left without its loop.
+        return self.is_zero_trip() or not loop_analysis.loop_jumps(self.loop)
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         # Bind ONCE: ``self.loop`` re-resolves via ``sdfg.cfg_list``; reparenting below renumbers it (warpx_boris_push).

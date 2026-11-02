@@ -23,7 +23,7 @@ from typing import Any
 
 import dace
 from dace import symbolic
-from dace.sdfg.narrowing import as_expr
+from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
@@ -126,7 +126,11 @@ class LoopToSymmetrize(ppl.Pass):
 
         row_lo = str(loop_analysis.get_init_assignment(outer))
         row_hi = str(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(outer))) + 1))
-        col_hi = str(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(inner))) + 1))
+        col_end = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(inner))) + 1)
+        # A band: the node takes one column bound for every row
+        if outer_var in {str(s) for s in as_basic(col_end).free_symbols}:
+            return False
+        col_hi = str(col_end)
 
         self._replace(cfg, outer, array, desc, row_lo, row_hi, col_offset, col_hi, source_upper)
         return True

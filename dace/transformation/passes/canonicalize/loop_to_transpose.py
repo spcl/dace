@@ -56,6 +56,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_basic, as_expr
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.dataflow.wcr_conversion import sole_access
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.loop_iteration_value import perfect_nest
 from dace.transformation.passes.canonicalize.split_statements import value_edges
@@ -131,7 +132,7 @@ def match_copy_chain(
         if n is src or n is sink:
             continue
         desc = sdfg.arrays.get(n.data)
-        if desc is None or not desc.transient:
+        if desc is None or not desc.transient or not sole_access(sdfg, n):
             return None
     src_oes = value_edges(state.out_edges(src))
     sink_ies = value_edges(state.in_edges(sink))

@@ -132,6 +132,24 @@ def test_semantic_lifting_disabled_leaves_nest(name):
     assert lifted(sdfg, Syrk) == [] and lifted(sdfg, Syr2k) == []
 
 
+SIZE = dace.symbol("SIZE", dtype=dace.int64)
+
+
+@dace.program
+def matrix_product_nest(C: dace.float64[SIZE, SIZE], A: dace.float64[SIZE, SIZE], B: dace.float64[SIZE, SIZE]):
+    for i in range(SIZE):
+        for j in range(SIZE):
+            for k in range(SIZE):
+                C[i, j] = C[i, j] + A[i, k] * B[k, j]
+
+
+@pytest.mark.parametrize("flag", ["lift", "semantic_lifting"])
+def test_lifting_off_leaves_a_matrix_product_a_nest(flag):
+    sdfg = matrix_product_nest.to_sdfg(simplify=False)
+    canonicalize(sdfg, **{flag: False})
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.LibraryNode)]
+
+
 def test_syr2k_nest_is_not_lifted_to_syrk():
     """syr2k's two cross-paired operands both reach the ``Syr2k`` node; no ``Syrk`` reads just one of them."""
     kernel = corpus_kernel("syr2k")[0]
@@ -620,3 +638,5 @@ if __name__ == "__main__":
         test_orientation_and_scaling_variants_lift(variant)
     for program in DEVIATING:
         test_deviating_rank_k_nests_not_lifted(program)
+    test_lifting_off_leaves_a_matrix_product_a_nest("lift")
+    test_lifting_off_leaves_a_matrix_product_a_nest("semantic_lifting")

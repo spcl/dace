@@ -681,6 +681,42 @@ def test_a_wcr_accumulator_is_not_an_induction_variable():
     assert np.isclose(got[0], ref[0]), (got, ref)
 
 
+def counter_after_loop_sdfg(name: str, entry: str, start: str, step: str) -> dace.SDFG:
+    """``k = entry; for i in range(start, n): k = step; O[0] = k``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("O", [1], dace.float64)
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    first = sdfg.add_state("first", is_start_block=True)
+    loop = LoopRegion("loop", "i < n", "i", f"i = {start}", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(first, loop, dace.InterstateEdge(assignments={"k": entry}))
+    head = loop.add_state("head", is_start_block=True)
+    loop.add_edge(head, loop.add_state("tail"), dace.InterstateEdge(assignments={"k": step}))
+    use = sdfg.add_state_after(loop, "use")
+    tasklet = use.add_tasklet("use", {}, {"o": None}, "o = k")
+    use.add_edge(tasklet, "o", use.add_write("O"), None, dace.Memlet("O[0]"))
+    return sdfg
+
+
+def test_a_counter_of_a_loop_that_does_not_run_keeps_its_entry_value():
+    sdfg = counter_after_loop_sdfg("counter_zero_trip", "0", "3", "k + 1")
+    assert InductionVariableSubstitution().apply_pass(sdfg, {})
+    for n, expected in ((1, 0.0), (5, 2.0)):
+        out = np.zeros(1)
+        sdfg(O=out, n=n)
+        assert out[0] == expected
+
+
+def test_a_derived_symbol_of_a_loop_that_does_not_run_keeps_its_entry_value():
+    sdfg = counter_after_loop_sdfg("derived_zero_trip", "5", "0", "i")
+    assert InductionVariableSubstitution().apply_pass(sdfg, {})
+    for n, expected in ((0, 5.0), (3, 2.0)):
+        out = np.zeros(1)
+        sdfg(O=out, n=n)
+        assert out[0] == expected
+
+
 if __name__ == "__main__":
     test_arithmetic_iv_scalar_slot_collapses_to_closed_form()
     test_geometric_iv_scalar_slot_collapses_to_closed_form()
@@ -696,3 +732,5 @@ if __name__ == "__main__":
     test_iedge_iv_refuses_loop_variant_step()
     test_array_load_not_inlined_as_iv_program()
     test_array_load_not_inlined_as_iv_handbuilt()
+    test_a_counter_of_a_loop_that_does_not_run_keeps_its_entry_value()
+    test_a_derived_symbol_of_a_loop_that_does_not_run_keeps_its_entry_value()

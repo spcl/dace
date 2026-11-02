@@ -635,7 +635,7 @@ class ArgMaxLift(ppl.Pass):
                     return None
             else:
                 return None
-        if cond_block is None:
+        if cond_block is None or self.stray_assignment(loop, cond_block):
             return None
 
         non_else = [(c, br) for c, br in cond_block.branches if c is not None]
@@ -855,7 +855,21 @@ class ArgMaxLift(ppl.Pass):
                     return None
             else:
                 return None
-        return found
+        return None if found is None or self.stray_assignment(region, found) else found
+
+    @staticmethod
+    def stray_assignment(region: ControlFlowRegion, child: ControlFlowBlock) -> bool:
+        """Whether an edge of ``region`` binds a name ``child`` does not read, directly or through another binding:
+        per-iteration work the rewrites would drop with the loop."""
+        bound = {k: str(v) for e in region.edges() for k, v in e.data.assignments.items()}
+        if not bound:
+            return False
+        used = {str(sym) for sym in child.free_symbols}
+        pending = dict(bound)
+        while hits := [name for name in pending if name in used]:
+            for name in hits:
+                used |= {str(sym) for sym in symbolic.pystr_to_symbolic(pending.pop(name)).free_symbols}
+        return bool(pending)
 
     def _unit_loop_from_zero(self, loop: LoopRegion) -> tuple[symbolic.SymbolicType, symbolic.SymbolicType] | None:
         """``(start, end)`` for a unit-stride loop starting at 0, else ``None``."""
@@ -936,6 +950,13 @@ class ArgMaxLift(ppl.Pass):
             return None
         idx_names = self._match_2d_true_branch(true_branch, carrier_name, gather_sym, array, loop_vars, sdfg)
         if idx_names is None:
+            return None
+        # The rewrite drops the seeds, so the scan must start from the first element at index zero
+        preloop = self._collect_preloop_assignments(outer_loop, sdfg)
+        if carrier_name not in preloop or any(symbolic.pystr_to_symbolic(preloop.get(n, "1")) != 0 for n in idx_names):
+            return None
+        position = self._seed_gather_position(preloop[carrier_name], array, None, preloop)
+        if position is None or any(symbolic.pystr_to_symbolic(p) != 0 for p in position.strip("()").split(",")):
             return None
 
         # Contiguity: the nested iteration must visit EXACTLY the whole array, in
@@ -1107,7 +1128,7 @@ class ArgMaxLift(ppl.Pass):
             inside = m.shape[t + 1 :]
             stride = symbolic.symstr(symbolic.simplify(functools.reduce(operator.mul, inside))) if inside else None
             position = f"int_floor({flat}, {stride})" if stride is not None else flat
-            assignments[name] = position if t == 0 else f"({position} % ({symbolic.symstr(dim)}))"
+            assignments[name] = position if t == 0 else f"py_mod({position}, {symbolic.symstr(dim)})"
         bind_state = m.parent.add_state(outer_loop.label + "_argreduce2d_bind")
         m.parent.add_edge(argmax_state, bind_state, dace.InterstateEdge(assignments=assignments))
         for oe in list(m.parent.out_edges(outer_loop)):
@@ -1133,12 +1154,9 @@ class ArgMaxLift(ppl.Pass):
     def _branch_has_content(self, branch: ControlFlowBlock) -> bool:
         if not isinstance(branch, ControlFlowRegion):
             return False
-        for n in branch.nodes():
-            if isinstance(n, SDFGState) and len(n.nodes()) > 0:
-                return True
-            if isinstance(n, (LoopRegion, ConditionalBlock)):
-                return True
-        return False
+        if any(e.data.assignments for e in branch.edges()):
+            return True
+        return any(not isinstance(n, SDFGState) or len(n.nodes()) > 0 for n in branch.nodes())
 
     def _parse_compare_node(self, tree: ast.expr) -> tuple[CompareOp | None, str | None, str | None, str | None]:
         """Extract ``(op_cls, gather_name, carrier_name, transform)`` from a
@@ -1361,9 +1379,9 @@ class ArgMaxLift(ppl.Pass):
         return None, None
 
     def _extract_singleton_state(self, branch: ControlFlowBlock) -> SDFGState | None:
-        if not isinstance(branch, ControlFlowRegion):
+        if not isinstance(branch, ControlFlowRegion) or not all(isinstance(n, SDFGState) for n in branch.nodes()):
             return None
-        content_states = [n for n in branch.nodes() if isinstance(n, SDFGState) and len(n.nodes()) > 0]
+        content_states = [n for n in branch.nodes() if n.number_of_nodes() > 0]
         if len(content_states) != 1:
             return None
         return content_states[0]
@@ -1584,18 +1602,27 @@ class ArgMaxLift(ppl.Pass):
         parent = loop.parent_graph
         cur: ControlFlowBlock = loop
         seen: dict = {}
+        overwritten: set[str] = set()  # by a block between the binding and the loop: the binding is no longer live
         while True:
             ins = parent.in_edges(cur)
             if len(ins) != 1:
                 break
             e = ins[0]
             for lhs, rhs in (e.data.assignments or {}).items():
-                if lhs not in preloop:  # closest-to-loop wins
+                if (
+                    lhs not in preloop
+                    and lhs not in overwritten
+                    and overwritten.isdisjoint(re.findall(r"\w+", str(rhs)))
+                ):
                     staged = staged_iedge_rhs(str(rhs), e.src, sdfg)
                     preloop[lhs] = str(rhs) if staged is None else symbolic.symstr(staged)
+            overwritten.update(e.data.assignments or {})  # a farther binding of it is shadowed
             if e.src in seen or not isinstance(e.src, (SDFGState, ControlFlowRegion)):
                 break
             seen[e.src] = None
+            overwritten.update(e.src.read_and_write_sets()[1])
+            if isinstance(e.src, ControlFlowRegion):
+                overwritten.update(k for edge in e.src.all_interstate_edges() for k in edge.data.assignments)
             cur = e.src
         return preloop
 
