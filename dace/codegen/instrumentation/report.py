@@ -168,6 +168,8 @@ class InstrumentationReport:
             name = event.name
             uuid = event.uuid
             tid = event.tid
+            if event.additional_info and "block" in event.additional_info:
+                tid = -1  # An event of a GPU thread block: summarized over all thread blocks
 
             if isinstance(event, DurationEvent):
                 # Time

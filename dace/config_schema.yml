@@ -721,6 +721,20 @@ required:
                     the SDFG, rather than one report that spans from SDFG
                     initialization to finalization.
 
+            gpu_events:
+                type: dict
+                title: GPU events
+                description: GPU event instrumentation configuration
+                required:
+                    max_device_events:
+                        type: int
+                        title: Events in GPU kernels
+                        default: 1048576
+                        description: >
+                            The most events per call of an SDFG that thread blocks record for
+                            instrumented nodes in GPU kernels (others are counted and reported
+                            as missing). Every event takes 40 bytes of GPU memory.
+
             papi:
                 type: dict
                 title: PAPI

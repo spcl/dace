@@ -191,6 +191,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
+        if nested_sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
+            return False  # Measured as a whole: inlining would drop its instrumentation
         if len(nested_sdfg.sdfg.nodes()) != 1 or not isinstance(nested_sdfg.sdfg.nodes()[0], SDFGState):
             return False
 
