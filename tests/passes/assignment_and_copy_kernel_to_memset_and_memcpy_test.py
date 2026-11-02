@@ -1291,5 +1291,22 @@ def test_a_copy_tasklet_writing_through_a_wcr_is_not_lifted_as_a_copy():
     assert numpy.allclose(a, a0 * c), a - a0 * c
 
 
+def test_a_flattened_index_is_not_a_copy():
+    """``dst[ii, jj] = src[3 * jj + ii]`` reads column-major: the dense box and the volume match a row-major copy."""
+    sdfg = dace.SDFG("flattened_index")
+    sdfg.add_array("src", [12], dace.float64)
+    sdfg.add_array("dst", [3, 4], dace.float64)
+    sdfg.add_state(is_start_block=True).add_mapped_tasklet(
+        "cp",
+        {"ii": "0:3", "jj": "0:4"},
+        {"i": dace.Memlet("src[jj * 3 + ii]")},
+        "o = i",
+        {"o": dace.Memlet("dst[ii, jj]")},
+        external_edges=True,
+    )
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    assert _get_num_memcpy_library_nodes(sdfg) == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
