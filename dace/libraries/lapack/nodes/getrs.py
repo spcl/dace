@@ -100,14 +100,15 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
 
         # NOTE: In the case where the RHS is only a single vector (1D array),
         # cuSOLVER still expects ldb to be the "number of rows"
+        nrhs = rows_rhs
         if len(desc_rhs.shape) == 1:
-            stride_rhs = rows_rhs
+            nrhs, stride_rhs = 1, rows_rhs
 
         code = (
             environments.cusolverdn.cuSolverDn.handle_setup_code(node)
             + f"""
                 cusolverDn{func}(
-                    __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {cols_rhs},
+                    __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {nrhs},
                     ({cuda_type}*)_a, {stride_a}, _ipiv, ({cuda_type}*)_rhs_in, {stride_rhs}, _res);
                 """
         )

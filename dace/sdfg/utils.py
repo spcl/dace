@@ -2988,15 +2988,20 @@ def specialize_symbols(sdfg: "dace.SDFG", values: dict[str, float | int | str]) 
     bake_symbols(sdfg, {name: str(value) for name, value in values.items()})
 
 
+def scope_iterators(sdfg: "dace.SDFG") -> set[str]:
+    """Iterators of the loops and maps of ``sdfg``, not of its nested SDFGs."""
+    loops = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
+    return loops | {p for s in sdfg.states() for n in s.nodes() if isinstance(n, nd.MapEntry) for p in n.map.params}
+
+
 def nested_bindings(sdfg: "dace.SDFG") -> set[str]:
     """Names ``sdfg`` binds itself, which a value mapped in from outside cannot replace."""
-    bound = {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
-    return bound | {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
+    return {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments} | scope_iterators(sdfg)
 
 
 def bake_symbols(sdfg: "dace.SDFG", vals: dict[str, str]) -> None:
-    loop_vars = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
-    vals = {name: val for name, val in vals.items() if name not in loop_vars}
+    iterators = scope_iterators(sdfg)
+    vals = {name: val for name, val in vals.items() if name not in iterators}
     # Drop their interstate definitions first: replace_dict would turn the key into a literal (`5 = ...`)
     for e in sdfg.all_interstate_edges():
         for name in vals:

@@ -112,7 +112,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
 
     _, _, mx = state.add_mapped_tasklet(
         "_eye_",
-        dict(__i0="0:n", __i1="0:n"),
+        dict(__i0=f"0:{n}", __i1=f"0:{n}"),
         {},
         "_out = (__i0 == __i1) ? 1 : 0;",
         dict(_out=Memlet.simple(bin_name, "__i0, __i1")),
