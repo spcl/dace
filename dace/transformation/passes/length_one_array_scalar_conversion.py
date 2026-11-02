@@ -109,7 +109,7 @@ def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
 
 
 class ScalarRefRewriter(ast.NodeTransformer):
-    """Collapse ``old[0]`` to ``new`` and rename a bare ``old`` to ``new``.
+    """Collapse ``old[0]`` (or ``old[0, 0]``) to ``new`` and rename a bare ``old`` to ``new``.
 
     :param rename: Mapping from each rewritten descriptor's old name to its new name.
     """
@@ -119,11 +119,11 @@ class ScalarRefRewriter(ast.NodeTransformer):
 
     def visit_Subscript(self, node: ast.Subscript):
         index = node.slice.value if isinstance(node.slice, ast.Index) else node.slice
+        indices = index.elts if isinstance(index, ast.Tuple) else [index]
         if (
             isinstance(node.value, ast.Name)
             and node.value.id in self.rename
-            and isinstance(index, ast.Constant)
-            and index.value == 0
+            and all(isinstance(i, ast.Constant) and i.value == 0 for i in indices)
         ):
             return ast.copy_location(ast.Name(id=self.rename[node.value.id], ctx=node.ctx), node)
         return self.generic_visit(node)

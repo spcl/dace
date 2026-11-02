@@ -2,12 +2,17 @@
 """ConfigPropagation: one external variant per configuration combination, behind a dispatcher with the signature."""
 
 import os
+import pathlib
+import tempfile
 
 import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import ConditionalBlock
+from dace import data
+from dace.codegen import codegen
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.config_propagation import ConfigPropagation, specialize_config, staged_copies
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 
@@ -195,3 +200,163 @@ def test_singleton_values_name_the_variant(tmp_path):
 
     names = sorted(os.listdir(tmp_path))
     assert f"{sdfg.name}_ldeep_0.sdfgz" in names and f"{sdfg.name}_ldeep_1.sdfgz" in names
+
+
+def write_by_branch(sdfg: dace.SDFG, condition: str) -> ConditionalBlock:
+    """``res[0] = 1 if condition else 2``."""
+    guard = ConditionalBlock("guard")
+    sdfg.add_node(guard, is_start_block=not sdfg.nodes())
+    for code, value in ((CodeBlock(condition), 1), (None, 2)):
+        branch = ControlFlowRegion(f"branch_{value}", sdfg=sdfg)
+        guard.add_branch(code, branch)
+        state = branch.add_state(f"write_{value}", is_start_block=True)
+        tasklet = state.add_tasklet("write", {}, {"o": None}, f"o = {value}")
+        state.add_edge(tasklet, "o", state.add_write("res"), None, dace.Memlet("res[0]"))
+    return guard
+
+
+def test_nested_length_one_connector_bakes_its_subscript():
+    inner = dace.SDFG("subscripted_connector_inner")
+    inner.add_array("y", [1], dace.int32)
+    inner.add_array("res", [1], dace.int32)
+    guard = write_by_branch(inner, "y[0] == 0")
+    sdfg = dace.SDFG("subscripted_connector")
+    sdfg.add_array("x", [1], dace.int32)
+    sdfg.add_array("res", [1], dace.int32)
+    state = sdfg.add_state(is_start_block=True)
+    call = state.add_nested_sdfg(inner, {"y": None}, {"res": None})
+    state.add_edge(state.add_read("x"), None, call, "y", dace.Memlet("x[0]"))
+    state.add_edge(call, "res", state.add_write("res"), None, dace.Memlet("res[0]"))
+
+    specialize_config(sdfg, {"x": 1})
+
+    assert guard.branches[0][0].as_string == "(1 == 0)"
+    res = np.zeros(1, dtype=np.int32)
+    sdfg(x=np.array([1], dtype=np.int32), res=res)
+    assert res[0] == 2
+
+
+def test_rank_two_flag_bakes_its_subscript():
+    sdfg = dace.SDFG("rank_two_flag")
+    sdfg.add_array("flag", [1, 1], dace.int32)
+    sdfg.add_array("res", [1], dace.int32)
+    guard = write_by_branch(sdfg, "flag[0, 0] == 1")
+
+    specialize_config(sdfg, {"flag": 1})
+
+    assert "[" not in guard.branches[0][0].as_string
+    res = np.zeros(1, dtype=np.int32)
+    sdfg(flag=np.ones((1, 1), dtype=np.int32), res=res)
+    assert res[0] == 1
+
+
+def test_unrelated_nested_rank_two_transient_keeps_a_valid_condition():
+    inner = dace.SDFG("unrelated_transient_inner")
+    inner.add_array("held", [1, 1], dace.int32, transient=True)
+    inner.add_array("res", [1], dace.int32)
+    start = inner.add_state(is_start_block=True)
+    tasklet = start.add_tasklet("store", {}, {"o": None}, "o = 3")
+    start.add_edge(tasklet, "o", start.add_write("held"), None, dace.Memlet("held[0, 0]"))
+    guard = write_by_branch(inner, "held[0, 0] == 3")
+    inner.add_edge(start, guard, dace.InterstateEdge())
+    sdfg = dace.SDFG("unrelated_transient")
+    sdfg.add_array("flag", [1], dace.int32)
+    sdfg.add_array("res", [1], dace.int32)
+    state = sdfg.add_state(is_start_block=True)
+    call = state.add_nested_sdfg(inner, {}, {"res": None})
+    state.add_edge(call, "res", state.add_write("res"), None, dace.Memlet("res[0]"))
+
+    specialize_config(sdfg, {"flag": 1})
+
+    assert isinstance(inner.arrays["held"], data.Scalar)
+    assert guard.branches[0][0].as_string == "(held == 3)"
+    assert codegen.generate_code(sdfg)
+
+
+def constant_sized_flag_sdfg() -> dace.SDFG:
+    sdfg = dace.SDFG("signature_kept")
+    sdfg.add_constant("K", 4)
+    sdfg.add_array("res", ["K"], dace.int32)
+    sdfg.add_array("flag", [1], dace.int32)
+    sdfg.arg_names = ["res", "flag"]
+    sdfg.frontend_metadata = {"origin": "test"}
+    write_by_branch(sdfg, "flag[0] == 1")
+    return sdfg
+
+
+def test_root_keeps_argument_order_metadata_and_constants():
+    with tempfile.TemporaryDirectory() as folder:
+        root = ConfigPropagation({"flag": [0, 1]}, folder).apply_pass(constant_sized_flag_sdfg(), {})
+        assert root.arg_names == ["res", "flag"]
+        assert root.frontend_metadata == {"origin": "test"}
+        assert "K" in root.constants_prop
+
+        res = np.zeros(4, dtype=np.int32)
+        root(res, np.array([1], dtype=np.int32))
+        assert res[0] == 1
+
+
+def test_written_structure_member_is_connected_as_output():
+    sdfg = dace.SDFG("written_member")
+    sdfg.add_datadesc("st", data.Structure({"x": data.Scalar(dace.float64)}, name="pair"))
+    sdfg.add_symbol("flag", dace.int32)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("write", {}, {"o": None}, "o = 1.0")
+    state.add_edge(tasklet, "o", state.add_write("st.x"), None, dace.Memlet("st.x"))
+
+    with tempfile.TemporaryDirectory() as folder:
+        root = ConfigPropagation({"flag": [0, 1]}, folder).apply_pass(sdfg, {})
+        list(root.all_control_flow_regions(recursive=True, load_ext=True))
+    root.validate()
+    calls = [node for node, _ in root.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG)]
+    assert calls and all("st" in call.out_connectors for call in calls)
+
+
+def test_unknown_domain_name_is_refused():
+    sdfg = dace.SDFG("unknown_domain")
+    sdfg.add_array("flag", [1], dace.int32)
+    sdfg.add_array("res", [1], dace.int32)
+    write_by_branch(sdfg, "flag[0] == 1")
+
+    with tempfile.TemporaryDirectory() as folder, pytest.raises(ValueError, match="typo"):
+        ConfigPropagation({"typo": [0, 1]}, folder).apply_pass(sdfg, {})
+
+
+def test_relative_output_dir_survives_a_directory_change():
+    sdfg = dace.SDFG("relative_output")
+    sdfg.add_array("flag", [1], dace.int32)
+    sdfg.add_array("res", [1], dace.int32)
+    write_by_branch(sdfg, "flag[0] == 1")
+
+    start = os.getcwd()
+    with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+        try:
+            os.chdir(first)
+            root = ConfigPropagation({"flag": [1]}, "variants").apply_pass(sdfg, {})
+            os.chdir(second)
+            list(root.all_control_flow_regions(recursive=True, load_ext=True))
+        finally:
+            os.chdir(start)
+    calls = [node for node, _ in root.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG)]
+    assert calls and all(call.sdfg is not None and os.path.isabs(call.ext_sdfg_path) for call in calls)
+
+
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory() as scratch:
+        test_variants_and_dispatcher(pathlib.Path(scratch, "variants"))
+        test_values_outside_the_domains_run_the_generic_sdfg(pathlib.Path(scratch, "generic"))
+        test_singleton_domains_call_one_variant(pathlib.Path(scratch, "singleton"))
+        test_staged_argument_takes_the_value(pathlib.Path(scratch, "staged"))
+        test_singleton_values_name_the_variant(pathlib.Path(scratch, "names"))
+    test_written_configuration_is_refused()
+    test_staged_copy_of_two_values_is_not_baked()
+    test_staged_reduction_is_not_baked()
+    test_multi_element_configuration_is_refused()
+    test_reassigned_symbol_is_refused()
+    test_nested_length_one_connector_bakes_its_subscript()
+    test_rank_two_flag_bakes_its_subscript()
+    test_unrelated_nested_rank_two_transient_keeps_a_valid_condition()
+    test_root_keeps_argument_order_metadata_and_constants()
+    test_written_structure_member_is_connected_as_output()
+    test_unknown_domain_name_is_refused()
+    test_relative_output_dir_survives_a_directory_change()

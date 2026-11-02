@@ -83,6 +83,10 @@ def specialize_variant(sdfg: SDFG, values: dict[str, Value]) -> None:
     sdfg.simplify()
 
 
+def arguments(sdfg: SDFG) -> set[str]:
+    return {name for name, desc in sdfg.arrays.items() if not desc.transient}
+
+
 def config_condition(sdfg: SDFG, values: dict[str, Value]) -> str:
     """The condition selecting ``values``, read from the arguments of ``sdfg``."""
 
@@ -132,15 +136,19 @@ class ConfigPropagation(ppl.Pass):
 
     def add_call(self, root: SDFG, state: SDFGState, variant: SDFG, path: str) -> None:
         """Call the external ``variant`` stored at ``path`` from ``state``, passing the arguments of ``root``."""
-        args = {name for name, desc in variant.arrays.items() if not desc.transient}
-        reads, writes = variant.read_and_write_sets()
+        args = arguments(variant)
+        # A structure member is read and written by its full name; the connector is its root
+        reads, writes = ({name.split(".")[0] for name in names} for names in variant.read_and_write_sets())
         # Ordered, untyped: the connector types are taken from the variant once it is loaded
         # An argument the variant no longer touches stays connected: every non-transient needs a connector
         inputs = dict.fromkeys(sorted((args & reads) | (args - reads - writes)))
         outputs = dict.fromkeys(sorted(args & writes))
         # Only what the variant uses: a symbol baked away may still be declared there
         used = {str(s) for s in variant.used_symbols(all_symbols=True)}
-        symbols = sorted(str(s) for s in variant.free_symbols if str(s) in used)
+        symbols = {str(s) for s in variant.free_symbols} & used
+        symbols = sorted(
+            symbols | (variant.constants_prop.keys() & variant.symbols.keys())
+        )  # a constant sizes connectors
         node = state.add_nested_sdfg(
             None,
             inputs,
@@ -155,8 +163,17 @@ class ConfigPropagation(ppl.Pass):
             state.add_edge(node, name, state.add_write(name), None, root.make_array_memlet(name))
 
     def apply_pass(self, sdfg: SDFG, _: dict[str, Any]) -> SDFG:
-        """:return: The dispatcher SDFG; the variants are written to ``output_dir``."""
+        """:return: The dispatcher SDFG; the variants are written to ``output_dir``.
+
+        :raises ValueError: If a domain names neither an argument nor a free symbol of ``sdfg``.
+        """
+        unknown = sorted(name for name in self.domains if name not in sdfg.free_symbols and name not in arguments(sdfg))
+        if unknown:
+            raise ValueError(f"Configuration names that are neither an argument nor a free symbol: {unknown}")
         root = SDFG(sdfg.name)
+        root.arg_names = list(sdfg.arg_names)
+        root.constants_prop = copy.deepcopy(sdfg.constants_prop)
+        root.frontend_metadata = copy.deepcopy(sdfg.frontend_metadata)
         for name, desc in sdfg.arrays.items():
             if not desc.transient:
                 root.add_datadesc(name, copy.deepcopy(desc))
@@ -172,7 +189,7 @@ class ConfigPropagation(ppl.Pass):
         generic.name = f"{sdfg.name}_generic"
         calls.append((generic, None))
         for callee, condition in calls:
-            path = os.path.join(self.output_dir, f"{callee.name}.sdfgz")
+            path = os.path.abspath(os.path.join(self.output_dir, f"{callee.name}.sdfgz"))
             callee.save(path, compress=True)
             branch = ControlFlowRegion(f"call_{callee.name}", sdfg=root)
             cond.add_branch(CodeBlock(condition) if condition else None, branch)
