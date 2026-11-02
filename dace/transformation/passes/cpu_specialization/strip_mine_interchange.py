@@ -923,7 +923,7 @@ def replicated_reads(state: SDFGState, node: nodes.NestedSDFG, reads: dict[str, 
     return True
 
 
-def tile_local(reads: dict[str, list[list[Any]]], writes: dict[str, list[list[Any]]]) -> bool:
+def tile_local(reads: dict[str, list[list[Any]]], writes: dict[str, list[list[Any]]], carried: set[str]) -> bool:
     """Whether every dependence among ``reads`` / ``writes`` stays inside one tile.
 
     A tile owns a slice of the CUT axis (``axis_symbol(0)``, the innermost parameter of every tiled
@@ -934,6 +934,7 @@ def tile_local(reads: dict[str, list[list[Any]]], writes: dict[str, list[list[An
 
     :param reads: ``name -> [index expression lists]``, on the tile's own axes.
     :param writes: the same for the writes.
+    :param carried: the symbols the loop defines: a cut dimension naming one moves across tiles from trip to trip.
     :returns: ``True`` if no dependence crosses a tile boundary.
     """
     cut = {str(axis_symbol(0))}
@@ -949,7 +950,8 @@ def tile_local(reads: dict[str, list[list[Any]]], writes: dict[str, list[list[An
             if not cut_dims:
                 return False
             if any(
-                {str(s) for s in write_indices[dim].free_symbols if str(s).startswith(AXIS_PREFIX)} != cut
+                {str(s) for s in write_indices[dim].free_symbols if str(s).startswith(AXIS_PREFIX) or str(s) in carried}
+                != cut
                 for dim in cut_dims
             ):
                 return False
@@ -1144,14 +1146,19 @@ def tileable_maps(loop: LoopRegion, sdfg: SDFG) -> Cut | None:
         # loop assigns (a CSR row's bounds, read per trip) has no value there.
         if {str(name) for name in symbolic.free_symbols_and_functions(size)} & defined:
             continue
-        cut = cut_along(shapes, size, innermost, reads, sdfg)
+        cut = cut_along(shapes, size, innermost, reads, sdfg, defined)
         if cut is not None:
             return cut
     return None
 
 
 def cut_along(
-    shapes: list[Shape], size: Any, innermost: bool, replicated: dict[str, list[list[Any]]], sdfg: SDFG
+    shapes: list[Shape],
+    size: Any,
+    innermost: bool,
+    replicated: dict[str, list[list[Any]]],
+    sdfg: SDFG,
+    carried: set[str],
 ) -> Cut | None:
     """The cut of ``shapes`` along their axis of extent ``size``, or ``None`` if a dependence crosses tiles.
 
@@ -1174,7 +1181,7 @@ def cut_along(
     # loop-carried one is -- and a per-map test never compares two maps against each other. The jacobi
     # stencils are that shape: ``B[i+1] = f(A[i..i+2])`` then ``A[i+1] = f(B[i..i+2])``. Hence ONE test
     # over every map that would be tiled.
-    if not tile_local(reads, writes):
+    if not tile_local(reads, writes, carried):
         return None
     cut_axis = {str(axis_symbol(0))}
     touched = {
