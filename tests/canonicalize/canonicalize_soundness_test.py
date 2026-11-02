@@ -10,6 +10,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_fusion import LoopFusion
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
 
 N = dace.symbol("N", dtype=dace.int64)
 M = dace.symbol("M", dtype=dace.int64)
@@ -105,8 +106,34 @@ def test_a_seed_read_before_a_store_is_not_the_stored_value():
     _assert_canon_keeps(reseeded_max, "reseeded_max", {"a": a, "out": np.zeros(1)}, N=8)
 
 
+def test_a_symbol_read_round_the_enclosing_loop_stays_live():
+    """``O[t] = k`` reads what the inner loop assigned on the outer loop's previous trip."""
+    sdfg = dace.SDFG("live_round_the_back_edge")
+    sdfg.add_array("O", [8], dace.int64)
+    sdfg.add_array("P", [4], dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    outer = LoopRegion("outer", "t < 8", "t", "t = 0", "t = t + 1")
+    read = outer.add_state("read", is_start_block=True)
+    tasklet = read.add_tasklet("use", {}, {"o"}, "o = k")
+    read.add_edge(tasklet, "o", read.add_write("O"), None, dace.Memlet("O[t]"))
+    inner = LoopRegion("inner", "i < 4", "i", "i = 0", "i = i + 1")
+    outer.add_node(inner)
+    outer.add_edge(read, inner, dace.InterstateEdge())
+    first = inner.add_state("first", is_start_block=True)
+    write = inner.add_state("write")
+    inner.add_edge(first, write, dace.InterstateEdge(assignments={"k": "i + t"}))
+    tasklet = write.add_tasklet("put", {}, {"o"}, "o = k")
+    write.add_edge(tasklet, "o", write.add_write("P"), None, dace.Memlet("P[i]"))
+    start = sdfg.add_state("start", is_start_block=True)
+    sdfg.add_node(outer)
+    sdfg.add_edge(start, outer, dace.InterstateEdge(assignments={"k": "100"}))
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert inner in list(outer.nodes())
+
+
 if __name__ == "__main__":
     test_a_write_offset_by_an_inner_iterator_stays_ordered()
+    test_a_symbol_read_round_the_enclosing_loop_stays_live()
     test_a_max_seeded_above_the_data_keeps_its_seed()
     test_a_seed_read_before_a_store_is_not_the_stored_value()
     test_loop_fusion_keeps_a_write_read_pair_at_unrelated_fixed_indices()
