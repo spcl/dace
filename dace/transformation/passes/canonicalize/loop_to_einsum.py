@@ -46,11 +46,11 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_basic, as_expr
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.canonicalize.loop_iteration_value import replace_loop_with_state
+from dace.transformation.passes.canonicalize.loop_iteration_value import perfect_nest, replace_loop_with_state
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -146,27 +146,6 @@ class _Product(NamedTuple):
     terms: list[Union[_Leaf, "_Product"]]
 
 
-def _plain_edges(region: ControlFlowRegion) -> bool:
-    """True iff every interstate edge inside ``region`` is an unconditional plain link.
-    A condition or an assignment means the body is more than straight-line dataflow."""
-    for e in region.edges():
-        if e.data.assignments:
-            return False
-        if e.data.condition is not None and e.data.condition.as_string.strip() not in ("1", "True"):
-            return False
-    return True
-
-
-def _single_body_block(region: ControlFlowRegion) -> ControlFlowBlock | None:
-    """``region``'s one meaningful child block, or ``None``. Empty scaffold states --
-    the connective ``..._for_inline_pre_state`` blocks the map->loop lowering leaves
-    behind -- are ignored; anything else must be alone."""
-    if not _plain_edges(region):
-        return None
-    blocks = [b for b in region.nodes() if not (isinstance(b, SDFGState) and b.number_of_nodes() == 0)]
-    return blocks[0] if len(blocks) == 1 else None
-
-
 def _loop_axis(loop: LoopRegion) -> _Axis | None:
     """``loop`` as one ``0 .. end`` unit-stride axis, or ``None`` if it is not one.
     A non-zero start or a non-unit stride is refused for the same reason
@@ -219,19 +198,11 @@ def _nest_of(root: LoopRegion) -> _Nest | None:
     """The iteration nest rooted at a ``LoopRegion``. Loops contribute ONE axis each and
     must form a perfect chain; the innermost body may then descend through map scopes
     (a mixed ``for i: for j,k in dace.map[...]`` nest is one nest)."""
-    axes: list[_Axis] = []
-    block = root
-    while isinstance(block, LoopRegion):
-        axis = _loop_axis(block)
-        if axis is None:
-            return None
-        axes.append(axis)
-        block = _single_body_block(block)
-        if block is None:
-            return None
-    if not isinstance(block, SDFGState):
+    nest = perfect_nest(root)
+    if nest is None:
         return None
-    return _descend_maps(block, axes, None)
+    axes = [_loop_axis(loop) for loop in nest[0]]
+    return None if None in axes else _descend_maps(nest[1], axes, None)
 
 
 def _nest_of_map(state: SDFGState, entry: nodes.MapEntry) -> _Nest | None:

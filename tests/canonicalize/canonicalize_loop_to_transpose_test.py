@@ -246,6 +246,26 @@ def test_a_window_that_may_be_empty_stays_a_loop():
     assert _apply(transpose_window.to_sdfg(simplify=True)) == 0
 
 
+def test_a_symbol_assigned_between_the_loops_stays_a_nest():
+    """The edge into the inner loop assigns ``k``, read after the nest: splicing the nest would drop it."""
+    sdfg = dace.SDFG("transpose_edge_assignment")
+    sdfg.add_array("A", [4, 4], dace.float64)
+    sdfg.add_array("B", [4, 4], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    outer = LoopRegion("outer", "i < 4", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(outer, is_start_block=True)
+    head = outer.add_state("head", is_start_block=True)
+    inner = LoopRegion("inner", "j < 4", "j", "j = 0", "j = j + 1", sdfg=sdfg)
+    outer.add_node(inner)
+    outer.add_edge(head, inner, dace.InterstateEdge(assignments={"k": "i"}))
+    body = inner.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("copy", {"__inp"}, {"__out"}, "__out = __inp")
+    body.add_edge(body.add_read("A"), None, tasklet, "__inp", dace.Memlet("A[i, j]"))
+    body.add_edge(tasklet, "__out", body.add_write("B"), None, dace.Memlet("B[j, i]"))
+
+    assert _apply(sdfg) == 0
+
+
 def test_a_zero_extent_transpose_is_a_no_op():
     """The BLAS call aborts the process on a zero extent."""
 

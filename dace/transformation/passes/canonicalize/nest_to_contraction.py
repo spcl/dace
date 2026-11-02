@@ -27,8 +27,8 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.canonicalize.loop_iteration_value import replace_loop_with_state
-from dace.transformation.passes.canonicalize.loop_to_einsum import _is_sum_tasklet, _single_body_block
+from dace.transformation.passes.canonicalize.loop_iteration_value import perfect_nest, replace_loop_with_state
+from dace.transformation.passes.canonicalize.loop_to_einsum import _is_sum_tasklet
 from dace.transformation.passes.canonicalize.loop_to_transpose import _is_copy_tasklet
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -529,15 +529,6 @@ def nest_axes(loops: list[LoopRegion], chain: list[nodes.MapEntry]) -> dict[str,
     return {a.param: a for a in axes}
 
 
-def loop_chain(loop: LoopRegion) -> tuple[list[LoopRegion], SDFGState] | None:
-    loops = []
-    block = loop
-    while isinstance(block, LoopRegion):
-        loops.append(block)
-        block = _single_body_block(block)
-    return (loops, block) if isinstance(block, SDFGState) else None
-
-
 def state_counts_of(sdfg: SDFG) -> dict[str, int]:
     counts: dict[str, int] = {}
     for state in sdfg.states():
@@ -575,7 +566,7 @@ class NestToContraction(ppl.Pass):
         for loop in candidates:
             if loop in gone:
                 continue
-            found = loop_chain(loop)
+            found = perfect_nest(loop)
             if found is None:
                 continue
             loops, state = found
