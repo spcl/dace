@@ -10,17 +10,20 @@ symbol, and each is declared as an assumption, so it is checked when the program
 import sympy
 
 from dace import SDFG, symbolic
+from dace.sdfg import nodes
 from dace.sdfg.state import BreakBlock, ContinueBlock, LoopRegion, ReturnBlock
 from dace.transformation.passes.analysis import loop_analysis
 
 
 def always_runs(block) -> bool:
     """Whether ``block`` runs on every execution of the root SDFG: no conditional around it, only loops that provably
-    iterate, no conditional edge or early exit on the way, up through every nested SDFG."""
+    iterate, no conditional edge or early exit in what holds it, up through every nested SDFG."""
     region = block.parent_graph
     while region is not None:
         if isinstance(region, SDFG):
             if any(not e.data.is_unconditional() for e in region.edges()):
+                return False
+            if any(isinstance(b, ReturnBlock) for b in region.all_control_flow_blocks()):
                 return False
             if region.parent_nsdfg_node is None:
                 return True
@@ -30,7 +33,7 @@ def always_runs(block) -> bool:
             return False
         if any(not e.data.is_unconditional() for e in region.edges()):
             return False
-        if any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in region.nodes()):
+        if any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in region.all_control_flow_blocks()):
             return False
         region = region.parent_graph
     return False
@@ -76,6 +79,9 @@ def declare_in_bounds_extents(sdfg: SDFG) -> dict[str, int]:
                 for edge in state.all_edges(an):
                     memlet = edge.data
                     if memlet.is_empty() or memlet.dynamic or memlet.data != an.data:
+                        continue
+                    # A nested SDFG's subset is propagated over its branches; its own accesses are visited with it.
+                    if isinstance(edge.dst if edge.src is an else edge.src, nodes.NestedSDFG):
                         continue
                     subset = memlet.src_subset if edge.src is an else memlet.dst_subset
                     subset = subset if subset is not None else memlet.subset
