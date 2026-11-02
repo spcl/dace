@@ -76,7 +76,7 @@ class DeadStateElimination(ppl.Pass):
                         if len(node.branches) == 1:
                             cond, branch = node.branches[0]
                             if cond is None or constant_truth(cond, node.sdfg) is True:
-                                node.parent_graph.add_node(branch)
+                                node.parent_graph.add_node(branch, ensure_unique_name=True)
                                 for ie in cfg.in_edges(node):
                                     cfg.add_edge(ie.src, branch, ie.data)
                                 for oe in cfg.out_edges(node):
