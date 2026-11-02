@@ -50,5 +50,27 @@ def test_a_symbol_the_body_assigns_is_not_mapped_into_the_enclosing_nest():
     assert np.array_equal(b, a[idx])
 
 
+def test_a_symbol_one_branch_assigns_is_carried_past_it():
+    """``row = i`` under an ``if`` does not define ``row`` for the read after it: an iteration that skips the branch
+    reads the previous iteration's value, so the loop is sequential."""
+    S = dace.symbol("S")
+
+    @dace.program
+    def carried(c: dace.int64[S], b: dace.float64[S], y: dace.float64[S]):
+        row = 0
+        for i in range(S):
+            if c[i] > 0:
+                row = i
+            y[i] = b[row]
+
+    sdfg = carried.to_sdfg(simplify=True)
+    assert not LoopToMap.can_be_applied_to(sdfg, loop=next(iter(_loops(sdfg))))
+
+
+def _loops(sdfg):
+    return (region for region in sdfg.all_control_flow_regions(recursive=True) if isinstance(region, LoopRegion))
+
+
 if __name__ == "__main__":
     test_a_symbol_the_body_assigns_is_not_mapped_into_the_enclosing_nest()
+    test_a_symbol_one_branch_assigns_is_carried_past_it()

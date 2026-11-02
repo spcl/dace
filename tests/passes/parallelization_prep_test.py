@@ -4,6 +4,7 @@
 import hashlib
 import json
 
+import numpy as np
 import pytest
 
 import dace
@@ -120,11 +121,16 @@ def test_the_modulo_peel_is_decided_on_the_loop_itself(program):
     # The remaining loop, and the peeled iteration only when its body holds a loop that could keep a wrap.
     assert len(peel._peel_segments(loop, 1, "back")) == (2 if nested else 1)
     before = _json_digest(sdfg)
-    assert peel._best_modulo_peel_for(loop, sdfg) == (1, "back")
+    assert peel._best_modulo_peel_for(loop, sdfg)[:2] == (1, "back")
     assert _json_digest(sdfg) == before
     assert peel.apply_pass(sdfg, {}) == 1
     sdfg.validate()
-    assert not any(peel._has_wrapping_modulo(l) for l in sdfg.all_control_flow_regions() if isinstance(l, LoopRegion))
+    # Only the pinned original keeps the wrap, for an ``N`` shorter than the peel.
+    assert not any(
+        peel._has_wrapping_modulo(l)
+        for l in sdfg.all_control_flow_regions()
+        if isinstance(l, LoopRegion) and not l.pinned_sequential
+    )
 
 
 def test_the_modulo_split_is_decided_on_the_loop_itself():
@@ -144,6 +150,23 @@ def test_the_modulo_split_is_decided_on_the_loop_itself():
     assert [str(r) for r in relations] == ["K < N"], relations
 
 
+@dace.program
+def store_near_the_end(a: dace.float64[N + 8], b: dace.float64[N + 8]):
+    for i in range(N):
+        a[i + 4] = b[i + 4] + 1.0
+        if i == N - 3:
+            b[0] = a[i + 4]
+
+
+def test_a_split_point_near_the_end_adds_no_iteration_to_a_short_loop():
+    """``N = 1`` puts the point ``N - 3`` below the start: the tail must not begin at ``i = -1``."""
+    sdfg = store_near_the_end.to_sdfg(simplify=True)
+    assert BestEffortLoopPeeling().apply_pass(sdfg, {})
+    a, b = np.zeros(9), np.arange(9.0) + 1.0
+    sdfg(a=a, b=b, N=1)
+    assert a[3] == 0.0 and a[4] == b[4] + 1.0
+
+
 if __name__ == "__main__":
     import _pytest.monkeypatch
 
@@ -157,3 +180,27 @@ if __name__ == "__main__":
     for program in (wrap_at_the_end, wrap_at_the_end_nested):
         test_the_modulo_peel_is_decided_on_the_loop_itself(program)
     test_the_modulo_split_is_decided_on_the_loop_itself()
+    test_a_split_point_near_the_end_adds_no_iteration_to_a_short_loop()
+
+
+@pytest.mark.parametrize("offset", [2, -2])
+def test_modulo_peel_keeps_a_loop_shorter_than_the_peel(offset):
+    """The peel of ``a[(i + 2) % N]`` runs iterations a loop of ``N = 1`` never had: it needs a runtime check."""
+
+    N = dace.symbol("N")
+
+    @dace.program
+    def wrap(A: dace.float64[N + 4], B: dace.float64[N + 4]):
+        for i in range(N):
+            A[i] = B[(i + offset) % N]
+
+    sdfg = wrap.to_sdfg(simplify=True)
+    assert BestEffortLoopPeeling().apply_pass(sdfg, {}) == 1
+    for n in (1, 2, 3, 12):
+        source = np.arange(n + 4) * 10.0
+        expected = np.arange(n + 4, dtype=float)
+        for i in range(n):
+            expected[i] = source[(i + offset) % n]
+        got = np.arange(n + 4, dtype=float)
+        sdfg(A=got, B=source.copy(), N=n)
+        assert np.array_equal(got, expected), n
