@@ -9,8 +9,9 @@ from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import sdfg_to_tree
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, StateSubgraphView
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, StateSubgraphView
 from dace.transformation.helpers import nest_sdfg_control_flow, nest_sdfg_subgraph, nest_state_subgraph
+from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 
 
 @dace.program
@@ -442,6 +443,80 @@ def test_an_sdfg_nested_in_a_moved_state_gets_the_new_sdfg_as_parent():
     assert np.allclose(a, x * 2.0 + 1.0)
 
 
+def branch_assigned_symbol() -> tuple[dace.SDFG, list]:
+    """``i = 1 if first else start`` in both branches of a conditional, then ``A[i] = i``; ``i`` is ``int32``."""
+    sdfg = dace.SDFG("branch_assigned_symbol")
+    for name in ("first", "start", "i"):
+        sdfg.add_symbol(name, dace.int32)
+    sdfg.add_array("A", [10], dace.float64)
+    begin = sdfg.add_state("begin", is_start_block=True)
+    pick = ConditionalBlock("pick")
+    sdfg.add_node(pick)
+    sdfg.add_edge(begin, pick, dace.InterstateEdge())
+    for condition, value in (("first != 0", "1"), (None, "start")):
+        branch = ControlFlowRegion(f"pick_{value}")
+        pick.add_branch(condition, branch)
+        branch.add_edge(
+            branch.add_state(is_start_block=True), branch.add_state(), dace.InterstateEdge(assignments={"i": value})
+        )
+    use = sdfg.add_state("use")
+    sdfg.add_edge(pick, use, dace.InterstateEdge())
+    tasklet = use.add_tasklet("store", {}, {"out"}, "out = i")
+    use.add_edge(tasklet, "out", use.add_write("A"), None, dace.Memlet("A[i]"))
+    sdfg.add_edge(use, sdfg.add_state("end"), dace.InterstateEdge())
+    return sdfg, [pick, use]
+
+
+def test_a_symbol_the_subgraph_assigns_keeps_its_declared_type():
+    sdfg, blocks = branch_assigned_symbol()
+
+    state = nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, blocks))
+
+    nested = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+    assert nested.sdfg.symbols["i"] == dace.int32
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "int64_t i;" not in code
+    for first, start, index in ((1, 7, 1), (0, 7, 7)):
+        data = np.zeros(10)
+        sdfg(A=data, first=first, start=start)
+        assert data[index] == index and np.count_nonzero(data) == 1
+
+
+def test_inlining_the_nest_back_keeps_the_declared_type():
+    sdfg, blocks = branch_assigned_symbol()
+    state = nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, blocks))
+    nested = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
+
+    InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nested)
+
+    assert sdfg.symbols["i"] == dace.int32
+
+
+def test_inlining_keeps_the_declared_type_of_a_loop_variable():
+    inner = dace.SDFG("inner_loop")
+    inner.add_symbol("i", dace.int32)
+    inner.add_array("A", [10], dace.float64)
+    loop = LoopRegion("fill", "i < 10", "i", "i = 0", "i = i + 1")
+    inner.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("store", {}, {"out"}, "out = i")
+    body.add_edge(tasklet, "out", body.add_write("A"), None, dace.Memlet("A[i]"))
+    sdfg = dace.SDFG("loop_variable_inline")
+    sdfg.add_array("A", [10], dace.float64)
+    state = sdfg.add_state()
+    nested = state.add_nested_sdfg(inner, {}, {"A"})
+    state.add_edge(nested, "A", state.add_write("A"), None, dace.Memlet("A[0:10]"))
+
+    InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nested)
+
+    assert sdfg.symbols["i"] == dace.int32
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "int64_t i;" not in code
+    data = np.zeros(10)
+    sdfg(A=data)
+    np.testing.assert_array_equal(data, np.arange(10.0))
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -461,3 +536,6 @@ if __name__ == "__main__":
     test_a_symbol_the_start_block_resets_is_mapped_only_when_read_first(False)
     test_a_symbol_the_start_block_resets_is_mapped_only_when_read_first(True)
     test_an_sdfg_nested_in_a_moved_state_gets_the_new_sdfg_as_parent()
+    test_a_symbol_the_subgraph_assigns_keeps_its_declared_type()
+    test_inlining_the_nest_back_keeps_the_declared_type()
+    test_inlining_keeps_the_declared_type_of_a_loop_variable()
