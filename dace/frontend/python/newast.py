@@ -5442,13 +5442,9 @@ class ProgramVisitor(ExtNodeVisitor):
             for i in new_axes:
                 strides.insert(i, 1)
         length = len(other_subset)
-        # Squeeze only scalar-index dims; a length-1 slice keeps its axis. Shift slice_dims past inserted new axes.
-        keep = set(new_axes)
-        for dim in expr.slice_dims:
-            for inserted in sorted(new_axes):
-                dim += inserted <= dim
-            keep.add(dim)
-        nsqz = other_subset.squeeze(ignore_indices=sorted(keep))
+        # Squeeze only scalar-index dims; a length-1 slice keeps its axis. slice_dims count the axes before new_axes.
+        subset_axes = [i for i in range(length) if i not in new_axes]
+        nsqz = other_subset.squeeze(ignore_indices=new_axes + [subset_axes[dim] for dim in expr.slice_dims])
         sqz = [i for i in range(length) if i not in nsqz]
         for i in reversed(sqz):
             strides.pop(i)
