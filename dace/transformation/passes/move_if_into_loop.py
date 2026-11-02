@@ -119,6 +119,9 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
                 bad = True
             if lhs in _free(rhs):
                 bad = True  # self-referential: accumulates over iterations
+        # The edge runs once ahead of the loop now, and in every iteration afterwards
+        if any(body_may_overwrite(region, loop, r) for r in e.data.get_read_memlets(cb.sdfg.arrays)):
+            bad = True
     if bad:
         return None
     # The prep now runs under the guard in every iteration, so what it writes must leave the guard's value alone, and
