@@ -773,12 +773,15 @@ def read_before_written(
         return subset is not None and state.entry_node(dn) is None and not subset.free_symbols & moving
 
     def stored_by(state: SDFGState, dn: nodes.AccessNode) -> set[str | tuple[str, subsets.Subset]]:
-        """What the writes into ``dn`` guarantee: its elements as (name, subset), or the bare name when a write sits
-        in a scope or has no subset, which then counts as the whole container."""
+        """What the writes into ``dn`` guarantee: its elements as (name, subset), or the bare name when a write spans
+        the container, sits in a scope or has no subset, which then counts as the whole container."""
         elements = [e.data.get_dst_subset(e, state) for e in state.in_edges(dn) if not e.data.is_empty()]
-        if state.entry_node(dn) is None and all(subset is not None for subset in elements):
-            return {(dn.data, subset) for subset in elements}
-        return {dn.data}
+        if state.entry_node(dn) is not None or any(subset is None for subset in elements):
+            return {dn.data}
+        whole = subsets.Range.from_array(state.sdfg.arrays[dn.data])
+        if subsets_cover(elements, whole, symbolic.Facts.none()):
+            return {dn.data}
+        return {(dn.data, subset) for subset in elements}
 
     def same_slot(part: subsets.Subset, read: subsets.Subset) -> bool:
         """Whether ``part`` can hold ``read`` when their elements are not both known: only a dimension where each
