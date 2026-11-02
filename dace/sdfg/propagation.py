@@ -646,7 +646,7 @@ class ConstantRangeMemlet(MemletPattern):
             sympy.sympify(
                 _subexpr(bound, first) if isinstance(bound, (sympy.Basic, symbolic.SymExpr)) else bound
             ).is_comparable
-            and symbolic.free_symbol_names([bound]).keys() <= set(self.params)
+            and symbolic.free_symbol_names([bound]).keys() <= set(map(str, self.params))
             for expr in expressions
             for dexpr in expr
             for bound in (dexpr if isinstance(dexpr, tuple) else (dexpr,))
