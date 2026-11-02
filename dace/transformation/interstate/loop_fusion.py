@@ -115,6 +115,8 @@ class LoopFusion(transformation.MultiStateTransformation):
             return False
         if not loop_analysis.fixed_iteration_space(first) or not loop_analysis.fixed_iteration_space(second):
             return False
+        if self._shares_symbols(first, second):
+            return False
         # Body SHAPE only gates here on "is this a body we know how to read/merge at all" -- a linear
         # chain of blocks (states, ConditionalBlocks, ...) or the indirect-access bridge shape
         # (``_body_chain``). Whether the pair may actually fuse is decided purely by ``_fusion_legal``
@@ -199,6 +201,17 @@ class LoopFusion(transformation.MultiStateTransformation):
         # Same start and stride: equal trip counts mean the iterators take the same values, however the
         #  last value is spelled (``i < 2*N`` and ``i <= 2*N - 1`` under stride 2).
         return _symbolically_equal(i1, i2) and same_trip_count(t1, t2)
+
+    @staticmethod
+    def _shares_symbols(first: LoopRegion, second: LoopRegion) -> bool:
+        """Whether merging the bodies changes a symbol read: one body reads what the other assigns, which it saw final
+        or not at all, or ``second`` reads the name of ``first``'s iterator, which its renamed iterator would capture."""
+        read1, read2 = first.free_symbols, second.free_symbols
+        if first.loop_variable != second.loop_variable and first.loop_variable in read2:
+            return True
+        assigned1 = {name for edge in first.all_interstate_edges() for name in edge.data.assignments}
+        assigned2 = {name for edge in second.all_interstate_edges() for name in edge.data.assignments}
+        return not (assigned1.isdisjoint(read2) and assigned2.isdisjoint(read1))
 
     @staticmethod
     def _accesses(block: ControlFlowBlock) -> tuple[dict[str, list], dict[str, list]]:
