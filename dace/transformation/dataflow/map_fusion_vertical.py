@@ -2015,18 +2015,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if any(self.is_view(read_map_1[name], sdfg) for name in fused_inout_data_names):
             return True
 
-        # The intermediate orders the first Map's reads before the second Map's writes only for a write that depends
-        #  on it: an independent one runs in no fixed order with the reads in the fused body.
-        if fused_inout_data_names and not mfhelper.writes_follow(
-            state, second_map_entry, second_map_exit, exchange_nodes, fused_inout_data_names
-        ):
-            return True
-        # Symmetrically, a read of the first Map is ordered before those writes only if it feeds the intermediate.
-        if fused_inout_data_names and not mfhelper.reads_precede(
-            state, first_map_entry, first_map_exit, exchange_nodes, fused_inout_data_names
-        ):
-            return True
-
         # A data container can not be used as output (of the second as well as the
         #  combined Map) and as intermediate. If we would allow that the Map would
         #  have two output nodes one the original one and the second is the created

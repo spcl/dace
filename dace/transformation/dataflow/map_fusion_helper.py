@@ -744,8 +744,8 @@ def read_overtaken_by_write(
 def anti_dependences(
     state: dace.SDFGState, first_entry: nodes.MapEntry, second_exit: nodes.MapExit
 ) -> list[tuple[nodes.Node, nodes.Node]]:
-    """The ``(reader, writer)`` pairs of a fusion: a node of the first Map's body reads a container that a node of the
-    second Map's body writes. Apart, the Map boundary runs every read first; fused, only a path in the body does.
+    """The ``(reader, writer)`` pairs of a fusion: a node of the first Map's body reads or writes a container that a
+    node of the second Map's body writes. Apart, the Map boundary runs it first; fused, only a path in the body does.
 
     A nested scope stands for its whole body: a reader by its exit, a writer by its entry.
 
@@ -759,6 +759,9 @@ def anti_dependences(
             continue
         reader = state.exit_node(edge.dst) if isinstance(edge.dst, nodes.EntryNode) else edge.dst
         readers.setdefault(edge.data.data, []).append(reader)
+    for edge in state.in_edges(state.exit_node(first_entry)):
+        if not edge.data.is_empty() and edge.data.data is not None:
+            readers.setdefault(edge.data.data, []).append(edge.src)
     pairs: list[tuple[nodes.Node, nodes.Node]] = []
     for edge in state.in_edges(second_exit):
         if edge.data.is_empty() or edge.data.data not in readers:
@@ -776,61 +779,6 @@ def keep_anti_dependences(state: dace.SDFGState, pairs: list[tuple[nodes.Node, n
         upstream = sdutils.find_upstream_nodes(writer, state)
         if reader not in upstream and writer not in sdutils.find_upstream_nodes(reader, state):
             state.add_nedge(reader, writer, dace.Memlet())
-
-
-def writes_follow(
-    state: dace.SDFGState,
-    map_entry: nodes.MapEntry,
-    map_exit: nodes.MapExit,
-    sources: set[nodes.AccessNode],
-    names: set[str],
-) -> bool:
-    """Whether every write of the Map ``map_entry`` to one of ``names`` depends, in its body, on the data it reads from
-    one of the access nodes ``sources``."""
-    connectors = {e.dst_conn[3:] for e in state.in_edges(map_entry) if e.src in sources and e.dst_conn}
-    reached = {e.dst for e in state.out_edges(map_entry) if e.src_conn and e.src_conn[4:] in connectors}
-    frontier = list(reached)
-    while frontier:
-        for edge in state.out_edges(frontier.pop()):
-            if edge.dst is not map_exit and edge.dst not in reached:
-                reached.add(edge.dst)
-                frontier.append(edge.dst)
-    for edge in state.in_edges(map_exit):
-        if edge.data.is_empty() or not edge.dst_conn or edge.src in reached:
-            continue
-        for outer in state.out_edges_by_connector(map_exit, "OUT_" + edge.dst_conn[3:]):
-            if isinstance(outer.dst, nodes.AccessNode) and outer.dst.data in names:
-                return False
-    return True
-
-
-def reads_precede(
-    state: dace.SDFGState,
-    map_entry: nodes.MapEntry,
-    map_exit: nodes.MapExit,
-    sinks: set[nodes.AccessNode],
-    names: set[str],
-) -> bool:
-    """Whether every read of the Map ``map_entry`` from one of ``names`` reaches, in its body, a write to one of the
-    access nodes ``sinks``."""
-    connectors = {e.src_conn[4:] for e in state.out_edges(map_exit) if e.dst in sinks and e.src_conn}
-    reaching = {e.src for e in state.in_edges(map_exit) if e.dst_conn and e.dst_conn[3:] in connectors}
-    frontier = list(reaching)
-    while frontier:
-        for edge in state.in_edges(frontier.pop()):
-            if edge.src is not map_entry and edge.src not in reaching:
-                reaching.add(edge.src)
-                frontier.append(edge.src)
-    for edge in state.in_edges(map_entry):
-        if edge.data.is_empty() or not edge.dst_conn or not isinstance(edge.src, nodes.AccessNode):
-            continue
-        if edge.src.data not in names:
-            continue
-        if any(
-            inner.dst not in reaching for inner in state.out_edges_by_connector(map_entry, "OUT_" + edge.dst_conn[3:])
-        ):
-            return False
-    return True
 
 
 def scope_accesses(
