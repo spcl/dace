@@ -421,6 +421,7 @@ def _create_einsum_internal(
     init_output: bool = None,
     alpha: symbolic.SymbolicType | None = None,
     beta: symbolic.SymbolicType | None = None,
+    pairwise: bool = True,
 ):
     # Infer shapes and strides of input/output arrays
     einsum = EinsumParser(einsum_string)
@@ -450,12 +451,13 @@ def _create_einsum_internal(
                 raise ValueError("Dimension mismatch in einsum expression")
             chardict[char] = shp
 
-    if optimize or len(einsum.inputs) > 2:
+    if pairwise and (optimize or len(einsum.inputs) > 2):
         # More than two operands contract pairwise along opt_einsum's path, each pair a GEMM-shaped step: one fused
         # nest over every index costs the product of all extents (seissol's three-operand contraction, 8x the
         # multiply-adds). Symbolic extents get stand-in sizes (a SMALL symbol small, any other large) for the path.
         # As ``np.einsum(optimize=True)``, no intermediate outgrows the largest operand: seissol's FLOP-optimal path
         # builds a 3x-larger-than-input intermediate whose transposes and re-reads cost more than the FLOPs saved.
+        # Under that limit a step may contract three or more operands at once; it becomes one nest over its operands.
         import opt_einsum as oe  # a dace dependency
 
         facts = sdfg.facts()
@@ -473,10 +475,10 @@ def _create_einsum_internal(
                 sdfg,
                 state,
                 expr,
-                arrays[pair[0]],
-                arrays[pair[1]],
+                *(arrays[i] for i in pair),
                 dtype=dtype,
                 optimize=False,
+                pairwise=False,
                 output=output if last else None,
                 output_name=output_name if last else None,
                 nodes=input_nodes,
@@ -736,11 +738,12 @@ def _create_einsum_internal(
         state.add_mapped_tasklet(
             "einsum",
             {param[k]: "0:%s" % v for k, v in chardict.items()},
+            # One connector per term: an operand may repeat under other indices (``ij,ji->i``).
             {
-                "inp_%s" % arr: Memlet.simple(arr, ",".join(param[c] for c in inp))
-                for inp, arr in zip(einsum.inputs, arrays)
+                f"inp_{i}": Memlet.simple(arr, ",".join(param[c] for c in inp))
+                for i, (inp, arr) in enumerate(zip(einsum.inputs, arrays))
             },
-            "out_%s = %s%s" % (output, alphacode, " * ".join("inp_%s" % arr for arr in arrays)),
+            "out_%s = %s%s" % (output, alphacode, " * ".join(f"inp_{i}" for i in range(len(arrays)))),
             {"out_%s" % output: Memlet.simple(output, output_index, wcr_str=wcr)},
             input_nodes=input_nodes,
             output_nodes={output: c},
