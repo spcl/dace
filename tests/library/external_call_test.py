@@ -472,3 +472,21 @@ def test_a_symbol_only_the_kernel_reads_stays_an_argument_of_the_program():
 
     assert "M" in call.abi_order and "M" in sdfg.arglist()
     assert np.array_equal(a, np.arange(float(SIZE)) + (np.arange(SIZE) < SIZE // 2))
+
+
+N2 = dace.symbol("N2", dtype=dace.int64)
+
+
+@dace.program
+def two_extents(a: dace.float64[N], b: dace.float64[N2]):
+    for i in range(1, N):
+        a[i] = a[i - 1] + 1.0
+    b[:] = 2.0
+
+
+def test_a_call_names_only_the_symbols_its_nest_uses():
+    sdfg, calls = outlined(two_extents, "extcall_used_symbols")
+
+    abi = [set(call.abi_order) for call in calls]
+
+    assert any("N" in names and "N2" not in names for names in abi)
