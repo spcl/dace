@@ -925,6 +925,26 @@ def test_a_descriptor_never_takes_a_value_naming_a_rebound_symbol():
     assert str(sdfg.arrays["tmp"].shape[0]) == "s"
 
 
+def test_a_value_naming_a_map_parameter_stays_out_of_that_map():
+    for propagate in (SymbolPropagation, ConstantPropagation):
+        sdfg = dace.SDFG(f"value_captured_by_map_{propagate.__name__}")
+        sdfg.add_array("A", [8], dace.int64)
+        sdfg.add_array("B", [8], dace.int64)
+        sdfg.add_symbol("s", dace.int64)
+        sdfg.add_symbol("k", dace.int64)
+        start = sdfg.add_state("start", is_start_block=True)
+        body = sdfg.add_state("body")
+        sdfg.add_edge(start, body, dace.InterstateEdge(assignments={"s": "k"}))
+        entry, exit_node = body.add_map("map", {"k": "0:4"})
+        tasklet = body.add_tasklet("copy", {"i"}, {"o"}, "o = i")
+        body.add_memlet_path(body.add_read("A"), entry, tasklet, dst_conn="i", memlet=dace.Memlet("A[s]"))
+        body.add_memlet_path(tasklet, exit_node, body.add_write("B"), src_conn="o", memlet=dace.Memlet("B[k]"))
+
+        propagate().apply_pass(sdfg, {})
+
+        assert body.in_edges(tasklet)[0].data.subset == dace.subsets.Range.from_string("s")
+
+
 def test_a_substitution_into_a_descriptor_is_reported():
     sdfg = dace.SDFG("descriptor_substitution_reported")
     sdfg.add_symbol("klev", dace.int32)
@@ -969,4 +989,5 @@ if __name__ == "__main__":
     test_nested_sdfg_mapping_keeps_matching_the_connected_shape()
     test_a_value_naming_a_symbol_the_loop_rebinds_does_not_cross_the_loop()
     test_a_descriptor_never_takes_a_value_naming_a_rebound_symbol()
+    test_a_value_naming_a_map_parameter_stays_out_of_that_map()
     test_a_substitution_into_a_descriptor_is_reported()

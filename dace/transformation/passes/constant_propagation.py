@@ -16,7 +16,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.symbol_propagation import loop_bound_symbols
+from dace.transformation.passes.symbol_propagation import loop_bound_symbols, scope_bound_names
 
 
 class _UnknownValue:
@@ -209,6 +209,13 @@ class ConstantPropagation(ppl.Pass):
                     for k, v in out_constants[block].items()
                     if v is not _UnknownValue and k not in multivalue_desc_symbols
                 }
+
+                if mapping and isinstance(block, SDFGState):
+                    # A value naming a scope's parameter means something else inside the scope: the symbol stays
+                    scoped = scope_bound_names(block)
+                    captured = {k for k, v in mapping.items() if _value_names(v, scoped)}
+                    remaining_unknowns |= captured
+                    mapping = {k: v for k, v in mapping.items() if k not in captured}
 
                 if mapping:
                     # Update replaced symbols for later replacements

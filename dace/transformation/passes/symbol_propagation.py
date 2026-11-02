@@ -2,6 +2,7 @@
 
 import ast
 import itertools
+from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -52,6 +53,14 @@ def _expression_names(value: str) -> frozenset[str] | None:
     except (SyntaxError, ValueError):
         return None
     return frozenset(node.id for node in ast.walk(tree) if isinstance(node, ast.Name))
+
+
+def blocks_with_parents(region: AbstractControlFlowRegion) -> Iterator[tuple[ControlFlowBlock, ControlFlowRegion]]:
+    """Every ``(block, parent)`` below ``region``, depth first, nested SDFGs excluded."""
+    for block in region.nodes():
+        yield block, region
+        if isinstance(block, AbstractControlFlowRegion):
+            yield from blocks_with_parents(block)
 
 
 def opaque_scalar_names(sdfg: SDFG) -> set[str]:
@@ -249,6 +258,12 @@ def nested_sdfg_shape_symbols(state: SDFGState) -> set[str]:
     return names
 
 
+def scope_bound_names(state: SDFGState) -> set[str]:
+    """The names a scope of ``state`` binds: a value naming one means something else inside that scope."""
+    sdfg = state.sdfg
+    return {name for n in state.nodes() if isinstance(n, nodes.EntryNode) for name in n.new_symbol_names(sdfg, state)}
+
+
 def reads_data(value, owner: SDFG) -> bool:
     """``value`` names a data container of ``owner``."""
     return bool(free_symbol_names(value) & set(owner.arrays))
@@ -374,9 +389,9 @@ class SymbolPropagation(ppl.Pass):
         # entry; a substitution into a descriptor reaches the states of that SDFG through their access nodes.
         self._state_reads: dict[SDFGState, set[str]] = {}
 
-        all_cfg_blks = {
-            node: parent for node, parent in sdfg.all_nodes_recursive() if isinstance(node, ControlFlowBlock)
-        }
+        # A table never crosses a nested SDFG, so one no edge assigns in has nothing to know, propagate or drop.
+        binding_sdfgs = [sd for sd in sdfg.all_sdfgs_recursive() if any(e.data.assignments for e in sd.all_interstate_edges())]
+        all_cfg_blks = {block: parent for sd in binding_sdfgs for block, parent in blocks_with_parents(sd)}
 
         # Live only for the fixed point below, which is a pure query -- rewriting starts at
         # ``_update_syms``, which may rewrite an init/update LHS and so change the answer.
@@ -386,7 +401,7 @@ class SymbolPropagation(ppl.Pass):
         self._opaque_scalars: dict[SDFG, set[str]] = {}
         # Views are seen as pointers. Descriptors do not change until the fixed point is reached.
         self._view_names: dict[SDFG, set[str]] = {}
-        for sd in sdfg.all_sdfgs_recursive():
+        for sd in binding_sdfgs:
             self._opaque_scalars[sd] = opaque_scalar_names(sd)
             self._view_names[sd] = {name for name, desc in sd.arrays.items() if isinstance(desc, dt.View)}
 
@@ -397,7 +412,7 @@ class SymbolPropagation(ppl.Pass):
         # then travels the length of a chain per sweep instead of one block per sweep, which is what
         # made the sweep count scale with the depth of the CFG. ConstantPropagation orders its own
         # fixed point the same way.
-        ordered_blks = self._execution_order(sdfg, all_cfg_blks)
+        ordered_blks = self._execution_order(binding_sdfgs, all_cfg_blks)
         readers = self._readers(ordered_blks)
 
         # Worklist over that order: a block is revisited only when something it reads moved, so the
@@ -430,7 +445,7 @@ class SymbolPropagation(ppl.Pass):
         for cfg_blk, parent in all_cfg_blks.items():
             propagated |= self._update_syms(cfg_blk, parent, in_syms, out_syms)
         # Substitution leaves the defining assignment behind; sweep to a fixed point.
-        eliminated = self._eliminate_dead_iedge_assignments(sdfg)
+        eliminated = self._eliminate_dead_iedge_assignments(binding_sdfgs)
         if eliminated:
             propagated |= eliminated
 
@@ -460,13 +475,13 @@ class SymbolPropagation(ppl.Pass):
         if self._before_free is None and owner is self._invariant_sdfg:
             self._before_free = {str(s) for s in owner.free_symbols}
 
-    def _eliminate_dead_iedge_assignments(self, sdfg: SDFG) -> set[str]:
+    def _eliminate_dead_iedge_assignments(self, sdfgs: list[SDFG]) -> set[str]:
         """Drop interstate-edge assignments whose LHS is no longer referenced anywhere."""
         removed: set[str] = set()
         # What an SDFG reads does not depend on eliminations in its parent or in its nested SDFGs
         # (a nested SDFG is read through its whole symbol mapping), so each SDFG is swept to its
         # own fixed point rather than all of them until none changes.
-        for sd in sdfg.all_sdfgs_recursive():
+        for sd in sdfgs:
             while True:
                 this_round = self._eliminate_round(sd)
                 if not this_round:
@@ -530,7 +545,7 @@ class SymbolPropagation(ppl.Pass):
         return sd_eliminated | safe_subs.keys()
 
     # Given a cfg_blk, builds the incoming set of symbols
-    def _execution_order(self, sdfg: SDFG, all_cfg_blks: dict[ControlFlowBlock, ControlFlowRegion]):
+    def _execution_order(self, sdfgs: list[SDFG], all_cfg_blks: dict[ControlFlowBlock, ControlFlowRegion]):
         """``(block, parent)`` pairs in execution order, one entry per block of ``all_cfg_blks``.
 
         Each region is ordered in reverse postorder (linear, unlike ``blockorder_topological_sort``,
@@ -572,7 +587,7 @@ class SymbolPropagation(ppl.Pass):
                     visit(blk)
                     revisit(blk)
 
-        for sd in sdfg.all_sdfgs_recursive():
+        for sd in sdfgs:
             visit(sd)
         for blk, parent in all_cfg_blks.items():
             if id(blk) not in seen:
@@ -770,7 +785,12 @@ class SymbolPropagation(ppl.Pass):
         state_subs = new_in_syms
         if isinstance(cfg_blk, SDFGState):
             pinned = nested_sdfg_shape_symbols(cfg_blk)
-            state_subs = {s: v for s, v in new_in_syms.items() if s not in pinned and not reads_data(v, cfg_blk.sdfg)}
+            scoped = scope_bound_names(cfg_blk)
+            state_subs = {
+                s: v
+                for s, v in new_in_syms.items()
+                if s not in pinned and not reads_data(v, cfg_blk.sdfg) and not free_symbol_names(v) & scoped
+            }
 
         iters = 0
         while iters < max_iters:
