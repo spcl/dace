@@ -212,7 +212,7 @@ ufuncs = dict(
         operator="Rint",
         inputs=["__in1"],
         outputs=["__out"],
-        code="__out = round(__in1)",
+        code="__out = nearbyint(__in1)",
         reduce=None,
         initial=np.rint.identity,
     ),
