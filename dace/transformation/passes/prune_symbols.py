@@ -54,7 +54,7 @@ class RemoveUnusedSymbols(ppl.Pass):
 
         # Only these names are ever acted on, so the walk stops once each is known to be used
         unused_symbols = repository_symbols_to_consider | bound_symbols
-        for used in self.symbol_uses(sdfg):
+        for used in self.symbol_uses(sdfg) if unused_symbols else ():
             unused_symbols -= used
             if not unused_symbols:
                 break
