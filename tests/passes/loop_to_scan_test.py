@@ -2384,6 +2384,21 @@ def test_a_scalar_carry_inside_a_branch_keeps_the_branch():
     assert_canon_matches_the_program(scalar_carry_in_a_branch, args, N=10)
 
 
+@dace.program
+def scaled_carry(a: dace.float64[N], d: dace.float64[N]):
+    for i in range(1, N):
+        with dace.tasklet:
+            c << a[i - 1]
+            x << d[i]
+            o >> a[i]
+            o = 0.5 * c + x
+
+
+def test_a_scaled_carry_is_no_scan():
+    rng = np.random.default_rng(5)
+    assert_canon_matches_the_program(scaled_carry, dict(a=rng.random(8), d=rng.random(8)), N=8)
+
+
 if __name__ == "__main__":
     import sys
 

@@ -3061,6 +3061,10 @@ def _find_scan_update_tasklet(
         out_edges = [e for e in state.out_edges(node) if e.data is not None and not e.data.is_empty()]
         if len(out_edges) != 1:
             continue
+        # The rewrite replaces the whole expression by the delta: every input must be a bare operand of ``op``
+        operands = (rhs.left, rhs.right) if isinstance(rhs, ast.BinOp) else rhs.args
+        if sum(isinstance(operand, ast.Name) for operand in operands) != len(in_edges):
+            continue
         # v1/v2: ``carry + delta`` (two data inputs). v3: ``carry + literal``
         # (one data input + a numeric constant on the other side of the binop;
         # e.g. TSVC s242 ``a[i] = a[i-1] + 0.5 + ...``). The Call (``max``/``min``)
