@@ -70,7 +70,27 @@ def test_a_device_to_host_transfer_is_not_forwarded():
     assert "t" in sdfg.arrays
 
 
+def test_rebound_offset_symbol_keeps_the_copy():
+    """``t = q[k:k + N]; k = k + 1; out = t``: reading ``q`` at ``k`` afterwards would read the next window."""
+    sdfg = dace.SDFG("shifted_copy_rebound")
+    sdfg.add_array("q", [N + 4], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_transient("t", [N], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    copy = sdfg.add_state("copy")
+    copy.add_nedge(copy.add_read("q"), copy.add_write("t"), dace.Memlet("q[k:k + N] -> [0:N]"))
+    use = sdfg.add_state("use")
+    sdfg.add_edge(copy, use, dace.InterstateEdge(assignments={"k": "k + 1"}))
+    use.add_mapped_tasklet(
+        "read", {"i": "0:N"}, {"x": dace.Memlet("t[i]")}, "o = x", {"o": dace.Memlet("out[i]")}, external_edges=True
+    )
+    sdfg.validate()
+    assert ForwardOffsetCopies().apply_pass(sdfg, {}) is None
+    assert "t" in sdfg.arrays
+
+
 if __name__ == "__main__":
     test_a_shifted_copy_read_in_a_later_state_reads_its_source()
     test_a_write_to_the_source_between_keeps_the_copy()
     test_a_device_to_host_transfer_is_not_forwarded()
+    test_rebound_offset_symbol_keeps_the_copy()
