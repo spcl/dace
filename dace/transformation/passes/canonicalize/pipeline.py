@@ -1038,6 +1038,8 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
 
     s += [(FUSE, maximal_fusion(target))]
     label = AFTER_FUSION
+    # A reduction fused over one element leaves its init map
+    s += [(label, PatternApplyOnceEverywhere([TrivialMapElimination()]))]
     # Out of phase: these matchers need the fused map form (contractions split over maps, durbin's unary copy).
     if lift_copy:
         s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
