@@ -60,13 +60,14 @@ sees a clean shape.
 import ast
 from typing import Any
 
-from dace import SDFG
+from dace import SDFG, data
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.analysis.loop_analysis import loop_header_names
 
 
 class HoistAnalysisCache:
@@ -317,6 +318,12 @@ def _legal_to_hoist_into(
     # body does ``count = count + 1``). Hoisting it past the loop would run the reset once
     # and let ``count`` grow unbounded across iterations -> an out-of-bounds compaction.
     if isinstance(child, LoopRegion) and _key_has_other_writer(cache, child, key, rhs):
+        return False
+    # The loop's own header runs ahead of the assignment on the first iteration.
+    if isinstance(child, LoopRegion) and key in loop_header_names(child):
+        return False
+    # A loop may run no iteration: an array read in the rhs would then be an access the program never made.
+    if isinstance(child, LoopRegion) and any(isinstance(sdfg.arrays.get(name), data.Array) for name in rhs_syms):
         return False
     inner_asyms, inner_wdata = cache.block_writes(child)
     inner_asyms = dict(inner_asyms)

@@ -871,5 +871,13 @@ def test_an_iterator_of_a_preceding_loop_blocks_the_hoist():
     assert _apply(sdfg) == 0
 
 
+def test_a_loop_header_reading_the_symbol_blocks_the_hoist():
+    """``for i = k - 3; i < k`` sees the entry value on its first iteration."""
+    sdfg, loop = _loop_after_entry("i < k", "i = k - 3", {"k": "3"})
+    first = loop.add_state("first", is_start_block=True)
+    loop.add_edge(first, loop.add_state("second"), InterstateEdge(assignments={"k": "M"}))
+    assert _apply(sdfg) == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
