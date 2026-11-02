@@ -341,6 +341,27 @@ def test_relative_output_dir_survives_a_directory_change():
     assert calls and all(call.sdfg is not None and os.path.isabs(call.ext_sdfg_path) for call in calls)
 
 
+def test_root_saves_and_simplifies_right_after_the_pass():
+    sdfg = dace.SDFG("loaded_root")
+    sdfg.add_array("flag", [1], dace.int32)
+    sdfg.add_array("res", [1], dace.int32)
+    write_by_branch(sdfg, "flag[0] == 1")
+
+    with tempfile.TemporaryDirectory() as folder:
+        root = ConfigPropagation({"flag": [0, 1]}, folder).apply_pass(sdfg, {})
+        root.save(os.path.join(folder, "root.sdfg"))
+        assert set(root.arglist()) == {"flag", "res"}
+        root.simplify()
+        loaded = dace.SDFG.from_file(os.path.join(folder, "root.sdfg"))
+
+    assert all(
+        call.sdfg is not None for call, _ in loaded.all_nodes_recursive() if isinstance(call, dace.nodes.NestedSDFG)
+    )
+    res = np.zeros(1, dtype=np.int32)
+    root(flag=np.array([0], dtype=np.int32), res=res)
+    assert res[0] == 2
+
+
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as scratch:
         test_variants_and_dispatcher(pathlib.Path(scratch, "variants"))
@@ -360,3 +381,4 @@ if __name__ == "__main__":
     test_written_structure_member_is_connected_as_output()
     test_unknown_domain_name_is_refused()
     test_relative_output_dir_survives_a_directory_change()
+    test_root_saves_and_simplifies_right_after_the_pass()

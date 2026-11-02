@@ -194,4 +194,5 @@ class ConfigPropagation(ppl.Pass):
             branch = ControlFlowRegion(f"call_{callee.name}", sdfg=root)
             cond.add_branch(CodeBlock(condition) if condition else None, branch)
             self.add_call(root, branch.add_state(callee.name, is_start_block=True), callee, path)
+        list(root.all_sdfgs_recursive(load_ext=True))  # Save, simplify and signature analysis walk the bodies
         return root
