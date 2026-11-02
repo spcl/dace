@@ -170,6 +170,11 @@ class FFTTransform(NamedTuple):
 VendorCall = Callable[[FFTTransform], nodes.Tasklet | None]
 
 
+def pointer_connectors(transform: FFTTransform) -> tuple[dict, dict]:
+    """A vendor call takes pointers, also where a one-element memlet would bind the value."""
+    return {"__in": dtypes.pointer(transform.src.dtype)}, {"__out": dtypes.pointer(transform.out.dtype)}
+
+
 def vendor_fft_sdfg(
     node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG, call: VendorCall, backend: str
 ) -> SDFG:
@@ -380,7 +385,10 @@ def fftw3_call(transform: FFTTransform, threaded: bool | None = None) -> nodes.T
     }}
     """
     return nodes.Tasklet(
-        f"fftw3_{'i' if transform.inverse else ''}fft", {"__in"}, {"__out"}, code, language=dtypes.Language.CPP
+        f"fftw3_{'i' if transform.inverse else ''}fft",
+        *pointer_connectors(transform),
+        code,
+        language=dtypes.Language.CPP,
     )
 
 
@@ -513,8 +521,7 @@ def cufft_call(transform: FFTTransform) -> nodes.Tasklet | None:
     """
     return nodes.Tasklet(
         f"cufft_{'i' if transform.inverse else ''}fft",
-        {"__in"},
-        {"__out"},
+        *pointer_connectors(transform),
         code,
         language=dtypes.Language.CPP,
     )
