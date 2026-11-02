@@ -1576,7 +1576,8 @@ def slot_accessed_besides(
     read-modify-write chain on the slot accumulates there and the writeback then overwrites it, and a
     read sees a value that is missing this loop's terms. seissol_tensor_contraction has the first
     case: after ``ShortLoopUnroll`` its ``l`` loop body holds nine accumulations into one output slot,
-    only the last of which ``AccumulatorCopyChainToWCR`` turned into a WCR write. cp2k_grid_integrate
+    only the last of which ``AccumulatorCopyChainToWCR`` turned into a WCR write. CloudSC's ``zexplicit = 0.0`` beside
+    its chain is the same: retargeted, every ``zqxn[jm, jl]`` read a running total. cp2k_grid_integrate
     has the second: its ``l`` loop reads the running ``binomial_k_lxa`` product that the enclosing
     ``k`` loop's chain accumulates, so a retarget froze it at its seed. A read can also sit in an
     interstate edge or a loop or branch condition, which are checked as well.
@@ -1699,97 +1700,6 @@ def _lift_wcr_scalar_retarget(
     for e in out_edges:
         parent.remove_edge(e)
         parent.add_edge(wb_state, e.dst, e.data)
-
-
-def _slot_accumulated_more_than_once(loop: LoopRegion, accum_name: str, accum_subset) -> bool:
-    """True iff more than one body state accumulates into ``accum_name[accum_subset]``.
-
-    The retarget privatizes ONE chain: it drops that tasklet's carry input and puts the WCR on its
-    write. Every other chain on the same slot keeps reading and writing the original accumulator, so
-    the two halves of the iteration accumulate into different places and the result is neither sum.
-
-    A short constant-bounded inner reduction is exactly how a body ends up with several: once
-    ``ShortLoopUnroll`` flattens it, each unrolled term becomes its own accumulate state in the
-    parent body. Summing them IS a reduction, just not one this pass can express by claiming a
-    single chain, so refuse and leave the loop to the passes that can.
-
-    :param loop: the loop being considered for retargeting.
-    :param accum_name: the accumulator's data name.
-    :param accum_subset: the slot the chain reads and writes.
-    """
-    want = str(accum_subset)
-    seen = 0
-    for state in loop.states():
-        if _state_in_nested_loop(state, loop):
-            continue
-        reads = writes = False
-        for node in state.nodes():
-            if not isinstance(node, nodes.AccessNode) or node.data != accum_name:
-                continue
-            if state.in_degree(node) == 0 and state.out_degree(node) >= 1:
-                reads = (
-                    any(
-                        e.data is not None and e.data.subset is not None and str(e.data.subset) == want
-                        for e in state.out_edges(node)
-                    )
-                    or reads
-                )
-            if state.in_degree(node) >= 1 and state.out_degree(node) == 0:
-                writes = (
-                    any(
-                        e.data is not None and e.data.subset is not None and str(e.data.subset) == want
-                        for e in state.in_edges(node)
-                    )
-                    or writes
-                )
-        if reads and writes:
-            seen += 1
-            if seen > 1:
-                return True
-    return False
-
-
-def _slot_overwritten_in_body(loop: LoopRegion, accum_name: str, accum_subset) -> bool:
-    """True iff the loop body OVERWRITES ``accum_name[accum_subset]`` without reading it back.
-
-    A slot re-initialized inside the body is per-iteration scratch, not a loop-carried accumulator,
-    so there is nothing to retarget: privatizing it hoists the initialization out of the loop and
-    the value then accumulates across every iteration. CloudSC's ``zexplicit`` is exactly that --
-
-    .. code-block:: python
-
-        for jl in range(kidia, kfdia + 1):
-            zexplicit = 0.0
-            for jn in range(1, nclv + 1):
-                zexplicit = zexplicit + zsolqa[jn - 1, jm - 1, jl - 1]
-            zqxn[jm - 1, jl - 1] = zqx[jm - 1, jk - 1, jl - 1] + zexplicit
-
-    -- and with ``nclv`` specialized the ``jn`` reduction unrolls into the ``jl`` body, so the
-    read-accumulate-write chain sits there in plain sight while ``zexplicit = 0.0`` sits beside it.
-    Retargeting it summed ``zsolqa`` over every ``jl`` into one scalar and every ``zqxn[jm, jl]``
-    read a running total, which reached the outputs as ``tendency_loc_q`` off by three orders.
-
-    :param loop: the loop being considered for retargeting.
-    :param accum_name: the accumulator's data name.
-    :param accum_subset: the slot the chain reads and writes.
-    """
-    want = str(accum_subset)
-    for state in loop.states():
-        for node in state.nodes():
-            if not isinstance(node, nodes.AccessNode) or node.data != accum_name:
-                continue
-            for edge in state.in_edges(node):
-                if edge.data is None or edge.data.subset is None or str(edge.data.subset) != want:
-                    continue
-                producer = edge.src
-                if not isinstance(producer, nodes.Tasklet):
-                    continue
-                # A producer that reads the slot back is the accumulate itself, not an overwrite --
-                # which is what excludes the chain's own write in ``chain_state``.
-                if any(e.data is not None and e.data.data == accum_name for e in state.in_edges(producer)):
-                    continue
-                return True
-    return False
 
 
 def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
@@ -1915,18 +1825,9 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             if first_write_edge is not data_out[0]:
                 continue
 
-            # Last, because it is the only check here that walks the whole body: a slot the body
-            # re-initializes is per-iteration scratch and carries nothing across the loop.
-            if _slot_overwritten_in_body(loop, data_name, carry_subset):
-                continue
-
-            # Same reason, other failure mode: the retarget rewrites ONE chain, so a second chain on
-            # the slot is left accumulating into the original.
-            if _slot_accumulated_more_than_once(loop, data_name, carry_subset):
-                continue
-
-            # The retarget leaves the original slot at its seed until the writeback, so a body that
-            # also reads the running value (a scan) would see that seed on every iteration.
+            # Last, because it is the only check here that walks the whole body. The retarget leaves the original slot
+            # at its seed until the writeback: a read of the running value (a scan) sees that seed, a re-initialization
+            # (per-iteration scratch) is hoisted out, and a second chain keeps accumulating into the original.
             if slot_accessed_besides(
                 loop, {carry_in_edge, last_write_edge}, data_name, carry_subset, sdfg.arrays[data_name]
             ):
