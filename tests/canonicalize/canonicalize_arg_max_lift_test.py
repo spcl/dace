@@ -2214,5 +2214,29 @@ def test_a_seed_overwritten_before_the_loop_stays_the_real_seed():
     assert out[0] == 0.7
 
 
+@dace.program
+def nest_seeded_above_the_data(m: dace.float64[N, N], out: dace.float64[3]):
+    v = 100.0
+    xi = -1
+    yi = -1
+    for i in range(N):
+        for j in range(N):
+            if m[i, j] > v:
+                v = m[i, j]
+                xi = i
+                yi = j
+    out[0] = v
+    out[1] = xi
+    out[2] = yi
+
+
+def test_a_nest_with_a_literal_seed_keeps_its_seed():
+    sdfg = nest_seeded_above_the_data.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    m, out = np.arange(16.0).reshape(4, 4).copy(), np.zeros(3)
+    sdfg(m=m, out=out, N=4)
+    assert out.tolist() == [100.0, -1.0, -1.0]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

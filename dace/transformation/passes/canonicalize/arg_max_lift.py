@@ -951,6 +951,13 @@ class ArgMaxLift(ppl.Pass):
         idx_names = self._match_2d_true_branch(true_branch, carrier_name, gather_sym, array, loop_vars, sdfg)
         if idx_names is None:
             return None
+        # The rewrite drops the seeds, so the scan must start from the first element at index zero
+        preloop = self._collect_preloop_assignments(outer_loop, sdfg)
+        if carrier_name not in preloop or any(symbolic.pystr_to_symbolic(preloop.get(n, "1")) != 0 for n in idx_names):
+            return None
+        position = self._seed_gather_position(preloop[carrier_name], array, None, preloop)
+        if position is None or any(symbolic.pystr_to_symbolic(p) != 0 for p in position.strip("()").split(",")):
+            return None
 
         # Contiguity: the nested iteration must visit EXACTLY the whole array, in
         # C-contiguous memory order, so a flat 1-D arg-reduce is equivalent.
