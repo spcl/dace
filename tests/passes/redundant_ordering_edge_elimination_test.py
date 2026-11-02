@@ -113,6 +113,19 @@ def test_ordering_edge_behind_a_writer_of_its_own_is_kept():
     assert any(e.data.is_empty() for e in state.edges())
 
 
+def test_ordering_edge_between_two_copies_of_one_source_is_kept():
+    sdfg = dace.SDFG("roee_two_copies")
+    for array in "SUV":
+        sdfg.add_array(array, (1,), dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    source, u, v = state.add_read("S"), state.add_access("U"), state.add_access("V")
+    state.add_edge(source, None, u, None, dace.Memlet("S[0] -> U[0]"))
+    state.add_edge(source, None, v, None, dace.Memlet("S[0] -> V[0]"))
+    state.add_nedge(u, v, dace.Memlet())
+    sdfg.validate()
+    assert RedundantOrderingEdgeElimination().apply_pass(sdfg, {}) is None
+
+
 def test_only_path_ordering_edge_is_kept():
     sdfg, state = build_two_chains("roee_only_path")
     ordering = state.add_nedge(tasklet_named(state, "t1"), tasklet_named(state, "t2"), dace.Memlet())
@@ -324,3 +337,4 @@ if __name__ == "__main__":
     test_nested_sdfg_ordering_edges_that_guard_nothing_are_removed()
     test_ordering_edge_between_outputs_of_their_only_writer_is_removed()
     test_ordering_edge_behind_a_writer_of_its_own_is_kept()
+    test_ordering_edge_between_two_copies_of_one_source_is_kept()
