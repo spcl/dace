@@ -46,7 +46,6 @@ from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import
 )
 from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
-from dace.transformation.passes.canonicalize.dead_loop_initialization import DeadLoopInitialization
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
 from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
@@ -315,7 +314,7 @@ class StructuralCleanup(ppl.Pass):
             DeadStateElimination(),
             RedundantOrderingEdgeElimination(),
             # After the state fusion above, so a copy and its readers share a state: redundant copies fold away
-            ppl.Pipeline([ArrayElimination(fold_ordered_copies=True)]),
+            ppl.Pipeline([ArrayElimination(fold_ordered_copies=True, nested=True)]),
             # A shifted copy array elimination keeps (read in several states) is read at the shifted source index
             ForwardOffsetCopies(),
             PruneUnreferencedTransients(),
@@ -693,7 +692,7 @@ def clean_anti_dependency_units() -> list[ppl.Pass]:
 
 def dead_dataflow_units() -> list[ppl.Pass]:
     return [
-        ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True)]),
+        ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True, nested=True)]),
         DeadCarriedStoreElimination(),
     ]
 
@@ -884,7 +883,7 @@ def derive_parallelism(
     s += [(label, DeadCarriedStoreElimination())]
     # Before the lift: a workspace whose pre-loop fill no iteration observes is then the loop's own, privatized per
     # iteration
-    s += [(label, DeadLoopInitialization())]
+    s += [(label, DeadFillElimination())]
     s += [(label, first_lift())]
     # Rescue: each rewrite acts only on a loop LoopToMap refuses.
     segments: list = []
@@ -1028,7 +1027,16 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
         s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
     if lift:
         s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
-    s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True)]))]
+    # Fusion joined a slice update's map with the copy of its result, across the states the frontend gave them.
+    s += [(label, EliminateCopyBack())]
+    s += [
+        (
+            label,
+            ppl.FixedPointPipeline(
+                [DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True, nested=True)]
+            ),
+        )
+    ]
     s += [(label, PruneEmptyConditionalBranches())]
     s += [
         (label, PatternApplyOnceEverywhere([RedundantArray()])),
@@ -1056,7 +1064,7 @@ def finish() -> Stages:
         # A staging copy sits in its readers' map scope, fed from the map entry, only once the terminal inlining has
         # run; the reclaim stays last for the arrays the fold leaves.
         (FINISH, PatternApplyOnceEverywhere([RedundantMapReadCopy()])),
-        (FINISH, ppl.Pipeline([ArrayElimination(fold_ordered_copies=True)])),
+        (FINISH, ppl.Pipeline([ArrayElimination(fold_ordered_copies=True, nested=True)])),
     ]
     return s
 

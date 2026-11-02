@@ -18,7 +18,9 @@ Contract, per copy edge ``A -> B``:
   view, reaches no nested SDFG, and no interstate edge or condition names it;
 * every reader of ``B`` is in a state of the copy's control-flow region (an acyclic one), reachable from it;
 * no block of that region on a path from the copy to a reader writes ``A``, nor does the copy's state or a
-  reader's state.
+  reader's state;
+* a symbol the offset names keeps its value up to every reader: no block after the copy rebinds it, and no map around
+  a reader shadows it.
 """
 
 from collections import defaultdict
@@ -29,6 +31,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import control_flow_reads
 
 
 def _writes(block: ControlFlowBlock, name: str) -> bool:
@@ -61,11 +64,7 @@ class ForwardOffsetCopies(ppl.Pass):
         return forwarded or None
 
     def apply_to_sdfg(self, sdfg: SDFG) -> int:
-        named = set()
-        for edge in sdfg.all_interstate_edges():
-            named |= {str(s) for s in edge.data.free_symbols}
-        for region in sdfg.all_control_flow_regions():
-            named |= region.used_symbols(all_symbols=True, with_contents=False)
+        named = control_flow_reads(sdfg)
         accesses: dict[str, list[tuple[SDFGState, nodes.AccessNode]]] = defaultdict(list)
         for st in sdfg.states():
             for an in st.data_nodes():
@@ -136,7 +135,10 @@ class ForwardOffsetCopies(ppl.Pass):
             between = after & _reach(region, reader, region.predecessors)
             if any(_writes(block, src.data) for block in between):
                 return None
-        return [b0 - d0 for (b0, _, _), (d0, _, _) in zip(src_subset.ranges, dst_subset.ranges)]
+        offset = [b0 - d0 for (b0, _, _), (d0, _, _) in zip(src_subset.ranges, dst_subset.ranges)]
+        if _offset_rebound(region, state, after, readers, {str(s) for o in offset for s in o.free_symbols}):
+            return None
+        return offset
 
     @staticmethod
     def forward(sdfg: SDFG, state: SDFGState, edge, offset: list, uses) -> None:
@@ -181,6 +183,28 @@ def _reach(region: ControlFlowRegion, start: ControlFlowBlock, step) -> set[Cont
             seen.add(block)
             stack.extend(step(block))
     return seen
+
+
+def _offset_rebound(
+    region: ControlFlowRegion,
+    state: SDFGState,
+    after: set[ControlFlowBlock],
+    readers: list[SDFGState],
+    names: set[str],
+) -> bool:
+    """Whether a block run after ``state`` rebinds one of ``names``, or a map in a reader state shadows one."""
+    if not names:
+        return False
+    if any(e.src is state or e.src in after for e in region.edges() if names & e.data.assignments.keys()):
+        return True
+    for block in after:
+        if isinstance(block, SDFGState):
+            continue
+        if any(names & e.data.assignments.keys() for e in block.all_interstate_edges()):
+            return True
+        if any(getattr(r, "loop_variable", None) in names for r in block.all_control_flow_regions()):
+            return True
+    return any(names & set(n.map.params) for st in readers for n in st.nodes() if isinstance(n, nodes.MapEntry))
 
 
 def _writes_besides(state: SDFGState, name: str, edge) -> bool:

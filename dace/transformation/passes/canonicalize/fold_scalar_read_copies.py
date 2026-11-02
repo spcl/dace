@@ -14,7 +14,7 @@ write.
 from collections.abc import Iterator
 from typing import Any
 
-from dace import SDFG, Memlet, data, symbolic
+from dace import SDFG, Memlet, data, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState
@@ -166,11 +166,18 @@ def copy_edges(sdfg: SDFG, state: SDFGState) -> Iterator[Any]:
             yield edge
 
 
+@properties.make_properties
 @transformation.explicit_cf_compatible
 class FoldScalarReadCopies(ppl.Pass):
     """Fold every scalar read and result copy the snapshot rule allows, in ``sdfg`` and its nested SDFGs."""
 
     CATEGORY: str = "Canonicalization"
+
+    reads_only = properties.Property(dtype=bool, default=False, desc="Leave the result copies alone")
+
+    def __init__(self, reads_only: bool = False):
+        super().__init__()
+        self.reads_only = reads_only
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
@@ -198,6 +205,8 @@ class FoldScalarReadCopies(ppl.Pass):
                         fold(state, copy, read)
                         counts[copy.dst.data] = 0
                         folded += 1
+                        continue
+                    if self.reads_only:
                         continue
                     target = foldable_write(owner, state, copy, counts)
                     if target is not None:

@@ -31,6 +31,20 @@ A top-level map writing a transient element for element (``np.zeros`` lowered as
 its state leaves when the copy overwrites all of it but a prefix or suffix of one axis before anything reads it
 (``sink = np.zeros(n + 1); sink[0:n] = c`` zeroes row ``n`` only); it goes when the copy leaves nothing.
 
+A fill ahead of a loop is dead when no iteration observes it, even when the array is read inside the loop. quatrex_rgf
+allocates its per-energy workspaces with ``np.zeros`` ahead of the energy loop::
+
+    xr_d = np.zeros((NB, BS, BS))
+    for e in range(NE):
+        xr_d[0] = ...
+        for i in range(NB - 1):
+            xr_d[i + 1] = f(xr_d[i])
+
+Each iteration writes the whole array before it reads any of it, and the fill keeps ``LoopToMap`` from privatizing the
+workspace. The fill must be constant and the array's only access outside the loop, the writes that tile the array must
+run unconditionally in one iteration -- in the body or in unit-stride loops nested in it, outside conditionals and
+nested SDFGs -- and no iteration may read the transient before writing it.
+
 Anything else (a partial or indirect write, a conditional one without ``else``, a read in between, a
 nested SDFG writing it) keeps the memset.
 """
@@ -50,6 +64,7 @@ from dace.sdfg.state import (
     ReturnBlock,
     SDFGState,
 )
+from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 
@@ -218,15 +233,23 @@ def narrow_fill_map(state: SDFGState, entry: nodes.MapEntry, zeroed: nodes.Acces
     if axis == -1:
         scope = state.scope_subgraph(entry).nodes()
         sources = {e.src for e in state.in_edges(entry)}
+        state.keep_order_through([*scope, zeroed])
         state.remove_nodes_from([*scope, zeroed])
         state.remove_nodes_from([n for n in sources if isinstance(n, nodes.AccessNode) and state.degree(n) == 0])
         return
     exit_node = state.exit_node(entry)
     inner = next(iter(state.in_edges(exit_node)))
     param = str(inner.data.subset.ranges[axis][0])
-    entry.map.range.ranges[entry.map.params.index(param)] = kept
+    entry.map.range[entry.map.params.index(param)] = kept
     outer = state.out_edges(exit_node)[0]
-    outer.data.subset.ranges[axis] = kept
+    outer.data.subset[axis] = kept
+
+
+def drop_fill(state: SDFGState, fill: FillLibraryNode, zeroed: nodes.AccessNode) -> None:
+    """Remove ``fill`` and the access node it writes, keeping any order that ran through them."""
+    state.keep_order_through([fill, zeroed])
+    state.remove_node(fill)
+    state.remove_node(zeroed)
 
 
 def blocks_within(block: ControlFlowBlock) -> Iterator[ControlFlowBlock]:
@@ -276,10 +299,10 @@ def touches(block: ControlFlowBlock, name: str, reads_only: bool = False) -> boo
     return False
 
 
-def unconditional_successor(graph: ControlFlowRegion, block: ControlFlowBlock) -> ControlFlowBlock | None:
-    """The one block ``block`` always passes to in ``graph``, if its only out edge reads nothing it is not told."""
+def unconditional_successor(graph: ControlFlowRegion, block: ControlFlowBlock, name: str) -> ControlFlowBlock | None:
+    """The one block ``block`` always passes to in ``graph``, if its only out edge does not read ``name``."""
     out_edges = graph.out_edges(block)
-    if len(out_edges) != 1 or not out_edges[0].data.is_unconditional():
+    if len(out_edges) != 1 or not out_edges[0].data.is_unconditional() or name in out_edges[0].data.read_symbols():
         return None
     return out_edges[0].dst
 
@@ -320,7 +343,7 @@ def overwritten_by_loop(loop: LoopRegion, name: str, desc: data.Array) -> bool:
     while block is not None:
         if any(overwritten_by(block, name, desc, {axis: index}) for axis in axes):
             return True
-        block = unconditional_successor(loop, block)
+        block = unconditional_successor(loop, block, name)
     return False
 
 
@@ -335,7 +358,7 @@ def overwritten_from(
     while block is not None:
         if touches(block, name):
             return overwritten_by(block, name, desc, fixed)
-        block = unconditional_successor(graph, block)
+        block = unconditional_successor(graph, block, name)
     return None
 
 
@@ -344,20 +367,161 @@ def overwritten_after(state: SDFGState, name: str, desc: data.Array) -> bool:
     block: ControlFlowBlock = state
     while True:
         graph = block.parent_graph
-        following = unconditional_successor(graph, block)
+        following = unconditional_successor(graph, block, name)
         while following is not None:
             if touches(following, name):
                 return overwritten_by(following, name, desc, {})
-            block, following = following, unconditional_successor(graph, following)
+            block, following = following, unconditional_successor(graph, following, name)
         # The chain ran out untouched: at the end of a plain region or a branch, control passes on after it.
         if graph.out_degree(block) != 0 or isinstance(graph, (LoopRegion, SDFG)):
             return False
         block = graph.parent_graph if isinstance(graph.parent_graph, ConditionalBlock) else graph
 
 
+def same(a: Any, b: Any) -> bool:
+    """Whether two index expressions are provably one value (no sign assumptions: an index may be 0)."""
+    return symbolic.equal(a, b, is_length=False) is True
+
+
+def enclosing_loops(state: SDFGState, loop: LoopRegion) -> list[LoopRegion] | None:
+    """The loops between ``state`` and ``loop`` (innermost first), or ``None`` when a conditional is in between."""
+    loops = []
+    region = state.parent_graph
+    while region is not loop:
+        if isinstance(region, ConditionalBlock) or region is None or isinstance(region, SDFG):
+            return None
+        if isinstance(region, LoopRegion):
+            loops.append(region)
+        region = region.parent_graph
+    return loops
+
+
+def swept_interval(begin, end, loops: list[LoopRegion]) -> tuple[Any, Any] | None:
+    """The interval ``[begin, end]`` of one axis covers over the unit-stride ``loops``: a ``c + v`` index sweeps
+    ``[c + start, c + last]``, a ``c - v`` one ``[c - last, c - start]``; an axis naming no loop variable is itself.
+    Anything else is ``None``."""
+    names = {loop.loop_variable: loop for loop in loops}
+    used = {str(s) for s in symbolic.pystr_to_symbolic(begin).free_symbols} & names.keys()
+    if not used:
+        return begin, end
+    if len(used) != 1 or not same(begin, end):
+        return None
+    loop = names[used.pop()]
+    start, last = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
+    if start is None or last is None or not same(loop_analysis.get_loop_stride(loop), 1):
+        return None
+    index = symbolic.pystr_to_symbolic(begin)
+    var = next(s for s in index.free_symbols if str(s) == loop.loop_variable)
+    for sign in (1, -1):
+        offset = index - sign * var
+        if loop.loop_variable not in {str(s) for s in offset.free_symbols}:
+            return (start + offset, last + offset) if sign == 1 else (offset - last, offset - start)
+    return None
+
+
+def tiles_every_iteration(loop: LoopRegion, name: str, desc: data.Data) -> bool:
+    """Whether the unconditional writes of ``name`` in one iteration of ``loop`` cover all of it: every axis whole but
+    one, along which some of the swept intervals chain from 0 to its extent."""
+    intervals: dict[int, list[tuple[Any, Any]]] = {}
+    for state in [block for block in loop.all_control_flow_blocks() if isinstance(block, SDFGState)]:
+        accesses = [n for n in state.data_nodes() if n.data == name]
+        if not accesses:
+            continue
+        loops = enclosing_loops(state, loop)
+        scopes = state.scope_dict()
+        for node in accesses:
+            for edge in state.in_edges(node):
+                if edge.data.is_empty():
+                    continue
+                if loops is None or scopes[node] is not None or edge.data.wcr is not None:
+                    return False
+                subset = edge.data.get_dst_subset(edge, state)
+                if not isinstance(subset, Range) or len(subset.ranges) != len(desc.shape):
+                    return False
+                partial = [
+                    axis
+                    for axis, ((b, e, _), extent) in enumerate(zip(subset.ranges, desc.shape))
+                    if not (same(b, 0) and same(e, extent - 1))
+                ]
+                if len(partial) > 1:
+                    return False
+                if not partial:
+                    return True
+                (axis,) = partial
+                begin, end, _ = subset.ranges[axis]
+                swept = swept_interval(begin, end, loops)
+                if swept is None:
+                    return False
+                intervals.setdefault(axis, []).append(swept)
+    if len(intervals) != 1:
+        return False
+    ((axis, spans),) = intervals.items()
+    # Chain from 0: a span starting where the covered prefix ends extends it; rewrites of covered elements are spare.
+    reach, pending = 0, list(spans)
+    while not same(reach, desc.shape[axis]):
+        following = next((span for span in pending if same(span[0], reach)), None)
+        if following is None:
+            return False
+        pending.remove(following)
+        reach = following[1] + 1
+    return True
+
+
+def dead_loop_fills(
+    sdfg: SDFG, loop: LoopRegion, candidates: set[str]
+) -> list[tuple[SDFGState, nodes.AccessNode, FillLibraryNode]]:
+    """The fills outside ``loop`` of the ``candidates`` (filled transients ``loop`` accesses) whose values no
+    iteration and nothing after the loop observes."""
+    from dace.transformation.interstate.loop_to_map import (  # Avoid import loop
+        carried_local_transients,
+        control_flow_reads_outside,
+    )
+
+    inside = set(loop.all_control_flow_blocks())
+    outside: dict[str, list[tuple[SDFGState, nodes.AccessNode]]] = {}
+    for state in sdfg.states():
+        if state in inside:
+            continue
+        for node in state.data_nodes():
+            if node.data in candidates:
+                outside.setdefault(node.data, []).append((state, node))
+    # Every access outside the loop must be a lone constant fill: checked first, before the loop-wide analyses.
+    filled: dict[str, list[tuple[SDFGState, nodes.AccessNode, FillLibraryNode]]] = {}
+    for name in sorted(outside):
+        if isinstance(sdfg.arrays[name], data.View):
+            continue
+        fills = []
+        for state, node in outside[name]:
+            producers = state.in_edges(node)
+            if (
+                state.out_degree(node) != 0
+                or len(producers) != 1
+                or not isinstance(producers[0].src, FillLibraryNode)
+                or state.in_degree(producers[0].src) != 0
+                or state.out_degree(producers[0].src) != 1
+            ):
+                break
+            fills.append((state, node, producers[0].src))
+        else:
+            if fills:
+                filled[name] = fills
+    if not filled:
+        return []
+    _, written = loop.read_and_write_sets()
+    flow_reads = control_flow_reads_outside(sdfg, loop)
+    found = []
+    for name, fills in filled.items():
+        if name not in written or name in flow_reads:
+            continue
+        if tiles_every_iteration(loop, name, sdfg.arrays[name]) and not carried_local_transients(loop, {name}):
+            found.extend(fills)
+    return found
+
+
 @properties.make_properties
 class DeadFillElimination(ppl.Pass):
-    """Remove every memset a map overwrites in full, unread, in the same state."""
+    """Remove every memset overwritten in full before any read: in its state, by the control flow after it, or in
+    every iteration of a loop."""
 
     CATEGORY: str = "Simplification"
 
@@ -382,8 +546,7 @@ class DeadFillElimination(ppl.Pass):
                     zeroed = dead_fill(state, fill)
                     if zeroed is None:
                         continue
-                    state.remove_node(fill)
-                    state.remove_node(zeroed)
+                    drop_fill(state, fill, zeroed)
                     removed += 1
                 for entry in [
                     n for n, scope in state.scope_dict().items() if isinstance(n, nodes.MapEntry) and scope is None
@@ -392,4 +555,28 @@ class DeadFillElimination(ppl.Pass):
                     if dead is not None:
                         narrow_fill_map(state, entry, *dead)
                         removed += 1
+            # Only a filled transient can have a dead fill: the loop analyses run where one exists.
+            filled = {
+                edge.dst.data
+                for state in sd.states()
+                for node in state.nodes()
+                if isinstance(node, FillLibraryNode)
+                for edge in state.out_edges(node)
+                if isinstance(edge.dst, nodes.AccessNode) and sd.arrays[edge.dst.data].transient
+            }
+            if not filled:
+                continue
+            for loop in [r for r in sd.all_control_flow_regions() if isinstance(r, LoopRegion)]:
+                candidates = {
+                    node.data
+                    for block in loop.all_control_flow_blocks()
+                    if isinstance(block, SDFGState)
+                    for node in block.data_nodes()
+                    if node.data in filled
+                }
+                if not candidates:
+                    continue
+                for state, node, fill in dead_loop_fills(sd, loop, candidates):
+                    drop_fill(state, fill, node)
+                    removed += 1
         return removed or None

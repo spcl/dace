@@ -159,9 +159,16 @@ class ArrayElimination(ppl.Pass):
         desc="Also fold a copy of a WAR carrier whose reads are ordered before the carrier's write (canonicalization)",
     )
 
-    def __init__(self, fold_ordered_copies: bool = False):
+    nested = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Also eliminate in every nested SDFG, for a caller that is not a recursive pipeline (canonicalization)",
+    )
+
+    def __init__(self, fold_ordered_copies: bool = False, nested: bool = False):
         super().__init__()
         self.fold_ordered_copies = fold_ordered_copies
+        self.nested = nested
 
     def folding_races(self, state: SDFGState, source: str, copy: nodes.AccessNode, first: bool) -> bool:
         """Whether folding ``copy`` onto ``source`` could reorder a read past a write; without
@@ -190,6 +197,11 @@ class ArrayElimination(ppl.Pass):
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
         result: set[str] = set()
+        for sd in sdfg.all_sdfgs_recursive() if self.nested else [sdfg]:
+            self._eliminate_in_sdfg(sd, pipeline_results, result)
+        return result or None
+
+    def _eliminate_in_sdfg(self, sdfg: SDFG, pipeline_results: dict[str, Any], result: set[str]) -> None:
         reachable: dict[SDFGState, set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
         # Get access nodes and modify set as pass continues
         access_sets: dict[str, set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.cfg_id]
@@ -198,7 +210,7 @@ class ArrayElimination(ppl.Pass):
         try:
             state_order = list(cfg.blockorder_topological_sort(sdfg, recursive=True, ignore_nonstate_blocks=True))
         except KeyError:
-            return None
+            return
         # The SDFG-wide facts (``SDFG.facts()``, a walk of every interstate edge and descriptor) each redundant-copy
         # probe resolves are shared by the whole sweep: merging access nodes touches no symbol, descriptor or
         # interstate edge, and every applied transformation drops them (``_apply_forgetting_facts``).
@@ -216,8 +228,6 @@ class ArrayElimination(ppl.Pass):
             if aname not in access_sets or not access_sets[aname]:
                 sdfg.remove_data(aname, validate=False)
                 result.add(aname)
-
-        return result or None
 
     def _eliminate_in_states(
         self,
