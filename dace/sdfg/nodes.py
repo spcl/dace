@@ -1397,6 +1397,15 @@ class Map:
         "(set by RangePrivatizeScatterReductions)",
         serialize_if=lambda m: m.omp_range_privatize,
     )
+    proven_parallel = Property(
+        dtype=bool,
+        default=False,
+        category="Semantics",
+        desc="Lifted on a proof ``LoopToMap`` cannot redo (wavefront, stream compaction, a guard or contract): "
+        "canonicalization keeps this map instead of lowering it to a loop nothing would lift again. It adds no "
+        "parallelism: a map is independent whether or not this is set.",
+        serialize_if=lambda m: m.proven_parallel,
+    )
 
     gpu_block_size = ListProperty(
         element_type=int,
