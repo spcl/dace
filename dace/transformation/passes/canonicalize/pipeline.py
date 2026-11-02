@@ -530,12 +530,13 @@ class _ThenIfChanged(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> bool | None:
-        changed = False
+        rewrote = run_then = False
         for unit, watched in self.first:
-            result = unit.apply_pass(sdfg, {})
-            changed = changed or (watched and result is not None)
-        if not changed:
-            return None
+            unit_changed = changed_the_graph(unit, unit.apply_pass(sdfg, {}))
+            rewrote = rewrote or unit_changed
+            run_then = run_then or (watched and unit_changed)
+        if not run_then:
+            return True if rewrote else None
         for unit in self.then:
             unit.apply_pass(sdfg, {})
         return True
