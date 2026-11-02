@@ -164,6 +164,21 @@ def run_both(sdfg, transform, **symbols):
     return results
 
 
+def test_while_to_for_keeps_a_start_value_read_from_an_array_written_before_the_loop():
+    sdfg = SDFG("start_reads_array")
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_array("o", [1], dace.int64)
+    first, second = sdfg.add_state("first", is_start_block=True), sdfg.add_state("second")
+    sdfg.add_edge(first, second, InterstateEdge(assignments={"i": "o[0]"}))
+    copy_statement(second, None, "o[0]")
+    loop = LoopRegion("loop", "i < 8")
+    sdfg.add_node(loop)
+    sdfg.add_edge(second, loop, InterstateEdge())
+    body, tail = loop.add_state("body", is_start_block=True), loop.add_state("tail")
+    loop.add_edge(body, tail, InterstateEdge(assignments={"i": "i + 1"}))
+    assert WhileToFor().apply_pass(sdfg, {}) is None
+
+
 def test_exit_symbol_of_a_loop_that_runs_no_iteration():
     expected, got = run_both(
         exit_reader("exit_empty", 5), lambda s: MaterializeLoopExitSymbols().apply_pass(s, {}), N=3
@@ -241,3 +256,4 @@ if __name__ == "__main__":
     test_exit_symbol_of_a_counter_a_branch_also_bumps_stays_a_read()
     test_iterator_exit_value_of_a_loop_that_runs_no_iteration()
     test_while_to_for_keeps_a_start_value_changed_before_the_loop()
+    test_while_to_for_keeps_a_start_value_read_from_an_array_written_before_the_loop()

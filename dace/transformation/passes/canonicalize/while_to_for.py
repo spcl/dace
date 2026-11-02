@@ -165,7 +165,8 @@ def start_edge(loop: LoopRegion, name: str):
         edge = ins[0]
         if name in edge.data.assignments:
             value = symbolic.pystr_to_symbolic(edge.data.assignments[name])
-            return None if changed.intersection(str(s) for s in value.free_symbols) else edge
+            reads = symbolic.free_symbols_and_functions(value) | set(symbolic.arrays(value))
+            return None if changed & reads else edge
         changed.update(edge.data.assignments)
         block = edge.src
         if not isinstance(block, SDFGState):
