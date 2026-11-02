@@ -473,8 +473,13 @@ def _split_off_first_map(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
                 continue
             scope = st.scope_subgraph(first, include_entry=True, include_exit=True).nodes()
             readers = [e.src for e in st.in_edges(first) if isinstance(e.src, AccessNode)]
+            # A node other maps write as well would pull them along: running first, this map writes one of its own
+            first_exit = st.exit_node(first)
+            for edge in st.out_edges(first_exit):
+                if any(e.src is not first_exit for e in st.in_edges(edge.dst)):
+                    st.remove_edge(edge)
+                    st.add_edge(first_exit, edge.src_conn, st.add_access(edge.dst.data), edge.dst_conn, edge.data)
             state_fission(SubgraphView(st, list(scope) + readers))
-            # It moves what shares a written node with this map as well, up to all of ``st``: no split, and no end
             return bool(st.nodes())
     return False
 
