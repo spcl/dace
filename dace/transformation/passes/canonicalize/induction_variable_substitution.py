@@ -411,22 +411,9 @@ def trip_count(
     stride: symbolic.SymbolicType,
     sdfg: SDFG,
 ) -> symbolic.SymbolicType:
-    """How often ``loop`` over the inclusive ``[start, end]`` runs; an empty range runs it zero times. A loop around it
-    is running, so that loop's range is not empty: ``for i in range(N): for j in range(1, N)`` runs ``N - 1`` times."""
+    """How often ``loop`` over the inclusive ``[start, end]`` runs; an empty range runs it zero times."""
     trip = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
-    facts = sdfg.facts()
-    if symbolic.provably_nonnegative(trip, facts):
-        return trip
-    for outer in loop_analysis.enclosing_loops(loop):
-        low, high = loop_analysis.get_init_assignment(outer), loop_analysis.get_loop_end(outer)
-        if (
-            low is not None
-            and high is not None
-            and loop_analysis.get_loop_stride(outer) == 1
-            and symbolic.provably_nonnegative(symbolic.simplify(trip - (high - low)), facts)
-        ):
-            return trip
-    return sympy.Max(0, trip)
+    return trip if loop_analysis.provably_runs(loop, 0, sdfg.facts()) else sympy.Max(0, trip)
 
 
 def extract_tasklet_iv(
@@ -1888,7 +1875,7 @@ def try_substitute_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: S
     from dace.transformation.interstate.loop_peeling import LoopPeeling
     from dace.transformation.passes.parallelization_prep import _constant_trip_count, _unique_block_label
 
-    if not loop.loop_variable or budget.get(loop, 0) <= 0:
+    if not loop.loop_variable or loop.inverted or budget.get(loop, 0) <= 0:
         return False
     # Body shape first: a scan of the loop's own blocks, against three sympy round trips.
     chain = rotation_body_chain(loop)
@@ -1897,7 +1884,8 @@ def try_substitute_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: S
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)
-    if start is None or end is None or stride is None or stride == 0:
+    # The peeled iteration's range check reads the stride's sign.
+    if start is None or end is None or stride is None or stride == 0 or not stride.is_number:
         return False
 
     # Deterministic candidate order: body-block order, then node order inside each state. The pass
@@ -1908,9 +1896,7 @@ def try_substitute_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: S
         plan = plan_rotation(parent, loop, sdfg, chain, accum, stride)
         if plan is None:
             continue
-        # ``LoopPeeling`` does NOT guard the peeled iteration, so peeling also asserts the loop runs
-        # at least once -- the assumption ``peel_limit`` already licenses for BestEffortLoopPeeling.
-        # Where the trip count is known, check it instead of assuming it.
+        # Where the trip count is known, the peeled iteration needs no guard: refuse a loop that never runs.
         trip = _constant_trip_count(loop, sdfg)
         if trip is not None and trip < 1:
             return False
@@ -1931,7 +1917,9 @@ def try_substitute_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: S
         # the peel CLONES the body; the reads shift only in the loop, which the peel has narrowed
         # to the iterations where the shifted read is in range.
         delete_rotation_update(chain, plan)
-        LoopPeeling().apply_to(sdfg=loop.sdfg, loop=loop, verify=False, options={"count": 1, "begin": True})
+        LoopPeeling().apply_to(
+            sdfg=loop.sdfg, loop=loop, verify=False, options={"count": 1, "begin": True, "guarded": True}
+        )
         if plan.remat is None:
             shift_rotation_reads(plan)
         else:

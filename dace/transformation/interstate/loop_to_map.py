@@ -766,32 +766,53 @@ def read_before_written(
 
     carried: set[str] = set()
     changes: dict[ControlFlowBlock, set[str]] = {}
-    moving: set[str] | None = None
+    moving = loop_varying_symbols(loop)
 
     def fixed_subset(state: SDFGState, dn: nodes.AccessNode, subset: subsets.Subset | None) -> bool:
         """Whether ``subset`` names the same elements wherever an iteration reaches ``dn``."""
-        nonlocal moving
-        if moving is None:
-            moving = loop_varying_symbols(loop)
         return subset is not None and state.entry_node(dn) is None and not subset.free_symbols & moving
 
     def stored_by(state: SDFGState, dn: nodes.AccessNode) -> set[str | tuple[str, subsets.Subset]]:
-        """What the writes into ``dn`` guarantee: its elements as (name, subset), or the bare name when a write's
-        elements are unknown here (a scope, a nested loop, a moving symbol), which then count as the whole container."""
+        """What the writes into ``dn`` guarantee: its elements as (name, subset), or the bare name when a write spans
+        the container, sits in a scope or has no subset, which then counts as the whole container."""
         elements = [e.data.get_dst_subset(e, state) for e in state.in_edges(dn) if not e.data.is_empty()]
-        if all(fixed_subset(state, dn, subset) for subset in elements):
-            return {(dn.data, subset) for subset in elements}
-        return {dn.data}
+        if state.entry_node(dn) is not None or any(subset is None for subset in elements):
+            return {dn.data}
+        whole = subsets.Range.from_array(state.sdfg.arrays[dn.data])
+        if subsets_cover(elements, whole, symbolic.Facts.none()):
+            return {dn.data}
+        return {(dn.data, subset) for subset in elements}
+
+    def same_slot(part: subsets.Subset, read: subsets.Subset) -> bool:
+        """Whether ``part`` can hold ``read`` when their elements are not both known: only a dimension where each
+        names one element, and no moving symbol separates them, tells them apart."""
+        if part.dims() != read.dims():
+            return True
+        for (first, last, _), (low, high, _) in zip(part.ndrange(), read.ndrange()):
+            if first != last or low != high or first == low:
+                continue
+            gap = symbolic.equalize_symbol(first - low)
+            if not {str(s) for s in gap.free_symbols} & moving and symbolic.simplify(gap) != 0:
+                return False
+        return True
 
     def read_covered(state: SDFGState, dn: nodes.AccessNode, stored: set[str | tuple[str, subsets.Subset]]) -> bool:
-        """Whether ``stored`` holds what ``dn`` reads; a read of unknown elements needs only some store of the name."""
+        """Whether ``stored`` holds what ``dn`` reads. Elements a nested loop or a moving symbol names are not known
+        here: such a store holds what :func:`same_slot` cannot tell apart, an unknown read needs only some store."""
         if dn.data in stored:
             return True
         parts = [entry[1] for entry in stored if isinstance(entry, tuple) and entry[0] == dn.data]
-        return bool(parts) and all(
-            not fixed_subset(state, dn, subset) or subsets_cover(parts, subset, symbolic.Facts.none())
-            for subset in [e.data.get_src_subset(e, state) for e in state.out_edges(dn) if not e.data.is_empty()]
-        )
+        if not parts:
+            return False
+        for subset in [e.data.get_src_subset(e, state) for e in state.out_edges(dn) if not e.data.is_empty()]:
+            if subset is None or state.entry_node(dn) is not None:
+                continue
+            if fixed_subset(state, dn, subset) and not any(part.free_symbols & moving for part in parts):
+                if not subsets_cover(parts, subset, symbolic.Facts.none()):
+                    return False
+            elif not any(same_slot(part, subset) for part in parts):
+                return False
+        return True
 
     def changed_by(block: ControlFlowBlock) -> set[str]:
         """The names ``block`` can change: containers it writes (any written access node, no memlet analysis),
@@ -833,22 +854,20 @@ def read_before_written(
                     forget(guarded, changed_by(block))
                 continue
             if isinstance(block, SDFGState):
-                for dn in block.data_nodes():
-                    if (
-                        dn.data in candidates
-                        and block.in_degree(dn) == 0
-                        and block.out_degree(dn) > 0
-                        and not read_covered(block, dn, written)
-                        and not any(
-                            read_covered(block, dn, guarded[key][1])
-                            for key in nested_read_guards(block, dn)
-                            if key in guarded
-                        )
+                accessed = [dn for dn in block.data_nodes() if dn.data in candidates]
+                stored = written.union(*(stored_by(block, dn) for dn in accessed if block.in_degree(dn) > 0))
+                for dn in accessed:
+                    if block.out_degree(dn) == 0:
+                        continue
+                    # A node with an in-edge runs after a store or an ordering edge: it sees this state's stores
+                    seen = stored if block.in_degree(dn) > 0 else written
+                    if not read_covered(block, dn, seen) and not any(
+                        read_covered(block, dn, guarded[key][1])
+                        for key in nested_read_guards(block, dn)
+                        if key in guarded
                     ):
                         carried.add(dn.data)
-                for dn in block.data_nodes():
-                    if dn.data in candidates and block.in_degree(dn) > 0:
-                        written |= stored_by(block, dn)
+                written |= stored
             elif isinstance(block, ConditionalBlock):
                 per_branch = []
                 recorded = {}
@@ -2305,9 +2324,7 @@ class LoopLift:
         # analysis universe; a pure-read access node or control-flow read among them is the cheap
         # trigger that keeps the block-order walk off most loops.
         if any(
-            n.data in local_transients and state.in_degree(n) == 0 and state.out_degree(n) > 0
-            for state in loop_states
-            for n in state.data_nodes()
+            n.data in local_transients and state.out_degree(n) > 0 for state in loop_states for n in state.data_nodes()
         ) or (local_transients & control_flow_reads(self.loop, ctx)):
             cached_carried = None if facts is None else facts.carried
             if cached_carried is UNCOMPUTED or cached_carried is None or cached_carried[0] != local_transients:

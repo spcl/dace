@@ -195,6 +195,22 @@ def test_rotation_substitution_is_idempotent():
     assert _structure(sdfg) == before, "a re-run mutated an already-substituted SDFG"
 
 
+@dace.program
+def rotate_over_empty_range(a: dace.float64[4], b: dace.float64[4]):
+    x = b[3]
+    for i in range(N):
+        a[i] = (b[i] + x) * 0.5
+        x = b[i]
+
+
+def test_the_peeled_iteration_runs_only_if_the_loop_does():
+    sdfg, applied, _ = _apply_rotation_alone(rotate_over_empty_range, "rotate_over_empty_range")
+    assert applied
+    a = np.zeros(4)
+    sdfg(a=a, b=np.arange(4.0), N=0)
+    assert not a.any()
+
+
 def test_peel_limit_zero_disables_the_rewrite():
     """The shifted read is wrong on the first iteration, so the rewrite cannot happen without the
     peel that removes that iteration. With no peel budget it must decline, not substitute anyway."""

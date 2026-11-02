@@ -117,6 +117,27 @@ def test_s244_matches_the_reference_through_the_pipeline(n):
 
 
 @dace.program
+def carried_over_empty_range(a: dace.float64[4], b: dace.float64[4], c: dace.float64[4]):
+    for i in range(N - 1):
+        a[i] = b[i]
+        a[i + 1] = c[i]
+
+
+@pytest.mark.parametrize("n", [1, 2, 3])
+def test_the_peeled_iteration_runs_only_if_the_loop_does(n):
+    sdfg, applied = run(carried_over_empty_range)
+    assert applied == 1
+    sdfg.name = f"carried_over_empty_range_{n}"
+    a = np.full(4, 7.0)
+    want = a.copy()
+    b, c = np.arange(4.0), 10.0 + np.arange(4.0)
+    for i in range(n - 1):
+        want[i], want[i + 1] = b[i], c[i]
+    sdfg(a=a, b=b, c=c, N=n)
+    assert np.array_equal(a, want)
+
+
+@dace.program
 def read_in_the_live_window(a: dace.float64[N], b: dace.float64[N]):
     # a[i + 2] is killed by a[i] two iterations later, but a[i + 1] READS the value in between.
     for i in range(N - 2):
@@ -241,6 +262,9 @@ if __name__ == "__main__":
     test_s244_is_rewritten_and_still_computes()
     test_s244_parallelizes_through_the_pipeline()
     test_s244_matches_the_reference_through_the_pipeline(17)
+    test_the_peeled_iteration_runs_only_if_the_loop_does(1)
+    test_the_peeled_iteration_runs_only_if_the_loop_does(2)
+    test_the_peeled_iteration_runs_only_if_the_loop_does(3)
     test_a_read_inside_the_live_window_refuses()
     test_a_conditional_killing_store_refuses()
     test_an_accumulating_kill_refuses()

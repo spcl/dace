@@ -244,6 +244,28 @@ def enclosing_loops(block: ControlFlowBlock) -> set[LoopRegion]:
     return found
 
 
+def provably_runs(loop: LoopRegion, count: int, facts: symbolic.Facts) -> bool:
+    """Whether ``loop`` runs at least ``count`` iterations. A loop around it is running, so that loop's range is not
+    empty: ``for i in range(N): for j in range(1, N)`` runs at least ``N - 1`` times, whatever ``N`` is."""
+    start, end, stride = get_init_assignment(loop), get_loop_end(loop), get_loop_stride(loop)
+    if start is None or end is None or stride is None:
+        return False
+    spare = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1 - count)
+    if symbolic.provably_nonnegative(spare, facts):
+        return True
+    for outer in enclosing_loops(loop):
+        low, high = get_init_assignment(outer), get_loop_end(outer)
+        if (
+            low is not None
+            and high is not None
+            and not outer.inverted
+            and get_loop_stride(outer) == 1
+            and symbolic.provably_nonnegative(symbolic.simplify(spare - (high - low)), facts)
+        ):
+            return True
+    return False
+
+
 def written_names(region: ControlFlowRegion) -> set[str]:
     """The data containers and interstate-assigned symbols written anywhere in ``region``."""
     written: set[str] = set()

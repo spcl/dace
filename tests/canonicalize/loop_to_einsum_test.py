@@ -607,5 +607,28 @@ def test_a_copy_above_the_innermost_map_keeps_the_nest():
     assert not LoopToEinsum().apply_pass(sdfg, {})
 
 
+@dace.program
+def matvec_in_a_time_loop(A: dace.float64[N, N], x: dace.float64[N], y: dace.float64[N]):
+    for _ in range(M):
+        x[0] = x[0] + 1
+        for i in range(N):
+            for j in range(N):
+                y[i] += A[i, j] * x[j]
+
+
+def test_a_contraction_under_an_enclosing_loop_lifts_and_keeps_accumulating():
+    n, m = 3, 2
+    A, x = np.arange(9.0).reshape(3, 3).copy(), np.arange(3.0)
+    y, x_ref = np.ones(3), x.copy()
+    want = y.copy()
+    for _ in range(m):
+        x_ref[0] += 1
+        want += A @ x_ref
+    sdfg = matvec_in_a_time_loop.to_sdfg(simplify=True)
+    assert LoopToEinsum().apply_pass(sdfg, {}) == 1
+    sdfg(A=A, x=x, y=y, N=n, M=m)
+    assert np.allclose(y, want)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v", "-p", "no:cacheprovider"]))

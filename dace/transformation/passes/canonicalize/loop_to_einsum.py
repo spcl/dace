@@ -46,7 +46,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_basic, as_expr
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
@@ -78,28 +78,6 @@ class TransposeSpec(NamedTuple):
 def _is_single_element(desc: data.Data) -> bool:
     """A ``Scalar`` or a length-1 ``Array`` -- the frontend's per-read staging shape."""
     return isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and all(str(s) == "1" for s in desc.shape))
-
-
-def _has_loop_ancestor(loop: LoopRegion) -> bool:
-    """True iff ``loop`` is nested inside another ``LoopRegion`` -- we match only
-    the OUTERMOST loop of a nest (matching it lifts, or no-ops on, the whole nest;
-    an inner loop alone is a 1-D reduction, LoopToReduce's domain, not an einsum)."""
-    p = loop.parent_graph
-    while p is not None and not isinstance(p, SDFG):
-        if isinstance(p, LoopRegion):
-            return True
-        p = p.parent_graph
-    return False
-
-
-def _region_in_loop(region: AbstractControlFlowRegion | None) -> bool:
-    """True iff ``region`` sits inside a ``LoopRegion`` (so its states' maps are already
-    covered by that loop's candidate)."""
-    while region is not None and not isinstance(region, SDFG):
-        if isinstance(region, LoopRegion):
-            return True
-        region = region.parent_graph
-    return False
 
 
 def sweeps_whole_array(order: list[str], ends: dict[str, object], desc: data.Data) -> bool:
@@ -464,10 +442,10 @@ def _axis_subset(idx: list[str], axes: dict[str, _Axis]) -> subsets.Range:
     return subsets.Range([(0, 0, 1) if i == "0" else (0, axes[i].end, 1) for i in idx])
 
 
-def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> EinsumSpec | None:
+def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue, repeats: bool) -> EinsumSpec | None:
     """The ``Einsum`` spec for an accumulated contraction, or ``None``. The acceptance
     rule mirrors ``LiftEinsum.can_be_applied`` on the map this nest would become."""
-    if not value.accumulates:
+    if not value.accumulates or (repeats and value.write_node is not None and value.write_node.setzero):
         return None
     axes = {a.param: a for a in nest.axes}
     if len(axes) != len(nest.axes):
@@ -528,11 +506,11 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> EinsumSpec | N
     inputs = [(f"_ein{i:02d}", t.array, _axis_subset(t.idx, axes), None) for i, t in enumerate(tensors)]
     if coeffs:
         inputs.append(("_alpha", coeffs[0].array, _axis_subset(coeffs[0].idx, axes), None))
-    beta = _fold_coefficient(sdfg, value.array, value.write_node)
+    beta = _fold_coefficient(sdfg, value.array, value.write_node, repeats)
     return EinsumSpec(einsum_str, value.coeff, beta, inputs, ("_out", value.array, _axis_subset(value.idx, axes), None))
 
 
-def _fold_coefficient(sdfg: SDFG, array: str, write_node: nodes.AccessNode | None) -> float:
+def _fold_coefficient(sdfg: SDFG, array: str, write_node: nodes.AccessNode | None, repeats: bool) -> float:
     """The ``Einsum``'s ``beta``: ``out = alpha*contraction + beta*out_prior``. The SAME
     three signals ``LiftEinsum.apply`` uses, in the same order -- folding onto undefined
     memory and discarding a meaningful prior both miscompile:
@@ -544,7 +522,8 @@ def _fold_coefficient(sdfg: SDFG, array: str, write_node: nodes.AccessNode | Non
     3. Else a non-transient output: the CALLER supplies the prior value that ``+=`` reads
        -> FOLD (beta=1).
     4. Else a fresh, never-written transient (k3mm's ``E = define_local(...)`` accumulator)
-       -> OVERWRITE (beta=0) rather than fold uninitialized garbage.
+       -> OVERWRITE (beta=0) rather than fold uninitialized garbage, unless a repeat of the
+       nest folds onto what the last run left (``repeats``).
     """
     if write_node is not None and write_node.setzero:
         return 0.0
@@ -558,7 +537,7 @@ def _fold_coefficient(sdfg: SDFG, array: str, write_node: nodes.AccessNode | Non
         for st in sdfg.states()
         for n in st.data_nodes()
     )
-    return 1.0 if (has_prior_writer or not sdfg.arrays[array].transient) else 0.0
+    return 1.0 if (has_prior_writer or repeats or not sdfg.arrays[array].transient) else 0.0
 
 
 def _direct_transpose(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> TransposeSpec | None:
@@ -609,14 +588,17 @@ def _may_hold_map_contraction(state: SDFGState) -> bool:
     return False
 
 
-def _match_nest(nest: _Nest | None, sdfg: SDFG) -> EinsumSpec | TransposeSpec | None:
-    """An ``EinsumSpec`` / ``TransposeSpec`` read directly off ``nest``, or ``None``."""
+def _match_nest(nest: _Nest | None, sdfg: SDFG, repeats: bool) -> EinsumSpec | TransposeSpec | None:
+    """An ``EinsumSpec`` / ``TransposeSpec`` read directly off ``nest``, or ``None``.
+
+    :param repeats: an enclosing loop may run the nest again.
+    """
     if nest is None or len(nest.axes) < 2:
         return None
     value = _body_value(nest, sdfg)
     if value is None:
         return None
-    return _direct_einsum(nest, sdfg, value) or _direct_transpose(nest, sdfg, value)
+    return _direct_einsum(nest, sdfg, value, repeats) or _direct_transpose(nest, sdfg, value)
 
 
 @explicit_cf_compatible
@@ -640,43 +622,40 @@ class LoopToEinsum(ppl.Pass):
 
     def _lift_loops(self, sdfg: SDFG) -> int:
         """Lift nests rooted at a ``LoopRegion``: the whole loop is spliced out."""
-        # Only the OUTERMOST loop of each nest is a candidate: matching it lifts (or
-        # no-ops on) the whole nest. Snapshot upfront -- a lift removes the nest.
+        # Outermost first: a match lifts the whole nest, a refused loop leaves its inner loops
+        # candidates (a time loop around a matvec). Snapshot upfront -- a lift removes the nest.
         candidates: list[tuple[LoopRegion, SDFG]] = []
         for sd in sdfg.all_sdfgs_recursive():
             candidates.extend(
                 (region, sd)
                 for region in sd.all_control_flow_regions()
-                if isinstance(region, LoopRegion) and region.loop_variable and not _has_loop_ancestor(region)
+                if isinstance(region, LoopRegion) and region.loop_variable
             )
 
-        count = 0
+        lifted: set[LoopRegion] = set()
         for loop, root in candidates:
             parent = loop.parent_graph
-            if not isinstance(parent, ControlFlowRegion) or loop not in parent.nodes():
+            around = loop_analysis.enclosing_loops(loop)
+            if around & lifted or not isinstance(parent, ControlFlowRegion) or loop not in parent.nodes():
                 continue  # already spliced out (defensive)
-            spec = _match_nest(_nest_of(loop), root)
+            spec = _match_nest(_nest_of(loop), root, any(outer.sdfg is root for outer in around))
             if spec is None:
                 continue
             if isinstance(spec, EinsumSpec):
                 self._replace_with_einsum(parent, loop, spec)
             else:
                 self._replace_with_transpose(parent, loop, spec)
-            count += 1
-        return count
+            lifted.add(loop)
+        return len(lifted)
 
     def _lift_maps(self, sdfg: SDFG) -> int:
         """Lift nests rooted at a top-level ``MapEntry``: the map scope is replaced in
-        place, leaving the rest of its state alone. Maps under a ``LoopRegion`` are
-        skipped -- the enclosing loop is the candidate that covers them."""
+        place, leaving the rest of its state alone."""
         candidates: list[tuple[SDFGState, nodes.MapEntry, SDFG]] = []
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():
                 if not _may_hold_map_contraction(state):
                     continue  # cheap screen: no map, or no product to contract (one node walk)
-                parent = state.parent_graph
-                if isinstance(parent, LoopRegion) or (parent is not sd and _region_in_loop(parent)):
-                    continue
                 candidates.extend(
                     (state, node, sd) for node in state.scope_children()[None] if isinstance(node, nodes.MapEntry)
                 )
@@ -687,7 +666,8 @@ class LoopToEinsum(ppl.Pass):
                 continue  # swallowed by an earlier lift in the same state (defensive)
             if _scope_boundary_is_ordered(state, entry):
                 continue  # an ordering memlet would be dropped with the scope; refuse
-            spec = _match_nest(_nest_of_map(state, entry), root)
+            repeats = any(outer.sdfg is root for outer in loop_analysis.enclosing_loops(state))
+            spec = _match_nest(_nest_of_map(state, entry), root, repeats)
             if not isinstance(spec, EinsumSpec):
                 continue  # map-form transposes stay maps: no loop scaffold to remove
             self._replace_map_with_einsum(state, entry, spec)
