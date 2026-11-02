@@ -748,14 +748,15 @@ def read_before_written(loop: LoopRegion, candidates: set[str], holders: Iterabl
             elif isinstance(block, ConditionalBlock):
                 per_branch = []
                 recorded = {}
-                for cond, body in block.branches:
+                for position, (cond, body) in enumerate(block.branches):
                     key = None if cond is None else cond.as_string
                     branch_written = set(written)
                     if key in guarded:
                         branch_written |= guarded[key][1]
                     scan(body, branch_written, dict(guarded))
                     per_branch.append(branch_written)
-                    if key is not None:
+                    # An ``elif`` arm also needs the earlier conditions false: a later branch on its own can run without it
+                    if key is not None and position == 0:
                         recorded[key] = ({str(name) for name in cond.get_free_symbols()}, branch_written)
                 guarded.update(recorded)
                 if per_branch and any(cond is None for cond, _ in block.branches):
