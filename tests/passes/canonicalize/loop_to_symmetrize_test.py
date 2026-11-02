@@ -94,6 +94,31 @@ def test_node_expands_and_runs():
     assert np.allclose(got, got.T)
 
 
+def test_a_bound_only_the_nest_names_stays_declared():
+    """``K`` is named by no array: only the node keeps it alive once the loops are gone."""
+    K = dace.symbol("K")
+
+    @dace.program
+    def symmetrize_rows(X: dace.float64[M, M]):
+        for i in range(K):
+            for j in range(i + 1, M):
+                X[j, i] = X[i, j]
+
+    sdfg = symmetrize_rows.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    assert _nsym(sdfg) == 1
+    assert "K" in sdfg.free_symbols
+
+    X = np.random.default_rng(3).standard_normal((8, 8))
+    want = X.copy()
+    for i in range(3):
+        for j in range(i + 1, 8):
+            want[j, i] = want[i, j]
+    got = X.copy()
+    sdfg(X=got, M=8, K=3)
+    assert np.allclose(got, want)
+
+
 @pytest.mark.parametrize("prog,source_upper", [(symmetrize_upper, True), (symmetrize_lower, False)])
 def test_lifts_and_parallelizes(prog, source_upper):
     """The triangular symmetrization nest lifts to one Symmetrize node, leaves no

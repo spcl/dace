@@ -158,8 +158,6 @@ class ExpandSymmetrizeCUDA(ExpandTransformation):
         sub-block, a non-square target -- has to go the general way instead of being indexed wrong.
         """
         rows, cols = desc.shape
-        # The window bounds are STRING properties; ``pystr_to_symbolic`` is what turns them into
-        # comparable expressions (sympy refuses a bare str).
         # Reparsing loses the assumptions and dtype the shape carries, so the window bound and the
         # extent become two sympy instances of one name that ``equal`` then calls undecidable.
         row_lo, row_hi, col_hi, rows, cols = symbolic.equalize_symbols_across(
@@ -240,10 +238,10 @@ class Symmetrize(nodes.LibraryNode):
     }
     default_implementation = "pure"
 
-    row_lo = properties.Property(dtype=str, default="0", desc="Outer (row) index start.")
-    row_hi = properties.Property(dtype=str, default="0", desc="Outer (row) index exclusive end.")
+    row_lo = properties.SymbolicProperty(default=0, desc="Outer (row) index start.")
+    row_hi = properties.SymbolicProperty(default=0, desc="Outer (row) index exclusive end.")
     col_offset = properties.Property(dtype=int, default=1, desc="Inner (col) start offset past the row index.")
-    col_hi = properties.Property(dtype=str, default="0", desc="Inner (col) index exclusive end.")
+    col_hi = properties.SymbolicProperty(default=0, desc="Inner (col) index exclusive end.")
     source_upper = properties.Property(
         dtype=bool, default=True, desc="Source triangle is the upper (read X[i,j], write X[j,i]); else the lower."
     )
@@ -264,6 +262,11 @@ class Symmetrize(nodes.LibraryNode):
         self.col_offset = col_offset
         self.col_hi = col_hi
         self.source_upper = source_upper
+
+    @property
+    def free_symbols(self) -> set[str]:
+        bounds = (self.row_lo, self.row_hi, self.col_hi)
+        return super().free_symbols | {str(s) for b in bounds for s in symbolic.pystr_to_symbolic(b).free_symbols}
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState):
         """Resolve the single in-place array and check it is 2-D.
