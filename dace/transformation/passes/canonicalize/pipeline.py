@@ -61,7 +61,7 @@ from dace.transformation.passes.canonicalize.fuse_elementwise_into_gemv import F
 from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 from dace.transformation.passes.canonicalize.fuse_maps_at_shared_axes import FuseMapsAtSharedAxes
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
-from dace.transformation.passes.canonicalize.in_bounds_facts import declare_in_bounds_extents
+from dace.transformation.passes.canonicalize.in_bounds_facts import DeclareInBoundsExtents, declare_in_bounds_extents
 from dace.transformation.passes.canonicalize.induction_variable_substitution import (
     InductionVariableSubstitution,
     LoopCarriedRotationSubstitution,
@@ -1018,7 +1018,8 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     fuses conditions; lift what fusion exposed; the final tidy. Invariant guards stay pushed in: hoisting them is
     the specialization step ``hoist_invariant_guards``."""
     label = RECOMPOSE
-    s: Stages = []
+    # The maps' propagated memlets show always-executed accesses the frontend form hides, and fusion proves with them
+    s: Stages = [(label, DeclareInBoundsExtents())]
     # Before fusion: the WCR map it leaves fuses with the matrix's producer
     s += [(label, FuseElementwiseIntoGemv())]
     s += [

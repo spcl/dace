@@ -7,11 +7,15 @@ An access every execution makes must be in bounds: ``Psi[i, j, NZ - 2]`` in a st
 symbol, and each is declared as an assumption, so it is checked when the program is called.
 """
 
+from typing import Any
+
 import sympy
 
 from dace import SDFG, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import BreakBlock, ContinueBlock, LoopRegion, ReturnBlock
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 
@@ -97,3 +101,19 @@ def declare_in_bounds_extents(sdfg: SDFG) -> dict[str, int]:
         if relation is not None and low > 1:
             sdfg.add_symbol_relation(relation)
     return {name: low for name, low in bounds.items() if low > 1}
+
+
+@transformation.explicit_cf_compatible
+class DeclareInBoundsExtents(ppl.Pass):
+    """:func:`declare_in_bounds_extents` as a recipe unit, for the accesses lifting and parallelization surface."""
+
+    CATEGORY: str = "Canonicalization"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Symbols
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> None:
+        declare_in_bounds_extents(sdfg)
