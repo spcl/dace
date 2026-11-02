@@ -48,7 +48,6 @@ from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.loop_fission import _linear_blocks, per_iter_axes
 
-
 #: The axes of a container not every access of which is per-iteration.
 UNALIGNED: frozenset[int] = frozenset()
 

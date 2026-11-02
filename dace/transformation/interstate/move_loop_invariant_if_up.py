@@ -50,12 +50,12 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDF
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.block_fusion import splice_empty_state
-from dace.transformation.passes.analysis.analysis import names_read_by_text
-from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop
 
 # Shared soundness kernel for the loop distribution below -- the same import route
 # ``fuse_loops.py`` uses, so fission, fusion and this hoist can never disagree.
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis.analysis import names_read_by_text
+from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop
 from dace.transformation.passes.loop_fission import LoopFission, _independent_block_groups, _linear_blocks
 
 

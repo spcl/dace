@@ -217,9 +217,7 @@ def level_parallel(blocks: list[ControlFlowBlock], loop_var: str | None, arrays:
         for name, axes in block_reads.items():
             reads[name] = reads[name] & axes if name in reads else axes
     return all(
-        axes & reads.get(name, axes)
-        for name, axes in writes.items()
-        if name in arrays and not arrays[name].transient
+        axes & reads.get(name, axes) for name, axes in writes.items() if name in arrays and not arrays[name].transient
     )
 
 

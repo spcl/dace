@@ -165,7 +165,9 @@ def run_both(sdfg, transform, **symbols):
 
 
 def test_exit_symbol_of_a_loop_that_runs_no_iteration():
-    expected, got = run_both(exit_reader("exit_empty", 5), lambda s: MaterializeLoopExitSymbols().apply_pass(s, {}), N=3)
+    expected, got = run_both(
+        exit_reader("exit_empty", 5), lambda s: MaterializeLoopExitSymbols().apply_pass(s, {}), N=3
+    )
     assert expected == got == 3
 
 
@@ -193,7 +195,11 @@ def test_while_to_for_keeps_a_start_value_changed_before_the_loop():
     sdfg.add_symbol("m", dace.int64)
     sdfg.add_symbol("i", dace.int64)
     sdfg.add_array("o", [1], dace.int64)
-    first, second, third = sdfg.add_state("first", is_start_block=True), sdfg.add_state("second"), sdfg.add_state("third")
+    first, second, third = (
+        sdfg.add_state("first", is_start_block=True),
+        sdfg.add_state("second"),
+        sdfg.add_state("third"),
+    )
     sdfg.add_edge(first, second, InterstateEdge(assignments={"m": "2"}))
     sdfg.add_edge(second, third, InterstateEdge(assignments={"i": "m"}))
     fourth = sdfg.add_state("fourth")

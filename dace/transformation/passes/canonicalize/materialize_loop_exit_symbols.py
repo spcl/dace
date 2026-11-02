@@ -235,7 +235,9 @@ def reiterated_names(
     return names
 
 
-def reassigned_after(parent: ControlFlowRegion, loop: LoopRegion, post_blocks: dict[ControlFlowBlock, None], name: str) -> bool:
+def reassigned_after(
+    parent: ControlFlowRegion, loop: LoopRegion, post_blocks: dict[ControlFlowBlock, None], name: str
+) -> bool:
     """Whether ``name`` is assigned again past ``loop``: a reader there may see that value, not the exit value."""
     for block in (loop, *post_blocks):
         if any(name in edge.data.assignments for edge in parent.out_edges(block)):

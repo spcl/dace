@@ -20,8 +20,8 @@ import pytest
 
 import dace
 from dace.ordered import OrderedSet
-from dace.sdfg import nodes
 from dace.properties import CodeBlock
+from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_to_map import (
     LiftContext,
@@ -1105,9 +1105,7 @@ def test_a_downward_strided_lift_visits_the_loops_iterates():
 
 def test_a_strided_lift_leaves_a_map_over_the_same_name_alone():
     sdfg, first = iota_loop("strided_lift_same_name_map", "i = 0", "i < N + 1", "i = i + 4")
-    first.add_mapped_tasklet(
-        "other", {"i": "1:N+1:4"}, {}, "o = 1", {"o": dace.Memlet("b[i]")}, external_edges=True
-    )
+    first.add_mapped_tasklet("other", {"i": "1:N+1:4"}, {}, "o = 1", {"o": dace.Memlet("b[i]")}, external_edges=True)
     assert ParallelizeLoops().apply_pass(sdfg, {}) == 1
     assert stored(sdfg, "b") == [1, 5]
 
