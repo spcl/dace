@@ -2838,8 +2838,9 @@ class LoopLift:
         # Find NestedSDFG's / Loop's unique data
         rw_set = read_set | write_set
         # A constant array is declared in every nested SDFG it inherits ``constants_prop`` into: copied
-        # in, never a connector, never moved out of the parent (other blocks may still read it).
-        constant_set = {name for name in rw_set if name in sdfg.constants_prop}
+        # in, never a connector, never moved out of the parent (other blocks may still read it). One this SDFG receives
+        # through a connector is an argument here, and stays one.
+        constant_set = {name for name in rw_set if name in sdfg.constants_prop and sdfg.arrays[name].transient}
         unique_set = set()
         outside_reads: set[str] | None = None
         for name in rw_set - constant_set:
