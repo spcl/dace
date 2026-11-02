@@ -713,12 +713,18 @@ def pass_out_through_nests(plan: LiftPlan) -> None:
         inner_name = outer_name
 
 
-def restride_views(sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new: list[symbolic.SymbolicType]) -> None:
+def restride_views(
+    sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new: list[symbolic.SymbolicType]
+) -> list[tuple[str, list[symbolic.SymbolicType], list[symbolic.SymbolicType]]]:
     """Views of ``name`` in ``sdfg`` scale their strides as the lift scaled ``old`` to ``new``: one factor for every
-    axis, the packed extent of the map dimensions placed inside them (1 when they are outside)."""
-    factor = symbolic.simplify(new[-1] / old[-1])
+    axis, the packed extent of the map dimensions placed inside them (1 when they are outside).
+
+    :returns: Each view that changed, with its strides before and after.
+    """
+    factor = symbolic.simplify(symbolic.pystr_to_symbolic(new[-1]) / old[-1])
+    restrided = []
     if factor == 1:
-        return
+        return restrided
     scaled, pending = {name}, [name]
     while pending:
         viewed = pending.pop()
@@ -734,22 +740,26 @@ def restride_views(sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new:
                         and isinstance(other.desc(sdfg), dt.View)
                     ):
                         view = other.desc(sdfg)
+                        before = list(view.strides)
                         view.set_shape(
                             view.shape,
-                            strides=[st * factor for st in view.strides],
+                            strides=[st * factor for st in before],
                             total_size=view.total_size * factor,
                         )
+                        restrided.append((other.data, before, list(view.strides)))
                         scaled.add(other.data)
                         pending.append(other.data)
+    return restrided
 
 
-def restride_nests(sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new: list[symbolic.SymbolicType]) -> None:
-    """Nests below that describe ``name`` with its own strides ``old`` take ``new``, so their window stays a plain
-    slice of the lifted array that ``dealias`` widens; so do the views of it in each of them.
+def restride_connected_nests(
+    sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new: list[symbolic.SymbolicType]
+) -> None:
+    """Nests connected to ``name`` that describe it with its own strides ``old`` take ``new``, so their window stays a
+    plain slice of the lifted array that ``dealias`` widens; so do the views of it in each of them.
 
     A nest that already describes the whole container addresses it as the parent does; its edges take the whole of
     it too, so that the window ``dealias`` sees starts at the slice's origin rather than at the accessed elements."""
-    restride_views(sdfg, name, old, new)
     outer = sdfg.arrays[name]
     for state in sdfg.states():
         for node in state.nodes():
@@ -766,6 +776,12 @@ def restride_nests(sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new:
                                 edge.data.volume = edge.data.subset.num_elements()
                     inner.set_shape(inner.shape, strides=new, total_size=inner.total_size)
                     restride_nests(node.sdfg, conn, old, new)
+
+
+def restride_nests(sdfg: SDFG, name: str, old: list[symbolic.SymbolicType], new: list[symbolic.SymbolicType]) -> None:
+    """Restride the views of ``name`` in ``sdfg`` and the nests connected to ``name`` or to one of those views."""
+    for data, before, after in [(name, old, new), *restride_views(sdfg, name, old, new)]:
+        restride_connected_nests(sdfg, data, before, after)
 
 
 def move_array(plan: LiftPlan) -> None:
