@@ -904,9 +904,10 @@ class NormalizeWCR(ppl.Pass):
         while scope is not None:
             params |= set(scope.map.params)
             scope = parent_state.entry_node(scope)
+        written = NormalizeWCR.plain_written(parent_sdfg)
         for oe in bound:
             cdesc = parent_sdfg.arrays.get(oe.data.data)
-            if cdesc is None or not cdesc.transient or oe.data.data in NormalizeWCR.plain_written(parent_sdfg):
+            if cdesc is None or not cdesc.transient or oe.data.data in written:
                 return False
             if oe.data.wcr is not None and params and not {str(sym) for sym in oe.data.subset.free_symbols} & params:
                 return False
