@@ -367,6 +367,8 @@ def test_a_nested_symbol_named_like_an_outer_one_widens_the_border_memlet():
 
     (border,) = host.out_edges(nest)
     assert border.data.subset == dace.subsets.Range([(0, 9, 1)])
+
+
 def propagated(subset: str, length: int, rng: tuple) -> dace.subsets.Range:
     memlet = dace.Memlet(f"A[{subset}]")
     arr = dace.data.Array(dace.float64, [length])
