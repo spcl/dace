@@ -36,6 +36,7 @@ The pass therefore refuses (no-op) on any region carrying an interstate-edge
 assignment and emits a loud warning so the dropped opportunity is visible.
 """
 
+import copy
 import warnings
 from typing import Any
 
@@ -530,9 +531,9 @@ class MoveIfIntoLoop(ppl.Pass):
         for b in lb_blocks:
             rc.add_node(b, ensure_unique_name=True)
         for e in lb_edges:
-            rc.add_edge(e.src, e.dst, e.data)
+            rc.add_edge(e.src, e.dst, copy.deepcopy(e.data))
         if edge_into_loop is not None:
-            rc.add_edge(edge_into_loop.src, lb_start, edge_into_loop.data)
+            rc.add_edge(edge_into_loop.src, lb_start, copy.deepcopy(edge_into_loop.data))
             keep_start_block(rc, required(order)[0])
         else:
             keep_start_block(rc, lb_start)
@@ -540,27 +541,30 @@ class MoveIfIntoLoop(ppl.Pass):
         inner_cb = ConditionalBlock(label=f"{loop_c.label}_if")
         inner_cb.add_branch(CodeBlock(cond.as_string), rc)
 
-        loop_c.add_node(inner_cb, is_start_block=True, ensure_unique_name=True)
+        new_loop = copy.deepcopy(loop_c)
+        for b in list(new_loop.nodes()):
+            new_loop.remove_node(b)
+        new_loop.add_node(inner_cb, is_start_block=True, ensure_unique_name=True)
         if sunk:
-            loop_c.add_state_before(inner_cb, f"{loop_c.label}_prep", is_start_block=True, assignments=dict(sunk))
+            new_loop.add_state_before(inner_cb, f"{new_loop.label}_prep", is_start_block=True, assignments=dict(sunk))
 
-        parent.add_node(loop_c, ensure_unique_name=True)
+        parent.add_node(new_loop, ensure_unique_name=True)
         for e in in_edges:
-            parent.add_edge(e.src, loop_c, e.data)
+            parent.add_edge(e.src, new_loop, copy.deepcopy(e.data))
         for e in out_edges:
-            parent.add_edge(loop_c, e.dst, e.data)
+            parent.add_edge(new_loop, e.dst, copy.deepcopy(e.data))
         for e in in_edges + out_edges:
             parent.remove_edge(e)
         parent.remove_node(cb)
         if is_start:
-            keep_start_block(parent, loop_c)
+            keep_start_block(parent, new_loop)
         if sunk:
             # ``sinkable_prep`` vetted the whole parent chain, so every edge left here carries
             # prep that now lives in the loop body; stripped, the chain's states splice away.
             for e in parent.edges():
                 for lhs in sunk:
                     e.data.assignments.pop(lhs, None)
-            splice_empty_prep_states(parent, loop_c)
+            splice_empty_prep_states(parent, new_loop)
 
     @staticmethod
     def _move_imperfect(cb: ConditionalBlock, cond: CodeBlock, region: ControlFlowRegion):
@@ -586,9 +590,9 @@ class MoveIfIntoLoop(ppl.Pass):
         for a, b in zip(units, units[1:]):
             parent.add_edge(a, b, InterstateEdge())
         for e in in_edges:
-            parent.add_edge(e.src, units[0], e.data)
+            parent.add_edge(e.src, units[0], copy.deepcopy(e.data))
         for e in out_edges:
-            parent.add_edge(units[-1], e.dst, e.data)
+            parent.add_edge(units[-1], e.dst, copy.deepcopy(e.data))
         for e in in_edges + out_edges:
             parent.remove_edge(e)
         parent.remove_node(cb)
