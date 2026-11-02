@@ -959,6 +959,8 @@ def derive_parallelism(
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
     s += [(label, FuseLoops())]
     s += [(label, Parallelize(target=target, hold_sibling_chains=False))]
+    # The time loop a wavefront skew made keeps the skew's name until here
+    s += [(label, unique_iterators())]
     return s
 
 
