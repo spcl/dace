@@ -2944,7 +2944,8 @@ class LoopLift:
 
         if negative_step:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
-            start, end, step = end, start, -step
+            # The map counts up from its lower bound, so that bound is the last iterate, not the loop's end.
+            start, end, step = last_iteration(self.loop), start, -step
 
         source_nodes = body.source_nodes()
         sink_nodes = body.sink_nodes()

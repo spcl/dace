@@ -1096,6 +1096,12 @@ def stored(sdfg: dace.SDFG, name: str = "a", N: int = 5) -> list[int]:
     return np.nonzero(arrays[name])[0].tolist()
 
 
+def test_a_downward_strided_lift_visits_the_loops_iterates():
+    sdfg, _ = iota_loop("downward_strided_lift", "i = 10", "i > -1", "i = i - 3")
+    assert ParallelizeLoops().apply_pass(sdfg, {}) == 1
+    assert stored(sdfg) == [1, 4, 7, 10]
+
+
 def test_a_strided_lift_leaves_a_map_over_the_same_name_alone():
     sdfg, first = iota_loop("strided_lift_same_name_map", "i = 0", "i < N + 1", "i = i + 4")
     first.add_mapped_tasklet(
@@ -1231,6 +1237,7 @@ if __name__ == "__main__":
     with pytest.MonkeyPatch.context() as mp:
         test_a_declared_body_symbol_has_the_type_the_parent_walk_gives(mp)
     test_a_strided_lift_ends_at_its_last_iterate()
+    test_a_downward_strided_lift_visits_the_loops_iterates()
     test_a_strided_lift_leaves_a_map_over_the_same_name_alone()
     test_a_gather_lifted_through_a_loop_fuses_into_its_consumer()
     test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop()
