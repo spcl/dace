@@ -1233,6 +1233,19 @@ def test_two_kernels_reading_one_count_name_fold_their_own_bound():
     assert sum(name.endswith("_fold") or "_fold_" in name for name in sdfg.arrays) == 2
 
 
+def test_an_extent_the_kernel_itself_stores_is_not_folded_before_the_launch():
+    sdfg = kernels_over_per_thread_counts(("counts",))
+    state = sdfg.start_block
+    entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    store = state.add_tasklet("store", {}, {"c"}, "c = 3 * b")
+    state.add_nedge(entry, store, dace.Memlet())
+    state.add_edge(store, "c", state.add_access("counts"), None, dace.Memlet("counts[b]"))
+    pass_ = MoveArrayOutOfKernel()
+    pass_.raise_on_unsupported = False
+    pass_.apply_pass(sdfg, {})
+    assert not any("_fold" in name for name in sdfg.arrays)
+
+
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)

@@ -489,6 +489,10 @@ def extent_bounds(desc: dt.Array, hierarchy: list[SDFG], kernel: Scope) -> list[
             kernel_sdfg.arrays[name].storage not in readable for name in (container, *reads)
         ):
             return None
+        # A fold before the launch cannot see what the kernel itself stores
+        in_kernel = state.scope_subgraph(entry).data_nodes()
+        if any(state.in_degree(n) > 0 and n.data in (container, *reads) for n in in_kernel):
+            return None
         bound = f"{sym}_max"
         into_kernel = state.parent_graph.in_edges(state)
         if any(bound in e.data.assignments for e in into_kernel) and not any(b.bound == bound for b in result):
