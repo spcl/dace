@@ -19,6 +19,7 @@ from dace.libraries.standard.nodes.reduce import Reduce
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.loop_to_reduce import (
     LoopToReduce,
     augassign_to_wcr_in_state,
@@ -1575,6 +1576,22 @@ def test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_array
     assert np.allclose(t[0], x @ y), "retargeted nested dot product diverged from the sequential oracle"
 
 
+@dace.program
+def diagonal_sum(m: dace.float64[N, N], out: dace.float64[1]):
+    s = 0.0
+    for i in range(N):
+        s = s + m[i, i]
+    out[0] = s
+
+
+def test_a_diagonal_read_folds_the_diagonal_only():
+    sdfg = diagonal_sum.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    m, out = np.random.default_rng(4).random((6, 6)), np.zeros(1)
+    sdfg(m=m, out=out, N=6)
+    assert out[0] == pytest.approx(np.trace(m))
+
+
 if __name__ == "__main__":
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()
@@ -2284,3 +2301,4 @@ def test_a_staging_copy_read_after_the_loop_is_kept():
     a, out = np.arange(1.0, 5.0), np.zeros(2)
     sdfg(a=a, out=out, N=4)
     assert np.allclose(out, [11.0, 11.0])
+    test_a_diagonal_read_folds_the_diagonal_only()
