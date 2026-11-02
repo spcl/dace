@@ -22,7 +22,7 @@ Each pass calls checkers directly from ``apply_pass``:
 from collections.abc import Iterator
 
 import dace
-from dace import subsets
+from dace import subsets, symbolic
 from dace.dtypes import ReductionType
 from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
@@ -720,16 +720,27 @@ def lane_varying_interstate_guard(sdfg: SDFG, widths: tuple[int, ...]) -> tuple[
     :param widths: tile widths; a descriptor whose last dim is one of them is a per-lane buffer.
     :returns: the first offending block with its error string, or ``None`` when the invariant holds.
     """
+    bindings: dict[SDFG, dict[str, set[str]]] = {}
     for block in sdfg.all_control_flow_blocks(recursive=True):
         if not isinstance(block, ConditionalBlock):
             continue
+        if block.sdfg not in bindings:
+            bindings[block.sdfg] = {
+                name: symbolic.free_symbols_and_functions(rhs)
+                for edge in block.sdfg.all_interstate_edges()
+                for name, rhs in edge.data.assignments.items()
+            }
         for condition, region in block.branches:
             if condition is None:
                 continue
             assigned = [
                 e for r in region.all_control_flow_regions(recursive=True) for e in r.edges() if e.data.assignments
             ]
-            for name in condition.get_free_symbols():
+            # The guard may read the buffer through a symbol: ``cond = rlmin > tmp``, ``if cond``
+            names = sorted(condition.get_free_symbols())
+            for name in names:
+                names += sorted(bindings[block.sdfg].get(name, set()).difference(names))
+            for name in names:
                 desc = block.sdfg.arrays.get(name)
                 if desc is None or not desc.shape or desc.shape[-1] not in widths:
                     continue
