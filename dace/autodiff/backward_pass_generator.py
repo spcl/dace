@@ -496,8 +496,10 @@ class BackwardPassGenerator:
 
                     bwd_edge = self.get_backward_state_edge(edge)
 
-                    # Add the condition to the edge
-                    bwd_edge.data.condition = CodeBlock(new_bwd_edge_condition)
+                    # Add the condition to the edge. The only way out of a backward state needs none,
+                    # and one on it would look like a branch that may end the program.
+                    bwd_condition = CodeBlock(new_bwd_edge_condition if len(edges_list) > 1 else "1")
+                    bwd_edge.data.condition = bwd_condition
 
                     # If there is a special case for the first iteration of the backward state
                     if forward_state in self.loop_states_view_map:
@@ -505,7 +507,7 @@ class BackwardPassGenerator:
                         bwd_loop_edge = self.get_backward_loop_state_edge(edge)
 
                         # Add the same condition to the edge
-                        bwd_loop_edge.data.condition = CodeBlock(new_bwd_edge_condition)
+                        bwd_loop_edge.data.condition = bwd_condition
 
                     # Add the forward condition to the list to update the conditions_map dict
                     if new_bwd_edge_condition != "1":
