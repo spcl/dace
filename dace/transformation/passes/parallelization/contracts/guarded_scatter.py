@@ -590,6 +590,15 @@ def _scatter_idx_targets_for_loop(
             for e in state.in_edges(node):
                 if e.data is None or e.data.subset is None or not indirect_write_needs_injectivity(e.data):
                     continue
+                # A span between two loaded bounds overlaps others although the bounds are distinct: no guard here
+                # asks for that.
+                if any(
+                    begin != end and str(sym) in bindings.keys() | chained.keys()
+                    for begin, end, _ in e.data.subset.ndrange()
+                    for sym in symbolic.pystr_to_symbolic(begin).free_symbols
+                    | symbolic.pystr_to_symbolic(end).free_symbols
+                ):
+                    return {}
                 found: dict[str, list[ast.AST] | None] = {}
                 # Form 1: interstate-bound index symbol referenced in the write subset.
                 for sym in e.data.subset.free_symbols:

@@ -891,6 +891,23 @@ def test_scatter_writing_its_own_index_stays_a_loop():
     assert not ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {})
 
 
+def test_a_span_between_loaded_bounds_is_not_a_scatter():
+    n = 5
+
+    @dace.program
+    def spans(x: dace.float64[n], z: dace.float64[n], st: dace.int64[3]):
+        for g in range(2):
+            for j in range(st[g], st[g + 1]):
+                x[j] = z[j] + g
+
+    sdfg = spans.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="cpu")
+    assert not any(
+        isinstance(node, nodes.MapEntry) and "guard" in (node.specialization_hint or "")
+        for node, _ in sdfg.all_nodes_recursive()
+    )
+
+
 if __name__ == "__main__":
     test_detect_finds_single_scatter()
     test_detect_finds_each_distinct_idx_array()
@@ -954,3 +971,4 @@ def test_a_transient_scattered_through_an_index_of_an_index_is_guarded_on_both()
     test_a_fancy_index_store_is_guarded()
     test_index_written_after_the_scatter_is_checked_before_it()
     test_scatter_writing_its_own_index_stays_a_loop()
+    test_a_span_between_loaded_bounds_is_not_a_scatter()
