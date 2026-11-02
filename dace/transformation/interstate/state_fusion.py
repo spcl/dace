@@ -627,11 +627,9 @@ class StateFusion(transformation.MultiStateTransformation):
                         for d in first_inout:
                             if d in other_cc.second_outputs:
                                 nodes_second = [n for n in second_output if n.data == d]
-                                # Read-Write race
-                                if d in fused_cc.first_inputs:
-                                    nodes_first = [n for n in first_input if n.data == d]
-                                else:
-                                    nodes_first = []
+                                # Read-Write race: an output node passes data on as well
+                                nodes_first = [n for n in first_input if n.data == d]
+                                nodes_first += [n for n in first_output if n.data == d and first_state.out_degree(n) > 0]
                                 for n2 in nodes_second:
                                     for e in second_state.in_edges(n2):
                                         path = second_state.memlet_path(e)
@@ -661,13 +659,13 @@ class StateFusion(transformation.MultiStateTransformation):
                         if d in other_cc.second_outputs:
                             # Check for intersection (if None, fusion is ok)
                             nodes_second = [n for n in second_output if n.data == d]
-                            # Read-Write race
-                            if d in fused_cc.first_inputs:
-                                nodes_first = [n for n in first_input if n.data == d]
-                                if StateFusion.memlets_intersect(
-                                    first_state, nodes_first, True, second_state, nodes_second, False
-                                ):
-                                    return False
+                            # Read-Write race: an output node passes data on as well
+                            nodes_first = [n for n in first_input if n.data == d]
+                            nodes_first += [n for n in first_output if n.data == d and first_state.out_degree(n) > 0]
+                            if nodes_first and StateFusion.memlets_intersect(
+                                first_state, nodes_first, True, second_state, nodes_second, False
+                            ):
+                                return False
                             # Write-Write race
                             if d in fused_cc.first_outputs:
                                 nodes_first = [n for n in first_output if n.data == d]
