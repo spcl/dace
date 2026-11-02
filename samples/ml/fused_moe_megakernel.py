@@ -38,23 +38,27 @@ fill each other's gaps.
 Every task is a DaCe program of its own, which DaCe inlines into the consume scope (see ``build``). Other blocks of the
 same kind (another router, no dense branch, another activation) are built from the same tasks, combined differently.
 
-Besides the megakernel, this file holds the block's configuration, random weights at the model's shapes, and a PyTorch
-reference that follows the Hugging Face ``transformers`` implementation operation by operation. If vLLM is installed
-(it pins its own PyTorch version), the block as vLLM runs it is timed as well. Requires PyTorch and a CUDA GPU with
-bfloat16 tensor cores (Ampere or newer).
+The reference is the block in Hugging Face ``transformers``, which is also timed with each of its implementations of
+the experts. The kernel stores and rounds values in bfloat16 where ``transformers`` does. If vLLM is installed (it pins
+its own PyTorch version), the block as vLLM runs it is timed as well. Requires PyTorch, ``transformers`` and a CUDA GPU
+with bfloat16 tensor cores (Ampere or newer).
 """
 
 import argparse
 import contextlib
-import dataclasses
 import math
-import types
 
 import numpy as np
 import tile_matmul as tm
 import torch
-import torch.nn.functional as F
 from torch import nn
+from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig
+from transformers.models.gemma4.modeling_gemma4 import (
+    Gemma4RMSNorm,
+    Gemma4TextExperts,
+    Gemma4TextMLP,
+    Gemma4TextRouter,
+)
 
 import dace
 
@@ -72,124 +76,66 @@ try:  # Optional: the block as vLLM runs it, for comparison
 except ImportError:
     HAVE_VLLM = False
 
-# The block and its PyTorch reference
+# The block in transformers: the reference
+
+GEMMA4_26B_A4B = dict(
+    hidden_size=2816, intermediate_size=2112, num_experts=128, top_k_experts=8, moe_intermediate_size=704
+)
+SMALL = dict(hidden_size=256, intermediate_size=128, num_experts=128, top_k_experts=4, moe_intermediate_size=128)
 
 
-@dataclasses.dataclass(frozen=True)
-class Config:
-    """Shapes of the block (defaults: the Gemma 4 26B-A4B model)."""
-
-    hidden: int = 2816  # Width of the residual stream
-    dense_intermediate: int = 2112  # Width of the dense MLP
-    num_experts: int = 128
-    top_k: int = 8  # Experts per token
-    expert_intermediate: int = 704  # Width of each expert
-    eps: float = 1e-6  # RMSNorm epsilon
+def block_config(**shapes) -> Gemma4TextConfig:
+    """The configuration of a decoder layer with a mixture of experts, of the given shapes."""
+    return Gemma4TextConfig(**shapes, enable_moe_block=True, num_hidden_layers=1, layer_types=["full_attention"])
 
 
-@dataclasses.dataclass
-class Weights:
-    """The block's parameters, as bfloat16 (norm and router scales in float32) PyTorch tensors."""
-
-    # Dense branch
-    pre_norm: torch.Tensor  # [hidden]
-    gate_proj: torch.Tensor  # [dense_intermediate, hidden]
-    up_proj: torch.Tensor  # [dense_intermediate, hidden]
-    down_proj: torch.Tensor  # [hidden, dense_intermediate]
-    post_norm_1: torch.Tensor  # [hidden]
-    # Router
-    router_scale: torch.Tensor  # [hidden]
-    router_proj: torch.Tensor  # [num_experts, hidden]
-    per_expert_scale: torch.Tensor  # [num_experts]
-    # Experts
-    pre_norm_2: torch.Tensor  # [hidden]
-    expert_gate_up: torch.Tensor  # [num_experts, 2 * expert_intermediate, hidden]
-    expert_down: torch.Tensor  # [num_experts, hidden, expert_intermediate]
-    post_norm_2: torch.Tensor  # [hidden]
-    # Sum of the branches
-    post_norm: torch.Tensor  # [hidden]
+# The block's RMSNorms (dense branch, experts, and their sum), as the decoder layer names them
+NORMS = (
+    "pre_feedforward_layernorm",
+    "post_feedforward_layernorm_1",
+    "pre_feedforward_layernorm_2",
+    "post_feedforward_layernorm_2",
+    "post_feedforward_layernorm",
+)
 
 
-def random_weights(config: Config, device: str = "cuda", seed: int = 0) -> Weights:
-    """Weights with the model's shapes and plausible magnitudes (the computation does not depend on their values)."""
-    generator = torch.Generator(device=device).manual_seed(seed)
+class FeedForward(nn.Module):
+    """The feed-forward part of the ``transformers`` ``Gemma4TextDecoderLayer`` (its modules, and its forward code),
+    with random weights of plausible magnitudes (the computation does not depend on their values)."""
 
-    def matrix(*shape: int) -> torch.Tensor:
-        fan_in = shape[-1]
-        return (torch.randn(*shape, generator=generator, device=device) / fan_in**0.5).to(torch.bfloat16)
+    def __init__(self, config: Gemma4TextConfig, seed: int = 0):
+        super().__init__()
+        self.mlp = Gemma4TextMLP(config, layer_idx=0)
+        self.router = Gemma4TextRouter(config)
+        self.experts = Gemma4TextExperts(config)
+        for norm in NORMS:
+            self.add_module(norm, Gemma4RMSNorm(config.hidden_size, eps=config.rms_norm_eps))
+        generator = torch.Generator().manual_seed(seed)
+        with torch.no_grad():
+            for p in self.parameters():
+                if p.dim() == 1:  # Scales
+                    p.copy_(1 + 0.1 * torch.randn(p.shape, generator=generator))
+                else:
+                    p.copy_(torch.randn(p.shape, generator=generator) / p.shape[-1] ** 0.5)
 
-    def scale(size: int) -> torch.Tensor:
-        return 1.0 + 0.1 * torch.randn(size, generator=generator, device=device)
-
-    c = config
-    return Weights(
-        pre_norm=scale(c.hidden),
-        gate_proj=matrix(c.dense_intermediate, c.hidden),
-        up_proj=matrix(c.dense_intermediate, c.hidden),
-        down_proj=matrix(c.hidden, c.dense_intermediate),
-        post_norm_1=scale(c.hidden),
-        router_scale=scale(c.hidden),
-        router_proj=matrix(c.num_experts, c.hidden),
-        per_expert_scale=scale(c.num_experts),
-        pre_norm_2=scale(c.hidden),
-        expert_gate_up=matrix(c.num_experts, 2 * c.expert_intermediate, c.hidden),
-        expert_down=matrix(c.num_experts, c.hidden, c.expert_intermediate),
-        post_norm_2=scale(c.hidden),
-        post_norm=scale(c.hidden),
-    )
+    def forward(self, residual: torch.Tensor) -> torch.Tensor:
+        # As in Gemma4TextDecoderLayer.forward, after attention
+        hidden_states = self.pre_feedforward_layernorm(residual)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states_1 = self.post_feedforward_layernorm_1(hidden_states)
+        _, top_k_weights, top_k_index = self.router(residual)
+        hidden_states_2 = self.pre_feedforward_layernorm_2(residual)
+        hidden_states_2 = self.experts(hidden_states_2, top_k_index, top_k_weights)
+        hidden_states_2 = self.post_feedforward_layernorm_2(hidden_states_2)
+        hidden_states = self.post_feedforward_layernorm(hidden_states_1 + hidden_states_2)
+        return residual + hidden_states
 
 
-def random_input(config: Config, tokens: int, device: str = "cuda") -> torch.Tensor:
+def random_input(config: Gemma4TextConfig, tokens: int) -> torch.Tensor:
     """The residual stream of ``tokens`` tokens, the same for every run (which experts the tokens pick, and so how
     much of the weights a block reads, depends on it)."""
-    generator = torch.Generator(device).manual_seed(tokens)
-    return torch.randn(tokens, config.hidden, device=device, generator=generator).to(torch.bfloat16)
-
-
-def rms_norm(x: torch.Tensor, weight: torch.Tensor | None, eps: float) -> torch.Tensor:
-    """Gemma 4's RMSNorm: normalizes in float32, then scales by ``weight`` (if any)."""
-    y = x.float()
-    y = y * torch.rsqrt(y.pow(2).mean(-1, keepdim=True) + eps)
-    if weight is not None:
-        y = y * weight.float()
-    return y.type_as(x)
-
-
-def gelu(x: torch.Tensor) -> torch.Tensor:
-    return F.gelu(x, approximate="tanh")
-
-
-def route(x: torch.Tensor, w: Weights, config: Config) -> tuple[torch.Tensor, torch.Tensor]:
-    """Picks ``top_k`` experts per token and their weights: softmax over all experts, top-k, renormalize, and scale
-    by a learned per-expert factor."""
-    h = rms_norm(x, None, config.eps) * w.router_scale * config.hidden**-0.5
-    scores = F.linear(h.to(torch.bfloat16), w.router_proj)
-    probabilities = F.softmax(scores, dim=-1, dtype=torch.float32)
-    weights, experts = torch.topk(probabilities, config.top_k, dim=-1)
-    weights = weights / weights.sum(dim=-1, keepdim=True)
-    return weights * w.per_expert_scale[experts], experts
-
-
-def reference(x: torch.Tensor, w: Weights, config: Config) -> torch.Tensor:
-    """The block as in ``transformers`` (eager mode): ``x`` is the residual stream, ``[tokens, hidden]``."""
-    # Dense branch
-    h = rms_norm(x, w.pre_norm, config.eps)
-    h = F.linear(gelu(F.linear(h, w.gate_proj)) * F.linear(h, w.up_proj), w.down_proj)
-    dense = rms_norm(h, w.post_norm_1, config.eps)
-
-    # Experts: each expert processes the tokens that picked it
-    weights, experts = route(x, w, config)
-    h = rms_norm(x, w.pre_norm_2, config.eps)
-    moe = torch.zeros_like(h)
-    hit = torch.nn.functional.one_hot(experts, config.num_experts).permute(2, 1, 0)  # [expert, slot, token]
-    for expert in torch.nonzero(hit.sum(dim=(1, 2))).flatten().tolist():
-        slot, token = torch.where(hit[expert])
-        gate, up = F.linear(h[token], w.expert_gate_up[expert]).chunk(2, dim=-1)
-        y = F.linear(gelu(gate) * up, w.expert_down[expert])
-        moe.index_add_(0, token, (y * weights[token, slot, None]).to(moe.dtype))
-    moe = rms_norm(moe, w.post_norm_2, config.eps)
-
-    return x + rms_norm(dense + moe, w.post_norm, config.eps)
+    generator = torch.Generator("cuda").manual_seed(tokens)
+    return torch.randn(tokens, config.hidden_size, device="cuda", generator=generator).to(torch.bfloat16)
 
 
 # The megakernel
@@ -231,15 +177,15 @@ def pack(weight: torch.Tensor) -> torch.Tensor:
     return weight.reshape(*batch, n // BN, BN, k // K_STEP, K_STEP).transpose(-2, -3).contiguous()
 
 
-def build(config: Config, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
+def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
     """The block for ``config`` as a GPU SDFG. Its arguments are the input, the weights (see ``arguments``), the
     output, and scratch buffers (see ``workspace``)."""
     D, DI, I, E, K = (
-        config.hidden,
-        config.dense_intermediate,
-        config.expert_intermediate,
+        config.hidden_size,
+        config.intermediate_size,
+        config.moe_intermediate_size,
         config.num_experts,
-        config.top_k,
+        config.top_k_experts,
     )
     assert D % BN == 0 and (2 * DI) % BN == 0 and (2 * I) % BN == 0 and E == BN == THREADS and D % ROUTE_STEP == 0
     assert BM * BN <= STAGING  # The product of a tile fits where its operands are staged
@@ -247,7 +193,7 @@ def build(config: Config, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
     RS = ROUTE_STEP // K_STEP  # Packed slices of the router weight per router task
     HALF = BN // 2  # Gate (and up) columns of a gate/up task
     # Constants in single precision (a Python float is a double on the GPU, which computes in double precision slowly)
-    EPS = np.float32(config.eps)
+    EPS = np.float32(config.rms_norm_eps)
     ROOT = np.float32(D**-0.5)
     GELU_C = np.float32(math.sqrt(2 / math.pi))
     GELU_A = np.float32(0.044715)
@@ -286,8 +232,8 @@ def build(config: Config, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
         t, x, pre_norm, pre_norm_2, router_scale, inv_rms, x_dense, x_expert, x_router, expert_acc, row_token, token_left
     ):  # fmt: skip
         """The RMS of token ``t`` (all the pre-norms normalize the same residual) and the inputs of the dense branch,
-        the experts and the router (the normalized input, rounded to bfloat16 as the model does, and scaled). Also
-        resets the token's scratch memory."""
+        the experts and the router (the normalized input, rounded to bfloat16 as the model does, and scaled, rounding
+        after each scale). Also resets the token's scratch memory."""
         sum_of_squares = dace.ndarray([1], dtype=dace.float32, storage=SHARED)
         sum_of_squares[0] = 0
         for d in dace.map[0:D] @ TB:
@@ -301,9 +247,9 @@ def build(config: Config, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
         inv_rms[t] = inv
         for d in dace.map[0:D] @ TB:
             n = dace.float32(x[t, d]) * inv
-            x_dense[t, d] = n * pre_norm[d]
-            x_router[t, d] = bf16(n) * router_scale[d] * ROOT
-            x_expert[t, d] = n * pre_norm_2[d]
+            x_dense[t, d] = n * dace.float32(pre_norm[d])
+            x_router[t, d] = bf16(bf16(n) * dace.float32(router_scale[d])) * ROOT
+            x_expert[t, d] = n * dace.float32(pre_norm_2[d])
 
     @dace.program
     def first_tasks(S, count, dense_rows, route_left, dense_gate_up_left, top_k_left):
@@ -376,7 +322,9 @@ def build(config: Config, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
         token_left
     ):  # fmt: skip
         """A tile of an expert's rows times a chunk of its down projection, scaled by each row's routing weight and
-        added to the output of the row's token. The last tile that adds to a token pushes its output task."""
+        added to the output of the row's token. The model rounds every addition to bfloat16; the sum stays in float32
+        here, whose atomic additions are native (before Hopper GPUs, those of bfloat16 are compare-and-swap loops, slow
+        when many tiles add to a token). The last tile that adds to a token pushes its output task."""
         work = staging.reshape(WORKSPACE)
         tile = staging[0 : BM * BN].reshape([BM, BN])
         e = tile_expert[g]
@@ -384,7 +332,7 @@ def build(config: Config, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
         r0 = g * BM
         tm.tile_matmul(h_expert[r0 : r0 + BM, :], expert_down_p[e, ch], tile, work, nr)
         for r, col in dace.map[0:nr, 0:BN] @ TB:
-            expert_acc[row_token[r0 + r], ch * BN + col] += dace.float32(tile[r, col]) * row_weight[r0 + r]
+            expert_acc[row_token[r0 + r], ch * BN + col] += bf16(dace.float32(tile[r, col]) * row_weight[r0 + r])
         for r in dace.map[0:nr] @ TB:
             token = row_token[r0 + r]
             if dace.atomic.add(token_left, token, -1) == 1:
@@ -452,7 +400,7 @@ def build(config: Config, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
                 total += math.exp(dace.float32(tile[0, chosen[j2]]) - top)
             c = chosen[j]
             pair_expert[g, j] = c
-            pair_weight[g, j] = math.exp(dace.float32(tile[0, c]) - top) / total * per_expert_scale[c]
+            pair_weight[g, j] = math.exp(dace.float32(tile[0, c]) - top) / total * dace.float32(per_expert_scale[c])
             pair_slot[g, j] = dace.atomic.add(count, c, 1)
         if is_last(top_k_left, 0):
             for _ in dace.map[0:1] @ TB:
@@ -472,14 +420,14 @@ def build(config: Config, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
         inv1 = inverse_rms(sums[0])
         inv2 = inverse_rms(sums[1])
         for d in dace.map[0:D] @ TB:
-            b1 = bf16(dace.float32(dense_out[g, d]) * inv1 * post_norm_1[d])
-            b2 = bf16(bf16(expert_acc[g, d]) * inv2 * post_norm_2[d])
+            b1 = bf16(dace.float32(dense_out[g, d]) * inv1 * dace.float32(post_norm_1[d]))
+            b2 = bf16(bf16(expert_acc[g, d]) * inv2 * dace.float32(post_norm_2[d]))
             v = dace.bfloat16(b1 + b2)
             staging[d] = v
             sums[2] += dace.float32(v) * dace.float32(v)
         inv = inverse_rms(sums[2])
         for d in dace.map[0:D] @ TB:
-            out[g, d] = dace.float32(x[g, d]) + bf16(dace.float32(staging[d]) * inv * post_norm[d])
+            out[g, d] = dace.float32(x[g, d]) + bf16(dace.float32(staging[d]) * inv * dace.float32(post_norm[d]))
 
     @dace.program
     def scan(
@@ -533,14 +481,14 @@ def build(config: Config, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
     @dace.program
     def moe_block(
         x: dace.bfloat16[T, D],
-        pre_norm: dace.float32[D],
-        post_norm_1: dace.float32[D],
-        router_scale: dace.float32[D],
+        pre_norm: dace.bfloat16[D],
+        post_norm_1: dace.bfloat16[D],
+        router_scale: dace.bfloat16[D],
         router_p: packed(E, D),
-        per_expert_scale: dace.float32[E],
-        pre_norm_2: dace.float32[D],
-        post_norm_2: dace.float32[D],
-        post_norm: dace.float32[D],
+        per_expert_scale: dace.bfloat16[E],
+        pre_norm_2: dace.bfloat16[D],
+        post_norm_2: dace.bfloat16[D],
+        post_norm: dace.bfloat16[D],
         dense_gate_up_p: packed(2 * DI, D),
         down_p: packed(D, DI),
         expert_gate_up_p: packed(E, 2 * I, D),
@@ -651,36 +599,37 @@ def to_gpu(sdfg: dace.SDFG) -> None:
             node.consume.schedule = dace.ScheduleType.GPU_Device
 
 
-def arguments(w: Weights) -> dict[str, torch.Tensor]:
-    """The weights as the program takes them (copies, made once): the gate and up projections interleaved in chunks of
-    64 rows, so that a tile of 128 output columns holds matching gate and up columns, and all projections packed."""
-    E, I2, D = w.expert_gate_up.shape
-    DI = w.gate_proj.shape[0]
+def arguments(block: FeedForward) -> dict[str, torch.Tensor]:
+    """The weights of ``block`` as the program takes them (copies, made once): the gate and up projections interleaved
+    in chunks of 64 rows, so that a tile of 128 output columns holds matching gate and up columns, and all projections
+    packed."""
+    w = {name: p.detach() for name, p in block.named_parameters()}
+    E, I2, D = w["experts.gate_up_proj"].shape
+    DI = w["mlp.gate_proj.weight"].shape[0]
     half = BN // 2
-    expert_gate_up = w.expert_gate_up.view(E, 2, I2 // 2 // half, half, D).transpose(1, 2).reshape(E, I2, D)
-    dense_gate_up = torch.stack([w.gate_proj, w.up_proj]).view(2, DI // half, half, D).transpose(0, 1)
-    dense_gate_up = dense_gate_up.reshape(2 * DI, D)
+    expert_gate_up = w["experts.gate_up_proj"].view(E, 2, I2 // 2 // half, half, D).transpose(1, 2)
+    dense_gate_up = torch.stack([w["mlp.gate_proj.weight"], w["mlp.up_proj.weight"]]).view(2, DI // half, half, D)
     return dict(
-        pre_norm=w.pre_norm,
-        post_norm_1=w.post_norm_1,
-        router_scale=w.router_scale,
-        router_p=pack(w.router_proj),
-        per_expert_scale=w.per_expert_scale,
-        pre_norm_2=w.pre_norm_2,
-        post_norm_2=w.post_norm_2,
-        post_norm=w.post_norm,
-        dense_gate_up_p=pack(dense_gate_up),
-        down_p=pack(w.down_proj),
-        expert_gate_up_p=pack(expert_gate_up),
-        expert_down_p=pack(w.expert_down),
+        pre_norm=w["pre_feedforward_layernorm.weight"],
+        post_norm_1=w["post_feedforward_layernorm_1.weight"],
+        router_scale=w["router.scale"],
+        router_p=pack(w["router.proj.weight"]),
+        per_expert_scale=w["router.per_expert_scale"],
+        pre_norm_2=w["pre_feedforward_layernorm_2.weight"],
+        post_norm_2=w["post_feedforward_layernorm_2.weight"],
+        post_norm=w["post_feedforward_layernorm.weight"],
+        dense_gate_up_p=pack(dense_gate_up.transpose(0, 1).reshape(2 * DI, D)),
+        down_p=pack(w["mlp.down_proj.weight"]),
+        expert_gate_up_p=pack(expert_gate_up.reshape(E, I2, D)),
+        expert_down_p=pack(w["experts.down_proj"]),
     )
 
 
-def workspace(config: Config, tokens: int) -> dict:
+def workspace(config: Gemma4TextConfig, tokens: int) -> dict:
     """Scratch buffers and symbol values for ``tokens`` tokens."""
     padded = (tokens + BM - 1) // BM * BM
-    tiles = tokens * config.top_k // BM + config.num_experts
-    E, K, D = config.num_experts, config.top_k, config.hidden
+    E, K, D = config.num_experts, config.top_k_experts, config.hidden_size
+    tiles = tokens * K // BM + E
 
     def zeros(*shape, dtype=torch.float32):
         return torch.zeros(*shape, dtype=dtype, device="cuda")
@@ -688,7 +637,7 @@ def workspace(config: Config, tokens: int) -> dict:
     return dict(
         inv_rms=zeros(tokens),
         x_router=zeros(padded, D, dtype=torch.bfloat16),
-        route_partial=zeros(config.hidden // ROUTE_STEP * padded, E),
+        route_partial=zeros(D // ROUTE_STEP * padded, E),
         route_left=zeros(padded // BM, dtype=torch.int32),
         top_k_left=zeros(1, dtype=torch.int32),
         count=zeros(E, dtype=torch.int32),
@@ -704,9 +653,9 @@ def workspace(config: Config, tokens: int) -> dict:
         row_weight=zeros(tiles * BM),
         x_dense=zeros(padded, D, dtype=torch.bfloat16),
         x_expert=zeros(tokens, D, dtype=torch.bfloat16),
-        h_dense=zeros(padded, config.dense_intermediate, dtype=torch.bfloat16),
-        h_expert=zeros(tiles * BM, config.expert_intermediate, dtype=torch.bfloat16),
-        gate_up_left=zeros(config.num_experts, dtype=torch.int32),
+        h_dense=zeros(padded, config.intermediate_size, dtype=torch.bfloat16),
+        h_expert=zeros(tiles * BM, config.moe_intermediate_size, dtype=torch.bfloat16),
+        gate_up_left=zeros(E, dtype=torch.int32),
         dense_gate_up_left=zeros(padded // BM, dtype=torch.int32),
         dense_out=zeros(padded, D, dtype=torch.bfloat16),
         expert_acc=zeros(tokens, D),
@@ -714,7 +663,7 @@ def workspace(config: Config, tokens: int) -> dict:
         T=tokens,
         TP=padded,
         NT=tiles,
-        DT=1 if tokens * config.top_k < config.num_experts * BM else padded // BM,
+        DT=1 if tokens * K < E * BM else padded // BM,
     )
 
 
@@ -725,46 +674,38 @@ class VllmFeedForward(nn.Module):
     """The feed-forward part of vLLM's ``Gemma4DecoderLayer``: its modules (merged gate/up MLP, router with its
     routing kernel, and the fused MoE experts with their Triton kernels), and its forward code."""
 
-    def __init__(self, config: Config, prefix: str = "layers.0"):
+    def __init__(self, config: Gemma4TextConfig, prefix: str = "layers.0"):
         super().__init__()
-        self.top_k = config.top_k
-        model_config = types.SimpleNamespace(
-            hidden_size=config.hidden, rms_norm_eps=config.eps, num_experts=config.num_experts
+        self.top_k = config.top_k_experts
+        self.mlp = Gemma4MLP(
+            config.hidden_size, config.intermediate_size, config.hidden_activation, prefix=f"{prefix}.mlp"
         )
-        self.mlp = Gemma4MLP(config.hidden, config.dense_intermediate, "gelu_pytorch_tanh", prefix=f"{prefix}.mlp")
-        self.router = Gemma4Router(model_config, prefix=f"{prefix}.router")
+        self.router = Gemma4Router(config, prefix=f"{prefix}.router")
         self.experts = FusedMoEFactory(
             num_experts=config.num_experts,
-            top_k=config.top_k,
-            hidden_size=config.hidden,
-            intermediate_size=config.expert_intermediate,
+            top_k=config.top_k_experts,
+            hidden_size=config.hidden_size,
+            intermediate_size=config.moe_intermediate_size,
             renormalize=True,
             prefix=f"{prefix}.experts",
             custom_routing_function=self.router.routing_function,
             activation="gelu_tanh",
         )
-        norm = lambda: RMSNorm(config.hidden, eps=config.eps)  # noqa: E731
-        self.pre_feedforward_layernorm = norm()
-        self.post_feedforward_layernorm = norm()
-        self.post_feedforward_layernorm_1 = norm()
-        self.pre_feedforward_layernorm_2 = norm()
-        self.post_feedforward_layernorm_2 = norm()
+        for norm in NORMS:
+            self.add_module(norm, RMSNorm(config.hidden_size, eps=config.rms_norm_eps))
 
-    def load(self, w: Weights):
+    def load(self, block: FeedForward):
+        """The weights of ``block``, then the post-loading step of vLLM's model loader (builds the fused MoE kernel)."""
         with torch.no_grad():
-            self.mlp.gate_up_proj.weight.copy_(torch.cat([w.gate_proj, w.up_proj]))
-            self.mlp.down_proj.weight.copy_(w.down_proj)
-            self.experts.routed_experts.w13_weight.copy_(w.expert_gate_up)
-            self.experts.routed_experts.w2_weight.copy_(w.expert_down)
-            self.router.scale.copy_(w.router_scale)
-            self.router.per_expert_scale.copy_(w.per_expert_scale)
-            self.router.proj.weight.copy_(w.router_proj)
-            self.pre_feedforward_layernorm.weight.copy_(w.pre_norm)
-            self.post_feedforward_layernorm_1.weight.copy_(w.post_norm_1)
-            self.pre_feedforward_layernorm_2.weight.copy_(w.pre_norm_2)
-            self.post_feedforward_layernorm_2.weight.copy_(w.post_norm_2)
-            self.post_feedforward_layernorm.weight.copy_(w.post_norm)
-        # The post-loading step of vLLM's model loader (builds the fused MoE kernel)
+            self.mlp.gate_up_proj.weight.copy_(torch.cat([block.mlp.gate_proj.weight, block.mlp.up_proj.weight]))
+            self.mlp.down_proj.weight.copy_(block.mlp.down_proj.weight)
+            self.experts.routed_experts.w13_weight.copy_(block.experts.gate_up_proj)
+            self.experts.routed_experts.w2_weight.copy_(block.experts.down_proj)
+            self.router.proj.weight.copy_(block.router.proj.weight)
+            self.router.scale.copy_(block.router.scale)
+            self.router.per_expert_scale.copy_(block.router.per_expert_scale)
+            for norm in NORMS:
+                self.get_submodule(norm).weight.copy_(block.get_submodule(norm).weight)
         for module in (self.mlp.gate_up_proj, self.mlp.down_proj, self.router.proj, self.experts.routed_experts):
             module.quant_method.process_weights_after_loading(module)
 
@@ -786,9 +727,10 @@ class VllmFeedForward(nn.Module):
 
 
 @contextlib.contextmanager
-def vllm_block(config: Config, w: Weights):
-    """vLLM's block with the weights ``w``, ready to run inside the context: eager mode (as with ``enforce_eager``),
-    with vLLM's own kernels (RMSNorm, GELU-and-multiply) rather than PyTorch fallbacks, on a single GPU."""
+def vllm_block(config: Gemma4TextConfig, block: FeedForward):
+    """vLLM's block with the weights of ``block``, ready to run inside the context: eager mode (as with
+    ``enforce_eager``), with vLLM's own kernels (RMSNorm, GELU-and-multiply) rather than PyTorch fallbacks, on a single
+    GPU."""
     vllm_config = VllmConfig(compilation_config=CompilationConfig(mode=CompilationMode.NONE, custom_ops=["all"]))
     with set_current_vllm_config(vllm_config):
         init_distributed_environment(
@@ -799,11 +741,11 @@ def vllm_block(config: Config, w: Weights):
         vllm_config.kernel_config.ir_op_priority.set_default()
         torch.set_default_dtype(torch.bfloat16)
         with torch.device("cuda"):
-            block = VllmFeedForward(config)
+            vllm = VllmFeedForward(config)
         torch.set_default_dtype(torch.float32)
-        block.load(w)
-        with set_forward_context(None, vllm_config), torch.inference_mode():
-            yield block
+        vllm.load(block)
+        with set_forward_context(None, vllm_config):
+            yield vllm
 
 
 # Comparison
@@ -853,30 +795,39 @@ if __name__ == "__main__":
     parser.add_argument("--pes", type=int, default=46 * 3, help="processing elements (thread blocks)")
     args = parser.parse_args()
 
-    config = (
-        Config(hidden=256, dense_intermediate=128, num_experts=128, top_k=4, expert_intermediate=128)
-        if args.small
-        else Config()
-    )
-    w = random_weights(config)
+    config = block_config(**(SMALL if args.small else GEMMA4_26B_A4B))
+    block = FeedForward(config).to("cuda", torch.bfloat16)
     program = build(config, args.pes)
     # The default stream, as PyTorch's (see ``to_gpu``)
     with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1):
         program = program.compile()
-    weights = arguments(w)
+    weights = arguments(block)
 
     with contextlib.ExitStack() as stack:
-        vllm = stack.enter_context(vllm_block(config, w)) if HAVE_VLLM else None
+        stack.enter_context(torch.inference_mode())
+        vllm = stack.enter_context(vllm_block(config, block)) if HAVE_VLLM else None
         for tokens in args.tokens:
             x = random_input(config, tokens)
-            expected = reference(x, w, config).float()
-            _, expected_experts = route(x, w, config)
-            times = {"reference": time_ms(lambda: reference(x, w, config))}
+            config._experts_implementation = "eager"  # A loop over the experts: the reference
+            expected = block(x).float()
+            expected_experts = block.router(x)[2]
+            times = {"transformers": time_ms(lambda: block(x))}
+            errors = []
+            # Without a Python loop: a grouped GEMM over the experts' rows (which loops over the experts on the host
+            # before Hopper GPUs), and a batched GEMM over the token's experts for every token (no host
+            # synchronization, but a copy of the weights of every token's experts: while they fit, for decoding)
+            config._experts_implementation = "grouped_mm"
+            errors.append(check("grouped_mm", block(x), expected_experts, expected, expected_experts))
+            times["grouped_mm"] = time_ms(lambda: block(x))
+            if tokens * config.top_k_experts <= config.num_experts:
+                config._experts_implementation = "batched_mm"
+                errors.append(check("batched_mm", block(x), expected_experts, expected, expected_experts))
+                times["batched_mm (CUDA graph)"] = time_ms(graphed(lambda: block(x)))
 
             out = torch.empty_like(x)
             scratch = workspace(config, tokens)
             program(x=x, out=out, **weights, **scratch)
-            errors = [check("DaCe", out, scratch["pair_expert"], expected, expected_experts)]
+            errors.append(check("DaCe", out, scratch["pair_expert"], expected, expected_experts))
             # The time of the kernels, by events on the stream they run on (without Python's argument conversion)
             callargs, initargs = program.construct_arguments(x=x, out=out, **weights, **scratch)
             times["DaCe"] = time_ms(lambda: program.fast_call(callargs, initargs))
@@ -886,5 +837,5 @@ if __name__ == "__main__":
                 times["vLLM"] = time_ms(lambda: vllm(x))
                 times["vLLM (CUDA graph)"] = time_ms(graphed(lambda: vllm(x)))
 
-            print(f"{tokens:5d} tokens: " + ", ".join(f"{name} {t:8.3f} ms" for name, t in times.items()))
-            print("              (" + "; ".join(errors) + ")")
+            print(f"{tokens:5d} tokens: " + ", ".join(f"{name} {t:.3f} ms" for name, t in times.items()))
+            print("             (" + "; ".join(errors) + ")")
