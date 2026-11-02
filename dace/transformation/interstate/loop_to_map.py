@@ -1563,10 +1563,12 @@ def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: set[str], loop_bl
                 kill = i
         for block in ctx.symbol_uses.get(name, ()):
             i = index.get(block)
-            if i is not None and i > start and block not in loop_blocks and (kill is None or i <= kill):
+            if i is None or rebound_around(loop, block, name):
+                continue
+            if i > start and block not in loop_blocks and (kill is None or i <= kill):
                 return True
             # The enclosing loop's next iteration runs a block ahead of ``loop`` again, unless a kill in its body is first
-            if kill is None and i is not None and i < start:
+            if kill is None and i < start:
                 for outer in enclosing_loops:
                     first = index[outer]
                     if (
