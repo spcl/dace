@@ -91,7 +91,7 @@ def assigned_in_region(
         assignments.add(region.loop_variable)
     for ise in region.edges():
         if ise.data.assignments:
-            assignments |= ise.data.assignments.keys()
+            assignments.update(ise.data.assignments)
             if symbols is not None:
                 # Only the names are ever read, so the types ``new_symbols`` would infer are not.
                 symbols.update(ise.data.new_symbol_names())
