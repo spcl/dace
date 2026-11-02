@@ -17,6 +17,7 @@ from dace.libraries.blas.blas_helpers import (
     check_access,
     dtype_to_cudadatatype,
     matrix_view,
+    packed_unit_extent,
     stepped_strides,
     to_blastype,
     to_cublas_computetype,
@@ -203,7 +204,11 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), cdata = _get_matmul_operands(node, state, sdfg)
+        # BLAS writes along one unit stride, and a dense copy would have to read back C for beta
+        _, _, cshape, cstrides = _matrix_operand(cdata)
+        if 1 not in packed_unit_extent(cshape, cstrides)[-2:]:
+            return ExpandGemmPure.make_sdfg(node, state, sdfg)
         dtype = adesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + "gemm"
         alpha = f"{dtype.ctype}({node.alpha})"
@@ -240,13 +245,10 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
             "_c, {ldc});"
         ).format_map(opt)
 
-        tasklet = dace.sdfg.nodes.Tasklet(
-            node.name,
-            node.in_connectors,
-            node.out_connectors,
-            code,
-            language=dace.dtypes.Language.CPP,
-        )
+        # Pointers even for one element, whose memlet would bind a value
+        inputs = {connector: dtypes.pointer(dtype) for connector in node.in_connectors}
+        outputs = {connector: dtypes.pointer(dtype) for connector in node.out_connectors}
+        tasklet = dace.sdfg.nodes.Tasklet(node.name, inputs, outputs, code, language=dace.dtypes.Language.CPP)
         return tasklet
 
 

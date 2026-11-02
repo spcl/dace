@@ -46,7 +46,7 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
             strides = stepped_strides(outer_array, edge.data.subset)
-            squeezed_strides = [s for i, s in enumerate(strides) if i in squeezed_dims]
+            squeezed_strides = [s for i, s in enumerate(strides) if i in squeezed_dims] or [1]
             res = edge, outer_array, size, strides, squeezed_size, squeezed_strides
             if edge.dst_conn == name_lhs:
                 res_lhs = res
@@ -59,7 +59,7 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
             strides = stepped_strides(outer_array, edge.data.subset)
-            squeezed_strides = [s for i, s in enumerate(strides) if i in squeezed_dims]
+            squeezed_strides = [s for i, s in enumerate(strides) if i in squeezed_dims] or [1]
             res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
@@ -255,7 +255,15 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         # A degenerate operand dimension is squeezed with a unit batch, so also check the output
         is_batched = len(size_a) >= 3 or len(size_b) >= 3 or (len(size_c) >= 3 and (len(a[2]) >= 3 or len(b[2]) >= 3))
 
-        if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2)):
+        # Squeezing a unit dimension makes a matrix look like a vector: only a one-element result is a dot product
+        rank_a, rank_b = len(size_a), len(size_b)
+        squeezed = rank_a == rank_b == 1 and not all(symbolic.equal_valued(1, extent) for extent in size_c)
+        if squeezed:
+            rank_a, rank_b = len(a[2]), len(b[2])
+
+        if (squeezed and rank_a == rank_b == 2) or (
+            len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2))
+        ):
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
 
@@ -288,7 +296,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 
             result = BatchedMatMul(node.name + "bmm", location=node.location)
-        elif len(size_a) == 2 and len(size_b) == 1:
+        elif rank_a == 2 and rank_b == 1:
             # Matrix and vector -> GEMV
             from dace.libraries.blas.nodes.gemv import Gemv
 
@@ -297,7 +305,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             b[0].dst_conn = "_x"
             c[0].src_conn = "_y"
             result = Gemv(node.name + "gemv", location=node.location, transA=node.transA)
-        elif len(size_a) == 1 and len(size_b) == 2:
+        elif rank_a == 1 and rank_b == 2:
             # Vector and matrix -> GEMV with transposed matrix
             from dace.libraries.blas.nodes.gemv import Gemv
 
@@ -306,7 +314,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             b[0].dst_conn = "_A"
             c[0].src_conn = "_y"
             result = Gemv(node.name + "gemvt", location=node.location, transA=not node.transB)
-        elif len(size_a) == 1 and len(size_b) == 1:
+        elif rank_a == 1 and rank_b == 1:
             # Vector and vector -> dot product
             from dace.libraries.blas.nodes.dot import Dot
 

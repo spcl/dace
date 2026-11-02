@@ -47,6 +47,49 @@ def test_a_single_row_reaches_blas_with_a_valid_leading_dimension():
     assert np.allclose(out, a @ b)
 
 
+def test_an_output_without_a_unit_stride_expands_to_pure():
+    """``out(a, :, :) = matmul(g, h)``: BLAS writes along a unit stride, and this slice of a Fortran array has none."""
+    sdfg = dace.SDFG("gemm_strided_output")
+    sdfg.add_array("a", [N, 3], dace.float64)
+    sdfg.add_array("b", [3, 5], dace.float64)
+    sdfg.add_array("out", [2, N, 5], dace.float64, strides=[1, 2, 2 * N])
+    state = sdfg.add_state()
+    gemm = Gemm("gemm")
+    gemm.implementation = "OpenBLAS"
+    state.add_edge(state.add_read("a"), None, gemm, "_a", dace.Memlet("a"))
+    state.add_edge(state.add_read("b"), None, gemm, "_b", dace.Memlet("b"))
+    state.add_edge(gemm, "_c", state.add_write("out"), None, dace.Memlet("out[1, 0:4, 0:5]"))
+
+    rng = np.random.default_rng(0)
+    a, b, out = rng.random((N, 3)), rng.random((3, 5)), np.zeros((2, N, 5), order="F")
+    sdfg(a=a, b=b, out=out)
+
+    assert np.allclose(out[1], a @ b)
+    assert np.all(out[0] == 0)
+
+
+def test_a_one_element_operand_reaches_blas_as_a_pointer():
+    """A one-element memlet binds a value, and ``cblas_dgemm`` takes a pointer."""
+    sdfg = dace.SDFG("gemm_one_element")
+    sdfg.add_array("a", [N, 1], dace.float64)
+    sdfg.add_array("b", [N, N], dace.float64)
+    sdfg.add_array("out", [N, 1], dace.float64)
+    state = sdfg.add_state()
+    gemm = Gemm("gemm")
+    gemm.implementation = "OpenBLAS"
+    state.add_edge(state.add_read("a"), None, gemm, "_a", dace.Memlet("a[0:4, 0:1]"))
+    state.add_edge(state.add_read("b"), None, gemm, "_b", dace.Memlet("b[0:1, 0:1]"))
+    state.add_edge(gemm, "_c", state.add_write("out"), None, dace.Memlet("out[0:4, 0:1]"))
+
+    rng = np.random.default_rng(0)
+    a, b, out = rng.random((N, 1)), rng.random((N, N)), np.zeros((N, 1))
+    sdfg(a=a, b=b, out=out)
+
+    assert np.allclose(out, a @ b[:1, :1])
+
+
 if __name__ == "__main__":
     test_an_operand_without_a_unit_stride_is_copied_dense()
     test_a_single_row_reaches_blas_with_a_valid_leading_dimension()
+    test_an_output_without_a_unit_stride_expands_to_pure()
+    test_a_one_element_operand_reaches_blas_as_a_pointer()
