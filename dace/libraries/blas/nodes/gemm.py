@@ -19,6 +19,13 @@ from dace.libraries.blas.blas_helpers import (
     to_blastype,
     to_cublas_computetype,
 )
+from dace.libraries.blas.indexed import (
+    expand_by_copies,
+    implementation_of,
+    indexed_connectors,
+    indexed_size,
+    operand_edges,
+)
 from dace.libraries.blas.nodes.matmul import (
     _get_codegen_gemm_opts,
     _get_matmul_operands,
@@ -190,6 +197,8 @@ class ExpandGemmPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "pure")
         node.validate(sdfg, state)
         return ExpandGemmPure.make_sdfg(node, state, sdfg)
 
@@ -200,6 +209,8 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "OpenBLAS")
         node.validate(sdfg, state)
         (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
@@ -253,8 +264,10 @@ class ExpandGemmMKL(ExpandTransformation):
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
-    def expansion(*args, **kwargs):
-        return ExpandGemmOpenBLAS.expansion(*args, **kwargs)
+    def expansion(node, state, sdfg, *args, **kwargs):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "MKL")
+        return ExpandGemmOpenBLAS.expansion(node, state, sdfg, *args, **kwargs)
 
 
 @dace.library.expansion
@@ -263,6 +276,8 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
 
     @classmethod
     def expansion(cls, node, state, sdfg):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, implementation_of(node, cls))
         node.validate(sdfg, state)
 
         # Find inputs and output
@@ -510,6 +525,8 @@ class ExpandGemmPBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "PBLAS")
         node.validate(sdfg, state)
         # Read the same matrix view validate accepted; the raw subset would mis-size an operand
         # such as an (NQ, 1, NP) reshape.
@@ -614,17 +631,17 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         self.cin = cin
 
     def validate(self, sdfg, state):
-        in_edges = state.in_edges(self)
+        in_edges = operand_edges(state, self)
         if len(in_edges) not in [2, 3]:
             raise ValueError("Expected 2 or 3 inputs to gemm")
         size2 = None
-        for _, _, _, dst_conn, memlet in state.in_edges(self):
+        for _, _, _, dst_conn, memlet in in_edges:
             if dst_conn == "_a":
-                size0 = _matrix_subset_size(memlet.subset)
+                size0 = indexed_size(state, self, "_a", _matrix_subset_size(memlet.subset))
             if dst_conn == "_b":
-                size1 = _matrix_subset_size(memlet.subset)
+                size1 = indexed_size(state, self, "_b", _matrix_subset_size(memlet.subset))
             if dst_conn == "_c":
-                size2 = _matrix_subset_size(memlet.subset)
+                size2 = indexed_size(state, self, "_c", _matrix_subset_size(memlet.subset))
 
         if self.transA:
             size0 = list(reversed(size0))
@@ -645,7 +662,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
             )
         elif not res:
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
-        size3 = _matrix_subset_size(out_memlet.subset)
+        size3 = indexed_size(state, self, "_c", _matrix_subset_size(out_memlet.subset))
         if size2 is not None:
             res = list(itertools.starmap(equal, zip(size2, size3)))
             fail = any(r is False for r in res)
