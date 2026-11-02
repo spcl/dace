@@ -12,6 +12,8 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
@@ -484,6 +486,35 @@ def test_swapped_symbols_resolve_simultaneously():
     resolved, free = _resolve_through_mapping(CodeBlock("i < j + 1"), {"i": "j", "j": "i"})
     assert dace.symbolic.guards_equal(resolved, "j < i + 1")
     assert free == {"i", "j"}
+
+
+def test_maps_writing_one_access_node_are_not_split_off():
+    """Sibling maps sharing their output node cannot part: the pass ends and computes the same."""
+
+    @dace.program
+    def kern_maps_writing_one_access_node(g: dace.int64, b: dace.float64[N, N]):
+        for i in dace.map[0:N]:
+            if g > 0:
+                b[i, 0] = 1.0
+        for i in dace.map[0:N]:
+            if g > 0:
+                b[i, 1] = 2.0
+
+    sdfg = kern_maps_writing_one_access_node.to_sdfg(simplify=True)
+    sdutil.fuse_states(sdfg)
+    state = next(s for s in sdfg.states() if sum(isinstance(n, nodes.MapEntry) for n in s.nodes()) == 2)
+    sink, *others = [n for n in state.data_nodes() if n.data == "b" and state.in_degree(n)]
+    for other in others:
+        sdutil.change_edge_dest(state, other, sink)
+        state.remove_node(other)
+    sdfg.validate()
+
+    MoveMapInvariantIfUp().apply_pass(sdfg, {})
+
+    sdfg.validate()
+    expected = np.zeros((N, N))
+    expected[:, 0], expected[:, 1] = 1.0, 2.0
+    assert np.array_equal(_run(sdfg, g=1), expected)
 
 
 if __name__ == "__main__":
