@@ -2915,6 +2915,12 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalars: dict[
         # By connector: one scalar can feed several
         inner = {ie.dst_conn: scalars[ie.data.data] for ie in in_edges if ie.data.data in scalars}
         if inner:
+            # Avoid import loop
+            from dace.transformation.passes.length_one_array_scalar_conversion import rewrite_code_slots, rewrite_refs
+
+            # An inner length-1 array is read as ``y[0]``: only the name takes the literal
+            subscripted = {name: name for name in inner}
+            rewrite_code_slots(nsdfg_node.sdfg, lambda text: rewrite_refs(text, subscripted))
             _specialize_scalar_impl(root, nsdfg_node.sdfg, inner)
 
 
