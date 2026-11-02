@@ -2219,10 +2219,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if first_map.range.free_symbols & set(first_map.params):
             return False
 
+        # The text of each single-index dimension, printed once for all the pairs below
+        texts = {id(s): [str(b) if b == e else None for b, e, _ in s.ranges] for s in writes + reads}
+
         def indexed_by(write: subsets.Range, read: subsets.Range, param: str) -> bool:
             # One index both name, one to one in ``param`` alone: the cheap answer for all but offset accesses
-            for (begin, end, _), (read_begin, read_end, _) in zip(write.ranges, read.ranges):
-                if begin == end and read_begin == read_end and str(begin) == str(read_begin):
+            for (begin, _, _), text, read_text in zip(write.ranges, texts[id(write)], texts[id(read)]):
+                if text is not None and text == read_text:
                     names = {symbol.name: symbol for symbol in begin.free_symbols}
                     if param in names and names.keys().isdisjoint(set(first_map.params) - {param}):
                         return abs(begin.diff(names[param])) == 1
