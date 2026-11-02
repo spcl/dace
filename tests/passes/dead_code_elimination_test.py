@@ -109,7 +109,7 @@ def test_dse_inside_loop_conditional():
     cond_block = ConditionalBlock("cond", sdfg, loop)
     loop.add_node(cond_block)
     b1 = ControlFlowRegion("b1", sdfg)
-    b1.add_state()
+    s1 = b1.add_state()
     cond_block.add_branch(CodeBlock("a > 0"), b1)
     b2 = ControlFlowRegion("b2", sdfg)
     s2 = b2.add_state()
@@ -122,7 +122,8 @@ def test_dse_inside_loop_conditional():
     loop.add_edge(cond_block, e, dace.InterstateEdge())
 
     DeadStateElimination().apply_pass(sdfg, {})
-    assert set(sdfg.states()) == {start, s, s2, e, end}
+    # ``a > 0`` is tested before the always-true arm, so its branch still runs; only the arm after that one is dead.
+    assert set(sdfg.states()) == {start, s, s1, s2, e, end}
 
 
 def test_dse_dead_branches_match_declared_type():
@@ -155,6 +156,22 @@ def test_dse_dead_branches_match_declared_type():
         cond, branch = entry
         assert cond is None or isinstance(cond, CodeBlock), type(cond)
         assert isinstance(branch, ControlFlowRegion), type(branch)
+
+
+def test_dse_keeps_the_arm_before_an_always_true_one():
+    """``if a > 0: first elif 1 == 1: second else: third`` keeps ``first``: an always-true arm kills only later arms."""
+    sdfg = dace.SDFG("dse_keeps_earlier_arm")
+    sdfg.add_symbol("a", dace.int32)
+    cond_block = ConditionalBlock("cond", sdfg)
+    sdfg.add_node(cond_block, is_start_block=True)
+    arms = [ControlFlowRegion(label, sdfg) for label in ("first", "second", "third")]
+    for arm, cond in zip(arms, (CodeBlock("a > 0"), CodeBlock("1 == 1"), None)):
+        arm.add_state()
+        cond_block.add_branch(cond, arm)
+
+    DeadStateElimination().apply_pass(sdfg, {})
+
+    assert [branch for _, branch in cond_block.branches] == arms[:2]
 
 
 def test_dse_malformed_conditional_block():
@@ -1141,6 +1158,7 @@ if __name__ == "__main__":
     test_dse_after_break()
     test_dse_after_continue()
     test_dse_reachable_around_return()
+    test_dse_keeps_the_arm_before_an_always_true_one()
     test_dde_simple()
     test_dde_libnode()
     test_dde_access_node_in_scope(False)

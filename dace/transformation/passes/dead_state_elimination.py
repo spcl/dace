@@ -176,37 +176,28 @@ class DeadStateElimination(ppl.Pass):
         return set(cfg.nodes()) - visited, dead_edges, edges_annotated
 
     def _find_dead_branches(self, block: ConditionalBlock) -> list[tuple[CodeBlock | None, ControlFlowRegion]]:
-        # The ``else`` arm has no guard, and is an ordinary dead branch once an earlier arm is taken.
+        # Arms test in order, so an always-true arm kills the arms after it, never the ones before it: those still
+        # run when their own guards hold. The ``else`` arm has no guard, and is an ordinary dead branch once an earlier
+        # arm is taken.
         dead_branches: list[tuple[CodeBlock | None, ControlFlowRegion]] = []
-        unconditional = None
+        taken = False
         for i, (cond, branch) in enumerate(block.branches):
-            if cond is None:
-                if not i == len(block.branches) - 1:
-                    raise InvalidSDFGNodeError(
-                        "Conditional block detected, where else branch is not the last branch.",
-                        # ``block_id`` indexes the parent region, not the SDFG.
-                        sdfg=block.parent_graph,
-                        state_id=block.block_id,
-                        node_id=None,
-                    )
-                break
-            # If an unconditional branch is found, ignore all other branches that follow this one.
-            if self._is_definitely_true(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
-                unconditional = branch
-                break
-        if unconditional is not None:
-            # Remove other (now never taken) branches
-            for cond, branch in block.branches:
-                if branch is not unconditional:
+            if cond is None and i != len(block.branches) - 1:
+                raise InvalidSDFGNodeError(
+                    "Conditional block detected, where else branch is not the last branch.",
+                    # ``block_id`` indexes the parent region, not the SDFG.
+                    sdfg=block.parent_graph,
+                    state_id=block.block_id,
+                    node_id=None,
+                )
+            if taken:
+                dead_branches.append((cond, branch))
+            elif cond is not None:
+                condition = symbolic.pystr_to_symbolic(cond.as_string)
+                if self._is_definitely_true(condition, block.sdfg):
+                    taken = True
+                elif self._is_definitely_false(condition, block.sdfg):
                     dead_branches.append((cond, branch))
-        else:
-            # Check if any branches are certainly never taken.
-            for cond, branch in block.branches:
-                if cond is not None and self._is_definitely_false(
-                    symbolic.pystr_to_symbolic(cond.as_string), block.sdfg
-                ):
-                    dead_branches.append((cond, branch))
-
         return dead_branches
 
     def report(self, pass_retval: set[SDFGState | Edge[InterstateEdge]]) -> str:
