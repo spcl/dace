@@ -496,6 +496,35 @@ def test_inline_nested_while_loop_into_sdfg_with_a_while_loop():
     assert A[0] == 5
 
 
+def test_a_mapped_symbol_a_parent_scope_binds_is_renamed():
+    """Inner ``k`` becomes a parent symbol, which a sibling map over ``k`` forbids."""
+    sdfg = dace.SDFG("scope_named_like_a_mapped_symbol")
+    sdfg.add_array("y", [8], dace.float64)
+    sdfg.add_array("w", [1], dace.float64)
+    sdfg.add_symbol("M", dace.int64)
+    first = sdfg.add_state("first", is_start_block=True)
+    first.add_mapped_tasklet("m", {"k": "0:8"}, {}, "o = k", {"o": dace.Memlet("y[k]")}, external_edges=True)
+    second = sdfg.add_state_after(first, "second")
+    inner = dace.SDFG("scope_named_like_a_mapped_symbol_inner")
+    inner.add_array("z", [1], dace.float64)
+    inner.add_symbol("k", dace.int64)
+    store = inner.add_state("store", is_start_block=True)
+    tasklet = store.add_tasklet("store", {}, {"o": None}, "o = k")
+    store.add_edge(tasklet, "o", store.add_write("z"), None, dace.Memlet("z[0]"))
+    bump = inner.add_state_after(store, "bump")
+    tasklet = bump.add_tasklet("bump", {"q": None}, {"o": None}, "o = q + 1")
+    bump.add_edge(bump.add_read("z"), None, tasklet, "q", dace.Memlet("z[0]"))
+    bump.add_edge(tasklet, "o", bump.add_write("z"), None, dace.Memlet("z[0]"))
+    nest = second.add_nested_sdfg(inner, {}, {"z": None}, symbol_mapping={"k": "M"})
+    second.add_edge(nest, "z", second.add_write("w"), None, dace.Memlet("w[0]"))
+
+    InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nest)
+
+    w = np.zeros(1)
+    sdfg(y=np.zeros(8), w=w, M=3)
+    assert w[0] == 4.0
+
+
 if __name__ == "__main__":
     test_inline_preserves_pre_and_post_numerics()
     test_inline_lowers_non_identity_symbol_mapping_to_iedge_assignment()
@@ -510,3 +539,4 @@ if __name__ == "__main__":
     test_inline_keeps_a_constant_mapped_symbol_the_nested_loop_reassigns()
     test_inline_nested_while_loop_into_sdfg_with_a_while_loop()
     print("all ok")
+    test_a_mapped_symbol_a_parent_scope_binds_is_renamed()
