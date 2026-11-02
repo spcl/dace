@@ -644,7 +644,7 @@ def _create_einsum_internal(
         product, product_node = _create_einsum_internal(
             sdfg, state, bmm, a.data, b.data, dtype=dtype, nodes={a.data: a, b.data: b}, alpha=alpha, beta=0.0
         )
-        # ``C = perm(A B) + beta C``: the transpose folds the output's own term (cp2k_trs4's ``ijk,ilkm->iljm``
+        # ``C = perm(A B) + beta C``: the transpose folds the output's own term (``ijk,lkm->iljm``
         # accumulating into its product buffer ran as an atomic scalar nest).
         # The node's beta is a plain number: a sympy value does not serialize into its numeric property.
         folded = sympy.sympify(beta)
