@@ -66,6 +66,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.symbolic import symbol
+from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow.wcr_conversion import wcr_operator
@@ -655,15 +656,12 @@ class NormalizeWCR(ppl.Pass):
         if {str(s) for s in oc_desc.free_symbols} - set(state.sdfg.symbols.keys()):
             return False
 
-        # A plain read-modify-write is only race-free when each map iteration updates its own element. An
-        # element no map parameter selects is a reduction across the iterations, and keeps its WCR.
-        params = set(state.entry_node(nsdfg).map.params)
-        selecting = {
-            inner
-            for inner, outer in nsdfg.symbol_mapping.items()
-            if {str(s) for s in symbolic.pystr_to_symbolic(str(outer)).free_symbols} & params
-        }
-        if not {str(s) for s in wcr_edge.data.subset.free_symbols} & selecting:
+        # A plain read-modify-write is only race-free when each map iteration updates its own element: every enclosing
+        # map parameter is an index of the element. Any other element is a reduction across them, and keeps its WCR.
+        index = {str(i) for i in out_edge.data.subset.min_element()}
+        if not self.enclosing_map_params(state, out_edge, state.scope_dict()) <= index:
+            return False
+        if xfh.get_parent_map(state) is not None:
             return False
 
         # Rewrite the body: explicit plain read-modify-write of the one element the WCR updates. The connector

@@ -777,6 +777,31 @@ def test_a_min_over_a_caller_array_starts_from_its_value():
     assert acc[0] == 1.0
 
 
+def test_a_read_write_element_shared_by_an_outer_map_keeps_its_wcr():
+    """``acc[j]`` is the inner map's own element, but every iteration of the outer map updates it."""
+    wcr = "lambda a, b: a + b"
+    sdfg = dace.SDFG("outer_map_rw_" + uuid.uuid4().hex[:8])
+    sdfg.add_array("acc", [4], dace.float64)
+    state = sdfg.add_state("map", is_start_block=True)
+    body = dace.SDFG("body_outer_map_rw")
+    body.add_array("oc", [4], dace.float64)
+    body.add_symbol("j", dace.int64)
+    inner = body.add_state("c", is_start_block=True)
+    t = inner.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    inner.add_edge(t, "o", inner.add_write("oc"), None, dace.Memlet(data="oc", subset="j", wcr=wcr))
+    me, mx = state.add_map("outer", {"i": "0:8"})
+    me2, mx2 = state.add_map("inner", {"j": "0:4"}, schedule=dace.ScheduleType.Sequential)
+    n = state.add_nested_sdfg(body, {"oc": None}, {"oc": None}, symbol_mapping={"j": "j"})
+    state.add_memlet_path(state.add_read("acc"), me, me2, n, dst_conn="oc", memlet=dace.Memlet("acc[j]"))
+    state.add_memlet_path(
+        n, mx2, mx, state.add_write("acc"), src_conn="oc", memlet=dace.Memlet(data="acc", subset="j", wcr=wcr)
+    )
+    sdfg.validate()
+
+    NormalizeWCR().apply_pass(sdfg, {})
+    assert next(e for e in state.out_edges(n) if e.src_conn == "oc").data.wcr is not None
+
+
 if __name__ == "__main__":
     import sys
 
@@ -787,3 +812,4 @@ if __name__ == "__main__":
     test_a_plain_boundary_over_many_elements_keeps_the_elements_no_iteration_wrote()
     test_a_wcr_leaving_an_inner_map_stays_seeded()
     test_a_min_over_a_caller_array_starts_from_its_value()
+    test_a_read_write_element_shared_by_an_outer_map_keeps_its_wcr()
