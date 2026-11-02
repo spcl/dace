@@ -10,7 +10,7 @@ from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDev
 @pytest.mark.gpu
 @pytest.mark.xfail(
     strict=True,
-    raises=NotImplementedError,
+    raises=AssertionError,
     reason="NestedGPUDeviceMapLowering does not yet lower several nesting levels into one device map",
 )
 @pytest.mark.parametrize("block_size", [None, "64,8,1"])
