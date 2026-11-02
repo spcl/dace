@@ -276,7 +276,7 @@ def lane_signature(
     def rebased(subset: Subset | None) -> str:
         if subset is None:
             return ""
-        exprs = [as_expr(symbolic.pystr_to_symbolic(str(x))) for rng in subset.ndrange() for x in rng]
+        exprs = [as_expr(x) for rng in subset.ndrange() for x in rng]
         return str(
             [
                 x.subs(
