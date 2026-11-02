@@ -18,7 +18,9 @@ keep no such flags (``-fno-trapping-math``). Anything the interpretation cannot 
 """
 
 import ast
+import collections
 import copy
+import functools
 from typing import Any
 
 import sympy
@@ -106,48 +108,75 @@ def index_polynomial(node: ast.expr, param: str) -> Any:
     return None
 
 
-def is_index_table(sdfg: SDFG, name: str) -> bool:
-    """Whether transient ``name`` is written only by a map assigning ``name[i] = i``, as ``np.arange`` is."""
-    writes = [
-        (state, edge)
-        for state in sdfg.states()
-        for node in state.data_nodes()
-        if node.data == name
-        for edge in state.in_edges(node)
-    ]
-    if len(writes) != 1 or not sdfg.arrays[name].transient:
-        return False
-    state, edge = writes[0]
-    if not isinstance(edge.src, nodes.MapExit) or len(edge.src.map.params) != 1 or state.in_degree(edge.src) != 1:
-        return False
-    param, write = edge.src.map.params[0], state.in_edges(edge.src)[0]
-    parsed = statement(write.src)
-    if parsed is None or write.src.in_connectors or str(write.data.subset) != param:
-        return False
-    polynomial = index_polynomial(parsed[1], param)
-    return polynomial is not None and sympy.expand(polynomial) == sympy.Symbol(param)
+class SDFGFacts:
+    """What analyzing the masks of one SDFG reads, each computed once. Valid until the first apply."""
+
+    def __init__(self, sdfg: SDFG) -> None:
+        self.sdfg = sdfg
+        self.sums: dict[str, bool] = {}
+
+    @functools.cached_property
+    def accesses(self) -> dict[str, list[tuple[SDFGState, nodes.AccessNode]]]:
+        found = collections.defaultdict(list)
+        for state in self.sdfg.states():
+            for node in state.data_nodes():
+                found[node.data].append((state, node))
+        return found
+
+    @functools.cached_property
+    def shared(self) -> set[str]:
+        """Transients of several states or read by control flow."""
+        shared = set(self.sdfg.shared_transients(check_toplevel=False))
+        for region in self.sdfg.all_control_flow_regions():
+            shared |= set(region.used_symbols(all_symbols=True, with_contents=False))
+        return shared
+
+    def is_sum(self, wcr: str) -> bool:
+        if wcr not in self.sums:
+            self.sums[wcr] = detect_reduction_type(wcr) == dtypes.ReductionType.Sum
+        return self.sums[wcr]
+
+    def is_index_table(self, name: str) -> bool:
+        """Whether transient ``name`` is written only by a map assigning ``name[i] = i``, as ``np.arange`` is."""
+        writes = [(state, edge) for state, node in self.accesses[name] for edge in state.in_edges(node)]
+        if len(writes) != 1 or not self.sdfg.arrays[name].transient:
+            return False
+        state, edge = writes[0]
+        if not isinstance(edge.src, nodes.MapExit) or len(edge.src.map.params) != 1 or state.in_degree(edge.src) != 1:
+            return False
+        param, write = edge.src.map.params[0], state.in_edges(edge.src)[0]
+        parsed = statement(write.src)
+        if parsed is None or write.src.in_connectors or str(write.data.subset) != param:
+            return False
+        polynomial = index_polynomial(parsed[1], param)
+        return polynomial is not None and sympy.expand(polynomial) == sympy.Symbol(param)
 
 
-def count_connector(state: SDFGState, tasklet: nodes.Tasklet, code: ast.expr, slot: str) -> str | None:
-    """The connector ``c`` when ``code`` is ``slot < c`` or ``c > slot``; ``slot`` may be read from an index table."""
-    if not isinstance(code, ast.Compare) or not isinstance(code.ops[0], (ast.Lt, ast.Gt)) or len(code.ops) != 1:
+def compared_names(tasklet: nodes.Tasklet, code: ast.expr) -> tuple[str, str] | None:
+    """``(s, c)`` when ``code`` is ``s < c`` or ``c > s`` for a connector ``c``."""
+    if not isinstance(code, ast.Compare) or len(code.ops) != 1 or not isinstance(code.ops[0], (ast.Lt, ast.Gt)):
         return None
     left, right = cast_operand(code.left), cast_operand(code.comparators[0])
     if isinstance(code.ops[0], ast.Gt):
         left, right = right, left
     if not isinstance(left, ast.Name) or not isinstance(right, ast.Name) or right.id not in tasklet.in_connectors:
         return None
-    if left.id == slot:
-        return right.id
-    read = [e.data for e in state.in_edges(tasklet) if e.dst_conn == left.id and not e.data.is_empty()]
-    return right.id if read and str(read[0].subset) == slot and is_index_table(state.sdfg, read[0].data) else None
+    return left.id, right.id
+
+
+def reads_slot(state: SDFGState, facts: SDFGFacts, tasklet: nodes.Tasklet, name: str, slot: str) -> bool:
+    """Whether ``name`` is ``slot``, directly or read from an index table."""
+    if name == slot:
+        return True
+    read = [e.data for e in state.in_edges(tasklet) if e.dst_conn == name and not e.data.is_empty()]
+    return bool(read) and str(read[0].subset) == slot and facts.is_index_table(read[0].data)
 
 
 class MaskedBody:
     """Interprets the body of ``entry``'s map on masked slots, collecting what it adds to writes leaving the map."""
 
-    def __init__(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, mask: nodes.Tasklet) -> None:
-        self.sdfg, self.state, self.mask = sdfg, state, mask
+    def __init__(self, facts: SDFGFacts, state: SDFGState, entry: nodes.MapEntry, mask: nodes.Tasklet) -> None:
+        self.facts, self.sdfg, self.state, self.mask = facts, facts.sdfg, state, mask
         self.slot = entry.map.params[0]
         self.scope = state.scope_subgraph(entry, include_entry=False, include_exit=False)
         self.members = set(self.scope.nodes())
@@ -170,7 +199,7 @@ class MaskedBody:
         path = self.state.memlet_path(edge)
         sink = path[-1].dst
         if sink not in self.members:
-            if any(e.data.wcr is None or detect_reduction_type(e.data.wcr) != dtypes.ReductionType.Sum for e in path):
+            if any(e.data.wcr is None or not self.facts.is_sum(e.data.wcr) for e in path):
                 raise Refusal(f"not a sum: {edge.data}")
             self.leaving.append(value)
         elif edge.data.wcr is not None or sink.data in self.values:
@@ -231,29 +260,29 @@ def count_read(state: SDFGState, entry: nodes.MapEntry, mask: nodes.Tasklet, cou
     return path[entering], leaf.data
 
 
-def local_to(sdfg: SDFG, state: SDFGState, body: MaskedBody) -> bool:
-    """Whether nothing outside the body reads what it holds."""
-    shared = set(sdfg.shared_transients(check_toplevel=False))
-    for region in sdfg.all_control_flow_regions():
-        shared |= set(region.used_symbols(all_symbols=True, with_contents=False))
-    outside = (node.data for node in state.data_nodes() if node not in body.members)
-    return not body.locals & shared and not body.locals.intersection(outside)
-
-
-def bound(sdfg: SDFG, state: SDFGState, mask: nodes.Tasklet, entry: nodes.MapEntry, count: str) -> bool:
-    """Stop ``entry``'s map after the first slot ``mask`` kills, if that is sound."""
-    begin, end, step = entry.map.range[0]
+def analyze(
+    facts: SDFGFacts, state: SDFGState, mask: nodes.Tasklet, entry: nodes.MapEntry, count: str
+) -> tuple[SDFGState, nodes.MapEntry, Any, Memlet] | None:
+    """What :func:`apply` needs to stop ``entry``'s map after the first slot ``mask`` kills, if that is sound."""
+    step = entry.map.range[0][2]
     read = None if step != 1 or sdutil.has_dynamic_map_inputs(state, entry) else count_read(state, entry, mask, count)
     if read is None:
-        return False
+        return None
     outer, memlet = read
-    body = MaskedBody(sdfg, state, entry, mask)
+    body = MaskedBody(facts, state, entry, mask)
     try:
         body.interpret()
     except Refusal:
-        return False
-    if memlet.data in body.written or not body.neutral() or not local_to(sdfg, state, body):
-        return False
+        return None
+    if memlet.data in body.written or not body.neutral() or body.locals & facts.shared:
+        return None
+    if any(node not in body.members for name in body.locals for _, node in facts.accesses[name]):
+        return None
+    return state, entry, outer, memlet
+
+
+def apply(sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, outer: Any, memlet: Memlet) -> None:
+    begin, end, step = entry.map.range[0]
     dtype = sdfg.arrays[memlet.data].dtype
     name = sdfg.find_new_symbol(f"__count_{memlet.data}")
     entry.map.range[0] = (begin, sympy.Min(end, sympy.Max(symbolic.symbol(name, dtype), begin)), step)
@@ -261,7 +290,25 @@ def bound(sdfg: SDFG, state: SDFGState, mask: nodes.Tasklet, entry: nodes.MapEnt
     state.add_edge(
         outer.src, outer.src_conn, entry, name, Memlet(data=memlet.data, subset=copy.deepcopy(memlet.subset))
     )
-    return True
+
+
+def masks_in(state: SDFGState, facts: SDFGFacts) -> list[tuple[nodes.Tasklet, nodes.MapEntry, str]]:
+    """The ``slot < count`` tasklets of ``state``, with the map that owns ``slot`` and the count's connector."""
+    compares = [
+        (node, names)
+        for node in state.nodes()
+        if (parsed := statement(node)) is not None and (names := compared_names(node, parsed[1])) is not None
+    ]
+    scopes = state.scope_dict() if compares else {}
+    found = []
+    for node, (slot_name, count) in compares:
+        entry = scopes[node]
+        while entry is not None:
+            if len(entry.map.params) == 1 and reads_slot(state, facts, node, slot_name, entry.map.params[0]):
+                found.append((node, entry, count))
+                break
+            entry = scopes[entry]
+    return found
 
 
 @transformation.explicit_cf_compatible
@@ -278,20 +325,13 @@ class BoundMaskedMaps(ppl.Pass):
         """:return: the number of maps bounded, or None if there is none."""
         bounded = 0
         for nested in sdfg.all_sdfgs_recursive():
+            facts = SDFGFacts(nested)
+            plans = {}
             for state in nested.states():
-                compares = [
-                    (node, parsed[1])
-                    for node in state.nodes()
-                    if (parsed := statement(node)) is not None and isinstance(parsed[1], ast.Compare)
-                ]
-                scopes = state.scope_dict() if compares else {}
-                for node, code in compares:
-                    entry = scopes[node]
-                    while entry is not None:
-                        if len(entry.map.params) == 1:
-                            count = count_connector(state, node, code, entry.map.params[0])
-                            if count is not None:
-                                bounded += bound(nested, state, node, entry, count)
-                                break
-                        entry = scopes[entry]
+                for mask, entry, count in masks_in(state, facts):
+                    if entry not in plans and (plan := analyze(facts, state, mask, entry, count)) is not None:
+                        plans[entry] = plan
+            for plan in plans.values():
+                apply(nested, *plan)
+            bounded += len(plans)
         return bounded or None

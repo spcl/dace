@@ -70,6 +70,12 @@ def bounded(sdfg):
     ]
 
 
+@dace.program
+def two_masks(x: dace.float64[N, M], a: dace.int32[N], b: dace.int32[N], f: dace.float64[N]):
+    slot = np.arange(M)
+    f[:] = np.sum(np.where((slot[None, :] < a[:, None]) & (slot[None, :] < b[:, None]), x * x, 0.0), axis=1)
+
+
 def expected_force(x, counts, neigh):
     out = np.zeros_like(x)
     m = neigh.shape[1]
@@ -133,6 +139,15 @@ def test_masked_factor_reading_the_slot_refuses():
     assert np.isnan(f[0])
 
 
+def test_two_masks_bound_the_map_once():
+    sdfg = specialized(two_masks, "bound_masked_two")
+    assert [sum(not c.startswith("IN_") for c in entry.in_connectors) for entry in bounded(sdfg)] == [1]
+    x = np.arange(1.0, 7.0).reshape(2, 3).copy()
+    f = np.zeros(2)
+    sdfg(x=x, a=np.array([1, 3], dtype=np.int32), b=np.array([3, 2], dtype=np.int32), f=f, N=2, M=3)
+    np.testing.assert_allclose(f, [1.0, 16.0 + 25.0])
+
+
 def test_absorbed_test_picks_no_branch():
     """``0.0 * v`` as a condition may be NaN: neither branch is known."""
     code = ast.parse("0.0 if t else 1.0", mode="eval").body
@@ -148,5 +163,6 @@ if __name__ == "__main__":
     test_exact_zero_keeps_one_masked_slot()
     test_masked_constant_is_not_neutral()
     test_masked_factor_reading_the_slot_refuses()
+    test_two_masks_bound_the_map_once()
     test_absorbed_test_picks_no_branch()
     test_fill_that_is_no_polynomial_is_no_index()
