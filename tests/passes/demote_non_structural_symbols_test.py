@@ -14,6 +14,9 @@ from dace.transformation.passes.demote_non_structural_symbols import (
     assigned_symbols,
     demote_symbols,
 )
+from dace.transformation.passes.vectorization.demote_data_reading_interstate_symbols import (
+    DemoteDataReadingInterstateSymbols,
+)
 
 
 def counting_sdfg() -> dace.SDFG:
@@ -144,9 +147,9 @@ def test_an_index_read_inside_a_branch_condition_stays_a_symbol():
     assert R[0] == 0.9
 
 
-def test_a_boolean_guard_stays_a_symbol():
-    """``g = B[0]`` (a ``bool`` array element the frontend declares as an integer symbol) and ``h = A[0] > 0.5`` only
-    guard a branch: control flow, so both stay symbols."""
+def boolean_guard_sdfg() -> dace.SDFG:
+    """``g = B[0]`` (a ``bool`` array element the frontend declares as an integer symbol), ``h = A[0] > 0.5``, then a
+    branch on ``g and h`` stores into ``R``."""
     sdfg = dace.SDFG("boolean_guard")
     sdfg.add_symbol("g", dace.int32)
     sdfg.add_symbol("h", dace.bool)
@@ -163,8 +166,26 @@ def test_a_boolean_guard_stays_a_symbol():
     sdfg.add_node(cond)
     sdfg.add_edge(start, cond, dace.InterstateEdge(assignments={"g": "B[0]", "h": "A[0] > 0.5"}))
     sdfg.validate()
+    return sdfg
+
+
+def test_a_boolean_guard_stays_a_symbol():
+    """A guard that only tests a branch is control flow, so canonicalization keeps both symbols."""
+    sdfg = boolean_guard_sdfg()
     assert DemoteNonStructuralSymbols().apply_pass(sdfg, {}) is None
     assert "g" in sdfg.symbols and "h" in sdfg.symbols
+
+    B, A, R = np.array([True]), np.array([0.9]), np.zeros(1)
+    sdfg(B=B, A=A, R=R)
+    assert R[0] == 1.0
+
+
+def test_the_vectorizer_demotes_a_boolean_guard_reading_data():
+    """A lane holds its own guard, so a guard read from data becomes a scalar branch lowering can turn into dataflow."""
+    sdfg = boolean_guard_sdfg()
+    assert DemoteDataReadingInterstateSymbols().apply_pass(sdfg, {}) == 2
+    sdfg.validate()
+    assert "g" in sdfg.arrays and "h" in sdfg.arrays
 
     B, A, R = np.array([True]), np.array([0.9]), np.zeros(1)
     sdfg(B=B, A=A, R=R)
@@ -260,5 +281,6 @@ if __name__ == "__main__":
     )
     test_an_index_read_inside_a_branch_condition_stays_a_symbol()
     test_a_boolean_guard_stays_a_symbol()
+    test_the_vectorizer_demotes_a_boolean_guard_reading_data()
     test_a_float_guard_becomes_a_scalar_read_before_the_guarded_write()
     test_a_sum_a_later_branch_reads_folds_into_its_compute_state()

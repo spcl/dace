@@ -119,10 +119,10 @@ def is_boolean_symbol(sd: SDFG, name: str) -> bool:
     return bool(values) and all(boolean(value) for value in values)
 
 
-def demote_symbols(sdfg: SDFG, candidates: Callable[[SDFG], Iterable[str]]) -> int:
-    """Demote to a transient scalar each non-boolean symbol ``candidates`` names in an SDFG of ``sdfg``, unless the graph's
-    structure is built from it (an array shape, a memlet subset, a map range, a loop's iteration domain, a nested
-    SDFG's mapping) or it cannot become a transient.
+def demote_symbols(sdfg: SDFG, candidates: Callable[[SDFG], Iterable[str]], booleans: bool = False) -> int:
+    """Demote to a transient scalar each symbol ``candidates`` names in an SDFG of ``sdfg``, a boolean one only with
+    ``booleans``, unless the graph's structure is built from it (an array shape, a memlet subset, a map range, a
+    loop's iteration domain, a nested SDFG's mapping) or it cannot become a transient.
 
     :returns: How many symbols were demoted.
     """
@@ -136,7 +136,7 @@ def demote_symbols(sdfg: SDFG, candidates: Callable[[SDFG], Iterable[str]]) -> i
         structural_stale = False
         free_syms: set[str] | None = None
         for name in candidates(sd):
-            if name not in sd.symbols or is_boolean_symbol(sd, name):
+            if name not in sd.symbols or (not booleans and is_boolean_symbol(sd, name)):
                 continue
             if structural is None:
                 structural = StructuralSymbols()

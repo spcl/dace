@@ -65,7 +65,7 @@ class DemoteDataReadingInterstateSymbols(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         """:returns: how many symbols were demoted, or ``None`` when none was."""
-        return demote_symbols(sdfg, data_reading_assigned_symbols) or None
+        return demote_symbols(sdfg, data_reading_assigned_symbols, booleans=True) or None
 
     def report(self, pass_retval: int) -> str:
         return f"Demoted {pass_retval} data-reading interstate symbols to scalars."
