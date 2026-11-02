@@ -13,8 +13,10 @@ import pytest
 import dace
 from dace.libraries.standard.nodes import Reduce
 from dace.libraries.standard.nodes.scan import Scan
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
@@ -2108,6 +2110,49 @@ def test_scaled_update_is_no_fold_of_the_array():
         out = np.array([0.25])
         sdfg(a=np.array([5.0, 7.0, 3.0]), out=out, N=3)
         assert out[0] == 10.0
+
+
+def guarded_scan_sdfg(name: str) -> tuple[dace.SDFG, LoopRegion, ConditionalBlock, ControlFlowRegion]:
+    """``x = a[0]; c = 0; for i in 1..11: if a[i] > x: x = a[i]``, then ``O = (x, c)``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [12], dace.float64)
+    sdfg.add_array("O", [2], dace.float64)
+    sdfg.add_scalar("x", dace.float64, transient=True)
+    sdfg.add_symbol("c", dace.int64)
+    seed = sdfg.add_state("seed", is_start_block=True)
+    seed.add_nedge(seed.add_read("a"), seed.add_write("x"), dace.Memlet("a[0] -> [0]"))
+    loop = LoopRegion("scan", "i < 12", "i", "i = 1", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(seed, loop, dace.InterstateEdge(assignments={"c": "0"}))
+    entry = loop.add_state("entry", is_start_block=True)
+    block = ConditionalBlock("pick", sdfg=sdfg, parent=loop)
+    loop.add_node(block)
+    loop.add_edge(entry, block, dace.InterstateEdge())
+    taken = ControlFlowRegion("taken", sdfg=sdfg, parent=block)
+    block.add_branch(CodeBlock("a[i] > x"), taken)
+    write = taken.add_state("write", is_start_block=True)
+    copy_tasklet = write.add_tasklet("carry", {"q"}, {"o"}, "o = q")
+    write.add_edge(write.add_read("a"), None, copy_tasklet, "q", dace.Memlet("a[i]"))
+    write.add_edge(copy_tasklet, "o", write.add_write("x"), None, dace.Memlet("x[0]"))
+    after = sdfg.add_state_after(loop, "after")
+    out = after.add_write("O")
+    for k, code in enumerate(("o = q", "o = c")):
+        store = after.add_tasklet(f"store{k}", {"q": None} if k == 0 else {}, {"o": None}, code)
+        if k == 0:
+            after.add_edge(after.add_read("x"), None, store, "q", dace.Memlet("x[0]"))
+        after.add_edge(store, "o", out, None, dace.Memlet(f"O[{k}]"))
+    sdfg.reset_cfg_list()
+    return sdfg, loop, block, taken
+
+
+def test_a_guarded_scan_lifts():
+    assert ArgMaxLift().apply_pass(guarded_scan_sdfg("guarded_scan")[0], {})
+
+
+def test_a_loop_edge_binding_what_the_guard_ignores_keeps_the_loop():
+    sdfg, loop, block, _ = guarded_scan_sdfg("guarded_scan_counter")
+    loop.edges_between(loop.start_block, block)[0].data.assignments["c"] = "c + 2"
+    assert not ArgMaxLift().apply_pass(sdfg, {})
 
 
 if __name__ == "__main__":

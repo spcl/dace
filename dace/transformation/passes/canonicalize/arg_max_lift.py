@@ -635,7 +635,7 @@ class ArgMaxLift(ppl.Pass):
                     return None
             else:
                 return None
-        if cond_block is None:
+        if cond_block is None or self.stray_assignment(loop, cond_block):
             return None
 
         non_else = [(c, br) for c, br in cond_block.branches if c is not None]
@@ -855,7 +855,21 @@ class ArgMaxLift(ppl.Pass):
                     return None
             else:
                 return None
-        return found
+        return None if found is None or self.stray_assignment(region, found) else found
+
+    @staticmethod
+    def stray_assignment(region: ControlFlowRegion, child: ControlFlowBlock) -> bool:
+        """Whether an edge of ``region`` binds a name ``child`` does not read, directly or through another binding:
+        per-iteration work the rewrites would drop with the loop."""
+        bound = {k: str(v) for e in region.edges() for k, v in e.data.assignments.items()}
+        if not bound:
+            return False
+        used = {str(sym) for sym in child.free_symbols}
+        pending = dict(bound)
+        while hits := [name for name in pending if name in used]:
+            for name in hits:
+                used |= {str(sym) for sym in symbolic.pystr_to_symbolic(pending.pop(name)).free_symbols}
+        return bool(pending)
 
     def _unit_loop_from_zero(self, loop: LoopRegion) -> tuple[symbolic.SymbolicType, symbolic.SymbolicType] | None:
         """``(start, end)`` for a unit-stride loop starting at 0, else ``None``."""
