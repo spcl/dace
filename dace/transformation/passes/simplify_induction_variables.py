@@ -31,6 +31,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.iteration_domain import loop_trip_count
 
 
 @properties.make_properties
@@ -67,21 +68,6 @@ def loop_nesting_depth(loop: LoopRegion) -> int:
             depth += 1
         parent = parent.parent_graph
     return depth
-
-
-def loop_trip_count(loop: LoopRegion) -> symbolic.SymbolicType | None:
-    """Return the number of iterations of ``loop`` if its bounds are simple enough.
-
-    Mirrors the trip-count computation used by ``InductionVariableSubstitution``.
-    """
-    start = loop_analysis.get_init_assignment(loop)
-    end = loop_analysis.get_loop_end(loop)
-    stride = loop_analysis.get_loop_stride(loop)
-    if start is None or end is None or stride is None:
-        return None
-    if symbolic.simplify(stride) == 0:
-        return None
-    return symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
 
 
 def self_referential_step(name: str, rhs: str) -> symbolic.SymbolicType | None:
