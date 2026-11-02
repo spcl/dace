@@ -301,6 +301,11 @@ class LoopToTranspose(ppl.Pass):
 
         d = len(loops)
         extracted = _extract_permutation_copy(body)
+        # The lift drops the chain's scratch: one read outside the nest would lose its value
+        if extracted is not None:
+            scratch = {n.data for n in body.data_nodes()} - set(extracted[:2])
+            if any(n.data in scratch for state in sdfg.states() if state is not body for n in state.data_nodes()):
+                return False
         if extracted is None:
             return False
         in_array, out_array, read_subset, write_subset = extracted

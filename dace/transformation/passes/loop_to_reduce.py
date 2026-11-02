@@ -857,6 +857,10 @@ def _expand_over_loop(
     if not isinstance(subset, subsets.Range):
         return None
     loop_var_name = str(loop_var)
+    # Two dimensions on the loop variable walk a diagonal, which no box of the two widened axes is
+    starts = [{str(s) for s in symbolic.pystr_to_symbolic(str(r[0])).free_symbols} for r in subset.ndrange()]
+    if sum(loop_var_name in names for names in starts) > 1:
+        return None
     ranges = []
     for rb, re_, rs in subset.ndrange():
         if rb != re_ or rs != 1:
