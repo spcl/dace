@@ -271,17 +271,6 @@ def test_refuses_symbolic_sizes():
     assert _residual_loops(sym) >= 1, "symbolic-size reduction axis must stay sequential (lift refused)"
 
 
-def test_short_literal_axis_lifts_over_a_symbolic_map():
-    """A literal reduction axis stays cheap whatever the map's extent, so only ``KK`` needs to be known."""
-    kk, nr, nm = 6, 5, 4
-    sdfg = _canon_full(_contour_sum, KK=kk)
-    assert _residual_loops(sdfg) == 0
-    b = np.random.default_rng(0).standard_normal((kk, nr, nm))
-    p = np.ones((nr, nm))
-    sdfg(B=b, P=p, NR=nr, NM=nm)
-    assert np.allclose(p, (b * b).sum(axis=0))
-
-
 def restore_omp_threads(previous: str | None) -> None:
     """Put ``OMP_NUM_THREADS`` -- and the loaded runtime's own count -- back as they were."""
     if previous is None:

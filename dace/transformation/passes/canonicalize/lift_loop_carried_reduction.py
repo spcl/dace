@@ -97,8 +97,7 @@ elements) while the reduction axis is large; past the crossover it just adds a W
 reduction over the loop axis on top of already-saturated parallelism and LOSES. That comparison
 needs concrete extents: with a SYMBOLIC size (the common case) the decision is undecidable, so
 ``_sizes_are_concrete`` refuses the lift rather than gamble. A specialized program (constants
-substituted) with a small inner map still lifts, and so does a reduction axis of a short literal
-count, whatever the map: specialization keeps that axis sequential, so the crossover does not arise.
+substituted) with a small inner map is the case that still lifts.
 """
 
 import ast
@@ -110,7 +109,6 @@ from dace.optionals import required
 from dace.sdfg import SDFGState
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import LoopRegion
-from dace.symbolic_facts import SMALL_CONSTANT_EXTENT
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.analysis import loop_analysis
@@ -268,14 +266,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
         SLOWER (AB crossover ~ a few hundred inner elements). That size comparison is undecidable
         for a SYMBOLIC extent -- the common case in real kernels (``N``, ``KLEV``) -- so lifting
         there is a blind gamble that usually loses. Refuse unless every relevant extent is
-        concrete; a specialized program (constants substituted in) is still eligible. A reduction
-        axis of a few literal trips (neighbours of a cell) is not that gamble."""
-        # A short literal axis runs sequentially once specialized (a schedule rule), so it adds no conflict to the map.
-        start, end = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop)
-        if start is not None and end is not None:
-            trips = symbolic.pystr_to_symbolic(end - start + 1)
-            if trips.is_number and trips < SMALL_CONSTANT_EXTENT:
-                return True
+        concrete; a specialized program (constants substituted in) is still eligible."""
         syms: dict = dict.fromkeys(cand.map_entry.map.range.free_symbols)
         for bound in (
             loop_analysis.get_init_assignment(loop),
