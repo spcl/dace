@@ -32,6 +32,7 @@ never on unrelated adjacent loops.
 """
 
 import re
+from collections.abc import Callable, Container
 from typing import Any
 
 import sympy
@@ -104,6 +105,46 @@ def _symbolically_equal(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> b
         return symbolic.simplify(_int_floor_to_sympy(diff)) == 0
     except Exception:
         return False
+
+
+def value_keys(
+    state: SDFGState,
+    node_key: Callable[[nodes.Node], Any],
+    edge_key: Callable[[dace.Memlet], tuple],
+    ids: ValueIds,
+    stored: dict[str, int],
+    inputs_of: Container[nodes.Node] | None = None,
+) -> dict[nodes.Node, int] | None:
+    """An interned key per node of ``state``, equal only for nodes computing one value: it folds in the keys of the
+    node's sources, wired by connector, so one set of tasklets and memlets connected differently differs.
+
+    :param node_key: What a node is by itself; ``None`` refuses.
+    :param edge_key: What a memlet reads.
+    :param ids: The interning table, shared by everything compared.
+    :param stored: Per container, the key of its last write; carries values into the next state.
+    :param inputs_of: The nodes whose sources count, all if ``None``; the key of any other is ``node_key`` alone.
+    :returns: The keys, or ``None`` if ``node_key`` refused.
+    """
+    keys: dict[nodes.Node, int] = {}
+    for node in sdutil.dfs_topological_sort(state):
+        payload = node_key(node)
+        if payload is None:
+            return None
+        inputs = []
+        if inputs_of is None or node in inputs_of:
+            # A memlet-path edge has None for a connector, a View's 'views'.
+            inputs = [
+                (keys[e.src], e.src_conn or "", e.dst_conn or "", *edge_key(e.data))
+                for e in state.in_edges(node)
+                if not e.data.is_empty()
+            ]
+        if not inputs and isinstance(node, nodes.AccessNode) and node.data in stored:
+            keys[node] = stored[node.data]  # a read of what an access node before it wrote
+            continue
+        keys[node] = ids.setdefault((payload, tuple(sorted(inputs))), len(ids))
+        if inputs and isinstance(node, nodes.AccessNode):
+            stored[node.data] = keys[node]
+    return keys
 
 
 def provably_ordered(low: symbolic.SymbolicType, high: symbolic.SymbolicType, facts: symbolic.Facts) -> bool:
@@ -281,31 +322,23 @@ class FuseConsecutiveLoops(ppl.Pass):
     def _state_signature(
         self, state: SDFGState, loop_var: str, local_scratch: dict[str, None], ids: ValueIds
     ) -> list[int] | None:
-        """The sorted value keys of ``state``'s sinks, ``None`` if a node's meaning is not in its key.
+        """The sorted value keys of ``state``'s sinks, ``None`` if a node's meaning is not in its key:
+        scope, nested SDFG and library nodes carry it in properties and contents."""
 
-        A node's key folds in those of its sources, wired by connector, so bodies that use one set of
-        tasklets and memlets but connect them differently differ. Scope, nested SDFG and library nodes
-        carry their meaning in properties and contents, and are refused.
-        """
-        if not all(isinstance(n, (nodes.AccessNode, nodes.Tasklet)) for n in state.nodes()):
-            return None
-        keys: dict[nodes.Node, int] = {}
-        for node in sdutil.dfs_topological_sort(state):
-            inputs = []
-            for e in state.in_edges(node):
-                memlet = e.data
-                subset = _normalize(str(memlet.subset), loop_var) if memlet.subset is not None else ""
-                # A copy memlet indexes its DESTINATION in ``other_subset``.
-                other = _normalize(str(memlet.other_subset), loop_var) if memlet.other_subset is not None else ""
-                data = _canon_data(memlet.data, local_scratch) if memlet.data else ""
-                # A memlet-path edge has None for a connector, a View's 'views'.
-                inputs.append((keys[e.src], e.src_conn or "", e.dst_conn or "", data, subset, other, str(memlet.wcr)))
-            value = (_node_key(node, loop_var, local_scratch), tuple(sorted(inputs)))
+        def node_key(node: nodes.Node) -> NodeKey | None:
+            if not isinstance(node, (nodes.AccessNode, nodes.Tasklet)):
+                return None
             if isinstance(node, nodes.AccessNode) and node.data in local_scratch:
                 desc = state.sdfg.arrays[node.data]
-                value += (str(desc.dtype), str(desc.shape))
-            keys[node] = ids.setdefault(value, len(ids))
-        return sorted(keys[n] for n in state.sink_nodes())
+                return ("scratch", f"{desc.dtype} {desc.shape}")
+            return _node_key(node, loop_var, local_scratch)
+
+        def edge_key(memlet: dace.Memlet) -> tuple:
+            subsets = ("" if s is None else _normalize(str(s), loop_var) for s in (memlet.subset, memlet.other_subset))
+            return (_canon_data(memlet.data, local_scratch) if memlet.data else "", *subsets, str(memlet.wcr))
+
+        keys = value_keys(state, node_key, edge_key, ids, {})
+        return None if keys is None else sorted(keys[n] for n in state.sink_nodes())
 
     def _merge(self, cfg: ControlFlowRegion, first: LoopRegion, second: LoopRegion, link: Edge[InterstateEdge]) -> None:
         """Extend ``first`` over the union range and splice ``second`` out.
