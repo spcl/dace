@@ -130,6 +130,9 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
     prep_written.update(lhs for e in region.edges() for lhs in e.data.assignments)
     if prep_written & cfree or read_when_loop_is_empty(cb, loop, prep_written):
         return None
+    # The moved loop runs under a false guard too: its counter must not leak where the old value was read
+    if loop_analysis.counter_used_outside_loop(lvar, loop, cb.sdfg):
+        return None
     return cb, cond, region
 
 
@@ -410,6 +413,8 @@ def match_imperfect(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, 
     if any(str(lp.loop_variable) in cfree or (cfree & loop_analysis.written_names(lp)) for lp in loops):
         return None
     if any(cfree & _state_writes(st) for st in states):
+        return None
+    if any(loop_analysis.counter_used_outside_loop(str(lp.loop_variable), lp, cb.sdfg) for lp in loops):
         return None
     return cb, cond, region
 

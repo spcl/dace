@@ -341,6 +341,23 @@ def test_a_prep_reading_the_slot_the_loop_updates_stays_ahead_of_the_loop():
     assert guard in sdfg.nodes()
 
 
+def test_a_counter_read_past_a_false_guard_keeps_the_guard_around_the_loop():
+    """``i`` keeps its value under a false guard; a loop outside the guard would leave its exit value there."""
+    sdfg, guard, region, loop = guarded_prep_sdfg("counter_read_past_guard")
+    sdfg.add_array("y", [1], dace.float64)
+    body = loop.add_state("body", is_start_block=True)
+    store = body.add_tasklet("store", {}, {"o": None}, "o = 1")
+    body.add_edge(store, "o", body.add_write("x"), None, dace.Memlet("x[i]"))
+    sdfg.add_state_before(guard, "start", is_start_block=True, assignments={"i": "5"})
+    after = sdfg.add_state_after(guard, "after")
+    use = after.add_tasklet("use", {}, {"o": None}, "o = i")
+    after.add_edge(use, "o", after.add_write("y"), None, dace.Memlet("y[0]"))
+    sdfg.validate()
+
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is None
+    assert guard in sdfg.nodes()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
@@ -368,4 +385,3 @@ def test_a_read_an_ordering_edge_puts_after_its_writer_is_not_upward_exposed():
     exposed = upward_exposed_reads(state)
 
     assert exposed == {"x", "u"}, exposed
-    test_a_prep_reading_the_slot_the_loop_updates_stays_ahead_of_the_loop()
