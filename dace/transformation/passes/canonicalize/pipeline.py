@@ -952,6 +952,8 @@ def derive_parallelism(
     # Wavefront: map what now maps, then skew the nests left sequential on a carried dependence.
     # Accumulator steps above leave a WCR that conflicts with nothing (a masked count two map levels deep)
     s += [(label, RevertNonReductionWCR()), *_inline_single_state(label)]
+    # The accumulator steps leave the increment's tasklet a plain copy
+    s += [(label, EliminateTrivialTasklets())]
     if target == "gpu":
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
     s += [(label, FuseLoops())]
