@@ -1136,7 +1136,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
         # it holds the pre-loop seed so the seeded ``Reduce`` (identity=None) folds correctly,
         # and the temp must not outlive the body.
         if carried_accum != accum:
-            if staged_elsewhere(sdfg, loop, chain[:-1]):
+            if staged_elsewhere(sdfg, loop, [n for n in chain if n.data != carried_accum]):
                 return None
             accum, write_subset = carried_accum, carried_sub
 
