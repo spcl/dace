@@ -118,7 +118,7 @@ def add_fft_node(
     elif len(lengths) != len(transformed):
         raise ValueError(f"{len(lengths)} transform lengths for {len(transformed)} axes")
     lengths = [symbolic.pystr_to_symbolic(str(n)) for n in lengths]
-    stored = sp.floor(lengths[-1] / 2) + 1
+    stored = symbolic.int_floor(lengths[-1], 2) + 1
 
     in_shape, out_shape = list(desc.shape), list(desc.shape)
     for axis, length in zip(transformed, lengths):
@@ -272,7 +272,7 @@ def add_fftshift(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, x: str, axes,
     """
     desc = sdfg.arrays[x]
     axes = list(range(len(desc.shape))) if axes is None else as_list(axes)
-    halves = [sp.floor(desc.shape[axis] / 2) for axis in axes]
+    halves = [symbolic.int_floor(desc.shape[axis], 2) for axis in axes]
     return numpy_roll(pv, sdfg, state, x, [-half if inverse else half for half in halves], axes)
 
 
@@ -297,7 +297,7 @@ def add_fft_frequencies(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, n, d, 
     if isinstance(d, str):
         raise NotImplementedError("numpy.fft.fftfreq with a spacing computed at runtime")
     n = symbolic.pystr_to_symbolic(str(scalar_argument(n)))
-    count = sp.floor(n / 2) + 1 if half_spectrum else n
+    count = symbolic.int_floor(n, 2) + 1 if half_spectrum else n
     name = pv.add_temp_transient([count], dtypes.float64)[0]
     total = f"({float(d)!r} * {sym2cpp(n)})"
     index = "__i" if half_spectrum else f"(__i < ({sym2cpp(n)} + 1) / 2 ? __i : __i - {sym2cpp(n)})"
