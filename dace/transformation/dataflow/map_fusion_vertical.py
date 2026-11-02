@@ -789,6 +789,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         mfhelper.keep_anti_dependences(graph, anti_dependences)
         self.join_in_place_outputs(graph, second_map_exit, in_place)
+        # The fused body now accesses them through nodes of its own: the analysis no longer holds for them.
+        self.forget_single_use(sdfg, in_place)
 
         # Put back the happens-before the rewrite took out of the graph, see
         #  `ordering_sources_of_intermediates`.
@@ -2302,6 +2304,16 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  This means that the data accesses, described by this transformation is
         #  point wise
         return True
+
+    def forget_single_use(self, sdfg: SDFG, names: AbstractSet[str]) -> None:
+        """Stop the cached `FindSingleUseData` result from calling ``names`` single use."""
+        # Function-local import, see `is_shared_data()`.
+        from dace.transformation.passes.analysis import FindSingleUseData
+
+        cached = (self._pipeline_results or {}).get(FindSingleUseData.__name__)
+        for single_use in (cached, self._single_use_data):
+            if single_use is not None and sdfg in single_use:
+                single_use[sdfg] -= set(names)
 
     def is_shared_data(
         self,

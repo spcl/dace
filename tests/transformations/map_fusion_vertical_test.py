@@ -4326,6 +4326,41 @@ def test_a_conditional_write_fuses_in_place_when_something_keeps_the_intermediat
     )
 
 
+def test_an_intermediate_fused_in_place_is_not_single_use_any_more():
+    """A second reader fuses the conditional write in place; the last reader must not then delete the container."""
+    sdfg = dace.SDFG(unique_name("in_place_then_exclusive"))
+    for name in "ABC":
+        sdfg.add_array(name, (10,), dace.float64)
+    sdfg.add_array("T", (10,), dace.float64, transient=True)
+    state = sdfg.add_state(is_start_block=True)
+    intermediate = state.add_access("T")
+    state.add_mapped_tasklet(
+        "maybe",
+        {"i": "0:10"},
+        {"_a": dace.Memlet("A[i]")},
+        "if _a > 0:\n\t_b = _a",
+        {"_b": dace.Memlet("T[i]", dynamic=True)},
+        external_edges=True,
+        output_nodes={"T": intermediate},
+    )
+    for reader, output in (("first", "B"), ("second", "C")):
+        state.add_mapped_tasklet(
+            reader,
+            {"j": "0:10"},
+            {"_a": dace.Memlet("T[j]")},
+            "_b = _a",
+            {"_b": dace.Memlet(f"{output}[j]")},
+            external_edges=True,
+            input_nodes={"T": intermediate},
+        )
+
+    FuseMaps().apply_pass(sdfg, {})
+
+    assert count_nodes(state, nodes.MapEntry) == 1
+    assert "T" in sdfg.arrays
+    sdfg.validate()
+
+
 def _two_maps_writing_out(second_column: int) -> tuple[SDFG, SDFGState]:
     """``for i: T[i] = 2 * A[i]; B[i, 0] = A[i]`` then ``for i: B[i, c] = T[i] + 1`` (bout_elm_pb's ``ddt_P`` planes)."""
     sdfg = SDFG(f"two_maps_writing_out_{second_column}")
