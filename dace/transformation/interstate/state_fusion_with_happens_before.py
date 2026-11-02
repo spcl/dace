@@ -1194,7 +1194,7 @@ class StateFusionExtended(StateFusion):
                 if took:
                     absorbed.setdefault(node.data, []).append(node)
                 elif second_state.out_degree(node) > 0:
-                    for m in absorbed.get(node.data, []):
+                    for m in absorbed.get(node.data, []) + candidates[:1]:
                         if not nx.has_path(first_state._nx, node, m) and not nx.has_path(first_state._nx, m, node):
                             first_state.add_nedge(m, node, memlet.Memlet())
                 continue

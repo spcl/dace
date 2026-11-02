@@ -1162,6 +1162,32 @@ def test_two_inlined_branches_of_one_name_stay_distinct():
     sdfg.validate()
 
 
+def test_dead_map_with_an_ordering_edge_out_goes_whole():
+    """An exit that only orders what follows is dead with its entry, not an orphan."""
+    sdfg = dace.SDFG("dde_dead_map_ordering_exit")
+    sdfg.add_array("y", [1], dace.float64)
+    sdfg.add_transient("t", [1], dace.float64)
+    sdfg.add_transient("z", [1], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("dead", {"i": "0:4"})
+    tasklet = state.add_tasklet("dead", {}, {"o"}, "o = 1.0")
+    state.add_nedge(entry, tasklet, dace.Memlet())
+    inner = state.add_access("t")
+    state.add_edge(tasklet, "o", inner, None, dace.Memlet("t[0]"))
+    state.add_nedge(inner, exit_node, dace.Memlet())
+    read = state.add_read("y")
+    state.add_nedge(exit_node, read, dace.Memlet())
+    state.add_edge(read, None, state.add_write("z"), None, dace.Memlet("y[0] -> [0]"))
+    next_state = sdfg.add_state_after(state)
+    next_state.add_edge(next_state.add_read("z"), None, next_state.add_write("y"), None, dace.Memlet("z[0] -> [0]"))
+    sdfg.validate()
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+
+    sdfg.validate()
+    assert not any(isinstance(n, (nodes.MapEntry, nodes.MapExit)) for n in state.nodes())
+
+
 if __name__ == "__main__":
     test_dse_simple()
     test_dse_unconditional()
@@ -1206,3 +1232,4 @@ if __name__ == "__main__":
     test_dde_keeps_the_order_a_removed_copy_carried_between_a_read_and_an_overwrite()
     test_dde_orders_nothing_through_access_nodes_the_removal_leaves_unwritten_and_unread()
     test_two_inlined_branches_of_one_name_stay_distinct()
+    test_dead_map_with_an_ordering_edge_out_goes_whole()
