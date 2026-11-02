@@ -574,8 +574,15 @@ class ConstantPropagation(ppl.Pass):
                         if _value_names(v, assigned_in_loop):
                             assignments[k] = _UnknownValue
                     # Unknown even without an incoming value: an assignment in the body reaches the next iteration
-                    only_inside = assigned_in_loop - assignments.keys()
-                    assignments.update(dict.fromkeys(assigned_in_loop, _UnknownValue))
+                    # (A data-dependent assignment is no constant anywhere, and most of a large body's are that.)
+                    constant_inside = {
+                        name
+                        for edge in block.all_interstate_edges()
+                        for name, value in self._data_independent_assignments(edge.data, arrays).items()
+                        if value is not _UnknownValue
+                    }
+                    only_inside = constant_inside - assignments.keys()
+                    assignments.update(dict.fromkeys(constant_inside, _UnknownValue))
 
                 if block not in in_const_dict:
                     in_const_dict[block] = {}
