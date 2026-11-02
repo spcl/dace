@@ -1135,6 +1135,24 @@ def test_nested_callback_with_nested_arraylike_object():
     assert test
 
 
+def test_symbol_arguments_reach_a_callback():
+    seen = []
+
+    @dace_inhibitor
+    def record(value):
+        seen.append(value)
+
+    @dace.program
+    def symbol_callback(a: dace.float64[N]):
+        for i in range(2):
+            record(i)
+        record(N)
+        record(N + 1)
+
+    symbol_callback(np.zeros(4))
+    assert seen == [0, 1, 4, 5]
+
+
 if __name__ == "__main__":
     test_automatic_callback()
     test_automatic_callback_2()
@@ -1183,3 +1201,4 @@ if __name__ == "__main__":
     test_callback_with_arraylike_object()
     test_callback_with_arraylike_object_typehints()
     test_nested_callback_with_nested_arraylike_object()
+    test_symbol_arguments_reach_a_callback()
