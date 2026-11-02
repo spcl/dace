@@ -12,7 +12,6 @@ from typing import Any
 
 from dace import SDFG, data, properties, symbolic
 from dace.ordered import OrderedSet
-from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
@@ -1559,11 +1558,6 @@ class CanonicalizationPipeline(ppl.Pass):
                 sdfg.save(os.path.join(self.dump_dir, f"{index:03d}_{label}.sdfgz"), compress=True)
         disable_openmp_sections(sdfg)
         equalize(sdfg)
-        # The finished form: a later canonicalization keeps these maps rather than rebuild them from loops.
-        if not self.stages or FINISH in self.stages:
-            for node, _ in sdfg.all_nodes_recursive():
-                if isinstance(node, nodes.MapEntry):
-                    node.map.proven_parallel = True
         if self.validate:
             sdfg.validate()
         return len(stages)
