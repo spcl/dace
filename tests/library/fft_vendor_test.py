@@ -19,6 +19,7 @@ from dace import dtypes
 from dace.codegen.common import get_gpu_backend
 from dace.libraries.blas.environments import intel_mkl
 from dace.libraries.fft import environments as fft_environments
+from dace.libraries.fft.algorithms import dft
 from dace.libraries.fft.environments import fftw3
 from dace.libraries.fft.nodes import FFT, IFFT
 from dace.libraries.fft.nodes.fft import FFTTransform, GpuFftLayout, cufft_call, fftw3_call, gpu_fft_layout
@@ -598,6 +599,30 @@ def test_the_gpu_fast_library_list_names_the_vendor_fft():
     assert ("hipFFT" in lists["hip"]) == fft_environments.hipFFT.is_installed() and "cuFFT" not in lists["hip"]
 
 
+def test_factor_of_a_computed_length_keeps_the_integer_division():
+    text = dace.symbolic.symstr(dft.in_floating_point("1 / int_floor(N, 2)"), cpp_mode=True)
+    assert "float64(N)" not in text and "float64(" in text
+
+
+def test_vendor_expansion_types_a_scalar_factor_as_declared():
+    sdfg = dace.SDFG("fft_scalar_factor")
+    sdfg.add_array("x", [8], dace.complex128)
+    sdfg.add_array("y", [8], dace.complex128)
+    sdfg.add_scalar("alpha", dace.float64, transient=True)
+    state = sdfg.add_state(is_start_block=True)
+    node = dace.libraries.fft.nodes.FFT("fft")
+    node.factor = "alpha"
+    node.implementation = "FFTW3"
+    state.add_node(node)
+    state.add_edge(state.add_read("x"), None, node, "_inp", dace.Memlet("x"))
+    state.add_edge(node, "_out", state.add_write("y"), None, dace.Memlet("y"))
+
+    sdfg.expand_library_nodes(recursive=False)
+
+    (inner,) = [n.sdfg for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert inner.symbols["alpha"] == dace.float64
+
+
 if __name__ == "__main__":
     test_cpu_poisson_round_trip_of_a_real_grid("pure")
     test_cpu_poisson_round_trip_of_a_real_grid("FFTW3")
@@ -655,3 +680,5 @@ if __name__ == "__main__":
     test_hipfft_is_the_cufft_code_renamed()
     test_set_fast_implementations_lowers_fft_to_the_cpu_vendor()
     test_the_gpu_fast_library_list_names_the_vendor_fft()
+    test_factor_of_a_computed_length_keeps_the_integer_division()
+    test_vendor_expansion_types_a_scalar_factor_as_declared()

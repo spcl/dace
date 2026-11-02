@@ -55,6 +55,16 @@ def idft_explicit(_inp, _out, N: dace.compiletime, factor: dace.compiletime):
 # N-dimensional native DFT (separable, rank-generic)
 
 
+INTEGRAL_OPERATIONS = (
+    sympy.floor,
+    sympy.ceiling,
+    sympy.Mod,
+    dace.symbolic.int_floor,
+    dace.symbolic.int_ceil,
+    dace.symbolic.CMod,
+)
+
+
 def in_floating_point(factor: dace.symbolic.SymbolicType) -> sympy.Basic:
     """``factor`` with every symbol cast to ``float64`` and every number a float, so ``1/(M*N)`` and
     ``sqrt(M)`` over integer symbols print as floating-point operations.
@@ -63,7 +73,13 @@ def in_floating_point(factor: dace.symbolic.SymbolicType) -> sympy.Basic:
     :return: The floating-point expression.
     """
     value = dace.symbolic.pystr_to_symbolic(factor)
-    return value.xreplace({s: dace.symbolic.float64(s) for s in value.free_symbols}).evalf()
+    # An integer operation keeps its integer operands, and casts as a whole: ``floor(N / 2)`` is not ``N / 2.0``
+    rounded = value.atoms(*INTEGRAL_OPERATIONS)
+    outermost = [atom for atom in rounded if not any(atom != other and other.has(atom) for other in rounded)]
+    masked = {atom: sympy.Dummy() for atom in outermost}
+    casted = value.xreplace(masked)
+    casted = casted.xreplace({s: dace.symbolic.float64(s) for s in casted.free_symbols - set(masked.values())})
+    return casted.xreplace({dummy: dace.symbolic.float64(atom) for atom, dummy in masked.items()}).evalf()
 
 
 def is_unit(factor: dace.symbolic.SymbolicType) -> bool:
