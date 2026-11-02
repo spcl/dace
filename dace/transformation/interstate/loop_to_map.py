@@ -23,6 +23,7 @@ from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.narrowing import as_basic
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     BreakBlock,
@@ -1438,6 +1439,9 @@ class LiftContext:
     #: extents give, both for :func:`declare_lifted_symbols`. Built on first use.
     assigning_edges: dict[str, list[Any]] | None = None
     extent_types: dict[str, dtypes.typeclass] | None = None
+    #: :func:`~dace.sdfg.sdfg.scope_bound_names` of the SDFG, and the iterators lifted since: a superset. Built on first
+    #: use.
+    scope_bound: set[str] | None = None
     #: name -> the blocks of ``block_order`` that read it (in their contents or on an out-edge), and the
     #: blocks all of whose out-edges assign it: the "used after the loop" walk as an index. Entries of
     #: blocks that left the order are skipped by ``block_index``. Built on first use.
@@ -1704,6 +1708,24 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: LiftC
             dtype = infer_expr_type(rhs, env)
             if dtype is not None:
                 declare_or_retype(nsdfg, name, dtype)
+
+
+def only_definitions_in(sdfg: SDFG, loop: LoopRegion, names: set[str], ctx: LiftContext) -> bool:
+    """Whether the interstate edges of ``loop`` are the only definition in ``sdfg`` of every one of ``names``, and
+    nothing in ``sdfg`` but a declaration names them outside it. Each of them is then free once the lift moved those
+    edges into the body, exactly while it stays declared, with no walk of ``sdfg``."""
+    edge_assignments, loop_variables = symbol_bindings(ctx, sdfg)
+    inside = Counter(k for e in loop.all_interstate_edges() for k in e.data.assignments)
+    if ctx.scope_bound is None:
+        ctx.scope_bound = scope_bound_names(sdfg)
+    extents = array_extent_types(sdfg, ctx)
+    assumed = {name for relation in sdfg.symbol_repo.runtime_assumptions for name in symbolic.relation_names(relation)}
+    return all(
+        edge_assignments[name] == inside[name]
+        and not loop_variables[name]
+        and not any(name in held for held in (ctx.scope_bound, extents, sdfg.arrays, sdfg.constants_prop, assumed))
+        for name in names
+    )
 
 
 def exhaustively_assigned(block: ConditionalBlock) -> set[str]:
@@ -2860,7 +2882,13 @@ class LoopLift:
         for region in self.loop.all_control_flow_regions(recursive=True):
             for e in region.edges():
                 loop_defined |= e.data.assignments.keys()
-        frees_nothing = not (loop_defined & sdfg.symbols.keys())
+        freed = loop_defined & sdfg.symbols.keys()
+        frees_nothing = not freed
+        # Known without a walk (a lift a caller's proof replaces the probe of has no context): the loop has the only
+        # definitions of what it frees, and a probe saw nothing read them after it.
+        freed_known = (
+            lift_ctx is not None and not frees_nothing and only_definitions_in(sdfg, self.loop, freed, lift_ctx)
+        )
         body = graph.add_state_before(self.loop, "single_state_body")
         nsdfg = SDFG("loop_body", constants=sdfg.constants_prop, parent=body)
         nsdfg.add_node(self.loop.start_block, is_start_block=True)
@@ -2911,7 +2939,8 @@ class LoopLift:
 
         # Fix SDFG symbols. Skipped outright when the loop declared nothing: the walk would be a
         # whole-SDFG traversal whose result is provably empty.
-        if not frees_nothing:
+        freed_known = freed_known and not freed & nsdfg.free_symbols
+        if not frees_nothing and not freed_known:
             for sym in sdfg.free_symbols - fsymbols:
                 if sym in sdfg.symbols:
                     sdfg.remove_symbol(sym)
@@ -3153,6 +3182,9 @@ class LoopLift:
         # only deregisters a declaration; it moves no use, so it cannot change what is used.
         if frees_nothing:
             post_free_symbols, newly_free = fsymbols, set()
+        elif freed_known:
+            newly_free = freed - fsymbols
+            post_free_symbols = fsymbols | newly_free
         else:
             post_free_symbols = sdfg.free_symbols
             newly_free = post_free_symbols - fsymbols
@@ -3170,7 +3202,11 @@ class LoopLift:
         # A declaration alone makes a symbol free, so deregistering one the body was the only definer and user of
         # un-frees it
         if deregistered:
-            post_free_symbols = sdfg.free_symbols
+            post_free_symbols = (
+                {sym for sym in post_free_symbols if sym in sdfg.symbols or sym in fsymbols}
+                if freed_known
+                else sdfg.free_symbols
+            )
             newly_free &= post_free_symbols
 
         # Deregistering does not un-free a symbol whose uses remain; the parent node must map it.
@@ -3196,6 +3232,8 @@ class LoopLift:
                 lift_ctx.extent_types = None
             if view_assignments:
                 lift_ctx.assigning_edges = None
+            if lift_ctx.scope_bound is not None:
+                lift_ctx.scope_bound.add(itervar)
 
         # Hand the post-lift free symbols to the holder, so the context it rebuilds next does not
         # walk the whole SDFG for a set this already has. Nothing between the snapshot above and
@@ -3203,7 +3241,7 @@ class LoopLift:
         # ``symbol_mapping`` belongs to the parent SDFG. ``remove_data`` DOES change
         # it -- a name leaving ``sdfg.arrays`` leaves the walk's defined set -- so skip the handoff
         # whenever the loop had body-local arrays to drop.
-        if lift_ctx is not None and (frees_nothing or not unique_set):
+        if lift_ctx is not None and (frees_nothing or freed_known or not unique_set):
             lift_ctx.post_lift_free_symbols = post_free_symbols
 
         # Every nested SDFG of the tree, as ``all_nodes_recursive`` reaches them, without yielding every
