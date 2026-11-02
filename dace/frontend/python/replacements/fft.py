@@ -252,15 +252,15 @@ def frequencies(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, n, d, half_spe
     n = symbolic.pystr_to_symbolic(str(n))
     count = sp.floor(n / 2) + 1 if half_spectrum else n
     name = pv.add_temp_transient([count], dtypes.float64)[0]
-    total = f"({float(d)!r} * {symbolic.symstr(n)})"
-    index = "__i" if half_spectrum else f"(__i < ({symbolic.symstr(n)} + 1) / 2 ? __i : __i - {symbolic.symstr(n)})"
+    extent = symbolic.symstr(n)
+    total = f"({float(d)!r} * {extent})"
+    index = "__i" if half_spectrum else f"(__i if __i < ({extent} + 1) // 2 else __i - {extent})"
     state.add_mapped_tasklet(
         "frequencies",
         {"__i": f"0:{symbolic.symstr(count)}"},
         {},
-        f"o = {index} / {total};",
+        f"o = {index} / {total}",
         {"o": Memlet(data=name, subset="__i")},
-        language=dtypes.Language.CPP,
         external_edges=True,
     )
     return name

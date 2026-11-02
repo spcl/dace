@@ -68,6 +68,31 @@ def test_1d_fft_normalization_over_a_symbolic_extent(transform, norm):
     np.testing.assert_allclose(tester(a.copy()), reference(a, norm=norm), rtol=1e-12, atol=1e-12)
 
 
+@pytest.mark.parametrize("extent", (7, 8))
+@pytest.mark.parametrize("half_spectrum", (False, True))
+def test_sample_frequencies_are_python_tasklets_matching_numpy(extent, half_spectrum):
+    N = dace.symbol("N", dtype=dace.int64)
+
+    @dace.program
+    def fftfreq_tester(out: dace.float64[N]):
+        out[:] = np.fft.fftfreq(N, 0.5)
+
+    @dace.program
+    def rfftfreq_tester(out: dace.float64[N // 2 + 1]):
+        out[:] = np.fft.rfftfreq(N, 0.5)
+
+    program = rfftfreq_tester if half_spectrum else fftfreq_tester
+    sdfg = program.to_sdfg(simplify=False)
+    sdfg.name = f"{sdfg.name}_{extent}"
+    tasklets = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.Tasklet)]
+    assert tasklets and all(node.language == dace.Language.Python for node in tasklets)
+
+    expected = np.fft.rfftfreq(extent, 0.5) if half_spectrum else np.fft.fftfreq(extent, 0.5)
+    out = np.zeros(expected.shape)
+    sdfg(out=out, N=extent)
+    assert np.allclose(out, expected)
+
+
 if __name__ == "__main__":
     test_fft(False)
     test_fft(True)
@@ -81,3 +106,7 @@ if __name__ == "__main__":
     test_1d_fft_normalization_over_a_symbolic_extent("ifft", "backward")
     test_1d_fft_normalization_over_a_symbolic_extent("ifft", "forward")
     test_1d_fft_normalization_over_a_symbolic_extent("ifft", "ortho")
+    test_sample_frequencies_are_python_tasklets_matching_numpy(7, False)
+    test_sample_frequencies_are_python_tasklets_matching_numpy(8, False)
+    test_sample_frequencies_are_python_tasklets_matching_numpy(7, True)
+    test_sample_frequencies_are_python_tasklets_matching_numpy(8, True)
