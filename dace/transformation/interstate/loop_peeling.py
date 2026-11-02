@@ -11,7 +11,7 @@ from dace import symbolic
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.properties import CodeBlock, Property, make_properties
 from dace.sdfg.nodes import NestedSDFG
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.passes.analysis import loop_analysis
@@ -30,6 +30,13 @@ class LoopPeeling(LoopUnroll):
         default=True,
         category="Parameters",
         desc="If True, peels loop from beginning (first `count` iterations), otherwise peels last `count` iterations.",
+    )
+
+    guarded = Property(
+        dtype=bool,
+        default=False,
+        category="Parameters",
+        desc="If True, a peeled iteration the loop is not proven to run sits behind its own loop-range check.",
     )
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
@@ -148,6 +155,19 @@ class LoopPeeling(LoopUnroll):
                 self._replace_loop_var_in_iedge(e.data, loop_var, value)
         return new_cfr
 
+    def _guard_iteration(self, graph: ControlFlowRegion, block: ControlFlowBlock, value, start, end, stride):
+        """Move the peeled ``block`` of iterate ``value`` into a conditional testing that the loop reaches ``value``."""
+        ascending = symbolic.pystr_to_symbolic(stride).is_negative is not True
+        bound = end if self.begin else start
+        condition = f"({value}) {'<=' if ascending == self.begin else '>='} ({bound})"
+        guard = ConditionalBlock(f"{block.label}_runs")
+        graph.add_node(guard, ensure_unique_name=True)
+        graph.remove_node(block)
+        region = ControlFlowRegion(f"{block.label}_region", graph.sdfg)
+        region.add_node(block, is_start_block=True)
+        guard.add_branch(CodeBlock(condition), region)
+        return guard
+
     @staticmethod
     def _replace_loop_var_in_block(block: ControlFlowBlock, loop_var: str, value: symbolic.SymbolicType) -> None:
         """Substitute ``loop_var`` for ``value`` inside ``block`` (state-level
@@ -215,10 +235,14 @@ class LoopPeeling(LoopUnroll):
         is_symbolic = any(symbolic.issymbolic(r) for r in (start, end))
         iterations, init, condition = self.peel_plan(self.loop, sdfg)
 
+        guard = self.guarded and not loop_analysis.provably_runs(self.loop, self.count, sdfg.facts())
+        stride = loop_analysis.get_loop_stride(self.loop)
         peeled_iterations: list[ControlFlowBlock] = []
         for i, current_index in iterations:
             is_symbolic |= symbolic.issymbolic(current_index)
             it = self._instantiate_peeled_iteration(graph, current_index, str(i) if is_symbolic else None)
+            if guard:
+                it = self._guard_iteration(graph, it, current_index, start, end, stride)
             if len(peeled_iterations) > 0:
                 if self.begin:
                     graph.add_edge(peeled_iterations[-1], it, sd.InterstateEdge())

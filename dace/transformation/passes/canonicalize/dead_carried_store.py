@@ -364,7 +364,7 @@ class DeadCarriedStoreElimination(ppl.Pass):
                 continue
             stride = int(as_expr(symbolic.pystr_to_symbolic(stride)))
             # A descending loop kills FORWARD; the tail peel anchors on the loop end, an iterate only at stride one.
-            if stride != 1:
+            if stride != 1 or loop.inverted:
                 continue
             body = body_is_analyzable(loop)
             if body is None:
@@ -376,7 +376,10 @@ class DeadCarriedStoreElimination(ppl.Pass):
             # infeasible or too-short loop) nothing has been removed yet.
             try:
                 LoopPeeling().apply_to(
-                    sdfg=loop.sdfg, loop=loop, verify=False, options={"count": match[1].distance, "begin": False}
+                    sdfg=loop.sdfg,
+                    loop=loop,
+                    verify=False,
+                    options={"count": match[1].distance, "begin": False, "guarded": True},
                 )
             except Exception:  # noqa: BLE001 -- an unpeelable loop keeps its store
                 continue
