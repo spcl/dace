@@ -174,17 +174,6 @@ def interchange_pays_on_gpu(loop: LoopRegion, sdfg: SDFG) -> bool:
     return not costs[0] < costs[1]
 
 
-def enclosing_loops(block) -> set[LoopRegion]:
-    """The loops around ``block``, through nested SDFGs."""
-    found: set[LoopRegion] = set()
-    graph = block.parent_graph
-    while graph is not None:
-        if isinstance(graph, LoopRegion):
-            found.add(graph)
-        graph = graph.parent if isinstance(graph, SDFG) else graph.parent_graph
-    return found
-
-
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class MoveLoopIntoMapGated(ppl.Pass):
@@ -267,7 +256,7 @@ class MoveLoopIntoMapGated(ppl.Pass):
             for loop in live_loops():
                 if loop in refused or loop in stale or (live is not None and loop not in live):
                     continue
-                around = enclosing_loops(loop)
+                around = loop_analysis.enclosing_loops(loop)
                 if not self.try_interchange(loop, gpu):
                     refused.add(loop)
                     continue

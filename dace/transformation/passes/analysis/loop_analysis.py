@@ -232,6 +232,17 @@ def loop_jumps(loop: LoopRegion) -> list[ControlFlowBlock]:
     return jumps
 
 
+def enclosing_loops(block: ControlFlowBlock) -> set[LoopRegion]:
+    """The loops around ``block``, through nested SDFGs."""
+    found: set[LoopRegion] = set()
+    graph = block.parent_graph
+    while graph is not None:
+        if isinstance(graph, LoopRegion):
+            found.add(graph)
+        graph = graph.parent if graph is graph.sdfg else graph.parent_graph
+    return found
+
+
 def written_names(region: ControlFlowRegion) -> set[str]:
     """The data containers and interstate-assigned symbols written anywhere in ``region``."""
     written: set[str] = set()

@@ -79,12 +79,13 @@ def _interstate_reads(block: ControlFlowBlock) -> list[str]:
 
 
 def _rw_subsets(
-    block: ControlFlowBlock, loop_var: str | None, expanded: dict[str, Any] | None = None
+    block: ControlFlowBlock, loop_var: str | None, expanded: dict[str, Any] | None = None, symbols: bool = True
 ) -> tuple[dict[str, frozenset[int]], dict[str, frozenset[int]]]:
     """For every container ``block`` writes / reads, the axes ALL of its accesses
     index at ``loop_var`` itself (:func:`~dace.transformation.passes.loop_fission.per_iter_axes`).
 
     :param expanded: Containers judged as if expanded by one slot dimension, with that dimension's index.
+    :param symbols: Also report the symbols ``block`` reads; a body nothing in which assigns one has no use for them.
 
     :returns: ``(writes, reads)`` dicts mapping container name -> those axes, empty when some
         access is not per-iteration w.r.t. ``loop_var``. A container absent from a dict
@@ -124,7 +125,7 @@ def _rw_subsets(
     if not isinstance(block, SDFGState):
         for edge in block.all_interstate_edges(recursive=True):
             writes.update(dict.fromkeys(edge.data.assignments, UNALIGNED))
-    for name in map(str, block.free_symbols):
+    for name in map(str, block.free_symbols) if symbols else ():
         if name not in block.sdfg.arrays:
             reads[name] = UNALIGNED
     return writes, reads
@@ -142,13 +143,19 @@ def charge_body_edges(loop: LoopRegion, rw: dict) -> None:
         reads.update(dict.fromkeys(edge.data.free_symbols, UNALIGNED))
 
 
-def assignment_coupled(loop: LoopRegion, order: list[ControlFlowBlock]) -> dict[ControlFlowBlock, ControlFlowBlock]:
+def assignment_coupled(
+    loop: LoopRegion, order: list[ControlFlowBlock], assigns: dict[ControlFlowBlock, set[str]]
+) -> dict[ControlFlowBlock, ControlFlowBlock]:
     """Union-find parents that already join the blocks a body-edge assignment couples.
 
     A symbol assigned on a body edge exists only in the clone holding that edge, so the edge's ends and every
     block reading the symbol stay in one group (CSR ``row_ptr_index := row_ptr[i]`` feeding an inner loop).
+
+    :param assigns: What :func:`assigned_in` answers for each block.
     """
     parent: dict[ControlFlowBlock, ControlFlowBlock] = {b: b for b in order}
+    if not any(assigns.values()) and not any(edge.data.assignments for edge in loop.edges()):
+        return parent
 
     def root(x: ControlFlowBlock) -> ControlFlowBlock:
         while parent[x] != x:
@@ -164,7 +171,6 @@ def assignment_coupled(loop: LoopRegion, order: list[ControlFlowBlock]) -> dict[
             parent[root(block)] = root(edge.dst)
     # A symbol a block assigns inside itself (kmp's ``q = fail[q - 1]`` in a branch) is read by the next iteration
     # of every block that reads it: assigner and readers carry it together, so they stay in one loop
-    assigns = {b: assigned_in(b) for b in order}
     for block in order:
         assigned = assigns[block]
         for other in order:
@@ -200,9 +206,12 @@ def _forward_flow_groups(
     if order is None or len(order) < 2 or not loop_analysis.fixed_iteration_space(loop):
         return None
     lv = loop.loop_variable
-    rw = {b: _rw_subsets(b, lv, expanded) for b in order}
+    assigns = {b: assigned_in(b) for b in order}
+    # Without an assignment in the body no block can read a symbol another writes
+    symbols = any(assigns.values()) or any(edge.data.assignments for edge in loop.edges())
+    rw = {b: _rw_subsets(b, lv, expanded, symbols) for b in order}
     charge_body_edges(loop, rw)
-    parent = assignment_coupled(loop, order)
+    parent = assignment_coupled(loop, order, assigns)
     flows: list[tuple[ControlFlowBlock, ControlFlowBlock]] = []
 
     def find(x: ControlFlowBlock) -> ControlFlowBlock:
