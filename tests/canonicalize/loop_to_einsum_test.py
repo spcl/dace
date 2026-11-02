@@ -546,5 +546,43 @@ def test_a_transpose_of_the_leading_block_is_not_lifted_to_a_whole_matrix_transp
     assert np.array_equal(B, expected)
 
 
+def test_a_contraction_over_part_of_its_output_keeps_the_rest():
+    """A sub-rectangle of ``C`` keeps ``C``'s row pitch: the GEMM must not write it packed."""
+
+    @dace.program
+    def partial_matmul(C: dace.float64[N, M], A: dace.float64[N, N], B: dace.float64[N, M]):
+        for i in range(N - 1):
+            for j in range(M - 1):
+                for k in range(N - 1):
+                    C[i, j] += A[i, k] * B[k, j]
+
+    rng = np.random.default_rng(0)
+    A, B, C = rng.random((5, 5)), rng.random((5, 4)), rng.random((5, 4))
+    expected = C.copy()
+    expected[:4, :3] += A[:4, :4] @ B[:4, :3]
+
+    sdfg = partial_matmul.to_sdfg(simplify=True)
+    LoopToEinsum().apply_pass(sdfg, {})
+
+    assert _n_einsum(sdfg) == 1
+    sdfg(C=C, A=A, B=B, N=5, M=4)
+    assert np.allclose(C, expected)
+
+
+def test_a_coefficient_read_from_the_output_is_no_contraction():
+    """``C[0, 0]`` changes under the sweep, so it cannot be read once as the einsum's alpha."""
+
+    @dace.program
+    def self_scaled(C: dace.float64[3, 3], A: dace.float64[3, 3], B: dace.float64[3, 3]):
+        for i in range(3):
+            for j in range(3):
+                for k in range(3):
+                    C[i, j] += C[0, 0] * A[i, k] * B[k, j]
+
+    sdfg = self_scaled.to_sdfg(simplify=True)
+    LoopToEinsum().apply_pass(sdfg, {})
+    assert _n_einsum(sdfg) == 0
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v", "-p", "no:cacheprovider"]))

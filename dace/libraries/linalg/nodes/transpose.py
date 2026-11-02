@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import warnings
+from typing import Any
 
 import dace.library
 import dace.properties
@@ -60,6 +61,11 @@ def _leading_dimensions(node, state, sdfg):
     if in_col != 1 or out_col != 1:
         return None
     return sym2cpp(in_row), sym2cpp(out_row)
+
+
+def _skip_when_empty(code: str, m: Any, n: Any) -> str:
+    """``code`` guarded on a nonempty matrix: ``?omatcopy`` aborts the process on a zero extent."""
+    return f"if (({sym2cpp(m)}) > 0 && ({sym2cpp(n)}) > 0) {{ {code} }}"
 
 
 @dace.library.expansion
@@ -179,6 +185,7 @@ class ExpandTransposeMKL(ExpandTransformation):
 
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         code = f"mkl_{func}('R', 'T', {sym2cpp(m)}, {sym2cpp(n)}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
+        code = _skip_when_empty(code, m, n)
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -246,6 +253,7 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         order = "CblasRowMajor"
         trans = "CblasTrans"
         code = f"cblas_{func}({order}, {trans}, {sym2cpp(m)}, {sym2cpp(n)}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
+        code = _skip_when_empty(code, m, n)
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )

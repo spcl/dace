@@ -10,9 +10,8 @@ full of nodes.
 Every case below plants that sink in an otherwise ordinary map body and pins what each
 canonicalization pass must then do. Two outcomes are correct and the tests distinguish them:
 
-* FAIL-DANGEROUS sites -- ``NormalizeLoopAndMapOrigin`` (rebases the map range, then substitutes the
-  shift into the body it walked) and ``LoopToEinsum``'s transpose purity check (approves the scope
-  it walked as a pure copy) -- now read scope membership, and the sink no longer changes the answer.
+* FAIL-DANGEROUS site -- ``NormalizeLoopAndMapOrigin`` (rebases the map range, then substitutes the
+  shift into the body it walked) -- now reads scope membership, and the sink no longer changes the answer.
 * FAIL-SAFE site -- ``LiftInv`` guards on ``len(body) != 1`` and REFUSES on the emptied walk. The
   refusal loses a lift and never produces a wrong answer, so the walk stays; the
   tests here pin the refusal so a later relaxation of the guard cannot turn it dangerous silently.
@@ -37,7 +36,6 @@ from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.transformation.passes.analysis import map_scope
-from dace.transformation.passes.canonicalize import loop_to_einsum
 from dace.transformation.passes.canonicalize.lift_inv import LiftInv
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
@@ -153,29 +151,6 @@ def map_of_sibling_nsdfgs(siblings: int, with_scratch: bool) -> tuple[SDFG, SDFG
     return sdfg, state, entry
 
 
-def transpose_probe(side_effect: bool) -> SDFG:
-    """A collapsed ``B[p, q] = A[q, p]`` map, the shape ``LoopToEinsum``'s probe hands the extractor.
-
-    With ``side_effect`` the scope also writes the non-transient ``C`` through a sink -- a body that
-    a Transpose lift would discard, and the very node that empties the reachability walk.
-    """
-    sdfg = SDFG("probe_transpose")
-    sdfg.add_array("A", [8, 8], dace.float64)
-    sdfg.add_array("B", [8, 8], dace.float64)
-    sdfg.add_array("C", [1], dace.float64)
-    state = sdfg.add_state("s")
-    entry, exit_node = state.add_map("t", dict(p="0:8", q="0:8"))
-    copy_tasklet = state.add_tasklet("cp", {"__inp"}, {"__out"}, "__out = __inp")
-    state.add_memlet_path(state.add_access("A"), entry, copy_tasklet, dst_conn="__inp", memlet=Memlet("A[q, p]"))
-    state.add_memlet_path(copy_tasklet, exit_node, state.add_access("B"), src_conn="__out", memlet=Memlet("B[p, q]"))
-    if side_effect:
-        side = state.add_tasklet("side", {}, {"__out"}, "__out = 3.0")
-        state.add_edge(entry, None, side, None, Memlet())
-        state.add_edge(side, "__out", state.add_access("C"), None, Memlet("C[0]"))
-    sdfg.validate()
-    return sdfg
-
-
 N = dace.symbol("N")
 
 
@@ -261,22 +236,6 @@ def test_rebasing_is_refused_when_a_scratch_bearing_body_rebinds_the_map_paramet
     assert str(entry.map.range) == "2:16"
 
 
-def test_a_pure_transposed_copy_is_read_as_a_transpose():
-    """The control for the purity check: a scope holding only the copy tasklet IS a transpose."""
-    spec = loop_to_einsum._extract_transpose(transpose_probe(side_effect=False), {"B": None})
-
-    assert spec is not None
-    assert (spec.src, spec.dst) == ("A", "B")
-
-
-def test_a_transposed_copy_that_also_writes_another_array_is_not_a_transpose():
-    """The same nest plus a write to the non-transient ``C`` through a sink is not a pure copy, and
-    lifting it to a Transpose would silently drop that write."""
-    spec = loop_to_einsum._extract_transpose(transpose_probe(side_effect=True), {"B": None})
-
-    assert spec is None
-
-
 def test_sibling_nested_sdfgs_beside_a_write_only_scratch_are_still_merged():
     """``NormalizeMapBody`` must see both siblings through the scratch and sequence them into one
     NestedSDFG -- the merge that exposes same-condition guards to ConditionFusion."""
@@ -322,8 +281,6 @@ if __name__ == "__main__":
     test_a_write_only_scratch_scalar_is_a_map_body_node()
     test_rebasing_a_map_beside_a_write_only_scratch_shifts_the_body_reads()
     test_rebasing_is_refused_when_a_scratch_bearing_body_rebinds_the_map_parameter()
-    test_a_pure_transposed_copy_is_read_as_a_transpose()
-    test_a_transposed_copy_that_also_writes_another_array_is_not_a_transpose()
     test_sibling_nested_sdfgs_beside_a_write_only_scratch_are_still_merged()
     test_a_lone_nested_sdfg_beside_a_write_only_scratch_is_left_alone()
     test_solve_against_identity_lifts_only_while_the_identity_map_holds_its_tasklet_alone(False, 1, 1)

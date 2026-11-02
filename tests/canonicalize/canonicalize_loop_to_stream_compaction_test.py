@@ -946,3 +946,25 @@ def test_a_guard_on_the_compacted_iterator_names_the_renamed_iterator_in_its_mas
         sdfg(a=a.copy(), out=got, cnt=got_cnt, N_ITER=n)
         assert int(got_cnt[0]) == want.size
         assert np.array_equal(got[: want.size], want)
+
+
+def test_a_range_past_its_end_compacts_nothing():
+    """``range(LO, HI)`` with ``LO > HI``: the mask and rank arrays are not sized by the negative count."""
+    LO, HI = dace.symbol("LO"), dace.symbol("HI")
+
+    @dace.program
+    def compact_window(a: dace.float64[8], out: dace.float64[8], cnt: dace.int64[1]):
+        c = 0
+        for i in range(LO, HI):
+            if a[i] > 0.5:
+                out[c] = a[i]
+                c = c + 1
+        cnt[0] = c
+
+    sdfg = compact_window.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    assert not any(isinstance(r, LoopRegion) for r in sdfg.all_control_flow_regions(recursive=True))
+    a = np.random.default_rng(2).random(8)
+    out, cnt = np.zeros(8), np.full(1, -1, dtype=np.int64)
+    sdfg(a=a, out=out, cnt=cnt, LO=5, HI=2)
+    assert cnt[0] == 0 and np.array_equal(out, np.zeros(8))

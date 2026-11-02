@@ -28,12 +28,8 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.canonicalize.loop_iteration_value import unit_stride
-from dace.transformation.passes.canonicalize.loop_to_transpose import (
-    _single_body_state,
-    _single_child_loop,
-    match_copy_chain,
-)
+from dace.transformation.passes.canonicalize.loop_iteration_value import perfect_nest, unit_stride
+from dace.transformation.passes.canonicalize.loop_to_transpose import match_copy_chain
 from dace.transformation.transformation import explicit_cf_compatible
 
 
@@ -91,8 +87,11 @@ class LoopToSymmetrize(ppl.Pass):
     def _try_lift(self, cfg: ControlFlowRegion, outer: LoopRegion, sdfg: dace.SDFG) -> bool:
         if not outer.loop_variable or not unit_stride(outer):
             return False
-        inner = _single_child_loop(outer)
-        if inner is None or not inner.loop_variable or not unit_stride(inner):
+        nest = perfect_nest(outer)
+        if nest is None or len(nest[0]) != 2:
+            return False
+        (_, inner), state = nest
+        if not inner.loop_variable or not unit_stride(inner):
             return False
         outer_var, inner_var = outer.loop_variable, inner.loop_variable
 
@@ -113,9 +112,6 @@ class LoopToSymmetrize(ppl.Pass):
         # Inner body: a single state doing an in-place transposed copy of ONE
         # 2-D array -- either a direct ``X -> X`` copy edge or a
         # ``X(read) -> copy-tasklet -> X(write)`` chain.
-        state = _single_body_state(inner)
-        if state is None:
-            return False
         extracted = self._extract_symmetric_copy(state, outer_var, inner_var)
         if extracted is None:
             return False

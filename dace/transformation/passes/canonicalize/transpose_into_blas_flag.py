@@ -53,6 +53,8 @@ def fold_one(sdfg: SDFG, state: SDFGState, transpose: nodes.LibraryNode, access_
     if state.in_degree(out) != 1 or len(readers) != 1:
         return False
     reader = readers[0]
+    if reader.data.subset.num_elements() != out_desc.total_size:
+        return False  # the operand is a window of the transpose, not the flipped matrix
     if not flip_transpose_flag(reader.dst, reader.dst_conn):
         return False
     state.add_edge(src, ins[0].src_conn, reader.dst, reader.dst_conn, Memlet.from_array(src.data, src_desc))

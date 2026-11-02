@@ -15,18 +15,15 @@ Recognised contraction shapes (all as ``@dace.program`` loop nests)::
 
 and the pure transpose ``for i: for j: B[i,j] = A[j,i]`` (2-D, cross-array).
 
-MATCHING happens in two tiers.
-
-**Tier 1 -- the direct matcher** (:func:`_match_nest`, the normal path). It reads the
-canonical loop form in place: no copy, no pipeline. Measured on the real form (see
-below) the nest that reaches this pass is
+The direct matcher (:func:`_match_nest`) reads the canonical loop form in place: no copy, no pipeline. Measured on
+the real form, the nest that reaches this pass is
 
 * a CHAIN of nested single-block ``LoopRegion``s -- one iteration axis each -- and/or
   ``MapEntry`` scopes (a map carries several params at once), innermost body one
   ``SDFGState``;
-* whose body accumulates via an explicit read/add/write (``C[i,j] = C[i,j] + prod``,
-  what the frontend emits -- NOT a WCR) or via a WCR-sum edge (what a ``@dace.map``
-  accumulation emits). Both are accepted directly;
+* whose body accumulates via an explicit read/add/write (``C[i,j] = C[i,j] + prod`` or
+  ``C[i,j] = C[i,j] - prod``, what the frontend emits -- NOT a WCR) or via a WCR-sum edge
+  (what a ``@dace.map`` accumulation emits). Both are accepted directly;
 * whose product is spread over several tasklets joined by single-element transient
   staging scalars (``A --A[i,k]--> A_index --> mul``), which the matcher walks through.
 
@@ -34,48 +31,6 @@ The einsum is then read straight off the index expressions: every axis that inde
 an operand but not the output is contracted. Acceptance mirrors ``LiftEinsum``'s
 ``can_be_applied`` (>=2 tensor operands, at most one scalar coefficient, indices that
 are exactly axis parameters or ``0``, rectangular full ranges, non-scalar output).
-
-**Tier 2 -- the probe** (:meth:`LoopToEinsum._probe`, fallback only). Trial
-normalization: deep-copy the loop into a throwaway SDFG, run a small canonicalization
-pipeline on the copy and see whether one ``Einsum`` falls out. It is kept so a shape
-the direct matcher has not been taught cannot silently stop lifting. It costs SECONDS per
-candidate, which is why it is no longer the primary matcher.
-
-The probe works as follows:
-
-0. Screen the loop against cheap NECESSARY conditions first
-   (:func:`_plausible_contraction`) -- the probe below costs seconds on a big nest
-   and a weather/physics kernel's outer loop can never lift.
-1. Copy the loop into a throwaway SDFG whose boundary arrays are full-size and
-   non-transient (so they look like arguments -- surviving simplification and
-   giving the contraction the caller-provides-prior ``beta`` LiftEinsum expects).
-2. Run a small ``parallelize + lift`` pipeline on the copy (Simplify, WCR
-   conversion, tasklet fusion, LoopToMap, inline, MapCollapse, a redundant-scalar
-   splice, then ``LiftEinsum``).
-3. If the copy collapsed to exactly one ``Einsum`` (or one transpose-shaped map),
-   read that node's spec -- its einsum string, alpha/beta, and the operand /
-   output array names + memlet subsets -- and rebuild an equivalent node in the
-   ORIGINAL SDFG, wired 1-to-1 to the original arrays by NAME (the copy preserves
-   names). The loop nest is spliced out the way ``LoopToReduce._lift`` does.
-4. Otherwise do nothing for this loop. The transform is opt-in and never a crash:
-   the whole probe is wrapped in ``try/except`` so a probe failure is a clean
-   no-op.
-
-NOTE ON THE PIPELINE: the ``+=`` accumulation reaches LiftEinsum's canonical
-``map -> single mul-tasklet -> WCR-sum`` shape only after (a) ``TaskletFusion``
-folds the ``mul`` + accumulate tasklets into one, (b) ``AugAssignToWCR`` turns the
-resulting ``y = y + a*b`` into a WCR write so ``LoopToMap`` will parallelise the
-reduction axis, and (c) the frontend's per-read staging scalars sitting inside the
-map scope are spliced out (no stock transform removes a redundant scalar between a
-MapEntry and a tasklet). The (a)-before-(b) order is load-bearing: ``AugAssignToWCR``
-only matches an accumulator whose tasklet inputs are all AccessNodes, and once
-canonicalize has de-WCR'd a ``@dace.map`` accumulation (polybench atax's ``compute_y``,
-a transposed matvec reducing over the OUTER axis onto a reset-then-accumulated ``y``)
-the product feeds the add via a direct tasklet->tasklet edge -- so fusing must happen
-first. ``MapFission`` -- part of the naive sequence -- is deliberately omitted: it
-miscompiles this staged shape into an invalid (rank-mismatched) SDFG. Because the
-pipeline runs on a disposable copy, an over-eager step can only cost a missed lift,
-never corrupt the real SDFG.
 """
 
 import ast
@@ -91,12 +46,11 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_basic, as_expr
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, SDFGState
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import loop_analysis, map_scope
-from dace.transformation.passes.canonicalize.loop_iteration_value import replace_loop_with_state
-from dace.transformation.passes.canonicalize.loop_to_transpose import _is_copy_tasklet
+from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.loop_iteration_value import perfect_nest, replace_loop_with_state
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -126,56 +80,9 @@ def _is_single_element(desc: data.Data) -> bool:
     return isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and all(str(s) == "1" for s in desc.shape))
 
 
-def _loop_data_census(loop: LoopRegion) -> tuple[dict[str, None], dict[str, None], dict[str, int]]:
-    """``(referenced, written, state_counts)`` for ``loop``, in ONE walk of its states.
-
-    Every candidate needs all three and they read the same nodes, so they share the walk instead
-    of taking one each. ``referenced`` is every array name read or written inside ``loop``,
-    ``written`` those with an in-edge to an AccessNode, ``state_counts`` the per-name number of
-    states holding an AccessNode for it. Insertion order is unchanged: states in ``all_states``
-    order, and within a state the data nodes before the edges.
-    """
-    referenced: dict[str, None] = {}
-    written: dict[str, None] = {}
-    counts: dict[str, int] = {}
-    for state in loop.states():
-        seen: dict[str, None] = {}
-        for dn in state.data_nodes():
-            referenced[dn.data] = None
-            if state.in_degree(dn) > 0:
-                written[dn.data] = None
-            seen[dn.data] = None
-        for name in seen:
-            counts[name] = counts.get(name, 0) + 1
-        for e in state.edges():
-            if e.data is not None and e.data.data is not None:
-                referenced[e.data.data] = None
-    return referenced, written, counts
-
-
-def _data_state_counts(cfg: ControlFlowRegion) -> dict[str, int]:
-    """Array name -> number of states in ``cfg`` holding an AccessNode for it."""
-    counts: dict[str, int] = {}
-    for state in cfg.states():
-        for name in dict.fromkeys(dn.data for dn in state.data_nodes()):
-            counts[name] = counts.get(name, 0) + 1
-    return counts
-
-
-def _live_outside(inside: dict[str, int], root_counts: dict[str, int], referenced: dict[str, None]) -> dict[str, None]:
-    """Referenced arrays that are also touched by data nodes OUTSIDE the loop --
-    i.e. cross the loop boundary and so must stay visible (non-transient) in the
-    probe, unlike the loop's purely-internal staging scratch. ``root_counts`` is the
-    enclosing SDFG's :func:`_data_state_counts`, computed ONCE per pass run, and
-    ``inside`` the loop's own counts from :func:`_loop_data_census`: the inside states
-    are a subset of the root's, so "touched outside" is a subtraction rather than a
-    fresh whole-SDFG walk per candidate."""
-    return dict.fromkeys(name for name in referenced if root_counts.get(name, 0) > inside.get(name, 0))
-
-
 def _has_loop_ancestor(loop: LoopRegion) -> bool:
-    """True iff ``loop`` is nested inside another ``LoopRegion`` -- we probe only
-    the OUTERMOST loop of a nest (probing it lifts, or no-ops on, the whole nest;
+    """True iff ``loop`` is nested inside another ``LoopRegion`` -- we match only
+    the OUTERMOST loop of a nest (matching it lifts, or no-ops on, the whole nest;
     an inner loop alone is a 1-D reduction, LoopToReduce's domain, not an einsum)."""
     p = loop.parent_graph
     while p is not None and not isinstance(p, SDFG):
@@ -195,336 +102,12 @@ def _region_in_loop(region: AbstractControlFlowRegion | None) -> bool:
     return False
 
 
-class _NestShape(NamedTuple):
-    """Cheap structural summary of a loop nest (one walk, no copying)."""
-
-    n_dims: int  # upper bound on the iteration dimensions the probe can collapse into one map
-    has_mul: bool  # some tasklet's code holds a '*'
-    all_copy_tasklets: bool  # every tasklet is a pure ``__out = __inp``
-
-
-def _nest_shape(loop: LoopRegion) -> _NestShape:
-    """Summarize ``loop``'s states in one walk, nested SDFG bodies included (see :func:`_plausible_contraction`)."""
-    n_dims = 1  # ``loop`` itself
-    has_mul, all_copy = False, True
-    regions: list[ControlFlowRegion] = [loop]
-    while regions:
-        region = regions.pop()
-        for block in region.all_control_flow_regions(recursive=True):
-            if block is not loop and isinstance(block, LoopRegion) and block.loop_variable:
-                n_dims += 1
-        for state in region.states():
-            for n in state.nodes():
-                if isinstance(n, nodes.MapEntry):
-                    n_dims += len(n.map.params)
-                elif isinstance(n, nodes.NestedSDFG):
-                    # The probe inlines the body, so its loops, maps and tasklets count as this nest's own.
-                    regions.append(n.sdfg)
-                elif isinstance(n, nodes.Tasklet):
-                    has_mul = has_mul or "*" in n.code.as_string
-                    all_copy = all_copy and _is_copy_tasklet(n)
-    return _NestShape(n_dims, has_mul, all_copy)
-
-
-def _plausible_contraction(loop: LoopRegion, root: SDFG, written: dict[str, None], live: dict[str, None]) -> bool:
-    """Cheap necessary conditions for the (seconds-long) probe to collapse to one ``Einsum`` /
-    ``Transpose``: exactly one written non-transient array, at least two iteration dimensions, and a
-    multiplication or only pure copies. Nested SDFG bodies are screened too (the probe inlines them).
-    """
-    boundary: dict[str, None] = {}
-    for name in written:
-        desc = root.arrays.get(name)
-        if desc is None or name in live or not desc.transient:
-            boundary[name] = None
-    if len(boundary) != 1:
-        return False
-    shape = _nest_shape(loop)
-    return shape.n_dims >= 2 and (shape.has_mul or shape.all_copy_tasklets)
-
-
-def _build_probe(loop: LoopRegion, root: SDFG, referenced: dict[str, None], live: dict[str, None]) -> SDFG | None:
-    """A throwaway SDFG wrapping a deep copy of ``loop``. Boundary arrays (live-out
-    or non-transient in the original) become full-size non-transient descriptors;
-    purely-internal staging scratch keeps its transient flag so simplification /
-    the scalar splice can remove it."""
-    probe = SDFG("probe_" + loop.label)
-    # sorted(): this fixes the probe's ARRAY INSERTION ORDER, which the probe pipeline (SimplifyPass +
-    # apply_transformations_repeated + LiftEinsum) walks when enumerating matches. The lift test is
-    # all-or-nothing, so a different order flips lift <-> no-lift for a whole nest -- a nest either collapses
-    # into a library node or stays a loop that later becomes a Map. Iterating the raw set made that a
-    # PYTHONHASHSEED coin-flip. Names are unique strings, so a stable sort is the canonical order.
-    for name in sorted(referenced):
-        if name not in root.arrays:
-            return None
-        desc = copy.deepcopy(root.arrays[name])
-        if not desc.transient or name in live:
-            desc.transient = False
-        probe.add_datadesc(name, desc)
-
-    # Carry over the symbols the loop and the descriptors depend on.
-    needed: set[str] = set(loop.used_symbols(all_symbols=True))
-    for name in sorted(referenced):
-        needed |= set(map(str, root.arrays[name].free_symbols))
-    for sym in sorted(needed):  # symbol insertion order feeds free_symbols / arglist order in the probe
-        if sym in root.symbols and sym not in probe.symbols and sym not in probe.arrays:
-            probe.add_symbol(sym, root.symbols[sym])
-
-    probe.add_node(copy.deepcopy(loop), is_start_block=True)
-    return probe
-
-
-def _splice_scope_scalars(probe: SDFG) -> None:
-    """Splice out redundant single-element transient scalars that sit on the
-    memlet path between a producer and a single tasklet consumer, connecting the
-    producer straight to the tasklet. This clears the frontend's per-read staging
-    (``MapEntry --A[i,j]--> A_index --> tasklet``) that no stock transform removes
-    inside a map scope, leaving the scope holding exactly the compute tasklet --
-    the shape ``LiftEinsum`` matches. Safe: the scalar is a pure pass-through."""
-    changed = True
-    while changed:
-        changed = False
-        for state in probe.states():
-            for n in list(state.nodes()):
-                if not isinstance(n, nodes.AccessNode):
-                    continue
-                desc = probe.arrays.get(n.data)
-                if desc is None or not desc.transient or not _is_single_element(desc):
-                    continue
-                in_edges = state.in_edges(n)
-                out_edges = state.out_edges(n)
-                if len(in_edges) != 1 or len(out_edges) != 1:
-                    continue
-                e_in, e_out = in_edges[0], out_edges[0]
-                if not isinstance(e_out.dst, nodes.Tasklet):
-                    continue
-                if e_in.data is None or e_in.data.is_empty():
-                    continue
-                state.add_edge(e_in.src, e_in.src_conn, e_out.dst, e_out.dst_conn, copy.deepcopy(e_in.data))
-                state.remove_edge(e_in)
-                state.remove_edge(e_out)
-                state.remove_node(n)
-                changed = True
-
-
-def _run_probe_pipeline(probe: SDFG) -> None:
-    """Parallelize + lift the disposable copy so a contraction collapses to one
-    ``Einsum`` and a transpose to one clean 2-D copy map. See the module docstring
-    for why each step is present (and why ``MapFission`` is not)."""
-    from dace.transformation.dataflow.lift_einsum import LiftEinsum
-    from dace.transformation.dataflow.map_collapse import MapCollapse
-    from dace.transformation.dataflow.tasklet_fusion import TaskletFusion
-    from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
-    from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
-    from dace.transformation.interstate.sdfg_nesting import InlineSDFG
-    from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
-    from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
-    from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-    from dace.transformation.passes.simplify import SimplifyPass
-
-    SimplifyPass().apply_pass(probe, {})
-    # Reduction-body clean-up (state level, where dataflow transforms reach).
-    # ORDER MATTERS: fuse tasklets BEFORE ``AugAssignToWCR``. ``AugAssignToWCR``
-    # only matches an accumulator whose tasklet inputs ALL come from AccessNodes
-    # (its expr-0 fission guard). A fresh frontend nest materializes the product
-    # in a scratch AccessNode, so it would match either way -- but once
-    # canonicalize's ``WCRToAugAssign`` has de-WCR'd a ``@dace.map`` accumulation
-    # (polybench atax ``compute_y``: ``y[j] += A[i,j]*tmp[i]``, reduction over the
-    # OUTER axis), the multiply feeds the add via a DIRECT tasklet->tasklet edge,
-    # AugAssignToWCR refuses, the outer reduction axis never becomes a WCR map, and
-    # the contraction never lifts. Fusing first collapses ``prod = a*b; y = y +
-    # prod`` into one ``y = y + a*b`` tasklet whose inputs are all AccessNodes,
-    # which AugAssignToWCR then WCR-ifies; the second fusion mops up any tasklet
-    # pair the WCR rewrite newly exposed.
-    EliminateTrivialTasklets().apply_pass(probe, {})
-    probe.apply_transformations_repeated(TaskletFusion, validate=False, validate_all=False)
-    probe.apply_transformations_repeated(AugAssignToWCR, validate=False, validate_all=False, permissive=False)
-    probe.apply_transformations_repeated(TaskletFusion, validate=False, validate_all=False)
-    EliminateTrivialTasklets().apply_pass(probe, {})
-    SimplifyPass().apply_pass(probe, {})
-    # Parallelize: every loop (including the WCR reduction axis) becomes a map;
-    # flatten the resulting nested SDFGs and merge the perfect nest into one map.
-    # ParallelizeLoops, not LoopToMap: shares one probe context; propagates itself, so SimplifyPass follows.
-    ParallelizeLoops(propagate=False).apply_pass(probe, {})
-    probe.apply_transformations_repeated([InlineSDFG, InlineMultistateSDFG], validate=False, validate_all=False)
-    SimplifyPass().apply_pass(probe, {})
-    probe.apply_transformations_repeated(MapCollapse, validate=False, validate_all=False)
-    _splice_scope_scalars(probe)
-    PatternMatchAndApplyRepeated([LiftEinsum()], validate=False).apply_pass(probe, {})
-
-
-def _probe_compute_nodes(
-    probe: SDFG,
-) -> tuple[
-    list[nodes.LibraryNode],
-    list[nodes.Tasklet],
-    list[nodes.MapEntry],
-    list[nodes.LibraryNode],
-    list[nodes.NestedSDFG],
-    list[LoopRegion],
-]:
-    """(einsum_nodes, tasklets, map_entries, other_libnodes, nested) across the probe."""
-    from dace.libraries.blas.nodes.einsum import Einsum
-
-    einsums: list[nodes.LibraryNode] = []
-    tasklets: list[nodes.Tasklet] = []
-    maps: list[nodes.MapEntry] = []
-    others: list[nodes.LibraryNode] = []
-    nested: list[nodes.NestedSDFG] = []
-    for n, _ in probe.all_nodes_recursive():
-        if isinstance(n, Einsum):
-            einsums.append(n)
-        elif isinstance(n, nodes.Tasklet):
-            tasklets.append(n)
-        elif isinstance(n, nodes.MapEntry):
-            maps.append(n)
-        elif isinstance(n, nodes.NestedSDFG):
-            nested.append(n)
-        elif isinstance(n, nodes.LibraryNode):
-            others.append(n)
-    loops = [r for r in probe.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable]
-    return einsums, tasklets, maps, others, nested, loops
-
-
-def _extract_einsum(probe: SDFG, written: dict[str, None]) -> EinsumSpec | None:
-    """If the probe collapsed to exactly one ``Einsum`` producing one of the loop's
-    output arrays (and no other compute), return its rebuildable spec."""
-    einsums, tasklets, maps, others, nested, loops = _probe_compute_nodes(probe)
-    if len(einsums) != 1 or tasklets or maps or others or nested or loops:
-        return None
-    node = einsums[0]
-    # A scalar-output Einsum -- no free output indices, e.g. ``i,i->`` (a dot product) or
-    # ``ij,ij->`` -- is a pure REDUCTION, not an array-producing contraction. Per this
-    # pass's own design (see ``_has_loop_ancestor``) a bare 1-D/0-D reduction is
-    # LoopToReduce's domain, not an einsum. ``_has_loop_ancestor`` only excludes nests
-    # inside an enclosing *LoopRegion*, so an inner reduction nested in outer *map* scopes
-    # (covariance's per-``(i,j)`` k-dot ``sum_k data[k,i]*data[k,j]``) slips through and is
-    # lifted to a standalone scalar-output Einsum whose result never re-embeds into the
-    # per-iteration ``cov[i,j]`` -- corrupting the kernel. Refuse it; LoopToReduce lifts it.
-    if node.einsum_str.rstrip().endswith("->"):
-        return None
-    host = next((st for st in probe.states() if node in st.nodes()), None)
-    if host is None:
-        return None
-
-    inputs: list[tuple[str, str, subsets.Subset, object]] = []
-    for e in host.in_edges(node):
-        if e.data is None or e.data.is_empty() or e.data.data is None:
-            return None
-        inputs.append((e.dst_conn, e.data.data, copy.deepcopy(e.data.subset), node.in_connectors[e.dst_conn]))
-    out_edges = host.out_edges(node)
-    if len(out_edges) != 1:
-        return None
-    oe = out_edges[0]
-    if oe.data is None or oe.data.data is None or oe.data.data not in written:
-        return None
-    output = (oe.src_conn, oe.data.data, copy.deepcopy(oe.data.subset), node.out_connectors[oe.src_conn])
-    if not inputs:
-        return None
-    return EinsumSpec(node.einsum_str, node.alpha, node.beta, inputs, output)
-
-
-def _axis_order(subset: subsets.Subset) -> list[str] | None:
-    """The ordered list of single-point index expressions of ``subset`` (one per
-    axis), or ``None`` if any axis is not a single point."""
-    order = []
-    for rb, re_, _ in subset.ndrange():
-        if rb != re_:
-            return None
-        order.append(str(rb).strip())
-    return order
-
-
-def _extract_transpose(probe: SDFG, written: dict[str, None]) -> TransposeSpec | None:
-    """If the probe collapsed to exactly one 2-D full-range map that is a pure
-    cross-array transposed copy ``dst[p,q] = src[q,p]``, return its spec. Pure
-    copy = the map scope has no arithmetic (only transient staging AccessNodes
-    and/or ``__out = __inp`` copy tasklets)."""
-    einsums, tasklets, maps, others, nested, loops = _probe_compute_nodes(probe)
-    if einsums or others or nested or loops or len(maps) != 1:
-        return None
-    map_entry = maps[0]
-    if len(map_entry.map.params) != 2:
-        return None
-    for rng in map_entry.map.range:
-        if str(rng[0]) != "0" or str(rng[2]) != "1":
-            return None  # partial / strided range -- not a full transpose
-
-    host = next((st for st in probe.states() if map_entry in st.nodes()), None)
-    if host is None:
-        return None
-    map_exit = host.exit_node(map_entry)
-
-    # Only pure copies allowed in the scope: transient AccessNodes + ``__out=__inp``.
-    # Scope membership, not a reachability walk: ``all_nodes_between`` returns EMPTY as soon as the
-    # scope holds one node with no out-edge, and this loop would then approve, unlooked-at, a body
-    # whose arithmetic the Transpose lift is about to discard.
-    for n in map_scope.map_body_nodes(host, map_entry):
-        if isinstance(n, nodes.AccessNode):
-            d = probe.arrays.get(n.data)
-            if d is None or not d.transient:
-                return None
-        elif isinstance(n, nodes.Tasklet):
-            if not _is_copy_tasklet(n):
-                return None
-        else:
-            return None
-
-    # One boundary input array (into the scope) and one boundary output array.
-    read = _boundary_axis_order(host.out_edges(map_entry), probe, transient_ok=False)
-    write = _boundary_axis_order(host.in_edges(map_exit), probe, transient_ok=False)
-    if read is None or write is None:
-        return None
-    src, read_order, src_subset = read
-    dst, write_order, dst_subset = write
-    if src == dst:
-        return None  # in-place symmetrization is LoopToSymmetrize's domain
-    params = dict.fromkeys(map_entry.map.params)
-    if dict.fromkeys(read_order) != params or dict.fromkeys(write_order) != params:
-        return None
-    if read_order != list(reversed(write_order)):
-        return None
-    sdesc, ddesc = probe.arrays.get(src), probe.arrays.get(dst)
-    if sdesc is None or ddesc is None or len(sdesc.shape) != 2 or len(ddesc.shape) != 2:
-        return None
-    if dst not in written or sdesc.dtype != ddesc.dtype:
-        return None
-    ends = {p: rng[1] for p, rng in zip(map_entry.map.params, map_entry.map.range)}
-    if not sweeps_whole_array(read_order, ends, sdesc) or not sweeps_whole_array(write_order, ends, ddesc):
-        return None  # the node transposes whole arrays; a partial map would overwrite the rest
-    return TransposeSpec(src, dst, sdesc.dtype, src_subset, dst_subset)
-
-
 def sweeps_whole_array(order: list[str], ends: dict[str, object], desc: data.Data) -> bool:
     """Whether ``order`` (one parameter per axis, each running ``0 .. ends[param]``) covers all of ``desc``."""
     return all(
         symbolic.simplify(pystr_to_symbolic(ends[p]) - (extent - 1)) == 0 for p, extent in zip(order, desc.shape)
     )
 
-
-def _boundary_axis_order(
-    edges: list[MultiConnectorEdge[Memlet]], probe: SDFG, transient_ok: bool
-) -> tuple[str, list[str], subsets.Range] | None:
-    """From a MapEntry's scope-side out-edges (or a MapExit's scope-side in-edges),
-    the single non-transient boundary array touched, its per-axis index order, and
-    a full-array subset. ``None`` unless exactly one such array is found."""
-    found: tuple[str, list[str], subsets.Range] | None = None
-    for e in edges:
-        if e.data is None or e.data.is_empty() or e.data.data is None:
-            continue
-        desc = probe.arrays.get(e.data.data)
-        if desc is None or (desc.transient and not transient_ok):
-            continue
-        order = _axis_order(e.data.subset)
-        if order is None:
-            return None
-        if found is not None:
-            return None  # ambiguous -- more than one boundary array
-        full = subsets.Range([(0, s - 1, 1) for s in desc.shape])
-        found = (e.data.data, order, full)
-    return found
-
-
-# Tier 1: the direct, loop-native matcher (no copy, no probe pipeline).
 
 #: Index letters, in the order ``LiftEinsum`` hands them out (kept identical so a
 #: directly-matched einsum string is spelled the way the post-LoopToMap lift spells it).
@@ -561,27 +144,6 @@ class _Product(NamedTuple):
 
     scale: object
     terms: list[Union[_Leaf, "_Product"]]
-
-
-def _plain_edges(region: ControlFlowRegion) -> bool:
-    """True iff every interstate edge inside ``region`` is an unconditional plain link.
-    A condition or an assignment means the body is more than straight-line dataflow."""
-    for e in region.edges():
-        if e.data.assignments:
-            return False
-        if e.data.condition is not None and e.data.condition.as_string.strip() not in ("1", "True"):
-            return False
-    return True
-
-
-def _single_body_block(region: ControlFlowRegion) -> ControlFlowBlock | None:
-    """``region``'s one meaningful child block, or ``None``. Empty scaffold states --
-    the connective ``..._for_inline_pre_state`` blocks the map->loop lowering leaves
-    behind -- are ignored; anything else must be alone."""
-    if not _plain_edges(region):
-        return None
-    blocks = [b for b in region.nodes() if not (isinstance(b, SDFGState) and b.number_of_nodes() == 0)]
-    return blocks[0] if len(blocks) == 1 else None
 
 
 def _loop_axis(loop: LoopRegion) -> _Axis | None:
@@ -636,19 +198,11 @@ def _nest_of(root: LoopRegion) -> _Nest | None:
     """The iteration nest rooted at a ``LoopRegion``. Loops contribute ONE axis each and
     must form a perfect chain; the innermost body may then descend through map scopes
     (a mixed ``for i: for j,k in dace.map[...]`` nest is one nest)."""
-    axes: list[_Axis] = []
-    block = root
-    while isinstance(block, LoopRegion):
-        axis = _loop_axis(block)
-        if axis is None:
-            return None
-        axes.append(axis)
-        block = _single_body_block(block)
-        if block is None:
-            return None
-    if not isinstance(block, SDFGState):
+    nest = perfect_nest(root)
+    if nest is None:
         return None
-    return _descend_maps(block, axes, None)
+    axes = [_loop_axis(loop) for loop in nest[0]]
+    return None if None in axes else _descend_maps(nest[1], axes, None)
 
 
 def _nest_of_map(state: SDFGState, entry: nodes.MapEntry) -> _Nest | None:
@@ -720,9 +274,23 @@ def _product_scale(tasklet: nodes.Tasklet) -> sympy.Basic | None:
     return ratio if as_basic(ratio).is_Number else None
 
 
+def _minuend(tasklet: nodes.Tasklet) -> str | None:
+    """The connector ``__in1`` of ``__out = __in1 - __in2`` -- a ``-=`` read/add/write -- else ``None``."""
+    conns = list(tasklet.in_connectors)
+    expr = _tasklet_expr(tasklet)
+    if len(conns) != 2 or expr is None:
+        return None
+    first, second = (as_expr(pystr_to_symbolic(c)) for c in conns)
+    try:
+        if symbolic.simplify(expr - first + second) == 0:
+            return conns[0]
+        return conns[1] if symbolic.simplify(expr - second + first) == 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _is_sum_tasklet(tasklet: nodes.Tasklet) -> bool:
-    """``__out = __in1 + __in2`` -- the read/add/write half of an aug-assign. Only a
-    plain SUM: a ``-=`` accumulation is not a ``ReductionType.Sum`` contraction."""
+    """``__out = __in1 + __in2`` -- the read/add/write half of an aug-assign."""
     conns = list(tasklet.in_connectors)
     if len(conns) != 2:
         return False
@@ -845,6 +413,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> _BodyValue | None:
     out_array, out_idx = got
 
     visited: dict = {}
+    negated = False
     if out_edge.data.wcr is not None:
         # WCR encoding: the producing tasklet IS the product, the sum lives on the edge.
         if detect_reduction_type(out_edge.data.wcr) != dtypes.ReductionType.Sum:
@@ -856,16 +425,18 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> _BodyValue | None:
     else:
         adder = out_edge.src
         in_edges = value_edges(state.in_edges(adder))
-        if _is_sum_tasklet(adder) and len(in_edges) == 2:
+        minuend = _minuend(adder)
+        if (minuend is not None or _is_sum_tasklet(adder)) and len(in_edges) == 2:
             # Aug-assign encoding: one input re-reads the output slot, the other is the product.
             visited[adder] = None
             resolved = [_resolve(state, sdfg, e, visited) for e in in_edges]
             if any(r is None for r in resolved):
                 return None
             prior = [i for i, r in enumerate(resolved) if isinstance(r, _Leaf) and list(r) == [out_array, out_idx]]
-            if len(prior) != 1:
+            if len(prior) != 1 or minuend not in (None, in_edges[prior[0]].dst_conn):
                 return None
             term, accumulates = resolved[1 - prior[0]], True
+            negated = minuend is not None
         else:
             # Plain assignment (the pure-copy / transpose shape).
             term = _resolve_tasklet(state, sdfg, adder, visited)
@@ -876,7 +447,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> _BodyValue | None:
     if any(n not in visited and not (entry is None and n is write_node) for n in body):
         return None  # the body computes something the lifted node would drop
     coeff, leaves = _flatten(term)
-    return _BodyValue(out_array, out_idx, coeff, leaves, accumulates, write_node)
+    return _BodyValue(out_array, out_idx, -coeff if negated else coeff, leaves, accumulates, write_node)
 
 
 def _axis_subset(idx: list[str], axes: dict[str, _Axis]) -> subsets.Range:
@@ -911,7 +482,7 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> EinsumSpec | N
         return None
     if any(i != "0" and i not in axes for i in value.idx):
         return None
-    if any(t.array == value.array for t in tensors):
+    if any(t.array == value.array for t in [*tensors, *coeffs]):
         return None  # the output feeds its own contraction -- a real loop-carried dependence
     out_chars = dict.fromkeys(i for i in value.idx if i != "0")
     in_chars = dict.fromkeys(i for t in tensors for i in t.idx if i != "0")
@@ -928,8 +499,7 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> EinsumSpec | N
     # same order as the connectors that carry them, which is the pairing the expansion's
     # ``*sorted(inputs)`` uses), but it must not depend on the frontend's edge insertion
     # order -- otherwise the same contraction gets a different einsum string depending on
-    # how it was spelled (the probe emits ``ij,jk->ik`` for a matmul but ``jk,ij->ik`` for
-    # the alpha-scaled one). Sorting by operand identity pins it.
+    # how it was spelled. Sorting by operand identity pins it.
     tensors.sort(key=lambda t: (t.array, tuple(t.idx)))
 
     mapping: dict[str, str] = {}
@@ -1046,8 +616,7 @@ def _match_nest(nest: _Nest | None, sdfg: SDFG) -> EinsumSpec | TransposeSpec | 
 class LoopToEinsum(ppl.Pass):
     """Lift a contraction nest to an ``Einsum`` node, or a transpose nest to a
     ``Transpose`` node. The nest may be spelled as ``LoopRegion``s, as map scopes or as
-    a mix of both; matching is direct, with the legacy probe as a fallback (see the
-    module docstring)."""
+    a mix of both (see the module docstring)."""
 
     CATEGORY: str = "Canonicalization"
 
@@ -1074,25 +643,18 @@ class LoopToEinsum(ppl.Pass):
                 if isinstance(region, LoopRegion) and region.loop_variable and not _has_loop_ancestor(region)
             )
 
-        # Per-SDFG data-node census, shared by every candidate of that SDFG (see
-        # ``_live_outside``). A lift rewires the CFG, so drop the census after one.
-        counts_cache: dict[int, dict[str, int]] = {}
         count = 0
         for loop, root in candidates:
             parent = loop.parent_graph
             if not isinstance(parent, ControlFlowRegion) or loop not in parent.nodes():
                 continue  # already spliced out (defensive)
-            counts = counts_cache.get(id(root))
-            if counts is None:
-                counts = counts_cache[id(root)] = _data_state_counts(root)
-            spec = self._match(loop, root, counts)
+            spec = _match_nest(_nest_of(loop), root)
             if spec is None:
                 continue
             if isinstance(spec, EinsumSpec):
                 self._replace_with_einsum(parent, loop, spec)
             else:
                 self._replace_with_transpose(parent, loop, spec)
-            counts_cache.clear()
             count += 1
         return count
 
@@ -1124,37 +686,6 @@ class LoopToEinsum(ppl.Pass):
             self._replace_map_with_einsum(state, entry, spec)
             count += 1
         return count
-
-    def _match(self, loop: LoopRegion, root: SDFG, root_counts: dict[str, int]) -> EinsumSpec | TransposeSpec | None:
-        """Match ``loop`` directly; on a decline fall back to the probe (and count it)."""
-        referenced, written, inside = _loop_data_census(loop)
-        if not referenced:
-            return None
-        live = _live_outside(inside, root_counts, referenced)
-        if not _plausible_contraction(loop, root, written, live):
-            return None
-        spec = _match_nest(_nest_of(loop), root)
-        if spec is not None:
-            return spec
-        return self._probe(loop, root, referenced, live, written)
-
-    def _probe(
-        self, loop: LoopRegion, root: SDFG, referenced: dict[str, None], live: dict[str, None], written: dict[str, None]
-    ) -> EinsumSpec | TransposeSpec | None:
-        """Copy the loop, run the lift pipeline on the copy, and return an
-        ``EinsumSpec`` / ``TransposeSpec`` if it cleanly collapsed, else ``None``.
-        Any probe failure is swallowed -- the lift is strictly opt-in."""
-        try:
-            probe = _build_probe(loop, root, referenced, live)
-            if probe is None:
-                return None
-            _run_probe_pipeline(probe)
-            spec = _extract_einsum(probe, written)
-            if spec is not None:
-                return spec
-            return _extract_transpose(probe, written)
-        except Exception:
-            return None
 
     def _replace_with_einsum(self, parent: ControlFlowRegion, loop: LoopRegion, spec: EinsumSpec) -> None:
         from dace.libraries.blas.nodes.einsum import Einsum

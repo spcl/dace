@@ -193,6 +193,25 @@ def loop_step(loop: LoopRegion) -> int:
     return int(step)
 
 
+def single_body_block(region: ControlFlowRegion) -> ControlFlowBlock | None:
+    """The one block of ``region`` that is not an empty state, or ``None`` when it holds more than that or an edge
+    inside it carries a condition or an assignment: then the body is more than straight-line dataflow."""
+    if any(e.data.assignments or not e.data.is_unconditional() for e in region.edges()):
+        return None
+    blocks = [b for b in region.nodes() if not (isinstance(b, SDFGState) and b.number_of_nodes() == 0)]
+    return blocks[0] if len(blocks) == 1 else None
+
+
+def perfect_nest(loop: LoopRegion) -> tuple[list[LoopRegion], SDFGState] | None:
+    """The chain of loops from ``loop`` inwards and the one state in the innermost, when they nest perfectly."""
+    loops = []
+    block = loop
+    while isinstance(block, LoopRegion):
+        loops.append(block)
+        block = single_body_block(block)
+    return (loops, block) if isinstance(block, SDFGState) else None
+
+
 def unit_stride(loop: LoopRegion) -> bool:
     stride = loop_analysis.get_loop_stride(loop)
     try:

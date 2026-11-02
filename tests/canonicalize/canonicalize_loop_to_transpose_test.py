@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.pass_pipeline import Pipeline
@@ -230,6 +231,52 @@ def test_idempotent(program):
     lifted = _libnodes(sdfg)
     assert _apply(sdfg) == 0
     assert _libnodes(sdfg) == lifted
+
+
+def test_a_window_that_may_be_empty_stays_a_loop():
+    """``range(LO, HI)`` may run nothing: views sized by its count would be negative."""
+    LO, HI = dace.symbol("LO"), dace.symbol("HI")
+
+    @dace.program
+    def transpose_window(A: dace.float64[8, 8], B: dace.float64[8, 8]):
+        for i in range(LO, HI):
+            for j in range(LO, HI):
+                B[j, i] = A[i, j]
+
+    assert _apply(transpose_window.to_sdfg(simplify=True)) == 0
+
+
+def test_a_symbol_assigned_between_the_loops_stays_a_nest():
+    """The edge into the inner loop assigns ``k``, read after the nest: splicing the nest would drop it."""
+    sdfg = dace.SDFG("transpose_edge_assignment")
+    sdfg.add_array("A", [4, 4], dace.float64)
+    sdfg.add_array("B", [4, 4], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    outer = LoopRegion("outer", "i < 4", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(outer, is_start_block=True)
+    head = outer.add_state("head", is_start_block=True)
+    inner = LoopRegion("inner", "j < 4", "j", "j = 0", "j = j + 1", sdfg=sdfg)
+    outer.add_node(inner)
+    outer.add_edge(head, inner, dace.InterstateEdge(assignments={"k": "i"}))
+    body = inner.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("copy", {"__inp"}, {"__out"}, "__out = __inp")
+    body.add_edge(body.add_read("A"), None, tasklet, "__inp", dace.Memlet("A[i, j]"))
+    body.add_edge(tasklet, "__out", body.add_write("B"), None, dace.Memlet("B[j, i]"))
+
+    assert _apply(sdfg) == 0
+
+
+def test_a_zero_extent_transpose_is_a_no_op():
+    """The BLAS call aborts the process on a zero extent."""
+
+    @dace.program
+    def transpose_nothing(A: dace.float64[N, M], B: dace.float64[M, N]):
+        B[:] = np.transpose(A)
+
+    sdfg = transpose_nothing.to_sdfg(simplify=True)
+    (node,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Transpose)]
+    node.implementation = "OpenBLAS"
+    sdfg(A=np.zeros((0, 3)), B=np.zeros((3, 0)), N=0, M=3)
 
 
 if __name__ == "__main__":

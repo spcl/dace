@@ -54,9 +54,10 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_basic, as_expr
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.loop_iteration_value import perfect_nest
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -68,54 +69,6 @@ def _const_pos_int(value: symbolic.SymbolicType) -> int | None:
     except Exception:
         return None
     return int(as_expr(s)) if as_basic(s).is_Integer and int(as_expr(s)) > 0 else None
-
-
-def _single_child_loop(region: ControlFlowRegion) -> LoopRegion | None:
-    """The region's one child ``LoopRegion`` if every other block is an empty
-    state (perfect nest with connective tissue tolerated), else ``None`` (also
-    ``None`` when the region holds a non-empty compute state -- i.e. is the
-    innermost level)."""
-    loop = None
-    for b in region.nodes():
-        if isinstance(b, LoopRegion):
-            if loop is not None:
-                return None
-            loop = b
-        elif isinstance(b, SDFGState):
-            if b.nodes():
-                return None
-        else:
-            return None
-    return loop
-
-
-def _single_body_state(loop: LoopRegion) -> SDFGState | None:
-    """The loop's one non-empty body state, or ``None`` if not a single compute
-    state (empty connective states tolerated)."""
-    blocks = list(loop.nodes())
-    if not all(isinstance(b, SDFGState) for b in blocks):
-        return None
-    non_empty = [b for b in blocks if b.nodes()]
-    return non_empty[0] if len(non_empty) == 1 else None
-
-
-def _descend_perfect_nest(outer: LoopRegion) -> tuple[list[LoopRegion] | None, SDFGState | None]:
-    """Descend a chain of perfectly nested ``LoopRegion`` s from ``outer`` to the
-    innermost compute loop. Returns ``(loops, body_state)`` where ``loops`` is the
-    outer-to-inner list and ``body_state`` is the innermost loop's single body
-    state, or ``(None, None)`` on any structural deviation."""
-    loops: list[LoopRegion] = []
-    cur = outer
-    while True:
-        loops.append(cur)
-        child = _single_child_loop(cur)
-        if child is None:
-            break
-        cur = child
-    body = _single_body_state(loops[-1])
-    if body is None:
-        return None, None
-    return loops, body
 
 
 def _is_copy_tasklet(node: nodes.Node) -> bool:
@@ -313,9 +266,10 @@ class LoopToTranspose(ppl.Pass):
                 return False
             p = p.parent_graph
 
-        loops, body = _descend_perfect_nest(outer)
-        if loops is None or len(loops) < 2:
+        nest = perfect_nest(outer)
+        if nest is None or len(nest[0]) < 2:
             return False
+        loops, body = nest
 
         # Per-loop (init, last-inclusive, stride); stride must be a positive int constant.
         ranges: dict[sympy.Symbol, tuple[symbolic.SymbolicType, symbolic.SymbolicType, int]] = {}
@@ -373,6 +327,11 @@ class LoopToTranspose(ppl.Pass):
         axes = [in_axis[var_at_out[b]] for b in range(d)]
         if axes == list(range(d)):
             return False  # identity permutation -- a plain copy, not a transpose
+
+        # The views and library calls below are sized by the loop counts: an empty loop must not size them negative.
+        facts = SymbolResolver().facts_at(cfg)
+        if not all(symbolic.provably_nonnegative(last - lo + 1, facts) for lo, last, _ in ranges.values()):
+            return False
 
         # Per-axis accessed ranges (the exact lo:hi:inc sub-grid, incl. affine coeff/off).
         def _side_ranges(
