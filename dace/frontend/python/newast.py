@@ -3389,6 +3389,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     }
 
                     if indirect_indices:
+                        out_memlet.dynamic = True
                         for i in indirect_indices:
                             out_memlet.subset[i] = self.indirect_index_footprint(target_name, target_subset, i)
                         map_range[adv_param] = adv_range
@@ -3433,6 +3434,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 }
 
                 if indirect_indices:
+                    memlet.dynamic = True
                     for i in indirect_indices:
                         memlet.subset[i] = self.indirect_index_footprint(target_name, target_subset, i)
                         if f"__i{i}" != adv_param:
@@ -3485,7 +3487,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 state.add_edge(op1, None, tasklet, "__inp", inp_memlet)
 
             out_memlet = Memlet.simple(target_name, f"{target_subset}")
-            if boolarr is not None:
+            if boolarr is not None or indirect_indices:
                 out_memlet.dynamic = True
             for i in indirect_indices:
                 out_memlet.subset[i] = self.indirect_index_footprint(target_name, target_subset, i)

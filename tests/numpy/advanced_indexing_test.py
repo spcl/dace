@@ -990,6 +990,19 @@ def test_gather_map_parameters_follow_the_output_order():
     assert np.allclose(out, x[:, idx, :])
 
 
+def test_an_index_array_store_keeps_the_fill_of_the_elements_it_misses():
+    """The store's memlet spans the indexed dimension; simplify read that as a full overwrite and dropped the zeros."""
+
+    @dace.program
+    def partial_store(src: dace.float64[N], idx: dace.int64[N], out: dace.float64[N]):
+        box = np.zeros(N)
+        box[idx] = src
+        out[:] = box
+
+    sdfg = partial_store.to_sdfg(simplify=True)
+    assert any(isinstance(n, dace_nodes.Tasklet) and n.label.startswith("_numpy_full") for n, _ in sdfg.all_nodes_recursive())
+
+
 if __name__ == "__main__":
     test_flat()
     test_flat_noncontiguous()
@@ -1045,3 +1058,4 @@ if __name__ == "__main__":
     test_index_array_followed_by_integer_index_write_is_allowed()
     test_gather_evaluated_before_its_destination_is_cleared()
     test_gather_map_parameters_follow_the_output_order()
+    test_an_index_array_store_keeps_the_fill_of_the_elements_it_misses()

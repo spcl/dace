@@ -354,7 +354,9 @@ def needs_contract(
 
 
 #: The refusals of a loop whose only conflicts may be its scatter's: colliding stores and the reads among them.
-SCATTER_REFUSALS = frozenset({Refusal.NON_UNIQUE_WRITE, Refusal.OVERLAPPING_WRITES, Refusal.CARRIED_DEPENDENCE})
+SCATTER_REFUSALS = frozenset(
+    {Refusal.NON_UNIQUE_WRITE, Refusal.DYNAMIC_WRITE, Refusal.OVERLAPPING_WRITES, Refusal.CARRIED_DEPENDENCE}
+)
 
 
 def detect_scatter_idx_arrays(sdfg: SDFG) -> set[str]:
