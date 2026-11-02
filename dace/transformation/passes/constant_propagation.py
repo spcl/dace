@@ -574,6 +574,7 @@ class ConstantPropagation(ppl.Pass):
                         if _value_names(v, assigned_in_loop):
                             assignments[k] = _UnknownValue
                     # Unknown even without an incoming value: an assignment in the body reaches the next iteration
+                    only_inside = assigned_in_loop - assignments.keys()
                     assignments.update(dict.fromkeys(assigned_in_loop, _UnknownValue))
 
                 if block not in in_const_dict:
@@ -598,6 +599,12 @@ class ConstantPropagation(ppl.Pass):
                                 order_cache,
                                 last_in,
                             )
+                            # Out of the loop, a key nothing knows is no key: most keep no value at all
+                            if isinstance(block, LoopRegion):
+                                known = out_const_dict.get(block, {})
+                                for name in only_inside:
+                                    if known.get(name, 0) is _UnknownValue:
+                                        del known[name]
                         else:
                             self._collect_constants_for_conditional(
                                 block,
