@@ -229,3 +229,9 @@ def test_symbol_dedup_partial_def_sites_not_merged():
     assert {"s1": "idx[0]", "s2": "idx[0]"} in assignments
     assert {"s2": "idx[0]"} in assignments
     sdfg.validate()
+
+
+def test_symbols_of_different_dtypes_stay_apart():
+    sdfg = _make_duplicate_gather_sdfg("dedup_dtypes")
+    sdfg.symbol_repo.set_type("s2", dace.int32)
+    assert SymbolDedup().apply_pass(sdfg, {}) is None

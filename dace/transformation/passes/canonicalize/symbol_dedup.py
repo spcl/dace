@@ -114,9 +114,10 @@ class SymbolDedup(ppl.Pass):
         # 2. Group symbols by their def-signature. Two symbols share a signature
         #    iff they are assigned on exactly the same edges with an equal RHS on
         #    each -- i.e. they are provably equal everywhere and mergeable.
-        by_signature: dict[frozenset[tuple[int, str]], list[str]] = {}
+        #    The declared dtype is part of it: one value assigned to an int32 and an int64 symbol truncates apart.
+        by_signature: dict[tuple[Any, frozenset[tuple[int, str]]], list[str]] = {}
         for sym, edge_map in defs.items():
-            by_signature.setdefault(frozenset(edge_map.items()), []).append(sym)
+            by_signature.setdefault((sdfg.symbols.get(sym), frozenset(edge_map.items())), []).append(sym)
 
         # A class of one merges nothing, so the whole-SDFG ``free_symbols`` walk behind
         # ``_protected_symbols`` is only paid once a merge is actually on the table.
