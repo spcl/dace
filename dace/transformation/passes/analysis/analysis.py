@@ -147,15 +147,18 @@ class ControlFlowBlockReachability(ppl.Pass):
         :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
                  control flow blocks.
         """
-        top_sdfg.reset_cfg_list()
-        blocks = reachability.BlockReachability(top_sdfg)
+        cfg_list = top_sdfg.reset_cfg_list()
+        # A recursive walk looks at every node of every state for nested SDFGs: one is enough
+        tree = list(top_sdfg.all_control_flow_regions(recursive=True)) if top_sdfg.parent_sdfg else cfg_list
+        sdfgs = [cfg for cfg in tree if isinstance(cfg, SDFG)]
+        blocks = reachability.BlockReachability(sdfgs)
         # ``cfg_id`` is a scan of the list just rebuilt; index it once instead of once per block.
-        cfg_ids = {id(cfg): cfg_id for cfg_id, cfg in enumerate(top_sdfg.cfg_list)}
+        cfg_ids = {id(cfg): cfg_id for cfg_id, cfg in enumerate(cfg_list)}
 
         single_level_reachable: dict[int, dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]]] = defaultdict(
             lambda: defaultdict(set)
         )
-        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
+        for cfg in tree:
             for n, reach in blocks.single_level[cfg].items():
                 single_level_reachable[cfg_ids[id(cfg)]][n] = reach
 
@@ -163,7 +166,7 @@ class ControlFlowBlockReachability(ppl.Pass):
             return single_level_reachable
 
         reachable: dict[int, dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]]] = {}
-        for sdfg in top_sdfg.all_sdfgs_recursive():
+        for sdfg in sdfgs:
             for cfg in sdfg.all_control_flow_regions():
                 result: dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]] = defaultdict(OrderedSet)
                 for block in cfg.nodes():
