@@ -147,6 +147,30 @@ def test_view_reused_as_iterator_is_not_written_through():
     assert np.array_equal(viewed(np.arange(5.0)), np.arange(5.0))
 
 
+def test_iterator_type_comes_from_the_range_as_a_whole():
+    """A literal widens an iterator only if it does not fit the default, and then to signed 64 bits: bound by bound,
+    ``-8589934592`` makes ``k`` unsigned (``k < 0`` never holds) and ``2**3``, which is ``8.0``, a double."""
+
+    @dace.program
+    def too_wide(A: dace.float64[1]):
+        for k in range(-8589934592, 0):
+            A[0] = 1
+
+    @dace.program
+    def power(A: dace.float64[8]):
+        for k in range(2**3):
+            A[k] = 1
+
+    @dace.program
+    def default_symbol(A: dace.float64[8]):
+        for k in range(N):
+            A[k] = 1
+
+    assert "int64_t k;" in too_wide.to_sdfg(simplify=False).generate_code()[0].clean_code
+    assert "int k;" in power.to_sdfg(simplify=False).generate_code()[0].clean_code
+    assert "int k;" in default_symbol.to_sdfg(simplify=False).generate_code()[0].clean_code
+
+
 if __name__ == "__main__":
     test_iterator_after_loop_holds_last_value()
     test_iterator_after_break_holds_break_value()
@@ -157,3 +181,4 @@ if __name__ == "__main__":
     test_variable_reused_as_iterator_keeps_what_the_body_bound()
     test_variable_reused_as_iterator_leaves_its_bound_alone()
     test_view_reused_as_iterator_is_not_written_through()
+    test_iterator_type_comes_from_the_range_as_a_whole()
