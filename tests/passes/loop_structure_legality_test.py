@@ -179,6 +179,29 @@ def test_while_to_for_keeps_a_start_value_read_from_an_array_written_before_the_
     assert WhileToFor().apply_pass(sdfg, {}) is None
 
 
+def flag_loop(name, entry_flag, flag_first):
+    """``i = 0; flag = entry_flag; while flag: ...``, the body assigning ``flag = i < N`` around ``i = i + 1``."""
+    sdfg = int_program(name, o=[1])
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_symbol("flag", dace.bool_)
+    head = sdfg.add_state("head", is_start_block=True)
+    loop = LoopRegion("loop", "flag")
+    sdfg.add_node(loop)
+    sdfg.add_edge(head, loop, InterstateEdge(assignments={"i": "0", "flag": entry_flag}))
+    sdfg.add_edge(loop, sdfg.add_state("after"), InterstateEdge())
+    body, mid, tail = loop.add_state("body", is_start_block=True), loop.add_state("mid"), loop.add_state("tail")
+    bump, test = {"i": "i + 1"}, {"flag": "i < N"}
+    loop.add_edge(body, mid, InterstateEdge(assignments=test if flag_first else bump))
+    loop.add_edge(mid, tail, InterstateEdge(assignments=bump if flag_first else test))
+    return sdfg
+
+
+def test_while_to_for_needs_the_condition_symbol_to_enter_and_stay_as_its_expression():
+    assert WhileToFor().apply_pass(flag_loop("flag_entry", "i < N", False), {}) == 1
+    assert WhileToFor().apply_pass(flag_loop("flag_true_on_entry", "1", False), {}) is None
+    assert WhileToFor().apply_pass(flag_loop("flag_before_bump", "i < N", True), {}) is None
+
+
 def test_exit_symbol_of_a_loop_that_runs_no_iteration():
     expected, got = run_both(
         exit_reader("exit_empty", 5), lambda s: MaterializeLoopExitSymbols().apply_pass(s, {}), N=3
@@ -257,3 +280,4 @@ if __name__ == "__main__":
     test_iterator_exit_value_of_a_loop_that_runs_no_iteration()
     test_while_to_for_keeps_a_start_value_changed_before_the_loop()
     test_while_to_for_keeps_a_start_value_read_from_an_array_written_before_the_loop()
+    test_while_to_for_needs_the_condition_symbol_to_enter_and_stay_as_its_expression()

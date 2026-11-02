@@ -84,6 +84,17 @@ def inlined_condition(loop: LoopRegion) -> tuple[sympy.Basic, str | None] | None
     return symbolic.pystr_to_symbolic(edges[0].data.assignments[name]), name
 
 
+def enters_as(loop: LoopRegion, cond_symbol: str, cond, name: str, start) -> bool:
+    """Whether the condition symbol enters ``loop`` holding ``cond`` at the counter's start: the loop head evaluates
+    ``cond`` in place of the symbol from then on, so the first test must agree with it."""
+    entry = start_edge(loop, cond_symbol)
+    if entry is None:
+        return False
+    at_start = {s: start for s in cond.free_symbols if str(s) == name}
+    value = symbolic.pystr_to_symbolic(entry.data.assignments[cond_symbol])
+    return value.subs({s: start for s in value.free_symbols if str(s) == name}) == cond.subs(at_start)
+
+
 def later_blocks(region: ControlFlowRegion, start: ControlFlowBlock) -> list[ControlFlowBlock]:
     """``start`` and every block of ``region`` reachable from it."""
     seen, stack = [], [start]
@@ -109,7 +120,11 @@ def bump(loop: LoopRegion, name: str, cond_symbol: str | None):
     step = value - symbolic.pystr_to_symbolic(name)
     if not (step.is_Integer and step != 0):
         return None
-    for block in later_blocks(loop, edge.dst):
+    after = later_blocks(loop, edge.dst)
+    if cond_symbol is not None and body_edges(loop, cond_symbol)[0] is not edge:
+        if body_edges(loop, cond_symbol)[0].src not in after:
+            return None  # the condition symbol holds the value from before the bump
+    for block in after:
         if reads_symbol(block, name):
             return None
         for out in loop.out_edges(block):
@@ -139,6 +154,8 @@ def convert(loop: LoopRegion) -> bool:
         if defining is None:
             continue
         start = symbolic.pystr_to_symbolic(defining.data.assignments[name])
+        if cond_symbol is not None and not enters_as(loop, cond_symbol, cond, name, start):
+            continue
         bounded = solved_for(cond, name)
         last = None
         if read_outside(loop, name, skip_body=True):
