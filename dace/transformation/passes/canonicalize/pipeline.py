@@ -22,7 +22,6 @@ from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.mapreduce import MapReduceFusion, MapWCRFusion
 from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
-from dace.transformation.dataflow.prune_connectors import PruneConnectors
 from dace.transformation.dataflow.redundant_array import RedundantArray, RedundantMapReadCopy
 from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
@@ -113,7 +112,7 @@ from dace.transformation.passes.empty_loop_elimination import EmptyLoopEliminati
 from dace.transformation.passes.equalize_symbol_dtypes import EqualizeSymbolDtypes, equalize
 from dace.transformation.passes.fold_constant_tables import FoldConstantTables
 from dace.transformation.passes.fuse_maps import FuseMaps
-from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions, InlineSDFGs
+from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
@@ -773,8 +772,7 @@ def normalize_statements(
     s += [(label, EliminateCopyBack())]
     s += [
         (label, PatternApplyOnceEverywhere([lower_maps], state_local=True)),
-        (label, PatternApplyOnceEverywhere([PruneConnectors()])),
-        (label, InlineSDFGs()),
+        (label, PruneAndInlineNestedSDFGs(multistate=True)),
     ]
     s += [(label, NormalizeNegativeStride()), (label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
     s += [(label, RerollUnrolledLoops()), (label, UntileLoops()), (label, FuseConsecutiveLoops())]
@@ -1199,7 +1197,8 @@ SETTLED_UNITS: tuple[type[ppl.Pass], ...] = (
 
 class Settled:
     """The change clock of one run of units: a unit of :data:`SETTLED_UNITS` is skipped when no unit has
-    changed the graph since it last ran. Keyed by class: these units take no options."""
+    changed the graph since it last ran. Keyed by class: these units take no options, and the one that does runs
+    every time with it set."""
 
     __slots__ = ("clock", "ran_at")
 
@@ -1207,14 +1206,18 @@ class Settled:
         self.clock = 0
         self.ran_at: dict[type, int] = {}
 
+    @staticmethod
+    def tracked(unit: ppl.Pass) -> bool:
+        return type(unit) in SETTLED_UNITS and not getattr(unit, "multistate", False)
+
     def skip(self, unit: ppl.Pass) -> bool:
-        return type(unit) in SETTLED_UNITS and self.ran_at.get(type(unit)) == self.clock
+        return self.tracked(unit) and self.ran_at.get(type(unit)) == self.clock
 
     def record(self, unit: ppl.Pass, changed: bool, dirties: bool = True) -> None:
         """Note that ``unit`` ran; ``dirties`` is whether its change earns the settled units another run."""
         if changed and dirties:
             self.clock += 1
-        if type(unit) in SETTLED_UNITS:
+        if self.tracked(unit):
             self.ran_at[type(unit)] = self.clock
 
 
