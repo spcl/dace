@@ -933,7 +933,10 @@ class BranchElimination(transformation.MultiStateTransformation):
                     for e in state_write_edges:
                         if e.data.data is None:
                             continue
-                        if e.data.subset.num_elements_exact() != 1 or state.in_degree(e.dst) != 1:
+                        if (
+                            e.data.subset.num_elements_exact() != 1
+                            or sum(not ie.data.is_empty() for ie in state.in_edges(e.dst)) != 1
+                        ):
                             return False
                         if e.data.data not in state_write_subsets:
                             state_write_subsets[e.data.data] = set()
@@ -1049,7 +1052,8 @@ class BranchElimination(transformation.MultiStateTransformation):
                         if e.data.data is None:
                             continue
                         # One write per node: the combine tasklet stands for one element.
-                        if e.data.subset.num_elements_exact() != 1 or state.in_degree(e.dst) != 1:
+                        writes_of_node = sum(not ie.data.is_empty() for ie in state.in_edges(e.dst))
+                        if e.data.subset.num_elements_exact() != 1 or writes_of_node != 1:
                             print(
                                 f"[can_be_applied] All write edges need to have exactly one-element write '{write}' (edge {e} problematic)."
                             )

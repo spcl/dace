@@ -919,13 +919,15 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         neighbor_tasklets: set[nodes.Tasklet] = set()
         has_write = False
         for an in access_nodes:
-            if state.in_degree(an) > 0:
+            # An ordering edge neither reads nor writes
+            edges = [e for e in state.all_edges(an) if not e.data.is_empty()]
+            if any(e.dst is an for e in edges):
                 has_write = True
-            elif state.out_degree(an) > 0:
+            elif edges:
                 # Read before any write in this state: the value is carried from a previous execution,
                 # which a declaration re-entered per execution would lose.
                 return None
-            for edge in state.all_edges(an):
+            for edge in edges:
                 other = edge.dst if edge.src is an else edge.src
                 if not isinstance(other, nodes.Tasklet) or scope_dict[other] is not scope:
                     return None

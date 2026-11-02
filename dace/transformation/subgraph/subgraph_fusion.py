@@ -1164,7 +1164,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             union = subsets.union(union, oe.data.subset, facts)
                         inner_memlet = dcpy(edge.data)
                         for i, s in enumerate(edge.data.subset):
-                            if i in invariant_dimensions[dst.label]:
+                            if union is not None and i in invariant_dimensions[dst.label]:
                                 inner_memlet.subset[i] = union[i]
 
                         inner_memlet.other_subset = dcpy(inner_memlet.subset)

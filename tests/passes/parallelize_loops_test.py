@@ -658,10 +658,10 @@ def test_a_sweep_derives_an_sdfgs_facts_once_per_lift_in_it(monkeypatch) -> None
     applying = [False]
     original_walk, original_apply = dace.sdfg.sdfg.interstate_bound_names, LoopLift.lift_in
 
-    def recorded(sd: dace.SDFG) -> set[str]:
+    def recorded(sd: dace.SDFG, *args) -> set[str]:
         if not applying[0]:
             walked.append(sd)
-        return original_walk(sd)
+        return original_walk(sd, *args)
 
     def apply(self: LoopToMap, graph: ControlFlowRegion, sd: dace.SDFG) -> None:
         applying[0] = True
