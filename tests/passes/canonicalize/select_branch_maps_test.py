@@ -174,6 +174,15 @@ def test_an_arm_behind_an_interstate_condition_stays_a_branch():
     assert not SelectBranchMaps().apply_pass(sdfg, {})
 
 
+def test_a_one_element_array_condition_keeps_a_valid_select():
+    sdfg = guarded_arm_sdfg("select_subscripted_cond", "c[0] > 0", False)
+    assert SelectBranchMaps().apply_pass(sdfg, {})
+    sdfg.validate()
+    y, z = np.zeros(4), np.zeros(4)
+    sdfg(a=np.arange(4.0), y=y, z=z, c=np.ones(1), d=0)
+    assert np.array_equal(z, np.arange(4.0) * 3 + 1)
+
+
 if __name__ == "__main__":
     test_a_branch_the_guard_protects_stays_a_branch()
     test_branch_maps_without_a_fusion_partner_stay_apart()
@@ -182,3 +191,4 @@ if __name__ == "__main__":
     test_canonicalization_fuses_the_select_with_its_producers()
     test_a_condition_on_a_scalar_is_handed_to_the_select()
     test_an_arm_behind_an_interstate_condition_stays_a_branch()
+    test_a_one_element_array_condition_keeps_a_valid_select()
