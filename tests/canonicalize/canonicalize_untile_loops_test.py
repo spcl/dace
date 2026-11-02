@@ -12,6 +12,7 @@ from dace import symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
@@ -1225,7 +1226,25 @@ def test_what_depends_on_the_tile_keeps_the_nest(program):
     assert UntileLoops().apply_pass(program.to_sdfg(simplify=True), {}) is None
 
 
+@dace.program
+def unrolled_triangle_under_a_strided_loop(a: dace.float64[8, 4, 4], n: dace.int64):
+    for i in range(0, n, 4):
+        for ii in range(4):
+            for q in range(0, ii):
+                a[i, ii, q] = 1.0
+
+
+def test_fresh_iterator_never_reuses_an_unrolled_loops_name():
+    """The empty ``q`` loop stays as its exit value; an outer loop renamed onto it never advanced."""
+    sdfg = unrolled_triangle_under_a_strided_loop.to_sdfg(simplify=False)
+    canonicalize(sdfg)
+    a = np.zeros((8, 4, 4))
+    sdfg(a=a, n=8)
+    assert np.array_equal(a[[0, 4]], np.tile(np.tril(np.ones((4, 4)), -1), (2, 1, 1)))
+
+
 if __name__ == "__main__":
+    test_fresh_iterator_never_reuses_an_unrolled_loops_name()
     for program in NOT_UNTILABLE:
         test_what_depends_on_the_tile_keeps_the_nest(program)
     test_a_map_tiling_with_a_partial_last_tile_untiles_back_to_one_map()

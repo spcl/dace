@@ -28,12 +28,14 @@ def iterator_id(name: str) -> int:
 
 
 def first_free_id(sdfg: dace.SDFG) -> int:
-    """One past the largest ``<N>`` any loop iterator or map parameter of the SDFG tree uses.
+    """One past the largest ``<N>`` any loop iterator, map parameter or interstate assignment of the SDFG tree uses.
 
-    Map parameters count because ``LoopToMap`` keeps a loop's iterator name as its map parameter.
+    Map parameters count because ``LoopToMap`` keeps a loop's iterator name as its map parameter, assignments because
+    a removed loop's name lives on as its exit value, which a loop renamed onto it would overwrite each iteration.
     """
     used = [-1]
     for nested in sdfg.all_sdfgs_recursive():
+        used += [iterator_id(sym) for edge in nested.all_interstate_edges() for sym in edge.data.assignments]
         used += [iterator_id(r.loop_variable) for r in nested.all_control_flow_regions() if isinstance(r, LoopRegion)]
         for state in nested.states():
             used += [iterator_id(p) for n in state.nodes() if isinstance(n, nodes.MapEntry) for p in n.map.params]
