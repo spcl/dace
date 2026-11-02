@@ -461,8 +461,12 @@ def test_guard_lifted_between_maps_keeps_the_type_of_its_symbol():
         outer_entry, outer_exit = state.add_map("outer", dict(i="0:3"))
         inner_entry, inner_exit = state.add_map("inner", dict(j="0:3"))
         body = state.add_nested_sdfg(inner, {"a": None}, {"b": None}, symbol_mapping={"i": "i", "j": "j"})
-        state.add_memlet_path(state.add_read("a"), outer_entry, inner_entry, body, memlet=dace.Memlet("a[0]"), dst_conn="a")
-        state.add_memlet_path(body, inner_exit, outer_exit, state.add_write("b"), memlet=dace.Memlet("b[i, j]"), src_conn="b")
+        state.add_memlet_path(
+            state.add_read("a"), outer_entry, inner_entry, body, memlet=dace.Memlet("a[0]"), dst_conn="a"
+        )
+        state.add_memlet_path(
+            body, inner_exit, outer_exit, state.add_write("b"), memlet=dace.Memlet("b[i, j]"), src_conn="b"
+        )
         return sdfg
 
     sdfg = build("float_guard_lifted")
