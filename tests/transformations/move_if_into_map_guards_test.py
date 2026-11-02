@@ -260,10 +260,19 @@ def test_a_copy_beside_the_inner_map_is_refused():
     def body(state):
         _write_ones(state)
         state.add_edge(
-            state.add_read("B"), None, state.add_write("B"), None, dace.Memlet(data="B", subset="0, 0", other_subset="1, 0")
+            state.add_read("B"),
+            None,
+            state.add_write("B"),
+            None,
+            dace.Memlet(data="B", subset="0, 0", other_subset="1, 0"),
         )
 
     assert not _apply(_guarded_map_nest(body, "i > 5"))
+
+
+def test_a_guard_assigning_a_symbol_the_parent_binds_is_refused():
+    """``s = s + 1`` reads the parent's ``s``, whose binding the move drops."""
+    assert not _apply(_guarded_map_nest(_write_ones, "s > 1", assignments={"s": "s + 1"}))
 
 
 def test_a_body_that_rebinds_a_guard_symbol_is_refused():
@@ -292,4 +301,5 @@ if __name__ == "__main__":
     test_guard_symbol_used_by_a_map_range_is_not_deleted()
     test_a_guard_computed_by_a_state_moves_in_and_the_levels_collapse_into_one_map()
     test_a_copy_beside_the_inner_map_is_refused()
+    test_a_guard_assigning_a_symbol_the_parent_binds_is_refused()
     test_a_body_that_rebinds_a_guard_symbol_is_refused()

@@ -255,6 +255,9 @@ def private_to_guard(match: GuardMatch) -> bool:
     outside_reads, outside_syms = outside_guard(match)
     if any(not enclosing.arrays[n].transient for n in match.locals):
         return False
+    # ``declare_guard_names`` drops the parent's value of an assigned symbol, which the guard may read
+    if match.assigned & enclosing.parent_nsdfg_node.symbol_mapping.keys():
+        return False
     if match.locals & (body_reads | body_writes | outside_reads) or match.reads & body_writes:
         return False
     return not match.assigned & outside_syms and (match.symbols | match.assigned) <= enclosing.symbols.keys()
