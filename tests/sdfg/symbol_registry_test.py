@@ -335,6 +335,40 @@ def test_new_names_avoid_names_bound_after_the_last_lookup():
     assert sdfg.add_transient("y", [1], dace.float64, find_new_name=True)[0] != "y"
 
 
+def test_simplify_keeps_a_symbol_a_relation_names():
+    """No graph reads ``a``, but removing it would leave the relation naming nothing."""
+    sdfg = dace.SDFG("related")
+    sdfg.add_symbol("a", dace.int64)
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol_relation(symbolic.Relation(symbolic.RelationKind.LT, symbolic.symbol("a"), symbolic.symbol("N")))
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("fill", {}, {"o"}, "o = 1")
+    state.add_edge(tasklet, "o", state.add_write("B"), None, dace.Memlet("B[0]"))
+    sdfg.simplify()
+    assert "a" in sdfg.symbols
+
+
+def test_an_sdfg_saved_without_a_repository_loads_its_symbols():
+    sdfg = dace.SDFG("saved_before")
+    sdfg.add_symbol("N", dace.int64)
+    saved = sdfg.to_json()
+    del saved["attributes"]["symbol_repo"]
+    saved["attributes"]["symbols"] = {"N": "int64"}
+    assert dict(dace.SDFG.from_json(saved).symbols) == {"N": dace.int64}
+
+
+def test_arglist_passes_a_scalar_argument_a_shape_names():
+    sdfg = dace.SDFG("scalar_extent")
+    sdfg.add_scalar("n", dace.int32)
+    sdfg.arg_names = ["n"]
+    sdfg.add_array("A", [4, symbolic.symbol("n")], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("use", {"a"}, {}, "pass")
+    state.add_edge(state.add_read("A"), None, tasklet, "a", dace.Memlet("A[0, 0]"))
+    assert isinstance(state.arglist()["n"], dace.data.Scalar)
+
+
 if __name__ == "__main__":
     test_loop_variable_cannot_be_added_as_symbol()
     test_scope_takes_over_a_symbol_a_shape_declared()
@@ -367,3 +401,6 @@ if __name__ == "__main__":
     test_swapping_two_names_keeps_both()
     test_renaming_into_a_declared_name_keeps_its_declaration()
     test_new_names_avoid_names_bound_after_the_last_lookup()
+    test_simplify_keeps_a_symbol_a_relation_names()
+    test_an_sdfg_saved_without_a_repository_loads_its_symbols()
+    test_arglist_passes_a_scalar_argument_a_shape_names()

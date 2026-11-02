@@ -1067,7 +1067,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         for arg in data_args.values():
             scalar_args.update(
                 {
-                    str(k): dt.Scalar(defined_syms[str(k)])
+                    str(k): dt.Scalar(defined_syms[str(k)]) if str(k) in defined_syms else sdfg.arrays[str(k)]
                     for k in arg.used_symbols(all_symbols=False)
                     if not str(k).startswith("__dace") and str(k) not in sdfg.constants
                 }

@@ -1108,6 +1108,7 @@ def _integral(quotient: sympy.Expr) -> bool:
 
 def ceiling_div(numerator: sympy.Expr, step: sympy.Expr) -> sympy.Expr:
     """``ceil(numerator / step)`` for an integer numerator and step, such as the element count of a range."""
+    numerator, step = sympy.sympify(numerator), sympy.sympify(step)
     if step == 1 and _integral(numerator):
         return numerator
     quotient = numerator / step

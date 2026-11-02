@@ -99,7 +99,8 @@ class RemoveUnusedSymbols(ppl.Pass):
         for code in itertools.chain(sdfg.global_code.values(), sdfg.init_code.values(), sdfg.exit_code.values()):
             result |= symbolic.symbols_in_code(code.as_string)
 
-        for relation in sdfg.symbol_repo.runtime_assumptions:
+        # A declared relation refuses the removal of the names it holds
+        for relation in (*sdfg.symbol_repo.params.relations, *sdfg.symbol_repo.runtime_assumptions):
             result |= symbolic.relation_names(relation)
 
         for desc in sdfg.arrays.values():

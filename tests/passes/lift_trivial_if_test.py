@@ -518,6 +518,24 @@ def test_should_reapply_only_on_block_count_change():
     assert not p.should_reapply(ppl.Modifies.Symbols | ppl.Modifies.Memlets)
 
 
+def test_a_condition_the_parser_rejects_stays_a_branch():
+    """A Python condition need not be a symbolic expression: ``np.abs(x) > 1`` is simply not decided."""
+    sdfg = dace.SDFG("unparsable_condition")
+    sdfg.add_symbol("x", dace.float64)
+    sdfg.add_array("A", [1], dace.float64)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    guard = ConditionalBlock("guard", sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(guard)
+    sdfg.add_edge(entry, guard, dace.InterstateEdge())
+    branch = ControlFlowRegion("branch", sdfg=sdfg, parent=guard)
+    state = branch.add_state("write", is_start_block=True)
+    tasklet = state.add_tasklet("fill", {}, {"o"}, "o = 1")
+    state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
+    guard.add_branch(CodeBlock("np.abs(x) > 1"), branch)
+    assert LiftTrivialIf().apply_pass(sdfg, {}) is None
+    assert guard in sdfg.nodes()
+
+
 if __name__ == "__main__":
     for c in _ALWAYS_TRUE:
         test_single_condition(c)
@@ -538,3 +556,4 @@ if __name__ == "__main__":
     test_trivial_if_with_nested_sdfg_reparents_correctly()
     test_trivial_cond_check_is_cached()
     test_should_reapply_only_on_block_count_change()
+    test_a_condition_the_parser_rejects_stays_a_branch()

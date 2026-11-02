@@ -941,7 +941,8 @@ class SDFG(ControlFlowRegion):
             raise TypeError("Class type mismatch")
 
         attrs = dict(json_obj["attributes"])
-        repo_json = attrs.pop("symbol_repo")
+        # An SDFG saved before the repository has a plain table of symbols
+        repo_json = attrs.pop("symbol_repo", None) or {"params": {"types": attrs.get("symbols", {})}}
         json_obj = dict(json_obj)
         json_obj["attributes"] = attrs
         nodes = json_obj["nodes"]

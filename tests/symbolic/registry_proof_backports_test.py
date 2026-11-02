@@ -4,7 +4,7 @@
 import sympy
 
 import dace
-from dace import symbolic
+from dace import subsets, symbolic
 from dace.symbolic import Facts, Predicate, predicate_relation
 
 
@@ -52,6 +52,12 @@ def test_a_ceiling_of_a_quotient_truncates_like_int_ceil():
     assert symbolic.symstr(sympy.ceiling(-x / 4), cpp_mode=True) == "(int_ceil(-x, 4))"
 
 
+def test_ceiling_div_takes_the_plain_integers_of_a_squeezed_range():
+    squeezed = subsets.Range.from_string("i")
+    squeezed.squeeze()
+    assert squeezed.size_exact() == [1]
+
+
 if __name__ == "__main__":
     test_a_nonzero_fact_reaches_the_sympy_assumptions()
     test_a_real_ceiling_is_bounded_for_any_sign_of_its_argument()
@@ -59,3 +65,4 @@ if __name__ == "__main__":
     test_a_strided_range_counts_whole_elements_on_both_sides_of_a_copy()
     test_a_sum_of_quotients_divides_once()
     test_a_ceiling_of_a_quotient_truncates_like_int_ceil()
+    test_ceiling_div_takes_the_plain_integers_of_a_squeezed_range()
