@@ -2033,5 +2033,25 @@ def test_partial_nan_propagating_max_canonicalizes_to_parallel_code():
     _assert_bits_equal(out, _nan_max_reference(a, np.zeros(9)))
 
 
+def test_value_fold_keeps_a_seed_that_is_no_element_of_the_array():
+    """``x = 0.25; if x < a[i]: x = a[i]`` folds into the seed, whichever side of the guard the carrier sits on."""
+
+    @dace.program
+    def seeded_max(a: dace.float64[N], out: dace.float64[1]):
+        x = 0.25
+        for i in range(1, N):
+            if x < a[i]:
+                x = a[i]
+        out[0] = x
+
+    sdfg = seeded_max.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    assert _num_loops(sdfg) == 0
+    for a, expected in (([9.0, 0.5, 0.75], 0.75), ([9.0, -1.0, -2.0], 0.25)):
+        out = np.zeros(1)
+        sdfg(a=np.array(a), out=out, N=3)
+        assert out[0] == expected
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
