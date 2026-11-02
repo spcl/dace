@@ -146,6 +146,9 @@ def _region_writes(region: ControlFlowRegion) -> tuple[dict[str, None], dict[str
     wdata: dict[str, None] = {}
     for e in region.all_interstate_edges():
         asyms.update(dict.fromkeys(e.data.assignments.keys()))
+    for inner in region.all_control_flow_regions():
+        if isinstance(inner, LoopRegion) and inner.loop_variable:
+            asyms[str(inner.loop_variable)] = None
     for st in region.states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
@@ -236,37 +239,19 @@ def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> dict
 
 
 def _block_reads_symbols(block: ControlFlowBlock) -> dict[str, None] | None:
-    """All symbols read anywhere inside a block (state, region, etc.).
+    """The symbols a block reads from outside it (state, region, etc.).
 
-    This is a legality predicate, so it fails CLOSED: an unreadable ``free_symbols`` or condition
-    yields ``None`` rather than a partial set, because a partial set silently drops the very read
-    the caller is looking for and lets an illegal hoist through.
+    This is a legality predicate, so it fails CLOSED: an unreadable ``free_symbols`` yields ``None``
+    rather than a partial set, because a partial set silently drops the very read the caller is
+    looking for and lets an illegal hoist through.
 
     :param block: The state or region to scan.
     :returns: The names of symbols read inside ``block``, or ``None`` if it cannot be determined.
     """
-    syms: dict[str, None] = {}
-    if isinstance(block, SDFGState):
-        try:
-            syms.update(dict.fromkeys(str(s) for s in block.free_symbols))
-        except Exception:
-            return None
-        return syms
-    if isinstance(block, ControlFlowRegion):
-        for st in block.states():
-            try:
-                syms.update(dict.fromkeys(str(s) for s in st.free_symbols))
-            except Exception:
-                return None
-        for e in block.all_interstate_edges():
-            for rhs in e.data.assignments.values():
-                syms.update(names_read_by(rhs))
-            if not e.data.is_unconditional():
-                try:
-                    syms.update(dict.fromkeys(str(s) for s in e.data.condition.get_free_symbols()))
-                except Exception:
-                    return None
-    return syms
+    try:
+        return dict.fromkeys(str(s) for s in block.free_symbols)
+    except Exception:
+        return None
 
 
 def _block_writes(block: ControlFlowBlock) -> tuple[dict[str, None], dict[str, None]]:
@@ -278,7 +263,7 @@ def _block_writes(block: ControlFlowBlock) -> tuple[dict[str, None], dict[str, N
     :param block: The state or region to scan.
     :returns: ``(assigned_symbols, written_data)``.
     """
-    if isinstance(block, ControlFlowRegion):
+    if isinstance(block, (ControlFlowRegion, ConditionalBlock)):
         return _region_writes(block)
     asyms: dict[str, None] = {}
     wdata: dict[str, None] = {}

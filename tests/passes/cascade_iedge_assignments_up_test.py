@@ -831,5 +831,45 @@ def test_a_per_iteration_assignment_whose_input_the_state_before_writes_stays():
     assert HoistAssignmentsToLoopBodyHead().apply_pass(sdfg, {}) is None
 
 
+def _write_symbol(state: dace.SDFGState, name: str) -> None:
+    tasklet = state.add_tasklet("t", {}, {"o"}, f"o = {name}")
+    state.add_edge(tasklet, "o", state.add_write("out"), None, dace.Memlet("out[0]"))
+
+
+def _loop_after_entry(condition: str = "i < 2", init: str = "i = 0", assignments: dict | None = None):
+    """``entry -[assignments]-> loop``, in an SDFG with ``out[1]``, the empty loop returned for its body."""
+    sdfg = dace.SDFG("hoist_refusal")
+    sdfg.add_array("out", [1], dace.int64)
+    for name in ("k", "M", "N"):
+        sdfg.add_symbol(name, dace.int64)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    loop = LoopRegion("loop", condition, "i", init, "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(entry, loop, InterstateEdge(assignments=assignments or {}))
+    return sdfg, loop
+
+
+def test_a_read_in_a_preceding_conditional_block_blocks_the_hoist():
+    """The branch reads the value from before the assignment."""
+    sdfg, loop = _loop_after_entry(assignments={"k": "3"})
+    block = ConditionalBlock("read_first")
+    loop.add_node(block, is_start_block=True)
+    branch = ControlFlowRegion("then", sdfg=sdfg)
+    _write_symbol(branch.add_state("read", is_start_block=True), "k")
+    block.add_branch(dace.properties.CodeBlock("i == 0"), branch)
+    loop.add_edge(block, loop.add_state("after"), InterstateEdge(assignments={"k": "M + 2"}))
+    assert _apply(sdfg) == 0
+
+
+def test_an_iterator_of_a_preceding_loop_blocks_the_hoist():
+    """``k = j + 1`` reads the value the inner loop leaves in ``j``."""
+    sdfg, loop = _loop_after_entry(assignments={"j": "7"})
+    inner = LoopRegion("inner", "j < 3", "j", "j = 0", "j = j + 1")
+    loop.add_node(inner, is_start_block=True)
+    inner.add_state("empty", is_start_block=True)
+    loop.add_edge(inner, loop.add_state("after"), InterstateEdge(assignments={"k": "j + 1"}))
+    assert _apply(sdfg) == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
