@@ -118,7 +118,7 @@ def copy_through_tasklet(state, read_subset):
     state.add_edge(tasklet, "y", state.add_write("b"), None, Memlet("b[0]"))
 
 
-def test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_every_round():
+def test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_no_change():
     sdfg = dace.SDFG("nothing_to_fold")
     sdfg.add_array("a", [8], dace.float64)
     sdfg.add_array("b", [8], dace.float64)
@@ -128,7 +128,7 @@ def test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_eve
 
     reported = PropagateAndPrune().apply_pass(sdfg, {})
 
-    assert reported == PropagateAndPrune.ROUNDS
+    assert reported is None
     assert sdfg.to_json() == before, "a round with nothing to fold mutated the SDFG"
 
 
@@ -321,7 +321,7 @@ def test_then_if_changed_reports_a_rewrite_of_an_unwatched_unit():
 
 
 if __name__ == "__main__":
-    test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_every_round()
+    test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_no_change()
     test_propagate_and_prune_folds_a_constant_bound_symbol_into_the_memlet()
     test_canonicalize_accumulator_reduction()
     test_canonicalize_perfect_loop_nesting()

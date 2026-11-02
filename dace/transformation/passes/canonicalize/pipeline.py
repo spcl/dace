@@ -258,21 +258,15 @@ class PropagateAndPrune(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
         changed = 0
-        for round_index in range(self.ROUNDS):
+        for _ in range(self.ROUNDS):
             # A Pipeline per round, not bare passes: DeadDataflowElimination declares a
             # ControlFlowBlockReachability dependency that only a Pipeline resolves.
-            members = [PropagateSymbols(), DeadDataflowElimination()]
-            result = ppl.Pipeline(members).apply_pass(sdfg, {})
-            if result:
-                changed += 1
-            # The results dict also holds the resolved analyses, so only the members' own keys say the round
-            # modified the graph. A round that did not hands every later round the identical graph, which it would
-            # repeat verbatim with the same report: count those rounds, skip the work (CloudSC: 2.0s of 5.3s).
-            if result and any(type(member).__name__ in result for member in members):
-                continue
-            if result:
-                changed += self.ROUNDS - 1 - round_index
-            break
+            pipeline = ppl.Pipeline([PropagateSymbols(), DeadDataflowElimination()])
+            # A round that modified nothing hands every later round the identical graph (CloudSC: 2.0s of 5.3s). The
+            # results dict also holds the resolved analyses, so only the members' own keys say it did.
+            if not changed_the_graph(pipeline, pipeline.apply_pass(sdfg, {})):
+                break
+            changed += 1
         return changed or None
 
 
