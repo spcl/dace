@@ -22,6 +22,7 @@ from dace.codegen import common
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.scope import is_thread_block_level, kernel_scope
 from dace.transformation import gpu_helpers
 from dace.transformation import pass_pipeline as ppl
 
@@ -43,6 +44,20 @@ def _aligned(size: int) -> int:
 def _nested_sdfg_nodes(sdfg: SDFG) -> list[nodes.NestedSDFG]:
     """Returns the nested SDFG nodes directly in ``sdfg``, in a deterministic order."""
     return [n for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
+
+
+def _max(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> symbolic.SymbolicType:
+    """The larger of two (symbolic) sizes."""
+    if not symbolic.issymbolic(a) and not symbolic.issymbolic(b):
+        return max(a, b)
+    return symbolic.sympy.Max(symbolic.pystr_to_symbolic(a), symbolic.pystr_to_symbolic(b))
+
+
+def _kernel_is_device_map(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> bool:
+    """Whether the kernel around a node is a ``GPU_Device`` scope (a persistent ``GPU_Persistent`` one synchronizes
+    its states differently)."""
+    found = kernel_scope(sdfg, state, node)
+    return found is not None and found[1].schedule == dtypes.ScheduleType.GPU_Device
 
 
 def is_shared_container(desc: dt.Data) -> bool:
@@ -221,7 +236,10 @@ class PlanSharedMemory(ppl.Pass):
     shared memory fits in ``compiler.cuda.max_static_shared_memory``. The decision is written back to the storage type of
     each container. In dynamic shared memory, the containers of each SDFG are laid out contiguously, followed by those
     of its nested SDFGs; a nested SDFG receives the offset of its part as the symbol ``__dace_dynsmem_base`` unless the
-    offset is a constant. The number of bytes to launch each kernel with is stored in the
+    offset is a constant. The parts of nested SDFGs in different states of an SDFG that the threads of a block run
+    together (see ``is_thread_block_level``) start at the same offset: they never run at the same time, as a state of a
+    thread block's code that accesses shared memory starts with a barrier (e.g., the tasks in the branches of a
+    persistent kernel share their memory). Those in one state are laid out one after the other. The number of bytes to launch each kernel with is stored in the
     ``_cuda_dynamic_shared_memory`` attribute of the kernel map entry, and its static shared memory in
     ``_cuda_static_shared_memory``.
     """
@@ -304,7 +322,7 @@ class PlanSharedMemory(ppl.Pass):
 
         # Lay out dynamic shared memory
         if dynamic:
-            plan.dynamic_bytes = self._layout(sdfg, kernel_level, top_nested, 0, dynamic, plan.levels)
+            plan.dynamic_bytes = self._layout(sdfg, kernel_level, top_nested, 0, dynamic, plan.levels, False)
             self._check_launch_symbols(state, kernel_entry, kernel_nodes, plan.dynamic_bytes)
         return plan
 
@@ -325,10 +343,13 @@ class PlanSharedMemory(ppl.Pass):
         base: symbolic.SymbolicType,
         dynamic: set[tuple[SDFG, str]],
         levels: list[SharedMemoryLevel],
+        block_level: bool,
     ) -> symbolic.SymbolicType:
         """
         Lays out the dynamic containers of an SDFG, followed by those of its nested SDFGs, starting at ``base``.
 
+        :param block_level: Whether the threads of a block run the SDFG together, so that the nested SDFGs of different
+                            states may share their part (see the class documentation).
         :return: The end of the layout, in the symbols of ``sdfg``.
         """
         level = SharedMemoryLevel(sdfg)
@@ -345,6 +366,37 @@ class PlanSharedMemory(ppl.Pass):
             cursor = offset + size
             cursor_alignment = alignment if symbolic.is_multiple(size, alignment) else 1
 
+        # The nested SDFGs that may share their part: those of each state of a block-level SDFG
+        state_of = {n: s for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.NestedSDFG)}
+        groups: dict = {}
+        for nsdfg_node in nested:
+            groups.setdefault(state_of.get(nsdfg_node) if block_level else None, []).append(nsdfg_node)
+        start, start_alignment, end = cursor, cursor_alignment, None
+        for group in groups.values():
+            group_end = self._layout_nested(sdfg, group, state_of, start, start_alignment, dynamic, levels)
+            end = group_end if end is None else _max(end, group_end)
+        if end is not None:
+            cursor = end
+
+        level.end = cursor
+        if level.containers:
+            levels.append(level)
+        return cursor
+
+    def _layout_nested(
+        self,
+        sdfg: SDFG,
+        nested: list[nodes.NestedSDFG],
+        state_of: dict,
+        cursor: symbolic.SymbolicType,
+        cursor_alignment: int,
+        dynamic: set[tuple[SDFG, str]],
+        levels: list[SharedMemoryLevel],
+    ) -> symbolic.SymbolicType:
+        """Lays out the parts of nested SDFGs one after the other, starting at ``cursor``.
+
+        :return: The end of the last part, in the symbols of ``sdfg``.
+        """
         for nsdfg_node in nested:
             nsdfg = nsdfg_node.sdfg
             nested_names = sorted(n for n, d in nsdfg.arrays.items() if is_shared_container(d))
@@ -368,7 +420,13 @@ class PlanSharedMemory(ppl.Pass):
                 inner_base = symbolic.symbol(symbol_name, dtypes.int64)
             else:
                 inner_base = nested_base
-            inner_end = self._layout(nsdfg, nested_names, _nested_sdfg_nodes(nsdfg), inner_base, dynamic, levels)
+            state = state_of[nsdfg_node]
+            inner_block_level = is_thread_block_level(sdfg, state, nsdfg_node) and _kernel_is_device_map(
+                sdfg, state, nsdfg_node
+            )
+            inner_end = self._layout(
+                nsdfg, nested_names, _nested_sdfg_nodes(nsdfg), inner_base, dynamic, levels, inner_block_level
+            )
 
             # Translate the end of the nested part to the symbols of this SDFG
             mapping = {symbolic.symbol(k): symbolic.pystr_to_symbolic(v) for k, v in nsdfg_node.symbol_mapping.items()}
@@ -376,10 +434,6 @@ class PlanSharedMemory(ppl.Pass):
                 symbolic.pystr_to_symbolic(inner_end).subs(mapping) if symbolic.issymbolic(inner_end) else inner_end
             )
             cursor_alignment = 1
-
-        level.end = cursor
-        if level.containers:
-            levels.append(level)
         return cursor
 
     @staticmethod
