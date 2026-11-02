@@ -83,8 +83,6 @@ jobs:
         uv pip install ./dace
 
     - name: Download data
-      # Skip "Riemann Solver on D-grid" (currently failing)
-      if: ${{ !startsWith(matrix.module, 'Riem_Solver3') }}
       run: |
         mkdir -p pyFV3/test_data
         cd pyFV3/test_data
@@ -93,8 +91,6 @@ jobs:
         cd ../..
 
     - name: "Regression test: ${{ matrix.name }}"
-      # Skip "Riemann Solver on D-grid" (currently failing)
-      if: ${{ !startsWith(matrix.module, 'Riem_Solver3') }}
       env:
         FV3_DACEMODE: BuildAndRun
         NDSL_LOGLEVEL: Debug
