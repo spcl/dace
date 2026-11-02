@@ -7,7 +7,7 @@ from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.transient_reuse import BufferSharing, StateOrder, inside_map
+from dace.transformation.passes.transient_reuse import BufferSharing, StateOrder, inside_parallel_map
 from dace.transformation.transformation import explicit_cf_compatible
 
 #: Storages a coalesced pair may mix: all of them are plain host memory the other side's code can address.
@@ -212,18 +212,22 @@ class Coalescing:
                 if not (order.within in state_upstream(state, node) or order.within in state_downstream(state, node)):
                     found.append((order.within, True, None))
                 continue
-            for e in state.in_edges(node):
-                if e is not copy_edge and not e.data.is_empty():
-                    found.append((order.top(e.src) or place, True, e.data.get_dst_subset(e, state)))
+            found.extend(
+                (order.top(e.src) or place, True, e.data.get_dst_subset(e, state))
+                for e in state.in_edges(node)
+                if e is not copy_edge and not e.data.is_empty()
+            )
             if node is other and into:
                 continue
-            for e in state.out_edges(node):
-                if e is not copy_edge and not e.data.is_empty():
-                    found.append((order.top(e.dst) or place, False, e.data.get_src_subset(e, state)))
+            found.extend(
+                (order.top(e.dst) or place, False, e.data.get_src_subset(e, state))
+                for e in state.out_edges(node)
+                if e is not copy_edge and not e.data.is_empty()
+            )
         if order.within is not None:
-            for e in state.out_edges(order.within):
-                if e.data.data == name:
-                    found.append((order.top(e.dst), False, e.data.subset))
+            found.extend(
+                (order.top(e.dst), False, e.data.subset) for e in state.out_edges(order.within) if e.data.data == name
+            )
         return found
 
     def rename(self, state: SDFGState, edge, transient: nodes.AccessNode, other: nodes.AccessNode, at: Placement):
@@ -308,7 +312,7 @@ class MinimizeTransients(ppl.Pass):
 
     1. Coalesce, in every SDFG: a transient living in one state and copied whole to or from a region of another
        container is that region (:class:`Coalescing`).
-    2. Share and lift, in SDFGs outside every map scope: transients whose uses never overlap share one buffer, and
+    2. Share and lift, in SDFGs outside every parallel map scope: transients whose uses never overlap share one buffer, and
        every buffer sized by symbols bound on entry is ``Persistent``
        (:class:`~dace.transformation.passes.transient_reuse.BufferSharing`).
 
@@ -332,7 +336,7 @@ class MinimizeTransients(ppl.Pass):
         changed = 0
         for sd in sdfg.all_sdfgs_recursive():
             changed += Coalescing(sd).run()
-            # A buffer inside a map scope is per iteration: sharing it would share it between iterations.
-            if not inside_map(sd):
+            # A buffer inside a parallel map scope is per iteration: sharing it would share it between iterations.
+            if not inside_parallel_map(sd):
                 changed += len(BufferSharing(sd, tuple(storages)).run())
         return changed or None
