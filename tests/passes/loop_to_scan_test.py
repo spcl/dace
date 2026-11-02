@@ -2429,6 +2429,20 @@ def test_a_slot_chosen_per_iteration_is_no_scan():
     assert_canon_matches_the_program(carry_on_a_body_slot, args, N=8)
 
 
+@dace.program
+def sibling_computes_from_the_carry(a: dace.float64[N], m: dace.float64[N], d: dace.float64[N]):
+    for i in range(1, N):
+        if m[i] > 0.5:
+            a[i] = a[i - 1] + d[i]
+        else:
+            a[i] = a[i - 1] * 2.0
+
+
+def test_a_sibling_computing_from_the_carry_is_no_hold():
+    args = dict(a=np.ones(8), m=np.array([0.1, 0.9] * 4), d=np.arange(1.0, 9.0))
+    assert_canon_matches_the_program(sibling_computes_from_the_carry, args, N=8)
+
+
 if __name__ == "__main__":
     import sys
 

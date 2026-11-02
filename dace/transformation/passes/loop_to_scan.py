@@ -1250,6 +1250,8 @@ def _writes_only_the_carry_slot(state: SDFGState, write_an: nodes.AccessNode, in
                 return False  # a source that is not data cannot be the held carrier
             roots.append(cur)
             continue
+        if isinstance(cur, nodes.Tasklet) and not _is_pure_copy_tasklet(cur):
+            return False  # ``out[i] = out[i-1] * 2`` is computed from the carrier, it does not hold it
         worklist.extend(e.src for e in in_edges)
     if not roots:
         return False
