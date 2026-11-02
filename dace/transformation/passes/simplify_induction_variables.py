@@ -123,10 +123,9 @@ def fold_self_referential_iedge_ivs(
         if step is None:
             continue
         # The closed form assumes the increment is loop-invariant. A step that
-        # depends on the loop variable (e.g. TSVC s141 ``k = k + j + 1``) is
-        # not a constant per-iteration increment and must not be folded here.
-        loop_var_name = loop.loop_variable
-        if loop_var_name is not None and loop_var_name in {str(s) for s in step.free_symbols}:
+        # depends on the loop variable (e.g. TSVC s141 ``k = k + j + 1``) or on
+        # a symbol assigned in the loop is no constant per-iteration increment.
+        if {str(s) for s in step.free_symbols} & {loop.loop_variable, *iv_edge_sites}:
             continue
         # Only fold when the counter is dead after the loop. If its post-loop
         # value is consumed, InductionVariableSubstitution owns the rewrite (it
