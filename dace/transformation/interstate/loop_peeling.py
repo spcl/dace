@@ -155,7 +155,7 @@ class LoopPeeling(LoopUnroll):
                 self._replace_loop_var_in_iedge(e.data, loop_var, value)
         return new_cfr
 
-    def _guard_iteration(self, graph: ControlFlowRegion, block: ControlFlowBlock, value, start, end, stride):
+    def guard_iteration(self, graph: ControlFlowRegion, block: ControlFlowBlock, value, start, end, stride):
         """Move the peeled ``block`` of iterate ``value`` into a conditional testing that the loop reaches ``value``."""
         ascending = symbolic.pystr_to_symbolic(stride).is_negative is not True
         bound = end if self.begin else start
@@ -242,7 +242,7 @@ class LoopPeeling(LoopUnroll):
             is_symbolic |= symbolic.issymbolic(current_index)
             it = self._instantiate_peeled_iteration(graph, current_index, str(i) if is_symbolic else None)
             if guard:
-                it = self._guard_iteration(graph, it, current_index, start, end, stride)
+                it = self.guard_iteration(graph, it, current_index, start, end, stride)
             if len(peeled_iterations) > 0:
                 if self.begin:
                     graph.add_edge(peeled_iterations[-1], it, sd.InterstateEdge())
