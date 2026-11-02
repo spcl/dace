@@ -1958,18 +1958,27 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Relaxed for data a Map reads as well if no iteration touches what another writes: each iteration then runs
         #  the first Map's accesses and the second's in order, in place (cloudsc's ``zsolqa[i, 1, 4]`` updated twice).
         for name in real_write_map_1 & real_write_map_2:
-            if name in real_read_map_1 or name in real_read_map_2:
-                if not self.relaxed_dataflow or any(self.is_view(s[name], sdfg) for s in access_sets if name in s):
-                    return True
-                accesses = self.map_accesses(name, access_sets, first_map_entry, second_map_entry, param_repl, state)
-                if accesses is None or not self.other_iterations_miss(
-                    first_map_entry.map,
-                    accesses[1] + accesses[3],
-                    accesses[0] + accesses[2] + accesses[1] + accesses[3],
-                    facts,
-                ):
-                    return True
-            elif not self.written_disjointly(name, first_map_exit, second_map_exit, state, facts):
+            if (
+                name not in real_read_map_1
+                and name not in real_read_map_2
+                and self.written_disjointly(name, first_map_exit, second_map_exit, state, facts)
+            ):
+                continue
+            if (
+                not self.relaxed_dataflow
+                or any(self.is_view(s[name], sdfg) for s in access_sets if name in s)
+                or any(
+                    e.data.data == name and e.data.wcr
+                    for x in (first_map_exit, second_map_exit)
+                    for e in state.out_edges(x)
+                )
+            ):
+                return True
+            accesses = self.map_accesses(name, access_sets, first_map_entry, second_map_entry, param_repl, state)
+            touched = accesses and accesses[0] + accesses[1] + accesses[2] + accesses[3]
+            if accesses is None or not self.other_iterations_miss(
+                first_map_entry.map, accesses[1] + accesses[3], touched, facts
+            ):
                 return True
 
         # These are the names (unresolved) and the access nodes of the data that is used
