@@ -265,6 +265,10 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
     # that the classmethod entry points (``can_be_applied_to``/``apply_to``) redo per candidate.
     # Mirrors ``sdutil.fuse_states``.
     xform = StateFusionExtended()
+    # Only fusions run in here: see ``fuse_states``.
+    xform.region_facts = {}
+    xform.side_effect_cache = {}
+    xform.shape_cache = {}
     for cfr in cfrs:
         cfg_id = cfr.cfg_id
         applied = True

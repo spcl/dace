@@ -1800,8 +1800,11 @@ def fuse_states(
     sf.order_array_seeds = order_array_seeds
     for sd in sdfg.all_sdfgs_recursive():
         for cfg in sd.all_control_flow_regions():
-            # Fusing states changes neither the regions nor the symbols the facts of a state are derived from
+            # Fusing states changes neither the regions nor the symbols the facts of a state are derived from. A fused
+            # state inherits the verdicts on its parts: both had no side effect and a fusible shape.
             sf.region_facts = {}
+            sf.side_effect_cache = {}
+            sf.shape_cache = {}
             while True:
                 edges = list(cfg.nx.edges)
                 applied = 0

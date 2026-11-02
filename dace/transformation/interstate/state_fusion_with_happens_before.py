@@ -191,6 +191,7 @@ class StateFusionExtended(StateFusion):
         # ask the same question the matcher answered. See ``apply``.
         self._matched_permissive = False
         self._side_effect_cache: dict[tuple[SDFGState, bool], bool] | None = None
+        self._shape_cache: dict[SDFGState, bool] | None = None
         self._region_facts: dict[ControlFlowRegion, symbolic.Facts] | None = None
 
     @property
@@ -206,6 +207,17 @@ class StateFusionExtended(StateFusion):
     @side_effect_cache.setter
     def side_effect_cache(self, cache: dict[tuple[SDFGState, bool], bool] | None) -> None:
         self._side_effect_cache = cache
+
+    @property
+    def shape_cache(self) -> dict[SDFGState, bool] | None:
+        """``state -> is_fusible_state_shape`` verdicts; ``None`` = uncached. Set by a caller whose only changes between
+        probes are fusions: a fused state keeps the shape of its two well-formed parts (``fuse`` checks it stays a
+        DAG), so the entries stay valid."""
+        return self._shape_cache
+
+    @shape_cache.setter
+    def shape_cache(self, cache: dict[SDFGState, bool] | None) -> None:
+        self._shape_cache = cache
 
     @property
     def region_facts(self) -> dict[ControlFlowRegion, symbolic.Facts] | None:
@@ -316,6 +328,15 @@ class StateFusionExtended(StateFusion):
             cache[key] = blocked
         return blocked
 
+    def state_shape_fusible(self, state: SDFGState, sdfg) -> bool:
+        """:func:`is_fusible_state_shape`, memoized in :attr:`shape_cache` when set."""
+        cache = self.shape_cache
+        if cache is None:
+            return is_fusible_state_shape(state, sdfg)
+        if state not in cache:
+            cache[state] = is_fusible_state_shape(state, sdfg)
+        return cache[state]
+
     @staticmethod
     def state_has_side_effect_node(state: SDFGState, sdfg) -> bool:
         """Whether ``state`` carries a node whose execution has side effects (a Tasklet with
@@ -380,7 +401,7 @@ class StateFusionExtended(StateFusion):
         # Structural well-formedness of BOTH states, above the permissive branch on purpose:
         # permissive relaxes the race checks, not whether the states are shapes ``apply`` can
         # rebuild (it re-runs scope_dict / topological_sort / memlet_path on them).
-        if not is_fusible_state_shape(first_state, sdfg) or not is_fusible_state_shape(second_state, sdfg):
+        if not self.state_shape_fusible(first_state, sdfg) or not self.state_shape_fusible(second_state, sdfg):
             return False
 
         if not permissive:
