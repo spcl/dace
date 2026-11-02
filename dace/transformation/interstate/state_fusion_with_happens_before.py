@@ -1098,7 +1098,7 @@ class StateFusionExtended(StateFusion):
                     continue
                 if node in second_nodes:
                     for i in second_sources:
-                        if kind in ("seed", "read_before", "war") and isinstance(i, nodes.AccessNode):
+                        if kind in ("seed", "read_before") and isinstance(i, nodes.AccessNode):
                             # A source AccessNode may merge into a first-state node upstream of the seed
                             # writer, closing a cycle (ludcmp ``w = y[i]; w(+)= ...``); its consumers never merge.
                             # A library node takes no ordering edge (it counts its inputs); it is ordered through ``i``.
@@ -1189,7 +1189,10 @@ class StateFusionExtended(StateFusion):
                 if took:
                     absorbed.setdefault(node.data, []).append(node)
                 elif second_state.out_degree(node) > 0:
-                    for m in absorbed.get(node.data, []):
+                    # An unmerged read of a container the second state rewrites orders that rewrite no more than a
+                    # merged one would: it stays behind the first state's writers, which the WAW check counted on
+                    writers = [c for c in candidates if node.data in second_writes and first_state.in_degree(c) > 0]
+                    for m in [*absorbed.get(node.data, []), *writers]:
                         if not nx.has_path(first_state._nx, node, m) and not nx.has_path(first_state._nx, m, node):
                             first_state.add_nedge(m, node, memlet.Memlet())
                 continue
