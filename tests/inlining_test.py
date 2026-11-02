@@ -1858,7 +1858,6 @@ def test_multistate_inline_early_return(shape: str, dead_successor: bool):
     inner.add_array("a", [10], dace.float64)
     if shape == "loop":
         # for i in range(3): if i >= N: return; a[0] += 1
-        inner.add_symbol("i", dace.int64)
         body = dace.sdfg.state.LoopRegion("loop", "i < 3", "i", "i = 0", "i = i + 1")
         inner.add_node(body, is_start_block=True)
         expected_increments = lambda n: min(max(n, 0), 3)

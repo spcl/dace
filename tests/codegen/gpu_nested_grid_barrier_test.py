@@ -64,7 +64,7 @@ def _kernel_with_consecutive_maps(nested: bool) -> dace.SDFG:
 def _check_barrier(nested: bool):
     sdfg = _kernel_with_consecutive_maps(nested)
     with dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"):
-        code = next(obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu")
+        code = next(obj.clean_code for obj in sdfg.generate_code() if obj.name == f"{sdfg.name}_cuda")
     assert "cooperative_groups::this_grid().sync();" in code
     # Only a cooperative launch keeps every block resident for the grid barrier
     assert re.search(r"(cuda|hip)LaunchCooperativeKernel\(", code)

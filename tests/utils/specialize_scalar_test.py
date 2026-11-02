@@ -52,6 +52,7 @@ def _get_sdfg_with_symbol_use_in_if():
         dtype=dace.float64,
         transient=False,
     )
+    sdfg.add_symbol("nlev", dace.int32)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg = dace.ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)

@@ -111,7 +111,6 @@ def make_inverted_loop_sdfg():
     nsdfg = dace.SDFG("nested_inverted_loop")
     nsdfg.using_explicit_control_flow = True
     nsdfg.add_symbol("M", dace.int64)
-    nsdfg.add_symbol("i", dace.int64)
     # The connector is the window the outer memlet selects
     nsdfg.add_array("a", [5, 2], dace.int64, strides=(M, 1))
 

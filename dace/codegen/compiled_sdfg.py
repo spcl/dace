@@ -131,11 +131,13 @@ class ReloadableDLL:
                 #  and then try to load that. We only do the copy if the new new name is
                 #  free. It seems that at least on LINUX there is some issue if we
                 #  overwrite a file that already exists.
+                #  An existing copy is skipped even when it is not loaded: it may hold an older build.
                 lib_filename = self._library_filename + f"_{counter}"
                 counter += 1
-                if pathlib.Path(lib_filename).exists():
+                while pathlib.Path(lib_filename).exists():
                     assert pathlib.Path(lib_filename).is_file()
-                    continue
+                    lib_filename = self._library_filename + f"_{counter}"
+                    counter += 1
 
                 # The file name is not taken, so make a copy. There might be a race condition
                 #  here in the presence of multiple processes.
@@ -245,6 +247,15 @@ class CompiledSDFG:
         # Present exactly when a GPU target emitted its init/exit pair, which is a sharper test than
         # the ``has_gpu_code`` heuristic below.
         self._gpu_last_error = self.get_exported_function("__dace_gpu_last_error", restype=ctypes.c_int)
+        # Avoid import loop
+        from dace.sdfg.symbol_repo import program_assumptions
+
+        # The orders proofs took from symbol scales, checked against the symbol values of every call
+        self._assumptions = program_assumptions(sdfg)
+        self._check_assumptions = (
+            lib.get_symbol(f"__dace_check_assumptions_{sdfg.name}", restype=ctypes.c_int) if self._assumptions else None
+        )
+        self._initarg_names: tuple[str, ...] = ()
 
         # Cache SDFG return values
         self._return_syms: dict[str, Any] = None
@@ -608,6 +619,10 @@ with open(r"{temp_path}", "wb") as f:
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
                 self._lib.load()
+            # Checked with the library loaded: a failed call unloads it
+            if self._check_assumptions is not None:
+                self._raise_on_broken_assumption(initargs)
+            if self._initialized is False:
                 self._initialize(initargs)
 
             with hooks.invoke_compiled_sdfg_call_hooks(self, callargs):
@@ -627,6 +642,24 @@ with open(r"{temp_path}", "wb") as f:
             self._lib.unload()
             self._initialized = False
             raise
+
+    def _raise_on_broken_assumption(self, initargs: Sequence[Any]) -> None:
+        """Raises if the symbol values break a declared assumption or an order a proof took from the symbol scales."""
+        broken = self._check_assumptions(*initargs)
+        if broken == 0:
+            return
+        relation = self._assumptions[broken - 1]
+        values = ", ".join(
+            f"{name}={getattr(value, 'value', value)}"
+            for name, value in zip(self._initarg_names, initargs)
+            if name in symbolic.relation_names(relation)
+        )
+        from dace.sdfg.symbol_repo import relation_text
+
+        raise ValueError(
+            f'"{self._sdfg.name}" was optimized assuming {relation_text(relation)} (declared, or SMALL symbols being '
+            f"much smaller than the others), which does not hold for {values}"
+        )
 
     def __del__(self):
         if self._initialized is True:
@@ -722,6 +755,7 @@ with open(r"{temp_path}", "wb") as f:
         )
         newargs = tuple(carg for carg, _aname in callparams)
         initargs = tuple(carg for carg, aname in callparams if aname in symbols)
+        self._initarg_names = tuple(aname for _carg, aname in callparams if aname in symbols)
 
         return (newargs, initargs)
 

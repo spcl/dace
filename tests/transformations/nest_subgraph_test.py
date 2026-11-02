@@ -494,10 +494,10 @@ def test_inlining_the_nest_back_keeps_the_declared_type():
 
 def test_inlining_keeps_the_declared_type_of_a_loop_variable():
     inner = dace.SDFG("inner_loop")
-    inner.add_symbol("i", dace.int32)
     inner.add_array("A", [10], dace.float64)
     loop = LoopRegion("fill", "i < 10", "i", "i = 0", "i = i + 1")
     inner.add_node(loop, is_start_block=True)
+    inner.symbol_repo.add("i", dace.int32, at=loop)
     body = loop.add_state("body", is_start_block=True)
     tasklet = body.add_tasklet("store", {}, {"out"}, "out = i")
     body.add_edge(tasklet, "out", body.add_write("A"), None, dace.Memlet("A[i]"))
@@ -509,7 +509,7 @@ def test_inlining_keeps_the_declared_type_of_a_loop_variable():
 
     InlineMultistateSDFG.apply_to(sdfg, nested_sdfg=nested)
 
-    assert sdfg.symbols["i"] == dace.int32
+    assert sdfg.symbol_repo.scope(loop).types["i"] == dace.int32
     code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
     assert "int64_t i;" not in code
     data = np.zeros(10)

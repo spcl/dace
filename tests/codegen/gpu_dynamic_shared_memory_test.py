@@ -306,9 +306,9 @@ def test_symbolic_size_is_placed_dynamically():
 def test_size_known_only_in_kernel_raises():
     sdfg = dace.SDFG("kernel_local_size")
     sdfg.add_array("A", [N], dace.float64, storage=S.GPU_Global)
-    sdfg.add_array("s", ["i + 1"], dace.float64, storage=S.GPU_Shared, transient=True)
     state = sdfg.add_state()
     entry, exit = state.add_map("kernel", {"i": "0:N"}, schedule=dace.ScheduleType.GPU_Device)
+    sdfg.add_array("s", ["i + 1"], dace.float64, storage=S.GPU_Shared, transient=True)
     store = state.add_tasklet("store", {}, {"w"}, "w = 1")
     load = state.add_tasklet("load", {"v"}, {"w"}, "w = v")
     s = state.add_access("s")

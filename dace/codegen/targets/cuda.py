@@ -2668,7 +2668,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
         # Generate all index arguments for kernel grid
         krange = subsets.Range(kernel_map.range[::-1])
         kdims = krange.size()
-        dsym = [symbolic.symbol("__DAPB%d" % i, nonnegative=True, integer=True) for i in range(len(krange))]
+        dsym = [symbolic.symbol("__DAPB%d" % i) for i in range(len(krange))]
         bidx = krange.coord_at(dsym)
 
         # handle dynamic map inputs
@@ -2765,7 +2765,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                 condition = ""
 
                 # Optimize conditions if they are always true
-                if i >= 3 or (dsym[i] >= minel) != True:
+                if i >= 3 or not _index_starts_at(dsym[i], minel):
                     condition += f"{v} >= {_topy(minel)}"
                 # The grid of the distributed dimension is padded to a multiple of the number of
                 # chiplets, so its trailing blocks always have to be masked out
@@ -3057,10 +3057,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
 
                 device_map_range = subsets.Range(scope_map.range[::-1])
                 device_map_dims = device_map_range.size()
-                dsym = [
-                    symbolic.symbol("__DAPB%d" % i, nonnegative=True, integer=True)
-                    for i in range(len(device_map_range))
-                ]
+                dsym = [symbolic.symbol("__DAPB%d" % i) for i in range(len(device_map_range))]
                 bidx = device_map_range.coord_at(dsym)
 
                 # handle dynamic map inputs
@@ -3134,7 +3131,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                     condition = ""
 
                     # Optimize conditions if they are always true
-                    if i >= 3 or (dsym[i] >= minel) != True:
+                    if i >= 3 or not _index_starts_at(dsym[i], minel):
                         condition += f"{v} >= {_topy(minel)}"
                     if (
                         i >= 3
@@ -3187,7 +3184,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                 brange = subsets.Range(scope_map.range[::-1])
                 kdims = brange.size()
                 dsym = [
-                    symbolic.symbol("__DAPT%d" % i, nonnegative=True, integer=True) - off
+                    symbolic.symbol("__DAPT%d" % i) - off
                     for i, off in zip(range(len(brange)), extra_gdim_offsets[scope_map])
                 ]
                 gdims = len(self._kernel_map.params)
@@ -3224,7 +3221,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                     #############################################
 
                     # Block range start
-                    if i >= 3 or (dsym[i] >= minel) != True:
+                    if i >= 3 or not _index_starts_at(dsym[i], minel):
                         condition += f"{v} >= {_topy(minel)}"
 
                     # Special case: block size is exactly the range of the map (0:b)
@@ -3261,7 +3258,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
 
             brange = subsets.Range(scope_map.range[::-1])
             kdims = brange.size()
-            dsym = [symbolic.symbol("__DAPT%d" % i, nonnegative=True, integer=True) for i in range(len(brange))]
+            dsym = [symbolic.symbol("__DAPT%d" % i) for i in range(len(brange))]
             dsym_end = [d + (bs * rng[2]) - 1 for d, bs, rng in zip(dsym, self._block_dims, brange)]
             tidx = brange.coord_at(dsym)
 
@@ -3306,7 +3303,7 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
                 #############################################
 
                 # Block range start
-                if i >= 3 or (dsym[i] >= minel) != True:
+                if i >= 3 or not _index_starts_at(dsym[i], minel):
                     condition += f"{v} >= {_topy(minel)}"
 
                 # Special case: block size is exactly the range of the map (0:b)
@@ -3627,6 +3624,14 @@ gpuError_t __err = {backend}{launch}((void*){kname}, dim3({gdims}), dim3({bdims}
 ########################################################################
 ########################################################################
 # Helper functions and classes
+
+
+def _index_starts_at(index: sympy.Expr, begin: sympy.Expr) -> bool:
+    """Whether a grid index (of ``__DAPB*`` block and ``__DAPT*`` thread index symbols, which count up from zero)
+    provably never falls below ``begin``."""
+    names = frozenset(s.name for s in index.free_symbols if s.name.startswith(("__DAPB", "__DAPT")))
+    from_zero = [symbolic.Relation(symbolic.RelationKind.LE, sympy.Integer(0), symbolic.symbol(name)) for name in names]
+    return symbolic.provably_le(begin, index, symbolic.Facts(from_zero, names))
 
 
 def _topy(arr):

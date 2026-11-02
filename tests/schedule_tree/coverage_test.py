@@ -64,7 +64,6 @@ def _loop_sdfg(loop: LoopRegion, increment: bool = False) -> tuple[dace.SDFG, da
     :return: The SDFG and the body state of the loop.
     """
     sdfg = dace.SDFG("loop")
-    sdfg.add_symbol("i", dace.int64)
     sdfg.add_array("A", [10], dace.float64)
     init = sdfg.add_state("init", is_start_block=True)
     sdfg.add_node(loop)
