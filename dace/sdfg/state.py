@@ -1990,6 +1990,81 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         """
         return sdfg_scope_symbols(self.sdfg)
 
+    def _apply_edges_leading_to(
+        self, graph: "ControlFlowRegion", block: "ControlFlowBlock", symbols: dict[str, dtypes.typeclass]
+    ) -> list[dict[str, dtypes.typeclass]]:
+        """Adds to ``symbols`` what the inter-state edges leading to ``block`` define, walking them all.
+
+        :return: The updates, in the order they were applied.
+        """
+        sdfg = self.sdfg
+        updates: list[dict[str, dtypes.typeclass]] = []
+        try:
+            graph.start_block
+            edges = graph.edge_bfs(block, reverse=True)
+        except ValueError:
+            # Cannot determine starting block (possibly some inter-state edges do not yet exist)
+            edges = graph.edges()
+        edges = list(edges)
+        for e in edges:
+            update = e.data.new_symbols(sdfg, symbols)
+            symbols.update(update)
+            updates.append(update)
+        # The walk runs from the block backwards, so an assignment that reads a symbol an earlier edge
+        # defines (``cjind = start`` after ``start = A[i]``) was inferred before that symbol had a type.
+        # Infer the ones left untyped again, in program order, now that every edge has been seen.
+        if any(v is None for update in updates for v in update.values()):
+            for e in reversed(edges):
+                retyped = {
+                    k: v
+                    for k, v in e.data.new_symbols(sdfg, symbols).items()
+                    if v is not None and symbols.get(k) is None
+                }
+                symbols.update(retyped)
+                updates.append(retyped)
+        return updates
+
+    def _apply_shared_walk(
+        self,
+        graph: "ControlFlowRegion",
+        block: "ControlFlowBlock",
+        symbols: dict[str, dtypes.typeclass],
+        region_updates: dict,
+    ) -> None:
+        """Adds to ``symbols`` what the inter-state edges leading to ``block`` define, sharing the walk with the blocks
+        before it: a block behind one edge extends what its predecessor resolved, so a region of ``B`` blocks visited in
+        order costs ``B`` edges, not ``B ** 2``. As in the full walk, the assignment farthest from ``block`` wins.
+
+        :param region_updates: See :meth:`symbols_defined_at_state`. A predecessor with one successor hands its entry
+                               over, which keeps one table per region instead of one per block.
+        """
+        if isinstance(graph, ConditionalBlock):  # Its branches are alternatives, with no edges between them
+            return
+        chain, known, seen = [], block, {block}
+        while (graph, known) not in region_updates:
+            edges = graph.in_edges(known)
+            if len(edges) != 1 or edges[0].src in seen:
+                break
+            chain.append(edges[0])
+            known = edges[0].src
+            seen.add(known)
+        if (graph, known) in region_updates:
+            resolved = {k: v for update in region_updates[(graph, known)] for k, v in update.items()}
+            if graph.out_degree(known) == 1 and known is not block:
+                del region_updates[(graph, known)]
+        elif graph.in_degree(known) == 0:
+            resolved = {}
+        else:
+            resolved = {}
+            for update in self._apply_edges_leading_to(graph, known, symbols):
+                resolved.update(update)
+        symbols.update(resolved)
+        for edge in reversed(chain):
+            for name, dtype in edge.data.new_symbols(self.sdfg, symbols).items():
+                if resolved.get(name) is None:
+                    resolved[name] = symbols[name] = dtype
+        region_updates[(graph, block)] = [resolved]
+
     def symbols_defined_at_state(
         self,
         *,
@@ -2040,37 +2115,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                         symbols.update(update)
 
             # The symbols of the inter-state edges leading to the block only depend on the block
-            cached = region_updates.get((graph, block)) if region_updates is not None else None
-            if cached is not None:
-                for update in cached:
-                    symbols.update(update)
-                continue
-            updates: list[dict[str, dtypes.typeclass]] = []
-            try:
-                graph.start_block
-                edges = graph.edge_bfs(block, reverse=True)
-            except ValueError:
-                # Cannot determine starting block (possibly some inter-state edges do not yet exist)
-                edges = graph.edges()
-            edges = list(edges)
-            for e in edges:
-                update = e.data.new_symbols(sdfg, symbols)
-                symbols.update(update)
-                updates.append(update)
-            # The walk runs from the block backwards, so an assignment that reads a symbol an earlier edge
-            # defines (``cjind = start`` after ``start = A[i]``) was inferred before that symbol had a type.
-            # Infer the ones left untyped again, in program order, now that every edge has been seen.
-            if any(v is None for update in updates for v in update.values()):
-                for e in reversed(edges):
-                    retyped = {
-                        k: v
-                        for k, v in e.data.new_symbols(sdfg, symbols).items()
-                        if v is not None and symbols.get(k) is None
-                    }
-                    symbols.update(retyped)
-                    updates.append(retyped)
-            if region_updates is not None and block is not self:
-                region_updates[(graph, block)] = updates
+            if region_updates is None:
+                self._apply_edges_leading_to(graph, block, symbols)
+            else:
+                self._apply_shared_walk(graph, block, symbols, region_updates)
 
         return symbols
 
