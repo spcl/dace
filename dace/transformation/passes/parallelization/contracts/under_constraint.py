@@ -182,7 +182,9 @@ class ParallelizeUnderConstraint(ppl.Pass):
         """The arrays :meth:`symbolic_stride_condition` proves injective: the only ones whose conflicts it answers for."""
         return set(self.stride_coefficients(loop, sdfg, facts) or ())
 
-    def stride_coefficients(self, loop: LoopRegion, sdfg: SDFG, facts: ScopeFacts | None = None) -> dict[str, str] | None:
+    def stride_coefficients(
+        self, loop: LoopRegion, sdfg: SDFG, facts: ScopeFacts | None = None
+    ) -> dict[str, str] | None:
         """Array -> symbolic coefficient of every injective symbolic-stride write of ``loop``, keyed by SPELLING: two
         writes can carry the same coefficient as two symbol instances. ``None`` when a write fails closed."""
         from dace.transformation.interstate.loop_to_map import loop_varying_symbols  # avoid an import cycle
