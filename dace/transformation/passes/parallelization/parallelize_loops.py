@@ -10,6 +10,7 @@ from typing import Any
 from dace import properties, subsets, symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
+from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlets_state
 from dace.sdfg.sdfg import forget_facts, memoize_facts
@@ -196,6 +197,13 @@ def loop_order_key(loop: LoopRegion) -> tuple[int, int]:
         depth += 1
         graph = graph.parent_graph
     return (sdfg_level, depth)
+
+
+def only_checks(loop: LoopRegion) -> bool:
+    """Whether ``loop`` does nothing but evaluate abort guards: nothing to gain from a map, and the checks of a proof
+    stay in front of what they guard."""
+    code = [node for state in loop.states() for node in state.nodes() if isinstance(node, nodes.CodeNode)]
+    return bool(code) and all(tutil.is_abort_guard(node) for node in code)
 
 
 @properties.make_properties
@@ -526,7 +534,7 @@ class ParallelizeLoops(ppl.Pass):
 
         :param xform: the probe that accepted ``loop``, with the shared analysis it was given.
         """
-        return self.hold_sibling_chains and held_sibling(loop, self.permissive, xform)
+        return only_checks(loop) or (self.hold_sibling_chains and held_sibling(loop, self.permissive, xform))
 
     def finish(self, sdfg: SDFG) -> None:
         """The post-lift steps: drop stale nested-SDFG symbol mappings, then propagate memlets if asked."""
