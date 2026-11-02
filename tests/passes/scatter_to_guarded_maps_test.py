@@ -275,10 +275,10 @@ def test_the_contract_probes_read_each_sdfgs_facts_once(monkeypatch):
     probing = [False]
     original_walk, original_probe = dace.sdfg.sdfg.interstate_bound_names, LoopLift.can_lift
 
-    def walk(sd):
+    def walk(sd, *args):
         if probing[0]:
             walked.append(sd)
-        return original_walk(sd)
+        return original_walk(sd, *args)
 
     def probe(self, graph, sd, permissive=False):
         probing[0] = True
@@ -864,6 +864,50 @@ def test_a_fancy_index_store_is_guarded():
         assert np.allclose(out, 2.0 * expected)
 
 
+def test_index_written_after_the_scatter_is_checked_before_it():
+    n = 5
+
+    @dace.program
+    def index_rewritten_later(z: dace.float64[n], x: dace.float64[n], p: dace.int64[n], q: dace.int64[n]):
+        for i in range(n):
+            z[p[i]] = x[i]
+        p[:] = q
+
+    sdfg = index_rewritten_later.to_sdfg(simplify=False)
+    ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {})
+    assert not any(name.startswith("__scatter_guard_check") for name in sdfg.free_symbols)
+
+
+def test_scatter_writing_its_own_index_stays_a_loop():
+    n = 5
+
+    @dace.program
+    def own_index(z: dace.float64[n], x: dace.float64[n], p: dace.int64[n]):
+        for i in range(n):
+            z[p[i]] = x[i]
+            p[i] = 0
+
+    sdfg = own_index.to_sdfg(simplify=False)
+    assert not ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {})
+
+
+def test_a_span_between_loaded_bounds_is_not_a_scatter():
+    n = 5
+
+    @dace.program
+    def spans(x: dace.float64[n], z: dace.float64[n], st: dace.int64[3]):
+        for g in range(2):
+            for j in range(st[g], st[g + 1]):
+                x[j] = z[j] + g
+
+    sdfg = spans.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="cpu")
+    assert not any(
+        isinstance(node, nodes.MapEntry) and "guard" in (node.specialization_hint or "")
+        for node, _ in sdfg.all_nodes_recursive()
+    )
+
+
 if __name__ == "__main__":
     test_detect_finds_single_scatter()
     test_detect_finds_each_distinct_idx_array()
@@ -923,5 +967,3 @@ def test_a_transient_scattered_through_an_index_of_an_index_is_guarded_on_both()
         out = np.zeros(n)
         sdfg(c=c, nl=nl.astype(np.int64), igk=igk.astype(np.int64), out=out, N=n)
         assert np.allclose(out, 2.0 * expected)
-    test_one_index_over_fixed_slabs_is_guarded_on_the_local_index_where_it_is_used()
-    test_a_fancy_index_store_is_guarded()

@@ -27,6 +27,7 @@ from dace.sdfg.state import (
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
 from dace.transformation.passes import FuseStates
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 
 
@@ -40,7 +41,7 @@ class DivEps(ast.NodeTransformer):
     def __init__(self, eps_node, tasklet_code_str, mode="add"):
         """
         mode: 'add' -> use (x + eps)
-              'max' -> use max(x, eps)
+              'max' -> use max(x, eps) in log, as 'add' in a division
         """
         self.eps_node = eps_node
         self.mode = mode
@@ -49,22 +50,12 @@ class DivEps(ast.NodeTransformer):
     def visit_BinOp(self, node):
         self.generic_visit(node)
         if isinstance(node.op, ast.Div):
-            if self.mode == "add":
-                print(
-                    f"Changing {self.tasklet_code_str} to have +{ast.unparse(self.eps_node)} "
-                    f"to avoid NaN/inf floating-point exception in division!"
-                )
-                node.right = ast.BinOp(left=node.right, op=ast.Add(), right=self.eps_node)
-            elif self.mode == "max":
-                print(
-                    f"Changing {self.tasklet_code_str} to have max(..., {ast.unparse(self.eps_node)}) "
-                    f"to avoid NaN/inf floating-point exception in division!"
-                )
-                node.right = ast.Call(
-                    func=ast.Name(id="max", ctx=ast.Load()),
-                    args=[node.right, self.eps_node],
-                    keywords=[],
-                )
+            # Both modes: a divisor clamped by ``max`` would lose its sign in the arm that does run.
+            print(
+                f"Changing {self.tasklet_code_str} to have +{ast.unparse(self.eps_node)} "
+                f"to avoid NaN/inf floating-point exception in division!"
+            )
+            node.right = ast.BinOp(left=node.right, op=ast.Add(), right=self.eps_node)
         return node
 
     def visit_Call(self, node):
@@ -197,17 +188,14 @@ class BranchElimination(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.conditional)]
 
-    def _check_reuse(self, sdfg: dace.SDFG, orig_state: dace.SDFGState, diff_set: set[str]):
-        for graph in sdfg.all_control_flow_regions():
-            if (not isinstance(graph, dace.SDFGState)) and orig_state in graph.states():
-                continue
-            if graph == orig_state:
-                continue
-            read_set, write_set = graph.read_and_write_sets()
-            if any(k in read_set or k in write_set for k in diff_set):
-                return True
-
-        return False
+    def _check_reuse(self, sdfg: dace.SDFG, body: ControlFlowRegion, state: dace.SDFGState, diff_set: set[str]):
+        """Whether a write only this arm makes is seen by anything but the arm's own later reads: the fused state
+        makes it unconditional."""
+        if any(not sdfg.arrays[k].transient for k in diff_set):
+            return True
+        if any(n.data in diff_set and state.in_degree(n) == 0 for n in state.data_nodes()):
+            return True
+        return loop_analysis.read_outside(sdfg, body, set(), diff_set)
 
     def _symbol_appears_as_read(self, cfg: ControlFlowRegion, symbol_name: str) -> bool:
         # Symbol can be read on an interstate edge, appear in a conditional block's conditions, loop regions condition / update
@@ -444,6 +432,11 @@ class BranchElimination(transformation.MultiStateTransformation):
 
         assert set(arr_inputs) | symbol_inputs == free_vars
 
+        # The combine tasklet blends with a 0/1 factor; only a truth value is one already.
+        top = ast.parse(cleaned.strip(), mode="eval").body
+        if not isinstance(top, (ast.Compare, ast.BoolOp)) and not isinstance(getattr(top, "op", None), ast.Not):
+            cleaned = f"({cleaned}) != 0"
+
         tasklet = state.add_tasklet(
             name=f"condition_symbol_to_scalar_{lhs}_to_{float_lhs_name}_scalar",
             inputs=OrderedSet(f"_in_{arr_input}_{i}" for i, arr_input in enumerate(arr_inputs)),
@@ -488,16 +481,15 @@ class BranchElimination(transformation.MultiStateTransformation):
                 last_access, None, tasklet, "_in_" + arr_name + f"_{i}", dace.memlet.Memlet(f"{arr_name}{new_subset}")
             )
 
-            # Convert boolean to float type
-            arr = state.sdfg.arrays[arr_name]
-            if arr.dtype == dace.bool:
-                arr.dtype = dace.float64
-
         fan = state.add_access(float_lhs_name)
         fan.setzero = True
         state.add_edge(tasklet, f"_out_{float_lhs_name}", fan, None, dace.memlet.Memlet(float_lhs_name))
 
         return float_lhs_name
+
+    def _condition_reads(self, data: set[str]) -> bool:
+        cond = next(c for c, _ in self.conditional.branches if c is not None).as_string
+        return not data.isdisjoint(dace.symbolic.free_symbols_and_functions(cond) | dace.symbolic.arrays(cond))
 
     def _is_disjoint_subset(self, state0: SDFGState, state1: SDFGState) -> bool:
         state0_writes: set[str] = set()
@@ -529,7 +521,8 @@ class BranchElimination(transformation.MultiStateTransformation):
                     if e.data.data is None:
                         continue
                     write_range = as_range(e.data.subset)
-                    assert write_range.num_elements_exact() == 1
+                    if write_range.num_elements_exact() != 1:
+                        return False
                     if e.data.data not in state_write_subsets:
                         state_write_subsets[e.data.data] = set()
                     state_write_subsets[e.data.data].add(write_range)
@@ -947,6 +940,8 @@ class BranchElimination(transformation.MultiStateTransformation):
                     for e in state_write_edges:
                         if e.data.data is None:
                             continue
+                        if e.data.subset.num_elements_exact() != 1 or state.in_degree(e.dst) != 1:
+                            return False
                         if e.data.data not in state_write_subsets:
                             state_write_subsets[e.data.data] = set()
                         state_write_subsets[e.data.data].add(e.data.subset)
@@ -986,12 +981,16 @@ class BranchElimination(transformation.MultiStateTransformation):
                         )
                         return False
 
+            # The split evaluates the condition again after the first arm ran.
+            if self._is_disjoint_subset(state0, state1) and self._condition_reads(write_sets0 | write_sets1):
+                return False
+
             # If diff states only have transient scalars or arrays it is probably ok (permissive)
             if diff_state0 or diff_state1:
-                if self._check_reuse(sdfg, state0, diff_state0):
+                if self._check_reuse(sdfg, body0, state0, diff_state0):
                     print(f"[can_be_applied] Branch 0 writes to non-reusable data: {diff_state0}")
                     return False
-                if self._check_reuse(sdfg, state1, diff_state1):
+                if self._check_reuse(sdfg, body1, state1, diff_state1):
                     print(f"[can_be_applied] Branch 1 writes to non-reusable data: {diff_state1}")
                     return False
 
@@ -1056,10 +1055,12 @@ class BranchElimination(transformation.MultiStateTransformation):
                     for e in state_write_edges:
                         if e.data.data is None:
                             continue
-                        if e.data.subset.num_elements_exact() != 1:
+                        # One write per node: the combine tasklet stands for one element.
+                        if e.data.subset.num_elements_exact() != 1 or state.in_degree(e.dst) != 1:
                             print(
                                 f"[can_be_applied] All write edges need to have exactly one-element write '{write}' (edge {e} problematic)."
                             )
+                            return False
 
                     # has_reused_ignored_data, resued = self.ignored_accesses_are_reused({state0})
                     # It is ok to have reused data for this case
@@ -1094,7 +1095,9 @@ class BranchElimination(transformation.MultiStateTransformation):
             return None
         if len(t.in_connectors) > 0:
             return None
-        return t.code.as_string.split("=")[-1].strip(), t
+        rhs = t.code.as_string.split("=", 1)[1].strip()
+        # A truth value folds to no number: ``pystr_to_symbolic`` keeps it relational.
+        return None if isinstance(ast.parse(rhs, mode="eval").body, (ast.Compare, ast.BoolOp)) else (rhs, t)
 
     def try_simplify_combine_tasklet(self, state: SDFGState, node: dace.nodes.Tasklet) -> set[str]:
         if node.language != dace.dtypes.Language.Python:
@@ -1231,24 +1234,22 @@ class BranchElimination(transformation.MultiStateTransformation):
         free_syms = {str(s).strip() for s in cond_code_symexpr.free_symbols if str(s) in graph.sdfg.symbols}
         # print("free_syms:", free_syms)
         sym_val_map = dict()
-        nodes_to_check: set[ControlFlowBlock] = {self.conditional}
 
-        # Do reverse BFS from the sink node to get all possible interstate assignments
-        while nodes_to_check:
-            node_to_check = nodes_to_check.pop()
-            ies = set(graph.in_edges(node_to_check))
-            for ie in ies:
-                for k, v in ie.data.assignments.items():
-                    if k in free_syms and k not in sym_val_map:
-                        # in case if Eq((x + 1 > b), 1) sympy will have a problem
-                        expr = pystr_to_symbolic(v, simplify=False)
-                        # if isinstance(expr, Eq):
+        # Walk back the single path into the conditional: past a join, or a block that can assign, no value is known.
+        # A value stands in for its symbol only if nothing it reads changed between the assignment and here.
+        changed: set[str] = set()
+        node: ControlFlowBlock = self.conditional
+        while graph.in_degree(node) == 1:
+            ie = graph.in_edges(node)[0]
+            for k, v in reversed(ie.data.assignments.items()):
+                if k in free_syms and k not in sym_val_map:
+                    if changed.isdisjoint(dace.symbolic.free_symbols_and_functions(v)):
                         sym_val_map[k] = v
-                        #    symbolic_sym_val_map[k] = expr
-                        # else: if not an Equality expression, subs / simplify will cause issue
-                        # As relationals can't be integers in Sympy system
-                        # But DaCe uses 1 == True, 0 == False
-            nodes_to_check = nodes_to_check.union({ie.src for ie in ies})
+                changed.add(k)
+            node = ie.src
+            if not isinstance(node, SDFGState):
+                break
+            changed |= node.read_and_write_sets()[1]
 
         # The symbol can in free symbols
         assigned_syms = set(sym_val_map)
@@ -1572,6 +1573,11 @@ class BranchElimination(transformation.MultiStateTransformation):
             return None, None
 
         if len(self.conditional.branches) == 2:
+            writes = {
+                w for _, body in self.conditional.branches for st in body.states() for w in st.read_and_write_sets()[1]
+            }
+            if self._condition_reads(writes):
+                return None, None
             return self._split_branches(parent_graph=graph, if_block=self.conditional)
 
         return None, None
@@ -1954,7 +1960,16 @@ class BranchElimination(transformation.MultiStateTransformation):
                         free_syms = free_syms.union(self.get_free_syms_outside_calls(expr, known_symbols))
             nodes_to_check = nodes_to_check.union({ie.src for ie in ies})
 
-        return all_params.intersection(free_syms) != set()
+        # A guard over a symbol an arm indexes with protects that access, as one over an iterator does.
+        indices = {
+            str(sym)
+            for _, body in self.conditional.branches
+            for state in body.states()
+            for e in state.edges()
+            if e.data.subset is not None
+            for sym in e.data.subset.free_symbols
+        }
+        return not free_syms.isdisjoint(all_params | indices)
 
     _index = 0
 

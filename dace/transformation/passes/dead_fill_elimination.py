@@ -57,7 +57,9 @@ from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg import nodes
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
+    BreakBlock,
     ConditionalBlock,
+    ContinueBlock,
     ControlFlowBlock,
     ControlFlowRegion,
     LoopRegion,
@@ -373,7 +375,11 @@ def overwritten_after(state: SDFGState, name: str, desc: data.Array) -> bool:
                 return overwritten_by(following, name, desc, {})
             block, following = following, unconditional_successor(graph, following, name)
         # The chain ran out untouched: at the end of a plain region or a branch, control passes on after it.
-        if graph.out_degree(block) != 0 or isinstance(graph, (LoopRegion, SDFG)):
+        if (
+            graph.out_degree(block) != 0
+            or isinstance(graph, (LoopRegion, SDFG))
+            or isinstance(block, (BreakBlock, ContinueBlock, ReturnBlock))
+        ):
             return False
         block = graph.parent_graph if isinstance(graph.parent_graph, ConditionalBlock) else graph
 
@@ -435,21 +441,27 @@ def tiles_every_iteration(loop: LoopRegion, name: str, desc: data.Data) -> bool:
                     continue
                 if loops is None or scopes[node] is not None or edge.data.wcr is not None:
                     return False
+                # A dynamic or nested write may store nothing.
+                if any(e.data.dynamic or isinstance(e.src, nodes.NestedSDFG) for e in state.memlet_tree(edge).leaves()):
+                    return False
                 subset = edge.data.get_dst_subset(edge, state)
                 if not isinstance(subset, Range) or len(subset.ranges) != len(desc.shape):
                     return False
                 partial = [
                     axis
-                    for axis, ((b, e, _), extent) in enumerate(zip(subset.ranges, desc.shape))
-                    if not (same(b, 0) and same(e, extent - 1))
+                    for axis, ((b, e, step), extent) in enumerate(zip(subset.ranges, desc.shape))
+                    if not (same(b, 0) and same(e, extent - 1) and same(step, 1))
                 ]
                 if len(partial) > 1:
                     return False
-                if not partial:
+                # A nested loop may not run: only the tiles, which shrink with its trips, cover anyway.
+                if not partial and not loops:
                     return True
+                if not partial:
+                    return False
                 (axis,) = partial
-                begin, end, _ = subset.ranges[axis]
-                swept = swept_interval(begin, end, loops)
+                begin, end, step = subset.ranges[axis]
+                swept = swept_interval(begin, end, loops) if same(step, 1) else None
                 if swept is None:
                     return False
                 intervals.setdefault(axis, []).append(swept)

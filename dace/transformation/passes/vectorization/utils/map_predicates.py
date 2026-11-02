@@ -6,9 +6,12 @@ loud-failure helper stays available. Removing them shifts silent corruption into
 """
 
 import ast
+import itertools
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
+
+import sympy
 
 import dace
 from dace import SDFGState, subsets, symbolic
@@ -285,6 +288,18 @@ def innermost_enclosing_map_label(sdfg: dace.SDFG) -> tuple[str, ...]:
             return (entry.map.label,)
         sdfg = state.sdfg
     return ()
+
+
+def clamped_to_one_iteration(lb, ub) -> bool:
+    """Whether a clamp in a map bound leaves at most one iteration (``Max(0, N - 2):N - 2``). The body of such a map
+    may be written for that iteration alone (``a[N - 3] += 1``), so it has no lanes."""
+    from dace.transformation.passes.lift_trivial_if import relaxed_bounds
+
+    lb, ub = sympy.sympify(lb), sympy.sympify(ub)
+    if not (lb.has(sympy.Max) or ub.has(sympy.Min)):
+        return False
+    widest = itertools.product(relaxed_bounds(lb, sympy.Max), relaxed_bounds(ub, sympy.Min))
+    return any((high - low).is_number and high - low <= 0 for low, high in widest)
 
 
 def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int | None = None) -> bool:
@@ -774,6 +789,8 @@ def is_vectorizable_map(
         K = tiled_param_count(state, map_entry, K)
         if K == 0:
             return False
+    if any(clamped_to_one_iteration(lb, ub) for lb, ub, _ in map_entry.map.range.ranges[-(K or 0) :]):
+        return False
     if not is_tile_eligible(state, map_entry, K):
         return False
     if map_body_has_library_node(state, map_entry):

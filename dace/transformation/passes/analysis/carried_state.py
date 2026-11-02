@@ -93,9 +93,9 @@ def proves_gf2_affine(loop: LoopRegion, step: StepSlice) -> int | None:
         return bits if proves_equal(actual, predicted) else None
 
 
-def gf2_state(loop: LoopRegion) -> Gf2State | None:
+def gf2_state(loop: LoopRegion, steps: list[StepSlice] | None = None) -> Gf2State | None:
     """The GF(2)-affine carried state of ``loop``, or ``None``."""
-    for step in step_slices(loop):
+    for step in step_slices(loop) if steps is None else steps:
         bits = proves_gf2_affine(loop, step)
         if bits is not None:
             return Gf2State(step, bits)

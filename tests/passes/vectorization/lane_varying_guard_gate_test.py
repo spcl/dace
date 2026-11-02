@@ -73,6 +73,18 @@ def test_invariant_flags_any_guard_over_a_widened_buffer_that_survives_lowering(
     assert violation is not None and "survived branch lowering" in violation, violation
 
 
+def test_invariant_flags_a_guard_that_reads_a_widened_buffer_through_a_symbol():
+    """``cond = rlmin > tmp``, ``if cond``: the C++ comparison of a double with a ``double[8]`` does not compile."""
+    sdfg = guarded_assign_sdfg(WIDTHS, assign=False)
+    sdfg.add_scalar("rlmin", dace.float64)
+    sdfg.add_symbol("cond", dace.bool_)
+    cond_block = next(n for n in sdfg.nodes() if isinstance(n, ConditionalBlock))
+    next(iter(sdfg.in_edges(cond_block))).data.assignments["cond"] = "rlmin > guard"
+    cond_block.branches[0][0].as_string = "cond"
+    violation = no_conditional_interstate_assign_on_widened_data(sdfg, WIDTHS)
+    assert violation is not None and "survived branch lowering" in violation, violation
+
+
 def test_invariant_accepts_a_scalar_guard():
     """The control: a guard that is NOT a lane buffer decides once for the tile, which is legal."""
     assert no_conditional_interstate_assign_on_widened_data(guarded_assign_sdfg((1,)), WIDTHS) is None
@@ -141,5 +153,6 @@ def _tile_nodes(sdfg: dace.SDFG, kind: str, into: str = None) -> list:
 if __name__ == "__main__":
     test_invariant_flags_a_guard_over_a_widened_buffer()
     test_invariant_flags_any_guard_over_a_widened_buffer_that_survives_lowering()
+    test_invariant_flags_a_guard_that_reads_a_widened_buffer_through_a_symbol()
     test_invariant_accepts_a_scalar_guard()
     test_azimint_naive_masked_counter_is_predicated_per_lane()

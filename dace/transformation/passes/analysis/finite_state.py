@@ -276,11 +276,11 @@ def step_slices(loop: LoopRegion) -> list[StepSlice]:
     return found
 
 
-def finite_state(loop: LoopRegion) -> FiniteState | None:
+def finite_state(loop: LoopRegion, steps: list[StepSlice] | None = None) -> FiniteState | None:
     """The finite carried state of ``loop``, or ``None`` when no carried symbol has a step and a table bound."""
     chain = straight_chain(loop)
     shapes = {name: tuple(desc.shape) for name, desc in loop.sdfg.arrays.items()}
-    for step in step_slices(loop):
+    for step in step_slices(loop) if steps is None else steps:
         with canon_stats.timed("z3", loop):
             bound = index_bound(loop, required(chain), step.symbol, shapes)
         if bound is not None:

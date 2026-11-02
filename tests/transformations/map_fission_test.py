@@ -1165,6 +1165,79 @@ def test_fission_keeps_copy_into_a_wider_array_valid():
     assert np.allclose(dqdt, expected)
 
 
+def fission_copy_between_widened_transients_sdfg(name: str, other_subset: str | None) -> dace.SDFG:
+    """A map over a nested SDFG whose three states are joined by two transients, ``t1`` and ``t2``.
+
+    The middle state holds a nested SDFG that copies ``t1`` into ``t2``: one memlet names ``t1`` in ``subset`` and
+    ``t2`` in ``other_subset``, or in no subset for the whole of ``t2``. Fission widens both transients, so both sides
+    of that copy need the map index.
+    """
+    N = dace.symbol("N")
+    copier = dace.SDFG("copier")
+    copier.add_array("t1", [2], dace.float64)
+    copier.add_array("t2", [2], dace.float64)
+    cstate = copier.add_state()
+    cstate.add_nedge(
+        cstate.add_read("t1"), cstate.add_write("t2"), dace.Memlet(data="t1", subset="0:2", other_subset=other_subset)
+    )
+
+    body = dace.SDFG("body")
+    body.add_array("a", [N], dace.float64)
+    body.add_array("b", [N], dace.float64)
+    body.add_array("t1", [2], dace.float64, transient=True)
+    body.add_array("t2", [2], dace.float64, transient=True)
+    body.add_symbol("i", dace.int64)
+
+    fill = body.add_state("fill_t1")
+    tasklet = fill.add_tasklet("fill", {"x"}, {"lo", "hi"}, "lo = x * 2.0\nhi = x * 3.0")
+    t1 = fill.add_write("t1")
+    fill.add_edge(fill.add_read("a"), None, tasklet, "x", dace.Memlet("a[i]"))
+    fill.add_edge(tasklet, "lo", t1, None, dace.Memlet("t1[0]"))
+    fill.add_edge(tasklet, "hi", t1, None, dace.Memlet("t1[1]"))
+
+    copy = body.add_state_after(fill, "copy_t1_t2")
+    node = copy.add_nested_sdfg(copier, {"t1"}, {"t2"})
+    copy.add_edge(copy.add_read("t1"), None, node, "t1", dace.Memlet("t1[0:2]"))
+    copy.add_edge(node, "t2", copy.add_write("t2"), None, dace.Memlet("t2[0:2]"))
+
+    use = body.add_state_after(copy, "use_t2")
+    tasklet = use.add_tasklet("sum", {"lo", "hi"}, {"y"}, "y = lo + hi")
+    t2 = use.add_read("t2")
+    use.add_edge(t2, None, tasklet, "lo", dace.Memlet("t2[0]"))
+    use.add_edge(t2, None, tasklet, "hi", dace.Memlet("t2[1]"))
+    use.add_edge(tasklet, "y", use.add_write("b"), None, dace.Memlet("b[i]"))
+
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("m", dict(i="0:N"))
+    node = state.add_nested_sdfg(body, {"a"}, {"b"}, {"i": "i", "N": "N"})
+    state.add_memlet_path(state.add_read("A"), entry, node, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(node, exit_, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("name, other_subset", [("copy_names_both_sides", "0:2"), ("copy_names_one_side", None)])
+def test_fission_widens_both_sides_of_a_copy_between_widened_transients(name: str, other_subset: str | None) -> None:
+    """NestForge#55: fission used to widen only the ``subset`` side of a copy whose other end is a widened container
+    as well, leaving memlets of unequal dimension, or a copy of every iteration's slot."""
+    sdfg = fission_copy_between_widened_transients_sdfg(name, other_subset)
+    sdfg.validate()
+    assert sdfg.apply_transformations(MapFission) == 1
+    sdfg.validate()
+
+    for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.NestedSDFG) and node.sdfg.name == "copier":
+            (edge,) = [e for state in node.sdfg.states() for e in state.edges()]
+            assert edge.data.subset.dims() == edge.data.other_subset.dims() == 2
+
+    A = np.array([1.0, 3.0, 7.0, 50.0])
+    B = np.zeros(4)
+    sdfg(A=A, B=B, N=4)
+    assert np.allclose(B, A * 5.0)
+
+
 _NC = dace.symbol("NC")
 
 
@@ -1493,3 +1566,5 @@ if __name__ == "__main__":
     test_fission_folds_a_reduction_whose_memlet_names_the_folded_transient()
     test_fission_declines_a_nested_body_with_a_dead_transient_output()
     test_fission_declines_a_reduction_the_body_writes_twice()
+    test_fission_widens_both_sides_of_a_copy_between_widened_transients("copy_names_both_sides", "0:2")
+    test_fission_widens_both_sides_of_a_copy_between_widened_transients("copy_names_one_side", None)

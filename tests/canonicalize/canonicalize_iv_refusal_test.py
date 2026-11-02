@@ -24,7 +24,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize import induction_variable_substitution as ivs
 from dace.transformation.passes.canonicalize.induction_variable_substitution import extract_tasklet_iv
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -163,6 +164,79 @@ def test_extract_tasklet_iv_separates_a_counter_from_a_reduction(data_dependent_
         if data_dependent_step
         else "a literal step must match the IV shape"
     )
+
+
+def counter_loop(name: str, body, init: str = "i = 0", cond: str = "i < 6") -> tuple[dace.SDFG, LoopRegion]:
+    """``k = 0, step = 1; for i: body(loop)``, with the array ``out`` to read them into."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("out", [6], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_symbol("step", dace.int64)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    loop = LoopRegion("loop", cond, "i", init, "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop)
+    sdfg.add_edge(entry, loop, dace.InterstateEdge(assignments={"k": "8", "step": "1"}))
+    body(loop)
+    return sdfg, loop
+
+
+def test_a_step_reassigned_in_a_body_branch_is_not_invariant():
+    def body(loop):
+        first = loop.add_state("first", is_start_block=True)
+        guard = ConditionalBlock("guard", sdfg=loop.sdfg)
+        loop.add_node(guard)
+        arm = ControlFlowRegion("arm", sdfg=loop.sdfg)
+        arm.add_edge(
+            arm.add_state("a", is_start_block=True), arm.add_state("b"), dace.InterstateEdge(assignments={"step": "5"})
+        )
+        guard.add_branch(CodeBlock("i == 3"), arm)
+        loop.add_edge(first, guard, dace.InterstateEdge())
+        loop.add_edge(guard, loop.add_state("last"), dace.InterstateEdge(assignments={"k": "k + step"}))
+
+    sdfg, _ = counter_loop("iv_step_in_branch", body)
+    assert ivs.InductionVariableSubstitution().apply_pass(sdfg, {}) is None
+
+
+def test_a_counter_the_loop_bound_reads_has_no_closed_form():
+    def body(loop):
+        loop.add_edge(
+            loop.add_state("a", is_start_block=True),
+            loop.add_state("b"),
+            dace.InterstateEdge(assignments={"k": "k - 1"}),
+        )
+
+    sdfg, _ = counter_loop("iv_bound_reads_counter", body, cond="i < k")
+    assert ivs.InductionVariableSubstitution().apply_pass(sdfg, {}) is None
+
+
+def test_an_empty_range_leaves_a_data_accumulator_alone():
+    N = dace.symbol("N", dace.int64)
+
+    @dace.program
+    def iv_empty_range(a: dace.float64[1]):
+        for i in range(3, N):
+            a[0] = a[0] + 1.5
+
+    a = np.ones(1)
+    canonicalize(iv_empty_range.to_sdfg(simplify=False))(a=a, N=1)
+    assert a[0] == 1.0
+
+
+def test_a_guard_reading_the_counter_keeps_the_increment_behind_it():
+    @dace.program
+    def iv_guard_reads_counter(a: dace.float64[8], out: dace.float64[16]):
+        k = 0
+        for i in range(4):
+            if k == 0:
+                k = k + 1
+                out[i] = a[k]
+            else:
+                k = k + 1
+                out[i + 8] = a[k]
+
+    out = np.zeros(16)
+    canonicalize(iv_guard_reads_counter.to_sdfg(simplify=False))(a=np.arange(8.0), out=out)
+    assert (out[0], out[8]) == (1.0, 0.0)
 
 
 if __name__ == "__main__":

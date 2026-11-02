@@ -156,7 +156,9 @@ def find_killed_store(loop: LoopRegion, body: list[SDFGState], stride: int) -> t
                 ambiguous.add(node.data)
             for edge in state.in_edges(node):
                 written = edge.data.get_dst_subset(edge, state)
-                if edge.data.wcr is not None or written is None:
+                # Another output of the tasklet still needs it, which the drop could not keep valid.
+                shared = isinstance(edge.src, nodes.Tasklet) and len(edge.src.out_connectors) > 1
+                if edge.data.wcr is not None or written is None or shared:
                     ambiguous.add(node.data)
                     continue
                 spot = constant_offset_on_axis(written, loop.loop_variable)
@@ -171,6 +173,10 @@ def find_killed_store(loop: LoopRegion, body: list[SDFGState], stride: int) -> t
         for dead_state, dead_edge, dead_axis, dead_off in found:
             for _, kill_edge, kill_axis, kill_off in found:
                 if kill_edge is dead_edge or kill_axis != dead_axis or kill_off >= dead_off:
+                    continue
+                # The other axes name one element only if they are the same.
+                dead_at, kill_at = dead_edge.data.subset.ranges, kill_edge.data.subset.ranges
+                if any(a != b for d, (a, b) in enumerate(zip(dead_at, kill_at)) if d != dead_axis):
                     continue
                 if (dead_off - kill_off) % stride != 0:
                     continue
@@ -357,8 +363,9 @@ class DeadCarriedStoreElimination(ppl.Pass):
             if stride is None or not symbolic.pystr_to_symbolic(stride).is_Integer:
                 continue
             stride = int(as_expr(symbolic.pystr_to_symbolic(stride)))
-            if stride < 1:
-                continue  # a descending loop kills FORWARD; out of scope until something needs it
+            # A descending loop kills FORWARD; the tail peel anchors on the loop end, an iterate only at stride one.
+            if stride != 1:
+                continue
             body = body_is_analyzable(loop)
             if body is None:
                 continue

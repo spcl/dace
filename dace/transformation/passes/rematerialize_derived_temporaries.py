@@ -348,6 +348,12 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                 return None
             if node in tasklets:
                 continue
+            # The clone runs under the consumer's parameters, which the code cannot be reread in.
+            entry = state.entry_node(node)
+            while entry is not None:
+                if set(entry.map.params) & set(node.code.get_free_symbols()):
+                    return None
+                entry = state.entry_node(entry)
             # Every other output of a cloned tasklet is mirrored into a private register inside the
             # consumer. One that leaves the producer's scope is a STORE, and repeating it in the clone
             # would add exactly the memory traffic this pass promises not to add.

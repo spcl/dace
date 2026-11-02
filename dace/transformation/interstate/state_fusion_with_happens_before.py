@@ -841,6 +841,12 @@ class StateFusionExtended(StateFusion):
                             return False
                         # Last writer (second) wins: the first writers go before the second's, past the match nodes
                         self.connections_to_make.append(("read_before", nodes_first, nodes_second))
+                        continue
+                    # That order runs through a merge ``fuse`` may not make; an overlap keeps its own edge
+                    if StateFusionExtended.memlets_intersect(
+                        first_state, nodes_first, False, second_state, nodes_second, False, facts
+                    ):
+                        self.connections_to_make.append(("waw", nodes_first, nodes_second))
                 # A second-state read of a first-state output merges with one first-state instance: it orders a
                 # first-state writer upstream of that instance before a second-state writer downstream of the read,
                 # and no other pair. Refuse when an unordered pair overlaps.
@@ -1192,7 +1198,20 @@ class StateFusionExtended(StateFusion):
                 if took:
                     absorbed.setdefault(node.data, []).append(node)
                 elif second_state.out_degree(node) > 0:
-                    for m in absorbed.get(node.data, []):
+                    # An unmerged read of a container the second state rewrites stays behind the first-state writers
+                    # that rewrite overlaps: the WAW check counted on the merge to order them
+                    rewrites = [
+                        n for n in second_state.data_nodes() if n.data == node.data and second_state.in_degree(n)
+                    ]
+                    writers = [
+                        c
+                        for c in candidates
+                        if first_state.in_degree(c) > 0
+                        and StateFusionExtended.memlets_intersect(
+                            first_state, [c], False, second_state, rewrites, False, facts
+                        )
+                    ]
+                    for m in [*absorbed.get(node.data, []), *writers]:
                         if not nx.has_path(first_state._nx, node, m) and not nx.has_path(first_state._nx, m, node):
                             first_state.add_nedge(m, node, memlet.Memlet())
                 continue

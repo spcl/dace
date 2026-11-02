@@ -92,9 +92,9 @@ static DACE_CONSTEXPR DACE_HDFI T ldexp(const T& x, int n) {
   return std::ldexp(x, n);
 }
 
-// Fortran EXPONENT(x), named ilogb so the bridge maps _FortranAExponent* to one name.
+// Fortran EXPONENT(x), one above C's ilogb, whose double overload would win over a template of that name.
 template <typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI int ilogb(const T& x) {
+static DACE_CONSTEXPR DACE_HDFI int ftn_exponent(const T& x) {
   int e = 0;
   std::frexp(x, &e);
   return e;

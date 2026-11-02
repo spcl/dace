@@ -95,6 +95,18 @@ def test_fortran_ordered_array_to_fortran_descriptor():
     assert np.allclose(out, A.sum(axis=1))
 
 
+@dace.program
+def scale_float32(A: dace.float32[20]):
+    A[:] = A * 2
+
+
+def test_float64_array_to_float32_argument_raises():
+    """The call hands the SDFG only the data pointer, so a float64 array is reinterpreted as float32
+    and the program computes on garbage."""
+    with pytest.raises(TypeError, match='float64 array argument "A" to a float32 array'):
+        scale_float32(np.random.rand(20))
+
+
 if __name__ == "__main__":
     test_view_argument()
     test_view_argument_override()
@@ -103,3 +115,4 @@ if __name__ == "__main__":
     test_fortran_ordered_array_to_c_descriptor_raises()
     test_c_ordered_array_to_fortran_descriptor_raises()
     test_fortran_ordered_array_to_fortran_descriptor()
+    test_float64_array_to_float32_argument_raises()

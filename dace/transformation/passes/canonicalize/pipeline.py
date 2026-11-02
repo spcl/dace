@@ -855,6 +855,7 @@ def recurrence_lifts(interchange_carry_with_map: bool, target: str, only: list |
         LoopToReduce(only=only),
         LoopToScan(interchange_carry_with_map=interchange_carry_with_map, target=target, only=only),
         LoopToStateScan(only=only),
+        ArgMaxLift(only=only),
         LoopToConditionalReduce(only=only),
         LiftLoopCarriedReduction(only=only),
     ]
@@ -1033,7 +1034,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     if lift_copy:
         s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
     if lift:
-        s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
+        s += [(label, PatternApplyOnceEverywhere([LiftEinsum(per_slice=target == "cpu")]))]
     # Fusion joined a slice update's map with the copy of its result, across the states the frontend gave them.
     s += [(label, EliminateCopyBack())]
     s += [
@@ -1135,6 +1136,9 @@ def disable_unit_validation(unit: ppl.Pass) -> None:
         unit.validate = False
     if isinstance(unit, ppl.Pipeline):
         for member in unit.passes:
+            disable_unit_validation(member)
+    if isinstance(unit, _ThenIfChanged):
+        for member in (*(pair[0] for pair in unit.first), *unit.then):
             disable_unit_validation(member)
 
 

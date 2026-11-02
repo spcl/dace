@@ -171,6 +171,9 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                     if isinstance(node, nodes.ExitNode) and state.entry_node(node) not in dead_nodes:
                         live_nodes.add(node)
                 dead_nodes = dtypes.deduplicate([n for n in dead_nodes if n not in live_nodes])
+                # A dead entry takes its exit along, whose order edges ``keep_order_through`` moves
+                dead_nodes += [state.exit_node(n) for n in dead_nodes if isinstance(n, nodes.EntryNode)]
+                dead_nodes = dtypes.deduplicate(dead_nodes)
 
                 if not dead_nodes:
                     break
@@ -360,8 +363,9 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
             if self.skip_library_nodes:
                 return False
             return not node.has_side_effects(sdfg)
-        elif isinstance(node, nodes.Tasklet):
-            # If a tasklet has any callbacks, mark as "live" due to potential side effects
+        elif isinstance(node, (nodes.Tasklet, nodes.NestedSDFG)):
+            # If a tasklet has any callbacks, mark as "live" due to potential side effects; a nested SDFG for what it
+            # holds (the abort guard of a lifted check loop writes nothing, so nothing else keeps it)
             return not node.has_side_effects(sdfg)
 
         elif isinstance(node, nodes.AccessNode):

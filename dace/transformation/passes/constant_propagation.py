@@ -525,6 +525,8 @@ class ConstantPropagation(ppl.Pass):
                 # Get predecessors
                 in_edges = cfg.in_edges(block)
                 assignments = {}
+                # A key some visited predecessor lacks keeps the value it came in with on that path
+                pairs = [(out_const_dict.get(e.src), e) for e in in_edges]
                 for edge in in_edges:
                     # If source was already visited, use its propagated constants
                     constants: dict[str, Any] = {}
@@ -545,6 +547,10 @@ class ConstantPropagation(ppl.Pass):
                         else:
                             assignments[aname] = aval
 
+                for k in assignments:
+                    if any(c is not None and k not in c and k not in e.data.assignments for c, e in pairs):
+                        assignments[k] = _UnknownValue
+
                 for edge in cfg.out_edges(block):
                     if not edge.data.assignments:
                         continue
@@ -564,8 +570,10 @@ class ConstantPropagation(ppl.Pass):
                     # overwritten there, cannot be assumed as constants for the loop itself.
                     assigned_in_loop = self._assigned_in_loop(block)
                     for k, v in assignments.items():
-                        if k in assigned_in_loop or _value_names(v, assigned_in_loop):
+                        if _value_names(v, assigned_in_loop):
                             assignments[k] = _UnknownValue
+                    # Unknown even without an incoming value: an assignment in the body reaches the next iteration
+                    assignments.update(dict.fromkeys(assigned_in_loop, _UnknownValue))
 
                 if block not in in_const_dict:
                     in_const_dict[block] = {}

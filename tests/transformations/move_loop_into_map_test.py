@@ -744,6 +744,30 @@ def test_the_cpu_interchange_gate_leaves_a_branching_body_alone():
     assert graph_digest(sdfg) == before
 
 
+def test_an_update_ahead_of_the_map_keeps_the_loop_outside():
+    sdfg = dace.SDFG("update_ahead_of_the_map")
+    sdfg.add_array("x", [4], dace.float64)
+    sdfg.add_array("y", [4], dace.float64)
+    loop = LoopRegion("outer", "t < 2", "t", "t = 0", "t = t + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    update = body.add_tasklet("update", {"a"}, {"b"}, "b = a + 1")
+    updated = body.add_access("x")
+    body.add_edge(body.add_read("x"), None, update, "a", dace.Memlet("x[0]"))
+    body.add_edge(update, "b", updated, None, dace.Memlet("x[0]"))
+    body.add_mapped_tasklet(
+        "reader",
+        {"i": "0:4"},
+        {"a": dace.Memlet("x[i]")},
+        "b = a",
+        {"b": dace.Memlet("y[i]")},
+        input_nodes={"x": updated},
+        external_edges=True,
+    )
+
+    assert sdfg.apply_transformations_repeated(MoveLoopIntoMap) == 0
+
+
 if __name__ == "__main__":
     test_forward_loops_semantic_eq()
     test_backward_loops_semantic_eq()
@@ -772,3 +796,4 @@ if __name__ == "__main__":
     test_cfg_body_leaves_the_single_map_interchange_byte_identical()
     test_the_cpu_interchange_gate_leaves_a_branching_body_alone()
     test_loop_bound_symbols_are_declared_in_the_nested_sdfg()
+    test_an_update_ahead_of_the_map_keeps_the_loop_outside()

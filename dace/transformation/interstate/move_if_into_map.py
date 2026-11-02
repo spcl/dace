@@ -50,12 +50,15 @@ def single_meaningful_state(region: ControlFlowRegion) -> SDFGState | None:
 
 
 def sibling_maps(state: SDFGState) -> list[MapEntry] | None:
-    """The top-level maps of ``state`` when everything else at the top level is an access node, else ``None``."""
+    """The top-level maps of ``state`` when everything else at the top level is an access node, else ``None``. A copy
+    between two access nodes is no map, and would run unguarded."""
     scope = state.scope_dict()
     top = [n for n in state.nodes() if scope[n] is None]
     entries = [n for n in top if isinstance(n, MapEntry)]
     exits = {state.exit_node(me) for me in entries}
     if not entries or any(not isinstance(n, AccessNode) for n in top if n not in exits and n not in entries):
+        return None
+    if any(isinstance(e.src, AccessNode) and isinstance(e.dst, AccessNode) for e in state.edges()):
         return None
     if any(all(isinstance(n, AccessNode) for n in state.all_nodes_between(me, state.exit_node(me))) for me in entries):
         return None
@@ -146,6 +149,9 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             if isinstance(node, NestedSDFG):
                 names |= node.sdfg.arrays.keys()
                 symbols |= node.sdfg.symbols.keys()
+                # The moved guard reads the parent's value; a body that rebinds the name reads another
+                if any(str(node.symbol_mapping.get(name, name)) != name for name in match.symbols):
+                    return False
         return not (match.reads | match.locals) & names and not match.assigned & symbols
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
@@ -248,6 +254,9 @@ def private_to_guard(match: GuardMatch) -> bool:
     body_reads, body_writes = match.branch_state.read_and_write_sets()
     outside_reads, outside_syms = outside_guard(match)
     if any(not enclosing.arrays[n].transient for n in match.locals):
+        return False
+    # ``declare_guard_names`` drops the parent's value of an assigned symbol, which the guard may read
+    if match.assigned & enclosing.parent_nsdfg_node.symbol_mapping.keys():
         return False
     if match.locals & (body_reads | body_writes | outside_reads) or match.reads & body_writes:
         return False

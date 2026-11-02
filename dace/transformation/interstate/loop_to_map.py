@@ -1799,25 +1799,28 @@ def symbols_assigned_before_use(
     """
     symbols_that_may_be_used: set[str] = {itervar}
     used_before_assignment: set[str] = set()
+    assigned: set[str] = set()
+    at_entry: dict[ControlFlowBlock, set[str]] = {}
     if blocks is None:
         blocks = cfg_analysis.blockorder_topological_sort(loop, recursive=True, ignore_nonstate_blocks=False)
     # Blocks are visited in order, so a symbol not yet assigned in this iteration comes from the previous one.
     for block, leaving in blocks_then_exits(list(blocks)):
         if not leaving:
-            # A conditional precedes its branches in the order, so a symbol every arm assigns is defined once
-            # they have run (the CloudSC nblks loop).
-            if isinstance(block, ConditionalBlock):
-                symbols_that_may_be_used |= exhaustively_assigned(block)
             # ``read_symbols()`` sees only interstate-edge reads; a read in the block's dataflow (``b[im]``) counts.
             try:
                 block_reads = own_reads(block, ctx)
             except Exception:
                 block_reads = set()
             used_before_assignment |= block_reads - symbols_that_may_be_used - closed
+            at_entry[block] = set(symbols_that_may_be_used)
             continue
+        # An assignment in a branch or a possibly zero-trip loop defines nothing past it; one in every arm does.
+        if isinstance(block, AbstractControlFlowRegion):
+            symbols_that_may_be_used = at_entry[block]
+            if isinstance(block, ConditionalBlock):
+                symbols_that_may_be_used |= exhaustively_assigned(block)
         for e in block.parent_graph.out_edges(block):
             used_before_assignment |= edge_read_symbols(e.data, ctx) - symbols_that_may_be_used - closed
-            assigned_symbols = set()
             for k, v in e.data.assignments.items():
                 if k in closed:
                     continue
@@ -1830,20 +1833,14 @@ def symbols_assigned_before_use(
                     if refusal is not None:
                         refusal.append((f"self-recurrent carried symbol '{k}' (assignment {k} = {v})", {k}))
                     return None
-                if k not in fsyms:
-                    assigned_symbols.add(k)
-            if assigned_symbols & used_before_assignment:
-                if refusal is not None:
-                    refusal.append(
-                        (
-                            "carried symbol dependency - "
-                            f"{assigned_symbols & used_before_assignment} read before being assigned",
-                            assigned_symbols & used_before_assignment,
-                        )
-                    )
-                return None
             symbols_that_may_be_used |= e.data.assignments.keys() - closed
-    return symbols_that_may_be_used
+            assigned |= e.data.assignments.keys() - closed
+    if assigned & used_before_assignment:
+        if refusal is not None:
+            carried = assigned & used_before_assignment
+            refusal.append((f"carried symbol dependency - {carried} read before being assigned", carried))
+        return None
+    return assigned | {itervar}
 
 
 def innermost_loop(block: ControlFlowBlock) -> LoopRegion | None:
@@ -2181,6 +2178,12 @@ class LoopLift:
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
+        # A symbol that varies inside an iteration is no offset: ``A[i + j]`` under a loop over ``j`` overlaps across ``i``
+        varying = {e for edge in self.loop.all_interstate_edges() for e in edge.data.assignments}
+        varying |= {r.loop_variable for r in self.loop.all_control_flow_regions() if isinstance(r, LoopRegion)}
+        varying.discard(itervar)
+        if varying:
+            b = sp.Wild("b", exclude=[itersym], properties=[lambda e: not varying & {str(s) for s in e.free_symbols}])
 
         for state in loop_states:
             for dn in state.data_nodes():
@@ -2341,6 +2344,10 @@ class LoopLift:
                         # edge, not a read, and its missing subset would be taken for a
                         # whole-array read.
                         if e.data is None or e.data.is_empty() or id(e) in rmw_reads:
+                            continue
+
+                        # Lowering a map scope leaves a copy of a container onto itself: it moves nothing.
+                        if isinstance(e.dst, nodes.AccessNode) and e.dst.data == data and e.data.other_subset is None:
                             continue
 
                         # Container read AND written: match only if the locations can't race.
@@ -2834,8 +2841,9 @@ class LoopLift:
         # Find NestedSDFG's / Loop's unique data
         rw_set = read_set | write_set
         # A constant array is declared in every nested SDFG it inherits ``constants_prop`` into: copied
-        # in, never a connector, never moved out of the parent (other blocks may still read it).
-        constant_set = {name for name in rw_set if name in sdfg.constants_prop}
+        # in, never a connector, never moved out of the parent (other blocks may still read it). One this SDFG receives
+        # through a connector is an argument here, and stays one.
+        constant_set = {name for name in rw_set if name in sdfg.constants_prop and sdfg.arrays[name].transient}
         unique_set = set()
         outside_reads: set[str] | None = None
         for name in rw_set - constant_set:

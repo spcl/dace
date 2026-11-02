@@ -2,6 +2,7 @@
 """Simplification pass that removes ``ConditionalBlock`` nodes whose condition is provably constant."""
 
 import ast
+import itertools
 import re
 from functools import lru_cache
 from typing import Any
@@ -122,6 +123,16 @@ def constant_truth(code: CodeBlock, sdfg: SDFG) -> bool | None:
     return None
 
 
+def relaxed_bounds(bound, clamp: type) -> list:
+    """``bound`` and the bounds past it that drop a ``clamp`` (``Min`` for an upper bound, ``Max`` for a lower one).
+
+    Dropping an argument of the clamp only widens the range, which holds wherever the clamp enters with a coefficient
+    of 1, the form an index-set split writes (``i < min(x, N)``).
+    """
+    clamps = [c for c in bound.atoms(clamp) if not (bound - c).has(c)]
+    return [bound, *(bound.subs(c, argument) for c in clamps for argument in c.args)]
+
+
 @transformation.explicit_cf_compatible
 class LiftTrivialIf(ppl.Pass):
     """Remove ``ConditionalBlock`` nodes whose condition is provably constant.
@@ -213,17 +224,10 @@ class LiftTrivialIf(ppl.Pass):
                 start = loop_analysis.get_init_assignment(graph)
                 end = loop_analysis.get_loop_end(graph)
                 step = loop_analysis.get_loop_stride(graph)
-                # ``is_positive`` is None for a symbolic step, whose sign nothing here knows. The body of an inverted
-                # loop runs once before its condition holds, and one that assigns its iterator or a bound leaves the
-                # range.
+                # The body of an inverted loop runs once before its condition holds.
                 if None not in (start, end, step) and not graph.inverted:
-                    assigned = {name for edge in graph.all_interstate_edges() for name in edge.data.assignments}
-                    named = {graph.loop_variable} | {str(free) for b in (start, end, step) for free in b.free_symbols}
-                    if not assigned & named:
-                        if step.is_positive:
-                            ranges[graph.loop_variable] = (start, end)
-                        elif step.is_negative:
-                            ranges[graph.loop_variable] = (end, start)
+                    if loop_analysis.range_holds(graph, (start, end, step), graph.sdfg):
+                        ranges[graph.loop_variable] = (start, end) if step.is_positive else (end, start)
             graph = graph.parent_graph
         return ranges
 
@@ -342,7 +346,13 @@ class LiftTrivialIf(ppl.Pass):
         if symbolic.pystr_to_symbolic(ivar) in c.free_symbols:
             return "unknown"  # C must be loop-invariant
         start, end = ivar_to_range[ivar]
-        verdict = self._cmp_verdict(opname, c, start, end, cfb.sdfg.facts())
+        facts = cfb.sdfg.facts()
+        # A wider range answers for the iterations inside it, so each argument of a clamp may stand in for the clamp.
+        verdict = "unknown"
+        for low, high in itertools.product(relaxed_bounds(start, sympy.Max), relaxed_bounds(end, sympy.Min)):
+            verdict = self._cmp_verdict(opname, c, low, high, facts)
+            if verdict != "unknown":
+                break
         if negate and verdict != "unknown":
             verdict = "false" if verdict == "true" else "true"
         return verdict

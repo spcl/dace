@@ -108,8 +108,8 @@ class TransientReuse(ppl.Pass):
 
     Only plain heap / GPU global arrays qualify, not read by control flow, not viewed or referenced, no WCR target and
     not ``may_alias``; one used inside a map scope only if it is allocated outside it (SDFG or Persistent lifetime, or also
-    accessed outside every map in each state using it). SDFGs nested in a parallel map are left alone: their buffers are
-    per iteration. A shared buffer has the same dtype, storage, pooling and strides as its members, is provably at least
+    accessed outside every map in each state using it). In an SDFG nested in a parallel map only the stack arrays of a
+    host thread share, within one run of the SDFG (:func:`sharing_storages`). A shared buffer has the same dtype, storage, pooling and strides as its members, is provably at least
     as large in every dimension, and is allocated once: Persistent if any member is, else SDFG lifetime. At the root
     SDFG every candidate sized only by symbols bound on entry becomes Persistent, shared or not. GPU arrays share only
     when all device work runs on one stream (``compiler.cuda.max_concurrent_streams == -1``), so device accesses run in
@@ -141,10 +141,11 @@ class TransientReuse(ppl.Pass):
             storages.append(dtypes.StorageType.GPU_Global)
         result: dict[int, dict[str, str]] = {}
         for sd in sdfg.all_sdfgs_recursive():
-            if inside_parallel_map(sd):
+            shared = sharing_storages(sd, tuple(storages))
+            if not shared:
                 continue
             before = sum(desc.total_size_in_bytes for desc in sd.arrays.values()) if self.verbose else 0
-            renamed = BufferSharing(sd, tuple(storages)).run()
+            renamed = BufferSharing(sd, shared).run()
             if renamed:
                 result[sd.cfg_id] = renamed
                 if self.verbose:
@@ -153,16 +154,33 @@ class TransientReuse(ppl.Pass):
         return result or None
 
 
-def inside_parallel_map(sdfg: SDFG) -> bool:
-    """Whether ``sdfg`` runs inside a map scope of some enclosing SDFG that is not ``Sequential``."""
+def enclosing_schedules(sdfg: SDFG) -> list[dtypes.ScheduleType | None]:
+    """The schedule of every scope around ``sdfg`` in the SDFGs enclosing it, ``None`` for one that is no map."""
+    found = []
     while sdfg.parent_nsdfg_node is not None:
         entry = sdfg.parent.entry_node(sdfg.parent_nsdfg_node)
         while entry is not None:
-            if not isinstance(entry, nodes.MapEntry) or entry.map.schedule != dtypes.ScheduleType.Sequential:
-                return True
+            found.append(entry.map.schedule if isinstance(entry, nodes.MapEntry) else None)
             entry = sdfg.parent.entry_node(entry)
         sdfg = sdfg.parent_sdfg
-    return False
+    return found
+
+
+def inside_parallel_map(sdfg: SDFG) -> bool:
+    """Whether ``sdfg`` runs inside a map scope of some enclosing SDFG that is not ``Sequential``."""
+    return any(schedule != dtypes.ScheduleType.Sequential for schedule in enclosing_schedules(sdfg))
+
+
+def sharing_storages(sdfg: SDFG, global_storages: tuple) -> tuple:
+    """The storages :class:`BufferSharing` may share in ``sdfg``. Each run of an SDFG nested in a host parallel map has
+    its own frame, so its stack arrays may share one buffer as the arrays of a sequential SDFG do; a device thread's
+    have no frame, and nothing global can be shared there: it would be shared with the iterations running at once."""
+    schedules = enclosing_schedules(sdfg)
+    if all(schedule == dtypes.ScheduleType.Sequential for schedule in schedules):
+        return global_storages
+    if all(schedule in (dtypes.ScheduleType.Sequential, *dtypes.CPU_SCHEDULES) for schedule in schedules):
+        return (dtypes.StorageType.Register,)
+    return ()
 
 
 @dataclass(slots=True)
@@ -401,6 +419,10 @@ class BufferSharing:
         excluded.update(n for n in self.scoped if not state_level[n] and sd.arrays[n].lifetime not in once)
         for name in excluded:
             self.uses.pop(name, None)
+        # Sharing takes two, and only the root lifts a lone buffer.
+        if len(self.uses) < 2 and sd.parent_nsdfg_node is not None:
+            self.uses.clear()
+            return
         self.liveness()
         for name, states in self.uses.items():
             for state, accessed in states.items():

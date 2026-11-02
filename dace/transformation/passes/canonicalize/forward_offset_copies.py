@@ -154,6 +154,10 @@ class ForwardOffsetCopies(ppl.Pass):
                         memlet.subset.offset(offset, False)
                     elif tree_edge is out and memlet.other_subset is not None:
                         memlet.other_subset.offset(offset, False)
+                    elif tree_edge is out and isinstance(out.dst, nodes.AccessNode) and not memlet.is_empty():
+                        # A copy naming its destination reads the whole of the array it copies.
+                        memlet.other_subset = subsets.Range.from_array(sdfg.arrays[copy])
+                        memlet.other_subset.offset(offset, False)
 
         for st, node in uses:
             if node is edge.dst:

@@ -473,6 +473,10 @@ class FuseMaps(ppl.Pass):
                     spaces[map_node] = iteration_space(map_node)
             return spaces[first] == spaces[second]
 
+        # What this sweep probed: a fusion goes on with the matches after it instead of probing every refusal again, and
+        #  the next sweep, which a fusion always asks for, probes them all against the graph as it stands.
+        probed: set[tuple[nodes.Node, ...]] = set()
+        fused = False
         progress = True
         while progress:
             progress = False
@@ -482,6 +486,9 @@ class FuseMaps(ppl.Pass):
                 for images in _induced_matches(state, pnodes, pedges):
                     if is_fusion and not same_space(images[0].map, images[-1].map):
                         continue
+                    if tuple(images) in probed:
+                        continue
+                    probed.add(tuple(images))
                     # Matched by node OBJECT: `PatternNode.__get__` returns a non-int as-is, so there is no
                     #  per-sweep node index, no `expressions()` rebuild and no O(index) node walk per read.
                     xform.setup_match(owner, cfg_id, state_id, dict(zip(pnodes, images)), expr_index, override=True)
@@ -506,7 +513,10 @@ class FuseMaps(ppl.Pass):
                     forget_probes()
                     if self.validate_all:
                         validate_state(state, state_id, owner, initialized_transients=set(owner.arrays.keys()))
-                    progress = True
+                    progress = fused = True
                     break
                 if progress:
                     break
+            if fused and not progress:
+                probed.clear()
+                progress, fused = True, False

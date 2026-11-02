@@ -345,6 +345,38 @@ class LoopFusion(transformation.MultiStateTransformation):
         return found
 
     @staticmethod
+    def _bound_in_body(loop: LoopRegion) -> set[str]:
+        """The names ``loop``'s body binds itself: the iterators of the loops in it and its edge assignments."""
+        names = {edge_name for edge in loop.all_interstate_edges() for edge_name in edge.data.assignments}
+        names.update(
+            r.loop_variable
+            for r in loop.all_control_flow_regions(recursive=True)
+            if r is not loop and isinstance(r, LoopRegion)
+        )
+        return names
+
+    @staticmethod
+    def _any_index(accesses: dict[str, list], bound: set[str]) -> dict[str, list]:
+        """``accesses`` with every index that names one of ``bound`` as one symbol, so that all of them compare equal."""
+        if not bound:
+            return accesses
+        anywhere = symbolic.symbol("_any_index")
+
+        def widened(sub):
+            if sub is None or bound.isdisjoint(map(str, sub.free_symbols)):
+                return sub
+            return subsets.Range(
+                [
+                    (anywhere, anywhere, 1)
+                    if not bound.isdisjoint(map(str, subsets.Range([dim]).free_symbols))
+                    else dim
+                    for dim in sub.ndrange()
+                ]
+            )
+
+        return {arr: [widened(sub) for sub in subs] for arr, subs in accesses.items()}
+
+    @staticmethod
     def _rename_ivar(accesses: dict[str, list], old: str, new: str) -> dict[str, list]:
         """``accesses`` with every subset rewritten from iterator ``old`` to ``new``, on COPIES --
         the originals are the live memlet subsets and must not be touched by a legality query."""
@@ -391,6 +423,11 @@ class LoopFusion(transformation.MultiStateTransformation):
         def apart(a, b) -> bool:
             return self._apart(first, a, b)
 
+        # An index a body binds is no fixed index: two of them, in different names, can still meet
+        bound = self._bound_in_body(first) | self._bound_in_body(second)
+        exact1, exact2 = w1, w2
+        r1, w1, r2, w2 = (self._any_index(accesses, bound) for accesses in (r1, w1, r2, w2))
+
         arrays = (set(r1) | set(w1)) & (set(r2) | set(w2))
         for arr in arrays:
             # A dependence whose subset could not be resolved (None) is refused rather than dropped --
@@ -417,8 +454,8 @@ class LoopFusion(transformation.MultiStateTransformation):
                         return False
             # output: writes from both bodies must hit the same cell each iteration, else the last-writer
             # order differs between fused and unfused.
-            for wa in w1.get(arr, []):
-                for wb in w2.get(arr, []):
+            for wa in exact1.get(arr, []):
+                for wb in exact2.get(arr, []):
                     if not self._same_point(wa, wb) and not apart(wa, wb):
                         return False
         return True

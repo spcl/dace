@@ -146,7 +146,10 @@ class ScatterToGuardedMaps(ppl.Pass):
         with memoize_facts(sdfg):
             probes = ContractProbes()
             scatter_loops = [
-                loop for loop in scatter_loops if needs_contract(sdfg, loop, joint_writes, probes, refusals)
+                loop
+                for loop in scatter_loops
+                if not writes_own_index(loop, _owning_sdfg(sdfg, loop))
+                and needs_contract(sdfg, loop, joint_writes, probes, refusals)
             ]
         kept = set(map(id, scatter_loops))
         sliced_guards = [g for g in sliced_guards if id(g[0]) in kept]
@@ -587,6 +590,15 @@ def _scatter_idx_targets_for_loop(
             for e in state.in_edges(node):
                 if e.data is None or e.data.subset is None or not indirect_write_needs_injectivity(e.data):
                     continue
+                # A span between two loaded bounds overlaps others although the bounds are distinct: no guard here
+                # asks for that.
+                if any(
+                    begin != end and str(sym) in bindings.keys() | chained.keys()
+                    for begin, end, _ in e.data.subset.ndrange()
+                    for sym in symbolic.pystr_to_symbolic(begin).free_symbols
+                    | symbolic.pystr_to_symbolic(end).free_symbols
+                ):
+                    return {}
                 found: dict[str, list[ast.AST] | None] = {}
                 # Form 1: interstate-bound index symbol referenced in the write subset.
                 for sym in e.data.subset.free_symbols:
@@ -1149,21 +1161,33 @@ def splice_guard_before(
 
 
 def index_rebuilt_around(owner_sdfg: SDFG, loop: LoopRegion, idx_name: str) -> bool:
-    """Whether a loop enclosing ``loop`` also writes ``idx_name``, so its values change between scatters."""
+    """Whether a loop enclosing ``loop`` or a block after it writes ``idx_name``: a hoisted guard would run too late."""
     enclosing = set()
-    region = loop.parent_graph
-    while not isinstance(region, SDFG):
+    block, region = loop, loop.parent_graph
+    while True:
+        enclosing.update(b for b in region.bfs_nodes(block) if b is not block)
+        if isinstance(region, SDFG):
+            break
         enclosing.add(region)
-        region = region.parent_graph
+        block, region = region, region.parent_graph
     for state in owner_sdfg.states():
         if not any(n.data == idx_name and state.in_degree(n) > 0 for n in state.data_nodes()):
             continue
-        region = state.parent_graph
+        region = state
         while not isinstance(region, SDFG):
             if region in enclosing:
                 return True
             region = region.parent_graph
     return False
+
+
+def writes_own_index(loop: LoopRegion, owner_sdfg: SDFG) -> bool:
+    """Whether ``loop`` writes an index array it scatters through: no check ahead of it sees the values it reads."""
+    indices = _scatter_idx_arrays_for_loop(loop, owner_sdfg)
+    return any(
+        isinstance(node, nodes.AccessNode) and node.data in indices and parent.in_degree(node) > 0
+        for node, parent in loop.all_nodes_recursive()
+    )
 
 
 def _collect_indirect_bindings(region: LoopRegion, sdfg: SDFG) -> dict[str, tuple[str, list[ast.AST]]]:

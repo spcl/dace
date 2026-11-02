@@ -737,6 +737,35 @@ def test_a_deleted_assignment_of_a_symbol_still_read_elsewhere_is_reported():
     assert not edge.data.assignments
 
 
+def test_a_join_with_a_path_that_assigns_nothing_is_not_a_constant():
+    sdfg = dace.SDFG("constant_on_one_path")
+    sdfg.add_symbol("x", dace.int64)
+    sdfg.add_symbol("c", dace.int64)
+    sdfg.add_array("out", [1], dace.int64)
+    first, taken, join = sdfg.add_state(is_start_block=True), sdfg.add_state(), sdfg.add_state()
+    sdfg.add_edge(first, join, dace.InterstateEdge("c <= 0"))
+    sdfg.add_edge(first, taken, dace.InterstateEdge("c > 0"))
+    sdfg.add_edge(taken, join, dace.InterstateEdge(assignments={"x": "7"}))
+    tasklet = join.add_tasklet("read", {}, {"o"}, "o = x")
+    join.add_edge(tasklet, "o", join.add_write("out"), None, dace.Memlet("out[0]"))
+
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    assert "x" in tasklet.free_symbols
+
+
+def test_an_assignment_in_a_loop_body_stays_for_the_next_iteration():
+    sdfg = dace.SDFG("constant_in_loop_body")
+    sdfg.add_symbol("x", dace.int64)
+    loop = LoopRegion("loop", "i < 2", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_edge(loop.add_state(is_start_block=True), loop.add_state(), dace.InterstateEdge(assignments={"x": "7"}))
+
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    assert all(e.data.assignments for e in loop.edges())
+
+
 if __name__ == "__main__":
     test_simple_constants()
     test_nested_constants()
@@ -761,3 +790,5 @@ if __name__ == "__main__":
     test_a_symbolic_string_mapping_is_not_a_constant()
     test_a_literal_string_mapping_is_still_propagated()
     test_a_deleted_assignment_of_a_symbol_still_read_elsewhere_is_reported()
+    test_a_join_with_a_path_that_assigns_nothing_is_not_a_constant()
+    test_an_assignment_in_a_loop_body_stays_for_the_next_iteration()

@@ -76,7 +76,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return edges
 
     @staticmethod
-    def _subset_param_order(subset, map_params: list[str]) -> list[str]:
+    def _subset_param_order(subset, map_params: list[str]) -> list[str] | None:
         """Per-dimension list of which map parameter the subset uses.
 
         Dimensions that don't reference any map param drop out. Used to compare
@@ -84,7 +84,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
 
         :param subset: Memlet subset to inspect.
         :param map_params: Names of the enclosing map's parameters.
-        :returns: One map-parameter name per dimension that references exactly one.
+        :returns: One map-parameter name per dimension that references exactly one; ``None`` if a dimension mixes
+                  several (a flattened index), which has no per-dimension order.
         """
         param_set = set(map_params)
         order = []
@@ -96,6 +97,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             free = set()
             for expr in (b, e):
                 free |= {str(s) for s in dace.symbolic.symlist(expr).keys()} & param_set
+            if len(free) > 1:
+                return None
             if len(free) == 1:
                 order.append(next(iter(free)))
         return order
@@ -115,6 +118,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         """
         in_order = self._subset_param_order(in_subset, map_params)
         out_order = self._subset_param_order(out_subset, map_params)
+        if in_order is None or out_order is None:
+            return False
         shared = set(in_order) & set(out_order)
         if not shared:
             return True
@@ -637,7 +642,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             libnode_cls, kind = copy.CopyLibraryNode, "memcpy"
             libnode_conn_names = {libnode_cls.INPUT_CONNECTOR_NAME, libnode_cls.OUTPUT_CONNECTOR_NAME}
 
-        joined_edges = set()
+        joined_edges = OrderedSet()
         rmed_count = 0
         for path in paths:
             # Read the common tail from the exit side: ``tasklet -> MapExit -> AccessNode``.
@@ -761,6 +766,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             joined_edges.update(path)
 
         self.rm_edges(state, joined_edges)
+        # The torn-down edges also ordered the rest of the map against those access nodes
+        if node in state.nodes():
+            map_exit = state.exit_node(node)
+            for edge in joined_edges:
+                if edge.dst is node:
+                    state.add_nedge(edge.src, node, Memlet())
+                elif edge.src is map_exit:
+                    state.add_nedge(map_exit, edge.dst, Memlet())
         return rmed_count
 
     def _has_passthrough_connectors(self, n: dace.nodes.Node) -> bool:
@@ -838,7 +851,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 # side-effecting precisely so it is not dead-code-eliminated -- the
                 # snapshot rename it guards is only sound when that check runs. Honour
                 # that contract; only genuinely-orphaned nodes are removed here.
-                if isinstance(n, dace.nodes.Tasklet) and n.side_effects:
+                if isinstance(n, dace.nodes.CodeNode) and n.has_side_effects(state.sdfg):
                     continue
                 state.remove_node(n)
                 removed += 1
@@ -1073,7 +1086,8 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             changed = True
             while changed:
                 changed = False
-                for loop in [r for r in nsdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]:
+                # Each SDFG walks its own loops: the device-level test below climbs from the SDFG it is given.
+                for loop in [r for r in nsdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]:
                     for is_memset in (False, True):
                         detected = self._detect_loop_transfer(loop, is_memset)
                         if detected is None:

@@ -4,9 +4,11 @@ import copy
 import networkx as nx
 import numpy as np
 
+import dace
 from dace import SDFG, InterstateEdge, Memlet, dtypes
 from dace.sdfg import nodes as dnodes
 from dace.transformation.interstate import StateFusionExtended
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 # Classical data hazards across the two fused states (first state -> second):
 #   RAW (read-after-write, true dep)   : first writes X, second reads X
@@ -2054,6 +2056,54 @@ def test_permissive_fusion_keeps_the_other_predecessor_of_the_second_state():
     assert not StateFusionExtended.can_be_applied_to(sdfg, permissive=True, first_state=first, second_state=second)
 
 
+def test_extended_fusion_orders_a_read_held_apart_after_the_leaf_instance():
+    """A WAR edge keeps the second state's read of ``t`` apart from the ordering-only leaf of ``t``, the node the WAW
+    check orders the overwritten ``x`` through."""
+    sdfg = SDFG("sfe_read_held_apart")
+    for name in ("x", "y", "u", "t"):
+        sdfg.add_array(name, [K], dtypes.float64, transient=name == "t")
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second")
+    produced, read_x, u, overwritten, leaf = (first.add_access(n) for n in ("t", "x", "u", "x", "t"))
+    first.add_edge(u, None, produced, None, Memlet(f"u[0:{K}] -> [0:{K}]"))
+    reader = first.add_tasklet("reader", {"a", "b"}, {"c"}, "c = a + b")
+    first.add_edge(read_x, None, reader, "a", Memlet("x[0]"))
+    first.add_edge(produced, None, reader, "b", Memlet("t[0]"))
+    first.add_nedge(produced, read_x, Memlet())
+    first.add_edge(reader, "c", y := first.add_write("y"), None, Memlet("y[0]"))
+    first.add_edge(y, None, overwritten, None, Memlet())
+    first.add_edge(first.add_read("u"), None, overwritten, None, Memlet(f"u[0:{K}] -> [0:{K}]"))
+    first.add_nedge(overwritten, leaf, Memlet())
+    written = second.add_write("x")
+    second.add_edge(second.add_read("t"), None, written, None, Memlet("t[1] -> [0]"))
+    sdfg.validate()
+
+    StateFusionExtended.apply_to(sdfg, first_state=first, second_state=second, options={"aggressive_merges": True})
+
+    sdfg.validate()
+    assert nx.has_path(first.nx, overwritten, written)
+
+
+def test_reader_of_a_rewritten_container_stays_ordered_after_its_writer():
+    n = dace.symbol("n", dace.int64, positive=True)
+
+    @dace.program
+    def rewritten_twice(a: dace.float64[n, n], y: dace.float64[n], z: dace.float64[n]):
+        for _ in range(2):
+            for i in range(1, n):
+                z[i] = 0.5 * z[i - 1] + y[i]
+        for i in range(1, n):
+            z[i] = 0.5 * z[i - 1] + y[i]
+        a[1, :] = a[0, :] + 1.0
+        z[:] = a[1, :] * 0.5
+
+    sdfg = rewritten_twice.to_sdfg(simplify=False)
+    canonicalize(sdfg, target="cpu")
+    z = np.ones(6)
+    sdfg(a=np.zeros((6, 6)), y=np.arange(1.0, 7.0), z=z, n=6)
+    assert np.array_equal(z, np.full(6, 0.5))
+
+
 if __name__ == "__main__":
     test_a_read_the_merge_point_does_not_follow_still_precedes_the_overwrite()
     test_extended_fusion()
@@ -2098,3 +2148,5 @@ if __name__ == "__main__":
     test_a_scope_reading_what_the_first_state_wrote_stays_behind_it()
     test_permissive_fusion_keeps_the_other_predecessor_of_the_second_state()
     test_aggressive_fusion_orders_a_write_write_past_a_shared_value()
+    test_extended_fusion_orders_a_read_held_apart_after_the_leaf_instance()
+    test_reader_of_a_rewritten_container_stays_ordered_after_its_writer()

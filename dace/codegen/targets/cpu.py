@@ -56,7 +56,7 @@ def register_array_on_stack(sdfg: SDFG, nodedesc: data.Data, arrsize, lifetime, 
     """Whether a register array is declared on the stack rather than allocated on the heap. Under
     ``StorageType.Register(force=True)`` every size is, a symbolic one as a variable-length array; otherwise a
     constant size is up to ``compiler.max_stack_array_size`` bytes and a symbolic one never is. A VLA dies with
-    its block, so a lifetime that outlives the block keeps the heap, and so does a split declare/allocate:
+    its block, so a lifetime that outlives the block keeps the heap; a split declare/allocate is no VLA either:
     ``declare_array`` has already emitted the pointer at SDFG scope, and a VLA would shadow it. Allocation and
     deallocation both ask here so they cannot disagree.
     """
@@ -1408,7 +1408,8 @@ class CPUCodeGen(TargetCodeGenerator):
         elif nodedesc.storage == dtypes.StorageType.CPU_Heap or (
             nodedesc.storage == dtypes.StorageType.Register and not on_stack
         ):
-            if nodedesc.storage == dtypes.StorageType.Register:
+            on_frame = (sdfg, node.data) in self._frame.frame_allocated
+            if nodedesc.storage == dtypes.StorageType.Register and not on_frame:
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn(
                         f"Variable-length array {name} with size {cpp.sym2cpp(arrsize)} "
@@ -1433,7 +1434,10 @@ class CPUCodeGen(TargetCodeGenerator):
             if not declared and declarator is None:
                 declaration_stream.write(f"{nodedesc.dtype.ctype} *{name};\n", cfg, state_id, node)
             allocation_stream.write(
-                self.heap_alloc_stmt(
+                f"{alloc_name} = static_cast<{ctypedef}>(__builtin_alloca_with_align("
+                f"sizeof({nodedesc.dtype.ctype}) * ({cpp.sym2cpp(arrsize)}), 512));"
+                if on_frame
+                else self.heap_alloc_stmt(
                     alloc_name if declarator is None else declarator,
                     nodedesc.dtype.ctype,
                     cpp.sym2cpp(arrsize),
@@ -1578,6 +1582,7 @@ class CPUCodeGen(TargetCodeGenerator):
         elif nodedesc.storage == dtypes.StorageType.CPU_Heap or (
             nodedesc.storage == dtypes.StorageType.Register
             and not register_array_on_stack(sdfg, nodedesc, arrsize, nodedesc.lifetime, declared)
+            and (sdfg, node.data) not in self._frame.frame_allocated
         ):
             callsite_stream.write(
                 self.heap_free_stmt(alloc_name, isinstance(nodedesc, data.Array), nodedesc), cfg, state_id, node

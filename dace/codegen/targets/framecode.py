@@ -112,6 +112,8 @@ class DaCeCodeGenerator:
             list[tuple[SDFG, SDFGState | None, nodes.AccessNode | None, bool, bool, bool]],
         ] = collections.defaultdict(list)
         self.where_allocated: dict[tuple[SDFG, str], SDFG] = {}
+        #: Forced register arrays of a split declaration at an allocation site no loop repeats: on the function's frame.
+        self.frame_allocated: set[tuple[SDFG, str]] = set()
         #: ``(cfg_id, name)`` of a persistent array -> the local pointer a CPU reduction clause names it by, while bound.
         self.reduction_aliases: dict[tuple[int, str], str] = {}
         # (cfg_id, symbol) -> ctype, for each loop-local counter the readable generator declares in its
@@ -1226,6 +1228,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
                     alloc_state = first_block if isinstance(first_block, SDFGState) else first_state_instance
                     curscope = allocation_block(first_block, desc, access_states)
+                    if getattr(desc.storage, "force", False) and not scope_allocation_repeats_per_iteration(curscope):
+                        self.frame_allocated.add((sdfg, name))
                     self.to_allocate[curscope].append((sdfg, alloc_state, first_node_instance, False, True, False))
                     curscope = last_block
                     # A control flow region has no state to dispatch the deallocation through

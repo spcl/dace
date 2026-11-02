@@ -23,6 +23,7 @@ from dace.transformation.passes.loop_to_reduce import (
     LoopToReduce,
     augassign_to_wcr_in_state,
     collapse_accumulator_chains,
+    only_read_modify_written,
     retarget_wcr_accumulators,
 )
 
@@ -2234,6 +2235,33 @@ def test_a_carried_input_the_tasklet_does_not_feed_is_no_accumulator():
     a, c, out = np.arange(1.0, 5.0), np.array([7.0]), np.zeros(2)
     sdfg(a=a, c=c, out=out, N=4)
     assert np.allclose(out, [11.0, 7.0])
+
+
+@pytest.mark.parametrize("second_reader", [False, True])
+def test_a_map_fanning_the_accumulator_out_to_another_reader_is_no_pure_update(second_reader):
+    """``C[l, j] = A[j]`` beside ``A[j] += B[j]`` reads the running value through the update's own map connector."""
+    sdfg = dace.SDFG(f"fan_out_{second_reader}")
+    sdfg.add_array("A", [2], dace.float64)
+    sdfg.add_array("B", [2], dace.float64)
+    sdfg.add_array("C", [4, 2], dace.float64)
+    loop = LoopRegion("l", "l < 4", "l", "l = 0", "l = l + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    entry, exit_node = state.add_map("m", {"j": "0:2"})
+    for conn in ("A", "B"):
+        entry.add_in_connector(f"IN_{conn}")
+        entry.add_out_connector(f"OUT_{conn}")
+        state.add_edge(state.add_read(conn), None, entry, f"IN_{conn}", mm.Memlet(f"{conn}[0:2]"))
+    update = state.add_tasklet("update", {"a": None, "b": None}, {"o": None}, "o = a + b")
+    state.add_edge(entry, "OUT_A", update, "a", mm.Memlet("A[j]"))
+    state.add_edge(entry, "OUT_B", update, "b", mm.Memlet("B[j]"))
+    state.add_memlet_path(update, exit_node, state.add_write("A"), src_conn="o", memlet=mm.Memlet("A[j]"))
+    if second_reader:
+        reader = state.add_tasklet("reader", {"a": None}, {"o": None}, "o = a")
+        state.add_edge(entry, "OUT_A", reader, "a", mm.Memlet("A[j]"))
+        state.add_memlet_path(reader, exit_node, state.add_write("C"), src_conn="o", memlet=mm.Memlet("C[l, j]"))
+    sdfg.validate()
+    assert only_read_modify_written(loop, "A") is not second_reader
 
 
 def test_a_staging_copy_read_after_the_loop_is_kept():

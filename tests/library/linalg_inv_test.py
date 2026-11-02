@@ -452,7 +452,7 @@ def test_inv_scratch_of_a_sequential_loop_is_allocated_once():
 def test_inv_scratch_under_a_map_stays_per_call():
     """Inversions a map may run at once each need their own pivots and status."""
     _, lifetimes = _scratch_lifetimes(inv_per_map_point)
-    assert lifetimes == {dace.AllocationLifetime.Scope}, lifetimes
+    assert lifetimes == {dace.AllocationLifetime.State}, lifetimes
 
 
 def test_inv_scratch_under_a_sequential_map_is_allocated_once():
@@ -462,6 +462,23 @@ def test_inv_scratch_under_a_sequential_map_is_allocated_once():
 
 
 ###############################################################################
+
+
+def test_identity_spans_the_actual_extent():
+    sdfg = dace.SDFG("inv_identity_extent")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("a", ["N", "N"], dace.float64)
+    sdfg.add_array("b", ["N", "N"], dace.float64)
+    state = sdfg.add_state()
+    node = Inv("inv", overwrite_a=False, use_getri=False)
+    node.implementation = "OpenBLAS"
+    state.add_memlet_path(state.add_read("a"), node, dst_conn="_ain", memlet=Memlet("a[0:N, 0:N]"))
+    state.add_memlet_path(node, state.add_write("b"), src_conn="_aout", memlet=Memlet("b[0:N, 0:N]"))
+
+    sdfg.expand_library_nodes(recursive=False)
+
+    assert "n" not in {str(s) for s in sdfg.free_symbols}
+
 
 if __name__ == "__main__":
     test_inv_scratch_of_a_sequential_loop_is_allocated_once()
@@ -485,3 +502,4 @@ if __name__ == "__main__":
     test_inv("cuSolverDn", np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], False, False)
     test_inv("cuSolverDn", np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True, False)
     test_inv("cuSolverDn", np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True, False)
+    test_identity_spans_the_actual_extent()

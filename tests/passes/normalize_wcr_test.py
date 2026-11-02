@@ -712,6 +712,130 @@ def test_a_tasklet_subscripting_its_wcr_output_keeps_its_index():
     assert np.allclose(X, ref)
 
 
+def _map_over_nested_wcr(acc_size: int, element: str, boundary: str, wcr: str) -> dace.SDFG:
+    """``map i: nested { acc_out[element] (wcr)= x[i] }`` over a write-only connector, boundary memlet plain."""
+    sdfg = dace.SDFG("nested_wcr_" + uuid.uuid4().hex[:8])
+    sdfg.add_array("x", [4], dace.float64)
+    sdfg.add_array("acc", [acc_size], dace.float64)
+    state = sdfg.add_state("map", is_start_block=True)
+
+    body = dace.SDFG("body_map_over_nested_wcr")
+    body.add_array("x", [4], dace.float64)
+    body.add_array("acc_out", [acc_size], dace.float64)
+    body.add_symbol("i", dace.int64)
+    inner = body.add_state("c", is_start_block=True)
+    t = inner.add_tasklet("t", {"_d"}, {"__out"}, "__out = _d")
+    inner.add_edge(inner.add_read("x"), None, t, "_d", dace.Memlet("x[i]"))
+    inner.add_edge(t, "__out", inner.add_write("acc_out"), None, dace.Memlet(data="acc_out", subset=element, wcr=wcr))
+
+    me, mx = state.add_map("m", {"i": "0:4"})
+    n = state.add_nested_sdfg(body, {"x": None}, {"acc_out": None}, symbol_mapping={"i": "i"})
+    state.add_memlet_path(state.add_read("x"), me, n, dst_conn="x", memlet=dace.Memlet("x[0:4]"))
+    state.add_memlet_path(n, mx, state.add_write("acc"), src_conn="acc_out", memlet=dace.Memlet(boundary))
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_plain_boundary_over_many_elements_keeps_the_elements_no_iteration_wrote():
+    """The per-iteration whole-connector buffer would copy back elements this iteration never wrote."""
+    sdfg = _map_over_nested_wcr(4, "i", "acc[0:4]", "lambda a, b: a + b")
+    NormalizeWCR().apply_pass(sdfg, {})
+    acc = np.full(4, 5.0)
+    sdfg(x=np.arange(1.0, 5.0), acc=acc)
+    assert acc.tolist() == [6.0, 7.0, 8.0, 9.0]
+
+
+def test_a_wcr_leaving_an_inner_map_stays_seeded():
+    """Only the last edge of a write through an inner map could drop its WCR; the rest accumulate into the buffer."""
+    sdfg = dace.SDFG("inner_map_wcr_" + uuid.uuid4().hex[:8])
+    sdfg.add_array("acc", [1], dace.float64)
+    state = sdfg.add_state("map", is_start_block=True)
+    body = dace.SDFG("body_inner_map_wcr")
+    body.add_array("oc", [1], dace.float64)
+    inner = body.add_state("c", is_start_block=True)
+    ime, imx = inner.add_map("in", {"j": "0:3"})
+    t = inner.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    inner.add_edge(ime, None, t, None, dace.Memlet())
+    inner.add_memlet_path(
+        t, imx, inner.add_write("oc"), src_conn="o", memlet=dace.Memlet(data="oc", subset="0", wcr="lambda a, b: a + b")
+    )
+    me, mx = state.add_map("m", {"i": "0:4"})
+    n = state.add_nested_sdfg(body, {}, {"oc": None})
+    state.add_edge(me, None, n, None, dace.Memlet())
+    state.add_memlet_path(n, mx, state.add_write("acc"), src_conn="oc", memlet=dace.Memlet("acc[0]"))
+    sdfg.validate()
+
+    NormalizeWCR().apply_pass(sdfg, {})
+    assert any(name.startswith("_nnr_priv_oc") for name in body.arrays)
+
+
+def test_a_min_over_a_caller_array_starts_from_its_value():
+    sdfg = _map_over_nested_wcr(1, "0", "acc[0]", "lambda a, b: min(a, b)")
+    NormalizeWCR().apply_pass(sdfg, {})
+    acc = np.ones(1)
+    sdfg(x=np.array([5.0, 6.0, 7.0, 8.0]), acc=acc)
+    assert acc[0] == 1.0
+
+
+def test_a_read_write_element_shared_by_an_outer_map_keeps_its_wcr():
+    """``acc[j]`` is the inner map's own element, but every iteration of the outer map updates it."""
+    wcr = "lambda a, b: a + b"
+    sdfg = dace.SDFG("outer_map_rw_" + uuid.uuid4().hex[:8])
+    sdfg.add_array("acc", [4], dace.float64)
+    state = sdfg.add_state("map", is_start_block=True)
+    body = dace.SDFG("body_outer_map_rw")
+    body.add_array("oc", [4], dace.float64)
+    body.add_symbol("j", dace.int64)
+    inner = body.add_state("c", is_start_block=True)
+    t = inner.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    inner.add_edge(t, "o", inner.add_write("oc"), None, dace.Memlet(data="oc", subset="j", wcr=wcr))
+    me, mx = state.add_map("outer", {"i": "0:8"})
+    me2, mx2 = state.add_map("inner", {"j": "0:4"}, schedule=dace.ScheduleType.Sequential)
+    n = state.add_nested_sdfg(body, {"oc": None}, {"oc": None}, symbol_mapping={"j": "j"})
+    state.add_memlet_path(state.add_read("acc"), me, me2, n, dst_conn="oc", memlet=dace.Memlet("acc[j]"))
+    state.add_memlet_path(
+        n, mx2, mx, state.add_write("acc"), src_conn="oc", memlet=dace.Memlet(data="acc", subset="j", wcr=wcr)
+    )
+    sdfg.validate()
+
+    NormalizeWCR().apply_pass(sdfg, {})
+    assert next(e for e in state.out_edges(n) if e.src_conn == "oc").data.wcr is not None
+
+
+def test_a_seed_keeps_the_value_a_caller_wrote_into_its_transient():
+    wcr = "lambda a, b: a + b"
+    sdfg = dace.SDFG("caller_transient_" + uuid.uuid4().hex[:8])
+    sdfg.add_array("x", [4], dace.float64)
+    sdfg.add_array("out", [4], dace.float64)
+    sdfg.add_transient("T", [4], dace.float64)
+    fill = sdfg.add_state("fill", is_start_block=True)
+    fill.add_mapped_tasklet("fill", {"k": "0:4"}, {}, "o = 100.0", {"o": dace.Memlet("T[k]")}, external_edges=True)
+    call = sdfg.add_state_after(fill, "call")
+    body = dace.SDFG("body_caller_transient")
+    body.add_array("x", [4], dace.float64)
+    body.add_array("oc", [4], dace.float64)
+    inner = body.add_state("c", is_start_block=True)
+    inner.add_mapped_tasklet(
+        "acc",
+        {"j": "0:4"},
+        {"_d": dace.Memlet("x[j]")},
+        "o = _d",
+        {"o": dace.Memlet(data="oc", subset="j", wcr=wcr)},
+        external_edges=True,
+    )
+    n = call.add_nested_sdfg(body, {"x": None}, {"oc": None})
+    written = call.add_access("T")
+    call.add_edge(call.add_read("x"), None, n, "x", dace.Memlet("x[0:4]"))
+    call.add_edge(n, "oc", written, None, dace.Memlet(data="T", subset="0:4", wcr=wcr))
+    call.add_edge(written, None, call.add_write("out"), None, dace.Memlet(data="T", subset="0:4", other_subset="0:4"))
+    sdfg.validate()
+
+    NormalizeWCR().apply_pass(sdfg, {})
+    out = np.zeros(4)
+    sdfg(x=np.arange(4.0), out=out)
+    assert out.tolist() == [100.0, 101.0, 102.0, 103.0]
+
+
 if __name__ == "__main__":
     import sys
 
@@ -719,3 +843,8 @@ if __name__ == "__main__":
     test_a_masked_count_two_map_levels_deep_keeps_its_accumulator_path_named()
     test_a_masked_subtraction_in_a_nested_body_keeps_its_sign()
     test_a_tasklet_subscripting_its_wcr_output_keeps_its_index()
+    test_a_plain_boundary_over_many_elements_keeps_the_elements_no_iteration_wrote()
+    test_a_wcr_leaving_an_inner_map_stays_seeded()
+    test_a_min_over_a_caller_array_starts_from_its_value()
+    test_a_read_write_element_shared_by_an_outer_map_keeps_its_wcr()
+    test_a_seed_keeps_the_value_a_caller_wrote_into_its_transient()

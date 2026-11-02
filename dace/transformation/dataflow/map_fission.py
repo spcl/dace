@@ -397,12 +397,19 @@ class MapFission(transformation.SingleStateTransformation):
                     continue
                 if e.data.data in inner_widened:
                     e.data.subset = widen(e.data.subset, inner_widened[e.data.data][2])
-                elif e.data.other_subset is not None:
-                    path = inner_state.memlet_path(e)
-                    ends = {n.data for n in (path[0].src, path[-1].dst) if isinstance(n, nodes.AccessNode)}
-                    other = ends & set(inner_widened)
-                    if other:
-                        e.data.other_subset = widen(e.data.other_subset, inner_widened[other.pop()][2])
+                # ``other_subset`` indexes the container at the other end of a copy, which is widened on its own. Left
+                # unset it means that whole container, and a widened one holds every iteration's slot.
+                path = inner_state.memlet_path(e)
+                src, dst = path[0].src, path[-1].dst
+                if not isinstance(src, nodes.AccessNode) or not isinstance(dst, nodes.AccessNode):
+                    continue
+                other = dst.data if src.data == e.data.data else src.data
+                if other in inner_widened:
+                    old, _, scalar_like = inner_widened[other]
+                    other_subset = e.data.other_subset
+                    if other_subset is None:
+                        other_subset = subsets.Range.from_array(old)
+                    e.data.other_subset = widen(other_subset, scalar_like)
             for node in inner_state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     MapFission.widen_integrated_connectors(node, inner_state, inner_widened, idx, ptypes)

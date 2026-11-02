@@ -164,6 +164,25 @@ def test_pure_with_a_register_vector():
     assert np.allclose(y, A @ x)
 
 
+def test_column_major_non_square_keeps_the_blas_extents():
+    sdfg = dace.SDFG("gemv_column_major_extents")
+    sdfg.add_array("A", [3, 5], dace.float64, strides=[1, 3])
+    sdfg.add_array("x", [5], dace.float64)
+    sdfg.add_array("y", [3], dace.float64)
+    state = sdfg.add_state()
+    node = blas.Gemv("gemv", transA=False, alpha=1, beta=0)
+    node.implementation = "OpenBLAS"
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_A", Memlet("A[0:3, 0:5]"))
+    state.add_edge(state.add_read("x"), None, node, "_x", Memlet("x[0:5]"))
+    state.add_edge(node, "_y", state.add_write("y"), None, Memlet("y[0:3]"))
+
+    sdfg.expand_library_nodes()
+
+    calls = [n.code.as_string for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    assert any("CblasColMajor, CblasNoTrans, 3, 5" in code for code in calls), calls
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("M", type=int, nargs="?", default=256)
@@ -181,3 +200,4 @@ if __name__ == "__main__":
     run_gemv(
         args.target, args.N, args.M, args.alpha, args.transposed, args.vectorize, args.tile_size_x, args.tile_size_y
     )
+    test_column_major_non_square_keeps_the_blas_extents()
