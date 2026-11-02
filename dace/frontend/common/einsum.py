@@ -766,6 +766,20 @@ def _create_einsum_internal(
                 )
             return output, c
 
+        # The GEMM path derives the output's strides from its shape, like an operand's (see
+        # ``contiguous_operands``): a strided output goes through a packed buffer, seeded when beta folds it.
+        strided_output = None
+        if not _lowering_reads_directly(c_desc):
+            strided_output = c
+            dense, c_desc = sdfg.add_transient(
+                f"{output}_dense", c_desc.shape, c_desc.dtype, storage=c_desc.storage, find_new_name=True
+            )
+            c = state.add_write(dense)
+            seeded = None
+            if not symbolic.equal_valued(0, beta):
+                seeded = state.add_access(dense)
+                state.add_nedge(state.add_read(output), seeded, Memlet.from_array(output, sdfg.arrays[output]))
+
         # Compute GEMM dimensions and strides
         strides = dict(
             BATCH=prod([c_shape[dim] for dim in einsum.c_batch]),
@@ -842,5 +856,10 @@ def _create_einsum_internal(
         state.add_edge(b, None, nsdfg_node, "Y", Memlet.from_array(b.data, b.desc(sdfg)))
         state.add_edge(nsdfg_node, "Z", c, None, Memlet.from_array(c.data, c.desc(sdfg)))
         dealias.integrate_nested_sdfg(nsdfg)
+        if strided_output is not None:
+            if seeded is not None:
+                state.add_nedge(seeded, nsdfg_node, Memlet())
+            state.add_nedge(c, strided_output, Memlet.from_array(c.data, c_desc))
+            c = strided_output
 
     return output, c
