@@ -1841,7 +1841,7 @@ def symbols_assigned_before_use(
                     fsyms = {str(s) for s in symbolic.pystr_to_symbolic(v).free_symbols}
                 except AttributeError:
                     fsyms = set()
-                if k in fsyms and k not in symbols_that_may_be_used:
+                if k == itervar or (k in fsyms and k not in symbols_that_may_be_used):
                     # ``k = f(k)`` before any reset this iteration reads the previous iteration's ``k``.
                     if refusal is not None:
                         refusal.append((f"self-recurrent carried symbol '{k}' (assignment {k} = {v})", {k}))
