@@ -94,6 +94,22 @@ def _check_range(subset, a, itersym, b, step, span=None, memo: dict | None = Non
     return found
 
 
+def offset_by_a_varying_symbol(subset: subsets.Subset | None, itersym, varying: set[str]) -> bool:
+    """Whether ``subset`` is pinned to the iteration only by ``i + b`` with ``b`` varying inside an iteration: ``A[i + j]``
+    under a loop over ``j`` overlaps across ``i``. ``A[8 * i + j]``, a flattened index, is left to :func:`_check_range`.
+    """
+    found = False
+    for rb, _, _ in subset.ndrange() if subset is not None else ():
+        rb = _align_itersym(sp.sympify(rb), itersym)
+        coeff = rb.coeff(itersym)
+        if coeff == 0:
+            continue
+        if abs(coeff) != 1 or not varying & {str(s) for s in (rb - coeff * itersym).free_symbols}:
+            return False
+        found = True
+    return found
+
+
 def through_symbol_mapping(subset: subsets.Subset, nsdfg_node: nodes.NestedSDFG) -> subsets.Subset:
     """Copy of an inner ``subset`` in terms of the outer symbols; matches by name, so the inner
     symbol's dtype does not matter."""
@@ -1524,11 +1540,20 @@ def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: set[str], loop_bl
             index_block_symbols(ctx, block)
     index = ctx.block_index
     start = index[loop]
+    enclosing = set(_enclosing_regions(loop))
+    enclosing_loops = [r for r in enclosing if isinstance(r, LoopRegion)]
+
+    def sure(block: Any) -> bool:
+        """Whether ``block`` runs on every path from ``loop``: no branch or later loop holds it."""
+        return all(
+            r in enclosing or not isinstance(r, (ConditionalBlock, LoopRegion)) for r in _enclosing_regions(block)
+        )
+
     for name in names:
         kill = None
         for block in ctx.symbol_kills.get(name, ()):
             i = index.get(block)
-            if i is not None and i > start and block not in loop_blocks and (kill is None or i < kill):
+            if i is not None and i > start and block not in loop_blocks and (kill is None or i < kill) and sure(block):
                 kill = i
         # A later loop of the same region that binds ``name`` assigns it before its body reads it, on every path:
         # structured control flow runs every block of a region after the ones before it.
@@ -1540,6 +1565,16 @@ def used_after_loop(ctx: LiftContext, loop: LoopRegion, names: set[str], loop_bl
             i = index.get(block)
             if i is not None and i > start and block not in loop_blocks and (kill is None or i <= kill):
                 return True
+            # The enclosing loop's next iteration runs a block ahead of ``loop`` again, unless a kill in its body is first
+            if kill is None and i is not None and i < start:
+                for outer in enclosing_loops:
+                    first = index[outer]
+                    if (
+                        first < i
+                        and set(_enclosing_regions(block)) & {outer}
+                        and not any(first < index.get(k, -1) <= i for k in ctx.symbol_kills.get(name, ()))
+                    ):
+                        return True
     return False
 
 
@@ -2064,7 +2099,13 @@ class LoopLift:
         # segment a range split leaves behind (e.g. the ``{x}`` clamp of the s1113 broadcast split),
         # where the dependence analysis has nothing to prove. The structural guards above still gate.
         if loop_analysis.loop_provably_at_most_one_iteration(self.loop, None if ctx is None else lift_facts(ctx, sdfg)):
-            return True
+            # A body-assigned symbol read after the loop stays with the checks below
+            assigned = {name for edge in self.loop.all_interstate_edges() for name in edge.data.assignments}
+            if not assigned or (
+                ctx is not None
+                and not used_after_loop(ctx, self.loop, assigned, set(self.loop.all_control_flow_blocks()))
+            ):
+                return True
         # Independent by construction (a map lowered to this loop, or a piece of one): nothing to prove.
         if known_parallel:
             return True
@@ -2178,12 +2219,8 @@ class LoopLift:
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
-        # A symbol that varies inside an iteration is no offset: ``A[i + j]`` under a loop over ``j`` overlaps across ``i``
-        varying = {e for edge in self.loop.all_interstate_edges() for e in edge.data.assignments}
-        varying |= {r.loop_variable for r in self.loop.all_control_flow_regions() if isinstance(r, LoopRegion)}
-        varying.discard(itervar)
-        if varying:
-            b = sp.Wild("b", exclude=[itersym], properties=[lambda e: not varying & {str(s) for s in e.free_symbols}])
+        if itervar in {name for edge in self.loop.all_interstate_edges() for name in edge.data.assignments}:
+            return refuse(Refusal.CARRIED_SYMBOL, f"the body assigns the iterator {itervar}", symbols={itervar})
 
         for state in loop_states:
             for dn in state.data_nodes():
@@ -2233,6 +2270,19 @@ class LoopLift:
                             closed_forms,
                             self,
                         )
+                        if (
+                            reason is None
+                            and not self.waives(dn.data, permissive)
+                            and offset_by_a_varying_symbol(
+                                in_closed_form(e.data.get_dst_subset(e, state), closed_forms),
+                                itersym,
+                                varying - {itervar},
+                            )
+                        ):
+                            reason = (
+                                Refusal.NON_UNIQUE_WRITE,
+                                f"write to {dn.data} is offset by a symbol varying inside an iteration",
+                            )
                         if reason is not None:
                             if facts is not None:
                                 facts.refusal_witness = ("write", dn.data)
@@ -2489,6 +2539,9 @@ class LoopLift:
             if reassigned_symbols is not None:
                 symbols_that_may_be_used -= reassigned_symbols
 
+        # The index saw a read this forward walk cannot: past a branch's kill, or round an enclosing loop
+        if ctx is not None:
+            return refuse(Refusal.LIVE_OUT_SYMBOL, "loop-defined symbol(s) read after the loop by another path")
         return True
 
     def witnessed_refusal(

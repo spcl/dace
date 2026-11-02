@@ -110,7 +110,7 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free
         and name not in scopes.enclosing_loop_iterators(loop)
     ):
         return False
-    for e in loop.edges():
+    for e in loop.all_interstate_edges():
         if e.data.assignments and name in e.data.assignments:
             return False
     return True
@@ -166,6 +166,11 @@ def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]
             if not _expr_is_loop_invariant(c_expr, loop, sdfg, {}, sdfg_free_symbols):
                 continue
             found[lhs] = (op_type, c_expr)
+    # An update under a nested region does not run once per iteration
+    for e in loop.all_interstate_edges():
+        if e not in loop.edges() or e.src.parent_graph is not loop:
+            for lhs in e.data.assignments:
+                found.pop(lhs, None)
     return found
 
 
