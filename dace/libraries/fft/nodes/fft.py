@@ -359,7 +359,10 @@ def fftw3_call(transform: FFTTransform, threaded: bool | None = None) -> nodes.T
         f"{['dft', 'dft_r2c', 'dft_c2r'].index(kind)}, {int(transform.inverse)}, {int(bool(looped))}, {len(dims)}"
     )
     key = ", ".join([kind_key] + [value for entry in dims + howmany for value in entry])
+    # An empty transform is numpy's empty result, and the planners return no plan for it
+    empty = " || ".join(f"({sym2cpp(n)}) == 0" for n in (*transform.lengths, *(src.shape[d] for d in batch)))
     code = f"""
+    if (!({empty})) {{
     {iodims("__dims", dims)}
     {iodims("__howmany", howmany)}
     const int __threads = {threads};
@@ -374,6 +377,7 @@ def fftw3_call(transform: FFTTransform, threaded: bool | None = None) -> nodes.T
             return __made;
         }});
     {loop_open}{prefix}_execute_{kind}(__plan, ({in_t} *)__in{in_offset}, ({out_t} *)__out{out_offset});
+    }}
     """
     return nodes.Tasklet(
         f"fftw3_{'i' if transform.inverse else ''}fft", {"__in"}, {"__out"}, code, language=dtypes.Language.CPP
