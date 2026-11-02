@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
@@ -79,6 +79,9 @@ class ConstantPropagation(ppl.Pass):
     """
 
     CATEGORY: str = "Simplification"
+
+    #: What each loop rebinds, for one SDFG's collection.
+    _loop_bound: dict | None = field(default=None, init=False, hash=False, compare=False, repr=False)
 
     recursive = properties.Property(
         dtype=bool, default=True, category="Applicability", desc="Propagate recursively through nested SDFGs"
@@ -173,6 +176,7 @@ class ConstantPropagation(ppl.Pass):
                     _add_nested_datanames(name, desc)
 
             # Trace all constants and symbols through blocks
+            self._loop_bound = None
             in_constants: BlockConstsT = {sdfg: initial_symbols}
             pre_constants: BlockConstsT = {}
             post_constants: BlockConstsT = {}
@@ -241,11 +245,13 @@ class ConstantPropagation(ppl.Pass):
                     {k: v for k, v in result.items() if k in desc_symbols}, replace_in_graph=False, replace_keys=False
                 )
 
-                # Remove constant symbol assignments in interstate edges
+                # Remove constant symbol assignments in interstate edges. A symbol read elsewhere drops out of
+                # ``result`` below, so the deletion itself has to count as a modification.
                 for edge in sdfg.all_interstate_edges():
                     intersection = result & edge.data.assignments.keys()
                     for sym in intersection:
                         del edge.data.assignments[sym]
+                        mutated = True
 
         nested_result = set()
         if self.recursive:
@@ -414,6 +420,15 @@ class ConstantPropagation(ppl.Pass):
                     out_consts[k] = _UnknownValue
             out_const_dict[conditional] = out_consts
 
+    def _assigned_in_loop(self, loop: LoopRegion) -> set[str]:
+        """:func:`loop_bound_symbols`, once per collection: the sweeps below ask it of a loop on every visit."""
+        if self._loop_bound is None:
+            self._loop_bound = {}
+        bound = self._loop_bound.get(loop)
+        if bound is None:
+            bound = self._loop_bound[loop] = loop_bound_symbols(loop)
+        return bound
+
     def _collect_constants_for_region(
         self,
         cfg: ControlFlowRegion,
@@ -461,7 +476,7 @@ class ConstantPropagation(ppl.Pass):
                 # In the case of a loop, the 'pre constants' are equivalent to the 'in constants', with the exception
                 # of values that may at any point be re-assigned inside the loop, since that assignment would carry over
                 # into the next iteration (including increments to the loop variable, if present).
-                assigned_in_loop = loop_bound_symbols(cfg)
+                assigned_in_loop = self._assigned_in_loop(cfg)
                 pre_const = {
                     k: _UnknownValue if k in assigned_in_loop or _value_names(v, assigned_in_loop) else v
                     for k, v in in_const.items()
@@ -540,7 +555,7 @@ class ConstantPropagation(ppl.Pass):
                 if isinstance(block, LoopRegion):
                     # Any constants before a loop that may be overwritten inside the loop, or whose value names a symbol
                     # overwritten there, cannot be assumed as constants for the loop itself.
-                    assigned_in_loop = loop_bound_symbols(block)
+                    assigned_in_loop = self._assigned_in_loop(block)
                     for k, v in assignments.items():
                         if k in assigned_in_loop or _value_names(v, assigned_in_loop):
                             assignments[k] = _UnknownValue

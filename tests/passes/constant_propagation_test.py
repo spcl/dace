@@ -719,6 +719,24 @@ def test_a_literal_string_mapping_is_still_propagated():
     sdfg.validate()
 
 
+def test_a_deleted_assignment_of_a_symbol_still_read_elsewhere_is_reported():
+    sdfg = dace.SDFG("deleted_assignment_reported")
+    sdfg.add_array("out", [2], dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    before = sdfg.add_state("before", is_start_block=True)
+    before.add_edge(
+        before.add_tasklet("first", {}, {"o"}, "o = n"), "o", before.add_write("out"), None, dace.Memlet("out[0]")
+    )
+    after = sdfg.add_state("after")
+    after.add_edge(
+        after.add_tasklet("second", {}, {"o"}, "o = n"), "o", after.add_write("out"), None, dace.Memlet("out[1]")
+    )
+    edge = sdfg.add_edge(before, after, dace.InterstateEdge(assignments={"n": "5"}))
+
+    assert ConstantPropagation().apply_pass(sdfg, {}) is not None
+    assert not edge.data.assignments
+
+
 if __name__ == "__main__":
     test_simple_constants()
     test_nested_constants()
@@ -742,3 +760,4 @@ if __name__ == "__main__":
     test_dependency_change_same_edge(True)
     test_a_symbolic_string_mapping_is_not_a_constant()
     test_a_literal_string_mapping_is_still_propagated()
+    test_a_deleted_assignment_of_a_symbol_still_read_elsewhere_is_reported()
