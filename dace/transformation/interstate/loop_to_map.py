@@ -524,6 +524,14 @@ def memlet_in_closed_form(m: memlet.Memlet, closed_forms: dict[str, Any] | None)
     return m
 
 
+def destination_memlet(e: Any, state: SDFGState, dn: nodes.AccessNode, closed_forms: dict[str, Any] | None):
+    """``e``'s memlet with ``subset`` the part of ``dn`` it writes, in closed form: a copy's memlet can name its source."""
+    dst = e.data.get_dst_subset(e, state)
+    if dst is None or dst is e.data.subset:
+        return memlet_in_closed_form(e.data, closed_forms)
+    return memlet.Memlet(data=dn.data, subset=in_closed_form(dst, closed_forms), wcr=e.data.wcr)
+
+
 def write_refusal(
     sdfg: SDFG,
     state: SDFGState,
@@ -2244,7 +2252,7 @@ class LoopLift:
                         if not counted_write(sdfg, state, dn, e):
                             continue
                         if id(e) in rmw_writes:
-                            accumulated = copy.copy(memlet_in_closed_form(e.data, closed_forms))
+                            accumulated = copy.copy(destination_memlet(e, state, dn, closed_forms))
                             accumulated.wcr = "lambda a, b: a + b"
                             write_memlets[dn.data].append(accumulated)
                             continue
@@ -2270,7 +2278,7 @@ class LoopLift:
                                 facts.refusal_witness = ("write", dn.data)
                             return refuse(*reason, dn.data, writes=[e.data.get_dst_subset(e, state)])
 
-                        write_memlets[dn.data].append(memlet_in_closed_form(e.data, closed_forms))
+                        write_memlets[dn.data].append(destination_memlet(e, state, dn, closed_forms))
 
         # Carried-read check: for every array also written, each in-loop READ subset must be
         # loop-invariant (no itersym) or match the writes' ``a*i+b``. A read at a DIFFERENT iter

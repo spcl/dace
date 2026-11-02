@@ -852,6 +852,20 @@ def test_a_body_reassigning_the_iterator_refuses_the_lift() -> None:
     assert not xform.can_be_applied(sdfg, 0, sdfg)
 
 
+def test_two_copies_into_one_array_are_compared_at_their_destinations() -> None:
+    sdfg = dace.SDFG("copies_collide")
+    for name in "abc":
+        sdfg.add_array(name, [8], dace.float64)
+    loop = LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    body.add_nedge(body.add_read("a"), body.add_write("b"), dace.Memlet(data="a", subset="i", other_subset="i"))
+    body.add_nedge(body.add_read("c"), body.add_write("b"), dace.Memlet(data="c", subset="i", other_subset="7 - i"))
+    xform = LoopToMap()
+    xform.setup_match(sdfg, sdfg.cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
+    assert not xform.can_be_applied(sdfg, 0, sdfg)
+
+
 @dace.program
 def carried_rows_beside_parallel_rows(
     a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N], d: dace.float64[N, N], e: dace.float64[N]
@@ -1303,6 +1317,7 @@ if __name__ == "__main__":
         test_a_symbol_read_after_the_loop_on_any_path_refuses_the_lift(place, False)
         test_a_symbol_read_after_the_loop_on_any_path_refuses_the_lift(place, True)
     test_a_body_reassigning_the_iterator_refuses_the_lift()
+    test_two_copies_into_one_array_are_compared_at_their_destinations()
     test_every_lift_of_a_sweep_leaves_the_nested_references_exact()
     test_a_lift_never_changes_what_a_surviving_edge_or_header_reads()
     test_the_memoized_control_flow_reads_are_the_walked_ones()
