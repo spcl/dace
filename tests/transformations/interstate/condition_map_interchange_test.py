@@ -240,6 +240,18 @@ def test_condition_map_interchange_symbol_dependency():
     _test_for_unchanged_behavior(tester, 1)
 
 
+def test_condition_map_interchange_scalar_index():
+    """A map body that indexes with a scalar argument keeps reading it through a symbol after simplification."""
+
+    @dace.program
+    def tester(A: dace.float32[20], B: dace.float32[20], i_sym: dace.int32):
+        if i_sym < 10:
+            for i in dace.map[0:10]:
+                B[i] = A[i_sym] + 10
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
 def test_condition_map_interchange_symbol_dependency2():
 
     @dace.program
@@ -272,4 +284,5 @@ if __name__ == "__main__":
     test_condition_map_interchange_data_dependency2()
     test_condition_map_interchange_data_dependency3()
     test_condition_map_interchange_symbol_dependency()
+    test_condition_map_interchange_scalar_index()
     test_condition_map_interchange_symbol_dependency2()
