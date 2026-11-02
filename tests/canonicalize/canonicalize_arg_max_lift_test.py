@@ -241,25 +241,39 @@ def test_refuses_subtraction_op():
 # don't actually compute argmax. The matcher must refuse all of these.
 
 
-def test_lookalike_refuses_non_unit_stride():
-    """``for i in range(0, N, 2)`` -- stride > 1 means the reduce would only
-    see half the array; refuse so the loop stays sequential until a
-    gather-then-reduce variant lands."""
+def test_strided_value_fold_reads_only_the_visited_elements():
+    """``range(1, N, 2)`` folds ``a[1:N:2]``.
+
+    The global minimum sits on the even slots the loop never reads, so a fold over ``a[1:N]`` returns ``-100``.
+    """
 
     @dace.program
-    def kernel_lookalike_refuses_non_unit_stride(a: dace.float64[N], result: dace.float64[1]):
-        x = a[0]
-        for i in range(0, N, 2):
-            if a[i] > x:
+    def strided_min(a: dace.float64[N], out: dace.float64[1]):
+        x = a[1]
+        for i in range(1, N, 2):
+            if a[i] < x:
                 x = a[i]
-        result[0] = x
+        out[0] = x
 
-    res = ArgMaxLift().apply_pass(kernel_lookalike_refuses_non_unit_stride.to_sdfg(simplify=True), {})
-    assert res is None, "stride>1 must be refused"
+    sdfg = strided_min.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+    steps = [
+        str(rng[2])
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, Reduce)
+        for rng in state.in_edges(node)[0].data.subset.ndrange()
+    ]
+    assert steps == ["2"]
+    a = np.array([-100.0 if k % 2 == 0 else float(k) for k in range(16)])
+    out = np.zeros(1)
+    sdfg(a=a.copy(), out=out, N=16)
+    assert out[0] == a[1:16:2].min()
 
 
 def test_lookalike_refuses_symbolic_stride():
-    """``for i in range(0, N, K)`` with symbolic ``K`` -- same as above; the
+    """``for i in range(0, N, K)`` with symbolic ``K``; the
     integer-stride check throws ``TypeError`` on the symbol and the matcher
     refuses."""
     K = dace.symbol("K_arg_stride")
