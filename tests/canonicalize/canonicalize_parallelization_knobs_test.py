@@ -274,7 +274,11 @@ def test_loop_peeling_modulo_wraparound_knob_parallelizes(prog, offset):
 
     on = prog.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, "peeling + modulo fold must parallelize the wrap-around write"
+    # Only the pinned original is left, for an ``N`` shorter than the peel.
+    unpinned = [
+        r for r in on.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and not r.pinned_sequential
+    ]
+    assert _nmaps(on) >= 1 and not unpinned, "peeling + modulo fold must parallelize the wrap-around write"
 
     B = np.arange(8, dtype=np.float64) + 0.5
     ref = np.zeros(8)
