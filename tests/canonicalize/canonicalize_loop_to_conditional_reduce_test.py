@@ -13,7 +13,8 @@ import pytest
 
 import dace
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
@@ -419,6 +420,34 @@ def test_refuses_a_guard_read_its_short_circuit_keeps_in_bounds():
     sdfg = kernel_lookahead.to_sdfg(simplify=True)
     LoopToConditionalReduce().apply_pass(sdfg, {})
     assert _has_conditional_block(sdfg)
+
+
+def _guarded_update(acc_type, condition: str, op: str = "+") -> tuple[dace.SDFG, LoopRegion, ConditionalBlock]:
+    """``for p: if condition: acc = acc op a[p]``, unconditional state joins left to the caller."""
+    sdfg = dace.SDFG("guarded_update")
+    sdfg.add_array("a", [4], dace.float64)
+    sdfg.add_array("acc", [1], acc_type)
+    sdfg.add_symbol("k", dace.float64)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    loop = LoopRegion("loop", "p < 4", "p", "p = 0", "p = p + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(entry, loop, dace.InterstateEdge(assignments={"k": "0"}))
+    block = ConditionalBlock("guard")
+    loop.add_node(block, is_start_block=True)
+    branch = ControlFlowRegion("then", sdfg=sdfg)
+    state = branch.add_state("update", is_start_block=True)
+    tasklet = state.add_tasklet("update", {"__acc", "__x"}, {"__out"}, f"__out = __acc {op} __x")
+    state.add_edge(state.add_read("acc"), None, tasklet, "__acc", dace.Memlet("acc[0]"))
+    state.add_edge(state.add_read("a"), None, tasklet, "__x", dace.Memlet("a[p]"))
+    state.add_edge(tasklet, "__out", state.add_write("acc"), None, dace.Memlet("acc[0]"))
+    block.add_branch(CodeBlock(condition), branch)
+    return sdfg, loop, block
+
+
+def test_a_float_addend_of_an_integer_accumulator_is_refused():
+    """``acc = acc * 0.5`` truncates after the product; a mask of the accumulator's type truncates 0.5 to 0."""
+    sdfg, _, _ = _guarded_update(dace.int64, "p > 0", "*")
+    assert LoopToConditionalReduce().apply_pass(sdfg, {}) is None
 
 
 if __name__ == "__main__":
