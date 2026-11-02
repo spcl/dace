@@ -38,6 +38,10 @@ fill each other's gaps.
 Every task is a DaCe program of its own, which DaCe inlines into the consume scope (see ``build``). Other blocks of the
 same kind (another router, no dense branch, another activation) are built from the same tasks, combined differently.
 
+With ``--profile``, every task records its time on the GPU instead (the ``GPU_Events`` instrumentation of a node in a
+kernel: an event per thread block that runs it, on the GPU's global timer). The sample then prints the time of every
+kind of task, and the instrumentation report holds a timeline with a track per processing element.
+
 The reference is the block in Hugging Face ``transformers``, which is also timed with each of its implementations of
 the experts. The kernel stores and rounds values in bfloat16 where ``transformers`` does. If vLLM is installed (it pins
 its own PyTorch version), the block as vLLM runs it is timed as well. Requires PyTorch, ``transformers`` and a CUDA GPU
@@ -45,6 +49,7 @@ with bfloat16 tensor cores (Ampere or newer).
 """
 
 import argparse
+import collections
 import contextlib
 import math
 
@@ -61,6 +66,7 @@ from transformers.models.gemma4.modeling_gemma4 import (
 )
 
 import dace
+from dace.codegen.instrumentation.report import InstrumentationReport
 
 try:  # Optional: the block as vLLM runs it, for comparison
     from vllm.config import CompilationConfig, VllmConfig, set_current_vllm_config
@@ -177,9 +183,10 @@ def pack(weight: torch.Tensor) -> torch.Tensor:
     return weight.reshape(*batch, n // BN, BN, k // K_STEP, K_STEP).transpose(-2, -3).contiguous()
 
 
-def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18) -> dace.SDFG:
+def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, profile: bool = False) -> dace.SDFG:
     """The block for ``config`` as a GPU SDFG. Its arguments are the input, the weights (see ``arguments``), the
-    output, and scratch buffers (see ``workspace``)."""
+    output, and scratch buffers (see ``workspace``). With ``profile``, every task records an event (see
+    ``print_profile``)."""
     D, DI, I, E, K = (
         config.hidden_size,
         config.intermediate_size,
@@ -568,7 +575,15 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18) -> 
                     row_token, row_weight, gate_up_left
                 )  # fmt: skip
 
-    sdfg = moe_block.to_sdfg(simplify=True)
+    sdfg = moe_block.to_sdfg(simplify=False)
+    if profile:  # The nested SDFG of every task call (which stays a nested SDFG, rather than being inlined)
+        tasks = (expert_gate_up, dense_gate_up, expert_down, dense_down, route, top_k, output, scan)
+        names = {task.name: task.f.__name__ for task in tasks}
+        for node, state in sdfg.all_nodes_recursive():  # (The calls, not the nested SDFGs of the tasks' own maps)
+            if isinstance(node, dace.nodes.NestedSDFG) and node.label in names and state.entry_node(node) is None:
+                node.label = names[node.label]
+                node.instrument = dace.InstrumentationType.GPU_Events
+    sdfg.simplify(validate=False)  # As the frontend does: shared memory is valid once the program is on the GPU
     to_gpu(sdfg)
     return sdfg
 
@@ -787,19 +802,41 @@ def check(name: str, result: torch.Tensor, experts: torch.Tensor, expected: torc
     return f"{name} error {error:.1e}, {int((~alike).sum())} routed differently"
 
 
+def print_profile(report: InstrumentationReport, num_pes: int):
+    """The time of every kind of task on the GPU, from the events of the tasks."""
+    events = [e for e in report.events if e.additional_info and "block" in e.additional_info]
+    span = max(e.timestamp + e.duration for e in events) - min(e.timestamp for e in events)  # Microseconds
+    tasks = collections.defaultdict(list)
+    for e in events:
+        tasks[e.name].append(e)
+    for name, of_kind in sorted(tasks.items(), key=lambda t: -sum(e.duration for e in t[1])):
+        total = sum(e.duration for e in of_kind)
+        cycles = np.mean([e.additional_info["cycles"] for e in of_kind])
+        print(
+            f"  {name:>14}: {len(of_kind):6d} tasks of {total / len(of_kind):7.2f} us ({cycles:7.0f} cycles), "
+            f"{total / (num_pes * span):6.1%} of the processing elements' time"
+        )
+    busy = sum(e.duration for e in events) / (num_pes * span)
+    print(f"  {len(events)} tasks in {span / 1000:.3f} ms, {busy:.1%} busy; timeline in {report.filepath}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--tokens", type=int, nargs="+", default=[1, 8, 64, 512, 2048])
     parser.add_argument("--small", action="store_true", help="a small configuration, for testing")
     # Three thread blocks per multiprocessor of an RTX 3070 (as many as the registers of the workers allow)
     parser.add_argument("--pes", type=int, default=46 * 3, help="processing elements (thread blocks)")
+    parser.add_argument("--profile", action="store_true", help="the time of every task instead of the comparison")
     args = parser.parse_args()
 
     config = block_config(**(SMALL if args.small else GEMMA4_26B_A4B))
     block = FeedForward(config).to("cuda", torch.bfloat16)
-    program = build(config, args.pes)
-    # The default stream, as PyTorch's (see ``to_gpu``)
-    with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1):
+    program = build(config, args.pes, profile=args.profile)
+    # The default stream, as PyTorch's (see ``to_gpu``), and a report of every call (for --profile)
+    with (
+        dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1),
+        dace.config.set_temporary("instrumentation", "report_each_invocation", value=True),
+    ):
         program = program.compile()
     weights = arguments(block)
 
@@ -811,8 +848,17 @@ if __name__ == "__main__":
             config._experts_implementation = "eager"  # A loop over the experts: the reference
             expected = block(x).float()
             expected_experts = block.router(x)[2]
+
+            out = torch.empty_like(x)
+            scratch = workspace(config, tokens)
+            program(x=x, out=out, **weights, **scratch)
+            errors = [check("DaCe", out, scratch["pair_expert"], expected, expected_experts)]
+            if args.profile:
+                print(f"{tokens:5d} tokens ({errors[0]}):")
+                print_profile(program.sdfg.get_latest_report(), args.pes)
+                continue
+
             times = {"transformers": time_ms(lambda: block(x))}
-            errors = []
             # Without a Python loop: a grouped GEMM over the experts' rows (which loops over the experts on the host
             # before Hopper GPUs), and a batched GEMM over the token's experts for every token (no host
             # synchronization, but a copy of the weights of every token's experts: while they fit, for decoding)
@@ -824,10 +870,6 @@ if __name__ == "__main__":
                 errors.append(check("batched_mm", block(x), expected_experts, expected, expected_experts))
                 times["batched_mm (CUDA graph)"] = time_ms(graphed(lambda: block(x)))
 
-            out = torch.empty_like(x)
-            scratch = workspace(config, tokens)
-            program(x=x, out=out, **weights, **scratch)
-            errors.append(check("DaCe", out, scratch["pair_expert"], expected, expected_experts))
             # The time of the kernels, by events on the stream they run on (without Python's argument conversion)
             callargs, initargs = program.construct_arguments(x=x, out=out, **weights, **scratch)
             times["DaCe"] = time_ms(lambda: program.fast_call(callargs, initargs))
