@@ -1000,7 +1000,7 @@ def test_a_kernel_level_access_above_a_per_thread_scratch_is_refused():
         lift(sdfg)
 
 
-def kernel_with_a_per_thread_count(indirect: bool = False) -> dace.SDFG:
+def kernel_with_a_per_thread_count(indirect: bool = False, extent: str = "n + 1") -> dace.SDFG:
     """``for b: n = counts[b]; buf = empty(n + 1); buf[n] = 2; out[b] = buf[n]``: the extent of ``buf`` is a
     count each thread reads (lavamd's ``pointers = np.empty(1 + neighbor_counts[l])``). ``indirect`` reads it
     through ``r = rows[b]; n = counts[r]`` (spgemm_hash's ``row_bin[rows_in_bins[b]]``)."""
@@ -1008,7 +1008,7 @@ def kernel_with_a_per_thread_count(indirect: bool = False) -> dace.SDFG:
     body.add_symbol("b", dace.int64)
     body.add_array("counts", [NX], dace.int32, storage=GLOBAL)
     body.add_array("o", [NX], dace.float64, storage=GLOBAL)
-    body.add_transient("buf", ["n + 1"], dace.float64, storage=dtypes.StorageType.Register)
+    body.add_transient("buf", [extent], dace.float64, storage=dtypes.StorageType.Register)
     load = body.add_state("load", is_start_block=True)
     use = body.add_state("use")
     index = "b"
@@ -1052,6 +1052,13 @@ def test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel():
     into_kernel = list(sdfg.in_edges(next(s for s in sdfg.states() if s.label == "kernel")))
     assert [e.data.assignments.get("n_max") for e in into_kernel] == ["n_max_host[0]"]
     sdfg.validate()
+
+
+def test_an_extent_shrinking_with_a_count_a_thread_reads_is_not_sized_by_its_maximum():
+    """``NX - n`` at the largest ``n`` is the smallest extent any thread needs: the other threads would overrun it."""
+    sdfg = kernel_with_a_per_thread_count(extent="NX - n")
+    assert lift(sdfg) is None
+    assert "n_max" not in sdfg.symbols
 
 
 @pytest.mark.gpu
@@ -1169,11 +1176,13 @@ def kernel_filling_its_scratch_through_a_whole_container_nest(inner_extent=LIMIT
     return sdfg
 
 
+@pytest.mark.parametrize("inner_extent", [LIMIT + 4, "M"])
 @pytest.mark.parametrize("layout", LAYOUTS)
-def test_a_whole_container_nest_keeps_writing_the_elements_it_wrote(layout):
-    """The nest's memlets already address ``buf`` as the kernel does; read as a window starting at ``buf[1]`` they
-    were shifted once more and wrote ``buf[2:4]`` (lavamd's neighbor ``pointers`` ran past the end)."""
-    sdfg = kernel_filling_its_scratch_through_a_whole_container_nest()
+def test_a_whole_container_nest_keeps_writing_the_elements_it_wrote(layout, inner_extent):
+    """The nest's memlets already address ``buf`` as the kernel does, whether it spells the extent like the kernel or
+    in its own mapped symbol; read as a window starting at ``buf[1]`` they were shifted once more and wrote
+    ``buf[2:4]`` (lavamd's neighbor ``pointers`` ran past the end, esirkepov's RZ coefficients faulted)."""
+    sdfg = kernel_filling_its_scratch_through_a_whole_container_nest(inner_extent)
     lift(sdfg, layout)
 
     nest = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
@@ -1280,6 +1289,7 @@ if __name__ == "__main__":
     test_a_kernel_level_access_above_a_per_thread_scratch_is_refused()
     test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel()
     test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads()
+    test_an_extent_shrinking_with_a_count_a_thread_reads_is_not_sized_by_its_maximum()
     test_an_extent_a_thread_reads_runs_on_the_device()
     test_an_extent_a_thread_reads_through_an_index_runs_on_the_device()
     for layout in LAYOUTS:
