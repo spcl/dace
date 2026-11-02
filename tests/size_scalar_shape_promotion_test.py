@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.frontend.python.common import DaceSyntaxError
 
 N = dace.symbol("N")
 
@@ -197,6 +198,26 @@ def test_a_size_read_through_views_reads_the_array_behind_them():
     assert out[0] == 4.0
 
 
+def test_a_returned_array_sized_by_a_promoted_size_is_refused():
+
+    @dace.program
+    def returned_creation(n: dace.int64):
+        return np.ones(n, dace.float64)
+
+    @dace.program
+    def returned_local(n: dace.int64):
+        local = np.ones(n, dace.float64)
+        return local + 1.0, 2.0
+
+    @dace.program
+    def returned_by_a_callee(n: dace.int64, out: dace.float64[1]):
+        out[0] = np.sum(returned_creation(n))
+
+    for program in (returned_creation, returned_local, returned_by_a_callee):
+        with pytest.raises(DaceSyntaxError, match="Data-dependent shape"):
+            program.to_sdfg(simplify=False)
+
+
 if __name__ == "__main__":
     test_size_descriptor_survives_its_use_as_a_shape()
     test_two_arrays_from_a_reassigned_size_keep_their_own_extents()
@@ -210,3 +231,4 @@ if __name__ == "__main__":
     test_every_promotion_is_its_own_symbol()
     test_a_shape_in_a_loop_reads_the_size_the_previous_iteration_wrote()
     test_a_size_read_through_views_reads_the_array_behind_them()
+    test_a_returned_array_sized_by_a_promoted_size_is_refused()
