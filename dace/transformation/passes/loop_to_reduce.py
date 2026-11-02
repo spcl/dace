@@ -1208,6 +1208,10 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
         expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end, facts, stride)
         if expanded is None:
             return None
+        # An input wider than the accumulator would be truncated before the fold, not after each update
+        acc_dtype = sdfg.arrays[accum].dtype
+        if dtypes.result_type_of(acc_dtype, sdfg.arrays[array].dtype) != acc_dtype:
+            return None
         return _Reduction(wcr, accum, write_subset, array, expanded)
 
     # Interstate-edge pattern: 2 empty states + 1 edge with 1 assignment, at loop level

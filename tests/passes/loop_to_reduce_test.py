@@ -1592,6 +1592,20 @@ def test_a_diagonal_read_folds_the_diagonal_only():
     assert out[0] == pytest.approx(np.trace(m))
 
 
+def test_an_input_wider_than_the_accumulator_stays_a_loop():
+    sdfg = dace.SDFG("reduce_wider_input")
+    sdfg.add_array("acc", [1], dace.int64)
+    sdfg.add_array("a", [4], dace.float64)
+    loop = LoopRegion("scale", "i < 4", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    update = body.add_tasklet("update", {"c", "x"}, {"o"}, "o = c * x")
+    body.add_edge(body.add_read("acc"), None, update, "c", dace.Memlet("acc[0]"))
+    body.add_edge(body.add_read("a"), None, update, "x", dace.Memlet("a[i]"))
+    body.add_edge(update, "o", body.add_write("acc"), None, dace.Memlet("acc[0]"))
+    assert not LoopToReduce().apply_pass(sdfg, {})
+
+
 if __name__ == "__main__":
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()
@@ -2302,3 +2316,4 @@ def test_a_staging_copy_read_after_the_loop_is_kept():
     sdfg(a=a, out=out, N=4)
     assert np.allclose(out, [11.0, 11.0])
     test_a_diagonal_read_folds_the_diagonal_only()
+    test_an_input_wider_than_the_accumulator_stays_a_loop()
