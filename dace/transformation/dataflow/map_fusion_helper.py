@@ -702,6 +702,32 @@ def scope_connectors_are_sound(
     return True
 
 
+def scope_contents(state: dace.SDFGState, entry: nodes.EntryNode) -> list[nodes.Node]:
+    """The nodes inside the scope of `entry` and its exit, not `entry`: `state.scope_subgraph()` without the walk
+    over the whole state that puts them in graph order. A probe asks this several times per candidate."""
+    children = state._scope_dict_tochildren_cached
+    if children is None:
+        children = state.scope_children()
+    contents: list[nodes.Node] = []
+    pending = [entry]
+    while pending:
+        for node in children[pending.pop()]:
+            contents.append(node)
+            if isinstance(node, nodes.EntryNode):
+                pending.append(node)
+    return contents
+
+
+def scope_edges(state: dace.SDFGState, entry: nodes.EntryNode, contents: list[nodes.Node]) -> Iterable[graph.Edge]:
+    """The edges of the scope of `entry`, whose `scope_contents()` are `contents`."""
+    return (
+        edge
+        for node in itertools.chain((entry,), contents)
+        if not (isinstance(node, nodes.ExitNode) and state.entry_node(node) is entry)
+        for edge in state.out_edges(node)
+    )
+
+
 def map_scope_data_is_known(
     state: dace.SDFGState,
     sdfg: dace.SDFG,
@@ -713,13 +739,13 @@ def map_scope_data_is_known(
     A name that another transformation deleted surfaces as a `KeyError` deep inside the rewrite
     (`AccessNode.desc()`, `Memlet.try_initialize()`, `sdfg.arrays[...]`), so it is refused here.
     """
-    scope = state.scope_subgraph(map_entry)
+    contents = scope_contents(state, map_entry)
     boundary_edges = list(state.in_edges(map_entry)) + list(state.out_edges(map_exit))
-    for edge in itertools.chain(scope.edges(), boundary_edges):
+    for edge in itertools.chain(scope_edges(state, map_entry, contents), boundary_edges):
         if edge.data is not None and edge.data.data is not None and edge.data.data not in sdfg.arrays:
             return False
     boundary_nodes = (e.src for e in state.in_edges(map_entry))
-    for node in itertools.chain(scope.nodes(), boundary_nodes, (e.dst for e in state.out_edges(map_exit))):
+    for node in itertools.chain(contents, boundary_nodes, (e.dst for e in state.out_edges(map_exit))):
         if isinstance(node, nodes.AccessNode) and node.data not in sdfg.arrays:
             return False
     return True

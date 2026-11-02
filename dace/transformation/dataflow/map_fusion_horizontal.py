@@ -184,7 +184,10 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         # Since we matched any two Maps in the state, we have to ensure that they
         #  are in the same scope (e.g. same state, or same parent Map), otherwise it could be that one is inside one Map
         #  while the other is inside another one.
-        scope = graph.scope_dict()
+        # The cached dict is only read here: `scope_dict()` copies it per call.
+        scope = graph._scope_dict_toparent_cached
+        if scope is None:
+            scope = graph.scope_dict()
         # A match another transformation of the same round invalidated names removed nodes.
         if first_map_entry not in scope or second_map_entry not in scope:
             return False

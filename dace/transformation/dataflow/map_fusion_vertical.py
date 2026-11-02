@@ -388,7 +388,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # A match another transformation of the same round invalidated names nodes that are no
         #  longer in the state; every scope lookup below would then raise instead of refusing.
-        scope: dict[nodes.Node, nodes.Node | None] = graph.scope_dict()
+        # The cached dict is only read here: `scope_dict()` copies it per call.
+        scope = graph._scope_dict_toparent_cached
+        if scope is None:
+            scope = graph.scope_dict()
         if first_map_exit not in scope or second_map_entry not in scope or self.array not in scope:
             return False
         first_map_entry: nodes.MapEntry = scope[first_map_exit]
@@ -436,8 +439,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  `desc()` further down, raise instead of refusing.
             if not mfhelper.map_scope_data_is_known(graph, sdfg, map_entry, map_exit):
                 return False
-            inner_subgraph = graph.scope_subgraph(map_entry)
-            for edge in inner_subgraph.edges():
+            for edge in mfhelper.scope_edges(graph, map_entry, mfhelper.scope_contents(graph, map_entry)):
                 edge.data.try_initialize(sdfg, graph, edge)
             for iedge in graph.in_edges(map_entry):
                 iedge.data.try_initialize(sdfg, graph, iedge)
@@ -514,8 +516,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             e.dst.data for e in (exclusive_outputs | shared_outputs) if isinstance(e.dst, nodes.AccessNode)
         } - in_place
         if intermediate_names:
-            first_scope = graph.scope_subgraph(first_map_entry, include_entry=False, include_exit=False)
-            for inner in first_scope.nodes():
+            for inner in mfhelper.scope_contents(graph, first_map_entry):
                 if not isinstance(inner, nodes.NestedSDFG):
                     continue
                 inout_conns = set(inner.in_connectors) & set(inner.out_connectors)
@@ -1773,15 +1774,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param state: The state on which we operate.
         :param sdfg: The SDFG on which we operate.
         """
-        first_map_body = state.scope_subgraph(first_map_entry, False, False)
-        second_map_body = state.scope_subgraph(second_map_entry, False, False)
+        first_map_body = mfhelper.scope_contents(state, first_map_entry)
+        second_map_body = mfhelper.scope_contents(state, second_map_entry)
 
         # Find the data that is internally referenced. Because of the first rule above,
         #  we filter all views above.
         first_map_body_data, second_map_body_data = [
             {
                 dnode.data
-                for dnode in map_body.nodes()
+                for dnode in map_body
                 if isinstance(dnode, nodes.AccessNode) and not self.is_view(dnode, sdfg)
             }
             for map_body in [first_map_body, second_map_body]
