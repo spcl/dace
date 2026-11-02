@@ -19,7 +19,7 @@ from collections.abc import Callable, Sequence
 from dace import symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
 #: The class line of a parallel arm: the guard is the evidence the iterations are independent.
 GUARDED = (
@@ -61,6 +61,39 @@ def _owner_sdfg(loop: LoopRegion) -> SDFG:
     return sd
 
 
+def version_block(
+    block: ControlFlowBlock,
+    label: str,
+    first: tuple[str | CodeBlock, ControlFlowBlock, str],
+    second: tuple[None, ControlFlowBlock, str],
+) -> tuple[ConditionalBlock, ControlFlowRegion, ControlFlowRegion]:
+    """Put a two-arm conditional in the place of ``block``, the one loop-versioning builder.
+
+    :param block: The block to replace, removed from its region.
+    :param label: The label of the conditional.
+    :param first: ``(condition, version, label of its region)`` of the guarded arm.
+    :param second: ``(None, version, label of its region)`` of the ``else`` arm.
+    :returns: The conditional and the regions of its two arms, in that order.
+    """
+    parent = block.parent_graph
+    in_edges = list(parent.in_edges(block))
+    out_edges = list(parent.out_edges(block))
+    conditional = ConditionalBlock(label=label)
+    parent.add_node(conditional, is_start_block=parent.start_block is block, ensure_unique_name=True)
+    for e in in_edges:
+        parent.add_edge(e.src, conditional, copy.deepcopy(e.data))
+    for e in out_edges:
+        parent.add_edge(conditional, e.dst, copy.deepcopy(e.data))
+    parent.remove_node(block)
+    regions = []
+    for condition, version, region_label in (first, second):
+        region = ControlFlowRegion(label=region_label, sdfg=parent.sdfg)
+        region.add_node(version, is_start_block=True, ensure_unique_name=True)
+        conditional.add_branch(condition, region)
+        regions.append(region)
+    return conditional, *regions
+
+
 def specialize_loop_under_condition(
     loop: LoopRegion,
     condition,
@@ -93,13 +126,6 @@ def specialize_loop_under_condition(
     if not isinstance(condition, CodeBlock):
         condition = CodeBlock(condition)
 
-    parent = loop.parent_graph
-    in_edges = list(parent.in_edges(loop))
-    out_edges = list(parent.out_edges(loop))
-    is_start = parent.start_block is loop
-
-    conditional = ConditionalBlock(label=f"{loop.label}_specialize")
-
     # True branch: a clone the caller parallelizes. Else branch (condition ``None``):
     # a clone kept as sequential fallback. Deep-copy both (not re-host the original) to
     # keep re-parenting simple and leave no stale refs to the removed loop.
@@ -108,29 +134,17 @@ def specialize_loop_under_condition(
     # ``loop`` carries as an earlier specialization's fallback does not hold there (LoopToScan's ``K < 0`` fallback,
     # versioned again on ``0 <= K`` by BreakAntiDependence)
     par_loop.pinned_sequential = False
-    par_region = ControlFlowRegion(label=f"{loop.label}_par")
-    par_region.add_node(par_loop, is_start_block=True, ensure_unique_name=True)
-    conditional.add_branch(condition, par_region)
-
     seq_loop = copy.deepcopy(loop)
     # Pin the fallback sequential so no later parallelizer (LoopToMap / LoopToReduce)
     # lifts it back to a Map -- it exists for values violating ``condition`` and must
     # stay sequential.
     seq_loop.pinned_sequential = True
-    seq_region = ControlFlowRegion(label=f"{loop.label}_seq")
-    seq_region.add_node(seq_loop, is_start_block=True, ensure_unique_name=True)
-    conditional.add_branch(None, seq_region)
-
-    parent.add_node(conditional, ensure_unique_name=True)
-    for e in in_edges:
-        parent.add_edge(e.src, conditional, copy.deepcopy(e.data))
-    for e in out_edges:
-        parent.add_edge(conditional, e.dst, copy.deepcopy(e.data))
-    for e in in_edges + out_edges:
-        parent.remove_edge(e)
-    parent.remove_node(loop)
-    if is_start:
-        parent.start_block = parent.node_id(conditional)
+    conditional, par_region, seq_region = version_block(
+        loop,
+        f"{loop.label}_specialize",
+        (condition, par_loop, f"{loop.label}_par"),
+        (None, seq_loop, f"{loop.label}_seq"),
+    )
 
     # Both clones still name the loop's scratch transients: a transient accessed outside the loop is one
     # LoopToMap cannot privatize, so the fallback gets its own copies (only one branch ever runs)
@@ -209,4 +223,5 @@ __all__ = [
     "label_arms",
     "specialize_loop_under_condition",
     "specialize_loop_under_relations",
+    "version_block",
 ]

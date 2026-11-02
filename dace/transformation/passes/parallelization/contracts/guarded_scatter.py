@@ -62,7 +62,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import Refusal
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.loop_specialization import label_arms
+from dace.transformation.passes.loop_specialization import label_arms, version_block
 from dace.transformation.passes.scatter_conflict_guard import (
     ScatterIndexSlice,
     build_guard_states,
@@ -1513,10 +1513,6 @@ def _wrap_loop_in_dispatcher(
     if block not in parent.nodes():
         return
 
-    in_edges = list(parent.in_edges(block))
-    out_edges = list(parent.out_edges(block))
-    was_start = parent.start_block is block
-
     # Pin the fallback so no later parallelizer re-lifts it, and so a parallelism
     # counter can treat this guarded region as fully parallel (the pinned clone is
     # the collision fallback, not a genuinely-sequential loop) -- same marker the
@@ -1533,26 +1529,15 @@ def _wrap_loop_in_dispatcher(
             if isinstance(node, nodes.NestedSDFG):
                 node.sdfg.parent_sdfg = parent.sdfg
 
-    cb = ConditionalBlock(loop.label + "_dispatch")
-    parent.add_node(cb, is_start_block=was_start, ensure_unique_name=True)  # derived label; wired by object ref
-
-    seq_branch = ControlFlowRegion(loop.label + "_seq_branch", sdfg=parent.sdfg)
-    seq_branch.add_node(sequential_clone, is_start_block=True)
-
-    par_branch = ControlFlowRegion(loop.label + "_par_branch", sdfg=parent.sdfg)
-    par_branch.add_node(block, is_start_block=True)
-    parent.remove_node(block)
-
-    cb.add_branch(condition_expr, seq_branch)
-    cb.add_branch(None, par_branch)
+    _, seq_branch, par_branch = version_block(
+        block,
+        loop.label + "_dispatch",
+        (condition_expr, sequential_clone, loop.label + "_seq_branch"),
+        (None, block, loop.label + "_par_branch"),
+    )
     if block is loop:
         # A cloned state's nested sdfgs already carry their own descriptors; a cloned loop shares its owner's.
         privatize_clone_local_transients(parent.sdfg, loop, sequential_clone)
-
-    for e in in_edges:
-        parent.add_edge(e.src, cb, e.data)
-    for e in out_edges:
-        parent.add_edge(cb, e.dst, e.data)
 
     # Lift the loop inside the False branch to a Map.
     from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops  # avoid an import cycle
