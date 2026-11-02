@@ -478,6 +478,10 @@ def extent_bounds(desc: dt.Array, hierarchy: list[SDFG], kernel: Scope) -> list[
     for sym in sorted({str(s) for d in desc.shape for s in symbolic.pystr_to_symbolic(d).free_symbols}):
         if not any(assigns_symbol(sdfg, sym) for sdfg in hierarchy[:-1]):
             continue
+        # The largest value of a symbol an extent shrinks with gives the smallest extent, not a bound on it
+        coefficients = [symbolic.affine_coefficients(d, sym) for d in desc.shape]
+        if any(c is not None and c[0].is_negative for c in coefficients):
+            return None
         read = kernel_assigned_read(hierarchy, sym)
         located = read and read_in_kernel_sdfg(hierarchy, *read)
         inlined = located and inline_kernel_reads(hierarchy, located[1])
@@ -769,7 +773,9 @@ def restride_connected_nests(
             for conn in dict.fromkeys(c for c, e in edges if c is not None and e.data.data == name):
                 inner = node.sdfg.arrays[conn]
                 if list(inner.strides) == old:
-                    if list(inner.shape) == list(outer.shape):
+                    mapping = symbolic.symbol_replacements(node.symbol_mapping)
+                    shape = [symbolic.replace_symbols(extent, mapping) for extent in inner.shape]
+                    if len(shape) == len(outer.shape) and all(map(dt.core.same_extent, shape, outer.shape)):
                         for c, edge in edges:
                             if c == conn and edge.data.data == name:
                                 edge.data.subset = subsets.Range.from_array(outer)
