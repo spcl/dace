@@ -571,7 +571,7 @@ class ConstantPropagation(ppl.Pass):
                     # overwritten there, cannot be assumed as constants for the loop itself.
                     assigned_in_loop = self._assigned_in_loop(block)
                     for k, v in assignments.items():
-                        if _value_names(v, assigned_in_loop):
+                        if k in assigned_in_loop or _value_names(v, assigned_in_loop):
                             assignments[k] = _UnknownValue
                     # Unknown even without an incoming value: an assignment in the body reaches the next iteration
                     # (A data-dependent assignment is no constant anywhere, and most of a large body's are that.)
