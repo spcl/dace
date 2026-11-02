@@ -837,7 +837,11 @@ class StateFusionExtended(StateFusion):
                     if not self._check_paths(
                         first_state, second_state, match_nodes, nodes_first, nodes_second, False, False
                     ):
-                        return False
+                        if not self.aggressive_merges:
+                            return False
+                        # Last writer (second) wins: the first writers go before the second's, past the match nodes
+                        self.connections_to_make.append(("read_before", nodes_first, nodes_second))
+                        continue
                     # That order runs through a merge ``fuse`` may not make; an overlap keeps its own edge
                     if StateFusionExtended.memlets_intersect(
                         first_state, nodes_first, False, second_state, nodes_second, False, facts
