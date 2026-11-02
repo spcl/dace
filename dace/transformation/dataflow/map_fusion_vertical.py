@@ -1369,7 +1369,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             is_in_place = inter_name in in_place
             if is_in_place:
                 new_inter_name, new_inter_desc, is_scalar = inter_name, inter_desc, False
-                new_inter_node = state.add_access(inter_name, copy.copy(inter_node.debuginfo))
+                # A body that fused this container in place before holds it in a node already, no copy onto itself
+                held = [
+                    e.src for e in pre_exit_edges if isinstance(e.src, nodes.AccessNode) and e.src.data == inter_name
+                ]
+                new_inter_node = held[0] if held else state.add_access(inter_name, copy.copy(inter_node.debuginfo))
             else:
                 (new_inter_shape_raw, new_inter_shape, squeezed_dims) = self.compute_reduced_intermediate(
                     producer_subset=producer_subset,
@@ -1421,13 +1425,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  that piece is the whole of it.
             for pre_exit_edge in pre_exit_edges:
                 if is_in_place:
-                    state.add_edge(
-                        pre_exit_edge.src,
-                        pre_exit_edge.src_conn,
-                        new_inter_node,
-                        None,
-                        copy.deepcopy(pre_exit_edge.data),
-                    )
+                    if pre_exit_edge.src is not new_inter_node:
+                        state.add_edge(
+                            pre_exit_edge.src,
+                            pre_exit_edge.src_conn,
+                            new_inter_node,
+                            None,
+                            copy.deepcopy(pre_exit_edge.data),
+                        )
                     continue
                 # Memlets have a lot of additional informations, to ensure that we get
                 #  all of them, we have to do it this way. The main reason for this is

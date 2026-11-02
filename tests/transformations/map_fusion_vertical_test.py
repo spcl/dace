@@ -4358,6 +4358,11 @@ def test_an_intermediate_fused_in_place_is_not_single_use_any_more():
 
     assert count_nodes(state, nodes.MapEntry) == 1
     assert "T" in sdfg.arrays
+    assert not any(
+        e.src.data == e.dst.data
+        for e in state.edges()
+        if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
+    )
     sdfg.validate()
 
 
