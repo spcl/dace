@@ -275,10 +275,10 @@ def test_the_contract_probes_read_each_sdfgs_facts_once(monkeypatch):
     probing = [False]
     original_walk, original_probe = dace.sdfg.sdfg.interstate_bound_names, LoopLift.can_lift
 
-    def walk(sd):
+    def walk(sd, *args):
         if probing[0]:
             walked.append(sd)
-        return original_walk(sd)
+        return original_walk(sd, *args)
 
     def probe(self, graph, sd, permissive=False):
         probing[0] = True

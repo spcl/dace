@@ -170,7 +170,7 @@ def test_a_writer_outside_any_map_keeps_the_reader():
     tasklet = state.add_tasklet("t", {"x"}, {"y"}, "y = x")
     state.add_memlet_path(written, entry, tasklet, dst_conn="x", memlet=dace.Memlet("a[i]"))
     state.add_memlet_path(tasklet, exit_, state.add_write("b"), src_conn="y", memlet=dace.Memlet("b[i]"))
-    assert not detach(state, written, entry)
+    assert not detach(state, written, entry, sdfg.facts())
 
 
 if __name__ == "__main__":
