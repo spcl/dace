@@ -8,12 +8,13 @@ need no GPU; the numeric ones run on the device, at sizes that leave the last bl
 
 import numpy as np
 import pytest
+from ordered_set import OrderedSet
 
 import dace
 from dace import dtypes
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.gpu_specialization.block_tile_kernels import BlockTileKernels
+from dace.transformation.passes.gpu_specialization.block_tile_kernels import BlockTileKernels, updates_shared
 
 M, N, K, NB, NNZ = (dace.symbol(s) for s in ("M", "N", "K", "NB", "NNZ"))
 SIZES = [(1, 1, 1, 1), (37, 300, 5, 3), (257, 513, 129, 2)]
@@ -243,6 +244,22 @@ def test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barr
     assert code.count("__syncthreads();") >= 2
 
 
+def test_a_tasklet_writing_a_plane_a_kernel_before_it_wrote_reads_nothing_it_updates():
+    sdfg = dace.SDFG("plane_after_plane")
+    sdfg.add_array("A", [4, 2], dtypes.float64)
+    state = sdfg.add_state()
+    _, _, first_exit = state.add_mapped_tasklet(
+        "lo", {"i": "0:4"}, {}, "o = 1.0", {"o": dace.Memlet("A[i, 0]")}, external_edges=True
+    )
+    second = state.add_tasklet("hi", {}, {"o": None}, "o = 2.0")
+    entry, exit_ = state.add_map("kernel", {"i": "0:4"})
+    state.add_nedge(entry, second, dace.Memlet())
+    written = state.out_edges(first_exit)[0].dst
+    state.add_nedge(written, entry, dace.Memlet())
+    state.add_memlet_path(second, exit_, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i, 1]"))
+    assert not updates_shared(second, state, OrderedSet())
+
+
 def test_a_body_that_accumulates_outside_the_inner_map_keeps_one_thread_per_iteration():
     """Every lane runs what lies outside the strided maps; ``total += s`` there would add ``s`` once per lane."""
     sdfg = canonical_gpu(accumulate_outside)
@@ -389,6 +406,7 @@ if __name__ == "__main__":
     test_a_library_node_inside_a_kernel_takes_its_block_collective(batched_dot, "Dot", "CUDA (block strided)")
     test_a_library_node_inside_a_kernel_takes_its_block_collective(gathered_gemm, "Gemm", "CUDA (block strided)")
     test_a_top_level_batched_gemm_is_one_vendor_batched_call()
+    test_a_tasklet_writing_a_plane_a_kernel_before_it_wrote_reads_nothing_it_updates()
     test_a_dot_over_a_gathered_row_fuses_into_one_block_reduction()
     test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barriers()
     test_a_body_that_accumulates_outside_the_inner_map_keeps_one_thread_per_iteration()
