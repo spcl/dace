@@ -390,6 +390,18 @@ _RANGE_TAUTOLOGY = ["not (i == 0)", "i != 0", "i < 10", "i <= 9", "i > 1", "i >=
 _RANGE_RUNTIME = ["i == 5", "i < 4", "i > 6", "i == 9"]
 
 
+def test_iteration_range_of_a_descending_loop_keeps_a_guard_inside_it():
+    """``i`` runs 9, 8, ..., 0, so ``i == 5`` holds once and ``i == 10`` never."""
+    descending = dict(init="i = 9", cond="i >= 0", update="i = i - 1")
+    sdfg = _get_loop_with_conditional("i == 5", **descending)
+    LiftTrivialIf().apply_pass(sdfg, {})
+    assert _num_conditionals(sdfg) == 1
+
+    sdfg = _get_loop_with_conditional("i == 10", **descending)
+    LiftTrivialIf().apply_pass(sdfg, {})
+    assert _num_conditionals(sdfg) == 0
+
+
 @pytest.mark.parametrize("cond", _RANGE_CONTRADICTION)
 def test_iteration_range_contradiction_single_branch_removed(cond: str):
     """A single-branch ``if`` whose guard is false for every iteration of the
@@ -560,6 +572,7 @@ if __name__ == "__main__":
     for c in _ALWAYS_FALSE:
         test_if_else_cond_is_trivially_false(c)
 
+    test_iteration_range_of_a_descending_loop_keeps_a_guard_inside_it()
     test_cfg_is_a_middle_node()
     test_simplify_pipeline_includes_lift_trivial_if()
     test_trivial_if_with_nested_sdfg_reparents_correctly()

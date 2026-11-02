@@ -159,23 +159,31 @@ class LiftTrivialIf(ppl.Pass):
             return symbolic.Truth.FALSE if truth is symbolic.Truth.TRUE else symbolic.Truth.TRUE
         return truth
 
-    def _loop_iter_ranges(self, cfb: ConditionalBlock):
-        """The ``(loop_variable, start, end)`` iteration range of every
-        ``LoopRegion`` enclosing ``cfb``, innermost first. ``start`` / ``end`` are
-        the inclusive bounds under normal (no-break) termination."""
+    def _loop_iter_ranges(self, cfb: ConditionalBlock) -> dict[str, tuple | None]:
+        """The inclusive ``(low, high)`` range of every ``LoopRegion`` iterator at ``cfb``, ``None`` for one whose range
+        says nothing there. The innermost loop binding a name decides, and a nested SDFG binds its own names."""
         from dace.sdfg.state import LoopRegion
         from dace.transformation.passes.analysis import loop_analysis
 
-        ranges = []
+        ranges: dict[str, tuple | None] = {}
         graph = cfb.parent_graph
-        seen = set()
-        while graph is not None and id(graph) not in seen:
-            seen.add(id(graph))
-            if isinstance(graph, LoopRegion) and graph.loop_variable:
+        while graph is not None and graph is not cfb.sdfg:
+            if isinstance(graph, LoopRegion) and graph.loop_variable and graph.loop_variable not in ranges:
+                ranges[graph.loop_variable] = None
                 start = loop_analysis.get_init_assignment(graph)
                 end = loop_analysis.get_loop_end(graph)
-                if start is not None and end is not None:
-                    ranges.append((graph.loop_variable, start, end))
+                step = loop_analysis.get_loop_stride(graph)
+                # ``is_positive`` is None for a symbolic step, whose sign nothing here knows. The body of an inverted
+                # loop runs once before its condition holds, and one that assigns its iterator or a bound leaves the
+                # range.
+                if None not in (start, end, step) and not graph.inverted:
+                    assigned = {name for edge in graph.all_interstate_edges() for name in edge.data.assignments}
+                    named = {graph.loop_variable} | {str(free) for b in (start, end, step) for free in b.free_symbols}
+                    if not assigned & named:
+                        if step.is_positive:
+                            ranges[graph.loop_variable] = (start, end)
+                        elif step.is_negative:
+                            ranges[graph.loop_variable] = (end, start)
             graph = graph.parent_graph
         return ranges
 
@@ -241,8 +249,8 @@ class LiftTrivialIf(ppl.Pass):
         ``LoopRegion`` whose iterator it is."""
         if code is None or code.language != dace.dtypes.Language.Python:
             return "unknown"
-        ranges = self._loop_iter_ranges(cfb)
-        if not ranges:
+        ivar_to_range = {name: bounds for name, bounds in self._loop_iter_ranges(cfb).items() if bounds is not None}
+        if not ivar_to_range:
             return "unknown"
         try:
             node = code.code[0]
@@ -260,8 +268,6 @@ class LiftTrivialIf(ppl.Pass):
 
         def name_of(n):
             return n.id if isinstance(n, ast.Name) else None
-
-        ivar_to_range = {iv: (s, e) for iv, s, e in ranges}
 
         def ivar_in(n):
             names = {sub.id for sub in ast.walk(n) if isinstance(sub, ast.Name)} & ivar_to_range.keys()
