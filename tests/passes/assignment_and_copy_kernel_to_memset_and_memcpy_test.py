@@ -1291,5 +1291,56 @@ def test_a_copy_tasklet_writing_through_a_wcr_is_not_lifted_as_a_copy():
     assert numpy.allclose(a, a0 * c), a - a0 * c
 
 
+def test_a_loop_in_a_nested_sdfg_of_a_gpu_map_stays_a_loop():
+    """A lifted transfer would expand to the host-only ``cudaMemcpyAsync`` inside the kernel."""
+    inner = dace.SDFG("nested_copy_loop")
+    inner.add_array("src", [4], dace.float64)
+    inner.add_array("dst", [4], dace.float64)
+    loop = LoopRegion("copy", "i < 4", "i", "i = 0", "i = i + 1", sdfg=inner)
+    inner.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("copy", {"__inp"}, {"__out"}, "__out = __inp")
+    body.add_edge(body.add_read("src"), None, tasklet, "__inp", dace.Memlet("src[i]"))
+    body.add_edge(tasklet, "__out", body.add_write("dst"), None, dace.Memlet("dst[i]"))
+
+    sdfg = dace.SDFG("gpu_map_over_nested_copy_loop")
+    sdfg.add_array("A", [8, 4], dace.float64)
+    sdfg.add_array("B", [8, 4], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("kernel", {"k": "0:8"}, schedule=dace.ScheduleType.GPU_Device)
+    nested = state.add_nested_sdfg(inner, {"src"}, {"dst"})
+    state.add_memlet_path(state.add_read("A"), entry, nested, dst_conn="src", memlet=dace.Memlet("A[k, 0:4]"))
+    state.add_memlet_path(nested, exit_node, state.add_write("B"), src_conn="dst", memlet=dace.Memlet("B[k, 0:4]"))
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    assert any(isinstance(r, LoopRegion) for r in inner.all_control_flow_regions())
+
+
+def test_a_flattened_index_is_not_a_copy():
+    """``dst[ii, jj] = src[3 * jj + ii]`` reads column-major: the dense box and the volume match a row-major copy."""
+    sdfg = dace.SDFG("flattened_index")
+    sdfg.add_array("src", [12], dace.float64)
+    sdfg.add_array("dst", [3, 4], dace.float64)
+    sdfg.add_state(is_start_block=True).add_mapped_tasklet(
+        "cp",
+        {"ii": "0:3", "jj": "0:4"},
+        {"i": dace.Memlet("src[jj * 3 + ii]")},
+        "o = i",
+        {"o": dace.Memlet("dst[ii, jj]")},
+        external_edges=True,
+    )
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+    assert _get_num_memcpy_library_nodes(sdfg) == 0
+
+
+def test_a_callback_tasklet_with_no_edges_survives_the_sweep():
+    sdfg = dace.SDFG("orphan_callback")
+    sdfg.add_symbol("callback_fn", dace.callback(None))
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("call", {}, {}, "callback_fn()")
+    AssignmentAndCopyKernelToMemsetAndMemcpy.remove_orphans(state)
+    assert tasklet in state.nodes()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

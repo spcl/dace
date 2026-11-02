@@ -44,7 +44,7 @@ def updated_containers(loop: LoopRegion, per_state: dict[SDFGState, set[str]]) -
     """:func:`updated_in_state` over ``loop``'s states, each computed once into ``per_state`` (nested loops share
     their states' entries)."""
     names: set[str] = set()
-    for state in [b for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState)]:
+    for state in loop.states():
         if state not in per_state:
             per_state[state] = updated_in_state(state)
         names |= per_state[state]
@@ -75,28 +75,20 @@ def update_match(state: SDFGState, tasklet: nodes.Tasklet, ins: list, outs: list
     target = state.memlet_path(outs[0])[-1].dst
     if not (isinstance(source, nodes.AccessNode) and isinstance(target, nodes.AccessNode)):
         return None
-    match = {
-        AugAssignToWCR.input: state.node_id(source),
-        AugAssignToWCR.tasklet: state.node_id(tasklet),
-        AugAssignToWCR.output: state.node_id(target),
-    }
+    match = {AugAssignToWCR.input: source, AugAssignToWCR.tasklet: tasklet, AugAssignToWCR.output: target}
     expr = 0
     if entry is not None:
-        match[AugAssignToWCR.map_entry] = state.node_id(entry)
-        match[AugAssignToWCR.map_exit] = state.node_id(state.exit_node(entry))
+        match[AugAssignToWCR.map_entry] = entry
+        match[AugAssignToWCR.map_exit] = state.exit_node(entry)
         expr = 1
     xform = AugAssignToWCR()
-    xform.setup_match(state.sdfg, state.parent_graph.cfg_id, state.block_id, match, expr)
+    xform.setup_match(state.sdfg, state.parent_graph.cfg_id, state.block_id, match, expr, override=True)
     return xform if xform.can_be_applied(state, expr, state.sdfg, permissive=True) else None
-
-
-def loop_states(loop: LoopRegion) -> list[SDFGState]:
-    return [b for b in loop.all_control_flow_blocks() if isinstance(b, SDFGState)]
 
 
 def all_convertible(loop: LoopRegion, names: set[str]) -> bool:
     """Whether every update of every container in ``names`` becomes WCR: the loop maps only with all of them."""
-    return all(xform is not None for name in names for st in loop_states(loop) for _, xform in updates_of(st, name))
+    return all(xform is not None for name in names for st in loop.states() for _, xform in updates_of(st, name))
 
 
 def convert_updates(loop: LoopRegion, name: str) -> int:
@@ -104,7 +96,7 @@ def convert_updates(loop: LoopRegion, name: str) -> int:
     states are listed afresh after each."""
     converted = 0
     while True:
-        for state in loop_states(loop):
+        for state in loop.states():
             xform = next((x for _, x in updates_of(state, name) if x is not None), None)
             if xform is not None:
                 xform.apply(state, state.sdfg)
@@ -120,16 +112,14 @@ def writes_move_with_the_iteration(loop: LoopRegion, name: str) -> bool:
     x``) is a reduction over the loop, which the loop's own parallel axes serve better than atomics across it."""
     moving = loop_analysis.body_local_symbols(loop) | {loop.loop_variable}
     found = False
-    for block in loop.all_control_flow_blocks():
-        if not isinstance(block, SDFGState):
-            continue
-        for node in block.data_nodes():
+    for state in loop.states():
+        for node in state.data_nodes():
             if node.data != name:
                 continue
-            for edge in block.in_edges(node):
+            for edge in state.in_edges(node):
                 if edge.data.is_empty():
                     continue
-                subset = edge.data.get_dst_subset(edge, block)
+                subset = edge.data.get_dst_subset(edge, state)
                 if subset is None or not {str(sym) for sym in subset.free_symbols} & moving:
                     return False
                 found = True

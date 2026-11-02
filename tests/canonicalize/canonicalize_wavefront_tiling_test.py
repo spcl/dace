@@ -19,6 +19,7 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.parallelization.wavefront.skew import SKEW_P_PREFIX, SKEW_T_PREFIX, WavefrontSkew
 
 N = dace.symbol("N")
@@ -163,6 +164,27 @@ def test_a_dependence_reaching_past_the_tile_still_tiles_bit_exactly(bi):
     got = a0.copy()
     sdfg(a=got, N=n)
     assert np.array_equal(got, ref)
+
+
+@dace.program
+def split_point_max(a: dace.float64[N, N]):
+    """nussinov's cell: a max over every split point of ``i..j``."""
+    for i in range(N - 2, -1, -1):
+        for j in range(i + 1, N):
+            a[i, j] = max(a[i, j], a[i, j - 1])
+            a[i, j] = max(a[i, j], a[i + 1, j])
+            for k in range(i + 1, j):
+                a[i, j] = max(a[i, j], a[i, k] + a[k + 1, j])
+
+
+def test_a_cell_with_a_wide_loop_keeps_the_element_diagonal_on_gpu():
+    tiled = {}
+    for target in ("cpu", "gpu"):
+        sdfg = split_point_max.to_sdfg(simplify=True)
+        canonicalize(sdfg, validate=False, target=target)
+        assert any(r.loop_variable.startswith(SKEW_T_PREFIX) for r in loops(sdfg))
+        tiled[target] = any("_tile_" in r.label for r in loops(sdfg))
+    assert tiled == {"cpu": True, "gpu": False}
 
 
 @pytest.mark.parametrize("prog", ALL_SHAPES, ids=lambda p: p.name)

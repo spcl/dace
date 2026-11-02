@@ -237,5 +237,23 @@ def test_an_ordering_edge_does_not_make_a_statement_part_of_the_iv_component():
     assert sorted(t.label for t in st.nodes() if isinstance(t, _dace.nodes.Tasklet)) == ["cp", "iv"]
 
 
+def test_a_statement_on_the_accumulators_container_keeps_the_body_whole():
+    """``res[0] *= 2`` beside ``b[i] = res[1] + 1``: the split matches nodes by container, so it would strand the read."""
+    sdfg = dace.SDFG("hoist_shares_container")
+    sdfg.add_array("res", [2], dace.float64)
+    sdfg.add_array("b", [4], dace.float64)
+    loop = LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    update = state.add_tasklet("iv", {"__in"}, {"__out"}, "__out = __in * 2")
+    state.add_edge(state.add_read("res"), None, update, "__in", dace.Memlet("res[0]"))
+    state.add_edge(update, "__out", state.add_write("res"), None, dace.Memlet("res[0]"))
+    other = state.add_tasklet("other", {"q"}, {"o"}, "o = q + 1")
+    state.add_edge(state.add_read("res"), None, other, "q", dace.Memlet("res[1]"))
+    state.add_edge(other, "o", state.add_write("b"), None, dace.Memlet("b[i]"))
+
+    assert HoistInductionVariableUpdates().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

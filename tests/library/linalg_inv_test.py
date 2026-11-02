@@ -452,7 +452,7 @@ def test_inv_scratch_of_a_sequential_loop_is_allocated_once():
 def test_inv_scratch_under_a_map_stays_per_call():
     """Inversions a map may run at once each need their own pivots and status."""
     _, lifetimes = _scratch_lifetimes(inv_per_map_point)
-    assert lifetimes == {dace.AllocationLifetime.Scope}, lifetimes
+    assert lifetimes == {dace.AllocationLifetime.State}, lifetimes
 
 
 def test_inv_scratch_under_a_sequential_map_is_allocated_once():

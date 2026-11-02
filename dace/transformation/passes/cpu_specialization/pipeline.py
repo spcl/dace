@@ -38,6 +38,8 @@ Order within the stage, and why:
 7. :class:`~dace.transformation.passes.cpu_specialization.specialize_cpu_transfers.SpecializeCpuTransfers`
    -- gives the transfers step 6 just sequentialized their single ``memcpy`` / ``memset`` back, so
    the parallel-by-default copy expansion costs nothing when the cost model refuses it.
+7a. :class:`~dace.transformation.passes.cpu_specialization.bound_masked_maps.BoundMaskedMaps` -- on the final shapes:
+   a map over padded slots stops at the count that masks them, and ``ChooseOmpSchedule`` then sees the uneven work.
 8. :class:`~dace.transformation.passes.cpu_specialization.range_privatize_scatter_reductions.RangePrivatizeScatterReductions`
    -- after the schedules are final: a parallel map scattering into an array through data-dependent
    indices gives each thread a private copy of only the rows its chunk writes, not of the whole array.
@@ -58,6 +60,7 @@ from dace.sdfg import infer_types
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
+from dace.transformation.passes.cpu_specialization.bound_masked_maps import BoundMaskedMaps
 from dace.transformation.passes.cpu_specialization.choose_omp_schedule import ChooseOmpSchedule
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
 from dace.transformation.passes.cpu_specialization.if_convert_map_bodies import IfConvertParallelMapBodies
@@ -98,6 +101,7 @@ def cpu_specialize(sdfg: SDFG, validate: bool = False) -> SDFG:
     SequentializeSmallAxes().apply_pass(sdfg, {})
     # After the schedules are final: only a body that stays a parallel map is if-converted.
     IfConvertParallelMapBodies().apply_pass(sdfg, {})
+    BoundMaskedMaps().apply_pass(sdfg, {})
     RangePrivatizeScatterReductions().apply_pass(sdfg, {})
     SpecializeCpuTransfers().apply_pass(sdfg, {})
     SpecializeSmallGemms(dtypes.DeviceType.CPU).apply_pass(sdfg, {})

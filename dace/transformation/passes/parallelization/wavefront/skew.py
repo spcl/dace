@@ -11,7 +11,8 @@ statement sequenced first.
 Where every dependence is non-negative along ``u`` and ``w = v + s + k*u`` the nest is tiled
 instead: a sequential tile diagonal over a parallel tile-column map over the tile's rows, each row
 running the statements clipped to the tile. On GPU a tile of loop statements also runs its own
-``(1, 1)`` diagonal across a thread block.
+``(1, 1)`` diagonal across a thread block, unless a cell holds a wide loop: that nest keeps the element diagonal, one
+kernel iteration per cell, and the wide loop takes the block.
 
 A nest whose inner axes are already parallel at fixed ``u``, or whose outer axis is, is left alone, and so is a
 time-step loop: one whose iterator indexes nothing.
@@ -35,6 +36,7 @@ from dace.sdfg.narrowing import as_expr, as_typeclass, ndrange_exprs, simplified
 from dace.sdfg.propagation import propagate_memlets_state
 from dace.sdfg.replace import replace_dict as replace_in_subgraph
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
+from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.interstate.loop_to_map import control_flow_reads, symbols_assigned_before_use
@@ -60,6 +62,7 @@ from dace.transformation.passes.parallelization.wavefront.statements import (
     free_names,
     is_time_step_loop,
     occurrence_index,
+    unit_loop_bounds,
 )
 
 SKEW_T_PREFIX = "_skew_t_"
@@ -386,6 +389,9 @@ class WavefrontSkew(ppl.Pass):
         bi, bj = self.tile_extents()
         if bi < 1 or bj < 1:
             return None
+        resolver = SymbolResolver()
+        if self.target == "gpu" and any(holds_wide_loop(st, resolver) for st in body.statements if st.kind == "loop"):
+            return None
         for k in range(MAX_PRESKEW + 1):
             if not deps.permutable(shifts, k):
                 continue
@@ -621,6 +627,19 @@ def skewable_refusal(refusals: dict, loop: LoopRegion) -> bool:
         return False
     refusal = refusals[loop]
     return refusal is None or refusal.kind.carried or refusal.kind is Refusal.PINNED
+
+
+def holds_wide_loop(st: Statement, resolver: SymbolResolver) -> bool:
+    """Whether a cell of ``st`` runs a parallel-capable axis that is not ``SMALL``. On GPU that axis takes the block,
+    which needs the cell to be a kernel iteration: a tile's thread per cell would walk it serially (nussinov 30x)."""
+    for node, parent in st.block.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry) and not all(xfh.small_map_axes(parent, node, resolver)):
+            return True
+        if isinstance(node, LoopRegion) and node is not st.block:
+            bounds = unit_loop_bounds(node)
+            if bounds is None or not symbolic.is_small_extent(bounds[1] - bounds[0] + 1, resolver.facts_at(node)):
+                return True
+    return False
 
 
 def emitted_here(loop: LoopRegion) -> bool:

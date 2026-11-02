@@ -2,6 +2,7 @@
 """Simplification pass that removes ``ConditionalBlock`` nodes whose condition is provably constant."""
 
 import ast
+import itertools
 import re
 from functools import lru_cache
 from typing import Any
@@ -120,6 +121,16 @@ def constant_truth(code: CodeBlock, sdfg: SDFG) -> bool | None:
     if expr == False or expr == sympy.Not(sympy.logic.boolalg.BooleanTrue(), evaluate=False):  # noqa: E712
         return False
     return None
+
+
+def relaxed_bounds(bound, clamp: type) -> list:
+    """``bound`` and the bounds past it that drop a ``clamp`` (``Min`` for an upper bound, ``Max`` for a lower one).
+
+    Dropping an argument of the clamp only widens the range, which holds wherever the clamp enters with a coefficient
+    of 1, the form an index-set split writes (``i < min(x, N)``).
+    """
+    clamps = [c for c in bound.atoms(clamp) if not (bound - c).has(c)]
+    return [bound, *(bound.subs(c, argument) for c in clamps for argument in c.args)]
 
 
 @transformation.explicit_cf_compatible
@@ -342,7 +353,13 @@ class LiftTrivialIf(ppl.Pass):
         if symbolic.pystr_to_symbolic(ivar) in c.free_symbols:
             return "unknown"  # C must be loop-invariant
         start, end = ivar_to_range[ivar]
-        verdict = self._cmp_verdict(opname, c, start, end, cfb.sdfg.facts())
+        facts = cfb.sdfg.facts()
+        # A wider range answers for the iterations inside it, so each argument of a clamp may stand in for the clamp.
+        verdict = "unknown"
+        for low, high in itertools.product(relaxed_bounds(start, sympy.Max), relaxed_bounds(end, sympy.Min)):
+            verdict = self._cmp_verdict(opname, c, low, high, facts)
+            if verdict != "unknown":
+                break
         if negate and verdict != "unknown":
             verdict = "false" if verdict == "true" else "true"
         return verdict

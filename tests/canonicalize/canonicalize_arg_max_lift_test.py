@@ -78,6 +78,24 @@ def test_tsvc_s314_max_value_only():
     assert np.isclose(out[0], np.max(a)), f"got {out[0]}, expected {np.max(a)}"
 
 
+def test_the_lift_on_a_split_takes_the_loops_it_is_given():
+    """``recurrence_lifts`` re-lifts the segments of a split, and no other loop."""
+
+    @dace.program
+    def max_fold(a: dace.float64[20], x: dace.float64[1]):
+        x[0] = a[0]
+        for i in range(1, 20):
+            if a[i] > x[0]:
+                x[0] = a[i]
+
+    sdfg = max_fold.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)]
+    assert ArgMaxLift(only=[]).apply_pass(sdfg, {}) is None
+    assert ArgMaxLift(only=[sdfg]).apply_pass(sdfg, {}) is None
+    assert ArgMaxLift(only=loops).apply_pass(sdfg, {}) == 1
+
+
 def test_tsvc_s316_min_value_only():
     """``<`` instead of ``>`` → ``Reduce(Min)``."""
 

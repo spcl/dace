@@ -393,7 +393,10 @@ def _run_compile_and_comparison_test(sdfg: dace.SDFG, expected_num_statements: i
     sdfg.compile()
 
     array_names = {array_name for array_name, arr in original_sdfg.arrays.items() if arr.transient is False}
-    arr_dict = {arr_name: numpy.random.choice([3.0, 6.0], (1,)) for arr_name in array_names}
+    arr_dict = {
+        arr_name: numpy.random.choice([3.0, 6.0], (1,)).astype(original_sdfg.arrays[arr_name].dtype.as_numpy_dtype())
+        for arr_name in array_names
+    }
     symbol_names = set(original_sdfg.free_symbols)
     symbol_dict = dict.fromkeys(symbol_names, 1.0)
     cp_arr_dict = copy.deepcopy(arr_dict)

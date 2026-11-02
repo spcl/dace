@@ -42,7 +42,10 @@ def test_unconditional_constant_index_promoted():
     constant index every iteration. The pass promotes; LoopToMap then accepts."""
 
     @dace.program
-    def kern_unconditional_constant_index_promoted(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_unconditional_constant_index_promoted(
+        arr_in: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]
+    ):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl]
@@ -60,7 +63,7 @@ def test_unconditional_constant_index_promoted():
     arr = rng.random(5)
     scale = rng.random(n)
     out = np.zeros(n)
-    sdfg(arr=arr, out=out, scale=scale, N=n)
+    sdfg(arr_in=arr, out=out, scale=scale, N=n)
     # The numpy oracle: each iteration writes arr[1] = 0.002 * scale[jl] then reads it back.
     expected = (0.002 * scale) * scale
     assert np.allclose(out, expected)
@@ -83,8 +86,9 @@ def test_refuses_conditional_write_with_unconditional_read():
 
     @dace.program
     def kern_refuses_conditional_write_with_unconditional_read(
-        arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag: dace.int64[1]
+        arr_in: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag: dace.int64[1]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             if flag[0] != 0:
                 arr[2] = 0.5 * scale[jl]
@@ -104,7 +108,7 @@ def test_refuses_conditional_write_with_unconditional_read():
     arr0 = rng.random(5)
     out = np.zeros(n)
     flag = np.array([0], dtype=np.int64)
-    sdfg(arr=arr0.copy(), out=out, scale=scale, flag=flag, N=n)
+    sdfg(arr_in=arr0.copy(), out=out, scale=scale, flag=flag, N=n)
     expected_off = arr0[2] * scale
     assert np.allclose(out, expected_off)
 
@@ -112,7 +116,7 @@ def test_refuses_conditional_write_with_unconditional_read():
     arr1 = rng.random(5)
     out = np.zeros(n)
     flag = np.array([1], dtype=np.int64)
-    sdfg(arr=arr1.copy(), out=out, scale=scale, flag=flag, N=n)
+    sdfg(arr_in=arr1.copy(), out=out, scale=scale, flag=flag, N=n)
     expected_on = (0.5 * scale) * scale
     assert np.allclose(out, expected_on)
 
@@ -123,8 +127,9 @@ def test_refuses_when_same_slot_is_live_out():
 
     @dace.program
     def kern_refuses_when_same_slot_is_live_out(
-        arr: dace.float64[5], out: dace.float64[N], post: dace.float64[1], scale: dace.float64[N]
+        arr_in: dace.float64[5], out: dace.float64[N], post: dace.float64[1], scale: dace.float64[N]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl]
@@ -137,6 +142,19 @@ def test_refuses_when_same_slot_is_live_out():
     assert _num_loops(sdfg) == loops_before
 
 
+def test_refuses_store_to_program_output():
+    """The caller reads a non-transient after the SDFG ends: no block shows that read, and promotion has no
+    writeback, so the store would stay in the per-iteration scalar."""
+
+    @dace.program
+    def kern_refuses_store_to_program_output(b: dace.float64[N], w: dace.float64[3], n: dace.int64):
+        for i in range(0, n, 2):
+            w[0] = b[i] + b[i + 1]
+
+    sdfg = kern_refuses_store_to_program_output.to_sdfg(simplify=True)
+    assert PromoteConstantIndexAccess().apply_pass(sdfg, {}) is None
+
+
 def test_promotes_when_only_other_slots_are_live_out():
     """The slot-precise live-out check allows promotion when a post-loop read targets a
     *different* slot of the same array -- the loop's writes to ``arr[1]`` are dead
@@ -144,8 +162,9 @@ def test_promotes_when_only_other_slots_are_live_out():
 
     @dace.program
     def kern_promotes_when_only_other_slots_are_live_out(
-        arr: dace.float64[5], out: dace.float64[N], post: dace.float64[1], scale: dace.float64[N]
+        arr_in: dace.float64[5], out: dace.float64[N], post: dace.float64[1], scale: dace.float64[N]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl]
@@ -163,8 +182,9 @@ def test_refuses_when_array_indexed_by_loop_var_elsewhere():
 
     @dace.program
     def kern_refuses_when_array_indexed_by_loop_var_elsewhere(
-        arr: dace.float64[N], out: dace.float64[N], scale: dace.float64[N]
+        arr_in: dace.float64[N], out: dace.float64[N], scale: dace.float64[N]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * arr[jl]
@@ -178,7 +198,7 @@ def test_refuses_when_arr_has_wcr():
     """A reduction (WCR) edge on the constant slot is a genuine accumulation, not a
     false dependence. The pass must refuse to privatize it."""
     sdfg = dace.SDFG("refuse_wcr")
-    sdfg.add_array("arr", [5], dace.float64, transient=False)
+    sdfg.add_array("arr", [5], dace.float64, transient=True)
     sdfg.add_array("out", [8], dace.float64, transient=False)
     sdfg.add_array("scale", [8], dace.float64, transient=False)
     loop = LoopRegion(
@@ -206,7 +226,8 @@ def test_idempotent():
     structural candidate is gone), so the pass returns ``None``."""
 
     @dace.program
-    def kern_idempotent(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_idempotent(arr_in: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[3] = 0.002 * scale[jl]
             out[jl] = arr[3] * scale[jl]
@@ -224,8 +245,9 @@ def test_numeric_correctness_then_loop_to_map_maps():
 
     @dace.program
     def kern_numeric_correctness_then_loop_to_map_maps(
-        arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]
+        arr_in: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl] + 1.5
@@ -243,7 +265,7 @@ def test_numeric_correctness_then_loop_to_map_maps():
     arr = rng.random(5)
     scale = rng.random(n)
     out = np.zeros(n)
-    sdfg(arr=arr, out=out, scale=scale, N=n)
+    sdfg(arr_in=arr, out=out, scale=scale, N=n)
     expected = (0.002 * scale) * scale + 1.5
     assert np.allclose(out, expected)
 
@@ -255,8 +277,9 @@ def test_promotes_and_lifts_when_other_slot_lives_out():
 
     @dace.program
     def kern_promotes_and_lifts_when_other_slot_lives_out(
-        arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], sink: dace.float64[1]
+        arr_in: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], sink: dace.float64[1]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             out[jl] = arr[1] * scale[jl] + 1.5
@@ -287,7 +310,7 @@ def test_promotes_and_lifts_when_other_slot_lives_out():
     arr_run = arr_in.copy()
     out_run = np.zeros(n)
     sink_run = np.zeros(1)
-    sdfg(arr=arr_run, out=out_run, scale=scale, sink=sink_run, N=n)
+    sdfg(arr_in=arr_run, out=out_run, scale=scale, sink=sink_run, N=n)
     assert np.allclose(out_run, out_ref)
     assert np.allclose(sink_run, sink_ref)
 
@@ -307,8 +330,9 @@ def test_promotes_multiple_distinct_constant_slots_of_same_array():
 
     @dace.program
     def kern_promotes_multiple_distinct_constant_slots_of_same_array(
-        arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]
+        arr_in: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[0] = 0.002 * scale[jl]
             arr[1] = 0.003 * scale[jl]
@@ -343,7 +367,7 @@ def test_promotes_multiple_distinct_constant_slots_of_same_array():
 
     arr_run = arr_in.copy()
     out_run = np.zeros(n)
-    sdfg(arr=arr_run, out=out_run, scale=scale, N=n)
+    sdfg(arr_in=arr_run, out=out_run, scale=scale, N=n)
     assert np.allclose(out_run, out_ref), (
         f"Multi-slot promotion changed the numeric result. got={out_run[:4]}, expected={out_ref[:4]}"
     )
@@ -361,8 +385,9 @@ def test_promotes_cloudsc_for767_species_pattern():
 
     @dace.program
     def kern_promotes_cloudsc_for767_species_pattern(
-        zvqx: dace.float64[5], pre_ice: dace.float64[N], zdtgdp: dace.float64[N], out: dace.float64[N]
+        zvqx_in: dace.float64[5], pre_ice: dace.float64[N], zdtgdp: dace.float64[N], out: dace.float64[N]
     ):
+        zvqx = zvqx_in.copy()
         for jl in range(N):
             zvqx[0] = 0.001 * pre_ice[jl] + zdtgdp[jl]
             zvqx[1] = 0.002 * pre_ice[jl] + zdtgdp[jl]
@@ -399,7 +424,7 @@ def test_promotes_cloudsc_for767_species_pattern():
 
     zvqx_run = zvqx_in.copy()
     out_run = np.zeros(n)
-    sdfg(zvqx=zvqx_run, pre_ice=pre_ice, zdtgdp=zdtgdp, out=out_run, N=n)
+    sdfg(zvqx_in=zvqx_run, pre_ice=pre_ice, zdtgdp=zdtgdp, out=out_run, N=n)
     assert np.allclose(out_run, out_ref), (
         f"5-species multi-slot promotion changed the result. got={out_run[:3]} expected={out_ref[:3]}"
     )
@@ -413,8 +438,9 @@ def test_multi_slot_refuses_if_symbolic_access_to_same_array():
 
     @dace.program
     def kern_multi_slot_refuses_if_symbolic_access_to_same_array(
-        arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]
+        arr_in: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[0] = 0.002 * scale[jl]
             arr[1] = 0.003 * scale[jl]
@@ -439,8 +465,9 @@ def test_refuses_conditional_block_in_body():
 
     @dace.program
     def kern_refuses_conditional_block_in_body(
-        arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag: dace.int32, sink: dace.float64[1]
+        arr_in: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag: dace.int32, sink: dace.float64[1]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             if flag > 0:
                 arr[3] = 0.002 * scale[jl]
@@ -469,8 +496,9 @@ def test_promotes_outer_loop_with_multiple_inner_constant_indexed_writes():
 
     @dace.program
     def kern_promotes_outer_loop_with_multiple_inner_constant_indexed_writes(
-        arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]
+        arr_in: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[0] = scale[jl] * 0.1
             arr[1] = scale[jl] * 0.2
@@ -503,7 +531,7 @@ def test_promotes_outer_loop_with_multiple_inner_constant_indexed_writes():
         out_ref[jl] = arr_ref[0] + arr_ref[1] + arr_ref[2] + arr_ref[3]
     arr_run = arr_in.copy()
     out_run = np.zeros(n)
-    sdfg(arr=arr_run, out=out_run, scale=scale, N=n)
+    sdfg(arr_in=arr_run, out=out_run, scale=scale, N=n)
     assert np.allclose(out_run, out_ref)
 
 
@@ -515,7 +543,8 @@ def test_promotes_multi_dim_constant_slot():
     """
 
     @dace.program
-    def kern_promotes_multi_dim_constant_slot(arr: dace.float64[6, 8], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_promotes_multi_dim_constant_slot(arr_in: dace.float64[6, 8], out: dace.float64[N], scale: dace.float64[N]):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[3, 5] = 0.001 * scale[jl]
             out[jl] = arr[3, 5] * scale[jl]
@@ -538,7 +567,7 @@ def test_promotes_multi_dim_constant_slot():
         out_ref[jl] = arr_ref[3, 5] * scale[jl]
     arr_run = arr_in.copy()
     out_run = np.zeros(n)
-    sdfg(arr=arr_run, out=out_run, scale=scale, N=n)
+    sdfg(arr_in=arr_run, out=out_run, scale=scale, N=n)
     assert np.allclose(out_run, out_ref)
 
 
@@ -550,13 +579,14 @@ def test_refuses_double_nested_conditionals():
 
     @dace.program
     def kern_refuses_double_nested_conditionals(
-        arr: dace.float64[5],
+        arr_in: dace.float64[5],
         out: dace.float64[N],
         scale: dace.float64[N],
         flag_a: dace.int32,
         flag_b: dace.int32,
         sink: dace.float64[1],
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             if flag_a > 0:
                 if flag_b > 0:
@@ -577,7 +607,8 @@ def test_refuses_partial_multi_dim_slot():
     isn't a single privatisable point, it's a 1-D sweep at axis 0."""
 
     @dace.program
-    def kern_refuses_partial_multi_dim_slot(arr: dace.float64[16, 8], out: dace.float64[N], scale: dace.float64[N]):
+    def kern_refuses_partial_multi_dim_slot(arr_in: dace.float64[16, 8], out: dace.float64[N], scale: dace.float64[N]):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[jl, 5] = 0.002 * scale[jl]
             out[jl] = arr[jl, 5] * scale[jl]
@@ -644,7 +675,7 @@ def test_refuses_multi_state_rmw_through_transient():
     """
     sdfg = dace.SDFG("multi_state_rmw")
     sdfg.add_array("a", [16], dace.float64)
-    sdfg.add_array("acc", [1], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64, transient=True)
     sdfg.add_transient("t", [1], dace.float64)
 
     loop = LoopRegion("outer", condition_expr="i < 16", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
@@ -688,7 +719,7 @@ def test_refuses_iedge_mediated_rmw():
     miss the iedge's RHS reference; the iedge-aware analysis catches it.
     """
     sdfg = dace.SDFG("iedge_mediated_rmw")
-    sdfg.add_array("arr", [1], dace.float64)
+    sdfg.add_array("arr", [1], dace.float64, transient=True)
     sdfg.add_symbol("sym", dace.float64)
 
     loop = LoopRegion("outer", condition_expr="i < 16", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
@@ -730,7 +761,7 @@ def test_undo_restores_all_arr_nodes_when_state_has_several():
     ``arr[1]`` promotion -- which triggers the revert path under test.
     """
     sdfg = dace.SDFG("undo_multi_node")
-    sdfg.add_array("arr", [4], dace.float64, transient=False)
+    sdfg.add_array("arr", [4], dace.float64, transient=True)
     sdfg.add_array("out", [8], dace.float64, transient=False)
     sdfg.add_array("acc", [1], dace.float64, transient=False)
     loop = LoopRegion(
@@ -907,8 +938,9 @@ def test_refuses_loop_varying_guard_and_stays_correct():
 
     @dace.program
     def kern_refuses_loop_varying_guard_and_stays_correct(
-        arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]
+        arr_in: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             if jl % 2 == 0:
                 arr[2] = scale[jl]
@@ -941,7 +973,7 @@ def test_refuses_loop_varying_guard_and_stays_correct():
         ref[jl] = ref_arr[2] * 3.0
 
     out = np.zeros(n)
-    sdfg(arr=arr_in.copy(), out=out, scale=scale, N=n)
+    sdfg(arr_in=arr_in.copy(), out=out, scale=scale, N=n)
     assert np.allclose(out, ref), f"got {out}, expected {ref}"
 
 
@@ -953,8 +985,9 @@ def test_promotes_when_write_dominates_read_across_states():
 
     @dace.program
     def kern_promotes_when_write_dominates_read_across_states(
-        arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], tmp: dace.float64[N]
+        arr_in: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], tmp: dace.float64[N]
     ):
+        arr = arr_in.copy()
         for jl in range(N):
             arr[1] = 0.002 * scale[jl]
             tmp[jl] = scale[jl] + 1.0
@@ -975,7 +1008,7 @@ def test_promotes_when_write_dominates_read_across_states():
 
     out = np.zeros(n)
     tmp = np.zeros(n)
-    sdfg(arr=arr_in.copy(), out=out, scale=scale, tmp=tmp, N=n)
+    sdfg(arr_in=arr_in.copy(), out=out, scale=scale, tmp=tmp, N=n)
     assert np.allclose(tmp, expected_tmp)
     assert np.allclose(out, expected_out)
 

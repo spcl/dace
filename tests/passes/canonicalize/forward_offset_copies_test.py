@@ -89,8 +89,24 @@ def test_rebound_offset_symbol_keeps_the_copy():
     assert "t" in sdfg.arrays
 
 
+def test_a_reader_naming_its_destination_reads_at_the_offset():
+    sdfg = dace.SDFG("forward_offset_implicit_source")
+    sdfg.add_array("A", [6], dace.float64)
+    sdfg.add_array("C", [3], dace.float64)
+    sdfg.add_transient("B", [3], dace.float64)
+    first = sdfg.add_state("copy", is_start_block=True)
+    second = sdfg.add_state_after(first, "read")
+    first.add_nedge(first.add_read("A"), first.add_write("B"), dace.Memlet("A[2:5] -> [0:3]"))
+    second.add_nedge(second.add_read("B"), second.add_write("C"), dace.Memlet("C[0:3]"))
+    assert ForwardOffsetCopies().apply_pass(sdfg, {}) == 1
+    A, C = np.arange(1.0, 7.0), np.zeros(3)
+    sdfg(A=A, C=C)
+    assert np.array_equal(C, A[2:5])
+
+
 if __name__ == "__main__":
     test_a_shifted_copy_read_in_a_later_state_reads_its_source()
     test_a_write_to_the_source_between_keeps_the_copy()
     test_a_device_to_host_transfer_is_not_forwarded()
     test_rebound_offset_symbol_keeps_the_copy()
+    test_a_reader_naming_its_destination_reads_at_the_offset()
