@@ -1044,7 +1044,7 @@ def subs_folded(expr: sympy.Basic, repl_dict: dict) -> sympy.Basic:
     ``s = 1``), which SymPy cannot see over symbols without integrality; see :data:`substituted_integers`."""
     result = expr.subs(repl_dict)
     integers = substituted_integers.get()
-    if not integers or not result.has(sympy.floor, sympy.ceiling):
+    if not integers or not isinstance(result, sympy.Basic) or not result.has(sympy.floor, sympy.ceiling):
         return result
     return result.replace(
         lambda node: (
