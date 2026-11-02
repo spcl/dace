@@ -597,7 +597,10 @@ def _independent_block_groups(loop: LoopRegion) -> list[list] | None:
     :returns: Ordered list of block groups, or ``None`` if not applicable.
     """
     order = _linear_blocks(loop)
-    if order is None or len(order) < 2 or not loop_analysis.fixed_iteration_space(loop):
+    if order is None or len(order) < 2:
+        return None
+    # A nested SDFG's body chain comes here too, and it has no header to outrun
+    if isinstance(loop, LoopRegion) and not loop_analysis.fixed_iteration_space(loop):
         return None
     pos = {b: i for i, b in enumerate(order)}
     rw = {b: _block_rw(b) for b in order}
