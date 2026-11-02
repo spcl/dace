@@ -5,6 +5,8 @@ import itertools
 from copy import deepcopy as dc
 from typing import Any
 
+import sympy
+
 from dace import Memlet, data, dtypes, symbolic, utils
 from dace.properties import CodeBlock, make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
@@ -33,10 +35,16 @@ def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
 
 
 def _trailing_returns(nsdfg: SDFG) -> list[ReturnBlock]:
-    # A sink of the callee's own top-level graph: control leaves the callee there anyway.
+    # A sink of the callee's own top-level graph that every path through its predecessors takes: control leaves the
+    # callee there anyway. Behind a condition it is an early exit, the other edge the path that goes on.
     start = nsdfg.start_block
     return [
-        blk for blk in nsdfg.nodes() if isinstance(blk, ReturnBlock) and nsdfg.out_degree(blk) == 0 and blk is not start
+        blk
+        for blk in nsdfg.nodes()
+        if isinstance(blk, ReturnBlock)
+        and nsdfg.out_degree(blk) == 0
+        and blk is not start
+        and all(e.data.is_unconditional() for e in nsdfg.in_edges(blk))
     ]
 
 
@@ -227,6 +235,14 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         returns = [blk for blk in nested_sdfg.sdfg.all_control_flow_blocks() if isinstance(blk, ReturnBlock)]
         if returns and set(returns) - set(_trailing_returns(nested_sdfg.sdfg)):
             return False
+
+        # A block no edge surely leaves can run off the callee and back to the caller; spliced, it would end the caller.
+        callee = nested_sdfg.sdfg
+        for block in callee.nodes():
+            exits = callee.out_edges(block)
+            if exits and not any(e.data.is_unconditional() for e in exits):
+                if len(exits) != 2 or sympy.Not(exits[0].data.condition_sympy()) != exits[1].data.condition_sympy():
+                    return False
 
         # Must be
         # - connected to access nodes only
@@ -453,7 +469,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             # The parent's own constant of the same name, type and value is this one: nesting copied it down
             if cstname not in transients and sdfg.holds_constant(cstname, csttype, cstval):
                 continue
-            if cstname in sdfg.constants:
+            if not sdfg.is_name_free(cstname):
                 if cstname in transients:
                     newname = transients[cstname]
                 else:

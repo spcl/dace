@@ -55,7 +55,7 @@ def _is_view_of(state: SDFGState, node: nodes.Node, viewed: nodes.AccessNode) ->
     return view_edge is not None and viewed in (view_edge.src, view_edge.dst)
 
 
-def keep_nest_order(state: SDFGState, inlined: set[nodes.Node], successors: set[nodes.Node]) -> None:
+def keep_nest_order(state: SDFGState, inlined: dict[nodes.Node, nodes.Node], successors: set[nodes.Node]) -> None:
     """
     Order every inlined node before each successor of the nested node it replaced, where the two conflict on a
     container and no path does yet.
@@ -66,10 +66,10 @@ def keep_nest_order(state: SDFGState, inlined: set[nodes.Node], successors: set[
     shares no written container with what follows stays free, so later fusions see only the dependences that exist.
 
     :param state: The state the nested SDFG was inlined into.
-    :param inlined: The nodes of the inlined body.
+    :param inlined: The top-level nodes of the inlined body, each with the node that orders it: its scope's exit.
     :param successors: The nodes the nested SDFG node's out-edges led to, recorded before inlining.
     """
-    body = [(n, *accessed(state, n)) for n in inlined if n in state._nodes]
+    body = [(last, *accessed(state, n)) for n, last in inlined.items() if n in state._nodes]
     for succ in successors:
         if succ not in state._nodes:
             continue  # moved to another state by a fission: the state boundary orders it
@@ -310,6 +310,14 @@ class InlineSDFG(transformation.SingleStateTransformation):
             return False
         if len(nested_sdfg.sdfg.nodes()) != 1 or not isinstance(nested_sdfg.sdfg.nodes()[0], SDFGState):
             return False
+
+        # A mapped value naming an inner map's parameter would be captured by that map, unless the name means nothing here
+        nested_state = nested_sdfg.sdfg.nodes()[0]
+        params = {p for n in nested_state.nodes() if isinstance(n, nodes.MapEntry) for p in n.map.params}
+        for k, v in nested_sdfg.symbol_mapping.items():
+            captured = params & {str(s) for s in symbolic.pystr_to_symbolic(v).free_symbols} - {str(k)}
+            if captured and captured & graph.symbols_defined_at(nested_sdfg).keys():
+                return False
 
         # Ensure every connector has one incoming/outgoing edge and that it
         # is not empty
@@ -762,7 +770,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             # The parent's own constant of the same name, type and value is this one: nesting copied it down
             if cstname not in transients and sdfg.holds_constant(cstname, csttype, cstval):
                 continue
-            if cstname in sdfg.constants:
+            if not sdfg.is_name_free(cstname):
                 if cstname in transients:
                     newname = transients[cstname]
                 else:
@@ -1024,7 +1032,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
             state.remove_edge(edge)
             state.add_edge(last, None, edge.dst, edge.dst_conn, dc(edge.data))
 
-        keep_nest_order(state, set(subgraph.nodes()), successors)
+        inlined = {}
+        for node, parent in nstate.scope_dict().items():
+            if parent is None and node in subgraph.nodes():
+                inlined[node] = nstate.exit_node(node) if isinstance(node, nodes.EntryNode) else node
+                inlined[inlined[node]] = inlined[node]
+        keep_nest_order(state, inlined, successors)
 
         #######################################################
         # Remove nested SDFG node

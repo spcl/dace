@@ -1137,6 +1137,9 @@ def disable_unit_validation(unit: ppl.Pass) -> None:
     if isinstance(unit, ppl.Pipeline):
         for member in unit.passes:
             disable_unit_validation(member)
+    if isinstance(unit, _ThenIfChanged):
+        for member in (*(pair[0] for pair in unit.first), *unit.then):
+            disable_unit_validation(member)
 
 
 #: A stage factory returns that stage's fresh passes, in order.

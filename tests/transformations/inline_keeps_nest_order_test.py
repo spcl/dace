@@ -101,3 +101,76 @@ def test_the_inlined_program_reads_the_old_value():
     sdfg(G=G, q=q, x=x)
 
     assert (q[0], G[0]) == (10.0, 3.0)
+
+
+def test_a_map_in_the_nest_runs_before_a_copy_of_what_it_wrote():
+    """A one-state nest holds two input-less fill maps; the copy out of the second must see its values."""
+    inner = dace.SDFG("two_fills")
+    state = inner.add_state(is_start_block=True)
+    for name, value in (("a", 1), ("b", 2)):
+        inner.add_array(name, [4], dace.float64)
+        state.add_mapped_tasklet(
+            f"fill_{name}", {"j": "0:4"}, {}, f"o = {value}", {"o": dace.Memlet(f"{name}[j]")}, external_edges=True
+        )
+    sdfg = dace.SDFG("nest_of_two_fills")
+    sdfg.add_array("a", [4], dace.float64)
+    sdfg.add_transient("b", [4], dace.float64)
+    sdfg.add_array("c", [4], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    nest = state.add_nested_sdfg(inner, {}, {"a": None, "b": None})
+    b = state.add_access("b")
+    state.add_edge(nest, "a", state.add_write("a"), None, dace.Memlet("a[0:4]"))
+    state.add_edge(nest, "b", b, None, dace.Memlet("b[0:4]"))
+    state.add_nedge(b, state.add_write("c"), dace.Memlet("b[0:4]"))
+    assert sdfg.apply_transformations_repeated(InlineSDFG) == 1
+    a, c = np.zeros(4), np.zeros(4)
+
+    sdfg(a=a, c=c)
+
+    assert np.all(c == 2.0)
+
+
+def test_a_mapped_value_is_not_captured_by_an_inner_map():
+    inner = dace.SDFG("inner_map_i")
+    inner.add_array("a", [3, 3], dace.float64)
+    inner.add_array("b", [3, 3], dace.float64)
+    inner.add_symbol("k", dace.int64)
+    inner.add_state(is_start_block=True).add_mapped_tasklet(
+        "m", {"i": "0:3"}, {"q": dace.Memlet("a[k, i]")}, "o = q", {"o": dace.Memlet("b[k, i]")}, external_edges=True
+    )
+    sdfg = dace.SDFG("outer_map_i")
+    sdfg.add_array("A", [3, 3], dace.float64)
+    sdfg.add_array("B", [3, 3], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    entry, exit_node = state.add_map("outer", {"i": "0:3"})
+    nest = state.add_nested_sdfg(inner, {"a": None}, {"b": None}, symbol_mapping={"k": "i"})
+    state.add_memlet_path(state.add_read("A"), entry, nest, dst_conn="a", memlet=dace.Memlet("A[0:3, 0:3]"))
+    state.add_memlet_path(nest, exit_node, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[0:3, 0:3]"))
+
+    assert sdfg.apply_transformations_repeated(InlineSDFG) == 0
+
+
+def test_a_nested_constant_does_not_take_over_a_parent_symbol():
+    inner = dace.SDFG("reads_constant")
+    inner.add_array("o", [2], dace.float64)
+    inner.add_constant("c", 3)
+    tasklet_state = inner.add_state(is_start_block=True)
+    t = tasklet_state.add_tasklet("t", {}, {"v"}, "v = c")
+    tasklet_state.add_edge(t, "v", tasklet_state.add_write("o"), None, dace.Memlet("o[0]"))
+    sdfg = dace.SDFG("parent_symbol_c")
+    sdfg.add_array("o", [2], dace.float64)
+    sdfg.add_symbol("c", dace.int64)
+    first = sdfg.add_state(is_start_block=True)
+    state = sdfg.add_state()
+    sdfg.add_edge(first, state, dace.InterstateEdge(assignments={"c": "100"}))
+    out = state.add_write("o")
+    nest = state.add_nested_sdfg(inner, {}, {"o": None})
+    state.add_edge(nest, "o", out, None, dace.Memlet("o[0]"))
+    t = state.add_tasklet("read", {}, {"v"}, "v = c")
+    state.add_edge(t, "v", out, None, dace.Memlet("o[1]"))
+    assert sdfg.apply_transformations_repeated(InlineSDFG) == 1
+    o = np.zeros(2)
+
+    sdfg(o=o)
+
+    assert list(o) == [3.0, 100.0]

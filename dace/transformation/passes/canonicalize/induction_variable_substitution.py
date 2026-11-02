@@ -63,6 +63,7 @@ import copy
 from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple
 
+import numpy as np
 import sympy
 
 from dace import SDFG, dtypes, nodes, properties, subsets, symbolic
@@ -306,12 +307,8 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free
         return False
     if name not in sdfg.symbols and name not in sdfg.constants and name not in sdfg_free_symbols:
         return False
-    # The loop must not assign to ``name`` on any of its body interstate edges --
-    # otherwise it would not be loop-invariant.
-    for e in loop.edges():
-        if e.data.assignments and name in e.data.assignments:
-            return False
-    return True
+    # An assignment anywhere under the loop, a nested branch included, makes it vary.
+    return not any(name in e.data.assignments for e in loop.all_interstate_edges())
 
 
 def step_is_loop_invariant(
@@ -400,10 +397,19 @@ def _extract_iv(
     iv = extract_tasklet_iv(tasklet, state, loop, sdfg, sdfg_free_symbols)
     if iv is None or not iv.reads_accum:
         return None
+    # The whole loop goes: a sink other than the accumulator is a copy of its running value that would go with it
+    if any(n.data != iv.accum for n in state.sink_nodes()):
+        return None
 
-    # Trip count = (end - start) // stride + 1 (loop_analysis.get_loop_end is inclusive).
-    trip_count = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
-    return iv.accum, iv.subset, iv.op_type, iv.const_val, trip_count
+    return iv.accum, iv.subset, iv.op_type, iv.const_val, trip_count(start, end, stride, sdfg)
+
+
+def trip_count(
+    start: symbolic.SymbolicType, end: symbolic.SymbolicType, stride: symbolic.SymbolicType, sdfg: SDFG
+) -> symbolic.SymbolicType:
+    """How often a loop over the inclusive ``[start, end]`` runs; an empty range runs it zero times."""
+    trip = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
+    return trip if symbolic.provably_nonnegative(trip, sdfg.facts()) else sympy.Max(0, trip)
 
 
 def extract_tasklet_iv(
@@ -494,6 +500,9 @@ def extract_tasklet_iv(
 
     final_accum, final_subset, _ = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset, sdfg.facts())
     if final_accum not in sdfg.arrays:
+        return None
+    # An integer accumulator truncates every iteration, which no closed form of a fractional step reproduces
+    if isinstance(const_val, float) and np.issubdtype(sdfg.arrays[final_accum].dtype.type, np.integer):
         return None
     # The eventual write subset must also be loop-invariant. Otherwise the
     # write hits a different slot each iteration (e.g. ``a[i] = a[i] * 0.5`` --
@@ -796,8 +805,7 @@ def apply_use_site_substitution(
             state.remove_node(n)
 
     # The loop no longer updates the accumulator; materialise the value it used to leave behind.
-    trip_count = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
-    closed = CLOSED_FORM[iv.op_type]("__in", iv.const_val, symbolic.symstr(trip_count))
+    closed = CLOSED_FORM[iv.op_type]("__in", iv.const_val, symbolic.symstr(trip_count(start, end, stride, parent.sdfg)))
     iv_post = closed_form_state(parent, loop.label + "_iv_use_post", iv.accum, iv.subset, closed)
     for oe in list(parent.out_edges(loop)):
         parent.add_edge(iv_post, oe.dst, oe.data)
@@ -876,6 +884,8 @@ def _hoist_branch_uniform_iv(
                 sym in (e2.data.assignments or {}) and id(e2) not in branch_edges for e2 in loop.all_interstate_edges()
             ):
                 continue  # sym also written outside the per-branch increments (incl. nested) -> not clean
+            if sym in {str(s) for code in cb.get_meta_codeblocks() for s in code.get_free_symbols()}:
+                continue  # a guard reading the counter: hoisted before it, the increment would change the branch taken
             # The hoisted increment's side follows the in-branch uses: 'after' (increment then
             # read, s124) hoists BEFORE the conditional, 'before' (read then increment) hoists
             # AFTER it. Branches not reading ``sym`` do not vote (none reading -> 'after');
@@ -1060,7 +1070,9 @@ def _try_substitute_derived_symbol(
         # after the loop; harmless (dead) when ``sym`` is loop-local.
         end = loop_analysis.get_loop_end(loop)
         if end is not None:
-            post_val = symbolic.symstr(rhs_expr.subs(symbolic.pystr_to_symbolic(loop_var), end))
+            start, stride = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_stride(loop)
+            last = end if start is None or stride is None else start + symbolic.int_floor(end - start, stride) * stride
+            post_val = symbolic.symstr(rhs_expr.subs(symbolic.pystr_to_symbolic(loop_var), last))
             dsym_post = parent.add_state(loop.label + "_dsym_post")
             for oe in list(parent.out_edges(loop)):
                 parent.add_edge(dsym_post, oe.dst, oe.data)
@@ -1172,7 +1184,7 @@ def _try_substitute_iedge_iv(
         if lhs not in sdfg.symbols and lhs not in sdfg_free_symbols:
             continue
         # No other body iedge may also write ``lhs``.
-        other_writers = [oe for oe in loop.edges() if oe is not e and lhs in (oe.data.assignments or {})]
+        other_writers = [oe for oe in loop.all_interstate_edges() if oe is not e and lhs in oe.data.assignments]
         if other_writers:
             continue
         if iv_candidate is not None:
@@ -1181,6 +1193,8 @@ def _try_substitute_iedge_iv(
     if iv_candidate is None:
         return False
     iv_edge, sym_name, step = iv_candidate
+    if sym_name in loop_analysis.loop_header_names(loop):
+        return False  # the trip count reads the counter the body changes
 
     # Bounds parsed only once an IV iedge exists -- three sympy round trips no shape without
     # one ever needs.
@@ -1242,8 +1256,7 @@ def _try_substitute_iedge_iv(
 
     # 5. Materialize ``sym + trip_count * step`` for later readers (and the next outer iteration) on
     #    the iedge into a spliced ``iv_post`` state; existing exit edges are rerouted from it.
-    trip_count = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
-    post_loop_expr = symbolic.simplify(as_expr(sym_sym) + trip_count * step)
+    post_loop_expr = symbolic.simplify(as_expr(sym_sym) + (symbolic.int_floor(end - start, stride) + 1) * step)
     post_loop_value = symbolic.symstr(post_loop_expr)
 
     # Two-level counter (s126): if the lone unconditional exit edge only assigns ``sym``, compose

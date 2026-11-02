@@ -265,6 +265,10 @@ class HoistInductionVariableUpdates(ppl.Pass):
             component = _is_isolated_iv_component(state, tasklet)
             if component is None:
                 continue
+            # The split matches nodes by container: another statement on one of these would go with the component
+            containers = {n.data for n in component if isinstance(n, nodes.AccessNode)}
+            if any(n.data in containers for n in state.data_nodes() if n not in component):
+                continue
             _split_iv_component_to_sibling_loop(loop, state, component, sdfg, parent)
             return True
         return False
