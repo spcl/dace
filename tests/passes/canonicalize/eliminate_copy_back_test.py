@@ -149,6 +149,25 @@ def test_a_sibling_read_of_the_written_element_keeps_the_copy_back():
     assert EliminateCopyBack().apply_pass(sdfg, {}) is None
 
 
+def test_a_stepped_copy_back_stays():
+    sdfg = dace.SDFG("copy_back_stepped")
+    sdfg.add_array("A", [6], dace.float64)
+    sdfg.add_transient("t", [3], dace.float64)
+    state = sdfg.add_state()
+    t = state.add_access("t")
+    state.add_mapped_tasklet(
+        "m",
+        {"j": "0:3"},
+        {"q": dace.Memlet("A[j]")},
+        "o = q + 1",
+        {"o": dace.Memlet("t[j]")},
+        external_edges=True,
+        output_nodes={"t": t},
+    )
+    state.add_edge(t, None, state.add_write("A"), None, dace.Memlet(data="A", subset="0:6:2", other_subset="0:3"))
+    assert EliminateCopyBack().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_a_slice_update_writes_its_target_in_place()
     test_a_read_of_the_neighbouring_element_keeps_the_copy_back()
@@ -157,3 +176,4 @@ if __name__ == "__main__":
     test_a_transient_used_in_part_folds_at_its_origin()
     test_a_read_inside_the_slice_at_another_element_keeps_the_copy_back()
     test_a_sibling_read_of_the_written_element_keeps_the_copy_back()
+    test_a_stepped_copy_back_stays()
