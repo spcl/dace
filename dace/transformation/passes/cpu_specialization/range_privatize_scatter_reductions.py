@@ -198,7 +198,7 @@ def _sequential_entry(state: SDFGState, entry: nodes.MapEntry) -> bool:
     return all((step > 0) == True for _b, _e, step in entry.map.range)  # noqa: E712
 
 
-def _pure_call(func: ast.expr) -> bool:
+def is_pure_call(func: ast.expr) -> bool:
     if isinstance(func, ast.Name):
         return func.id in PURE_CALLS
     if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
@@ -433,7 +433,7 @@ class SiteSlicer:
 
         class Rename(ast.NodeTransformer):
             def visit_Call(self, node: ast.Call):
-                if not _pure_call(node.func) or node.keywords:
+                if not is_pure_call(node.func) or node.keywords:
                     raise Refuse(ast.unparse(node))
                 node.args = [self.visit(a) for a in node.args]
                 return node
