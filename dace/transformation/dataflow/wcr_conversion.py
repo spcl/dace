@@ -300,6 +300,11 @@ def reads_container(sdfg: SDFG, name: str) -> bool:
     return any(name in edge.data.free_symbols for edge in sdfg.all_interstate_edges())
 
 
+def _read_in_another_state(sdfg: SDFG, state: SDFGState, name: str) -> bool:
+    """Whether a state other than ``state`` accesses ``name``: its value is then no private intermediate."""
+    return any(other is not state and name in {n.data for n in other.data_nodes()} for other in sdfg.states())
+
+
 class AugAssignToWCR(transformation.SingleStateTransformation):
     """
     Convert augmented assignment (``a += b``, ``a = a + b``) into a tasklet + WCR.
@@ -597,7 +602,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # copy_in / copy_out must be private single-use transients.
         for node in (cin, cout):
             desc = sdfg.arrays.get(node.data)
-            if desc is None or not desc.transient:
+            if desc is None or not desc.transient or _read_in_another_state(sdfg, graph, node.data):
                 return False
         if graph.in_degree(cin) != 1 or graph.out_degree(cin) != 1:
             return False
@@ -711,7 +716,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             return False
         # The intermediate must be a private single-use transient.
         desc = sdfg.arrays.get(mid.data)
-        if desc is None or not desc.transient:
+        if desc is None or not desc.transient or _read_in_another_state(sdfg, graph, mid.data):
             return False
         if graph.in_degree(mid) != 1 or graph.out_degree(mid) != 1:
             return False
@@ -1143,6 +1148,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             index_syms |= boundary_write_index_syms(sdfg, self.output.data)
             if any(str(it) not in index_syms for it in outer_map_params):
                 return False
+            # Naming the parameter is not being injective in it: ``k % 4`` is one slot for many iterations
+            if any(token in str(edge.data.subset) for token in ("Mod", "%", "floor")):
+                return False
         # The tasklet must already READ BACK the destination element (same data, same subset), so
         # ``__out`` already equals ``dest <op> incoming`` and dropping the WCR keeps the accumulate.
         for ie in graph.in_edges(self.tasklet):
@@ -1316,6 +1324,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             index_syms = _index_syms_across_nesting(sdfg, edge.data.subset)
             index_syms |= boundary_write_index_syms(sdfg, edge.data.data)
             if any(str(it) not in index_syms for it in outer_map_params):
+                return False
+            # Naming the parameter is not being injective in it: ``k % 4`` is one slot for many iterations
+            if any(token in str(edge.data.subset) for token in ("Mod", "%", "floor")):
                 return False
 
         return True
