@@ -1812,6 +1812,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             [e for e in state.out_edges(exit_node) if e.data.data == name]
             for exit_node in (first_map_exit, second_map_exit)
         ]
+        # Written through a View, the edges name the View: nothing here compares them.
+        if not all(sides):
+            return False
         # Plain stores only: maps accumulating into one container are each a reduction, and fused they stop being
         # one (nbody's per-component gemv maps, a Gemv each)
         if any(e.data.wcr is not None for side in sides for e in side):
@@ -1936,6 +1939,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #   to pass through the intermediate we create, this will separate the reads
         #   from the writes.
         fused_inout_data_names: set[str] = set(read_map_1.keys()).intersection(write_map_2.keys())
+
+        # The names above are unresolved: a read through a View of what the second Map writes (or the reverse) is
+        #  missed by them, and the View's subsets do not compare with the container's.
+        if not (real_read_map_1 & real_write_map_2) <= fused_inout_data_names:
+            return True
 
         # If a data container is used as input and output then it can not be a view (simplicity)
         if any(self.is_view(read_map_1[name], sdfg) for name in fused_inout_data_names):
