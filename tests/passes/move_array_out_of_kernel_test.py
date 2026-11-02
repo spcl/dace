@@ -1246,6 +1246,28 @@ def test_an_extent_the_kernel_itself_stores_is_not_folded_before_the_launch():
     assert not any("_fold" in name for name in sdfg.arrays)
 
 
+def test_a_copy_into_a_lifted_array_naming_only_its_source_gains_the_kernel_index():
+    sdfg = dace.SDFG("lifted_copy_target")
+    sdfg.add_array("A", [128], dace.float64, storage=GLOBAL)
+    sdfg.add_array("B", [128], dace.float64, storage=GLOBAL)
+    sdfg.add_transient("src", [4], dace.float64, storage=REGISTER)
+    sdfg.add_transient("buf", [1024], dace.float64, storage=REGISTER)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("kernel", {"i": "0:128"}, schedule=GPU_DEVICE)
+    source, buf = state.add_access("src"), state.add_access("buf")
+    fill = state.add_tasklet("fill", {"x"}, {"y"}, "y = x")
+    use = state.add_tasklet("use", {"v"}, {"o"}, "o = v")
+    state.add_memlet_path(state.add_read("A"), entry, fill, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_edge(fill, "y", source, None, dace.Memlet("src[0]"))
+    copy_edge = state.add_edge(source, None, buf, None, dace.Memlet("src[0:4]"))
+    state.add_edge(buf, None, use, "v", dace.Memlet("buf[0]"))
+    state.add_memlet_path(use, exit_node, state.add_write("B"), src_conn="o", memlet=dace.Memlet("B[i]"))
+    pass_ = MoveArrayOutOfKernel()
+    pass_.raise_on_unsupported = False
+    assert pass_.apply_pass(sdfg, {})
+    assert copy_edge.data.dst_subset.dims() == 2 and "i" in {str(s) for s in copy_edge.data.dst_subset.free_symbols}
+
+
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)

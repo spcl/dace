@@ -218,8 +218,10 @@ def prefix_memlet(edge: MultiConnectorEdge, name: str, prefix: Prefix) -> None:
     memlet = edge.data
     if memlet.data == name:
         memlet.subset = subsets.Range(prefix + memlet.subset.ndrange())
-    elif isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name and memlet.dst_subset is not None:
-        memlet.dst_subset = subsets.Range(prefix + memlet.dst_subset.ndrange())
+    elif isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name:
+        # A copy naming its source and no destination writes the start of the array
+        written = memlet.dst_subset or subsets.Range([(0, size - 1, 1) for size in memlet.subset.size()])
+        memlet.dst_subset = subsets.Range(prefix + written.ndrange())
     elif isinstance(edge.src, nodes.AccessNode) and edge.src.data == name and memlet.src_subset is not None:
         memlet.src_subset = subsets.Range(prefix + memlet.src_subset.ndrange())
 
