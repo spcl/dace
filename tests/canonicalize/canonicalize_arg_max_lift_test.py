@@ -2053,5 +2053,30 @@ def test_value_fold_keeps_a_seed_that_is_no_element_of_the_array():
         assert out[0] == expected
 
 
+def test_scaled_update_is_no_fold_of_the_array():
+    """``if a[i] > x: x = 2.0 * a[i]`` updates with another value than it compares, so it stays a loop."""
+
+    @dace.program
+    def scaled_symbol(a: dace.float64[N], out: dace.float64[1]):
+        x = 0.25
+        for i in range(N):
+            if a[i] > x:
+                x = 2.0 * a[i]
+        out[0] = x
+
+    @dace.program
+    def scaled_data(a: dace.float64[N], out: dace.float64[1]):
+        for i in range(N):
+            if a[i] > out[0]:
+                out[0] = 2.0 * a[i]
+
+    for program in (scaled_symbol, scaled_data):
+        sdfg = program.to_sdfg(simplify=True)
+        assert not ArgMaxLift().apply_pass(sdfg, {})
+        out = np.array([0.25])
+        sdfg(a=np.array([5.0, 7.0, 3.0]), out=out, N=3)
+        assert out[0] == 10.0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

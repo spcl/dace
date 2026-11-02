@@ -186,6 +186,7 @@ from dace.sdfg.narrowing import as_expr, as_range, coeff_of, simplified
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.induction_variable_substitution import staged_iedge_rhs
 
@@ -1421,7 +1422,7 @@ class ArgMaxLift(ppl.Pass):
             upstream = ins[0].src
             if isinstance(upstream, nodes.Tasklet):
                 t_ins = list(state.in_edges(upstream))
-                if len(t_ins) != 1:
+                if len(t_ins) != 1 or not AugAssignToWCR.is_copy(upstream, ins[0].src_conn, t_ins[0].dst_conn):
                     return None
                 upstream = t_ins[0].src
                 if not isinstance(upstream, nodes.AccessNode):
@@ -1774,7 +1775,11 @@ class ArgMaxLift(ppl.Pass):
             m.parent.add_edge(entry, reduce_state, dace.InterstateEdge())
             seed = entry.add_tasklet("seed", {}, {"_out": None}, f"_out = {m.carrier_name}")
             entry.add_edge(
-                seed, "_out", entry.add_write(out_name), None, mm.Memlet(data=out_name, subset=copy.deepcopy(output_subset))
+                seed,
+                "_out",
+                entry.add_write(out_name),
+                None,
+                mm.Memlet(data=out_name, subset=copy.deepcopy(output_subset)),
             )
         # Re-route inbound edges. For symbol carriers, drop any pre-loop iedge
         # assignment that binds the carrier symbol -- the reduce subsumes it.
