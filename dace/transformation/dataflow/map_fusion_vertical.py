@@ -2068,8 +2068,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if read_subsets is None or write_subsets is None:
                 return True
             all_subsets = read_subsets + write_subsets
-            # Now we can test if these subsets are point wise
-            if not self.test_if_subsets_are_point_wise(all_subsets, facts):
+            # Now we can test if these subsets are point wise, or a read another iteration's write cannot reach:
+            #  lulesh's ``a[i, 4]`` from ``a[i, 2]`` and ``a[i, 3]``
+            if not self.test_if_subsets_are_point_wise(all_subsets, facts) and not self.other_iterations_miss(
+                first_map_entry.map, write_subsets, read_subsets, facts
+            ):
                 return True
             del all_subsets
 
