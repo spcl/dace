@@ -438,12 +438,12 @@ def refused_on(loop: LoopRegion, names: set[str], refusals: dict[LoopRegion, Any
     return rescued is not None and not rescued.isdisjoint(names)
 
 
-def only_read_modify_written(loop: LoopRegion, name: str) -> bool:
+def only_read_modify_written(loop: ControlFlowRegion, name: str) -> bool:
     """Whether every access of ``name`` in ``loop`` is an update's own read-modify-write
     (:func:`~dace.transformation.interstate.loop_to_map.rmw_edges`, :func:`read_by_its_update`) or already a WCR write,
     and no condition or interstate edge reads it: a WCR then leaves it without a conflict. Any other reader (a term of
     the increment, householder's ``V @ Q[k:, :]`` beside ``Q[k:, :] -= ...``) sees the accumulated value, which a WCR
-    does not order."""
+    does not order, unless no iteration reads what another writes (s118's ``a[i - j - 1]`` beside ``a[i] += ...``)."""
     from dace.transformation.interstate.loop_to_map import rmw_edges
 
     if name in loop_analysis.control_reads(loop):
@@ -452,21 +452,43 @@ def only_read_modify_written(loop: LoopRegion, name: str) -> bool:
     writes, reads, names = rmw_edges(states, frozenset({name}))
     if name not in names:
         return False
-    for state in states:
-        for node in state.data_nodes():
-            if node.data != name:
+    accesses = [(state, node) for state in states for node in state.data_nodes() if node.data == name]
+    stored = [e.data.get_dst_subset(e, state) for state, node in accesses for e in data_in_edges(state, node)]
+    for state, node in accesses:
+        if any(id(e) not in writes and e.data.wcr is None for e in data_in_edges(state, node)):
+            return False
+        for read in data_out_edges(state, node):
+            if id(read) in reads and read_by_its_update(state, read, name):
                 continue
-            if any(id(e) not in writes and e.data.wcr is None for e in data_in_edges(state, node)):
-                return False
-            if any(id(e) not in reads or not read_by_its_update(state, e, name) for e in data_out_edges(state, node)):
+            if not apart_across_iterations(loop, read.data.get_src_subset(read, state), stored):
                 return False
     return True
 
 
+def apart_across_iterations(loop: ControlFlowRegion, read: subsets.Subset, stored: list[subsets.Subset]) -> bool:
+    """Whether no iteration of ``loop`` reads ``read`` where another writes one of ``stored``."""
+    from dace.transformation.interstate.loop_to_map import _smt_proves_disjoint_boxes, loop_varying_symbols
+
+    if not isinstance(loop, LoopRegion):
+        return False
+    start, end, step = (
+        loop_analysis.get_init_assignment(loop),
+        loop_analysis.get_loop_end(loop),
+        loop_analysis.get_loop_stride(loop),
+    )
+    if start is None or end is None or step is None:
+        return False
+    itersym, varying = symbolic.pystr_to_symbolic(loop.loop_variable), loop_varying_symbols(loop)
+    return all(_smt_proves_disjoint_boxes(read, store, itersym, start, end, step, varying) for store in stored)
+
+
 def read_by_its_update(state: SDFGState, read: gr.MultiConnectorEdge[mm.Memlet], name: str) -> bool:
     """Whether the tasklet ``read`` reaches, past a staging copy of the load, writes ``name`` back, past one of the
-    store (``staging_successor``)."""
-    reader = state.memlet_path(read)[-1].dst
+    store (``staging_successor``); a nested SDFG reached is an update if its body only updates the connector."""
+    last = state.memlet_path(read)[-1]
+    reader = last.dst
+    if isinstance(reader, nodes.NestedSDFG):
+        return last.dst_conn in reader.out_connectors and only_read_modify_written(reader.sdfg, last.dst_conn)
     # One element only: a staged slab is the operand of whatever reads it, householder's ``V @ Q[k:, :]``
     if isinstance(reader, nodes.AccessNode) and state.out_degree(reader) == 1 and read.data.num_elements() == 1:
         reader = state.memlet_path(state.out_edges(reader)[0])[-1].dst
