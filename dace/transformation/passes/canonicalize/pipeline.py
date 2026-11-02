@@ -104,6 +104,7 @@ from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.while_to_for import WhileToFor
 from dace.transformation.passes.constant_propagation import ConstantPropagation
+from dace.transformation.passes.consolidate_edges import ConsolidateEdges
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_fill_elimination import DeadFillElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
@@ -968,7 +969,8 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
 
     def inner_round() -> list[ppl.Pass]:
         return [
-            # States first: map fusion only sees maps that share a state
+            # States first: map fusion only sees maps that share a state, and consolidated edges let more states fuse
+            ConsolidateEdges(),
             HoistAssignmentsToLoopBodyHead(),
             FuseStates(aggressive_merges=True, order_array_seeds=True),
             # Loops next: two fused loops put their maps in one body
