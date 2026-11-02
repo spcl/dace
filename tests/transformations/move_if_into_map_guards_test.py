@@ -266,6 +266,25 @@ def test_a_copy_beside_the_inner_map_is_refused():
     assert not _apply(_guarded_map_nest(body, "i > 5"))
 
 
+def test_a_body_that_rebinds_a_guard_symbol_is_refused():
+    """The guard reads the parent's ``s``; moved into the nested body it would read that body's ``s - 1``."""
+
+    def body(state):
+        nested = dace.SDFG("rebinding")
+        nested.add_array("B", [3, 2], dace.float64)
+        for name in ("i", "k", "s"):
+            nested.add_symbol(name, dace.int64)
+        inner = nested.add_state("write", is_start_block=True)
+        t = inner.add_tasklet("t", {}, {"o"}, "o = s")
+        inner.add_edge(t, "o", inner.add_write("B"), None, dace.Memlet("B[i, k]"))
+        me, mx = state.add_map("m", {"k": "0:2"})
+        n = state.add_nested_sdfg(nested, {}, {"B": None}, symbol_mapping={"i": "i", "k": "k", "s": "s - 1"})
+        state.add_edge(me, None, n, None, dace.Memlet())
+        state.add_memlet_path(n, mx, state.add_write("B"), src_conn="B", memlet=dace.Memlet("B[0:3, 0:2]"))
+
+    assert not _apply(_guarded_map_nest(body, "s == 1"))
+
+
 if __name__ == "__main__":
     test_a_guard_over_a_map_nest_moves_under_the_innermost_map()
     test_data_dependent_guard_does_not_produce_an_invalid_sdfg()
@@ -273,3 +292,4 @@ if __name__ == "__main__":
     test_guard_symbol_used_by_a_map_range_is_not_deleted()
     test_a_guard_computed_by_a_state_moves_in_and_the_levels_collapse_into_one_map()
     test_a_copy_beside_the_inner_map_is_refused()
+    test_a_body_that_rebinds_a_guard_symbol_is_refused()

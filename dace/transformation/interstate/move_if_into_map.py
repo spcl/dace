@@ -149,6 +149,9 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
             if isinstance(node, NestedSDFG):
                 names |= node.sdfg.arrays.keys()
                 symbols |= node.sdfg.symbols.keys()
+                # The moved guard reads the parent's value; a body that rebinds the name reads another
+                if any(str(node.symbol_mapping.get(name, name)) != name for name in match.symbols):
+                    return False
         return not (match.reads | match.locals) & names and not match.assigned & symbols
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
