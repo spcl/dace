@@ -16,6 +16,7 @@ from dace.libraries.blas.blas_helpers import (
     to_blastype,
     to_cublas_computetype,
 )
+from dace.libraries.blas.indexed import expand_by_copies, indexed_connectors, indexed_size, operand_edges
 from dace.libraries.blas.nodes.matmul import _get_batchmm_opts, _get_codegen_gemm_opts, _get_matmul_operands
 from dace.symbolic import equal, symstr
 from dace.transformation.transformation import ExpandTransformation
@@ -124,6 +125,8 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "pure")
         node.validate(sdfg, state)
         return ExpandBatchedMatMulPure.make_sdfg(node, state, sdfg)
 
@@ -134,6 +137,8 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "MKL")
         node.validate(sdfg, state)
         (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(
             node, state, sdfg
@@ -207,6 +212,8 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "OpenBLAS")
         node.validate(sdfg, state)
         (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(
             node, state, sdfg
@@ -256,6 +263,8 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "cuBLAS")
         node.validate(sdfg, state)
 
         # Find inputs and output
@@ -477,21 +486,21 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         super().__init__(name, location=location, inputs={"_a", "_b"}, outputs={"_c"})
 
     def validate(self, sdfg, state):
-        in_edges = state.in_edges(self)
+        in_edges = operand_edges(state, self)
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to batched matrix-matrix product")
         full0 = full1 = None
-        for _, _, _, dst_conn, memlet in state.in_edges(self):
+        for _, _, _, dst_conn, memlet in in_edges:
             if dst_conn == "_a":
-                full0 = memlet.subset.size()
+                full0 = indexed_size(state, self, "_a", memlet.subset.size())
                 subset = dc(memlet.subset)
                 subset.squeeze()
-                size0 = subset.size()
+                size0 = indexed_size(state, self, "_a", subset.size())
             if dst_conn == "_b":
-                full1 = memlet.subset.size()
+                full1 = indexed_size(state, self, "_b", memlet.subset.size())
                 subset = dc(memlet.subset)
                 subset.squeeze()
-                size1 = subset.size()
+                size1 = indexed_size(state, self, "_b", subset.size())
 
         # A degenerate operand dimension is squeezed with a unit batch; the unsqueezed sizes still define the operation
         if len(size0) <= 2 and len(size1) <= 2 and (len(full0) >= 3 or len(full1) >= 3):
@@ -524,9 +533,10 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
 
         # Output must have batch dimensions
-        if len(out_memlet.subset) < 3:
+        out_size = indexed_size(state, self, "_c", out_memlet.subset.size())
+        if len(out_size) < 3:
             raise ValueError(
-                f"Batched matrix-matrix product output must be at least 3D, got {len(out_memlet.subset)} dimensions"
+                f"Batched matrix-matrix product output must be at least 3D, got {len(out_size)} dimensions"
             )
 
 

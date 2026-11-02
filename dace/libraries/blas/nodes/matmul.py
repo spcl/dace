@@ -7,6 +7,12 @@ from typing import Any
 import dace
 from dace import properties, symbolic
 from dace.libraries.blas.blas_helpers import matrix_view
+from dace.libraries.blas.indexed import (
+    expand_by_copies,
+    indexed_connectors,
+    indexed_size,
+    specialized_index_connectors,
+)
 
 
 def _matrix_subset_size(subset):
@@ -222,15 +228,25 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         a, b, c = _get_matmul_operands(node, state, sdfg)
-        size_a = a[4]
-        size_b = b[4]
-        size_c = c[4]
+        # The sizes of the operands as the product uses them (indexed, see ``dace.libraries.blas.indexed``)
+        size_a = indexed_size(state, node, "_a", a[4])
+        size_b = indexed_size(state, node, "_b", b[4])
+        size_c = indexed_size(state, node, "_c", c[4])
+        full_a = indexed_size(state, node, "_a", a[2])
+        full_b = indexed_size(state, node, "_b", b[2])
+        indexed = indexed_connectors(node)
 
         # Check if this is a batched operation (at least one input has 3+ dimensions).
         # A degenerate operand dimension is squeezed with a unit batch, so also check the output
-        is_batched = len(size_a) >= 3 or len(size_b) >= 3 or (len(size_c) >= 3 and (len(a[2]) >= 3 or len(b[2]) >= 3))
+        is_batched = (
+            len(size_a) >= 3 or len(size_b) >= 3 or (len(size_c) >= 3 and (len(full_a) >= 3 or len(full_b) >= 3))
+        )
+        if indexed and len(size_a) == 1 and len(size_b) == 1:
+            # A dot product of indexed vectors: gathered first
+            return expand_by_copies(node, state, sdfg, "specialize")
 
-        if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2)):
+        renames = {}
+        if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(full_a) == 2 and len(full_b) == 2)):
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
 
@@ -238,7 +254,8 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             cin = True
             if "_cin" not in node.in_connectors:
                 cin = False
-            if c[0].data.wcr:
+            # A sum into the output accumulates (beta = 1); an indexed output is scattered with the sum instead
+            if c[0].data.wcr and "_c" not in indexed:
                 from dace.frontend import operations
 
                 redtype = operations.detect_reduction_type(c[0].data.wcr)
@@ -256,6 +273,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                 transA=node.transA,
                 transB=node.transB,
             )
+            specialized_index_connectors(node, gemm, renames)
             return gemm
         elif is_batched and len(size_a) >= 2 and len(size_b) >= 2:
             # Batched matrix multiplication with broadcasting support
@@ -268,18 +286,14 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             from dace.libraries.blas.nodes.gemv import Gemv
 
             # Rename inputs to match dot naming
-            a[0].dst_conn = "_A"
-            b[0].dst_conn = "_x"
-            c[0].src_conn = "_y"
+            renames = {"_a": "_A", "_b": "_x", "_c": "_y"}
             result = Gemv(node.name + "gemv", location=node.location, transA=node.transA)
         elif len(size_a) == 1 and len(size_b) == 2:
             # Vector and matrix -> GEMV with transposed matrix
             from dace.libraries.blas.nodes.gemv import Gemv
 
             # Rename inputs to match dot naming
-            a[0].dst_conn = "_x"
-            b[0].dst_conn = "_A"
-            c[0].src_conn = "_y"
+            renames = {"_a": "_x", "_b": "_A", "_c": "_y"}
             result = Gemv(node.name + "gemvt", location=node.location, transA=not node.transB)
         elif len(size_a) == 1 and len(size_b) == 1:
             # Vector and vector -> dot product
@@ -293,6 +307,15 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         else:
             raise NotImplementedError(f"Matrix multiplication not implemented for shapes: {size_a} and {size_b}")
 
+        # The edges of the operands and of their indices, under the names of the node the product specializes to
+        for e in state.all_edges(node):
+            if e.dst is node and e.dst_conn is not None:
+                operand = e.dst_conn.removesuffix("_index")
+                if operand in renames:
+                    e.dst_conn = renames[operand] + e.dst_conn[len(operand) :]
+            elif e.src is node and e.src_conn in renames:
+                e.src_conn = renames[e.src_conn]
+        specialized_index_connectors(node, result, renames)
         result.alpha = node.alpha
         result.beta = node.beta
         return result

@@ -10,6 +10,7 @@ from dace import memlet as mm
 from dace import properties, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, environments
+from dace.libraries.blas.indexed import expand_by_copies, indexed_connectors, indexed_size, operand_edges
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.sdfg import SDFG, SDFGState
 from dace.transformation.transformation import ExpandTransformation
@@ -21,6 +22,8 @@ class ExpandGemvPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, parent_state, parent_sdfg, "pure")
         node.validate(parent_sdfg, parent_state)
         sdfg = dace.SDFG(node.label + "_sdfg")
         (
@@ -119,6 +122,8 @@ class ExpandGemvCuBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Gemv", state, sdfg, m=None, n=None, **kwargs):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "cuBLAS")
         node.validate(sdfg, state)
 
         (
@@ -216,6 +221,8 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Gemv", state, sdfg, m=None, n=None, **kwargs):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "OpenBLAS")
         from dace.sdfg.scope import is_devicelevel_gpu
 
         if is_devicelevel_gpu(sdfg, state, node):
@@ -292,8 +299,10 @@ class ExpandGemvMKL(ExpandTransformation):
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
-    def expansion(*args, **kwargs):
-        return ExpandGemvOpenBLAS.expansion(*args, **kwargs)
+    def expansion(node, state, sdfg, *args, **kwargs):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "MKL")
+        return ExpandGemvOpenBLAS.expansion(node, state, sdfg, *args, **kwargs)
 
 
 @dace.library.expansion
@@ -302,6 +311,8 @@ class ExpandGemvPBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Gemv", state, sdfg, m=None, n=None, **kwargs):
+        if indexed_connectors(node):  # Gathers and scatters around the product
+            return expand_by_copies(node, state, sdfg, "PBLAS")
         node.validate(sdfg, state)
         (
             (edge_a, outer_array_a, _, _, shape_a, strides_a),
@@ -387,23 +398,19 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         self.beta = beta
 
     def validate(self, sdfg, state):
-        in_edges = state.in_edges(self)
+        in_edges = operand_edges(state, self)
         if len(in_edges) not in [2, 3]:
             raise ValueError("Expected 2 or 3 inputs to GEMV")
         size_y_in = None
-        for _, _, _, dst_conn, memlet in state.in_edges(self):
+        for _, _, _, dst_conn, memlet in in_edges:
+            subset = copy.deepcopy(memlet.subset)
+            subset.squeeze()
             if dst_conn == "_A":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_a = subset.size()
+                size_a = indexed_size(state, self, "_A", subset.size())
             if dst_conn == "_x":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_x = subset.size()
+                size_x = indexed_size(state, self, "_x", subset.size())
             if dst_conn == "_y":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_y_in = subset.size()
+                size_y_in = indexed_size(state, self, "_y", subset.size())
 
         if len(size_a) != 2 or len(size_x) != 1:
             raise ValueError("Matrix-vector product only supported on matrix-vector input")
@@ -421,7 +428,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
 
         out_subset = copy.deepcopy(out_memlet.subset)
         out_subset.squeeze()
-        size_y_out = out_subset.size()
+        size_y_out = indexed_size(state, self, "_y", out_subset.size())
         if size_y_in is not None and size_y_in != size_y_out:
             raise ValueError("Input y-vector must match output y-vector.")
         if len(size_y_out) != 1 or size_y_out[0] != a_rows:
