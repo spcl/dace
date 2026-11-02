@@ -19,6 +19,7 @@ from dace.libraries.blas.blas_helpers import (
     to_blastype,
     to_cublas_computetype,
 )
+from dace.libraries.blas.blocked import matrix_size
 from dace.libraries.blas.indexed import (
     expand_by_copies,
     implementation_of,
@@ -198,8 +199,8 @@ class ExpandGemmPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
-        if indexed_connectors(node):  # Gathers and scatters around the product
-            return expand_by_copies(node, state, sdfg, "pure")
+        if indexed_connectors(node) or node.blocked:  # Copies around the product
+            return expand_by_copies(node, state, sdfg, "pure", node.blocked)
         node.validate(sdfg, state)
         return ExpandGemmPure.make_sdfg(node, state, sdfg)
 
@@ -210,8 +211,8 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
-        if indexed_connectors(node):  # Gathers and scatters around the product
-            return expand_by_copies(node, state, sdfg, "OpenBLAS")
+        if indexed_connectors(node) or node.blocked:  # Copies around the product
+            return expand_by_copies(node, state, sdfg, "OpenBLAS", node.blocked)
         node.validate(sdfg, state)
         (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
@@ -266,8 +267,8 @@ class ExpandGemmMKL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg, *args, **kwargs):
-        if indexed_connectors(node):  # Gathers and scatters around the product
-            return expand_by_copies(node, state, sdfg, "MKL")
+        if indexed_connectors(node) or node.blocked:  # Copies around the product
+            return expand_by_copies(node, state, sdfg, "MKL", node.blocked)
         return ExpandGemmOpenBLAS.expansion(node, state, sdfg, *args, **kwargs)
 
 
@@ -277,8 +278,8 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
 
     @classmethod
     def expansion(cls, node, state, sdfg):
-        if indexed_connectors(node):  # Gathers and scatters around the product
-            return expand_by_copies(node, state, sdfg, implementation_of(node, cls))
+        if indexed_connectors(node) or node.blocked:  # Copies around the product
+            return expand_by_copies(node, state, sdfg, implementation_of(node, cls), node.blocked)
         node.validate(sdfg, state)
 
         # Find inputs and output
@@ -526,8 +527,8 @@ class ExpandGemmPBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
-        if indexed_connectors(node):  # Gathers and scatters around the product
-            return expand_by_copies(node, state, sdfg, "PBLAS")
+        if indexed_connectors(node) or node.blocked:  # Copies around the product
+            return expand_by_copies(node, state, sdfg, "PBLAS", node.blocked)
         node.validate(sdfg, state)
         # Read the same matrix view validate accepted; the raw subset would mis-size an operand
         # such as an (NQ, 1, NP) reshape.
@@ -619,6 +620,12 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         category="Code Generation",
         desc="If applicable, overrides computation type (CUBLAS-specific, see ``cublasComputeType_t``)",
     )
+    blocked = properties.SetProperty(
+        element_type=str,
+        default=set(),
+        category="Semantics",
+        desc="The input operands stored in blocks of columns (see dace.libraries.blas.blocked)",
+    )
 
     def __init__(self, name, location=None, transA=False, transB=False, alpha=1, beta=0, cin=True):
         super().__init__(
@@ -637,12 +644,14 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         in_edges = operand_edges(state, self)
         if len(in_edges) not in [2, 3]:
             raise ValueError("Expected 2 or 3 inputs to gemm")
+        if not self.blocked <= {"_a", "_b"}:
+            raise ValueError(f"Only the inputs _a and _b can be stored in blocks of columns, not {set(self.blocked)}")
         size2 = None
         for _, _, _, dst_conn, memlet in in_edges:
             if dst_conn == "_a":
-                size0 = indexed_size(state, self, "_a", _matrix_subset_size(memlet.subset))
+                size0 = indexed_size(state, self, "_a", matrix_size(memlet.subset, "_a" in self.blocked))
             if dst_conn == "_b":
-                size1 = indexed_size(state, self, "_b", _matrix_subset_size(memlet.subset))
+                size1 = indexed_size(state, self, "_b", matrix_size(memlet.subset, "_b" in self.blocked))
             if dst_conn == "_c":
                 size2 = indexed_size(state, self, "_c", _matrix_subset_size(memlet.subset))
 
