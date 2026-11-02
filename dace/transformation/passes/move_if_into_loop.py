@@ -46,6 +46,7 @@ from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, propagation
+from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge, memlets_in_ast
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
@@ -53,36 +54,7 @@ from dace.transformation import transformation
 from dace.transformation.interstate.block_fusion import splice_empty_state
 from dace.transformation.interstate.state_fusion import keep_start_block
 from dace.transformation.passes.analysis import loop_analysis
-
-
-def _written(region: ControlFlowRegion) -> set:
-    """Symbols/data written inside a region (interstate assigns + data writes)."""
-    w = set()
-    for e in region.all_interstate_edges():
-        w |= set(e.data.assignments.keys())
-    for st in region.states():
-        for n in st.nodes():
-            if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
-                w.add(n.data)
-    return w
-
-
-def _linear_order(region: ControlFlowRegion) -> list | None:
-    """Blocks of ``region`` in order iff it is a plain linear chain
-    (unconditional edges; assignments are allowed -- they carry condition
-    prep); else ``None``."""
-    blocks = list(region.nodes())
-    edges = list(region.edges())
-    if not blocks or len(edges) != len(blocks) - 1:
-        return None
-    for e in edges:
-        if e.data.condition.as_string not in ("1", "True", "(1)"):
-            return None
-    succ = {e.src: e.dst for e in edges}
-    order = [region.start_block]
-    while order[-1] in succ:
-        order.append(succ[order[-1]])
-    return order if len(order) == len(blocks) else None
+from dace.transformation.passes.loop_fission import _linear_blocks
 
 
 def _free(expr: str) -> set:
@@ -104,7 +76,7 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
     cond, region = cb.branches[0]
     if cond is None or not isinstance(region, ControlFlowRegion):
         return None  # single branch, real condition, no else
-    order = _linear_order(region)
+    order = _linear_blocks(region, allow_assignments=True)
     if order is None or not isinstance(order[-1], LoopRegion):
         return None
     loop = order[-1]
@@ -112,7 +84,7 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
     if any(not isinstance(p, SDFGState) for p in prep):
         return None
     lvar = str(loop.loop_variable)
-    loop_w = _written(loop)
+    loop_w = loop_analysis.written_names(loop)
     cfree = {str(s) for s in cond.get_free_symbols()}
     if lvar in cfree or (cfree & loop_w):
         return None  # condition loop-invariant
@@ -122,7 +94,7 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
     # the prep into the loop body, so a prep that computes a bound (e.g. a
     # materialized ``LEN_1D_minus_k = LEN_1D - k`` feeding ``i < LEN_1D_minus_k``)
     # would leave that bound uninitialized at the first condition check.
-    bound_syms = _loop_bound_symbols(loop)
+    bound_syms = loop_analysis.loop_header_names(loop)
     bad = False
     for p in prep:
         acc = {n.data for n in p.nodes() if isinstance(n, nodes.AccessNode)}
@@ -147,6 +119,12 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
             if lhs in _free(rhs):
                 bad = True  # self-referential: accumulates over iterations
     if bad:
+        return None
+    # The prep now runs under the guard in every iteration, so what it writes must leave the guard's value alone, and
+    # must not be needed after a loop that runs no iteration
+    prep_written = {name for p in prep for name in _state_writes(p)}
+    prep_written.update(lhs for e in region.edges() for lhs in e.data.assignments)
+    if prep_written & cfree or read_when_loop_is_empty(cb, loop, prep_written):
         return None
     return cb, cond, region
 
@@ -203,20 +181,43 @@ def _state_reads(st: SDFGState) -> set:
     return {n.data for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.out_degree(n) > 0}
 
 
-def _loop_bound_symbols(loop: LoopRegion) -> set:
-    """Names referenced by ``loop``'s bound expressions (init/condition/update),
-    excluding the loop variable itself.
+def read_when_loop_is_empty(cb: ConditionalBlock, loop: LoopRegion, names: set[str]) -> bool:
+    """Whether a value of ``names`` is read past ``cb`` although ``loop`` may run no iteration, which would skip them.
 
-    The loop's trip count is decided from these before the body runs, so any
-    name here must already hold its value at loop entry. Used to refuse sinking
-    a prep that *produces* a bound name into the body (which would leave the
-    first condition check reading an uninitialized value)."""
-    names = set()
-    for stmt in (loop.init_statement, loop.loop_condition, loop.update_statement):
-        if stmt is not None:
-            names |= {str(s) for s in stmt.get_free_symbols()}
-    names.discard(str(loop.loop_variable))
-    return names
+    :param cb: The guard whose subtree holds ``loop``.
+    :param loop: The loop the guard's prep moves into.
+    :param names: The containers and symbols the prep writes.
+    """
+    if not names:
+        return False
+    sdfg = cb.sdfg
+    if any(name in sdfg.arrays and not sdfg.arrays[name].transient for name in names):
+        return not provably_nonempty(loop)
+    inside = {id(block) for region in cb.all_control_flow_regions() for block in region.nodes()}
+    live = bool(names & reads_outside(cb)) or any(
+        id(state) not in inside and not names.isdisjoint(node.data for node in state.data_nodes())
+        for state in sdfg.states()
+    )
+    return live and not provably_nonempty(loop)
+
+
+def provably_nonempty(loop: LoopRegion) -> bool:
+    """Whether ``loop`` runs at least one iteration, by a nonnegativity proof over its parsed header.
+
+    An unknown answer (a free symbolic bound with no sign fact) is ``False``.
+    """
+    init = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if init is None or end is None or stride is None:
+        return False
+    step = dace.symbolic.pystr_to_symbolic(stride)
+    facts = loop.sdfg.facts()
+    span = as_expr(dace.symbolic.pystr_to_symbolic(end)) - as_expr(dace.symbolic.pystr_to_symbolic(init))
+    for sign, diff in ((dace.symbolic.Predicate.POSITIVE, span), (dace.symbolic.Predicate.NEGATIVE, -span)):
+        if dace.symbolic.ask(dace.symbolic.predicate_relation(sign, step), facts) is dace.symbolic.Truth.TRUE:
+            return dace.symbolic.provably_nonnegative(dace.symbolic.simplify(diff), facts)
+    return False
 
 
 def reads_outside(cb: ConditionalBlock) -> OrderedSet[str]:
@@ -236,7 +237,7 @@ def reads_outside(cb: ConditionalBlock) -> OrderedSet[str]:
         if id(region) in inside:
             continue
         if isinstance(region, LoopRegion):
-            reads |= _loop_bound_symbols(region)
+            reads |= loop_analysis.loop_header_names(region)
         elif isinstance(region, ConditionalBlock):
             for branch_cond, _branch in region.branches:
                 if branch_cond is not None:
@@ -319,7 +320,7 @@ def sinkable_prep(cb: ConditionalBlock, region: ControlFlowRegion, loop: LoopReg
     parent = cb.parent_graph
     if not isinstance(parent, LoopRegion):
         return {}
-    order = _linear_order(parent)
+    order = _linear_blocks(parent, allow_assignments=True)
     if order is None or order[-1] is not cb or len(order) < 2:
         return {}
     if any(not isinstance(b, SDFGState) or b.number_of_nodes() != 0 for b in order[:-1]):
@@ -330,8 +331,8 @@ def sinkable_prep(cb: ConditionalBlock, region: ControlFlowRegion, loop: LoopReg
     if not prep:
         return {}
     lvar = str(loop.loop_variable)
-    written = _written(region)
-    bounds = _loop_bound_symbols(loop)
+    written = loop_analysis.written_names(region)
+    bounds = loop_analysis.loop_header_names(loop)
     live = reads_outside(cb)
     arrays = cb.sdfg.arrays
     for lhs, rhs in prep.items():
@@ -388,7 +389,7 @@ def _match_imperfect(sdfg: SDFG) -> tuple[ConditionalBlock, CodeBlock, ControlFl
         cond, region = cb.branches[0]
         if cond is None or not isinstance(region, ControlFlowRegion):
             continue
-        order = _linear_order(region)
+        order = _linear_blocks(region, allow_assignments=True)
         if order is None:
             continue
         if any(not isinstance(b, (LoopRegion, SDFGState)) for b in order):
@@ -416,7 +417,7 @@ def _match_imperfect(sdfg: SDFG) -> tuple[ConditionalBlock, CodeBlock, ControlFl
         # The guard's truth must be the same for every sibling: it must not
         # depend on any sibling loop's variable / written data, nor on data a
         # sibling bare state writes.
-        if any(str(lp.loop_variable) in cfree or (cfree & _written(lp)) for lp in loops):
+        if any(str(lp.loop_variable) in cfree or (cfree & loop_analysis.written_names(lp)) for lp in loops):
             continue
         if any(cfree & _state_writes(st) for st in states):
             continue
@@ -522,12 +523,12 @@ class MoveIfIntoLoop(ppl.Pass):
         in_edges = list(parent.in_edges(cb))
         out_edges = list(parent.out_edges(cb))
         is_start = parent.start_block is cb
-        sunk = sinkable_prep(cb, region, required(_linear_order(region))[-1])
+        sunk = sinkable_prep(cb, region, required(_linear_blocks(region, allow_assignments=True))[-1])
 
         # Splice the loop's body in place of the loop so the region becomes  prep... -> body...
         # ``cb`` is dropped below, so its branch region is rewritten in place rather than copied.
         rc = region
-        order = _linear_order(rc)
+        order = _linear_blocks(rc, allow_assignments=True)
         loop_c = required(order)[-1]
         edge_into_loop = next((e for e in rc.edges() if e.dst is loop_c), None)
 
@@ -587,7 +588,7 @@ class MoveIfIntoLoop(ppl.Pass):
         is_start = parent.start_block is cb
 
         # ``_guarded_loop`` / ``_trivial_guarded_loop`` copy each block, and ``cb`` is dropped below.
-        order = _linear_order(region)
+        order = _linear_blocks(region, allow_assignments=True)
         units = [
             (_guarded_loop(b, cond) if isinstance(b, LoopRegion) else _trivial_guarded_loop(b, cond))
             for b in required(order)

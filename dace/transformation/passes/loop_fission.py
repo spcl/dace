@@ -19,10 +19,39 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
+
+
+def per_iter_axes(subset, loop_var: str | None, extra_index=None) -> frozenset[int]:
+    """The axes ``subset`` indexes at exactly ``loop_var``, empty unless it is :func:`_is_per_iter_subset`.
+
+    Two per-iteration accesses meet in one iteration only when they share such an axis: ``A[i, j]`` and ``A[j, i]`` are
+    both per-iteration, yet ``A[j, i]`` reads what later iterations of the first one write.
+    """
+    if loop_var is None or subset is None:
+        return frozenset()
+    try:
+        loop_sym = symbolic.pystr_to_symbolic(loop_var)
+    except Exception:
+        return frozenset()
+    axes: list[int] = []
+    extra = [] if extra_index is None else [(extra_index, extra_index, 1)]
+    for axis, (rb, re_, _) in enumerate([*subset.ndrange(), *extra]):
+        if rb != re_:
+            return frozenset()
+        try:
+            expr = symbolic.pystr_to_symbolic(str(rb))
+        except Exception:
+            return frozenset()
+        if loop_sym in expr.free_symbols:
+            offset = symbolic.simplify(as_expr(expr) - as_expr(loop_sym))
+            if not (isinstance(offset, sympy.Basic) and offset.is_number and offset == 0):
+                return frozenset()
+            axes.append(axis)
+    return frozenset(axes)
 
 
 def _is_per_iter_subset(subset, loop_var: str | None, extra_index=None) -> bool:
@@ -42,26 +71,6 @@ def _is_per_iter_subset(subset, loop_var: str | None, extra_index=None) -> bool:
     Cross-iteration subsets like ``a[i - 1]`` break this property and force
     the producer / consumer to stay in the same fission group.
     """
-    if loop_var is None or subset is None:
-        return False
-    try:
-        loop_sym = symbolic.pystr_to_symbolic(loop_var)
-    except Exception:
-        return False
-    saw_loop_var = False
-    extra = [] if extra_index is None else [(extra_index, extra_index, 1)]
-    for rb, re_, _ in [*subset.ndrange(), *extra]:
-        if rb != re_:
-            return False
-        try:
-            expr = symbolic.pystr_to_symbolic(str(rb))
-        except Exception:
-            return False
-        if loop_sym in expr.free_symbols:
-            offset = symbolic.simplify(as_expr(expr) - as_expr(loop_sym))
-            if not (isinstance(offset, sympy.Basic) and offset.is_number and offset == 0):
-                return False
-            saw_loop_var = True
     # A subset that NEVER references the loop variable is a constant slot in
     # this loop's scope (e.g. ``a[i]`` inside an inner ``for j``). Constant
     # slots are NOT per-iteration: a write-then-read in the body forms an
@@ -70,7 +79,7 @@ def _is_per_iter_subset(subset, loop_var: str | None, extra_index=None) -> bool:
     # only the final write instead of the per-iter intermediates. TSVC s257
     # ``a[i] = aa[j,i] - a[i-1]; aa[j,i] = a[i] + bb[j,i]`` inside the
     # inner ``j`` loop is the canonical regression.
-    return saw_loop_var
+    return bool(per_iter_axes(subset, loop_var, extra_index))
 
 
 def _subsets_at_node(node: nodes.AccessNode, state: SDFGState):
@@ -151,12 +160,15 @@ def _fissions_after_bridge_rewrite(loop: LoopRegion, sdfg: SDFG) -> bool:
 
 
 def _container_per_iter_only(state: SDFGState, data: str, loop_var: str | None) -> bool:
-    """``True`` iff every memlet referencing ``data`` in ``state`` is per-iter."""
+    """``True`` iff every memlet referencing ``data`` in ``state`` is per-iter, all on one shared axis."""
+    shared: frozenset[int] | None = None
     for n in state.nodes():
         if not (isinstance(n, nodes.AccessNode) and n.data == data):
             continue
         for sub, _ in _subsets_at_node(n, state):
-            if not _is_per_iter_subset(sub, loop_var):
+            axes = per_iter_axes(sub, loop_var)
+            shared = axes if shared is None else shared & axes
+            if not shared:
                 return False
     return True
 
@@ -552,17 +564,17 @@ def edge_data_by_ends(region) -> dict:
     return {(e.src, e.dst): e.data for e in region.edges()}
 
 
-def _linear_blocks(loop: LoopRegion, allow_assignments: bool = False) -> list | None:
+def _linear_blocks(loop: ControlFlowRegion, allow_assignments: bool = False) -> list | None:
     """Return ``loop``'s body blocks in execution order if it is a simple
     linear chain of unconditional edges, assignment-free unless ``allow_assignments``; else ``None``.
 
-    :param loop: The loop whose body CFG is inspected.
+    :param loop: The loop or other region whose CFG is inspected.
     :param allow_assignments: Accept edges that assign symbols; the caller keeps each such edge inside one group.
     :returns: The ordered block list, or ``None`` if not a plain chain.
     """
     blocks = list(loop.nodes())
     edges = list(loop.edges())
-    if len(edges) != len(blocks) - 1:
+    if not blocks or len(edges) != len(blocks) - 1:
         return None
     if not all(plain_edge(e, allow_assignments) for e in edges):
         return None
@@ -585,7 +597,7 @@ def _independent_block_groups(loop: LoopRegion) -> list[list] | None:
     :returns: Ordered list of block groups, or ``None`` if not applicable.
     """
     order = _linear_blocks(loop)
-    if order is None or len(order) < 2:
+    if order is None or len(order) < 2 or not loop_analysis.fixed_iteration_space(loop):
         return None
     pos = {b: i for i, b in enumerate(order)}
     rw = {b: _block_rw(b) for b in order}
@@ -665,7 +677,7 @@ class LoopFission(ppl.Pass):
         :param loop: The loop to judge.
         """
         if _single_compute_state(loop) is not None:
-            return _fissions_after_bridge_rewrite(loop, loop.sdfg)
+            return loop_analysis.fixed_iteration_space(loop) and _fissions_after_bridge_rewrite(loop, loop.sdfg)
         return _independent_block_groups(loop) is not None
 
     @staticmethod
@@ -681,7 +693,7 @@ class LoopFission(ppl.Pass):
             # Decide without rewriting, then mutate: the bridge rewrite is only sound once the fission
             # separates producer and consumer into their own loops, so a loop that turns out not to
             # fission must come out exactly as it went in.
-            if not _fissions_after_bridge_rewrite(loop, sdfg):
+            if not loop_analysis.fixed_iteration_space(loop) or not _fissions_after_bridge_rewrite(loop, sdfg):
                 return False
             _rewrite_per_iter_bridges(compute, loop.loop_variable, sdfg)
             LoopFission._fission(loop, compute, sdfg)

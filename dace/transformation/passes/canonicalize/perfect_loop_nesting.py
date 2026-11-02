@@ -36,12 +36,12 @@ of child A before ALL of child B, which is legal exactly when nothing depends
 backwards -- B(i') must not feed or clobber A(i) for any ``i' > i``.
 
 The condition is discharged per ACCESS rather than by unioning footprints:
-``_is_per_iter_subset`` asks whether an access names one element whose
-``loop_var`` coordinate IS ``loop_var``, with the remaining coordinates free.
-Every access that answers yes lies in the hyperplane of its own parent
-iteration, so the children's per-iteration footprints are pairwise disjoint
-across ``i`` and only A(i) can reach what B(i) reads -- which is the same before
-and after the split. Any access it cannot pin that way -- a range, a fixed slot,
+``per_iter_axes`` asks on which axes an access names one element whose
+coordinate IS ``loop_var``, with the remaining coordinates free. Accesses that
+share such an axis lie in the hyperplane of their parent iteration, so the
+children's per-iteration footprints are pairwise disjoint across ``i`` and only
+A(i) can reach what B(i) reads -- which is the same before and after the split.
+Row ``A[i, j]`` against column ``A[j, i]`` share none. Any access it cannot pin that way -- a range, a fixed slot,
 a read one parent iteration behind, a subset the memlets do not describe --
 answers no and the two blocks MERGE. Nothing is ever assumed disjoint; the
 over-approximation refuses. That is why a sibling pair sharing only a READ-ONLY
@@ -101,7 +101,12 @@ from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, Control
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
-from dace.transformation.passes.canonicalize.distribute_producer_consumer import _forward_flow_groups, _rw_subsets
+from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.canonicalize.distribute_producer_consumer import (
+    _forward_flow_groups,
+    _interstate_reads,
+    _rw_subsets,
+)
 from dace.transformation.passes.canonicalize.sift_statements_into_perfect_nest import sift_imperfect_nests
 from dace.transformation.passes.loop_fission import LoopFission, _linear_blocks
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
@@ -203,17 +208,17 @@ def level_parallel(blocks: list[ControlFlowBlock], loop_var: str | None, arrays:
     :param loop_var: The enclosing loop's iteration variable.
     :param arrays: The owning SDFG's data descriptors, to tell a transient from a real container.
     """
-    writes: dict[str, bool] = {}
-    reads: dict[str, bool] = {}
+    writes: dict[str, frozenset[int]] = {}
+    reads: dict[str, frozenset[int]] = {}
     for block in blocks:
         block_writes, block_reads = _rw_subsets(block, loop_var)
-        for name, aligned in block_writes.items():
-            writes[name] = writes.get(name, True) and aligned
-        for name, aligned in block_reads.items():
-            reads[name] = reads.get(name, True) and aligned
+        for name, axes in block_writes.items():
+            writes[name] = writes[name] & axes if name in writes else axes
+        for name, axes in block_reads.items():
+            reads[name] = reads[name] & axes if name in reads else axes
     return all(
-        aligned and reads.get(name, True)
-        for name, aligned in writes.items()
+        axes & reads.get(name, axes)
+        for name, axes in writes.items()
         if name in arrays and not arrays[name].transient
     )
 
@@ -251,16 +256,20 @@ def distribute_loops(
     """
     count = 0
     changed = True
+    # ``grouping`` reads the loop alone, so a refusal stands until a fission inside the loop changes its body.
+    refused: set[LoopRegion] = set()
     while changed:
         changed = False
         for loop in list(sdfg.all_control_flow_regions(recursive=True)):
-            if not isinstance(loop, LoopRegion):
+            if not isinstance(loop, LoopRegion) or loop in refused:
                 continue
             groups = grouping(loop)
             if groups is None:
+                refused.add(loop)
                 continue
             if diagnostics is not None:
                 diagnostics.append((loop.label,) + parallel_level_diagnostic(loop, groups))
+            refused -= loop_analysis.enclosing_loops(loop)
             # ``add_node`` re-homes each per-group ``copy.deepcopy(loop)`` clone, nested SDFGs included.
             LoopFission._fission_blocks(loop, groups)
             count += 1
@@ -285,6 +294,20 @@ def groups_with_expansion(
     return split_after_expansion(loop)
 
 
+def accessed_names(block: ControlFlowBlock) -> tuple[set[str], set[str]]:
+    """The containers ``block`` writes and reads, control flow included: the names of :func:`_rw_subsets` without
+    judging a subset, for the question asked of every loop."""
+    writes: set[str] = set()
+    reads = set(_interstate_reads(block))
+    for state in [block] if isinstance(block, SDFGState) else block.states():
+        for node in state.data_nodes():
+            if state.in_degree(node) > 0:
+                writes.add(node.data)
+            if state.out_degree(node) > 0 or state.in_degree(node) == 0:
+                reads.add(node.data)
+    return writes, reads
+
+
 def split_after_expansion(loop: LoopRegion) -> list[list[ControlFlowBlock]] | None:
     """The distribution groups of a sequential ``loop`` once the transients its blocks share get one slot each.
 
@@ -301,15 +324,15 @@ def split_after_expansion(loop: LoopRegion) -> list[list[ControlFlowBlock]] | No
     order = _linear_blocks(loop, allow_assignments=True) if loop.loop_variable else None
     if order is None or len(order) < 2:
         return None
+    sdfg = loop.sdfg
     seen: dict[str, int] = {}
     accumulated: set[str] = set()
     for block in order:
-        writes, reads = _rw_subsets(block, loop.loop_variable)
-        for name in dict.fromkeys([*writes, *reads]):
+        writes, reads = accessed_names(block)
+        for name in writes | reads:
             seen[name] = seen.get(name, 0) + 1
-        accumulated.update(name for name in writes if name in reads)
+        accumulated |= writes & reads
     shared = {name for name, count in seen.items() if count > 1}
-    sdfg = loop.sdfg
     # Only an accumulator one block updates and another reads couples the blocks for good (the CSR row sum ``s``);
     # without one, expanding a shared value (a loop-invariant ``alpha[0]`` copy) only splits off a statement and
     # hides the nest from the library lifts (``LoopToSymm``).

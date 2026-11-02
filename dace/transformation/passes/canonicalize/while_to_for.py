@@ -154,8 +154,10 @@ def convert(loop: LoopRegion) -> bool:
 
 def start_edge(loop: LoopRegion, name: str):
     """The nearest edge before ``loop`` that assigns ``name``, up a chain of single unconditional edges through
-    blocks that assign nothing to it; ``None`` when the chain branches first or the value reads ``name``."""
+    blocks that assign nothing to it; ``None`` when the chain branches first, the value reads ``name``, or the chain
+    changes what the value reads (the loop header would evaluate it afresh)."""
     region, block = loop.parent_graph, loop
+    changed = {name}
     while True:
         ins = region.in_edges(block)
         if len(ins) != 1 or not ins[0].data.is_unconditional():
@@ -163,10 +165,12 @@ def start_edge(loop: LoopRegion, name: str):
         edge = ins[0]
         if name in edge.data.assignments:
             value = symbolic.pystr_to_symbolic(edge.data.assignments[name])
-            return None if name in {str(s) for s in value.free_symbols} else edge
+            return None if changed.intersection(str(s) for s in value.free_symbols) else edge
+        changed.update(edge.data.assignments)
         block = edge.src
         if not isinstance(block, SDFGState):
             return None  # a region before the loop may assign the name inside it
+        changed.update(node.data for node in block.data_nodes() if block.in_degree(node) > 0)
 
 
 def exit_value(cond, name: str, start, step: int):

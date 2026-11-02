@@ -45,7 +45,12 @@ from dace.sdfg import nodes
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.loop_fission import _is_per_iter_subset, _linear_blocks
+from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.loop_fission import _linear_blocks, per_iter_axes
+
+
+#: The axes of a container not every access of which is per-iteration.
+UNALIGNED: frozenset[int] = frozenset()
 
 
 def _interstate_reads(block: ControlFlowBlock) -> list[str]:
@@ -74,20 +79,26 @@ def _interstate_reads(block: ControlFlowBlock) -> list[str]:
 
 
 def _rw_subsets(
-    block: ControlFlowBlock, loop_var: str | None, expanded: dict[str, Any] | None = None
-) -> tuple[dict[str, bool], dict[str, bool]]:
-    """For every container ``block`` writes / reads, whether ALL of its accesses
-    are per-iteration (single-point at ``loop_var`` with zero offset).
+    block: ControlFlowBlock, loop_var: str | None, expanded: dict[str, Any] | None = None, symbols: bool = True
+) -> tuple[dict[str, frozenset[int]], dict[str, frozenset[int]]]:
+    """For every container ``block`` writes / reads, the axes ALL of its accesses
+    index at ``loop_var`` itself (:func:`~dace.transformation.passes.loop_fission.per_iter_axes`).
 
     :param expanded: Containers judged as if expanded by one slot dimension, with that dimension's index.
+    :param symbols: Also report the symbols ``block`` reads; a body nothing in which assigns one has no use for them.
 
-    :returns: ``(writes, reads)`` dicts mapping container name -> ``True`` iff
-        every write / read memlet of that container is per-iteration w.r.t.
-        ``loop_var`` (``_is_per_iter_subset``). A container absent from a dict
+    :returns: ``(writes, reads)`` dicts mapping container name -> those axes, empty when some
+        access is not per-iteration w.r.t. ``loop_var``. A container absent from a dict
         is not written / read by the block.
     """
-    writes: dict[str, bool] = {}
-    reads: dict[str, bool] = {}
+    writes: dict[str, frozenset[int]] = {}
+    reads: dict[str, frozenset[int]] = {}
+
+    def narrow(found: dict[str, frozenset[int]], name: str, subset: Any) -> None:
+        slot = None if expanded is None else expanded.get(name)
+        axes = per_iter_axes(subset, loop_var, slot)
+        found[name] = found[name] & axes if name in found else axes
+
     states = [block] if isinstance(block, SDFGState) else list(block.states())
     for st in states:
         for n in st.nodes():
@@ -96,31 +107,27 @@ def _rw_subsets(
             for e in st.in_edges(n):
                 if e.data is None:
                     continue
-                sub = e.data.get_dst_subset(e, st)
-                slot = None if expanded is None else expanded.get(n.data)
-                writes[n.data] = writes.get(n.data, True) and _is_per_iter_subset(sub, loop_var, slot)
+                narrow(writes, n.data, e.data.get_dst_subset(e, st))
             if st.out_degree(n) > 0 or st.in_degree(n) == 0:
                 for e in st.out_edges(n):
                     if e.data is None:
                         continue
-                    sub = e.data.get_src_subset(e, st)
-                    slot = None if expanded is None else expanded.get(n.data)
-                    reads[n.data] = reads.get(n.data, True) and _is_per_iter_subset(sub, loop_var, slot)
+                    narrow(reads, n.data, e.data.get_src_subset(e, st))
                 if st.out_degree(n) == 0 and st.in_degree(n) == 0:
-                    reads.setdefault(n.data, False)
-    # False, not True: the subset an interstate read uses is not analyzable here, and the forward
+                    reads.setdefault(n.data, UNALIGNED)
+    # Unaligned: the subset an interstate read uses is not analyzable here, and the forward
     # producer->consumer split is only legal when BOTH sides are provably per-iteration. Recording
     # it as unanalyzable keeps such a pair fused.
     for name in _interstate_reads(block):
-        reads[name] = False
+        reads[name] = UNALIGNED
     # A symbol is never a per-iteration subset: one assigned inside the block (KMP's state ``q``) is written, one
     # the block uses is read, so a block reading a symbol another block assigns stays fused with it.
     if not isinstance(block, SDFGState):
         for edge in block.all_interstate_edges(recursive=True):
-            writes.update(dict.fromkeys(edge.data.assignments, False))
-    for name in map(str, block.free_symbols):
+            writes.update(dict.fromkeys(edge.data.assignments, UNALIGNED))
+    for name in map(str, block.free_symbols) if symbols else ():
         if name not in block.sdfg.arrays:
-            reads[name] = False
+            reads[name] = UNALIGNED
     return writes, reads
 
 
@@ -132,17 +139,23 @@ def charge_body_edges(loop: LoopRegion, rw: dict) -> None:
     """
     for edge in loop.edges():
         writes, reads = rw[edge.dst]
-        writes.update(dict.fromkeys(edge.data.assignments, False))
-        reads.update(dict.fromkeys(edge.data.free_symbols, False))
+        writes.update(dict.fromkeys(edge.data.assignments, UNALIGNED))
+        reads.update(dict.fromkeys(edge.data.free_symbols, UNALIGNED))
 
 
-def assignment_coupled(loop: LoopRegion, order: list[ControlFlowBlock]) -> dict[ControlFlowBlock, ControlFlowBlock]:
+def assignment_coupled(
+    loop: LoopRegion, order: list[ControlFlowBlock], assigns: dict[ControlFlowBlock, set[str]]
+) -> dict[ControlFlowBlock, ControlFlowBlock]:
     """Union-find parents that already join the blocks a body-edge assignment couples.
 
     A symbol assigned on a body edge exists only in the clone holding that edge, so the edge's ends and every
     block reading the symbol stay in one group (CSR ``row_ptr_index := row_ptr[i]`` feeding an inner loop).
+
+    :param assigns: What :func:`assigned_in` answers for each block.
     """
     parent: dict[ControlFlowBlock, ControlFlowBlock] = {b: b for b in order}
+    if not any(assigns.values()) and not any(edge.data.assignments for edge in loop.edges()):
+        return parent
 
     def root(x: ControlFlowBlock) -> ControlFlowBlock:
         while parent[x] != x:
@@ -158,7 +171,6 @@ def assignment_coupled(loop: LoopRegion, order: list[ControlFlowBlock]) -> dict[
             parent[root(block)] = root(edge.dst)
     # A symbol a block assigns inside itself (kmp's ``q = fail[q - 1]`` in a branch) is read by the next iteration
     # of every block that reads it: assigner and readers carry it together, so they stay in one loop
-    assigns = {b: assigned_in(b) for b in order}
     for block in order:
         assigned = assigns[block]
         for other in order:
@@ -191,12 +203,15 @@ def _forward_flow_groups(
     :param expanded: Containers judged as if expanded by one slot dimension (see :func:`_rw_subsets`).
     """
     order = _linear_blocks(loop, allow_assignments=allow_assignments)
-    if order is None or len(order) < 2:
+    if order is None or len(order) < 2 or not loop_analysis.fixed_iteration_space(loop):
         return None
     lv = loop.loop_variable
-    rw = {b: _rw_subsets(b, lv, expanded) for b in order}
+    assigns = {b: assigned_in(b) for b in order}
+    # Without an assignment in the body no block can read a symbol another writes
+    symbols = any(assigns.values()) or any(edge.data.assignments for edge in loop.edges())
+    rw = {b: _rw_subsets(b, lv, expanded, symbols) for b in order}
     charge_body_edges(loop, rw)
-    parent = assignment_coupled(loop, order)
+    parent = assignment_coupled(loop, order, assigns)
     flows: list[tuple[ControlFlowBlock, ControlFlowBlock]] = []
 
     def find(x: ControlFlowBlock) -> ControlFlowBlock:
@@ -219,8 +234,8 @@ def _forward_flow_groups(
                     break
                 if x in writes_i and x in reads_j:
                     # forward producer -> consumer: safe only if aligned per-iter
-                    # on both the producing write and the consuming read.
-                    if not (writes_i[x] and reads_j[x]):
+                    # on both the producing write and the consuming read, on one shared axis.
+                    if not (writes_i[x] & reads_j[x]):
                         merge = True
                         break
                     flows.append((bi, bj))

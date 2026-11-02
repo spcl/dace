@@ -64,32 +64,15 @@ from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.subsets import Subset
-from dace.transformation.passes.analysis.loop_analysis import get_init_assignment, get_loop_end, get_loop_stride
-from dace.transformation.passes.move_if_into_loop import _linear_order
-
-
-def _provably_nonempty(loop: LoopRegion) -> bool:
-    """S1: prove the inner ``loop`` executes at least once.
-
-    For a positive stride the loop is non-empty iff ``init <= last-reached``; for a negative
-    stride iff ``init >= last-reached``. Uses the parsed init/condition/stride and a
-    ``sympy`` non-negativity proof; an unknown result (e.g. a free symbolic bound with no
-    positivity assumption) is treated as *not* provable and refuses.
-    """
-    init = get_init_assignment(loop)
-    end = get_loop_end(loop)
-    stride = get_loop_stride(loop)
-    if init is None or end is None or stride is None:
-        return False
-    s = symbolic.pystr_to_symbolic(stride)
-    facts = loop.sdfg.facts()
-    if symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, s), facts) is symbolic.Truth.TRUE:
-        diff = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(end)) - as_expr(symbolic.pystr_to_symbolic(init)))
-    elif symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.NEGATIVE, s), facts) is symbolic.Truth.TRUE:
-        diff = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(init)) - as_expr(symbolic.pystr_to_symbolic(end)))
-    else:
-        return False
-    return symbolic.provably_nonnegative(diff, facts)
+from dace.transformation.passes.analysis.loop_analysis import (
+    get_init_assignment,
+    get_loop_end,
+    get_loop_stride,
+    loop_header_names,
+    loop_jumps,
+)
+from dace.transformation.passes.loop_fission import _linear_blocks
+from dace.transformation.passes.move_if_into_loop import provably_nonempty
 
 
 def _last_reached_iterate(loop: LoopRegion) -> symbolic.SymbolicType | None:
@@ -231,7 +214,7 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
     for outer in sdfg.all_control_flow_regions(recursive=True):
         if not isinstance(outer, LoopRegion) or not outer.loop_variable:
             continue
-        order = _linear_order(outer)
+        order = _linear_blocks(outer, allow_assignments=True)
         if order is None:
             continue
         inner_loops = [b for b in order if isinstance(b, LoopRegion)]
@@ -247,7 +230,7 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
             continue  # pre/post must be plain statements, not loops/conditionals
         if not inner.loop_variable:
             continue
-        if not _provably_nonempty(inner):  # S1
+        if not provably_nonempty(inner) or loop_jumps(inner):  # S1: the guarded post must run
             continue
         if get_init_assignment(inner) is None or _last_reached_iterate(inner) is None:
             continue
@@ -268,6 +251,10 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
             if e is not None:
                 sifted_lhs.update(dict.fromkeys(e.data.assignments.keys()))
         if any(s in sifted_lhs for s in _body_written_names(inner)):
+            continue
+        # The inner header runs before any sifted statement, so it must not read what ``pre`` produces.
+        pre_written = {n.data for st in pre for n in st.data_nodes() if st.in_degree(n) > 0}
+        if loop_header_names(inner) & (pre_written | sifted_lhs.keys()):
             continue
         return outer, inner, pre, post
     return None

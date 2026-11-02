@@ -2296,11 +2296,38 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             # Add new global symbols to nested SDFG
             undeclared = [(sym, symval) for sym, symval in s.symbol_mapping.items() if sym not in sdfg.symbols]
             if undeclared:
-                defined_symbols = self._defined_symbols_for_nesting()
+                wanted = {str(s) for _, value in undeclared for s in symbolic.pystr_to_symbolic(value).free_symbols}
+                defined_symbols = self._enclosing_iterator_symbols(wanted)
+                if defined_symbols is None:
+                    defined_symbols = self._defined_symbols_for_nesting()
                 for sym, symval in undeclared:
                     sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
 
         return s
+
+    def _enclosing_iterator_symbols(self, names: set[str]) -> dict[str, dt.Data] | None:
+        """:meth:`defined_symbols` when ``names`` are all iterators of the loops around this state whose headers read
+        declared symbols and outer iterators only, else ``None``. It answers those from the loops alone, where the
+        full walk visits every region of the SDFG (a loop-body nesting asks for nothing else).
+        """
+        # Avoid cyclic import
+        from dace.transformation.passes.analysis import loop_analysis
+
+        sdfg = self.sdfg
+        chain: list[LoopRegion] = []
+        region = self.parent_graph
+        while region is not None and region is not sdfg:
+            if isinstance(region, LoopRegion):
+                chain.append(region)
+            region = region.parent_graph
+        if not names <= {loop.loop_variable for loop in chain}:
+            return None
+        defined = dict(sdfg.symbols)
+        for loop in reversed(chain):
+            if not loop_analysis.loop_header_names(loop) <= defined.keys() | sdfg.arrays.keys():
+                return None
+            defined.update((k, v) for k, v in loop.new_symbols(defined).items() if v is not None)
+        return defined
 
     def _defined_symbols_for_nesting(self) -> dict[str, dt.Data]:
         """:meth:`defined_symbols` of this state, memoized for the library expansions of one
