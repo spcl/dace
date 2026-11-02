@@ -389,7 +389,8 @@ class WavefrontSkew(ppl.Pass):
         bi, bj = self.tile_extents()
         if bi < 1 or bj < 1:
             return None
-        if self.target == "gpu" and any(holds_wide_loop(st) for st in body.statements if st.kind == "loop"):
+        resolver = SymbolResolver()
+        if self.target == "gpu" and any(holds_wide_loop(st, resolver) for st in body.statements if st.kind == "loop"):
             return None
         for k in range(MAX_PRESKEW + 1):
             if not deps.permutable(shifts, k):
@@ -628,10 +629,9 @@ def skewable_refusal(refusals: dict, loop: LoopRegion) -> bool:
     return refusal is None or refusal.kind.carried or refusal.kind is Refusal.PINNED
 
 
-def holds_wide_loop(st: Statement) -> bool:
+def holds_wide_loop(st: Statement, resolver: SymbolResolver) -> bool:
     """Whether a cell of ``st`` runs a parallel-capable axis that is not ``SMALL``. On GPU that axis takes the block,
     which needs the cell to be a kernel iteration: a tile's thread per cell would walk it serially (nussinov 30x)."""
-    resolver = SymbolResolver()
     for node, parent in st.block.all_nodes_recursive():
         if isinstance(node, nodes.MapEntry) and not all(xfh.small_map_axes(parent, node, resolver)):
             return True
