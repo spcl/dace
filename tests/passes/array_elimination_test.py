@@ -515,6 +515,25 @@ def test_remove_unused_scalars() -> None:
     assert "tmp" not in sdfg.arrays
 
 
+def test_a_stepped_copy_back_is_not_an_in_place_update():
+    """``t[j] = A[j]; A[0:5:2] = t``: folded, ``j`` would read the ``A[2 * (j // 2)]`` an earlier ``j`` rewrote."""
+    sdfg = dace.SDFG("stepped_copy_back")
+    sdfg.add_array("A", [6], dace.float64)
+    sdfg.add_transient("t", [3], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    me, mx = state.add_map("m", {"j": "0:3"})
+    tasklet = state.add_tasklet("add", {"i"}, {"o"}, "o = i + 1.0")
+    temp = state.add_access("t")
+    state.add_memlet_path(state.add_read("A"), me, tasklet, dst_conn="i", memlet=dace.Memlet("A[j]"))
+    state.add_memlet_path(tasklet, mx, temp, src_conn="o", memlet=dace.Memlet("t[j]"))
+    state.add_edge(temp, None, state.add_write("A"), None, dace.Memlet(data="t", subset="0:3", other_subset="0:5:2"))
+
+    Pipeline([ArrayElimination(fold_ordered_copies=True)]).apply_pass(sdfg, {})
+    a = np.array([1.0, 10.0, 100.0, 1e3, 1e4, 1e5])
+    sdfg(A=a)
+    assert a[4] == 101.0
+
+
 if __name__ == "__main__":
     test_redundant_simple()
     test_merge_simple()
@@ -526,3 +545,4 @@ if __name__ == "__main__":
     test_slice_view_fold_preserves_anti_dependence_on_output()
     test_slice_view_fold_still_removes_a_safe_view()
     test_remove_unused_scalars()
+    test_a_stepped_copy_back_is_not_an_in_place_update()
