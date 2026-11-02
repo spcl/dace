@@ -41,7 +41,9 @@ The products are NumPy matrix products of views (``x[r0:r0 + nr] @ w[c0:c0 + BN]
 rows ``nr``), in which the rows of an expert's tokens are gathered (``x[row_token[r0:r0 + nr]]``). DaCe fuses the gather
 and the transposition into the product (``GatherIntoMatrixProduct``, ``TransposeIntoMatrixProduct``), and computes a
 product that the threads of a block run together with the block (the ``ThreadBlockMMA`` implementation of ``Gemm``:
-tensor cores on GPUs that have them, staging the operands in a shared memory workspace of its own).
+tensor cores on GPUs that have them, staging the operands in a shared memory workspace of its own). The weights are
+stored in blocks of 32 columns (``BlockMatrixOperands``, see ``dace.libraries.blas.blocked``), as inference engines pack
+their weights once: the 32 columns of the 128 rows of a tile that a product stages at a time are then contiguous.
 
 With ``--profile``, every task records its time on the GPU instead (the ``GPU_Events`` instrumentation of a node in a
 kernel: an event per thread block that runs it, on the GPU's global timer). The sample then prints the time of every
@@ -72,6 +74,7 @@ from transformers.models.gemma4.modeling_gemma4 import (
 import dace
 from dace.codegen.instrumentation.report import InstrumentationReport
 from dace.transformation.dataflow import GatherIntoMatrixProduct, TransposeIntoMatrixProduct
+from dace.transformation.passes import BlockMatrixOperands
 
 try:  # Optional: the block as vLLM runs it, for comparison
     from vllm.config import CompilationConfig, VllmConfig, set_current_vllm_config
@@ -156,6 +159,8 @@ SHARED = dace.StorageType.GPU_Shared
 WARPS = 4  # Warps per thread block
 THREADS = 32 * WARPS
 BM, BN = 64, 128  # Rows and columns of a tile
+BLOCK = 32  # The weights are stored in blocks of BLOCK columns (see ``in_blocks``)
+WEIGHTS = ("router_w", "dense_gate_up_w", "down_w", "expert_gate_up_w", "expert_down_w")
 # The kinds of tasks, multiples of ``1 << KIND`` (64-bit constants): a task is its kind, a tile and a chunk (see
 # ``append_to_stream``)
 KIND, FIELD = 40, 20
@@ -562,6 +567,7 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
     sdfg.simplify(validate=False)  # As the frontend does: shared memory is valid once the program is on the GPU
     # The gathers of rows and the transposed weights, read by the products themselves
     sdfg.apply_transformations_repeated([GatherIntoMatrixProduct, TransposeIntoMatrixProduct], validate=False)
+    BlockMatrixOperands(WEIGHTS, BLOCK).apply_pass(sdfg, {})  # The program then takes the weights in blocks
     to_gpu(sdfg)
     return sdfg
 
@@ -592,16 +598,24 @@ def to_gpu(sdfg: dace.SDFG) -> None:
             node.consume.schedule = dace.ScheduleType.GPU_Device
 
 
+def in_blocks(weight: torch.Tensor) -> torch.Tensor:
+    """A weight ``[..., N, K]`` stored in blocks of BLOCK columns, ``[..., K / BLOCK, N, BLOCK]`` (see
+    ``dace.libraries.blas.blocked``): a copy."""
+    *batch, n, k = weight.shape
+    return weight.reshape(*batch, n, k // BLOCK, BLOCK).transpose(-3, -2).contiguous()
+
+
 def arguments(block: FeedForward) -> dict[str, torch.Tensor]:
-    """The weights of ``block`` as the program takes them: the gate and up projections interleaved in chunks of 64 rows
-    (copies, made once), so that a tile of 128 output columns holds matching gate and up columns."""
+    """The weights of ``block`` as the program takes them (copies, made once): the gate and up projections interleaved
+    in chunks of 64 rows, so that a tile of 128 output columns holds matching gate and up columns, and the weights of
+    the products in blocks of columns (see ``in_blocks``)."""
     w = {name: p.detach() for name, p in block.named_parameters()}
     E, I2, D = w["experts.gate_up_proj"].shape
     DI = w["mlp.gate_proj.weight"].shape[0]
     half = BN // 2
     expert_gate_up = w["experts.gate_up_proj"].view(E, 2, I2 // 2 // half, half, D).transpose(1, 2)
     dense_gate_up = torch.stack([w["mlp.gate_proj.weight"], w["mlp.up_proj.weight"]]).view(2, DI // half, half, D)
-    return dict(
+    result = dict(
         pre_norm=w["pre_feedforward_layernorm.weight"],
         post_norm_1=w["post_feedforward_layernorm_1.weight"],
         router_scale=w["router.scale"],
@@ -615,6 +629,7 @@ def arguments(block: FeedForward) -> dict[str, torch.Tensor]:
         expert_gate_up_w=expert_gate_up.reshape(E, I2, D),
         expert_down_w=w["experts.down_proj"],
     )
+    return {name: in_blocks(t) if name in WEIGHTS else t for name, t in result.items()}
 
 
 def workspace(config: Gemma4TextConfig, tokens: int) -> dict:
