@@ -1232,6 +1232,103 @@ def test_a_nest_behind_a_view_of_a_lifted_array_steps_as_the_view_does(layout):
     sdfg.validate()
 
 
+def kernels_over_per_thread_counts(names: tuple[str, ...], shape: str = "cnt + 1") -> dace.SDFG:
+    """One device kernel per name of ``names``, in its own state, whose body does ``cnt = <name>[b]`` and fills a
+    transient ``buf`` of ``shape``."""
+    sdfg = dace.SDFG("per_thread_counts_" + "_".join(names))
+    sdfg.add_symbol("NX", dace.int64)
+    sdfg.add_array("o", ["NX"], dace.float64, storage=GLOBAL)
+    previous = None
+    for name in names:
+        sdfg.add_array(name, ["NX"], dace.int64, storage=dtypes.StorageType.CPU_Heap)
+        state = sdfg.add_state(f"launch_{name}", is_start_block=previous is None)
+        if previous is not None:
+            sdfg.add_edge(previous, state, dace.InterstateEdge())
+        previous = state
+        entry, exit_node = state.add_map(f"kernel_{name}", {"b": "0:NX"}, schedule=GPU_DEVICE)
+        body = dace.SDFG(f"body_{name}")
+        for symbol in ("b", "cnt", "NX"):
+            body.add_symbol(symbol, dace.int64)
+        body.add_array(name, ["NX"], dace.int64)
+        body.add_array("o", ["NX"], dace.float64, storage=GLOBAL)
+        body.add_transient("buf", [shape], dace.float64, storage=GLOBAL)
+        bind = body.add_state("bind", is_start_block=True)
+        fill = body.add_state("fill")
+        body.add_edge(bind, fill, dace.InterstateEdge(assignments={"cnt": f"{name}[b]"}))
+        fill.add_mapped_tasklet(
+            "fill",
+            {"k": f"0:{shape}"},
+            {},
+            "o = k",
+            {"o": dace.Memlet("buf[k]")},
+            schedule=SEQUENTIAL,
+            external_edges=True,
+        )
+        read = body.add_state_after(fill, "read")
+        read.add_mapped_tasklet(
+            "read",
+            {"k": "0:1"},
+            {"q": dace.Memlet("buf[0]")},
+            "o = q",
+            {"o": dace.Memlet("o[b]")},
+            schedule=SEQUENTIAL,
+            external_edges=True,
+        )
+        nest = state.add_nested_sdfg(body, {name: None}, {"o": None}, symbol_mapping={"b": "b", "NX": "NX"})
+        state.add_memlet_path(state.add_read(name), entry, nest, dst_conn=name, memlet=dace.Memlet(f"{name}[0:NX]"))
+        state.add_memlet_path(nest, exit_node, state.add_write("o"), src_conn="o", memlet=dace.Memlet("o[0:NX]"))
+    return sdfg
+
+
+def test_an_extent_shrinking_with_a_thread_count_is_not_sized_by_its_maximum():
+    sdfg = kernels_over_per_thread_counts(("counts",), "NX - cnt")
+    pass_ = MoveArrayOutOfKernel()
+    pass_.raise_on_unsupported = False
+    pass_.apply_pass(sdfg, {})
+    assert not any("_fold" in name for name in sdfg.arrays)
+
+
+def test_two_kernels_reading_one_count_name_fold_their_own_bound():
+    sdfg = kernels_over_per_thread_counts(("first", "second"))
+    assert lift(sdfg) == 2
+    assert sum(name.endswith("_fold") or "_fold_" in name for name in sdfg.arrays) == 2
+
+
+def test_an_extent_the_kernel_itself_stores_is_not_folded_before_the_launch():
+    sdfg = kernels_over_per_thread_counts(("counts",))
+    state = sdfg.start_block
+    entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    store = state.add_tasklet("store", {}, {"c"}, "c = 3 * b")
+    state.add_nedge(entry, store, dace.Memlet())
+    state.add_edge(store, "c", state.add_access("counts"), None, dace.Memlet("counts[b]"))
+    pass_ = MoveArrayOutOfKernel()
+    pass_.raise_on_unsupported = False
+    pass_.apply_pass(sdfg, {})
+    assert not any("_fold" in name for name in sdfg.arrays)
+
+
+def test_a_copy_into_a_lifted_array_naming_only_its_source_gains_the_kernel_index():
+    sdfg = dace.SDFG("lifted_copy_target")
+    sdfg.add_array("A", [128], dace.float64, storage=GLOBAL)
+    sdfg.add_array("B", [128], dace.float64, storage=GLOBAL)
+    sdfg.add_transient("src", [4], dace.float64, storage=REGISTER)
+    sdfg.add_transient("buf", [1024], dace.float64, storage=REGISTER)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("kernel", {"i": "0:128"}, schedule=GPU_DEVICE)
+    source, buf = state.add_access("src"), state.add_access("buf")
+    fill = state.add_tasklet("fill", {"x"}, {"y"}, "y = x")
+    use = state.add_tasklet("use", {"v"}, {"o"}, "o = v")
+    state.add_memlet_path(state.add_read("A"), entry, fill, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_edge(fill, "y", source, None, dace.Memlet("src[0]"))
+    copy_edge = state.add_edge(source, None, buf, None, dace.Memlet("src[0:4]"))
+    state.add_edge(buf, None, use, "v", dace.Memlet("buf[0]"))
+    state.add_memlet_path(use, exit_node, state.add_write("B"), src_conn="o", memlet=dace.Memlet("B[i]"))
+    pass_ = MoveArrayOutOfKernel()
+    pass_.raise_on_unsupported = False
+    assert pass_.apply_pass(sdfg, {})
+    assert copy_edge.data.dst_subset.dims() == 2 and "i" in {str(s) for s in copy_edge.data.dst_subset.free_symbols}
+
+
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)
@@ -1294,3 +1391,7 @@ if __name__ == "__main__":
     test_an_extent_a_thread_reads_through_an_index_runs_on_the_device()
     for layout in LAYOUTS:
         test_a_nest_behind_a_view_of_a_lifted_array_steps_as_the_view_does(layout)
+    test_an_extent_shrinking_with_a_thread_count_is_not_sized_by_its_maximum()
+    test_two_kernels_reading_one_count_name_fold_their_own_bound()
+    test_an_extent_the_kernel_itself_stores_is_not_folded_before_the_launch()
+    test_a_copy_into_a_lifted_array_naming_only_its_source_gains_the_kernel_index()

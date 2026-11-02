@@ -204,6 +204,25 @@ def test_gpu_keeps_the_node_for_the_vendor_solver():
     assert len(getrf_nodes(sdfg)) == 1
 
 
+T = dace.symbol("T")
+
+
+@dace.program
+def lu_stopping_early(A: dace.float64[N, N]):
+    for k in range(N):
+        if k == T:
+            break
+        for i in range(k + 1, N):
+            A[i, k] = A[i, k] / A[k, k]
+            for j in range(k + 1, N):
+                A[i, j] = A[i, j] - A[i, k] * A[k, j]
+
+
+def test_an_early_exit_under_a_guard_keeps_the_nest():
+    sdfg = lu_stopping_early.to_sdfg(simplify=True)
+    assert not LoopToGetrfNoPivot().apply_pass(sdfg, {})
+
+
 if __name__ == "__main__":
     for p in (lu_slices, lu_augmented, lu_loops, lu_loops_to_n_minus_1):
         test_an_elimination_nest_lifts_to_one_node_that_factors(p)

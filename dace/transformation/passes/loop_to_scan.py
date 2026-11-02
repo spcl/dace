@@ -40,7 +40,6 @@ on any other carried writes to non-transient arrays.
 
 import ast
 import copy
-import re
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
@@ -66,6 +65,7 @@ from dace.libraries.standard.nodes.scan import (
 )
 from dace.optionals import required
 from dace.ordered import OrderedSet
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_basic, as_expr, as_loop, as_state, free_symbols
 from dace.sdfg.sdfg import InterstateEdge
@@ -1036,6 +1036,10 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
             # ``_Scan`` -- one ``Scan`` libnode per slot in the rewrite.
             multi = _match_multi_slot(loop.loop_variable, sdfg, state, out_name, start, end)
             if multi:
+                # The multi-slot rewrite has no identity fill: a skipped iteration would scan uninitialized deltas
+                if _enclosing_masked_conditional(state) is not None:
+                    cand_failed = True
+                    break
                 for info in multi:
                     if inner_loop is not None:
                         info = info._replace(inner_loop=inner_loop)
@@ -1063,6 +1067,15 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
         break
     if matched is None:
         return []
+    # The vector rewrite emits one forward unit-stride seed
+    if any(s.inner_loop is not None and (s.coef != 1 or s.scan_stride != 1) for s in matched):
+        return []
+    # An index bound inside the body changes per iteration: it is no fixed slot of a scan
+    bound = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
+    for info in matched:
+        indices = [info.k_w, info.k_r, *(expr for _, expr in info.other_indices)]
+        if bound & {str(sym) for expr in indices for sym in as_basic(expr).free_symbols}:
+            return []
 
     # Body may write only the carriers we matched. Any other non-transient write
     # would need ``lastprivate``-style preservation that the rewrite doesn't model.
@@ -1189,13 +1202,6 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
     # iterations that never had one.
     if any(not _sibling_branches_hold_the_carry(s, loop) for s in matched):
         return []
-    # The multi-slot rewrite has no identity fill for an iteration a mask skips
-    if len(matched) > 1 and any(_enclosing_masked_conditional(s.body_state) is not None for s in matched):
-        return []
-    # An index the body assigns is no invariant of the post-loop seed
-    assigned = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
-    if assigned and any(assigned & set(re.findall(r"[A-Za-z_]\w*", str(s.other_indices))) for s in matched):
-        return []
     severed = [
         _carrier_read_edge(
             s.body_state,
@@ -1259,8 +1265,8 @@ def _writes_only_the_carry_slot(state: SDFGState, write_an: nodes.AccessNode, in
                 return False  # a source that is not data cannot be the held carrier
             roots.append(cur)
             continue
-        if isinstance(cur, nodes.Tasklet) and not isinstance(ast.parse(cur.code.as_string).body[0].value, ast.Name):
-            return False  # computes a value of its own
+        if isinstance(cur, nodes.Tasklet) and not _is_pure_copy_tasklet(cur):
+            return False  # ``out[i] = out[i-1] * 2`` is computed from the carrier, it does not hold it
         worklist.extend(e.src for e in in_edges)
     if not roots:
         return False
@@ -2240,7 +2246,7 @@ def _match_scalar_carry(loop: LoopRegion, sdfg: SDFG) -> _ScalarCarryScan | None
         return None
 
     state, inner_loop = _descend_to_content_state(loop)
-    if state is None or inner_loop is not None or _enclosing_masked_conditional(state) is not None:
+    if state is None or inner_loop is not None or state.parent_graph is not loop:
         return None  # v1 keeps narrow on flat bodies; nested-scalar-carry is a follow-up.
     for n in state.nodes():
         if not isinstance(n, (nodes.Tasklet, nodes.AccessNode)):
@@ -2384,7 +2390,7 @@ def _match_one_scalar_carry(
     # Check if ``acc`` is read outside this loop's body (any other state of any
     # nested SDFG, or any interstate edge condition/assignments). When true the
     # rewrite emits a post-loop writeback to preserve the final value.
-    acc_used_post_loop = _acc_used_outside_body(sdfg, acc_name, state)
+    acc_used_post_loop = _acc_used_outside_body(sdfg, acc_name, state) or _repeated_by_a_loop(loop)
 
     return _ScalarCarryScan(
         op=op,
@@ -2663,6 +2669,14 @@ def _resolve_per_iter_write(state: SDFGState, edge, sdfg: SDFG, loop_var: str, a
         if _identity_input(state, dst) is None or state.out_degree(dst) != 1:
             return None
         cur_edge = list(state.out_edges(dst))[0]
+
+
+def _repeated_by_a_loop(loop: LoopRegion) -> bool:
+    """Whether a loop around ``loop`` runs it again: its next run reads what this one left in the accumulator."""
+    parent = loop.parent_graph
+    while parent is not None and not isinstance(parent, LoopRegion):
+        parent = parent.parent_graph
+    return parent is not None
 
 
 def _acc_used_outside_body(sdfg: SDFG, acc_name: str, body_state: SDFGState) -> bool:
@@ -3006,7 +3020,7 @@ def stride_guard_is_statically_dischargeable(infos: list["_Scan"], facts: symbol
     for info in infos:
         s = as_basic(info.scan_stride) if isinstance(info.scan_stride, symbolic.SymExpr) else info.scan_stride
         if not (isinstance(s, sympy.Basic) and not s.is_Integer and not loop_analysis._provably_le(1, s, facts)):
-            return False  # a true scan beside it: the loop is no DOALL
+            return False  # a real recurrence beside the guarded one: no bare Map
         guarded = True
         if info.iter_start is None or info.iter_end is None:
             return False
@@ -3079,6 +3093,10 @@ def _find_scan_update_tasklet(
         out_edges = [e for e in state.out_edges(node) if e.data is not None and not e.data.is_empty()]
         if len(out_edges) != 1:
             continue
+        # The rewrite replaces the whole expression by the delta: every input must be a bare operand of ``op``
+        operands = (rhs.left, rhs.right) if isinstance(rhs, ast.BinOp) else rhs.args
+        if sum(isinstance(operand, ast.Name) for operand in operands) != len(in_edges):
+            continue
         # v1/v2: ``carry + delta`` (two data inputs). v3: ``carry + literal``
         # (one data input + a numeric constant on the other side of the binop;
         # e.g. TSVC s242 ``a[i] = a[i-1] + 0.5 + ...``). The Call (``max``/``min``)
@@ -3086,10 +3104,6 @@ def _find_scan_update_tasklet(
         # would degenerate to ``out[i] = max(out[start], literal)`` which is
         # better lifted as a plain reduction, not a scan.
         if len(in_edges) not in (1, 2):
-            continue
-        # The rewrite replaces the whole expression: both operands must be the bare inputs
-        operands = (rhs.left, rhs.right) if isinstance(rhs, ast.BinOp) else rhs.args
-        if len(in_edges) == 2 and not all(isinstance(operand, ast.Name) for operand in operands):
             continue
         literal_delta = None
         if len(in_edges) == 1:
@@ -4659,10 +4673,19 @@ def _rewrite_scalar_carry(parent: ControlFlowRegion, loop: LoopRegion, info: _Sc
         s_write = parent.add_state(loop.label + "_scan_write")
         parent.add_edge(s_scan, s_write, dace.InterstateEdge())
         tail_state = s_write
-    if info.acc_used_post_loop:
+    if info.acc_used_post_loop and loop_analysis._provably_le(1, trip, SymbolResolver().facts_at(parent)):
         s_acc_post = parent.add_state(loop.label + "_scan_acc_post")
         parent.add_edge(tail_state, s_acc_post, dace.InterstateEdge())
         tail_state = s_acc_post
+    elif info.acc_used_post_loop:
+        # A loop that may not run leaves the accumulator at its seed
+        ran = ConditionalBlock(loop.label + "_scan_acc_post_ran", sdfg=sdfg, parent=parent)
+        parent.add_node(ran)
+        parent.add_edge(tail_state, ran, dace.InterstateEdge())
+        branch = ControlFlowRegion(loop.label + "_scan_acc_post_branch", sdfg=sdfg, parent=ran)
+        ran.add_branch(CodeBlock(f"({symbolic.symstr(trip)}) > 0"), branch)
+        s_acc_post = branch.add_state(loop.label + "_scan_acc_post", is_start_block=True)
+        tail_state = ran
     # Reroute predecessors of the loop to ``s_build`` and successors of the
     # loop from ``tail_state`` BEFORE removing the loop node; otherwise the
     # new states would be unreachable / dangling.
@@ -4696,12 +4719,12 @@ def _rewrite_scalar_carry(parent: ControlFlowRegion, loop: LoopRegion, info: _Sc
             last_out = _build_subset(out_desc, info.out_scan_axis, final, info.out_other_indices)
             last_delta = symbolic.simplify(in_span[0][1])
             _emit_scalar_carry_acc_post(
-                tail_state, sdfg, info, info.out_name, last_out, delta_buf or info.delta_name, last_delta
+                s_acc_post, sdfg, info, info.out_name, last_out, delta_buf or info.delta_name, last_delta
             )
         else:
             last = symbolic.simplify(out_span[0][1])
             _emit_scalar_carry_acc_post(
-                tail_state, sdfg, info, scan_buf or info.out_name, subsets.Range([(last, last, 1)])
+                s_acc_post, sdfg, info, scan_buf or info.out_name, subsets.Range([(last, last, 1)])
             )
 
     # Remove the original loop now that its semantics are captured by the new states.

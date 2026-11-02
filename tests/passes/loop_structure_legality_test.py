@@ -164,6 +164,57 @@ def run_both(sdfg, transform, **symbols):
     return results
 
 
+def test_while_to_for_keeps_a_start_value_read_from_an_array_written_before_the_loop():
+    sdfg = SDFG("start_reads_array")
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_array("o", [1], dace.int64)
+    first, second = sdfg.add_state("first", is_start_block=True), sdfg.add_state("second")
+    sdfg.add_edge(first, second, InterstateEdge(assignments={"i": "o[0]"}))
+    copy_statement(second, None, "o[0]")
+    loop = LoopRegion("loop", "i < 8")
+    sdfg.add_node(loop)
+    sdfg.add_edge(second, loop, InterstateEdge())
+    body, tail = loop.add_state("body", is_start_block=True), loop.add_state("tail")
+    loop.add_edge(body, tail, InterstateEdge(assignments={"i": "i + 1"}))
+    assert WhileToFor().apply_pass(sdfg, {}) is None
+
+
+def test_while_to_for_keeps_a_bound_the_body_moves():
+    sdfg = int_program("moving_bound", o=[1])
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_symbol("m", dace.int64)
+    head = sdfg.add_state("head", is_start_block=True)
+    loop = LoopRegion("loop", "i < m")
+    sdfg.add_node(loop)
+    sdfg.add_edge(head, loop, InterstateEdge(assignments={"i": "0", "m": "N"}))
+    body, tail = loop.add_state("body", is_start_block=True), loop.add_state("tail")
+    loop.add_edge(body, tail, InterstateEdge(assignments={"m": "m - 2", "i": "i + 1"}))
+    assert WhileToFor().apply_pass(sdfg, {}) is None
+
+
+def flag_loop(name, entry_flag, flag_first):
+    """``i = 0; flag = entry_flag; while flag: ...``, the body assigning ``flag = i < N`` around ``i = i + 1``."""
+    sdfg = int_program(name, o=[1])
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_symbol("flag", dace.bool_)
+    head = sdfg.add_state("head", is_start_block=True)
+    loop = LoopRegion("loop", "flag")
+    sdfg.add_node(loop)
+    sdfg.add_edge(head, loop, InterstateEdge(assignments={"i": "0", "flag": entry_flag}))
+    sdfg.add_edge(loop, sdfg.add_state("after"), InterstateEdge())
+    body, mid, tail = loop.add_state("body", is_start_block=True), loop.add_state("mid"), loop.add_state("tail")
+    bump, test = {"i": "i + 1"}, {"flag": "i < N"}
+    loop.add_edge(body, mid, InterstateEdge(assignments=test if flag_first else bump))
+    loop.add_edge(mid, tail, InterstateEdge(assignments=bump if flag_first else test))
+    return sdfg
+
+
+def test_while_to_for_needs_the_condition_symbol_to_enter_and_stay_as_its_expression():
+    assert WhileToFor().apply_pass(flag_loop("flag_entry", "i < N", False), {}) == 1
+    assert WhileToFor().apply_pass(flag_loop("flag_true_on_entry", "1", False), {}) is None
+    assert WhileToFor().apply_pass(flag_loop("flag_before_bump", "i < N", True), {}) is None
+
+
 def test_exit_symbol_of_a_loop_that_runs_no_iteration():
     expected, got = run_both(
         exit_reader("exit_empty", 5), lambda s: MaterializeLoopExitSymbols().apply_pass(s, {}), N=3
@@ -175,6 +226,21 @@ def test_exit_symbol_leaves_a_later_assignment_alone():
     sdfg = exit_reader("exit_reassigned", 0, {"k": "0"})
     expected, got = run_both(sdfg, lambda s: MaterializeLoopExitSymbols().apply_pass(s, {}), N=3)
     assert expected == got == 0
+
+
+def test_exit_symbol_of_a_counter_a_branch_also_bumps_stays_a_read():
+    sdfg = exit_reader("exit_nested_bump", 0)
+    loop = next(b for b in sdfg.nodes() if isinstance(b, LoopRegion))
+    guard = ConditionalBlock("guard")
+    arm = ControlFlowRegion("arm")
+    guard.add_branch(CodeBlock("i > 0"), arm)
+    bump = arm.add_state("bump", is_start_block=True)
+    arm.add_edge(bump, arm.add_state("bumped"), InterstateEdge(assignments={"k": "k + 1"}))
+    loop.add_node(guard)
+    loop.add_edge(next(b for b in loop.nodes() if b.label == "tail"), guard, InterstateEdge())
+    sdfg.reset_cfg_list()
+    expected, got = run_both(sdfg, lambda s: MaterializeLoopExitSymbols().apply_pass(s, {}), N=3)
+    assert expected == got == 11
 
 
 def test_iterator_exit_value_of_a_loop_that_runs_no_iteration():
@@ -223,5 +289,9 @@ if __name__ == "__main__":
     test_fusion_refuses_a_read_of_the_first_iterators_exit_value()
     test_exit_symbol_of_a_loop_that_runs_no_iteration()
     test_exit_symbol_leaves_a_later_assignment_alone()
+    test_exit_symbol_of_a_counter_a_branch_also_bumps_stays_a_read()
     test_iterator_exit_value_of_a_loop_that_runs_no_iteration()
     test_while_to_for_keeps_a_start_value_changed_before_the_loop()
+    test_while_to_for_keeps_a_start_value_read_from_an_array_written_before_the_loop()
+    test_while_to_for_keeps_a_bound_the_body_moves()
+    test_while_to_for_needs_the_condition_symbol_to_enter_and_stay_as_its_expression()
