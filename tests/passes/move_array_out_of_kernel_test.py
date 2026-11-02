@@ -1181,6 +1181,48 @@ def test_a_whole_container_nest_keeps_writing_the_elements_it_wrote(layout):
     assert written == [1, 2], written
 
 
+def kernel_reading_its_scratch_through_a_view_in_a_nest() -> dace.SDFG:
+    """``A[i] = row[2]`` in a nest with ``buf[1, 2] = i``; ``row`` views ``buf[1, 0:8]`` and enters the nest whole."""
+    body = dace.SDFG("reader")
+    body.add_array("row", [8], dace.float64, storage=GLOBAL)
+    body.add_array("A", [128], dace.float64, storage=GLOBAL)
+    inner = body.add_state("read", is_start_block=True)
+    read = inner.add_tasklet("read", {"r": None}, {"o": None}, "o = r")
+    inner.add_edge(inner.add_read("row"), None, read, "r", dace.Memlet("row[2]"))
+    inner.add_edge(read, "o", inner.add_write("A"), None, dace.Memlet("A[i]"))
+    sdfg = dace.SDFG("scratch_view_entering_a_nest")
+    sdfg.add_array("A", [128], dace.float64, storage=GLOBAL)
+    sdfg.add_transient("buf", [4, 8], dace.float64, storage=GLOBAL)
+    sdfg.add_view("row", [8], dace.float64, storage=GLOBAL)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("kernel", dict(i="0:128"), schedule=GPU_DEVICE)
+    buf = state.add_access("buf")
+    produce = state.add_tasklet("produce", {}, {"o": None}, "o = i")
+    state.add_edge(me, None, produce, None, dace.Memlet())
+    state.add_edge(produce, "o", buf, None, dace.Memlet("buf[1, 2]"))
+    row = state.add_access("row")
+    state.add_edge(buf, None, row, None, dace.Memlet("buf[1, 0:8]"))
+    nest = state.add_nested_sdfg(body, {"row": None}, {"A": None}, symbol_mapping=dict(i="i"))
+    state.add_edge(row, None, nest, "row", dace.Memlet("row[0:8]"))
+    state.add_memlet_path(nest, mx, state.add_write("A"), src_conn="A", memlet=dace.Memlet("A[0:128]"))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_nest_behind_a_view_of_a_lifted_array_steps_as_the_view_does(layout):
+    """Only the view scaled its strides: the nest read ``row[2]`` two elements on, in other threads' slices, while the
+    write landed two rows on (cp2k_grid_integrate's TensorDot over ``alpha[0]``, every task with ``nlp > 1``)."""
+    sdfg = kernel_reading_its_scratch_through_a_view_in_a_nest()
+    lift(sdfg, layout)
+
+    nest = next(n for n in sdfg.start_state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    expected = sdfg.arrays["buf"].strides[-1]
+    assert sdfg.arrays["row"].strides[0] == expected, sdfg.arrays["row"].strides
+    assert nest.sdfg.arrays["row"].strides[0] == expected, nest.sdfg.arrays["row"].strides
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_tile_extent(sympy.Min(N - 1, B_I + 31), B_I, 32)
     test_tile_extent(N - 1, sympy.Integer(0), N)
@@ -1240,3 +1282,5 @@ if __name__ == "__main__":
     test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads()
     test_an_extent_a_thread_reads_runs_on_the_device()
     test_an_extent_a_thread_reads_through_an_index_runs_on_the_device()
+    for layout in LAYOUTS:
+        test_a_nest_behind_a_view_of_a_lifted_array_steps_as_the_view_does(layout)
