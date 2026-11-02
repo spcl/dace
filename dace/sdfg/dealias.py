@@ -5,7 +5,7 @@ This module contains functions for ensuring SDFGs and nested SDFGs share the sam
 
 import ast
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 from dace import data, dtypes, subsets, symbolic, utils
 from dace.frontend.python import astutils
@@ -334,7 +334,7 @@ def dealias_sdfg(sdfg: SDFG, symbols: SymbolResolver | None = None):
 
 
 def _same_container(
-    parent_desc: data.Data, inner_desc: data.Data, available_symbols: set[str], parent_node: nd.NestedSDFG
+    parent_desc: data.Data, inner_desc: data.Data, available_symbols: Collection[str], parent_node: nd.NestedSDFG
 ) -> bool:
     """
     Says whether a connector's descriptor already describes the container it is connected to.
@@ -358,7 +358,7 @@ def _same_container(
 
     # Adopting the parent's descriptor is only possible when the nested SDFG knows the symbols it is
     # written in; otherwise it would be left referring to names that mean nothing inside.
-    if {str(s) for s in parent_desc.free_symbols} - available_symbols:
+    if any(str(s) not in available_symbols for s in parent_desc.free_symbols):
         return False
 
     return inner_desc.is_equivalent(parent_desc, symbol_mapping=parent_node.symbol_mapping)
@@ -977,18 +977,37 @@ def rebase_reconnected_edges(edges, offset: subsets.Range | None = None, squeeze
                 rebase_connector(node, connector, offset, squeeze)
 
 
-def _windowed_edges(sdfg: SDFG, symbol_types: dict[str, dtypes.typeclass]):
+class SymbolsAtNestedSDFG:
+    """Membership view over a nested SDFG's symbols and those defined at its node in the parent. That is a walk over
+    the parent, which only a connector written in a renamed symbol needs, so it runs on the first question."""
+
+    __slots__ = ("sdfg", "symbols", "names")
+
+    def __init__(self, sdfg: SDFG, symbols: SymbolResolver) -> None:
+        self.sdfg = sdfg
+        self.symbols = symbols
+        self.names: set[str] | None = None
+
+    def __contains__(self, name: str) -> bool:
+        if self.names is None:
+            defined = self.symbols.defined_at(self.sdfg.parent, self.sdfg.parent_nsdfg_node)
+            self.names = set(self.sdfg.symbols.keys()) | set(defined.keys())
+        return name in self.names
+
+
+def _windowed_edges(sdfg: SDFG, symbols: SymbolResolver):
     """
     Yields the parent edges whose connector describes something other than the container they connect.
 
     :param sdfg: The nested SDFG to inspect.
-    :param symbol_types: The symbols defined at the nested SDFG node in the parent.
+    :param symbols: Resolves the symbols defined at the nested SDFG node in the parent.
     :return: A generator of (connector, edge, outer descriptor) tuples.
     """
     parent_sdfg = sdfg.parent_sdfg
     parent_state = sdfg.parent
     parent_node = sdfg.parent_nsdfg_node
-    available_symbols = set(sdfg.symbols.keys()) | set(symbol_types.keys())
+
+    available_symbols = SymbolsAtNestedSDFG(sdfg, symbols)
     for edge in parent_state.all_edges(parent_node):
         if edge.data.data not in parent_sdfg.arrays:
             continue
@@ -1016,8 +1035,7 @@ def windowed_connectors(sdfg: SDFG, symbols: SymbolResolver | None = None) -> di
         return {}
     if symbols is None:
         symbols = SymbolResolver()
-    symbol_types = symbols.defined_at(sdfg.parent, sdfg.parent_nsdfg_node)
-    return {connector: edge.data.data for connector, edge, _ in _windowed_edges(sdfg, symbol_types)}
+    return {connector: edge.data.data for connector, edge, _ in _windowed_edges(sdfg, symbols)}
 
 
 def widen_windowed_connectors(sdfg: SDFG, symbols: SymbolResolver | None = None) -> set[str]:
@@ -1046,7 +1064,7 @@ def widen_windowed_connectors(sdfg: SDFG, symbols: SymbolResolver | None = None)
 
     windows: dict[str, tuple[data.Data, Memlet]] = {}
     rejected: set[str] = set()
-    for connector, edge, outer in _windowed_edges(sdfg, symbol_types):
+    for connector, edge, outer in _windowed_edges(sdfg, symbols):
         if connector in rejected:
             continue
         inner = sdfg.arrays[connector]
