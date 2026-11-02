@@ -94,6 +94,7 @@ class Symv(nodes.LibraryNode):
         **vendor.vendor_expansions("Symv", symv_call),
     }
     default_implementation = None
+    matrix_connectors = ("_A",)
 
     uplo = properties.Property(dtype=bool, default=False, desc="Read the upper triangle of _A instead of the lower.")
     alpha = properties.SymbolicProperty(allow_none=False, default=1)
@@ -106,9 +107,9 @@ class Symv(nodes.LibraryNode):
     def validate(self, sdfg, state):
         blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_x", "_yin", "_yout")
         a, x, yin, yout = (operand(self, state, sdfg, c).shape for c in ("_A", "_x", "_yin", "_yout"))
-        if len(a) != 2 or a[0] != a[1]:
+        if len(a) != 2 or not blas_helpers.extents_agree(a[:1], a[1:]):
             raise ValueError(f"{self.label}: _A must be a square matrix")
-        if not x == yin == yout == [a[0]]:
+        if not blas_helpers.extents_agree(x, yin, yout, a[:1]):
             raise ValueError(f"{self.label}: _x, _yin and _yout must be vectors of {a[0]} elements")
 
 

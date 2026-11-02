@@ -101,6 +101,7 @@ class Syrk(nodes.LibraryNode):
         **vendor.vendor_expansions("Syrk", syrk_call),
     }
     default_implementation = None
+    matrix_connectors = ("_A", "_Cin", "_Cout")
 
     uplo = properties.Property(dtype=bool, default=False, desc="Update the upper triangle of C instead of the lower.")
     transA = properties.Property(dtype=bool, default=False, desc="Compute _A^T @ _A instead of _A @ _A^T.")
@@ -117,7 +118,7 @@ class Syrk(nodes.LibraryNode):
         if len(a) != 2:
             raise ValueError(f"{self.label}: _A must be a matrix")
         n = a[1] if self.transA else a[0]
-        if not cin == cout == [n, n]:
+        if not blas_helpers.extents_agree(cin, cout, [n, n]):
             raise ValueError(f"{self.label}: _Cin and _Cout must be {n} x {n} matrices")
 
 

@@ -391,6 +391,126 @@ def test_gpu_library_rejects_a_matrix_without_a_contiguous_dimension(implementat
         sdfg.expand_library_nodes()
 
 
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+@pytest.mark.parametrize("order", ["C", "F"])
+@pytest.mark.parametrize("shape", [(4, 1), (1, 4)])
+def test_ger_of_a_single_row_or_column(implementation, order, shape):
+    """Squeezing a genuine ``(N, 1)`` matrix rejected a valid BLAS call; a one-element vector has no stride either."""
+    a, x, y = matrix(shape, order), rng.standard_normal(shape[0]), rng.standard_normal(shape[1])
+    res = np.zeros(shape, order=order)
+    connectors = {"_A": ("A", a), "_x": ("x", x), "_y": ("y", y)}
+    run(f"ger_unit_{shape[0]}_{order}", Ger("ger", alpha=1.5), implementation, connectors, {"_res": ("res", res)})
+    np.testing.assert_allclose(res, a + 1.5 * np.outer(x, y))
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+@pytest.mark.parametrize("order", ["C", "F"])
+def test_symm_of_a_single_column_next_to_a_full_matrix(implementation, order):
+    """A packed column's stride is free: as the leading dimension of a column-major call it must span the rows."""
+    a = symmetric_from(matrix((4, 4), order), upper=False)
+    a = np.asarray(a, order=order)
+    b, cin = rng.standard_normal((4, 1)), rng.standard_normal((4, 1))
+    cout = np.zeros((4, 1))
+    connectors = {"_A": ("A", a), "_B": ("B", b), "_Cin": ("Cin", cin)}
+    node = Symm("symm", alpha=1.5, beta=0.5)
+    run(f"symm_unit_{order}", node, implementation, connectors, {"_Cout": ("Cout", cout)})
+    np.testing.assert_allclose(cout, 1.5 * a @ b + 0.5 * cin)
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+def test_syrk_of_a_single_column(implementation):
+    a, cin = rng.standard_normal((4, 1)), rng.standard_normal((4, 4))
+    cout = np.zeros((4, 4))
+    connectors = {"_A": ("A", a), "_Cin": ("Cin", cin)}
+    run("syrk_unit", Syrk("syrk", alpha=1.5, beta=0.5), implementation, connectors, {"_Cout": ("Cout", cout)})
+    np.testing.assert_allclose(np.tril(cout), np.tril(1.5 * a @ a.T + 0.5 * cin))
+
+
+@pytest.mark.parametrize("implementation", IMPLEMENTATIONS)
+def test_symv_of_one_element(implementation):
+    a, x, yin, yout = np.array([[3.0]]), np.array([2.0]), np.array([1.0]), np.zeros(1)
+    connectors = {"_A": ("A", a), "_x": ("x", x), "_yin": ("yin", yin)}
+    node = Symv("symv", alpha=1.5, beta=0.5)
+    run("symv_unit", node, implementation, connectors, {"_yout": ("yout", yout)})
+    np.testing.assert_allclose(yout, 1.5 * a @ x + 0.5 * yin)
+
+
+SCALE = dace.symbol("scale", dace.float64)
+SYMBOLIC_SCALES = {
+    "scal": (lambda: Scal("scal", a=SCALE), {"_x": (7,)}, "_res", (7,)),
+    "ger": (lambda: Ger("ger", alpha=SCALE), {"_A": (4, 3), "_x": (4,), "_y": (3,)}, "_res", (4, 3)),
+    "symv": (lambda: Symv("symv", alpha=SCALE), {"_A": (4, 4), "_x": (4,), "_yin": (4,)}, "_yout", (4,)),
+    "symm": (lambda: Symm("symm", alpha=SCALE), {"_A": (4, 4), "_B": (4, 3), "_Cin": (4, 3)}, "_Cout", (4, 3)),
+    "syrk": (lambda: Syrk("syrk", alpha=SCALE), {"_A": (4, 3), "_Cin": (4, 4)}, "_Cout", (4, 4)),
+}
+
+
+@pytest.mark.parametrize("implementation", ["pure", pytest.param("OpenBLAS", marks=pytest.mark.lapack)])
+@pytest.mark.parametrize("name", list(SYMBOLIC_SCALES))
+def test_a_symbolic_scale_reaches_the_nested_call(implementation, name):
+    """The vendor scalars are C++ text in a nested SDFG, whose code no symbol inference reads."""
+    make, inputs, output, shape = SYMBOLIC_SCALES[name]
+    arrays = {connector: (connector[1:], rng.standard_normal(extents)) for connector, extents in inputs.items()}
+    result = np.zeros(shape)
+    sdfg = build(f"symbolic_scale_{name}", make(), implementation, arrays, {output: (output[1:], result)})
+    sdfg.add_symbol("scale", dace.float64)
+
+    sdfg(scale=0.0, **dict([*arrays.values(), (output[1:], result)]))
+    baseline = result.copy()
+    sdfg(scale=2.0, **dict([*arrays.values(), (output[1:], result)]))
+
+    assert not np.allclose(result, baseline)
+
+
+def symbolic_symv(name: str, rows, cols, length) -> dace.SDFG:
+    sdfg = dace.SDFG(name)
+    state = sdfg.add_state()
+    sdfg.add_array("A", [rows, cols], dace.float64)
+    for vector in ("x", "yin", "yout"):
+        sdfg.add_array(vector, [length], dace.float64)
+    node = Symv("symv", alpha=1.0, beta=0.0)
+    node.implementation = "pure"
+    for connector, array_name in (("_A", "A"), ("_x", "x"), ("_yin", "yin")):
+        memlet = dace.Memlet.from_array(array_name, sdfg.arrays[array_name])
+        state.add_edge(state.add_read(array_name), None, node, connector, memlet)
+    state.add_edge(node, "_yout", state.add_write("yout"), None, dace.Memlet("yout"))
+    return sdfg
+
+
+def test_extents_equal_only_at_run_time_warn():
+    """``a(:,:)`` and ``x(:)`` differ as symbols and agree at run time, which Gemm already allows."""
+    sdfg = symbolic_symv("unproved_extents", "R", "C", "L")
+    with pytest.warns(UserWarning, match="may not match"):
+        sdfg.validate()
+    a, x = symmetric_from(matrix((4, 4), "C"), upper=False), rng.standard_normal(4)
+    yout = np.zeros(4)
+    sdfg(A=a, x=x, yin=np.zeros(4), yout=yout, R=4, C=4, L=4)
+    np.testing.assert_allclose(yout, a @ x)
+
+
+def test_extents_proved_different_are_rejected():
+    with pytest.raises(dace.sdfg.InvalidSDFGNodeError, match="square matrix"):
+        symbolic_symv("different_extents", 4, 5, 4).validate()
+
+
+@pytest.mark.parametrize("order", ["C", "F"])
+def test_pure_ger_updates_only_its_subset(order):
+    """``dger`` with M below LDA lowers to a subset, which the pure expansion refused."""
+    a, x, y = matrix((10, 4), order), rng.standard_normal(3), rng.standard_normal(2)
+    res = a.copy(order="K")
+    connectors = {"_A": ("A", a), "_x": ("x", x), "_y": ("y", y)}
+    sdfg = build(f"ger_subset_{order}", Ger("ger", alpha=2.0), "pure", connectors, {"_res": ("res", res)})
+    for edge in sdfg.start_block.edges():
+        if edge.data.data in ("A", "res"):
+            edge.data = dace.Memlet(f"{edge.data.data}[0:3, 0:2]")
+
+    sdfg(A=a, x=x, y=y, res=res)
+
+    expected = a.copy()
+    expected[:3, :2] += 2.0 * np.outer(x, y)
+    np.testing.assert_allclose(res, expected)
+
+
 if __name__ == "__main__":
     for implementation in ("pure", "OpenBLAS"):
         test_scal(implementation)
@@ -401,6 +521,17 @@ if __name__ == "__main__":
             for flag, upper in ((False, False), (True, True)):
                 test_symm(implementation, order, flag, upper)
                 test_syrk(implementation, order, flag, upper)
+            test_ger_of_a_single_row_or_column(implementation, order, (4, 1))
+            test_ger_of_a_single_row_or_column(implementation, order, (1, 4))
+            test_symm_of_a_single_column_next_to_a_full_matrix(implementation, order)
+        test_syrk_of_a_single_column(implementation)
+        test_symv_of_one_element(implementation)
+        for name in SYMBOLIC_SCALES:
+            test_a_symbolic_scale_reaches_the_nested_call(implementation, name)
+    test_extents_equal_only_at_run_time_warn()
+    test_extents_proved_different_are_rejected()
+    test_pure_ger_updates_only_its_subset("C")
+    test_pure_ger_updates_only_its_subset("F")
     for implementation in VENDOR_ROUTINES:
         for name in VENDOR_NODES:
             test_vendor_expansion_calls_the_library(implementation, name)

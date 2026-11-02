@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
 from copy import deepcopy as dc
 from typing import Any, NamedTuple
 
@@ -217,7 +218,7 @@ def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
 
 
 class Operand(NamedTuple):
-    """The data on a BLAS connector, with its unit dimensions squeezed out."""
+    """The data on a BLAS connector, in its matrix view on ``node.matrix_connectors``, otherwise squeezed."""
 
     desc: data.Data
     shape: list
@@ -225,14 +226,42 @@ class Operand(NamedTuple):
 
 
 def operand(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", connector: str) -> Operand:
+    """The data on ``connector``; a genuine ``(N, 1)`` matrix keeps both dimensions, a vector any of its forms.
+
+    :param node: The node, whose ``matrix_connectors`` name its matrices.
+    :param state: The state of the node.
+    :param sdfg: The SDFG of the state.
+    :param connector: The connector.
+    :return: The descriptor, and the shape and strides the node reads it by.
+    """
     if connector in node.in_connectors:
         edge = sdutil.in_edge_with_name(node, state, connector)
     else:
         edge = sdutil.out_edge_with_name(node, state, connector)
     desc = sdfg.arrays[edge.data.data]
-    subset = dc(edge.data.subset)
-    dims = subset.squeeze()
-    return Operand(desc, subset.size(), [desc.strides[d] * edge.data.subset[d][2] for d in dims])
+    if connector in node.matrix_connectors:
+        size, dims = matrix_view(edge.data.subset)
+    else:
+        subset = dc(edge.data.subset)
+        dims = subset.squeeze()
+        size = subset.size()
+    # One element squeezes every dimension away and has no stride to walk
+    return Operand(desc, size, [desc.strides[d] * edge.data.subset[d][2] for d in dims] or [1])
+
+
+def extents_agree(*shapes: list) -> bool:
+    """Whether ``shapes`` can be one shape: an extent proved different cannot, an unproved one warns as Gemm does.
+
+    :param shapes: The shapes.
+    :return: False if a rank or an extent differs.
+    """
+    first, *others = shapes
+    if any(len(other) != len(first) for other in others):
+        return False
+    results = [symbolic.equal(a, b) for other in others for a, b in zip(first, other)]
+    if None in results:
+        warnings.warn(f"Extents {shapes} may not match", UserWarning, stacklevel=2)
+    return False not in results
 
 
 def require_one_dtype(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG", *connectors: str) -> None:
@@ -249,12 +278,18 @@ class MatrixLayout(NamedTuple):
     leading: list
 
 
+def leading_dimension(matrix: Operand, axis: int) -> Any:
+    """The stride of ``axis``. A single row or column never steps it, so its stride is free but BLAS still checks it
+    against the other extent."""
+    return matrix.shape[1 - axis] if symbolic.equal_valued(1, matrix.shape[axis]) else matrix.strides[axis]
+
+
 def matrix_layout(*matrices: Operand) -> MatrixLayout | None:
     """The common layout of ``matrices``, or ``None`` if one has no contiguous dimension or they differ."""
     if all(m.strides[1] == 1 for m in matrices):
-        return MatrixLayout(True, [m.strides[0] for m in matrices])
+        return MatrixLayout(True, [leading_dimension(m, 0) for m in matrices])
     if all(m.strides[0] == 1 for m in matrices):
-        return MatrixLayout(False, [m.strides[1] for m in matrices])
+        return MatrixLayout(False, [leading_dimension(m, 1) for m in matrices])
     return None
 
 
@@ -289,11 +324,18 @@ def scalar_arguments(dtype: dtypes.typeclass, **values: Any) -> tuple[str, dict[
 
 
 def connector_sdfg(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG") -> "dace.SDFG":
-    """A nested SDFG with one array per connector of ``node``, in the squeezed shape and strides of its data."""
+    """A nested SDFG with one array per connector of ``node``, in the shape and strides of its :func:`operand`."""
     nsdfg = dace.SDFG(f"{node.label}_sdfg")
     for connector in list(node.in_connectors) + list(node.out_connectors):
         desc, shape, strides = operand(node, state, sdfg, connector)
         nsdfg.add_array(connector, shape, desc.dtype, desc.storage, strides=strides)
+    # A C++ tasklet hides the symbols it names from inference: declare what the node reads, typed as where it sits
+    defined = state.symbols_defined_at(node)
+    for name in sorted(node.free_symbols - nsdfg.symbols.keys()):
+        if name in defined:
+            nsdfg.add_symbol(name, defined[name])
+        elif isinstance(sdfg.arrays.get(name), data.Scalar):
+            nsdfg.add_symbol(name, sdfg.arrays[name].dtype)
     return nsdfg
 
 
@@ -335,7 +377,10 @@ def in_place_call(
         call_state = nsdfg.add_state_after(copy_state, f"{node.label}_call")
         # The call reads ``target`` too, so the copy into it is not dead
         reads[f"_{target}_before"] = target
-    tasklet = call_state.add_tasklet(node.label, list(reads), [f"_{target}"], code, language=dtypes.Language.CPP)
+    # Pointers even for one element, whose memlet would bind a value
+    pointers = {connector: dtypes.pointer(nsdfg.arrays[name].dtype) for connector, name in reads.items()}
+    written = {f"_{target}": dtypes.pointer(nsdfg.arrays[target].dtype)}
+    tasklet = call_state.add_tasklet(node.label, pointers, written, code, language=dtypes.Language.CPP)
     for connector, name in reads.items():
         call_state.add_edge(
             call_state.add_read(name), None, tasklet, connector, dace.Memlet.from_array(name, nsdfg.arrays[name])
