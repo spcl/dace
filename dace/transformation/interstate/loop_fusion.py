@@ -496,7 +496,10 @@ class LoopFusion(transformation.MultiStateTransformation):
         return any(
             isinstance(region, ConditionalBlock)
             and any(
-                state.in_degree(node) > 0 for state in region.states() for node in state.data_nodes() if node.data == arr
+                state.in_degree(node) > 0
+                for state in region.states()
+                for node in state.data_nodes()
+                if node.data == arr
             )
             for region in loop.all_control_flow_blocks()
         )
