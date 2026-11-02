@@ -58,6 +58,7 @@ class Scal(nodes.LibraryNode):
         **vendor.vendor_expansions("Scal", scal_call),
     }
     default_implementation = None
+    matrix_connectors = ()
 
     a = properties.SymbolicProperty(allow_none=False, default=1, desc="The scaling factor.")
 
@@ -68,7 +69,7 @@ class Scal(nodes.LibraryNode):
     def validate(self, sdfg, state):
         blas_helpers.require_one_dtype(self, state, sdfg, "_x", "_res")
         x, res = operand(self, state, sdfg, "_x").shape, operand(self, state, sdfg, "_res").shape
-        if len(x) != 1 or x != res:
+        if len(x) != 1 or not blas_helpers.extents_agree(x, res):
             raise ValueError(f"{self.label}: _x and _res must be vectors of one length")
 
 

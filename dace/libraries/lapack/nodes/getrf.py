@@ -141,6 +141,7 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
         "hipSolverDn": ExpandGetrfHipSolverDn,
     }
     default_implementation = None
+    matrix_connectors = ("_xin",)
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")

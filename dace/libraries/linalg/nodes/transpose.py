@@ -287,5 +287,5 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         out_size, _ = blas_helpers.matrix_view(out_memlet.subset)
         if len(out_size) != 2:
             raise ValueError("Transpose operation only supported on matrices")
-        if list(out_size) != [in_size[1], in_size[0]]:
+        if not blas_helpers.extents_agree(list(out_size), [in_size[1], in_size[0]]):
             raise ValueError("Output to transpose operation must agree in the m and n dimensions")
