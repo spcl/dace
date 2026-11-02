@@ -420,7 +420,7 @@ class NormalizeWCR(ppl.Pass):
         from an uninitialized slot, so an identity-writing state is prepended.
         """
         desc = sdfg.arrays.get(acc)
-        if desc is None:
+        if desc is None or not self.is_fresh_storage(sdfg, acc, desc):
             return
         for st in sdfg.states():
             for e in st.edges():

@@ -769,6 +769,14 @@ def test_a_wcr_leaving_an_inner_map_stays_seeded():
     assert any(name.startswith("_nnr_priv_oc") for name in body.arrays)
 
 
+def test_a_min_over_a_caller_array_starts_from_its_value():
+    sdfg = _map_over_nested_wcr(1, "0", "acc[0]", "lambda a, b: min(a, b)")
+    NormalizeWCR().apply_pass(sdfg, {})
+    acc = np.ones(1)
+    sdfg(x=np.array([5.0, 6.0, 7.0, 8.0]), acc=acc)
+    assert acc[0] == 1.0
+
+
 if __name__ == "__main__":
     import sys
 
@@ -778,3 +786,4 @@ if __name__ == "__main__":
     test_a_tasklet_subscripting_its_wcr_output_keeps_its_index()
     test_a_plain_boundary_over_many_elements_keeps_the_elements_no_iteration_wrote()
     test_a_wcr_leaving_an_inner_map_stays_seeded()
+    test_a_min_over_a_caller_array_starts_from_its_value()
