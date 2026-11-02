@@ -5,50 +5,9 @@ from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.cpp import mangle_dace_state_struct_name
 from dace.sdfg import is_devicelevel_gpu, nodes
-from dace.sdfg.scope import is_in_scope
+from dace.sdfg.scope import is_thread_block_level
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
-
-#: Schedules whose code runs per thread (or warp) rather than once per thread block
-_THREAD_SCHEDULES = [
-    dtypes.ScheduleType.GPU_ThreadBlock,
-    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
-    dtypes.ScheduleType.GPU_Warp,
-]
-
-
-def _kernel_scope(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> tuple[SDFGState, nodes.EntryNode]:
-    """The outermost GPU scope (the kernel) around a node in device code, and its state."""
-    kernel = None
-    while sdfg is not None:
-        sdict = state.scope_dict()
-        scope = sdict[node]
-        while scope is not None:
-            if scope.schedule in dtypes.GPU_SCHEDULES:
-                kernel = (state, scope)
-            scope = sdict[scope]
-        if sdfg.parent is None:
-            break
-        state, node, sdfg = sdfg.parent, sdfg.parent_nsdfg_node, sdfg.parent_sdfg
-    return kernel
-
-
-def runs_per_thread_block(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> bool:
-    """Whether the threads of a block run a node in device code together, once per block: in a kernel whose threads
-    are scheduled by thread-block maps (or in a consume scope, whose processing elements are thread blocks), outside
-    those maps."""
-    if is_in_scope(sdfg, state, node, _THREAD_SCHEDULES):
-        return False
-    kernel_state, kernel = _kernel_scope(sdfg, state, node)
-    if isinstance(kernel, nodes.ConsumeEntry):
-        return True
-    # Without thread-block maps, every thread runs an iteration of the kernel's map
-    for n in kernel_state.scope_subgraph(kernel).nodes():
-        inner = n.sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG) else [(n, kernel_state)]
-        for m, _ in inner:
-            if isinstance(m, nodes.MapEntry) and m.map.schedule in _THREAD_SCHEDULES[:2]:
-                return True
-    return False
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_Events)
@@ -96,7 +55,7 @@ class GPUEventProvider(InstrumentationProvider):
                 and isinstance(parent, SDFGState)
                 and is_devicelevel_gpu(parent.sdfg, parent, node)
             ):
-                if not runs_per_thread_block(parent.sdfg, parent, node):
+                if not is_thread_block_level(parent.sdfg, parent, node):
                     raise TypeError(
                         f'GPU event instrumentation of "{node.label}" in a kernel applies to nodes that the threads '
                         "of a block run together (outside thread-block maps, in a kernel with thread-block maps or a "

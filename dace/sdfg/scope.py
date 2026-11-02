@@ -261,6 +261,53 @@ def is_devicelevel_gpu(sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState", nod
     )
 
 
+#: Schedules whose code runs per thread (or warp) rather than once per thread block
+THREAD_SCHEDULES = [
+    dtypes.ScheduleType.GPU_ThreadBlock,
+    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+    dtypes.ScheduleType.GPU_Warp,
+]
+
+
+def kernel_scope(
+    sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState", node: nd.Node
+) -> tuple["dace.sdfg.SDFGState", nd.EntryNode] | None:
+    """The outermost GPU scope (the kernel) around a node in device code, and its state."""
+    kernel = None
+    while sdfg is not None:
+        sdict = state.scope_dict()
+        scope = sdict[node]
+        while scope is not None:
+            if scope.schedule in dtypes.GPU_SCHEDULES:
+                kernel = (state, scope)
+            scope = sdict[scope]
+        if sdfg.parent is None:
+            break
+        state, node, sdfg = sdfg.parent, sdfg.parent_nsdfg_node, sdfg.parent_sdfg
+    return kernel
+
+
+def is_thread_block_level(sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState", node: nd.Node) -> bool:
+    """Whether the threads of a block run a node in device code together, once per block: in a kernel whose threads
+    are scheduled by thread-block maps (or in a consume scope, whose processing elements are thread blocks), outside
+    those maps."""
+    if is_in_scope(sdfg, state, node, THREAD_SCHEDULES):
+        return False
+    found = kernel_scope(sdfg, state, node)
+    if found is None:
+        return False
+    kernel_state, kernel = found
+    if isinstance(kernel, nd.ConsumeEntry):
+        return True
+    # Without thread-block maps, every thread runs an iteration of the kernel's map
+    for n in kernel_state.scope_subgraph(kernel).nodes():
+        inner = n.sdfg.all_nodes_recursive() if isinstance(n, nd.NestedSDFG) else [(n, kernel_state)]
+        for m, _ in inner:
+            if isinstance(m, nd.MapEntry) and m.map.schedule in THREAD_SCHEDULES[:2]:
+                return True
+    return False
+
+
 def is_devicelevel_gpu_kernel(sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState", node: nd.Node) -> bool:
     """Tests whether a node in an SDFG is contained within an actual GPU kernel.
     The main difference from :func:`is_devicelevel_gpu` is that it returns False for NestedSDFGs that have a GPU
