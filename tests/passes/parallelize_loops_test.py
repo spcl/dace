@@ -1239,6 +1239,29 @@ def test_a_local_scratch_rewritten_at_the_element_it_reads_lifts():
     assert loop not in sdfg.nodes()
 
 
+def test_two_nested_writes_meeting_across_iterations_stay_a_loop():
+    """Each of ``b[i]`` and ``b[i + 1]`` is one-to-one; iteration ``i + 1`` writes what iteration ``i`` wrote second."""
+    inner = dace.SDFG("two_nested_writes_inner")
+    inner.add_array("bo", [9], dace.float64)
+    inner.add_symbol("i", dace.int32)
+    first = inner.add_state("first", is_start_block=True)
+    for state, slot in ((first, "i"), (inner.add_state_after(first, "second"), "i + 1")):
+        tasklet = state.add_tasklet("store", {}, {"o": None}, "o = 1")
+        state.add_edge(tasklet, "o", state.add_write("bo"), None, dace.Memlet(f"bo[{slot}]"))
+    sdfg = dace.SDFG("two_nested_writes")
+    sdfg.add_array("B", [9], dace.float64)
+    loop = LoopRegion("writes", "i < 8", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    nest = state.add_nested_sdfg(inner, {}, {"bo": None}, symbol_mapping={"i": "i"})
+    state.add_edge(nest, "bo", state.add_write("B"), None, dace.Memlet("B[0:9]"))
+    sdfg.validate()
+
+    ParallelizeLoops().apply_pass(sdfg, {})
+
+    assert loop in sdfg.nodes()
+
+
 if __name__ == "__main__":
     test_lift_never_changes_a_surviving_blocks_free_symbols()
     test_reused_analysis_costs_no_maps_against_the_matcher()
@@ -1297,3 +1320,4 @@ if __name__ == "__main__":
     test_a_container_assumed_private_is_left_out_of_the_dependence_test()
     test_a_local_array_read_at_an_element_this_iteration_did_not_write_stays_a_loop()
     test_a_local_scratch_rewritten_at_the_element_it_reads_lifts()
+    test_two_nested_writes_meeting_across_iterations_stay_a_loop()

@@ -125,7 +125,7 @@ def through_symbol_mapping(subset: subsets.Subset, nsdfg_node: nodes.NestedSDFG)
     return outer
 
 
-def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span) -> bool:
+def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span, start=0) -> bool:
     """Whether every write to ``conn``'s array INSIDE ``nsdfg_node`` is indexed by the (mapped)
     iteration variable.
 
@@ -144,9 +144,11 @@ def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span) -> b
     :param conn: output connector (== inner array name) written.
     :param itersym: outer loop iteration symbol.
     :param span: ``end - start`` of the outer loop, see :func:`_check_range`.
-    :returns: True iff every inner write to ``conn`` is iter-indexed.
+    :param start: The first iterate of the outer loop.
+    :returns: True iff every inner write to ``conn`` is iter-indexed, and any two distinct ones never meet.
     """
     found = False
+    written: dict[str, subsets.Subset] = {}
     for state in nsdfg_node.sdfg.states():
         for dn in state.data_nodes():
             if dn.data != conn or state.in_degree(dn) == 0:
@@ -160,7 +162,7 @@ def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span) -> b
                 if e.data is None or e.data.wcr is not None:
                     return False
                 if isinstance(e.src, nodes.NestedSDFG):
-                    if not nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, span):
+                    if not nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, span, start):
                         return False
                     found = True
                     continue
@@ -171,6 +173,16 @@ def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span) -> b
                 if not _check_range(outer, a, itersym, b, step, span):
                     return False
                 found = True
+                # ``b[i]`` and ``b[i + 1]`` are each one-to-one, and meet across two iterations
+                if str(outer) not in written and not all(
+                    any(
+                        lo == hi and other_lo == other_hi and _dim_provably_disjoint(lo, other_lo, itersym, step, start)
+                        for (lo, hi, _), (other_lo, other_hi, _) in zip(outer.ndrange(), other.ndrange())
+                    )
+                    for other in written.values()
+                ):
+                    return False
+                written[str(outer)] = outer
     return found
 
 
@@ -581,7 +593,7 @@ def write_refusal(
         # NestedSDFG body propagates a whole-array external write hiding an
         # inner per-iteration write; look past the connector.
         if not ok and isinstance(e.src, nodes.NestedSDFG):
-            ok = nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, end - start)
+            ok = nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, end - start, start)
             # NSDFG descent only proves WRITE uniqueness. A carried READ at a
             # DIFFERENT iter position (``a[i+1]`` while writing ``a[i]``) is a
             # forward/backward dependence that races. Require every inner read
