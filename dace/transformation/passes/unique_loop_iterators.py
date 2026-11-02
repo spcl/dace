@@ -6,6 +6,8 @@ loop variable is renamed to ``_loop_it_<N>`` in the loop, the descriptors it siz
 SDFGs. When a block after the loop reads the original name, that name is assigned the iterator's exit value.
 """
 
+import sympy
+
 import dace
 from dace import nodes, symbolic
 from dace.sdfg.replace import replace_properties_dict
@@ -64,7 +66,7 @@ def rename_iterator(cfg: ControlFlowRegion, old: str, new: str) -> None:
 
 
 def exit_value(loop: LoopRegion) -> symbolic.SymbolicType | None:
-    """The iterator value after a counted loop: one step past the last value it takes."""
+    """The iterator value after a counted loop: one step past the last value it takes, ``init`` if it runs no iteration."""
     end = loop_analysis.get_loop_end(loop)
     if end is None:
         return None
@@ -74,7 +76,7 @@ def exit_value(loop: LoopRegion) -> symbolic.SymbolicType | None:
         return end
     if init is None:
         return end + step
-    return init + symbolic.int_floor(end - init + step, step) * step
+    return init + sympy.Max(0, symbolic.int_floor(end - init + step, step)) * step
 
 
 def symbol_readers(sdfg: dace.SDFG, names: set[str]) -> dict[str, set[ControlFlowBlock]]:
