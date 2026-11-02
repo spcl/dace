@@ -129,6 +129,26 @@ def test_a_read_inside_the_slice_at_another_element_keeps_the_copy_back():
     assert EliminateCopyBack().apply_pass(sdfg, {}) is None
 
 
+def test_a_sibling_read_of_the_written_element_keeps_the_copy_back():
+    """``t[i] = A[i] + 1; y[i] = A[i] * 2`` in one map: in place, ``y`` could read the new ``A[i]``."""
+    sdfg = dace.SDFG("copy_back_sibling_read")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("y", [4], dace.float64)
+    sdfg.add_transient("t", [4], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("both", {"i": "0:4"})
+    a, t = state.add_read("A"), state.add_access("t")
+    update = state.add_tasklet("update", {"x"}, {"o"}, "o = x + 1.0")
+    sibling = state.add_tasklet("sibling", {"x"}, {"o"}, "o = x * 2.0")
+    state.add_memlet_path(a, entry, update, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(a, entry, sibling, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(update, exit_node, t, src_conn="o", memlet=dace.Memlet("t[i]"))
+    state.add_memlet_path(sibling, exit_node, state.add_write("y"), src_conn="o", memlet=dace.Memlet("y[i]"))
+    state.add_nedge(t, state.add_write("A"), dace.Memlet("t[0:4] -> [0:4]"))
+    sdfg.validate()
+    assert EliminateCopyBack().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_a_slice_update_writes_its_target_in_place()
     test_a_read_of_the_neighbouring_element_keeps_the_copy_back()
@@ -136,3 +156,4 @@ if __name__ == "__main__":
     test_a_read_outside_the_updated_slice_writes_in_place()
     test_a_transient_used_in_part_folds_at_its_origin()
     test_a_read_inside_the_slice_at_another_element_keeps_the_copy_back()
+    test_a_sibling_read_of_the_written_element_keeps_the_copy_back()

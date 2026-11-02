@@ -17,6 +17,7 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import reachable
 
 
 @dataclass
@@ -84,7 +85,8 @@ def copy_back(state: SDFGState, sdfg: SDFG, transient: nodes.AccessNode, uses: C
 
 def in_place(state: SDFGState, found: CopyBack) -> bool:
     """Whether every element the map writes is read, if at all, only by the iteration writing it: one write, straight
-    into the map exit, and every read of the target at that element or outside what the copy writes."""
+    into the map exit, and every read of the target outside what the copy writes, or at that element and ahead of the
+    write: a sibling of the writing tasklet reads the old value only through the transient's detour."""
     target = found.copy.dst
     subset = found.copy.data.get_dst_subset(found.copy, state)
     entry = state.entry_node(found.map_exit)
@@ -100,6 +102,7 @@ def in_place(state: SDFGState, found: CopyBack) -> bool:
         return False
     element = placed(write, subset, found)
     facts = state.sdfg.facts()
+    ahead = reachable(state, writes[0].src, forward=False) | {writes[0].src}
     for edge in state.in_edges(entry):
         if edge.data.is_empty() or edge.data.data != target.data:
             continue
@@ -107,7 +110,10 @@ def in_place(state: SDFGState, found: CopyBack) -> bool:
             read = leaf.data.get_src_subset(leaf, state)
             if not isinstance(read, subsets.Range):
                 return False
-            if not same_index(read, element) and subsets.intersects(read, subset, facts) is not symbolic.Truth.FALSE:
+            if same_index(read, element):
+                if leaf.dst not in ahead:
+                    return False
+            elif subsets.intersects(read, subset, facts) is not symbolic.Truth.FALSE:
                 return False
     # Anything else in the scope naming the target (a nested write, a second access node) is not this pattern
     inner = state.scope_subgraph(entry, include_entry=False, include_exit=False)
