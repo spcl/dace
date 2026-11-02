@@ -4,7 +4,7 @@
 import itertools
 from copy import deepcopy as dc
 
-from dace import Memlet, data, symbolic, utils
+from dace import Memlet, data, dtypes, symbolic, utils
 from dace.properties import make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
@@ -79,6 +79,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
+        if nested_sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
+            return False  # Measured as a whole: inlining would drop its instrumentation
 
         # Not nested in scope
         if state.entry_node(nested_sdfg) is not None:

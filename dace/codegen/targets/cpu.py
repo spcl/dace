@@ -2106,6 +2106,11 @@ class CPUCodeGen(TargetCodeGenerator):
                 node,
             )
 
+        # Instrumentation: Pre-node (around the call or the inlined code)
+        instr = self._dispatcher.instrumentation[node.instrument]
+        if instr is not None:
+            instr.on_node_begin(sdfg, cfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
+
         #############################
         # Generate function contents
 
@@ -2188,6 +2193,10 @@ class CPUCodeGen(TargetCodeGenerator):
                 function_stream.write(global_code)
             function_stream.write(nested_global_stream.getvalue())
             function_stream.write(nested_stream.getvalue())
+
+        # Instrumentation: Post-node
+        if instr is not None:
+            instr.on_node_end(sdfg, cfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
 
         self._dispatcher.declared_arrays.exit_scope(sdfg)
         self._dispatcher.defined_vars.exit_scope(sdfg)
