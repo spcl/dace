@@ -1202,7 +1202,16 @@ class SDFG(ControlFlowRegion):
                     if isinstance(key, str) and (
                         key.startswith("_meta_")
                         or key
-                        in ["name", "hash", "orig_sdfg", "transformation_hist", "instrument", "guid", "scope_dict"]
+                        in [
+                            "name",
+                            "hash",
+                            "orig_sdfg",
+                            "transformation_hist",
+                            "instrument",
+                            "guid",
+                            "scope_dict",
+                            "proven_parallel",
+                        ]
                     ):
                         keys_to_delete.append(key)
                     else:

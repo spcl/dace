@@ -391,6 +391,10 @@ class ParallelizeLoops(ppl.Pass):
                     # propagated over it reach past the array (s351: ``range(0, 4 * N, 4)`` reading ``b[i + 3]``).
                     rb, _, rs = node.map.range[0]
                     node.map.range = subsets.Range([(rb, last, rs)])
+            # The caller's proof replaced the dependence test, so nothing could lift this map's loop again.
+            if proven or self.permissive:
+                for node in lifted:
+                    node.map.proven_parallel = True
             for node in lifted:
                 if facts and node not in existing:
                     note = FACTS_NOTE.format(facts="; ".join(f.describe() for f in facts))
