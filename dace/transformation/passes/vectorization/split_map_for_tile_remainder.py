@@ -403,7 +403,7 @@ class SplitMapForTileRemainder(ppl.Pass):
             f"if ((long long)({expr_c}) % {modulus} != 0 || (long long)({expr_c}) < {modulus}) {{\n"
             f"#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)\n"
             f'    printf("DaCe tile vectorization: {message}\\n", (long long)({expr_c}));\n'
-            f"    __trap();\n"
+            f"    __builtin_trap();\n"
             f"#else\n"
             f'    fprintf(stderr, "DaCe tile vectorization: {message}\\n", (long long)({expr_c}));\n'
             f"    abort();\n"
