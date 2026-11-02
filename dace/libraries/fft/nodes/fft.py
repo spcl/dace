@@ -16,6 +16,7 @@ from dace.frontend.python.replacements.utils import normalize_axes
 from dace.libraries import hip_dialect
 from dace.libraries.blas.environments.intel_mkl import IntelMKL
 from dace.libraries.fft import environments as env
+from dace.libraries.standard.helper import call_scratch_lifetime, scratch_storage
 from dace.sdfg import utils as sdutil
 
 
@@ -244,7 +245,9 @@ def vendor_fft_sdfg(
 
     source, state = "_inp", None
     if stage:
-        sdfg.add_transient("__staged", staged.shape, staged.dtype, storage=staged.storage, strides=staged.strides)
+        lifetime = call_scratch_lifetime(node, parent_state, parent_sdfg, *staged.shape)
+        storage = scratch_storage(staged.storage, lifetime)
+        sdfg.add_transient("__staged", staged.shape, staged.dtype, storage, strides=staged.strides, lifetime=lifetime)
         # The cast names the type: ``decltype(o)`` would be a reference to the target element.
         state = elementwise(
             None, "stage", "_inp", "__staged", indesc.shape, f"o = dace.{read_type.to_string()}(i){scale}"
