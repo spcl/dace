@@ -36,9 +36,8 @@ The pass therefore refuses (no-op) on any region carrying an interstate-edge
 assignment and emits a loud warning so the dropped opportunity is visible.
 """
 
-import re
-
 import copy
+import re
 import warnings
 from typing import Any
 

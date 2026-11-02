@@ -1217,7 +1217,11 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
         return []
     # A carry read of what this iteration wrote is no recurrence
     for s, read in zip(matched, severed):
-        if any(str(w.data.subset) == str(read.data.subset) for w in s.body_state.in_edges(read.src) if not w.data.is_empty()):
+        if any(
+            str(w.data.subset) == str(read.data.subset)
+            for w in s.body_state.in_edges(read.src)
+            if not w.data.is_empty()
+        ):
             return []
     return matched
 

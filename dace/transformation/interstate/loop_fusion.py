@@ -423,7 +423,9 @@ class LoopFusion(transformation.MultiStateTransformation):
             if any(sub is None for d in (r1, w1, r2, w2) for sub in d.get(arr, [])):
                 return False
             if arr in w1 or arr in w2:
-                if any(varying & {str(s) for s in sub.free_symbols} for d in (r1, w1, r2, w2) for sub in d.get(arr, [])):
+                if any(
+                    varying & {str(s) for s in sub.free_symbols} for d in (r1, w1, r2, w2) for sub in d.get(arr, [])
+                ):
                     return False
             # flow: a value written in body1 and read in body2 must not be read ahead of its production
             # (read-ahead WAR = fused reads stale value). 'invariant' is refused: body1 writes a
@@ -460,7 +462,10 @@ class LoopFusion(transformation.MultiStateTransformation):
         return any(
             isinstance(region, ConditionalBlock)
             and any(
-                state.in_degree(node) > 0 for state in region.states() for node in state.data_nodes() if node.data == arr
+                state.in_degree(node) > 0
+                for state in region.states()
+                for node in state.data_nodes()
+                if node.data == arr
             )
             for region in loop.all_control_flow_blocks()
         )
