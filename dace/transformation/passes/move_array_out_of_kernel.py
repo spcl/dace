@@ -471,6 +471,10 @@ def extent_bounds(desc: dt.Array, hierarchy: list[SDFG], kernel: Scope) -> list[
     for sym in sorted({str(s) for d in desc.shape for s in symbolic.pystr_to_symbolic(d).free_symbols}):
         if not any(assigns_symbol(sdfg, sym) for sdfg in hierarchy[:-1]):
             continue
+        # The maximum of ``sym`` bounds only an extent that grows with it
+        for extent in map(symbolic.pystr_to_symbolic, desc.shape):
+            if any(str(s) == sym and not sympy.diff(extent, s).is_nonnegative for s in extent.free_symbols):
+                return None
         read = kernel_assigned_read(hierarchy, sym)
         located = read and read_in_kernel_sdfg(hierarchy, *read)
         inlined = located and inline_kernel_reads(hierarchy, located[1])
