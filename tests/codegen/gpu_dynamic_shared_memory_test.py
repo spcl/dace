@@ -459,7 +459,9 @@ def test_inline_storage_constructor():
 
     sdfg = prog.to_sdfg()
     assert _placement(sdfg, "s") is True
-    assert sdfg.arrays["s"].storage == S.GPU_Shared(dynamic=True)
+    # Without simplification, ``s`` stays in the nested SDFG of the map body
+    (desc,) = [nsdfg.arrays["s"] for nsdfg in sdfg.all_sdfgs_recursive() if "s" in nsdfg.arrays]
+    assert desc.storage == S.GPU_Shared(dynamic=True)
 
 
 if __name__ == "__main__":
