@@ -148,6 +148,12 @@ class PerfLoopNesting(xf.SingleStateTransformation):
         top_children = _ordered_top_children(inner_state)
         if len(top_children) < 2:
             return False
+        # A library node or nested SDFG at the top level belongs to no child: no copy would keep it
+        inner_scope = inner_state.scope_dict()
+        if any(
+            isinstance(n, (nodes.LibraryNode, nodes.NestedSDFG)) and inner_scope[n] is None for n in inner_state.nodes()
+        ):
+            return False
         # Each child becomes its own parent-map copy. Cross-child dependencies
         # survive only when the shared container crosses the NestedSDFG
         # boundary; ``apply`` then restores their original order with an

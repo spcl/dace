@@ -486,6 +486,40 @@ def test_pln_on_parent_inside_nested_sdfg_must_use_owning_sdfg():
     assert len(top_entries) == 2
 
 
+def test_library_node_beside_the_children_refuses():
+    inner = SDFG("inner")
+    inner.add_array("x", [3], dace.float64)
+    inner.add_array("y", [3], dace.float64)
+    inner.add_array("z", [3], dace.float64)
+    inner.add_scalar("w", dace.float64)
+    state = inner.add_state("body", is_start_block=True)
+    for out in "yz":
+        state.add_mapped_tasklet(
+            "child",
+            {"j": "0:2"},
+            {"a": mm.Memlet("x[j]")},
+            "b = a",
+            {"b": mm.Memlet(f"{out}[j]")},
+            external_edges=True,
+        )
+    reduce = state.add_reduce("lambda p, q: p + q", None, 0)
+    state.add_edge(state.add_read("x"), None, reduce, None, mm.Memlet("x[0:2]"))
+    state.add_edge(reduce, None, state.add_write("w"), None, mm.Memlet("w[0]"))
+
+    sdfg = SDFG("library_beside_children")
+    sdfg.add_array("x", [3, 3], dace.float64)
+    sdfg.add_array("y", [3, 3], dace.float64)
+    sdfg.add_array("z", [3, 3], dace.float64)
+    sdfg.add_array("w", [3], dace.float64)
+    outer = sdfg.add_state("outer", is_start_block=True)
+    entry, exit_ = outer.add_map("parent", {"i": "0:2"})
+    nested = outer.add_nested_sdfg(inner, {"x"}, {"y", "z", "w"})
+    outer.add_memlet_path(outer.add_read("x"), entry, nested, dst_conn="x", memlet=mm.Memlet("x[i, 0:2]"))
+    for out, subset in (("y", "i, 0:2"), ("z", "i, 0:2"), ("w", "i")):
+        outer.add_memlet_path(nested, exit_, outer.add_write(out), src_conn=out, memlet=mm.Memlet(f"{out}[{subset}]"))
+    assert not PerfLoopNesting.can_be_applied_to(sdfg, parent_entry=entry)
+
+
 if __name__ == "__main__":
     test_three_parallel_inner_maps_fission_into_three_parents()
     test_mixed_map_and_tasklet_wraps_tasklet_with_trivial_map()
@@ -569,3 +603,4 @@ def test_a_container_written_through_a_copy_orders_its_reader_after_it():
     sdfg(a=a, b=b, c=c, d=d, N=5)
     np.testing.assert_array_equal(b, 2 * a)
     np.testing.assert_array_equal(d, 6 * a)
+    test_library_node_beside_the_children_refuses()
