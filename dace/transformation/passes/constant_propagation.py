@@ -186,6 +186,7 @@ class ConstantPropagation(ppl.Pass):
             # Keep track of replaced and ambiguous symbols
             symbols_replaced: dict[str, Any] = {}
             remaining_unknowns: set[str] = set()
+            captured_symbols: set[str] = set()
 
             # Collect symbols from symbol-dependent data descriptors
             # If there can be multiple values over the SDFG, the symbols are not propagated
@@ -215,6 +216,7 @@ class ConstantPropagation(ppl.Pass):
                     scoped = scope_bound_names(block)
                     captured = {k for k, v in mapping.items() if _value_names(v, scoped)}
                     remaining_unknowns |= captured
+                    captured_symbols |= captured
                     mapping = {k: v for k, v in mapping.items() if k not in captured}
 
                 if mapping:
@@ -243,15 +245,20 @@ class ConstantPropagation(ppl.Pass):
             # Gather initial propagated symbols
             result = {k: v for k, v in symbols_replaced.items() if k not in remaining_unknowns}
 
-            # Cheap refusal first: with nothing propagated, every step below is a no-op on an empty
-            # dict, but each still pays a full SDFG walk -- and ``SDFG.replace_dict`` has no empty
-            # early return, so it re-normalizes every descriptor property for no replacement.
-            if result:
-                # Remove single-valued symbols from data descriptors (e.g., symbolic array size)
-                sdfg.replace_dict(
-                    {k: v for k, v in result.items() if k in desc_symbols}, replace_in_graph=False, replace_keys=False
-                )
+            # Remove single-valued symbols from data descriptors (e.g., symbolic array size). A symbol unknown only
+            # where no descriptor naming it is accessed keeps its assignments, but has one value for the descriptors.
+            single_valued = {
+                k: v
+                for k, v in symbols_replaced.items()
+                if k in desc_symbols and k not in multivalue_desc_symbols and k not in captured_symbols
+            }
+            # ``SDFG.replace_dict`` has no empty early return: it would re-normalize every descriptor property.
+            if single_valued:
+                sdfg.replace_dict(single_valued, replace_in_graph=False, replace_keys=False)
+                mutated |= not single_valued.keys() <= result.keys()
 
+            # Cheap refusal first: with nothing propagated, the step below is a no-op that pays a full SDFG walk.
+            if result:
                 # Remove constant symbol assignments in interstate edges. A symbol read elsewhere drops out of
                 # ``result`` below, so the deletion itself has to count as a modification.
                 for edge in sdfg.all_interstate_edges():
@@ -675,17 +682,25 @@ class ConstantPropagation(ppl.Pass):
         :param constants: Constant symbols found in ``collect_constants``.
         :return: A tuple of two sets: (all descriptor-related symbols, symbols that take multiple values).
         """
-        symbols_in_data: set[str] = set()
+        symbols_in_data: dict[str, set[str]] = {}
         symbols_in_data_with_multiple_values: set[str] = set()
-        for arr in sdfg.arrays.values():
-            symbols_in_data |= set(map(str, arr.free_symbols))
+        for name, arr in sdfg.arrays.items():
+            for sym in map(str, arr.free_symbols):
+                symbols_in_data.setdefault(sym, set()).add(name)
 
         values: dict[str, Any] = {}
-        for mapping in constants.values():
+        for block, mapping in constants.items():
+            accessed = None
             # Symbols that data descriptors depend on must receive a single value, otherwise mark as unknown
             for k, v in mapping.items():
                 if k not in symbols_in_data:
                     continue
+                # Unknown where none of its descriptors is accessed says nothing about their size
+                if v is _UnknownValue:
+                    if accessed is None:
+                        accessed = {n.data for n in block.data_nodes()} if isinstance(block, SDFGState) else set()
+                    if symbols_in_data[k].isdisjoint(accessed):
+                        continue
                 if k in values:
                     if v is _UnknownValue or v != values[k]:
                         symbols_in_data_with_multiple_values.add(k)
@@ -694,7 +709,7 @@ class ConstantPropagation(ppl.Pass):
                         symbols_in_data_with_multiple_values.add(k)
                     values[k] = v
 
-        return symbols_in_data, symbols_in_data_with_multiple_values
+        return set(symbols_in_data), symbols_in_data_with_multiple_values
 
     def _propagate(self, symbols: dict[str, Any], new_symbols: dict[str, Any]) -> bool:
         """
