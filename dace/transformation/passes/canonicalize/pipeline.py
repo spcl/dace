@@ -1014,7 +1014,14 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
         s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
     if lift:
         s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
-    s += [(label, ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True, nested=True)]))]
+    s += [
+        (
+            label,
+            ppl.FixedPointPipeline(
+                [DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True, nested=True)]
+            ),
+        )
+    ]
     s += [(label, PruneEmptyConditionalBranches())]
     s += [
         (label, PatternApplyOnceEverywhere([RedundantArray()])),

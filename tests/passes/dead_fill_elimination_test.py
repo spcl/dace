@@ -213,7 +213,12 @@ def test_interstate_read_after_the_fill_keeps_it():
     second = sdfg.add_state("overwrite")
     sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"x": "tmp[0]"}))
     second.add_mapped_tasklet(
-        "write", {"i": "0:N"}, {"__b": dace.Memlet("b[i]")}, "__t = __b", {"__t": dace.Memlet("tmp[i]")}, external_edges=True
+        "write",
+        {"i": "0:N"},
+        {"__b": dace.Memlet("b[i]")},
+        "__t = __b",
+        {"__t": dace.Memlet("tmp[i]")},
+        external_edges=True,
     )
     assert DeadFillElimination().apply_pass(sdfg, {}) is None
     assert fills(sdfg) == 1

@@ -229,7 +229,9 @@ def test_copy_store_is_read_at_its_destination_index():
     first = loop.add_state("first", is_start_block=True)
     second = loop.add_state_after(first, "second")
     first.add_nedge(first.add_read("b"), first.add_write("a"), dace.Memlet(data="b", subset="i + 1", other_subset="i"))
-    second.add_nedge(second.add_read("c"), second.add_write("a"), dace.Memlet(data="c", subset="i", other_subset="i + 5"))
+    second.add_nedge(
+        second.add_read("c"), second.add_write("a"), dace.Memlet(data="c", subset="i", other_subset="i + 5")
+    )
     sdfg.validate()
     assert DeadCarriedStoreElimination().apply_pass(sdfg, {}) is None
     assert stores_of(sdfg, "a") == 2
