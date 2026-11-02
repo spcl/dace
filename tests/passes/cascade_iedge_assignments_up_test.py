@@ -899,5 +899,18 @@ def test_an_array_read_does_not_move_past_a_zero_trip_loop():
     assert _apply(sdfg) == 0
 
 
+def test_a_conditional_edge_keeps_its_assignment():
+    """The join reads ``k`` on the path that skips the assignment."""
+    sdfg, loop = _loop_after_entry(assignments={"k": "3"})
+    first = loop.add_state("first", is_start_block=True)
+    taken = loop.add_state("taken")
+    join = loop.add_state("join")
+    loop.add_edge(first, taken, InterstateEdge(condition="M > 100", assignments={"k": "M + 2"}))
+    loop.add_edge(first, join, InterstateEdge(condition="M <= 100"))
+    loop.add_edge(taken, join, InterstateEdge())
+    _write_symbol(join, "k")
+    assert _apply(sdfg) == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

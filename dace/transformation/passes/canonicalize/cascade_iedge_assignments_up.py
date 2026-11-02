@@ -406,6 +406,9 @@ def _find_destination(
         reads = cache.block_reads(b)
         if reads is None or key in reads:
             return None
+        # L5, for the edges of the region itself: an assignment behind a condition does not always run
+        if any(not e.data.is_unconditional() for e in edge_region.out_edges(b)):
+            return None
     dest: ControlFlowRegion = edge_region
     walker: ControlFlowRegion = edge_region
     while True:
