@@ -369,6 +369,44 @@ def test_arglist_passes_a_scalar_argument_a_shape_names():
     assert isinstance(state.arglist()["n"], dace.data.Scalar)
 
 
+def strided_copy(tmp_size) -> dace.SDFG:
+    n, s = symbolic.symbol("N", dace.int64), symbolic.symbol("s", dace.int64)
+    sdfg = dace.SDFG("strided_copy")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    sdfg.add_symbol("R", dace.float64)
+    sdfg.add_array("A", [n], dace.float64)
+    sdfg.add_transient("tmp", [tmp_size(n, s)], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    memlet = dace.Memlet(data="A", subset="0:N:s", other_subset="0:ceiling(N/s)")
+    state.add_edge(state.add_read("A"), None, state.add_write("tmp"), None, memlet)
+    return sdfg
+
+
+def test_a_rounding_folds_once_substitution_leaves_an_integer():
+    """Both ``ceiling_div`` and a parsed ``ceiling(N/s)`` become ``N`` at ``s = 1``, as dtypes prove ``N`` an integer."""
+    n = symbolic.symbol("N", dace.int64)
+    for tmp_size in (symbolic.ceiling_div, lambda n, s: symbolic.pystr_to_symbolic("ceiling(N/s)")):
+        sdfg = strided_copy(tmp_size)
+        sdfg.replace("s", "1")
+        assert sdfg.arrays["tmp"].shape == (n,)
+        sdfg.validate()
+
+        by_expression = strided_copy(tmp_size)
+        by_expression.replace_dict({"s": "1", "N": "2*K"})
+        assert not by_expression.arrays["tmp"].shape[0].has(sympy.ceiling)
+
+
+def test_a_rounding_of_a_float_or_a_fraction_stays():
+    x, n = symbolic.pystr_to_symbolic("ceiling(R/s)"), symbolic.pystr_to_symbolic("ceiling(N/s)")
+    sdfg = strided_copy(lambda *_: x)
+    sdfg.replace("s", "1")
+    assert sdfg.arrays["tmp"].shape[0].has(sympy.ceiling)
+    sdfg = strided_copy(lambda *_: n)
+    sdfg.replace("s", "2")
+    assert sdfg.arrays["tmp"].shape[0].has(sympy.ceiling)
+
+
 if __name__ == "__main__":
     test_loop_variable_cannot_be_added_as_symbol()
     test_scope_takes_over_a_symbol_a_shape_declared()
@@ -404,3 +442,5 @@ if __name__ == "__main__":
     test_simplify_keeps_a_symbol_a_relation_names()
     test_an_sdfg_saved_without_a_repository_loads_its_symbols()
     test_arglist_passes_a_scalar_argument_a_shape_names()
+    test_a_rounding_folds_once_substitution_leaves_an_integer()
+    test_a_rounding_of_a_float_or_a_fraction_stays()

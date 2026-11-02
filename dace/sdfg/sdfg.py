@@ -53,7 +53,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import SubgraphView, generate_element_id
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.sdfg.symbol_repo import SymbolRepo, bound_names, scope_owners
+from dace.sdfg.symbol_repo import SymbolRepo, bound_names, integer_names, scope_owners
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
@@ -1125,11 +1125,15 @@ class SDFG(ControlFlowRegion):
                 _remove_dict_keys(self.constants_prop, name)
                 _remove_dict_keys(self.callback_mapping, name)
 
-        # Replace inside data descriptors
-        for array in self.arrays.values():
-            replace_properties_dict(array, repldict, symrepl)
+        token = symbolic.substituted_integers.set(integer_names(self._symbol_repo.params.types))
+        try:
+            # Replace inside data descriptors
+            for array in self.arrays.values():
+                replace_properties_dict(array, repldict, symrepl)
 
-        super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
+            super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
+        finally:
+            symbolic.substituted_integers.reset(token)
 
     def add_symbol(
         self,

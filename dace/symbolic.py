@@ -5,6 +5,7 @@ import pickle
 import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
+from contextvars import ContextVar
 from functools import cache, lru_cache
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias, Union
 
@@ -34,6 +35,7 @@ from dace.symbolic_facts import (  # noqa: F401
     provably_le,
     provably_nonnegative,
     relation_names,
+    with_integers,
 )
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
@@ -1030,7 +1032,26 @@ def subs_reachable(expr, repl_dict: dict, keys_by_name: dict[str, list]):
                 pending.extend(substitutable_names(repl_dict[key]))
     if not reachable:
         return expr
-    return expr.subs({key: value for key, value in repl_dict.items() if key in reachable})
+    return subs_folded(expr, {key: value for key, value in repl_dict.items() if key in reachable})
+
+
+#: The names an SDFG knows to be integers while it substitutes; symbols carry no integrality of their own
+substituted_integers: ContextVar[frozenset[str]] = ContextVar("substituted_integers", default=frozenset())
+
+
+def subs_folded(expr: sympy.Basic, repl_dict: dict) -> sympy.Basic:
+    """``expr.subs(repl_dict)``, dropping a ``floor`` or ``ceiling`` left around an integer (``ceiling(N/s)`` with
+    ``s = 1``), which SymPy cannot see over symbols without integrality; see :data:`substituted_integers`."""
+    result = expr.subs(repl_dict)
+    integers = substituted_integers.get()
+    if not integers or not result.has(sympy.floor, sympy.ceiling):
+        return result
+    return result.replace(
+        lambda node: (
+            isinstance(node, (sympy.floor, sympy.ceiling)) and with_integers(node.args[0], integers).is_integer is True
+        ),
+        lambda node: node.args[0],
+    )
 
 
 def is_undefined(expr: SymbolicType | str) -> bool:
