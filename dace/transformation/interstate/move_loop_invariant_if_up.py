@@ -49,22 +49,17 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, rehome_claimed_block
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.analysis.analysis import names_read_by_text
+from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop
 
 # Shared soundness kernel for the loop distribution below -- the same import route
 # ``fuse_loops.py`` uses, so fission, fusion and this hoist can never disagree.
 from dace.transformation.passes.loop_fission import LoopFission, _independent_block_groups
 
 
-def _free(expr: str) -> set[str]:
-    """Free symbol names of a condition / assignment expression string.
-
-    :param expr: A condition or interstate-assignment RHS expression.
-    :returns: The set of free symbol names, empty if ``expr`` cannot be parsed.
-    """
-    try:
-        return {str(s) for s in symbolic.pystr_to_symbolic(expr).free_symbols}
-    except Exception:
-        return set()
+def _free(expr: str) -> frozenset[str]:
+    """The names a condition or assignment text reads, containers it subscripts (``a`` in ``a[i]``) included."""
+    return names_read_by_text(expr)
 
 
 def _written(region: ControlFlowRegion) -> set[str]:
@@ -107,6 +102,16 @@ def _linear_order(region: ControlFlowRegion) -> list | None:
     return order if len(order) == len(blocks) else None
 
 
+def edges_before(loop: LoopRegion, block: ControlFlowRegion) -> list:
+    """The edges of ``loop``'s body chain that run before ``block`` in every iteration."""
+    edges = []
+    while loop.in_degree(block) == 1:
+        edge = loop.in_edges(block)[0]
+        edges.append(edge)
+        block = edge.src
+    return edges
+
+
 def _is_empty_state(b: ControlFlowRegion) -> bool:
     """Whether ``b`` is an ``SDFGState`` carrying no nodes.
 
@@ -114,6 +119,11 @@ def _is_empty_state(b: ControlFlowRegion) -> bool:
     :returns: ``True`` iff ``b`` is an empty ``SDFGState``.
     """
     return isinstance(b, SDFGState) and b.number_of_nodes() == 0
+
+
+def _empty_branch(branch: ControlFlowRegion) -> bool:
+    """Whether ``branch`` holds no work, so hoisting replaces its loop by an empty state."""
+    return all(_is_empty_state(b) for b in branch.nodes())
 
 
 def _enclosing_loops(loop: LoopRegion, sdfg: SDFG) -> list[LoopRegion]:
@@ -242,11 +252,24 @@ def _hoistable(
     #   - invariant: hoist with the guard;
     #   - per-iteration: must be DEAD outside the branch (lhs not read
     #     anywhere except inside cb), otherwise refuse.
+    # Only an edge before the guard binds a name the guard sees in every iteration: one after it runs after the first
+    # test. A name with two definitions has no single value to hoist.
+    prep = edges_before(loop, cb)
+    definitions: dict[str, set[str]] = {}
+    for e in loop.edges():
+        for lhs, rhs in e.data.assignments.items():
+            definitions.setdefault(lhs, set()).add(rhs)
     chain_assignments: list[tuple[str, str]] = []
     for e in loop.edges():
         for lhs, rhs in e.data.assignments.items():
             rf = _free(rhs)
-            is_variant = lvar in rf or bool(rf & loop_w) or lhs in loop_w - set(e.data.assignments)
+            is_variant = (
+                e not in prep
+                or len(definitions[lhs]) > 1
+                or lvar in rf
+                or bool(rf & loop_w)
+                or lhs in loop_w - set(e.data.assignments)
+            )
             if not is_variant:
                 chain_assignments.append((lhs, rhs))
                 continue
@@ -281,6 +304,11 @@ def _hoistable(
                 return None
             if any(avar in _free(rhs) or (_free(rhs) & aw) for _, rhs in chain_assignments):
                 return None
+
+    # An arm without work, and the missing ``else``, stop running the loop, which is what leaves ``lvar`` its exit value
+    skips_loop = len(conds) == len(cb.branches) or any(_empty_branch(branch) for _, branch in cb.branches)
+    if lvar and skips_loop and counter_used_outside_loop(lvar, loop, loop.sdfg):
+        return None
 
     return conds[0], chain_assignments
 
@@ -570,7 +598,7 @@ class MoveLoopInvariantIfUp(ppl.Pass):
         outer_cb = ConditionalBlock(label=f"{loop.label}_guard")
         for index, (branch_cond, branch) in enumerate(cb.branches):
             inner = ControlFlowRegion(label=f"{loop.label}_body_{index}" if index else f"{loop.label}_body")
-            if all(_is_empty_state(b) for b in branch.nodes()):
+            if _empty_branch(branch):
                 inner.add_state(f"{loop.label}_skip_{index}", is_start_block=True)
             else:
                 unswitched = MoveLoopInvariantIfUp._loop_with_branch(loop, cb, index, hoist_assignments)

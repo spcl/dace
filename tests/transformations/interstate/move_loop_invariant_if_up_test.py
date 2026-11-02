@@ -14,7 +14,8 @@ import copy
 import numpy as np
 
 import dace
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
@@ -481,6 +482,48 @@ def test_hoist_refuses_a_guard_that_reads_the_loop_variable():
     assert sdfg.to_json() == before
 
 
+def _guard_loop(name: str, assignments: dict[str, str] | None = None, after_guard: dict[str, str] | None = None):
+    """``for k in 0:3: <assignments>; if g > 2: a[0] = a[0] - 1; <after_guard>``, on ``a[1]`` and a symbol ``g``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [1], dace.int64)
+    sdfg.add_symbol("g", dace.int64)
+    loop = LoopRegion("loop", "k < 3", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    prep = loop.add_state("prep", is_start_block=True)
+    guard = ConditionalBlock("guard")
+    loop.add_node(guard)
+    loop.add_edge(prep, guard, dace.InterstateEdge(assignments=assignments or {}))
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    guard.add_branch(CodeBlock("g > 2"), arm)
+    state = arm.add_state("update", is_start_block=True)
+    tasklet = state.add_tasklet("update", {"x"}, {"y"}, "y = x - 1")
+    state.add_edge(state.add_read("a"), None, tasklet, "x", dace.Memlet("a[0]"))
+    state.add_edge(tasklet, "y", state.add_write("a"), None, dace.Memlet("a[0]"))
+    if after_guard is not None:
+        loop.add_edge(guard, loop.add_state("after"), dace.InterstateEdge(assignments=after_guard))
+    return sdfg
+
+
+def test_prep_reading_data_the_loop_writes_is_not_hoisted():
+    """``g = a[0]`` reads per iteration what the guarded arm decrements."""
+    sdfg = _guard_loop("prep_reads_written_data", {"g": "a[0]"})
+    assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is None
+
+
+def test_assignment_after_the_guard_is_not_its_prep():
+    """The first test of ``g > 2`` sees the value from before the loop, not the ``g = 5`` that follows the guard."""
+    sdfg = _guard_loop("assignment_after_guard", after_guard={"g": "5"})
+    assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is None
+
+
+def test_guard_stays_when_the_iterator_is_read_after_the_loop():
+    """Not entering the loop would leave ``k`` without its exit value."""
+    sdfg = _guard_loop("iterator_read_after_loop")
+    state = sdfg.add_state_after(_loops(sdfg)[0], "read_iterator", assignments={"h": "k"})
+    assert state in sdfg.nodes()
+    assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_invariant_symbolic_guard_hoisted_and_e2e()
     test_invariant_data_guard_hoisted_and_e2e()
@@ -493,3 +536,6 @@ if __name__ == "__main__":
     test_outer_index_data_guard_partial_then_full_hoist_modes()
     test_inner_index_data_guard_not_movable()
     test_scalar_guard_sifts_all_the_way_up_both_modes()
+    test_prep_reading_data_the_loop_writes_is_not_hoisted()
+    test_assignment_after_the_guard_is_not_its_prep()
+    test_guard_stays_when_the_iterator_is_read_after_the_loop()
