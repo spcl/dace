@@ -518,7 +518,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         :param apply_filter: Whether the top-level ``filter`` set gates the rewrite here (``False`` in
             the nested-SDFG recursion: the filter names outer-level descriptors).
         :param stage_nontransients: Whether to stage non-transient arrays (top level only).
-        :returns: Names of the descriptors that are now scalar-referenced in the body.
+        :returns: Names of the descriptors that are now scalar-referenced in the body, nested SDFGs included.
         """
         blocked = self._blocked_descriptors(sdfg)
         # Hoisted: the loop below only calls ``remove_data`` / ``add_scalar``; the state rewrite is
@@ -602,6 +602,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             if any(nm.startswith(p) for p in prefixes):
                 sdfg.symbol_repo.remove(nm)
 
+        rewritten = set(rename)
         if self.recursive:
             for state in sdfg.states():
                 for node in state.nodes():
@@ -609,9 +610,9 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         # Nested-SDFG recursion is transient-only (a non-transient inner arg belongs to
                         # the parent's signature) and the filter names outer descriptors, so neither
                         # staging nor filtering applies inside.
-                        self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
+                        rewritten |= self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
 
-        return set(rename)
+        return rewritten
 
     def apply_pass(self, sdfg: SDFG, _: dict) -> set[str] | None:
         rewritten = self._rewrite(sdfg, apply_filter=True, stage_nontransients=self.preserve_abi)
@@ -675,7 +676,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         :param sdfg: SDFG to rewrite.
         :param apply_filter: Whether the top-level ``filter`` set gates the rewrite here.
         :param stage_nontransients: Whether to stage non-transient scalars (top level only).
-        :returns: Names of the descriptors that are now array-referenced in the body.
+        :returns: Names of the descriptors that are now array-referenced in the body, nested SDFGs included.
         """
         rename: dict[str, str] = {}
         staged: list[tuple[str, str, bool, bool]] = []  # (scalar_name, array_name, is_read, is_written)
@@ -742,12 +743,13 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                     s = copyout.add_write(scal_name)
                     copyout.add_nedge(a, s, Memlet(data=arr_name, subset="0"))
 
+        rewritten = set(rename)
         if self.recursive:
             for state in sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
-                        self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
-        return set(rename)
+                        rewritten |= self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
+        return rewritten
 
     def apply_pass(self, sdfg: SDFG, _: dict) -> set[str] | None:
         rewritten = self._rewrite(sdfg, apply_filter=True, stage_nontransients=self.preserve_abi)
