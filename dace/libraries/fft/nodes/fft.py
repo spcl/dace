@@ -90,6 +90,11 @@ def pure_sdfg(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG
 
     indesc, outdesc = input_and_output(parent_state, parent_sdfg, node)
     sdfg = dft.dft_nd_sdfg(indesc, outdesc, node.factor, isinstance(node, IFFT), node.axes, node.half_spectrum)
+    declare_factor_symbols(sdfg, node, parent_state, parent_sdfg)
+    return sdfg
+
+
+def declare_factor_symbols(sdfg: SDFG, node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> None:
     # The factor scales a C++ tasklet, whose code no symbol inference reads: declare what it names, typed as where
     # the node sits -- a symbol in scope there, or the scalar container the factor reads
     names = sorted(str(s) for s in symbolic.pystr_to_symbolic(node.factor).free_symbols)
@@ -102,7 +107,6 @@ def pure_sdfg(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG
                 sdfg.add_symbol(name, defined[name])
             elif isinstance(parent_sdfg.arrays.get(name), data.Scalar):
                 sdfg.add_symbol(name, parent_sdfg.arrays[name].dtype)
-    return sdfg
 
 
 @library.register_expansion(FFT, "pure")
@@ -251,6 +255,7 @@ def vendor_fft_sdfg(
     state.add_edge(tasklet, "__out", state.add_write("_out"), None, Memlet.from_array("_out", sdfg.arrays["_out"]))
     if scale and not stage:
         elementwise(state, "normalize", "_out", "_out", outdesc.shape, f"o = i{scale}")
+    declare_factor_symbols(sdfg, node, parent_state, parent_sdfg)
     return sdfg
 
 
