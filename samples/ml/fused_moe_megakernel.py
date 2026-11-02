@@ -15,8 +15,7 @@ branches on the same input (the residual stream after attention) and adds them:
 
 After a kernel that normalizes the tokens (one thread block per token), a single consume scope runs the rest of the
 block as tasks on a queue. Every processing element is a GPU thread block that pops a task, mostly a 64 x 128 tile of
-one matrix product with tensor cores (the ``tile_matmul`` library node) followed by an epilogue on the tile. The tasks
-are:
+one matrix product followed by an epilogue on the tile. The tasks are:
 
 * router: the logits of 64 tokens for a slice of the input (the router's inner dimension is split, so that routing is
   done quickly while the dense tasks start);
@@ -38,6 +37,12 @@ fill each other's gaps.
 Every task is a DaCe program of its own, which DaCe inlines into the consume scope (see ``build``). Other blocks of the
 same kind (another router, no dense branch, another activation) are built from the same tasks, combined differently.
 
+The products are NumPy matrix products of views (``x[r0:r0 + nr] @ w[c0:c0 + BN].T``, with a data-dependent number of
+rows ``nr``), in which the rows of an expert's tokens are gathered (``x[row_token[r0:r0 + nr]]``). DaCe fuses the gather
+and the transposition into the product (``GatherIntoMatrixProduct``, ``TransposeIntoMatrixProduct``), and computes a
+product that the threads of a block run together with the block (the ``ThreadBlockMMA`` implementation of ``Gemm``:
+tensor cores on GPUs that have them, staging the operands in a shared memory workspace of its own).
+
 With ``--profile``, every task records its time on the GPU instead (the ``GPU_Events`` instrumentation of a node in a
 kernel: an event per thread block that runs it, on the GPU's global timer). The sample then prints the time of every
 kind of task, and the instrumentation report holds a timeline with a track per processing element.
@@ -54,7 +59,6 @@ import contextlib
 import math
 
 import numpy as np
-import tile_matmul as tm
 import torch
 from torch import nn
 from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig
@@ -67,6 +71,7 @@ from transformers.models.gemma4.modeling_gemma4 import (
 
 import dace
 from dace.codegen.instrumentation.report import InstrumentationReport
+from dace.transformation.dataflow import GatherIntoMatrixProduct, TransposeIntoMatrixProduct
 
 try:  # Optional: the block as vLLM runs it, for comparison
     from vllm.config import CompilationConfig, VllmConfig, set_current_vllm_config
@@ -151,9 +156,6 @@ SHARED = dace.StorageType.GPU_Shared
 WARPS = 4  # Warps per thread block
 THREADS = 32 * WARPS
 BM, BN = 64, 128  # Rows and columns of a tile
-K_STEP, STAGES = 32, 2  # Slices of the inner dimension that tile_matmul stages in shared memory
-WORKSPACE = tm.workspace_shape(BM, BN, K_STEP, STAGES)
-STAGING = math.prod(WORKSPACE)  # Elements of the workspace
 # The kinds of tasks, multiples of ``1 << KIND`` (64-bit constants): a task is its kind, a tile and a chunk (see
 # ``append_to_stream``)
 KIND, FIELD = 40, 20
@@ -170,19 +172,6 @@ NT = dace.symbol("NT")  # The most expert tiles there can be: T * top_k / BM + n
 DT = dace.symbol("DT")
 
 
-def packed(*shape) -> dace.data.Array:
-    """A weight matrix ``W[N, K]`` (or a batch of them), packed for ``tile_matmul``: as ``W[N / BN, K / K_STEP, BN,
-    K_STEP]``, so that the slices of the weight that a tile reads are contiguous (see ``pack``)."""
-    *batch, n, k = shape
-    return dace.data.Array(dace.bfloat16, [*batch, n // BN, k // K_STEP, BN, K_STEP])
-
-
-def pack(weight: torch.Tensor) -> torch.Tensor:
-    """Packs a weight matrix ``[..., N, K]`` (see ``packed``): a copy."""
-    *batch, n, k = weight.shape
-    return weight.reshape(*batch, n // BN, BN, k // K_STEP, K_STEP).transpose(-2, -3).contiguous()
-
-
 def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, profile: bool = False) -> dace.SDFG:
     """The block for ``config`` as a GPU SDFG. Its arguments are the input, the weights (see ``arguments``), the
     output, and scratch buffers (see ``workspace``). With ``profile``, every task records an event (see
@@ -195,9 +184,7 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
         config.top_k_experts,
     )
     assert D % BN == 0 and (2 * DI) % BN == 0 and (2 * I) % BN == 0 and E == BN == THREADS and D % ROUTE_STEP == 0
-    assert BM * BN <= STAGING  # The product of a tile fits where its operands are staged
     RP = D // ROUTE_STEP  # Router tasks per tile of tokens
-    RS = ROUTE_STEP // K_STEP  # Packed slices of the router weight per router task
     HALF = BN // 2  # Gate (and up) columns of a gate/up task
     # Constants in single precision (a Python float is a double on the GPU, which computes in double precision slowly)
     EPS = np.float32(config.rms_norm_eps)
@@ -291,18 +278,16 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
 
     @dace.program
     def expert_gate_up(
-        S, g, ch, staging, x_expert, expert_gate_up_p, tile_expert, tile_rows, tile_start, row_token, count,
+        S, g, ch, tile, x_expert, expert_gate_up_w, tile_expert, tile_rows, tile_start, row_token, count,
         gate_up_left, h_expert
     ):  # fmt: skip
-        """A tile of an expert's rows (read from the rows of their tokens) times a chunk of its gate and up
-        projections. The last gate/up task of the expert (of all its tiles) pushes its down tasks, the tiles of a chunk
-        one after the other: they read it from L2."""
-        work = staging.reshape(WORKSPACE)
-        tile = staging[0 : BM * BN].reshape([BM, BN])
+        """A tile of an expert's rows (the rows of their tokens) times a chunk of its gate and up projections. The last
+        gate/up task of the expert (of all its tiles) pushes its down tasks, the tiles of a chunk one after the other:
+        they read it from L2."""
         e = tile_expert[g]
         nr = tile_rows[g]
         r0 = g * BM
-        tm.tile_matmul(x_expert, expert_gate_up_p[e, ch], tile, work, nr, row_token[r0 : r0 + BM])
+        tile[0:nr] = x_expert[row_token[r0 : r0 + nr]] @ expert_gate_up_w[e, ch * BN : ch * BN + BN, :].T
         gelu_times_up(tile, nr, h_expert, r0, ch)
         if is_last(gate_up_left, e):
             n = (count[e] + BM - 1) // BM  # Tiles of the expert
@@ -310,14 +295,12 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
                 append_to_stream(S, EXPERT_DOWN, tile_start[e] + i % n, i // n)
 
     @dace.program
-    def dense_gate_up(S, g, ch, staging, x_dense, dense_gate_up_p, dense_rows, dense_gate_up_left, h_dense):
+    def dense_gate_up(S, g, ch, tile, x_dense, dense_gate_up_w, dense_rows, dense_gate_up_left, h_dense):
         """BM tokens times a chunk of the dense gate and up projections. The last of the tokens pushes their down
         tasks."""
-        work = staging.reshape(WORKSPACE)
-        tile = staging[0 : BM * BN].reshape([BM, BN])
         nr = dense_rows[g]
         r0 = g * BM
-        tm.tile_matmul(x_dense[r0 : r0 + BM, :], dense_gate_up_p[ch], tile, work, nr)
+        tile[0:nr] = x_dense[r0 : r0 + nr, :] @ dense_gate_up_w[ch * BN : ch * BN + BN, :].T
         gelu_times_up(tile, nr, h_dense, r0, ch)
         if is_last(dense_gate_up_left, g):
             for c in dace.map[0 : D // BN] @ TB:
@@ -325,19 +308,17 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
 
     @dace.program
     def expert_down(
-        S, g, ch, staging, h_expert, expert_down_p, tile_expert, tile_rows, row_token, row_weight, expert_acc,
+        S, g, ch, tile, h_expert, expert_down_w, tile_expert, tile_rows, row_token, row_weight, expert_acc,
         token_left
     ):  # fmt: skip
         """A tile of an expert's rows times a chunk of its down projection, scaled by each row's routing weight and
         added to the output of the row's token. The model rounds every addition to bfloat16; the sum stays in float32
         here, whose atomic additions are native (before Hopper GPUs, those of bfloat16 are compare-and-swap loops, slow
         when many tiles add to a token). The last tile that adds to a token pushes its output task."""
-        work = staging.reshape(WORKSPACE)
-        tile = staging[0 : BM * BN].reshape([BM, BN])
         e = tile_expert[g]
         nr = tile_rows[g]
         r0 = g * BM
-        tm.tile_matmul(h_expert[r0 : r0 + BM, :], expert_down_p[e, ch], tile, work, nr)
+        tile[0:nr] = h_expert[r0 : r0 + nr, :] @ expert_down_w[e, ch * BN : ch * BN + BN, :].T
         for r, col in dace.map[0:nr, 0:BN] @ TB:
             expert_acc[row_token[r0 + r], ch * BN + col] += bf16(dace.float32(tile[r, col]) * row_weight[r0 + r])
         for r in dace.map[0:nr] @ TB:
@@ -346,54 +327,46 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
                 append_to_stream(S, OUTPUT, token, 0)
 
     @dace.program
-    def dense_down(S, g, ch, staging, h_dense, down_p, dense_rows, dense_out, token_left):
+    def dense_down(S, g, ch, h_dense, down_w, dense_rows, dense_out, token_left):
         """BM tokens times a chunk of the dense down projection."""
-        work = staging.reshape(WORKSPACE)
-        tile = staging[0 : BM * BN].reshape([BM, BN])
         nr = dense_rows[g]
         r0 = g * BM
-        tm.tile_matmul(h_dense[r0 : r0 + BM, :], down_p[ch], tile, work, nr)
-        for r, col in dace.map[0:nr, 0:BN] @ TB:
-            dense_out[r0 + r, ch * BN + col] = tile[r, col]
+        dense_out[r0 : r0 + nr, ch * BN : ch * BN + BN] = h_dense[r0 : r0 + nr, :] @ down_w[ch * BN : ch * BN + BN, :].T
         for r in dace.map[0:nr] @ TB:
             if dace.atomic.add(token_left, r0 + r, -1) == 1:
                 append_to_stream(S, OUTPUT, r0 + r, 0)
 
     @dace.program
-    def route(S, g, ch, staging, x_router, router_p, route_partial, dense_rows, route_left):
-        """Part of the router logits of BM tokens: a slice of the input times the router weight. The last part of
-        these tokens pushes their top-k tasks."""
-        work = staging.reshape(WORKSPACE)
+    def route(S, g, ch, x_router, router_w, route_partial, dense_rows, route_left):
+        """Part of the router logits of BM tokens: a slice of the input times the router weight (summed in float32,
+        the type of the parts). The last part of these tokens pushes their top-k tasks."""
         nr = dense_rows[g]
         r0 = g * BM
-        tm.tile_matmul(
-            x_router[r0 : r0 + BM, ch * ROUTE_STEP : ch * ROUTE_STEP + ROUTE_STEP],
-            router_p[0, ch * RS : ch * RS + RS],
-            route_partial[ch * TP + r0 : ch * TP + r0 + BM, :],
-            work,
-            nr,
+        k0 = ch * ROUTE_STEP
+        route_partial[ch * TP + r0 : ch * TP + r0 + nr, :] = (
+            x_router[r0 : r0 + nr, k0 : k0 + ROUTE_STEP] @ router_w[:, k0 : k0 + ROUTE_STEP].T
         )
         if is_last(route_left, g):
             for r in dace.map[0:nr] @ TB:
                 append_to_stream(S, TOP_K, r0 + r, 0)
 
     @dace.program
-    def top_k(S, g, staging, route_partial, per_expert_scale, count, pair_expert, pair_slot, pair_weight, top_k_left):
+    def top_k(S, g, route_partial, per_expert_scale, count, pair_expert, pair_slot, pair_weight, top_k_left):
         """The experts of token ``g``: a thread per expert, then per chosen expert. The last token pushes the scan."""
-        tile = staging[0 : BM * BN].reshape([BM, BN])
+        logits = dace.ndarray([E], dtype=dace.bfloat16, storage=SHARED)
         chosen = dace.ndarray([K], dtype=dace.int32, storage=SHARED)
         # The token's router logits (the projection rounds them to bfloat16)
         for expert in dace.map[0:E] @ TB:
             total = dace.float32(0)
             for part in range(RP):
                 total += route_partial[part * TP + g, expert]
-            tile[0, expert] = total
+            logits[expert] = total
         # The rank of every logit (ties: lowest index first): the top k are chosen
         for expert in dace.map[0:E] @ TB:
-            v = dace.float32(tile[0, expert])
+            v = dace.float32(logits[expert])
             rank = 0
             for other in range(E):
-                v2 = dace.float32(tile[0, other])
+                v2 = dace.float32(logits[other])
                 if v2 > v or (v2 == v and other < expert):
                     rank += 1
             if rank < K:
@@ -401,22 +374,29 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
         # The softmax probabilities of the chosen experts, renormalized (the softmax denominator cancels) and scaled;
         # claim a row of every chosen expert
         for j in dace.map[0:K] @ TB:
-            top = dace.float32(tile[0, chosen[0]])
+            top = dace.float32(logits[chosen[0]])
             total = dace.float32(0)
             for j2 in range(K):
-                total += math.exp(dace.float32(tile[0, chosen[j2]]) - top)
+                total += math.exp(dace.float32(logits[chosen[j2]]) - top)
             c = chosen[j]
             pair_expert[g, j] = c
-            pair_weight[g, j] = math.exp(dace.float32(tile[0, c]) - top) / total * dace.float32(per_expert_scale[c])
+            pair_weight[g, j] = math.exp(dace.float32(logits[c]) - top) / total * dace.float32(per_expert_scale[c])
             pair_slot[g, j] = dace.atomic.add(count, c, 1)
         if is_last(top_k_left, 0):
             for _ in dace.map[0:1] @ TB:
                 append_to_stream(S, SCAN, 0, 0)
 
     @dace.program
-    def output(g, staging, x, dense_out, expert_acc, post_norm_1, post_norm_2, post_norm, out):
+    def branches(g, d, inv1, inv2, dense_out, expert_acc, post_norm_1, post_norm_2):
+        """Element ``d`` of the sum of both branches of token ``g``, normalized (in bfloat16, as the model)."""
+        b1 = bf16(dace.float32(dense_out[g, d]) * inv1 * dace.float32(post_norm_1[d]))
+        b2 = bf16(bf16(expert_acc[g, d]) * inv2 * dace.float32(post_norm_2[d]))
+        return bf16(b1 + b2)
+
+    @dace.program
+    def output(g, x, dense_out, expert_acc, post_norm_1, post_norm_2, post_norm, out):
         """Normalizes both branches of token ``g``, adds them, normalizes, and adds the residual (in bfloat16, as the
-        model). The sum of the branches stays in the staging memory."""
+        model). The sum of the branches is computed again rather than kept, as it is read from L2."""
         sums = dace.ndarray([3], dtype=dace.float32, storage=SHARED)
         sums[:] = 0
         for d in dace.map[0:D] @ TB:
@@ -427,14 +407,12 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
         inv1 = inverse_rms(sums[0])
         inv2 = inverse_rms(sums[1])
         for d in dace.map[0:D] @ TB:
-            b1 = bf16(dace.float32(dense_out[g, d]) * inv1 * dace.float32(post_norm_1[d]))
-            b2 = bf16(bf16(expert_acc[g, d]) * inv2 * dace.float32(post_norm_2[d]))
-            v = dace.bfloat16(b1 + b2)
-            staging[d] = v
-            sums[2] += dace.float32(v) * dace.float32(v)
+            v = branches(g, d, inv1, inv2, dense_out, expert_acc, post_norm_1, post_norm_2)
+            sums[2] += v * v
         inv = inverse_rms(sums[2])
         for d in dace.map[0:D] @ TB:
-            out[g, d] = dace.float32(x[g, d]) + bf16(dace.float32(staging[d]) * inv * dace.float32(post_norm[d]))
+            v = branches(g, d, inv1, inv2, dense_out, expert_acc, post_norm_1, post_norm_2)
+            out[g, d] = dace.float32(x[g, d]) + bf16(v * inv * dace.float32(post_norm[d]))
 
     @dace.program
     def scan(
@@ -491,15 +469,15 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
         pre_norm: dace.bfloat16[D],
         post_norm_1: dace.bfloat16[D],
         router_scale: dace.bfloat16[D],
-        router_p: packed(E, D),
+        router_w: dace.bfloat16[E, D],
         per_expert_scale: dace.bfloat16[E],
         pre_norm_2: dace.bfloat16[D],
         post_norm_2: dace.bfloat16[D],
         post_norm: dace.bfloat16[D],
-        dense_gate_up_p: packed(2 * DI, D),
-        down_p: packed(D, DI),
-        expert_gate_up_p: packed(E, 2 * I, D),
-        expert_down_p: packed(E, D, I),
+        dense_gate_up_w: dace.bfloat16[2 * DI, D],
+        down_w: dace.bfloat16[D, DI],
+        expert_gate_up_w: dace.bfloat16[E, 2 * I, D],
+        expert_down_w: dace.bfloat16[E, D, I],
         out: dace.bfloat16[T, D],
         # Scratch
         inv_rms: dace.float32[T],
@@ -543,32 +521,30 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
             kind = task >> KIND << KIND
             g = (task >> FIELD) & MASK
             ch = task & MASK
-            # The product of a tile overwrites the operands that tile_matmul staged: sharing their memory leaves room for
-            # a third thread block on each multiprocessor (whose loads cover the gaps between the tasks of the others)
-            staging = dace.ndarray([STAGING], dtype=dace.bfloat16, storage=SHARED)
+            tile = dace.ndarray([BM, BN], dtype=dace.bfloat16, storage=SHARED)  # The product of a tile
             if kind == EXPERT_GATE_UP:
                 expert_gate_up(
-                    S, g, ch, staging, x_expert, expert_gate_up_p, tile_expert, tile_rows, tile_start, row_token,
+                    S, g, ch, tile, x_expert, expert_gate_up_w, tile_expert, tile_rows, tile_start, row_token,
                     count, gate_up_left, h_expert
                 )  # fmt: skip
             elif kind == DENSE_GATE_UP:
-                dense_gate_up(S, g, ch, staging, x_dense, dense_gate_up_p, dense_rows, dense_gate_up_left, h_dense)
+                dense_gate_up(S, g, ch, tile, x_dense, dense_gate_up_w, dense_rows, dense_gate_up_left, h_dense)
             elif kind == EXPERT_DOWN:
                 expert_down(
-                    S, g, ch, staging, h_expert, expert_down_p, tile_expert, tile_rows, row_token, row_weight,
+                    S, g, ch, tile, h_expert, expert_down_w, tile_expert, tile_rows, row_token, row_weight,
                     expert_acc, token_left
                 )  # fmt: skip
             elif kind == DENSE_DOWN:
-                dense_down(S, g, ch, staging, h_dense, down_p, dense_rows, dense_out, token_left)
+                dense_down(S, g, ch, h_dense, down_w, dense_rows, dense_out, token_left)
             elif kind == ROUTE:
-                route(S, g, ch, staging, x_router, router_p, route_partial, dense_rows, route_left)
+                route(S, g, ch, x_router, router_w, route_partial, dense_rows, route_left)
             elif kind == TOP_K:
                 top_k(
-                    S, g, staging, route_partial, per_expert_scale, count, pair_expert, pair_slot, pair_weight,
+                    S, g, route_partial, per_expert_scale, count, pair_expert, pair_slot, pair_weight,
                     top_k_left
                 )  # fmt: skip
             elif kind == OUTPUT:
-                output(g, staging, x, dense_out, expert_acc, post_norm_1, post_norm_2, post_norm, out)
+                output(g, x, dense_out, expert_acc, post_norm_1, post_norm_2, post_norm, out)
             else:
                 scan(
                     S, count, pair_expert, pair_slot, pair_weight, tile_start, tile_expert, tile_rows, num_tiles,
@@ -584,6 +560,8 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
                 node.label = names[node.label]
                 node.instrument = dace.InstrumentationType.GPU_Events
     sdfg.simplify(validate=False)  # As the frontend does: shared memory is valid once the program is on the GPU
+    # The gathers of rows and the transposed weights, read by the products themselves
+    sdfg.apply_transformations_repeated([GatherIntoMatrixProduct, TransposeIntoMatrixProduct], validate=False)
     to_gpu(sdfg)
     return sdfg
 
@@ -615,9 +593,8 @@ def to_gpu(sdfg: dace.SDFG) -> None:
 
 
 def arguments(block: FeedForward) -> dict[str, torch.Tensor]:
-    """The weights of ``block`` as the program takes them (copies, made once): the gate and up projections interleaved
-    in chunks of 64 rows, so that a tile of 128 output columns holds matching gate and up columns, and all projections
-    packed."""
+    """The weights of ``block`` as the program takes them: the gate and up projections interleaved in chunks of 64 rows
+    (copies, made once), so that a tile of 128 output columns holds matching gate and up columns."""
     w = {name: p.detach() for name, p in block.named_parameters()}
     E, I2, D = w["experts.gate_up_proj"].shape
     DI = w["mlp.gate_proj.weight"].shape[0]
@@ -628,15 +605,15 @@ def arguments(block: FeedForward) -> dict[str, torch.Tensor]:
         pre_norm=w["pre_feedforward_layernorm.weight"],
         post_norm_1=w["post_feedforward_layernorm_1.weight"],
         router_scale=w["router.scale"],
-        router_p=pack(w["router.proj.weight"]),
+        router_w=w["router.proj.weight"],
         per_expert_scale=w["router.per_expert_scale"],
         pre_norm_2=w["pre_feedforward_layernorm_2.weight"],
         post_norm_2=w["post_feedforward_layernorm_2.weight"],
         post_norm=w["post_feedforward_layernorm.weight"],
-        dense_gate_up_p=pack(dense_gate_up.transpose(0, 1).reshape(2 * DI, D)),
-        down_p=pack(w["mlp.down_proj.weight"]),
-        expert_gate_up_p=pack(expert_gate_up.reshape(E, I2, D)),
-        expert_down_p=pack(w["experts.down_proj"]),
+        dense_gate_up_w=dense_gate_up.transpose(0, 1).reshape(2 * DI, D),
+        down_w=w["mlp.down_proj.weight"],
+        expert_gate_up_w=expert_gate_up.reshape(E, I2, D),
+        expert_down_w=w["experts.down_proj"],
     )
 
 
@@ -824,8 +801,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--tokens", type=int, nargs="+", default=[1, 8, 64, 512, 2048])
     parser.add_argument("--small", action="store_true", help="a small configuration, for testing")
-    # Three thread blocks per multiprocessor of an RTX 3070 (as many as the registers of the workers allow)
-    parser.add_argument("--pes", type=int, default=46 * 3, help="processing elements (thread blocks)")
+    # Two thread blocks per multiprocessor (as many as the shared memory of the tasks leaves room for)
+    pes = 2 * torch.cuda.get_device_properties().multi_processor_count
+    parser.add_argument("--pes", type=int, default=pes, help="processing elements (thread blocks)")
     parser.add_argument("--profile", action="store_true", help="the time of every task instead of the comparison")
     args = parser.parse_args()
 
