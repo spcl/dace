@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace import nodes
 from dace.codegen.common import get_gpu_backend
 from dace.libraries.fft.nodes import FFT, IFFT
 
@@ -295,6 +296,63 @@ def test_a_computed_length_reaches_fft_and_fftfreq():
     np.testing.assert_allclose(half, np.fft.rfftfreq(9, 0.5))
 
 
+def test_a_resize_of_a_unit_dimension_indexes_what_its_connector_keeps():
+    """The whole-array connector squeezes unit dimensions, so ``i[__i0, __i1]`` had an index too many."""
+
+    @dace.program
+    def resized_column(x: dace.complex128[6, 1]):
+        return np.fft.fft(x, n=8, axis=0)
+
+    @dace.program
+    def resized_point(x: dace.complex128[1]):
+        return np.fft.fft(x, n=4)
+
+    column = np.arange(6.0).reshape(6, 1) + 1j
+    np.testing.assert_allclose(resized_column(x=column), np.fft.fft(column, n=8, axis=0))
+    point = np.array([2.0 + 1j])
+    np.testing.assert_allclose(resized_point(x=point), np.fft.fft(point, n=4))
+
+
+def test_a_typed_extent_is_not_resized_to_itself():
+    """A symbol's dtype is part of its identity: an extent rebuilt from its string looked like another length."""
+    typed = dace.symbol("TYPED", dace.int64)
+
+    @dace.program
+    def typed_extent(x: dace.complex128[typed]):
+        return np.fft.fft(x)
+
+    sdfg = typed_extent.to_sdfg(simplify=True)
+    assert not any(isinstance(node, nodes.MapEntry) for node, _ in sdfg.all_nodes_recursive())
+
+
+def test_a_one_point_axis_is_a_scaled_copy():
+    """The pure DFT subscripted the values a one-element memlet binds, which does not compile."""
+
+    @dace.program
+    def forward_column(x: dace.complex128[6, 1]):
+        return np.fft.fft(x)
+
+    @dace.program
+    def inverse_point(x: dace.complex128[1]):
+        return np.fft.ifft(x, norm="ortho")
+
+    column = np.arange(6.0).reshape(6, 1) + 1j
+    np.testing.assert_allclose(forward_column(x=column), np.fft.fft(column))
+    point = np.array([2.0 + 1j])
+    np.testing.assert_allclose(inverse_point(x=point), np.fft.ifft(point, norm="ortho"))
+
+
+def test_norm_none_is_backward():
+    """numpy documents ``norm=None`` as ``"backward"``."""
+
+    @dace.program
+    def default_norm(x: dace.complex128[N]):
+        return np.fft.ifft(x, norm=None)
+
+    x = np.arange(5.0) + 1j
+    np.testing.assert_allclose(default_norm(x=x, N=5), np.fft.ifft(x))
+
+
 if __name__ == "__main__":
     for implementation in ("pure", "FFTW3"):
         test_the_real_input_family_keeps_half_the_spectrum(implementation)
@@ -307,3 +365,7 @@ if __name__ == "__main__":
     test_rfft_refuses_a_complex_input()
     test_fftshift_and_ifftshift_roll_by_half_of_each_axis()
     test_a_computed_length_reaches_fft_and_fftfreq()
+    test_a_resize_of_a_unit_dimension_indexes_what_its_connector_keeps()
+    test_a_typed_extent_is_not_resized_to_itself()
+    test_a_one_point_axis_is_a_scaled_copy()
+    test_norm_none_is_backward()
