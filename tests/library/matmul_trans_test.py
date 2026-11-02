@@ -148,3 +148,29 @@ def test_matmul_trans_no_transient_in_sdfg():
     prog = sdfg.compile()
     prog(A=a, B=b, C=c)
     np.testing.assert_allclose(c, a.T @ b, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("implementation", ["pure", "OpenBLAS"])
+@pytest.mark.parametrize("transA", [False, True])
+def test_batched_matmul_keeps_the_transposed_matrix_operand(implementation, transA):
+    b, m, k, n = 2, 3, 4, 5
+    sdfg = dace.SDFG(f"mm_batched_trans_{implementation}_{transA}")
+    a_shape, b_shape = ((k, m), (b, k, n)) if transA else ((b, m, k), (n, k))
+    sdfg.add_array("A", a_shape, dace.float64)
+    sdfg.add_array("B", b_shape, dace.float64)
+    sdfg.add_array("C", (b, m, n), dace.float64)
+    state = sdfg.add_state()
+    node = MatMul("mm", transA=transA, transB=not transA)
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, "_a", dace.Memlet.from_array("A", sdfg.arrays["A"]))
+    state.add_edge(state.add_read("B"), None, node, "_b", dace.Memlet.from_array("B", sdfg.arrays["B"]))
+    state.add_edge(node, "_c", state.add_write("C"), None, dace.Memlet.from_array("C", sdfg.arrays["C"]))
+    sdfg.expand_library_nodes(recursive=False)
+    batched = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.LibraryNode))
+    batched.implementation = implementation
+
+    rng = np.random.default_rng(0)
+    a, x = rng.random(a_shape), rng.random(b_shape)
+    c = np.zeros((b, m, n))
+    sdfg(A=a, B=x, C=c)
+    np.testing.assert_allclose(c, a.T @ x if transA else a @ x.T, rtol=1e-12, atol=1e-12)

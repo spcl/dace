@@ -313,6 +313,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 
             result = BatchedMatMul(node.name + "bmm", location=node.location)
+            result.transA, result.transB = node.transA, node.transB
         elif len(size_a) == 2 and len(size_b) == 1:
             # Matrix and vector -> GEMV.  ``transA`` flows through:
             # Fortran ``MATMUL(TRANSPOSE(A), v)`` arrives with the

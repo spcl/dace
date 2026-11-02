@@ -114,11 +114,11 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         cdesc = parent_sdfg.arrays[outedge.data.data]
         bopt = _get_batchmm_opts(shape_a, strides_a, shape_b, strides_b, cdesc.shape, cdesc.strides)
 
-        res = equal(shape_a[-1], shape_b[-2])
+        rows_a, cols_a = shape_a[-1:-3:-1] if node.transA else shape_a[-2:]
+        rows_b, cols_b = shape_b[-1:-3:-1] if node.transB else shape_b[-2:]
+        res = equal(cols_a, rows_b)
         if res is None:
-            warnings.warn(
-                f"First matrix columns {shape_a[-1]} may not match second matrix rows {shape_b[-2]}", UserWarning
-            )
+            warnings.warn(f"First matrix columns {cols_a} may not match second matrix rows {rows_b}", UserWarning)
         elif not res:
             raise SyntaxError("Matrix sizes must match")
 
@@ -126,9 +126,9 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         if bopt:
             # Use batch dimensions from bopt (may be multi-dimensional)
             batch_dims = bopt.get("batch_dims", [bopt["b"]])
-            shape_c = tuple(batch_dims) + (shape_a[-2], shape_b[-1])
+            shape_c = tuple(batch_dims) + (rows_a, cols_b)
         else:
-            shape_c = (shape_a[-2], shape_b[-1])
+            shape_c = (rows_a, cols_b)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
@@ -183,9 +183,9 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
             map_params["__i%d" % i] = f"0:{symstr(shape_c[i])}"
 
         # M, N, K dimensions
-        map_params["__im"] = f"0:{symstr(shape_a[-2])}"
-        map_params["__in"] = f"0:{symstr(shape_b[-1])}"
-        map_params["__ik"] = f"0:{symstr(shape_a[-1])}"
+        map_params["__im"] = f"0:{symstr(rows_a)}"
+        map_params["__in"] = f"0:{symstr(cols_b)}"
+        map_params["__ik"] = f"0:{symstr(cols_a)}"
 
         def batch_indices(operand_shape) -> str:
             """The operand's batch subscripts, following NumPy's broadcasting rules.
@@ -203,16 +203,12 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
             return ", ".join(subscripts)
 
         # For A: if 2D, use [M, K]; if 3D+, use [batch_indices..., M, K]
-        if len(array_a.shape) == 2:
-            memlet_a = "__im, __ik"
-        else:
-            memlet_a = f"{batch_indices(array_a.shape)}, __im, __ik"
+        matrix_a = "__ik, __im" if node.transA else "__im, __ik"
+        memlet_a = matrix_a if len(array_a.shape) == 2 else f"{batch_indices(array_a.shape)}, {matrix_a}"
 
         # For B: if 2D, use [K, N]; if 3D+, use [batch_indices..., K, N]
-        if len(array_b.shape) == 2:
-            memlet_b = "__ik, __in"
-        else:
-            memlet_b = f"{batch_indices(array_b.shape)}, __ik, __in"
+        matrix_b = "__in, __ik" if node.transB else "__ik, __in"
+        memlet_b = matrix_b if len(array_b.shape) == 2 else f"{batch_indices(array_b.shape)}, {matrix_b}"
 
         # For C: always has batch dimensions
         c_indices = ", ".join(["__i%d" % i for i in range(num_batch_dims)]) + ", __im, __in"
@@ -735,11 +731,11 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
                     )
 
         # Validate K-dimension compatibility
-        res = equal(size0[-1], size1[-2])
+        modes = size0[-2 if self.transA else -1], size1[-1 if self.transB else -2]
+        res = equal(*modes)
         if res is None:
             warnings.warn(
-                f"First tensor's last mode {size0[-1]} and second tensor's second-last mode {size1[-2]} may not match",
-                UserWarning,
+                f"First tensor's mode {modes[0]} and second tensor's mode {modes[1]} may not match", UserWarning
             )
         elif not res:
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
