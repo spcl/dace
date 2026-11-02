@@ -307,7 +307,8 @@ class BufferSharing:
             # At the root, symbols bound on entry are known at init: a buffer sized by them alone is allocated there.
             if desc.lifetime != persistent and root and self.hoistable(desc):
                 desc.lifetime = persistent
-            elif len(group.members) > 1 and desc.lifetime != persistent:
+            # Below the root the SDFG may be inlined into a parallel map, whose iterations each keep their own buffer.
+            elif len(group.members) > 1 and desc.lifetime != persistent and root:
                 desc.lifetime = dtypes.AllocationLifetime.SDFG
         renamed = {m: g.rep for g in groups for m in g.members if m != g.rep}
         if not renamed:
