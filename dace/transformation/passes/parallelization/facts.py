@@ -13,7 +13,7 @@ from typing import Any
 
 from dace import symbolic
 from dace.optionals import required
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import LoopRegion
 from dace.symbolic_facts import RelationKind
 from dace.transformation.passes.analysis import array_facts, canon_stats, smt_dependence
 from dace.transformation.passes.analysis.smt_dependence import z3
@@ -44,27 +44,19 @@ def constant_names(terms: list[Any]) -> tuple[set[str], set[str]]:
 
 
 def iteration_bindings(loop: LoopRegion) -> dict[str, Any]:
-    """The names ``loop`` assigns exactly once per iteration, with their values: on its own interstate edges or a
-    branch's, not inside a nested loop, and assigned nowhere else in the loop."""
+    """The names ``loop`` assigns exactly once per iteration, with their values: on its own unconditional interstate
+    edges, and assigned nowhere else in the loop."""
     counts: Counter = Counter()
     for edge in loop.all_interstate_edges():
         counts.update(edge.data.assignments.keys())
     bindings: dict[str, Any] = {}
-    regions: list[ControlFlowRegion] = [loop]
-    while regions:
-        region = regions.pop()
-        for edge in region.edges():
-            for name, value in edge.data.assignments.items():
-                if counts[name] == 1:
-                    try:
-                        bindings[name] = symbolic.pystr_to_symbolic(value)
-                    except Exception:
-                        continue
-        for block in region.nodes():
-            if isinstance(block, ConditionalBlock):
-                regions.extend(branch for condition, branch in block.branches)
-            elif isinstance(block, ControlFlowRegion) and not isinstance(block, LoopRegion):
-                regions.append(block)
+    for edge in loop.edges():
+        for name, value in edge.data.assignments.items():
+            if counts[name] == 1 and edge.data.is_unconditional():
+                try:
+                    bindings[name] = symbolic.pystr_to_symbolic(value)
+                except Exception:
+                    continue
     return bindings
 
 
