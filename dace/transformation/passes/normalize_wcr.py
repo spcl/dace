@@ -822,6 +822,7 @@ class NormalizeWCR(ppl.Pass):
                 isinstance(e.src, nodes.NestedSDFG)
                 or (isinstance(e.src, nodes.Tasklet) and isinstance(e.dst, nodes.MapExit))
             )
+            and not (isinstance(e.dst, nodes.MapExit) and e.dst.map.proven_parallel)
         ]
         if not targets:
             return 0
