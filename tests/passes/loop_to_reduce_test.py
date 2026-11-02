@@ -46,8 +46,8 @@ def prefer(request):
 #: there re-runs an identical lift (or an identical no-op) under the second mode. Those cases fix
 #: the mode here instead of sweeping it; the emit side of every WCR op stays swept by the tests
 #: that do vary the mode: ``+`` by ``test_sdfg_api_sum_reduction_is_lifted``, ``max`` by
-#: ``test_branched_max_is_lifted`` / ``test_conditional_interstate_gt_lifts_to_max``, ``min`` by
-#: the corresponding min pair, ``|``/``&`` by the permissive any/all pair, and the
+#: ``test_conditional_interstate_gt_lifts_to_max``, ``min`` by
+#: ``test_conditional_interstate_lt_lifts_to_min``, ``|``/``&`` by the permissive any/all pair, and the
 #: symbol-accumulator bridge by ``test_any_pattern_symbol_bridge_via_tmp_scalar``.
 #: ``reduce-libnode`` is the stronger single mode for refusals: only it can emit a ``Reduce``,
 #: and only under it does a wrong lift change ``_count_loops``.
@@ -331,9 +331,8 @@ def _assert_single_reduce_with_wcr(sdfg: dace.SDFG, expected_wcr: str):
 def test_conditional_interstate_gt_lifts_to_max():
     """``>``/``>=`` guard, either operand order -> ``max``.
 
-    Paired with ``test_branched_max_is_lifted``, which pins the same ``max`` WCR under
-    ``wcr-scalar``: ``_cmp_to_wcr`` decides before the ``prefer`` dispatch and neither lift
-    branches on the WCR op, so the two modes need not be crossed with all four guard forms.
+    ``_cmp_to_wcr`` decides before the ``prefer`` dispatch and neither lift branches on the WCR
+    op, so the two modes need not be crossed with all four guard forms.
     """
     prefer = "reduce-libnode"
     for cond in ("B[i] > accum", "accum < B[i]", "B[i] >= accum", "accum <= B[i]"):
@@ -350,8 +349,7 @@ def test_conditional_interstate_gt_lifts_to_max():
 def test_conditional_interstate_lt_lifts_to_min():
     """``<``/``<=`` guard, either operand order -> ``min``.
 
-    Runs ``wcr-scalar`` so this pair covers both emit modes; ``min`` under ``reduce-libnode``
-    is pinned by ``test_branched_min_is_lifted``.
+    Runs ``wcr-scalar`` so this pair covers both emit modes.
     """
     prefer = "wcr-scalar"
     for cond in ("B[i] < accum", "accum > B[i]", "B[i] <= accum", "accum >= B[i]"):
@@ -687,98 +685,6 @@ def test_array_slot_const_product_not_lifted_iv(prefer):
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
     assert lifted == 0
-
-
-# s314 / s316: branched min / max
-
-
-@dace.program
-def _branched_max(a: dace.float64[N], result: dace.float64[N]):
-    x = a[0]
-    for i in range(1, N):
-        if a[i] > x:
-            x = a[i]
-    result[0] = x
-
-
-def test_branched_max_is_lifted():
-    """TSVC s314: ``for i: if a[i] > x: x = a[i]``.
-
-    Frontend lowers the masked update into ``[ConditionalBlock, cond_prep_state,
-    post_state]`` joined by iedges ``{arr_sym: a[i]}`` and ``{guard_sym: arr_sym > x}``.
-    ``max`` is idempotent so the conditional is redundant at the WCR level
-    (``acc = max(acc, a[i])`` matches the masked semantics whether the guard fires or
-    not). Both emit modes are correct: this one runs ``wcr-scalar`` -- whose per-iteration
-    index inversion has to undo the ``range(1, N)`` offset, the ``a[1:N]`` case
-    ``_lift_wcr_scalar`` names s314 for -- and ``test_branched_min_is_lifted`` runs
-    ``reduce-libnode`` on the same matcher.
-    """
-    prefer = "wcr-scalar"
-    sdfg = _branched_max.to_sdfg(simplify=True)
-    sdfg.validate()
-    lifted = _prep_and_lift(sdfg, prefer)
-    assert lifted >= 1
-
-
-@dace.program
-def _branched_min(a: dace.float64[N], result: dace.float64[N]):
-    x = a[0]
-    for i in range(1, N):
-        if a[i] < x:
-            x = a[i]
-    result[0] = x
-
-
-def test_branched_min_is_lifted():
-    """TSVC s316: same shape as s314 with ``<`` (branched min), run under ``reduce-libnode``
-    so the s314/s316 pair still covers both emit modes."""
-    prefer = "reduce-libnode"
-    sdfg = _branched_min.to_sdfg(simplify=True)
-    sdfg.validate()
-    lifted = _prep_and_lift(sdfg, prefer)
-    assert lifted >= 1
-
-
-@dace.program
-def _strided_branched_min(a: dace.float64[N], result: dace.float64[N]):
-    x = a[1]
-    for i in range(1, N, 2):
-        if a[i] < x:
-            x = a[i]
-    result[0] = x
-
-
-def test_strided_branched_min_folds_only_visited_elements():
-    """A STRIDED branched min must fold only the elements the loop actually visits.
-
-    ``_extract_branched_minmax`` widened the per-iteration read but let ``_expand_over_loop``'s
-    ``loop_stride`` fall back to its default of 1, so ``range(1, N, 2)`` produced the reduce
-    subset ``a[1:N]`` instead of ``a[1:N:2]`` and every skipped even slot silently entered the
-    fold. Unlike the leaked-symbol failures this one is a pure VALUE bug -- the SDFG stays
-    valid and compiles clean -- so the fixture parks the global minimum on the even slots the
-    loop never reads: a correct fold returns the odd-slot minimum, the unstrided one returns
-    ``-100``.
-    """
-    sdfg = _strided_branched_min.to_sdfg(simplify=True)
-    sdfg.validate()
-    lifted = _prep_and_lift(sdfg, "reduce-libnode")
-    sdfg.validate()
-    assert lifted >= 1
-
-    steps = sorted(
-        str(rng[2])
-        for red, state in [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-        for rng in state.in_edges(red)[0].data.subset.ndrange()
-    )
-    assert steps == ["2"], f"the reduce must read only the stride-2 slots; got {steps}"
-
-    n = 16
-    a = np.array([-100.0 if k % 2 == 0 else float(k) for k in range(n)])
-    result = np.zeros(n)
-    sdfg(a=a.copy(), result=result, N=n)
-    assert np.isclose(result[0], a[1:n:2].min()), (
-        f"the lifted strided min folded elements the loop never visits: got {result[0]}, expected {a[1:n:2].min()}"
-    )
 
 
 def _build_interstate_edge_sum_sdfg(start: int, step: int):
@@ -2276,3 +2182,77 @@ def test_augassign_traversal_matches_old_generic_driver(build):
     assert new_sdfg.hash_sdfg() == old_sdfg.hash_sdfg(), (
         f"{build.__name__}: rewritten graph diverged from the old driver"
     )
+
+
+def test_a_tasklet_computing_more_than_the_fold_is_no_reduction():
+    """``acc + 2.0 * a[i]`` folds the doubled array: a ``Reduce`` over the raw one drops the factor."""
+
+    @dace.program
+    def doubled_sum(a: dace.float64[N], acc: dace.float64[1]):
+        for i in range(N):
+            with dace.tasklet:
+                x << a[i]
+                c << acc[0]
+                o >> acc[0]
+                o = c + 2.0 * x
+
+    sdfg = doubled_sum.to_sdfg(simplify=True)
+    assert LoopToReduce().apply_pass(sdfg, {}) is None
+
+
+def test_a_recurrence_the_chain_cannot_split_leaves_the_loop_alone():
+    """``acc * 0.5 + a[i]`` is no update of ``acc``: the retarget neither rewrites it nor spins on it."""
+
+    @dace.program
+    def decayed_sum(a: dace.float64[N], acc: dace.float64[1]):
+        for i in range(N):
+            with dace.tasklet:
+                x << a[i]
+                c << acc[0]
+                o >> acc[0]
+                o = c * 0.5 + x
+
+    sdfg = decayed_sum.to_sdfg(simplify=True)
+    assert retarget_wcr_accumulators(sdfg) is None
+
+
+def test_a_carried_input_the_tasklet_does_not_feed_is_no_accumulator():
+    """``x = y + a[i]; y = c`` reads ``y`` from the previous iteration, but nothing accumulates into it."""
+
+    @dace.program
+    def overwritten_seed(a: dace.float64[N], c: dace.float64[1], out: dace.float64[2]):
+        x = 0.0
+        y = 1.0
+        for i in range(N):
+            x = y + a[i]
+            y = c[0]
+        out[0] = x
+        out[1] = y
+
+    sdfg = overwritten_seed.to_sdfg(simplify=True)
+    LoopToReduce().apply_pass(sdfg, {})
+    a, c, out = np.arange(1.0, 5.0), np.array([7.0]), np.zeros(2)
+    sdfg(a=a, c=c, out=out, N=4)
+    assert np.allclose(out, [11.0, 7.0])
+
+
+def test_a_staging_copy_read_after_the_loop_is_kept():
+    """``t = s + a[i]; s = t`` folded into ``s`` must not leave a stale ``t`` to a read after the loop."""
+
+    @dace.program
+    def staged_sum(a: dace.float64[N], out: dace.float64[2]):
+        s = 1.0
+        t = 0.0
+        for i in range(N):
+            t = s + a[i]
+            s = t
+        out[0] = t
+        out[1] = s
+
+    sdfg = staged_sum.to_sdfg(simplify=False)
+    LoopToReduce().apply_pass(sdfg, {})
+    collapse_accumulator_chains(sdfg)
+    retarget_wcr_accumulators(sdfg)
+    a, out = np.arange(1.0, 5.0), np.zeros(2)
+    sdfg(a=a, out=out, N=4)
+    assert np.allclose(out, [11.0, 11.0])

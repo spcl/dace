@@ -34,23 +34,11 @@ from dace.transformation import transformation as xf
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.analysis import loop_analysis
 
-# Ops here are commutative by construction -> skip is_op_commutative (returns None
-# for max/min: Python builtins choke on symbolic args).
-_BINOP_TO_WCR: dict[type, str] = {
-    ast.Add: "lambda a, b: a + b",
-    ast.Mult: "lambda a, b: a * b",
-    ast.BitAnd: "lambda a, b: a & b",
-    ast.BitOr: "lambda a, b: a | b",
-    ast.BitXor: "lambda a, b: a ^ b",
-}
-_BOOLOP_TO_WCR: dict[type, str] = {
-    ast.Or: "lambda a, b: a | b",
-    ast.And: "lambda a, b: a & b",
-}
-_CALL_TO_WCR: dict[str, str] = {
-    "max": "lambda a, b: max(a, b)",
-    "min": "lambda a, b: min(a, b)",
-}
+#: The WCR of each update operator a ``Reduce`` folds: ``AugAssignToWCR.increment``'s, except subtraction, which is no
+#: fold of the read array over the accumulator.
+_REDUCE_WCR = {op: f"lambda a, b: {op}(a, b)" for op in ("min", "max")}
+_REDUCE_WCR |= {op: f"lambda a, b: a {op} b" for op in ("+", "*", "^", "&", "|")}
+_REDUCE_WCR |= {"or": _REDUCE_WCR["|"], "and": _REDUCE_WCR["&"]}
 # Guard `lhs <cmp> rhs` with body `sym = arr[i]`: reduction = max iff guard fires when arr > sym.
 _CMP_GT = (ast.Gt, ast.GtE)
 _CMP_LT = (ast.Lt, ast.LtE)
@@ -464,9 +452,11 @@ def refused_on(loop: LoopRegion, names: set[str], refusals: dict[LoopRegion, Any
 
 
 def only_read_modify_written(loop: LoopRegion, name: str) -> bool:
-    """Whether every access of ``name`` in ``loop`` is a read-modify-write
-    (:func:`~dace.transformation.interstate.loop_to_map.rmw_edges`) or already a WCR write, and no condition or
-    interstate edge reads it: a WCR then leaves it without a conflict."""
+    """Whether every access of ``name`` in ``loop`` is an update's own read-modify-write
+    (:func:`~dace.transformation.interstate.loop_to_map.rmw_edges`, :func:`read_by_its_update`) or already a WCR write,
+    and no condition or interstate edge reads it: a WCR then leaves it without a conflict. Any other reader (a term of
+    the increment, householder's ``V @ Q[k:, :]`` beside ``Q[k:, :] -= ...``) sees the accumulated value, which a WCR
+    does not order."""
     from dace.transformation.interstate.loop_to_map import rmw_edges
 
     if name in loop_analysis.control_reads(loop):
@@ -479,11 +469,35 @@ def only_read_modify_written(loop: LoopRegion, name: str) -> bool:
         for node in state.data_nodes():
             if node.data != name:
                 continue
-            if any(
-                id(e) not in writes and e.data.wcr is None for e in state.in_edges(node) if not e.data.is_empty()
-            ) or any(id(e) not in reads for e in state.out_edges(node) if not e.data.is_empty()):
+            if any(id(e) not in writes and e.data.wcr is None for e in data_in_edges(state, node)):
+                return False
+            if any(id(e) not in reads or not read_by_its_update(state, e, name) for e in data_out_edges(state, node)):
                 return False
     return True
+
+
+def read_by_its_update(state: SDFGState, read: gr.MultiConnectorEdge[mm.Memlet], name: str) -> bool:
+    """Whether the tasklet ``read`` reaches, past a staging copy of the load, writes ``name`` back, past one of the
+    store (``staging_successor``)."""
+    reader = state.memlet_path(read)[-1].dst
+    if isinstance(reader, nodes.AccessNode) and state.out_degree(reader) == 1:
+        reader = state.memlet_path(state.out_edges(reader)[0])[-1].dst
+    if not isinstance(reader, nodes.Tasklet):
+        return False
+    written = [state.memlet_path(e)[-1].dst for e in data_out_edges(state, reader)]
+    for _ in range(3):  # ``tasklet -> tmp -> copy -> tmp -> name`` at most
+        if any(isinstance(n, nodes.AccessNode) and n.data == name for n in written):
+            return True
+        staged = [e for n in written if isinstance(n, nodes.AccessNode) for e in data_out_edges(state, n)]
+        staged += [
+            e
+            for n in written
+            if isinstance(n, nodes.Tasklet) and len(data_in_edges(state, n)) == 1
+            for e in data_out_edges(state, n)
+            if AugAssignToWCR.is_copy(n, e.src_conn, data_in_edges(state, n)[0].dst_conn)
+        ]
+        written = [state.memlet_path(e)[-1].dst for e in staged]
+    return False
 
 
 def names_across_nesting(state: SDFGState, name: str) -> dict[SDFG, set[str]]:
@@ -779,20 +793,22 @@ def _chase_forward_to_accum(state, sdfg: SDFG, start_node, start_subset, facts: 
     Lets ``_extract`` see the frontend's ``compute -> tmp -> assign-copy -> accumulator``
     staging: without it ``_scalar_equiv`` rejects an accumulator like ``sum_out: float64[N]``
     written at ``[0]`` (descriptor not scalar-like though the access is).
+
+    :returns: The final ``(name, subset)`` and the access nodes walked, in order.
     """
     cur, cur_sub = start_node, start_subset
-    visited = set()
+    visited = []
     while True:
-        if id(cur) in visited:
-            return cur.data, cur_sub
-        visited.add(id(cur))
+        if cur in visited:
+            return cur.data, cur_sub, visited
+        visited.append(cur)
         desc = sdfg.arrays.get(cur.data)
         if desc is None or not desc.transient:
-            return cur.data, cur_sub
+            return cur.data, cur_sub, visited
         out_edges = state.out_edges(cur)
         in_edges = state.in_edges(cur)
         if len(out_edges) != 1 or len(in_edges) != 1:
-            return cur.data, cur_sub
+            return cur.data, cur_sub, visited
         oe = out_edges[0]
         if (
             not isinstance(oe.dst, nodes.AccessNode)
@@ -800,7 +816,7 @@ def _chase_forward_to_accum(state, sdfg: SDFG, start_node, start_subset, facts: 
             or oe.data.subset is None
             or _one_elem(oe.data.subset, facts) != _one_elem(cur_sub, facts)
         ):
-            return cur.data, cur_sub
+            return cur.data, cur_sub, visited
         cur, cur_sub = oe.dst, oe.data.subset
 
 
@@ -1019,25 +1035,6 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
         if tasklet.code.language != dtypes.Language.Python:
             return None
 
-        # Classify the tasklet's single-assignment body.
-        try:
-            tree = ast.parse((tasklet.code.as_string or "").strip())
-        except SyntaxError:
-            return None
-        if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-            return None
-        rhs = tree.body[0].value
-        if isinstance(rhs, ast.BinOp):
-            wcr = _BINOP_TO_WCR.get(type(rhs.op))
-        elif isinstance(rhs, ast.BoolOp) and len(rhs.values) == 2:
-            wcr = _BOOLOP_TO_WCR.get(type(rhs.op))
-        elif isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2:
-            wcr = _CALL_TO_WCR.get(rhs.func.id)
-        else:
-            wcr = None
-        if wcr is None:
-            return None
-
         # Tasklet must have exactly 2 data inputs and 1 data output.
         def _has_data(e):
             return e.data is not None and not e.data.is_empty()
@@ -1049,6 +1046,9 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
 
         write_edge = out_edges[0]
         if not isinstance(write_edge.dst, nodes.AccessNode):
+            return None
+        update = AugAssignToWCR.assignment(tasklet, write_edge.src_conn)
+        if update is None:
             return None
         accum = write_edge.dst.data
         if accum not in sdfg.arrays:
@@ -1069,7 +1069,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
         # Chase forward through the copy chain (``compute -> tmp -> assign-copy -> accumulator``)
         # so the carry-input check can match an accumulator whose descriptor is not
         # scalar-like (``sum_out: float64[N]`` written at ``[0]``) but whose access is.
-        final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset, facts)
+        final_accum, final_subset, chain = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset, facts)
 
         # Resolve each tasklet input.
         resolved = []
@@ -1089,9 +1089,9 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
                     or _one_elem(e.data.subset, facts) != _one_elem(pred.data.subset, facts)
                 ):
                     return None
-                resolved.append((pred.src.data, copy.deepcopy(pred.data.subset)))
+                resolved.append((pred.src.data, copy.deepcopy(pred.data.subset), e.dst_conn))
             else:
-                resolved.append((src.data, e.data.subset))
+                resolved.append((src.data, e.data.subset, e.dst_conn))
 
         # Accumulator input must be loop-carried: resolved data is written inside the loop,
         # so its value flows from a prior iteration. This makes ``acc = acc op x`` a reduction
@@ -1102,32 +1102,42 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
         carried = {an.data for st in loop.states() for an in st.data_nodes() if st.in_degree(an) > 0}
         accum_ok = False
         array, arr_subset = None, None
-        carried_accum, carried_sub = None, None
-        for name, sub in resolved:
+        carried_accum, carried_sub, carried_conn, array_conn = None, None, None, None
+        for name, sub, conn in resolved:
             if _uses(sub, loop_var_sym):
                 if array is not None:
                     return None
-                array, arr_subset = name, sub
+                array, arr_subset, array_conn = name, sub, conn
             elif (
                 _one_elem(sub, facts) == 1
                 and name in carried
                 and (
                     (name == accum and sub == write_subset)
                     or (name == final_accum and sub == final_subset)
-                    or (name != accum and _scalar_equiv(sdfg, name, accum))
+                    or (name == final_accum and name != accum and _scalar_equiv(sdfg, name, accum))
                 )
             ):
                 accum_ok = True
-                carried_accum, carried_sub = name, sub
+                carried_accum, carried_sub, carried_conn = name, sub, conn
         if not accum_ok or array is None or array == accum:
             return None
+        # The tasklet folds exactly the two inputs: ``Reduce`` reads the array raw, so anything else the tasklet
+        # computes (``acc + 2.0 * a[i]``, ``acc * 0.5 + a[i]``) is no fold of it.
+        found = AugAssignToWCR.increment(update.value, carried_conn)
+        if found is None or found[0] not in _REDUCE_WCR:
+            return None
+        if not (isinstance(found[1], ast.Name) and found[1].id == array_conn):
+            return None
+        wcr = _REDUCE_WCR[found[0]]
 
         # The carried accumulator (survives across iterations, read downstream) may differ
         # from the tasklet's write target when the frontend stages via a temp
         # (``tmp = acc + a[i]; acc = tmp``). Reduce into the carried accumulator, not the temp:
         # it holds the pre-loop seed so the seeded ``Reduce`` (identity=None) folds correctly,
-        # and dropping the temp is safe (it doesn't outlive the body).
-        if carried_accum is not None and carried_accum != accum:
+        # and the temp must not outlive the body.
+        if carried_accum != accum:
+            if staged_elsewhere(sdfg, loop, [n for n in chain if n.data != carried_accum]):
+                return None
             accum, write_subset = carried_accum, carried_sub
 
         # A pure reduction READS the folded array and writes ONLY the accumulator, at a slot
@@ -1156,7 +1166,12 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
         allowed = {accum} | ({carried_accum} if carried_accum is not None else set())
         for st in loop.states():
             for an in st.data_nodes():
-                if st.in_degree(an) == 0 or an.data in allowed:
+                if st.in_degree(an) == 0:
+                    continue
+                if an.data in allowed:
+                    # Another write of the accumulator ends the fold (``acc = acc + a[i]; acc = b``)
+                    if an not in chain:
+                        return None
                     continue
                 if not sdfg.arrays[an.data].transient:
                     return None
@@ -1279,154 +1294,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> _Reducti
             ),
         )
 
-    # Branched min/max pattern (TSVC s314, s316): ``for i: if a[i] > x: x = a[i]``.
-    # Frontend lowers to 3 blocks ``[ConditionalBlock, cond_prep_state, post_state]``
-    # threading the cmp through a temp symbol:
-    #   (block) -> (cond_prep) {arr_sym: arr[i]}
-    #   (cond_prep) -> (if_N) {guard_sym: arr_sym <cmp> accum}
-    #   if_N TRUE branch body: ``accum = arr[i]`` (passthrough copy)
-    # max/min idempotent -> the conditional is redundant at wcr level
-    # (``acc = max(acc, arr[i])`` correct whether or not the guard fires). Both lifts
-    # consume the resulting ``_Reduction`` as-is.
-    info = _extract_branched_minmax(loop, sdfg, loop_var_sym, start, end, stride)
-    if info is not None:
-        return info
-
     return None
-
-
-def _extract_branched_minmax(
-    loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.Symbol, start, end, stride
-) -> _Reduction | None:
-    """Match ``for i: if arr[i] <cmp> accum: accum = arr[i]`` where the frontend lowers
-    the masked update into:
-
-    - one ``ConditionalBlock`` (single TRUE branch guarded by a temp symbol),
-    - one ``cond_prep`` SDFGState hubbing the guard-computing iedge,
-    - one trailing empty SDFGState,
-
-    threaded by iedges ``{arr_sym: arr[i]}`` and ``{guard_sym: arr_sym <cmp> accum}``.
-
-    Returns ``_Reduction`` (``wcr`` = ``max`` for ``>``/``>=``, ``min`` for ``<``/``<=``),
-    or ``None`` on any structural/semantic failure.
-    """
-    facts = sdfg.facts()
-    blocks = loop.nodes()
-    cond_blocks = [b for b in blocks if isinstance(b, ConditionalBlock)]
-    if len(cond_blocks) != 1:
-        return None
-    cb = cond_blocks[0]
-    if len(cb.branches) != 1:
-        return None
-    branch_cond, branch_body = cb.branches[0]
-    if branch_cond is None:
-        return None
-    guard_sym = branch_cond.as_string.strip()
-    if not guard_sym.isidentifier():
-        return None
-
-    # Walk one hop back through iedges to where guard_sym is assigned.
-    guard_iedge = next(
-        (ie for ie in loop.edges() if ie.dst is cb and ie.data is not None and guard_sym in ie.data.assignments),
-        None,
-    )
-    if guard_iedge is None:
-        return None
-    guard_rhs = guard_iedge.data.assignments[guard_sym]
-    try:
-        guard_tree = ast.parse(guard_rhs.strip().lstrip("(").rstrip(")"), mode="eval").body
-    except SyntaxError:
-        return None
-    if not isinstance(guard_tree, ast.Compare) or len(guard_tree.ops) != 1:
-        return None
-    cmp_op = guard_tree.ops[0]
-    if not isinstance(cmp_op, _CMP_GT + _CMP_LT):
-        return None
-    if not (isinstance(guard_tree.left, ast.Name) and isinstance(guard_tree.comparators[0], ast.Name)):
-        return None
-    cmp_lhs_sym, cmp_rhs_sym = guard_tree.left.id, guard_tree.comparators[0].id
-
-    # One more hop back: the iedge into ``guard_iedge.src`` assigns the array-temp symbol.
-    prep_state = guard_iedge.src
-    arr_iedge = next(
-        (ie for ie in loop.edges() if ie.dst is prep_state and ie.data is not None and ie.data.assignments),
-        None,
-    )
-    if arr_iedge is None:
-        return None
-    arr_sym = None
-    accum_name = None
-    cmp_is_gt = None
-    if cmp_lhs_sym in arr_iedge.data.assignments:
-        arr_sym, accum_name = cmp_lhs_sym, cmp_rhs_sym
-        # cmp is ``arr_sym <op> accum`` -- ``>``/``>=`` => max
-        cmp_is_gt = isinstance(cmp_op, _CMP_GT)
-    elif cmp_rhs_sym in arr_iedge.data.assignments:
-        arr_sym, accum_name = cmp_rhs_sym, cmp_lhs_sym
-        # cmp is ``accum <op> arr_sym`` -- ``<``/``<=`` => max (guard fires when accum
-        # smaller, i.e. arr_sym larger)
-        cmp_is_gt = isinstance(cmp_op, _CMP_LT)
-    if arr_sym is None:
-        return None
-
-    arr_rhs = arr_iedge.data.assignments[arr_sym]
-    try:
-        arr_tree = ast.parse(arr_rhs.strip(), mode="eval").body
-    except SyntaxError:
-        return None
-    if not isinstance(arr_tree, ast.Subscript) or not isinstance(arr_tree.value, ast.Name):
-        return None
-    array_name = arr_tree.value.id
-    desc = sdfg.arrays.get(array_name)
-    if desc is None:
-        return None
-
-    # TRUE branch body must be a single state whose only effect is ``accum_name = arr[i]``
-    # (or ``= arr_sym``): find an AccessNode write to ``accum_name`` with one in-edge
-    # tracing back through a passthrough chain to a read of ``array_name``.
-    branch_states = [s for s in branch_body.nodes() if isinstance(s, SDFGState)]
-    if len(branch_states) != 1:
-        return None
-    body_state = branch_states[0]
-
-    accum_writes = [
-        n
-        for n in body_state.nodes()
-        if isinstance(n, nodes.AccessNode) and n.data == accum_name and body_state.in_degree(n) > 0
-    ]
-    array_reads = [
-        n
-        for n in body_state.nodes()
-        if isinstance(n, nodes.AccessNode) and n.data == array_name and body_state.out_degree(n) > 0
-    ]
-    if len(accum_writes) != 1 or len(array_reads) != 1:
-        return None
-
-    # Per-iteration array subset (the carry-input form ``arr[i]``).
-    array_read_edges = [e for e in body_state.out_edges(array_reads[0]) if e.data and not e.data.is_empty()]
-    if len(array_read_edges) != 1:
-        return None
-    array_subset = array_read_edges[0].data.subset
-    if not _uses(array_subset, loop_var_sym):
-        return None
-    if _one_elem(array_subset, facts) != 1:
-        return None
-
-    # Accumulator slot from the body's write to accum_name.
-    accum_write_edges = [e for e in body_state.in_edges(accum_writes[0]) if e.data and not e.data.is_empty()]
-    if len(accum_write_edges) != 1:
-        return None
-    accum_subset = accum_write_edges[0].data.subset
-    if _one_elem(accum_subset, facts) != 1 or _uses(accum_subset, loop_var_sym):
-        return None
-
-    wcr = _CALL_TO_WCR["max"] if cmp_is_gt else _CALL_TO_WCR["min"]
-    # ``stride`` must reach the widening: dropping it folds every element in ``[start, end]``,
-    # including the ones a strided loop skips, which silently changes the min/max.
-    expanded = _expand_over_loop(array_subset, loop_var_sym, start, end, facts, stride)
-    if expanded is None:
-        return None
-    return _Reduction(wcr, accum_name, accum_subset, array_name, expanded)
 
 
 def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
@@ -1553,7 +1421,7 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
     # ``info.array_subset`` is the union-over-iterations extent. Project each axis whose
     # range spans the loop (``loop_start`` -> ``loop_end``) back onto ``loop_var + per-iter
     # offset``; loop-invariant constant slices stay as-is. Covers full-array (``a[0:N]`` for
-    # ``range(N)``) and offset (``a[1:N]`` for ``range(1, N)`` -- TSVC s314).
+    # ``range(N)``) and offset (``a[1:N]`` for ``range(1, N)``).
     iter_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
     loop_start = loop_analysis.get_init_assignment(loop)
     loop_end = loop_analysis.get_loop_end(loop)
@@ -1738,6 +1606,19 @@ def slot_accessed_besides(
     return accum_name in control_flow_reads(loop)
 
 
+def staged_elsewhere(sdfg: SDFG, loop: LoopRegion, staged: list[nodes.AccessNode]) -> bool:
+    """Whether the containers of the staging copies ``staged`` of an accumulation in ``loop`` are used anywhere else:
+    a fold drops them or changes what they hold."""
+    names = {node.data for node in staged}
+    if not names:
+        return False
+    if names & loop_analysis.control_reads(loop):
+        return True
+    if any(n.data in names and n not in staged for st in loop.states() for n in st.data_nodes()):
+        return True
+    return loop_analysis.read_outside(sdfg, loop, names, names)
+
+
 def control_flow_reads(loop: LoopRegion) -> set[str]:
     """Every name ``loop`` reads outside its dataflow: interstate edges, branch conditions, and the
     condition, init and update of ``loop`` and of every loop nested in it."""
@@ -1766,9 +1647,9 @@ def _lift_wcr_scalar_retarget(
     from ``accum[accum_subset]`` to a fresh transient scalar ``_priv_<accum>``.
 
     Preserves the body (incl. any compute chain feeding the accumulator); only the WCR
-    edge's destination changes. Same Map-able shape as ``PrivatizeReductionAccumulator``
-    via ``AugAssignToWCR + LoopToMap + PRA``, but parallelisation happens later (downstream
-    ``LoopToMap``) not here.
+    edge's destination changes. Same Map-able shape as
+    :func:`~dace.transformation.passes.canonicalize.privatize_reduction_accumulator.privatize_reduction_accumulator`
+    after ``AugAssignToWCR + LoopToMap``, but parallelisation happens later (downstream ``LoopToMap``) not here.
     """
     import dace
 
@@ -1923,9 +1804,8 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
     Accepts transient (TSVC s4115 ``s``) and non-transient accumulators; either way the
     privatised scalar is seeded/written-back at the boundary.
 
-    :returns: ``(state, final_tasklet, carry_in_edge, value_in_edge, first_write_edge,
-              last_write_edge, accum_source_an, accum_sink_an, wcr_lambda, accum_name,
-              accum_subset)`` or ``None``.
+    :returns: ``(state, final_tasklet, carry_in_edge, first_write_edge, last_write_edge, accum_source_an,
+              accum_sink_an, (op, inc), accum_name, accum_subset)`` or ``None``.
     """
     facts = sdfg.facts()
     if not loop.loop_variable:
@@ -1975,6 +1855,7 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
                 continue
             cur_edge = last_write_edge
             cur_src = cur_edge.src
+            staged: list[nodes.AccessNode] = []
             while isinstance(cur_src, nodes.AccessNode):
                 desc = sdfg.arrays.get(cur_src.data)
                 if (
@@ -1984,6 +1865,7 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
                     or state.out_degree(cur_src) != 1
                 ):
                     break
+                staged.append(cur_src)
                 prev = list(state.in_edges(cur_src))[0]
                 cur_edge = prev
                 cur_src = cur_edge.src
@@ -2010,32 +1892,18 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             if str(carry_subset) != str(write_subset):
                 continue
 
-            # Validate the final tasklet's body is a known WCR-able op.
-            try:
-                tree = ast.parse((final_tasklet.code.as_string or "").strip())
-            except SyntaxError:
-                continue
-            if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
-                continue
-            rhs = tree.body[0].value
-            if isinstance(rhs, ast.BinOp):
-                wcr = _BINOP_TO_WCR.get(type(rhs.op))
-            elif isinstance(rhs, ast.BoolOp) and len(rhs.values) == 2:
-                wcr = _BOOLOP_TO_WCR.get(type(rhs.op))
-            elif isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2:
-                wcr = _CALL_TO_WCR.get(rhs.func.id)
-            else:
-                wcr = None
-            if wcr is None:
-                continue
-
             # Tasklet: exactly 2 data inputs (carry + value), 1 data output.
             data_in = [e for e in state.in_edges(final_tasklet) if e.data is not None and not e.data.is_empty()]
             data_out = [e for e in state.out_edges(final_tasklet) if e.data is not None and not e.data.is_empty()]
             if len(data_in) != 2 or len(data_out) != 1:
                 continue
-            value_in_edge = next((e for e in data_in if e is not carry_in_edge), None)
-            if value_in_edge is None:
+            if carry_in_edge not in data_in:
+                continue
+            # The update ``out = carry <op> inc``, any other computation of the carry (``carry * 0.5 + x``) being no
+            # accumulation. ``first_write_edge`` below is this output.
+            assign = AugAssignToWCR.assignment(final_tasklet, data_out[0].src_conn)
+            update = None if assign is None else AugAssignToWCR.increment(assign.value, carry_in_edge.dst_conn)
+            if update is None:
                 continue
 
             # The chain must carry the tasklet's RESULT into the accumulator. Walking back from the
@@ -2066,16 +1934,19 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             ):
                 continue
 
+            # The staging copies then hold the increment, not the running value.
+            if staged_elsewhere(sdfg, loop, staged):
+                continue
+
             return (
                 state,
                 final_tasklet,
                 carry_in_edge,
-                value_in_edge,
                 first_write_edge,
                 last_write_edge,
                 src_an,
                 sink_an,
-                wcr,
+                update,
                 data_name,
                 copy.deepcopy(carry_subset),
             )
@@ -2096,12 +1967,11 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
         state,
         final_tasklet,
         carry_in_edge,
-        value_in_edge,
         first_write_edge,
         last_write_edge,
         src_an,
         sink_an,
-        wcr,
+        update,
         accum_name,
         accum_subset,
     ) = info
@@ -2112,30 +1982,9 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
     priv_name, _ = root.add_scalar(f"_priv_{accum_name}", dtype=desc.dtype, transient=True, find_new_name=True)
 
     # rewrite the tasklet's RHS to drop the carry operand
-    tree = ast.parse((final_tasklet.code.as_string or "").strip())
-    assign_node = tree.body[0]
-    rhs = assign_node.value
+    AugAssignToWCR.write_increment(final_tasklet, first_write_edge.src_conn, *update)
+    wcr = _REDUCE_WCR["+" if update[0] == "-" else update[0]]
     carry_conn = carry_in_edge.dst_conn
-
-    new_rhs = None
-    if isinstance(rhs, ast.BinOp):
-        if isinstance(rhs.left, ast.Name) and rhs.left.id == carry_conn:
-            new_rhs = rhs.right
-        elif isinstance(rhs.right, ast.Name) and rhs.right.id == carry_conn:
-            new_rhs = rhs.left
-    elif isinstance(rhs, ast.BoolOp):
-        kept = [v for v in rhs.values if not (isinstance(v, ast.Name) and v.id == carry_conn)]
-        if len(kept) == 1:
-            new_rhs = kept[0]
-    elif isinstance(rhs, ast.Call):
-        kept_args = [a for a in rhs.args if not (isinstance(a, ast.Name) and a.id == carry_conn)]
-        if len(kept_args) == 1:
-            new_rhs = kept_args[0]
-    if new_rhs is None:
-        # Could not simplify -- leave the SDFG untouched.
-        return
-
-    final_tasklet.code.code = [ast.copy_location(ast.Assign(targets=assign_node.targets, value=new_rhs), assign_node)]
 
     state.remove_edge(carry_in_edge)
     if carry_conn in final_tasklet.in_connectors:

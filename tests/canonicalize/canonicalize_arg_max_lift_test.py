@@ -241,25 +241,39 @@ def test_refuses_subtraction_op():
 # don't actually compute argmax. The matcher must refuse all of these.
 
 
-def test_lookalike_refuses_non_unit_stride():
-    """``for i in range(0, N, 2)`` -- stride > 1 means the reduce would only
-    see half the array; refuse so the loop stays sequential until a
-    gather-then-reduce variant lands."""
+def test_strided_value_fold_reads_only_the_visited_elements():
+    """``range(1, N, 2)`` folds ``a[1:N:2]``.
+
+    The global minimum sits on the even slots the loop never reads, so a fold over ``a[1:N]`` returns ``-100``.
+    """
 
     @dace.program
-    def kernel_lookalike_refuses_non_unit_stride(a: dace.float64[N], result: dace.float64[1]):
-        x = a[0]
-        for i in range(0, N, 2):
-            if a[i] > x:
+    def strided_min(a: dace.float64[N], out: dace.float64[1]):
+        x = a[1]
+        for i in range(1, N, 2):
+            if a[i] < x:
                 x = a[i]
-        result[0] = x
+        out[0] = x
 
-    res = ArgMaxLift().apply_pass(kernel_lookalike_refuses_non_unit_stride.to_sdfg(simplify=True), {})
-    assert res is None, "stride>1 must be refused"
+    sdfg = strided_min.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+    steps = [
+        str(rng[2])
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, Reduce)
+        for rng in state.in_edges(node)[0].data.subset.ndrange()
+    ]
+    assert steps == ["2"]
+    a = np.array([-100.0 if k % 2 == 0 else float(k) for k in range(16)])
+    out = np.zeros(1)
+    sdfg(a=a.copy(), out=out, N=16)
+    assert out[0] == a[1:16:2].min()
 
 
 def test_lookalike_refuses_symbolic_stride():
-    """``for i in range(0, N, K)`` with symbolic ``K`` -- same as above; the
+    """``for i in range(0, N, K)`` with symbolic ``K``; the
     integer-stride check throws ``TypeError`` on the symbol and the matcher
     refuses."""
     K = dace.symbol("K_arg_stride")
@@ -2031,6 +2045,51 @@ def test_partial_nan_propagating_max_canonicalizes_to_parallel_code():
     out = np.zeros(9)
     sdfg(a=a.copy(), out=out, B=9, J=5, K=33)
     _assert_bits_equal(out, _nan_max_reference(a, np.zeros(9)))
+
+
+def test_value_fold_keeps_a_seed_that_is_no_element_of_the_array():
+    """``x = 0.25; if x < a[i]: x = a[i]`` folds into the seed, whichever side of the guard the carrier sits on."""
+
+    @dace.program
+    def seeded_max(a: dace.float64[N], out: dace.float64[1]):
+        x = 0.25
+        for i in range(1, N):
+            if x < a[i]:
+                x = a[i]
+        out[0] = x
+
+    sdfg = seeded_max.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    assert _num_loops(sdfg) == 0
+    for a, expected in (([9.0, 0.5, 0.75], 0.75), ([9.0, -1.0, -2.0], 0.25)):
+        out = np.zeros(1)
+        sdfg(a=np.array(a), out=out, N=3)
+        assert out[0] == expected
+
+
+def test_scaled_update_is_no_fold_of_the_array():
+    """``if a[i] > x: x = 2.0 * a[i]`` updates with another value than it compares, so it stays a loop."""
+
+    @dace.program
+    def scaled_symbol(a: dace.float64[N], out: dace.float64[1]):
+        x = 0.25
+        for i in range(N):
+            if a[i] > x:
+                x = 2.0 * a[i]
+        out[0] = x
+
+    @dace.program
+    def scaled_data(a: dace.float64[N], out: dace.float64[1]):
+        for i in range(N):
+            if a[i] > out[0]:
+                out[0] = 2.0 * a[i]
+
+    for program in (scaled_symbol, scaled_data):
+        sdfg = program.to_sdfg(simplify=True)
+        assert not ArgMaxLift().apply_pass(sdfg, {})
+        out = np.array([0.25])
+        sdfg(a=np.array([5.0, 7.0, 3.0]), out=out, N=3)
+        assert out[0] == 10.0
 
 
 if __name__ == "__main__":

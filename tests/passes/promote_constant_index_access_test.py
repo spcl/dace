@@ -617,7 +617,7 @@ def test_refuses_reduction_accumulator_rmw():
     Asserts (a) PCIA returns ``None`` (no promotions), (b) end-to-end the
     SDFG computes the right sum. Reduction-shape slots are intentionally
     left for the downstream reduction-to-WCR path
-    (``AugAssignToWCR -> LoopToMap -> PrivatizeReductionAccumulator``)
+    (``AugAssignToWCR -> LoopToMap -> privatize_reduction_accumulator``)
     which DOES emit init + writeback."""
     n = 64
     sdfg = _rmw_accumulator.to_sdfg(simplify=True)

@@ -4,6 +4,7 @@
 import contextlib
 import copy
 import enum
+import itertools
 import warnings
 from collections import ChainMap, Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -38,6 +39,7 @@ from dace.sdfg.state import (
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 from dace.transformation import transformation as xf
+from dace.transformation.dataflow.wcr_conversion import wcr_operator
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 from dace.transformation.passes.parallelization.facts import SolverFacts
 
@@ -614,6 +616,12 @@ def rmw_edges(states: Iterable[SDFGState], names: frozenset[str] | None = None) 
                     writes.update(id(w) for w in fed)
                     containers.add(node.data)
     return writes, reads, containers
+
+
+def reduction_family(wcr: str) -> str:
+    """What identifies a WCR's operator: a difference accumulates like a sum; any other reducer stands for itself."""
+    op = wcr_operator(wcr)
+    return wcr if op is None else ("+" if op == "-" else op)
 
 
 def counted_write(sdfg: SDFG, state: SDFGState, dn: nodes.AccessNode, e: gr.MultiConnectorEdge[memlet.Memlet]) -> bool:
@@ -2289,9 +2297,25 @@ class LoopLift:
                             data,
                             writes=[reps[x].subset, reps[y].subset],
                         )
-            # WCR writes combine with each other in any order, but not with a plain write: ``A[N-1] += 1`` on
-            # one iteration and ``A[i] = ...`` on iteration N-1 race once the loop is a map.
-            accumulated = {str(m.subset): m for m in mmlts if m.wcr is not None}
+            # WCR writes combine with each other in any order only under one operator: ``s += x`` and ``s *= y`` on
+            # two iterations do not commute.
+            combines = [m for m in mmlts if m.wcr is not None]
+            for x, y in itertools.combinations(combines, 2):
+                if (
+                    reduction_family(x.wcr) != reduction_family(y.wcr)
+                    and _writes_may_overlap(x, y, itersym, step, start, end, varying, self.solver_facts, self)
+                    and not self.waives(data, permissive)
+                ):
+                    return refuse(
+                        Refusal.OVERLAPPING_WRITES,
+                        f"accumulations of {data} under two operators may overlap across iterations: "
+                        f"{x.subset} and {y.subset}",
+                        data,
+                        writes=[x.subset, y.subset],
+                    )
+            # Nor with a plain write: ``A[N-1] += 1`` on one iteration and ``A[i] = ...`` on iteration N-1 race once
+            # the loop is a map.
+            accumulated = {str(m.subset): m for m in combines}
             for acc in accumulated.values():
                 for plain in reps:
                     if _writes_may_overlap(

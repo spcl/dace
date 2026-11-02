@@ -22,6 +22,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.dataflow import AugAssignToWCR
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N = 4
 Nsym = dace.symbol("Nsym", dtype=dace.int64)
@@ -137,6 +138,28 @@ def test_wcr_prefix_scan_computes_the_sequential_result():
 
     assert np.allclose(out, np.concatenate(([0.0], np.cumsum(b)[:-1])))
     assert np.allclose(acc, b.sum())
+
+
+def test_accumulations_under_two_operators_keep_the_loop_sequential():
+    """``s += a[i]; s *= b[i]`` do not commute across iterations, whichever WCR each update became."""
+
+    @dace.program
+    def add_then_scale(a: dace.float64[Nsym], b: dace.float64[Nsym], acc: dace.float64[1]):
+        for i in range(Nsym):
+            acc[0] += a[i]
+            acc[0] *= b[i]
+
+    sdfg = add_then_scale.to_sdfg(simplify=False)
+    sdfg.name = "add_then_scale_wcr"
+    canonicalize(sdfg, validate=True)
+    n = 64
+    a, b = np.linspace(0.5, 1.5, n), np.linspace(1.1, 0.9, n)
+    expected = 1.0
+    for x, y in zip(a, b):
+        expected = (expected + x) * y
+    acc = np.ones(1)
+    sdfg(a=a, b=b, acc=acc, Nsym=n)
+    assert np.isclose(acc[0], expected)
 
 
 if __name__ == "__main__":

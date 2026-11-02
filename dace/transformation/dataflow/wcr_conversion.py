@@ -327,7 +327,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     copyback = transformation.PatternNode(nodes.Tasklet)
 
     #: Order-independent update operators and their WCR operator; subtraction takes the accumulator on its left only
-    _BINOPS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.BitXor: "^"}
+    _BINOPS = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.BitXor: "^", ast.BitAnd: "&", ast.BitOr: "|"}
     _BOOLOPS = {ast.Or: "or", ast.And: "and"}
     _FUNCTIONS = ("min", "max")
 

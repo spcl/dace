@@ -370,7 +370,7 @@ def test_length_one_array_target_falls_back_to_atomic():
     """A length-1 ``Array`` accumulator (``arr[0]``) is emitted by DaCe as a
     ``T*`` pointer slot, which OpenMP's ``reduction(...)`` clause cannot use
     (it needs a scalar VARIABLE). Detection must refuse this case; the atomic
-    path must fire instead. ``PrivatizeReductionAccumulator`` is the upstream
+    path must fire instead. ``privatize_reduction_accumulator`` is the upstream
     rewrite that converts such targets into a transient ``Scalar``; without
     it, atomic is the correct fallback.
 

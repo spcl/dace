@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for ``PrivatizeReductionAccumulator``.
+"""Tests for ``privatize_reduction_accumulator``.
 
-The pass converts WCR-on-array-element reductions (e.g. ``dot[0] WCR-+= val``
+The helper converts WCR-on-array-element reductions (e.g. ``dot[0] WCR-+= val``
 inside a parallel map) into WCR-on-scalar + init + writeback. The resulting
 SDFG has a transient ``Scalar`` accumulator the OMP codegen can name in a
 ``reduction(op:scalar)`` clause.
@@ -16,7 +16,7 @@ from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.state_fusion import StateFusion
-from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import PrivatizeReductionAccumulator
+from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import privatize_reduction_accumulator
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 N = dace.symbol("N")
@@ -26,7 +26,7 @@ def _build_wcr_map(prog) -> dace.SDFG:
     """Build the simplified SDFG and run the AugAssignToWCR + LoopToMap +
     state-fusion + inline path that produces a parallel WCR-map with the WCR
     target as an array element. This matches the canonicalize order in which
-    ``PrivatizeReductionAccumulator`` is wired."""
+    ``privatize_reduction_accumulator`` is called."""
     sdfg = prog.to_sdfg(simplify=True)
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(AugAssignToWCR, validate=False, validate_all=False, permissive=True)
@@ -34,6 +34,15 @@ def _build_wcr_map(prog) -> dace.SDFG:
     PatternMatchAndApplyRepeated([StateFusion()]).apply_pass(sdfg, {})
     PatternMatchAndApplyRepeated([InlineSDFG()]).apply_pass(sdfg, {})
     return sdfg
+
+
+def privatize_all(sdfg: dace.SDFG) -> int | None:
+    count = 0
+    for state in list(sdfg.states()):
+        for map_exit in [n for n in state.nodes() if isinstance(n, nodes.MapExit)]:
+            for edge in list(state.in_edges(map_exit)):
+                count += privatize_reduction_accumulator(state, map_exit, edge)
+    return count or None
 
 
 def _count_wcr_edges(sdfg: dace.SDFG):
@@ -75,7 +84,7 @@ def test_array_slot_dot_product_privatized():
     assert arr_wcr_before >= 1
     assert scalar_wcr_before == 0
 
-    lifted = PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    lifted = privatize_all(sdfg)
     sdfg.validate()
     assert lifted == 1
 
@@ -124,7 +133,7 @@ def test_two_reductions_get_unique_scalar_names():
     arr_wcr_before, _ = _count_wcr_edges(sdfg)
     assert arr_wcr_before >= 2
 
-    lifted = PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    lifted = privatize_all(sdfg)
     sdfg.validate()
     assert lifted == 2
 
@@ -162,7 +171,7 @@ def _two_reductions_same_array(a: dace.float64[N], b: dace.float64[N], acc: dace
 def test_two_reductions_same_array_get_unique_names():
     """Both reductions write into different slots of the same array."""
     sdfg = _build_wcr_map(_two_reductions_same_array)
-    lifted = PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    lifted = privatize_all(sdfg)
     sdfg.validate()
     assert lifted == 2
 
@@ -187,11 +196,11 @@ def test_two_reductions_same_array_get_unique_names():
 
 def test_idempotent_no_double_privatize():
     sdfg = _build_wcr_map(_array_slot_dot)
-    PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    privatize_all(sdfg)
     arrays_after_first = set(sdfg.arrays.keys())
     # Second invocation: pass must NOT add any new ``_priv_`` arrays nor
     # split any further states (the WCR target is already a Scalar).
-    lifted2 = PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    lifted2 = privatize_all(sdfg)
     assert lifted2 is None
     assert set(sdfg.arrays.keys()) == arrays_after_first
 
@@ -309,7 +318,7 @@ def test_ordering_memlet_is_not_an_in_state_init():
     state.add_edge(state.add_read("z"), None, state.add_access("dot"), None, dace.Memlet())
     sdfg.validate()
 
-    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) == 1
+    assert privatize_all(sdfg) == 1
     sdfg.validate()
 
     rng = np.random.default_rng(5)
@@ -328,7 +337,7 @@ def test_reader_after_the_reduction_in_the_same_state_blocks_privatization():
         out[0] = 2.0 * s[0]
 
     sdfg = reduce_then_read.to_sdfg(simplify=True)
-    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) is None
+    assert privatize_all(sdfg) is None
     s, out = np.ones(1), np.zeros(1)
     sdfg(a=np.arange(8.0), s=s, out=out)
     assert out[0] == 58.0
@@ -361,7 +370,7 @@ def test_in_state_seed_is_written_before_the_reduction_map():
     state.add_edge(double, "__c", state.add_write("c"), None, dace.Memlet("c[0]"))
     sdfg.validate()
 
-    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) == 1
+    assert privatize_all(sdfg) == 1
     sdfg.validate()
     s, c = np.ones(1), np.zeros(1)
     sdfg(a=np.arange(8.0), s=s, c=c)
@@ -385,7 +394,7 @@ def test_two_maps_reducing_into_one_slot_in_one_state_keep_both_sums():
         )
     acc = np.zeros(2)
 
-    PrivatizeReductionAccumulator().apply_pass(sdfg, {})
+    privatize_all(sdfg)
     sdfg(acc=acc, x=np.ones(10), y=np.full(10, 2.0))
 
     assert acc[0] == 30.0
@@ -413,7 +422,7 @@ def test_a_map_nest_reducing_into_one_slot_accumulates_into_the_scalar():
     x = np.arange(20, dtype=np.float64).reshape(4, 5)
     acc = np.full(2, 1.0)
 
-    assert PrivatizeReductionAccumulator().apply_pass(sdfg, {}) == 1
+    assert privatize_all(sdfg) == 1
     sdfg.validate()
     sdfg(acc=acc, x=x)
 

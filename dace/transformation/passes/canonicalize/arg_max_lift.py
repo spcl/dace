@@ -34,7 +34,7 @@ Two carrier storages are matched, with different capabilities:
 
 * **Data carrier** -- ``data.Scalar`` or length-1 array (``shape == (1,)``). The
   in-loop write is an AccessNode chain in the true-branch's single state. Value
-  only: a unit-stride gather ``a[b + i]``, no transform, and no iedge assignment
+  only: a gather ``a[b + i]``, no transform, and no iedge assignment
   anywhere in the true-branch (any such assignment is an extra write, e.g. a
   sibling ``index = i``). The base TSVC ``s314`` / ``s316`` shape.
 
@@ -48,7 +48,8 @@ Two carrier storages are matched, with different capabilities:
   - an **affine gather** ``a[b + c*i]``. A STRIDED gather (``c != 1``, TSVC
     ``s318``) is lowered ONLY on the combined transform+index path, whose
     ``ArgReduce`` reads the strided, transformed gather in one pass; every
-    other symbol-carrier shape needs the unit stride. A SHIFTED gather
+    other symbol-carrier shape needs the unit stride. A strided LOOP over a
+    unit gather (``range(1, N, 2)``) is a value fold's alone. A SHIFTED gather
     (``b != 0``, e.g. ``a[i + 1]`` over a 0-based loop -- what rebasing the
     loop origin leaves behind) reduces over the same elements as its unshifted
     form, so the plain value-only lift folds ``b`` into the emitted slice; the
@@ -186,6 +187,7 @@ from dace.sdfg.narrowing import as_expr, as_range, coeff_of, simplified
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.induction_variable_substitution import staged_iedge_rhs
 
@@ -197,7 +199,7 @@ CMP_AST_TO_RTYPE: dict[type[ast.cmpop], dtypes.ReductionType] = {
     ast.LtE: dtypes.ReductionType.Min,
 }
 
-#: ``(start, end, conditional block, guard, true branch)`` of a unit-stride, break-free guarded loop.
+#: ``(start, end, conditional block, guard, true branch)`` of an ascending, break-free guarded loop.
 LoopSkeleton = tuple[
     symbolic.SymbolicType, symbolic.SymbolicType, ConditionalBlock, properties.CodeBlock, ControlFlowRegion
 ]
@@ -221,6 +223,10 @@ STRICT_WCR: dict[dtypes.ReductionType, str] = {
     dtypes.ReductionType.Max: "lambda a, b: max(a, b)",
     dtypes.ReductionType.Min: "lambda a, b: min(a, b)",
 }
+
+
+#: The comparison that holds with its operands swapped.
+MIRRORED_CMP: dict[type, type] = {ast.Gt: ast.Lt, ast.GtE: ast.LtE, ast.Lt: ast.Gt, ast.LtE: ast.GtE}
 
 
 class PartialReduction(NamedTuple):
@@ -267,6 +273,8 @@ class _Match(NamedTuple):
     gather_base: Any = 0
     gather_coeff: Any = 1
     last_wins: bool = False
+    keeps_seed: bool = False  # the fold starts from the carrier's value, which is no element of the gather
+    stride: Any = 1  # of the loop: only a value fold takes one, its gather striding along
 
 
 class _Match2D(NamedTuple):
@@ -584,7 +592,7 @@ class ArgMaxLift(ppl.Pass):
 
         Both the value-carrier argmax (:meth:`_match`, TSVC s314 / s315 / s318) and
         the predicate index (:meth:`match_predicate_index`, TSVC s331) require the
-        SAME loop skeleton -- a unit-stride, break-free loop whose body is exactly
+        SAME loop skeleton -- an ascending, break-free loop whose body is exactly
         one :class:`ConditionalBlock` (plus empty wrapper states) with a single
         non-else branch and no else content. Only what the branch WRITES tells the
         two apart, so the skeleton is decided once here and each analysis then reads
@@ -637,7 +645,7 @@ class ArgMaxLift(ppl.Pass):
         if start is None or end is None or stride is None:
             return None
         try:
-            if int(as_expr(symbolic.simplify(stride))) != 1:
+            if int(as_expr(symbolic.simplify(stride))) < 1:
                 return None
         except (TypeError, ValueError):
             return None
@@ -650,6 +658,7 @@ class ArgMaxLift(ppl.Pass):
         if skeleton is None:
             return None
         start, end, cond_block, cond_codeblock, true_branch = skeleton
+        stride = symbolic.simplify(required(loop_analysis.get_loop_stride(loop)))
 
         cond_expr_str = cond_codeblock.as_string.strip()
         # The comparison ``gather OP carrier`` reaches the ConditionalBlock in
@@ -673,6 +682,17 @@ class ArgMaxLift(ppl.Pass):
                     gather_sym_name = None
         if op_ast is None or carrier_name is None:
             return None
+        # ``x < a[i]`` is ``a[i] > x``: the carrier is the name the branch writes, the gather the one bound to an element
+        if (
+            inline_gather is None
+            and transform is None
+            and (
+                gather_sym_name in sdfg.arrays
+                or any(gather_sym_name in e.data.assignments for e in true_branch.all_interstate_edges())
+            )
+            and self._resolve_gather_iedge(loop, cond_block, carrier_name, loop.loop_variable, sdfg) is not None
+        ):
+            gather_sym_name, carrier_name, op_ast = carrier_name, gather_sym_name, MIRRORED_CMP[op_ast]
         op = CMP_AST_TO_RTYPE[op_ast]
 
         # Resolve the gather ``arr[b + c*i]``: either the inline subscript parsed
@@ -707,6 +727,7 @@ class ArgMaxLift(ppl.Pass):
             return None
 
         idx_carrier_name = None
+        keeps_seed = False
         if carrier_kind in ("scalar", "length_one_array"):
             # Data-carrier path: the in-loop write lives on AccessNode chains;
             # the true-branch's iedges must NOT carry assignments (any iedge
@@ -773,9 +794,11 @@ class ArgMaxLift(ppl.Pass):
             # others by extending the emitted slice down to it. None is implied by
             # the match, so verify it; a seed that reads elsewhere (a constant
             # ``x = 0.0; j = -1``) would reduce over a set missing the real seed.
-            if not self._verify_affine_seed(
+            # The plain value fold needs no position: it starts from whatever the carrier holds (``x = 0.0``).
+            keeps_seed = stride != 1 or not self._verify_affine_seed(
                 loop, sdfg, carrier_name, idx_carrier_name, input_array, gather_base, gather_coeff, start, transform
-            ):
+            )
+            if keeps_seed and not value_only:
                 return None
 
         # Tie-break semantics (``tie_break``; 'infer' reads it off the guard's
@@ -803,6 +826,8 @@ class ArgMaxLift(ppl.Pass):
             gather_base=gather_base,
             gather_coeff=gather_coeff,
             last_wins=last_wins,
+            keeps_seed=keeps_seed,
+            stride=stride,
         )
 
     # match helpers
@@ -1401,7 +1426,7 @@ class ArgMaxLift(ppl.Pass):
             upstream = ins[0].src
             if isinstance(upstream, nodes.Tasklet):
                 t_ins = list(state.in_edges(upstream))
-                if len(t_ins) != 1:
+                if len(t_ins) != 1 or not AugAssignToWCR.is_copy(upstream, ins[0].src_conn, t_ins[0].dst_conn):
                     return None
                 upstream = t_ins[0].src
                 if not isinstance(upstream, nodes.AccessNode):
@@ -1748,14 +1773,26 @@ class ArgMaxLift(ppl.Pass):
 
         # Reduce-state replaces the loop.
         reduce_state = m.parent.add_state(m.loop.label + "_argmax")
+        entry = reduce_state
+        if m.keeps_seed:
+            entry = m.parent.add_state(m.loop.label + "_argmax_seed")
+            m.parent.add_edge(entry, reduce_state, dace.InterstateEdge())
+            seed = entry.add_tasklet("seed", {}, {"_out": None}, f"_out = {m.carrier_name}")
+            entry.add_edge(
+                seed,
+                "_out",
+                entry.add_write(out_name),
+                None,
+                mm.Memlet(data=out_name, subset=copy.deepcopy(output_subset)),
+            )
         # Re-route inbound edges. For symbol carriers, drop any pre-loop iedge
         # assignment that binds the carrier symbol -- the reduce subsumes it.
         for ie in list(m.parent.in_edges(m.loop)):
             new_assigns = dict(ie.data.assignments or {})
-            if m.carrier_kind == "symbol" and m.carrier_name in new_assigns:
+            if m.carrier_kind == "symbol" and m.carrier_name in new_assigns and not m.keeps_seed:
                 del new_assigns[m.carrier_name]
             new_iedge = dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
-            m.parent.add_edge(ie.src, reduce_state, new_iedge)
+            m.parent.add_edge(ie.src, entry, new_iedge)
             m.parent.remove_edge(ie)
 
         if m.carrier_kind == "symbol":
@@ -1797,7 +1834,8 @@ class ArgMaxLift(ppl.Pass):
         #    Min (finite extremes, so codegen stays a plain numeric literal).
         #  * scalar / length-1 carrier -> keep ``identity=None``: it WCR-folds
         #    into the pre-loop ``x = a[start]`` seed already in the carrier AN.
-        if m.carrier_kind == "symbol":
+        #  * a kept seed -> the same, in the fresh transient the seed state wrote.
+        if m.carrier_kind == "symbol" and not m.keeps_seed:
             numeric_type = sdfg.arrays[m.input_array].dtype.type
             identity = neutral_extreme(numeric_type, m.op)
         else:
@@ -1811,10 +1849,10 @@ class ArgMaxLift(ppl.Pass):
         # carrier extends down to the seed iteration -- its dropped pre-loop bind
         # no longer materialises the seed (TSVC s314 seeds from ``a[0]`` at
         # ``start = 1``); a scalar / length-1 carrier keeps the seed in its
-        # AccessNode, so it starts at ``start``. Unit stride is gated in ``_match``.
-        iter_lo = self._seed_iteration(m, start) if m.carrier_kind == "symbol" else start
+        # AccessNode, so it starts at ``start``. The loop's stride reaches here only for a value fold.
+        iter_lo = self._seed_iteration(m, start) if m.carrier_kind == "symbol" and not m.keeps_seed else start
         pos_lo, pos_hi = self._gather_range(m, iter_lo, end)
-        input_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(pos_lo, pos_hi, 1)]))
+        input_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(pos_lo, pos_hi, m.stride)]))
         reduce_state.add_edge(read, None, node, "_in", input_memlet)
         output_memlet = mm.Memlet(data=out_name, subset=output_subset)
         reduce_state.add_edge(node, "_out", write, None, output_memlet)
@@ -2096,7 +2134,7 @@ class ArgMaxLift(ppl.Pass):
         write with no value carrier, against a guard that names no carrier at all.
         """
         skeleton = skeleton if skeleton is not None else self.guarded_loop_skeleton(loop)
-        if skeleton is None:
+        if skeleton is None or symbolic.simplify(required(loop_analysis.get_loop_stride(loop))) != 1:
             return None
         start, end, cond_block, cond_codeblock, true_branch = skeleton
 
@@ -2323,7 +2361,7 @@ class ArgMaxLift(ppl.Pass):
         if not all(names) or len(set(names)) != len(names):
             return None
         skeleton = self.guarded_loop_skeleton(nest[-1])
-        if skeleton is None:
+        if skeleton is None or symbolic.simplify(required(loop_analysis.get_loop_stride(nest[-1]))) != 1:
             return None
         _, _, _, guard, true_branch = skeleton
 
@@ -2377,7 +2415,7 @@ class ArgMaxLift(ppl.Pass):
         source_subset = self.visited_box(gather, names, extents, varying)
         if source_subset is None:
             return None
-        if self.read_outside(sdfg, nest[0], set(bindings), scratch):
+        if loop_analysis.read_outside(sdfg, nest[0], set(bindings), scratch):
             return None
         return PartialReduction(
             loops=nest,
@@ -2654,32 +2692,6 @@ class ArgMaxLift(ppl.Pass):
         if moved != set(names):
             return None
         return subsets.Range(ranges)
-
-    @staticmethod
-    def read_outside(sdfg: SDFG, region: ControlFlowRegion, symbols: set[str], containers: set[str]) -> bool:
-        """Whether anything outside ``region`` reads one of ``symbols`` -- the binding chain the rewrite drops --
-        or accesses one of ``containers``."""
-        if not symbols and not containers:
-            return False
-        inside = {id(b) for b in region.all_control_flow_blocks()} | {id(region)}
-        inside_edges = {id(e) for e in region.all_interstate_edges()}
-        for edge in sdfg.all_interstate_edges():
-            if id(edge) not in inside_edges and edge.data.read_symbols() & (symbols | containers):
-                return True
-        for block in sdfg.all_control_flow_blocks():
-            if id(block) in inside:
-                continue
-            if isinstance(block, SDFGState):
-                if symbols & block.free_symbols or any(n.data in containers for n in block.data_nodes()):
-                    return True
-            elif isinstance(block, LoopRegion):
-                codes = [block.init_statement, block.loop_condition, block.update_statement]
-                if any(c is not None and {str(s) for s in c.get_free_symbols()} & symbols for c in codes):
-                    return True
-            elif isinstance(block, ConditionalBlock):
-                if any(c is not None and {str(s) for s in c.get_free_symbols()} & symbols for c, _ in block.branches):
-                    return True
-        return False
 
     def rewrite_partial_reduction(self, m: PartialReduction, sdfg: SDFG) -> None:
         """Replace the nest with one :class:`Reduce` of ``source[box]`` into ``carrier[K]``, ``identity=None``: it
