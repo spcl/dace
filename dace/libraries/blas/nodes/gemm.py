@@ -17,6 +17,7 @@ from dace.libraries.blas.blas_helpers import (
     check_access,
     dtype_to_cudadatatype,
     matrix_view,
+    stepped_strides,
     to_blastype,
     to_cublas_computetype,
 )
@@ -67,7 +68,7 @@ def _operand_window(edge, desc, shape, strides):
         idx[dims[0]], idx[dims[1]] = row, col
         return ", ".join(idx)
 
-    return window, list(desc.strides), index
+    return window, stepped_strides(desc, edge.data.subset), index
 
 
 @dace.library.expansion

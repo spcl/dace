@@ -6,7 +6,7 @@ from typing import Any
 
 import dace
 from dace import properties, symbolic
-from dace.libraries.blas.blas_helpers import matrix_view
+from dace.libraries.blas.blas_helpers import matrix_view, stepped_strides
 
 
 def _matrix_subset_size(subset):
@@ -45,8 +45,8 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             squeezed_dims = squeezed.squeeze()
             squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
-            strides = list(outer_array.strides)
-            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
+            strides = stepped_strides(outer_array, edge.data.subset)
+            squeezed_strides = [s for i, s in enumerate(strides) if i in squeezed_dims]
             res = edge, outer_array, size, strides, squeezed_size, squeezed_strides
             if edge.dst_conn == name_lhs:
                 res_lhs = res
@@ -58,8 +58,8 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             squeezed_dims = squeezed.squeeze()
             squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
-            strides = list(outer_array.strides)
-            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
+            strides = stepped_strides(outer_array, edge.data.subset)
+            squeezed_strides = [s for i, s in enumerate(strides) if i in squeezed_dims]
             res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
