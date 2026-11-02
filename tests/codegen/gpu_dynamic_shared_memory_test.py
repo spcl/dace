@@ -501,7 +501,79 @@ def test_inline_storage_constructor():
     assert desc.storage == S.GPU_Shared(dynamic=True)
 
 
+def _task(name: str, value: int) -> dace.SDFG:
+    """A thread block's task: its threads fill a 16 KiB shared container, and then read it in reverse (a value another
+    thread wrote) into ``y``."""
+    task = dace.SDFG(name)
+    task.add_array("y", [32], dace.float64)
+    task.add_array("s", [KIB16], dace.float64, storage=S.GPU_Shared(dynamic=True), transient=True)
+    tb = dace.ScheduleType.GPU_ThreadBlock
+    fill = task.add_state("fill")
+    fill.add_mapped_tasklet(
+        "fill", {"j": "0:32"}, {}, f"w = {value} + j", {"w": dace.Memlet("s[j]")}, schedule=tb, external_edges=True
+    )
+    read = task.add_state_after(fill, "read")
+    read.add_mapped_tasklet(
+        "read",
+        {"j": "0:32"},
+        {"v": dace.Memlet("s[31 - j]")},
+        "w = v",
+        {"w": dace.Memlet("y[j]")},
+        schedule=tb,
+        external_edges=True,
+    )
+    return task
+
+
+def _tasks_sdfg(same_state: bool) -> dace.SDFG:
+    """A kernel whose thread blocks run two tasks with shared containers of their own, in two states of the block's
+    code (or in one)."""
+    body = dace.SDFG("tasks_body")
+    body.add_array("b", [2, 32], dace.float64, storage=S.GPU_Global)
+    first = body.add_state("first")
+    second = first if same_state else body.add_state_after(first, "second")
+    for row, (state, value) in enumerate(((first, 100), (second, 200))):
+        call = state.add_nested_sdfg(_task(f"task{row}", value), set(), {"y"})
+        state.add_edge(call, "y", state.add_write("b"), None, dace.Memlet(f"b[{row}, 0:32]"))
+        call.integrate_into_parent()
+
+    sdfg = dace.SDFG("tasks_same_state" if same_state else "tasks_in_states")
+    sdfg.add_array("B", [N, 2, 32], dace.float64, storage=S.GPU_Global)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("kernel", {"i": "0:N"}, schedule=dace.ScheduleType.GPU_Device)
+    call = state.add_nested_sdfg(body, set(), {"b"})
+    state.add_nedge(entry, call, dace.Memlet())
+    state.add_memlet_path(call, exit_, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i, 0:2, 0:32]"))
+    call.integrate_into_parent()
+    sdfg.validate()
+    return sdfg
+
+
+def test_tasks_in_different_states_share_shared_memory():
+    """The tasks of different states of a block's code never run at the same time: their parts of dynamic shared
+    memory start at the same offset. In one state, they follow each other."""
+    for same_state, size in ((False, KIB16 * 8), (True, 2 * KIB16 * 8)):
+        sdfg = _tasks_sdfg(same_state)
+        code, _ = _generate(sdfg)
+        assert re.search(rf"LaunchKernel\(.*, {size}, ", code), same_state
+        offsets = re.findall(r"\bs = \(double\*\)\(&__dace_dynsmem\w*\[(\w+)\]\);", code)
+        assert len(offsets) == 2, offsets
+
+
+@pytest.mark.gpu
+def test_tasks_in_different_states_run():
+    import cupy
+
+    sdfg = _tasks_sdfg(same_state=False)
+    B = cupy.zeros((3, 2, 32))
+    sdfg(B=B, N=3)
+    expected = np.stack([100 + np.arange(32)[::-1], 200 + np.arange(32)[::-1]])
+    assert np.array_equal(cupy.asnumpy(B), np.broadcast_to(expected, B.shape))
+
+
 if __name__ == "__main__":
+    test_tasks_in_different_states_share_shared_memory()
+    test_tasks_in_different_states_run()
     test_storage_type_attribute()
     for storage in (S.GPU_Shared, S.GPU_Shared(dynamic=True), S.GPU_Shared(dynamic=False)):
         test_storage_type_serialization(storage)
