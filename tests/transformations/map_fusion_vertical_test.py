@@ -4285,9 +4285,8 @@ def test_fusion_rebases_a_nested_producer_below_an_inner_map():
 
 
 @pytest.mark.parametrize("looped", [False, True])
-def test_a_conditional_write_fuses_in_place_when_something_keeps_the_intermediate_alive(looped: bool):
-    """An element skipped on this execution holds nothing a reader may rely on, unless an earlier loop trip wrote it:
-    then only the container itself holds it."""
+def test_a_conditional_write_fuses_only_into_an_intermediate_nothing_else_keeps_alive(looped: bool):
+    """An element skipped on this execution holds nothing a reader may rely on, unless an earlier loop trip wrote it."""
     sdfg = dace.SDFG(unique_name(f"conditional_producer_{looped}"))
     for name in "AB":
         sdfg.add_array(name, (10,), dace.float64)
@@ -4320,10 +4319,7 @@ def test_a_conditional_write_fuses_in_place_when_something_keeps_the_intermediat
 
     FuseMaps().apply_pass(sdfg, {})
 
-    assert count_nodes(state, nodes.MapEntry) == 1
-    assert (
-        any(isinstance(n, nodes.AccessNode) and n.data == "T" and state.entry_node(n) for n in state.nodes()) == looped
-    )
+    assert count_nodes(state, nodes.MapEntry) == (2 if looped else 1)
 
 
 def _two_maps_writing_out(second_column: int) -> tuple[SDFG, SDFGState]:
