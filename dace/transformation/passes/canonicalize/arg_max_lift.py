@@ -1595,18 +1595,23 @@ class ArgMaxLift(ppl.Pass):
         parent = loop.parent_graph
         cur: ControlFlowBlock = loop
         seen: dict = {}
+        overwritten: set[str] = set()  # by a block between the binding and the loop: the binding is no longer live
         while True:
             ins = parent.in_edges(cur)
             if len(ins) != 1:
                 break
             e = ins[0]
             for lhs, rhs in (e.data.assignments or {}).items():
-                if lhs not in preloop:  # closest-to-loop wins
+                if lhs not in preloop and lhs not in overwritten and overwritten.isdisjoint(re.findall(r"\w+", str(rhs))):
                     staged = staged_iedge_rhs(str(rhs), e.src, sdfg)
                     preloop[lhs] = str(rhs) if staged is None else symbolic.symstr(staged)
+            overwritten.update(e.data.assignments or {})  # a farther binding of it is shadowed
             if e.src in seen or not isinstance(e.src, (SDFGState, ControlFlowRegion)):
                 break
             seen[e.src] = None
+            overwritten.update(e.src.read_and_write_sets()[1])
+            if isinstance(e.src, ControlFlowRegion):
+                overwritten.update(k for edge in e.src.all_interstate_edges() for k in edge.data.assignments)
             cur = e.src
         return preloop
 

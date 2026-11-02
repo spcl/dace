@@ -2179,5 +2179,40 @@ def test_a_block_beside_the_carrier_write_keeps_the_loop():
     assert not ArgMaxLift().apply_pass(sdfg, {})
 
 
+@dace.program
+def seed_then_conditional_overwrite(a: dace.float64[N], c: dace.float64[N], out: dace.float64[1]):
+    x = a[0]
+    for k in range(N):
+        if c[k] > 0.5:
+            x = 10.0
+    for i in range(1, N):
+        if a[i] > x:
+            x = a[i]
+    out[0] = x
+
+
+@dace.program
+def seed_then_array_overwrite(a: dace.float64[N], out: dace.float64[1]):
+    x = a[0]
+    a[0] = 50.0
+    for i in range(1, N):
+        if a[i] > x:
+            x = a[i]
+    out[0] = x
+
+
+def test_a_seed_overwritten_before_the_loop_stays_the_real_seed():
+    a, c = np.array([0.5, 0.7, 0.2, 0.1]), np.array([0.1, 0.9, 0.1, 0.1])
+    sdfg = seed_then_conditional_overwrite.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    out = np.zeros(1)
+    sdfg(a=a.copy(), c=c, out=out, N=4)
+    assert out[0] == 10.0
+    sdfg = seed_then_array_overwrite.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    sdfg(a=a.copy(), out=out, N=4)
+    assert out[0] == 0.7
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
