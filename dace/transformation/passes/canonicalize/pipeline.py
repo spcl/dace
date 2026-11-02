@@ -185,8 +185,7 @@ def disable_openmp_sections(sdfg: SDFG) -> None:
 def _structural_cleanup(label: str) -> list[tuple[str, ppl.Pass]]:
     """Tidy symbols, then the state machine, between phases; never ``SimplifyPass`` mid-pipeline.
 
-    Symbol phase: ``SymbolDedup``, ``SymbolPropagation``, ``ConstantPropagation``,
-    ``RemoveUnusedSymbols``, then ``SymbolDedup`` again LAST (propagation and the prune both mint
+    Symbol phase: :func:`symbol_phase`, then ``SymbolDedup`` again LAST (propagation and the prune both mint
     new mergeable pairs; 7 kernels kept one otherwise). It runs at every boundary because two
     names for one address make syntactic subset tests (``AugAssignToWCR``) silently decline; that
     once turned an indirect accumulate into a scatter that aborted at run time
@@ -204,6 +203,33 @@ def _structural_cleanup(label: str) -> list[tuple[str, ppl.Pass]]:
     :returns: ``(stage_label, pass)`` pairs, in order.
     """
     return [(label, StructuralCleanup())]
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class PropagateSymbols(ppl.Pass):
+    """``SymbolPropagation`` then ``ConstantPropagation``, the order the recipe always wants them in, as one unit."""
+
+    CATEGORY: str = "Canonicalization"
+
+    def modifies(self) -> ppl.Modifies:
+        return SymbolPropagation().modifies() | ConstantPropagation().modifies()
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified != ppl.Modifies.Nothing
+
+    def depends_on(self) -> list[type[ppl.Pass] | ppl.Pass]:
+        return []
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> bool | None:
+        symbols = SymbolPropagation().apply_pass(sdfg, {})
+        constants = ConstantPropagation().apply_pass(sdfg, {})
+        return True if symbols is not None or constants is not None else None
+
+
+def symbol_phase() -> list[ppl.Pass]:
+    """Merge the symbols that are one value, fold what is known, drop what that left unread."""
+    return [SymbolDedup(), PropagateSymbols(), RemoveUnusedSymbols()]
 
 
 @properties.make_properties
@@ -235,7 +261,7 @@ class PropagateAndPrune(ppl.Pass):
         for round_index in range(self.ROUNDS):
             # A Pipeline per round, not bare passes: DeadDataflowElimination declares a
             # ControlFlowBlockReachability dependency that only a Pipeline resolves.
-            members = [SymbolPropagation(), ConstantPropagation(), DeadDataflowElimination()]
+            members = [PropagateSymbols(), DeadDataflowElimination()]
             result = ppl.Pipeline(members).apply_pass(sdfg, {})
             if result:
                 changed += 1
@@ -288,10 +314,7 @@ class StructuralCleanup(ppl.Pass):
         walk_fuse.progress = False
         return [
             EqualizeSymbolDtypes(),
-            SymbolDedup(),
-            SymbolPropagation(),
-            ConstantPropagation(),
-            RemoveUnusedSymbols(),
+            *symbol_phase(),
             SymbolDedup(),
             FoldScalarReadCopies(),
             walk_fuse,
@@ -861,7 +884,7 @@ def derive_parallelism(
     s: Stages = [(label, SymbolSSA())]
     # SSA leaves one definition per name, which is when propagation can substitute it (``j = j_0 + 1`` into
     # ``b[j]``); demoted first, its operand is a scalar read and the symbol stays.
-    s += [(label, SymbolPropagation()), (label, ConstantPropagation())]
+    s += [(label, PropagateSymbols())]
     # Before demotion: the anti-dependence proof reads a guard's symbols (``A[P]`` under ``P > i`` reads ahead), which
     # a demoted guard turns into opaque scalar reads.
     s += [(label, BreakAntiDependence(forward_reads=True)), (label, BreakAntiDependence())]
@@ -880,7 +903,7 @@ def derive_parallelism(
         ]
     s += [(label, unit) for unit in dead_dataflow_units()]
     s += [(label, PrivatizeScalars()), (label, PrivatizeArrays())]
-    s += [(label, SymbolPropagation()), (label, ConstantPropagation())]
+    s += [(label, PropagateSymbols())]
     # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted copy's
     # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
     s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, unique_iterators()), (label, SymbolSSA())]
@@ -1029,11 +1052,10 @@ def finish() -> Stages:
     """The terminal bookkeeping: symbols, derived annotations, assumption guard, hints; the views inlining minted."""
     s: Stages = [(FINISH, StructuralCleanup())]
     # On the settled form: a loop over the segments of a pointer array is lifted behind the entry guard that checks
-    # the data facts its segment confinement rests on (nfa_frontier's components).
-    s += [(FINISH, SegmentConfinedLoops())]
-    s += [(FINISH, SymbolDedup()), (FINISH, SymbolPropagation()), (FINISH, ConstantPropagation())]
+    # the data facts its segment confinement rests on (nfa_frontier's components). The cleanup settled the symbols of
+    # everything else.
+    s += [(FINISH, _ThenIfChanged([(SegmentConfinedLoops(), True)], symbol_phase()))]
     s += [
-        (FINISH, RemoveUnusedSymbols()),
         (FINISH, OptionalArrayInference()),
         (FINISH, ConvertLengthOneArraysToScalars()),
         (FINISH, DeadFillElimination()),
