@@ -1126,6 +1126,8 @@ def test_fusion_dataflow_intermediate_downstream():
     sdfg.validate()
 
     apply_fusion(sdfg, removed_maps=0, strict_dataflow=True)
+    # A privatized intermediate stays refused under `relaxed_dataflow` as well: only one fused in place is free of it.
+    apply_fusion(sdfg, removed_maps=0, strict_dataflow=True, map_fusion_opt={"relaxed_dataflow": True})
 
     # However without strict dataflow, the merge is possible.
     apply_fusion(sdfg, removed_maps=1, strict_dataflow=False)
