@@ -177,6 +177,21 @@ def test_exit_symbol_leaves_a_later_assignment_alone():
     assert expected == got == 0
 
 
+def test_exit_symbol_of_a_counter_a_branch_also_bumps_stays_a_read():
+    sdfg = exit_reader("exit_nested_bump", 0)
+    loop = next(b for b in sdfg.nodes() if isinstance(b, LoopRegion))
+    guard = ConditionalBlock("guard")
+    arm = ControlFlowRegion("arm")
+    guard.add_branch(CodeBlock("i > 0"), arm)
+    bump = arm.add_state("bump", is_start_block=True)
+    arm.add_edge(bump, arm.add_state("bumped"), InterstateEdge(assignments={"k": "k + 1"}))
+    loop.add_node(guard)
+    loop.add_edge(next(b for b in loop.nodes() if b.label == "tail"), guard, InterstateEdge())
+    sdfg.reset_cfg_list()
+    expected, got = run_both(sdfg, lambda s: MaterializeLoopExitSymbols().apply_pass(s, {}), N=3)
+    assert expected == got == 11
+
+
 def test_iterator_exit_value_of_a_loop_that_runs_no_iteration():
     sdfg = int_program("iterator_exit_empty", o=[1], a=[8])
     loop = counted_loop("loop", "i", 5)
@@ -223,5 +238,6 @@ if __name__ == "__main__":
     test_fusion_refuses_a_read_of_the_first_iterators_exit_value()
     test_exit_symbol_of_a_loop_that_runs_no_iteration()
     test_exit_symbol_leaves_a_later_assignment_alone()
+    test_exit_symbol_of_a_counter_a_branch_also_bumps_stays_a_read()
     test_iterator_exit_value_of_a_loop_that_runs_no_iteration()
     test_while_to_for_keeps_a_start_value_changed_before_the_loop()
