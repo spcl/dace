@@ -739,21 +739,22 @@ def test_scatter_then_interstate_edge_read_is_not_fused():
 
 def test_inner_iterators_over_overlapping_segments_can_meet():
     n = dace.symbol("n", dace.int64, positive=True)
+    m = dace.symbol("m", dace.int64, positive=True)
 
     @dace.program
-    def segments(x: dace.float64[n], y: dace.float64[n], z: dace.float64[n], st: dace.int64[4]):
-        for g in range(3):
+    def segments(x: dace.float64[n], y: dace.float64[n], z: dace.float64[n], st: dace.int64[m + 1]):
+        for g in range(m):
             for j in range(st[g], st[g + 1]):
-                z[j] = y[j]
-        for g in range(3):
+                z[j] = z[st[g]] + y[j]
+        for g in range(m):
             for j in range(st[g], st[g + 1]):
-                y[j] = x[j]
+                y[j] = y[st[g]] + x[j]
 
     sdfg = segments.to_sdfg(simplify=False)
     canonicalize(sdfg, target="cpu")
-    y, z = np.ones(4), np.zeros(4)
-    sdfg(x=np.full(4, 2.0), y=y, z=z, st=np.array([0, 3, 1, 4]), n=4)
-    assert np.array_equal(z, np.ones(4))
+    z = np.zeros(4)
+    sdfg(x=np.full(4, 2.0), y=np.ones(4), z=z, st=np.array([0, 3, 1, 4]), n=4, m=3)
+    assert np.array_equal(z, [1.0, 3.0, 4.0, 4.0])
 
 
 if __name__ == "__main__":
