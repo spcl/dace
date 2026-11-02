@@ -6,7 +6,8 @@ import numpy as np
 
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.select_branch_maps import SelectBranchMaps
 
@@ -143,6 +144,36 @@ def test_a_condition_on_a_scalar_is_handed_to_the_select():
         assert np.allclose(out, expected(a, b, abs(m)))
 
 
+def guarded_arm_sdfg(name: str, cond: str, flag: bool) -> dace.SDFG:
+    """``if <cond>: y = a * 3 else: y = a * 2`` then ``z = y + 1``; ``flag`` guards the else arm on ``d > 0``."""
+    sdfg = dace.SDFG(name)
+    for arr, size in (("a", 4), ("y", 4), ("z", 4), ("c", 1)):
+        sdfg.add_array(arr, [size], dace.float64)
+    sdfg.add_symbol("d", dace.int64)
+    block = ConditionalBlock("branch", sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(block, is_start_block=True)
+    after = sdfg.add_state_after(block, "after")
+    after.add_mapped_tasklet("use", {"i": "0:4"}, {"q": dace.Memlet("y[i]")}, "o = q + 1", {"o": dace.Memlet("z[i]")},
+                             external_edges=True)
+    for code, tag, arm in (("o = q * 3", "t", cond), ("o = q * 2", "f", None)):
+        region = ControlFlowRegion(tag, sdfg=sdfg, parent=block)
+        block.add_branch(CodeBlock(arm) if arm else None, region)
+        first = region.add_state(f"first_{tag}", is_start_block=True)
+        state = first
+        if flag and tag == "f":
+            state = region.add_state("guarded")
+            region.add_edge(first, state, dace.InterstateEdge("d > 0"))
+        state.add_mapped_tasklet(tag, {"i": "0:4"}, {"q": dace.Memlet("a[i]")}, code, {"o": dace.Memlet("y[i]")},
+                                 external_edges=True)
+    sdfg.reset_cfg_list()
+    return sdfg
+
+
+def test_an_arm_behind_an_interstate_condition_stays_a_branch():
+    sdfg = guarded_arm_sdfg("select_guarded_arm", "d > 5", True)
+    assert not SelectBranchMaps().apply_pass(sdfg, {})
+
+
 if __name__ == "__main__":
     test_a_branch_the_guard_protects_stays_a_branch()
     test_branch_maps_without_a_fusion_partner_stay_apart()
@@ -150,3 +181,4 @@ if __name__ == "__main__":
     test_a_branch_copying_beside_its_map_stays_a_branch()
     test_canonicalization_fuses_the_select_with_its_producers()
     test_a_condition_on_a_scalar_is_handed_to_the_select()
+    test_an_arm_behind_an_interstate_condition_stays_a_branch()

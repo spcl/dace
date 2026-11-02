@@ -43,7 +43,7 @@ MAX_TASKLETS = 64
 
 def branch_map(region: ControlFlowRegion) -> tuple[SDFGState, nodes.MapEntry] | None:
     """The one non-empty state of ``region`` and its single top-level map, when the contract admits them."""
-    if any(e.data.assignments for e in region.edges()):
+    if any(e.data.assignments or not e.data.is_unconditional() for e in region.edges()):
         return None
     states = [b for b in region.nodes() if isinstance(b, SDFGState)]
     if len(states) != len(region.nodes()):
