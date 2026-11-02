@@ -9,11 +9,11 @@ from typing import (
 )
 
 import dace
-from dace import data, dtypes, properties, subsets, symbolic, transformation
+from dace import data, dtypes, graphlib as nx, properties, subsets, symbolic, transformation
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes, propagation
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ReturnBlock, SymbolResolver
+from dace.sdfg.state import LoopRegion, ReturnBlock, SymbolResolver
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
@@ -959,14 +959,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  modify inside the intermediate array.
             #  Since we do not allow for WCR, we do not check if the producer subsets intersects.
             producer_subsets: list[subsets.Subset] = []
+            conditional_write = False
             for producer_edge in producer_edges:
                 if producer_edge.data.is_empty():
                     continue
                 if isinstance(producer_edge.src, nodes.AccessNode) and self.is_view(producer_edge.src, sdfg):
                     return None
-                if producer_edge.data.dynamic:
-                    # TODO(phimuell): Find out if this restriction could be lifted, but it is unlikely.
-                    return None
+                conditional_write = conditional_write or producer_edge.data.dynamic
                 if producer_edge.data.wcr is not None:
                     return None
                 # `compute_reduced_intermediate()` sizes the new intermediate from this subset
@@ -1139,6 +1138,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 if self.require_exclusive_intermediates:
                     return None
 
+                # What a conditional write skips keeps its old value here, which a buffer would not hold.
+                if conditional_write:
+                    return None
+
                 # The intermediate data is used somewhere else, either in this or another state.
                 # NOTE: If the intermediate is shared, then we will turn it into a
                 #   sink node attached to the combined MapExit. Technically this
@@ -1187,6 +1190,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
                 shared_outputs.add(out_edge)
             else:
+                # An element a conditional write skips has no value the buffer could lose: this Map is the only
+                #  writer, so reading it is undefined either way, unless an earlier execution wrote it.
+                if conditional_write and (
+                    intermediate_desc.lifetime != dtypes.AllocationLifetime.Scope or self._in_a_cycle(state)
+                ):
+                    return None
                 # The intermediate can be removed, as it is not used anywhere else.
                 exclusive_outputs.add(out_edge)
 
@@ -1194,6 +1203,19 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  and one group in `handle_intermediate_set()`.
         assert processed_inter_nodes == OrderedSet(e.dst for e in (pure_outputs | exclusive_outputs | shared_outputs))
         return (pure_outputs, exclusive_outputs, shared_outputs)
+
+    @staticmethod
+    def _in_a_cycle(state: dace.SDFGState) -> bool:
+        """Whether control flow in the SDFG of `state` can run `state` again, through a loop region or a back edge."""
+        block = state
+        while not isinstance(block, SDFG):
+            region = block.parent_graph
+            if isinstance(region, LoopRegion):
+                return True
+            if any(nx.has_path(region.nx, successor, block) for successor in region.successors(block)):
+                return True
+            block = region
+        return False
 
     def _reduce_producer_tree(
         self,
