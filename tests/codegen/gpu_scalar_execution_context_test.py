@@ -36,6 +36,14 @@ def _make_program(storage: dace.StorageType, persistent=False):
     _modify_array(sdfg, storage)
 
     if persistent:
+        # GPU copies land right before the first use, behind ``t``'s assignment, which belongs in the kernel
+        assign, copy_in = sdfg.start_block, sdfg.out_edges(sdfg.start_block)[0].dst
+        loop = sdfg.out_edges(copy_in)[0].dst
+        sdfg.remove_edge(sdfg.out_edges(assign)[0])
+        sdfg.remove_edge(sdfg.out_edges(copy_in)[0])
+        sdfg.add_edge(copy_in, assign, dace.InterstateEdge())
+        sdfg.add_edge(assign, loop, dace.InterstateEdge())
+        sdfg.start_block = sdfg.node_id(copy_in)
         content_nodes = set(sdfg.nodes()) - {sdfg.start_state, sdfg.sink_nodes()[0]}
         subgraph = SubgraphView(sdfg, content_nodes)
         transform = GPUPersistentKernel()

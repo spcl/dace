@@ -20,7 +20,6 @@ from dace.sdfg.nodes import MapEntry, Tasklet
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
-    SCALAR_TAIL_MARKER,
     SplitMapForTileRemainder,
 )
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
@@ -108,13 +107,13 @@ def test_K1_divisible_stays_one_region():
     assert boundary == 0
 
 
-@pytest.mark.parametrize("tail_mode,marker", [("masked", ""), ("scalar", SCALAR_TAIL_MARKER)])
-def test_K1_extent_below_the_width_is_one_remainder_region(tail_mode, marker):
-    """A 1-element map under width 8 has no interior; peeling one left an empty ``0:-1`` map."""
+@pytest.mark.parametrize("tail_mode", ["masked", "scalar"])
+def test_K1_extent_below_the_width_stays_whole_and_unmarked(tail_mode):
+    """A 1-element map under width 8 has no interior: left whole and scalar (ecf86b6ea), never a ``0:-1`` map."""
     sdfg, state, me = _build_kernel(K=1, bounds=(1,), widths=(8,))
     SplitMapForTileRemainder(widths=(8,), tail_mode=tail_mode).apply_pass(sdfg, {})
     entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, MapEntry)]
-    assert [(e.map.label, str(e.map.range)) for e in entries] == [(f"k{marker}", "0")]
+    assert [(e.map.label, str(e.map.range)) for e in entries] == [("k", "0")]
 
 
 def test_K2_both_non_divisible_produces_3_regions():

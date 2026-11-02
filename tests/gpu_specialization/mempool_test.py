@@ -20,7 +20,7 @@ def _pooled_kernel(A: dc.float64[N], B: dc.float64[N]):
     for i in dc.map[0:N]:
         tmp[i] = A[i] * 2.0
     for i in dc.map[0:N]:
-        B[i] = tmp[i] + 1.0
+        B[i] = tmp[N - 1 - i] + A[i]  # Reads both out of order, so that B can share neither's buffer
 
 
 def _build_pooled_sdfg():
@@ -47,7 +47,7 @@ def test_mempool_runs_correctly_and_emits_expected_calls():
     A = np.arange(n, dtype=np.float64)
     B = np.zeros(n, dtype=np.float64)
     compiled(A=A, B=B, _MP_N=n)
-    np.testing.assert_allclose(B, A * 2.0 + 1.0)
+    np.testing.assert_allclose(B, A[::-1] * 2.0 + A)
 
     # Async alloc/free calls are emitted on the host side; scan every emitted source.
     build = sdfg.build_folder

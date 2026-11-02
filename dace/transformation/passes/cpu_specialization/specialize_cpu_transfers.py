@@ -146,13 +146,16 @@ class SpecializeCpuTransfers(ppl.Pass):
         # loop nest, and the pass does not touch LoopRegion bounds, so a verdict computed for one
         # transfer's loop stays valid for the next transfer under the same loop.
         loop_cache: dict[int, bool] = {}
+        varying_cache: dict[int, set[str]] = {}
         for node, state in sdfg.all_nodes_recursive():
             is_copy = isinstance(node, CopyLibraryNode)
             if not is_copy and not isinstance(node, FillLibraryNode):
                 continue
             if not (copy_is_host(node, state) if is_copy else memset_is_host(node, state)):
                 continue
-            if node.schedule in PARALLEL_SCHEDULES and is_reentered_cpu_transfer(node, state, loop_cache=loop_cache):
+            if node.schedule in PARALLEL_SCHEDULES and is_reentered_cpu_transfer(
+                node, state, loop_cache=loop_cache, varying_cache=varying_cache
+            ):
                 node.schedule = dtypes.ScheduleType.Sequential
                 changed += 1
             if node.schedule != dtypes.ScheduleType.Sequential or node.implementation not in UNCHOSEN:

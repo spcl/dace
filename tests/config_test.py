@@ -80,7 +80,7 @@ def test_config_isolation_multi_thread():
     thread_two_has_launched = threading.Event()
     master_thread_has_modified_its_configuration = threading.Event()
     thread_one_has_stoped_working = threading.Event()
-    CONFIG_KEY = "compiler.cuda.backend"
+    CONFIG_KEY = "compiler.cuda.hip_arch"
     initial_value = Config.get(CONFIG_KEY)
     assert Config.get_default(CONFIG_KEY) == initial_value
 
