@@ -37,7 +37,7 @@ from dace.sdfg.replace import replace_dict as replace_in_subgraph
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.interstate.loop_to_map import control_flow_reads
+from dace.transformation.interstate.loop_to_map import control_flow_reads, symbols_assigned_before_use
 from dace.transformation.passes.analysis import canon_stats
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     WAVEFRONT_DIAGONAL,
@@ -306,6 +306,9 @@ class WavefrontSkew(ppl.Pass):
             ):
                 return None
         unsafe = body.assigned
+        # A symbol one instance hands to the next is a dependence the access model does not see
+        if unsafe and symbols_assigned_before_use(outer, body.u) is None:
+            return None
         if (free_names(body.u_lo) | free_names(body.u_hi)) & (unsafe | {body.u}):
             return None
         if any((free_names(st.lo) | free_names(st.hi)) & (unsafe | {st.var}) for st in body.statements):
