@@ -10,10 +10,11 @@ implementations for it (see ``thread_block_implementation``).
   columns ``N`` and inner dimension ``K``, ``K`` contiguous in both operands (as in ``x @ w.T`` for row-major ``x``
   and ``w``). The rows, any number of them (also data-dependent, as in ``x[r0:r0 + nr] @ w.T``), are computed in
   chunks of up to 64, the columns split among the warps of the block. Slices of ``K`` are copied asynchronously
-  (``cp.async``) into a workspace in shared memory, a transient in dynamic shared memory that the kernel's other code
-  reuses where it is not live, and loaded into tensor-core fragments (``ldmatrix``). Rows of ``a`` gathered through
-  ``_a_index`` (see ``dace.libraries.blas.indexed``) are read directly. The tensor-core code needs CUDA compute
-  capability 8.0; elsewhere (older GPUs, HIP), the same expansion multiplies element by element.
+  (``cp.async``, which also fetches the next slices into L2) into a workspace, a transient in dynamic shared memory
+  (which the products in other states of the block's code share, see ``PlanSharedMemory``), and loaded into
+  tensor-core fragments (``ldmatrix``). Rows of ``a`` gathered through ``_a_index`` (see
+  ``dace.libraries.blas.indexed``) are read directly. The tensor-core code needs CUDA compute capability 8.0;
+  elsewhere (older GPUs, HIP), the same expansion multiplies element by element.
 * ``ThreadBlock``: any types and shapes; every thread computes elements of the product.
 
 Both write only the elements of the output (view), and support ``alpha`` but not ``beta``.
@@ -32,6 +33,9 @@ from dace.transformation.transformation import ExpandTransformation
 WARP_SIZE = 32
 #: The rows of a chunk of the tensor-core product, and the elements of a slice of the inner dimension
 MMA_ROWS, MMA_K_STEP, MMA_STAGES = 64, 32, 2
+#: The bytes around every copied chunk that L2 fetches with it: the following slices of a row-major operand, whose
+#: rows a slice only reads 64 bytes of, are then read from L2 rather than from another DRAM page each time
+MMA_L2_FETCH = 256
 
 
 def kernel_threads(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> int:
@@ -256,14 +260,14 @@ for (long long m0 = 0; m0 < M_TOTAL; m0 += MT) {{
         for (int j = 0; j < A_COPIES; ++j) {{
             const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
             if (MT * CHUNKS % THREADS == 0 || i < MT * CHUNKS)
-                asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\\n"
+                asm volatile("cp.async.cg.shared.global.L2::{MMA_L2_FETCH}B [%0], [%1], 16, %2;\\n"
                              :: "r"(DACE_TB_ADDR(s, r, c)), "l"(a_src[j] ? a_src[j] + k0 : a), "r"(a_src[j] ? 16 : 0));
         }}
         #pragma unroll
         for (int j = 0; j < B_COPIES; ++j) {{
             const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
             if (N * CHUNKS % THREADS == 0 || i < N * CHUNKS)
-                asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\\n"
+                asm volatile("cp.async.cg.shared.global.L2::{MMA_L2_FETCH}B [%0], [%1], 16;\\n"
                              :: "r"(DACE_TB_ADDR(s, MT + r, c)), "l"(b_src[j] + k0));
         }}
     }};
