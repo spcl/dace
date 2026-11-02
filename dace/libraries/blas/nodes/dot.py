@@ -172,6 +172,8 @@ ExpandDotHipBLAS = hip_dialect.hip_expansion(ExpandDotCuBLAS, environments.hipbl
 
 @dace.library.node
 class Dot(dace.sdfg.nodes.LibraryNode):
+    """BLAS dot product of ``_x`` and ``_y``, conjugating ``_x`` if ``conjugate``."""
+
     # Global properties
     implementations = {
         "pure": ExpandDotPure,

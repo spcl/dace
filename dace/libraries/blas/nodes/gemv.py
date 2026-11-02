@@ -386,6 +386,8 @@ ExpandGemvHipBLAS = hip_dialect.hip_expansion(ExpandGemvCuBLAS, environments.hip
 
 @dace.library.node
 class Gemv(dace.sdfg.nodes.LibraryNode):
+    """BLAS ``?gemv``: ``_y = alpha * _A @ _x + beta * _y``, with ``_A^T`` if ``transA``."""
+
     # Global properties
     implementations = {
         "pure": ExpandGemvPure,

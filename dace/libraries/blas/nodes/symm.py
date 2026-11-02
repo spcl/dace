@@ -125,6 +125,7 @@ class Symm(nodes.LibraryNode):
 @oprepo.replaces("dace.libraries.blas.symm")
 @oprepo.replaces("dace.libraries.blas.Symm")
 def symm_libnode(pv, sdfg: SDFG, state: SDFGState, A, B, C, result=None, side=False, uplo=False, alpha=1, beta=0):
+    """Adds a :class:`Symm` writing ``alpha * A @ B + beta * C`` to ``result``, by default ``C``."""
     result = result if result is not None else C
     node = Symm("symm", side=side, uplo=uplo, alpha=alpha, beta=beta)
     for name, connector in ((A, "_A"), (B, "_B"), (C, "_Cin")):

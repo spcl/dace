@@ -125,6 +125,7 @@ class Syrk(nodes.LibraryNode):
 @oprepo.replaces("dace.libraries.blas.syrk")
 @oprepo.replaces("dace.libraries.blas.Syrk")
 def syrk_libnode(pv, sdfg: SDFG, state: SDFGState, A, C, result=None, uplo=False, transA=False, alpha=1, beta=0):
+    """Adds a :class:`Syrk` writing ``alpha * A @ A^T + beta * C`` to ``result``, by default ``C``."""
     result = result if result is not None else C
     node = Syrk("syrk", uplo=uplo, transA=transA, alpha=alpha, beta=beta)
     for name, connector in ((A, "_A"), (C, "_Cin")):

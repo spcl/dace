@@ -116,6 +116,7 @@ class Symv(nodes.LibraryNode):
 @oprepo.replaces("dace.libraries.blas.symv")
 @oprepo.replaces("dace.libraries.blas.Symv")
 def symv_libnode(pv, sdfg: SDFG, state: SDFGState, A, x, y, result=None, alpha=1, beta=0, uplo=False):
+    """Adds a :class:`Symv` writing ``alpha * A @ x + beta * y`` to ``result``, by default ``y``."""
     result = result if result is not None else y
     node = Symv("symv", uplo=uplo, alpha=alpha, beta=beta)
     for name, connector in ((A, "_A"), (x, "_x"), (y, "_yin")):
