@@ -426,7 +426,7 @@ def match_imperfect(
 
 
 def _guarded_loop(loop: LoopRegion, cond: CodeBlock) -> LoopRegion:
-    """Make the body of ``loop``, already out of its region, ``if cond: <original body>``; returns ``loop``."""
+    """Make the body of ``loop`` ``if cond: <original body>``; returns ``loop``."""
     body_blocks = list(loop.nodes())
     body_edges = list(loop.edges())
     body_start = loop.start_block
@@ -445,7 +445,7 @@ def _guarded_loop(loop: LoopRegion, cond: CodeBlock) -> LoopRegion:
 
 
 def _trivial_guarded_loop(state: SDFGState, cond: CodeBlock) -> LoopRegion:
-    """Wrap ``state``, already out of its region, in a trivial single-iteration loop whose body is
+    """Wrap ``state`` in a trivial single-iteration loop whose body is
     ``if cond: <state>`` (the free-state perfect-nesting wrapper)."""
     inner = ControlFlowRegion(label=f"{state.label}_g")
     inner.add_node(state, is_start_block=True)
@@ -596,11 +596,12 @@ class MoveIfIntoLoop(ppl.Pass):
 
         # ``cb`` is dropped below, so its branch hands its blocks over.
         order = required(_linear_blocks(region, allow_assignments=True))
-        for b in order:
-            region.remove_node(b)
+        # While each block hangs in the tree: a loop out of it lists its new regions by a whole-tree reset
         units = [
             (_guarded_loop(b, cond) if isinstance(b, LoopRegion) else _trivial_guarded_loop(b, cond)) for b in order
         ]
+        for b in order:
+            region.remove_node(b)
 
         for u in units:
             parent.add_node(u, ensure_unique_name=True)
