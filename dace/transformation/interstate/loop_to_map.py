@@ -2295,6 +2295,10 @@ class LoopLift:
         isread_set: set[memlet.Memlet] = set()
         for e in self.loop.all_interstate_edges():
             isread_set |= set(e.data.get_read_memlets(sdfg.arrays))
+        # And in the headers inside the body: ``if a[i + 1] > 0`` reads what iteration ``i + 1`` writes.
+        for block in self.loop.all_control_flow_blocks() if write_memlets else ():
+            if isinstance(block, (LoopRegion, ConditionalBlock)):
+                isread_set.update(block.get_meta_read_memlets())
         for mmlt in [memlet_in_closed_form(m, closed_forms) for m in isread_set]:
             if mmlt.data in write_memlets:
                 if not self.test_read_memlet(

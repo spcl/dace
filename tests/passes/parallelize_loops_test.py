@@ -21,7 +21,8 @@ import pytest
 import dace
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_to_map import (
     LiftContext,
     LoopLift,
@@ -1111,6 +1112,18 @@ def test_a_strided_lift_leaves_a_map_over_the_same_name_alone():
     assert stored(sdfg, "b") == [1, 5]
 
 
+def test_a_header_reading_another_iterations_store_stays_a_loop():
+    sdfg, _ = iota_loop("header_reads_a_later_store", "i = 0", "i < 8", "i = i + 1")
+    loop = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
+    guard = ConditionalBlock("guard")
+    loop.add_node(guard)
+    loop.add_edge(loop.start_block, guard, dace.InterstateEdge())
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    guard.add_branch(CodeBlock("a[i + 1] > 0"), branch)
+    branch.add_state("taken", is_start_block=True)
+    assert ParallelizeLoops().apply_pass(sdfg, {}) is None
+
+
 def test_a_gather_lifted_through_a_loop_fuses_into_its_consumer():
     """Canonicalize turns the gather map into a loop and back; the lifted body's nested SDFG must keep its
     per-iteration ``gathered[k]`` connector, or fusion sees all of it written and keeps two kernels."""
@@ -1239,6 +1252,7 @@ if __name__ == "__main__":
     test_a_strided_lift_ends_at_its_last_iterate()
     test_a_downward_strided_lift_visits_the_loops_iterates()
     test_a_strided_lift_leaves_a_map_over_the_same_name_alone()
+    test_a_header_reading_another_iterations_store_stays_a_loop()
     test_a_gather_lifted_through_a_loop_fuses_into_its_consumer()
     test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop()
     test_a_container_assumed_private_is_left_out_of_the_dependence_test()
