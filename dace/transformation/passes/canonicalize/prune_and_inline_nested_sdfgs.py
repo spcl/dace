@@ -20,7 +20,7 @@ from typing import Any
 from dace import SDFG
 from dace.config import Config
 from dace.sdfg import nodes
-from dace.sdfg.propagation import propagate_memlets_state
+from dace.sdfg.propagation import propagate_memlets_scope
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -142,14 +142,16 @@ class PruneAndInlineNestedSDFGs(ppl.Pass):
         inline.connector_names = {}
         walk = Walk([(PruneConnectors(), PruneConnectors.nsdfg), (inline, InlineSDFG.nested_sdfg)])
         applied = 0
-        scoped: dict[SDFGState, None] = {}
+        #: Per state, the scopes a nested SDFG was inlined into.
+        scoped: dict[SDFGState, dict[nodes.EntryNode, None]] = {}
         candidate = walk.first_accepted(sdfg)
         while candidate is not None:
             xform, state, node = candidate
             dirty = ancestor_blocks(state)
             dirty.append(state)
-            if isinstance(xform, InlineSDFG) and state.entry_node(node) is not None:
-                scoped[state] = None
+            entry = state.entry_node(node)
+            if isinstance(xform, InlineSDFG) and entry is not None:
+                scoped.setdefault(state, {})[entry] = None
             xform.permissive = False
             xform.apply(state, state.sdfg)
             applied += 1
@@ -157,9 +159,12 @@ class PruneAndInlineNestedSDFGs(ppl.Pass):
             candidate = walk.first_accepted(sdfg)
         # Only memlets change here, under which a resolver stays valid
         symbols = SymbolResolver()
-        for state in scoped:
+        for state, entries in scoped.items():
             if state.sdfg is not None and state in state.parent_graph.nodes():
-                propagate_memlets_state(state.sdfg, state, symbols)
+                tree = state.scope_tree()
+                # The inlining changed nothing outside these scopes, and their nested scopes kept their memlets
+                changed = [tree[entry] for entry in entries if entry in state._nodes]
+                propagate_memlets_scope(state.sdfg, state, changed, symbols=symbols)
         # No validation here: the pipeline's ``validate`` / ``validate_all`` own it, as they did for the wrapper, and
         # validation is not read-only (``Fill.validate`` drops an unwired value connector).
         return applied or None
