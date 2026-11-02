@@ -1266,7 +1266,8 @@ class InvalidSDFGError(Exception):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id)
 
     def __str__(self):
-        if self.state_id is not None:
+        # A transformation that fails validation may have removed the block it names
+        if self.state_id is not None and 0 <= self.state_id < self.sdfg.number_of_nodes():
             # The id may name a control flow block that is not a state, such as a conditional
             # block, in which case only its label is available.
             block = self.sdfg.node(self.state_id)
