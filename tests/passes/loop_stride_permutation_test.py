@@ -366,7 +366,7 @@ def test_trapezoid_interchange_is_faster():
         aa = np.zeros((n, n))
         csdfg(aa=aa, bb=bb, cc=cc, N=n)  # warm the caches and the first-call overhead
         times = []
-        for _ in range(5):
+        for _ in range(25):  # The fastest of many: under a loaded node a few repetitions all see other processes
             start = time.perf_counter()
             csdfg(aa=aa, bb=bb, cc=cc, N=n)
             times.append(time.perf_counter() - start)
