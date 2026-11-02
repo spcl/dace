@@ -360,8 +360,9 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
             if self.skip_library_nodes:
                 return False
             return not node.has_side_effects(sdfg)
-        elif isinstance(node, nodes.Tasklet):
-            # If a tasklet has any callbacks, mark as "live" due to potential side effects
+        elif isinstance(node, (nodes.Tasklet, nodes.NestedSDFG)):
+            # If a tasklet has any callbacks, mark as "live" due to potential side effects; a nested SDFG for what it
+            # holds (the abort guard of a lifted check loop writes nothing, so nothing else keeps it)
             return not node.has_side_effects(sdfg)
 
         elif isinstance(node, nodes.AccessNode):
