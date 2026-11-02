@@ -2496,6 +2496,22 @@ def test_an_accumulator_survives_the_next_run_of_its_loop():
     assert np.allclose(out, 2 * a.sum() + np.cumsum(a))
 
 
+K = dace.symbol("K")
+
+
+@dace.program
+def backward_nested_scan(a: dace.float64[K, N], b: dace.float64[K, N]):
+    for k in range(K - 2, -1, -1):
+        for j in range(N):
+            a[k, j] = a[k + 1, j] + b[k, j]
+
+
+def test_a_backward_nested_scan_is_not_vector_lifted():
+    sdfg = backward_nested_scan.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert not LoopToScan(lift_nested_scan=True).apply_pass(sdfg, {})
+
+
 if __name__ == "__main__":
     import sys
 

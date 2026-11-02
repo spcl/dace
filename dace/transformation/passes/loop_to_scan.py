@@ -1067,6 +1067,9 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
         break
     if matched is None:
         return []
+    # The vector rewrite emits one forward unit-stride seed
+    if any(s.inner_loop is not None and (s.coef != 1 or s.scan_stride != 1) for s in matched):
+        return []
     # An index bound inside the body changes per iteration: it is no fixed slot of a scan
     bound = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
     for info in matched:
