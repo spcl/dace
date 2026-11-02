@@ -51,8 +51,13 @@ def specialize_config(sdfg: SDFG, values: dict[str, Value]) -> None:
     A scalar argument stops being an argument: it turns transient and every read folds to the constant. A length-1
     array argument stays on the signature, since callers pass its buffer; its reads go through a staged scalar, and
     that scalar -- like any transient a frontend already staged from a configuration container -- takes the value.
+
+    :raises ValueError: If the SDFG writes a configuration container, whose value would be lost.
     """
     containers = {name: val for name, val in values.items() if name in sdfg.arrays}
+    written = sorted(containers.keys() & sdfg.read_and_write_sets()[1])
+    if written:
+        raise ValueError(f"Configuration containers are not constant, the SDFG writes {written}")
     specialize_symbols(sdfg, {name: val for name, val in values.items() if name not in containers})
     arrays = {name for name in containers if isinstance(sdfg.arrays[name], data.Array)}
     if arrays:

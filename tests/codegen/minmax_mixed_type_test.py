@@ -62,6 +62,21 @@ def test_max_mixed_int_double_is_compile_error():
     assert _MIXED_TYPE_ERROR.format("Max") in str(excinfo.value)
 
 
+def test_max_keeps_the_wider_integer():
+    sdfg = dace.SDFG("max_int64")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("result", [1], dace.int64)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("wide", {}, {"o": None}, "o = Max(1, N)")
+    state.add_edge(tasklet, "o", state.add_write("result"), None, dace.Memlet("result[0]"))
+
+    result = np.zeros(1, dtype=np.int64)
+    sdfg(result=result, N=3000000000)
+
+    assert result[0] == 3000000000
+
+
 if __name__ == "__main__":
     test_min_mixed_int_double_is_compile_error()
     test_max_mixed_int_double_is_compile_error()
+    test_max_keeps_the_wider_integer()
