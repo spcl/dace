@@ -79,8 +79,8 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        # This expansion emits ?dotu only
-        if node.conjugate and desc_x.dtype.is_complex():
+        # There is no ?dot for complex data, which returns through ?dotu and ?dotc, nor for half precision
+        if desc_x.dtype.is_complex() or dtype == dace.dtypes.float16:
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         try:
@@ -123,8 +123,8 @@ class ExpandDotCuBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        # This expansion emits ?dotu only
-        if node.conjugate and desc_x.dtype.is_complex():
+        # There is no ?dot for complex data, which returns through ?dotu and ?dotc, nor for half precision
+        if desc_x.dtype.is_complex() or dtype == dace.dtypes.float16:
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         try:
