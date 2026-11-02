@@ -11,8 +11,8 @@ plain :class:`~dace.transformation.pass_pipeline.Pass` objects so the
 - :class:`BestEffortLoopPeeling` -- index-set-split a loop at a point DERIVED from its body
   (an ``if i == x`` guard, a broadcast read's conflicting index), and peel a wrapping body
   modulo to its floor-correct affine form, pruning the now-dead boundary guard from each
-  segment. ``peel_limit`` bounds the modulo peel and underwrites the large-trip-count
-  assumption the split's range proofs lean on (0 disables the pass).
+  segment. ``peel_limit`` bounds the modulo peel and its large-trip-count assumption (0
+  disables the pass).
 
 Transformation classes are imported lazily inside the methods: importing them at
 module load would cycle (this package is imported by the transformations those
@@ -480,8 +480,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         dtype=int,
         default=DEFAULT_PEEL_LIMIT,
         desc="Bounds the wrapping-modulo peel to 1..peel_limit iterations (front/back/both), keeping "
-        "the smallest peel that folds the wrap away. Also underwrites the split range proofs: a loop "
-        "worth peeling by k <= peel_limit is assumed to run more than peel_limit times (0 disables).",
+        "the smallest peel that folds the wrap away: a loop worth peeling by k <= peel_limit is assumed to "
+        "run more than peel_limit times (0 disables).",
     )
 
     validate = properties.Property(
