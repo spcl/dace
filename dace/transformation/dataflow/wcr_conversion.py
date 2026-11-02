@@ -447,6 +447,11 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         ]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        # The tasklet then computes the increment alone, stored in the accumulator's type before the WCR applies it
+        acc = sdfg.arrays[self.input.data].dtype
+        reads = [sdfg.arrays[e.data.data].dtype for e in graph.in_edges(self.tasklet) if not e.data.is_empty()]
+        if any(dtypes.result_type_of(acc, read) != acc for read in reads):
+            return False
         if expr_index == 2:
             return self._can_be_applied_rmw_copy(graph, sdfg)
         if expr_index == 3:
