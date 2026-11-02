@@ -448,7 +448,7 @@ def only_read_modify_written(loop: LoopRegion, name: str) -> bool:
 
     if name in loop_analysis.control_reads(loop):
         return False
-    states = loop.states()
+    states = list(loop.states())
     writes, reads, names = rmw_edges(states, frozenset({name}))
     if name not in names:
         return False
@@ -467,7 +467,8 @@ def read_by_its_update(state: SDFGState, read: gr.MultiConnectorEdge[mm.Memlet],
     """Whether the tasklet ``read`` reaches, past a staging copy of the load, writes ``name`` back, past one of the
     store (``staging_successor``)."""
     reader = state.memlet_path(read)[-1].dst
-    if isinstance(reader, nodes.AccessNode) and state.out_degree(reader) == 1:
+    # One element only: a staged slab is the operand of whatever reads it, householder's ``V @ Q[k:, :]``
+    if isinstance(reader, nodes.AccessNode) and state.out_degree(reader) == 1 and read.data.num_elements() == 1:
         reader = state.memlet_path(state.out_edges(reader)[0])[-1].dst
     if not isinstance(reader, nodes.Tasklet):
         return False
