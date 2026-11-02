@@ -55,10 +55,12 @@ def _is_view_of(state: SDFGState, node: nodes.Node, viewed: nodes.AccessNode) ->
     return view_edge is not None and viewed in (view_edge.src, view_edge.dst)
 
 
-def keep_nest_order(state: SDFGState, inlined: dict[nodes.Node, nodes.Node], successors: set[nodes.Node]) -> None:
+def keep_nest_order(
+    state: SDFGState, inlined: dict[nodes.Node, nodes.Node], successors: set[nodes.Node], predecessors: set[nodes.Node]
+) -> None:
     """
-    Order every inlined node before each successor of the nested node it replaced, where the two conflict on a
-    container and no path does yet.
+    Order every inlined node between the predecessors and the successors of the nested node it replaced, where the two
+    conflict on a container and no path does yet.
 
     The nested node ran as a unit: whatever followed it waited for all of its body. Spliced in, only data dependences
     remain, so a later write to a container the body read (an anti-dependence) could be sorted before that read and
@@ -68,8 +70,24 @@ def keep_nest_order(state: SDFGState, inlined: dict[nodes.Node, nodes.Node], suc
     :param state: The state the nested SDFG was inlined into.
     :param inlined: The top-level nodes of the inlined body, each with the node that orders it: its scope's exit.
     :param successors: The nodes the nested SDFG node's out-edges led to, recorded before inlining.
+    :param predecessors: The nodes its in-edges came from, likewise; each must stay ahead of a body node it conflicts with.
     """
     body = [(last, *accessed(state, n)) for n, last in inlined.items() if n in state._nodes]
+    for pred in predecessors:
+        if pred not in state._nodes:
+            continue
+        reached = descendants(state, pred)
+        before_reads, before_writes = accessed(state, pred)
+        for node in ancestors(state, pred):
+            reads, writes = accessed(state, node)
+            before_reads, before_writes = before_reads | reads, before_writes | writes
+        for node, last in inlined.items():
+            if node not in state._nodes or node is pred or node in reached or isinstance(node, nodes.ExitNode):
+                continue
+            reads, writes = accessed(state, node)
+            reads, writes = reads | accessed(state, last)[0], writes | accessed(state, last)[1]
+            if reads & before_writes or writes & (before_reads | before_writes):
+                state.add_nedge(pred, node, Memlet())
     for succ in successors:
         if succ not in state._nodes:
             continue  # moved to another state by a fission: the state boundary orders it
@@ -602,6 +620,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         isolated_nodes = {n for n in state.data_nodes() if state.degree(n) == 0}
         # What ran after the nested node as a whole; its body must still precede them once spliced in
         successors = {e.dst for e in state.out_edges(nsdfg_node)}
+        predecessors = {e.src for e in state.in_edges(nsdfg_node)}
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
@@ -1037,7 +1056,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if parent is None and node in subgraph.nodes():
                 inlined[node] = nstate.exit_node(node) if isinstance(node, nodes.EntryNode) else node
                 inlined[inlined[node]] = inlined[node]
-        keep_nest_order(state, inlined, successors)
+        keep_nest_order(state, inlined, successors, predecessors)
 
         #######################################################
         # Remove nested SDFG node
