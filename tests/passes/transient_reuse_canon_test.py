@@ -318,6 +318,23 @@ def test_buffer_written_again_shares_the_gap_between_its_live_ranges():
     assert np.allclose(B, 2 * A + 1) and np.allclose(C, 3 * A + 1) and np.allclose(D, 4 * A + 1)
 
 
+def test_whole_copy_between_arrays_goes_with_their_shared_buffer():
+    sdfg = new_sdfg("reuse_handed_over", ["A", "B", "C"], ["T", "U"])
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    chain(s0, "A", "2 * x", "T")
+    s1 = sdfg.add_state_after(s0, "s1")
+    s1.add_nedge(s1.add_access("T"), s1.add_access("U"), Memlet("T[0:N]"))
+    s2 = sdfg.add_state_after(s1, "s2")
+    chain(s2, "U", "x + 1", "B")
+
+    assert reuse(sdfg) == {sdfg.cfg_id: {"U": "T"}}
+    assert all(e.data.is_empty() for e in s1.edges())
+    A = np.random.rand(N_VALUE)
+    B = np.zeros(N_VALUE)
+    run(sdfg, A=A, B=B, C=np.zeros(N_VALUE))
+    assert np.allclose(B, 2 * A + 1)
+
+
 def test_indirect_write_does_not_end_a_live_range():
     """``T[(i * i) % N]`` propagates to ``T[0:N]``: what it misses stays live across the back edge."""
     sdfg = new_sdfg("reuse_indirect_write", ["A", "B", "C"], ["T", "U"])
@@ -530,6 +547,7 @@ if __name__ == "__main__":
     test_wcr_accumulator_is_not_shared()
     test_states_of_one_loop_body_share_one_buffer()
     test_buffer_written_again_shares_the_gap_between_its_live_ranges()
+    test_whole_copy_between_arrays_goes_with_their_shared_buffer()
     test_indirect_write_does_not_end_a_live_range()
     test_value_kept_across_calls_is_not_shared()
     test_branches_of_a_conditional_share_one_buffer()

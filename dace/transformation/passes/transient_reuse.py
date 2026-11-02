@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import sympy
 
-from dace import SDFG, SDFGState, dtypes, properties, subsets, symbolic
+from dace import SDFG, Memlet, SDFGState, dtypes, properties, subsets, symbolic
 from dace import data as dt
 from dace.config import Config
 from dace.ordered import OrderedSet
@@ -103,6 +103,8 @@ class TransientReuse(ppl.Pass):
     live on entry to a state, both on exit, one all through it, or within it unless the accesses of the one dying or
     local to it all finish before the first write of the other. An array read where no path holds a write before it
     carries a value from an earlier run and shares nothing.
+
+    A whole-array copy hands a dying array over to one born there: the two do not interfere and the copy goes.
 
     Only plain heap / GPU global arrays qualify, not read by control flow, not viewed or referenced, no WCR target and
     not ``may_alias``; one used inside a map scope only if it is allocated outside it (SDFG or Persistent lifetime, or also
@@ -267,6 +269,8 @@ class BufferSharing:
     nested: OrderedSet = field(default_factory=OrderedSet)
     #: The SDFG's facts, derived once: nothing changes until the renaming at the end.
     facts: symbolic.Facts | None = None
+    #: Per candidate, the candidates a whole-array copy connects it to.
+    partners: dict[str, OrderedSet] = field(default_factory=dict)
     equalities: dict[tuple, bool] = field(default_factory=dict)
     bounds: dict[tuple, bool] = field(default_factory=dict)
 
@@ -341,6 +345,15 @@ class BufferSharing:
                     node.add_in_connector(f"IN_{renamed[old]}", node.in_connectors.pop(f"IN_{old}"), force=True)
                 if f"OUT_{old}" in node.out_connectors:
                     node.add_out_connector(f"OUT_{renamed[old]}", node.out_connectors.pop(f"OUT_{old}"), force=True)
+        for state in self.sdfg.states():
+            for edge in state.edges():
+                if (
+                    isinstance(edge.src, nodes.AccessNode)
+                    and isinstance(edge.dst, nodes.AccessNode)
+                    and edge.src.data == edge.dst.data in renamed.values()
+                    and not edge.data.is_empty()
+                ):
+                    edge.data = Memlet()
         for name in renamed:
             self.sdfg.remove_data(name, validate=False)
         return renamed
@@ -389,6 +402,14 @@ class BufferSharing:
         for name in excluded:
             self.uses.pop(name, None)
         self.liveness()
+        for name, states in self.uses.items():
+            for state, accessed in states.items():
+                for node in accessed:
+                    for edge in state.out_edges(node):
+                        other = edge.dst
+                        if isinstance(other, nodes.AccessNode) and other.data in self.uses and other.data != name:
+                            self.partners.setdefault(name, OrderedSet()).add(other.data)
+                            self.partners.setdefault(other.data, OrderedSet()).add(name)
 
     def liveness(self) -> None:
         """Live ranges of every candidate over the control flow graph, as bits per vertex: ``uses`` is read before any
@@ -506,17 +527,20 @@ class BufferSharing:
         )
 
     def place(self, name: str, groups: list[Group]) -> Group | None:
-        """Add ``name`` to the first group it fits, one with the same shape first."""
+        """Add ``name`` to the first group it fits: one holding a copy partner, the copy going with it, then one with
+        the same shape."""
         shape = self.sdfg.arrays[name].shape
-        for same_shape in (True, False):
-            for group in groups:
-                if (self.sdfg.arrays[group.rep].shape == shape) != same_shape:
-                    continue
-                rep = self.joined_rep(group, name)
-                if rep is not None and all(self.disjoint(name, m) for m in group.members):
-                    group.rep = rep
-                    group.members.append(name)
-                    return group
+        partners = self.partners.get(name, ())
+
+        def preference(group: Group) -> tuple[bool, bool]:
+            return not any(m in partners for m in group.members), self.sdfg.arrays[group.rep].shape != shape
+
+        for group in sorted(groups, key=preference):
+            rep = self.joined_rep(group, name)
+            if rep is not None and all(self.disjoint(name, m) for m in group.members):
+                group.rep = rep
+                group.members.append(name)
+                return group
         return None
 
     def disjoint(self, a: str, b: str) -> bool:
@@ -530,9 +554,37 @@ class BufferSharing:
         uses_a, uses_b = self.uses[a].get(state), self.uses[b].get(state)
         if uses_a is None or uses_b is None:
             return False
-        if not (in_b or out_a) and order.before(uses_a, uses_b):
+        if not (in_b or out_a) and (order.before(uses_a, uses_b) or self.handed_over(state, uses_a, uses_b)):
             return True
-        return not (in_a or out_b) and order.before(uses_b, uses_a)
+        return not (in_a or out_b) and (order.before(uses_b, uses_a) or self.handed_over(state, uses_b, uses_a))
+
+    def handed_over(self, state: SDFGState, first: list[nodes.AccessNode], second: list[nodes.AccessNode]) -> bool:
+        """Whether the last access through ``first`` is a whole-array copy that is the first access through ``second``:
+        in one buffer the copy reads and writes the same elements, and :meth:`run` drops it."""
+        order = self.order(state)
+        for edge in state.edges():
+            source, target = edge.src, edge.dst
+            if not (source in first and target in second) or edge.data.wcr is not None or edge.data.is_empty():
+                continue
+            if state.out_degree(source) != 1 or state.in_degree(target) != 1 or not self.whole_copy(state, edge):
+                continue
+            return all(n is source or source in order.descendants(n) for n in first) and all(
+                n is target or n in order.descendants(target) for n in second
+            )
+        return False
+
+    def whole_copy(self, state: SDFGState, edge) -> bool:
+        desc, other = self.sdfg.arrays[edge.src.data], self.sdfg.arrays[edge.dst.data]
+        read, written = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
+        # A copy memlet without an other subset uses its one subset on both sides.
+        read, written = read or written, written or read
+        return (
+            read is not None
+            and len(desc.shape) == len(other.shape)
+            and all(self.equal(x, y) for x, y in zip(desc.shape, other.shape))
+            and read.covers_precise(subsets.Range.from_array(desc), self.facts)
+            and written.covers_precise(subsets.Range.from_array(other), self.facts)
+        )
 
     def order(self, state: SDFGState) -> StateOrder:
         if state not in self.orders:
