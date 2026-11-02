@@ -39,7 +39,7 @@ def test_relu_2():
             with dace.tasklet:
                 a << A[i]
                 o >> out[i]
-                o = max(a, 0)
+                o = max(a, dace.float16(0))  # min and max take no mixed types
         return out
 
     A = np.random.rand(20).astype(np.float16)
