@@ -2253,6 +2253,10 @@ class LoopLift:
                         if e.data is None or e.data.is_empty() or id(e) in rmw_reads:
                             continue
 
+                        # Lowering a map scope leaves a copy of a container onto itself: it moves nothing.
+                        if isinstance(e.dst, nodes.AccessNode) and e.dst.data == data and e.data.other_subset is None:
+                            continue
+
                         # Container read AND written: match only if the locations can't race.
                         src_subset = in_closed_form(e.data.get_src_subset(e, state), closed_forms)
                         if not self.test_read_memlet(

@@ -67,28 +67,6 @@ def _map_body_has_data_dependent_wcr(graph: SDFGState, map_entry: nodes.MapEntry
     return False
 
 
-def fold_identity_copy(state: SDFGState, edge) -> None:
-    """Fold ``edge`` when skipping a map scope left a copy of a container onto itself: an access node inside the map
-    fed through the entry, or drained through the exit, by a node of the same container. Such an edge has no
-    ``other_subset``, so its source subset is undefined for every pass that reads one."""
-    src, dst = edge.src, edge.dst
-    if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)) or src.data != dst.data:
-        return
-    if edge.data.other_subset is not None:
-        return
-    if state.in_degree(dst) == 1:
-        kept, gone = src, dst
-    elif state.out_degree(src) == 1:
-        kept, gone = dst, src
-    else:
-        edge.data.other_subset = copy.deepcopy(edge.data.subset)
-        return
-    state.remove_edge(edge)
-    sdutil.change_edge_src(state, gone, kept)
-    sdutil.change_edge_dest(state, gone, kept)
-    state.remove_node(gone)
-
-
 @properties.make_properties
 class MapToForLoop(transformation.SingleStateTransformation):
     """Implements the Map to for-loop transformation.
@@ -306,20 +284,16 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # store as object field for external access
         self.loop_region = loop_region
         # Skip map in input edges
-        bypassed = []
         for edge in nstate.out_edges(map_entry):
             src_node = nstate.memlet_path(edge)[0].src
-            bypassed.append(nstate.add_edge(src_node, None, edge.dst, edge.dst_conn, edge.data))
+            nstate.add_edge(src_node, None, edge.dst, edge.dst_conn, edge.data)
             nstate.remove_edge(edge)
 
         # Skip map in output edges
         for edge in nstate.in_edges(map_exit):
             dst_node = nstate.memlet_path(edge)[-1].dst
-            bypassed.append(nstate.add_edge(edge.src, edge.src_conn, dst_node, None, edge.data))
+            nstate.add_edge(edge.src, edge.src_conn, dst_node, None, edge.data)
             nstate.remove_edge(edge)
-
-        for edge in bypassed:
-            fold_identity_copy(nstate, edge)
 
         # Remove nodes from dynamic map range
         nstate.remove_nodes_from([e.src for e in dace.sdfg.dynamic_map_inputs(nstate, map_entry)])
