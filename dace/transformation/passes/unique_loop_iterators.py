@@ -12,6 +12,7 @@ from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import ControlFlowBlockReachability, loop_analysis
+from dace.transformation.passes.iteration_domain import executed_trip_count
 from dace.transformation.transformation import explicit_cf_compatible
 
 #: Prefix of the renamed iterators.
@@ -108,7 +109,7 @@ def exit_value(loop: LoopRegion) -> symbolic.SymbolicType | None:
         return end
     if init is None:
         return end + step
-    return init + symbolic.int_floor(end - init + step, step) * step
+    return init + executed_trip_count(loop) * step
 
 
 def plans_a_rename(sdfg: dace.SDFG) -> bool:

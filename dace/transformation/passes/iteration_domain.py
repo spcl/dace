@@ -5,6 +5,8 @@ import copy
 from collections.abc import Sequence
 from typing import Any
 
+import sympy
+
 from dace import subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr
@@ -69,6 +71,22 @@ def loop_trip_count(loop: LoopRegion) -> Any | None:
     if start is None or end is None or stride is None or constant_int(stride) == 0:
         return None
     return exact_trip_count(start, end, stride)
+
+
+def executed_trip_count(loop: LoopRegion) -> Any | None:
+    """How many iterations ``loop`` really runs, zero for a range that holds none; ``None`` as for
+    :func:`loop_trip_count`.
+
+    ``int_floor`` truncates, so the count is read off ``end - start + stride``: the one numerator that is either
+    nonnegative, and floors exactly, or leaves a count of at most zero for the clamp.
+    """
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or stride is None or constant_int(stride) == 0:
+        return None
+    trips = symbolic.simplify(symbolic.int_floor(end - start + stride, stride))
+    return trips if symbolic.provably_nonnegative(trips, loop.sdfg.facts()) else sympy.Max(0, trips)
 
 
 def step_equivalent_maps(first: nodes.MapEntry, second: nodes.MapEntry) -> bool:

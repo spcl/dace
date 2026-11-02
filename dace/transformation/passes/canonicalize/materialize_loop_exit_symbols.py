@@ -54,6 +54,7 @@ from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, Control
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, scopes
+from dace.transformation.passes.iteration_domain import executed_trip_count
 
 #: Python literal names an expression may mention besides SDFG symbols. Modern ``ast`` renders
 #: these as ``Constant`` rather than ``Name``, so this is a belt-and-braces allowance.
@@ -168,19 +169,9 @@ def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: set[str]
 
 
 def _trip_count(loop: LoopRegion) -> str | None:
-    """Compute ``(end - init) // stride + 1`` as a sympy expression string."""
-    start = loop_analysis.get_init_assignment(loop)
-    end = loop_analysis.get_loop_end(loop)
-    stride = loop_analysis.get_loop_stride(loop)
-    if start is None or end is None or stride is None:
-        return None
-    try:
-        # int_floor, never `//`: sympy distributes floor() over the sum and sym2cpp drops it, so the
-        # materialized trip count would truncate term by term.
-        n = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
-    except Exception:
-        return None
-    return symbolic.symstr(n)
+    """The iterations ``loop`` runs, as an expression string."""
+    trips = executed_trip_count(loop)
+    return None if trips is None else symbolic.symstr(trips)
 
 
 def _closed_form(op_type: type, init: str, c: str, n: str) -> str | None:
