@@ -702,6 +702,32 @@ def read_before_written(loop: LoopRegion, candidates: set[str], holders: Iterabl
 
     carried: set[str] = set()
     changes: dict[ControlFlowBlock, set[str]] = {}
+    moving: set[str] | None = None
+
+    def fixed_subset(state: SDFGState, dn: nodes.AccessNode, subset: subsets.Subset | None) -> bool:
+        """Whether ``subset`` names the same elements wherever an iteration reaches ``dn``."""
+        nonlocal moving
+        if moving is None:
+            moving = loop_varying_symbols(loop)
+        return subset is not None and state.entry_node(dn) is None and not subset.free_symbols & moving
+
+    def stored_by(state: SDFGState, dn: nodes.AccessNode) -> set[str | tuple[str, subsets.Subset]]:
+        """What the writes into ``dn`` guarantee: its elements as (name, subset), or the bare name when a write's
+        elements are unknown here (a scope, a nested loop, a moving symbol), which then count as the whole container."""
+        elements = [e.data.get_dst_subset(e, state) for e in state.in_edges(dn) if not e.data.is_empty()]
+        if all(fixed_subset(state, dn, subset) for subset in elements):
+            return {(dn.data, subset) for subset in elements}
+        return {dn.data}
+
+    def read_covered(state: SDFGState, dn: nodes.AccessNode, stored: set[str | tuple[str, subsets.Subset]]) -> bool:
+        """Whether ``stored`` holds what ``dn`` reads; a read of unknown elements needs only some store of the name."""
+        if dn.data in stored:
+            return True
+        parts = [entry[1] for entry in stored if isinstance(entry, tuple) and entry[0] == dn.data]
+        return bool(parts) and all(
+            not fixed_subset(state, dn, subset) or any(part.covers(subset, symbolic.Facts.none()) for part in parts)
+            for subset in [e.data.get_src_subset(e, state) for e in state.out_edges(dn) if not e.data.is_empty()]
+        )
 
     def changed_by(block: ControlFlowBlock) -> set[str]:
         """The names ``block`` can change: containers it writes (any written access node, no memlet analysis),
@@ -744,15 +770,19 @@ def read_before_written(loop: LoopRegion, candidates: set[str], holders: Iterabl
                 for dn in block.data_nodes():
                     if (
                         dn.data in candidates
-                        and dn.data not in written
                         and block.in_degree(dn) == 0
                         and block.out_degree(dn) > 0
+                        and not read_covered(block, dn, written)
                         and not any(
-                            dn.data in guarded[key][1] for key in nested_read_guards(block, dn) if key in guarded
+                            read_covered(block, dn, guarded[key][1])
+                            for key in nested_read_guards(block, dn)
+                            if key in guarded
                         )
                     ):
                         carried.add(dn.data)
-                written |= {dn.data for dn in block.data_nodes() if dn.data in candidates and block.in_degree(dn) > 0}
+                for dn in block.data_nodes():
+                    if dn.data in candidates and block.in_degree(dn) > 0:
+                        written |= stored_by(block, dn)
             elif isinstance(block, ConditionalBlock):
                 per_branch = []
                 recorded = {}

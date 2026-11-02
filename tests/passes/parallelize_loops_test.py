@@ -1198,6 +1198,47 @@ def test_a_container_assumed_private_is_left_out_of_the_dependence_test():
     assert sdfg.hash_sdfg() == before
 
 
+def test_a_local_array_read_at_an_element_this_iteration_did_not_write_stays_a_loop():
+    """``t[0]`` is written first, yet ``t[1]`` comes from the iteration before: privatizing ``t`` loses that carry."""
+    sdfg = dace.SDFG("carry_in_another_element")
+    sdfg.add_array("X", [8], dace.float64)
+    sdfg.add_array("O", [8], dace.float64)
+    sdfg.add_transient("t", [2], dace.float64)
+    loop = LoopRegion("carry", "i < 8", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    store = loop.add_state("store", is_start_block=True)
+    store.add_nedge(store.add_read("X"), store.add_write("t"), dace.Memlet("X[i] -> [0]", data="t"))
+    use = loop.add_state_after(store, "use")
+    use.add_nedge(use.add_read("t"), use.add_write("O"), dace.Memlet("t[1] -> [i]"))
+    shift = loop.add_state_after(use, "shift")
+    tasklet = shift.add_tasklet("shift", {"v": None}, {"o": None}, "o = v")
+    shift.add_edge(shift.add_read("t"), None, tasklet, "v", dace.Memlet("t[0]"))
+    shift.add_edge(tasklet, "o", shift.add_write("t"), None, dace.Memlet("t[1]"))
+    sdfg.validate()
+
+    ParallelizeLoops().apply_pass(sdfg, {})
+
+    assert loop in sdfg.nodes()
+
+
+def test_a_local_scratch_rewritten_at_the_element_it_reads_lifts():
+    sdfg = dace.SDFG("scratch_in_one_element")
+    sdfg.add_array("X", [8], dace.float64)
+    sdfg.add_array("O", [8], dace.float64)
+    sdfg.add_transient("t", [2], dace.float64)
+    loop = LoopRegion("scratch", "i < 8", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    store = loop.add_state("store", is_start_block=True)
+    store.add_nedge(store.add_read("X"), store.add_write("t"), dace.Memlet("X[i] -> [1]", data="t"))
+    use = loop.add_state_after(store, "use")
+    use.add_nedge(use.add_read("t"), use.add_write("O"), dace.Memlet("t[1] -> [i]"))
+    sdfg.validate()
+
+    ParallelizeLoops().apply_pass(sdfg, {})
+
+    assert loop not in sdfg.nodes()
+
+
 if __name__ == "__main__":
     test_lift_never_changes_a_surviving_blocks_free_symbols()
     test_reused_analysis_costs_no_maps_against_the_matcher()
@@ -1254,3 +1295,5 @@ if __name__ == "__main__":
     test_a_gather_lifted_through_a_loop_fuses_into_its_consumer()
     test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop()
     test_a_container_assumed_private_is_left_out_of_the_dependence_test()
+    test_a_local_array_read_at_an_element_this_iteration_did_not_write_stays_a_loop()
+    test_a_local_scratch_rewritten_at_the_element_it_reads_lifts()
