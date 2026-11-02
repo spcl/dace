@@ -1786,6 +1786,10 @@ class LibraryNode(CodeNode):
         show it. ``False`` unless the library node says otherwise."""
         return False
 
+    def rename_symbols(self, repl: dict[str, str]) -> None:
+        """Called before ``repl`` reaches this node's properties; a node that holds a body of its own, closed over
+        names of the caller, renames them there."""
+
     @staticmethod
     def folds_by_beta(beta) -> bool:
         """:meth:`folds_onto_output` of a node scaling its prior output by ``beta``."""

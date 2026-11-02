@@ -359,6 +359,9 @@ def replace_properties_dict(
 ):
     symrepl = symrepl or symbolic_replacements(repl, sdfg.symbols if sdfg is not None else {})
 
+    if isinstance(node, nodes.LibraryNode):
+        node.rename_symbols(repl)
+
     for propclass, propval in node.properties():
         if propval is None:
             continue

@@ -309,6 +309,20 @@ class ExternalCall(nodes.LibraryNode):
         connected = self.in_connectors.keys() | self.out_connectors.keys()
         return super().free_symbols | {arg for arg in self.abi_order if arg not in connected}
 
+    def rename_symbols(self, repl: dict[str, str]) -> None:
+        """A symbol argument has one name on both sides of the call, so the nest follows ``abi_order``, which
+        ``repl`` renames next; only a name can replace an argument."""
+        if self.standalone_sdfg is None:
+            return
+        connected = self.in_connectors.keys() | self.out_connectors.keys()
+        renames = {
+            arg: str(repl[arg])
+            for arg in self.abi_order
+            if arg not in connected and arg in repl and str(repl[arg]).isidentifier()
+        }
+        if renames:
+            self.standalone_sdfg.replace_dict(renames)
+
     @property
     def standalone_sdfg(self) -> dace.SDFG | None:
         """The nest the ``DaceReference`` expansion copies; kept in memory only, never serialized."""
@@ -317,6 +331,12 @@ class ExternalCall(nodes.LibraryNode):
     @standalone_sdfg.setter
     def standalone_sdfg(self, value: dace.SDFG | None) -> None:
         self._standalone_sdfg = value
+
+
+def kernel_bodies(sdfg: dace.SDFG) -> list[dace.SDFG]:
+    """The nests the ``ExternalCall`` nodes of ``sdfg`` hold, those of their own kernels included."""
+    found = [call.standalone_sdfg for call in external_calls(sdfg) if call.standalone_sdfg is not None]
+    return found + [inner for body in found for inner in kernel_bodies(body)]
 
 
 def external_calls(sdfg: dace.SDFG) -> list[ExternalCall]:

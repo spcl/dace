@@ -2,19 +2,20 @@
 """Fresh ``<prefix><N>`` name suffixes shared by the canonicalization passes."""
 
 from dace import SDFG
+from dace.libraries.standard.nodes.external_call import kernel_bodies
 from dace.sdfg.state import LoopRegion
 
 
 def lowest_free_suffix(sdfg: SDFG, prefixes: tuple[str, ...], with_free_symbols: bool = False) -> int:
     """Lowest ``N`` such that no ``<prefix><N>`` for any of ``prefixes`` is used in the SDFG tree.
 
-    :param sdfg: The root SDFG; nested SDFGs are scanned too.
+    :param sdfg: The root SDFG; nested SDFGs and kernel bodies, which a rename can reach, are scanned too.
     :param prefixes: The name prefixes that share one suffix counter.
     :param with_free_symbols: Also scan each SDFG's free symbols, not only its declared symbols.
     :return: The first unused suffix.
     """
     used: dict[int, None] = {}
-    for sd in sdfg.all_sdfgs_recursive():
+    for sd in (owner for root in (sdfg, *kernel_bodies(sdfg)) for owner in root.all_sdfgs_recursive()):
         names = list(sd.symbols.keys())
         if with_free_symbols:
             names += list(sd.free_symbols)

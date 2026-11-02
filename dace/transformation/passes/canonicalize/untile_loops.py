@@ -479,9 +479,16 @@ def _audit_combined_access(inner: LoopRegion, outer_var: str, inner_var: str, ca
     Case A (``ii in range(0, K)``): ``i`` and ``ii`` must enter every memlet only as ``i + ii``.
 
     Case B (``ii in range(i, i + K)``): ``i`` must NEVER appear in a memlet
-    (only ``ii``). The new iterator ``k`` becomes ``ii`` directly.
+    (only ``ii``). The new iterator ``k`` becomes ``ii`` directly. Code nodes obey
+    :func:`code_node_allows`: a kernel takes an iterator as an argument, not through a memlet.
     """
     texts = body_bound_texts(inner)
+    for st in inner.states():
+        for node in st.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                texts.extend(str(value) for value in node.symbol_mapping.values())
+            elif isinstance(node, nodes.CodeNode) and not code_node_allows(node, outer_var, inner_var, case):
+                return False
     if case == "B":
         return all(outer_var not in free_symbol_names(text) for text in texts)
     return all(reads_only_through_sum(text, outer_var, inner_var) for text in texts)
@@ -511,9 +518,15 @@ class MapTilePair:
     K_expr: symbolic.SymbolicType
 
 
+def code_node_allows(node: nodes.CodeNode, outer_var: str, inner_var: str, case: str) -> bool:
+    """Code nodes may name neither iterator in case A, and not ``outer_var`` in case B."""
+    named = {str(s) for s in node.free_symbols}
+    return outer_var not in named and (case != "A" or inner_var not in named)
+
+
 def map_body_reads_only(state: SDFGState, inner: nodes.MapEntry, outer_var: str, inner_var: str, case: str) -> bool:
     """Whether the scope of ``inner`` reads ``outer_var`` only as case ``case`` allows: never (B), or only through
-    ``outer_var + inner_var`` (A). Code nodes may name neither in case A, and not ``outer_var`` in case B."""
+    ``outer_var + inner_var`` (A)."""
     scope = state.scope_subgraph(inner)
     texts = [text for e in scope.edges() if not e.data.is_empty() for text in memlet_bound_texts(e.data)]
     for node in scope.nodes():
@@ -523,10 +536,8 @@ def map_body_reads_only(state: SDFGState, inner: nodes.MapEntry, outer_var: str,
             texts.extend(str(bound) for rng in node.map.range.ranges for bound in rng)
         elif isinstance(node, nodes.NestedSDFG):
             texts.extend(str(value) for value in node.symbol_mapping.values())
-        elif isinstance(node, nodes.CodeNode):
-            named = {str(s) for s in node.free_symbols}
-            if outer_var in named or (case == "A" and inner_var in named):
-                return False
+        elif isinstance(node, nodes.CodeNode) and not code_node_allows(node, outer_var, inner_var, case):
+            return False
     if case == "B":
         return all(outer_var not in free_symbol_names(text) for text in texts)
     return all(reads_only_through_sum(text, outer_var, inner_var) for text in texts)

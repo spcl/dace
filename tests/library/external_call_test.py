@@ -15,6 +15,9 @@ from dace.libraries.standard.nodes import Reduce, external_call
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import helpers, passes
+from dace.transformation.interstate import LoopTiling
+from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
+from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.outline_to_external_calls import replace_with_external_call
 
 N = dace.symbol("N", dtype=dace.int64)
@@ -283,6 +286,70 @@ def test_a_reloaded_node_keeps_its_call_but_not_its_reference_nest():
     assert twin.standalone_sdfg is None
     with pytest.raises(ValueError, match="only use ExternCall"):
         reloaded.expand_library_nodes()
+
+
+def kernel_in_loop(name: str) -> tuple[dace.SDFG, LoopRegion, external_call.ExternalCall]:
+    sdfg = accumulate_steps.to_sdfg(simplify=True)
+    sdfg.name = name
+    loop = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
+    state = next(b for b in loop.nodes() if isinstance(b, dace.SDFGState))
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    nsdfg = helpers.nest_state_subgraph(sdfg, state, state.scope_subgraph(entry))
+    return sdfg, loop, replace_with_external_call(state, nsdfg, "accumulate_kernel")
+
+
+def test_a_kernel_follows_the_rename_of_its_symbol_argument():
+    sdfg, loop, call = kernel_in_loop("extcall_untiled_iterator")
+    old = loop.loop_variable
+    assert old in call.abi_order and old in call.standalone_sdfg.free_symbols
+
+    LoopTiling.apply_to(sdfg, options={"tile_size": 2}, loop=loop)
+    tiles = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
+    assert UntileLoops().untile_loop(tiles, sdfg)
+    sdfg.reset_cfg_list()
+
+    new = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)).loop_variable
+    assert new != old
+    assert new in call.abi_order and old not in call.abi_order
+    assert new in call.standalone_sdfg.symbols and old not in call.standalone_sdfg.symbols
+    assert new in call.standalone_sdfg.free_symbols and old not in call.standalone_sdfg.free_symbols
+    a = np.random.default_rng(7).random(SIZE)
+    expected, b = np.zeros(SIZE), np.zeros(SIZE)
+    accumulate_steps(a=a, b=expected, T=4)
+    sdfg(a=a, b=b, T=4, N=SIZE)
+    assert np.array_equal(b, expected) and np.any(b)
+
+
+@dace.program
+def scaled_by_tile_origin(a: dace.float64[N], b: dace.float64[N]):
+    for i in range(0, N, 4):
+        for ii in range(i, i + 4):
+            for j in dace.map[0:N]:
+                b[j] = a[j] * i + ii
+
+
+def test_a_loop_pair_a_kernel_reads_the_tile_origin_of_stays_tiled():
+    sdfg = scaled_by_tile_origin.to_sdfg(simplify=True)
+    sdfg.name = "extcall_reads_tile_origin"
+    outer = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
+    inner = next(r for r in outer.nodes() if isinstance(r, LoopRegion))
+    state = next(b for b in inner.nodes() if isinstance(b, dace.SDFGState))
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    nsdfg = helpers.nest_state_subgraph(sdfg, state, state.scope_subgraph(entry))
+    call = replace_with_external_call(state, nsdfg, "scale_kernel")
+    assert outer.loop_variable in call.abi_order
+
+    assert not UntileLoops().untile_loop(outer, sdfg)
+
+    assert inner.parent_graph is outer and outer.loop_variable in call.abi_order
+
+
+def test_a_fresh_name_avoids_the_names_inside_a_kernel():
+    sdfg, loop, call = kernel_in_loop("extcall_fresh_name")
+    assert loop.loop_variable in call.abi_order
+    call.standalone_sdfg.add_symbol("_untile_k_0", dace.int64)
+
+    assert lowest_free_suffix(sdfg, ("_untile_k_",)) == 1
 
 
 def test_a_kernel_inside_a_loop_takes_the_loop_iterator_by_value(tmp_path):
