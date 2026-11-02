@@ -720,9 +720,23 @@ def _product_scale(tasklet: nodes.Tasklet) -> sympy.Basic | None:
     return ratio if as_basic(ratio).is_Number else None
 
 
+def _minuend(tasklet: nodes.Tasklet) -> str | None:
+    """The connector ``__in1`` of ``__out = __in1 - __in2`` -- a ``-=`` read/add/write -- else ``None``."""
+    conns = list(tasklet.in_connectors)
+    expr = _tasklet_expr(tasklet)
+    if len(conns) != 2 or expr is None:
+        return None
+    first, second = (as_expr(pystr_to_symbolic(c)) for c in conns)
+    try:
+        if symbolic.simplify(expr - first + second) == 0:
+            return conns[0]
+        return conns[1] if symbolic.simplify(expr - second + first) == 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _is_sum_tasklet(tasklet: nodes.Tasklet) -> bool:
-    """``__out = __in1 + __in2`` -- the read/add/write half of an aug-assign. Only a
-    plain SUM: a ``-=`` accumulation is not a ``ReductionType.Sum`` contraction."""
+    """``__out = __in1 + __in2`` -- the read/add/write half of an aug-assign."""
     conns = list(tasklet.in_connectors)
     if len(conns) != 2:
         return False
@@ -845,6 +859,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> _BodyValue | None:
     out_array, out_idx = got
 
     visited: dict = {}
+    negated = False
     if out_edge.data.wcr is not None:
         # WCR encoding: the producing tasklet IS the product, the sum lives on the edge.
         if detect_reduction_type(out_edge.data.wcr) != dtypes.ReductionType.Sum:
@@ -856,16 +871,18 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> _BodyValue | None:
     else:
         adder = out_edge.src
         in_edges = value_edges(state.in_edges(adder))
-        if _is_sum_tasklet(adder) and len(in_edges) == 2:
+        minuend = _minuend(adder)
+        if (minuend is not None or _is_sum_tasklet(adder)) and len(in_edges) == 2:
             # Aug-assign encoding: one input re-reads the output slot, the other is the product.
             visited[adder] = None
             resolved = [_resolve(state, sdfg, e, visited) for e in in_edges]
             if any(r is None for r in resolved):
                 return None
             prior = [i for i, r in enumerate(resolved) if isinstance(r, _Leaf) and list(r) == [out_array, out_idx]]
-            if len(prior) != 1:
+            if len(prior) != 1 or minuend not in (None, in_edges[prior[0]].dst_conn):
                 return None
             term, accumulates = resolved[1 - prior[0]], True
+            negated = minuend is not None
         else:
             # Plain assignment (the pure-copy / transpose shape).
             term = _resolve_tasklet(state, sdfg, adder, visited)
@@ -876,7 +893,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> _BodyValue | None:
     if any(n not in visited and not (entry is None and n is write_node) for n in body):
         return None  # the body computes something the lifted node would drop
     coeff, leaves = _flatten(term)
-    return _BodyValue(out_array, out_idx, coeff, leaves, accumulates, write_node)
+    return _BodyValue(out_array, out_idx, -coeff if negated else coeff, leaves, accumulates, write_node)
 
 
 def _axis_subset(idx: list[str], axes: dict[str, _Axis]) -> subsets.Range:
