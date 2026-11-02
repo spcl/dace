@@ -577,7 +577,13 @@ def test_writes_through_a_view_do_not_count_as_written_disjointly():
     view, written = state.add_access("V"), state.add_write("X")
     state.add_nedge(view, written, dace.Memlet(f"X[0:{N}]"))
     _, _, first = state.add_mapped_tasklet(
-        "first", {"i": f"0:{N}"}, {}, "_b = 1.0", {"_b": dace.Memlet("V[i]")}, external_edges=True, output_nodes={"V": view}
+        "first",
+        {"i": f"0:{N}"},
+        {},
+        "_b = 1.0",
+        {"_b": dace.Memlet("V[i]")},
+        external_edges=True,
+        output_nodes={"V": view},
     )
     _, _, second = state.add_mapped_tasklet(
         "second",

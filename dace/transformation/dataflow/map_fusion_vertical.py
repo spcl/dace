@@ -9,7 +9,8 @@ from typing import (
 )
 
 import dace
-from dace import data, dtypes, graphlib as nx, properties, subsets, symbolic, transformation
+from dace import data, dtypes, properties, subsets, symbolic, transformation
+from dace import graphlib as nx
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes, propagation
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -1797,11 +1798,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Find the data that is internally referenced. Because of the first rule above,
         #  we filter all views above.
         first_map_body_data, second_map_body_data = [
-            {
-                dnode.data
-                for dnode in map_body
-                if isinstance(dnode, nodes.AccessNode) and not self.is_view(dnode, sdfg)
-            }
+            {dnode.data for dnode in map_body if isinstance(dnode, nodes.AccessNode) and not self.is_view(dnode, sdfg)}
             for map_body in [first_map_body, second_map_body]
         ]
 
@@ -2842,6 +2839,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             return
         elif isinstance(inner_desc, data.Array) and inner_desc.shape == (1,):
             return
+
         # We now compute the new strides and shape of the inner data descriptor. Since we already
         #  know that the inner data and what is passed from the outside is the same, we use this
         #  information. We will simply set strides/shape to what it is on the outside. To avoid

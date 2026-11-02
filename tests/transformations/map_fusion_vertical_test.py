@@ -11,9 +11,9 @@ import dace
 from dace import SDFG, SDFGState
 from dace import data as dace_data
 from dace import symbolic as dace_symbolic
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
-from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.dataflow import MapExpansion, MapFusion, MapFusionVertical
 from dace.transformation.dataflow.map_fusion_helper import is_node_reachable_from
