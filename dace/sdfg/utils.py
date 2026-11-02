@@ -1752,6 +1752,18 @@ def trace_nested_access(
     return list(reversed(trace))
 
 
+def refusals_after_fusion(
+    cfg: ControlFlowRegion, refused: set, first: ControlFlowBlock, second: ControlFlowBlock
+) -> set:
+    """The refused block pairs of ``cfg`` that still hold after fusing ``first`` and ``second``: a refusal reads the
+    pair, the edges around it and data fusing leaves alone, so only the two blocks and their neighbours lose theirs."""
+    touched = {first, second}
+    for block in (first, second):
+        if block in cfg._nodes:
+            touched.update(cfg.predecessors(block), cfg.successors(block))
+    return {pair for pair in refused if pair[0] not in touched and pair[1] not in touched}
+
+
 def fuse_states(
     sdfg: SDFG,
     permissive: bool = False,
@@ -1805,8 +1817,7 @@ def fuse_states(
             sf.region_facts = {}
             sf.side_effect_cache = {}
             sf.shape_cache = {}
-            # Pairs refused in an earlier sweep. A refusal reads the pair, the edges around it and data that fusing
-            # leaves alone, so it holds until a fusion touches one of the two states or a neighbour.
+            # Pairs refused in an earlier sweep, see ``refusals_after_fusion``.
             refused = set()
             while True:
                 edges = list(cfg.nx.edges)
@@ -1842,11 +1853,7 @@ def fuse_states(
                         pbar.update(1)
                     skip_nodes.add(u)
                     skip_nodes.add(v)
-                    touched = {u, v}
-                    for block in (u, v):
-                        if block in cfg._nodes:
-                            touched.update(cfg.predecessors(block), cfg.successors(block))
-                    refused = {pair for pair in refused if pair[0] not in touched and pair[1] not in touched}
+                    refused = refusals_after_fusion(cfg, refused, u, v)
                 if applied == 0:
                     break
     if progress:
