@@ -94,11 +94,19 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
     type2 = arr2.dtype.type
     restype = dtypes.dtype_to_typeclass(np.result_type(type1, type2).type)
 
-    # A product assigned to memory that only exists in a GPU kernel (shared memory, registers) is computed there too
+    # A product assigned to memory that only exists in a GPU kernel (shared memory, registers) is computed there too.
+    # A product of 16-bit floats assigned to a wider float keeps the precision it accumulates in (as BLAS products with
+    # a wider output type do), rather than being rounded to 16 bits first.
     storage = arr1.storage
-    target_storage = visitor.get_target_storage()
-    if target_storage in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register):
-        storage = target_storage
+    target = visitor.get_target_descriptor()
+    if target is not None and target.storage in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register):
+        storage = target.storage
+    if (
+        target is not None
+        and restype in (dtypes.float16, dtypes.bfloat16)
+        and target.dtype in (dtypes.float32, dtypes.float64)
+    ):
+        restype = target.dtype
     op3, arr3 = sdfg.add_transient(visitor.get_target_name(), output_shape, restype, storage, find_new_name=True)
 
     acc1 = state.add_read(op1)
