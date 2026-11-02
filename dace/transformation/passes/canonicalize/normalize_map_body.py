@@ -360,7 +360,7 @@ class NormalizeMapBody(ppl.Pass):
                     base.add_symbol(sym, stype)
             for cname, cval in tail.constants_prop.items():
                 if cname not in base.constants_prop:
-                    base.add_constant(cname, cval)
+                    base.constants_prop[cname] = cval
             _append_cfg(base, tail)
 
             # Re-point drop's boundary edges onto keep with (possibly renamed) connectors.
