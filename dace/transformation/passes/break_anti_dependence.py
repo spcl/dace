@@ -796,7 +796,8 @@ class BreakAntiDependence(ppl.Pass):
         if not isinstance(sub, ast.Subscript) or not isinstance(sub.value, ast.Name):
             return None
         arr_name = sub.value.id
-        if arr_name not in sdfg.arrays:
+        # The guard reads ``arr`` before the loop: an offset the loop rewrites is not the offset it checked
+        if arr_name not in sdfg.arrays or arr_name in written_data(loop):
             return None
         # The subscript must be exactly ``isym``
         if not (isinstance(sub.slice, ast.Name) and sub.slice.id == isym_name):

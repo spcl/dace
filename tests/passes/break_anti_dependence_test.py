@@ -766,6 +766,19 @@ def test_smt_fallback_refuses_when_the_indirection_array_is_written_in_the_loop(
     assert sdfg.to_json() == before, "a refusing pass must leave the SDFG bit-identical"
 
 
+@dace.program
+def indirected_offset_the_loop_rewrites(a: dace.float64[N + 8], idx: dace.int64[N + 8], b: dace.float64[N]):
+    for i in range(N):
+        a[i] = a[i + idx[i]] + b[i]
+        idx[i + 1] = 0 - idx[i + 1]
+
+
+def test_an_offset_array_the_loop_rewrites_is_not_renamed():
+    """The positive check runs before the loop; a later iteration reads through the rewritten, negative offset."""
+    sdfg = indirected_offset_the_loop_rewrites.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_break_anti_dependence_read_ahead_parallelizes()
     test_break_anti_dependence_read_behind_refused()
@@ -791,3 +804,4 @@ if __name__ == "__main__":
     test_smt_fallback_breaks_a_guarded_indirected_read_ahead()
     test_smt_fallback_refuses_the_same_shape_without_the_guard()
     test_smt_fallback_refuses_when_the_indirection_array_is_written_in_the_loop()
+    test_an_offset_array_the_loop_rewrites_is_not_renamed()
