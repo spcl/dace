@@ -206,7 +206,7 @@ def collapse_accumulator_chains(sdfg: SDFG) -> int:
     count = EliminateTrivialTasklets().apply_pass(sdfg, {}) or 0
     # An integer accumulator's load was a symbol assignment; demoted, ``o[b] -> o_index -> (o_index + 1) -> o[b]``
     # matches no ``AugAssignToWCR`` shape until the copy folds.
-    count += FoldScalarReadCopies().apply_pass(sdfg, {}) or 0
+    count += FoldScalarReadCopies(reads_only=True).apply_pass(sdfg, {}) or 0
     count += _augassign_to_wcr_per_state(sdfg)
     return count
 
