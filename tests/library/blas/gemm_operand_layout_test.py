@@ -2,6 +2,7 @@
 """Gemm on OpenBLAS over operands BLAS cannot read as they are: no unit stride, or a single row with a free stride."""
 
 import numpy as np
+import pytest
 
 import dace
 from dace.libraries.blas import Gemm
@@ -88,8 +89,39 @@ def test_a_one_element_operand_reaches_blas_as_a_pointer():
     assert np.allclose(out, a @ b[:1, :1])
 
 
+@pytest.mark.parametrize(
+    "a_shape,a_subset,b_shape,out_shape",
+    [([4, 3], "2:4, 0:3", [3, 3], [2, 3]), ([4, 3, 2, 2], "0:4, 0:3, 1, 1", [3, 3], [4, 3])],
+)
+def test_a_gpu_copy_moves_each_operand_s_window(a_shape, a_subset, b_shape, out_shape):
+    """The host-to-GPU copy starts at the connector's pointer, so a whole container read past the operand's end.
+
+    Expanding needs no device.
+    """
+    sdfg = dace.SDFG(f"gemm_gpu_window_{len(a_shape)}")
+    sdfg.add_array("a", a_shape, dace.float64)
+    sdfg.add_array("b", b_shape, dace.float64)
+    sdfg.add_array("out", out_shape, dace.float64)
+    state = sdfg.add_state()
+    gemm = Gemm("gemm")
+    gemm.implementation = "cuBLAS"
+    state.add_edge(state.add_read("a"), None, gemm, "_a", dace.Memlet(f"a[{a_subset}]"))
+    state.add_edge(state.add_read("b"), None, gemm, "_b", dace.Memlet("b"))
+    state.add_edge(gemm, "_c", state.add_write("out"), None, dace.Memlet("out"))
+
+    sdfg.expand_library_nodes(recursive=False)
+
+    nested = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG)).sdfg
+    expected = int(np.prod(out_shape))
+    assert nested.arrays["_a"].total_size == expected
+    copies = [e for s in nested.states() for e in s.edges() if e.src.label == "_a" and e.dst.label == "_a_gpu"]
+    assert [copy.data.num_elements() for copy in copies] == [expected]
+
+
 if __name__ == "__main__":
     test_an_operand_without_a_unit_stride_is_copied_dense()
     test_a_single_row_reaches_blas_with_a_valid_leading_dimension()
     test_an_output_without_a_unit_stride_expands_to_pure()
     test_a_one_element_operand_reaches_blas_as_a_pointer()
+    test_a_gpu_copy_moves_each_operand_s_window([4, 3], "2:4, 0:3", [3, 3], [2, 3])
+    test_a_gpu_copy_moves_each_operand_s_window([4, 3, 2, 2], "0:4, 0:3, 1, 1", [3, 3], [4, 3])
