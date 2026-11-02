@@ -10,8 +10,8 @@ The rewrite reuses the vectorizer's branch lowering (``SameWriteSetIfElseToITECF
 ``BranchNormalization``) on the map's nested body. Evaluating both arms and writing back the old value
 where an arm does not write is only sound when every arm reads and writes nothing but the map's own
 element (the map parameters, unshifted) or element 0 of a container, and writes only containers the body
-also reads; anything else -- a gather, a shifted read an index guard protects, a library node, a loop --
-leaves the body as it was. A body the lowering cannot flatten completely is left untouched too.
+also reads; anything else -- a gather, a shifted read an index guard protects, a library node, a loop, an integer
+division its guard keeps from zero -- leaves the body as it was. A body the lowering cannot flatten completely is left untouched too.
 
 Selects also make every arm's loads unconditional, so the conversion only pays when it adds no memory stream:
 every container an arm of a top-level conditional reads or writes must be touched on every path through it (or
@@ -28,6 +28,7 @@ from dace import SDFG, dtypes, symbolic
 from dace import data as dt
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.tasklet_utils import integer_division
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.vectorization.demote_data_reading_interstate_symbols import (
@@ -124,6 +125,8 @@ def convertible(body: SDFG, lanes: set[str], inputs: set[str]) -> bool:
             for node in state.nodes():
                 if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG, nodes.EntryNode)):
                     return False
+                if isinstance(node, nodes.Tasklet) and integer_division(state, node):
+                    return False
             for edge in state.edges():
                 if edge.data.is_empty() or body.arrays[edge.data.data].transient:
                     continue
@@ -134,9 +137,11 @@ def convertible(body: SDFG, lanes: set[str], inputs: set[str]) -> bool:
     return True
 
 
-def if_convert(body: SDFG) -> SDFG | None:
-    """A copy of ``body`` with every conditional lowered to ITE selects, or ``None`` if one remains."""
-    candidate = copy.deepcopy(body)
+def if_convert(node: nodes.NestedSDFG, state: SDFGState) -> bool:
+    """Lower every conditional of ``node``'s SDFG to ITE selects, or leave it as it was if one remains.
+
+    The lowering proves each arm in range from the maps around it, so it runs on the attached body, not on a copy."""
+    body, kept = node.sdfg, copy.deepcopy(node.sdfg)
     try:
         for step in (
             DemoteDataReadingInterstateSymbols(),
@@ -144,12 +149,16 @@ def if_convert(body: SDFG) -> SDFG | None:
             SameWriteSetIfElseToITECFG(),
             BranchNormalization(),
         ):
-            step.apply_pass(candidate, {})
+            step.apply_pass(body, {})
+        if not any(isinstance(b, ConditionalBlock) for b in body.all_control_flow_blocks()):
+            return True
     except NotImplementedError:
-        return None
-    if any(isinstance(b, ConditionalBlock) for b in candidate.all_control_flow_blocks()):
-        return None
-    return candidate
+        pass
+    kept.parent = state
+    kept.parent_sdfg = state.sdfg
+    kept.parent_nsdfg_node = node
+    node.sdfg = kept
+    return False
 
 
 class IfConvertParallelMapBodies(ppl.Pass):
@@ -183,12 +192,5 @@ class IfConvertParallelMapBodies(ppl.Pass):
                 inputs = {name for name in node.in_connectors if not isinstance(node.sdfg.arrays[name], dt.Stream)}
                 if not convertible(node.sdfg, lanes, inputs):
                     continue
-                lowered = if_convert(node.sdfg)
-                if lowered is None:
-                    continue
-                lowered.parent = state
-                lowered.parent_sdfg = sdfg
-                lowered.parent_nsdfg_node = node
-                node.sdfg = lowered
-                converted += 1
+                converted += if_convert(node, state)
         return converted or None
