@@ -37,7 +37,6 @@ assignment and emits a loud warning so the dropped opportunity is visible.
 """
 
 import copy
-import re
 import warnings
 from typing import Any
 
@@ -60,7 +59,10 @@ from dace.transformation.passes.loop_fission import _linear_blocks
 
 def _free(expr: str) -> set:
     """Free symbol names of a Python/condition expression string."""
-    return set(re.findall(r"[A-Za-z_]\w*", str(expr)))
+    try:
+        return {str(s) for s in dace.symbolic.pystr_to_symbolic(expr).free_symbols}
+    except Exception:
+        return set()
 
 
 def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
