@@ -152,6 +152,10 @@ class LiftEinsum(xf.SingleStateTransformation):
         # einsum's single ``_alpha`` connector); refuse multi-scalar products.
         if num_coeffs > 1:
             return False
+        # The coefficient is read once; a slot of the output changes under the sweep (``C[i,j] += C[0,0]*A[i,k]*B[k,j]``).
+        written = {e.data.data for e in state.out_edges(self.tasklet)}
+        if any(e.data.data in written for e in state.in_edges(self.tasklet) if not e.data.is_empty()):
+            return False
 
         # If there are too many characters for an einsum expression, fail
         if len(unique_chars) == 0 or len(unique_chars) > len(self.EINSUM_CHARS):

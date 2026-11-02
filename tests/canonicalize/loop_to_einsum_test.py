@@ -569,5 +569,20 @@ def test_a_contraction_over_part_of_its_output_keeps_the_rest():
     assert np.allclose(C, expected)
 
 
+def test_a_coefficient_read_from_the_output_is_no_contraction():
+    """``C[0, 0]`` changes under the sweep, so it cannot be read once as the einsum's alpha."""
+
+    @dace.program
+    def self_scaled(C: dace.float64[3, 3], A: dace.float64[3, 3], B: dace.float64[3, 3]):
+        for i in range(3):
+            for j in range(3):
+                for k in range(3):
+                    C[i, j] += C[0, 0] * A[i, k] * B[k, j]
+
+    sdfg = self_scaled.to_sdfg(simplify=True)
+    LoopToEinsum().apply_pass(sdfg, {})
+    assert _n_einsum(sdfg) == 0
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v", "-p", "no:cacheprovider"]))

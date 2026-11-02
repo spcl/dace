@@ -911,7 +911,7 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> EinsumSpec | N
         return None
     if any(i != "0" and i not in axes for i in value.idx):
         return None
-    if any(t.array == value.array for t in tensors):
+    if any(t.array == value.array for t in [*tensors, *coeffs]):
         return None  # the output feeds its own contraction -- a real loop-carried dependence
     out_chars = dict.fromkeys(i for i in value.idx if i != "0")
     in_chars = dict.fromkeys(i for t in tensors for i in t.idx if i != "0")
