@@ -148,7 +148,7 @@ class ExpandGemvCuBLAS(ExpandTransformation):
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
         trans = "CUBLAS_OP_N" if transA else "CUBLAS_OP_T"
-        if not node.transA:
+        if not transA:
             m, n = n, m
 
         if veclen != 1:
@@ -254,7 +254,7 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
 
         layout = "CblasColMajor"
         trans = "CblasNoTrans" if transA else "CblasTrans"
-        if not node.transA:
+        if not transA:
             m, n = n, m
 
         if veclen != 1:
