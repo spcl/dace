@@ -492,7 +492,7 @@ def extract_tasklet_iv(
     if _uses(write_subset, loop_var_sym):
         return None
 
-    final_accum, final_subset = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset, sdfg.facts())
+    final_accum, final_subset, _ = _chase_forward_to_accum(state, sdfg, write_edge.dst, write_subset, sdfg.facts())
     if final_accum not in sdfg.arrays:
         return None
     # The eventual write subset must also be loop-invariant. Otherwise the

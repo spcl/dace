@@ -20,6 +20,7 @@ from dace.sdfg.state import (
     ControlFlowBlock,
     ControlFlowRegion,
     LoopRegion,
+    SDFGState,
 )
 
 if TYPE_CHECKING:
@@ -667,3 +668,29 @@ def control_reads(loop: LoopRegion) -> set[str]:
     for region in [loop, *loop.all_control_flow_regions()]:
         names |= region.used_symbols(all_symbols=True, with_contents=False)
     return names
+
+
+def read_outside(sdfg: "SDFG", region: ControlFlowRegion, symbols: set[str], containers: set[str]) -> bool:
+    """Whether anything outside ``region`` reads one of ``symbols`` -- the binding chain the rewrite drops --
+    or accesses one of ``containers``."""
+    if not symbols and not containers:
+        return False
+    inside = {id(b) for b in region.all_control_flow_blocks()} | {id(region)}
+    inside_edges = {id(e) for e in region.all_interstate_edges()}
+    for edge in sdfg.all_interstate_edges():
+        if id(edge) not in inside_edges and edge.data.read_symbols() & (symbols | containers):
+            return True
+    for block in sdfg.all_control_flow_blocks():
+        if id(block) in inside:
+            continue
+        if isinstance(block, SDFGState):
+            if symbols & block.free_symbols or any(n.data in containers for n in block.data_nodes()):
+                return True
+        elif isinstance(block, LoopRegion):
+            codes = [block.init_statement, block.loop_condition, block.update_statement]
+            if any(c is not None and {str(s) for s in c.get_free_symbols()} & symbols for c in codes):
+                return True
+        elif isinstance(block, ConditionalBlock):
+            if any(c is not None and {str(s) for s in c.get_free_symbols()} & symbols for c, _ in block.branches):
+                return True
+    return False

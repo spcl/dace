@@ -2276,3 +2276,77 @@ def test_augassign_traversal_matches_old_generic_driver(build):
     assert new_sdfg.hash_sdfg() == old_sdfg.hash_sdfg(), (
         f"{build.__name__}: rewritten graph diverged from the old driver"
     )
+
+
+def test_a_tasklet_computing_more_than_the_fold_is_no_reduction():
+    """``acc + 2.0 * a[i]`` folds the doubled array: a ``Reduce`` over the raw one drops the factor."""
+
+    @dace.program
+    def doubled_sum(a: dace.float64[N], acc: dace.float64[1]):
+        for i in range(N):
+            with dace.tasklet:
+                x << a[i]
+                c << acc[0]
+                o >> acc[0]
+                o = c + 2.0 * x
+
+    sdfg = doubled_sum.to_sdfg(simplify=True)
+    assert LoopToReduce().apply_pass(sdfg, {}) is None
+
+
+def test_a_recurrence_the_chain_cannot_split_leaves_the_loop_alone():
+    """``acc * 0.5 + a[i]`` is no update of ``acc``: the retarget neither rewrites it nor spins on it."""
+
+    @dace.program
+    def decayed_sum(a: dace.float64[N], acc: dace.float64[1]):
+        for i in range(N):
+            with dace.tasklet:
+                x << a[i]
+                c << acc[0]
+                o >> acc[0]
+                o = c * 0.5 + x
+
+    sdfg = decayed_sum.to_sdfg(simplify=True)
+    assert retarget_wcr_accumulators(sdfg) is None
+
+
+def test_a_carried_input_the_tasklet_does_not_feed_is_no_accumulator():
+    """``x = y + a[i]; y = c`` reads ``y`` from the previous iteration, but nothing accumulates into it."""
+
+    @dace.program
+    def overwritten_seed(a: dace.float64[N], c: dace.float64[1], out: dace.float64[2]):
+        x = 0.0
+        y = 1.0
+        for i in range(N):
+            x = y + a[i]
+            y = c[0]
+        out[0] = x
+        out[1] = y
+
+    sdfg = overwritten_seed.to_sdfg(simplify=True)
+    LoopToReduce().apply_pass(sdfg, {})
+    a, c, out = np.arange(1.0, 5.0), np.array([7.0]), np.zeros(2)
+    sdfg(a=a, c=c, out=out, N=4)
+    assert np.allclose(out, [11.0, 7.0])
+
+
+def test_a_staging_copy_read_after_the_loop_is_kept():
+    """``t = s + a[i]; s = t`` folded into ``s`` must not leave a stale ``t`` to a read after the loop."""
+
+    @dace.program
+    def staged_sum(a: dace.float64[N], out: dace.float64[2]):
+        s = 1.0
+        t = 0.0
+        for i in range(N):
+            t = s + a[i]
+            s = t
+        out[0] = t
+        out[1] = s
+
+    sdfg = staged_sum.to_sdfg(simplify=False)
+    LoopToReduce().apply_pass(sdfg, {})
+    collapse_accumulator_chains(sdfg)
+    retarget_wcr_accumulators(sdfg)
+    a, out = np.arange(1.0, 5.0), np.zeros(2)
+    sdfg(a=a, out=out, N=4)
+    assert np.allclose(out, [11.0, 11.0])
