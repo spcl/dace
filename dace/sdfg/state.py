@@ -3152,6 +3152,8 @@ class SymbolResolver:
             tuple[ControlFlowBlock, ControlFlowBlock | None], list[dict[str, dtypes.typeclass]]
         ] = {}
         self._facts: dict[tuple[ControlFlowBlock, nd.EntryNode | None], symbolic.Facts] = {}
+        #: Per loop, what ``derive_facts`` reads of it: the loop, the names it binds and its range, if that holds.
+        self._loop_scopes: dict["LoopRegion", tuple[Any, dict[str, Any], list[tuple[str, Any, Any, Any]]]] = {}
         self._data_facts: dict[tuple[ControlFlowBlock, str], tuple[symbolic.DataFact, ...]] = {}
         #: Per SDFG, the scope resolved last and the symbols every node directly inside it sees.
         self._per_scope: dict[SDFG, tuple[SDFGState, nd.EntryNode, dict[str, dtypes.typeclass]]] = {}
@@ -3218,22 +3220,22 @@ class SymbolResolver:
         region = block
         while region is not None and region is not sdfg:
             if isinstance(region, LoopRegion) and region.loop_variable:
-                bounds = (
-                    loop_analysis.get_init_assignment(region),
-                    loop_analysis.get_loop_end(region),
-                    loop_analysis.get_loop_stride(region),
-                )
-                if None not in bounds and not loop_analysis.range_holds(region, bounds, sdfg):
-                    bounds = (None, None, None)
-                scopes.append(
-                    (
+                if region not in self._loop_scopes:
+                    bounds = (
+                        loop_analysis.get_init_assignment(region),
+                        loop_analysis.get_loop_end(region),
+                        loop_analysis.get_loop_stride(region),
+                    )
+                    if None not in bounds and not loop_analysis.range_holds(region, bounds, sdfg):
+                        bounds = (None, None, None)
+                    self._loop_scopes[region] = (
                         region,
                         # Without an init the iterator is still rebound here, so outer facts on it end
                         region.new_symbols(sdfg.symbols) or {region.loop_variable: None},
                         # The body of an inverted loop runs once before its condition is checked
                         [(region.loop_variable, *bounds)] if None not in bounds and not region.inverted else [],
                     )
-                )
+                scopes.append(self._loop_scopes[region])
             region = region.parent_graph
         scopes.reverse()
         maps = []
@@ -3384,6 +3386,7 @@ class SymbolResolver:
         self._facts.clear()
         self._data_facts.clear()
         self._sdfg_facts.clear()
+        self._loop_scopes.clear()
         if self._per_sdfg.pop(sdfg, None) is None:
             return
         self._per_state.pop(sdfg, None)
@@ -3396,6 +3399,7 @@ class SymbolResolver:
             # Every SDFG is within the root: drop all, without walking the tree
             for table in (self._facts, self._data_facts, self._region_updates, self._per_sdfg, self._per_state):
                 table.clear()
+            self._loop_scopes.clear()
             self._per_scope.clear()
             return
         # Up the nesting chain of each resolved SDFG, not down the whole tree below ``sdfg``
@@ -3411,6 +3415,7 @@ class SymbolResolver:
 
         self._facts = {key: facts for key, facts in self._facts.items() if not within(key[0].sdfg)}
         self._data_facts = {key: facts for key, facts in self._data_facts.items() if not within(key[0].sdfg)}
+        self._loop_scopes = {key: scope for key, scope in self._loop_scopes.items() if not within(key.sdfg)}
         self._region_updates = {
             key: updates for key, updates in self._region_updates.items() if not within(key[0].sdfg)
         }
