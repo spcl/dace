@@ -64,7 +64,14 @@ from dace.sdfg.graph import (
     generate_element_id,
 )
 from dace.sdfg.replace import replace_properties_dict, symbolic_replacements
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SDFGState,
+)
 from dace.sdfg.symbol_repo import SymbolRepo, bound_names, scope_from_json
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
@@ -209,15 +216,17 @@ def scope_bound_names(sdfg: "SDFG") -> set[str]:
     """The names a scope of ``sdfg`` binds (not those of its nested SDFGs): the variables of loops that initialize
     them, map and consume parameters, and the dynamic connectors of scope entries. Such a name is never an SDFG
     symbol. A loop without an initializer iterates a variable defined outside it."""
-    names: set[str] = set()
-    for region in sdfg.all_control_flow_regions():
-        if isinstance(region, LoopRegion) and region.init_statement is not None:
-            names |= bound_names(region)
-        for block in region.nodes():
+
+    def binders(graph: AbstractControlFlowRegion) -> Iterator[Any]:
+        for block in graph.nodes():
             if isinstance(block, SDFGState):
-                for entry in block.entry_nodes():
-                    names |= bound_names(entry)
-    return names
+                yield from block.entry_nodes()
+            elif isinstance(block, AbstractControlFlowRegion):
+                if isinstance(block, LoopRegion) and block.init_statement is not None:
+                    yield block
+                yield from binders(block)
+
+    return {name for owner in binders(sdfg) for name in bound_names(owner)}
 
 
 def is_scope_bound_name(sdfg: "SDFG", name: str) -> bool:
