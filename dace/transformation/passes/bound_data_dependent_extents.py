@@ -107,7 +107,11 @@ def state_relations(state: SDFGState, ranges: dict[str, Interval], nonempty: set
 
     for node in state.nodes():
         # ``__arr[__inp0]``, a gather: the row its one memlet names bounds the index array read on the other.
-        if isinstance(node, nodes.Tasklet) and array_facts.assignment_value(node) == "__arr[__inp0]" and runs(scopes[node]):
+        if (
+            isinstance(node, nodes.Tasklet)
+            and array_facts.assignment_value(node) == "__arr[__inp0]"
+            and runs(scopes[node])
+        ):
             memlets = {edge.dst_conn: edge.data for edge in state.in_edges(node)}
             values = element_range(sdfg, memlets["__inp0"].data)
             if values is not None and memlets["__arr"].subset[-1][0].is_number:
@@ -191,6 +195,7 @@ def capacity(extent: Any, facts: symbolic.Facts, known: dict[Any, int | None]) -
         sizes = [capacity(base, facts, known) for base, _ in factors]
         result = None if None in sizes else prod(size**exponent for size, (_, exponent) in zip(sizes, factors))
     else:
+
         def fits(limit: int) -> symbolic.Truth:
             return symbolic.ask(symbolic.Relation(symbolic.RelationKind.LE, extent, sympy.Integer(limit)), facts)
 
