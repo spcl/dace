@@ -181,14 +181,24 @@ def rebound_names(sd: SDFG) -> set[str]:
     return rebound
 
 
-def unread_names(sd: SDFG, names: set[str]) -> set[str]:
+def state_reads(state: SDFGState, memo: dict[SDFGState, set[str]]) -> set[str]:
+    """``state.free_symbols`` as names, from ``memo`` when a walk over the same contents already answered."""
+    reads = memo.get(state)
+    if reads is None:
+        reads = memo[state] = {str(s) for s in state.free_symbols}
+    return reads
+
+
+def unread_names(sd: SDFG, names: set[str], memo: dict[SDFGState, set[str]]) -> set[str]:
     """``names`` minus every name a block, region meta code or interstate edge of ``sd`` reads.
 
     Same answer as subtracting ``blk.free_symbols`` for every block, without its cost: a region's
     free symbols re-walk the whole body once per nesting level, yet only ever report what a state,
     meta code, or an interstate edge inside the region reads (plus the extents of a container that
     edge names). So regions are asked only for a survivor one of their edges reads under the
-    ``used_symbols`` spelling, which ``free_symbol_names`` can miss."""
+    ``used_symbols`` spelling, which ``free_symbol_names`` can miss.
+
+    :param memo: :func:`state_reads` memo over ``sd``'s states."""
     remaining = set(names)
     for e in sd.all_interstate_edges():
         for rhs in e.data.assignments.values():
@@ -205,6 +215,8 @@ def unread_names(sd: SDFG, names: set[str]) -> set[str]:
         if isinstance(blk, AbstractControlFlowRegion):
             remaining -= meta_read_symbols(blk)
             regions.append(blk)
+        elif isinstance(blk, SDFGState):
+            remaining -= state_reads(blk, memo)
         else:
             remaining -= {str(s) for s in blk.free_symbols}
     if not remaining or not regions:
@@ -358,6 +370,9 @@ class SymbolPropagation(ppl.Pass):
         # cannot introduce a free symbol, so it pays for neither walk.
         self._invariant_sdfg = sdfg
         self._before_free: set[str] | None = None
+        # What each state reads, for the span of this run: only ``_update_syms`` rewrites a state, and it renews the
+        # entry; a substitution into a descriptor reaches the states of that SDFG through their access nodes.
+        self._state_reads: dict[SDFGState, set[str]] = {}
 
         all_cfg_blks = {
             node: parent for node, parent in sdfg.all_nodes_recursive() if isinstance(node, ControlFlowBlock)
@@ -429,17 +444,21 @@ class SymbolPropagation(ppl.Pass):
                     f"symbols, never introduce them."
                 )
         self._before_free = self._invariant_sdfg = None  # dropped with the rewrite span it brackets
+        self._state_reads = {}
 
         return propagated or None
 
-    def _arm_invariant(self) -> None:
+    def _arm_invariant(self, owner: SDFG) -> None:
         """Snapshot the SDFG's free symbols for the end-of-pass invariant, once per invocation.
 
         Called immediately before each rewrite, so the first non-empty one takes it: every
         replacement before that was empty, and an empty replacement can renormalize a property
-        value but can neither add nor drop a name."""
-        if self._before_free is None:
-            self._before_free = {str(s) for s in self._invariant_sdfg.free_symbols}
+        value but can neither add nor drop a name. A rewrite below a nested SDFG does not arm it:
+        the free symbols of the top SDFG read a nested SDFG through its symbol mapping alone.
+
+        :param owner: The SDFG whose contents are about to be rewritten."""
+        if self._before_free is None and owner is self._invariant_sdfg:
+            self._before_free = {str(s) for s in owner.free_symbols}
 
     def _eliminate_dead_iedge_assignments(self, sdfg: SDFG) -> set[str]:
         """Drop interstate-edge assignments whose LHS is no longer referenced anywhere."""
@@ -486,18 +505,20 @@ class SymbolPropagation(ppl.Pass):
             safe_subs = {sym: candidates[sym] for sym, names in rhs_names.items() if names <= invariant}
 
         if safe_subs:
-            self._arm_invariant()
+            self._arm_invariant(sd)
             sd.replace_dict(safe_subs, replace_keys=False, replace_in_graph=False)
+            for state in sd.states():
+                self._state_reads.pop(state, None)
 
         targets = {lhs for e in sd.all_interstate_edges() for lhs in e.data.assignments}
-        unread = unread_names(sd, targets)
+        unread = unread_names(sd, targets, self._state_reads)
 
         sd_eliminated: set[str] = set()
         if unread:
             for e in sd.all_interstate_edges():
                 for lhs in list(e.data.assignments.keys()):
                     if lhs in unread:
-                        self._arm_invariant()
+                        self._arm_invariant(sd)
                         del e.data.assignments[lhs]
                         sd_eliminated.add(lhs)
         # Drop orphaned declarations, else nested-SDFG validation demands the symbol.
@@ -728,7 +749,8 @@ class SymbolPropagation(ppl.Pass):
             return set()
         # One free-symbol walk per round, carried across it: the snapshot taken after a round's
         # rewrites is what the next round reads, and it is also the "before" of the first round.
-        free_sym = {str(s) for s in cfg_blk.free_symbols}
+        is_state = isinstance(cfg_blk, SDFGState)
+        free_sym = state_reads(cfg_blk, self._state_reads) if is_state else {str(s) for s in cfg_blk.free_symbols}
         free_before = free_sym | free_edge_sym
 
         # An acyclic chain converges within ``#symbols`` rounds; the cap stops a cyclic one.
@@ -776,7 +798,7 @@ class SymbolPropagation(ppl.Pass):
                 blk_subs = {}  # Nested CFGs inherit their parent's symbols
             substituted = bool(blk_subs)
             if substituted:
-                self._arm_invariant()
+                self._arm_invariant(cfg_blk.sdfg)
             if replace is not None:
                 replace(blk_subs)
 
@@ -789,7 +811,7 @@ class SymbolPropagation(ppl.Pass):
                 }
                 if edge_subs:
                     substituted = True
-                    self._arm_invariant()
+                    self._arm_invariant(cfg_blk.sdfg)
                 edge.data.replace_dict(edge_subs, replace_keys=False)
 
             # An empty replacement can renormalize a property value but can neither add nor drop a
@@ -797,6 +819,8 @@ class SymbolPropagation(ppl.Pass):
             if not substituted:
                 break
             new_free_sym = {str(s) for s in cfg_blk.free_symbols}
+            if is_state:
+                self._state_reads[cfg_blk] = new_free_sym
             new_free_edge_sym = {str(s) for edge in out_edges for s in edge.data.free_symbols}
             settled = free_sym == new_free_sym and free_edge_sym == new_free_edge_sym
             free_sym, free_edge_sym = new_free_sym, new_free_edge_sym
