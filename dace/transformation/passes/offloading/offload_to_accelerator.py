@@ -20,6 +20,7 @@ from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.memlet_utils import can_memlet_be_turned_into_a_map, memlet_to_map
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import (
@@ -202,6 +203,9 @@ class OffloadToAccelerator(ppl.Pass):
         self._taskloop_heuristics = Config.get_bool("optimizer", "gpu_taskloop_heuristics")
         self.cache_scopes(sdfg)
 
+        if self.lift_accumulating_copies(sdfg):
+            self.cache_scopes(sdfg)
+
         # step 1: set schedule of maps and library nodes -> heuristic only!
         self.find_taskloops(sdfg)
         if self.isolate_small_kernel_axes(sdfg):
@@ -222,6 +226,22 @@ class OffloadToAccelerator(ppl.Pass):
         register_kernel_local_transients(sdfg)
 
         return self.device_resident(sdfg) or None
+
+    def lift_accumulating_copies(self, sdfg: SDFG) -> bool:
+        """Turn a top-level copy with a WCR into the map it is: no transfer accumulates, a kernel does.
+
+        :returns: whether any state changed.
+        """
+        lifted = False
+        for state in sdfg.states():
+            top = self._cached_scope_children[state][None]
+            for edge in list(state.edges()):
+                if edge.data.wcr is None or edge.data.is_empty() or edge.src not in top or edge.dst not in top:
+                    continue
+                if can_memlet_be_turned_into_a_map(edge, state, sdfg):
+                    memlet_to_map(edge, state, sdfg)
+                    lifted = True
+        return lifted
 
     @staticmethod
     def fill_device_constants(sdfg: SDFG) -> None:
