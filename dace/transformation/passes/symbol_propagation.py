@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
+import sympy
+from sympy.logic.boolalg import Boolean, BooleanFunction
+
 from dace import SDFG, SDFGState, properties
 from dace import data as dt
 from dace.frontend.python import astutils
@@ -347,6 +350,12 @@ def resolve_bindings(
                 continue
         if not repl:
             break
+        # A read in place of a condition symbol is a truth value through ``!= 0``; And and Not take nothing else
+        conditions = {arg for operation in resolved.atoms(BooleanFunction) for arg in operation.args}
+        repl = {
+            sym: sympy.Ne(rhs, 0) if sym in conditions and not isinstance(rhs, Boolean) else rhs
+            for sym, rhs in repl.items()
+        }
         resolved = resolved.xreplace(repl)
     # Each RHS is parsed on its own, so one name can come back as several instances (a plain one
     # beside a stamped one). Merge them: ``coeff`` / ``in free_symbols`` on the result go through
