@@ -2,7 +2,7 @@
 
 import collections
 
-from dace import SDFG, InterstateEdge, SDFGState, properties, symbolic
+from dace import SDFG, InterstateEdge, SDFGState, properties
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
 from dace.sdfg.state import (
@@ -16,6 +16,7 @@ from dace.sdfg.state import (
 from dace.sdfg.validation import InvalidSDFGInterstateEdgeError, InvalidSDFGNodeError
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.lift_trivial_if import constant_truth
 
 
 @properties.make_properties
@@ -74,9 +75,7 @@ class DeadStateElimination(ppl.Pass):
                         # If only one branch is left, and it is unconditionally executed, inline it.
                         if len(node.branches) == 1:
                             cond, branch = node.branches[0]
-                            if cond is None or self._is_definitely_true(
-                                symbolic.pystr_to_symbolic(cond.as_string), sdfg
-                            ):
+                            if cond is None or constant_truth(cond, node.sdfg) is True:
                                 node.parent_graph.add_node(branch)
                                 for ie in cfg.in_edges(node):
                                     cfg.add_edge(ie.src, branch, ie.data)
@@ -193,10 +192,10 @@ class DeadStateElimination(ppl.Pass):
             if taken:
                 dead_branches.append((cond, branch))
             elif cond is not None:
-                condition = symbolic.pystr_to_symbolic(cond.as_string)
-                if self._is_definitely_true(condition, block.sdfg):
+                truth = constant_truth(cond, block.sdfg)
+                if truth is True:
                     taken = True
-                elif self._is_definitely_false(condition, block.sdfg):
+                elif truth is False:
                     dead_branches.append((cond, branch))
         return dead_branches
 
@@ -209,45 +208,8 @@ class DeadStateElimination(ppl.Pass):
 
     def is_definitely_taken(self, edge: InterstateEdge, sdfg: SDFG) -> bool:
         """Returns True iff edge condition definitely evaluates to True."""
-        if edge.is_unconditional():
-            return True
-
-        # Evaluate condition
-        return self._is_definitely_true(edge.condition_sympy(), sdfg)
-
-    def _is_definitely_true(self, cond: symbolic.sympy.Basic, sdfg: SDFG) -> bool:
-        cond = symbolic.refold_booleans(cond)
-        if cond == True or cond == symbolic.sympy.Not(symbolic.sympy.logic.boolalg.BooleanFalse(), evaluate=False):
-            return True
-
-        # Evaluate non-optional arrays
-        cond = symbolic.evaluate_optional_arrays(cond, sdfg)
-        if cond == True:
-            return True
-
-        # Indeterminate or False condition
-        return False
+        return edge.is_unconditional() or constant_truth(edge.condition, sdfg) is True
 
     def is_definitely_not_taken(self, edge: InterstateEdge, sdfg: SDFG) -> bool:
         """Returns True iff edge condition definitely evaluates to False."""
-        if edge.is_unconditional():
-            return False
-
-        # Evaluate condition
-        return self._is_definitely_false(edge.condition_sympy(), sdfg)
-
-    def _is_definitely_false(self, cond: symbolic.sympy.Basic, sdfg: SDFG) -> bool:
-        # The parser hands back NON-EVALUATING AND/OR nodes; fold literal arms first, else a
-        # condition such as AND(False, x) never reads as constant (cloudsc's spliced boundary
-        # segment kept a dead branch with statically out-of-bounds memlets that way).
-        cond = symbolic.refold_booleans(cond)
-        if cond == False or cond == symbolic.sympy.Not(symbolic.sympy.logic.boolalg.BooleanTrue(), evaluate=False):
-            return True
-
-        # Evaluate non-optional arrays
-        cond = symbolic.evaluate_optional_arrays(cond, sdfg)
-        if cond == False:
-            return True
-
-        # Indeterminate or True condition
-        return False
+        return not edge.is_unconditional() and constant_truth(edge.condition, sdfg) is False

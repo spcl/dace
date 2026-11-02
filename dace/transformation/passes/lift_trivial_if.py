@@ -67,6 +67,61 @@ def _trivial_cond_check_cached(code_string: str, val: bool) -> bool:
     return False
 
 
+def is_conjunction(expr) -> bool:
+    # ``pystr_to_symbolic`` yields dace's own conjunction operator (whose ``func`` is named ``AND``), not ``sympy.And``.
+    return isinstance(expr, sympy.And) or (isinstance(expr, sympy.Basic) and expr.func.__name__ == "AND")
+
+
+def flatten_conjuncts(expr) -> list:
+    """All conjuncts of a (possibly nested) conjunction, flattened: conditional fusion nests its cartesian product as
+    ``((c1 and c2) and c3)``, and an atom and its negation meet at any depth."""
+    if not is_conjunction(expr):
+        return [expr]
+    return [atom for arg in expr.args for atom in flatten_conjuncts(arg)]
+
+
+def contradiction(expr) -> bool:
+    """Whether ``expr`` is a conjunction holding an atom and its negation, the ``c and not c`` of conditional fusion's
+    cartesian product for identical guards. False with free symbols too."""
+    if not is_conjunction(expr):
+        return False
+    conjuncts = flatten_conjuncts(expr)
+    return any(sympy.Not(ci) == cj for i, ci in enumerate(conjuncts) for j, cj in enumerate(conjuncts) if i != j)
+
+
+def constant_truth(code: CodeBlock, sdfg: SDFG) -> bool | None:
+    """The truth value ``code`` has wherever it is evaluated, or ``None`` when that takes knowing where.
+
+    The one guard-folding prover of ``DeadStateElimination`` and ``LiftTrivialIf``; the latter adds what holds at one
+    position (the iteration ranges and facts around a conditional).
+
+    :param code: A branch or interstate-edge condition.
+    :param sdfg: The SDFG whose arrays the condition names: a non-optional array is never ``None``.
+    :returns: ``True`` or ``False`` when the condition is decided, else ``None``.
+    """
+    if code.language != dace.dtypes.Language.Python:
+        return None
+    text = code.as_string
+    if _trivial_cond_check_cached(text, True):
+        return True
+    if _trivial_cond_check_cached(text, False):
+        return False
+    try:
+        expr = symbolic.pystr_to_symbolic(text)
+    except Exception:
+        return None
+    if contradiction(expr):
+        return False
+    # The parser hands back NON-EVALUATING AND/OR nodes; fold literal arms first, else a condition such as AND(False,
+    # x) never reads as constant (cloudsc's spliced boundary segment kept a dead branch with out-of-bounds memlets).
+    expr = symbolic.evaluate_optional_arrays(symbolic.refold_booleans(expr), sdfg)
+    if expr == True or expr == sympy.Not(sympy.logic.boolalg.BooleanFalse(), evaluate=False):  # noqa: E712
+        return True
+    if expr == False or expr == sympy.Not(sympy.logic.boolalg.BooleanTrue(), evaluate=False):  # noqa: E712
+        return False
+    return None
+
+
 @transformation.explicit_cf_compatible
 class LiftTrivialIf(ppl.Pass):
     """Remove ``ConditionalBlock`` nodes whose condition is provably constant.
@@ -119,30 +174,15 @@ class LiftTrivialIf(ppl.Pass):
                     node.sdfg.parent_sdfg = state.sdfg
                     node.sdfg.parent_nsdfg_node = node
 
-    def _trivial_cond_check(self, code: CodeBlock, val: bool) -> bool:
-        """Whether ``code`` provably evaluates to the constant truth value ``val``.
-
-        :param code: Branch condition to inspect.
-        :param val: Truth value to test the condition against.
-        :returns: ``True`` only if the condition statically reduces to ``val``.
-        """
-        if code.language != dace.dtypes.Language.Python:
-            return False
-        return _trivial_cond_check_cached(code.as_string, val)
-
-    def _trivially_true(self, code: CodeBlock, cfb: ConditionalBlock | None = None) -> bool:
-        if self._trivial_cond_check(code, True):
+    def _trivially_true(self, code: CodeBlock, cfb: ConditionalBlock) -> bool:
+        if constant_truth(code, cfb.sdfg) is True:
             return True
-        return cfb is not None and (
-            self._range_verdict(code, cfb) == "true" or self._facts_verdict(code, cfb) is symbolic.Truth.TRUE
-        )
+        return self._range_verdict(code, cfb) == "true" or self._facts_verdict(code, cfb) is symbolic.Truth.TRUE
 
-    def _trivially_false(self, code: CodeBlock, cfb: ConditionalBlock | None = None) -> bool:
-        if self._trivial_cond_check(code, False):
+    def _trivially_false(self, code: CodeBlock, cfb: ConditionalBlock) -> bool:
+        if constant_truth(code, cfb.sdfg) is False:
             return True
-        return cfb is not None and (
-            self._range_verdict(code, cfb) == "false" or self._facts_verdict(code, cfb) is symbolic.Truth.FALSE
-        )
+        return self._range_verdict(code, cfb) == "false" or self._facts_verdict(code, cfb) is symbolic.Truth.FALSE
 
     @classmethod
     def _facts_verdict(cls, code: CodeBlock, cfb: ConditionalBlock) -> symbolic.Truth:
@@ -306,52 +346,10 @@ class LiftTrivialIf(ppl.Pass):
             verdict = "false" if verdict == "true" else "true"
         return verdict
 
-    @staticmethod
-    def _is_conjunction(expr) -> bool:
-        # ``pystr_to_symbolic`` yields dace's own conjunction operator (whose
-        # ``func`` is named ``AND``), not ``sympy.And``; accept either.
-        return isinstance(expr, sympy.And) or (isinstance(expr, sympy.Basic) and expr.func.__name__ == "AND")
-
-    def _flatten_conjuncts(self, expr) -> list:
-        """All conjuncts of a (possibly nested) conjunction, flattened.
-
-        Conditional fusion nests the cartesian product as
-        ``((c1 and c2) and c3)``; flattening exposes every atom so an atom
-        and its negation can be found regardless of nesting depth.
-        """
-        if not self._is_conjunction(expr):
-            return [expr]
-        out = []
-        for arg in expr.args:
-            out.extend(self._flatten_conjuncts(arg))
-        return out
-
-    def _unsatisfiable(self, code: CodeBlock) -> bool:
-        """Whether ``code`` is a contradiction even with free symbols: a
-        (possibly nested) conjunction containing an atom and its negation
-        (the ``c and not c`` combinations conditional fusion's cartesian
-        product emits for identical guards). Such a branch never executes,
-        so dropping it is value-preserving.
-        """
-        if code is None or code.language != dace.dtypes.Language.Python:
-            return False
-        try:
-            expr = symbolic.pystr_to_symbolic(code.as_string)
-        except Exception:
-            return False
-        if not self._is_conjunction(expr):
-            return False
-        conjuncts = self._flatten_conjuncts(expr)
-        for i, ci in enumerate(conjuncts):
-            neg = sympy.Not(ci)
-            if any(j != i and neg == cj for j, cj in enumerate(conjuncts)):
-                return True
-        return False
-
     def dead_branch(self, cond: CodeBlock | None, cfb: ConditionalBlock) -> bool:
         """Whether a branch of ``cfb`` guarded by ``cond`` can never run: a condition that is false (statically or over
         the enclosing loop ranges) or a contradiction such as ``c and not c``. An else branch (``None``) always can."""
-        return cond is not None and (self._trivially_false(cond, cfb) or self._unsatisfiable(cond))
+        return cond is not None and self._trivially_false(cond, cfb)
 
     def taken_branch(self, cfb: ConditionalBlock) -> tuple[bool, ControlFlowRegion | None]:
         """Whether the conditions of an ``if`` or ``if/else`` decide which of its branches runs.
