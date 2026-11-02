@@ -857,7 +857,11 @@ class StateFusionExtended(StateFusion):
                     if not self._check_paths(
                         first_state, second_state, match_nodes, nodes_first, nodes_second, False, False
                     ):
-                        return False
+                        if not self.aggressive_merges:
+                            return False
+                        # Last writer (second) wins: the first writers go before the second's, past the match nodes
+                        self.connections_to_make.append(("read_before", nodes_first, nodes_second))
+                        continue
                     # A WAR edge onto a match keeps it from merging, and that order with it: an overlap needs its own edge
                     if any(
                         kind == "war" for kind, *_ in self.connections_to_make
