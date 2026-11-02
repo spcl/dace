@@ -31,6 +31,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import control_flow_reads
 
 
 def _writes(block: ControlFlowBlock, name: str) -> bool:
@@ -63,11 +64,7 @@ class ForwardOffsetCopies(ppl.Pass):
         return forwarded or None
 
     def apply_to_sdfg(self, sdfg: SDFG) -> int:
-        named = set()
-        for edge in sdfg.all_interstate_edges():
-            named |= {str(s) for s in edge.data.free_symbols}
-        for region in sdfg.all_control_flow_regions():
-            named |= region.used_symbols(all_symbols=True, with_contents=False)
+        named = control_flow_reads(sdfg)
         accesses: dict[str, list[tuple[SDFGState, nodes.AccessNode]]] = defaultdict(list)
         for st in sdfg.states():
             for an in st.data_nodes():

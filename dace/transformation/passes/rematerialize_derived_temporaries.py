@@ -34,9 +34,10 @@ from dace.memlet import Memlet
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.propagation import propagate_memlets_map_scope
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.canonicalize.fold_scalar_read_copies import control_flow_reads
 
 # A producer-side value the clone needs: container, point to read it at, and the access node that
 # stores it there (None when the producer simply reads the container through its map entry).
@@ -73,27 +74,16 @@ def symbolic_references(sdfg: SDFG) -> OrderedSet:
     """Every name referenced by something other than a memlet.
 
     A container named here is read outside dataflow, so its access nodes do not tell the whole story.
-    The slots are the ones ``length_one_array_scalar_conversion.rewrite_code_slots`` enumerates --
-    interstate assignments and conditions, ``ConditionalBlock`` guards, ``LoopRegion`` init/update/
-    condition, and ``NestedSDFG.symbol_mapping``; keep the two in step when a slot is added. (That
-    helper REWRITES source text and this one only reads free symbols, which is why it is not called
-    here: a rewriter cannot answer "which names are referenced" without re-parsing every slot twice.)
+    The slots are the ones ``length_one_array_scalar_conversion.rewrite_code_slots`` enumerates: the
+    control flow's own reads and ``NestedSDFG.symbol_mapping``; keep the two in step when a slot is
+    added. (That helper REWRITES source text and this one only reads free symbols, which is why it is
+    not called here: a rewriter cannot answer "which names are referenced" without re-parsing every
+    slot twice.)
 
     :param sdfg: The SDFG to scan (this level only; a nested SDFG uses its own names).
     :returns: The referenced names.
     """
-    names: OrderedSet = OrderedSet()
-    for edge in sdfg.all_interstate_edges():
-        names |= OrderedSet(edge.data.free_symbols)
-    for block in sdfg.all_control_flow_blocks():
-        if isinstance(block, LoopRegion):
-            for code in (block.init_statement, block.loop_condition, block.update_statement):
-                if code is not None:
-                    names |= OrderedSet(code.get_free_symbols())
-        elif isinstance(block, ConditionalBlock):
-            for cond, _ in block.branches:
-                if cond is not None:
-                    names |= OrderedSet(cond.get_free_symbols())
+    names = OrderedSet(control_flow_reads(sdfg))
     for state in sdfg.states():
         for node in state.nodes():
             # A nested SDFG can bind one of its symbols to an outer container's value; that reference
