@@ -2956,6 +2956,8 @@ class SymbolResolver:
         relations += [
             symbolic.Relation(symbolic.RelationKind.EQ, symbolic.symbol(name), symbolic.replace_symbols(value, renamed))
             for name, value in mapped.items()
+            # Each ``?`` is a value of its own
+            if not value.atoms(symbolic.UndefinedSymbol)
         ]
         return relations, {f"outer:{name}" for name in outer.integers}, small, unreadable
 

@@ -2,6 +2,7 @@
 """Symbols crossing a call: which names a callee receives, and what a call leaves behind in it."""
 
 import numpy as np
+import sympy
 
 import dace
 
@@ -133,6 +134,23 @@ def test_a_symbolic_default_argument_is_typed_by_the_program():
     assert A[0] == 4
 
 
+def test_a_descending_iterator_claims_no_sign_it_loses():
+    """``range(3, -3, -1)`` reaches -2, so the body of the loop is not nested under ``0 < i``."""
+
+    @dace.program
+    def descending(A: dace.float64[6]):
+        for i in range(3, -3, -1):
+            for j in dace.map[0:2]:
+                A[j] = i
+
+    sdfg = descending.to_sdfg(simplify=False)
+    nested = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert nested
+    zero, i = sympy.Integer(0), dace.symbolic.symbol("i")
+    positive = dace.symbolic.Relation(dace.symbolic.RelationKind.LT, zero, i)
+    assert not any(dace.symbolic.holds(positive, node.sdfg.facts()) for node in nested)
+
+
 if __name__ == "__main__":
     test_a_callee_receives_the_loop_iterator_its_slice_names()
     test_a_compile_time_argument_stays_an_expression()
@@ -141,3 +159,4 @@ if __name__ == "__main__":
     test_a_size_promoted_in_a_loop_outlives_the_loop()
     test_split_of_a_symbolic_length_is_decided_by_the_facts()
     test_a_symbolic_default_argument_is_typed_by_the_program()
+    test_a_descending_iterator_claims_no_sign_it_loses()

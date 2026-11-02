@@ -2615,9 +2615,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 eoff = 1
             try:
                 conditions = [s >= 0 for s in (start, stop, step)]
-                if conditions == [True, True, True] or (start > stop and step < 0):
+                ascending = conditions == [True, True, True]
+                # A descending loop's last value is above ``stop``, the first one it never reaches
+                if ascending or (start > stop and step < 0 and stop >= -1):
                     nonnegative = True
-                    if start != 0:
+                    if start != 0 and (ascending or stop >= 0):
                         positive = True
             except:
                 pass

@@ -271,6 +271,17 @@ def test_inlining_keeps_the_assumptions_proofs_took():
     assert relation in outer.symbol_repo.runtime_assumptions
 
 
+def test_two_undefined_mappings_are_not_one_value():
+    outer = dace.SDFG("outer")
+    inner = dace.SDFG("inner")
+    inner.add_symbol("a", dace.int64)
+    inner.add_symbol("b", dace.int64)
+    body = inner.add_state(is_start_block=True)
+    outer.add_state(is_start_block=True).add_nested_sdfg(inner, {}, {}, {"a": "?", "b": "?"})
+    same = symbolic.Relation(symbolic.RelationKind.EQ, symbolic.symbol("a"), symbolic.symbol("b"))
+    assert symbolic.ask(same, SymbolResolver().facts_at(body)) is symbolic.Truth.UNKNOWN
+
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
@@ -300,3 +311,4 @@ if __name__ == "__main__":
     test_a_loop_header_ends_a_fact_on_entry()
     test_floor_of_a_quotient_truncates_as_its_code_does()
     test_inlining_keeps_the_assumptions_proofs_took()
+    test_two_undefined_mappings_are_not_one_value()
