@@ -344,7 +344,7 @@ class ParallelizeLoops(ppl.Pass):
         # A known-parallel loop is mapped as it is: no sibling chain holds it, and its scale is the CPU specialization's
         # to settle.
         known_parallel = loop_analysis.is_known_parallel(loop)
-        if not proven and not known_parallel and self.holds_back(xform, loop):
+        if not proven and not known_parallel and (only_checks(loop) or self.holds_back(xform, loop)):
             return False
         if expanded:
             # avoid an import cycle
@@ -516,7 +516,7 @@ class ParallelizeLoops(ppl.Pass):
 
         :param xform: the probe that accepted ``loop``, with the shared analysis it was given.
         """
-        return only_checks(loop) or (self.hold_sibling_chains and held_sibling(loop, self.permissive, xform))
+        return self.hold_sibling_chains and held_sibling(loop, self.permissive, xform)
 
     def finish(self, sdfg: SDFG) -> None:
         """The post-lift steps: drop stale nested-SDFG symbol mappings, then propagate memlets if asked."""
