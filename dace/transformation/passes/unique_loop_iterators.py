@@ -17,6 +17,8 @@ from dace.transformation.transformation import explicit_cf_compatible
 
 #: Prefix of the renamed iterators.
 LOOP_ITERATOR_PREFIX = "_loop_it_"
+#: Prefix of a wavefront skew's diagonal iterator, which stays: it tells the skew the loop is its own.
+SKEW_T_PREFIX = "_skew_t_"
 #: Label prefix of the state assigning an iterator its exit value.
 POST_VALUE_STATE_PREFIX = "loop_iter_post_value"
 
@@ -25,6 +27,11 @@ def iterator_id(name: str) -> int:
     """The ``<N>`` of ``_loop_it_<N>``, or -1 for any other name."""
     suffix = name[len(LOOP_ITERATOR_PREFIX) :]
     return int(suffix) if name.startswith(LOOP_ITERATOR_PREFIX) and suffix.isdigit() else -1
+
+
+def is_settled(name: str) -> bool:
+    """Whether a loop may keep the iterator ``name`` as long as no other loop shares it."""
+    return iterator_id(name) >= 0 or name.startswith(SKEW_T_PREFIX)
 
 
 def first_free_id(sdfg: dace.SDFG) -> int:
@@ -120,7 +127,7 @@ def plans_a_rename(sdfg: dace.SDFG) -> bool:
     iterators = [
         r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable
     ]
-    return len(set(iterators)) < len(iterators) or any(iterator_id(name) < 0 for name in iterators)
+    return len(set(iterators)) < len(iterators) or not all(map(is_settled, iterators))
 
 
 def symbol_readers(sdfg: dace.SDFG, names: set[str]) -> dict[str, set[ControlFlowBlock]]:
@@ -212,7 +219,7 @@ class UniqueLoopIterators(ppl.Pass):
             if not isinstance(loop, LoopRegion) or not loop.loop_variable:
                 continue
             old = loop.loop_variable
-            if iterator_id(old) >= 0 and old not in duplicated:
+            if is_settled(old) and old not in duplicated:
                 continue
             plan.append((loop, old, self.next_id))
             self.original[loop] = old
