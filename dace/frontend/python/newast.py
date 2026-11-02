@@ -1104,6 +1104,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: dict[str, tuple[str, Memlet]] = {}  # Keeps track of views
+        self.size_symbols: list[str] = []  # Symbols read from a size-1 descriptor on an interstate edge
         self.nested_closure_arrays: dict[str, tuple[Any, data.Data]] = {}
         self.annotated_types: dict[str, data.Data] = annotated_types or {}
 
@@ -1253,6 +1254,9 @@ class ProgramVisitor(ExtNodeVisitor):
         for arrname, arr in self.sdfg.arrays.items():
             # Return values become non-transient (accessible by the outside)
             if arrname.startswith("__return"):
+                # The caller sizes a return value before the interstate edge assigning the symbol runs
+                if any(str(s) in self.size_symbols for s in arr.free_symbols):
+                    raise DaceSyntaxError(self, self.program_ast, f"Data-dependent shape {arr.shape} is not allowed.")
                 arr.transient = False
                 self.outputs[arrname] = (None, Memlet.from_array(arrname, arr), [])
 
@@ -5519,6 +5523,7 @@ class ProgramVisitor(ExtNodeVisitor):
         """
         desc = self.sdfg.arrays[scalar]
         name = self.sdfg.add_symbol(f"__sym_{scalar}", desc.dtype, find_new_name=True)
+        self.size_symbols.append(name)
         sym = dace.symbol(name, dtype=desc.dtype)
         # Nested scopes resolve free symbols through globals
         self.globals[name] = sym
