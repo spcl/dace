@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Sharing one buffer between transient arrays whose uses never overlap."""
 
+import re
 from dataclasses import dataclass, field
 
 import sympy
@@ -266,6 +267,8 @@ class BufferSharing:
     nested: OrderedSet = field(default_factory=OrderedSet)
     #: The SDFG's facts, derived once: nothing changes until the renaming at the end.
     facts: symbolic.Facts | None = None
+    equalities: dict[tuple, bool] = field(default_factory=dict)
+    bounds: dict[tuple, bool] = field(default_factory=dict)
 
     def run(self) -> dict[str, str]:
         self.facts = self.sdfg.facts()
@@ -293,8 +296,12 @@ class BufferSharing:
                     node.data = renamed[node.data]
                 # A Python tasklet may name a container in its code (``InlineTaskletConnectors``), not by connector
                 elif isinstance(node, nodes.Tasklet) and node.language is dtypes.Language.Python:
-                    names = renamed.keys() - node.in_connectors.keys() - node.out_connectors.keys()
-                    code_repl = {name: renamed[name] for name in names if name in node.code.as_string}
+                    named = re.findall(r"\w+", node.code.as_string)
+                    code_repl = {
+                        name: renamed[name]
+                        for name in named
+                        if name in renamed and name not in node.in_connectors and name not in node.out_connectors
+                    }
                     if code_repl:
                         replace_in_codeblock(node.code, code_repl, node, self.sdfg)
             # Scope connectors passing a renamed array through are named after it, unless a scope already has that
@@ -582,9 +589,9 @@ class BufferSharing:
             and len(rep.shape) == len(new.shape)
             and rep.alignment == new.alignment
             and rep.pool == new.pool
-            and all(symbolic.equal(x, y) is True for x, y in zip(rep.strides, new.strides))
-            and all(symbolic.equal(x, y) is True for x, y in zip(rep.offset, new.offset))
-            and symbolic.equal(rep.start_offset, new.start_offset) is True
+            and all(self.equal(x, y) for x, y in zip(rep.strides, new.strides))
+            and all(self.equal(x, y) for x, y in zip(rep.offset, new.offset))
+            and self.equal(rep.start_offset, new.start_offset)
         ):
             return None
         persistent = dtypes.AllocationLifetime.Persistent
@@ -600,8 +607,7 @@ class BufferSharing:
             if m == chosen or m not in self.nested:
                 continue
             if not (
-                len(arrays[m].shape) == len(shape)
-                and all(symbolic.equal(x, y) is True for x, y in zip(arrays[m].shape, shape))
+                len(arrays[m].shape) == len(shape) and all(self.equal(x, y) for x, y in zip(arrays[m].shape, shape))
             ):
                 return None
         if arrays[chosen].lifetime == persistent:
@@ -610,12 +616,19 @@ class BufferSharing:
             return None
         return chosen
 
+    def equal(self, x, y) -> bool:
+        """``symbolic.equal`` once per pair: few distinct extents recur across all candidates."""
+        if (x, y) not in self.equalities:
+            self.equalities[(x, y)] = symbolic.equal(x, y) is True
+        return self.equalities[(x, y)]
+
+    def at_least(self, x, y) -> bool:
+        if (x, y) not in self.bounds:
+            self.bounds[(x, y)] = symbolic.provably_nonnegative(symbolic.simplify(x - y), self.facts)
+        return self.bounds[(x, y)]
+
     def covers(self, big: dt.Array, small: dt.Array) -> bool:
-        facts = self.facts
-        return all(
-            symbolic.provably_nonnegative(symbolic.simplify(x - y), facts)
-            for x, y in zip((*big.shape, big.total_size), (*small.shape, small.total_size))
-        )
+        return all(self.at_least(x, y) for x, y in zip((*big.shape, big.total_size), (*small.shape, small.total_size)))
 
     def hoistable(self, desc: dt.Array) -> bool:
         """Whether ``desc`` can be allocated on entry to the SDFG: its size reads only symbols bound on entry and
