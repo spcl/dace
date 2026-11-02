@@ -414,6 +414,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         super()._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream, codegen)
         self._flush_generated_functions(function_stream, cfg, state_id, node)
 
+    def _generate_AITasklet(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream, codegen=None):
+        # No connector inlining: the compile check shows the model its own code back.
+        super()._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream, codegen)
+        self._flush_generated_functions(function_stream, cfg, state_id, node)
+
     # No tasklet banner or separators: each tasklet line carries a trailing ``// <label>``.
 
     def tasklet_body_comment(self, node) -> str:
