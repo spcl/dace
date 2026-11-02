@@ -467,6 +467,16 @@ class StateFusion(transformation.MultiStateTransformation):
             for _, dst, _ in graph.out_edges(src):
                 if dst == second_state:
                     return False
+
+        # If second state has other input edges, there might be issues
+        # Exceptions are when none of the states contain dataflow, unless
+        # the first state is an initial state (in which case the new initial
+        # state would be ambiguous). Control flow, so permissive mode keeps this too: fusing would drop those
+        # edges or send them through the first state.
+        if (not second_state.is_empty() or not first_state.is_empty() or len(in_edges) == 0) and graph.in_degree(
+            second_state
+        ) != 1:
+            return False
         return True
 
     def check_fusible(self, graph, sdfg, permissive: bool) -> bool:
@@ -495,17 +505,6 @@ class StateFusion(transformation.MultiStateTransformation):
                 for node in state.nodes():
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and node.has_side_effects(sdfg):
                         return False
-
-            # If second state has other input edges, there might be issues
-            # Exceptions are when none of the states contain dataflow, unless
-            # the first state is an initial state (in which case the new initial
-            # state would be ambiguous).
-            first_in_edges = graph.in_edges(first_state)
-            second_in_edges = graph.in_edges(second_state)
-            if (not second_state.is_empty() or not first_state.is_empty() or len(first_in_edges) == 0) and len(
-                second_in_edges
-            ) != 1:
-                return False
 
             # Get connected components.
             first_cc = list(nx.weakly_connected_components(first_state._nx))

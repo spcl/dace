@@ -442,6 +442,22 @@ class StateFusionExtended(StateFusion):
             if (scoped_writes - top_writes) & {n.data for n in second_state.data_nodes()}:
                 return False
             second_scope = second_state.scope_dict()
+            # Its mirror images: an access only a scope of the other state holds has no top-level node either, for a
+            # read of what the first state wrote or a first-state read of what the second state writes.
+            second_top = {n.data for n in second_state.data_nodes() if second_scope[n] is None}
+            second_scoped = {n.data for n in second_state.data_nodes() if second_scope[n] is not None} - second_top
+            if second_scoped & (top_writes | scoped_writes):
+                return False
+            first_top = {n.data for n in first_state.data_nodes() if first_scope[n] is None}
+            first_scoped_reads = {
+                n.data for n in first_state.data_nodes() if first_scope[n] is not None and first_state.out_degree(n) > 0
+            }
+            if (first_scoped_reads - first_top) & {
+                n.data
+                for n in second_state.data_nodes()
+                if any(not e.data.is_empty() for e in second_state.in_edges(n))
+            }:
+                return False
             second_writes = {
                 n.data for n in second_state.data_nodes() if second_scope[n] is None and second_state.in_degree(n) > 0
             }
@@ -467,17 +483,6 @@ class StateFusionExtended(StateFusion):
                     return False
                 if len(sinks) > 1:
                     self.connections_to_make.append(("unify", sinks, []))
-
-            # If second state has other input edges, there might be issues
-            # Exceptions are when none of the states contain dataflow, unless
-            # the first state is an initial state (in which case the new initial
-            # state would be ambiguous).
-            first_in_edges = graph.in_edges(first_state)
-            second_in_edges = graph.in_edges(second_state)
-            if (not second_state.is_empty() or not first_state.is_empty() or len(first_in_edges) == 0) and len(
-                second_in_edges
-            ) != 1:
-                return False
 
             # Get connected components. `weakly_connected_components` hands back `set`s, so
             #  both the components and their contents are put in state order, see
