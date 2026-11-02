@@ -1815,6 +1815,15 @@ def step_direction(step: Any, facts: symbolic.Facts) -> int | None:
     return None
 
 
+def last_iteration(loop: LoopRegion) -> symbolic.SymbolicType | None:
+    """The iteration variable's value in the last iteration: the loop's inclusive end moved onto its stride."""
+    end = loop_analysis.get_loop_end(loop)
+    start, step = loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_stride(loop)
+    if end is None or start is None or step is None or step in (1, -1):
+        return end
+    return symbolic.simplify(start + symbolic.int_floor(end - start, step) * step)
+
+
 def whole_container(sdfg: sd.SDFG, inner: memlet.Memlet) -> memlet.Memlet:
     """A dynamic memlet over the whole container of ``inner``, with its WCR: an external memlet until propagation."""
     outer = memlet.Memlet.from_array(inner.data, sdfg.arrays[inner.data], wcr=inner.wcr)
@@ -1854,6 +1863,9 @@ class LoopLift:
     keep_small_loops_sequential: bool = True
     #: Propagate each memlet routed through the new map; unset by a caller that propagates the lifted state after.
     propagate_edges: bool = True
+    #: The map entry and state of the last rewrite.
+    lifted_entry: nodes.MapEntry | None = None
+    lifted_state: SDFGState | None = None
 
     def probe(self, permissive: bool = False) -> bool:
         """Whether :attr:`loop` lifts as the graph stands; on a refusal, :attr:`last_refusal` says why."""
@@ -3171,6 +3183,7 @@ class LoopLift:
 
         # Integrate the nested SDFG into the parent SDFG
         dealias.integrate_nested_sdfg(nsdfg.sdfg)
+        self.lifted_entry, self.lifted_state = entry, body
 
 
 @properties.make_properties
