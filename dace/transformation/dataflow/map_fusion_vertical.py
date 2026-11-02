@@ -2564,8 +2564,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if any(subset is None for subset in found_subsets):
             return None
 
-        found_subsets = copy.deepcopy(found_subsets)
         if param_repl:
+            found_subsets = copy.deepcopy(found_subsets)
             for subset in found_subsets:
                 # Replace happens in place
                 symbolic.safe_replace(param_repl, subset.replace)

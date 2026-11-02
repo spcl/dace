@@ -36,11 +36,11 @@ class DetachDisjointReads(ppl.Pass):
         detached = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
-                detached += detach_in_state(state)
+                detached += detach_in_state(state, nsdfg.facts())
         return detached or None
 
 
-def detach_in_state(state: SDFGState) -> int:
+def detach_in_state(state: SDFGState, facts: symbolic.Facts) -> int:
     """Detach every map of ``state`` that qualifies."""
     candidates = [n for n in state.data_nodes() if state.in_degree(n) and state.out_degree(n)]
     candidates = [n for n in candidates if all(isinstance(e.src, nodes.MapExit) for e in state.in_edges(n))]
@@ -49,9 +49,9 @@ def detach_in_state(state: SDFGState) -> int:
     detached = 0
     scope = state.scope_dict()
     for node in candidates:
-        if node not in state.nodes() or scope.get(node) is not None or type(node.desc(state.sdfg)) is not data.Array:
+        if scope.get(node) is not None or type(node.desc(state.sdfg)) is not data.Array or node not in state.nodes():
             continue
-        while any(detach(state, node, reader) for reader in state.successors(node)):
+        while any(detach(state, node, reader, facts) for reader in state.successors(node)):
             detached += 1
     return detached
 
@@ -70,7 +70,7 @@ def miss(first: list[subsets.Subset], second: list[subsets.Subset], facts: symbo
     )
 
 
-def detach(state: SDFGState, node: nodes.AccessNode, reader: nodes.Node) -> bool:
+def detach(state: SDFGState, node: nodes.AccessNode, reader: nodes.Node, facts: symbolic.Facts) -> bool:
     """Make ``reader``, a map reading ``node``, a sibling of the maps writing ``node``, if it reads none of what they
     wrote. :return: whether it did."""
     if not isinstance(reader, nodes.MapEntry):
@@ -86,7 +86,6 @@ def detach(state: SDFGState, node: nodes.AccessNode, reader: nodes.Node) -> bool
     reads = [e for e in state.in_edges(reader) if e.data.data == name]
     if any(e.src is not node for e in reads):
         return False
-    facts = state.sdfg.facts()
     sources = [e for e in reads if not e.data.is_empty()]
     if not sources or not miss([e.data.get_src_subset(e, state) for e in sources], stored(state, writes), facts):
         return False
