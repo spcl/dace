@@ -12,8 +12,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes as nd
 from dace.properties import CodeBlock
+from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
@@ -447,6 +447,13 @@ def _guarded_update(acc_type, condition: str, op: str = "+") -> tuple[dace.SDFG,
 def test_a_float_addend_of_an_integer_accumulator_is_refused():
     """``acc = acc * 0.5`` truncates after the product; a mask of the accumulator's type truncates 0.5 to 0."""
     sdfg, _, _ = _guarded_update(dace.int64, "p > 0", "*")
+    assert LoopToConditionalReduce().apply_pass(sdfg, {}) is None
+
+
+def test_a_symbol_assigned_past_the_guard_is_the_value_of_the_iteration_before():
+    sdfg, loop, block = _guarded_update(dace.float64, "k > 0.5")
+    sdfg.add_array("b", [4], dace.float64)
+    loop.add_edge(block, loop.add_state("after"), dace.InterstateEdge(assignments={"k": "b[p]"}))
     assert LoopToConditionalReduce().apply_pass(sdfg, {}) is None
 
 
