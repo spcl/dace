@@ -1188,27 +1188,6 @@ def test_dead_map_with_an_ordering_edge_out_goes_whole():
     assert not any(isinstance(n, (nodes.MapEntry, nodes.MapExit)) for n in state.nodes())
 
 
-def test_a_tasklet_left_without_outputs_leaves_its_map():
-    """Its empty edge to the map exit only closes the scope, so the map keeps its live tasklet alone (cloudsc ``zratio``)."""
-    sdfg = dace.SDFG("outputless_tasklet")
-    sdfg.add_array("A", [8], dace.float64)
-    sdfg.add_array("B", [8], dace.float64)
-    state = sdfg.add_state()
-    entry, exit_node = state.add_map("m", dict(i="0:8"))
-    live = state.add_tasklet("live", {"a"}, {"b"}, "b = a")
-    dead = state.add_tasklet("dead", {"a"}, {}, "__out: dace.float64\n__out = a / 2.0")
-    read = state.add_read("A")
-    state.add_memlet_path(read, entry, live, dst_conn="a", memlet=dace.Memlet("A[i]"))
-    state.add_memlet_path(read, entry, dead, dst_conn="a", memlet=dace.Memlet("A[i]"))
-    state.add_nedge(dead, exit_node, dace.Memlet())
-    state.add_memlet_path(live, exit_node, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
-    sdfg.validate()
-
-    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
-    sdfg.validate()
-    assert dead not in state.nodes() and live in state.nodes()
-
-
 if __name__ == "__main__":
     test_dse_simple()
     test_dse_unconditional()
@@ -1254,4 +1233,3 @@ if __name__ == "__main__":
     test_dde_orders_nothing_through_access_nodes_the_removal_leaves_unwritten_and_unread()
     test_two_inlined_branches_of_one_name_stay_distinct()
     test_dead_map_with_an_ordering_edge_out_goes_whole()
-    test_a_tasklet_left_without_outputs_leaves_its_map()

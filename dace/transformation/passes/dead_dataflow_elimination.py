@@ -317,17 +317,6 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         n = sum(len(v) for v in pass_retval.values())
         return f"Eliminated {n} nodes in {len(pass_retval)} states: {pass_retval}"
 
-    @staticmethod
-    def _closes_scope_only(node: nodes.Node, edge: MultiConnectorEdge) -> bool:
-        # A Python tasklet without outputs computes nothing: the empty edge to its exit only closes the scope
-        return (
-            isinstance(node, nodes.Tasklet)
-            and node.language is dtypes.Language.Python
-            and not node.out_connectors
-            and isinstance(edge.dst, nodes.ExitNode)
-            and edge.data.is_empty()
-        )
-
     def _is_node_dead(
         self,
         node: nodes.Node,
@@ -365,7 +354,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                 # The ordering only vanishes with the producer; one with another successor survives it.
                 if any(succ is not node for pe in state.in_edges(node) for succ in state.successors(pe.src)):
                     return False
-        elif any(e.dst not in dead_nodes and not self._closes_scope_only(node, e) for e in state.out_edges(node)):
+        elif any(succ not in dead_nodes for succ in state.successors(node)):
             return False
 
         # Determine on a case-by-case basis
