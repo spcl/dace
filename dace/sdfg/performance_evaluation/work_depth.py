@@ -1362,7 +1362,7 @@ def maximize_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: sp
     if var not in expr.free_symbols:
         return expr
     lower, upper, step = pystr_to_symbolic(lower), pystr_to_symbolic(upper), pystr_to_symbolic(step)
-    last = lower + sp.Abs(step) * int_floor(upper - lower, sp.Abs(step))
+    last = lower + step * int_floor(upper - lower, step)
     return sp.Max(expr.subs(var, lower), expr.subs(var, last))
 
 

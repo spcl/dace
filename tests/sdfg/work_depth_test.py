@@ -22,6 +22,7 @@ from dace.sdfg.performance_evaluation.work_depth import (
     count_depth_code,
     get_tasklet_avg_par,
     get_tasklet_work_depth,
+    maximize_over_range,
 )
 from dace.sdfg.state import LoopRegion
 from dace.sdfg.utils import inline_control_flow_regions
@@ -655,6 +656,11 @@ def test_a_map_depth_is_its_deepest_iteration_not_the_map_parameter() -> None:
     assert_symbolically_equal(depth, 2 * log2N)
 
 
+def test_a_map_depth_stops_at_the_last_iteration_a_negative_step_reaches() -> None:
+    i = pystr_to_symbolic("i")
+    assert maximize_over_range(-i, i, 10, -1, -2) == 0
+
+
 @pytest.mark.parametrize("model,work,depth", [("unit", 2, 2), ("libm", 21, 14)])
 def test_an_exp_costs_its_libm_flops_only_under_the_libm_model(model: str, work: int, depth: int):
     with dace.config.set_temporary("work_depth", "transcendental_cost", value=model):
@@ -697,3 +703,5 @@ if __name__ == "__main__":
         test_assumption_system_contradictions(assumptions)
 
     test_depth_counter_vs_work_counter()
+    test_a_map_depth_is_its_deepest_iteration_not_the_map_parameter()
+    test_a_map_depth_stops_at_the_last_iteration_a_negative_step_reaches()
