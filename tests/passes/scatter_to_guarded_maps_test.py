@@ -864,6 +864,33 @@ def test_a_fancy_index_store_is_guarded():
         assert np.allclose(out, 2.0 * expected)
 
 
+def test_index_written_after_the_scatter_is_checked_before_it():
+    n = 5
+
+    @dace.program
+    def index_rewritten_later(z: dace.float64[n], x: dace.float64[n], p: dace.int64[n], q: dace.int64[n]):
+        for i in range(n):
+            z[p[i]] = x[i]
+        p[:] = q
+
+    sdfg = index_rewritten_later.to_sdfg(simplify=False)
+    ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {})
+    assert not any(name.startswith("__scatter_guard_check") for name in sdfg.free_symbols)
+
+
+def test_scatter_writing_its_own_index_stays_a_loop():
+    n = 5
+
+    @dace.program
+    def own_index(z: dace.float64[n], x: dace.float64[n], p: dace.int64[n]):
+        for i in range(n):
+            z[p[i]] = x[i]
+            p[i] = 0
+
+    sdfg = own_index.to_sdfg(simplify=False)
+    assert not ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {})
+
+
 if __name__ == "__main__":
     test_detect_finds_single_scatter()
     test_detect_finds_each_distinct_idx_array()
@@ -925,3 +952,5 @@ def test_a_transient_scattered_through_an_index_of_an_index_is_guarded_on_both()
         assert np.allclose(out, 2.0 * expected)
     test_one_index_over_fixed_slabs_is_guarded_on_the_local_index_where_it_is_used()
     test_a_fancy_index_store_is_guarded()
+    test_index_written_after_the_scatter_is_checked_before_it()
+    test_scatter_writing_its_own_index_stays_a_loop()
