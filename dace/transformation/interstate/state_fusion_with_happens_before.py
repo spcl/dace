@@ -707,14 +707,7 @@ class StateFusionExtended(StateFusion):
                         continue  # re-written inside the second state: not a merge point
                     # ``a`` merges with the one producer its read selects, not with whichever the read reaches
                     producers = [n for n in first_output if n.data == a.data and _has_data_write(n)]
-                    if (
-                        producers
-                        and all(nx.has_path(first_state._nx, c, p) for c in consumers for p in producers)
-                        # Only an overlap is sure to merge: an edge landing on a disjoint ``a`` leaves it apart
-                        and StateFusionExtended.memlets_intersect(
-                            first_state, producers, False, second_state, [a], True, facts
-                        )
-                    ):
+                    if producers and all(nx.has_path(first_state._nx, c, p) for c in consumers for p in producers):
                         return True
                 return False
 
@@ -1205,8 +1198,8 @@ class StateFusionExtended(StateFusion):
                 if took:
                     absorbed.setdefault(node.data, []).append(node)
                 elif second_state.out_degree(node) > 0:
-                    # An unmerged read of a container the second state rewrites stays behind the first-state writers
-                    # that rewrite overlaps: the WAW check counted on the merge to order them
+                    # An unmerged read stays behind the first-state writers: the WAR exemption counted on the merge to
+                    # order them, and so did the WAW check for those a rewrite of the container overlaps
                     rewrites = [
                         n for n in second_state.data_nodes() if n.data == node.data and second_state.in_degree(n)
                     ]
@@ -1214,8 +1207,11 @@ class StateFusionExtended(StateFusion):
                         c
                         for c in candidates
                         if first_state.in_degree(c) > 0
-                        and StateFusionExtended.memlets_intersect(
-                            first_state, [c], False, second_state, rewrites, False, facts
+                        and (
+                            second_state.in_degree(node) == 0
+                            or StateFusionExtended.memlets_intersect(
+                                first_state, [c], False, second_state, rewrites, False, facts
+                            )
                         )
                     ]
                     for m in [*absorbed.get(node.data, []), *writers]:
