@@ -8,6 +8,7 @@ import copy
 import enum
 import functools
 import itertools
+import math
 import warnings
 from collections import deque
 from typing import TYPE_CHECKING, Optional, cast
@@ -293,7 +294,8 @@ class AffineSMemlet(SeparableMemletPattern):
 
         # Special case: multiplier < 0
         if self.negative is symbolic.Truth.TRUE:
-            result_begin, result_end = result_end, result_begin
+            result_begin = rb.subs(self.param, node_re).expand()
+            result_end = re.subs(self.param, node_rb).expand()
 
         # Special case: a point access in a strided map accesses every ``multiplier * stride``-th element
         if node_rs != 1 and rb == re and rs == 1 and rt == 1 and self.multiplier.is_Integer and self.multiplier > 0:
@@ -389,7 +391,7 @@ class ModuloSMemlet(SeparableMemletPattern):
         se_range = self.subpattern.propagate(array, [self.subexpr], node_range, facts)
         last = self.modulo - 1
         # The image keeps its shape only if no index wraps
-        if symbolic.provably_nonnegative(se_range[0], facts) and symbolic.provably_le(se_range[1], last, facts):
+        if all(symbolic.provably_nonnegative(e, facts) and symbolic.provably_le(e, last, facts) for e in se_range[:2]):
             return se_range
         return (sympy.Integer(0), last, 1)
 
@@ -499,7 +501,7 @@ class GenericSMemlet(SeparableMemletPattern):
                 raise NotImplementedError
 
             if _is_negative(node_rs, facts) is symbolic.Truth.TRUE:
-                node_rb, node_re, node_rs = node_re, node_rb, -node_rs
+                node_rb, node_re, node_rs = ascending_range(node_rb, node_re, node_rs)
 
             # Get true range end
             pos_firstindex = node_rb
@@ -610,6 +612,10 @@ def _subexpr(dexpr, repldict):
         return dexpr.subs(repldict)
 
 
+#: Beyond this many iterations ConstantRangeMemlet leaves a map to the full-array fallback.
+CONSTANT_RANGE_POINTS = 4096
+
+
 @registry.autoregister
 class ConstantRangeMemlet(MemletPattern):
     """Memlet pattern that matches arbitrary expressions with constant range."""
@@ -625,6 +631,9 @@ class ConstantRangeMemlet(MemletPattern):
             return False
 
         self.params = variable_context[-1]
+        self.points = [range(int(b), int(e) + (1 if s > 0 else -1), int(s)) for b, e, s in node_range]
+        if not 0 < math.prod(map(len, self.points)) <= CONSTANT_RANGE_POINTS:
+            return False
 
         # Each point is compared by value: an expression that does not evaluate to a number at the first point (e.g.
         # an unknown function) cannot be bounded
@@ -641,20 +650,17 @@ class ConstantRangeMemlet(MemletPattern):
     # TODO: An integer set library should shine here (unify indices)
     def propagate(self, array, expressions, node_range, facts: symbolic.Facts):
         rng = [(None, None, 1)] * len(array.shape)
-        node_range_gen = itertools.starmap(range, node_range)
-        for ndind in itertools.product(*tuple(node_range_gen)):
+        for ndind in itertools.product(*self.points):
             repldict = {p: ndind[i] for i, p in enumerate(self.params)}
             for expr in expressions:
                 for dim, dexpr in enumerate(expr):
-                    evaldexpr = _subexpr(dexpr, repldict)
-                    rb, re, rs = rng[dim]
-                    if rb is None:
-                        rng[dim] = (evaldexpr, evaldexpr, 1)
-                    else:
-                        if evaldexpr < rb:
-                            rng[dim] = (evaldexpr, re, rs)
-                        if evaldexpr > re:  # The +1 is because ranges are exclusive
-                            rng[dim] = (rb, evaldexpr, rs)
+                    values = [_subexpr(b, repldict) for b in (dexpr[:2] if isinstance(dexpr, tuple) else (dexpr,))]
+                    rb, re = rng[dim][:2]
+                    rng[dim] = (
+                        min(values if rb is None else (rb, *values)),
+                        max(values if re is None else (re, *values)),
+                        1,
+                    )
 
         return subsets.Range(rng)
 
@@ -1345,8 +1351,19 @@ def _positive_step_range(start, stop, step):
     # This inequality needs to be checked exactly like this due to
     # constraints in sympy/symbolic expressions, do not simplify!!!
     if (step < 0) == True:
-        start, stop, step = stop + ((start - stop) % -step), start, -step
+        start, stop, step = ascending_range(start, stop, step)
     return start, stop, step
+
+
+def ascending_range(start, stop, step):
+    """The range of a negative ``step`` as a positive one, from the last index it reaches: 10:1:-4 is 2:10:4.
+
+    :param start: First index.
+    :param stop: Last bound (inclusive).
+    :param step: The negative step.
+    :return: The equivalent ``(start, stop, step)`` triple.
+    """
+    return stop + (0 if step == -1 else (start - stop) % -step), start, -step
 
 
 def _propagate_border_memlet_candidates(

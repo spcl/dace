@@ -991,7 +991,9 @@ class LoopToMap(xf.MultiStateTransformation):
 
         if negative_step:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
-            start, end, step = end, start, -step
+            from dace.sdfg.propagation import ascending_range  # Avoid import loop
+
+            start, end, step = ascending_range(start, end, step)
 
         source_nodes = body.source_nodes()
         sink_nodes = body.sink_nodes()

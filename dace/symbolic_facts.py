@@ -499,9 +499,16 @@ def division_types() -> tuple[type, ...]:
     return (symbolic.int_floor, symbolic.int_ceil, sympy.Mod, sympy.floor, sympy.ceiling)
 
 
+def division_operands(atom: sympy.Expr) -> tuple[sympy.Expr, sympy.Expr]:
+    """Numerator and denominator; a ``floor`` of a quotient divides like ``int_floor``, as the code it emits does."""
+    if isinstance(atom, sympy.floor):
+        return sympy.fraction(sympy.together(atom.args[0]))
+    return (*atom.args, sympy.Integer(1))[:2]
+
+
 def division_kind(atom: sympy.Expr) -> DivisionKind:
     if isinstance(atom, sympy.floor):
-        return DivisionKind.REAL_FLOOR
+        return DivisionKind.REAL_FLOOR if division_operands(atom)[1] == 1 else DivisionKind.FLOOR
     if isinstance(atom, sympy.ceiling):
         return DivisionKind.REAL_CEIL
     if isinstance(atom, symbolic.int_floor):
@@ -535,8 +542,7 @@ def lowered(
                     {},
                     divisions,
                 )
-                # A real rounding has one argument: its denominator is one
-                for arg in (*atom.args, sympy.Integer(1))[:2]
+                for arg in division_operands(atom)
             )
             division = Division(division_kind(atom), numerator, denominator)
             # An exact quotient (and its zero remainder) is the same under C's truncation and Python's rounding; an
