@@ -94,6 +94,22 @@ def _check_range(subset, a, itersym, b, step, span=None, memo: dict | None = Non
     return found
 
 
+def offset_by_a_varying_symbol(subset: subsets.Subset | None, itersym, varying: set[str]) -> bool:
+    """Whether ``subset`` is pinned to the iteration only by ``i + b`` with ``b`` varying inside an iteration: ``A[i + j]``
+    under a loop over ``j`` overlaps across ``i``. ``A[8 * i + j]``, a flattened index, is left to :func:`_check_range`.
+    """
+    found = False
+    for rb, _, _ in subset.ndrange() if subset is not None else ():
+        rb = _align_itersym(sp.sympify(rb), itersym)
+        coeff = rb.coeff(itersym)
+        if coeff == 0:
+            continue
+        if abs(coeff) != 1 or not varying & {str(s) for s in (rb - coeff * itersym).free_symbols}:
+            return False
+        found = True
+    return found
+
+
 def through_symbol_mapping(subset: subsets.Subset, nsdfg_node: nodes.NestedSDFG) -> subsets.Subset:
     """Copy of an inner ``subset`` in terms of the outer symbols; matches by name, so the inner
     symbol's dtype does not matter."""
@@ -2203,14 +2219,8 @@ class LoopLift:
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])
-        # A symbol that varies inside an iteration is no offset: ``A[i + j]`` under a loop over ``j`` overlaps across ``i``
-        varying = {e for edge in self.loop.all_interstate_edges() for e in edge.data.assignments}
-        varying |= {r.loop_variable for r in self.loop.all_control_flow_regions() if isinstance(r, LoopRegion)}
-        if itervar in {e for edge in self.loop.all_interstate_edges() for e in edge.data.assignments}:
+        if itervar in {name for edge in self.loop.all_interstate_edges() for name in edge.data.assignments}:
             return refuse(Refusal.CARRIED_SYMBOL, f"the body assigns the iterator {itervar}", symbols={itervar})
-        varying.discard(itervar)
-        if varying:
-            b = sp.Wild("b", exclude=[itersym], properties=[lambda e: not varying & {str(s) for s in e.free_symbols}])
 
         for state in loop_states:
             for dn in state.data_nodes():
@@ -2260,6 +2270,19 @@ class LoopLift:
                             closed_forms,
                             self,
                         )
+                        if (
+                            reason is None
+                            and not self.waives(dn.data, permissive)
+                            and offset_by_a_varying_symbol(
+                                in_closed_form(e.data.get_dst_subset(e, state), closed_forms),
+                                itersym,
+                                varying - {itervar},
+                            )
+                        ):
+                            reason = (
+                                Refusal.NON_UNIQUE_WRITE,
+                                f"write to {dn.data} is offset by a symbol varying inside an iteration",
+                            )
                         if reason is not None:
                             if facts is not None:
                                 facts.refusal_witness = ("write", dn.data)
