@@ -297,10 +297,10 @@ def touches(block: ControlFlowBlock, name: str, reads_only: bool = False) -> boo
     return False
 
 
-def unconditional_successor(graph: ControlFlowRegion, block: ControlFlowBlock) -> ControlFlowBlock | None:
-    """The one block ``block`` always passes to in ``graph``, if its only out edge reads nothing it is not told."""
+def unconditional_successor(graph: ControlFlowRegion, block: ControlFlowBlock, name: str) -> ControlFlowBlock | None:
+    """The one block ``block`` always passes to in ``graph``, if its only out edge does not read ``name``."""
     out_edges = graph.out_edges(block)
-    if len(out_edges) != 1 or not out_edges[0].data.is_unconditional():
+    if len(out_edges) != 1 or not out_edges[0].data.is_unconditional() or name in out_edges[0].data.read_symbols():
         return None
     return out_edges[0].dst
 
@@ -341,7 +341,7 @@ def overwritten_by_loop(loop: LoopRegion, name: str, desc: data.Array) -> bool:
     while block is not None:
         if any(overwritten_by(block, name, desc, {axis: index}) for axis in axes):
             return True
-        block = unconditional_successor(loop, block)
+        block = unconditional_successor(loop, block, name)
     return False
 
 
@@ -356,7 +356,7 @@ def overwritten_from(
     while block is not None:
         if touches(block, name):
             return overwritten_by(block, name, desc, fixed)
-        block = unconditional_successor(graph, block)
+        block = unconditional_successor(graph, block, name)
     return None
 
 
@@ -365,11 +365,11 @@ def overwritten_after(state: SDFGState, name: str, desc: data.Array) -> bool:
     block: ControlFlowBlock = state
     while True:
         graph = block.parent_graph
-        following = unconditional_successor(graph, block)
+        following = unconditional_successor(graph, block, name)
         while following is not None:
             if touches(following, name):
                 return overwritten_by(following, name, desc, {})
-            block, following = following, unconditional_successor(graph, following)
+            block, following = following, unconditional_successor(graph, following, name)
         # The chain ran out untouched: at the end of a plain region or a branch, control passes on after it.
         if graph.out_degree(block) != 0 or isinstance(graph, (LoopRegion, SDFG)):
             return False

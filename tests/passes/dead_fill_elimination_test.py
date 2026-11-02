@@ -200,6 +200,25 @@ def test_memset_in_a_branch_overwritten_after_it_is_dropped():
     assert np.allclose(out, b)
 
 
+def test_interstate_read_after_the_fill_keeps_it():
+    """``tmp = 0; x = tmp[0]`` on the edge out of the fill's state, then a map overwrites ``tmp``: ``x`` sees the fill."""
+    sdfg = dace.SDFG("interstate_read_of_fill")
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_transient("tmp", [N], dace.float64)
+    sdfg.add_symbol("x", dace.float64)
+    first = sdfg.add_state("fill", is_start_block=True)
+    fill = FillLibraryNode("memset_tmp", value=0)
+    first.add_node(fill)
+    first.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, first.add_access("tmp"), None, dace.Memlet("tmp[0:N]"))
+    second = sdfg.add_state("overwrite")
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"x": "tmp[0]"}))
+    second.add_mapped_tasklet(
+        "write", {"i": "0:N"}, {"__b": dace.Memlet("b[i]")}, "__t = __b", {"__t": dace.Memlet("tmp[i]")}, external_edges=True
+    )
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
+    assert fills(sdfg) == 1
+
+
 if __name__ == "__main__":
     test_overwritten_memset_is_dropped()
     test_memset_kept_when_the_map_misses_elements()
@@ -267,3 +286,4 @@ def test_zeros_a_copy_leaves_a_middle_row_of_stay_whole():
     sdfg = zeros_then_prefix_copy("1:N")
     assert DeadFillElimination().apply_pass(sdfg, {}) is None
     assert zeroing_map_ranges(sdfg) == ["0:N + 1, 0:4"]
+    test_interstate_read_after_the_fill_keeps_it()
