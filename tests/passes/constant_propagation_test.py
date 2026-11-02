@@ -766,7 +766,38 @@ def test_an_assignment_in_a_loop_body_stays_for_the_next_iteration():
     assert all(e.data.assignments for e in loop.edges())
 
 
+def loop_sizing_a_buffer(read_before_assignment: bool) -> dace.SDFG:
+    """``for i: [buf[0] = 1;] n = c; buf[0] = 1`` over a transient ``buf[n]``."""
+    sdfg = dace.SDFG(f"buffer_sized_in_a_loop_{read_before_assignment}")
+    sdfg.add_symbol("c", dace.int64)
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_transient("buf", ["n"], dace.int64)
+    loop = LoopRegion("loop", "i < 2", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    head, body = loop.add_state(is_start_block=True), loop.add_state()
+    loop.add_edge(head, body, dace.InterstateEdge(assignments={"n": "c + 1"}))
+    for state in (head, body) if read_before_assignment else (body,):
+        tasklet = state.add_tasklet("fill", {}, {"o"}, "o = 1")
+        state.add_edge(tasklet, "o", state.add_write("buf"), None, dace.Memlet("buf[0]"))
+    return sdfg
+
+
+def test_a_symbol_unknown_only_away_from_its_descriptor_sizes_it():
+    """The loop head does not know ``n``, but nothing accesses ``buf`` there: ``buf`` takes the value."""
+    sdfg = loop_sizing_a_buffer(False)
+    ConstantPropagation().apply_pass(sdfg, {})
+    assert [str(extent) for extent in sdfg.arrays["buf"].shape] == ["c + 1"]
+
+
+def test_a_descriptor_accessed_where_its_symbol_is_unknown_keeps_it():
+    sdfg = loop_sizing_a_buffer(True)
+    ConstantPropagation().apply_pass(sdfg, {})
+    assert [str(extent) for extent in sdfg.arrays["buf"].shape] == ["n"]
+
+
 if __name__ == "__main__":
+    test_a_symbol_unknown_only_away_from_its_descriptor_sizes_it()
+    test_a_descriptor_accessed_where_its_symbol_is_unknown_keeps_it()
     test_simple_constants()
     test_nested_constants()
     test_simple_loop()

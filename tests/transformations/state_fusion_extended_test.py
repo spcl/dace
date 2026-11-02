@@ -9,6 +9,7 @@ from dace import SDFG, InterstateEdge, Memlet, dtypes
 from dace.sdfg import nodes as dnodes
 from dace.transformation.interstate import StateFusionExtended
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.fusion_inline import FuseStates
 
 # Classical data hazards across the two fused states (first state -> second):
 #   RAW (read-after-write, true dep)   : first writes X, second reads X
@@ -2084,7 +2085,39 @@ def test_reader_of_a_rewritten_container_stays_ordered_after_its_writer():
     assert np.array_equal(z, np.full(6, 0.5))
 
 
+def test_a_read_disjoint_from_the_writer_never_exempts_a_later_rewrite():
+    """A[4] in ``second`` does not merge with the writer of A[3], so it orders nothing: the read of D keeps its edge."""
+
+    def step(state, name, reads, write):
+        inputs = {f"a{i}": Memlet(read) for i, read in enumerate(reads)}
+        code = "b = " + " + ".join(inputs)
+        state.add_mapped_tasklet(name, {"i": "0:7"}, inputs, code, {"b": Memlet(write)}, external_edges=True)
+
+    sdfg = SDFG("war_exemption")
+    sdfg.add_array("A", (5, 8), dace.float64)
+    for name in ("C", "S"):
+        sdfg.add_array(name, (8,), dace.float64)
+    for name in ("D", "Y"):
+        sdfg.add_array(name, (8,), dace.float64, transient=True)
+    first = sdfg.add_state("first")
+    step(first, "make_d", ["C[i]"], "D[i]")
+    middle = sdfg.add_state_after(first, "middle")
+    step(middle, "read_d", ["D[i]", "A[3, i]"], "A[3, i]")
+    second = sdfg.add_state_after(middle, "second")
+    step(second, "make_y", ["A[4, i]", "S[i]"], "Y[i]")
+    third = sdfg.add_state_after(second, "third")
+    step(third, "rewrite_d", ["Y[i]", "C[i]"], "D[i]")
+    fuser = FuseStates(aggressive_merges=True)
+    fuser.progress = False
+    fuser.apply_pass(sdfg, {})
+    state = next(s for s in sdfg.states() if any(isinstance(n, dnodes.MapExit) for n in s.nodes()))
+    reader = next(n for n in state.nodes() if isinstance(n, dnodes.MapExit) and n.map.label.startswith("read_d"))
+    writer = next(n for n in state.nodes() if isinstance(n, dnodes.MapEntry) and n.map.label.startswith("rewrite_d"))
+    assert nx.has_path(state._nx, reader, writer)
+
+
 if __name__ == "__main__":
+    test_a_read_disjoint_from_the_writer_never_exempts_a_later_rewrite()
     test_a_read_the_merge_point_does_not_follow_still_precedes_the_overwrite()
     test_extended_fusion()
     test_ordering_is_proven_by_any_candidate_not_just_the_first()
