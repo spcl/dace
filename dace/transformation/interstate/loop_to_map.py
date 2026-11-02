@@ -543,7 +543,7 @@ def write_refusal(
 ) -> "tuple[Refusal, str] | None":
     """Why (kind and message) :meth:`LoopToMap.can_be_applied` refuses the loop on the write ``e`` into ``dn``, or
     ``None``; ``closed_forms`` as :attr:`LoopToMap.closed_forms`. A Z3 proof marks ``lift``'s probe."""
-    if e.data.dynamic and e.data.wcr is None and not permissive:
+    if e.data.dynamic and e.data.wcr is None:
         # Dynamic write (no WCR) is safe across iterations if its dst subset
         # pins an axis to the iter var (same ``a*i+b`` as non-dynamic below):
         # each iteration writes a disjoint slab, so a lane firing or not can't
