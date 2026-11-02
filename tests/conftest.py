@@ -272,7 +272,6 @@ _NVIDIA_ONLY = {
     "cusolver": ("lapack_getrf_nopivot_test.py",),
     "preallocate_transients": ("parse_state_struct_test.py",),
     "nested_gpu_scalar_expanded": ("ai_node_contexts_cudatest.py",),
-    "beyond": ("gpu_dynamic_shared_memory_test.py",),
     "heat3d_sass": ("half_shifted_load_cudatest.py",),
     "symbolic_heat3d": ("half_shifted_load_cudatest.py",),
     "naked_sqrt": ("gpu_fp16_math_header_test.py",),
