@@ -119,6 +119,12 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
                 bad = True  # self-referential: accumulates over iterations
     if bad:
         return None
+    # The prep now runs under the guard in every iteration, so what it writes must leave the guard's value alone, and
+    # must not be needed after a loop that runs no iteration
+    prep_written = {name for p in prep for name in _state_writes(p)}
+    prep_written.update(lhs for e in region.edges() for lhs in e.data.assignments)
+    if prep_written & cfree or read_when_loop_is_empty(cb, loop, prep_written):
+        return None
     return cb, cond, region
 
 
@@ -172,6 +178,26 @@ def _state_writes(st: SDFGState) -> set:
 def _state_reads(st: SDFGState) -> set:
     """Data containers read in ``st``."""
     return {n.data for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.out_degree(n) > 0}
+
+
+def read_when_loop_is_empty(cb: ConditionalBlock, loop: LoopRegion, names: set[str]) -> bool:
+    """Whether a value of ``names`` is read past ``cb`` although ``loop`` may run no iteration, which would skip them.
+
+    :param cb: The guard whose subtree holds ``loop``.
+    :param loop: The loop the guard's prep moves into.
+    :param names: The containers and symbols the prep writes.
+    """
+    if not names:
+        return False
+    sdfg = cb.sdfg
+    if any(name in sdfg.arrays and not sdfg.arrays[name].transient for name in names):
+        return not provably_nonempty(loop)
+    inside = {id(block) for region in cb.all_control_flow_regions() for block in region.nodes()}
+    live = bool(names & reads_outside(cb)) or any(
+        id(state) not in inside and not names.isdisjoint(node.data for node in state.data_nodes())
+        for state in sdfg.states()
+    )
+    return live and not provably_nonempty(loop)
 
 
 def provably_nonempty(loop: LoopRegion) -> bool:
