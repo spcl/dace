@@ -7,6 +7,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.narrowing import as_basic
 from dace.sdfg.state import SDFGState, SymbolResolver
+from dace.sdfg.utils import has_literal_capacity
 from dace.subsets import Range
 
 
@@ -24,8 +25,8 @@ def is_copy_or_fill_libnode(node: nodes.Node) -> bool:
     return isinstance(node, (CopyLibraryNode, FillLibraryNode))
 
 
-#: The lowerings a thread runs whole, inside a kernel.
-IN_KERNEL_IMPLEMENTATIONS = frozenset({"pure", "sequential"})
+#: The lowerings a thread runs whole, inside a kernel; ``specialize`` becomes a node that has one.
+IN_KERNEL_IMPLEMENTATIONS = frozenset({"pure", "sequential", "specialize"})
 
 
 def is_device_wide_libnode(node: nodes.Node, state: SDFGState | None = None) -> bool:
@@ -62,7 +63,11 @@ def small_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
     for edge in state.all_edges(node):
         if edge.data.is_empty():
             continue
-        sizes = [edge.data.subset.num_elements(), state.sdfg.arrays[edge.data.data].total_size]
+        desc = state.sdfg.arrays[edge.data.data]
+        if has_literal_capacity(desc):
+            named = True
+            continue
+        sizes = [edge.data.subset.num_elements(), desc.total_size]
         small = [symbolic.is_small(size, facts) for size in sizes]
         if not any(small) and not symbolic.pystr_to_symbolic(sizes[0]).is_number:
             return False

@@ -46,6 +46,7 @@ from dace.config import Config
 from dace.optionals import required
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
+from dace.sdfg.utils import has_literal_capacity
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -75,6 +76,10 @@ def warp_width() -> int:
 #: race through the cross-block atomic. 512 (vs the 128/256 a plain elementwise map takes)
 #: keeps well under the 1024 thread/block limit while roughly halving the atomic traffic.
 TREE_REDUCTION_BLOCK_SIZE = [512, 1, 1]
+
+
+#: The block of a map whose threads each own its body's arrays on their stack.
+STACK_OWNING_BLOCK_SIZE = [256, 1, 1]
 
 
 def constant_extent(extent) -> int | None:
@@ -220,6 +225,16 @@ def map_is_tree_reduction(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     return scope_contains_block_reduce(state, map_entry)
 
 
+def scope_owns_capacities(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+    """True iff a nested SDFG in ``map_entry``'s scope holds an array of a literal capacity, sized per thread."""
+    return any(
+        has_literal_capacity(desc)
+        for node in state.all_nodes_between(map_entry, required(state.exit_node(map_entry)))
+        if isinstance(node, nodes.NestedSDFG)
+        for desc in node.sdfg.arrays.values()
+    )
+
+
 def owns_the_thread_block(node) -> bool:
     """True iff ``node`` is a map that gives its enclosing kernel a thread-block level of its own.
 
@@ -281,6 +296,8 @@ class SelectGPUDeviceBlockSize(ppl.Pass):
             # per block. A plain map falls back to the domain-matched shape.
             if map_is_tree_reduction(state, node):
                 block_size = list(TREE_REDUCTION_BLOCK_SIZE)
+            elif scope_owns_capacities(state, node):
+                block_size = list(STACK_OWNING_BLOCK_SIZE)
             else:
                 block_size = pick_gpu_block_size(gpu_map, unit_stride_counts(state.sdfg, state, node))
                 if block_size is None:

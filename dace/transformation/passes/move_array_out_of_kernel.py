@@ -28,6 +28,7 @@ from dace.sdfg import dealias, is_devicelevel_gpu, nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import LoopRegion
+from dace.sdfg.utils import THREAD_CAPACITY, has_literal_capacity
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.length_one_array_scalar_conversion import rewrite_code_slots
@@ -79,8 +80,14 @@ def fits_registers(desc: dt.Data, register_limit: int) -> bool:
     """A constant size of at most ``register_limit`` elements; persistent and external arrays outlive a thread."""
     if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
         return False
-    total = utils.prod(desc.shape)
+    total = desc.total_size
     return isinstance(total, numbers.Integral) and total <= register_limit
+
+
+def array_limit(sdfg: SDFG, register_limit: int) -> int:
+    """``register_limit``, or for an SDFG whose arrays hold a literal capacity, one a thread owns, its stack budget."""
+    owned = any(has_literal_capacity(desc) for desc in sdfg.arrays.values())
+    return max(register_limit, THREAD_CAPACITY) if owned else register_limit
 
 
 def is_move_candidate(desc: dt.Data, register_limit: int) -> bool:
@@ -796,12 +803,13 @@ def collect_users(
     sdfg: SDFG, outer: Scope | None, register_limit: int, users: dict[tuple[SDFG, str], list[Scope | None]]
 ) -> None:
     """Record the kernel around every access of a move candidate in ``sdfg`` and the SDFGs nested in it."""
+    limit = array_limit(sdfg, register_limit)
     for state in sdfg.states():
         sdict = state.scope_dict()
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 collect_users(node.sdfg, find_kernel(sdict, sdict[node], state, outer), register_limit, users)
-            elif isinstance(node, nodes.AccessNode) and is_move_candidate(sdfg.arrays[node.data], register_limit):
+            elif isinstance(node, nodes.AccessNode) and is_move_candidate(sdfg.arrays[node.data], limit):
                 kernel = find_kernel(sdict, sdict[node], state, outer)
                 found = users.setdefault((sdfg, node.data), [])
                 if kernel not in found:
@@ -921,7 +929,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         handled = 0
         moved: OrderedSet = OrderedSet()
         for name, desc, owner, kernels in candidates:
-            if name not in accumulated and fits_registers(desc, self.register_limit):
+            if name not in accumulated and fits_registers(desc, array_limit(owner, self.register_limit)):
                 desc.storage = dtypes.StorageType.Register
                 handled += 1
                 continue
