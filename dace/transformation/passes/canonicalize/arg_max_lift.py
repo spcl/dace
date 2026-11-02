@@ -647,8 +647,13 @@ class ArgMaxLift(ppl.Pass):
         if self._contains_break(loop):
             return None
         # An assignment nothing in the body reads updates a value the rewrite would drop with the loop
-        read = cond_block.free_symbols | {s for e in loop.edges() for s in e.data.free_symbols}
-        if any(name not in read for e in loop.edges() for name in e.data.assignments):
+        assigned = {
+            name: set(re.findall(r"[A-Za-z_]\w*", str(v)))
+            for e in loop.edges()
+            for name, v in e.data.assignments.items()
+        }
+        read = {str(s) for s in cond_block.free_symbols}.union(*(v for name, v in assigned.items() if name not in v))
+        if any(name not in read for name in assigned):
             return None
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
