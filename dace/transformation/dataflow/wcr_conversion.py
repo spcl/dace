@@ -302,6 +302,17 @@ def reads_written_element(read, write) -> bool:
     return read.data.data == write.data.data and read.data.subset == write.data.subset
 
 
+def sole_access(sdfg: SDFG, node: nodes.AccessNode) -> bool:
+    """Whether ``node`` is the only access node of its container in ``sdfg`` and no control flow names it."""
+    name = node.data
+    if any(other is not node and other.data == name for state in sdfg.states() for other in state.data_nodes()):
+        return False
+    for region in sdfg.all_control_flow_regions():
+        if any(name in code.get_free_symbols() for code in region.get_meta_codeblocks()):
+            return False
+    return not any(name in edge.data.free_symbols for edge in sdfg.all_interstate_edges())
+
+
 def reads_container(sdfg: SDFG, name: str) -> bool:
     """Whether ``sdfg`` reads ``name``: an access node of it with a successor, or an interstate edge, loop
     statement or branch condition naming it."""
@@ -661,7 +672,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if self.name_increment(tlet, oute.src_conn, ine.dst_conn) is None:
             return False
 
-        return not self.another_writer(graph, out)
+        return not self.another_writer(graph, out) and sole_access(sdfg, cin) and sole_access(sdfg, cout)
 
     def _apply_rmw_copy(self, state: SDFGState, sdfg: SDFG):
         """Rewrite the copy-wrapped RMW into a WCR write: drop the accumulator
@@ -768,7 +779,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         if self.name_increment(combine, combine_store.src_conn, acc_read.dst_conn) is None:
             return False
-        return not self.another_writer(graph, out)
+        return not self.another_writer(graph, out) and sole_access(sdfg, mid)
 
     def _apply_combine_copyback(self, state: SDFGState, sdfg: SDFG):
         """Rewrite the combine-then-copyback RMW into a WCR write: drop the
@@ -896,7 +907,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # combine-copyback in a map is a vectorizer intermediate (a NormalizeWCR seeded accumulator
         # whose copyback WidenAccesses folds); converting it here would strip that copyback. Sum/prod
         # reductions reach WCR via the direct augmented-assign (expr_index 1) instead.
-        return (permissive or op in self._FUNCTIONS)
+        return (permissive or op in self._FUNCTIONS) and sole_access(sdfg, mid)
 
     def _apply_combine_copyback_map(self, state: SDFGState, sdfg: SDFG):
         """Rewrite the in-map combine-then-copyback into a map-exit WCR write: the combine emits

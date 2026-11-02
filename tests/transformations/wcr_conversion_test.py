@@ -883,6 +883,13 @@ def test_combine_copyback_after_a_write_keeps_the_load_ordering_it():
     assert combine_copyback_sdfg("combine_seeded", True).apply_transformations_repeated(AugAssignToWCR) == 0
 
 
+def test_combine_copyback_keeps_a_slice_another_state_reads():
+    sdfg = combine_copyback_sdfg("combine_read_later", False)
+    later = sdfg.add_state_after(sdfg.start_state, "later")
+    later.add_nedge(later.add_read("mid"), later.add_write("B"), dace.Memlet("mid[0] -> [0]"))
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 0
+
+
 def test_aug_assign_in_a_nested_body_keeps_a_read_ordering_it_behind_a_write():
     body = dace.SDFG("ordered_nest_body")
     body.add_array("A", [1], dace.float64)
@@ -1040,6 +1047,7 @@ if __name__ == "__main__":
     test_isolating_an_accumulate_read_through_a_shared_view_keeps_the_views_source()
     test_aug_assign_python_after_a_write_fissions_the_state()
     test_combine_copyback_after_a_write_keeps_the_load_ordering_it()
+    test_combine_copyback_keeps_a_slice_another_state_reads()
     test_aug_assign_in_a_nested_body_keeps_a_read_ordering_it_behind_a_write()
     test_aug_assign_fission_moves_the_whole_map_of_a_multi_tasklet_update()
     test_aug_assign_python_min_max("max(a, k)", np.maximum)
