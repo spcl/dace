@@ -246,6 +246,35 @@ def test_a_read_under_the_same_guard_inside_a_map_is_not_carried():
     assert "t" not in read_before_written(outer, names)
 
 
+@dace.program
+def carry_beside_a_nested_fill(X: dace.float64[N], O: dace.float64[N]):
+    t = dace.define_local([2, N], dace.float64)
+    for i in range(1, N):
+        for j in range(N):
+            t[0, j] = X[j] + i
+        if i > 1:
+            O[i] = t[1, i]
+        for j in range(N):
+            t[1, j] = t[0, j]
+
+
+@dace.program
+def carry_through_the_written_node(X: dace.float64[N], O: dace.float64[N]):
+    t = dace.define_local([N + 1], dace.float64)
+    for i in range(N):
+        t[i + 1] = X[i]
+        O[i] = t[i] * 2
+
+
+@pytest.mark.parametrize("program", [carry_beside_a_nested_fill, carry_through_the_written_node])
+def test_a_store_of_other_elements_covers_no_read(program):
+    from dace.transformation.interstate.loop_to_map import read_before_written
+
+    sdfg = program.to_sdfg(simplify=True)
+    outer = next(r for r in sdfg.nodes() if isinstance(r, dace.sdfg.state.LoopRegion))
+    assert "t" in read_before_written(outer, {"t"})
+
+
 if __name__ == "__main__":
     import sys
 
@@ -254,3 +283,5 @@ if __name__ == "__main__":
     test_a_read_under_the_same_varying_guard_still_maps()
     test_a_per_iteration_guard_pair_inside_a_branch_still_maps()
     test_a_guard_whose_scalar_is_rewritten_between_the_branches_is_refused()
+    test_a_store_of_other_elements_covers_no_read(carry_beside_a_nested_fill)
+    test_a_store_of_other_elements_covers_no_read(carry_through_the_written_node)
