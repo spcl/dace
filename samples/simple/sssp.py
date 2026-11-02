@@ -5,9 +5,9 @@ Every task is a vertex ``u`` whose distance went down. It relaxes the edges leav
 ``u`` is shorter than the best known distance of a neighbor ``v``, it lowers ``dist[v]`` and pushes ``v``, whose
 own edges must then be relaxed again. The computation is done once the worklist is empty and no task is running.
 
-The algorithm is *asynchronous* (asynchronous Bellman-Ford), not bulk-synchronous: unlike the rounds of classic
-Bellman-Ford or of a level-by-level breadth-first search, nothing waits for all vertices to finish a step. Processing
-elements pop vertices in any order, and a distance that one task lowers is used by the next task that reads it.
+The algorithm is asynchronous: unlike the bulk-synchronous rounds of classic Bellman-Ford or of a level-by-level
+breadth-first search, nothing waits for all vertices to finish a step. Processing elements pop vertices in any
+order, and a distance that one task lowers is used by the next task that reads it.
 
 Distances are lowered with ``dace.atomic.min``, which returns the old distance: concurrent improvements of one vertex
 are merged rather than lost, and only a task that lowered ``dist[v]`` pushes ``v``. A vertex is in the worklist at most
