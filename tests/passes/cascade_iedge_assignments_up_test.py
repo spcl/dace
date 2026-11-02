@@ -815,6 +815,7 @@ def test_a_per_iteration_assignment_moves_to_the_body_head():
     assert not loop.edges_between(first, second)[0].data.assignments
     head_edges = list(loop.in_edges(first))
     assert len(head_edges) == 1 and head_edges[0].data.assignments == {"k": "c[i]"}
+    assert HoistAssignmentsToLoopBodyHead().apply_pass(sdfg, {}) is None, "the empty head has nothing left to move past"
     sdfg.validate()
 
     b, c = np.arange(8.0), np.arange(8.0) * 3

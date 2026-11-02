@@ -578,7 +578,13 @@ def _hoist_to_body_head(sdfg: SDFG) -> int:
         if not isinstance(loop, LoopRegion):
             continue
         first = loop.start_block
-        if not isinstance(first, SDFGState) or loop.in_degree(first) != 0 or loop.out_degree(first) != 1:
+        # An empty ``first`` is the head this hoist left: nothing is kept apart, and moving on would never settle
+        if (
+            not isinstance(first, SDFGState)
+            or first.is_empty()
+            or loop.in_degree(first) != 0
+            or loop.out_degree(first) != 1
+        ):
             continue
         edge = loop.out_edges(first)[0]
         if not edge.data.assignments or not edge.data.is_unconditional():
