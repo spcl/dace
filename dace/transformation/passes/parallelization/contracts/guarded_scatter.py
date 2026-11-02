@@ -204,7 +204,11 @@ class ScatterToGuardedMaps(ppl.Pass):
             for idx_name, (_targets, window) in _scatter_idx_targets_for_loop(loop, owner_sdfg, window_1d=True).items():
                 if idx_name not in idx_arrays:
                     continue
-                if scratch_scatter(owner_sdfg, idx_name, _targets) or index_rebuilt_around(owner_sdfg, loop, idx_name):
+                if (
+                    idx_name not in sdfg.arrays
+                    or scratch_scatter(owner_sdfg, idx_name, _targets)
+                    or index_rebuilt_around(owner_sdfg, loop, idx_name)
+                ):
                     rebuilt_guards.append((loop, idx_name, window))
                 else:
                     hoisted_names.add(idx_name)
