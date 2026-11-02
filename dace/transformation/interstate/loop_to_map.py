@@ -827,7 +827,7 @@ def read_before_written(
                     if edge.data.assignments:
                         forget(guarded, set(edge.data.assignments))
             if flow_read:
-                carried.update(flow_reads(block) - written)
+                carried.update(flow_reads(block) - {e[0] if isinstance(e, tuple) else e for e in written})
             if block not in relevant:
                 if guarded:
                     forget(guarded, changed_by(block))
