@@ -2830,7 +2830,121 @@ def test_symbol_read_check_handles_while_loop_without_init_or_update():
     assert not be._symbol_appears_as_read(sdfg, "other")
 
 
+@dace.program
+def one_sided_write(c: dace.float64[4], x: dace.float64[4], y: dace.float64[4]):
+    for i in range(4):
+        if c[i] > 0:
+            x[i] = 1.0
+            y[i] = 1.0
+        else:
+            y[i] = 2.0
+
+
+@dace.program
+def two_writes_in_one_arm(c: dace.float64[2], x: dace.float64[4]):
+    for i in range(2):
+        if c[i] > 0:
+            x[2 * i] = 1.0
+            x[2 * i + 1] = 2.0
+
+
+@dace.program
+def guard_on_the_index(x: dace.float64[3], idx: dace.int64[3]):
+    for i in range(3):
+        j = idx[i]
+        if j >= 0:
+            x[j] = 1.0
+
+
+@pytest.mark.parametrize("program", [one_sided_write, two_writes_in_one_arm, guard_on_the_index])
+def test_what_an_unconditional_arm_would_break_keeps_its_branch(program):
+    """A write the other arm leaves alone, a node the combine cannot stand for, an access only the guard keeps legal."""
+    sdfg = parsed_simplified(program)
+    EliminateBranches().apply_pass(sdfg, {})
+    assert any(isinstance(n, ConditionalBlock) for n, _ in sdfg.all_nodes_recursive())
+
+
+@dace.program
+def truthy_condition(c: dace.int64[3], o: dace.float64[3]):
+    for i in range(3):
+        if c[i]:
+            o[i] = 1.0
+        else:
+            o[i] = 5.0
+
+
+@dace.program
+def condition_on_a_stale_symbol(o: dace.float64[3]):
+    k = 0
+    for i in range(3):
+        t = k
+        k = k + 1
+        if t == 0:
+            o[i] = 1.0
+        else:
+            o[i] = 2.0
+
+
+def test_truthy_integer_blends_as_zero_or_one():
+    sdfg = parsed_simplified(truthy_condition)
+    EliminateBranches().apply_pass(sdfg, {})
+    assert not any(isinstance(n, ConditionalBlock) for n, _ in sdfg.all_nodes_recursive())
+    o = np.zeros(3)
+    sdfg(c=np.array([2, 0, -3]), o=o)
+    assert np.array_equal(o, [1.0, 5.0, 1.0])
+
+
+def test_condition_keeps_the_value_its_symbol_was_assigned():
+    sdfg = parsed_simplified(condition_on_a_stale_symbol)
+    EliminateBranches().apply_pass(sdfg, {})
+    o = np.zeros(3)
+    sdfg(o=o)
+    assert np.array_equal(o, [1.0, 2.0, 2.0])
+
+
+def if_else_on_array(name, cond, dtype, then_subset, else_subset):
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("x", [2], dace.float64)
+    if dtype is not dace.float64:
+        sdfg.add_array("m", [2], dtype)
+    start = sdfg.add_state("start", is_start_block=True)
+    block = ConditionalBlock("block", sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(block)
+    sdfg.add_edge(start, block, InterstateEdge())
+    for arm, condition, subset, value in (("a", cond, then_subset, -1.0), ("b", None, else_subset, 5.0)):
+        region = ControlFlowRegion(arm, sdfg=sdfg, parent=block)
+        state = region.add_state(f"{arm}_state", is_start_block=True)
+        tasklet = state.add_tasklet("write", {}, {"o": dace.float64}, f"o = {value}")
+        state.add_edge(tasklet, "o", state.add_access("x"), None, dace.Memlet(f"x[{subset}]"))
+        block.add_branch(CodeBlock(condition) if condition else None, region)
+    return sdfg
+
+
+def test_split_never_reevaluates_a_condition_an_arm_writes():
+    sdfg = if_else_on_array("split_condition_read", "x[0] > 0", dace.float64, "0", "1")
+    pass_ = EliminateBranches()
+    pass_.apply_to_top_level_ifs = True
+    pass_.apply_pass(sdfg, {})
+    x = np.array([1.0, 0.0])
+    sdfg(x=x)
+    assert np.array_equal(x, [-1.0, 0.0])
+
+
+def test_bool_array_read_by_a_condition_keeps_its_type():
+    sdfg = if_else_on_array("bool_condition_read", "m[1] > 0", dace.bool, "0", "0")
+    pass_ = EliminateBranches()
+    pass_.apply_to_top_level_ifs = True
+    pass_.apply_pass(sdfg, {})
+    assert sdfg.arrays["m"].dtype == dace.bool
+
+
 if __name__ == "__main__":
+    for program in (one_sided_write, two_writes_in_one_arm, guard_on_the_index):
+        test_what_an_unconditional_arm_would_break_keeps_its_branch(program)
+    test_truthy_integer_blends_as_zero_or_one()
+    test_condition_keeps_the_value_its_symbol_was_assigned()
+    test_split_never_reevaluates_a_condition_an_arm_writes()
+    test_bool_array_read_by_a_condition_keeps_its_type()
     test_s1161()
     test_top_level_if()
     test_interstate_boolean()

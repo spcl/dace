@@ -753,5 +753,109 @@ def test_unrolled_reduction_through_a_strength_reduced_counter_lifts():
         assert np.isclose(out[0], a.sum())
 
 
+@dace.program
+def reroll_counter_beside_lanes(a: dace.float64[20], b: dace.float64[20], n: dace.int64):
+    k = 0
+    for i in range(0, n, 2):
+        a[i] = b[i]
+        a[i + 1] = b[i + 1]
+        k = k + 1
+    a[19] = k
+
+
+@dace.program
+def reroll_constant_reads_differ(a: dace.float64[20], b: dace.float64[20], c: dace.float64[2], n: dace.int64):
+    for i in range(0, n, 2):
+        a[i] = b[i] * c[0]
+        a[i + 1] = b[i + 1] * c[1]
+
+
+@dace.program
+def reroll_step_not_a_multiple_of_spacing(a: dace.float64[20]):
+    for i in range(0, 9, 3):
+        a[i] = 1.0
+        a[i + 2] = 1.0
+
+
+@dace.program
+def reroll_alternating_sum(b: dace.float64[20], o: dace.float64[1], n: dace.int64):
+    acc = 0.0
+    for i in range(0, n, 2):
+        acc += b[i] - b[i + 1]
+    o[0] = acc
+
+
+@dace.program
+def reroll_decay_per_iteration(b: dace.float64[20], o: dace.float64[1], n: dace.int64):
+    acc = 1.0
+    for i in range(0, n, 2):
+        acc = acc * 0.5 + b[i] + b[i + 1]
+    o[0] = acc
+
+
+@dace.program
+def reroll_operands_swapped(a: dace.float64[20], x: dace.float64[20], y: dace.float64[20], n: dace.int64):
+    for i in range(0, n, 2):
+        a[i] = x[i] - y[i]
+        a[i + 1] = y[i + 1] - x[i + 1]
+
+
+@dace.program
+def reroll_scratch_read_after(a: dace.float64[20], b: dace.float64[20], o: dace.float64[2], n: dace.int64):
+    x = 0.0
+    y = 0.0
+    for i in range(0, n, 2):
+        x = b[i] * 2.0
+        a[i] = x
+        y = b[i + 1] * 2.0
+        a[i + 1] = y
+    o[0] = x
+    o[1] = y
+
+
+@dace.program
+def reroll_iterator_in_tasklet(a: dace.float64[20], n: dace.int64):
+    for i in range(0, n, 2):
+        a[i] = i
+        a[i + 1] = i
+
+
+@dace.program
+def reroll_chain_constant_reads_differ(a: dace.float64[20], c: dace.float64[2], n: dace.int64):
+    for i in range(0, n, 2):
+        a[i] = a[i + 1] * c[0]
+        a[i + 1] = a[i + 2] * c[1]
+
+
+@dace.program
+def reroll_chain_counter(a: dace.float64[20], n: dace.int64):
+    k = 0
+    for i in range(0, n, 2):
+        a[i] = a[i + 1] * 2.0
+        a[i + 1] = a[i + 2] * 2.0
+        k = k + 1
+    a[19] = k
+
+
+NOT_LANES = [
+    reroll_counter_beside_lanes,
+    reroll_constant_reads_differ,
+    reroll_step_not_a_multiple_of_spacing,
+    reroll_alternating_sum,
+    reroll_decay_per_iteration,
+    reroll_operands_swapped,
+    reroll_scratch_read_after,
+    reroll_iterator_in_tasklet,
+    reroll_chain_constant_reads_differ,
+    reroll_chain_counter,
+]
+
+
+@pytest.mark.parametrize("program", NOT_LANES)
+def test_statements_that_only_look_like_lanes_stay(program):
+    """Each differs from equally-spaced copies of one statement in a way no name, code or offset multiset shows."""
+    assert RerollUnrolledLoops().apply_pass(program.to_sdfg(simplify=True), {}) is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
