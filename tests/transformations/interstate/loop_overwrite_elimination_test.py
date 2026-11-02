@@ -350,7 +350,8 @@ def test_overwrite_elimination_loop_dep2():
             for j in range(i, 9, 1):
                 A[0] = B[j]
 
-    _test_for_unchanged_behavior(tester, 2, 2)
+    # The inner loop does not run at i = 9, and the outer loop's body depends on i
+    _test_for_unchanged_behavior(tester, 2, 0)
 
 
 def two_inner_loops_on_one_iterator() -> tuple[dace.SDFG, LoopRegion]:
@@ -378,6 +379,21 @@ def two_inner_loops_on_one_iterator() -> tuple[dace.SDFG, LoopRegion]:
 def test_a_write_in_a_sibling_loop_is_not_judged_by_the_facts_of_the_read():
     """``i = 4`` reads ``A[19]``, which ``i = 0`` wrote: the facts at the read bound the other loop's ``j`` by 9."""
     sdfg, loop = two_inner_loops_on_one_iterator()
+    transformation = LoopOverwriteElimination()
+    transformation.loop = loop
+    assert not transformation.can_be_applied(sdfg, 0, sdfg, False)
+
+
+def test_a_loop_that_may_not_run_stays():
+    """Eliminating ``for i in range(N)`` would write ``A[0]`` at ``N = 0`` as well."""
+    sdfg = dace.SDFG("may_not_run")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [10], dace.float64)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    tasklet = state.add_tasklet("fill", {}, {"o"}, "o = 1.0")
+    state.add_edge(tasklet, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
     transformation = LoopOverwriteElimination()
     transformation.loop = loop
     assert not transformation.can_be_applied(sdfg, 0, sdfg, False)
@@ -412,3 +428,4 @@ if __name__ == "__main__":
     test_overwrite_elimination_loop_dep()
     test_overwrite_elimination_loop_dep2()
     test_a_write_in_a_sibling_loop_is_not_judged_by_the_facts_of_the_read()
+    test_a_loop_that_may_not_run_stays()

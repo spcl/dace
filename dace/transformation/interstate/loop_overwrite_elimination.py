@@ -57,6 +57,15 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
         if start is None or end is None or stride is None:
             return False
 
+        # The body runs exactly once afterwards, so the loop has to run
+        facts = SymbolResolver().facts_at(graph)
+        if not any(
+            symbolic.provably_nonnegative(sign * stride, facts)
+            and symbolic.provably_le(sign * start, sign * end, facts)
+            for sign in (1, -1)
+        ):
+            return False
+
         # Check if any continue, break, or return statements are present in the loop.
         if self.loop.has_break or self.loop.has_continue or self.loop.has_return:
             return False
