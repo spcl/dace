@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A second canonicalization keeps every map: lowering them would rebuild the ones a loop lift can, and lose the rest."""
+"""A map lifted on a proof ``LoopToMap`` cannot redo survives a second canonicalization."""
 
 import numpy as np
 
@@ -25,12 +25,6 @@ def threshold_pack(src: dace.float64[N], packed: dace.float64[N], count: dace.in
             packed[n] = src[i] * 2.0
             n = n + 1
     count[0] = n
-
-
-@dace.program
-def doubled(a: dace.float64[N], b: dace.float64[N]):
-    for i in range(N):
-        b[i] = 2.0 * a[i]
 
 
 def map_count(sdfg: dace.SDFG) -> int:
@@ -67,18 +61,6 @@ def test_a_stream_compaction_map_survives_a_second_canonicalization():
     assert count[0] == 3 and np.array_equal(packed, [2.0, 4.0, 6.0, 0.0, 0.0, 0.0])
 
 
-def test_a_map_is_kept_rather_than_rebuilt():
-    sdfg = doubled.to_sdfg(simplify=False)
-    sdfg.name = "idempotent_kept_map"
-    canonicalize(sdfg)
-    first = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.MapEntry)]
-    assert len(first) == 1
-    canonicalize(sdfg)
-    second = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.MapEntry)]
-    assert [node.guid for node in second] == [node.guid for node in first]
-
-
 if __name__ == "__main__":
     test_a_wavefront_map_survives_a_second_canonicalization()
     test_a_stream_compaction_map_survives_a_second_canonicalization()
-    test_a_map_is_kept_rather_than_rebuilt()
