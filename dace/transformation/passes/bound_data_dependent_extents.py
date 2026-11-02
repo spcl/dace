@@ -275,7 +275,8 @@ def keeps_strides(desc: dt.Array, shape: list) -> bool:
 
 def resize_plan(sdfg: SDFG, name: str, shape: list) -> list[tuple[SDFG, str, list]] | None:
     """Every descriptor that must take ``shape`` with ``sdfg``'s ``name``: the nested SDFG connectors it binds,
-    restated in their own symbols; ``None`` if a view or a connector cannot follow without moving a stride."""
+    restated in their own symbols; ``None`` if a view or a connector cannot follow without moving a stride, or a
+    symbol of ``shape`` the nest does not bind means something else there."""
     desc = sdfg.arrays[name]
     plan = [(sdfg, name, shape)]
     strides_kept = keeps_strides(desc, shape)
@@ -299,9 +300,11 @@ def resize_plan(sdfg: SDFG, name: str, shape: list) -> list[tuple[SDFG, str, lis
                     return None
                 inverse = {str(value): key for key, value in other.symbol_mapping.items()}
                 names = {str(s) for extent in shape for s in symbolic.pystr_to_symbolic(extent).free_symbols}
-                if not names <= inverse.keys():
+                unbound = names - inverse.keys()
+                taken = {*other.symbol_mapping, *other.sdfg.symbols, *other.sdfg.arrays}
+                if unbound - sdfg.symbols.keys() or unbound & taken:
                     return None
-                rename = {symbolic.symbol(n): symbolic.symbol(inverse[n]) for n in names}
+                rename = {symbolic.symbol(n): symbolic.symbol(inverse.get(n, n)) for n in names}
                 inner_shape = [symbolic.pystr_to_symbolic(extent).subs(rename) for extent in shape]
                 if any(entry[0] is other.sdfg and entry[1] == conn for entry in plan):
                     continue
@@ -368,6 +371,10 @@ class BoundDataDependentExtents(ppl.Pass):
                     continue
                 for owner, resized_name, resized_shape in plan:
                     owner.arrays[resized_name].set_shape(resized_shape)
+                    if owner is not nested:
+                        for symbol in {str(s) for s in owner.arrays[resized_name].free_symbols} - owner.symbols.keys():
+                            owner.add_symbol(symbol, owner.parent_sdfg.symbols[symbol])
+                            owner.parent_nsdfg_node.symbol_mapping[symbol] = symbol
                 resized += 1
             if nested.parent_nsdfg_node is not None:
                 resized += set_capacities(nested, assigned)
