@@ -363,7 +363,9 @@ def splice_empty_prep_states(parent: ControlFlowRegion, block: ControlFlowBlock)
         pass
 
 
-def match_imperfect(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
+def match_imperfect(
+    cb: ConditionalBlock, use_index: dict[SDFG, tuple]
+) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
     """Match ``cb`` as a guard over a *heterogeneous* body: a linear chain of ``LoopRegion`` and bare ``SDFGState``
     blocks with at least one of each (a frontend imperfect nest, e.g. ``if c: { for j: body1 ; s }``).
 
@@ -375,6 +377,7 @@ def match_imperfect(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, 
     it would run unconditionally) and a loud warning is emitted.
 
     :param cb: The conditional block to match.
+    :param use_index: Per SDFG, its :func:`symbol_use_sites` and :func:`rebinding_loops`; filled on first need.
     :returns: ``(cb, condition, region)`` or ``None``.
     """
     if len(cb.branches) != 1:
@@ -414,7 +417,10 @@ def match_imperfect(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, 
         return None
     if any(cfree & _state_writes(st) for st in states):
         return None
-    if any(loop_analysis.counter_used_outside_loop(str(lp.loop_variable), lp, cb.sdfg) for lp in loops):
+    sdfg = cb.sdfg
+    if sdfg not in use_index:
+        use_index[sdfg] = (*loop_analysis.symbol_use_sites(sdfg), loop_analysis.rebinding_loops(sdfg))
+    if any(loop_analysis.counter_used_outside_loop(str(lp.loop_variable), lp, sdfg, *use_index[sdfg]) for lp in loops):
         return None
     return cb, cond, region
 
@@ -492,8 +498,10 @@ class MoveIfIntoLoop(ppl.Pass):
                     self._move(*m)
                     moved += 1
             if not moved:
+                # A move hoists the loops whole and adds no use of their counters, so one index serves the sweep
+                use_index: dict[SDFG, tuple] = {}
                 for cb in guards:
-                    m = match_imperfect(cb)
+                    m = match_imperfect(cb, use_index)
                     if m is not None:
                         self._move_imperfect(*m)
                         moved += 1
