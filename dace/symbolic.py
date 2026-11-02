@@ -1490,6 +1490,14 @@ def sympy_intdiv_fix(expr):
     processed = 1
     while processed > 0:
         processed = 0
+        # One division over one positive denominator: C would truncate each term of a sum on its own, and ``int_ceil``
+        # (``(x + y - 1) / y``) is right for ``y > 0`` only
+        for rounded in nexpr.find(lambda k: isinstance(k, (sympy.floor, sympy.ceiling))):
+            numerator, denominator = sympy.fraction(sympy.together(rounded.args[0]))
+            if denominator != 1 and not rounded.has(sympy.Float):
+                lowered = int_floor if isinstance(rounded, sympy.floor) else int_ceil
+                nexpr = nexpr.subs(rounded, lowered(numerator, denominator))
+                processed += 1
         for ceil in nexpr.find(sympy.ceiling):
             # Simple ceiling
             m = ceil.match(sympy.ceiling(a / b))
