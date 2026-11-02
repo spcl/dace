@@ -1145,6 +1145,23 @@ def test_dde_orders_nothing_through_access_nodes_the_removal_leaves_unwritten_an
     sdfg.validate()
 
 
+def test_two_inlined_branches_of_one_name_stay_distinct():
+    sdfg = dace.SDFG("inlined_branches")
+    previous = sdfg.add_state("start", is_start_block=True)
+    for label in ("first", "second"):
+        condition = ConditionalBlock(label)
+        branch = ControlFlowRegion("body")
+        branch.add_state("work", is_start_block=True)
+        condition.add_branch("1 == 1", branch)
+        sdfg.add_node(condition)
+        sdfg.add_edge(previous, condition, dace.InterstateEdge())
+        previous = condition
+
+    DeadStateElimination().apply_pass(sdfg, {})
+
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_dse_simple()
     test_dse_unconditional()
@@ -1188,3 +1205,4 @@ if __name__ == "__main__":
     test_dde_keeps_a_nested_write_when_simplify_reapplies_it_per_nested_sdfg()
     test_dde_keeps_the_order_a_removed_copy_carried_between_a_read_and_an_overwrite()
     test_dde_orders_nothing_through_access_nodes_the_removal_leaves_unwritten_and_unread()
+    test_two_inlined_branches_of_one_name_stay_distinct()
