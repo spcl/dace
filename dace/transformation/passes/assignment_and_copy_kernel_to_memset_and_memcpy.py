@@ -642,7 +642,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             libnode_cls, kind = copy.CopyLibraryNode, "memcpy"
             libnode_conn_names = {libnode_cls.INPUT_CONNECTOR_NAME, libnode_cls.OUTPUT_CONNECTOR_NAME}
 
-        joined_edges = set()
+        joined_edges = OrderedSet()
         rmed_count = 0
         for path in paths:
             # Read the common tail from the exit side: ``tasklet -> MapExit -> AccessNode``.
@@ -766,6 +766,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             joined_edges.update(path)
 
         self.rm_edges(state, joined_edges)
+        # The torn-down edges also ordered the rest of the map against those access nodes
+        if node in state.nodes():
+            map_exit = state.exit_node(node)
+            for edge in joined_edges:
+                if edge.dst is node:
+                    state.add_nedge(edge.src, node, Memlet())
+                elif edge.src is map_exit:
+                    state.add_nedge(map_exit, edge.dst, Memlet())
         return rmed_count
 
     def _has_passthrough_connectors(self, n: dace.nodes.Node) -> bool:
