@@ -65,6 +65,22 @@ def test_step_of_unknown_sign_gives_no_range():
     assert symbolic.ask(le("0", "j"), SymbolResolver().facts_at(state, tasklet)) is symbolic.Truth.UNKNOWN
 
 
+def test_a_range_empty_by_the_facts_yields_facts_rather_than_a_contradiction():
+    """``j in K:N`` under ``N + 1 <= K`` never runs: the body knows less instead of raising while the map is built."""
+    sdfg = dace.SDFG("facts_at_empty_range")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol_relation(le("N + 1", "K"))
+    sdfg.add_array("A", ["N + K + 8"], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    tasklet, _, _ = state.add_mapped_tasklet(
+        "m", {"j": "K:N"}, {}, "a = 1.0", {"a": dace.Memlet("A[j]")}, external_edges=True
+    )
+    facts = SymbolResolver().facts_at(state, tasklet)
+    assert symbolic.ask(le("N + 1", "K"), facts) is symbolic.Truth.TRUE
+    assert symbolic.ask(le("K", "j"), facts) is symbolic.Truth.UNKNOWN
+
+
 def test_nested_sdfg_inherits_outer_ranges_through_its_symbol_mapping():
     outer = dace.SDFG("facts_at_outer")
     outer.add_symbol("N", dace.int64)
@@ -195,6 +211,7 @@ if __name__ == "__main__":
     test_map_body_knows_the_parameter_range()
     test_map_entry_does_not_know_its_own_parameter_range()
     test_step_of_unknown_sign_gives_no_range()
+    test_a_range_empty_by_the_facts_yields_facts_rather_than_a_contradiction()
     test_nested_sdfg_inherits_outer_ranges_through_its_symbol_mapping()
     test_nested_sdfg_assumption_provable_from_the_mapping_is_valid()
     test_nested_sdfg_assumption_unprovable_from_the_mapping_is_invalid()

@@ -2894,6 +2894,7 @@ class SymbolResolver:
                 for param, rng in zip(map_entry.map.params, map_entry.map.range.ranges)
             ]
             scopes.append((map_entry, bound, ranges if isinstance(map_entry, nd.MapEntry) else []))
+        from_ranges: list[symbolic.Relation] = []
         for owner, bound, ranges in scopes:
             # A scope rebinds its names: what held for an outer symbol of the same name no longer does
             relations = [relation for relation in relations if not symbolic.relation_names(relation) & bound.keys()]
@@ -2907,18 +2908,27 @@ class SymbolResolver:
                 low, high = (low, high) if sign.is_positive else (high, low) if sign.is_negative else (None, None)
                 # The body of a provably empty range never runs, so its bounds, which contradict, are not facts
                 if low is not None and not (sympy.sympify(high) - sympy.sympify(low)).is_negative:
-                    relations += [
+                    bounds = [
                         symbolic.Relation(symbolic.RelationKind.LE, sympy.sympify(low), symbolic.symbol(name)),
                         symbolic.Relation(symbolic.RelationKind.LE, symbolic.symbol(name), sympy.sympify(high)),
                     ]
+                    relations += bounds
+                    from_ranges += bounds
             # What the scope declares for its names
             if owner in sdfg.symbol_repo.scopes:
                 declared = scope_facts(sdfg.symbol_repo.scopes[owner])
                 relations.extend(declared.relations)
                 integers |= declared.integers
-        # Ranges and declarations consistent on their own; a contradiction between them surfaces in a proof
+        # Solved by the first proof that needs them. A range the facts prove empty has a body that never runs, so it
+        # is sound to know less there: without its bounds.
         return symbolic.Facts(
-            tuple(relations), frozenset(integers), frozenset(small), frozenset(parameters), own.assumed, check=False
+            tuple(relations),
+            frozenset(integers),
+            frozenset(small),
+            frozenset(parameters),
+            own.assumed,
+            check=False,
+            fallback=tuple(relation for relation in relations if relation not in from_ranges),
         )
 
     def outer_facts(self, sdfg: "SDFG") -> tuple[list[symbolic.Relation], set[str], set[str], frozenset[str]]:
@@ -2941,11 +2951,12 @@ class SymbolResolver:
         unreadable = frozenset(
             name for name, value in mapped.items() if not {str(f) for f in value.free_symbols} <= outer.parameters
         )
-        names = {name for relation in outer.relations for name in symbolic.relation_names(relation)}
+        known = outer.known()
+        names = {name for relation in known for name in symbolic.relation_names(relation)}
         names |= {str(free) for value in mapped.values() for free in value.free_symbols}
         # ':' cannot appear in a DaCe name, so a renamed outer symbol never meets an inner one
         renamed = {name: sympy.Symbol(f"outer:{name}") for name in names}
-        relations = [relation.replaced(renamed) for relation in outer.relations]
+        relations = [relation.replaced(renamed) for relation in known]
         relations += [
             symbolic.Relation(symbolic.RelationKind.EQ, symbolic.symbol(name), symbolic.replace_symbols(value, renamed))
             for name, value in mapped.items()

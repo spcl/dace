@@ -1,10 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import cast
+from unittest.mock import patch
 
 import pytest
 import sympy
+from sympy.printing.str import StrPrinter
 
-from dace import dtypes, symbolic
+from dace import dtypes, symbolic, symbolic_facts
 from dace.symbolic_facts import (
     Facts,
     InconsistentAssumptionsError,
@@ -243,6 +245,31 @@ def test_facts_about_unrelated_symbols_share_one_simplification():
     assert symbolic.simplify.cache_info().hits == 1
 
 
+def test_is_small_reads_a_symexpr_by_its_exact_form():
+    facts = Facts((), INTEGERS, frozenset({"N"}))
+    assert symbolic.is_small(symbolic.SymExpr(N, N + 1), facts)
+    assert not symbolic.is_small(symbolic.SymExpr(M, N), facts)
+
+
+def test_building_equal_facts_again_prints_no_relation():
+    relation = Relation(RelationKind.LE, N + 17, 3 * M)
+    Facts((relation,), INTEGERS)
+    with patch.object(StrPrinter, "doprint", autospec=True, side_effect=StrPrinter.doprint) as doprint:
+        Facts((relation,), INTEGERS)
+    doprint.assert_not_called()
+
+
+def test_a_solution_survives_the_solves_of_many_other_scopes():
+    symbolic_facts.solve.cache_clear()
+    first = (Relation(RelationKind.LE, ZERO, N),)
+    symbolic_facts.solve(first, INTEGERS)
+    for bound in range(1024):
+        symbolic_facts.solve((Relation(RelationKind.LE, M, sympy.Integer(bound)),), INTEGERS)
+    hits = symbolic_facts.solve.cache_info().hits
+    symbolic_facts.solve(first, INTEGERS)
+    assert symbolic_facts.solve.cache_info().hits == hits + 1
+
+
 if __name__ == "__main__":
     test_positive_integer_is_at_least_one()
     test_strict_relation_implies_weak()
@@ -272,3 +299,6 @@ if __name__ == "__main__":
     test_inequality_of_identical_expressions_is_false()
     test_a_redundant_fact_keeps_a_proof()
     test_facts_about_unrelated_symbols_share_one_simplification()
+    test_is_small_reads_a_symexpr_by_its_exact_form()
+    test_building_equal_facts_again_prints_no_relation()
+    test_a_solution_survives_the_solves_of_many_other_scopes()
