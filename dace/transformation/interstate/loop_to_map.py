@@ -1799,25 +1799,28 @@ def symbols_assigned_before_use(
     """
     symbols_that_may_be_used: set[str] = {itervar}
     used_before_assignment: set[str] = set()
+    assigned: set[str] = set()
+    at_entry: dict[ControlFlowBlock, set[str]] = {}
     if blocks is None:
         blocks = cfg_analysis.blockorder_topological_sort(loop, recursive=True, ignore_nonstate_blocks=False)
     # Blocks are visited in order, so a symbol not yet assigned in this iteration comes from the previous one.
     for block, leaving in blocks_then_exits(list(blocks)):
         if not leaving:
-            # A conditional precedes its branches in the order, so a symbol every arm assigns is defined once
-            # they have run (the CloudSC nblks loop).
-            if isinstance(block, ConditionalBlock):
-                symbols_that_may_be_used |= exhaustively_assigned(block)
             # ``read_symbols()`` sees only interstate-edge reads; a read in the block's dataflow (``b[im]``) counts.
             try:
                 block_reads = own_reads(block, ctx)
             except Exception:
                 block_reads = set()
             used_before_assignment |= block_reads - symbols_that_may_be_used - closed
+            at_entry[block] = set(symbols_that_may_be_used)
             continue
+        # An assignment in a branch or a possibly zero-trip loop defines nothing past it; one in every arm does.
+        if isinstance(block, AbstractControlFlowRegion):
+            symbols_that_may_be_used = at_entry[block]
+            if isinstance(block, ConditionalBlock):
+                symbols_that_may_be_used |= exhaustively_assigned(block)
         for e in block.parent_graph.out_edges(block):
             used_before_assignment |= edge_read_symbols(e.data, ctx) - symbols_that_may_be_used - closed
-            assigned_symbols = set()
             for k, v in e.data.assignments.items():
                 if k in closed:
                     continue
@@ -1830,20 +1833,14 @@ def symbols_assigned_before_use(
                     if refusal is not None:
                         refusal.append((f"self-recurrent carried symbol '{k}' (assignment {k} = {v})", {k}))
                     return None
-                if k not in fsyms:
-                    assigned_symbols.add(k)
-            if assigned_symbols & used_before_assignment:
-                if refusal is not None:
-                    refusal.append(
-                        (
-                            "carried symbol dependency - "
-                            f"{assigned_symbols & used_before_assignment} read before being assigned",
-                            assigned_symbols & used_before_assignment,
-                        )
-                    )
-                return None
             symbols_that_may_be_used |= e.data.assignments.keys() - closed
-    return symbols_that_may_be_used
+            assigned |= e.data.assignments.keys() - closed
+    if assigned & used_before_assignment:
+        if refusal is not None:
+            carried = assigned & used_before_assignment
+            refusal.append((f"carried symbol dependency - {carried} read before being assigned", carried))
+        return None
+    return assigned | {itervar}
 
 
 def innermost_loop(block: ControlFlowBlock) -> LoopRegion | None:
