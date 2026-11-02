@@ -462,6 +462,19 @@ def test_iteration_range_symbolic_upper_bound():
     assert _num_conditionals(tauto) == 0
 
 
+def test_iteration_range_reads_a_clamped_bound():
+    """Either argument of a clamp bounds the range: the ``5`` decides ``i == 5``, and an ``i == 2`` stays."""
+    decided = _get_loop_with_conditional("i == 5", cond="i < min(5, N)")
+    decided.add_symbol("N", dace.int32)
+    LiftTrivialIf().apply_pass(decided, {})
+    assert _num_conditionals(decided) == 0
+
+    kept = _get_loop_with_conditional("i == 2", cond="i < min(5, N)")
+    kept.add_symbol("N", dace.int32)
+    LiftTrivialIf().apply_pass(kept, {})
+    assert _num_conditionals(kept) == 1
+
+
 def test_iteration_range_no_enclosing_loop_is_not_folded():
     """Without an enclosing loop there is no iteration range, so ``i == 0`` is a
     free-symbol condition the pass must leave alone."""
@@ -573,6 +586,7 @@ if __name__ == "__main__":
         test_if_else_cond_is_trivially_false(c)
 
     test_iteration_range_of_a_descending_loop_keeps_a_guard_inside_it()
+    test_iteration_range_reads_a_clamped_bound()
     test_cfg_is_a_middle_node()
     test_simplify_pipeline_includes_lift_trivial_if()
     test_trivial_if_with_nested_sdfg_reparents_correctly()

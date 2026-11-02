@@ -33,6 +33,8 @@ Safety. The pass refuses unless ``arr[c]``:
   that is *not* must-defined observes the previous iteration's write in the original
   loop, and the pre-loop value in the promoted loop. See
   :meth:`PromoteConstantIndexAccess.slot_reads_are_must_defined`,
+- is **transient** -- the caller of the SDFG reads a non-transient after the last state, and
+  no block of this SDFG shows that read,
 - is **not live-out at that slot** -- the loop's writes to ``arr[c]`` are unobservable
   outside the loop. The check is *slot-precise*: a post-loop read of a different element
   of ``arr`` (``arr[k]`` for some ``k != c``) does not block promotion, because the
@@ -282,7 +284,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 desc = sdfg.arrays.get(name)
                 if not isinstance(desc, data.Array):
                     continue
-                if desc.lifetime not in _PRIVATIZABLE_LIFETIMES:
+                # A non-transient outlives the SDFG: its slot is live-out at every exit, and promotion has no writeback.
+                if not desc.transient or desc.lifetime not in _PRIVATIZABLE_LIFETIMES:
                     continue
                 for edge in list(state.in_edges(node)) + list(state.out_edges(node)):
                     memlet = edge.data
@@ -327,19 +330,6 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 # canonical case -- and is NOT privatizable: promoting it
                 # would lose the cross-iteration dependency and silently drop
                 # every accumulation.
-                #
-                # KNOWN LATENT GAP: a non-transient slot that the body WRITES
-                # without an in-loop read still escapes -- e.g.
-                # ``for i: arr[5] = i`` on a non-transient ``arr``. The pass
-                # emits no epilogue writeback, so the in-loop writes land in
-                # the transient-scalar alias and never reach the caller's
-                # ``arr[5]``. The internal-only ``_not_live_out`` check
-                # below does not catch this. Adding a refusal here would
-                # break a number of existing PCIA tests that assert
-                # promotion fires on this shape without verifying the
-                # caller-visible final value -- the assertions only check a
-                # secondary output. Leaving as-is and TODO: either add an
-                # epilogue writeback or tighten those tests + refuse here.
                 if self._slot_has_in_body_rmw(loop, name, point):
                     continue
                 # The prologue-load rewrite is value-preserving only if no read of the

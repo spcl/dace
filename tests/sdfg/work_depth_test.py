@@ -9,6 +9,7 @@ from pytest import raises
 import dace
 from dace import symbolic
 from dace.frontend.python.parser import DaceProgram
+from dace.libraries.linalg import TensorTranspose
 from dace.libraries.sort import IntegerSort, ScatterConflictCheck
 from dace.libraries.standard import ArgMax, CountLibraryNode, CShift, FindFirst, Norm2, Scan, ScanOp
 from dace.libraries.standard.nodes.find_first import INDEX_NAME as FIND_FIRST_INDEX
@@ -21,6 +22,7 @@ from dace.sdfg.performance_evaluation.work_depth import (
     count_depth_code,
     get_tasklet_avg_par,
     get_tasklet_work_depth,
+    maximize_over_range,
 )
 from dace.sdfg.state import LoopRegion
 from dace.sdfg.utils import inline_control_flow_regions
@@ -595,6 +597,28 @@ library_node_cases = {
         2 + log2N,
     ),
     "cshift": (lambda: CShift("cshift", shift=1), {"_x": "x[0:N]"}, {"_out": "y[0:N]"}, 0, 0),
+    # spcl/dace#2753: a plain permutation moves data like a copy; alpha and beta add their flops per element
+    "tensor_transpose": (
+        lambda: TensorTranspose("transpose", axes=[0]),
+        {"_inp_tensor": "x[0:N]"},
+        {"_out_tensor": "y[0:N]"},
+        0,
+        0,
+    ),
+    "tensor_transpose_accumulates": (
+        lambda: TensorTranspose("transpose", axes=[0], beta=1),
+        {"_inp_tensor": "x[0:N]"},
+        {"_out_tensor": "y[0:N]"},
+        N,
+        1,
+    ),
+    "tensor_transpose_scales": (
+        lambda: TensorTranspose("transpose", axes=[0], alpha=2, beta=3),
+        {"_inp_tensor": "x[0:N]"},
+        {"_out_tensor": "y[0:N]"},
+        3 * N,
+        2,
+    ),
 }
 
 
@@ -609,6 +633,32 @@ def test_library_node_is_costed_by_its_parallel_algorithm(case: str):
     result = w_d_map[get_uuid(sut)]
     assert_symbolically_equal(result[0], sp.sympify(work))
     assert_symbolically_equal(result[1], sp.sympify(depth))
+
+
+def test_a_map_depth_is_its_deepest_iteration_not_the_map_parameter() -> None:
+    """spcl/dace#2754: a map over ``i`` whose body scans the prefix ``x[0:i+1]`` (a triangular recurrence after the
+    scan lifting). The work sums over ``i``; the depth is the deepest iteration's, with no ``i`` left free."""
+    sdfg = dace.SDFG("prefix_scans")
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_array("y", [N, N], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("rows", {"i": "0:N"})
+    scan = Scan("scan")
+    state.add_memlet_path(state.add_read("x"), entry, scan, dst_conn="_scan_in", memlet=dace.Memlet("x[0:i+1]"))
+    state.add_memlet_path(scan, exit_, state.add_write("y"), src_conn="_scan_out", memlet=dace.Memlet("y[i, 0:i+1]"))
+    w_d_map: dict[str, sp.Expr] = {}
+
+    analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, ["N>4"])
+
+    work, depth = w_d_map[get_uuid(sdfg)]
+    assert pystr_to_symbolic("i") not in depth.free_symbols
+    assert_symbolically_equal(work, N * (N - 1))
+    assert_symbolically_equal(depth, 2 * log2N)
+
+
+def test_a_map_depth_stops_at_the_last_iteration_a_negative_step_reaches() -> None:
+    i = pystr_to_symbolic("i")
+    assert maximize_over_range(-i, i, 10, -1, -2) == 0
 
 
 @pytest.mark.parametrize("model,work,depth", [("unit", 2, 2), ("libm", 21, 14)])
@@ -653,3 +703,5 @@ if __name__ == "__main__":
         test_assumption_system_contradictions(assumptions)
 
     test_depth_counter_vs_work_counter()
+    test_a_map_depth_is_its_deepest_iteration_not_the_map_parameter()
+    test_a_map_depth_stops_at_the_last_iteration_a_negative_step_reaches()

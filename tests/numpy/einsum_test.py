@@ -642,11 +642,41 @@ def test_a_contraction_whose_output_interleaves_the_operands_transposes_the_prod
 
 
 def test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds_beta_into_the_transpose():
-    """cp2k_trs4's ``ijk,ilkm->iljm`` accumulating into its buffer (``beta = 1``): a batched GEMM whose product the
-    transpose folds in, not a scalar nest of atomic adds."""
+    """``ijk,lkm->iljm`` accumulating into its buffer (``beta = 1``): a GEMM whose product the transpose folds in, not
+    a scalar nest of atomic adds."""
     from dace.libraries.blas.nodes.einsum import Einsum
 
     sdfg = dace.SDFG("accumulating_interleaved_einsum")
+    sdfg.add_array("A", (6, 5, 4), dace.float64)
+    sdfg.add_array("B", (3, 4, 5), dace.float64)
+    sdfg.add_array("C", (6, 3, 5, 5), dace.float64)
+    state = sdfg.add_state()
+    enode = Einsum("einsum")
+    enode.einsum_str = "ijk,lkm->iljm"
+    enode.beta = 1.0
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
+    state.add_node(enode)
+    state.add_edge(state.add_read("A"), None, enode, "a", dace.Memlet("A"))
+    state.add_edge(state.add_read("B"), None, enode, "b", dace.Memlet("B"))
+    state.add_edge(enode, "out", state.add_write("C"), None, dace.Memlet("C"))
+    enode.expand(sdfg, state)
+
+    assert "TensorTranspose" in contraction_nodes(sdfg)
+    assert not any(e.data.wcr for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet))
+    sdfg = dace.SDFG.from_json(sdfg.to_json())  # the folded beta survives serialization
+    rng = np.random.default_rng(11)
+    A, B, C = rng.random((6, 5, 4)), rng.random((3, 4, 5)), rng.random((6, 3, 5, 5))
+    expected = C + np.einsum("ijk,lkm->iljm", A, B)
+    sdfg(A=A, B=B, C=C)
+    assert np.allclose(C, expected)
+
+
+def test_a_broadcast_product_under_a_shared_index_needs_no_transpose():
+    """cp2k_trs4's ``ijk,ilkm->iljm`` accumulating into its buffer: a map over ``i`` around a broadcast ``matmul``."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    sdfg = dace.SDFG("broadcast_product_einsum")
     sdfg.add_array("A", (6, 5, 4), dace.float64)
     sdfg.add_array("B", (6, 3, 4, 5), dace.float64)
     sdfg.add_array("C", (6, 3, 5, 5), dace.float64)
@@ -660,11 +690,9 @@ def test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds
     state.add_edge(state.add_read("A"), None, enode, "a", dace.Memlet("A"))
     state.add_edge(state.add_read("B"), None, enode, "b", dace.Memlet("B"))
     state.add_edge(enode, "out", state.add_write("C"), None, dace.Memlet("C"))
-    enode.expand(sdfg, state)
+    sdfg.expand_library_nodes()
 
-    assert "TensorTranspose" in contraction_nodes(sdfg)
-    assert not any(e.data.wcr for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet))
-    sdfg = dace.SDFG.from_json(sdfg.to_json())  # the folded beta survives serialization
+    assert "TensorTranspose" not in contraction_nodes(sdfg)
     rng = np.random.default_rng(11)
     A, B, C = rng.random((6, 5, 4)), rng.random((6, 3, 4, 5)), rng.random((6, 3, 5, 5))
     expected = C + np.einsum("ijk,ilkm->iljm", A, B)
@@ -698,6 +726,48 @@ def test_an_interleaving_contraction_of_device_tensors_keeps_its_product_on_the_
     assert set(tensors.values()) == {gpu}, tensors
 
 
+def test_a_three_operand_contraction_whose_path_step_is_not_a_pair() -> None:
+    """spcl/dace#2756: under ``memory_limit="max_input"`` opt_einsum may contract three operands in one step, when
+    every pairwise intermediate outgrows the largest operand (seissol's ``dkl,blq,dqp->bkp``). That step is one nest
+    over its operands, not a pair."""
+    NB, NBF, NQ, ND = (dace.symbol(s, positive=True) for s in ("NB", "NBF", "NQ", "ND"))
+
+    @dace.program
+    def three_operands(
+        kDivM: dace.float64[ND, NBF, NBF],
+        I: dace.float64[NB, NBF, NQ],
+        star: dace.float64[ND, NQ, NQ],
+        upd: dace.float64[NB, NBF, NQ],
+    ):
+        upd[:] = np.einsum("dkl,blq,dqp->bkp", kDivM, I, star)
+
+    sdfg = three_operands.to_sdfg()
+    sdfg.validate()
+    rng = np.random.default_rng(5)
+    kDivM, I, star = rng.random((3, 4, 4)), rng.random((6, 4, 5)), rng.random((3, 5, 5))
+    upd = np.zeros((6, 4, 5))
+    sdfg(kDivM=kDivM, I=I, star=star, upd=upd, NB=6, NBF=4, NQ=5, ND=3)
+    assert np.allclose(upd, np.einsum("dkl,blq,dqp->bkp", kDivM, I, star))
+
+
+def test_a_nest_reads_a_repeated_operand_once_per_term() -> None:
+    @dace.program
+    def two_terms(A: dace.float64[3, 3], out: dace.float64[3]):
+        out[:] = np.einsum("ij,ji->i", A, A)
+
+    @dace.program
+    def three_terms(A: dace.float64[3, 4, 4], I: dace.float64[6, 4, 4], out: dace.float64[6, 4, 4]):
+        out[:] = np.einsum("dkl,blq,dqp->bkp", A, I, A)
+
+    rng = np.random.default_rng(6)
+    A, B, I = rng.random((3, 3)), rng.random((3, 4, 4)), rng.random((6, 4, 4))
+    pair, triple = np.zeros(3), np.zeros((6, 4, 4))
+    two_terms(A, pair)
+    three_terms(B, I, triple)
+    assert np.allclose(pair, np.einsum("ij,ji->i", A, A))
+    assert np.allclose(triple, np.einsum("dkl,blq,dqp->bkp", B, I, B))
+
+
 if __name__ == "__main__":
     test_an_interleaving_contraction_of_device_tensors_keeps_its_product_on_the_device()
     test_general_einsum()
@@ -725,3 +795,6 @@ if __name__ == "__main__":
     test_a_contraction_in_no_gemm_order_transposes_the_small_operand()
     test_a_contraction_whose_output_interleaves_the_operands_transposes_the_product()
     test_an_accumulating_contraction_whose_output_interleaves_the_operands_folds_beta_into_the_transpose()
+    test_a_broadcast_product_under_a_shared_index_needs_no_transpose()
+    test_a_three_operand_contraction_whose_path_step_is_not_a_pair()
+    test_a_nest_reads_a_repeated_operand_once_per_term()

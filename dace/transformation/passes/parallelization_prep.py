@@ -11,8 +11,7 @@ plain :class:`~dace.transformation.pass_pipeline.Pass` objects so the
 - :class:`BestEffortLoopPeeling` -- index-set-split a loop at a point DERIVED from its body
   (an ``if i == x`` guard, a broadcast read's conflicting index), and peel a wrapping body
   modulo to its floor-correct affine form, pruning the now-dead boundary guard from each
-  segment. ``peel_limit`` bounds the modulo peel and underwrites the large-trip-count
-  assumption the split's range proofs lean on (0 disables the pass).
+  segment. ``peel_limit`` bounds the modulo peel (0 disables the pass).
 
 Transformation classes are imported lazily inside the methods: importing them at
 module load would cycle (this package is imported by the transformations those
@@ -489,8 +488,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         dtype=int,
         default=DEFAULT_PEEL_LIMIT,
         desc="Bounds the wrapping-modulo peel to 1..peel_limit iterations (front/back/both), keeping "
-        "the smallest peel that folds the wrap away. Also underwrites the split range proofs: a loop "
-        "worth peeling by k <= peel_limit is assumed to run more than peel_limit times (0 disables).",
+        "the smallest peel that folds the wrap away; a shorter loop keeps its form behind a runtime check "
+        "(0 disables).",
     )
 
     validate = properties.Property(
@@ -1130,42 +1129,19 @@ class BestEffortLoopPeeling(ppl.Pass):
         if start is None or end is None:
             return None
         sides = set()
-        if symbolic.simplify(x - start) != 0 and not self._nonneg_in_loop(loop, end + 1 - x, start, end):
+        if symbolic.simplify(x - start) != 0 and not self._nonneg_in_loop(loop, end + 1 - x):
             sides.add("before")
-        if symbolic.simplify(x - end) != 0 and not self._nonneg_in_loop(loop, x - start, start, end):
+        if symbolic.simplify(x - end) != 0 and not self._nonneg_in_loop(loop, x - start):
             sides.add("after")
         return frozenset(sides)
 
-    def _nonneg_in_loop(self, loop: LoopRegion, expr, start, end) -> bool:
-        """Whether ``expr >= 0`` holds -- either unconditionally
-        (:meth:`_provably_nonneg`) or under the same large-trip-count assumption
-        :meth:`_nonneg_assuming_large_modulus` already encodes: a symbolic loop
-        being peeled/split by ``k <= peel_limit`` iterations presupposes it runs
-        more than ``peel_limit`` times, so its trip count ``end - start + 1``
-        exceeds ``peel_limit``.
-
-        A near-boundary split point ``x`` carving off ``c <= peel_limit`` tail
-        iterations has ``x - start = trip - 1 - c``, non-negative once
-        ``trip > peel_limit`` -- so its range-membership is statically true and
-        needs no ``if start <= x`` runtime guard (the ext_peel_multi_back back-peel
-        at ``x = LEN_1D - 2``: ``x - start = LEN_1D - 2 = trip - 2 >= 0`` for
-        ``trip = LEN_1D > peel_limit``). Applying the assumption with the trip
-        count as the modulus (and NO wrap offsets, so no offset facts are relied
-        on) proves only such affine-in-trip boundary points; a point leaning on a
-        free offset (``N - K``) is left guarded. A non-affine floor/ceil point
-        (``N // 2``) falls through to :meth:`provably_nonneg_symbolic`, which
-        bounds it from the nonnegative-symbol contract."""
+    def _nonneg_in_loop(self, loop: LoopRegion, expr) -> bool:
+        """Whether ``expr >= 0`` holds, unconditionally (:meth:`_provably_nonneg`) or from the
+        nonnegative-symbol contract and floor/ceil bounds (:meth:`provably_nonneg_symbolic`, the ``x =
+        int_floor(N, 2)`` split points). A large trip count is not assumed: a split point ``N - 3`` lies below
+        the start of a loop that runs once, and ``[x + 1, end]`` would then run an iteration the loop never had."""
         if self._provably_nonneg(expr):
             return True
-        import sympy
-
-        trip = symbolic.simplify(end - start + 1)
-        if isinstance(trip, sympy.Symbol) and self._nonneg_assuming_large_modulus(expr, trip) is not None:
-            return True
-        # Floor/ceil-of-a-nonnegative-bound split points (``x = int_floor(N, 2)``) are not affine in
-        # the trip count, so the large-modulus path leaves them guarded; the symbolic nonnegativity
-        # prover discharges them from the canonicalization nonnegative-symbol contract + floor/ceil
-        # bounds. See :meth:`provably_nonneg_symbolic`.
         return self.provably_nonneg_symbolic(expr, SymbolResolver().facts_at(loop.parent_graph))
 
     def _specialize_index_set_split(
@@ -1520,7 +1496,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         if C1 < 0:
             return None  # decreasing in m -> not bounded below as m grows
         if bool(C0 + C1 * (self.peel_limit + 1) >= 0):
-            return frozenset(relied)
+            return frozenset(relied | ({m} if C0 + C1 < 0 else set()))
         return None
 
     def _enclosing_loop_ranges(self, block) -> dict[Any, Any]:
@@ -1641,7 +1617,8 @@ class BestEffortLoopPeeling(ppl.Pass):
             hi_relied = self._nonneg_assuming_large_modulus(as_expr(m) - 1 - (hi - t * as_expr(m)), m, offsets)
             if hi_relied is None:
                 continue
-            relations = frozenset(sympy.StrictLessThan(o, m) for o in (lo_relied | hi_relied))
+            relied = lo_relied | hi_relied
+            relations = frozenset(sympy.StrictLessThan(self.peel_limit if o == m else o, m) for o in relied)
             return arg - t * as_expr(m), relations
         return None
 
@@ -1757,7 +1734,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         return points
 
     def _best_modulo_peel_for(self, loop: LoopRegion, sdfg: SDFG):
-        """The smallest ``(count, direction)`` peel that turns a genuinely-wrapping
+        """The smallest ``(count, direction, relations)`` peel that turns a genuinely-wrapping
         body modulo into an affine, floor-correct index for ``loop``; ``None`` if the
         loop has no such wrap or no bounded peel folds it. Unlike the index-set split
         above, this runs *even when* ``LoopToMap`` already maps the loop: a wrap-around
@@ -1767,18 +1744,32 @@ class BestEffortLoopPeeling(ppl.Pass):
         folding the wrap to its affine, floor-correct form is value-preserving whether
         or not it also maps.
 
+        ``relations`` is what the peel and its folds need of a symbolic loop: more iterations than it peels and
+        a modulus past ``peel_limit``. A loop that may run shorter keeps its original form behind them.
+
         Decided by range analysis alone (:meth:`_folds_every_wrap`): each peel's remaining
         loop, and each peeled iteration whose body holds a loop, is probed on ``loop``
         itself under its own header, and nothing is peeled until the winner is known."""
-        if not self._has_wrapping_modulo(loop):
+        from dace.transformation.passes.analysis import loop_analysis
+
+        if loop.pinned_sequential or not self._has_wrapping_modulo(loop):
             return None
+        start = loop_analysis.get_init_assignment(loop)
         # Smallest peel first (count ascending, single-side before both) so the
         # correctness fix touches as few iterations as possible.
         for count in range(1, self.peel_limit + 1):
             for direction in ("front", "back", "both"):
                 segments = self._peel_segments(loop, count, direction)
-                if segments and self._folds_every_wrap(loop, segments):
-                    return (count, direction)
+                relations: set = set()
+                if segments and self._folds_every_wrap(loop, segments, relations):
+                    peeled = count * len(self._peel_sides(loop, count, direction))
+                    distance = _as_symbolic(loop_analysis.get_loop_end(loop)) - _as_symbolic(start)
+                    trip = symbolic.simplify(distance / loop_analysis.get_loop_stride(loop) + 1)
+                    # Below a single peeled iteration the loop runs nothing, so only a fold's relation needs it.
+                    needs_fallback = bool(relations) or peeled > 1
+                    if not self._provably_nonneg(trip - peeled):
+                        relations.add(sympy.LessThan(peeled, trip))
+                    return count, direction, frozenset(relations), needs_fallback
         return None
 
     def _peel_segments(self, loop: LoopRegion, count: int, direction: str) -> list[tuple[str | None, str | None, bool]]:
@@ -1855,7 +1846,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         Decided by range analysis alone (:meth:`_folds_every_wrap`): both halves are probed
         on ``loop`` itself under their own headers, and nothing is split until the winner
         is known."""
-        if not self._has_wrapping_modulo(loop):
+        if loop.pinned_sequential or not self._has_wrapping_modulo(loop):
             return None
         for x in self._modulo_split_points(loop):
             plan = self._split_plan(loop.sdfg, loop, x, middle_singleton=False)
@@ -1928,8 +1919,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         and ``_split_loop_at`` drops whichever side is empty -- so a point ON a boundary yields
         a peel of one, which is why there is no separate peel stage. The carve regroups the
         loop's own iterations only while ``start <= x <= end``, and a loop-invariant ``x`` need
-        not satisfy it (a free ``K`` in ``if i == K``), so an unprovable membership is emitted
-        as ``if (start <= x <= end) { split } else { original loop }`` rather than assumed.
+        not satisfy it (a free ``K`` in ``if i == K``), so an unproven side is clamped to the loop's
+        own bound, or the split guarded when only bare bounds map, rather than assumed.
 
         Next a wrapping-modulo peel fixes a boundary that reads/writes the wrong element under
         C's truncated ``%`` -- a correctness fix, so it runs even when the loop already maps.
@@ -1947,8 +1938,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         applied = 0
         # 1. Index-set splitting for interior equality guards. The split only regroups the loop's
         #    own iterations while the split point lies inside the range, which a loop-invariant
-        #    point does not have to (``if i == K`` with a free ``K``), so an unprovable membership
-        #    becomes the `if in-range: split else: original loop` branch condition.
+        #    point does not have to (``if i == K`` with a free ``K``): see _specialize_index_set_split.
         for loop in list(_loops(sdfg)):
             found = self._best_split_for(loop, sdfg)
             if found is None:
@@ -1967,8 +1957,13 @@ class BestEffortLoopPeeling(ppl.Pass):
         #    emits C's truncated ``%`` and computes the wrong boundary value).
         for loop in list(_loops(sdfg)):
             best = self._best_modulo_peel_for(loop, sdfg)
-            if best is not None and self._peel_one_loop(sdfg, loop, *best):
-                self._clean_peeled_remainder(sdfg)
+            if best is not None:
+                count, direction, relations, needs_fallback = best
+                conditional = self._specialize_modulo_rewrite(
+                    sdfg, loop, lambda target: self._peel_one_loop(sdfg, target, count, direction), relations
+                )
+                if conditional is not None and not needs_fallback:
+                    conditional.remove_branch(conditional.branches[-1][1])
                 rewritten.append(loop)
                 applied += 1
         # 2b. Specialize a symbolic-boundary wrap the constant peel could not reach
@@ -1978,7 +1973,9 @@ class BestEffortLoopPeeling(ppl.Pass):
             res = self._best_modulo_split_for(loop, sdfg)
             if res is not None:
                 x, relations = res
-                self._specialize_modulo_split(sdfg, loop, x, relations)
+                self._specialize_modulo_rewrite(
+                    sdfg, loop, lambda target: self._split_loop_at(sdfg, target, x, middle_singleton=False), relations
+                )
                 rewritten.append(loop)
                 applied += 1
         # There is deliberately no separate boundary-peel stage. A boundary peel IS an index-set split
@@ -2003,7 +2000,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             sdfg.validate()
         return applied or None
 
-    def _specialize_modulo_split(self, sdfg: SDFG, loop: LoopRegion, x, relations) -> None:
+    def _specialize_modulo_rewrite(self, sdfg: SDFG, loop: LoopRegion, rewrite, relations):
         """Replace ``loop`` with ``if (offset < modulus) { band split into affine
         maps } else { original modular loop }``.
 
@@ -2017,13 +2014,13 @@ class BestEffortLoopPeeling(ppl.Pass):
         from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
 
         if not relations:
-            if self._split_loop_at(sdfg, loop, x, middle_singleton=False):
+            if rewrite(loop):
                 self._clean_peeled_remainder(sdfg)
             return
         condition = " && ".join(sym2cpp(r) for r in sorted(relations, key=str))
 
         def _parallelize(par_loop, par_region, _owner):
-            if self._split_loop_at(sdfg, par_loop, x, middle_singleton=False):
+            if rewrite(par_loop):
                 self._clean_peeled_remainder(par_region)
 
-        specialize_loop_under_condition(loop, condition, _parallelize, sdfg)
+        return specialize_loop_under_condition(loop, condition, _parallelize, sdfg)

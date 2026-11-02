@@ -138,7 +138,7 @@ def make_ctypes_argument(
         if isinstance(argtype.dtype, dtypes.vector) and argtype.dtype.vtype.as_numpy_dtype() == arg.dtype:
             pass
         else:
-            print(f'WARNING: Passing {arg.dtype} array argument "{a}" to a {argtype.dtype.type.__name__} array')
+            raise TypeError(f'Passing {arg.dtype} array argument "{a}" to a {argtype.dtype.type.__name__} array')
     elif (
         is_dtArray
         and is_ndarray

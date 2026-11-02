@@ -167,6 +167,12 @@ class FuseMaps(ppl.Pass):
         desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
 
+    relaxed_dataflow = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` both Maps may update one container in place and a shared intermediate may be accessed further "
+        "down its dataflow, whatever `strict_dataflow` says.",
+    )
     assume_always_shared = properties.Property(
         dtype=bool,
         default=False,
@@ -245,6 +251,7 @@ class FuseMaps(ppl.Pass):
         only_inner_maps: bool | None = None,
         only_toplevel_maps: bool | None = None,
         strict_dataflow: bool | None = None,
+        relaxed_dataflow: bool | None = None,
         assume_always_shared: bool | None = None,
         require_exclusive_intermediates: bool | None = None,
         require_all_intermediates: bool | None = None,
@@ -266,6 +273,8 @@ class FuseMaps(ppl.Pass):
             self.only_inner_maps = only_inner_maps
         if strict_dataflow is not None:
             self.strict_dataflow = strict_dataflow
+        if relaxed_dataflow is not None:
+            self.relaxed_dataflow = relaxed_dataflow
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
         if require_exclusive_intermediates is not None:
@@ -354,6 +363,7 @@ class FuseMaps(ppl.Pass):
                     only_inner_maps=self.only_inner_maps,
                     only_toplevel_maps=self.only_toplevel_maps,
                     strict_dataflow=self.strict_dataflow,
+                    relaxed_dataflow=self.relaxed_dataflow,
                     assume_always_shared=self.assume_always_shared,
                     require_exclusive_intermediates=self.require_exclusive_intermediates,
                     require_all_intermediates=self.require_all_intermediates,

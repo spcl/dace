@@ -171,6 +171,9 @@ def edge_accesses(state: SDFGState, e: MultiConnectorEdge[Memlet]) -> list[tuple
         return []
     src, dst = e.src, e.dst
     src_an, dst_an = isinstance(src, nodes.AccessNode), isinstance(dst, nodes.AccessNode)
+    # A dynamic map input is a read no leaf repeats, and its value sets the extent of the scope
+    if isinstance(dst, nodes.EntryNode) and not (e.dst_conn or "").startswith("IN_"):
+        return None
     if isinstance(src, nodes.ExitNode) or isinstance(dst, nodes.EntryNode):
         if isinstance(src, nodes.CodeNode) or isinstance(dst, nodes.CodeNode):
             return None  # a code node feeding a scope through no container
@@ -441,7 +444,8 @@ def extract_body(outer: LoopRegion, sdfg: SDFG, occurrences: dict[str, set[SDFGS
     for block in chain:
         if isinstance(block, LoopRegion):
             vb = unit_loop_bounds(block)
-            if vb is None:
+            # A jump ends the loop early, and tiling would only end one tile's piece of it
+            if vb is None or not loop_analysis.fixed_iteration_space(block):
                 return None
             statements.append(Statement(order, "loop", block, block.loop_variable, vb[0], vb[1]))
             order += 1

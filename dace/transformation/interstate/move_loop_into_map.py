@@ -858,14 +858,9 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
             if str(itervar) in e.data.free_symbols:
                 return False
             if isinstance(e.dst, nodes.AccessNode) and e.dst.data in read_set:
-                # NOTE: This is strict check that can be potentially relaxed.
-                # If some data written indirectly by the Map (i.e., it is not an immediate output of the MapExit) is
-                # also read, then abort. In practice, we could follow the edges and with subset compositions figure out
-                # if there is a RW dependency on the loop variable. However, in such complicated cases, it is far more
-                # likely that the simplification redundant array/copying transformations trigger first. If they don't,
-                # this is a good hint that there is a RW dependency.
-                if nx.has_path(body._nx, map_exit, e.dst):
-                    return False
+                # Outside the Map it runs once after the interchange: fine for a repeat of the same value, not for
+                # what a later iteration reads back (``x[0] += 1`` ahead of the Map). The Map's own writes count too.
+                return False
         for n in body.nodes():
             if n in subgraph.nodes():
                 continue

@@ -1309,6 +1309,45 @@ def test_wavefront_skew_refuses_a_symbol_one_instance_hands_to_the_next():
     assert WavefrontSkew().apply_pass(sdfg, {}) is None
 
 
+def test_wavefront_skew_refuses_a_statement_loop_with_a_break():
+    """Tiling would end only the current tile's piece of the row."""
+
+    @dace.program
+    def wavefront_with_break(a: dace.float64[N, N], b: dace.int64[N, N]):
+        for i in range(1, N):
+            for j in range(1, N):
+                a[i, j] = a[i - 1, j] + a[i, j - 1] + 1.0
+                if b[i, j] > 0:
+                    break
+
+    assert WavefrontSkew().apply_pass(wavefront_with_break.to_sdfg(simplify=True), {}) is None
+
+
+def test_wavefront_skew_refuses_a_dynamic_map_input_in_a_statement():
+    """``b[u - 1, v + 2]`` sizes the map: a dependence on a later front the access model would not see."""
+    sdfg = dace.SDFG("dynamic_map_input")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_array("b", [N, N], dace.int64)
+    outer = LoopRegion("outer", "u < N", "u", "u = 1", "u = u + 1")
+    sdfg.add_node(outer, is_start_block=True)
+    inner = LoopRegion("inner", "v < N - 2", "v", "v = 1", "v = v + 1")
+    outer.add_node(inner, is_start_block=True)
+    state = inner.add_state("body", is_start_block=True)
+    t = state.add_tasklet("t", {"x", "y"}, {"o"}, "o = x + y + 1.0")
+    state.add_edge(state.add_read("a"), None, t, "x", dace.Memlet("a[u - 1, v]"))
+    state.add_edge(state.add_read("a"), None, t, "y", dace.Memlet("a[u, v - 1]"))
+    state.add_edge(t, "o", state.add_write("a"), None, dace.Memlet("a[u, v]"))
+    me, mx = state.add_map("sized", {"k": "0:n"}, schedule=dace.ScheduleType.Sequential)
+    me.add_in_connector("n", dace.int64)
+    state.add_edge(state.add_read("b"), None, me, "n", dace.Memlet("b[u - 1, v + 2]"))
+    write = state.add_tasklet("write", {}, {"o"}, "o = n + k")
+    state.add_edge(me, None, write, None, dace.Memlet())
+    state.add_memlet_path(write, mx, state.add_write("b"), src_conn="o", memlet=dace.Memlet("b[u, v]", dynamic=True))
+    sdfg.validate()
+
+    assert WavefrontSkew().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_wavefront_skew_rewrites_to_skewed_iterators_modified_inner_lifted_to_map()
     test_wavefront_skew_value_preserving()
@@ -1356,3 +1395,5 @@ if __name__ == "__main__":
     for related in (False, True):
         test_wavefront_skew_assumes_a_relation_between_symbols(related)
     test_wavefront_skew_refuses_a_symbol_one_instance_hands_to_the_next()
+    test_wavefront_skew_refuses_a_statement_loop_with_a_break()
+    test_wavefront_skew_refuses_a_dynamic_map_input_in_a_statement()

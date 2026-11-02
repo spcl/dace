@@ -175,6 +175,31 @@ def test_merge_siblings_data_vs_connector_name_collision():
     assert np.allclose(A, X + 2.0) and np.allclose(B, X + 1.0)
 
 
+def test_merge_siblings_carries_a_constant_of_the_tail():
+    """``constants_prop`` holds ``(descriptor, value)``: the tail's array constant arrives in the merged body as is."""
+    sdfg = dace.SDFG("merge_constant")
+    for arr in ("X", "A", "B"):
+        sdfg.add_array(arr, [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", {"i": "0:N"})
+    base = _sibling_nsdfg("sibA", with_tmp_conn=True, with_tmp_array=False)
+    tail = _sibling_nsdfg("sibB", with_tmp_conn=False, with_tmp_array=True)
+    table = np.array([2, 3, 4], dtype=np.int32)
+    tail.add_constant("table", table)
+    n_base = state.add_nested_sdfg(base, {"x"}, {"o"})
+    n_tail = state.add_nested_sdfg(tail, {"x"}, {"o"})
+    read = state.add_read("X")
+    state.add_memlet_path(read, me, n_base, dst_conn="x", memlet=dace.Memlet("X[i]"))
+    state.add_memlet_path(read, me, n_tail, dst_conn="x", memlet=dace.Memlet("X[i]"))
+    state.add_memlet_path(n_base, mx, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(n_tail, mx, state.add_write("B"), src_conn="o", memlet=dace.Memlet("B[i]"))
+    convert_legacy_nested_sdfgs(sdfg)
+
+    assert NormalizeMapBody().apply_pass(sdfg, {}) is not None
+    merged = next(n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG))
+    assert np.array_equal(merged.sdfg.constants_prop["table"][1], table)
+
+
 def test_siblings_joined_through_a_tasklet_stay_apart():
     """``A`` feeds a tasklet that feeds ``B``: merged, the node would write the tasklet's input and read its output,
     a cycle (warpx_esirkepov_deposition on GPU: ``State should be acyclic``)."""

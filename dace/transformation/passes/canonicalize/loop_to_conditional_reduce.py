@@ -182,6 +182,9 @@ class LoopToConditionalReduce(ppl.Pass):
                 assigned = {name for edge in region.all_interstate_edges() for name in edge.data.assignments}
                 if assigned & m.true_state.free_symbols or self.read_elsewhere(sd, assigned, m.cond_block):
                     continue
+                # An assignment past the block reaches the next iteration's guard, which the rewrite cannot carry
+                if any(edge.data.assignments for edge in region.dfs_edges(m.cond_block)):
+                    continue
                 if self._rewrite(m, sd):
                     rewritten += 1
         return rewritten or None
@@ -322,6 +325,12 @@ class LoopToConditionalReduce(ppl.Pass):
         # ``-``: the accumulator must be on the LEFT for associativity
         # (``acc - x1 - x2`` is order-independent; ``x1 - acc - x2`` is not).
         if op_str == "-" and acc_in_conn != lhs_name:
+            return None
+
+        # The mask scalar has the accumulator's type: a narrowing addend would be cut before the update, not after it.
+        addend_edge = next(e for e in in_edges if e.dst_conn == addend_in_conn)
+        addend_type = sdfg.arrays[addend_edge.data.data].dtype.type
+        if not np.can_cast(addend_type, sdfg.arrays[acc_name].dtype.type, "safe"):
             return None
 
         return _Match(

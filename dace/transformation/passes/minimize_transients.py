@@ -7,7 +7,7 @@ from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.transient_reuse import BufferSharing, StateOrder, inside_parallel_map
+from dace.transformation.passes.transient_reuse import BufferSharing, StateOrder, sharing_storages
 from dace.transformation.transformation import explicit_cf_compatible
 
 #: Storages a coalesced pair may mix: all of them are plain host memory the other side's code can address.
@@ -277,6 +277,9 @@ class Coalescing:
             state.add_edge(other, e.src_conn, e.dst, e.dst_conn, e.data)
             state.remove_edge(e)
         state.remove_node(transient)
+        # A transient nothing read leaves the source of its copy with no edge at all.
+        if state.degree(other) == 0:
+            state.remove_node(other)
         self.sdfg.remove_data(old, validate=False)
         self.occurrences.pop(old, None)
         per_state = self.occurrences.setdefault(at.target, {})
@@ -312,9 +315,9 @@ class MinimizeTransients(ppl.Pass):
 
     1. Coalesce, in every SDFG: a transient living in one state and copied whole to or from a region of another
        container is that region (:class:`Coalescing`).
-    2. Share and lift, in SDFGs outside every parallel map scope: transients whose uses never overlap share one buffer, and
-       every buffer sized by symbols bound on entry is ``Persistent``
-       (:class:`~dace.transformation.passes.transient_reuse.BufferSharing`).
+    2. Share and lift: transients whose uses never overlap share one buffer, and outside every parallel map scope every
+       buffer sized by symbols bound on entry is ``Persistent``
+       (:class:`~dace.transformation.passes.transient_reuse.BufferSharing`, :func:`sharing_storages`).
 
     Contracting a scope-local transient to its footprint is :class:`ShrinkMapLocalTransients`, which storage
     finalization runs earlier; what remains is left to the allocator.
@@ -336,7 +339,7 @@ class MinimizeTransients(ppl.Pass):
         changed = 0
         for sd in sdfg.all_sdfgs_recursive():
             changed += Coalescing(sd).run()
-            # A buffer inside a parallel map scope is per iteration: sharing it would share it between iterations.
-            if not inside_parallel_map(sd):
-                changed += len(BufferSharing(sd, tuple(storages)).run())
+            shared = sharing_storages(sd, tuple(storages))
+            if shared:
+                changed += len(BufferSharing(sd, shared).run())
         return changed or None

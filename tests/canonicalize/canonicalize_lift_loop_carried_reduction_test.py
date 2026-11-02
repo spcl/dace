@@ -327,6 +327,32 @@ def test_contour_pattern_indexed_write_is_injective_not_reduction():
     assert np.allclose(Q, ref)
 
 
+def test_a_second_reader_of_the_updated_value_is_not_lifted():
+    """``t = A[j] + B[j]; A[j] = t; C[l, j] = t``: the rewrite turns ``t`` into the increment, which ``C`` then reads."""
+    sdfg = dace.SDFG("staged_update_read_twice")
+    sdfg.add_array("A", [2], dace.float64)
+    sdfg.add_array("B", [2], dace.float64)
+    sdfg.add_array("C", [3, 2], dace.float64)
+    sdfg.add_scalar("t", dace.float64, transient=True)
+    loop = LoopRegion("l", "l < 3", "l", "l = 0", "l = l + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    entry, exit_node = state.add_map("m", {"j": "0:2"})
+    update = state.add_tasklet("update", {"a": None, "b": None}, {"o": None}, "o = a + b")
+    state.add_memlet_path(state.add_read("A"), entry, update, dst_conn="a", memlet=dace.Memlet("A[j]"))
+    state.add_memlet_path(state.add_read("B"), entry, update, dst_conn="b", memlet=dace.Memlet("B[j]"))
+    staged = state.add_access("t")
+    state.add_edge(update, "o", staged, None, dace.Memlet("t[0]"))
+    for name, subset in (("A", "j"), ("C", "l, j")):
+        copy = state.add_tasklet(f"copy_{name}", {"i": None}, {"o": None}, "o = i")
+        state.add_edge(staged, None, copy, "i", dace.Memlet("t[0]"))
+        state.add_memlet_path(
+            copy, exit_node, state.add_write(name), src_conn="o", memlet=dace.Memlet(f"{name}[{subset}]")
+        )
+    sdfg.validate()
+    assert LiftLoopCarriedReduction().apply_pass(sdfg, {}) is None
+
+
 def test_a_loop_whose_control_flow_reads_the_running_sum_is_not_lifted():
     """``for k: map i: out[i] = out[i] + B[k, i]`` then ``s = out[0]`` on the interstate edge: lifting would hand ``s``
     a partial sum."""

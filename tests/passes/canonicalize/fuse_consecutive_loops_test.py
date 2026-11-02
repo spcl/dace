@@ -217,5 +217,62 @@ def test_bodies_differing_only_in_a_copy_memlets_destination_are_not_fused():
     assert np.array_equal(run(sdfg), oracle)
 
 
+@dace.program
+def _empty_second_side(a: dace.float64[10], x: dace.float64[10], m: dace.int64, n: dace.int64):
+    for i in range(0, m):
+        a[i] = x[i] + 100.0
+    for j in range(m, n):
+        a[j] = x[j] + 100.0
+
+
+def test_fused_range_keeps_the_iterations_of_an_empty_side():
+    """With ``m > n`` the second loop is empty, and the union is ``[0, m)``, not ``[0, n)``."""
+    sdfg = _empty_second_side.to_sdfg(simplify=True)
+    assert FuseConsecutiveLoops().apply_pass(sdfg, {}) == 1
+    a = np.zeros(10)
+    sdfg(a=a, x=np.arange(10.0), m=5, n=3)
+    assert np.array_equal(a[:6], [100.0, 101.0, 102.0, 103.0, 104.0, 0.0])
+
+
+@dace.program
+def _swapped_scratches(c: dace.float64[6], x: dace.float64[6], y: dace.float64[6]):
+    for i in range(0, 3):
+        s1 = x[i] + 1.0
+        s2 = y[i] + 1.0
+        c[i] = s1 - s2
+    for j in range(3, 6):
+        s3 = y[j] + 1.0
+        s4 = x[j] + 1.0
+        c[j] = s3 - s4
+
+
+@dace.program
+def _different_reductions(c: dace.float64[6], x: dace.float64[6, 3]):
+    for i in range(0, 3):
+        c[i] = np.sum(x[i, :])
+    for j in range(3, 6):
+        c[j] = np.max(x[j, :])
+
+
+@dace.program
+def _iterators_read_after(a: dace.float64[6], x: dace.float64[6], o: dace.int64[2]):
+    for i in range(0, 3):
+        a[i] = x[i]
+    for j in range(3, 6):
+        a[j] = x[j]
+    o[0] = i
+    o[1] = j
+
+
+@pytest.mark.parametrize("program", [_swapped_scratches, _different_reductions, _iterators_read_after])
+def test_bodies_that_only_look_alike_are_not_fused(program):
+    """Scratches wired differently, library nodes of different kind, and a copy of each iterator on a body edge."""
+    sdfg = program.to_sdfg(simplify=True)
+    assert FuseConsecutiveLoops().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_fused_range_keeps_the_iterations_of_an_empty_side()
+    test_bodies_that_only_look_alike_are_not_fused(_swapped_scratches)
+    test_bodies_that_only_look_alike_are_not_fused(_different_reductions)
+    test_bodies_that_only_look_alike_are_not_fused(_iterators_read_after)

@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import LoopRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes import SimplifyInductionVariables
 
 
@@ -678,6 +679,36 @@ def test_counter_reseeded_without_reading_itself_is_not_folded():
     assert str(read.data.subset) == "k"
 
 
+def test_a_step_assigned_in_the_loop_is_not_folded():
+    """``k += step`` with ``step`` reassigned in a body branch has no closed form."""
+    sdfg = dace.SDFG("iv_step_reassigned")
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_symbol("step", dace.int64)
+    sdfg.add_array("out", [6], dace.int64)
+    start = sdfg.add_state(is_start_block=True)
+    loop = LoopRegion("loop", "i < 6", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop)
+    sdfg.add_edge(start, loop, dace.InterstateEdge(assignments={"k": "0", "step": "1"}))
+    read = loop.add_state("read", is_start_block=True)
+    tasklet = read.add_tasklet("t", {}, {"o"}, "o = k")
+    read.add_edge(tasklet, "o", read.add_write("out"), None, dace.Memlet("out[i]"))
+    guard = ConditionalBlock("guard", sdfg=sdfg)
+    loop.add_node(guard)
+    loop.add_edge(read, guard, dace.InterstateEdge())
+    arm = ControlFlowRegion("arm", sdfg=sdfg)
+    arm.add_edge(
+        arm.add_state("a", is_start_block=True), arm.add_state("b"), dace.InterstateEdge(assignments={"step": "5"})
+    )
+    guard.add_branch(CodeBlock("i == 3"), arm)
+    loop.add_edge(guard, loop.add_state("last"), dace.InterstateEdge(assignments={"k": "k + step"}))
+
+    sdfg.simplify()
+    out = np.zeros(6, dtype=np.int64)
+    sdfg(out=out)
+
+    assert list(out) == [0, 1, 2, 3, 8, 13]
+
+
 if __name__ == "__main__":
     test_folds_memlet_subset_and_removes_dead_assignment()
     test_no_action_when_no_derived_iv()
@@ -703,3 +734,4 @@ if __name__ == "__main__":
     test_llvm_two_independent_derived_ivs_same_basis()
     test_does_not_fold_conditional_argmax_iv()
     test_counter_reseeded_without_reading_itself_is_not_folded()
+    test_a_step_assigned_in_the_loop_is_not_folded()

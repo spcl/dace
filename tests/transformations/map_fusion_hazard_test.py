@@ -498,8 +498,8 @@ def test_horizontal_fusion_must_not_merge_a_read_with_an_unordered_in_place_upda
 
 def test_vertical_fusion_must_not_move_a_side_read_past_the_in_place_write():
     """The first Map reads ``X`` into ``d`` (the intermediate) and, in another tasklet, into ``s``; the second updates
-    ``X`` from ``d``. The intermediate orders only the read feeding it: fused, the copy into ``s`` could follow the
-    update."""
+    ``X`` from ``d``. The intermediate orders only the read feeding it: fused, an edge in the body keeps the copy into
+    ``s`` ahead of the update."""
     sdfg = dace.SDFG(unique_name("side_read_before_update"))
     sdfg.add_array("X", [2, N], dace.float64)
     sdfg.add_array("s", [N], dace.float64)
@@ -521,7 +521,13 @@ def test_vertical_fusion_must_not_move_a_side_read_past_the_in_place_write():
     }
     xform = dftrans.MapFusionVertical()
     xform.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), match, 0)
-    assert not xform.can_be_applied(state, 0, sdfg)
+    assert xform.can_be_applied(state, 0, sdfg)
+
+    side_read = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == "first_s")
+    update = next(e.src for e in state.in_edges(state.exit_node(second)))
+    xform.apply(state, sdfg)
+
+    assert update in state.bfs_nodes(side_read)
 
 
 def _fused_shift(fuse: bool) -> np.ndarray:

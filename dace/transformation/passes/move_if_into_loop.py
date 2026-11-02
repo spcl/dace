@@ -129,16 +129,6 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
     return cb, cond, region
 
 
-def find_match(sdfg: SDFG) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
-    """Find a ``ConditionalBlock`` guarding (loop-invariant prep then) a loop."""
-    for cb in sdfg.all_control_flow_regions(recursive=True):
-        if isinstance(cb, ConditionalBlock):
-            m = match_guard(cb)
-            if m is not None:
-                return m
-    return None
-
-
 def upward_exposed_reads(st: SDFGState) -> set:
     """Containers ``st`` reads before writing -- the only reads repetition can change.
 
@@ -366,90 +356,84 @@ def splice_empty_prep_states(parent: ControlFlowRegion, block: ControlFlowBlock)
         pass
 
 
-def _match_imperfect(sdfg: SDFG) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
-    """Find a ``ConditionalBlock`` guarding a *heterogeneous* body: a linear
-    chain of ``LoopRegion`` and bare ``SDFGState`` blocks with at least one of
-    each (a frontend imperfect nest, e.g. ``if c: { for j: body1 ; s }``).
+def match_imperfect(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
+    """Match ``cb`` as a guard over a *heterogeneous* body: a linear chain of ``LoopRegion`` and bare ``SDFGState``
+    blocks with at least one of each (a frontend imperfect nest, e.g. ``if c: { for j: body1 ; s }``).
 
-    Distinct from :func:`find_match`, which only takes ``[prep..., one loop]``;
-    here the guard is duplicated into every sibling (bare states first wrapped
-    in a trivial single-iteration loop, so the duplicated guard sits *inside*
-    that loop -- never a top-level ``ConditionalBlock``; the wrapper is spliced
-    out later by the ``untrivialize`` stage). The condition must be invariant
-    w.r.t. every sibling loop and unclobbered by any sibling bare state. A
-    region carrying an interstate-edge assignment is a no-op (the assignment
-    cannot be moved under the per-sibling guards, so it would run
-    unconditionally) and a loud warning is emitted.
+    Distinct from :func:`match_guard`, which only takes ``[prep..., one loop]``; here the guard is duplicated into
+    every sibling (bare states first wrapped in a trivial single-iteration loop, so the duplicated guard sits *inside*
+    that loop -- never a top-level ``ConditionalBlock``; the wrapper is spliced out later by the ``untrivialize`` stage).
+    The condition must be invariant w.r.t. every sibling loop and unclobbered by any sibling bare state. A region
+    carrying an interstate-edge assignment is a no-op (the assignment cannot be moved under the per-sibling guards, so
+    it would run unconditionally) and a loud warning is emitted.
 
-    :returns: ``(cond_block, condition, region)`` or ``None``.
+    :param cb: The conditional block to match.
+    :returns: ``(cb, condition, region)`` or ``None``.
     """
-    for cb in sdfg.all_control_flow_regions(recursive=True):
-        if not isinstance(cb, ConditionalBlock) or len(cb.branches) != 1:
-            continue
-        cond, region = cb.branches[0]
-        if cond is None or not isinstance(region, ControlFlowRegion):
-            continue
-        order = _linear_blocks(region, allow_assignments=True)
-        if order is None:
-            continue
-        if any(not isinstance(b, (LoopRegion, SDFGState)) for b in order):
-            continue
-        loops = [b for b in order if isinstance(b, LoopRegion)]
-        states = [b for b in order if isinstance(b, SDFGState)]
-        if not loops or not states:
-            continue  # heterogeneous only; the pure cases are find_match's job
-        # Leave the existing ``[prep states..., exactly one trailing loop]``
-        # fast path entirely to find_match (it places prep *inside* that loop).
-        if len(loops) == 1 and order[-1] is loops[0] and all(isinstance(b, SDFGState) for b in order[:-1]):
-            continue
-        if any(e.data.assignments for e in region.edges()):
-            warnings.warn(
-                "\n" + "!" * 78 + "\n"
-                "MoveIfIntoLoop: refusing to distribute guard "
-                f"{cond.as_string!r} over an imperfect nest in "
-                f"{cb.label!r}: the branch carries an interstate-edge "
-                "assignment that cannot be moved under the per-sibling "
-                "guards and would execute UNCONDITIONALLY. Left unchanged.\n" + "!" * 78,
-                stacklevel=2,
-            )
-            continue  # conservative: no inter-block interstate assignments
-        cfree = {str(s) for s in cond.get_free_symbols()}
-        # The guard's truth must be the same for every sibling: it must not
-        # depend on any sibling loop's variable / written data, nor on data a
-        # sibling bare state writes.
-        if any(str(lp.loop_variable) in cfree or (cfree & loop_analysis.written_names(lp)) for lp in loops):
-            continue
-        if any(cfree & _state_writes(st) for st in states):
-            continue
-        return cb, cond, region
-    return None
+    if len(cb.branches) != 1:
+        return None
+    cond, region = cb.branches[0]
+    if cond is None or not isinstance(region, ControlFlowRegion):
+        return None
+    order = _linear_blocks(region, allow_assignments=True)
+    if order is None:
+        return None
+    if any(not isinstance(b, (LoopRegion, SDFGState)) for b in order):
+        return None
+    loops = [b for b in order if isinstance(b, LoopRegion)]
+    states = [b for b in order if isinstance(b, SDFGState)]
+    if not loops or not states:
+        return None  # heterogeneous only; the pure cases are match_guard's job
+    # Leave the existing ``[prep states..., exactly one trailing loop]``
+    # fast path entirely to match_guard (it places prep *inside* that loop).
+    if len(loops) == 1 and order[-1] is loops[0] and all(isinstance(b, SDFGState) for b in order[:-1]):
+        return None
+    if any(e.data.assignments for e in region.edges()):
+        warnings.warn(
+            "\n" + "!" * 78 + "\n"
+            "MoveIfIntoLoop: refusing to distribute guard "
+            f"{cond.as_string!r} over an imperfect nest in "
+            f"{cb.label!r}: the branch carries an interstate-edge "
+            "assignment that cannot be moved under the per-sibling "
+            "guards and would execute UNCONDITIONALLY. Left unchanged.\n" + "!" * 78,
+            stacklevel=2,
+        )
+        return None  # conservative: no inter-block interstate assignments
+    cfree = {str(s) for s in cond.get_free_symbols()}
+    # The guard's truth must be the same for every sibling: it must not
+    # depend on any sibling loop's variable / written data, nor on data a
+    # sibling bare state writes.
+    if any(str(lp.loop_variable) in cfree or (cfree & loop_analysis.written_names(lp)) for lp in loops):
+        return None
+    if any(cfree & _state_writes(st) for st in states):
+        return None
+    return cb, cond, region
 
 
 def _guarded_loop(loop: LoopRegion, cond: CodeBlock) -> LoopRegion:
-    """Return a copy of ``loop`` whose body is ``if cond: <original body>``."""
-    lp = copy.deepcopy(loop)
-    body_blocks = list(lp.nodes())
-    body_edges = list(lp.edges())
-    body_start = lp.start_block
-    inner = ControlFlowRegion(label=f"{lp.label}_g")
+    """Make the body of ``loop``, already out of its region, ``if cond: <original body>``; returns ``loop``."""
+    body_blocks = list(loop.nodes())
+    body_edges = list(loop.edges())
+    body_start = loop.start_block
+    inner = ControlFlowRegion(label=f"{loop.label}_g")
     for b in body_blocks:
-        lp.remove_node(b)
+        loop.remove_node(b)
     for b in body_blocks:
         inner.add_node(b, ensure_unique_name=True)
     for e in body_edges:
-        inner.add_edge(e.src, e.dst, copy.deepcopy(e.data))
+        inner.add_edge(e.src, e.dst, e.data)
     keep_start_block(inner, body_start)
-    icb = ConditionalBlock(label=f"{lp.label}_if")
+    icb = ConditionalBlock(label=f"{loop.label}_if")
     icb.add_branch(CodeBlock(cond.as_string), inner)
-    lp.add_node(icb, is_start_block=True, ensure_unique_name=True)
-    return lp
+    loop.add_node(icb, is_start_block=True, ensure_unique_name=True)
+    return loop
 
 
 def _trivial_guarded_loop(state: SDFGState, cond: CodeBlock) -> LoopRegion:
-    """Wrap ``state`` in a trivial single-iteration loop whose body is
+    """Wrap ``state``, already out of its region, in a trivial single-iteration loop whose body is
     ``if cond: <state>`` (the free-state perfect-nesting wrapper)."""
     inner = ControlFlowRegion(label=f"{state.label}_g")
-    inner.add_node(copy.deepcopy(state), is_start_block=True)
+    inner.add_node(state, is_start_block=True)
     icb = ConditionalBlock(label=f"{state.label}_if")
     icb.add_branch(CodeBlock(cond.as_string), inner)
     tv = f"__triv_{state.label}"
@@ -488,19 +472,25 @@ class MoveIfIntoLoop(ppl.Pass):
         :returns: Number of guards moved, or ``None`` if none.
         """
         count = 0
+        # One sweep per round: a move keeps every block alive, so the rest of the snapshot stays valid and a guard
+        # the move stacked on another is reached by the next sweep.
         while True:
-            m = find_match(sdfg)
-            if m is not None:
-                self._move(*m)
-                count += 1
-                continue
-            m = _match_imperfect(sdfg)
-            if m is not None:
-                self._move_imperfect(*m)
-                count += 1
-                continue
-            break
-        return count or None
+            guards = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, ConditionalBlock)]
+            moved = 0
+            for cb in guards:
+                m = match_guard(cb)
+                if m is not None:
+                    self._move(*m)
+                    moved += 1
+            if not moved:
+                for cb in guards:
+                    m = match_imperfect(cb)
+                    if m is not None:
+                        self._move_imperfect(*m)
+                        moved += 1
+            if not moved:
+                return count or None
+            count += moved
 
     @staticmethod
     def push(cb: ConditionalBlock) -> bool:
@@ -587,11 +577,12 @@ class MoveIfIntoLoop(ppl.Pass):
         out_edges = list(parent.out_edges(cb))
         is_start = parent.start_block is cb
 
-        # ``_guarded_loop`` / ``_trivial_guarded_loop`` copy each block, and ``cb`` is dropped below.
-        order = _linear_blocks(region, allow_assignments=True)
+        # ``cb`` is dropped below, so its branch hands its blocks over.
+        order = required(_linear_blocks(region, allow_assignments=True))
+        for b in order:
+            region.remove_node(b)
         units = [
-            (_guarded_loop(b, cond) if isinstance(b, LoopRegion) else _trivial_guarded_loop(b, cond))
-            for b in required(order)
+            (_guarded_loop(b, cond) if isinstance(b, LoopRegion) else _trivial_guarded_loop(b, cond)) for b in order
         ]
 
         for u in units:

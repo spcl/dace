@@ -469,12 +469,20 @@ def _split_off_first_map(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
                 for n in sdutil.find_upstream_nodes(first, st)
                 if n is not first and not isinstance(n, AccessNode) and st.entry_node(n) is None
             ]
-            if upstream:
+            exit_node = st.exit_node(first)
+            # state_fission keeps every writer of a node together: a sibling writing the same node moves along
+            if upstream or any(e.src is not exit_node for o in st.out_edges(exit_node) for e in st.in_edges(o.dst)):
                 continue
             scope = st.scope_subgraph(first, include_entry=True, include_exit=True).nodes()
             readers = [e.src for e in st.in_edges(first) if isinstance(e.src, AccessNode)]
+            # A node other maps write as well would pull them along: running first, this map writes one of its own
+            first_exit = st.exit_node(first)
+            for edge in st.out_edges(first_exit):
+                if any(e.src is not first_exit for e in st.in_edges(edge.dst)):
+                    st.remove_edge(edge)
+                    st.add_edge(first_exit, edge.src_conn, st.add_access(edge.dst.data), edge.dst_conn, edge.data)
             state_fission(SubgraphView(st, list(scope) + readers))
-            return True
+            return bool(st.nodes())
     return False
 
 

@@ -325,6 +325,19 @@ def test_free_map_permissive():
     assert applied == 1
 
 
+def test_an_update_by_a_wider_type_stays_a_plain_update():
+    """``acc = acc * a[0]``, int64 by float64: as a WCR the increment 0.5 truncates to 0 before it multiplies."""
+    sdfg = dace.SDFG("int_update_by_float")
+    sdfg.add_array("acc", [1], dace.int64)
+    sdfg.add_array("a", [1], dace.float64)
+    state = sdfg.add_state()
+    update = state.add_tasklet("update", {"x": None, "y": None}, {"o": None}, "o = x * y")
+    state.add_edge(state.add_read("acc"), None, update, "x", dace.Memlet("acc[0]"))
+    state.add_edge(state.add_read("a"), None, update, "y", dace.Memlet("a[0]"))
+    state.add_edge(update, "o", state.add_write("acc"), None, dace.Memlet("acc[0]"))
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=True) == 0
+
+
 def test_aug_assign_same_inconns():
 
     @dace.program
