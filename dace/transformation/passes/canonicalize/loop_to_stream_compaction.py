@@ -146,6 +146,8 @@ import ast
 import copy
 from typing import Any, NamedTuple
 
+import sympy
+
 import dace
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
@@ -162,6 +164,7 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
     SDFGState,
+    SymbolResolver,
 )
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -696,7 +699,12 @@ class LoopToStreamCompaction(ppl.Pass):
         # Read before anything is added: the phase copies rename each level's iterator, and a
         # rename must carry the dtype the ORIGINAL level declares, level by level.
         iterator_dtypes = [self.iterator_dtype(level.loop, sdfg, resolver) for level in m.levels]
-        shape = [level.trip for level in m.levels]
+        # A level past its end runs nothing, but an array sized by its bare count would be negative.
+        facts = SymbolResolver().facts_at(parent)
+        shape = [
+            level.trip if symbolic.provably_nonnegative(level.trip, facts) else sympy.Max(0, level.trip)
+            for level in m.levels
+        ]
         mask_name, _ = sdfg.add_array(MASK_PREFIX + root.label, shape, MASK_DTYPE, transient=True, find_new_name=True)
         idx_name, _ = sdfg.add_array(IDX_PREFIX + root.label, shape, COUNT_DTYPE, transient=True, find_new_name=True)
         total_name, _ = sdfg.add_scalar(TOTAL_PREFIX + root.label, COUNT_DTYPE, transient=True, find_new_name=True)
