@@ -128,8 +128,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         dtype=bool,
         default=False,
         category="Applicability",
-        desc="If `True` both Maps may update one container in place and a shared intermediate may be accessed further "
-        "down its dataflow, whatever `strict_dataflow` says.",
+        desc="If `True` both Maps may update one container in place, and an ordering edge may join them, "
+        "whatever `strict_dataflow` says.",
     )
     assume_always_shared = properties.Property(
         dtype=bool,
@@ -1180,7 +1180,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #   if the intermediate is used further down in the same datadflow,
                 #   then we consider that the maps can not be fused. But we only
                 #   do this in the strict data flow mode.
-                if self.strict_dataflow and not self.relaxed_dataflow:
+                if self.strict_dataflow and reduced:
                     if self._is_data_accessed_downstream(
                         data=intermediate_node.data,
                         graph=state,
