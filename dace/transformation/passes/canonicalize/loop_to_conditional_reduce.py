@@ -182,6 +182,9 @@ class LoopToConditionalReduce(ppl.Pass):
                 assigned = {name for edge in region.all_interstate_edges() for name in edge.data.assignments}
                 if assigned & m.true_state.free_symbols or self.read_elsewhere(sd, assigned, m.cond_block):
                     continue
+                # An assignment past the block reaches the next iteration's guard, which the rewrite cannot carry
+                if any(edge.data.assignments for edge in region.dfs_edges(m.cond_block)):
+                    continue
                 if self._rewrite(m, sd):
                     rewritten += 1
         return rewritten or None
