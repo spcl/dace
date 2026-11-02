@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import array_facts
 from dace.transformation.passes.parallelization.parallelize_loops import ParallelizeLoops
@@ -316,6 +317,26 @@ def test_a_difference_is_not_nonnegative():
         state.add_edge(t, "o", state.add_write(name), None, dace.Memlet(f"{name}[0]"))
     known = array_facts.nonnegative_containers(sdfg)
     assert {"a", "b", "s"} <= known and "d" not in known
+
+
+def test_a_constant_fill_is_nonnegative_before_validation_drops_its_unwired_value_connector():
+    """Only validation removes the unwired value connector of a fill; the fact must not depend on that having run."""
+    sdfg = dace.SDFG("nonneg_fill")
+    sdfg.add_array("a", [4], dace.int64, transient=True)
+    sdfg.add_scalar("v", dace.int64, transient=True)
+    sdfg.add_array("b", [4], dace.int64, transient=True)
+    state = sdfg.add_state()
+    fill = FillLibraryNode("fill_a", value=0)
+    state.add_node(fill)
+    state.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write("a"), None, dace.Memlet("a[0:4]"))
+    wired = FillLibraryNode("fill_b", value=0)
+    state.add_node(wired)
+    t = state.add_tasklet("set_v", {}, {"o"}, "o = -1")
+    state.add_edge(t, "o", value := state.add_access("v"), None, dace.Memlet("v[0]"))
+    state.add_edge(value, None, wired, FillLibraryNode.VALUE_CONNECTOR_NAME, dace.Memlet("v[0]"))
+    state.add_edge(wired, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write("b"), None, dace.Memlet("b[0:4]"))
+    known = array_facts.nonnegative_containers(sdfg, frozenset({"v"}))
+    assert "a" in known and "b" not in known
 
 
 if __name__ == "__main__":
