@@ -233,6 +233,7 @@ def narrow_fill_map(state: SDFGState, entry: nodes.MapEntry, zeroed: nodes.Acces
     if axis == -1:
         scope = state.scope_subgraph(entry).nodes()
         sources = {e.src for e in state.in_edges(entry)}
+        state.keep_order_through([*scope, zeroed])
         state.remove_nodes_from([*scope, zeroed])
         state.remove_nodes_from([n for n in sources if isinstance(n, nodes.AccessNode) and state.degree(n) == 0])
         return
@@ -245,7 +246,8 @@ def narrow_fill_map(state: SDFGState, entry: nodes.MapEntry, zeroed: nodes.Acces
 
 
 def drop_fill(state: SDFGState, fill: FillLibraryNode, zeroed: nodes.AccessNode) -> None:
-    """Remove ``fill`` and the access node it writes."""
+    """Remove ``fill`` and the access node it writes, keeping any order that ran through them."""
+    state.keep_order_through([fill, zeroed])
     state.remove_node(fill)
     state.remove_node(zeroed)
 
