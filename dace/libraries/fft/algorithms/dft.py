@@ -214,6 +214,14 @@ def add_dft_axis_state(
     # Divide by a FLOATING denominator: ``1/(M*N)`` over integer symbols is C integer division, i.e. zero. In the
     # element's own precision: ``complex64 * double`` multiplies to zero.
     scale = "" if is_unit(factor) else f"o *= {real}({sym2cpp(in_floating_point(factor))});"
+    index = ", ".join(f"__i{d}" for d in range(ndim))
+    if dace.symbolic.equal_valued(1, shape[axis]):
+        # A one-point DFT is a scaled copy; its one-element memlets would make ``inp`` and ``tw`` values, not pointers
+        ranges = index_ranges(shape, "__i")
+        code = f"o = i;\n{scale}"
+        return add_elementwise_state(
+            sdfg, after, f"dft_axis{axis}", src, dst, ranges, index, index, code, language=dace.Language.CPP
+        )
     twiddles, after = add_twiddle_state(sdfg, after, shape[axis], axis, element, inverse, sdfg.arrays[dst].storage)
     # The exponent is reduced modulo the length, as an FFT's twiddle factors are: one table entry per residue
     code = f"""
@@ -233,7 +241,7 @@ o = sum;
             "tw": dace.Memlet.from_array(twiddles, sdfg.arrays[twiddles]),
         },
         code,
-        {"o": dace.Memlet(data=dst, subset=", ".join(f"__i{d}" for d in range(ndim)))},
+        {"o": dace.Memlet(data=dst, subset=index)},
         language=dace.Language.CPP,
         external_edges=True,
     )
