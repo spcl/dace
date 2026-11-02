@@ -8,7 +8,7 @@ import dace
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import helpers as xfh
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.fold_constant_tables import FoldConstantTables
+from dace.transformation.passes.fold_constant_tables import FoldConstantTables, read_constant_tables
 
 N = 8
 TABLE = (1, 2, 1, 2, 0)
@@ -100,8 +100,20 @@ def test_a_table_written_again_stays_a_container():
     assert "iphase" not in sdfg.constants
 
 
+def test_a_literal_read_of_a_table_on_an_edge_becomes_its_value():
+    sdfg = dace.SDFG("table_read_on_edge")
+    sdfg.add_constant("table", np.array(TABLE, dtype=np.int32))
+    first = sdfg.add_state(is_start_block=True)
+    edge = sdfg.add_edge(first, sdfg.add_state(), dace.InterstateEdge(assignments={"k": "(table[3])", "n": "table[i]"}))
+
+    assert read_constant_tables(sdfg) == 1
+
+    assert edge.data.assignments == {"k": str(TABLE[3]), "n": "table[i]"}
+
+
 if __name__ == "__main__":
     test_a_literal_table_becomes_a_constant_and_computes_the_same(False)
     test_a_literal_table_becomes_a_constant_and_computes_the_same(True)
     test_an_outlined_reader_of_the_constant_still_compiles_and_computes_the_same()
     test_a_table_written_again_stays_a_container()
+    test_a_literal_read_of_a_table_on_an_edge_becomes_its_value()

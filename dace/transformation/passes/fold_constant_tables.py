@@ -9,7 +9,7 @@ import numpy as np
 from dace import data, properties, symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -24,7 +24,7 @@ class FoldConstantTables(ppl.Pass):
     removing the fill. Host code and every kernel then read the same constant array, which needs no placement.
 
     Only a transient 1-D array qualifies whose every element is written exactly once, by an input-less tasklet
-    assigning a literal, in one state outside every loop, and that nothing else writes.
+    assigning a literal, in one state, and that nothing else writes. A loop around that state rewrites the same values.
     """
 
     def modifies(self) -> ppl.Modifies:
@@ -49,9 +49,46 @@ class FoldConstantTables(ppl.Pass):
         return OrderedSet(folded) or None
 
 
+def read_constant_tables(sdfg: SDFG) -> int:
+    """Write each literal read of a 1-D constant on an interstate edge as its value, so that a symbol taken from a table
+    is a number: lulesh's face corners index the arrays they select, and a symbolic index proves nothing disjoint.
+    :return: the number of assignments rewritten."""
+    rewritten = 0
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        tables = {name for name, value in nsdfg.constants.items() if np.ndim(value) == 1}
+        if not tables:
+            continue
+        for edge in nsdfg.all_interstate_edges():
+            for name, value in edge.data.assignments.items():
+                if any(table in value for table in tables):
+                    parsed = ast.parse(value, mode="eval")
+                    written = ast.unparse(parsed)
+                    read = ast.unparse(ConstantReads(nsdfg, tables).visit(parsed))
+                    if read != written:
+                        edge.data.assignments[name] = read
+                        rewritten += 1
+    return rewritten
+
+
+class ConstantReads(ast.NodeTransformer):
+    """Replace ``table[literal]`` by the element, for ``tables`` among ``sdfg``'s constants."""
+
+    def __init__(self, sdfg: SDFG, tables: set[str]) -> None:
+        self.sdfg = sdfg
+        self.tables = tables
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+        self.generic_visit(node)
+        if not isinstance(node.value, ast.Name) or node.value.id not in self.tables:
+            return node
+        if not isinstance(node.slice, ast.Constant) or not isinstance(node.slice.value, int):
+            return node
+        return ast.Constant(self.sdfg.constants[node.value.id][node.slice.value].item())
+
+
 def literal_fills(sdfg: SDFG) -> dict[str, Fill]:
-    """Transient 1-D tables whose every element is written once, by a tasklet assigning a literal, in one state
-    outside every loop, and that nothing else writes."""
+    """Transient 1-D tables whose every element is written once, by a tasklet assigning a literal, in one state, and
+    that nothing else writes."""
     fills: dict[str, Fill] = {}
     refused: OrderedSet[str] = OrderedSet(sdfg.constants)
     for state in sdfg.states():
@@ -62,7 +99,7 @@ def literal_fills(sdfg: SDFG) -> dict[str, Fill]:
             for edge in state.in_edges(node):
                 write = literal_write(state, edge)
                 owner = fills.setdefault(node.data, (state, {}))[0]
-                if write is None or owner is not state or in_a_loop(state):
+                if write is None or owner is not state:
                     refused.add(node.data)
                 else:
                     fills[node.data][1][edge.src] = write
@@ -93,13 +130,3 @@ def literal_write(state: SDFGState, edge) -> tuple[int, object] | None:
     except (SyntaxError, ValueError, TypeError):
         return None
     return int(index), value
-
-
-def in_a_loop(block: SDFGState) -> bool:
-    """A ``LoopRegion`` of the block's own SDFG encloses it."""
-    region = block.parent_graph
-    while region is not None and not isinstance(region, SDFG):
-        if isinstance(region, LoopRegion):
-            return True
-        region = region.parent_graph
-    return False

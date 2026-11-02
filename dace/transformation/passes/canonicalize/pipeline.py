@@ -107,9 +107,10 @@ from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowEli
 from dace.transformation.passes.dead_fill_elimination import DeadFillElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.demote_non_structural_symbols import DemoteNonStructuralSymbols
+from dace.transformation.passes.detach_disjoint_reads import DetachDisjointReads
 from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.transformation.passes.equalize_symbol_dtypes import EqualizeSymbolDtypes, equalize
-from dace.transformation.passes.fold_constant_tables import FoldConstantTables
+from dace.transformation.passes.fold_constant_tables import FoldConstantTables, read_constant_tables
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
@@ -220,9 +221,10 @@ class PropagateSymbols(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> bool | None:
+        tables = read_constant_tables(sdfg)
         symbols = SymbolPropagation().apply_pass(sdfg, {})
         constants = ConstantPropagation().apply_pass(sdfg, {})
-        return True if symbols is not None or constants is not None else None
+        return True if tables or symbols is not None or constants is not None else None
 
 
 def symbol_phase() -> list[ppl.Pass]:
@@ -969,6 +971,7 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
             FuseLoops(),
             PatternApplyOnceEverywhere([MapCollapse()]),
             PatternApplyOnceEverywhere([DistributeTaskletIntoMap()]),
+            DetachDisjointReads(),
             ppl.Pipeline(
                 [
                     FuseMaps(allow_intermediates_with_symbolic_size=True, partial_reduce_fusion=True),
