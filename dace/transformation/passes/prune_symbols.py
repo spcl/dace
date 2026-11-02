@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import itertools
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from dace import SDFG, dtypes, properties, symbolic
@@ -49,20 +50,25 @@ class RemoveUnusedSymbols(ppl.Pass):
         result: set[str] = set()
 
         repository_symbols_to_consider = self.symbols or set(sdfg.symbols.keys())
+        bound_symbols = {sym for isedge in sdfg.all_interstate_edges() for sym in isedge.data.assignments}
 
-        # Compute used symbols
-        used_symbols = self.used_symbols(sdfg)
+        # Only these names are ever acted on, so the walk stops once each is known to be used
+        unused_symbols = repository_symbols_to_consider | bound_symbols
+        for used in self.symbol_uses(sdfg):
+            unused_symbols -= used
+            if not unused_symbols:
+                break
 
         # Remove unused symbols from interstate edge assignments.
         modified = False
-        for isedge in sdfg.all_interstate_edges():
-            edge_symbols_to_consider = set(isedge.data.assignments.keys())
-            for sym in edge_symbols_to_consider - used_symbols:
-                del isedge.data.assignments[sym]
-                modified = True
+        if unused_symbols & bound_symbols:
+            for isedge in sdfg.all_interstate_edges():
+                for sym in isedge.data.assignments.keys() & unused_symbols:
+                    del isedge.data.assignments[sym]
+                    modified = True
 
         # Remove unused symbols from the SDFG's symbols repository.
-        for sym in repository_symbols_to_consider - used_symbols:
+        for sym in repository_symbols_to_consider & unused_symbols:
             if sym in sdfg.symbols:
                 sdfg.remove_symbol(sym)
                 result.add(sym)
@@ -93,45 +99,32 @@ class RemoveUnusedSymbols(ppl.Pass):
         return f"Removed {len(pass_retval)} unused symbols: {pass_retval}."
 
     def used_symbols(self, sdfg: SDFG) -> set[str]:
-        result = set()
+        return set().union(*self.symbol_uses(sdfg))
+
+    def symbol_uses(self, sdfg: SDFG) -> Iterator[set[str]]:
+        """The names ``sdfg`` reads, in batches, the cheap sources first."""
+        for e in sdfg.all_interstate_edges():
+            yield e.data.free_symbols
+
+        for desc in sdfg.arrays.values():
+            yield set(map(str, desc.free_symbols))
 
         # Add symbols in global/init/exit code
         for code in itertools.chain(sdfg.global_code.values(), sdfg.init_code.values(), sdfg.exit_code.values()):
-            result |= symbolic.symbols_in_code(code.as_string)
-
-        for desc in sdfg.arrays.values():
-            result |= set(map(str, desc.free_symbols))
+            yield symbolic.symbols_in_code(code.as_string)
 
         for block in sdfg.all_control_flow_blocks():
             # In addition to the standard free symbols, we are conservative with other tasklet languages by
             # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are
             # ok to include
             if isinstance(block, SDFGState):
-                result |= block.free_symbols
+                yield block.free_symbols
                 for node in block.nodes():
                     if isinstance(node, nodes.Tasklet):
-                        if node.code.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(
-                                node.code.as_string, sdfg.symbols.keys(), node.ignored_symbols
-                            )
-                        if node.code_global.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(
-                                node.code_global.as_string, sdfg.symbols.keys(), node.ignored_symbols
-                            )
-                        if node.code_init.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(
-                                node.code_init.as_string, sdfg.symbols.keys(), node.ignored_symbols
-                            )
-                        if node.code_exit.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(
-                                node.code_exit.as_string, sdfg.symbols.keys(), node.ignored_symbols
-                            )
+                        for code in (node.code, node.code_global, node.code_init, node.code_exit):
+                            if code.language != dtypes.Language.Python:
+                                yield symbolic.symbols_in_code(code.as_string, sdfg.symbols.keys(), node.ignored_symbols)
             else:
                 # The blocks inside a region are visited themselves: walking them again for every enclosing region
                 # repeats the whole nest once per nesting level
-                result |= block.used_symbols(all_symbols=True, with_contents=False)
-
-        for e in sdfg.all_interstate_edges():
-            result |= e.data.free_symbols
-
-        return result
+                yield block.used_symbols(all_symbols=True, with_contents=False)
