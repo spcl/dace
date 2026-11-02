@@ -1083,7 +1083,6 @@ def finish() -> Stages:
         # run; the reclaim stays last for the arrays the fold leaves.
         (FINISH, PatternApplyOnceEverywhere([RedundantMapReadCopy()])),
         (FINISH, ppl.Pipeline([ArrayElimination(fold_ordered_copies=True, nested=True)])),
-        (FINISH, ConsolidateEdges()),
     ]
     return s
 
