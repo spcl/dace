@@ -69,6 +69,44 @@ def test_loop_fusion_keeps_a_write_read_pair_at_unrelated_fixed_indices():
     assert sdfg.apply_transformations_repeated(LoopFusion) == 0
 
 
+@dace.program
+def seeded_max(m: dace.float64[N, N], out: dace.float64[3]):
+    v = 100.0
+    xi = -1
+    yi = -1
+    for i in range(N):
+        for j in range(N):
+            if m[i, j] > v:
+                v = m[i, j]
+                xi = i
+                yi = j
+    out[0] = v
+    out[1] = xi
+    out[2] = yi
+
+
+def test_a_max_seeded_above_the_data_keeps_its_seed():
+    m = np.random.default_rng(1).random((6, 6))
+    _assert_canon_keeps(seeded_max, "seeded_max", {"m": m, "out": np.zeros(3)}, N=6)
+
+
+@dace.program
+def reseeded_max(a: dace.float64[N], out: dace.float64[1]):
+    x = a[0]
+    a[0] = 50.0
+    for i in range(1, N):
+        if a[i] > x:
+            x = a[i]
+    out[0] = x
+
+
+def test_a_seed_read_before_a_store_is_not_the_stored_value():
+    a = np.random.default_rng(2).random(8)
+    _assert_canon_keeps(reseeded_max, "reseeded_max", {"a": a, "out": np.zeros(1)}, N=8)
+
+
 if __name__ == "__main__":
     test_a_write_offset_by_an_inner_iterator_stays_ordered()
+    test_a_max_seeded_above_the_data_keeps_its_seed()
+    test_a_seed_read_before_a_store_is_not_the_stored_value()
     test_loop_fusion_keeps_a_write_read_pair_at_unrelated_fixed_indices()
