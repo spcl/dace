@@ -879,5 +879,25 @@ def test_a_loop_header_reading_the_symbol_blocks_the_hoist():
     assert _apply(sdfg) == 0
 
 
+def test_a_read_after_a_zero_trip_loop_blocks_the_hoist():
+    """With ``N == 0`` the assignment never runs, and the read after the loop keeps ``k = 3``."""
+    sdfg, loop = _loop_after_entry("i < N", assignments={"k": "3"})
+    first = loop.add_state("first", is_start_block=True)
+    loop.add_edge(first, loop.add_state("second"), InterstateEdge(assignments={"k": "N + 5"}))
+    _write_symbol(sdfg.add_state_after(loop, "after"), "k")
+    assert _apply(sdfg) == 0
+
+
+def test_an_array_read_does_not_move_past_a_zero_trip_loop():
+    """The loop may be what makes ``a[M]`` a valid access."""
+    sdfg, loop = _loop_after_entry("i < N")
+    sdfg.add_array("a", [10], dace.int64)
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state("second")
+    loop.add_edge(first, second, InterstateEdge(assignments={"k": "a[M]"}))
+    _write_symbol(second, "k")
+    assert _apply(sdfg) == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
