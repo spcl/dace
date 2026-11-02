@@ -681,9 +681,10 @@ def nest_state_subgraph(
     # full upon nesting)
     input_arrays = {}
     output_arrays = {}
-    # A boundary edge's own endpoint is that boundary's interface, whatever its other edges are.
-    carried = {id(e.dst) for e in inputs if e.data.data is not None} | {
-        id(e.src) for e in outputs if e.data.data is not None
+    # A boundary edge's own endpoint is that boundary's interface, whatever its other edges are. A copy memlet naming
+    # the edge's other end carries that container, and this one needs its own interface.
+    carried = {id(e.dst) for e in inputs if e.data.data == getattr(e.dst, "data", None) and e.data.data is not None} | {
+        id(e.src) for e in outputs if e.data.data == getattr(e.src, "data", None) and e.data.data is not None
     }
     for node in subgraph.nodes():
         if isinstance(node, nodes.AccessNode) and node.data not in subgraph_transients:
