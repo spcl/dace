@@ -2416,6 +2416,19 @@ def test_a_loop_that_does_not_run_keeps_the_accumulator_seed():
     assert_canon_matches_the_program(scalar_carry_from_m, args, N=8, M=8)
 
 
+@dace.program
+def carry_on_a_body_slot(a: dace.float64[3, N], idx: dace.int64[N], d: dace.float64[N]):
+    for i in range(1, N):
+        j = idx[i]
+        a[j, i] = a[j, i - 1] + d[i]
+
+
+def test_a_slot_chosen_per_iteration_is_no_scan():
+    idx = np.array([0, 1, 0, 2, 1, 0, 2, 1], dtype=np.int64)
+    args = dict(a=np.ones((3, 8)), idx=idx, d=np.arange(1.0, 9.0))
+    assert_canon_matches_the_program(carry_on_a_body_slot, args, N=8)
+
+
 if __name__ == "__main__":
     import sys
 

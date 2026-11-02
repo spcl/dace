@@ -1063,6 +1063,12 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
         break
     if matched is None:
         return []
+    # An index bound inside the body changes per iteration: it is no fixed slot of a scan
+    bound = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
+    for info in matched:
+        indices = [info.k_w, info.k_r, *(expr for _, expr in info.other_indices)]
+        if bound & {str(sym) for expr in indices for sym in as_basic(expr).free_symbols}:
+            return []
 
     # Body may write only the carriers we matched. Any other non-transient write
     # would need ``lastprivate``-style preservation that the rewrite doesn't model.
