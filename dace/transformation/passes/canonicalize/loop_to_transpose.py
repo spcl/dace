@@ -54,7 +54,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.narrowing import as_basic, as_expr
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.split_statements import value_edges
@@ -373,6 +373,11 @@ class LoopToTranspose(ppl.Pass):
         axes = [in_axis[var_at_out[b]] for b in range(d)]
         if axes == list(range(d)):
             return False  # identity permutation -- a plain copy, not a transpose
+
+        # The views and library calls below are sized by the loop counts: an empty loop must not size them negative.
+        facts = SymbolResolver().facts_at(cfg)
+        if not all(symbolic.provably_nonnegative(last - lo + 1, facts) for lo, last, _ in ranges.values()):
+            return False
 
         # Per-axis accessed ranges (the exact lo:hi:inc sub-grid, incl. affine coeff/off).
         def _side_ranges(

@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.pass_pipeline import Pipeline
@@ -230,6 +231,32 @@ def test_idempotent(program):
     lifted = _libnodes(sdfg)
     assert _apply(sdfg) == 0
     assert _libnodes(sdfg) == lifted
+
+
+def test_a_window_that_may_be_empty_stays_a_loop():
+    """``range(LO, HI)`` may run nothing: views sized by its count would be negative."""
+    LO, HI = dace.symbol("LO"), dace.symbol("HI")
+
+    @dace.program
+    def transpose_window(A: dace.float64[8, 8], B: dace.float64[8, 8]):
+        for i in range(LO, HI):
+            for j in range(LO, HI):
+                B[j, i] = A[i, j]
+
+    assert _apply(transpose_window.to_sdfg(simplify=True)) == 0
+
+
+def test_a_zero_extent_transpose_is_a_no_op():
+    """The BLAS call aborts the process on a zero extent."""
+
+    @dace.program
+    def transpose_nothing(A: dace.float64[N, M], B: dace.float64[M, N]):
+        B[:] = np.transpose(A)
+
+    sdfg = transpose_nothing.to_sdfg(simplify=True)
+    (node,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Transpose)]
+    node.implementation = "OpenBLAS"
+    sdfg(A=np.zeros((0, 3)), B=np.zeros((3, 0)), N=0, M=3)
 
 
 if __name__ == "__main__":
