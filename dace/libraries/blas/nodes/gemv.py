@@ -8,11 +8,31 @@ import dace.library
 import dace.sdfg.nodes
 from dace import memlet as mm
 from dace import properties, symbolic
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
-from dace.libraries.blas.nodes.matmul import _get_matmul_operands
+from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _matrix_operand
 from dace.sdfg import SDFG, SDFGState
 from dace.transformation.transformation import ExpandTransformation
+
+
+def gemv_operands(node: "Gemv", state: dace.SDFGState, sdfg: dace.SDFG) -> tuple:
+    """The operands of ``node``, with ``_A`` in its matrix view: a genuine ``(N, 1)`` keeps both dimensions.
+
+    :return: ``_A`` as ``(edge, descriptor, shape, strides)``, then the two vectors as :func:`_get_matmul_operands` does.
+    """
+    a, x, y = _get_matmul_operands(node, state, sdfg, name_lhs="_A", name_rhs="_x", name_out="_y")
+    return _matrix_operand(a), x, y
+
+
+def binds_a_value(*shapes: list) -> bool:
+    """Whether a vector of ``shapes`` has one element, whose memlet binds the value a vendor call needs a pointer to.
+
+    :param shapes: The shapes of the vectors.
+    :return: True if a vendor call cannot take them.
+    """
+    return any(symbolic.equal_valued(1, shape[0]) for shape in shapes)
 
 
 @dace.library.expansion
@@ -24,10 +44,10 @@ class ExpandGemvPure(ExpandTransformation):
         node.validate(parent_sdfg, parent_state)
         sdfg = dace.SDFG(node.label + "_sdfg")
         (
-            (edge_a, outer_array_a, _, _, shape_a, strides_a),
+            (edge_a, outer_array_a, shape_a, strides_a),
             (edge_x, outer_array_x, _, _, shape_x, strides_x),
             (edge_y, outer_array_y, _, _, shape_y, strides_y),
-        ) = _get_matmul_operands(node, parent_state, parent_sdfg, name_lhs="_A", name_rhs="_x", name_out="_y")
+        ) = gemv_operands(node, parent_state, parent_sdfg)
         dtype_a = outer_array_a.dtype.type
         dtype_x = outer_array_x.dtype.type
         dtype_y = outer_array_y.dtype.type
@@ -51,7 +71,7 @@ class ExpandGemvPure(ExpandTransformation):
         _, array_x = sdfg.add_array("_x", shape_x, dtype_x, strides=strides_x, storage=outer_array_x.storage)
         _, array_y = sdfg.add_array("_y", shape_y, dtype_y, strides=strides_y, storage=outer_array_y.storage)
 
-        mul_program = f"__out = {node.alpha} * __A * __x"
+        mul_program = f"__out = ({node.alpha}) * __A * __x"
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
@@ -91,7 +111,7 @@ class ExpandGemvPure(ExpandTransformation):
             output_nodes=output_nodes,
         )
 
-        add_program = f"__y_out = ({node.beta} * __y_in) + __tmp"
+        add_program = f"__y_out = (({node.beta}) * __y_in) + __tmp"
 
         memlet_idx = "__i"
 
@@ -122,10 +142,12 @@ class ExpandGemvCuBLAS(ExpandTransformation):
         node.validate(sdfg, state)
 
         (
-            (edge_a, outer_array_a, _, _, shape_a, strides_a),
+            (edge_a, outer_array_a, shape_a, strides_a),
             (edge_x, outer_array_x, _, _, shape_x, strides_x),
             (edge_y, outer_array_y, _, _, shape_y, strides_y),
-        ) = _get_matmul_operands(node, state, sdfg, name_lhs="_A", name_rhs="_x", name_out="_y")
+        ) = gemv_operands(node, state, sdfg)
+        if binds_a_value(shape_x, shape_y):
+            return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen
@@ -147,7 +169,7 @@ class ExpandGemvCuBLAS(ExpandTransformation):
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
         trans = "CUBLAS_OP_N" if transA else "CUBLAS_OP_T"
-        if not node.transA:
+        if not transA:
             m, n = n, m
 
         if veclen != 1:
@@ -224,10 +246,12 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         node.validate(sdfg, state)
 
         (
-            (edge_a, outer_array_a, _, _, shape_a, strides_a),
+            (edge_a, outer_array_a, shape_a, strides_a),
             (edge_x, outer_array_x, _, _, shape_x, strides_x),
             (edge_y, outer_array_y, _, _, shape_y, strides_y),
-        ) = _get_matmul_operands(node, state, sdfg, name_lhs="_A", name_rhs="_x", name_out="_y")
+        ) = gemv_operands(node, state, sdfg)
+        if binds_a_value(shape_x, shape_y):
+            return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen
@@ -253,7 +277,7 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
 
         layout = "CblasColMajor"
         trans = "CblasNoTrans" if transA else "CblasTrans"
-        if not node.transA:
+        if not transA:
             m, n = n, m
 
         if veclen != 1:
@@ -277,8 +301,8 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
             alpha = "&__alpha"
             beta = "&__beta"
 
-        code += f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, _A, {lda},
-                                _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});"""
+        code += f"""cblas_{func}({layout}, {trans}, {sym2cpp(m)}, {sym2cpp(n)}, {alpha}, _A, {sym2cpp(lda)},
+                                _x, {sym2cpp(strides_x[0])}, {beta}, _y, {sym2cpp(strides_y[0])});"""
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
@@ -304,10 +328,10 @@ class ExpandGemvPBLAS(ExpandTransformation):
     def expansion(node: "Gemv", state, sdfg, m=None, n=None, **kwargs):
         node.validate(sdfg, state)
         (
-            (edge_a, outer_array_a, _, _, shape_a, strides_a),
+            (edge_a, outer_array_a, shape_a, strides_a),
             (edge_x, outer_array_x, _, _, shape_x, strides_x),
             (edge_y, outer_array_y, _, _, shape_y, strides_y),
-        ) = _get_matmul_operands(node, state, sdfg, name_lhs="_A", name_rhs="_x", name_out="_y")
+        ) = gemv_operands(node, state, sdfg)
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen
@@ -357,14 +381,21 @@ class ExpandGemvPBLAS(ExpandTransformation):
         return sdfg
 
 
+ExpandGemvHipBLAS = hip_dialect.hip_expansion(ExpandGemvCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
+
+
 @dace.library.node
 class Gemv(dace.sdfg.nodes.LibraryNode):
+    """BLAS ``?gemv``: ``_y = alpha * _A @ _x + beta * _y``, with ``_A^T`` if ``transA``."""
+
     # Global properties
     implementations = {
         "pure": ExpandGemvPure,
         "OpenBLAS": ExpandGemvOpenBLAS,
         "MKL": ExpandGemvMKL,
         "cuBLAS": ExpandGemvCuBLAS,
+        "hipBLAS": ExpandGemvHipBLAS,
+        "rocBLAS": ExpandGemvHipBLAS,
         "PBLAS": ExpandGemvPBLAS,
     }
     default_implementation = None
@@ -393,9 +424,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         size_y_in = None
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_A":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_a = subset.size()
+                size_a, _ = blas_helpers.matrix_view(memlet.subset)
             if dst_conn == "_x":
                 subset = copy.deepcopy(memlet.subset)
                 subset.squeeze()
@@ -417,6 +446,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from matrix-vector product")
+        blas_helpers.reject_overlapping_output(self, state, "_y", accumulator="_y")
         out_memlet = out_edges[0].data
 
         out_subset = copy.deepcopy(out_memlet.subset)

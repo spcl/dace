@@ -5,6 +5,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
@@ -43,7 +44,8 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
 
         n = n or node.n
         code = (
-            f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
+            f"_res = LAPACKE_{lapack_dtype}getrf({blas_helpers.lapack_order(desc_x)}, {rows_x}, {cols_x}, {cast}_xin, "
+            f"{stride_x}, _ipiv);"
         )
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
@@ -70,7 +72,8 @@ class ExpandGetrfMKL(ExpandTransformation):
 
         n = n or node.n
         code = (
-            f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
+            f"_res = LAPACKE_{lapack_dtype}getrf({blas_helpers.lapack_order(desc_x)}, {rows_x}, {cols_x}, {cast}_xin, "
+            f"{stride_x}, _ipiv);"
         )
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
@@ -123,11 +126,22 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+ExpandGetrfHipSolverDn = hip_dialect.hip_expansion(
+    ExpandGetrfCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
+
+
 @dace.library.node
 class Getrf(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {"OpenBLAS": ExpandGetrfOpenBLAS, "MKL": ExpandGetrfMKL, "cuSolverDn": ExpandGetrfCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandGetrfOpenBLAS,
+        "MKL": ExpandGetrfMKL,
+        "cuSolverDn": ExpandGetrfCuSolverDn,
+        "hipSolverDn": ExpandGetrfHipSolverDn,
+    }
     default_implementation = None
+    matrix_connectors = ("_xin",)
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
@@ -170,7 +184,10 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
         if desc_ipiv.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Pivot output must be an integer array!")
 
-        stride_x = desc_xin.strides[sqdims1[0]]
+        layout = blas_helpers.matrix_layout(blas_helpers.operand(self, state, sdfg, "_xin"))
+        if layout is None:
+            raise ValueError("Matrix must be contiguous along one dimension")
+        stride_x = layout.leading[0]
         shape_x = squeezed1.size()
         rows_x = shape_x[0]
         cols_x = shape_x[1]

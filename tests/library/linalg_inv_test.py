@@ -388,6 +388,23 @@ def test_inv(implementation, dtype, size, shape, overwrite, getri):
 
 ###############################################################################
 
+
+def test_identity_spans_the_actual_extent():
+    sdfg = dace.SDFG("inv_identity_extent")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("a", ["N", "N"], dace.float64)
+    sdfg.add_array("b", ["N", "N"], dace.float64)
+    state = sdfg.add_state()
+    node = Inv("inv", overwrite_a=False, use_getri=False)
+    node.implementation = "OpenBLAS"
+    state.add_memlet_path(state.add_read("a"), node, dst_conn="_ain", memlet=Memlet("a[0:N, 0:N]"))
+    state.add_memlet_path(node, state.add_write("b"), src_conn="_aout", memlet=Memlet("b[0:N, 0:N]"))
+
+    sdfg.expand_library_nodes(recursive=False)
+
+    assert "n" not in {str(s) for s in sdfg.free_symbols}
+
+
 if __name__ == "__main__":
     test_inv("MKL", np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, True)
     test_inv("MKL", np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, True)
@@ -407,3 +424,4 @@ if __name__ == "__main__":
     test_inv("cuSolverDn", np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], False, False)
     test_inv("cuSolverDn", np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True, False)
     test_inv("cuSolverDn", np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True, False)
+    test_identity_spans_the_actual_extent()

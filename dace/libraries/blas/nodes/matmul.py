@@ -6,7 +6,7 @@ from typing import Any
 
 import dace
 from dace import properties, symbolic
-from dace.libraries.blas.blas_helpers import matrix_view
+from dace.libraries.blas.blas_helpers import matrix_view, stepped_strides
 
 
 def _matrix_subset_size(subset):
@@ -45,8 +45,8 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             squeezed_dims = squeezed.squeeze()
             squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
-            strides = list(outer_array.strides)
-            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
+            strides = stepped_strides(outer_array, edge.data.subset)
+            squeezed_strides = [s for i, s in enumerate(strides) if i in squeezed_dims] or [1]
             res = edge, outer_array, size, strides, squeezed_size, squeezed_strides
             if edge.dst_conn == name_lhs:
                 res_lhs = res
@@ -58,8 +58,8 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             squeezed_dims = squeezed.squeeze()
             squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
-            strides = list(outer_array.strides)
-            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
+            strides = stepped_strides(outer_array, edge.data.subset)
+            squeezed_strides = [s for i, s in enumerate(strides) if i in squeezed_dims] or [1]
             res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
@@ -157,12 +157,35 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
     return {"sa": stride_a, "sb": stride_b, "sc": stride_c, "b": batch_size, "batch_dims": result_batch_dims}
 
 
+def densify_matrix_operands(node: dace.nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> None:
+    """Copy every input whose matrix view has no unit stride into a dense transient read by ``node`` instead. BLAS
+    needs one unit stride, and a copy made before lowering does not survive: simplify turns a copy of a slice such
+    ``w[:, :, 1, 2]`` back into a view of it."""
+    lhs, rhs, _ = _get_matmul_operands(node, state, sdfg)
+    for operand in (lhs, rhs):
+        edge, desc, shape, strides = _matrix_operand(operand)
+        if any(stride == 1 for stride in strides[-2:]):
+            continue
+        name, dense = sdfg.add_transient(
+            f"{edge.data.data}_dense", shape, desc.dtype, storage=desc.storage, find_new_name=True
+        )
+        copy = state.add_access(name)
+        whole = dace.subsets.Range.from_array(dense)
+        into = dace.Memlet(data=edge.data.data, subset=dc(edge.data.subset), other_subset=whole)
+        state.add_edge(edge.src, edge.src_conn, copy, None, into)
+        state.add_edge(copy, None, node, edge.dst_conn, dace.Memlet.from_array(name, dense))
+        state.remove_edge(edge)
+
+
 def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func) -> dict[str, Any]:
     """Get option map for GEMM code generation (with column-major order)."""
     # Avoid import loops
     from dace.codegen.common import sym2cpp
-    from dace.libraries.blas.blas_helpers import get_gemm_opts
+    from dace.libraries.blas.blas_helpers import get_gemm_opts, packed_unit_extent
+    from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 
+    if not isinstance(node, BatchedMatMul):
+        densify_matrix_operands(node, state, sdfg)
     # M/N/K and the leading dimensions come from the matrix view the dispatcher matched.
     adata, bdata, cdata = _get_matmul_operands(node, state, sdfg)
     _, _, ashape, astride = _matrix_operand(adata)
@@ -176,7 +199,9 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
         bshape = list(reversed(bshape))
         bstride = list(reversed(bstride))
 
-    opt = get_gemm_opts(astride, bstride, cstride)
+    opt = get_gemm_opts(
+        packed_unit_extent(ashape, astride), packed_unit_extent(bshape, bstride), packed_unit_extent(cshape, cstride)
+    )
     bopt = _get_batchmm_opts(ashape, astride, bshape, bstride, cshape, cstride)
 
     opt["x"] = "_a"
@@ -230,7 +255,15 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         # A degenerate operand dimension is squeezed with a unit batch, so also check the output
         is_batched = len(size_a) >= 3 or len(size_b) >= 3 or (len(size_c) >= 3 and (len(a[2]) >= 3 or len(b[2]) >= 3))
 
-        if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2)):
+        # Squeezing a unit dimension makes a matrix look like a vector: only a one-element result is a dot product
+        rank_a, rank_b = len(size_a), len(size_b)
+        squeezed = rank_a == rank_b == 1 and not all(symbolic.equal_valued(1, extent) for extent in size_c)
+        if squeezed:
+            rank_a, rank_b = len(a[2]), len(b[2])
+
+        if (squeezed and rank_a == rank_b == 2) or (
+            len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2))
+        ):
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
 
@@ -263,7 +296,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
 
             result = BatchedMatMul(node.name + "bmm", location=node.location)
-        elif len(size_a) == 2 and len(size_b) == 1:
+        elif rank_a == 2 and rank_b == 1:
             # Matrix and vector -> GEMV
             from dace.libraries.blas.nodes.gemv import Gemv
 
@@ -272,7 +305,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             b[0].dst_conn = "_x"
             c[0].src_conn = "_y"
             result = Gemv(node.name + "gemv", location=node.location, transA=node.transA)
-        elif len(size_a) == 1 and len(size_b) == 2:
+        elif rank_a == 1 and rank_b == 2:
             # Vector and matrix -> GEMV with transposed matrix
             from dace.libraries.blas.nodes.gemv import Gemv
 
@@ -281,10 +314,12 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             b[0].dst_conn = "_A"
             c[0].src_conn = "_y"
             result = Gemv(node.name + "gemvt", location=node.location, transA=not node.transB)
-        elif len(size_a) == 1 and len(size_b) == 1:
+        elif rank_a == 1 and rank_b == 1:
             # Vector and vector -> dot product
             from dace.libraries.blas.nodes.dot import Dot
 
+            if not (symbolic.equal_valued(1, node.alpha) and symbolic.equal_valued(0, node.beta)):
+                raise NotImplementedError(f"{node.label}: Dot takes no alpha or beta")
             # Rename inputs to match dot naming
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_y"

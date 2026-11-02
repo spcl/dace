@@ -7,7 +7,9 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import SDFG, SDFGState, dtypes
 from dace import memlet as mm
+from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers, environments
 from dace.transformation.transformation import ExpandTransformation
 
@@ -77,8 +79,8 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        # This expansion emits ?dotu only
-        if node.conjugate and desc_x.dtype.is_complex():
+        # There is no ?dot for complex data, which returns through ?dotu and ?dotc, nor for half precision
+        if desc_x.dtype.is_complex() or dtype == dace.dtypes.float16:
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         try:
@@ -92,6 +94,8 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
+        # C++ text: a symbolic length or stride prints ``Lb**3`` otherwise
+        n, stride_x, stride_y = sym2cpp(n), sym2cpp(stride_x), sym2cpp(stride_y)
         code = f"_result = cblas_{func}({n}, _x, {stride_x}, _y, {stride_y});"
         # The return type is scalar in cblas_?dot signature
         tasklet = dace.sdfg.nodes.Tasklet(
@@ -119,8 +123,8 @@ class ExpandDotCuBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        # This expansion emits ?dotu only
-        if node.conjugate and desc_x.dtype.is_complex():
+        # There is no ?dot for complex data, which returns through ?dotu and ?dotc, nor for half precision
+        if desc_x.dtype.is_complex() or dtype == dace.dtypes.float16:
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         try:
@@ -133,6 +137,8 @@ class ExpandDotCuBLAS(ExpandTransformation):
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
+        # C++ text: a symbolic length or stride prints ``Lb**3`` otherwise
+        n, stride_x, stride_y = sym2cpp(n), sym2cpp(stride_x), sym2cpp(stride_y)
 
         code = environments.cublas.cuBLAS.handle_setup_code(node)
         if node.accumulator_type is None:
@@ -161,14 +167,21 @@ class ExpandDotCuBLAS(ExpandTransformation):
         return tasklet
 
 
+ExpandDotHipBLAS = hip_dialect.hip_expansion(ExpandDotCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
+
+
 @dace.library.node
 class Dot(dace.sdfg.nodes.LibraryNode):
+    """BLAS dot product of ``_x`` and ``_y``, conjugating ``_x`` if ``conjugate``."""
+
     # Global properties
     implementations = {
         "pure": ExpandDotPure,
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
+        "hipBLAS": ExpandDotHipBLAS,
+        "rocBLAS": ExpandDotHipBLAS,
     }
     default_implementation = None
 
@@ -232,8 +245,8 @@ class Dot(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Output of dot product must be a single element")
 
         # We are guaranteed that there is only one non-squeezed dimension
-        stride_x = desc_x.strides[sqdims1[0]]
-        stride_y = desc_y.strides[sqdims2[0]]
+        stride_x = blas_helpers.stepped_strides(desc_x, in_memlets[0].subset)[sqdims1[0]]
+        stride_y = blas_helpers.stepped_strides(desc_y, in_memlets[1].subset)[sqdims2[0]]
         n = squeezed1.num_elements()
         if squeezed1.num_elements() != squeezed2.num_elements():
             raise ValueError("Size mismatch in inputs")

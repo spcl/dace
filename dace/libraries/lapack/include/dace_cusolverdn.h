@@ -1,8 +1,23 @@
 // Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
+#if defined(__HIPCC__) || defined(WITH_HIP)
+// HIP dialect: hipSOLVER mirrors cuSOLVER, so this header keeps the cuSOLVER names (see dace/libraries/hip_dialect.py)
+#include <hip/hip_runtime.h>
+#if __has_include(<hipsolver/hipsolver.h>)
+#include <hipsolver/hipsolver.h>
+#else
+#include <hipsolver.h>
+#endif
+#define cusolverStatus_t hipsolverStatus_t
+#define CUSOLVER_STATUS_SUCCESS HIPSOLVER_STATUS_SUCCESS
+#define cusolverDnHandle_t hipsolverDnHandle_t
+#define cusolverDnCreate hipsolverDnCreate
+#define cusolverDnDestroy hipsolverDnDestroy
+#else
 #include <cuda_runtime.h>
 #include <cusolverDn.h>
+#endif
 
 #include <cstddef>    // size_t
 #include <stdexcept>  // std::runtime_error
