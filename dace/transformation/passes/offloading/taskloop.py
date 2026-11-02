@@ -25,8 +25,8 @@ def is_copy_or_fill_libnode(node: nodes.Node) -> bool:
     return isinstance(node, (CopyLibraryNode, FillLibraryNode))
 
 
-#: The lowerings a thread runs whole, inside a kernel; ``specialize`` becomes a node that has one.
-IN_KERNEL_IMPLEMENTATIONS = frozenset({"pure", "sequential", "specialize"})
+#: The lowerings a thread runs whole, inside a kernel.
+IN_KERNEL_IMPLEMENTATIONS = frozenset({"pure", "sequential"})
 
 
 def is_device_wide_libnode(node: nodes.Node, state: SDFGState | None = None) -> bool:
@@ -56,14 +56,17 @@ def is_device_wide_libnode(node: nodes.Node, state: SDFGState | None = None) -> 
 def small_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether ``node`` has an in-kernel lowering and every memlet of it moves a subset, or one of a container, whose
     size names ``SMALL`` symbols only or is a literal, and some size names one."""
-    if not IN_KERNEL_IMPLEMENTATIONS & type(node).implementations.keys():
+    arrays = state.sdfg.arrays
+    owned = any(not e.data.is_empty() and has_literal_capacity(arrays[e.data.data]) for e in state.all_edges(node))
+    # ``specialize`` becomes a node that has such a lowering
+    if not (IN_KERNEL_IMPLEMENTATIONS | ({"specialize"} if owned else set())) & type(node).implementations.keys():
         return False
     facts = SymbolResolver().facts_at(state)
     named = False
     for edge in state.all_edges(node):
         if edge.data.is_empty():
             continue
-        desc = state.sdfg.arrays[edge.data.data]
+        desc = arrays[edge.data.data]
         if has_literal_capacity(desc):
             named = True
             continue
