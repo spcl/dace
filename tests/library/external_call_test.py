@@ -502,3 +502,11 @@ def test_a_call_keeps_a_symbol_only_its_array_shapes_use():
     sdfg, (call,) = outlined(fixed_prefix, "extcall_shape_symbol")
 
     assert "N" in call.abi_order
+
+
+def test_a_container_named_like_a_connector_prefix_keeps_its_name():
+    assert external_call.data_name(external_call.in_conn(external_call.out_conn("gemv"))) == external_call.out_conn(
+        "gemv"
+    )
+    assert external_call.data_name(external_call.out_conn(external_call.in_conn("x"))) == external_call.in_conn("x")
+    assert external_call.data_name(external_call.in_conn("x")) == "x"

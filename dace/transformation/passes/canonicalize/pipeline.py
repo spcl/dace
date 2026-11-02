@@ -60,7 +60,7 @@ from dace.transformation.passes.canonicalize.fuse_elementwise_into_gemv import F
 from dace.transformation.passes.canonicalize.fuse_loops import FuseLoops
 from dace.transformation.passes.canonicalize.fuse_maps_at_shared_axes import FuseMapsAtSharedAxes
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
-from dace.transformation.passes.canonicalize.in_bounds_facts import declare_in_bounds_extents
+from dace.transformation.passes.canonicalize.in_bounds_facts import DeclareInBoundsExtents, declare_in_bounds_extents
 from dace.transformation.passes.canonicalize.induction_variable_substitution import (
     InductionVariableSubstitution,
     LoopCarriedRotationSubstitution,
@@ -102,6 +102,7 @@ from dace.transformation.passes.canonicalize.supply_num_threads import SupplyNum
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.while_to_for import WhileToFor
+from dace.transformation.passes.consolidate_edges import ConsolidateEdges
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_fill_elimination import DeadFillElimination
@@ -949,10 +950,14 @@ def derive_parallelism(
     # Wavefront: map what now maps, then skew the nests left sequential on a carried dependence.
     # Accumulator steps above leave a WCR that conflicts with nothing (a masked count two map levels deep)
     s += [(label, RevertNonReductionWCR()), *_inline_single_state(label)]
+    # The accumulator steps leave the increment's tasklet a plain copy
+    s += [(label, EliminateTrivialTasklets())]
     if target == "gpu":
         s += [(label, ppl.Pipeline([ReorderStateForLoopFusion()]))]
     s += [(label, FuseLoops())]
     s += [(label, Parallelize(target=target, hold_sibling_chains=False))]
+    # The time loop a wavefront skew made keeps the skew's name until here
+    s += [(label, unique_iterators())]
     return s
 
 
@@ -963,7 +968,8 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
 
     def inner_round() -> list[ppl.Pass]:
         return [
-            # States first: map fusion only sees maps that share a state
+            # States first: map fusion only sees maps that share a state, and consolidated edges let more states fuse
+            ConsolidateEdges(),
             HoistAssignmentsToLoopBodyHead(),
             FuseStates(aggressive_merges=True, order_array_seeds=True),
             # Loops next: two fused loops put their maps in one body
@@ -1009,7 +1015,8 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     fuses conditions; lift what fusion exposed; the final tidy. Invariant guards stay pushed in: hoisting them is
     the specialization step ``hoist_invariant_guards``."""
     label = RECOMPOSE
-    s: Stages = []
+    # The maps' propagated memlets show always-executed accesses the frontend form hides, and fusion proves with them
+    s: Stages = [(label, DeclareInBoundsExtents())]
     # Before fusion: the WCR map it leaves fuses with the matrix's producer
     s += [(label, FuseElementwiseIntoGemv())]
     s += [
@@ -1028,6 +1035,8 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
 
     s += [(FUSE, maximal_fusion(target))]
     label = AFTER_FUSION
+    # A reduction fused over one element leaves its init map
+    s += [(label, PatternApplyOnceEverywhere([TrivialMapElimination()]))]
     # Out of phase: these matchers need the fused map form (contractions split over maps, durbin's unary copy).
     if lift_copy:
         s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
@@ -1067,6 +1076,9 @@ def finish() -> Stages:
         (FINISH, InlineControlFlowRegions()),
         (FINISH, AssumeSymbolConstraints()),
         (FINISH, NormalizeFloorDivision()),
+        # Fusion leaves plain copies through its intermediates
+        (FINISH, EliminateTrivialTasklets()),
+        (FINISH, FoldScalarReadCopies()),
         # A staging copy sits in its readers' map scope, fed from the map entry, only once the terminal inlining has
         # run; the reclaim stays last for the arrays the fold leaves.
         (FINISH, PatternApplyOnceEverywhere([RedundantMapReadCopy()])),

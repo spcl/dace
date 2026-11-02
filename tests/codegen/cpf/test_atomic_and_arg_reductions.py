@@ -127,5 +127,6 @@ def test_argmax_and_argmin_reduce_through_the_declared_pair_and_keep_the_first_e
     code = rendered_run(sdfg, language, {"a": a, "val": val, "idx": idx, "N": SIZE})
 
     assert f"reduction(arg_{op}_pair : __ar_best)" in code and "critical" not in code, code
+    assert "omp_orig" not in code, "icx 2026.2 at -O2 loses a thread's update on a reduction seeded from omp_orig"
     expected = int(np.argmax(a) if op == "max" else np.argmin(a))
     assert idx[0] == expected and val[0] == a[expected]
