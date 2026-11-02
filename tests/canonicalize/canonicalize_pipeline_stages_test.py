@@ -26,13 +26,8 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.interstate.move_map_invariant_if_up import hoist_invariant_guards
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.canonicalize.pipeline import (
-    PhaseFixpoint,
-    PropagateAndPrune,
-    _ThenIfChanged,
-    build_stages,
-    prepared,
-)
+from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
+from dace.transformation.passes.canonicalize.pipeline import PhaseFixpoint, PropagateAndPrune, build_stages, prepared
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.pattern_matching import PatternMatchAndApply
 
@@ -316,7 +311,8 @@ def test_then_if_changed_reports_a_rewrite_of_an_unwatched_unit():
         def apply_pass(self, sdfg, _):
             ran.append(True)
 
-    assert _ThenIfChanged([(Rewrites(), False)], [Then()]).apply_pass(dace.SDFG("unwatched"), {}) is True
+    unit = canon_pipeline._ThenIfChanged([(Rewrites(), False)], [Then()])
+    assert unit.apply_pass(dace.SDFG("unwatched"), {}) is True
     assert not ran
 
 

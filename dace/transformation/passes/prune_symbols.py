@@ -123,7 +123,9 @@ class RemoveUnusedSymbols(ppl.Pass):
                     if isinstance(node, nodes.Tasklet):
                         for code in (node.code, node.code_global, node.code_init, node.code_exit):
                             if code.language != dtypes.Language.Python:
-                                yield symbolic.symbols_in_code(code.as_string, sdfg.symbols.keys(), node.ignored_symbols)
+                                yield symbolic.symbols_in_code(
+                                    code.as_string, sdfg.symbols.keys(), node.ignored_symbols
+                                )
             else:
                 # The blocks inside a region are visited themselves: walking them again for every enclosing region
                 # repeats the whole nest once per nesting level

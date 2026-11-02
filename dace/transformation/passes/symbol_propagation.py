@@ -390,7 +390,9 @@ class SymbolPropagation(ppl.Pass):
         self._state_reads: dict[SDFGState, set[str]] = {}
 
         # A table never crosses a nested SDFG, so one no edge assigns in has nothing to know, propagate or drop.
-        binding_sdfgs = [sd for sd in sdfg.all_sdfgs_recursive() if any(e.data.assignments for e in sd.all_interstate_edges())]
+        binding_sdfgs = [
+            sd for sd in sdfg.all_sdfgs_recursive() if any(e.data.assignments for e in sd.all_interstate_edges())
+        ]
         all_cfg_blks = {block: parent for sd in binding_sdfgs for block, parent in blocks_with_parents(sd)}
 
         # Live only for the fixed point below, which is a pure query -- rewriting starts at
@@ -736,7 +738,9 @@ class SymbolPropagation(ppl.Pass):
     def _without_loop_bound(self, table: dict[str, Any], loop: LoopRegion) -> dict[str, Any]:
         """``table`` past ``loop``'s entry: neither a symbol the loop rebinds nor a value naming one stays known."""
         bound = self._loop_bound_symbols(loop)
-        return {k: None if k in bound or (v is not None and free_symbol_names(v) & bound) else v for k, v in table.items()}
+        return {
+            k: None if k in bound or (v is not None and free_symbol_names(v) & bound) else v for k, v in table.items()
+        }
 
     # Given a cfg_blk, updates the symbols in the cfg_blk
     def _update_syms(
