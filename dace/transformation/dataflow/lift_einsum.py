@@ -53,6 +53,32 @@ class LiftEinsum(xf.SingleStateTransformation):
                 return True
         return False
 
+    def tensor_indices(self, memlet) -> list[str] | None:
+        """The map parameters ``memlet`` indexes, per dimension in order; a dimension at a map-invariant index (an
+        enclosing iterator, a constant) names no einsum index. ``None`` for an index an einsum cannot name."""
+        entry = self.map_entry
+        scoped = {*entry.map.params, *(c for c in entry.in_connectors if not c.startswith("IN_"))}
+        indices = []
+        for begin, _, _ in memlet.subset.ndrange():
+            name = str(begin)
+            if name in entry.map.params:
+                indices.append(name)
+            elif scoped & {str(s) for s in pystr_to_symbolic(begin).free_symbols}:
+                return None
+        return indices
+
+    def slices_at_points(self, edge, outer) -> bool:
+        """Whether the scope memlet ``outer`` keeps the single index ``edge`` reads or writes in every dimension no
+        map parameter runs over. Two points of one array through one connector widen it to a range."""
+        params = self.map_entry.map.params
+        inner, wide = edge.data.subset, outer.data.subset
+        if wide is None or len(inner) != len(wide):
+            return False
+        for (begin, _, _), (first, last, _) in zip(inner.ndrange(), wide.ndrange()):
+            if str(begin) not in params and not str(first) == str(last) == str(begin):
+                return False
+        return True
+
     def can_be_applied(self, state: SDFGState, _, sdfg: SDFG, permissive=False):
         contents = state.scope_subgraph(self.map_entry, False, False)
         # Ensure map body contains only the tasklet
@@ -99,24 +125,25 @@ class LiftEinsum(xf.SingleStateTransformation):
                 return False
             if memlet.volume != 1 or memlet.subset.num_elements() != 1:
                 return False
-            ind = {str(rb) for rb, _, _ in memlet.subset.ndrange()}
+            indices = self.tensor_indices(memlet)
+            if indices is None:
+                return False
+            ind = set(indices)
             unique_chars |= ind
-            if any(i != "0" and i not in self.map_entry.map.params for i in ind):
+            outer = state.memlet_path(e)[-2 if e.dst is self.tasklet else 1]
+            if not self.slices_at_points(e, outer):
                 return False
 
             # Keep track of input/output indices for WCR check
             if e.dst is self.tasklet:
                 input_chars |= ind
-                if not (ind - {"0"}):
+                if not ind:
                     num_coeffs += 1
                 else:
                     num_tensor_inputs += 1
-                    tensor_input_chars.append(ind - {"0"})
+                    tensor_input_chars.append(ind)
             else:
                 output_chars |= ind
-
-        if len(input_chars) == 0:
-            return False
 
         # A single tensor operand is a copy, transpose or reduction (``i->i``, ``ij->ji``, ``ij->i``), not a
         # contraction. Those have their own nodes (CopyLibraryNode, Transpose, Reduce), so they are left to them.
@@ -125,7 +152,7 @@ class LiftEinsum(xf.SingleStateTransformation):
 
         # A scalar output (no free output index) is a dot product or a full reduction: a 1x1 GEMM gains nothing over
         # the WCR reduction it came from, so only an einsum with a free output index lifts.
-        if not (output_chars - {"0"}):
+        if not output_chars:
             return False
 
         # Reject an ELEMENTWISE op: NO contracted index (every input index also appears in
@@ -136,8 +163,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         # matvec/matmul HAS a contracted index (``input_chars - output_chars`` non-empty,
         # so this guard is skipped) -- neither is caught. A genuine outer product
         # (``a[i]*b[j]`` -> ``i,j->ij``, no input matching the FULL output index) is preserved.
-        out_idx = output_chars - {"0"}
-        if not (input_chars - output_chars) and any(ci == out_idx for ci in tensor_input_chars):
+        if not (input_chars - output_chars) and any(ci == output_chars for ci in tensor_input_chars):
             return False
 
         # In ``contraction_only`` mode (the vectorizer), refuse any op with NO contracted index
@@ -158,7 +184,7 @@ class LiftEinsum(xf.SingleStateTransformation):
             return False
 
         # If there are too many characters for an einsum expression, fail
-        if len(unique_chars) == 0 or len(unique_chars) > len(self.EINSUM_CHARS):
+        if len(unique_chars) > len(self.EINSUM_CHARS):
             return False
 
         # Test outputs
@@ -170,6 +196,14 @@ class LiftEinsum(xf.SingleStateTransformation):
         if input_chars - output_chars:
             if oe.data.wcr is None or detect_reduction_type(oe.data.wcr) != dtypes.ReductionType.Sum:
                 return False
+            # The einsum accumulates in place, without the WCR: an enclosing iterator the output does not name sums its
+            # iterations into one slot, a race the moment that scope runs in parallel.
+            written_at = {str(rb) for rb, _, _ in oe.data.subset.ndrange()}
+            scope = state.entry_node(self.map_entry)
+            while scope is not None:
+                if not written_at.issuperset(scope.map.params):
+                    return False
+                scope = state.entry_node(scope)
         elif oe.data.wcr is not None:  # if, e.g., outer product, no WCR
             return False
 
@@ -231,8 +265,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         for e in state.in_edges(self.tasklet):
             if e.data.is_empty():
                 continue
-            ind = {str(rb) for rb, _, _ in e.data.subset.ndrange()}
-            if not (ind - {"0"}):  # scalar coefficient: no map parameter
+            if not self.tensor_indices(e.data):  # scalar coefficient: no map parameter
                 coeff_edges.append(e)
                 coeff_map_conns[state.memlet_path(e)[-2].dst_conn] = "_alpha"
                 continue
@@ -273,12 +306,11 @@ class LiftEinsum(xf.SingleStateTransformation):
         einsum_output = ""
         for e in in_edges + [out_edge]:
             # Create parameter mapping
-            ind = [str(rb) for rb, _, _ in e.data.subset.ndrange()]
             expr = ""
-            for i in ind:
-                if i != "0" and i not in param_mapping:
+            for i in self.tensor_indices(e.data):
+                if i not in param_mapping:
                     param_mapping[i] = self.EINSUM_CHARS[len(param_mapping)]
-                expr += "" if i == "0" else param_mapping[i]
+                expr += param_mapping[i]
             if e is out_edge:
                 einsum_output = expr
             else:
@@ -343,7 +375,8 @@ class LiftEinsum(xf.SingleStateTransformation):
             if e.dst_conn in coeff_map_conns:  # runtime scalar coefficient (not restricted)
                 state.add_edge(e.src, e.src_conn, einsum, coeff_map_conns[e.dst_conn], e.data)
         for e in state.out_edges(map_exit):
-            e.data.wcr = None  # Cancel WCR now that it is nested in the einsum
+            for hop in state.memlet_path(e)[1:] if e.data.wcr is not None else ():
+                hop.data.wcr = None  # Cancel WCR now that it is nested in the einsum, out to the outermost scope
             data = e.data
             if restrict:
                 data = copy.deepcopy(e.data)
