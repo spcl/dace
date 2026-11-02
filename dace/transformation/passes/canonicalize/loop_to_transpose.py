@@ -259,14 +259,6 @@ class LoopToTranspose(ppl.Pass):
         return count or None
 
     def _try_lift(self, cfg: ControlFlowRegion, outer: LoopRegion, sdfg: dace.SDFG) -> bool:
-        # Only start from an OUTERMOST loop: an inner loop is picked up by descending
-        # from its outer parent, so a non-outermost start would double-match.
-        p = outer.parent_graph
-        while p is not None and not isinstance(p, dace.SDFG):
-            if isinstance(p, LoopRegion):
-                return False
-            p = p.parent_graph
-
         nest = perfect_nest(outer)
         if nest is None or len(nest[0]) < 2:
             return False
