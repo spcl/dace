@@ -4,10 +4,12 @@
 import numpy as np
 
 import dace
+from dace.libraries.blas.nodes.matmul import MatMul
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.canonicalize.transpose_into_blas_flag import transposes_as_blas_flags
 
 G, P, S = (dace.symbol(s) for s in "GPS")
 
@@ -54,6 +56,28 @@ def test_a_transpose_an_elementwise_map_reads_stays_a_copy():
     np.testing.assert_allclose(out, beta.T + 1.0)
 
 
+def test_a_gemm_on_a_window_of_a_transpose_keeps_the_transpose():
+    """The operand is ``T[0:2, 0:2]``: flipping the flag would hand the GEMM all of ``A``."""
+    sdfg = dace.SDFG("transpose_window_operand")
+    sdfg.add_array("A", [3, 5], dace.float64)
+    sdfg.add_array("B", [2, 4], dace.float64)
+    sdfg.add_array("C", [2, 4], dace.float64)
+    sdfg.add_array("T", [5, 3], dace.float64, transient=True)
+    state = sdfg.add_state()
+    temp = state.add_access("T")
+    transpose = Transpose("transpose", dtype=dace.float64)
+    state.add_edge(state.add_read("A"), None, transpose, "_inp", dace.Memlet("A[0:3, 0:5]"))
+    state.add_edge(transpose, "_out", temp, None, dace.Memlet("T[0:5, 0:3]"))
+    gemm = MatMul("gemm")
+    state.add_edge(temp, None, gemm, "_a", dace.Memlet("T[0:2, 0:2]"))
+    state.add_edge(state.add_read("B"), None, gemm, "_b", dace.Memlet("B[0:2, 0:4]"))
+    state.add_edge(gemm, "_c", state.add_write("C"), None, dace.Memlet("C[0:2, 0:4]"))
+
+    assert transposes_as_blas_flags(sdfg) == 0
+    assert transposes(sdfg) == [transpose]
+
+
 if __name__ == "__main__":
+    test_a_gemm_on_a_window_of_a_transpose_keeps_the_transpose()
     test_a_transposed_gemm_operand_is_read_in_place()
     test_a_transpose_an_elementwise_map_reads_stays_a_copy()
