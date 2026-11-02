@@ -1000,7 +1000,9 @@ def test_an_index_array_store_keeps_the_fill_of_the_elements_it_misses():
         out[:] = box
 
     sdfg = partial_store.to_sdfg(simplify=True)
-    assert any(isinstance(n, dace_nodes.Tasklet) and n.label.startswith("_numpy_full") for n, _ in sdfg.all_nodes_recursive())
+    assert any(
+        isinstance(n, dace_nodes.Tasklet) and n.label.startswith("_numpy_full") for n, _ in sdfg.all_nodes_recursive()
+    )
 
 
 if __name__ == "__main__":
