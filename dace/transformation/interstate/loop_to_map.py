@@ -42,6 +42,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.dataflow.wcr_conversion import wcr_operator
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 from dace.transformation.passes.parallelization.facts import SolverFacts
+from dace.transformation.passes.scalar_fission import subsets_cover
 
 IndexExpr = str | int | symbolic.SymbolicType
 
@@ -765,7 +766,7 @@ def read_before_written(loop: LoopRegion, candidates: set[str], holders: Iterabl
             return True
         parts = [entry[1] for entry in stored if isinstance(entry, tuple) and entry[0] == dn.data]
         return bool(parts) and all(
-            not fixed_subset(state, dn, subset) or any(part.covers(subset, symbolic.Facts.none()) for part in parts)
+            not fixed_subset(state, dn, subset) or subsets_cover(parts, subset, symbolic.Facts.none())
             for subset in [e.data.get_src_subset(e, state) for e in state.out_edges(dn) if not e.data.is_empty()]
         )
 
