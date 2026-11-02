@@ -91,6 +91,11 @@ def _induced_matches(
     yield from extend(0, [])
 
 
+def iteration_space(map_node: nodes.Map) -> tuple[Any, frozenset]:
+    """What two Maps need in common for `find_parameter_remapping()` to exist: their schedule and their ranges."""
+    return map_node.schedule, frozenset(collections.Counter(tuple(r) for r in map_node.range.ranges).items())
+
+
 def align_step_equivalent_candidates(state: SDFGState) -> int:
     """Align every same-scope map pair that shares data and differs only in step; returns the pairs aligned.
 
@@ -448,6 +453,16 @@ class FuseMaps(ppl.Pass):
         """
         name = type(xform).__name__
         owner = cfg.sdfg
+        # The structural refusal of nearly every candidate, ahead of the match it would set up.
+        spaces: dict[nodes.Map, tuple[Any, frozenset]] = {}
+        is_fusion = isinstance(xform, (dftrans.MapFusionVertical, dftrans.MapFusionHorizontal))
+
+        def same_space(first: nodes.Map, second: nodes.Map) -> bool:
+            for map_node in (first, second):
+                if map_node not in spaces:
+                    spaces[map_node] = iteration_space(map_node)
+            return spaces[first] == spaces[second]
+
         progress = True
         while progress:
             progress = False
@@ -455,6 +470,8 @@ class FuseMaps(ppl.Pass):
             cfg_id = cfg.cfg_id
             for expr_index, (pnodes, pedges) in enumerate(shapes):
                 for images in _induced_matches(state, pnodes, pedges):
+                    if is_fusion and not same_space(images[0].map, images[-1].map):
+                        continue
                     # Matched by node OBJECT: `PatternNode.__get__` returns a non-int as-is, so there is no
                     #  per-sweep node index, no `expressions()` rebuild and no O(index) node walk per read.
                     xform.setup_match(owner, cfg_id, state_id, dict(zip(pnodes, images)), expr_index, override=True)
