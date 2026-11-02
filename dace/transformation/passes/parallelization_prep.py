@@ -1121,42 +1121,19 @@ class BestEffortLoopPeeling(ppl.Pass):
         if start is None or end is None:
             return None
         sides = set()
-        if symbolic.simplify(x - start) != 0 and not self._nonneg_in_loop(loop, end + 1 - x, start, end):
+        if symbolic.simplify(x - start) != 0 and not self._nonneg_in_loop(loop, end + 1 - x):
             sides.add("before")
-        if symbolic.simplify(x - end) != 0 and not self._nonneg_in_loop(loop, x - start, start, end):
+        if symbolic.simplify(x - end) != 0 and not self._nonneg_in_loop(loop, x - start):
             sides.add("after")
         return frozenset(sides)
 
-    def _nonneg_in_loop(self, loop: LoopRegion, expr, start, end) -> bool:
-        """Whether ``expr >= 0`` holds -- either unconditionally
-        (:meth:`_provably_nonneg`) or under the same large-trip-count assumption
-        :meth:`_nonneg_assuming_large_modulus` already encodes: a symbolic loop
-        being peeled/split by ``k <= peel_limit`` iterations presupposes it runs
-        more than ``peel_limit`` times, so its trip count ``end - start + 1``
-        exceeds ``peel_limit``.
-
-        A near-boundary split point ``x`` carving off ``c <= peel_limit`` tail
-        iterations has ``x - start = trip - 1 - c``, non-negative once
-        ``trip > peel_limit`` -- so its range-membership is statically true and
-        needs no ``if start <= x`` runtime guard (the ext_peel_multi_back back-peel
-        at ``x = LEN_1D - 2``: ``x - start = LEN_1D - 2 = trip - 2 >= 0`` for
-        ``trip = LEN_1D > peel_limit``). Applying the assumption with the trip
-        count as the modulus (and NO wrap offsets, so no offset facts are relied
-        on) proves only such affine-in-trip boundary points; a point leaning on a
-        free offset (``N - K``) is left guarded. A non-affine floor/ceil point
-        (``N // 2``) falls through to :meth:`provably_nonneg_symbolic`, which
-        bounds it from the nonnegative-symbol contract."""
+    def _nonneg_in_loop(self, loop: LoopRegion, expr) -> bool:
+        """Whether ``expr >= 0`` holds, unconditionally (:meth:`_provably_nonneg`) or from the
+        nonnegative-symbol contract and floor/ceil bounds (:meth:`provably_nonneg_symbolic`, the ``x =
+        int_floor(N, 2)`` split points). A large trip count is not assumed: a split point ``N - 3`` lies below
+        the start of a loop that runs once, and ``[x + 1, end]`` would then run an iteration the loop never had."""
         if self._provably_nonneg(expr):
             return True
-        import sympy
-
-        trip = symbolic.simplify(end - start + 1)
-        if isinstance(trip, sympy.Symbol) and self._nonneg_assuming_large_modulus(expr, trip) is not None:
-            return True
-        # Floor/ceil-of-a-nonnegative-bound split points (``x = int_floor(N, 2)``) are not affine in
-        # the trip count, so the large-modulus path leaves them guarded; the symbolic nonnegativity
-        # prover discharges them from the canonicalization nonnegative-symbol contract + floor/ceil
-        # bounds. See :meth:`provably_nonneg_symbolic`.
         return self.provably_nonneg_symbolic(expr, SymbolResolver().facts_at(loop.parent_graph))
 
     def _specialize_index_set_split(
