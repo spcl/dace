@@ -5,7 +5,7 @@ from dace.sdfg import InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, SDFGState
 from dace.transformation import transformation
-from dace.transformation.interstate.state_fusion import is_start_block, keep_start_block
+from dace.transformation.interstate.state_fusion import assignments_move_before, is_start_block, keep_start_block
 
 
 def merge_assignments(first: dict[str, str], second: dict[str, str]) -> dict[str, str] | None:
@@ -57,8 +57,8 @@ def splice_empty_state(region: ControlFlowRegion, state: SDFGState, plain_edges_
     if len(out_e) == 1 and (in_e or is_start):
         succ = out_e[0].dst
         # The successor edge's condition would have to be distributed over every predecessor edge, and nothing
-        # carries its assignments out of a region entry without predecessors.
-        if succ is state or not out_e[0].data.is_unconditional() or (not in_e and out_e[0].data.assignments):
+        # carries its assignments out of a region entry: predecessors only cover the later visits.
+        if succ is state or not out_e[0].data.is_unconditional() or (is_start and out_e[0].data.assignments):
             return False
         merged = [merge_assignments(e.data.assignments, out_e[0].data.assignments) for e in in_e]
         if any(m is None for m in merged):
@@ -135,21 +135,8 @@ class BlockFusion(transformation.MultiStateTransformation):
             # If the first block is a control flow region, no absorption is possible.
             if isinstance(self.first_block, AbstractControlFlowRegion):
                 return False
-            # Fail if symbol is set before the block to fuse
-            new_assignments = set(out_edges[0].data.assignments.keys())
-            if any((new_assignments & set(e.data.assignments.keys())) for e in in_edges):
+            if not assignments_move_before(self.first_block, out_edges[0], in_edges):
                 return False
-            # Fail if symbol is used in the dataflow of that block
-            if len(new_assignments & self.first_block.free_symbols) > 0:
-                return False
-            # Fail if symbols assigned on the first edge are free symbols on the second edge
-            symbols_used = set(out_edges[0].data.free_symbols)
-            for e in in_edges:
-                if e.data.assignments.keys() & symbols_used:
-                    return False
-                # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
-                if new_assignments & set(e.data.free_symbols):
-                    return False
 
         # There can be no block that has output edges pointing to both the first and the second block. Such a case will
         # produce a multi-graph.

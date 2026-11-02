@@ -11,7 +11,8 @@ from dace import graphlib as nx
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, SDFGState, SymbolResolver
+from dace.sdfg.graph import Edge
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState, SymbolResolver
 from dace.symbolic import Truth
 from dace.transformation import transformation
 
@@ -167,6 +168,40 @@ def is_fusible_state_shape(state: SDFGState, sdfg) -> bool:
             if not scope_edge_is_walkable(state, sdfg, e):
                 return False
     return True
+
+
+def assignments_move_before(block: ControlFlowBlock, edge: Edge, in_edges: list[Edge]) -> bool:
+    """Whether the assignments of ``edge``, out of ``block``, mean the same on the edges into ``block``."""
+    # Reading free symbols parses the assignment RHS and the states' code. An edge (or a
+    # state) that does not parse must never be absorbed into a predecessor edge.
+    try:
+        # Fail if symbol is set before the state to fuse
+        new_assignments = set(edge.data.assignments.keys())
+        if any((new_assignments & set(e.data.assignments.keys())) for e in in_edges):
+            return False
+        # Fail if symbols assigned on the first edge are free symbols on the
+        # second edge
+        freesyms = edge.data.free_symbols
+        symbols_used = set(freesyms)
+        for e in in_edges:
+            if e.data.assignments.keys() & symbols_used:
+                return False
+            # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
+            if new_assignments & set(e.data.free_symbols):
+                return False
+        # Fail if assignments have free symbols that are updated in the
+        # first state
+        if freesyms and any(
+            n.data in freesyms for n in block.nodes() if isinstance(n, nodes.AccessNode) and block.in_degree(n) > 0
+        ):
+            return False
+        # Fail if symbol is used in the dataflow of that state. Last of the four: the
+        # other three are independent ANDed refusals and far cheaper, and
+        # ``SDFGState.free_symbols`` re-parses every tasklet's code (measured the most
+        # expensive single call in this block).
+        return not new_assignments & block.free_symbols
+    except (SyntaxError, ValueError, TypeError):
+        return False
 
 
 @transformation.explicit_cf_compatible
@@ -427,38 +462,7 @@ class StateFusion(transformation.MultiStateTransformation):
         if out_edges[0].data.assignments:
             if not in_edges and not self.assignments_need_no_predecessor(graph, first_state):
                 return False
-            # Reading free symbols parses the assignment RHS and the states' code. An edge (or a
-            # state) that does not parse must never be absorbed into a predecessor edge.
-            try:
-                # Fail if symbol is set before the state to fuse
-                new_assignments = set(out_edges[0].data.assignments.keys())
-                if any((new_assignments & set(e.data.assignments.keys())) for e in in_edges):
-                    return False
-                # Fail if symbols assigned on the first edge are free symbols on the
-                # second edge
-                freesyms = out_edges[0].data.free_symbols
-                symbols_used = set(freesyms)
-                for e in in_edges:
-                    if e.data.assignments.keys() & symbols_used:
-                        return False
-                    # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
-                    if new_assignments & set(e.data.free_symbols):
-                        return False
-                # Fail if assignments have free symbols that are updated in the
-                # first state
-                if freesyms and any(
-                    n.data in freesyms
-                    for n in first_state.nodes()
-                    if isinstance(n, nodes.AccessNode) and first_state.in_degree(n) > 0
-                ):
-                    return False
-                # Fail if symbol is used in the dataflow of that state. Last of the four: the
-                # other three are independent ANDed refusals and far cheaper, and
-                # ``SDFGState.free_symbols`` re-parses every tasklet's code (measured the most
-                # expensive single call in this block).
-                if len(new_assignments & first_state.free_symbols) > 0:
-                    return False
-            except (SyntaxError, ValueError, TypeError):
+            if not assignments_move_before(first_state, out_edges[0], in_edges):
                 return False
 
         # There can be no state that have output edges pointing to both the
