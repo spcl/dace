@@ -1,6 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,7 +10,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.frontend.python.common import DaceSyntaxError
 from dace.memlet import Memlet
-from dace.symbolic import SymbolicType, pystr_to_symbolic
+from dace.symbolic import Facts, Relation, RelationKind, SymbolicType, holds, issymbolic, pystr_to_symbolic
 
 MemletType = ast.Call | ast.Attribute | ast.Subscript | ast.Name
 
@@ -82,7 +83,12 @@ def _parse_dim_atom(das, atom):
     return result
 
 
-def _fill_missing_slices(das, ast_ndslice, array, indices):
+def counts_from_the_end(index: Any, facts: Callable[[], Facts]) -> bool:
+    """Whether a subscript is negative; a symbol's sign is a fact, not a SymPy assumption."""
+    return (index < 0) == True or (issymbolic(index) and holds(Relation(RelationKind.LT, index, 0), facts()))
+
+
+def _fill_missing_slices(das, ast_ndslice, array, indices, facts):
     # Filling ndslice with default values from array dimensions
     # if ranges not specified (e.g., of the form "A[:]")
     ndslice = [None] * len(array.shape)
@@ -108,12 +114,12 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             rs = _parse_dim_atom(das, dim[2] or 1)
             # NOTE: try/except for cases where rb/re are not symbols/numbers
             try:
-                if (rb < 0) == True:
+                if counts_from_the_end(rb, facts):
                     rb += array.shape[indices[idx]]
             except (TypeError, ValueError):
                 pass
             try:
-                if (re < 0) == True:
+                if counts_from_the_end(re, facts):
                     re += array.shape[indices[idx]]
             except (TypeError, ValueError):
                 pass
@@ -202,7 +208,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             new_idx += 1
         else:
             r = pyexpr_to_symbolic(das, dim)
-            if (r < 0) == True:
+            if counts_from_the_end(r, facts):
                 r += array.shape[indices[idx]]
             ndslice[idx] = r
             idx += 1
@@ -219,7 +225,11 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
 
 def parse_memlet_subset(
-    array: data.Data, node: ast.Name | ast.Subscript, das: dict[str, Any], parsed_slice: Any = None
+    array: data.Data,
+    node: ast.Name | ast.Subscript,
+    das: dict[str, Any],
+    parsed_slice: Any = None,
+    facts: Callable[[], Facts] = Facts.none,
 ) -> tuple[subsets.Range, list[int], dict[int, str], list[int]]:
     """
     Parses an AST subset and returns access range, as well as new dimensions to
@@ -255,7 +265,7 @@ def parse_memlet_subset(
             narray.shape = [s for i, s in enumerate(array.shape) if i in offsets]
 
             # Loop over the N dimensions
-            ndslice, offsets, new_extra_dims, arrdims = _fill_missing_slices(das, ast_ndslice, narray, offsets)
+            ndslice, offsets, new_extra_dims, arrdims = _fill_missing_slices(das, ast_ndslice, narray, offsets, facts)
             if new_extra_dims and idx != (len(ast_ndslices) - 1):
                 raise NotImplementedError("New axes only implemented for last slice")
             if arrdims and len(ast_ndslices) != 1:
@@ -314,7 +324,7 @@ def ParseMemlet(
             write_conflict_resolution = node.value.args[1]
 
     try:
-        subset, new_axes, arrdims, slice_dims = parse_memlet_subset(array, node, das, parsed_slice)
+        subset, new_axes, arrdims, slice_dims = parse_memlet_subset(array, node, das, parsed_slice, visitor.facts)
     except IndexError:
         raise DaceSyntaxError(
             visitor,

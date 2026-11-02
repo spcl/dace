@@ -823,6 +823,10 @@ class TaskletTransformer(ExtNodeTransformer):
         for stmt in _DISALLOWED_STMTS:
             setattr(self, "visit_" + stmt, lambda n: _disallow_stmt(self, n))
 
+    def facts(self) -> symbolic.Facts:
+        """What holds where the tasklet is being parsed."""
+        return self.visitor.facts()
+
     def parse_tasklet(self, tasklet_ast: TaskletType, name: str | None = None):
         """
         Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets.
