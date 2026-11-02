@@ -728,17 +728,7 @@ class StateFusion(transformation.MultiStateTransformation):
 
         # Normal case: both states are not empty
 
-        # Find source/sink (data) nodes
-        first_input = [node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)]
-        first_output = [node for node in first_state.sink_nodes() if isinstance(node, nodes.AccessNode)]
-        second_input = [node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)]
-
         top2 = top_level_nodes(second_state)
-
-        # first input = first input - first output
-        first_input = [
-            node for node in first_input if next((x for x in first_output if x.data == node.data), None) is None
-        ]
 
         # NOTE: We exclude Views from the process of merging common data nodes because it may lead to double edges.
         # The lookup only asks "is this a View", and a descriptor that is gone is not one.
@@ -763,7 +753,7 @@ class StateFusion(transformation.MultiStateTransformation):
                 # update parent information
                 node.sdfg.parent = first_state
             # The same node OBJECT can already be a member of the first state.
-            if node not in first_state.nodes():
+            if node not in first_state._nodes:
                 first_state.add_node(node)
         for src, src_conn, dst, dst_conn, data in second_state.edges():
             first_state.add_edge(src, src_conn, dst, dst_conn, data)

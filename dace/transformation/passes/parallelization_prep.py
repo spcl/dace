@@ -290,7 +290,7 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
                 xform.setup_match(sdfg, cfg_id, -1, candidate, 0, override=True)
                 if not xform.can_be_applied(cfr, 0, sdfg, permissive=False):
                     continue
-                xform.apply(cfr, sdfg)
+                xform.fuse(cfr, sdfg)
                 fused += 1
                 applied = True
                 break

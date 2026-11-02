@@ -1794,10 +1794,14 @@ def fuse_states(
 
     start = time.time()
 
+    # One instance, reused: ``setup_match(..., override=True)`` overwrites all a probe reads
+    sf = StateFusionExtended()
+    sf.aggressive_merges = aggressive_merges
+    sf.order_array_seeds = order_array_seeds
     for sd in sdfg.all_sdfgs_recursive():
         for cfg in sd.all_control_flow_regions():
             # Fusing states changes neither the regions nor the symbols the facts of a state are derived from
-            region_facts: dict = {}
+            sf.region_facts = {}
             while True:
                 edges = list(cfg.nx.edges)
                 applied = 0
@@ -1812,13 +1816,9 @@ def fuse_states(
 
                     if isinstance(u, SDFGState) and isinstance(v, SDFGState):
                         candidate = {StateFusionExtended.first_state: u, StateFusionExtended.second_state: v}
-                        sf = StateFusionExtended()
-                        sf.aggressive_merges = aggressive_merges
-                        sf.order_array_seeds = order_array_seeds
-                        sf.region_facts = region_facts
                         sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
                         if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
-                            sf.apply(cfg, sd)
+                            sf.fuse(cfg, sd)
                             applied += 1
                             counter += 1
                             if progress:
