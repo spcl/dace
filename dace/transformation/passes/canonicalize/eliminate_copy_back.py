@@ -3,7 +3,9 @@
 
 The frontend spells an update ``A[S] = A[S] + e`` as ``A[S] -> map -> t -> A[S]``: the operator's result, then the
 assignment's copy. Each iteration writes the element it read, so writing ``A`` in place is exact; the transient and
-the copy are gone, and the map is the read-modify-write ``AugAssignToWCR`` turns into a WCR write.
+the copy are gone, and the map is the read-modify-write ``AugAssignToWCR`` turns into a WCR write. A read of ``A``
+outside ``S`` sees no write either way (``A[0, :] = A[0, :] / A[1, :]``), and a transient used only in part (the
+``kidia:kfdia`` of a ``klon`` array) folds the same way: the map's writes all lie in what the copy takes.
 """
 
 from collections import Counter
@@ -26,6 +28,8 @@ class CopyBack:
     copy: MultiConnectorEdge[Memlet]
     #: The dimensions of ``subset`` the transient spans, in order; the others are single indices.
     kept: list[int]
+    #: Where the copied part of the transient begins, per dimension.
+    origin: list[symbolic.SymbolicType]
 
 
 def same_index(a: subsets.Range, b: subsets.Range) -> bool:
@@ -39,11 +43,11 @@ def same_index(a: subsets.Range, b: subsets.Range) -> bool:
     )
 
 
-def placed(write: subsets.Range, subset: subsets.Range, kept: list[int]) -> subsets.Range:
+def placed(write: subsets.Range, subset: subsets.Range, found: CopyBack) -> subsets.Range:
     """The element of the target a write of the transient at ``write`` lands on."""
     begins = [begin for begin, _, _ in subset.ranges]
-    for dim, (begin, _, _) in zip(kept, write.ranges):
-        begins[dim] = begins[dim] + begin
+    for dim, origin, (begin, _, _) in zip(found.kept, found.origin, write.ranges):
+        begins[dim] = begins[dim] + begin - origin
     return subsets.Range([(begin, begin, 1) for begin in begins])
 
 
@@ -68,17 +72,19 @@ def copy_back(state: SDFGState, sdfg: SDFG, transient: nodes.AccessNode, uses: C
     whole, subset = copy.data.get_src_subset(copy, state), copy.data.get_dst_subset(copy, state)
     if not isinstance(whole, subsets.Range) or not isinstance(subset, subsets.Range):
         return None
-    if whole != subsets.Range.from_array(desc):
+    if any(step != 1 for _, _, step in whole.ranges):
+        return None
+    if not whole.covers(write.data.get_dst_subset(write, state), sdfg.facts()):
         return None
     kept = [dim for dim, (begin, end, _) in enumerate(subset.ranges) if symbolic.pystr_to_symbolic(end - begin) != 0]
     if len(kept) != len(desc.shape):
         return None
-    return CopyBack(map_exit, transient, copy, kept)
+    return CopyBack(map_exit, transient, copy, kept, [begin for begin, _, _ in whole.ranges])
 
 
 def in_place(state: SDFGState, found: CopyBack) -> bool:
     """Whether every element the map writes is read, if at all, only by the iteration writing it: one write, straight
-    into the map exit, and every read of the target at that element."""
+    into the map exit, and every read of the target at that element or outside what the copy writes."""
     target = found.copy.dst
     subset = found.copy.data.get_dst_subset(found.copy, state)
     entry = state.entry_node(found.map_exit)
@@ -92,13 +98,16 @@ def in_place(state: SDFGState, found: CopyBack) -> bool:
     write = writes[0].data.get_dst_subset(writes[0], state)
     if not isinstance(write, subsets.Range) or write.num_elements() != 1:
         return False
-    element = placed(write, subset, found.kept)
+    element = placed(write, subset, found)
+    facts = state.sdfg.facts()
     for edge in state.in_edges(entry):
         if edge.data.is_empty() or edge.data.data != target.data:
             continue
         for leaf in state.memlet_tree(edge).leaves():
             read = leaf.data.get_src_subset(leaf, state)
-            if not isinstance(read, subsets.Range) or not same_index(read, element):
+            if not isinstance(read, subsets.Range):
+                return False
+            if not same_index(read, element) and subsets.intersects(read, subset, facts) is not symbolic.Truth.FALSE:
                 return False
     # Anything else in the scope naming the target (a nested write, a second access node) is not this pattern
     inner = state.scope_subgraph(entry, include_entry=False, include_exit=False)
@@ -111,7 +120,7 @@ def eliminate(state: SDFGState, sdfg: SDFG, found: CopyBack, uses: Counter[str])
     (outer,) = state.in_edges(found.transient)
     (inner,) = [e for e in state.in_edges(found.map_exit) if e.dst_conn == "IN_" + outer.src_conn[4:]]
     write = inner.data.get_dst_subset(inner, state)
-    inner.data = Memlet(data=target.data, subset=placed(write, subset, found.kept))
+    inner.data = Memlet(data=target.data, subset=placed(write, subset, found))
     state.add_edge(found.map_exit, outer.src_conn, target, copy.dst_conn, Memlet(data=target.data, subset=subset))
     state.remove_node(found.transient)
     uses[found.transient.data] -= 1
