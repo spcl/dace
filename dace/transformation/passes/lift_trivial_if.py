@@ -199,16 +199,16 @@ class LiftTrivialIf(ppl.Pass):
             return symbolic.Truth.FALSE if truth is symbolic.Truth.TRUE else symbolic.Truth.TRUE
         return truth
 
-    def _loop_iter_ranges(self, cfb: ConditionalBlock) -> dict[str, tuple | None]:
-        """The inclusive ``(low, high)`` range of every ``LoopRegion`` iterator at ``cfb``, ``None`` for one whose range
-        says nothing there. The innermost loop binding a name decides, and a nested SDFG binds its own names."""
+    def _loop_iter_ranges(self, cfb: ConditionalBlock, names: set[str]) -> dict[str, tuple | None]:
+        """The inclusive ``(low, high)`` range of every ``LoopRegion`` iterator in ``names`` at ``cfb``, ``None`` for one
+        whose range says nothing there. The innermost loop binding a name decides, and a nested SDFG binds its own."""
         from dace.sdfg.state import LoopRegion
         from dace.transformation.passes.analysis import loop_analysis
 
         ranges: dict[str, tuple | None] = {}
         graph = cfb.parent_graph
         while graph is not None and graph is not cfb.sdfg:
-            if isinstance(graph, LoopRegion) and graph.loop_variable and graph.loop_variable not in ranges:
+            if isinstance(graph, LoopRegion) and graph.loop_variable in names and graph.loop_variable not in ranges:
                 ranges[graph.loop_variable] = None
                 start = loop_analysis.get_init_assignment(graph)
                 end = loop_analysis.get_loop_end(graph)
@@ -289,12 +289,13 @@ class LiftTrivialIf(ppl.Pass):
         ``LoopRegion`` whose iterator it is."""
         if code is None or code.language != dace.dtypes.Language.Python:
             return "unknown"
-        ivar_to_range = {name: bounds for name, bounds in self._loop_iter_ranges(cfb).items() if bounds is not None}
-        if not ivar_to_range:
-            return "unknown"
         try:
             node = code.code[0]
         except (AttributeError, IndexError, TypeError):
+            return "unknown"
+        names = {sub.id for sub in ast.walk(node) if isinstance(sub, ast.Name)}
+        ivar_to_range = {iv: bounds for iv, bounds in self._loop_iter_ranges(cfb, names).items() if bounds is not None}
+        if not ivar_to_range:
             return "unknown"
         if isinstance(node, ast.Expr):
             node = node.value
