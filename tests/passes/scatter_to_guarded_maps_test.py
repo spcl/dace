@@ -19,11 +19,14 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.parallelization.contracts.guarded_scatter import (
     ScatterToGuardedMaps,
     detect_scatter_idx_arrays,
+    detect_scatter_loops_and_idx_arrays,
 )
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 
 N = dace.symbol("N")
 K = dace.symbol("K")
+
+C = dace.symbol("C")
 
 # TSVC scatter kernels
 
@@ -938,9 +941,128 @@ if __name__ == "__main__":
     test_a_sliced_guard_hoisted_out_of_a_map_feeds_the_dispatcher_inside_it(True)
     test_an_index_rebuilt_every_round_is_guarded_before_each_scatter(False)
     test_an_index_rebuilt_every_round_is_guarded_before_each_scatter(True)
+    test_a_store_narrowing_its_loaded_index_is_no_scatter()
+    test_an_index_read_whose_scale_may_be_zero_is_no_scatter()
+    test_two_index_arrays_into_one_target_are_no_scatter()
+    test_two_constant_columns_of_one_index_stay_keyed_and_two_index_pairs_do_not()
+    test_a_hoisted_count_is_not_read_ahead_of_its_guard()
+    test_an_index_only_a_nested_sdfg_names_is_guarded_there()
     test_the_contract_waives_only_the_scatter_and_a_carried_counter_stays_sequential()
     with pytest.MonkeyPatch.context() as mp:
         test_the_contract_probes_read_each_sdfgs_facts_once(mp)
+
+
+@dace.program
+def scatter_through_a_narrowed_index(idx: dace.int64[N], b: dace.float64[N], out: dace.float64[4]):
+    for i in range(N):
+        k = idx[i]
+        out[k % 4] = b[i]
+
+
+@dace.program
+def scatter_reading_the_index_at_a_scaled_slot(idx: dace.int64[N], b: dace.float64[N], out: dace.float64[N]):
+    for i in range(N):
+        out[idx[C * i]] = b[i]
+
+
+@dace.program
+def two_scatters_into_one_target(
+    idx: dace.int64[N], jdx: dace.int64[N], b: dace.float64[N], d: dace.float64[N], out: dace.float64[N]
+):
+    for i in range(N):
+        out[idx[i]] = b[i]
+        out[jdx[i]] = d[i]
+
+
+@dace.program
+def two_columns_of_one_scatter(idx: dace.int64[N], b: dace.float64[N], d: dace.float64[N], out: dace.float64[N, 2]):
+    for i in range(N):
+        out[idx[i], 0] = b[i]
+        out[idx[i], 1] = d[i]
+
+
+@dace.program
+def two_pairs_into_one_target(
+    x: dace.int64[N], y: dace.int64[N], b: dace.float64[N], d: dace.float64[N], out: dace.float64[N, N]
+):
+    for i in range(N):
+        out[x[i], y[i]] = b[i]
+        out[y[i], x[i]] = d[i]
+
+
+@dace.program
+def index_rewritten_between_scatters(
+    idx: dace.int64[N], f: dace.int64[N], g: dace.int64[N], b: dace.float64[N], x: dace.float64[N], y: dace.float64[N]
+):
+    idx[:] = f
+    for i in range(N):
+        x[idx[i]] = b[i]
+    idx[:] = g
+    for i in range(N):
+        y[idx[i]] = b[i]
+
+
+def test_a_store_narrowing_its_loaded_index_is_no_scatter():
+    """A permutation says nothing of ``out[k % 4]``: the guard would pass and iterations would race on the slot."""
+    assert not detect_scatter_idx_arrays(scatter_through_a_narrowed_index.to_sdfg(simplify=True))
+
+
+def test_an_index_read_whose_scale_may_be_zero_is_no_scatter():
+    """``C == 0`` reads one element every iteration, so a permutation does not separate them."""
+    assert not detect_scatter_idx_arrays(scatter_reading_the_index_at_a_scaled_slot.to_sdfg(simplify=True))
+
+
+def test_two_index_arrays_into_one_target_are_no_scatter():
+    """Two permutations are each distinct, not distinct from each other."""
+    assert not detect_scatter_idx_arrays(two_scatters_into_one_target.to_sdfg(simplify=True))
+
+
+def test_two_constant_columns_of_one_index_stay_keyed_and_two_index_pairs_do_not():
+    assert len(detect_scatter_loops_and_idx_arrays(two_columns_of_one_scatter.to_sdfg(simplify=True))[3]) == 2
+    assert not detect_scatter_loops_and_idx_arrays(two_pairs_into_one_target.to_sdfg(simplify=True))[0]
+
+
+def test_a_hoisted_count_is_not_read_ahead_of_its_guard():
+    """The first scatter dispatches on its own guard; the guard hoisted for the second runs after that scatter."""
+    sdfg = index_rewritten_between_scatters.to_sdfg(simplify=True)
+    canonicalize(sdfg)
+    n = 8
+    f, g = _make_permutation(n, 1).astype(np.int64), _make_permutation(n, 2).astype(np.int64)
+    b, x, y = np.arange(1.0, n + 1), np.zeros(n), np.zeros(n)
+    sdfg(idx=np.zeros(n, np.int64), f=f, g=g, b=b, x=x, y=y, N=n)
+    expected_x, expected_y = np.zeros(n), np.zeros(n)
+    expected_x[f], expected_y[g] = b, b
+    assert np.array_equal(x, expected_x) and np.array_equal(y, expected_y)
+
+
+def test_an_index_only_a_nested_sdfg_names_is_guarded_there():
+    """The owner passes the index through a connector, so the root has no array of that name to hoist a guard to."""
+    inner = dace.SDFG("scatter_through_a_connector_inner")
+    inner.add_array("inner_idx", [8], dace.int64)
+    inner.add_array("inner_b", [8], dace.float64)
+    inner.add_array("inner_out", [8], dace.float64)
+    inner.add_symbol("k", dace.int64)
+    loop = LoopRegion("scatter", "i < 8", "i", "i = 0", "i = i + 1")
+    inner.add_node(loop, is_start_block=True)
+    bind = loop.add_state("bind", is_start_block=True)
+    store = loop.add_state("store")
+    loop.add_edge(bind, store, dace.InterstateEdge(assignments={"k": "inner_idx[i]"}))
+    tasklet = store.add_tasklet("copy", {"v": None}, {"o": None}, "o = v")
+    store.add_edge(store.add_read("inner_b"), None, tasklet, "v", dace.Memlet("inner_b[i]"))
+    store.add_edge(tasklet, "o", store.add_write("inner_out"), None, dace.Memlet("inner_out[k]"))
+    outer = dace.SDFG("scatter_through_a_connector")
+    for name, dtype in (("P", dace.int64), ("B", dace.float64), ("O", dace.float64)):
+        outer.add_array(name, [8], dtype)
+    state = outer.add_state(is_start_block=True)
+    nest = state.add_nested_sdfg(inner, {"inner_idx": None, "inner_b": None}, {"inner_out": None})
+    state.add_edge(state.add_read("P"), None, nest, "inner_idx", dace.Memlet("P[0:8]"))
+    state.add_edge(state.add_read("B"), None, nest, "inner_b", dace.Memlet("B[0:8]"))
+    state.add_edge(nest, "inner_out", state.add_write("O"), None, dace.Memlet("O[0:8]"))
+    ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(outer, {})
+    assert any(isinstance(n, ScatterConflictCheck) for st in inner.states() for n in st.nodes())
+    out = np.zeros(8)
+    outer(P=np.arange(8, dtype=np.int64)[::-1].copy(), B=np.arange(8.0), O=out)
+    assert np.array_equal(out, np.arange(8.0)[::-1])
 
 
 @dace.program

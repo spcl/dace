@@ -577,6 +577,7 @@ def _scatter_idx_targets_for_loop(
     dim_nodes_by_arr: dict[str, list[ast.AST]] = {}
     outside: set[str] | None = None
     read: set[str] = set()
+    slots: dict[str, str] = {}
     for state in region.states():
         for node in state.data_nodes():
             if state.in_degree(node) == 0:
@@ -625,6 +626,9 @@ def _scatter_idx_targets_for_loop(
                 for arr, dim_nodes in _tasklet_indexed_write(state, e, loop_var, sdfg).items():
                     found.setdefault(arr, dim_nodes)
                 if not slot_follows_index(e.data.subset, bindings.keys() | chained.keys()):
+                    return {}
+                # Each store is checked alone, so a second slot of one target can meet the first in another iteration
+                if found and slots.setdefault(node.data, str(e.data.subset)) != str(e.data.subset):
                     return {}
                 for arr, dim_nodes in found.items():
                     loop_arrays.setdefault(arr, set()).add(node.data)
@@ -984,8 +988,21 @@ def joint_scatter_writes_for_loop(region: LoopRegion, sdfg: SDFG) -> list[JointS
                 mask, ok = enclosing_branch_condition(state, region, bindings)
                 if not ok or (mask is not None and not key_map_can_read(mask, sdfg, loop_var, varying)):
                     return None
-                writes.append(JointScatterWrite(target=node.data, dim_exprs=tuple(exprs), mask_expr=mask))
+                write = JointScatterWrite(target=node.data, dim_exprs=tuple(exprs), mask_expr=mask)
+                if any(may_meet_elsewhere(write, other) for other in writes):
+                    return None
+                writes.append(write)
     return writes
+
+
+def may_meet_elsewhere(a: JointScatterWrite, b: JointScatterWrite) -> bool:
+    """Whether two separately keyed writes can hit one slot in different iterations: same target, different slot
+    expressions, and no dimension holding two different constants (``out[x[i], 0]`` and ``out[x[i], 1]``)."""
+    return (
+        a.target == b.target
+        and a.dim_exprs != b.dim_exprs
+        and not any(x != y and x.isdecimal() and y.isdecimal() for x, y in zip(a.dim_exprs, b.dim_exprs))
+    )
 
 
 def one_index_over_fixed_slabs(subset, bindings: dict, loop_var: str, varying: set[str], sdfg: SDFG) -> bool:
