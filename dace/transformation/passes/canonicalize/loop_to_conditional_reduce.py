@@ -324,6 +324,12 @@ class LoopToConditionalReduce(ppl.Pass):
         if op_str == "-" and acc_in_conn != lhs_name:
             return None
 
+        # The mask scalar has the accumulator's type: a narrowing addend would be cut before the update, not after it.
+        addend_edge = next(e for e in in_edges if e.dst_conn == addend_in_conn)
+        addend_type = sdfg.arrays[addend_edge.data.data].dtype.type
+        if not np.can_cast(addend_type, sdfg.arrays[acc_name].dtype.type, "safe"):
+            return None
+
         return _Match(
             loop=loop,
             cond_block=cb,
