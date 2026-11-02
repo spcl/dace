@@ -843,7 +843,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 # side-effecting precisely so it is not dead-code-eliminated -- the
                 # snapshot rename it guards is only sound when that check runs. Honour
                 # that contract; only genuinely-orphaned nodes are removed here.
-                if isinstance(n, dace.nodes.Tasklet) and n.side_effects:
+                if isinstance(n, dace.nodes.CodeNode) and n.has_side_effects(state.sdfg):
                     continue
                 state.remove_node(n)
                 removed += 1

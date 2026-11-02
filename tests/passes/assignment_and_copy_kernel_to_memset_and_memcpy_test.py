@@ -1308,5 +1308,14 @@ def test_a_flattened_index_is_not_a_copy():
     assert _get_num_memcpy_library_nodes(sdfg) == 0
 
 
+def test_a_callback_tasklet_with_no_edges_survives_the_sweep():
+    sdfg = dace.SDFG("orphan_callback")
+    sdfg.add_symbol("callback_fn", dace.callback(None))
+    state = sdfg.add_state(is_start_block=True)
+    tasklet = state.add_tasklet("call", {}, {}, "callback_fn()")
+    AssignmentAndCopyKernelToMemsetAndMemcpy.remove_orphans(state)
+    assert tasklet in state.nodes()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
