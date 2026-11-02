@@ -45,7 +45,7 @@ def out_conn(name: str) -> str:
 
 
 def data_name(conn: str) -> str:
-    return conn.removeprefix(IN_PREFIX).removeprefix(OUT_PREFIX)
+    return conn.removeprefix(IN_PREFIX) if conn.startswith(IN_PREFIX) else conn.removeprefix(OUT_PREFIX)
 
 
 def one_element(memlet: dace.Memlet) -> bool:
