@@ -135,7 +135,23 @@ class LoopFusion(transformation.MultiStateTransformation):
         if self.dont_mix_known_parallel and known1 != known2:
             if not self._is_doall(sdfg, second if known1 else first):
                 return False
-        return self._fusion_legal(first, second, acc1, acc2)
+        return self._fusion_legal(first, second, acc1, acc2) and not self._iterator_read_after(graph, first, second)
+
+    @staticmethod
+    def _iterator_read_after(graph: ControlFlowRegion, first: LoopRegion, second: LoopRegion) -> bool:
+        """Whether a block after ``second`` reads its iterator, which the merge renames to ``first``'s."""
+        name = second.loop_variable
+        if name == first.loop_variable:
+            return False
+        frontier, seen = [second], {second}
+        while frontier:
+            for edge in graph.out_edges(frontier.pop()):
+                if name in edge.data.free_symbols or name in edge.dst.free_symbols:
+                    return True
+                if edge.dst not in seen:
+                    seen.add(edge.dst)
+                    frontier.append(edge.dst)
+        return False
 
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
         # Bind the loop OBJECT before _merge mutates the CFG. `self.first` is a PatternNode descriptor
@@ -189,9 +205,14 @@ class LoopFusion(transformation.MultiStateTransformation):
         for loop in (first, second):
             if not loop.loop_variable:
                 return False
+        # A body-first loop runs once on an empty range, its partner not at all
+        if first.inverted != second.inverted:
+            return False
         s1 = loop_analysis.get_loop_stride(first)
         s2 = loop_analysis.get_loop_stride(second)
         if s1 is None or s2 is None or not _symbolically_equal(s1, s2):
+            return False
+        if (s1 > 0) != True:  # noqa: E712 -- the offset signs of ``dep_class`` assume a forward sweep
             return False
         i1 = loop_analysis.get_init_assignment(first)
         i2 = loop_analysis.get_init_assignment(second)
@@ -423,9 +444,12 @@ class LoopFusion(transformation.MultiStateTransformation):
         def apart(a, b) -> bool:
             return self._apart(first, a, b)
 
+        # An inner iterator varies inside an iteration: no constant of an index, as ``dep_class`` reads it
+        inner = [r for loop in (first, second) for r in loop.all_control_flow_regions(recursive=True)]
+        varying = {r.loop_variable for r in inner if isinstance(r, LoopRegion)} - {ivar, second.loop_variable}
         # An index a body binds is no fixed index: two of them, in different names, can still meet
         bound = self._bound_in_body(first) | self._bound_in_body(second)
-        exact1, exact2 = w1, w2
+        exact = r1, w1, r2, w2
         r1, w1, r2, w2 = (self._any_index(accesses, bound) for accesses in (r1, w1, r2, w2))
 
         arrays = (set(r1) | set(w1)) & (set(r2) | set(w2))
@@ -434,6 +458,9 @@ class LoopFusion(transformation.MultiStateTransformation):
             # otherwise an unseen edge could hide a fusion-preventing dependence.
             if any(sub is None for d in (r1, w1, r2, w2) for sub in d.get(arr, [])):
                 return False
+            if arr in w1 or arr in w2:
+                if any(varying & {str(s) for s in sub.free_symbols} for d in exact for sub in d.get(arr, [])):
+                    return False
             # flow: a value written in body1 and read in body2 must not be read ahead of its production
             # (read-ahead WAR = fused reads stale value). 'invariant' is refused: body1 writes a
             # loop-invariant location that body2 reads, so unfused body2 sees the FINAL value body1 left
@@ -454,11 +481,25 @@ class LoopFusion(transformation.MultiStateTransformation):
                         return False
             # output: writes from both bodies must hit the same cell each iteration, else the last-writer
             # order differs between fused and unfused.
-            for wa in exact1.get(arr, []):
-                for wb in exact2.get(arr, []):
+            for wa in exact[1].get(arr, []):
+                for wb in exact[3].get(arr, []):
                     if not self._same_point(wa, wb) and not apart(wa, wb):
                         return False
+                    # One cell each iteration writes twice: the second loop's last write wins only if it is sure
+                    if ivar not in {str(s) for s in wa.free_symbols} and self._conditional_writes(second, arr):
+                        return False
         return True
+
+    @staticmethod
+    def _conditional_writes(loop: LoopRegion, arr: str) -> bool:
+        """Whether ``loop`` writes ``arr`` under a branch of its body."""
+        return any(
+            isinstance(region, ConditionalBlock)
+            and any(
+                state.in_degree(node) > 0 for state in region.states() for node in state.data_nodes() if node.data == arr
+            )
+            for region in loop.all_control_flow_blocks()
+        )
 
     def _same_iteration_only(
         self,
@@ -499,8 +540,8 @@ class LoopFusion(transformation.MultiStateTransformation):
         ra, rb = list(a.ndrange()), list(b.ndrange())
         if len(ra) != len(rb):
             return False
-        for (sa, _ea, _sa), (sb, _eb, _sb) in zip(ra, rb):
-            if not _symbolically_equal(sa, sb):
+        for (sa, ea, ta), (sb, eb, tb) in zip(ra, rb):
+            if not (_symbolically_equal(sa, sb) and _symbolically_equal(ea, eb) and _symbolically_equal(ta, tb)):
                 return False
         return True
 
@@ -647,13 +688,14 @@ class LoopFusion(transformation.MultiStateTransformation):
                     continue
                 n.data = local
                 for e in s.all_edges(n):
-                    if e.data.is_empty():
-                        continue
-                    if e.data.data == arr:
-                        e.data.data = local
-                        e.data.subset = copy.deepcopy(zero)
-                    else:  # a copy named after its other end indexes this one in ``other_subset``
+                    # A copy named after its other end indexes this one in ``other_subset``
+                    if not e.data.is_empty() and e.data.data != arr:
                         e.data.other_subset = copy.deepcopy(zero)
+            # Every edge of a path through a scope names ``arr``, not just the one at the access node
+            for e in s.edges():
+                if e.data.data == arr:
+                    e.data.data = local
+                    e.data.subset = copy.deepcopy(zero)
         try:
             sdfg.remove_data(arr, validate=False)
         except ValueError:

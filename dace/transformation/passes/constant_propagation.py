@@ -525,8 +525,6 @@ class ConstantPropagation(ppl.Pass):
                 # Get predecessors
                 in_edges = cfg.in_edges(block)
                 assignments = {}
-                # A key some visited predecessor lacks keeps the value it came in with on that path
-                pairs = [(out_const_dict.get(e.src), e) for e in in_edges]
                 for edge in in_edges:
                     # If source was already visited, use its propagated constants
                     constants: dict[str, Any] = {}
@@ -547,9 +545,12 @@ class ConstantPropagation(ppl.Pass):
                         else:
                             assignments[aname] = aval
 
-                for k in assignments:
-                    if any(c is not None and k not in c and k not in e.data.assignments for c, e in pairs):
-                        assignments[k] = _UnknownValue
+                # A key some visited predecessor lacks keeps the value it came in with on that path
+                if len(in_edges) > 1:
+                    for edge in in_edges:
+                        if edge.src in out_const_dict:
+                            lacking = assignments.keys() - out_const_dict[edge.src].keys()
+                            assignments.update(dict.fromkeys(lacking - edge.data.assignments.keys(), _UnknownValue))
 
                 for edge in cfg.out_edges(block):
                     if not edge.data.assignments:

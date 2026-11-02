@@ -374,7 +374,8 @@ class BreakAntiDependence(ppl.Pass):
             w_has = isym in as_basic(wb).free_symbols
             if not r_has and not w_has:
                 if not _is_identically_zero(rb - wb):
-                    return ("none", None)  # different fixed index -> never alias
+                    # Different constants never alias; ``b[K]`` and ``b[M]`` may
+                    return ("none", None) if as_basic(rb - wb).is_number else ("complex", None)
                 continue
             # carried dimension: decompose ``wb`` as ``alpha * isym + beta`` with
             # ``alpha in {+1, -1}`` and ``beta`` loop-invariant. ``alpha = +1`` is
