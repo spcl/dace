@@ -421,6 +421,21 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         return AugAssignToWCR.update(tasklet, inedges, outedge)
 
     @staticmethod
+    def another_writer(graph: SDFGState, out: nodes.AccessNode) -> bool:
+        """Whether a node other than ``out`` writes its container in this state. ``apply`` drops the load edge and
+        lets the WCR read the destination at write time instead -- but that load is what orders the RMW behind the
+        other write. A scan seeds ``a[k+1] = a[k]`` through its own access node and then accumulates into
+        ``a[k+1]``; without the load the WCR is unordered against the seed and the increment is applied to whichever
+        value happens to be there. (CloudSC's vertical flux band, and TSVC's recurrences, are exactly this shape.)"""
+        return any(
+            other is not out
+            and isinstance(other, nodes.AccessNode)
+            and other.data == out.data
+            and graph.in_degree(other) > 0
+            for other in graph.nodes()
+        )
+
+    @staticmethod
     def write_increment(tasklet: nodes.Tasklet, target: str, op: str, inc: ast.expr) -> str:
         """Make the update ``target = acc <op> inc`` write ``inc`` alone; returns the WCR of ``op``. ``acc - inc`` is
         ``acc + (-inc)`` exactly, a sum, which atomics and privatization know."""
@@ -640,21 +655,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if self.name_increment(tlet, oute.src_conn, ine.dst_conn) is None:
             return False
 
-        # Another writer of the accumulator in this state forbids the rewrite. ``apply`` drops the
-        # load edge and lets the WCR read the destination at write time instead -- but that load is
-        # what orders the RMW behind the other write. A scan seeds ``a[k+1] = a[k]`` through its own
-        # access node and then accumulates into ``a[k+1]``; without the load the WCR is unordered
-        # against the seed and the increment is applied to whichever value happens to be there.
-        # (CloudSC's vertical flux band, and TSVC's recurrences, are exactly this shape.)
-        if any(
-            other is not out
-            and isinstance(other, nodes.AccessNode)
-            and other.data == out.data
-            and graph.in_degree(other) > 0
-            for other in graph.nodes()
-        ):
-            return False
-        return True
+        return not self.another_writer(graph, out)
 
     def _apply_rmw_copy(self, state: SDFGState, sdfg: SDFG):
         """Rewrite the copy-wrapped RMW into a WCR write: drop the accumulator
@@ -759,7 +760,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         if len(data_in) != 2 or len(data_out) != 1:
             return False
 
-        return self.name_increment(combine, combine_store.src_conn, acc_read.dst_conn) is not None
+        if self.name_increment(combine, combine_store.src_conn, acc_read.dst_conn) is None:
+            return False
+        return not self.another_writer(graph, out)
 
     def _apply_combine_copyback(self, state: SDFGState, sdfg: SDFG):
         """Rewrite the combine-then-copyback RMW into a WCR write: drop the
@@ -887,7 +890,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         # combine-copyback in a map is a vectorizer intermediate (a NormalizeWCR seeded accumulator
         # whose copyback WidenAccesses folds); converting it here would strip that copyback. Sum/prod
         # reductions reach WCR via the direct augmented-assign (expr_index 1) instead.
-        return permissive or op in self._FUNCTIONS
+        return (permissive or op in self._FUNCTIONS)
 
     def _apply_combine_copyback_map(self, state: SDFGState, sdfg: SDFG):
         """Rewrite the in-map combine-then-copyback into a map-exit WCR write: the combine emits
@@ -932,6 +935,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 for e in list(state.in_edges_by_connector(me, in_conn)):
                     state.remove_edge(e)
                 me.remove_in_connector(in_conn)
+                # The dropped read ordered the map behind a write of the accumulator
+                if state.in_degree(inp) > 0:
+                    state.add_nedge(inp, me, Memlet())
         if state.degree(inp) == 0:
             state.remove_node(inp)
 
