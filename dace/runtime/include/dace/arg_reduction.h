@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <type_traits>
 #include <utility>
 
@@ -58,6 +59,26 @@ DACE_HDFI arg_pair<V, I> arg_min_combine(const arg_pair<V, I>& out, const arg_pa
   return (arg_greater(out.__ar_v, in.__ar_v) || (in.__ar_v == out.__ar_v && in.__ar_i < out.__ar_i)) ? in : out;
 }
 
+// The value no element is worse than, or better than when ``lowest`` is false.
+template <typename V>
+DACE_HDFI V arg_bound(bool lowest) {
+  if constexpr (arg_is_complex<V>::value) {
+    const typename V::value_type part = arg_bound<typename V::value_type>(lowest);
+    return V(part, part);
+  } else if constexpr (std::numeric_limits<V>::has_infinity) {
+    return lowest ? -std::numeric_limits<V>::infinity() : std::numeric_limits<V>::infinity();
+  } else {
+    return lowest ? std::numeric_limits<V>::lowest() : std::numeric_limits<V>::max();
+  }
+}
+
+// A thread's start: the neutral pair, whose index loses every tie. Never omp_orig: icx 2026.2 at -O2 reuses the value
+// it read for the seed as omp_out, so threads overwrite each other's answers.
+template <typename V, typename I>
+DACE_HDFI void arg_seed(arg_pair<V, I>& priv, bool lowest) {
+  priv = arg_pair<V, I>{arg_bound<V>(lowest), std::numeric_limits<I>::max()};
+}
+
 }  // namespace dace
 
 // Every pair an ArgReduce lowering names: each scalar and complex value type, indexed by int32 or int64.
@@ -68,6 +89,8 @@ DACE_HDFI arg_pair<V, I> arg_min_combine(const arg_pair<V, I>& out, const arg_pa
       dace::arg_pair<dace::complex64, I>, dace::arg_pair<dace::complex128, I>
 
 #pragma omp declare reduction(arg_max_pair : DACE_ARG_PAIRS(int32_t), DACE_ARG_PAIRS(int64_t) : \
-    omp_out = dace::arg_max_combine(omp_out, omp_in)) initializer(omp_priv = omp_orig)
+    omp_out = dace::arg_max_combine(omp_out, omp_in)) \
+    initializer(dace::arg_seed(omp_priv, true))
 #pragma omp declare reduction(arg_min_pair : DACE_ARG_PAIRS(int32_t), DACE_ARG_PAIRS(int64_t) : \
-    omp_out = dace::arg_min_combine(omp_out, omp_in)) initializer(omp_priv = omp_orig)
+    omp_out = dace::arg_min_combine(omp_out, omp_in)) \
+    initializer(dace::arg_seed(omp_priv, false))

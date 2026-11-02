@@ -237,9 +237,7 @@ class ExpandArgReduceCPU(ExpandTransformation):
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         in_dtype, it, n_str, read, has_val = _scan_context(node, parent_state, parent_sdfg)
         types = f"<{in_dtype.ctype}, {it}>"
-        # Seeded from element 0 rather than an identity: the input slice is never empty, and
-        # ``initializer(omp_priv = omp_orig)`` then hands every thread a real element, so no
-        # dtype-dependent infinity has to be spelled.
+        # Seeded from element 0, the input slice is never empty; each thread starts from the neutral pair.
         code = (
             f"dace::arg_pair{types} __ar_best = dace::arg_pair_of{types}({read('0')}, 0);\n"
             f"#pragma omp parallel for reduction(arg_{node.op}_pair : __ar_best)\n"
