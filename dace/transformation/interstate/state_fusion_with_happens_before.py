@@ -707,7 +707,14 @@ class StateFusionExtended(StateFusion):
                         continue  # re-written inside the second state: not a merge point
                     # ``a`` merges with the one producer its read selects, not with whichever the read reaches
                     producers = [n for n in first_output if n.data == a.data and _has_data_write(n)]
-                    if producers and all(nx.has_path(first_state._nx, c, p) for c in consumers for p in producers):
+                    if (
+                        producers
+                        and all(nx.has_path(first_state._nx, c, p) for c in consumers for p in producers)
+                        # Only an overlap is sure to merge: an edge landing on a disjoint ``a`` leaves it apart
+                        and StateFusionExtended.memlets_intersect(
+                            first_state, producers, False, second_state, [a], True, facts
+                        )
+                    ):
                         return True
                 return False
 

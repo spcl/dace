@@ -356,6 +356,30 @@ def test_aggressive_fusion_orders_a_write_write_past_a_shared_value():
     assert np.array_equal(_run(sdfg, "fused", A=np.zeros(K))["A"], ref["A"])
 
 
+def test_a_read_a_disjoint_merge_would_order_stays_before_the_overwrite():
+    """The first state reads ``T`` into ``X[0]``; the second overwrites ``T`` from ``X[1]``, which never merges."""
+    sdfg = SDFG("disjoint_merge_war")
+    sdfg.add_array("X", [K], dtypes.typeclass(float))
+    sdfg.add_array("T", [K], dtypes.typeclass(float), transient=True)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second")
+    seed = first.add_tasklet("seed", {}, {"o": None}, "o = 3.0")
+    t = first.add_write("T")
+    first.add_edge(seed, "o", t, None, Memlet("T[1]"))
+    read = first.add_tasklet("read", {"i": None}, {"o": None}, "o = 2.0 * i")
+    first.add_edge(t, None, read, "i", Memlet("T[1]"))
+    first.add_edge(read, "o", first.add_write("X"), None, Memlet("X[0]"))
+    overwrite = second.add_tasklet("overwrite", {"i": None}, {"o": None}, "o = i")
+    second.add_edge(second.add_read("X"), None, overwrite, "i", Memlet("X[1]"))
+    second.add_edge(overwrite, "o", second.add_write("T"), None, Memlet("T[1]"))
+    ref = _run(sdfg, "ref", X=np.zeros(K))
+    sdfg.apply_transformations_repeated(StateFusionExtended, options={"aggressive_merges": True})
+    assert sdfg.number_of_nodes() == 1
+    fused = sdfg.nodes()[0]
+    assert nx.has_path(fused._nx, read, overwrite)
+    assert np.array_equal(_run(sdfg, "fused", X=np.zeros(K))["X"], ref["X"])
+
+
 def test_war_write_after_read():
     """first: B[k] = A[k];  second: A[k] = 9.  B must get the OLD A[k].
 
@@ -2148,5 +2172,6 @@ if __name__ == "__main__":
     test_a_scope_reading_what_the_first_state_wrote_stays_behind_it()
     test_permissive_fusion_keeps_the_other_predecessor_of_the_second_state()
     test_aggressive_fusion_orders_a_write_write_past_a_shared_value()
+    test_a_read_a_disjoint_merge_would_order_stays_before_the_overwrite()
     test_extended_fusion_orders_a_read_held_apart_after_the_leaf_instance()
     test_reader_of_a_rewritten_container_stays_ordered_after_its_writer()
