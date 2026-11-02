@@ -597,7 +597,7 @@ def _independent_block_groups(loop: LoopRegion) -> list[list] | None:
     :returns: Ordered list of block groups, or ``None`` if not applicable.
     """
     order = _linear_blocks(loop)
-    if order is None or len(order) < 2:
+    if order is None or len(order) < 2 or not loop_analysis.fixed_iteration_space(loop):
         return None
     pos = {b: i for i, b in enumerate(order)}
     rw = {b: _block_rw(b) for b in order}
@@ -677,7 +677,7 @@ class LoopFission(ppl.Pass):
         :param loop: The loop to judge.
         """
         if _single_compute_state(loop) is not None:
-            return _fissions_after_bridge_rewrite(loop, loop.sdfg)
+            return loop_analysis.fixed_iteration_space(loop) and _fissions_after_bridge_rewrite(loop, loop.sdfg)
         return _independent_block_groups(loop) is not None
 
     @staticmethod
@@ -693,7 +693,7 @@ class LoopFission(ppl.Pass):
             # Decide without rewriting, then mutate: the bridge rewrite is only sound once the fission
             # separates producer and consumer into their own loops, so a loop that turns out not to
             # fission must come out exactly as it went in.
-            if not _fissions_after_bridge_rewrite(loop, sdfg):
+            if not loop_analysis.fixed_iteration_space(loop) or not _fissions_after_bridge_rewrite(loop, sdfg):
                 return False
             _rewrite_per_iter_bridges(compute, loop.loop_variable, sdfg)
             LoopFission._fission(loop, compute, sdfg)

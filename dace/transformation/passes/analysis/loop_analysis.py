@@ -20,6 +20,7 @@ from dace.sdfg.state import (
     ControlFlowBlock,
     ControlFlowRegion,
     LoopRegion,
+    ReturnBlock,
 )
 
 if TYPE_CHECKING:
@@ -229,6 +230,39 @@ def loop_jumps(loop: LoopRegion) -> list[ControlFlowBlock]:
         elif isinstance(block, ControlFlowRegion) and not isinstance(block, LoopRegion):
             stack.extend(block.nodes())
     return jumps
+
+
+def written_names(region: ControlFlowRegion) -> set[str]:
+    """The data containers and interstate-assigned symbols written anywhere in ``region``."""
+    written: set[str] = set()
+    for edge in region.all_interstate_edges():
+        written.update(edge.data.assignments)
+    for state in region.states():
+        written.update(node.data for node in state.data_nodes() if state.in_degree(node) > 0)
+    return written
+
+
+def loop_header_names(loop: LoopRegion) -> set[str]:
+    """The names ``loop``'s init, condition and update read, its own iterator left out."""
+    names: set[str] = set()
+    for statement in (loop.init_statement, loop.loop_condition, loop.update_statement):
+        if statement is not None:
+            names.update(str(name) for name in statement.get_free_symbols())
+    names.discard(str(loop.loop_variable))
+    return names
+
+
+def fixed_iteration_space(loop: LoopRegion) -> bool:
+    """Whether the iterations of ``loop`` are the ones its header names, whatever its body does.
+
+    Only such a loop may be cloned or share its iterations: a condition on data the body writes, a body that writes
+    the header's names, and a jump or return each let one statement decide how often another runs.
+    """
+    if not loop.loop_variable or loop_jumps(loop):
+        return False
+    if any(isinstance(block, ReturnBlock) for block in loop.all_control_flow_blocks()):
+        return False
+    return loop_header_names(loop).isdisjoint(written := written_names(loop)) and loop.loop_variable not in written
 
 
 def get_loop_end(loop: LoopRegion) -> symbolic.SymbolicType | None:

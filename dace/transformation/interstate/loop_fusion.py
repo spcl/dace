@@ -113,6 +113,8 @@ class LoopFusion(transformation.MultiStateTransformation):
             return False
         if not self._same_iteration_space(first, second):
             return False
+        if not loop_analysis.fixed_iteration_space(first) or not loop_analysis.fixed_iteration_space(second):
+            return False
         # Body SHAPE only gates here on "is this a body we know how to read/merge at all" -- a linear
         # chain of blocks (states, ConditionalBlocks, ...) or the indirect-access bridge shape
         # (``_body_chain``). Whether the pair may actually fuse is decided purely by ``_fusion_legal``

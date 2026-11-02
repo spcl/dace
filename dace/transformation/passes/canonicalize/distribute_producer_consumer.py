@@ -45,6 +45,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.loop_fission import _linear_blocks, per_iter_axes
 
 
@@ -196,7 +197,7 @@ def _forward_flow_groups(
     :param expanded: Containers judged as if expanded by one slot dimension (see :func:`_rw_subsets`).
     """
     order = _linear_blocks(loop, allow_assignments=allow_assignments)
-    if order is None or len(order) < 2:
+    if order is None or len(order) < 2 or not loop_analysis.fixed_iteration_space(loop):
         return None
     lv = loop.loop_variable
     rw = {b: _rw_subsets(b, lv, expanded) for b in order}
