@@ -346,6 +346,7 @@ class ParallelizeLoops(ppl.Pass):
             # The expansion rewrote the loop's subsets and the buffers' shapes: what was derived from them is stale.
             if xform.lift_context is not None:
                 xform.lift_context.loop_facts.pop(loop, None)
+                xform.lift_context.extent_types = None
             if xform.symbol_resolver is not None:
                 xform.symbol_resolver.forget_within(sd)
         # A proof of independence replaces the dependence test, not the scale rule: a SMALL loop stays sequential.

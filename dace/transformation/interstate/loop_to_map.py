@@ -5,8 +5,8 @@ import contextlib
 import copy
 import enum
 import warnings
-from collections import Counter, defaultdict
-from collections.abc import Iterable, Iterator
+from collections import ChainMap, Counter, defaultdict
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from itertools import islice
 from re import findall
@@ -1434,6 +1434,10 @@ class LiftContext:
     #: :func:`declare_lifted_symbols` otherwise walks the whole SDFG for, per lift. Built on first use.
     edge_assignments: Counter | None = None
     loop_variables: Counter | None = None
+    #: name -> the interstate edges of the SDFG that ever assigned it, moved ones included, and the symbol types array
+    #: extents give, both for :func:`declare_lifted_symbols`. Built on first use.
+    assigning_edges: dict[str, list[Any]] | None = None
+    extent_types: dict[str, dtypes.typeclass] | None = None
     #: name -> the blocks of ``block_order`` that read it (in their contents or on an out-edge), and the
     #: blocks all of whose out-edges assign it: the "used after the loop" walk as an index. Entries of
     #: blocks that left the order are skipped by ``block_index``. Built on first use.
@@ -1576,14 +1580,16 @@ def build_lift_context(
     )
 
 
-def iterator_type(loop: LoopRegion, rebound: set[str], table: dict[str, dtypes.typeclass]) -> dtypes.typeclass | None:
+def iterator_type(
+    loop: LoopRegion, rebound: Callable[[str], bool], table: Mapping[str, dtypes.typeclass]
+) -> dtypes.typeclass | None:
     """The type ``loop`` gives its iterator when every other name its header reads keeps the type ``table``
-    declares (none is in ``rebound``), so the walk of ``defined_symbols`` would infer the same one."""
+    declares (none is ``rebound``), so the walk of ``defined_symbols`` would infer the same one."""
     if not loop.init_statement:
         return None
     itervar = loop.loop_variable
     header = " ".join(c.as_string for c in (loop.init_statement, loop.loop_condition, loop.update_statement) if c)
-    if any(name in rebound for name in findall(r"[A-Za-z_]\w*", header) if name != itervar):
+    if any(rebound(name) for name in findall(r"[A-Za-z_]\w*", header) if name != itervar):
         return None
     return loop.new_symbols(table).get(itervar)
 
@@ -1600,6 +1606,31 @@ def declare_or_retype(sdfg: SDFG, name: str, dtype: dtypes.typeclass) -> None:
         sdfg.symbol_repo.set_type(name, dtype)
     else:
         sdfg.add_symbol(name, dtype)
+
+
+def assignments_in(sdfg: SDFG, ctx: LiftContext | None) -> dict[str, list[Any]]:
+    """Name -> the interstate edges of ``sdfg`` assigning it (:attr:`LiftContext.assigning_edges`)."""
+    edges = None if ctx is None else ctx.assigning_edges
+    if edges is None:
+        edges = {}
+        for e in sdfg.all_interstate_edges():
+            for name in e.data.assignments:
+                edges.setdefault(name, []).append(e)
+        if ctx is not None:
+            ctx.assigning_edges = edges
+    return edges
+
+
+def array_extent_types(sdfg: SDFG, ctx: LiftContext | None) -> dict[str, dtypes.typeclass]:
+    """The symbol types the extents of ``sdfg``'s arrays give (:attr:`LiftContext.extent_types`)."""
+    types = None if ctx is None else ctx.extent_types
+    if types is None:
+        types = {}
+        for desc in sdfg.arrays.values():
+            types.update({s.name: s.dtype for s in desc.free_symbols if s.dtype is not None})
+        if ctx is not None:
+            ctx.extent_types = types
+    return types
 
 
 def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: LiftContext | None = None) -> None:
@@ -1625,19 +1656,18 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: LiftC
             for r in sdfg.all_control_flow_regions(recursive=True)
             if isinstance(r, LoopRegion) and r.loop_variable
         )
-    # Every assigned name, and every iterator some loop other than ``loop`` binds.
-    rebound: set[str] = {name for name, count in edge_assignments.items() if count > 0}
-    rebound.update(name for name, count in loop_variables.items() if count > (name == loop.loop_variable))
+
+    def rebound(name: str) -> bool:
+        """Whether an edge assigns ``name``, or a loop other than ``loop`` binds it."""
+        return edge_assignments[name] > 0 or loop_variables[name] > (name == loop.loop_variable)
+
     # A declared symbol type wins over the type an array extent's symbol carries.
-    table: dict[str, dtypes.typeclass] = {}
-    for desc in sdfg.arrays.values():
-        table.update({s.name: s.dtype for s in desc.free_symbols if s.dtype is not None})
-    table.update(sdfg.symbols)
+    table = ChainMap(sdfg.symbols, array_extent_types(sdfg, ctx))
     itervar = loop.loop_variable
-    for name in sorted(free - rebound - {itervar}):
+    for name in sorted(n for n in free - {itervar} if not rebound(n)):
         if name in table:
             declare_or_retype(nsdfg, name, table[name])
-    if itervar in free and itervar not in rebound:
+    if itervar in free and not rebound(itervar):
         itertype = iterator_type(loop, rebound, table)
         if itertype is not None:
             declare_or_retype(nsdfg, itervar, itertype)
@@ -1656,9 +1686,11 @@ def declare_lifted_symbols(nsdfg: SDFG, sdfg: SDFG, loop: LoopRegion, ctx: LiftC
     once = {name for name in free - nsdfg.symbols.keys() if edge_assignments[name] == 1 and loop_variables[name] == 0}
     if not once:
         return
-    for edge in sdfg.all_interstate_edges():
-        for name in once.intersection(edge.data.assignments):
-            if name not in edge.data.new_symbol_names():
+    edges = assignments_in(sdfg, ctx)
+    for name in sorted(once):
+        for edge in edges.get(name, ()):
+            # An edge a lift moved into a body assigns there: the one left is the only edge of ``sdfg``
+            if edge.src.sdfg is not sdfg or name not in edge.data.new_symbol_names():
                 continue
             rhs = edge.data.assignments[name]
             reads = set(findall(r"[A-Za-z_]\w*", rhs))
@@ -3160,6 +3192,10 @@ class LoopLift:
                 internalized.add(name)
         if lift_ctx is not None:
             lift_ctx.internalized_data = internalized
+            if internalized or direct_edges:
+                lift_ctx.extent_types = None
+            if view_assignments:
+                lift_ctx.assigning_edges = None
 
         # Hand the post-lift free symbols to the holder, so the context it rebuilds next does not
         # walk the whole SDFG for a set this already has. Nothing between the snapshot above and
