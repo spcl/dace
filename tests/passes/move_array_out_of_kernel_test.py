@@ -1143,14 +1143,14 @@ def test_a_view_of_a_lifted_array_steps_over_the_other_threads_slices(layout):
     assert 10 * view_stride == int(buf.strides[1] + 2 * buf.strides[2])
 
 
-def kernel_filling_its_scratch_through_a_whole_container_nest() -> dace.SDFG:
+def kernel_filling_its_scratch_through_a_whole_container_nest(inner_extent=LIMIT + 4) -> dace.SDFG:
     """``A[i] = buf[1]`` after a nest writes ``buf[1:3]``; the nest's ``buf`` is the whole container, its
     memlets address it as the kernel does. ``buf`` is larger than registers hold."""
     sdfg = dace.SDFG("scratch_filled_by_a_whole_container_nest")
     sdfg.add_array("A", [128], dace.float64, storage=GLOBAL)
     sdfg.add_transient("buf", [LIMIT + 4], dace.float64, storage=GLOBAL)
     body = dace.SDFG("fill")
-    body.add_array("buf", [LIMIT + 4], dace.float64, storage=GLOBAL)
+    body.add_array("buf", [inner_extent], dace.float64, storage=GLOBAL)
     inner = body.add_state("fill", is_start_block=True)
     write = inner.add_access("buf")
     for k in (1, 2):
@@ -1158,7 +1158,7 @@ def kernel_filling_its_scratch_through_a_whole_container_nest() -> dace.SDFG:
         inner.add_edge(tasklet, "o", write, None, dace.Memlet(f"buf[{k}]"))
     state = sdfg.add_state("s")
     me, mx = state.add_map("kernel", dict(i="0:128"), schedule=GPU_DEVICE)
-    nest = state.add_nested_sdfg(body, set(), {"buf"})
+    nest = state.add_nested_sdfg(body, set(), {"buf"}, symbol_mapping={"M": LIMIT + 4} if inner_extent == "M" else None)
     state.add_edge(me, None, nest, None, dace.Memlet())
     buf = state.add_access("buf")
     state.add_edge(nest, "buf", buf, None, dace.Memlet("buf[1:3]"))

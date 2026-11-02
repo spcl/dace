@@ -769,7 +769,9 @@ def restride_connected_nests(
             for conn in dict.fromkeys(c for c, e in edges if c is not None and e.data.data == name):
                 inner = node.sdfg.arrays[conn]
                 if list(inner.strides) == old:
-                    if list(inner.shape) == list(outer.shape):
+                    mapping = symbolic.symbol_replacements(node.symbol_mapping)
+                    shape = [symbolic.replace_symbols(extent, mapping) for extent in inner.shape]
+                    if len(shape) == len(outer.shape) and all(map(dt.core.same_extent, shape, outer.shape)):
                         for c, edge in edges:
                             if c == conn and edge.data.data == name:
                                 edge.data.subset = subsets.Range.from_array(outer)
