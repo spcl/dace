@@ -50,6 +50,13 @@ class ExpandPure(ExpandTransformation):
             schedule = dace.dtypes.ScheduleType.GPU_Device
         else:
             schedule = dace.dtypes.ScheduleType.Default
+        input_nodes = None
+        if value_info is not None and schedule == dace.dtypes.ScheduleType.GPU_Device:
+            # A kernel cannot read host memory: the value reaches it as a scalar argument.
+            local, _ = sdfg.add_scalar(f"{VALUE_CONNECTOR_NAME}_local", val_desc.dtype, transient=True)
+            input_nodes = {local: state.add_access(local)}
+            state.add_nedge(state.add_read(val_name), input_nodes[local], dace.memlet.Memlet(f"{val_name}[0]"))
+            inputs = {inner_val: dace.memlet.Memlet(f"{local}[0]")}
         state.add_mapped_tasklet(
             f"{node.label}_tasklet",
             map_rng,
@@ -57,6 +64,7 @@ class ExpandPure(ExpandTransformation):
             f"{inner_out} = {value_expr}",
             outputs,
             schedule=schedule,
+            input_nodes=input_nodes,
             external_edges=True,
         )
 
