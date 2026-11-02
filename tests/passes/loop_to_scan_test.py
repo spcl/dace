@@ -2399,6 +2399,23 @@ def test_a_scaled_carry_is_no_scan():
     assert_canon_matches_the_program(scaled_carry, dict(a=rng.random(8), d=rng.random(8)), N=8)
 
 
+M = dace.symbol("M")
+
+
+@dace.program
+def scalar_carry_from_m(a: dace.float64[N], s: dace.float64[1], out: dace.float64[N]):
+    acc = s[0]
+    for i in range(M, N):
+        acc = acc + a[i]
+        out[i] = acc
+    s[0] = acc
+
+
+def test_a_loop_that_does_not_run_keeps_the_accumulator_seed():
+    args = dict(a=np.ones(8), s=np.array([5.0]), out=np.arange(8.0))
+    assert_canon_matches_the_program(scalar_carry_from_m, args, N=8, M=8)
+
+
 if __name__ == "__main__":
     import sys
 

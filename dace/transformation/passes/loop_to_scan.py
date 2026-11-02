@@ -64,6 +64,7 @@ from dace.libraries.standard.nodes.scan import (
     out_connector,
 )
 from dace.optionals import required
+from dace.properties import CodeBlock
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_basic, as_expr, as_loop, as_state, free_symbols
@@ -4641,10 +4642,19 @@ def _rewrite_scalar_carry(parent: ControlFlowRegion, loop: LoopRegion, info: _Sc
         s_write = parent.add_state(loop.label + "_scan_write")
         parent.add_edge(s_scan, s_write, dace.InterstateEdge())
         tail_state = s_write
-    if info.acc_used_post_loop:
+    if info.acc_used_post_loop and loop_analysis._provably_le(1, trip, SymbolResolver().facts_at(parent)):
         s_acc_post = parent.add_state(loop.label + "_scan_acc_post")
         parent.add_edge(tail_state, s_acc_post, dace.InterstateEdge())
         tail_state = s_acc_post
+    elif info.acc_used_post_loop:
+        # A loop that may not run leaves the accumulator at its seed
+        ran = ConditionalBlock(loop.label + "_scan_acc_post_ran", sdfg=sdfg, parent=parent)
+        parent.add_node(ran)
+        parent.add_edge(tail_state, ran, dace.InterstateEdge())
+        branch = ControlFlowRegion(loop.label + "_scan_acc_post_branch", sdfg=sdfg, parent=ran)
+        ran.add_branch(CodeBlock(f"({symbolic.symstr(trip)}) > 0"), branch)
+        s_acc_post = branch.add_state(loop.label + "_scan_acc_post", is_start_block=True)
+        tail_state = ran
     # Reroute predecessors of the loop to ``s_build`` and successors of the
     # loop from ``tail_state`` BEFORE removing the loop node; otherwise the
     # new states would be unreachable / dangling.
@@ -4678,12 +4688,12 @@ def _rewrite_scalar_carry(parent: ControlFlowRegion, loop: LoopRegion, info: _Sc
             last_out = _build_subset(out_desc, info.out_scan_axis, final, info.out_other_indices)
             last_delta = symbolic.simplify(in_span[0][1])
             _emit_scalar_carry_acc_post(
-                tail_state, sdfg, info, info.out_name, last_out, delta_buf or info.delta_name, last_delta
+                s_acc_post, sdfg, info, info.out_name, last_out, delta_buf or info.delta_name, last_delta
             )
         else:
             last = symbolic.simplify(out_span[0][1])
             _emit_scalar_carry_acc_post(
-                tail_state, sdfg, info, scan_buf or info.out_name, subsets.Range([(last, last, 1)])
+                s_acc_post, sdfg, info, scan_buf or info.out_name, subsets.Range([(last, last, 1)])
             )
 
     # Remove the original loop now that its semantics are captured by the new states.
