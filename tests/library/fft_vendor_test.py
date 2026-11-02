@@ -29,6 +29,9 @@ N = dace.symbol("N")
 
 CPU_IMPLEMENTATIONS = ["pure", pytest.param("FFTW3", marks=pytest.mark.fftw)]
 
+#: Shapes with a zero extent, and their axes: a transformed extent, a batch, and a looped batch.
+EMPTY_CPU_TRANSFORMS = (((0,), None), ((0, 3), [0]), ((4, 0), [0]), ((0, 3, 4), [2]))
+
 
 def gpu_implementation() -> str:
     """The vendor FFT of this build's GPU backend."""
@@ -352,6 +355,64 @@ def test_gpu_fft_over_an_empty_batch_is_a_no_op():
         np.testing.assert_allclose(y, np.fft.fftn(x, axes=(0, 1, 2)), rtol=1e-12, atol=1e-10)
 
 
+@pytest.mark.parametrize("implementation", [*CPU_IMPLEMENTATIONS, pytest.param("MKL", marks=pytest.mark.mkl)])
+@pytest.mark.parametrize("shape,axes", EMPTY_CPU_TRANSFORMS)
+def test_cpu_fft_over_an_empty_transform_is_a_no_op(implementation, shape, axes):
+    """An extent that is empty at run time transforms nothing, as numpy returns an empty array.
+
+    FFTW plans no zero-length axis and MKL's interface no empty batch either, which threw through the C ABI.
+    """
+    extents = [dace.symbol(f"E{d}", dace.int64) for d in range(len(shape))]
+    label = "x".join(str(extent) for extent in shape)
+    sdfg = dace.SDFG(f"empty_cpu_fft_{label}_{implementation}")
+    state = sdfg.add_state()
+    sdfg.add_array("x", extents, dace.complex128)
+    sdfg.add_array("y", extents, dace.complex128)
+    node = FFT("fft", axes=axes)
+    node.implementation = implementation
+    state.add_node(node)
+    state.add_edge(state.add_read("x"), None, node, "_inp", dace.Memlet.from_array("x", sdfg.arrays["x"]))
+    state.add_edge(node, "_out", state.add_write("y"), None, dace.Memlet.from_array("y", sdfg.arrays["y"]))
+
+    x = np.zeros(shape, dtype=np.complex128)
+    y = np.zeros(shape, dtype=np.complex128)
+    sdfg(x=x, y=y, **{f"E{d}": extent for d, extent in enumerate(shape)})
+
+    assert y.size == 0
+
+
+@pytest.mark.parametrize("implementation", ("FFTW3", "MKL"))
+def test_a_gpu_program_declares_the_cpu_vendor_plans_of_its_state_struct(implementation):
+    """The GPU file carries the whole state struct, so it needs the header of the plan caches a host FFT adds."""
+    sdfg = dace.SDFG(f"mixed_gpu_{implementation}")
+    state = sdfg.add_state()
+    sdfg.add_array("x", [8], dace.complex128)
+    sdfg.add_array("y", [8], dace.complex128)
+    node = FFT("fft")
+    node.implementation = implementation
+    state.add_node(node)
+    state.add_edge(state.add_read("x"), None, node, "_inp", dace.Memlet.from_array("x", sdfg.arrays["x"]))
+    state.add_edge(node, "_out", state.add_write("y"), None, dace.Memlet.from_array("y", sdfg.arrays["y"]))
+    gpu_state = sdfg.add_state_after(state)
+    sdfg.add_array("g", [8], dace.float64, storage=dtypes.StorageType.GPU_Global, transient=True)
+    gpu_state.add_mapped_tasklet(
+        "fill",
+        {"i": "0:8"},
+        {},
+        "o = i",
+        {"o": dace.Memlet("g[i]")},
+        schedule=dtypes.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
+
+    with dace.config.temporary_config():
+        dace.Config.set("compiler", "cuda", "backend", value="cuda")
+        files = sdfg.generate_code()
+    gpu_file = next(f for f in files if f.language == "cu")
+    assert "fftw3.h" in gpu_file.clean_code
+    assert "PlanCache<fftw_plan>" in gpu_file.clean_code
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("shape", [(32, 48), (8, 12, 16)])
 def test_gpu_fftn_over_every_axis(shape):
@@ -656,6 +717,11 @@ if __name__ == "__main__":
     test_gpu_batch_innermost_view_into_a_fortran_result_takes_one_plan()
     test_gpu_oppositely_ordered_sides_stage_the_source()
     test_gpu_fft_over_an_empty_batch_is_a_no_op()
+    for implementation in ("pure", "FFTW3"):
+        for shape, axes in EMPTY_CPU_TRANSFORMS:
+            test_cpu_fft_over_an_empty_transform_is_a_no_op(implementation, shape, axes)
+    test_a_gpu_program_declares_the_cpu_vendor_plans_of_its_state_struct("FFTW3")
+    test_a_gpu_program_declares_the_cpu_vendor_plans_of_its_state_struct("MKL")
     test_gpu_fftn_over_every_axis((32, 48))
     test_gpu_fftn_over_every_axis((8, 12, 16))
     test_a_batch_of_two_dense_axes_goes_to_fftw3_as_one_dimension()

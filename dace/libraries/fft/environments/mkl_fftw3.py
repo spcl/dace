@@ -18,7 +18,8 @@ class MKLFFTW3:
     cmake_link_flags: list[str] = []
     cmake_files: list[str] = []
 
-    headers = ["fftw/fftw3.h", "omp.h"]
+    # The state struct, whose plan caches name fftw_plan, is also written into a GPU backend file
+    headers = {"frame": ["fftw/fftw3.h", "omp.h"], "cuda": ["fftw/fftw3.h"]}
     state_fields = ["dace::fft::PlanCache<fftw_plan> fftw_plans;", "dace::fft::PlanCache<fftwf_plan> fftwf_plans;"]
     init_code = ""
     finalize_code = ""
