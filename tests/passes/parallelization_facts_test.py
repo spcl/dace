@@ -143,6 +143,22 @@ def test_break_anti_dependence_snapshots_a_read_ahead_only_under_a_nonnegative_i
     assert np.allclose(a, ref)
 
 
+def test_a_symbol_one_branch_assigns_is_not_bound_on_every_iteration():
+    """``row`` keeps its old value on the other iterations, so ``x[row]`` is not a distinct store per iteration."""
+
+    @dace.program
+    def conditional_row(c: dace.int64[N], b: dace.float64[N], x: dace.float64[N]):
+        row = 0
+        for i in range(N):
+            if c[i] > 0:
+                row = i
+            x[row] = b[i]
+
+    sdfg = conditional_row.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    assert any(isinstance(region, LoopRegion) for region in sdfg.all_control_flow_regions())
+
+
 if __name__ == "__main__":
     for program in (strided_store, quadratic_store):
         test_a_store_injective_only_for_a_positive_coefficient_lifts_under_that_fact(program)
@@ -151,3 +167,4 @@ if __name__ == "__main__":
     test_a_fact_about_an_index_array_the_loop_rewrites_is_not_assumed()
     for declared in (False, True):
         test_break_anti_dependence_snapshots_a_read_ahead_only_under_a_nonnegative_index(declared)
+    test_a_symbol_one_branch_assigns_is_not_bound_on_every_iteration()
