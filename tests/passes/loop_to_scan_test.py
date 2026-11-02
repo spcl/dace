@@ -10,6 +10,7 @@ import pytest
 import dace
 from dace.libraries.standard.nodes.scan import Scan, ScanOp, in_connector, init_connector, out_connector
 from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
@@ -2352,6 +2353,35 @@ def test_delta_may_be_a_computed_expression():
     got = seed.copy()
     sdfg(out=got, x=x, y=y, z=z, N=n)
     assert np.allclose(got, want), f"max|diff| = {np.max(np.abs(got - want)):.3e}"
+
+
+def assert_canon_matches_the_program(program, args: dict, **symbols):
+    """Canonicalization keeps what the unoptimized program computes."""
+    reference = {name: value.copy() for name, value in args.items()}
+    plain = program.to_sdfg(simplify=False)
+    plain.name += "_plain"
+    plain(**reference, **symbols)
+    sdfg = program.to_sdfg(simplify=False)
+    canonicalize(sdfg, validate=True)
+    sdfg(**args, **symbols)
+    for name, value in args.items():
+        assert np.allclose(value, reference[name]), name
+
+
+@dace.program
+def scalar_carry_in_a_branch(a: dace.float64[N], m: dace.float64[N], out: dace.float64[N]):
+    acc = 0.0
+    for i in range(N):
+        if m[i] > 0.5:
+            acc = acc + a[i]
+            out[i] = acc
+        else:
+            out[i] = -1.0
+
+
+def test_a_scalar_carry_inside_a_branch_keeps_the_branch():
+    args = dict(a=np.arange(1.0, 11.0), m=np.array([0.1, 0.9] * 5), out=np.zeros(10))
+    assert_canon_matches_the_program(scalar_carry_in_a_branch, args, N=10)
 
 
 if __name__ == "__main__":

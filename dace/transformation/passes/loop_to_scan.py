@@ -2222,7 +2222,7 @@ def _match_scalar_carry(loop: LoopRegion, sdfg: SDFG) -> _ScalarCarryScan | None
         return None
 
     state, inner_loop = _descend_to_content_state(loop)
-    if state is None or inner_loop is not None:
+    if state is None or inner_loop is not None or state.parent_graph is not loop:
         return None  # v1 keeps narrow on flat bodies; nested-scalar-carry is a follow-up.
     for n in state.nodes():
         if not isinstance(n, (nodes.Tasklet, nodes.AccessNode)):
