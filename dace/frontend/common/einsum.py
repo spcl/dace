@@ -581,6 +581,7 @@ def _create_einsum_internal(
         (batch := broadcast_matmul_batch(einsum)) is not None
         and all(sdfg.arrays[array].dtype == dtype for array in arrays)
         and _lowering_reads_directly(sdfg.arrays[output])
+        and sdfg.arrays[output].storage != dtypes.StorageType.GPU_Global
         and not is_devicelevel_gpu(sdfg, state, input_nodes[arrays[0]])
     ):
         c = state.add_write(output)

@@ -35,7 +35,7 @@ def batch_of_products(name: str, output: str) -> dace.SDFG:
 
 def test_contraction_under_an_enclosing_map_lifts_per_slice():
     sdfg = batch_of_products("lift_einsum_nested_slice", "o")
-    assert sdfg.apply_transformations(LiftEinsum) == 1
+    assert sdfg.apply_transformations(LiftEinsum, options={"per_slice": True}) == 1
     state = sdfg.start_state
     einsum = next(n for n in state.nodes() if isinstance(n, blas.Einsum))
     assert isinstance(state.entry_node(einsum), dace.nodes.MapEntry)
@@ -49,7 +49,7 @@ def test_contraction_under_an_enclosing_map_lifts_per_slice():
 
 def test_enclosing_map_the_output_does_not_index_stays_a_reduction():
     sdfg = batch_of_products("lift_einsum_nested_shared", "0")
-    assert sdfg.apply_transformations(LiftEinsum) == 0
+    assert sdfg.apply_transformations(LiftEinsum, options={"per_slice": True}) == 0
 
 
 if __name__ == "__main__":

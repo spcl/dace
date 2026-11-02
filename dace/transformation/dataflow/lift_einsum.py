@@ -36,9 +36,17 @@ class LiftEinsum(xf.SingleStateTransformation):
         "off by default so the standalone lift still hoists outer products.",
     )
 
-    def __init__(self, contraction_only: bool = False):
+    per_slice = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Also lift a map indexing an operand at a map-invariant point: under an enclosing map, one einsum per "
+        "iteration. CPU only: a device kernel has no in-kernel einsum lowering.",
+    )
+
+    def __init__(self, contraction_only: bool = False, per_slice: bool = False):
         super().__init__()
         self.contraction_only = contraction_only
+        self.per_slice = per_slice
 
     @classmethod
     def expressions(cls):
@@ -63,7 +71,7 @@ class LiftEinsum(xf.SingleStateTransformation):
             name = str(begin)
             if name in entry.map.params:
                 indices.append(name)
-            elif scoped & {str(s) for s in pystr_to_symbolic(begin).free_symbols}:
+            elif name != "0" and (not self.per_slice or scoped & {str(s) for s in begin.free_symbols}):
                 return None
         return indices
 

@@ -1029,7 +1029,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     if lift_copy:
         s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
     if lift:
-        s += [(label, PatternApplyOnceEverywhere([LiftEinsum()]))]
+        s += [(label, PatternApplyOnceEverywhere([LiftEinsum(per_slice=target == "cpu")]))]
     # Fusion joined a slice update's map with the copy of its result, across the states the frontend gave them.
     s += [(label, EliminateCopyBack())]
     s += [
