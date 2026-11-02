@@ -640,12 +640,13 @@ class ConstantRangeMemlet(MemletPattern):
             return False
 
         # Each point is compared by value: an expression that does not evaluate to a number at the first point (e.g.
-        # an unknown function) cannot be bounded
+        # an unknown function), or holds a symbol the first point may cancel (``c * i`` at 0), cannot be bounded
         first = {p: dim[0] for p, dim in zip(self.params, node_range)}
         return all(
             sympy.sympify(
                 _subexpr(bound, first) if isinstance(bound, (sympy.Basic, symbolic.SymExpr)) else bound
             ).is_comparable
+            and symbolic.free_symbol_names([bound]).keys() <= set(self.params)
             for expr in expressions
             for dexpr in expr
             for bound in (dexpr if isinstance(dexpr, tuple) else (dexpr,))

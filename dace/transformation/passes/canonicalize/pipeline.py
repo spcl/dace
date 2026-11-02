@@ -832,10 +832,8 @@ def lift_semantics(lift: bool, lift_copy: bool, interchange_carry_with_map: bool
     if lift_copy:
         s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
     if lift:
-        s += [(label, LoopToTranspose())]
+        s += [(label, LoopToTranspose()), (label, LoopToEinsum()), (label, NestToContraction())]
     s += [
-        (label, LoopToEinsum()),
-        (label, NestToContraction()),
         (label, SinkLastOnlyScanStore()),
         (label, LoopToReduce()),
         (label, LiftPreprocess()),

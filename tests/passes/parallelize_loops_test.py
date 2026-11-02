@@ -1354,6 +1354,95 @@ def test_a_break_under_a_guarded_branch_does_not_stop_the_read_order_walk():
     assert read_before_written(loop, {"t"}) == {"t"}
 
 
+def test_a_local_array_read_at_an_element_this_iteration_did_not_write_stays_a_loop():
+    """``t[0]`` is written first, yet ``t[1]`` comes from the iteration before: privatizing ``t`` loses that carry."""
+    sdfg = dace.SDFG("carry_in_another_element")
+    sdfg.add_array("X", [8], dace.float64)
+    sdfg.add_array("O", [8], dace.float64)
+    sdfg.add_transient("t", [2], dace.float64)
+    loop = LoopRegion("carry", "i < 8", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    store = loop.add_state("store", is_start_block=True)
+    store.add_nedge(store.add_read("X"), store.add_write("t"), dace.Memlet("X[i] -> [0]", data="t"))
+    use = loop.add_state_after(store, "use")
+    use.add_nedge(use.add_read("t"), use.add_write("O"), dace.Memlet("t[1] -> [i]"))
+    shift = loop.add_state_after(use, "shift")
+    tasklet = shift.add_tasklet("shift", {"v": None}, {"o": None}, "o = v")
+    shift.add_edge(shift.add_read("t"), None, tasklet, "v", dace.Memlet("t[0]"))
+    shift.add_edge(tasklet, "o", shift.add_write("t"), None, dace.Memlet("t[1]"))
+    sdfg.validate()
+
+    ParallelizeLoops().apply_pass(sdfg, {})
+
+    assert loop in sdfg.nodes()
+
+
+def test_a_local_scratch_rewritten_at_the_element_it_reads_lifts():
+    sdfg = dace.SDFG("scratch_in_one_element")
+    sdfg.add_array("X", [8], dace.float64)
+    sdfg.add_array("O", [8], dace.float64)
+    sdfg.add_transient("t", [2], dace.float64)
+    loop = LoopRegion("scratch", "i < 8", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    store = loop.add_state("store", is_start_block=True)
+    store.add_nedge(store.add_read("X"), store.add_write("t"), dace.Memlet("X[i] -> [1]", data="t"))
+    use = loop.add_state_after(store, "use")
+    use.add_nedge(use.add_read("t"), use.add_write("O"), dace.Memlet("t[1] -> [i]"))
+    sdfg.validate()
+
+    ParallelizeLoops().apply_pass(sdfg, {})
+
+    assert loop not in sdfg.nodes()
+
+
+def test_two_nested_writes_meeting_across_iterations_stay_a_loop():
+    """Each of ``b[i]`` and ``b[i + 1]`` is one-to-one; iteration ``i + 1`` writes what iteration ``i`` wrote second."""
+    inner = dace.SDFG("two_nested_writes_inner")
+    inner.add_array("bo", [9], dace.float64)
+    inner.add_symbol("i", dace.int32)
+    first = inner.add_state("first", is_start_block=True)
+    for state, slot in ((first, "i"), (inner.add_state_after(first, "second"), "i + 1")):
+        tasklet = state.add_tasklet("store", {}, {"o": None}, "o = 1")
+        state.add_edge(tasklet, "o", state.add_write("bo"), None, dace.Memlet(f"bo[{slot}]"))
+    sdfg = dace.SDFG("two_nested_writes")
+    sdfg.add_array("B", [9], dace.float64)
+    loop = LoopRegion("writes", "i < 8", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    nest = state.add_nested_sdfg(inner, {}, {"bo": None}, symbol_mapping={"i": "i"})
+    state.add_edge(nest, "bo", state.add_write("B"), None, dace.Memlet("B[0:9]"))
+    sdfg.validate()
+
+    ParallelizeLoops().apply_pass(sdfg, {})
+
+    assert loop in sdfg.nodes()
+
+
+def test_a_nested_read_on_its_own_connector_of_the_written_array_stays_a_loop():
+    """``out[i] = in[i + 1] + 1`` with both connectors on ``B``: the write alone is one-to-one."""
+    inner = dace.SDFG("own_connector_read_inner")
+    inner.add_array("bi", [9], dace.float64)
+    inner.add_array("bo", [9], dace.float64)
+    inner.add_symbol("i", dace.int32)
+    body = inner.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("store", {"q": None}, {"o": None}, "o = q + 1")
+    body.add_edge(body.add_read("bi"), None, tasklet, "q", dace.Memlet("bi[i + 1]"))
+    body.add_edge(tasklet, "o", body.add_write("bo"), None, dace.Memlet("bo[i]"))
+    sdfg = dace.SDFG("own_connector_read")
+    sdfg.add_array("B", [9], dace.float64)
+    loop = LoopRegion("reads", "i < 8", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    nest = state.add_nested_sdfg(inner, {"bi": None}, {"bo": None}, symbol_mapping={"i": "i"})
+    state.add_edge(state.add_read("B"), None, nest, "bi", dace.Memlet("B[0:9]"))
+    state.add_edge(nest, "bo", state.add_write("B"), None, dace.Memlet("B[0:9]"))
+    sdfg.validate()
+
+    ParallelizeLoops().apply_pass(sdfg, {})
+
+    assert loop in sdfg.nodes()
+
+
 if __name__ == "__main__":
     test_lift_never_changes_a_surviving_blocks_free_symbols()
     test_reused_analysis_costs_no_maps_against_the_matcher()
@@ -1418,3 +1507,9 @@ if __name__ == "__main__":
     test_a_loop_writing_a_slab_that_starts_at_the_iterate_stays_a_loop()
     test_a_container_assumed_private_is_left_out_of_the_dependence_test()
     test_a_break_under_a_guarded_branch_does_not_stop_the_read_order_walk()
+
+
+    test_a_local_array_read_at_an_element_this_iteration_did_not_write_stays_a_loop()
+    test_a_local_scratch_rewritten_at_the_element_it_reads_lifts()
+    test_two_nested_writes_meeting_across_iterations_stay_a_loop()
+    test_a_nested_read_on_its_own_connector_of_the_written_array_stays_a_loop()

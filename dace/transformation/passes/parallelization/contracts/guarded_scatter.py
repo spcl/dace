@@ -67,6 +67,7 @@ from dace.transformation.passes.scatter_conflict_guard import (
     ScatterIndexSlice,
     build_guard_states,
     insert_scatter_guard,
+    value_is_injective_affine,
 )
 from dace.transformation.passes.vectorization.utils.map_predicates import NO_VECTORIZE_MARKER
 
@@ -204,7 +205,11 @@ class ScatterToGuardedMaps(ppl.Pass):
             for idx_name, (_targets, window) in _scatter_idx_targets_for_loop(loop, owner_sdfg, window_1d=True).items():
                 if idx_name not in idx_arrays:
                     continue
-                if scratch_scatter(owner_sdfg, idx_name, _targets) or index_rebuilt_around(owner_sdfg, loop, idx_name):
+                if (
+                    idx_name not in sdfg.arrays
+                    or scratch_scatter(owner_sdfg, idx_name, _targets)
+                    or index_rebuilt_around(owner_sdfg, loop, idx_name)
+                ):
                     rebuilt_guards.append((loop, idx_name, window))
                 else:
                     hoisted_names.add(idx_name)
@@ -288,7 +293,9 @@ class ScatterToGuardedMaps(ppl.Pass):
                 # safe; we OR the counts together so any positive count routes
                 # to the sequential branch.
                 loop_idx = _scatter_idx_arrays_for_loop(loop, owner_sdfg)
-                loop_idx_syms = [dup_count_syms[i] for i in loop_idx if i in dup_count_syms]
+                loop_idx_syms = [
+                    dup_count_syms[i] for i in loop_idx if i in dup_count_syms and (id(loop), i) not in sliced_dup_syms
+                ]
                 # A hoisted guard binds its count in the root; a dispatcher in a nested owner reads it passed down
                 for sym in loop_idx_syms:
                     pass_symbol_down_to(owner_sdfg, sdfg, sym)
@@ -570,6 +577,7 @@ def _scatter_idx_targets_for_loop(
     dim_nodes_by_arr: dict[str, list[ast.AST]] = {}
     outside: set[str] | None = None
     read: set[str] = set()
+    slots: dict[str, str] = {}
     for state in region.states():
         for node in state.data_nodes():
             if state.in_degree(node) == 0:
@@ -617,6 +625,11 @@ def _scatter_idx_targets_for_loop(
                 # Form 4: a tasklet writing through its index input.
                 for arr, dim_nodes in _tasklet_indexed_write(state, e, loop_var, sdfg).items():
                     found.setdefault(arr, dim_nodes)
+                if not slot_follows_index(e.data.subset, bindings.keys() | chained.keys()):
+                    return {}
+                # Each store is checked alone, so a second slot of one target can meet the first in another iteration
+                if found and slots.setdefault(node.data, str(e.data.subset)) != str(e.data.subset):
+                    return {}
                 for arr, dim_nodes in found.items():
                     loop_arrays.setdefault(arr, set()).add(node.data)
                     if dim_nodes is not None:
@@ -630,6 +643,8 @@ def _scatter_idx_targets_for_loop(
         desc = sdfg.arrays[arr]
         one_dim = len(desc.shape) == 1
         dim_nodes = dim_nodes_by_arr.get(arr)
+        if one_dim and dim_nodes is not None and not index_read_injective(dim_nodes[0], region):
+            return {}
         if one_dim and scratch_scatter(sdfg, arr, tgts):
             # The window the loop reads, right before it: the rest of a local index array may hold nothing yet
             window = None if dim_nodes is None else _classify_index_slice(desc, dim_nodes, region)
@@ -645,6 +660,30 @@ def _scatter_idx_targets_for_loop(
         if index_slice is not None or one_dim:
             result[arr] = (tgts, index_slice)
     return result
+
+
+def slot_follows_index(subset: subsets.Subset, names: set[str]) -> bool:
+    """Whether the slot of ``subset`` is one-to-one in each loaded index of ``names`` it reads: distinct indices say
+    nothing of ``out[k % 4]``."""
+    return all(
+        value_is_injective_affine(str(begin), str(sym))
+        for begin, _, _ in subset.ndrange()
+        for sym in symbolic.pystr_to_symbolic(begin).free_symbols
+        if str(sym) in names
+    )
+
+
+def index_read_injective(subscript: ast.AST, region: LoopRegion) -> bool:
+    """Whether ``idx[subscript]`` reads a new element every iteration, so that distinct elements of ``idx`` give
+    distinct slots. A symbolic scale counts when the loop's end divides by it, or it is known nonzero."""
+    coefficients = symbolic.affine_coefficients(astutils.unparse(subscript), region.loop_variable)
+    if coefficients is None:
+        return False
+    scale = coefficients[0]
+    if scale.is_nonzero:
+        return True
+    end = loop_analysis.get_loop_end(region)
+    return end is not None and any(str(call.args[1]) == str(scale) for call in end.atoms(symbolic.int_floor))
 
 
 def _classify_index_slice(desc: data.Array, dim_nodes: list[ast.AST], region: LoopRegion) -> ScatterIndexSlice | None:
@@ -949,8 +988,21 @@ def joint_scatter_writes_for_loop(region: LoopRegion, sdfg: SDFG) -> list[JointS
                 mask, ok = enclosing_branch_condition(state, region, bindings)
                 if not ok or (mask is not None and not key_map_can_read(mask, sdfg, loop_var, varying)):
                     return None
-                writes.append(JointScatterWrite(target=node.data, dim_exprs=tuple(exprs), mask_expr=mask))
+                write = JointScatterWrite(target=node.data, dim_exprs=tuple(exprs), mask_expr=mask)
+                if any(may_meet_elsewhere(write, other) for other in writes):
+                    return None
+                writes.append(write)
     return writes
+
+
+def may_meet_elsewhere(a: JointScatterWrite, b: JointScatterWrite) -> bool:
+    """Whether two separately keyed writes can hit one slot in different iterations: same target, different slot
+    expressions, and no dimension holding two different constants (``out[x[i], 0]`` and ``out[x[i], 1]``)."""
+    return (
+        a.target == b.target
+        and a.dim_exprs != b.dim_exprs
+        and not any(x != y and x.isdecimal() and y.isdecimal() for x, y in zip(a.dim_exprs, b.dim_exprs))
+    )
 
 
 def one_index_over_fixed_slabs(subset, bindings: dict, loop_var: str, varying: set[str], sdfg: SDFG) -> bool:

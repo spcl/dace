@@ -237,7 +237,7 @@ def _hoistable(
                 continue
             # Variant assignment: only legal to leave inside the loop
             # body if its lhs is not observed outside the branch.
-            if lhs in outside_reads:
+            if lhs in outside_reads or loop_analysis.read_outside(loop.sdfg, loop, {lhs}, set()):
                 return None
 
     assigned = {lhs for lhs, _ in chain_assignments}

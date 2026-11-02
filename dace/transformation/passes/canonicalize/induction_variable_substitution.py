@@ -401,15 +401,32 @@ def _extract_iv(
     if any(n.data != iv.accum for n in state.sink_nodes()):
         return None
 
-    return iv.accum, iv.subset, iv.op_type, iv.const_val, trip_count(start, end, stride, sdfg)
+    return iv.accum, iv.subset, iv.op_type, iv.const_val, trip_count(loop, start, end, stride, sdfg)
 
 
 def trip_count(
-    start: symbolic.SymbolicType, end: symbolic.SymbolicType, stride: symbolic.SymbolicType, sdfg: SDFG
+    loop: LoopRegion,
+    start: symbolic.SymbolicType,
+    end: symbolic.SymbolicType,
+    stride: symbolic.SymbolicType,
+    sdfg: SDFG,
 ) -> symbolic.SymbolicType:
-    """How often a loop over the inclusive ``[start, end]`` runs; an empty range runs it zero times."""
+    """How often ``loop`` over the inclusive ``[start, end]`` runs; an empty range runs it zero times. A loop around it
+    is running, so that loop's range is not empty: ``for i in range(N): for j in range(1, N)`` runs ``N - 1`` times."""
     trip = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
-    return trip if symbolic.provably_nonnegative(trip, sdfg.facts()) else sympy.Max(0, trip)
+    facts = sdfg.facts()
+    if symbolic.provably_nonnegative(trip, facts):
+        return trip
+    for outer in loop_analysis.enclosing_loops(loop):
+        low, high = loop_analysis.get_init_assignment(outer), loop_analysis.get_loop_end(outer)
+        if (
+            low is not None
+            and high is not None
+            and loop_analysis.get_loop_stride(outer) == 1
+            and symbolic.provably_nonnegative(symbolic.simplify(trip - (high - low)), facts)
+        ):
+            return trip
+    return sympy.Max(0, trip)
 
 
 def extract_tasklet_iv(
@@ -805,7 +822,8 @@ def apply_use_site_substitution(
             state.remove_node(n)
 
     # The loop no longer updates the accumulator; materialise the value it used to leave behind.
-    closed = CLOSED_FORM[iv.op_type]("__in", iv.const_val, symbolic.symstr(trip_count(start, end, stride, parent.sdfg)))
+    trips = trip_count(loop, start, end, stride, parent.sdfg)
+    closed = CLOSED_FORM[iv.op_type]("__in", iv.const_val, symbolic.symstr(trips))
     iv_post = closed_form_state(parent, loop.label + "_iv_use_post", iv.accum, iv.subset, closed)
     for oe in list(parent.out_edges(loop)):
         parent.add_edge(iv_post, oe.dst, oe.data)
@@ -1077,7 +1095,23 @@ def _try_substitute_derived_symbol(
             for oe in list(parent.out_edges(loop)):
                 parent.add_edge(dsym_post, oe.dst, oe.data)
                 parent.remove_edge(oe)
-            parent.add_edge(loop, dsym_post, InterstateEdge(assignments={sym: post_val}))
+            spare = None if start is None or stride is None else trip_count(loop, start, end, stride, loop.sdfg) - 1
+            if (
+                spare is None
+                or symbolic.provably_nonnegative(symbolic.simplify(spare), loop.sdfg.facts())
+                or not loop_analysis.read_outside(loop.sdfg, loop, {sym}, set())
+            ):
+                parent.add_edge(loop, dsym_post, InterstateEdge(assignments={sym: post_val}))
+                return True
+            # A loop that does not run leaves the value from before it
+            ran = ConditionalBlock(loop.label + "_dsym_ran")
+            branch = ControlFlowRegion(loop.label + "_dsym_set")
+            first = branch.add_state(is_start_block=True)
+            branch.add_edge(first, branch.add_state(), InterstateEdge(assignments={sym: post_val}))
+            ran.add_branch(properties.CodeBlock(f"({symbolic.symstr(spare)}) >= 0"), branch)
+            parent.add_node(ran)
+            parent.add_edge(loop, ran, InterstateEdge())
+            parent.add_edge(ran, dsym_post, InterstateEdge())
         return True
     return False
 
@@ -1256,7 +1290,7 @@ def _try_substitute_iedge_iv(
 
     # 5. Materialize ``sym + trip_count * step`` for later readers (and the next outer iteration) on
     #    the iedge into a spliced ``iv_post`` state; existing exit edges are rerouted from it.
-    post_loop_expr = symbolic.simplify(as_expr(sym_sym) + (symbolic.int_floor(end - start, stride) + 1) * step)
+    post_loop_expr = symbolic.simplify(as_expr(sym_sym) + trip_count(loop, start, end, stride, sdfg) * step)
     post_loop_value = symbolic.symstr(post_loop_expr)
 
     # Two-level counter (s126): if the lone unconditional exit edge only assigns ``sym``, compose

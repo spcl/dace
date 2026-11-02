@@ -42,6 +42,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.dataflow.wcr_conversion import wcr_operator
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 from dace.transformation.passes.parallelization.facts import SolverFacts
+from dace.transformation.passes.scalar_fission import subsets_cover
 
 IndexExpr = str | int | symbolic.SymbolicType
 
@@ -125,7 +126,7 @@ def through_symbol_mapping(subset: subsets.Subset, nsdfg_node: nodes.NestedSDFG)
     return outer
 
 
-def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span) -> bool:
+def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span, start=0) -> bool:
     """Whether every write to ``conn``'s array INSIDE ``nsdfg_node`` is indexed by the (mapped)
     iteration variable.
 
@@ -144,9 +145,11 @@ def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span) -> b
     :param conn: output connector (== inner array name) written.
     :param itersym: outer loop iteration symbol.
     :param span: ``end - start`` of the outer loop, see :func:`_check_range`.
-    :returns: True iff every inner write to ``conn`` is iter-indexed.
+    :param start: The first iterate of the outer loop.
+    :returns: True iff every inner write to ``conn`` is iter-indexed, and any two distinct ones never meet.
     """
     found = False
+    written: dict[str, subsets.Subset] = {}
     for state in nsdfg_node.sdfg.states():
         for dn in state.data_nodes():
             if dn.data != conn or state.in_degree(dn) == 0:
@@ -160,7 +163,7 @@ def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span) -> b
                 if e.data is None or e.data.wcr is not None:
                     return False
                 if isinstance(e.src, nodes.NestedSDFG):
-                    if not nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, span):
+                    if not nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, span, start):
                         return False
                     found = True
                     continue
@@ -171,10 +174,42 @@ def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span) -> b
                 if not _check_range(outer, a, itersym, b, step, span):
                     return False
                 found = True
+                # ``b[i]`` and ``b[i + 1]`` are each one-to-one, and meet across two iterations
+                if str(outer) not in written and not all(
+                    meet_within_one_iteration(outer, other, itersym, step, start) for other in written.values()
+                ):
+                    return False
+                written[str(outer)] = outer
     return found
 
 
-def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
+def meet_within_one_iteration(first: subsets.Subset, second: subsets.Subset, itersym, step, start=0) -> bool:
+    """Whether two subsets of one body never share an element across two iterations: some dimension is the same
+    one-to-one index in both, or keeps them apart in any iteration pair."""
+    return any(
+        low == high
+        and other_low == other_high
+        and (
+            _same_injective_index(low, other_low, itersym)
+            or _dim_provably_disjoint(low, other_low, itersym, step, start)
+        )
+        for (low, high, _), (other_low, other_high, _) in zip(first.ndrange(), second.ndrange())
+    )
+
+
+def nested_write_subsets(nsdfg_node, conn) -> list[subsets.Subset]:
+    """The writes to ``conn``'s array in ``nsdfg_node``'s own states, through its symbol mapping."""
+    return [
+        through_symbol_mapping(e.data.get_dst_subset(e, state), nsdfg_node)
+        for state in nsdfg_node.sdfg.states()
+        for dn in state.data_nodes()
+        if dn.data == conn
+        for e in state.in_edges(dn)
+        if not e.data.is_empty() and not isinstance(e.src, nodes.NestedSDFG)
+    ]
+
+
+def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step, writes=(), start=0) -> bool:
     """Whether every read of ``conn``'s array INSIDE ``nsdfg_node`` matches the SAME ``a*i+b``
     pattern as the writes, or is loop-invariant.
 
@@ -183,6 +218,7 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
     races: iteration ``i`` reads ``a[i+1]`` while ``i+1`` writes it. Conservative: each inner read
     must match ``a*i+b`` OR be loop-invariant (no outer ``itersym``). Nested NestedSDFGs recurse.
 
+    :param writes: The subsets written in the body: an itersym-dependent read must stay clear of them across iterations.
     :returns: True if no carried-read pattern found; False if any inner read hits the carrier
               array outside the write's affine form.
     """
@@ -196,7 +232,7 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
                     continue
                 if isinstance(e.dst, nodes.NestedSDFG):
                     # The read enters another nested SDFG; descend.
-                    if not nested_reads_match_writes(e.dst, e.dst_conn, itersym, a, b, step):
+                    if not nested_reads_match_writes(e.dst, e.dst_conn, itersym, a, b, step, writes, start):
                         return False
                     continue
                 src_subset = e.data.get_src_subset(e, state)
@@ -213,6 +249,8 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step) -> bool:
                     continue
                 # itersym-dependent read: must match the writes' a*i+b, else it's a carried read.
                 if not _check_range(outer, a, itersym, b, step):
+                    return False
+                if not all(meet_within_one_iteration(outer, write, itersym, step, start) for write in writes):
                     return False
     return True
 
@@ -589,12 +627,15 @@ def write_refusal(
         # NestedSDFG body propagates a whole-array external write hiding an
         # inner per-iteration write; look past the connector.
         if not ok and isinstance(e.src, nodes.NestedSDFG):
-            ok = nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, end - start)
+            ok = nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, end - start, start)
             # NSDFG descent only proves WRITE uniqueness. A carried READ at a
             # DIFFERENT iter position (``a[i+1]`` while writing ``a[i]``) is a
             # forward/backward dependence that races. Require every inner read
             # of ``conn`` to match the writes' ``a*i+b`` (or be loop-invariant).
-            if ok and not nested_reads_match_writes(e.src, e.src_conn, itersym, a, b, step):
+            # The same array can enter on a connector of its own.
+            read_as = {e.src_conn, *(r.dst_conn for r in state.in_edges(e.src) if r.data.data == dn.data)}
+            writes = nested_write_subsets(e.src, e.src_conn) if ok else []
+            if ok and not all(nested_reads_match_writes(e.src, c, itersym, a, b, step, writes, start) for c in read_as):
                 ok = False
         if not ok and not permissive:
             verdicts = None if ctx is None else ctx.invariants.smt_injective
@@ -725,6 +766,32 @@ def read_before_written(
 
     carried: set[str] = set()
     changes: dict[ControlFlowBlock, set[str]] = {}
+    moving: set[str] | None = None
+
+    def fixed_subset(state: SDFGState, dn: nodes.AccessNode, subset: subsets.Subset | None) -> bool:
+        """Whether ``subset`` names the same elements wherever an iteration reaches ``dn``."""
+        nonlocal moving
+        if moving is None:
+            moving = loop_varying_symbols(loop)
+        return subset is not None and state.entry_node(dn) is None and not subset.free_symbols & moving
+
+    def stored_by(state: SDFGState, dn: nodes.AccessNode) -> set[str | tuple[str, subsets.Subset]]:
+        """What the writes into ``dn`` guarantee: its elements as (name, subset), or the bare name when a write's
+        elements are unknown here (a scope, a nested loop, a moving symbol), which then count as the whole container."""
+        elements = [e.data.get_dst_subset(e, state) for e in state.in_edges(dn) if not e.data.is_empty()]
+        if all(fixed_subset(state, dn, subset) for subset in elements):
+            return {(dn.data, subset) for subset in elements}
+        return {dn.data}
+
+    def read_covered(state: SDFGState, dn: nodes.AccessNode, stored: set[str | tuple[str, subsets.Subset]]) -> bool:
+        """Whether ``stored`` holds what ``dn`` reads; a read of unknown elements needs only some store of the name."""
+        if dn.data in stored:
+            return True
+        parts = [entry[1] for entry in stored if isinstance(entry, tuple) and entry[0] == dn.data]
+        return bool(parts) and all(
+            not fixed_subset(state, dn, subset) or subsets_cover(parts, subset, symbolic.Facts.none())
+            for subset in [e.data.get_src_subset(e, state) for e in state.out_edges(dn) if not e.data.is_empty()]
+        )
 
     def changed_by(block: ControlFlowBlock) -> set[str]:
         """The names ``block`` can change: containers it writes (any written access node, no memlet analysis),
@@ -769,15 +836,19 @@ def read_before_written(
                 for dn in block.data_nodes():
                     if (
                         dn.data in candidates
-                        and dn.data not in written
                         and block.in_degree(dn) == 0
                         and block.out_degree(dn) > 0
+                        and not read_covered(block, dn, written)
                         and not any(
-                            dn.data in guarded[key][1] for key in nested_read_guards(block, dn) if key in guarded
+                            read_covered(block, dn, guarded[key][1])
+                            for key in nested_read_guards(block, dn)
+                            if key in guarded
                         )
                     ):
                         carried.add(dn.data)
-                written |= {dn.data for dn in block.data_nodes() if dn.data in candidates and block.in_degree(dn) > 0}
+                for dn in block.data_nodes():
+                    if dn.data in candidates and block.in_degree(dn) > 0:
+                        written |= stored_by(block, dn)
             elif isinstance(block, ConditionalBlock):
                 per_branch = []
                 recorded = {}

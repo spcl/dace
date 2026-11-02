@@ -524,6 +524,35 @@ def test_guard_stays_when_the_iterator_is_read_after_the_loop():
     assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is None
 
 
+def test_guard_stays_when_a_per_iteration_symbol_is_read_after_the_loop():
+    """``z`` is bound every iteration whatever ``c`` says; a guard around the loop would skip that when ``c`` is false."""
+    sdfg = dace.SDFG("per_iteration_symbol_read_after")
+    sdfg.add_array("x", [4], dace.float64)
+    sdfg.add_array("y", [1], dace.float64)
+    sdfg.add_symbol("c", dace.int32)
+    sdfg.add_symbol("z", dace.int64)
+    start = sdfg.add_state("start", is_start_block=True)
+    loop = LoopRegion("loop", "k < 4", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(start, loop, dace.InterstateEdge(assignments={"z": "0"}))
+    bind = loop.add_state("bind", is_start_block=True)
+    guard = ConditionalBlock("guard")
+    branch = ControlFlowRegion("taken")
+    store = branch.add_state("store", is_start_block=True)
+    tasklet = store.add_tasklet("store", {}, {"o": None}, "o = 1")
+    store.add_edge(tasklet, "o", store.add_write("x"), None, dace.Memlet("x[k]"))
+    guard.add_branch(CodeBlock("c > 0"), branch)
+    loop.add_node(guard)
+    loop.add_edge(bind, guard, dace.InterstateEdge(assignments={"z": "k + 10"}))
+    after = sdfg.add_state_after(loop, "after")
+    tasklet = after.add_tasklet("use", {}, {"o": None}, "o = z")
+    after.add_edge(tasklet, "o", after.add_write("y"), None, dace.Memlet("y[0]"))
+    sdfg.validate()
+
+    assert not MoveLoopInvariantIfUp().apply_pass(sdfg, {})
+    assert guard in loop.nodes()
+
+
 if __name__ == "__main__":
     test_invariant_symbolic_guard_hoisted_and_e2e()
     test_invariant_data_guard_hoisted_and_e2e()
@@ -539,3 +568,4 @@ if __name__ == "__main__":
     test_prep_reading_data_the_loop_writes_is_not_hoisted()
     test_assignment_after_the_guard_is_not_its_prep()
     test_guard_stays_when_the_iterator_is_read_after_the_loop()
+    test_guard_stays_when_a_per_iteration_symbol_is_read_after_the_loop()
