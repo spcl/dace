@@ -35,8 +35,9 @@ class DetachDisjointReads(ppl.Pass):
         """:return: the number of maps detached, or None if there is none."""
         detached = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
+            facts = nsdfg.facts()
             for state in nsdfg.states():
-                detached += detach_in_state(state, nsdfg.facts())
+                detached += detach_in_state(state, facts)
         return detached or None
 
 

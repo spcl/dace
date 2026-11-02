@@ -123,6 +123,22 @@ class _SymbolDTypeContext(threading.local):
         level = types.MappingProxyType({n: dt for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)})
         return level, AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
 
+    def prepare_inherited(
+        self, authority: Mapping[str, "dtypes.typeclass"]
+    ) -> tuple[types.MappingProxyType, "AuthorityKey"]:
+        """:meth:`prepare` of the active level with ``authority`` on top, at the cost of what ``authority`` changes."""
+        level, key = self.ctx_stack[-1], self.key_stack[-1]
+        changed = {n: dt for n, dt in authority.items() if level.get(n) is not dt and not level.get(n) == dt}
+        if not changed:
+            return level, key
+        scalars = {n: dt for n, dt in changed.items() if self._is_scalar_symbol_dtype(dt)}
+        entries = {**dict(key.entries), **{n: dt.ctype for n, dt in scalars.items()}}
+        merged = {**level, **scalars}
+        for name in changed.keys() - scalars.keys():
+            entries.pop(name, None)
+            merged.pop(name, None)
+        return types.MappingProxyType(merged), AuthorityKey.of(tuple(sorted(entries.items())))
+
     def push_prepared(self, prepared: tuple[types.MappingProxyType, "AuthorityKey"]) -> types.MappingProxyType:
         """Adds a level :meth:`prepare` built."""
         self.ctx_stack.append(prepared[0])
@@ -155,16 +171,8 @@ class _SymbolDTypeContext(threading.local):
         if len(self.ctx_stack) == 1:
             return
         current = self.ctx_stack[-1]
-        new = {
-            name: dtype
-            for name, dtype in declared.items()
-            if self._is_scalar_symbol_dtype(dtype) and (name not in current or current[name] != dtype)
-        }
-        if not new:
-            return
-        level = {**current, **new}
-        self.ctx_stack[-1] = types.MappingProxyType(level)
-        self.key_stack[-1] = AuthorityKey.of(tuple(sorted((n, dt.ctype) for n, dt in level.items())))
+        scalars = {name: dtype for name, dtype in declared.items() if self._is_scalar_symbol_dtype(dtype)}
+        self.ctx_stack[-1], self.key_stack[-1] = self.prepare_inherited(scalars)
 
     def get(self) -> types.MappingProxyType:
         """Get the current active set of authoritative dtype."""
@@ -220,9 +228,10 @@ def symbol_dtype(atom: "symbol") -> "dtypes.typeclass":
     return declared_symbol_dtype(atom.name) or atom.dtype
 
 
-def prepare_serialization_symbol_dtypes(authority: dict[str, "dtypes.typeclass"]):
-    """``authority`` prepared once for repeated :func:`serialization_symbol_dtypes` scopes (``prepared=``)."""
-    return _SERIALIZATION_SYMBOL_DTYPES.prepare(authority)
+def prepare_serialization_symbol_dtypes(authority: Mapping[str, "dtypes.typeclass"]):
+    """``authority`` on top of the active one, prepared once for repeated :func:`serialization_symbol_dtypes` scopes
+    (``prepared=``)."""
+    return _SERIALIZATION_SYMBOL_DTYPES.prepare_inherited(authority)
 
 
 def symbol_dtype_authority_active() -> bool:
@@ -242,11 +251,11 @@ def serialization_symbol_dtypes(authority: dict[str, "dtypes.typeclass"], inheri
     :param inherit: Keep the enclosing level's entries that ``authority`` does not override.
     :param prepared: ``authority`` already passed through :func:`prepare_serialization_symbol_dtypes`.
     """
+    if prepared is None and inherit:
+        prepared = prepare_serialization_symbol_dtypes(authority)
     if prepared is not None:
         _SERIALIZATION_SYMBOL_DTYPES.push_prepared(prepared)
     else:
-        if inherit:
-            authority = {**_SERIALIZATION_SYMBOL_DTYPES.get(), **authority}
         _SERIALIZATION_SYMBOL_DTYPES.push(authority)
     try:
         yield
