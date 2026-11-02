@@ -21,7 +21,7 @@ from dace import SDFG
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg.propagation import propagate_memlets_state
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow import PruneConnectors
@@ -138,7 +138,9 @@ class PruneAndInlineNestedSDFGs(ppl.Pass):
         :param pipeline_results: Unused; neither transformation reads pipeline results.
         :returns: Number of applications, or ``None`` if none.
         """
-        walk = Walk([(PruneConnectors(), PruneConnectors.nsdfg), (InlineSDFG(), InlineSDFG.nested_sdfg)])
+        inline = InlineSDFG()
+        inline.connector_names = {}
+        walk = Walk([(PruneConnectors(), PruneConnectors.nsdfg), (inline, InlineSDFG.nested_sdfg)])
         applied = 0
         scoped: dict[SDFGState, None] = {}
         candidate = walk.first_accepted(sdfg)
@@ -153,9 +155,11 @@ class PruneAndInlineNestedSDFGs(ppl.Pass):
             applied += 1
             walk.forget(dirty)
             candidate = walk.first_accepted(sdfg)
+        # Only memlets change here, under which a resolver stays valid
+        symbols = SymbolResolver()
         for state in scoped:
             if state.sdfg is not None and state in state.parent_graph.nodes():
-                propagate_memlets_state(state.sdfg, state)
+                propagate_memlets_state(state.sdfg, state, symbols)
         # No validation here: the pipeline's ``validate`` / ``validate_all`` own it, as they did for the wrapper, and
         # validation is not read-only (``Fill.validate`` drops an unwired value connector).
         return applied or None
