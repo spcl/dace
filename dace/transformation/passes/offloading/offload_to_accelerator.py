@@ -515,22 +515,27 @@ class OffloadToAccelerator(ppl.Pass):
                     other = edge.dst if edge.src is node else edge.src
                     if self.touches_device_code(scopes, other):
                         device.add(node.data)
-                    elif self.is_container_copy(sdfg, node, other):
+                    elif self.is_container_copy(sdfg, state, node, other):
                         continue
                     elif not fallback and not hybrid:
                         host.add(node.data)
         return host, device, written
 
     @staticmethod
-    def is_container_copy(sdfg: SDFG, node: nodes.AccessNode, other: nodes.Node) -> bool:
+    def is_container_copy(sdfg: SDFG, state: SDFGState, node: nodes.AccessNode, other: nodes.Node) -> bool:
         """Whether the edge between ``node`` and ``other`` copies one container into another: no code runs
         on either side, so the copy says nothing about where either container belongs (a ``return x``
-        copied into ``__return``). A view is an alias, not a copy, and still counts as a use."""
-        return (
-            isinstance(other, nodes.AccessNode)
-            and not isinstance(sdfg.arrays.get(node.data), data.View)
-            and not isinstance(sdfg.arrays.get(other.data), data.View)
-        )
+        copied into ``__return``). A view is an alias, so code reached through one is a use of ``node``
+        and a view nothing but containers touch is the same copy (an expanded reshape on the device)."""
+        seen, pending = {node}, [other]
+        while pending:
+            current = pending.pop()
+            if not isinstance(current, nodes.AccessNode):
+                return False
+            seen.add(current)
+            if isinstance(sdfg.arrays.get(current.data), data.View):
+                pending.extend(n for e in state.all_edges(current) for n in (e.src, e.dst) if n not in seen)
+        return True
 
     def stage_on_host(self, sdfg: SDFG, name: str, write_back: bool) -> bool:
         """Give ``name`` a host copy, point every use at it, and copy at the SDFG's boundary.
