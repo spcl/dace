@@ -1165,7 +1165,69 @@ def test_a_four_level_cascade_of_nested_clamps_collapses_completely():
     assert len(survivors) == 1, f"all ten spatial loops must collapse; got {survivors}"
 
 
+@dace.program
+def untile_guard_on_tile_offset(a: dace.float64[8], n: dace.int64):
+    for i in range(0, n, 4):
+        for ii in range(4):
+            if ii == 0:
+                a[i + ii] = 1.0
+            else:
+                a[i + ii] = 2.0
+
+
+@dace.program
+def untile_tile_offset_on_an_edge(a: dace.float64[8], b: dace.int64[8], n: dace.int64):
+    for i in range(0, n, 4):
+        for ii in range(4):
+            x = b[ii]
+            a[i + ii] = x
+
+
+@dace.program
+def untile_counter_per_tile(a: dace.float64[9], n: dace.int64):
+    k = 0
+    for i in range(0, n, 4):
+        k = k + 1
+        for ii in range(4):
+            a[i + ii] = 1.0
+    a[8] = k
+
+
+@dace.program
+def untile_tile_offset_in_a_bound(a: dace.float64[8, 8], n: dace.int64):
+    for i in range(0, n, 4):
+        for ii in range(4):
+            for q in range(0, ii):
+                a[i + ii, q] = 1.0
+
+
+@dace.program
+def untile_dependence_against_the_axes(a: dace.float64[8, 8], n: dace.int64):
+    for ti in range(0, n, 2):
+        for tj in range(0, n, 2):
+            for i in range(ti, ti + 2):
+                for j in range(tj, tj + 2):
+                    a[i, j + 1] = a[i + 1, j] + 1.0
+
+
+NOT_UNTILABLE = [
+    untile_guard_on_tile_offset,
+    untile_tile_offset_on_an_edge,
+    untile_counter_per_tile,
+    untile_tile_offset_in_a_bound,
+    untile_dependence_against_the_axes,
+]
+
+
+@pytest.mark.parametrize("program", NOT_UNTILABLE)
+def test_what_depends_on_the_tile_keeps_the_nest(program):
+    """The tile walk is observable here: by control flow, a per-tile statement, or a dependence order flips."""
+    assert UntileLoops().apply_pass(program.to_sdfg(simplify=True), {}) is None
+
+
 if __name__ == "__main__":
+    for program in NOT_UNTILABLE:
+        test_what_depends_on_the_tile_keeps_the_nest(program)
     test_a_map_tiling_with_a_partial_last_tile_untiles_back_to_one_map()
     test_case_a_combined_access_K4_collapses_to_single_loop()
     test_case_a_with_arithmetic_combination_collapses()

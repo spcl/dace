@@ -143,7 +143,8 @@ def _iter_candidate_inners(outer: LoopRegion) -> Iterator[LoopRegion]:
 def _intermediate_chain_clean(outer: LoopRegion, inner: LoopRegion, outer_var: str) -> bool:
     """``True`` iff every LoopRegion strictly between ``outer`` and
     ``inner`` is free of references to ``outer.loop_variable`` in its
-    iteration descriptors.
+    iteration descriptors, and no edge from ``outer`` down to ``inner``
+    decides or assigns: such an edge runs per tile, and would run per point.
 
     Multi-dim untile is sound only when the intermediates index on
     independent axes; same-axis cascades (whose intermediates use
@@ -151,7 +152,11 @@ def _intermediate_chain_clean(outer: LoopRegion, inner: LoopRegion, outer_var: s
     fixpoint instead, not by descending past them in one rewrite.
     """
     current = inner.parent_graph
-    while current is not outer and current is not None:
+    while True:
+        if any(e.data.assignments or not e.data.is_unconditional() for e in current.edges()):
+            return False
+        if current is outer:
+            return True
         if isinstance(current, LoopRegion):
             for code in (current.init_statement, current.loop_condition, current.update_statement):
                 if code is None:
@@ -163,6 +168,55 @@ def _intermediate_chain_clean(outer: LoopRegion, inner: LoopRegion, outer_var: s
                 if outer_var in names:
                     return False
         current = current.parent_graph
+
+
+def tiles_visit_points_in_order(outer: LoopRegion, inner: LoopRegion) -> bool:
+    """Whether the nest from ``outer`` down to ``inner`` computes the same tile by tile as row by row.
+
+    Collapsing a tile with its point loop past a foreign-axis loop interchanges the two, which is safe only when the
+    dependences point one way on every axis and each element's writers differ on at most one loop. Decided for
+    single-element, unit-coefficient accesses, refused otherwise.
+    """
+    tiles, points, region = {outer.loop_variable}, set(), inner.parent_graph
+    while region is not outer:
+        (points if _tile_size(loop_analysis.get_loop_stride(region)) is None else tiles).add(region.loop_variable)
+        region = region.parent_graph
+    points |= {r.loop_variable for r in [inner, *inner.all_control_flow_regions()] if isinstance(r, LoopRegion)}
+    if any(e.data.assignments for e in inner.all_interstate_edges()):
+        return False
+    reads: dict[str, list[list]] = {}
+    writes: dict[str, list[list]] = {}
+    for st in inner.states():
+        if not all(isinstance(n, (nodes.AccessNode, nodes.Tasklet)) for n in st.nodes()):
+            return False
+        for e in st.edges():
+            if e.data.is_empty():
+                continue
+            sides = ((e.src, e.data.get_src_subset(e, st), reads), (e.dst, e.data.get_dst_subset(e, st), writes))
+            for node, subset, accesses in sides:
+                if isinstance(node, nodes.AccessNode):
+                    if subset is None or subset.num_elements() != 1:
+                        return False
+                    exprs = [symbolic.pystr_to_symbolic(str(rng[0])) for rng in as_range(subset).ranges]
+                    exprs = [x.subs({s: 0 for s in x.free_symbols if str(s) in tiles}) for x in exprs]
+                    accesses.setdefault(node.data, []).append(exprs)
+    if loop_analysis.control_reads(outer) & writes.keys():
+        return False
+    sdfg = outer.sdfg
+    for data, written in writes.items():
+        # A body's scratch is private to the point, in either order.
+        if sdfg.arrays[data].transient and not loop_analysis.read_outside(sdfg, outer, set(), {data}):
+            continue
+        for element in written:
+            axes = [[s for s in x.free_symbols if str(s) in points] for x in element]
+            if any(len(axis) > 1 for axis in axes) or len(points) - sum(map(len, axes)) > 1:
+                return False
+            if any(x.coeff(s) != 1 for x, axis in zip(element, axes) for s in axis):
+                return False
+            for other in written + reads.get(data, []):
+                distance = [symbolic.simplify(a - b) for a, b in zip(element, other)]
+                if not all(d.is_number for d in distance) or (max(distance) > 0 and min(distance) < 0):
+                    return False
     return True
 
 
@@ -482,11 +536,20 @@ def _audit_combined_access(inner: LoopRegion, outer_var: str, inner_var: str, ca
     (only ``ii``). The new iterator ``k`` becomes ``ii`` directly. Code nodes obey
     :func:`code_node_allows`: a kernel takes an iterator as an argument, not through a memlet.
     """
+    # Interstate edges and conditions take no part in the sum: only memlets and Map ranges do.
+    control = {name for e in inner.all_interstate_edges() for name in e.data.free_symbols}
+    for region in inner.all_control_flow_regions():
+        if region is not inner:
+            control |= region.used_symbols(all_symbols=True, with_contents=False)
+    if outer_var in control or (case == "A" and inner_var in control):
+        return False
     texts = body_bound_texts(inner)
     for st in inner.states():
         for node in st.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 texts.extend(str(value) for value in node.symbol_mapping.values())
+            elif isinstance(node, nodes.EntryNode):
+                texts.extend(str(bound) for rng in node.map.range.ranges for bound in rng)
             elif isinstance(node, nodes.CodeNode) and not code_node_allows(node, outer_var, inner_var, case):
                 return False
     if case == "B":
@@ -857,6 +920,8 @@ class UntileLoops(ppl.Pass):
             # intermediates DO reference outer.var) are handled by
             # fixpoint level-by-level instead.
             if candidate is not outer and not _intermediate_chain_clean(outer, candidate, outer.loop_variable):
+                continue
+            if candidate.parent_graph is not outer and not tiles_visit_points_in_order(outer, candidate):
                 continue
             inner = candidate
             case = cand_case
