@@ -1805,6 +1805,9 @@ def fuse_states(
             sf.region_facts = {}
             sf.side_effect_cache = {}
             sf.shape_cache = {}
+            # Pairs refused in an earlier sweep. A refusal reads the pair, the edges around it and data that fusing
+            # leaves alone, so it holds until a fusion touches one of the two states or a neighbour.
+            refused = set()
             while True:
                 edges = list(cfg.nx.edges)
                 applied = 0
@@ -1814,32 +1817,36 @@ def fuse_states(
                         progress = True
                         pbar = tqdm(total=fusible_states, desc="Fusing states", initial=counter)
 
-                    if u in skip_nodes or v in skip_nodes:
+                    if u in skip_nodes or v in skip_nodes or (u, v) in refused:
                         continue
 
                     if isinstance(u, SDFGState) and isinstance(v, SDFGState):
                         candidate = {StateFusionExtended.first_state: u, StateFusionExtended.second_state: v}
                         sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
-                        if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                        fusible = sf.can_be_applied(cfg, 0, sd, permissive=permissive)
+                        if fusible:
                             sf.fuse(cfg, sd)
-                            applied += 1
-                            counter += 1
-                            if progress:
-                                pbar.update(1)
-                            skip_nodes.add(u)
-                            skip_nodes.add(v)
                     else:
                         candidate = {BlockFusion.first_block: u, BlockFusion.second_block: v}
                         bf = BlockFusion()
                         bf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
-                        if bf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                        fusible = bf.can_be_applied(cfg, 0, sd, permissive=permissive)
+                        if fusible:
                             bf.apply(cfg, sd)
-                            applied += 1
-                            counter += 1
-                            if progress:
-                                pbar.update(1)
-                            skip_nodes.add(u)
-                            skip_nodes.add(v)
+                    if not fusible:
+                        refused.add((u, v))
+                        continue
+                    applied += 1
+                    counter += 1
+                    if progress:
+                        pbar.update(1)
+                    skip_nodes.add(u)
+                    skip_nodes.add(v)
+                    touched = {u, v}
+                    for block in (u, v):
+                        if block in cfg._nodes:
+                            touched.update(cfg.predecessors(block), cfg.successors(block))
+                    refused = {pair for pair in refused if pair[0] not in touched and pair[1] not in touched}
                 if applied == 0:
                     break
     if progress:
