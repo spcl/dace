@@ -32,6 +32,7 @@ from dace.transformation.interstate.loop_to_map import (
     build_lift_invariants,
     control_flow_reads,
     loop_facts_of,
+    read_before_written,
 )
 from dace.transformation.passes.analysis import smt_dependence
 from dace.transformation.passes.parallelization.parallelize_loops import (
@@ -658,10 +659,10 @@ def test_a_sweep_derives_an_sdfgs_facts_once_per_lift_in_it(monkeypatch) -> None
     applying = [False]
     original_walk, original_apply = dace.sdfg.sdfg.interstate_bound_names, LoopLift.lift_in
 
-    def recorded(sd: dace.SDFG, *args) -> set[str]:
+    def recorded(sd: dace.SDFG, *scope: Any) -> set[str]:
         if not applying[0]:
             walked.append(sd)
-        return original_walk(sd, *args)
+        return original_walk(sd, *scope)
 
     def apply(self: LoopToMap, graph: ControlFlowRegion, sd: dace.SDFG) -> None:
         applying[0] = True
@@ -773,8 +774,8 @@ def iterator_read_after(kill: bool) -> tuple[dace.SDFG, LoopRegion]:
 
 @pytest.mark.parametrize("kill", [False, True])
 def test_the_use_index_decides_as_the_walk_does(kill: bool) -> None:
-    """``used_after_loop`` replaces the block-order walk for a probe that has a context; a disagreement
-    lifts a loop whose iterator is read after it."""
+    """A probe with a context and one without decide alike; a wrong verdict lifts a loop whose iterator is read
+    after it."""
     verdicts = []
     for with_context in (False, True):
         sdfg, loop = iterator_read_after(kill)
@@ -784,6 +785,135 @@ def test_the_use_index_decides_as_the_walk_does(kill: bool) -> None:
         xform.setup_match(sdfg, -1, -1, {LoopToMap.loop: loop}, 0, override=True)
         verdicts.append(xform.can_be_applied(sdfg, 0, sdfg))
     assert verdicts[0] == verdicts[1] == kill, verdicts
+
+
+def symbol_left_behind(place: str) -> tuple[dace.SDFG, LoopRegion]:
+    """A loop assigning ``k``, whose last value ``place`` reads."""
+
+    def read_k(region: ControlFlowRegion) -> dace.SDFGState:
+        state = region.add_state("read_k")
+        out = state.add_tasklet("r", {}, {"o": None}, "o = k")
+        state.add_edge(out, "o", state.add_write("b"), None, dace.Memlet("b[0]"))
+        return state
+
+    sdfg = dace.SDFG(f"symbol_left_behind_{place}")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_symbol("c", dace.int64)
+    loop = LoopRegion("loop", "i < 1" if place == "after_one_trip" else "i < 8", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    assign = loop.add_state("assign", is_start_block=True)
+    body = loop.add_state("body")
+    loop.add_edge(assign, body, dace.InterstateEdge(assignments={"k": "i"}))
+    body.add_mapped_tasklet("w", {"m": "0:1"}, {}, "o = k", {"o": dace.Memlet("a[i]")}, external_edges=True)
+    if place == "next_outer_iteration":
+        outer = LoopRegion("outer", "t < 8", "t", "t = 0", "t = t + 1", sdfg=sdfg)
+        sdfg.add_node(outer, is_start_block=True)
+        first = read_k(outer)
+        outer.add_node(loop)
+        outer.add_edge(first, loop, dace.InterstateEdge())
+        return sdfg, loop
+    sdfg.add_node(loop, is_start_block=True)
+    tail = read_k(sdfg)
+    if place == "behind_a_branch":
+        guard = ConditionalBlock("guard", sdfg=sdfg, parent=sdfg)
+        arm = ControlFlowRegion("arm", sdfg=sdfg, parent=guard)
+        guard.add_branch(CodeBlock("c > 0"), arm)
+        arm.add_edge(
+            arm.add_state("a", is_start_block=True), arm.add_state("b"), dace.InterstateEdge(assignments={"k": "1"})
+        )
+        sdfg.add_edge(loop, guard, dace.InterstateEdge())
+        sdfg.add_edge(guard, tail, dace.InterstateEdge())
+    else:
+        sdfg.add_edge(loop, tail, dace.InterstateEdge())
+    return sdfg, loop
+
+
+@pytest.mark.parametrize("place", ["next_outer_iteration", "behind_a_branch", "after_one_trip"])
+@pytest.mark.parametrize("with_context", [False, True])
+def test_a_symbol_read_after_the_loop_on_any_path_refuses_the_lift(place: str, with_context: bool) -> None:
+    sdfg, loop = symbol_left_behind(place)
+    xform = LoopToMap()
+    if with_context:
+        xform.lift_context = build_lift_context(sdfg, build_lift_invariants(sdfg))
+    xform.setup_match(sdfg, loop.parent_graph.cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
+    assert not xform.can_be_applied(loop.parent_graph, 0, sdfg)
+
+
+def test_a_body_reassigning_the_iterator_refuses_the_lift() -> None:
+    sdfg = dace.SDFG("reassigned_iterator")
+    sdfg.add_array("a", [8], dace.float64)
+    loop = LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    body.add_mapped_tasklet("w", {"m": "0:1"}, {}, "o = 1.0", {"o": dace.Memlet("a[i]")}, external_edges=True)
+    loop.add_edge(body, loop.add_state("next"), dace.InterstateEdge(assignments={"i": "i + 1"}))
+    xform = LoopToMap()
+    xform.setup_match(sdfg, sdfg.cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
+    assert not xform.can_be_applied(sdfg, 0, sdfg)
+
+
+def test_two_copies_into_one_array_are_compared_at_their_destinations() -> None:
+    sdfg = dace.SDFG("copies_collide")
+    for name in "abc":
+        sdfg.add_array(name, [8], dace.float64)
+    loop = LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    body.add_nedge(body.add_read("a"), body.add_write("b"), dace.Memlet(data="a", subset="i", other_subset="i"))
+    body.add_nedge(body.add_read("c"), body.add_write("b"), dace.Memlet(data="c", subset="i", other_subset="7 - i"))
+    xform = LoopToMap()
+    xform.setup_match(sdfg, sdfg.cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
+    assert not xform.can_be_applied(sdfg, 0, sdfg)
+
+
+def test_an_elif_arm_does_not_cover_a_later_branch_on_its_condition() -> None:
+    sdfg = dace.SDFG("elif_write_guard")
+    for name, size in (("x", 8), ("o", 8), ("t", 1)):
+        sdfg.add_array(name, [size], dace.float64, transient=name == "t")
+    sdfg.add_symbol("c", dace.int64)
+    loop = LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    write = ConditionalBlock("write", sdfg=sdfg, parent=loop)
+    loop.add_node(write, is_start_block=True)
+    write.add_branch(CodeBlock("i % 2 == 1"), ControlFlowRegion("odd", sdfg=sdfg, parent=write))
+    write.branches[0][1].add_state("nothing", is_start_block=True)
+    arm = ControlFlowRegion("arm", sdfg=sdfg, parent=write)
+    write.add_branch(CodeBlock("c > 0"), arm)
+    store = arm.add_state("store", is_start_block=True)
+    store.add_nedge(store.add_read("x"), store.add_write("t"), dace.Memlet("x[i] -> [0]"))
+    read = ConditionalBlock("read", sdfg=sdfg, parent=loop)
+    arm = ControlFlowRegion("reader", sdfg=sdfg, parent=read)
+    read.add_branch(CodeBlock("c > 0"), arm)
+    load = arm.add_state("load", is_start_block=True)
+    load.add_nedge(load.add_read("t"), load.add_write("o"), dace.Memlet("t[0] -> [i]"))
+    loop.add_edge(write, read, dace.InterstateEdge())
+    assert read_before_written(loop, {"t"}) == {"t"}
+
+
+def test_a_condition_reading_a_loop_local_before_its_write_refuses_the_lift() -> None:
+    sdfg = dace.SDFG("condition_reads_local")
+    sdfg.add_array("o", [8], dace.float64)
+    sdfg.add_array("x", [8], dace.float64)
+    sdfg.add_array("t", [1], dace.float64, transient=True)
+    loop = LoopRegion("loop", "i < 8", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    write = ConditionalBlock("write", sdfg=sdfg, parent=loop)
+    loop.add_node(write, is_start_block=True)
+    arm = ControlFlowRegion("store", sdfg=sdfg, parent=write)
+    write.add_branch(CodeBlock("i % 3 == 0"), arm)
+    store = arm.add_state("store", is_start_block=True)
+    store.add_nedge(store.add_read("x"), store.add_write("t"), dace.Memlet("x[i] -> [0]"))
+    read = ConditionalBlock("read", sdfg=sdfg, parent=loop)
+    arm = ControlFlowRegion("reader", sdfg=sdfg, parent=read)
+    read.add_branch(CodeBlock("t[0] > 3"), arm)
+    use = arm.add_state("use", is_start_block=True)
+    tasklet = use.add_tasklet("one", {}, {"o": None}, "o = 1")
+    use.add_edge(tasklet, "o", use.add_write("o"), None, dace.Memlet("o[i]"))
+    loop.add_edge(write, read, dace.InterstateEdge())
+    xform = LoopToMap()
+    xform.setup_match(sdfg, sdfg.cfg_id, -1, {LoopToMap.loop: loop}, 0, override=True)
+    assert not xform.can_be_applied(sdfg, 0, sdfg)
 
 
 @dace.program
@@ -1233,6 +1363,13 @@ if __name__ == "__main__":
         test_every_memoized_fact_of_a_sweep_is_the_derived_one(mp)
     test_the_use_index_decides_as_the_walk_does(False)
     test_the_use_index_decides_as_the_walk_does(True)
+    for place in ("next_outer_iteration", "behind_a_branch", "after_one_trip"):
+        test_a_symbol_read_after_the_loop_on_any_path_refuses_the_lift(place, False)
+        test_a_symbol_read_after_the_loop_on_any_path_refuses_the_lift(place, True)
+    test_a_body_reassigning_the_iterator_refuses_the_lift()
+    test_two_copies_into_one_array_are_compared_at_their_destinations()
+    test_an_elif_arm_does_not_cover_a_later_branch_on_its_condition()
+    test_a_condition_reading_a_loop_local_before_its_write_refuses_the_lift()
     test_every_lift_of_a_sweep_leaves_the_nested_references_exact()
     test_a_lift_never_changes_what_a_surviving_edge_or_header_reads()
     test_the_memoized_control_flow_reads_are_the_walked_ones()

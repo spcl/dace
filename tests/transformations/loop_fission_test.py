@@ -1076,6 +1076,29 @@ def test_fission_of_a_loop_that_does_not_split_leaves_the_graph_unchanged():
     assert sdfg.to_json() == before
 
 
+def test_a_symbol_a_branch_assigns_for_a_later_block_is_not_split_off():
+    sdfg = dace.SDFG("fission_branch_symbol")
+    for name in "bcy":
+        sdfg.add_array(name, [10], dace.float64)
+    sdfg.add_symbol("row", dace.int64)
+    loop = LoopRegion("l", "i < 10", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    guard = ConditionalBlock("guard", sdfg=sdfg, parent=loop)
+    branch = ControlFlowRegion("hit", sdfg=sdfg, parent=guard)
+    guard.add_branch(CodeBlock("c[i] > 0"), branch)
+    loop.add_node(guard, is_start_block=True)
+    branch.add_edge(
+        branch.add_state("assign", is_start_block=True),
+        branch.add_state("done"),
+        dace.InterstateEdge(assignments={"row": "i"}),
+    )
+    use = loop.add_state("use")
+    use.add_nedge(use.add_read("b"), use.add_write("y"), dace.Memlet("y[i] -> [row]"))
+    loop.add_edge(guard, use, dace.InterstateEdge())
+
+    assert not LoopFission.can_fission(loop)
+
+
 if __name__ == "__main__":
     test_loop_fission_two()
     test_loop_fission_three()
@@ -1112,3 +1135,4 @@ if __name__ == "__main__":
     test_dependence_aware_grouping_disjoint_same_data()
     test_fission_splits_only_the_loop_it_is_given()
     test_fission_of_a_loop_that_does_not_split_leaves_the_graph_unchanged()
+    test_a_symbol_a_branch_assigns_for_a_later_block_is_not_split_off()
