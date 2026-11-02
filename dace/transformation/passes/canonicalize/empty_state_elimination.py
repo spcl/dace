@@ -16,93 +16,28 @@ two edges' assignments onto the bypass edge. An empty state pinned only by an
 assignment keeps two states apart, which keeps their maps apart, which blocks
 fusion -- so merging rather than refusing is what makes this a fusion-prep
 pass. The merge is only performed when it is provably value-preserving (see
-``_merge_assignments``); anything else is left untouched.
+``merge_assignments``); anything else is left untouched.
 """
 
 from typing import Any
 
-from dace import SDFG, symbolic
-from dace.sdfg.sdfg import InterstateEdge
+from dace import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.interstate.block_fusion import splice_empty_state
 
 
-def _merge_assignments(first: dict[str, str], second: dict[str, str]) -> dict[str, str] | None:
-    """Merge the assignments of two consecutive interstate edges onto one edge.
-
-    One edge's assignments run in unspecified order (validation rejects reading a symbol the same
-    edge writes), so a symbol written on either side and read on the other blocks the merge, in both
-    directions. A left-hand-side collision is fine: ``second`` wins either way.
-
-    :param first: Assignments of the edge entering the empty state.
-    :param second: Assignments of the edge leaving it.
-    :returns: The merged assignment dict, or ``None`` if merging is unsound.
-    """
-    if not second:
-        return dict(first)
-    if first:  # membership-only: no need to copy the keys into a set first
-        # ``free_symbols_and_functions`` is the scan validation itself uses, so the guard
-        # accepts exactly the merges validation accepts.
-        for rhs in second.values():
-            if any(s in first for s in symbolic.free_symbols_and_functions(rhs)):
-                return None
-        for lhs, rhs in first.items():
-            if lhs in second:  # dropped by the overwrite below; never reaches the merged edge
-                continue
-            if any(s in second for s in symbolic.free_symbols_and_functions(rhs)):
-                return None
-    merged = dict(first)
-    merged.update(second)
-    return merged
-
-
-def _elide_one(region: ControlFlowRegion) -> bool:
+def elide_one(region: ControlFlowRegion) -> bool:
     """Splice out one empty, trivially-connected ``SDFGState`` of ``region``.
 
     :param region: The control-flow region to scan.
     :returns: ``True`` if a state was removed (caller should re-scan).
     """
-    for st in list(region.nodes()):
-        if not isinstance(st, SDFGState) or st.number_of_nodes() != 0:
-            continue
-        in_e = list(region.in_edges(st))
-        out_e = list(region.out_edges(st))
-        is_start = region.start_block is st
-        # Single-successor splice: every predecessor jumps straight to the
-        # (unique) successor; the empty state is bypassed.
-        if len(out_e) == 1 and (in_e or is_start):
-            succ = out_e[0].dst
-            if succ is st:
-                continue
-            # The successor edge's condition would have to be distributed over
-            # every predecessor edge; only an unconditional one splices cleanly.
-            if not out_e[0].data.is_unconditional():
-                continue
-            # Nothing carries the successor edge's assignments when the empty
-            # state is the region's entry and has no predecessor.
-            if not in_e and out_e[0].data.assignments:
-                continue
-            merged = [_merge_assignments(e.data.assignments, out_e[0].data.assignments) for e in in_e]
-            if any(m is None for m in merged):
-                continue
-            for e, assignments in zip(in_e, merged):
-                region.add_edge(e.src, succ, InterstateEdge(condition=e.data.condition, assignments=assignments))
-            for e in in_e + out_e:
-                region.remove_edge(e)
-            region.remove_node(st)
-            if is_start:
-                region.start_block = region.node_id(succ)
-            return True
-        # Empty sink with no successor: a dead tail; drop it and its in-edges.
-        # Its assignments are dropped with it, so they must not be observable
-        # -- in a nested region an exit-edge symbol can outlive the region.
-        if not out_e and in_e and not is_start and not any(e.data.assignments for e in in_e):
-            for e in in_e:
-                region.remove_edge(e)
-            region.remove_node(st)
-            return True
-    return False
+    return any(
+        isinstance(state, SDFGState) and state.number_of_nodes() == 0 and splice_empty_state(region, state)
+        for state in region.nodes()
+    )
 
 
 @transformation.explicit_cf_compatible
@@ -131,7 +66,7 @@ class EmptyStateElimination(ppl.Pass):
         while changed:
             changed = False
             for region in list(sdfg.all_control_flow_regions(recursive=True)):
-                while _elide_one(region):
+                while elide_one(region):
                     count += 1
                     changed = True
         return count or None

@@ -50,6 +50,7 @@ from dace.sdfg.sdfg import InterstateEdge, memlets_in_ast
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.interstate.block_fusion import splice_empty_state
 from dace.transformation.interstate.state_fusion import keep_start_block
 from dace.transformation.passes.analysis import loop_analysis
 
@@ -354,25 +355,14 @@ def splice_empty_prep_states(parent: ControlFlowRegion, block: ControlFlowBlock)
     :param parent: The region holding ``block``.
     :param block: The block whose empty predecessors are spliced out.
     """
-    while True:
-        for pred in parent.predecessors(block):
-            if not isinstance(pred, SDFGState) or pred.number_of_nodes() != 0:
-                continue
-            in_e = list(parent.in_edges(pred))
-            out_e = list(parent.out_edges(pred))
-            if len(out_e) != 1 or any(not (e.data.is_unconditional() and not e.data.assignments) for e in in_e + out_e):
-                continue
-            was_start = parent.start_block is pred
-            for e in in_e:
-                parent.add_edge(e.src, block, copy.deepcopy(e.data))
-            for e in in_e + out_e:
-                parent.remove_edge(e)
-            parent.remove_node(pred)
-            if was_start:
-                keep_start_block(parent, block)
-            break
-        else:
-            return
+    while any(
+        isinstance(pred, SDFGState)
+        and pred.number_of_nodes() == 0
+        and parent.out_degree(pred) == 1
+        and splice_empty_state(parent, pred, plain_edges_only=True)
+        for pred in parent.predecessors(block)
+    ):
+        pass
 
 
 def _match_imperfect(sdfg: SDFG) -> tuple[ConditionalBlock, CodeBlock, ControlFlowRegion] | None:
