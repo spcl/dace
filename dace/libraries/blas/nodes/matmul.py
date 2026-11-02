@@ -7,6 +7,7 @@ from typing import Any
 import dace
 from dace import properties, symbolic
 from dace.libraries.blas.blas_helpers import matrix_view
+from dace.libraries.blas.blocked import matrix_size
 from dace.libraries.blas.indexed import (
     expand_by_copies,
     indexed_connectors,
@@ -229,12 +230,18 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         a, b, c = _get_matmul_operands(node, state, sdfg)
+        blocked = set(node.blocked)
+
+        def unblocked(operand, connector: str, size: list) -> list:
+            """The size of the matrix of an operand stored in blocks of columns (see ``dace.libraries.blas.blocked``)."""
+            return matrix_size(operand[0].data.subset, True) if connector in blocked else size
+
         # The sizes of the operands as the product uses them (indexed, see ``dace.libraries.blas.indexed``)
-        size_a = indexed_size(state, node, "_a", a[4])
-        size_b = indexed_size(state, node, "_b", b[4])
+        size_a = indexed_size(state, node, "_a", unblocked(a, "_a", a[4]))
+        size_b = indexed_size(state, node, "_b", unblocked(b, "_b", b[4]))
         size_c = indexed_size(state, node, "_c", c[4])
-        full_a = indexed_size(state, node, "_a", a[2])
-        full_b = indexed_size(state, node, "_b", b[2])
+        full_a = indexed_size(state, node, "_a", unblocked(a, "_a", a[2]))
+        full_b = indexed_size(state, node, "_b", unblocked(b, "_b", b[2]))
         indexed = indexed_connectors(node)
 
         # Check if this is a batched operation (at least one input has 3+ dimensions).
@@ -247,7 +254,12 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             return expand_by_copies(node, state, sdfg, "specialize")
 
         renames = {}
-        if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(full_a) == 2 and len(full_b) == 2)):
+        is_gemm = len(size_c) == 2 and (
+            (len(size_a) == 2 and len(size_b) == 2) or (len(full_a) == 2 and len(full_b) == 2)
+        )
+        if blocked and not is_gemm:  # Only Gemm reads blocked operands: in the usual layout first
+            return expand_by_copies(node, state, sdfg, "specialize", blocked)
+        if is_gemm:
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
 
@@ -274,6 +286,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                 transA=node.transA,
                 transB=node.transB,
             )
+            gemm.blocked = node.blocked
             specialized_index_connectors(node, gemm, renames)
             # A product in a kernel that the threads of a block compute together
             implementation = thread_block_implementation(node, state, sdfg)
@@ -354,6 +367,12 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
 
     transA = properties.Property(dtype=bool, default=False, desc="Whether to transpose A before multiplying")
     transB = properties.Property(dtype=bool, default=False, desc="Whether to transpose B before multiplying")
+    blocked = properties.SetProperty(
+        element_type=str,
+        default=set(),
+        category="Semantics",
+        desc="The input operands stored in blocks of columns (see dace.libraries.blas.blocked)",
+    )
 
     def __init__(self, name, location=None, alpha=1, beta=0, transA=False, transB=False):
         self.alpha = alpha

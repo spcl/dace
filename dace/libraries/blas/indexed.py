@@ -18,13 +18,15 @@ connector is read through the same index. For example:
 Implementations that read and write the operands through their indices do so in their own expansion. The others expand
 an indexed node by copies (see ``expand_by_copies``): the indexed operands are gathered into transients, the node
 without index connectors computes the product (with the same implementation), and an indexed output is scattered from a
-transient.
+transient. The same expansion copies operands stored in blocks of columns (see ``dace.libraries.blas.blocked``) into
+the usual layout.
 """
 
 import copy
+from collections.abc import Collection
 
 from dace import SDFG, Memlet, SDFGState, dtypes, nodes
-from dace.libraries.blas.blas_helpers import matrix_view
+from dace.libraries.blas.blocked import operand_view
 from dace.sdfg.scope import is_devicelevel_gpu
 
 #: The suffix of an index connector
@@ -83,28 +85,39 @@ def without_indices(node: nodes.LibraryNode) -> nodes.LibraryNode:
     return result
 
 
-def expand_by_copies(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, implementation: str) -> SDFG:
-    """An expansion of a node with index connectors by copies: every indexed operand is gathered into a transient, the
-    node without index connectors (expanded later with ``implementation``) computes the product, and an indexed output
-    is scattered from a transient.
+def expand_by_copies(
+    node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, implementation: str, blocked: Collection[str] = ()
+) -> SDFG:
+    """An expansion of a node with index connectors, or with operands stored in blocks of columns, by copies: every
+    indexed operand is gathered into a transient, every blocked one copied into a transient in the usual layout, the
+    node without index connectors and blocked operands (expanded later with ``implementation``) computes the product,
+    and an indexed output is scattered from a transient.
 
-    :param node: The node, with index connectors.
+    :param node: The node, with index connectors or blocked operands.
     :param state: The state of the node.
     :param sdfg: The SDFG of the state.
     :param implementation: The implementation of the node without index connectors.
+    :param blocked: The blocked operands of the node (inputs, see ``dace.libraries.blas.blocked``).
     :return: The expansion, as a nested SDFG.
     """
     nsdfg = SDFG(f"{node.label}_indexed")
     nstate = nsdfg.add_state(node.label)
     in_host_code = not is_devicelevel_gpu(sdfg, state, node)  # Copies of GPU memory run as kernels
 
+    def schedule_of(desc) -> dtypes.ScheduleType:
+        if in_host_code and desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned):
+            return dtypes.ScheduleType.GPU_Device
+        return dtypes.ScheduleType.Default
+
     # The connectors, in the view of their operands that the node works with
     for e in state.in_edges(node) + state.out_edges(node):
         connector = e.dst_conn if e.dst is node else e.src_conn
         if connector in nsdfg.arrays:  # An input and output of the same name
             continue
+        if connector in blocked and (e.src is node or index_connector(connector) in node.in_connectors):
+            raise ValueError(f'"{node.label}": a blocked operand ("{connector}") must be an input without an index')
         desc = sdfg.arrays[e.data.data]
-        size, dims = matrix_view(e.data.subset)
+        size, dims = operand_view(e.data.subset, connector in blocked)
         nsdfg.add_array(connector, size, desc.dtype, storage=desc.storage, strides=[desc.strides[d] for d in dims])
 
     def copy_map(name: str, operand: str, transient: str, gather: bool, access: dict, wcr: str | None = None):
@@ -115,9 +128,7 @@ def expand_by_copies(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, impl
         iparams = [f"__i{d}" for d in range(len(idesc.shape))]
         rparams = [f"__r{d}" for d in range(len(odesc.shape) - 1)]
         rest = "".join(f", {p}" for p in rparams)
-        schedule = dtypes.ScheduleType.Default
-        if in_host_code and odesc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned):
-            schedule = dtypes.ScheduleType.GPU_Device
+        schedule = schedule_of(odesc)
         element = Memlet(f"{transient}[{', '.join(iparams + rparams)}]")
         row = Memlet(f"{operand}[0:{odesc.shape[0]}{rest}]", wcr=wcr, dynamic=not gather)
         nstate.add_mapped_tasklet(
@@ -144,7 +155,27 @@ def expand_by_copies(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, impl
         )
         return name
 
-    # The operands of the product: the gathered transients, or the operands themselves
+    def unblock(connector: str) -> nodes.AccessNode:
+        """A transient that holds the matrix of a blocked operand, in the usual layout."""
+        blocks, rows, width = nsdfg.arrays[connector].shape
+        desc = nsdfg.arrays[connector]
+        name, _ = nsdfg.add_transient(
+            f"{connector}_unblocked", [rows, blocks * width], desc.dtype, storage=desc.storage, find_new_name=True
+        )
+        access = nstate.add_access(name)
+        nstate.add_mapped_tasklet(
+            f"unblock{connector}",
+            {"__r": f"0:{rows}", "__c": f"0:{blocks * width}"},
+            {"__in": Memlet(f"{connector}[__c // ({width}), __r, __c % ({width})]")},
+            "__out = __in",
+            {"__out": Memlet(f"{name}[__r, __c]")},
+            schedule=schedule_of(desc),
+            external_edges=True,
+            output_nodes={name: access},
+        )
+        return access
+
+    # The operands of the product: the gathered (or unblocked) transients, or the operands themselves
     indexed = set(indexed_connectors(node))
     reads, writes = {}, {}  # Connector -> (access node, wcr)
     for e in state.in_edges(node):
@@ -155,6 +186,8 @@ def expand_by_copies(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, impl
             source = transient_of(connector, "gathered")
             reads[connector] = nstate.add_access(source)
             copy_map(f"gather{connector}", connector, source, True, {source: reads[connector]})
+        elif connector in blocked:
+            reads[connector] = unblock(connector)
         else:
             reads[connector] = nstate.add_read(connector)
     for e in state.out_edges(node):
@@ -172,6 +205,8 @@ def expand_by_copies(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, impl
     pstate = product.add_state(node.label)
     inner = without_indices(node)
     inner.implementation = implementation
+    if blocked:
+        inner.blocked = frozenset()
     pstate.add_node(inner)
 
     def operand(connector: str, access: nodes.AccessNode) -> str:

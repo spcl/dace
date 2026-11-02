@@ -7,6 +7,7 @@ import pytest
 import dace
 from dace.libraries.blas import Gemm
 from dace.transformation.dataflow import GatherIntoMatrixProduct, TransposeIntoMatrixProduct
+from dace.transformation.passes import BlockMatrixOperands
 
 BM, N, K, T, R = 64, 128, 256, 3, 500  # Rows per tile, columns, inner dimension, tiles, rows of the gathered matrix
 GPU_Global, GPU_Shared = dace.StorageType.GPU_Global, dace.StorageType.GPU_Shared
@@ -46,14 +47,24 @@ def products(sdfg: dace.SDFG) -> list:
     return [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, (Gemm, dace.libraries.blas.MatMul))]
 
 
-def run(program, implementation: str, **arrays):
+def pack(w: np.ndarray, block: int = 32) -> np.ndarray:
+    """``w[R, C]`` in blocks of ``block`` columns (see ``dace.libraries.blas.blocked``)."""
+    rows, columns = w.shape
+    return w.reshape(rows, columns // block, block).swapaxes(0, 1).copy()
+
+
+def run(program, implementation: str, blocked: bool, **arrays):
+    """Runs a program whose weight ``w`` is stored in rows, or in blocks of columns (``blocked``)."""
     import cupy
 
     sdfg = program.to_sdfg()
     sdfg.apply_transformations_repeated([GatherIntoMatrixProduct, TransposeIntoMatrixProduct])
+    if blocked:
+        BlockMatrixOperands(names={"w"}).apply_pass(sdfg, {})
+        arrays["w"] = pack(arrays["w"])
     sdfg.expand_library_nodes(recursive=False)  # MatMul -> Gemm, which selects a thread-block implementation
     (gemm,) = [n for n in products(sdfg) if isinstance(n, Gemm)]
-    assert gemm.implementation == "ThreadBlockMMA"
+    assert gemm.implementation == "ThreadBlockMMA" and gemm.blocked == ({"_b"} if blocked else set())
     gemm.implementation = implementation
     args = {name: cupy.asarray(value) for name, value in arrays.items()}
     sdfg(**args)
@@ -73,23 +84,27 @@ def as_bf16(values: np.ndarray):
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("blocked", [False, True])
 @pytest.mark.parametrize("implementation", ["ThreadBlockMMA", "ThreadBlock"])
-def test_tiles(implementation):
+def test_tiles(implementation, blocked):
     x, w = random_bf16(T * BM, K), random_bf16(N, K)
-    y = run(tiles, implementation, x=as_bf16(x), w=as_bf16(w), y=np.zeros((T * BM, N), np.float32))
+    y = run(tiles, implementation, blocked, x=as_bf16(x), w=as_bf16(w), y=np.zeros((T * BM, N), np.float32))
     assert np.array_equal(y, as_bf16(x @ w.T).astype(np.float32))
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("blocked", [False, True])
 @pytest.mark.parametrize("implementation", ["ThreadBlockMMA", "ThreadBlock"])
-def test_gathered_rows(implementation):
+def test_gathered_rows(implementation, blocked):
     x, w = random_bf16(R, K), random_bf16(N, K)
     idx = np.random.default_rng(1).integers(0, R, (T, BM)).astype(np.int32)
-    y = run(gathered, implementation, x=as_bf16(x), idx=idx, w=as_bf16(w), y=np.zeros((T * BM, N), np.float32))
+    zeros = np.zeros((T * BM, N), np.float32)
+    y = run(gathered, implementation, blocked, x=as_bf16(x), idx=idx, w=as_bf16(w), y=zeros)
     assert np.array_equal(y, as_bf16(x[idx.reshape(-1)] @ w.T).astype(np.float32))
 
 
 if __name__ == "__main__":
     for implementation in ("ThreadBlockMMA", "ThreadBlock"):
-        test_tiles(implementation)
-        test_gathered_rows(implementation)
+        for blocked in (False, True):
+            test_tiles(implementation, blocked)
+            test_gathered_rows(implementation, blocked)

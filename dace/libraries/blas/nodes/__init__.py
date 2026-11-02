@@ -5,6 +5,7 @@ from .gemv import Gemv
 from .gemm import Gemm
 from .ger import Ger
 from .batched_matmul import BatchedMatMul
+from .pack import Pack
 
 from .axpy import Axpy
 from .einsum import Einsum

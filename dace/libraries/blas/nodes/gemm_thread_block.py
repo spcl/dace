@@ -13,9 +13,11 @@ implementations for it (see ``thread_block_implementation``).
   (``cp.async``, which also fetches the next slices into L2) into a workspace, a transient in dynamic shared memory
   (which the products in other states of the block's code share, see ``PlanSharedMemory``), and loaded into
   tensor-core fragments (``ldmatrix``). Rows of ``a`` gathered through ``_a_index`` (see
-  ``dace.libraries.blas.indexed``) are read directly. The tensor-core code needs CUDA compute capability 8.0;
-  elsewhere (older GPUs, HIP), the same expansion multiplies element by element.
-* ``ThreadBlock``: any types and shapes; every thread computes elements of the product.
+  ``dace.libraries.blas.indexed``) are read directly, as are operands stored in blocks of columns along ``K`` (see
+  ``dace.libraries.blas.blocked``, blocks of a multiple of 32 columns), whose slices are then contiguous. The
+  tensor-core code needs CUDA compute capability 8.0; elsewhere (older GPUs, HIP), the same expansion multiplies element
+  by element.
+* ``ThreadBlock``: any types, shapes and layouts; every thread computes elements of the product.
 
 Both write only the elements of the output (view), and support ``alpha`` but not ``beta``.
 """
@@ -26,7 +28,7 @@ import dace
 from dace import SDFG, Memlet, SDFGState, dtypes, nodes, symbolic
 from dace.codegen.common import sym2cpp
 from dace.config import Config
-from dace.libraries.blas.blas_helpers import matrix_view
+from dace.libraries.blas.blocked import operand_view
 from dace.sdfg.scope import is_devicelevel_gpu, is_thread_block_level, kernel_scope
 from dace.transformation.transformation import ExpandTransformation
 
@@ -64,19 +66,73 @@ def kernel_threads(sdfg: SDFG, state: SDFGState, node: nodes.Node) -> int:
 
 
 def _operands(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> dict[str, tuple[list, list, object]]:
-    """The size and strides of every connector's view (see ``matrix_view``), and the descriptor it views."""
+    """The size and strides of every connector's view (see ``operand_view``), and the descriptor it views."""
     result = {}
     for e in state.in_edges(node) + state.out_edges(node):
         connector = e.dst_conn if e.dst is node else e.src_conn
         desc = sdfg.arrays[e.data.data]
-        size, dims = matrix_view(e.data.subset)
+        size, dims = operand_view(e.data.subset, connector in node.blocked)
         result[connector] = (list(size), [desc.strides[d] for d in dims], desc)
     return result
 
 
+class _Operand:
+    """An input of a thread-block product as its code reads it: the matrix ``op(x)`` (``x``, or ``x`` transposed),
+    where ``x`` is the operand's view, stored in rows or in blocks of columns (see ``dace.libraries.blas.blocked``)."""
+
+    def __init__(self, size: list, strides: list, transposed: bool, blocked: bool):
+        self.strides, self.transposed, self.blocked = strides, transposed, blocked
+        if blocked:
+            blocks, rows, self.width = size
+            stored = [rows, blocks * self.width]
+        else:
+            stored = list(size)
+        self.shape = stored[::-1] if transposed else stored
+
+    def _stored(self, r: str, c: str) -> str:
+        """The offset of element ``(r, c)`` of ``x``."""
+        s = [sym2cpp(stride) for stride in self.strides]
+        if self.blocked:
+            w = sym2cpp(self.width)
+            return f"(({c}) / ({w})) * ({s[0]}) + ({r}) * ({s[1]}) + (({c}) % ({w})) * ({s[2]})"
+        return f"({r}) * ({s[0]}) + ({c}) * ({s[1]})"
+
+    def offset(self, i: str, j: str) -> str:
+        """The offset of element ``(i, j)`` of ``op(x)``."""
+        return self._stored(j, i) if self.transposed else self._stored(i, j)
+
+    def _inner_is_columns(self, inner: int) -> bool:
+        """Whether dimension ``inner`` of ``op(x)`` (the product's inner dimension) is that of the columns of ``x``."""
+        return (inner == 1) != self.transposed
+
+    def slices_contiguous(self, inner: int) -> bool:
+        """Whether the slices of ``MMA_K_STEP`` elements of dimension ``inner`` of ``op(x)`` are contiguous."""
+        if self.blocked:
+            return (
+                self._inner_is_columns(inner)
+                and symbolic.equal(self.strides[2], 1) is True
+                and not symbolic.issymbolic(self.width)
+                and int(self.width) % MMA_K_STEP == 0
+            )
+        strides = self.strides[::-1] if self.transposed else self.strides
+        return symbolic.equal(strides[inner], 1) is True
+
+    def outer_offset(self, x: str, inner: int) -> str:
+        """The offset of index ``x`` of the other dimension of ``op(x)`` than ``inner``, at the start of the inner one."""
+        return self.offset(x, "0") if inner == 1 else self.offset("0", x)
+
+    def slice_offset(self, k: str) -> str:
+        """The offset of the slice at ``k`` of the inner dimension, a multiple of ``MMA_K_STEP`` (from
+        ``outer_offset``; see ``slices_contiguous``)."""
+        if self.blocked:
+            w, s0 = sym2cpp(self.width), sym2cpp(self.strides[0])
+            return f"(({k}) / ({w})) * ({s0}) + ({k}) % ({w})"
+        return f"({k})"
+
+
 class _Product:
-    """The shape of a thread-block product: ``c[M, N] = alpha * op(a)[M, K] @ op(b)[K, N]``, with the strides of
-    ``op(a)`` (row, inner), ``op(b)`` (inner, column) and ``c`` (row, column)."""
+    """The shape of a thread-block product: ``c[M, N] = alpha * op(a)[M, K] @ op(b)[K, N]``, with its inputs (see
+    ``_Operand``) and the strides of ``c`` (row, column)."""
 
     def __init__(self, node, operands: dict):
         if node.beta != 0:
@@ -87,12 +143,10 @@ class _Product:
         self.gather = "_a_index" in operands
         if self.gather and node.transA:
             raise ValueError(f'"{node.label}": a gathered operand cannot be transposed')
-        if node.transA:
-            a, sa = a[::-1], sa[::-1]
-        if node.transB:
-            b, sb = b[::-1], sb[::-1]
-        self.m, self.n, self.k = c[0], c[1], a[1]
-        self.sa, self.sb, self.sc = sa, sb, sc
+        self.a = _Operand(a, sa, node.transA, "_a" in node.blocked)
+        self.b = _Operand(b, sb, node.transB, "_b" in node.blocked)
+        self.m, self.n, self.k = c[0], c[1], self.a.shape[1]
+        self.sc = sc
         self.types = adesc.dtype, bdesc.dtype, cdesc.dtype
         self.alpha = node.alpha
 
@@ -121,8 +175,11 @@ def mma_ineligibility(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> 
         if symbolic.issymbolic(value, sdfg.constants):
             return f"the {what} ({value}) is not a constant"
     n, k = (int(symbolic.evaluate(v, sdfg.constants)) for v in (product.n, product.k))
-    if symbolic.equal(product.sa[1], 1) is not True or symbolic.equal(product.sb[0], 1) is not True:
-        return "the inner dimension is not contiguous in both operands"
+    if not product.a.slices_contiguous(1) or not product.b.slices_contiguous(0):
+        return (
+            f"the inner dimension is not contiguous in both operands (in blocks of columns, of a multiple of "
+            f"{MMA_K_STEP})"
+        )
     warps = kernel_threads(sdfg, state, node) // WARP_SIZE
     if k % MMA_K_STEP or warps == 0 or n % warps or (n // warps) % 16:
         return f"a {n}-column, {k}-deep product does not split among {warps} warps in slices of {MMA_K_STEP}"
@@ -167,7 +224,7 @@ def _nested(node, operands: dict, product: _Product, code: str, threads: int, sc
 def _elementwise(product: _Product, threads: int) -> str:
     """C++ code in which every thread computes elements of the product (strided over the block)."""
     acc = "double" if dtypes.float64 in product.types else "float"
-    sa, sb, sc = ([sym2cpp(s) for s in strides] for strides in (product.sa, product.sb, product.sc))
+    sc = [sym2cpp(s) for s in product.sc]
     row = "a_index[i]" if product.gather else "i"
     scale = "" if product.alpha == 1 else f"({acc})({sym2cpp(product.alpha)}) * "
     return f"""
@@ -176,7 +233,7 @@ for (long long idx = tid; idx < (long long)({sym2cpp(product.m)}) * ({sym2cpp(pr
     const long long row = {row};
     {acc} sum = 0;
     for (long long kk = 0; kk < {sym2cpp(product.k)}; ++kk)
-        sum += ({acc}) a[row * ({sa[0]}) + kk * ({sa[1]})] * ({acc}) b[kk * ({sb[0]}) + j * ({sb[1]})];
+        sum += ({acc}) a[{product.a.offset("row", "kk")}] * ({acc}) b[{product.b.offset("kk", "j")}];
     c[i * ({sc[0]}) + j * ({sc[1]})] = ({product.types[2].ctype})({scale}sum);
 }}
 """
@@ -225,9 +282,11 @@ class ExpandGemmThreadBlockMMA(ExpandTransformation):
         # Chunks of 16 bytes are swizzled (XOR with the row) so that the eight rows ``ldmatrix`` reads at once, and the
         # rows ``cp.async`` writes, hit distinct banks
         swizzle = "((r) >> 1) & 3" if chunks == 4 else "(r) & 7"
-        sa0, sb1 = sym2cpp(product.sa[0]), sym2cpp(product.sb[1])
-        sc0, sc1 = (sym2cpp(s) for s in product.sc)
+        # Where the slices of a row of op(a) and of a column of op(b) start, and how far a slice at k0 is from them
         a_row = "a_index[m0 + r]" if product.gather else "(m0 + r)"
+        a_start, b_start = product.a.outer_offset(f"(long long){a_row}", 1), product.b.outer_offset("r", 0)
+        a_slice, b_slice = product.a.slice_offset("k0"), product.b.slice_offset("k0")
+        sc0, sc1 = (sym2cpp(s) for s in product.sc)
         scale = "" if product.alpha == 1 else f"(float)({sym2cpp(product.alpha)}) * "
         code = f"""
 constexpr int MT = {rows}, N = {n}, K = {k}, KS = {MMA_K_STEP}, STAGES = {MMA_STAGES}, CHUNKS = {chunks};
@@ -247,12 +306,12 @@ for (long long m0 = 0; m0 < M_TOTAL; m0 += MT) {{
     #pragma unroll
     for (int j = 0; j < A_COPIES; ++j) {{
         const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
-        a_src[j] = (i < MT * CHUNKS && r < nrows) ? a + (long long)({a_row}) * ({sa0}) + c * 8 : nullptr;
+        a_src[j] = (i < MT * CHUNKS && r < nrows) ? a + {a_start} + c * 8 : nullptr;
     }}
     #pragma unroll
     for (int j = 0; j < B_COPIES; ++j) {{
         const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
-        b_src[j] = b + r * ({sb1}) + c * 8;
+        b_src[j] = b + {b_start} + c * 8;
     }}
     // Copies the slices of A and B starting at k0 into stage s (rows of A beyond the product are zero-filled)
     auto load_stage = [&](int s, int k0) {{
@@ -261,14 +320,14 @@ for (long long m0 = 0; m0 < M_TOTAL; m0 += MT) {{
             const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
             if (MT * CHUNKS % THREADS == 0 || i < MT * CHUNKS)
                 asm volatile("cp.async.cg.shared.global.L2::{MMA_L2_FETCH}B [%0], [%1], 16, %2;\\n"
-                             :: "r"(DACE_TB_ADDR(s, r, c)), "l"(a_src[j] ? a_src[j] + k0 : a), "r"(a_src[j] ? 16 : 0));
+                             :: "r"(DACE_TB_ADDR(s, r, c)), "l"(a_src[j] ? a_src[j] + {a_slice} : a), "r"(a_src[j] ? 16 : 0));
         }}
         #pragma unroll
         for (int j = 0; j < B_COPIES; ++j) {{
             const int i = tid + j * THREADS, r = i / CHUNKS, c = i % CHUNKS;
             if (N * CHUNKS % THREADS == 0 || i < N * CHUNKS)
                 asm volatile("cp.async.cg.shared.global.L2::{MMA_L2_FETCH}B [%0], [%1], 16;\\n"
-                             :: "r"(DACE_TB_ADDR(s, MT + r, c)), "l"(b_src[j] + k0));
+                             :: "r"(DACE_TB_ADDR(s, MT + r, c)), "l"(b_src[j] + {b_slice}));
         }}
     }};
 
