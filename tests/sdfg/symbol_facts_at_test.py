@@ -7,6 +7,7 @@ import sympy
 import dace
 from dace import symbolic
 from dace.sdfg.state import LoopRegion, SymbolResolver
+from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 
 ZERO = symbolic.pystr_to_symbolic("0")
 
@@ -230,6 +231,66 @@ def test_a_dimension_scaling_one_symbol_makes_it_nonnegative(dimension: str, non
     assert truth is (symbolic.Truth.TRUE if nonnegative else symbolic.Truth.UNKNOWN)
 
 
+def loop_over(condition: str, init: str | None, update: str, **symbols) -> tuple[dace.SDFG, LoopRegion]:
+    sdfg = dace.SDFG(f"facts_loop_{abs(hash((condition, init, update)))}")
+    for name, dtype in symbols.items():
+        sdfg.add_symbol(name, dtype)
+    loop = LoopRegion("loop", condition, "i", init, update)
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state("body", is_start_block=True)
+    return sdfg, loop
+
+
+def test_a_range_needs_a_bound_the_body_cannot_write():
+    sdfg, loop = loop_over("i < s", "i = 0", "i = i + 1")
+    sdfg.add_scalar("s", dace.int64, transient=True)
+    assert symbolic.ask(le("i", "s - 1"), SymbolResolver().facts_at(loop)) is symbolic.Truth.UNKNOWN
+
+
+def test_a_range_needs_an_init_that_does_not_read_the_iterator():
+    _, loop = loop_over("i < N", "i = 2 * i", "i = i + 1", N=dace.int64)
+    assert symbolic.ask(le("i", "0"), SymbolResolver().facts_at(loop)) is symbolic.Truth.UNKNOWN
+
+
+def test_a_range_needs_a_condition_along_the_step():
+    _, loop = loop_over("i < N", "i = N - 1", "i = i - 1", N=dace.int64)
+    assert symbolic.ask(le("N - 1", "i"), SymbolResolver().facts_at(loop)) is symbolic.Truth.UNKNOWN
+
+
+def test_a_float_limit_gives_no_integer_range():
+    _, loop = loop_over("i < x", "i = 0", "i = i + 1", x=dace.float64)
+    assert symbolic.ask(le("i + 1", "x"), SymbolResolver().facts_at(loop)) is symbolic.Truth.UNKNOWN
+
+
+def test_a_float_iterator_gives_no_integer_range():
+    _, loop = loop_over("i < 1.0", "i = 0.0", "i = i + 0.25")
+    assert symbolic.ask(le("i", "0"), SymbolResolver().facts_at(loop)) is symbolic.Truth.UNKNOWN
+
+
+def test_a_loop_header_ends_a_fact_on_entry():
+    sdfg, loop = loop_over("i > -3", None, "i = i - 1")
+    sdfg.add_symbol("i", dace.int64, predicates=frozenset({symbolic.Predicate.POSITIVE}))
+    assert symbolic.ask(le("1", "i"), SymbolResolver().facts_at(loop)) is symbolic.Truth.UNKNOWN
+
+
+def test_inlining_keeps_the_assumptions_proofs_took():
+    inner = dace.SDFG("assumption_inner")
+    inner.add_symbol("k", dace.int64)
+    inner.add_symbol("N", dace.int64)
+    inner.add_state(is_start_block=True)
+    relation = symbolic.Relation(symbolic.RelationKind.LT, symbolic.symbol("k"), symbolic.symbol("N"))
+    inner.symbol_repo.runtime_assumptions.add(relation)
+    outer = dace.SDFG("assumption_outer")
+    outer.add_symbol("k", dace.int64)
+    outer.add_symbol("N", dace.int64)
+    state = outer.add_state(is_start_block=True)
+    state.add_nested_sdfg(inner, {}, {}, symbol_mapping={"k": "k", "N": "N"})
+
+    InlineMultistateSDFG.apply_to(outer, nested_sdfg=state.nodes()[0], verify=False, save=False)
+
+    assert relation in outer.symbol_repo.runtime_assumptions
+
+
 if __name__ == "__main__":
     test_loop_body_knows_the_iterator_range()
     test_loop_header_does_not_know_the_iterator_range()
@@ -253,3 +314,10 @@ if __name__ == "__main__":
     test_a_dimension_scaling_one_symbol_makes_it_nonnegative("2 * N", True)
     test_a_dimension_scaling_one_symbol_makes_it_nonnegative("N + 1", False)
     test_a_dimension_scaling_one_symbol_makes_it_nonnegative("M * N", False)
+    test_a_range_needs_a_bound_the_body_cannot_write()
+    test_a_range_needs_an_init_that_does_not_read_the_iterator()
+    test_a_range_needs_a_condition_along_the_step()
+    test_a_float_limit_gives_no_integer_range()
+    test_a_float_iterator_gives_no_integer_range()
+    test_a_loop_header_ends_a_fact_on_entry()
+    test_inlining_keeps_the_assumptions_proofs_took()

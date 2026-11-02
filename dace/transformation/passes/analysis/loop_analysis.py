@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Optional
 
 import sympy
 
-from dace import symbolic
+from dace import dtypes, symbolic
 from dace.frontend.python import astutils
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
@@ -257,6 +257,28 @@ def get_loop_end(loop: LoopRegion) -> symbolic.SymbolicType | None:
         if match:
             end = match[a]
     return end
+
+
+def range_holds(loop: LoopRegion, bounds: tuple, sdfg: "dace.SDFG") -> bool:
+    """
+    Whether the ``(start, end, step)`` of ``loop`` describe its iterator in every iteration: nothing in the loop changes
+    them, and ``end`` is an integer limit reached in the direction of ``step``.
+    """
+    from dace.sdfg.sdfg import interstate_bound_names  # Avoid import loop
+
+    iterator = loop.loop_variable
+    start, end, step = (sympy.sympify(bound) for bound in bounds)
+    reads = {name for bound in (start, end, step) for name in symbolic.free_symbols_and_functions(bound)}
+    reads |= {name for bound in (start, end, step) for name in symbolic.arrays(bound)}
+    if iterator in symbolic.free_symbols_and_functions(start) or reads & sdfg.arrays.keys():
+        return False
+    if interstate_bound_names(loop, loop) & (reads | {iterator}):
+        return False
+    if loop.new_symbols(sdfg.symbols).get(iterator) not in dtypes.INTEGER_TYPES or end.atoms(sympy.Float):
+        return False
+    if any(sdfg.symbols.get(name, dtypes.int64) not in dtypes.INTEGER_TYPES for name in reads):
+        return False
+    return step.is_positive == ("<" in symbolic.pystr_to_symbolic(loop.loop_condition.as_string).rel_op)
 
 
 def get_assignments(statement) -> dict[str, str]:

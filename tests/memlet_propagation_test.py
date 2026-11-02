@@ -2,10 +2,11 @@
 import itertools
 
 import numpy as np
+import pytest
 import sympy
 
 import dace
-from dace.sdfg.propagation import propagate_memlet, propagate_memlets_sdfg, propagate_memlets_state, propagate_subset
+from dace.sdfg.propagation import ascending_range, propagate_memlet, propagate_memlets_sdfg, propagate_memlets_state, propagate_subset
 from dace.sdfg.state import SymbolResolver
 from dace.symbolic import same_value
 
@@ -468,6 +469,32 @@ def test_nested_sdfg_connector_offset():
         assert edge.data.subset == dace.subsets.Range([(1, 2, 1)]), edge.data.subset
 
 
+def propagated(subset: str, length: int, rng: tuple) -> dace.subsets.Range:
+    memlet = dace.Memlet(f"A[{subset}]")
+    arr = dace.data.Array(dace.float64, [length])
+    return propagate_subset([memlet], arr, ["i"], dace.subsets.Range([rng]), dace.symbolic.Facts.none()).subset
+
+
+@pytest.mark.parametrize(
+    "subset, length, rng, expected",
+    [
+        ("i % 5", 8, (0, 4, 1), (0, 4, 1)),  # every point counts, the last one included
+        ("i % 5", 8, (3, 3, 1), (3, 3, 1)),  # a single point
+        ("50 - i:50 - i + 2", 60, (0, 9, 1), (41, 51, 1)),  # negative multiplier over a range subset
+        ("50 - i", 60, (10, 0, -4), (40, 48, 1)),  # the lattice starts at 10, not at 0
+        ("i % 4", 8, (10, 3, -1), (0, 3, 1)),  # a descending image wraps
+    ],
+)
+def test_propagated_extent(subset, length, rng, expected):
+    got = propagated(subset, length, rng)
+    assert [(int(b), int(e)) for b, e, _ in got.ranges] == [expected[:2]], got
+
+
+def test_ascending_range_ends_on_the_last_index():
+    assert ascending_range(10, 1, -4) == (2, 10, 4)
+    assert ascending_range(9, 0, -1) == (0, 9, 1)
+
+
 if __name__ == "__main__":
     test_undefined_symbol_propagation()
     test_conditional()
@@ -484,3 +511,9 @@ if __name__ == "__main__":
     test_typed_parameter_symbol()
     test_nested_sdfg_connector_in_mapped_symbols()
     test_nested_sdfg_connector_offset()
+    test_propagated_extent("i % 5", 8, (0, 4, 1), (0, 4, 1))
+    test_propagated_extent("i % 5", 8, (3, 3, 1), (3, 3, 1))
+    test_propagated_extent("50 - i:50 - i + 2", 60, (0, 9, 1), (41, 51, 1))
+    test_propagated_extent("50 - i", 60, (10, 0, -4), (40, 48, 1))
+    test_propagated_extent("i % 4", 8, (10, 3, -1), (0, 3, 1))
+    test_ascending_range_ends_on_the_last_index()

@@ -3196,19 +3196,13 @@ class SymbolResolver:
                     loop_analysis.get_loop_end(region),
                     loop_analysis.get_loop_stride(region),
                 )
-                if None not in bounds:
-                    # An interstate edge of the body that assigns the iterator or a symbol of the bounds ends what the
-                    # range says about the iterator
-                    assigned = {name for edge in region.all_interstate_edges() for name in edge.data.assignments}
-                    named = {region.loop_variable} | {
-                        str(free) for bound in bounds for free in sympy.sympify(bound).free_symbols
-                    }
-                    if assigned & named:
-                        bounds = (None, None, None)
+                if None not in bounds and not loop_analysis.range_holds(region, bounds, sdfg):
+                    bounds = (None, None, None)
                 scopes.append(
                     (
                         region,
-                        region.new_symbols(sdfg.symbols),
+                        # Without an init the iterator is still rebound here, so outer facts on it end
+                        region.new_symbols(sdfg.symbols) or {region.loop_variable: None},
                         # The body of an inverted loop runs once before its condition is checked
                         [(region.loop_variable, *bounds)] if None not in bounds and not region.inverted else [],
                     )
@@ -3282,8 +3276,10 @@ class SymbolResolver:
         if nsdfg is None or sdfg.parent is None:
             return [], set(), set(), frozenset()
         outer = self.facts_at(sdfg.parent, nsdfg)
-        # A symbol an interstate edge of ``sdfg`` assigns equals its mapped value on entry only
-        assigned = {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
+        from dace.sdfg.sdfg import interstate_bound_names  # Avoid import loop
+
+        # A symbol ``sdfg`` assigns equals its mapped value on entry only
+        assigned = interstate_bound_names(sdfg)
         mapped = {
             name: symbolic.pystr_to_symbolic(value)
             for name, value in nsdfg.symbol_mapping.items()

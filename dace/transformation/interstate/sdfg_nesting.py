@@ -611,6 +611,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
         symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+        sdfg.symbol_repo.runtime_assumptions.update(nsdfg.symbol_repo.runtime_assumptions)
 
         # The replacement restates the descriptors of this SDFG and the symbol mappings of the nested SDFGs within,
         # but not the connector descriptors inside those. Symbol mapping entries that are not plain symbols (e.g.,

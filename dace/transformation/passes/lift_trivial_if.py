@@ -174,7 +174,8 @@ class LiftTrivialIf(ppl.Pass):
             if isinstance(graph, LoopRegion) and graph.loop_variable:
                 start = loop_analysis.get_init_assignment(graph)
                 end = loop_analysis.get_loop_end(graph)
-                if start is not None and end is not None:
+                bounds = (start, end, loop_analysis.get_loop_stride(graph))
+                if None not in bounds and loop_analysis.range_holds(graph, bounds, graph.sdfg):
                     ranges.append((graph.loop_variable, start, end))
             graph = graph.parent_graph
         return ranges
