@@ -1997,6 +1997,43 @@ def test_a_container_written_then_read_is_rewritten_after_its_reads():
     _aggressive_fusion_matches(sdfg, A=np.random.default_rng(4).random(8), C=np.zeros(8))
 
 
+def test_a_scope_reading_what_the_first_state_wrote_stays_behind_it():
+    """A read only an in-scope access node holds has no top-level node to be ordered through."""
+    sdfg = SDFG("scoped_read_after_write")
+    sdfg.add_transient("c", [4], dtypes.typeclass(float))
+    sdfg.add_array("out", [4], dtypes.typeclass(float))
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state_after(first, "second")
+    entry, exit_node = first.add_map("write", {"i": "0:4"})
+    tasklet = first.add_tasklet("produce", {}, {"o"}, "o = i")
+    first.add_nedge(entry, tasklet, Memlet())
+    first.add_memlet_path(tasklet, exit_node, first.add_write("c"), src_conn="o", memlet=Memlet("c[i]"))
+    entry, exit_node = second.add_map("read", {"i": "0:4"})
+    tasklet = second.add_tasklet("consume", {"v"}, {"o"}, "o = v * 2")
+    inner = second.add_access("c")
+    second.add_nedge(entry, inner, Memlet())
+    second.add_edge(inner, None, tasklet, "v", Memlet("c[i]"))
+    second.add_memlet_path(tasklet, exit_node, second.add_write("out"), src_conn="o", memlet=Memlet("out[i]"))
+    assert not StateFusionExtended.can_be_applied_to(sdfg, first_state=first, second_state=second)
+
+
+def test_permissive_fusion_keeps_the_other_predecessor_of_the_second_state():
+    """Permissive relaxes the race checks: an edge into the second state from elsewhere still has to survive."""
+    sdfg = SDFG("permissive_second_predecessor")
+    sdfg.add_symbol("c", dtypes.typeclass(int))
+    sdfg.add_array("x", [1], dtypes.typeclass(float))
+    guard = sdfg.add_state("guard", is_start_block=True)
+    first, other, second = sdfg.add_state("first"), sdfg.add_state("other"), sdfg.add_state("second")
+    sdfg.add_edge(guard, first, InterstateEdge("c > 0"))
+    sdfg.add_edge(guard, other, InterstateEdge("c <= 0"))
+    sdfg.add_edge(first, second, InterstateEdge())
+    sdfg.add_edge(other, second, InterstateEdge())
+    for state in (first, second):
+        tasklet = state.add_tasklet("t", {}, {"o"}, "o = 1")
+        state.add_edge(tasklet, "o", state.add_write("x"), None, Memlet("x[0]"))
+    assert not StateFusionExtended.can_be_applied_to(sdfg, permissive=True, first_state=first, second_state=second)
+
+
 if __name__ == "__main__":
     test_a_read_the_merge_point_does_not_follow_still_precedes_the_overwrite()
     test_extended_fusion()
@@ -2038,3 +2075,5 @@ if __name__ == "__main__":
     test_extended_fusion_orders_an_array_accumulation_after_its_seed()
     test_extended_fusion_fuses_a_transient_built_from_disjoint_slices()
     test_extended_fusion_keeps_a_sliced_transient_the_second_state_reads()
+    test_a_scope_reading_what_the_first_state_wrote_stays_behind_it()
+    test_permissive_fusion_keeps_the_other_predecessor_of_the_second_state()

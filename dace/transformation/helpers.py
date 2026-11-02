@@ -1194,7 +1194,7 @@ def isolate_nested_sdfg(
         if (
             (not all(iedge.src is nsdfg_node for iedge in state.in_edges(oedge.dst)))
             or (not isinstance(oedge.dst, nodes.AccessNode))
-            or isinstance(oedge.dst, data.View)
+            or isinstance(oedge.dst.desc(state.sdfg), data.View)
         ):
             if test_if_applicable:
                 return False

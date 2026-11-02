@@ -49,6 +49,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, rehome_claimed_block
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.interstate.block_fusion import splice_empty_state
 
 # Shared soundness kernel for the loop distribution below -- the same import route
 # ``fuse_loops.py`` uses, so fission, fusion and this hoist can never disagree.
@@ -435,34 +436,13 @@ def splice_guard(region: ControlFlowRegion, guard: ConditionalBlock, take: bool)
 
 def drop_empty_states(region: ControlFlowRegion) -> None:
     """Splice out empty states on plain (unconditional, assignment-free) edges of ``region``."""
-    changed = True
-    while changed:
-        changed = False
-        for st in list(region.nodes()):
-            if not isinstance(st, SDFGState) or st.number_of_nodes() != 0:
-                continue
-            in_e = list(region.in_edges(st))
-            out_e = list(region.out_edges(st))
-            if any(not (e.data.is_unconditional() and not e.data.assignments) for e in in_e + out_e):
-                continue
-            if len(out_e) == 1 and (in_e or region.start_block is st):
-                succ = out_e[0].dst
-                for e in in_e:
-                    region.add_edge(e.src, succ, e.data)
-                for e in in_e + out_e:
-                    region.remove_edge(e)
-                was_start = region.start_block is st
-                region.remove_node(st)
-                if was_start:
-                    region.start_block = region.node_id(succ)
-                changed = True
-                break
-            if not out_e and in_e and region.start_block is not st:
-                for e in in_e:
-                    region.remove_edge(e)
-                region.remove_node(st)
-                changed = True
-                break
+    while any(
+        isinstance(st, SDFGState)
+        and st.number_of_nodes() == 0
+        and splice_empty_state(region, st, plain_edges_only=True)
+        for st in region.nodes()
+    ):
+        pass
 
 
 @properties.make_properties

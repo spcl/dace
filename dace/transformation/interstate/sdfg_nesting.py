@@ -5,6 +5,7 @@ import copy
 import itertools
 import operator
 import warnings
+from collections.abc import Iterable
 from copy import deepcopy as dc
 from functools import reduce
 
@@ -68,9 +69,9 @@ def keep_nest_order(state: SDFGState, inlined: set[nodes.Node], successors: set[
     :param inlined: The nodes of the inlined body.
     :param successors: The nodes the nested SDFG node's out-edges led to, recorded before inlining.
     """
-    body = [(n, *accessed(state, n)) for n in inlined if n in state.nodes()]
+    body = [(n, *accessed(state, n)) for n in inlined if n in state._nodes]
     for succ in successors:
-        if succ not in state.nodes():
+        if succ not in state._nodes:
             continue  # moved to another state by a fission: the state boundary orders it
         reaches = ancestors(state, succ)
         after_reads: set[str] = set()
@@ -106,6 +107,16 @@ def descendants(state: SDFGState, node: nodes.Node) -> set[nodes.Node]:
                 seen.add(edge.dst)
                 stack.append(edge.dst)
     return seen
+
+
+def code_connector_names(states: Iterable[SDFGState]) -> set[str]:
+    """The connector names of the code nodes of ``states``, library nodes and nested SDFGs apart."""
+    names: set[str] = set()
+    for state in states:
+        for node in state.nodes():
+            if isinstance(node, nodes.CodeNode) and not isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)):
+                names.update(node.in_connectors, node.out_connectors)
+    return names
 
 
 def ancestors(state: SDFGState, node: nodes.Node) -> set[nodes.Node]:
@@ -153,6 +164,20 @@ class InlineSDFG(transformation.SingleStateTransformation):
     """
 
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._connector_names: dict[SDFG, set[str]] | None = None
+
+    @property
+    def connector_names(self) -> dict[SDFG, set[str]] | None:
+        """Per SDFG, the connector names of its tasklets; ``None`` = walked per apply. A driver that applies this
+        transformation alone sets a dict: the walk then runs once per SDFG and inlining only adds to the names."""
+        return self._connector_names
+
+    @connector_names.setter
+    def connector_names(self, names: dict[SDFG, set[str]] | None) -> None:
+        self._connector_names = names
 
     @staticmethod
     def annotates_memlets():
@@ -682,11 +707,15 @@ class InlineSDFG(transformation.SingleStateTransformation):
         # exists, find new name)
         # A connector of a code node may not share a name with data either (see validation), and the code nodes of
         # the nested state join the parent too.
-        taken = set(sdfg.arrays) | set(sdfg.symbols) | set(sdfg.constants)
-        for block in (*sdfg.states(), nstate):
-            for node in block.nodes():
-                if isinstance(node, nodes.CodeNode) and not isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)):
-                    taken.update(node.in_connectors, node.out_connectors)
+        inlined_connectors = code_connector_names([nstate])
+        if self.connector_names is None:
+            parent_connectors = code_connector_names(sdfg.states())
+        else:
+            parent_connectors = self.connector_names.get(sdfg)
+            if parent_connectors is None:
+                parent_connectors = self.connector_names[sdfg] = code_connector_names(sdfg.states())
+        taken = set(sdfg.arrays) | set(sdfg.symbols) | set(sdfg.constants) | parent_connectors | inlined_connectors
+        parent_connectors |= inlined_connectors
         # Mapping from nested transient name to top-level name
         transients: dict[str, str] = {}
         # One connector walk for every name minted below: until the nested nodes move out, this adds
@@ -839,7 +868,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         # Add nested SDFG into top-level SDFG
 
         # Add nested nodes into original state
-        subgraph = SubgraphView(nstate, [n for n in nstate.nodes() if n not in (source_accesses | sink_accesses)])
+        boundary_accesses = source_accesses | sink_accesses
+        subgraph = SubgraphView(nstate, [n for n in nstate.nodes() if n not in boundary_accesses])
         state.add_nodes_from(subgraph.nodes())
         for edge in subgraph.edges():
             state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, Memlet.from_memlet(edge.data))
@@ -986,7 +1016,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         # The last inlined access node of each such output now feeds the scope exit in the nested SDFG's place. A
         # written one: an unwritten read of the same data can sort after the write and would not order it.
         for conn, edge in scope_outputs.items():
-            candidates = [n for n in reversed(order) if n.data == edge.data.data and n in state.nodes()]
+            candidates = [n for n in reversed(order) if n.data == edge.data.data and n in state._nodes]
             last = next((n for n in candidates if state.in_degree(n) > 0), next(iter(candidates), None))
             if last is None:
                 self._remove_edge_path(state, {conn: edge}, {conn}, reverse=False)

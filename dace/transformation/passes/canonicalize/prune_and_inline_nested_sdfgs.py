@@ -19,13 +19,15 @@ from typing import Any
 
 from dace import SDFG
 from dace.config import Config
+from dace.properties import Property, make_properties
 from dace.sdfg import nodes
-from dace.sdfg.propagation import propagate_memlets_state
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, SDFGState
+from dace.sdfg.propagation import propagate_memlets_scope
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, SDFGState, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.dataflow import PruneConnectors
 from dace.transformation.interstate import InlineSDFG
+from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 
 #: A transformation and the pattern node its single-node expression binds.
 Probe = tuple[transformation.SingleStateTransformation, transformation.PatternNode]
@@ -115,11 +117,22 @@ def accepts(
         return False
 
 
+@make_properties
 @transformation.explicit_cf_compatible
 class PruneAndInlineNestedSDFGs(ppl.Pass):
     """Apply ``PruneConnectors`` and ``InlineSDFG`` at every nested SDFG they accept, to a fixpoint."""
 
     CATEGORY: str = "Canonicalization"
+
+    multistate = Property(
+        dtype=bool,
+        default=False,
+        desc="Also apply ``InlineMultistateSDFG``, ahead of ``InlineSDFG`` as ``InlineSDFGs`` does.",
+    )
+
+    def __init__(self, multistate: bool = False) -> None:
+        super().__init__()
+        self.multistate = multistate
 
     def modifies(self) -> ppl.Modifies:
         return PruneConnectors().modifies() | InlineSDFG().modifies()
@@ -138,24 +151,41 @@ class PruneAndInlineNestedSDFGs(ppl.Pass):
         :param pipeline_results: Unused; neither transformation reads pipeline results.
         :returns: Number of applications, or ``None`` if none.
         """
-        walk = Walk([(PruneConnectors(), PruneConnectors.nsdfg), (InlineSDFG(), InlineSDFG.nested_sdfg)])
+        inline = InlineSDFG()
+        inline.connector_names = {}
+        probes: list[Probe] = [(PruneConnectors(), PruneConnectors.nsdfg), (inline, InlineSDFG.nested_sdfg)]
+        if self.multistate:
+            probes.insert(1, (InlineMultistateSDFG(), InlineMultistateSDFG.nested_sdfg))
+        walk = Walk(probes)
         applied = 0
-        scoped: dict[SDFGState, None] = {}
+        #: Per state, the scopes a nested SDFG was inlined into.
+        scoped: dict[SDFGState, dict[nodes.EntryNode, None]] = {}
         candidate = walk.first_accepted(sdfg)
         while candidate is not None:
             xform, state, node = candidate
             dirty = ancestor_blocks(state)
             dirty.append(state)
-            if isinstance(xform, InlineSDFG) and state.entry_node(node) is not None:
-                scoped[state] = None
+            entry = state.entry_node(node)
+            if isinstance(xform, InlineSDFG) and entry is not None:
+                scoped.setdefault(state, {})[entry] = None
             xform.permissive = False
             xform.apply(state, state.sdfg)
             applied += 1
             walk.forget(dirty)
+            if isinstance(xform, InlineMultistateSDFG):
+                # The nest's regions moved with their states into the parent, whose descriptors they now read
+                walk.clean_states.clear()
+                walk.clean_regions.clear()
+                inline.connector_names.clear()
             candidate = walk.first_accepted(sdfg)
-        for state in scoped:
+        # Only memlets change here, under which a resolver stays valid
+        symbols = SymbolResolver()
+        for state, entries in scoped.items():
             if state.sdfg is not None and state in state.parent_graph.nodes():
-                propagate_memlets_state(state.sdfg, state)
+                tree = state.scope_tree()
+                # The inlining changed nothing outside these scopes, and their nested scopes kept their memlets
+                changed = [tree[entry] for entry in entries if entry in state._nodes]
+                propagate_memlets_scope(state.sdfg, state, changed, symbols=symbols)
         # No validation here: the pipeline's ``validate`` / ``validate_all`` own it, as they did for the wrapper, and
         # validation is not read-only (``Fill.validate`` drops an unwired value connector).
         return applied or None

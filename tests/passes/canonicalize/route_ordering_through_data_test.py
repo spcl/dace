@@ -217,6 +217,23 @@ def test_nest_sharing_a_sink_gets_its_own_access_node_and_inlines():
     assert np.allclose(out[:5], np.arange(5.0) + 1.0) and np.allclose(out[5:], b) and np.allclose(a, b)
 
 
+def test_ordering_edge_before_a_side_effect_is_kept():
+    """A tasklet with an ordered side effect touches no data of the nest, yet has to stay behind it."""
+    sdfg = dace.SDFG("nest_before_side_effect")
+    for array in ("a", "b", "c", "d"):
+        sdfg.add_array(array, [N], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    nest = add_one_nest(state, "nest_before_side_effect_nest", "a", "b")
+    effect = state.add_tasklet("effect", {"v"}, {"w"}, "w = v", side_effects=True)
+    state.add_edge(state.add_read("c"), None, effect, "v", dace.Memlet("c[0]"))
+    state.add_edge(effect, "w", state.add_write("d"), None, dace.Memlet("d[0]"))
+    edge = state.add_nedge(nest, effect, dace.Memlet())
+    RouteOrderingThroughData().apply_pass(sdfg, {})
+    # Kept directly, or rerouted through the access node the nest writes
+    written = next(e.dst for e in state.out_edges(nest) if not e.data.is_empty())
+    assert any(dace.graphlib.has_path(state.nx, source, effect) for source in (nest, written))
+
+
 if __name__ == "__main__":
     test_ordering_edge_guarding_no_conflict_is_dropped_and_the_nest_inlines()
     test_ordering_edge_guarding_a_write_after_read_is_kept_in_order()
@@ -224,3 +241,4 @@ if __name__ == "__main__":
     test_nest_sharing_a_sink_gets_its_own_access_node_and_inlines()
     test_parallel_copies_of_an_ordering_edge_guarding_a_write_after_read_keep_one()
     test_ordering_edge_after_a_copy_reading_what_the_nest_updates_is_kept_in_order()
+    test_ordering_edge_before_a_side_effect_is_kept()

@@ -1,15 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """State fusion transformation"""
 
+import itertools
 import warnings
+from collections.abc import Collection
 
 from dace import data as dt
-from dace import dtypes, sdfg, subsets
+from dace import dtypes, sdfg, subsets, symbolic
 from dace import graphlib as nx
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import SDFGState, SymbolResolver
+from dace.sdfg.graph import Edge
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState, SymbolResolver
 from dace.symbolic import Truth
 from dace.transformation import transformation
 
@@ -18,10 +21,10 @@ from dace.transformation import transformation
 class CCDesc:
     def __init__(
         self,
-        first_input_nodes: set[nodes.AccessNode],
-        first_output_nodes: set[nodes.AccessNode],
-        second_input_nodes: set[nodes.AccessNode],
-        second_output_nodes: set[nodes.AccessNode],
+        first_input_nodes: Collection[nodes.AccessNode],
+        first_output_nodes: Collection[nodes.AccessNode],
+        second_input_nodes: Collection[nodes.AccessNode],
+        second_output_nodes: Collection[nodes.AccessNode],
     ) -> None:
         self.first_inputs = {n.data for n in first_input_nodes}
         self.first_input_nodes = first_input_nodes
@@ -167,6 +170,40 @@ def is_fusible_state_shape(state: SDFGState, sdfg) -> bool:
     return True
 
 
+def assignments_move_before(block: ControlFlowBlock, edge: Edge, in_edges: list[Edge]) -> bool:
+    """Whether the assignments of ``edge``, out of ``block``, mean the same on the edges into ``block``."""
+    # Reading free symbols parses the assignment RHS and the states' code. An edge (or a
+    # state) that does not parse must never be absorbed into a predecessor edge.
+    try:
+        # Fail if symbol is set before the state to fuse
+        new_assignments = set(edge.data.assignments.keys())
+        if any((new_assignments & set(e.data.assignments.keys())) for e in in_edges):
+            return False
+        # Fail if symbols assigned on the first edge are free symbols on the
+        # second edge
+        freesyms = edge.data.free_symbols
+        symbols_used = set(freesyms)
+        for e in in_edges:
+            if e.data.assignments.keys() & symbols_used:
+                return False
+            # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
+            if new_assignments & set(e.data.free_symbols):
+                return False
+        # Fail if assignments have free symbols that are updated in the
+        # first state
+        if freesyms and any(
+            n.data in freesyms for n in block.nodes() if isinstance(n, nodes.AccessNode) and block.in_degree(n) > 0
+        ):
+            return False
+        # Fail if symbol is used in the dataflow of that state. Last of the four: the
+        # other three are independent ANDed refusals and far cheaper, and
+        # ``SDFGState.free_symbols`` re-parses every tasklet's code (measured the most
+        # expensive single call in this block).
+        return not new_assignments & block.free_symbols
+    except (SyntaxError, ValueError, TypeError):
+        return False
+
+
 @transformation.explicit_cf_compatible
 class StateFusion(transformation.MultiStateTransformation):
     """Implements the state-fusion transformation.
@@ -179,6 +216,9 @@ class StateFusion(transformation.MultiStateTransformation):
     first_state = transformation.PatternNode(sdfg.SDFGState)
     second_state = transformation.PatternNode(sdfg.SDFGState)
 
+    #: The collection a connected component's nodes are kept in.
+    node_collection: type = set
+
     @staticmethod
     def annotates_memlets():
         return False
@@ -187,8 +227,8 @@ class StateFusion(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.first_state, cls.second_state)]
 
-    @staticmethod
-    def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> list[CCDesc]:
+    @classmethod
+    def find_fused_components(cls, first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> list[CCDesc]:
         # Make a bipartite graph out of the first and second components
         g = nx.DiGraph()
         g.add_nodes_from((0, i) for i in range(len(first_cc_output)))
@@ -201,18 +241,21 @@ class StateFusion(transformation.MultiStateTransformation):
                 if len(outnames1 & inpnames2) > 0:
                     g.add_edge((0, i), (1, j))
 
-        # Construct result out of connected components of the bipartite graph
+        # Construct result out of connected components of the bipartite graph. Both the
+        #  components and their contents are sorted: they are `set`s of `(graph, index)`
+        #  tuples, so their natural iteration order is not reproducible, and it decides the
+        #  order in which the happens-before edges of ``StateFusionExtended`` are recorded.
         result = []
-        for cc in nx.weakly_connected_components(g):
-            input1, output1, input2, output2 = set(), set(), set(), set()
-            for gind, cind in cc:
-                if gind == 0:
-                    input1 |= first_cc_input[cind]
-                    output1 |= first_cc_output[cind]
-                else:
-                    input2 |= second_cc_input[cind]
-                    output2 |= second_cc_output[cind]
-            result.append(CCDesc(input1, output1, input2, output2))
+        for cc in sorted(sorted(cc) for cc in nx.weakly_connected_components(g)):
+            first = [cind for gind, cind in cc if gind == 0]
+            second = [cind for gind, cind in cc if gind == 1]
+            groups = (
+                (first_cc_input[cind] for cind in first),
+                (first_cc_output[cind] for cind in first),
+                (second_cc_input[cind] for cind in second),
+                (second_cc_output[cind] for cind in second),
+            )
+            result.append(CCDesc(*(cls.node_collection(itertools.chain.from_iterable(g)) for g in groups)))
 
         return result
 
@@ -224,6 +267,7 @@ class StateFusion(transformation.MultiStateTransformation):
         graph_b: SDFGState,
         group_b: list[nodes.AccessNode],
         inputs_b: bool,
+        facts: symbolic.Facts | None = None,
     ) -> bool:
         """
         Performs an all-pairs check for subset intersection on two
@@ -236,6 +280,7 @@ class StateFusion(transformation.MultiStateTransformation):
         :param graph_b: The graph in which the second set of nodes reside.
         :param group_b: The second set of nodes to check.
         :param inputs_b: If True, checks inputs of the second group.
+        :param facts: The facts in ``graph_a``; ``None`` derives them.
         :return: True if subsets intersect or result is indeterminate.
         """
         # Set traversal functions: the subset an edge accesses on the side of the group's node, never the other
@@ -256,7 +301,7 @@ class StateFusion(transformation.MultiStateTransformation):
             subset_b = dst_subset
 
         # Simple all-pairs check. The states are consecutive, so what holds in the first holds in the second.
-        facts = SymbolResolver().facts_at(graph_a)
+        facts = SymbolResolver().facts_at(graph_a) if facts is None else facts
         # An empty Memlet only orders, it accesses no data
         edges_a = [e for e in edges_a if not e.data.is_empty()]
         edges_b = [e for e in edges_b if not e.data.is_empty()]
@@ -392,10 +437,12 @@ class StateFusion(transformation.MultiStateTransformation):
             warnings.warn(f"{type(self).__name__}: refusing match, unexpected subgraph: {e!r}")
             return False
 
-    def check_fusible(self, graph, sdfg, permissive: bool) -> bool:
-        first_state: SDFGState = self.first_state
-        second_state: SDFGState = self.second_state
+    def assignments_need_no_predecessor(self, graph, first_state: SDFGState) -> bool:
+        """Whether ``fuse_edge`` can place the assignments of a ``first_state`` without incoming edges."""
+        return False
 
+    def control_flow_allows_fusion(self, graph, first_state: SDFGState, second_state: SDFGState) -> bool:
+        """The refusals that read the interstate edges only: the fused pair and its assignments stay well-defined."""
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
 
@@ -411,39 +458,11 @@ class StateFusion(transformation.MultiStateTransformation):
         if not out_edges[0].data.is_unconditional():
             return False
         # The interstate edge may have assignments, as long as there are input
-        # edges to the first state that can absorb them.
+        # edges to the first state that can absorb them, or ``fuse_edge`` places them on a new predecessor.
         if out_edges[0].data.assignments:
-            if not in_edges:
+            if not in_edges and not self.assignments_need_no_predecessor(graph, first_state):
                 return False
-            # Reading free symbols parses the assignment RHS and the states' code. An edge (or a
-            # state) that does not parse must never be absorbed into a predecessor edge.
-            try:
-                # Fail if symbol is set before the state to fuse
-                new_assignments = set(out_edges[0].data.assignments.keys())
-                if any((new_assignments & set(e.data.assignments.keys())) for e in in_edges):
-                    return False
-                # Fail if symbol is used in the dataflow of that state
-                if len(new_assignments & first_state.free_symbols) > 0:
-                    return False
-                # Fail if assignments have free symbols that are updated in the
-                # first state
-                freesyms = out_edges[0].data.free_symbols
-                if freesyms and any(
-                    n.data in freesyms
-                    for n in first_state.nodes()
-                    if isinstance(n, nodes.AccessNode) and first_state.in_degree(n) > 0
-                ):
-                    return False
-                # Fail if symbols assigned on the first edge are free symbols on the
-                # second edge
-                symbols_used = set(freesyms)
-                for e in in_edges:
-                    if e.data.assignments.keys() & symbols_used:
-                        return False
-                    # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
-                    if new_assignments & set(e.data.free_symbols):
-                        return False
-            except (SyntaxError, ValueError, TypeError):
+            if not assignments_move_before(first_state, out_edges[0], in_edges):
                 return False
 
         # There can be no state that have output edges pointing to both the
@@ -452,6 +471,24 @@ class StateFusion(transformation.MultiStateTransformation):
             for _, dst, _ in graph.out_edges(src):
                 if dst == second_state:
                     return False
+
+        # If second state has other input edges, there might be issues
+        # Exceptions are when none of the states contain dataflow, unless
+        # the first state is an initial state (in which case the new initial
+        # state would be ambiguous). Control flow, so permissive mode keeps this too: fusing would drop those
+        # edges or send them through the first state.
+        if (not second_state.is_empty() or not first_state.is_empty() or len(in_edges) == 0) and graph.in_degree(
+            second_state
+        ) != 1:
+            return False
+        return True
+
+    def check_fusible(self, graph, sdfg, permissive: bool) -> bool:
+        first_state: SDFGState = self.first_state
+        second_state: SDFGState = self.second_state
+
+        if not self.control_flow_allows_fusion(graph, first_state, second_state):
+            return False
 
         # Structural well-formedness of BOTH states, above the permissive branch on purpose:
         # permissive relaxes the race checks, not whether the states are shapes ``apply`` can
@@ -472,17 +509,6 @@ class StateFusion(transformation.MultiStateTransformation):
                 for node in state.nodes():
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and node.has_side_effects(sdfg):
                         return False
-
-            # If second state has other input edges, there might be issues
-            # Exceptions are when none of the states contain dataflow, unless
-            # the first state is an initial state (in which case the new initial
-            # state would be ambiguous).
-            first_in_edges = graph.in_edges(first_state)
-            second_in_edges = graph.in_edges(second_state)
-            if (not second_state.is_empty() or not first_state.is_empty() or len(first_in_edges) == 0) and len(
-                second_in_edges
-            ) != 1:
-                return False
 
             # Get connected components.
             first_cc = list(nx.weakly_connected_components(first_state._nx))
@@ -691,20 +717,27 @@ class StateFusion(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, _, sdfg):
-        first_state: SDFGState = self.first_state
-        second_state: SDFGState = self.second_state
-
-        graph = first_state.parent_graph
-
-        # Remove interstate edge(s)
-        edges = graph.edges_between(first_state, second_state)
-        for edge in edges:
+    @staticmethod
+    def fuse_edge(graph: ControlFlowRegion, first_state: SDFGState, second_state: SDFGState) -> None:
+        """Remove the interstate edge between the states; its assignments move onto the edges into ``first_state``, or
+        onto a new empty predecessor if it has none."""
+        for edge in graph.edges_between(first_state, second_state):
             if edge.data.assignments:
-                for src, dst, other_data in graph.in_edges(first_state):
-                    other_data.assignments.update(edge.data.assignments)
+                if graph.in_degree(first_state) == 0:
+                    graph.add_state_before(
+                        first_state,
+                        label=f"{first_state.label}_assign",
+                        is_start_block=is_start_block(graph, first_state),
+                        assignments=dict(edge.data.assignments),
+                    )
+                else:
+                    for src, dst, other_data in graph.in_edges(first_state):
+                        other_data.assignments.update(edge.data.assignments)
             graph.remove_edge(edge)
 
+    @staticmethod
+    def fuse_empty_state(graph: ControlFlowRegion, first_state: SDFGState, second_state: SDFGState) -> bool:
+        """Remove whichever of the states holds nothing; ``False`` if both hold nodes."""
         # Special case 1: first state is empty
         if first_state.is_empty():
             # Ask BEFORE the removal: ``remove_node`` clears the region's start-block pin, and the
@@ -714,7 +747,7 @@ class StateFusion(transformation.MultiStateTransformation):
             graph.remove_node(first_state)
             if was_start:
                 keep_start_block(graph, second_state)
-            return
+            return True
 
         # Special case 2: second state is empty
         if second_state.is_empty():
@@ -724,21 +757,31 @@ class StateFusion(transformation.MultiStateTransformation):
             graph.remove_node(second_state)
             if was_start:
                 keep_start_block(graph, first_state)
+            return True
+        return False
+
+    @staticmethod
+    def drop_second_state(graph: ControlFlowRegion, first_state: SDFGState, second_state: SDFGState) -> None:
+        """Redirect the edges out of the merged ``second_state`` and remove it."""
+        was_start = is_start_block(graph, second_state)
+        sdutil.change_edge_src(graph, second_state, first_state)
+        graph.remove_node(second_state)
+        if was_start:
+            keep_start_block(graph, first_state)
+
+    def apply(self, _, sdfg):
+        first_state: SDFGState = self.first_state
+        second_state: SDFGState = self.second_state
+
+        graph = first_state.parent_graph
+
+        self.fuse_edge(graph, first_state, second_state)
+        if self.fuse_empty_state(graph, first_state, second_state):
             return
 
         # Normal case: both states are not empty
 
-        # Find source/sink (data) nodes
-        first_input = [node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)]
-        first_output = [node for node in first_state.sink_nodes() if isinstance(node, nodes.AccessNode)]
-        second_input = [node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)]
-
         top2 = top_level_nodes(second_state)
-
-        # first input = first input - first output
-        first_input = [
-            node for node in first_input if next((x for x in first_output if x.data == node.data), None) is None
-        ]
 
         # NOTE: We exclude Views from the process of merging common data nodes because it may lead to double edges.
         # The lookup only asks "is this a View", and a descriptor that is gone is not one.
@@ -763,7 +806,7 @@ class StateFusion(transformation.MultiStateTransformation):
                 # update parent information
                 node.sdfg.parent = first_state
             # The same node OBJECT can already be a member of the first state.
-            if node not in first_state.nodes():
+            if node not in first_state._nodes:
                 first_state.add_node(node)
         for src, src_conn, dst, dst_conn, data in second_state.edges():
             first_state.add_edge(src, src_conn, dst, dst_conn, data)
@@ -817,9 +860,4 @@ class StateFusion(transformation.MultiStateTransformation):
             first_state.remove_node(node)
             merged_nodes.add(n)
 
-        # Redirect edges and remove second state
-        was_start = is_start_block(graph, second_state)
-        sdutil.change_edge_src(graph, second_state, first_state)
-        graph.remove_node(second_state)
-        if was_start:
-            keep_start_block(graph, first_state)
+        self.drop_second_state(graph, first_state, second_state)

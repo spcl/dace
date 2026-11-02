@@ -29,6 +29,7 @@ import sympy
 from dace import properties, symbolic
 from dace.optionals import required
 from dace.sdfg import SDFG, nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.narrowing import as_basic, as_expr, config_int
 from dace.sdfg.sdfg import forget_all_facts, memoize_facts
 from dace.sdfg.state import (
@@ -265,9 +266,15 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
     # that the classmethod entry points (``can_be_applied_to``/``apply_to``) redo per candidate.
     # Mirrors ``sdutil.fuse_states``.
     xform = StateFusionExtended()
+    # Only fusions run in here: see ``fuse_states``.
+    xform.region_facts = {}
+    xform.side_effect_cache = {}
+    xform.shape_cache = {}
     for cfr in cfrs:
         cfg_id = cfr.cfg_id
         applied = True
+        # A restart below re-reads the pairs refused so far only once a fusion touched them
+        refused = set()
         while applied:
             applied = False
             # RESTART the region's edge scan after each fusion, rather than carrying on past the
@@ -284,13 +291,15 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
             # the reused transformation above, not the truncated scan.
             for edge in list(cfr.edges()):
                 u, v = edge.src, edge.dst
-                if not (isinstance(u, SDFGState) and isinstance(v, SDFGState)):
+                if (u, v) in refused or not (isinstance(u, SDFGState) and isinstance(v, SDFGState)):
                     continue
                 candidate = {StateFusionExtended.first_state: u, StateFusionExtended.second_state: v}
                 xform.setup_match(sdfg, cfg_id, -1, candidate, 0, override=True)
                 if not xform.can_be_applied(cfr, 0, sdfg, permissive=False):
+                    refused.add((u, v))
                     continue
-                xform.apply(cfr, sdfg)
+                xform.fuse(cfr, sdfg)
+                refused = sdutil.refusals_after_fusion(cfr, refused, u, v)
                 fused += 1
                 applied = True
                 break
