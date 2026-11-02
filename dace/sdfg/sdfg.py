@@ -234,9 +234,17 @@ def is_scope_bound_name(sdfg: "SDFG", name: str) -> bool:
     return False
 
 
-def interstate_bound_names(sdfg: "SDFG") -> set[str]:
-    """The names the interstate edges of ``sdfg`` (not of its nested SDFGs) assign; an edge types them by inference."""
-    return {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
+def interstate_bound_names(region: ControlFlowRegion, own_loop: LoopRegion | None = None) -> set[str]:
+    """The names the interstate edges and loop statements of ``region`` (not of its nested SDFGs) assign; an edge types
+    them by inference. ``own_loop`` may run its iterator: only other names its statements assign count."""
+    from dace.transformation.passes.analysis.loop_analysis import get_assignments  # Avoid import loop
+
+    names = {name for edge in region.all_interstate_edges() for name in edge.data.assignments}
+    for loop in region.all_control_flow_regions():
+        if isinstance(loop, LoopRegion):
+            header = get_assignments(loop.init_statement).keys() | get_assignments(loop.update_statement).keys()
+            names |= header - {loop.loop_variable} if loop is own_loop else header
+    return names
 
 
 def root_sdfg(anchor: Any) -> "SDFG":

@@ -224,17 +224,10 @@ class LiftTrivialIf(ppl.Pass):
                 start = loop_analysis.get_init_assignment(graph)
                 end = loop_analysis.get_loop_end(graph)
                 step = loop_analysis.get_loop_stride(graph)
-                # ``is_positive`` is None for a symbolic step, whose sign nothing here knows. The body of an inverted
-                # loop runs once before its condition holds, and one that assigns its iterator or a bound leaves the
-                # range.
+                # The body of an inverted loop runs once before its condition holds.
                 if None not in (start, end, step) and not graph.inverted:
-                    assigned = {name for edge in graph.all_interstate_edges() for name in edge.data.assignments}
-                    named = {graph.loop_variable} | {str(free) for b in (start, end, step) for free in b.free_symbols}
-                    if not assigned & named:
-                        if step.is_positive:
-                            ranges[graph.loop_variable] = (start, end)
-                        elif step.is_negative:
-                            ranges[graph.loop_variable] = (end, start)
+                    if loop_analysis.range_holds(graph, (start, end, step), graph.sdfg):
+                        ranges[graph.loop_variable] = (start, end) if step.is_positive else (end, start)
             graph = graph.parent_graph
         return ranges
 

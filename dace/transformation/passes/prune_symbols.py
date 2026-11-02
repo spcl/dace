@@ -113,6 +113,9 @@ class RemoveUnusedSymbols(ppl.Pass):
         for code in itertools.chain(sdfg.global_code.values(), sdfg.init_code.values(), sdfg.exit_code.values()):
             yield symbolic.symbols_in_code(code.as_string)
 
+        for relation in sdfg.symbol_repo.runtime_assumptions:
+            yield symbolic.relation_names(relation)
+
         for block in sdfg.all_control_flow_blocks():
             # In addition to the standard free symbols, we are conservative with other tasklet languages by
             # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are
