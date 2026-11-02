@@ -838,6 +838,11 @@ class StateFusionExtended(StateFusion):
                         first_state, second_state, match_nodes, nodes_first, nodes_second, False, False
                     ):
                         return False
+                    # That order runs through a merge ``fuse`` may not make; an overlap keeps its own edge
+                    if StateFusionExtended.memlets_intersect(
+                        first_state, nodes_first, False, second_state, nodes_second, False, facts
+                    ):
+                        self.connections_to_make.append(("waw", nodes_first, nodes_second))
                 # A second-state read of a first-state output merges with one first-state instance: it orders a
                 # first-state writer upstream of that instance before a second-state writer downstream of the read,
                 # and no other pair. Refuse when an unordered pair overlaps.
