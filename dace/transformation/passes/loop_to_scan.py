@@ -1036,6 +1036,10 @@ def _match_all(loop: LoopRegion, sdfg: SDFG, allow_multi_slot: bool = False) -> 
             # ``_Scan`` -- one ``Scan`` libnode per slot in the rewrite.
             multi = _match_multi_slot(loop.loop_variable, sdfg, state, out_name, start, end)
             if multi:
+                # The multi-slot rewrite has no identity fill: a skipped iteration would scan uninitialized deltas
+                if _enclosing_masked_conditional(state) is not None:
+                    cand_failed = True
+                    break
                 for info in multi:
                     if inner_loop is not None:
                         info = info._replace(inner_loop=inner_loop)

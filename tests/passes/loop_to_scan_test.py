@@ -2462,6 +2462,22 @@ def test_a_recurrence_beside_a_discharged_guard_stays_ordered():
     )
 
 
+@dace.program
+def masked_two_slots(a: dace.float64[2, N], m: dace.float64[N], d: dace.float64[N], e: dace.float64[N]):
+    for i in range(1, N):
+        if m[i] > 0.5:
+            a[0, i] = a[0, i - 1] * d[i]
+            a[1, i] = a[1, i - 1] * e[i]
+        else:
+            a[0, i] = a[0, i - 1]
+            a[1, i] = a[1, i - 1]
+
+
+def test_masked_slots_hold_their_skipped_iterations():
+    args = dict(a=np.ones((2, 8)), m=np.array([0.1, 0.9] * 4), d=np.arange(2.0, 10.0), e=np.arange(3.0, 11.0))
+    assert_canon_matches_the_program(masked_two_slots, args, N=8)
+
+
 if __name__ == "__main__":
     import sys
 
