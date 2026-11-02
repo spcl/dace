@@ -64,6 +64,7 @@ from .mpi import MPITransformMap
 from .warp_tiling import WarpTiling
 
 # Algorithmic
+from .matrix_product_operands import GatherIntoMatrixProduct, TransposeIntoMatrixProduct
 from .matrix_product_transpose import MatrixProductTranspose
 from .lift_einsum import LiftEinsum
 
