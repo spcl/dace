@@ -1598,7 +1598,11 @@ def writes_whole_array(state: SDFGState, edge: Edge[Memlet], desc: dt.Data) -> b
         if isinstance(src, nd.LibraryNode) and src.folds_onto_output():
             return False
         # An indirect store spans the dimension it indexes but writes one element of it per execution
-        if isinstance(src, nd.Tasklet) and tree_edge.data.volume != tree_edge.data.subset.num_elements():
+        if (
+            isinstance(src, nd.Tasklet)
+            and not tree_edge.data.is_empty()
+            and tree_edge.data.volume != tree_edge.data.subset.num_elements()
+        ):
             return False
     # A write through a view carries the view's full range, whatever reached the view itself.
     if isinstance(edge.src, nd.AccessNode) and isinstance(edge.src.desc(state), dt.View):
