@@ -329,7 +329,10 @@ def is_short_loop(loop, cache: dict[int, bool] | None = None) -> bool:
 
 
 def is_reentered_cpu_transfer(
-    node: nodes.LibraryNode, state: dace.SDFGState, loop_cache: dict[int, bool] | None = None
+    node: nodes.LibraryNode,
+    state: dace.SDFGState,
+    loop_cache: dict[int, bool] | None = None,
+    varying_cache: dict[int, set[str]] | None = None,
 ) -> bool:
     """Whether an enclosing parallel map or long loop re-enters ``node``, so its own OpenMP region
     would be re-opened on every entry.
@@ -344,6 +347,7 @@ def is_reentered_cpu_transfer(
     :param state: the state containing ``node``.
     :param loop_cache: forwarded to :func:`is_short_loop`; see its docstring for the invalidation
                        contract.
+    :param varying_cache: forwarded to :func:`symbols_varying_in`.
     :returns: ``True`` if an enclosing parallel map or a not-provably-short loop re-enters ``node``.
     """
     from dace.sdfg.state import LoopRegion
@@ -356,7 +360,7 @@ def is_reentered_cpu_transfer(
                 return True
         elif isinstance(scope, LoopRegion) and not is_short_loop(scope, cache=loop_cache):
             # A loop of an enclosing SDFG sees the size through a symbol mapping: counted as before.
-            if size_symbols is None or scope.sdfg is not state.sdfg or size_symbols & symbols_varying_in(scope):
+            if size_symbols is None or scope.sdfg is not state.sdfg or size_symbols & symbols_varying_in(scope, varying_cache):
                 return True
     return False
 
@@ -382,17 +386,25 @@ def transfer_size_symbols(node: nodes.LibraryNode, state: dace.SDFGState) -> set
     return {str(s) for s in dace.symbolic.free_symbols_and_functions(out_edges[0].data.subset.num_elements())}
 
 
-def symbols_varying_in(loop) -> set[str]:
+def symbols_varying_in(loop, cache: dict[int, set[str]] | None = None) -> set[str]:
     """The symbols that take more than one value across ``loop``'s trips: its iteration variable, the
-    variables of the loops inside it, and every symbol an interstate edge inside it assigns."""
+    variables of the loops inside it, and every symbol an interstate edge inside it assigns.
+
+    :param cache: an optional ``id(loop) -> symbols`` map, under the contract of :func:`is_short_loop`'s: the walk
+                  covers the whole loop body, and every transfer in that body asks.
+    """
     from dace.sdfg.state import LoopRegion
 
+    if cache is not None and id(loop) in cache:
+        return cache[id(loop)]
     varying = {loop.loop_variable} if loop.loop_variable else set()
     for region in loop.all_control_flow_regions():
         if isinstance(region, LoopRegion) and region.loop_variable:
             varying.add(region.loop_variable)
     for edge in loop.all_interstate_edges(recursive=True):
         varying |= set(edge.data.assignments)
+    if cache is not None:
+        cache[id(loop)] = varying
     return varying
 
 
