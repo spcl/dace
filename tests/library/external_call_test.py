@@ -490,3 +490,15 @@ def test_a_call_names_only_the_symbols_its_nest_uses():
     abi = [set(call.abi_order) for call in calls]
 
     assert any("N" in names and "N2" not in names for names in abi)
+
+
+@dace.program
+def fixed_prefix(a: dace.float64[N]):
+    for i in range(3):
+        a[i] = 1.0
+
+
+def test_a_call_keeps_a_symbol_only_its_array_shapes_use():
+    sdfg, (call,) = outlined(fixed_prefix, "extcall_shape_symbol")
+
+    assert "N" in call.abi_order
