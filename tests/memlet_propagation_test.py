@@ -6,7 +6,13 @@ import pytest
 import sympy
 
 import dace
-from dace.sdfg.propagation import ascending_range, propagate_memlet, propagate_memlets_sdfg, propagate_memlets_state, propagate_subset
+from dace.sdfg.propagation import (
+    ascending_range,
+    propagate_memlet,
+    propagate_memlets_sdfg,
+    propagate_memlets_state,
+    propagate_subset,
+)
 from dace.sdfg.state import SymbolResolver
 from dace.symbolic import same_value
 
