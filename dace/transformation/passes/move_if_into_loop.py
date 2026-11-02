@@ -77,8 +77,7 @@ def match_guard(cb: ConditionalBlock) -> tuple[ConditionalBlock, CodeBlock, Cont
     if cond is None or not isinstance(region, ControlFlowRegion):
         return None  # single branch, real condition, no else
     order = _linear_blocks(region, allow_assignments=True)
-    # A while loop's exit reads what its body changes: a false guard would leave it spinning
-    if order is None or not isinstance(order[-1], LoopRegion) or not order[-1].loop_variable:
+    if order is None or not isinstance(order[-1], LoopRegion):
         return None
     loop = order[-1]
     prep = order[:-1]

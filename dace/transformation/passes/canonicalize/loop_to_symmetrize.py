@@ -128,8 +128,6 @@ class LoopToSymmetrize(ppl.Pass):
         row_hi = str(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(outer))) + 1))
         col_hi = str(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(inner))) + 1))
 
-        if outer_var in {str(s) for s in symbolic.pystr_to_symbolic(col_hi).free_symbols}:
-            return False  # a band: the row range cannot stand for the triangle
         self._replace(cfg, outer, array, desc, row_lo, row_hi, col_offset, col_hi, source_upper)
         return True
 

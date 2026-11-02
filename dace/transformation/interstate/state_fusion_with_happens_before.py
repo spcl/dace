@@ -838,10 +838,8 @@ class StateFusionExtended(StateFusion):
                         first_state, second_state, match_nodes, nodes_first, nodes_second, False, False
                     ):
                         return False
-                    # A WAR edge onto a match keeps it from merging, and that order with it: an overlap needs its own edge
-                    if any(
-                        kind == "war" for kind, *_ in self.connections_to_make
-                    ) and StateFusionExtended.memlets_intersect(
+                    # That order runs through a merge ``fuse`` may not make; an overlap keeps its own edge
+                    if StateFusionExtended.memlets_intersect(
                         first_state, nodes_first, False, second_state, nodes_second, False, facts
                     ):
                         self.connections_to_make.append(("waw", nodes_first, nodes_second))

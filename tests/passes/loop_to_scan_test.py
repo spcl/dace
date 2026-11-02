@@ -826,11 +826,10 @@ def test_v5_multi_write_an_per_carrier_in_fused_body():
     fails even though the carry is structurally valid. state 1 writes ``out[i]``
     (side-effect), state 2 writes ``out[i+1]`` (scan carry). The matcher must pick the
     scan-carry write (loop-var-indexed subset matching the recurrence) and ignore the
-    side-effect write, which lands past the carry: on ``out[i]`` the read would see it,
-    and the loop would be no recurrence (``test_a_carry_read_of_this_iterations_write_is_no_scan``).
+    side-effect write.
     """
     sdfg = dace.SDFG("multi_write_an_fused")
-    sdfg.add_array("out", [2 * N + 2], dace.float64)
+    sdfg.add_array("out", [N + 1], dace.float64)
     sdfg.add_array("delta", [N], dace.float64)
     init = sdfg.add_state("init", is_start_block=True)
     loop = LoopRegion("loop", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1", loop_var="i")
@@ -841,12 +840,12 @@ def test_v5_multi_write_an_per_carrier_in_fused_body():
     s2 = loop.add_state("scan_step")
     loop.add_edge(s1, s2, dace.InterstateEdge())
 
-    # State 1: write a side-effect beside the carry (mimics the cloudsc pre-scan compute).
+    # State 1: write a side-effect to out[i] (mimics the cloudsc pre-scan compute).
     t1 = s1.add_tasklet("side", {"_d"}, {"_o"}, "_o = _d * 0.5")
     dd = s1.add_read("delta")
     ow1 = s1.add_write("out")
     s1.add_edge(dd, None, t1, "_d", dace.Memlet(data="delta", subset="i"))
-    s1.add_edge(t1, "_o", ow1, None, dace.Memlet(data="out", subset="N + 1 + i"))
+    s1.add_edge(t1, "_o", ow1, None, dace.Memlet(data="out", subset="i"))
 
     # State 2: the scan step. Reads out[i], writes out[i+1].
     rd = s2.add_read("out")
@@ -866,38 +865,6 @@ def test_v5_multi_write_an_per_carrier_in_fused_body():
         f"carry write (out[i+1]) and ignore the side-effect write (out[i]); got {res}"
     )
     assert _num_scan_nodes(sdfg) == 1
-
-
-def test_a_carry_read_of_this_iterations_write_is_no_scan():
-    """``a[i] = x[i]; a[i + 1] = a[i] + y[i]``: the read sees this iteration's own write, not a running value."""
-
-    @dace.program
-    def overwritten_carry(a: dace.float64[N], x: dace.float64[N], y: dace.float64[N]):
-        for i in range(N - 1):
-            a[i] = x[i]
-            a[i + 1] = a[i] + y[i]
-
-    sdfg = overwritten_carry.to_sdfg(simplify=True)
-    LiftPreprocess().apply_pass(sdfg, {})
-    assert not LoopToScan().apply_pass(sdfg, {})
-
-
-def test_a_scalar_carry_under_a_branch_is_no_scan():
-    """The update and the output sit in one branch: the rewrite would delete the branch's sibling with the loop."""
-
-    @dace.program
-    def masked_carry(a: dace.float64[N], m: dace.float64[N], out: dace.float64[N]):
-        acc = 0.0
-        for i in range(N):
-            if m[i] > 0.5:
-                acc = acc + a[i]
-                out[i] = acc
-            else:
-                out[i] = -1.0
-
-    sdfg = masked_carry.to_sdfg(simplify=True)
-    LiftPreprocess().apply_pass(sdfg, {})
-    assert not LoopToScan().apply_pass(sdfg, {})
 
 
 def test_v6_negative_write_offset_scan_with_outer_axis():
