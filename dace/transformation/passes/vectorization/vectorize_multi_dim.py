@@ -525,12 +525,12 @@ class _AssertTileOpsLowered(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
-        violation = no_widened_scalar_tasklets(sdfg, len(self._widths), self._widths)
-        if violation is not None:
-            raise VectorizeUnsupported(f"tasklet not lowered to a tile op: {violation}")
-        violation = no_lane_collapsing_nested_sdfgs(sdfg, len(self._widths), self._widths)
-        if violation is not None:
-            raise VectorizeUnsupported(f"nested SDFG collapses the tile to one lane: {violation}")
+        found = no_widened_scalar_tasklets(sdfg, len(self._widths), self._widths)
+        if found is not None:
+            raise VectorizeUnsupported(f"tasklet not lowered to a tile op: {found[1]}", maps=(found[0],))
+        found = no_lane_collapsing_nested_sdfgs(sdfg, len(self._widths), self._widths)
+        if found is not None:
+            raise VectorizeUnsupported(f"nested SDFG collapses the tile to one lane: {found[1]}", maps=(found[0],))
         found = lane_varying_interstate_guard(sdfg, self._widths)
         if found is not None:
             block, violation = found

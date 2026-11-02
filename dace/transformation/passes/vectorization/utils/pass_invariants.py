@@ -513,7 +513,7 @@ def no_wcr_inside_nested_sdfgs(scope: SDFG | SDFGState, allow_boundary_duplicate
 # K-dim pipeline invariants (require widths / K context).
 
 
-def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> str | None:
+def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> tuple[str, str] | None:
     """No plain Python :class:`~dace.sdfg.nodes.Tasklet` inside a tile-tagged body may still read or
     write a TILE.
 
@@ -522,11 +522,13 @@ def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> s
     already swapped its connectors for ``(W,)`` buffers, so codegen emits the body verbatim against
     a pointer (``out = sqrt(inp / N)`` with ``inp`` a ``double*``): a compile error at best, a
     silently wrong per-lane value at worst. Neither is a result the vectorizer may hand back, so the
-    orchestrator refuses the kernel and leaves it correct + scalar instead.
+    orchestrator refuses the map and leaves it correct + scalar instead.
+
+    :returns: the offending map's label with the violation, or ``None`` when the invariant holds.
     """
     import dace.data as data
 
-    for _state, nsdfg_node, _map_entry, map_widths in _tile_tagged_bodies(sdfg, widths):
+    for _state, nsdfg_node, map_entry, map_widths in _tile_tagged_bodies(sdfg, widths):
         inner_sdfg = nsdfg_node.sdfg
         for state in inner_sdfg.states():
             for node in state.nodes():
@@ -541,7 +543,7 @@ def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> s
                     desc = inner_sdfg.arrays.get(edge.data.data)
                     if not isinstance(desc, data.Array) or tuple(desc.shape) != map_widths:
                         continue
-                    return (
+                    return map_entry.map.label, (
                         f"{inner_sdfg.name}.{state.label}: tasklet ``{node.label}`` still holds "
                         f"the scalar body ``{node.code.as_string.strip()!r}`` while its operand "
                         f"``{edge.data.data}`` was widened to a {map_widths} tile "
@@ -550,7 +552,7 @@ def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> s
     return None
 
 
-def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> str | None:
+def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> tuple[str, str] | None:
     """No NestedSDFG inside a tile-tagged body may read/write a TILE through a single-element
     connector.
 
@@ -558,11 +560,13 @@ def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...])
     out=a, where=I)``) keeps scalar inner descriptors while the tile body around it holds
     ``(W,)`` operands. Codegen then runs it ONCE at the tile base -- lane 0 decides for all W
     lanes and the result is broadcast -- with no compile error and no other invariant tripped.
-    Refuse the kernel instead of handing back a silently wrong per-lane value.
+    Refuse the map instead of handing back a silently wrong per-lane value.
+
+    :returns: the offending map's label with the violation, or ``None`` when the invariant holds.
     """
     import dace.data as data
 
-    for _state, nsdfg_node, _map_entry, map_widths in _tile_tagged_bodies(sdfg, widths):
+    for _state, nsdfg_node, map_entry, map_widths in _tile_tagged_bodies(sdfg, widths):
         inner_sdfg = nsdfg_node.sdfg
         for state in inner_sdfg.states():
             for node in state.nodes():
@@ -584,7 +588,7 @@ def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...])
                     except (TypeError, ValueError):
                         collapsed = False
                     if collapsed:
-                        return (
+                        return map_entry.map.label, (
                             f"{inner_sdfg.name}.{state.label}: nested SDFG ``{node.label}`` reads/writes "
                             f"tile ``{edge.data.data}`` {map_widths} through single-element connector "
                             f"``{conn}`` -- it would run once at the tile base (lane 0 for all lanes)"
