@@ -277,6 +277,9 @@ class Coalescing:
             state.add_edge(other, e.src_conn, e.dst, e.dst_conn, e.data)
             state.remove_edge(e)
         state.remove_node(transient)
+        # A transient nothing read leaves the source of its copy with no edge at all.
+        if state.degree(other) == 0:
+            state.remove_node(other)
         self.sdfg.remove_data(old, validate=False)
         self.occurrences.pop(old, None)
         per_state = self.occurrences.setdefault(at.target, {})

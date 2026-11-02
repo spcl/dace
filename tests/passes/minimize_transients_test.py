@@ -145,6 +145,17 @@ def test_copy_in_read_after_a_second_reader_overwrites_it_stays():
     assert MinimizeTransients().apply_pass(sdfg, {}) is None
 
 
+def test_transient_nothing_reads_leaves_no_isolated_source():
+    sdfg = dace.SDFG("minimize_transients_dead_copy")
+    sdfg.add_array("b", [8], dace.float64)
+    sdfg.add_transient("t", [8], dace.float64)
+    state = sdfg.add_state()
+    state.add_nedge(state.add_read("b"), state.add_write("t"), dace.Memlet("b[0:8] -> [0:8]"))
+    assert MinimizeTransients().apply_pass(sdfg, {}) == 1
+    assert state.is_empty()
+    sdfg.validate()
+
+
 def stack_arrays_in_parallel_map_sdfg() -> dace.SDFG:
     """``out[i] = (2 + 3) * a[i, n - 1]`` per iteration of a parallel map, each term through a stack array of the
     nested SDFG; the first array is dead when the second is written."""
@@ -215,4 +226,5 @@ if __name__ == "__main__":
     test_copy_out_next_to_another_write_of_the_target_stays()
     test_transient_computed_from_its_target_region_stays()
     test_copy_in_read_after_a_second_reader_overwrites_it_stays()
+    test_transient_nothing_reads_leaves_no_isolated_source()
     test_stack_arrays_of_a_nest_in_a_parallel_map_share_one_buffer()
