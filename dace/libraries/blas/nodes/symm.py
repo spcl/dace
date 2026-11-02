@@ -114,6 +114,7 @@ class Symm(nodes.LibraryNode):
 
     def validate(self, sdfg, state):
         blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_B", "_Cin", "_Cout")
+        blas_helpers.reject_overlapping_output(self, state, "_Cout", accumulator="_Cin")
         a, b, cin, cout = (operand(self, state, sdfg, c).shape for c in ("_A", "_B", "_Cin", "_Cout"))
         if len(cin) != 2 or not blas_helpers.extents_agree(b, cin, cout):
             raise ValueError(f"{self.label}: _B, _Cin and _Cout must be matrices of one shape")

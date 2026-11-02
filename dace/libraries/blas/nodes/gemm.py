@@ -18,6 +18,7 @@ from dace.libraries.blas.blas_helpers import (
     dtype_to_cudadatatype,
     matrix_view,
     packed_unit_extent,
+    reject_overlapping_output,
     stepped_strides,
     to_blastype,
     to_cublas_computetype,
@@ -621,6 +622,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from matrix-matrix product")
+        reject_overlapping_output(self, state, "_c", accumulator="_c")
         out_memlet = out_edges[0].data
         # Function is symmetric, edge order does not matter
         if len(size0) != 2 or len(size1) != 2:

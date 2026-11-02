@@ -106,6 +106,7 @@ class Symv(nodes.LibraryNode):
 
     def validate(self, sdfg, state):
         blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_x", "_yin", "_yout")
+        blas_helpers.reject_overlapping_output(self, state, "_yout", accumulator="_yin")
         a, x, yin, yout = (operand(self, state, sdfg, c).shape for c in ("_A", "_x", "_yin", "_yout"))
         if len(a) != 2 or not blas_helpers.extents_agree(a[:1], a[1:]):
             raise ValueError(f"{self.label}: _A must be a square matrix")

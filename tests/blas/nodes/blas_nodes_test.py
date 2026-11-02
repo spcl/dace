@@ -4,7 +4,7 @@ import pytest
 
 import dace
 from dace.libraries import blas
-from dace.libraries.blas.nodes import Axpy, Gemm, Gemv, MatMul
+from dace.libraries.blas.nodes import Axpy, Gemm, Gemv, Ger, MatMul, Scal, Symm, Symv, Syrk
 from dace.transformation.dataflow import RedundantSecondArray
 
 M = dace.symbol("M")
@@ -203,6 +203,50 @@ def test_a_scaled_matmul_of_two_vectors_is_refused():
         sdfg.expand_library_nodes()
 
 
+ALIASED_OUTPUTS = {
+    "symv": (lambda: Symv("symv", beta=0), {"_A": "A", "_x": "y", "_yin": "y"}, {"_yout": "y"}),
+    "symm": (lambda: Symm("symm"), {"_A": "A", "_B": "B", "_Cin": "B"}, {"_Cout": "B"}),
+    "syrk": (lambda: Syrk("syrk"), {"_A": "B", "_Cin": "B"}, {"_Cout": "B"}),
+    "ger": (lambda: Ger("ger"), {"_A": "A", "_x": "A[0, 0:2]", "_y": "y"}, {"_res": "A"}),
+    "gemv": (lambda: Gemv("gemv"), {"_A": "A", "_x": "y"}, {"_y": "y"}),
+    "gemm": (lambda: Gemm("gemm"), {"_a": "A", "_b": "B"}, {"_c": "A"}),
+    "scal": (lambda: Scal("scal"), {"_x": "z[0:2]"}, {"_res": "z[1:3]"}),
+}
+
+
+@pytest.mark.parametrize("name", list(ALIASED_OUTPUTS))
+def test_an_output_proved_to_overlap_an_input_is_refused(name):
+    """``symv(A, y, y, beta=0)`` zeroed ``y`` before reading it as ``x``, and BLAS forbids the overlap."""
+    make, inputs, outputs = ALIASED_OUTPUTS[name]
+    arrays = {"A": MATRIX, "B": MATRIX, "y": VECTOR, "z": ([3], dace.float64, None)}
+    sdfg = wired_sdfg(f"aliased_{name}", make(), inputs, outputs, arrays)
+    with pytest.raises(dace.sdfg.InvalidSDFGNodeError, match="overlaps"):
+        sdfg.validate()
+
+
+def test_outputs_not_proved_to_overlap_stay_allowed():
+    """Disjoint columns of one array, and windows only the run-time values of ``s`` and ``t`` place, are valid calls."""
+    arrays = {"A": MATRIX, "yin": VECTOR, "B": ([2, 3], dace.float64, None)}
+    node = Symv("symv", beta=0)
+    node.implementation = "pure"
+    columns = {"_A": "A", "_x": "B[0:2, 0]", "_yin": "yin"}
+    sdfg = wired_sdfg("disjoint_columns", node, columns, {"_yout": "B[0:2, 1]"}, arrays)
+    a, b = np.array([[2.0, 1.0], [1.0, 3.0]]), np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    sdfg(A=a, B=b, yin=np.zeros(2))
+    np.testing.assert_allclose(b[:, 1], a @ b[:, 0])
+
+    node = Symv("symv", beta=0)
+    node.implementation = "pure"
+    arrays = {"A": MATRIX, "yin": VECTOR, "z": ([5], dace.float64, None)}
+    windows = {"_A": "A", "_x": "z[s:s + 2]", "_yin": "yin"}
+    sdfg = wired_sdfg("unproved_windows", node, windows, {"_yout": "z[t:t + 2]"}, arrays)
+    sdfg.add_symbol("s", dace.int64)
+    sdfg.add_symbol("t", dace.int64)
+    z = np.array([1.0, 2.0, 0.0, 0.0, 0.0])
+    sdfg(A=a, z=z, yin=np.zeros(2), s=0, t=2)
+    np.testing.assert_allclose(z[2:4], a @ z[:2])
+
+
 if __name__ == "__main__":
     implementations = ["pure", "MKL", "cuBLAS"]
     for implementation in implementations:
@@ -217,3 +261,6 @@ if __name__ == "__main__":
     test_openblas_gemv_prints_a_symbolic_extent_as_cpp()
     test_openblas_gemm_of_integers_falls_back_to_pure()
     test_a_scaled_matmul_of_two_vectors_is_refused()
+    for name in ALIASED_OUTPUTS:
+        test_an_output_proved_to_overlap_an_input_is_refused(name)
+    test_outputs_not_proved_to_overlap_stay_allowed()

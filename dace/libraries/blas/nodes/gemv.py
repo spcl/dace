@@ -446,6 +446,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from matrix-vector product")
+        blas_helpers.reject_overlapping_output(self, state, "_y", accumulator="_y")
         out_memlet = out_edges[0].data
 
         out_subset = copy.deepcopy(out_memlet.subset)
