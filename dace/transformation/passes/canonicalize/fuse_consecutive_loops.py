@@ -18,11 +18,13 @@ and drops the first's partial sum). Fusing the two loops back into one
 ``for i in range(0, N)`` removes the split so a single ``Reduce`` is lifted and
 the result is exact.
 
-The rewrite is unconditionally value-preserving: concatenating two disjoint,
-adjacent iteration ranges ``[A, B)`` and ``[B, C)`` under the *same* stride and
-the *same* body executes the body for exactly the same index sequence in the
-same order as a single ``[A, C)`` loop, so every loop-carried value is
-identical. The match is deliberately conservative -- both loops must be
+Concatenating two adjacent iteration ranges ``[A, B)`` and ``[B, C)`` under the
+*same* stride and the *same* body executes the body for the same index sequence
+in the same order as a single loop over their union, so every loop-carried value
+is identical. That union is ``[A, C)`` only for ``A <= B <= C``; an empty side
+makes it ``[min(A, B), max(B, C))``, which holds in every case and is what the
+fused loop runs when the order is not provable. The match is deliberately
+conservative -- both loops must be
 single-state, unit-stride, directly consecutive (one plain interstate edge
 between them, nothing else), and structurally identical up to their iteration
 variable -- so it fires only on the re-rolled tile/remainder shape and its kin,
@@ -38,6 +40,7 @@ import dace
 from dace import symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import Edge
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
@@ -53,10 +56,8 @@ ScratchIndex = dict[str, OrderedSet[SDFGState]]
 
 #: Iterator- and scratch-name-independent key of a body node: ``(kind, payload)``.
 NodeKey = tuple[str, str]
-#: ``(src key, src connector, dst key, dst connector, data, subset, other subset, wcr)``.
-EdgeKey = tuple[NodeKey, str, NodeKey, str, str, str, str, str]
-#: Sorted node keys and sorted edge descriptors of a body state.
-StateSignature = tuple[tuple[NodeKey, ...], tuple[EdgeKey, ...]]
+#: Interned value keys: two nodes with one id compute one value, in any body they appear in.
+ValueIds = dict[tuple, int]
 
 #: Placeholder the iteration variable is normalised to when comparing two loop
 #: bodies, so ``a[_loop_it_0]`` and ``a[_loop_it_1]`` compare equal.
@@ -105,6 +106,14 @@ def _symbolically_equal(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> b
         return False
 
 
+def provably_ordered(low: symbolic.SymbolicType, high: symbolic.SymbolicType, facts: symbolic.Facts) -> bool:
+    """Whether ``low <= high`` is provable, floor-aware."""
+    low, high = symbolic.equalize_symbols_across(as_expr(low), as_expr(high))
+    return symbolic.provably_le(low, high, facts) or bool(
+        symbolic.simplify(_int_floor_to_sympy(high - low)).is_nonnegative
+    )
+
+
 def _normalize(text: str, loop_var: str) -> str:
     """Replace whole-word occurrences of ``loop_var`` in ``text`` with the
     canonical placeholder so two bodies differing only in iterator name match."""
@@ -121,9 +130,7 @@ def _node_key(node: nodes.Node, loop_var: str, local_scratch: dict[str, None]) -
     """A structural key for a body node, iterator- and scratch-name-independent."""
     if isinstance(node, nodes.AccessNode):
         return ("access", _canon_data(node.data, local_scratch))
-    if isinstance(node, nodes.Tasklet):
-        return ("tasklet", _normalize(node.code.as_string.strip(), loop_var))
-    return ("other", type(node).__name__)
+    return ("tasklet", _normalize(node.code.as_string.strip(), loop_var))
 
 
 @explicit_cf_compatible
@@ -205,8 +212,8 @@ class FuseConsecutiveLoops(ppl.Pass):
         return False
 
     def _adjacent_identical(self, first: LoopRegion, second: LoopRegion, scratch_index: ScratchIndex) -> bool:
-        """Whether ``first`` then ``second`` are unit-stride, structurally
-        identical, and cover adjacent index ranges ``[A, B)`` and ``[B, C)``."""
+        """Whether ``first`` then ``second`` are unit-stride, structurally identical, cover adjacent index ranges
+        ``[A, B)`` and ``[B, C)``, and nothing outside reads the iterator value the fusion changes."""
         for loop in (first, second):
             if not loop.loop_variable:
                 return False
@@ -222,30 +229,37 @@ class FuseConsecutiveLoops(ppl.Pass):
         second_start = loop_analysis.get_init_assignment(second)
         if not _symbolically_equal(first_end_excl, second_start):
             return False
-        return self._bodies_match(first, second, scratch_index)
+        if not self._bodies_match(first, second, scratch_index):
+            return False
+        # A shared name exits with the value it had after ``second``, which the fused loop keeps.
+        names = (first, second) if first.loop_variable != second.loop_variable else ()
+        return not any(loop_analysis.counter_used_outside_loop(l.loop_variable, l, l.sdfg) for l in names)
 
     def _single_body_state(self, loop: LoopRegion) -> SDFGState | None:
         """The loop's one non-empty body state, or ``None`` if the body is not a
-        single compute state (empty connective states are tolerated)."""
+        single compute state (empty connective states are tolerated, their edges
+        must not decide or assign anything: those are not compared)."""
         blocks = list(loop.nodes())
         if not all(isinstance(b, SDFGState) for b in blocks):
             return None
         non_empty = [b for b in blocks if b.nodes()]
         if len(non_empty) != 1:
             return None
+        if any(e.data.assignments or not e.data.is_unconditional() for e in loop.edges()):
+            return None
         return non_empty[0]
 
     def _bodies_match(self, first: LoopRegion, second: LoopRegion, scratch_index: ScratchIndex) -> bool:
-        """Whether the two loops' single body states are identical up to their
-        iteration variable and body-local scratch names (same nodes, same edges,
-        same memlets)."""
+        """Whether the two loops' single body states compute the same values into the same places,
+        up to their iteration variable and body-local scratch names."""
         s1 = self._single_body_state(first)
         s2 = self._single_body_state(second)
         if s1 is None or s2 is None:
             return False
-        sig1 = self._state_signature(s1, first.loop_variable, self._local_scratch(first, s1, scratch_index))
-        sig2 = self._state_signature(s2, second.loop_variable, self._local_scratch(second, s2, scratch_index))
-        return sig1 == sig2
+        ids: ValueIds = {}
+        sig1 = self._state_signature(s1, first.loop_variable, self._local_scratch(first, s1, scratch_index), ids)
+        sig2 = self._state_signature(s2, second.loop_variable, self._local_scratch(second, s2, scratch_index), ids)
+        return sig1 is not None and sig1 == sig2
 
     def _local_scratch(self, loop: LoopRegion, body_state: SDFGState, scratch_index: ScratchIndex) -> dict[str, None]:
         """Transient data names used ONLY inside ``body_state`` -- i.e. not
@@ -264,28 +278,34 @@ class FuseConsecutiveLoops(ppl.Pass):
                     local[n.data] = None
         return local
 
-    def _state_signature(self, state: SDFGState, loop_var: str, local_scratch: dict[str, None]) -> StateSignature:
-        """An iterator- and scratch-name-independent structural signature of a
-        body state: its sorted node keys and its sorted edge descriptors
-        (endpoints, connectors, memlet data / both subsets / wcr)."""
-        node_sig = sorted(_node_key(n, loop_var, local_scratch) for n in state.nodes())
-        edge_sig: list[EdgeKey] = []
-        for e in state.edges():
-            subset = _normalize(str(e.data.subset), loop_var) if (e.data and e.data.subset is not None) else ""
-            # A copy memlet indexes its DESTINATION in ``other_subset``; two bodies differing only
-            # there are two different statements, and the loser's body is deleted by ``_merge``.
-            other = (
-                _normalize(str(e.data.other_subset), loop_var) if (e.data and e.data.other_subset is not None) else ""
-            )
-            data_name = _canon_data(e.data.data, local_scratch) if (e.data is not None and e.data.data) else ""
-            wcr = str(e.data.wcr) if e.data is not None else ""
-            # Connectors are the only raw fields here, and a memlet-path edge carries None while a
-            # View's carries 'views'. Two edges whose endpoints canonicalize alike then reach a
-            # None-vs-str comparison in the sort below, so spell an absent connector like the rest.
-            src_key = _node_key(e.src, loop_var, local_scratch)
-            dst_key = _node_key(e.dst, loop_var, local_scratch)
-            edge_sig.append((src_key, e.src_conn or "", dst_key, e.dst_conn or "", data_name, subset, other, wcr))
-        return (tuple(node_sig), tuple(sorted(edge_sig)))
+    def _state_signature(
+        self, state: SDFGState, loop_var: str, local_scratch: dict[str, None], ids: ValueIds
+    ) -> list[int] | None:
+        """The sorted value keys of ``state``'s sinks, ``None`` if a node's meaning is not in its key.
+
+        A node's key folds in those of its sources, wired by connector, so bodies that use one set of
+        tasklets and memlets but connect them differently differ. Scope, nested SDFG and library nodes
+        carry their meaning in properties and contents, and are refused.
+        """
+        if not all(isinstance(n, (nodes.AccessNode, nodes.Tasklet)) for n in state.nodes()):
+            return None
+        keys: dict[nodes.Node, int] = {}
+        for node in sdutil.dfs_topological_sort(state):
+            inputs = []
+            for e in state.in_edges(node):
+                memlet = e.data
+                subset = _normalize(str(memlet.subset), loop_var) if memlet.subset is not None else ""
+                # A copy memlet indexes its DESTINATION in ``other_subset``.
+                other = _normalize(str(memlet.other_subset), loop_var) if memlet.other_subset is not None else ""
+                data = _canon_data(memlet.data, local_scratch) if memlet.data else ""
+                # A memlet-path edge has None for a connector, a View's 'views'.
+                inputs.append((keys[e.src], e.src_conn or "", e.dst_conn or "", data, subset, other, str(memlet.wcr)))
+            value = (_node_key(node, loop_var, local_scratch), tuple(sorted(inputs)))
+            if isinstance(node, nodes.AccessNode) and node.data in local_scratch:
+                desc = state.sdfg.arrays[node.data]
+                value += (str(desc.dtype), str(desc.shape))
+            keys[node] = ids.setdefault(value, len(ids))
+        return sorted(keys[n] for n in state.sink_nodes())
 
     def _merge(self, cfg: ControlFlowRegion, first: LoopRegion, second: LoopRegion, link: Edge[InterstateEdge]) -> None:
         """Extend ``first`` over the union range and splice ``second`` out.
@@ -300,7 +320,14 @@ class FuseConsecutiveLoops(ppl.Pass):
         :param link: The ``first -> second`` sequencing edge (removed with ``second``).
         """
         var = first.loop_variable
+        facts = first.sdfg.facts()
+        start = symbolic.pystr_to_symbolic(loop_analysis.get_init_assignment(first))
+        adjacent = symbolic.pystr_to_symbolic(loop_analysis.get_init_assignment(second))
         new_end_excl = symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(second))) + 1)
+        if not provably_ordered(start, adjacent, facts):
+            first.init_statement = dace.properties.CodeBlock(f"{var} = {symbolic.symstr(sympy.Min(start, adjacent))}")
+        if not provably_ordered(adjacent, new_end_excl, facts):
+            new_end_excl = sympy.Max(adjacent, new_end_excl)
         first.loop_condition = dace.properties.CodeBlock(f"{var} < ({symbolic.symstr(new_end_excl)})")
         # Independent within each range says nothing across them (``A[i + K] = A[i]`` over ``[0, K)`` and ``[K, 2K)``).
         first.known_parallel = False
@@ -419,6 +446,10 @@ def plan_guarded_fusion(region: ControlFlowRegion) -> GuardedFusionPlan | None:
     for (_, prev_end), (nxt_start, _) in zip(bounds, bounds[1:]):
         if not _symbolically_equal(symbolic.simplify(prev_end + 1), nxt_start):
             return None
+    # The guards partition the union only when no sibling's range is inverted.
+    facts = region.sdfg.facts()
+    if not all(provably_ordered(lo, hi + 1, facts) for lo, hi in bounds):
+        return None
 
     v = symbolic.pystr_to_symbolic(var)
     guards = [[symbolic.simplify(v - lo), symbolic.simplify(hi - v)] for (lo, hi) in bounds]
