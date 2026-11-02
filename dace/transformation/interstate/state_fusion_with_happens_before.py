@@ -1098,7 +1098,7 @@ class StateFusionExtended(StateFusion):
                     continue
                 if node in second_nodes:
                     for i in second_sources:
-                        if kind in ("seed", "read_before") and isinstance(i, nodes.AccessNode):
+                        if kind in ("seed", "read_before", "war") and isinstance(i, nodes.AccessNode):
                             # A source AccessNode may merge into a first-state node upstream of the seed
                             # writer, closing a cycle (ludcmp ``w = y[i]; w(+)= ...``); its consumers never merge.
                             # A library node takes no ordering edge (it counts its inputs); it is ordered through ``i``.
