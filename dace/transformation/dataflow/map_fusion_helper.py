@@ -935,7 +935,7 @@ def scope_accesses(
     state: dace.SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit
 ) -> tuple[list[tuple[str | None, Any]], list[tuple[str | None, Any]]]:
     """The ``(container, outer memlet)`` reads and writes of the Map ``map_entry``, Views resolved (``None``: one
-    that does not resolve)."""
+    that does not resolve). The memlet of an access through a View is ``None``: its subset is the View's."""
 
     def accesses(edges, endpoint):
         found = []
@@ -944,7 +944,8 @@ def scope_accesses(
                 continue
             node = endpoint(edge)
             name = _dealias(state, node) if isinstance(node, nodes.AccessNode) else edge.data.data
-            found.append((name, edge.data))
+            viewed = isinstance(node, nodes.AccessNode) and name != node.data
+            found.append((name, None if viewed else edge.data))
         return found
 
     reads = accesses(state.in_edges(map_entry), lambda e: state.memlet_path(e)[0].src)
@@ -968,7 +969,11 @@ def conflicting_accesses(
             for other_name, other in others:
                 if name is None or other_name is None:
                     return True
-                if name != other_name or (written.wcr is not None and other.wcr is not None):
+                if name != other_name:
+                    continue
+                if written is None or other is None:
+                    return True
+                if written.wcr is not None and other.wcr is not None:
                     continue
                 facts = state.sdfg.facts() if facts is None else facts
                 if subsets.intersects(written.subset, other.subset, facts) is not symbolic.Truth.FALSE:
