@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 
 import dace
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import BreakBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate import TrivialLoopElimination
 
 I = dace.symbol("I")
@@ -118,6 +118,14 @@ class TrivialLoopEliminationTest(unittest.TestCase):
         self.assertEqual(sdfg.apply_transformations(TrivialLoopElimination), 1)
 
         self.assertEqual(str(sdfg.arrays["tmp"].shape[0]), "i + 1")
+
+    def test_a_loop_holding_its_own_break_is_kept(self):
+        sdfg = dace.SDFG("trivial_loop_break")
+        loop = LoopRegion("l", "i < 1", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+        sdfg.add_node(loop, is_start_block=True)
+        loop.add_node(BreakBlock("brk"), is_start_block=True)
+
+        self.assertEqual(sdfg.apply_transformations(TrivialLoopElimination), 0)
 
 
 if __name__ == "__main__":
