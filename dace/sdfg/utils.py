@@ -2097,6 +2097,15 @@ def view_edge_with_memlet(state: DataflowGraphView, view: nd.AccessNode) -> Mult
     return e if e is not None and e.data else None
 
 
+#: Most elements one array may hold on a thread's stack.
+THREAD_CAPACITY = 4096
+
+
+def has_literal_capacity(desc: dt.Data) -> bool:
+    """A symbolic shape in a literal ``total_size``: every iteration fits what is allocated once."""
+    return bool(desc.free_symbols) and not sympy.sympify(desc.total_size).free_symbols
+
+
 def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: DataflowGraphView, fsymbols: set[str]) -> bool:
     """
     Checks whether the Array or View descriptor is non-free symbol dependent.
@@ -2129,7 +2138,7 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: Dataflow
             d = state.sdfg.arrays[n.data]
             return is_nonfree_sym_dependent(n, d, state, fsymbols)
     elif isinstance(desc, dt.Array):
-        if any(str(s) not in fsymbols for s in desc.free_symbols):
+        if any(str(s) not in fsymbols for s in desc.free_symbols) and not has_literal_capacity(desc):
             return True
     return False
 

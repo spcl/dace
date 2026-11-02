@@ -7,6 +7,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.narrowing import as_basic
 from dace.sdfg.state import SDFGState, SymbolResolver
+from dace.sdfg.utils import has_literal_capacity
 from dace.subsets import Range
 
 
@@ -55,14 +56,21 @@ def is_device_wide_libnode(node: nodes.Node, state: SDFGState | None = None) -> 
 def small_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
     """Whether ``node`` has an in-kernel lowering and every memlet of it moves a subset, or one of a container, whose
     size names ``SMALL`` symbols only or is a literal, and some size names one."""
-    if not IN_KERNEL_IMPLEMENTATIONS & type(node).implementations.keys():
+    arrays = state.sdfg.arrays
+    owned = any(not e.data.is_empty() and has_literal_capacity(arrays[e.data.data]) for e in state.all_edges(node))
+    # ``specialize`` becomes a node that has such a lowering
+    if not (IN_KERNEL_IMPLEMENTATIONS | ({"specialize"} if owned else set())) & type(node).implementations.keys():
         return False
     facts = SymbolResolver().facts_at(state)
     named = False
     for edge in state.all_edges(node):
         if edge.data.is_empty():
             continue
-        sizes = [edge.data.subset.num_elements(), state.sdfg.arrays[edge.data.data].total_size]
+        desc = arrays[edge.data.data]
+        if has_literal_capacity(desc):
+            named = True
+            continue
+        sizes = [edge.data.subset.num_elements(), desc.total_size]
         small = [symbolic.is_small(size, facts) for size in sizes]
         if not any(small) and not symbolic.pystr_to_symbolic(sizes[0]).is_number:
             return False
