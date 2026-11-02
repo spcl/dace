@@ -2478,6 +2478,24 @@ def test_masked_slots_hold_their_skipped_iterations():
     assert_canon_matches_the_program(masked_two_slots, args, N=8)
 
 
+@dace.program
+def carry_repeated_by_a_loop(a: dace.float64[N], out: dace.float64[N]):
+    acc = 0.0
+    for t in range(3):
+        for i in range(N):
+            acc = acc + a[i]
+            out[i] = acc
+
+
+def test_an_accumulator_survives_the_next_run_of_its_loop():
+    sdfg = carry_repeated_by_a_loop.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
+    LoopToScan().apply_pass(sdfg, {})
+    a, out = np.arange(1.0, 9.0), np.zeros(8)
+    sdfg(a=a, out=out, N=8)
+    assert np.allclose(out, 2 * a.sum() + np.cumsum(a))
+
+
 if __name__ == "__main__":
     import sys
 

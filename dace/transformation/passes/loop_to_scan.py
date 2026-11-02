@@ -2379,7 +2379,7 @@ def _match_one_scalar_carry(
     # Check if ``acc`` is read outside this loop's body (any other state of any
     # nested SDFG, or any interstate edge condition/assignments). When true the
     # rewrite emits a post-loop writeback to preserve the final value.
-    acc_used_post_loop = _acc_used_outside_body(sdfg, acc_name, state)
+    acc_used_post_loop = _acc_used_outside_body(sdfg, acc_name, state) or _repeated_by_a_loop(loop)
 
     return _ScalarCarryScan(
         op=op,
@@ -2658,6 +2658,14 @@ def _resolve_per_iter_write(state: SDFGState, edge, sdfg: SDFG, loop_var: str, a
         if _identity_input(state, dst) is None or state.out_degree(dst) != 1:
             return None
         cur_edge = list(state.out_edges(dst))[0]
+
+
+def _repeated_by_a_loop(loop: LoopRegion) -> bool:
+    """Whether a loop around ``loop`` runs it again: its next run reads what this one left in the accumulator."""
+    parent = loop.parent_graph
+    while parent is not None and not isinstance(parent, LoopRegion):
+        parent = parent.parent_graph
+    return parent is not None
 
 
 def _acc_used_outside_body(sdfg: SDFG, acc_name: str, body_state: SDFGState) -> bool:
