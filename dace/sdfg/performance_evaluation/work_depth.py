@@ -17,7 +17,7 @@ import sympy as sp
 from dace import SDFG, SDFGState, dtypes
 from dace.config import Config
 from dace.libraries.blas import Dot, Gemm, Gemv, MatMul
-from dace.libraries.linalg import Cholesky, Inv, Solve, Transpose
+from dace.libraries.linalg import Cholesky, Inv, Solve, TensorTranspose, Transpose
 from dace.libraries.sort import IntegerSort, ScatterConflictCheck
 from dace.libraries.standard import (
     ArgReduce,
@@ -486,6 +486,25 @@ def count_depth_scatter_conflict_check(node: ScatterConflictCheck, symbols, stat
     return 2 + tree_depth(n)
 
 
+def tensor_transpose_flops(node: TensorTranspose) -> tuple[int, int]:
+    """Flops and their chain per element of ``out = alpha * perm(inp) + beta * out``: none for a plain permutation
+    (``alpha == 1``, ``beta == 0``), which only moves data like a copy."""
+    scales = node.alpha != 1 or node.beta not in (0, 1)
+    accumulates = node.beta != 0
+    flops = int(node.alpha != 1) + int(node.beta not in (0, 1)) + int(accumulates)
+    return flops, int(scales) + int(accumulates)
+
+
+def count_work_tensor_transpose(node: TensorTranspose, symbols: dict[str, str], state: SDFGState) -> sp.Expr:
+    """Work of a tensor transpose: its per-element flops over every element it reads."""
+    return tensor_transpose_flops(node)[0] * input_volume(node, state, symbols, "_inp_tensor")
+
+
+def count_depth_tensor_transpose(node: TensorTranspose, symbols: dict[str, str], state: SDFGState) -> sp.Expr:
+    """Depth of a tensor transpose: every element is independent, so one element's chain of flops."""
+    return pystr_to_symbolic(tensor_transpose_flops(node)[1])
+
+
 def no_arithmetic(*args) -> sp.Expr:
     """Data movement (copies, fills, shifts, selects) performs no arithmetic."""
     return pystr_to_symbolic(0)
@@ -496,6 +515,7 @@ LIBNODES_TO_WORK = {
     Gemm: count_work_gemm,
     Gemv: count_work_gemv,
     Transpose: lambda *args: 0,
+    TensorTranspose: count_work_tensor_transpose,
     Reduce: count_work_reduce,
     Dot: count_work_dot,
     Cholesky: count_work_cholesky,
@@ -523,6 +543,7 @@ LIBNODES_TO_DEPTH = {
     Gemm: count_depth_gemm,
     Gemv: count_depth_gemv,
     Transpose: lambda *args: 0,
+    TensorTranspose: count_depth_tensor_transpose,
     Reduce: count_depth_reduce,
     Dot: count_depth_dot,
     Cholesky: count_depth_cholesky,
@@ -1331,6 +1352,20 @@ def accumulate_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: 
     return sp.Sum(expr, (var, pystr_to_symbolic(0), shifted_hi)).doit()
 
 
+def maximize_over_range(expr: sp.Expr, var: sp.Symbol, lower: sp.Expr, upper: sp.Expr, step: sp.Expr) -> sp.Expr:
+    """The largest value of ``expr`` while ``var`` runs over ``lower:upper:step`` (``upper`` inclusive).
+
+    Every iteration of a map runs in parallel, so the map's depth is its deepest iteration, not a sum. Taken at the
+    first and the last iteration, which is exact for a body depth monotone in ``var`` (a triangular nest's column
+    length, a scan over a prefix), the cases depth formulas produce.
+    """
+    if var not in expr.free_symbols:
+        return expr
+    lower, upper, step = pystr_to_symbolic(lower), pystr_to_symbolic(upper), pystr_to_symbolic(step)
+    last = lower + step * int_floor(upper - lower, step)
+    return sp.Max(expr.subs(var, lower), expr.subs(var, last))
+
+
 def scope_work_depth(
     state: SDFGState,
     w_d_map: dict[str, sp.Expr],
@@ -1528,6 +1563,12 @@ def scope_work_depth(
 
         for uuid in wcr_depth_map:
             w_d_map[uuid] = (w_d_map[uuid][0], w_d_map[uuid][1] + wcr_depth_map[uuid])
+        # A body depth that varies with a map parameter (a scan over a prefix of length ``i``) is the deepest
+        # iteration's: the parameter must not stay free in the result (spcl/dace#2754)
+        if isinstance(entry, nd.MapEntry):
+            for param, (begin, end, step) in zip(entry.map.params, entry.map.range):
+                max_depth = maximize_over_range(max_depth, pystr_to_symbolic(param), begin, end, step)
+            max_depth = simplify(max_depth, context.facts)
     # summarise work / depth of the whole scope in the dictionary
     scope_result = (work, max_depth)
     w_d_map[get_uuid(state)] = scope_result
