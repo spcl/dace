@@ -14,6 +14,7 @@ import pytest
 import dace
 from dace.codegen.targets.cpu import register_array_on_stack
 from dace.dtypes import AllocationLifetime, StorageType
+from dace.sdfg.state import LoopRegion
 
 N = dace.symbol("N", dtype=dace.int64)
 
@@ -182,20 +183,25 @@ def test_a_global_lifetime_keeps_a_symbolic_stack_array_on_the_heap():
     assert "double tmp[" not in code, code
 
 
-def test_a_split_declaration_keeps_a_symbolic_stack_array_on_the_heap():
-    """A size that only an interstate edge defines is declared in one block and allocated in another,
-    and a VLA cannot bridge that split."""
+@pytest.mark.parametrize("in_loop", [False, True])
+def test_a_split_declaration_takes_the_frame_unless_a_loop_repeats_it(in_loop):
+    """A size that only an interstate edge defines is declared in one block and allocated in another, and a VLA
+    cannot bridge that split: ``alloca`` does, once per function, and the heap in a loop that would grow the frame."""
     K = dace.symbol("K", dtype=dace.int64)
-    sdfg = dace.SDFG("vla_split_declaration")
+    sdfg = dace.SDFG(f"vla_split_declaration_{in_loop}")
     sdfg.add_symbol("K", dace.int64)
     sdfg.add_array("a", (N,), dace.float64)
     sdfg.add_array("b", (N,), dace.float64)
     sdfg.add_transient("tmp", (K,), dace.float64, storage=FORCED)
-    init = sdfg.add_state("init", is_start_block=True)
-    first = sdfg.add_state("first")
-    second = sdfg.add_state("second")
-    sdfg.add_edge(init, first, dace.InterstateEdge(assignments={"K": "N"}))
-    sdfg.add_edge(first, second, dace.InterstateEdge())
+    region = sdfg
+    if in_loop:
+        region = LoopRegion("repeat", "t < 2", "t", "t = 0", "t = t + 1")
+        sdfg.add_node(region, is_start_block=True)
+    init = region.add_state("init", is_start_block=True)
+    first = region.add_state("first")
+    second = region.add_state("second")
+    region.add_edge(init, first, dace.InterstateEdge(assignments={"K": "N"}))
+    region.add_edge(first, second, dace.InterstateEdge())
     first.add_mapped_tasklet(
         "fill",
         {"i": "0:K"},
@@ -214,10 +220,14 @@ def test_a_split_declaration_keeps_a_symbolic_stack_array_on_the_heap():
     )
     sdfg.validate()
 
-    with pytest.warns(UserWarning, match="Variable-length array tmp"):
+    if in_loop:
+        with pytest.warns(UserWarning, match="Variable-length array tmp"):
+            code = sdfg.generate_code()[0].clean_code
+    else:
         code = sdfg.generate_code()[0].clean_code
-        run_scratch(sdfg, 8, N=8)
+    run_scratch(sdfg, 8, N=8)
     assert "double tmp[" not in code, code
+    assert bool(HEAP_ALLOC.search(code)) == in_loop, code
 
 
 @pytest.mark.parametrize("placement", [FORCED, UNFORCED])
@@ -251,7 +261,8 @@ if __name__ == "__main__":
     test_a_small_constant_register_array_stays_aligned_on_the_stack()
     test_a_large_constant_register_array_moves_to_the_heap()
     test_a_global_lifetime_keeps_a_symbolic_stack_array_on_the_heap()
-    test_a_split_declaration_keeps_a_symbolic_stack_array_on_the_heap()
+    test_a_split_declaration_takes_the_frame_unless_a_loop_repeats_it(False)
+    test_a_split_declaration_takes_the_frame_unless_a_loop_repeats_it(True)
     test_stack_placement_survives_clone_and_serialization(FORCED)
     test_stack_placement_survives_clone_and_serialization(UNFORCED)
     test_the_bare_register_template_is_unchanged()

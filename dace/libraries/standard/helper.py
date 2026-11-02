@@ -90,7 +90,7 @@ def call_scratch_lifetime(
     """The lifetime of the scratch an expansion of ``node`` allocates, sized by ``sizes``: ``Persistent``, allocated
     once at init, when every map enclosing the call is ``Sequential`` and every size holds one value for the whole run
     (a loop of calls otherwise allocates and frees per trip, and on a GPU that pair costs more than a small
-    factorization); ``Scope`` otherwise, where calls that may run at once each need their own."""
+    factorization); ``State`` when calls may run at once, each with its own; ``Scope`` otherwise."""
     # Avoid import loops
     from dace.transformation import helpers as xfh
     from dace.transformation.passes.persistent_transients import persistent_size_symbols, size_symbols_at_root
@@ -99,7 +99,7 @@ def call_scratch_lifetime(
         entry.schedule != dtypes.ScheduleType.Sequential
         for entry, entry_state in xfh.get_parent_maps(parent_state, node)
     ):
-        return dtypes.AllocationLifetime.Scope
+        return dtypes.AllocationLifetime.State
     names = {str(free) for size in sizes for free in dace.symbolic.pystr_to_symbolic(size).free_symbols}
     root = parent_sdfg
     while root.parent_sdfg is not None:
@@ -112,12 +112,19 @@ def call_scratch_lifetime(
 
 def scratch_storage(storage: dtypes.StorageType, lifetime: dtypes.AllocationLifetime) -> dtypes.StorageType:
     """``storage`` for scratch of ``lifetime``: a ``Persistent`` one left to storage inference (``Default``, or a
-    ``Register`` operand's) is placed on the heap, the only host storage a persistent allocation may take."""
+    ``Register`` operand's) is placed on the heap, the only host storage a persistent allocation may take; a ``State``
+    one on the calling thread's stack, whatever its size, not a heap allocation per map iteration."""
     if lifetime == dtypes.AllocationLifetime.Persistent and storage in (
         dtypes.StorageType.Default,
         dtypes.StorageType.Register,
     ):
         return dtypes.StorageType.CPU_Heap
+    if lifetime == dtypes.AllocationLifetime.State and storage in (
+        dtypes.StorageType.Default,
+        dtypes.StorageType.Register,
+        dtypes.StorageType.CPU_Heap,
+    ):
+        return dtypes.StorageType.Register(force=True)
     return storage
 
 

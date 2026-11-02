@@ -145,6 +145,79 @@ def test_copy_in_read_after_a_second_reader_overwrites_it_stays():
     assert MinimizeTransients().apply_pass(sdfg, {}) is None
 
 
+def test_transient_nothing_reads_leaves_no_isolated_source():
+    sdfg = dace.SDFG("minimize_transients_dead_copy")
+    sdfg.add_array("b", [8], dace.float64)
+    sdfg.add_transient("t", [8], dace.float64)
+    state = sdfg.add_state()
+    state.add_nedge(state.add_read("b"), state.add_write("t"), dace.Memlet("b[0:8] -> [0:8]"))
+    assert MinimizeTransients().apply_pass(sdfg, {}) == 1
+    assert state.is_empty()
+    sdfg.validate()
+
+
+def stack_arrays_in_parallel_map_sdfg() -> dace.SDFG:
+    """``out[i] = (2 + 3) * a[i, n - 1]`` per iteration of a parallel map, each term through a stack array of the
+    nested SDFG; the first array is dead when the second is written."""
+    body = dace.SDFG("stack_arrays_in_parallel_map_body")
+    for symbol in ("i", "m", "n"):
+        body.add_symbol(symbol, dace.int64)
+    body.add_array("a", ["m", "n"], dace.float64)
+    body.add_array("out", ["m"], dace.float64)
+    stack = dace.StorageType.Register(force=True)
+    body.add_array("first", ["n"], dace.float64, transient=True, storage=stack)
+    body.add_array("second", ["n"], dace.float64, transient=True, storage=stack)
+    body.add_scalar("term", dace.float64, transient=True)
+
+    def scaled(name: str, factor: int, after: dace.SDFGState | None) -> dace.SDFGState:
+        state = body.add_state(f"fill_{name}", is_start_block=after is None)
+        if after is not None:
+            body.add_edge(after, state, dace.InterstateEdge())
+        state.add_mapped_tasklet(
+            f"scale_{name}",
+            {"j": "0:n"},
+            {"x": dace.Memlet("a[i, j]")},
+            f"y = {factor} * x",
+            {"y": dace.Memlet(f"{name}[j]")},
+            external_edges=True,
+        )
+        return state
+
+    fill_first = scaled("first", 2, None)
+    read_first = body.add_state_after(fill_first, "read_first")
+    tasklet = read_first.add_tasklet("last", {"x"}, {"y"}, "y = x")
+    read_first.add_edge(read_first.add_read("first"), None, tasklet, "x", dace.Memlet("first[n - 1]"))
+    read_first.add_edge(tasklet, "y", read_first.add_write("term"), None, dace.Memlet("term[0]"))
+    fill_second = scaled("second", 3, read_first)
+    read_second = body.add_state_after(fill_second, "read_second")
+    tasklet = read_second.add_tasklet("add", {"x", "t"}, {"y"}, "y = x + t")
+    read_second.add_edge(read_second.add_read("second"), None, tasklet, "x", dace.Memlet("second[n - 1]"))
+    read_second.add_edge(read_second.add_read("term"), None, tasklet, "t", dace.Memlet("term[0]"))
+    read_second.add_edge(tasklet, "y", read_second.add_write("out"), None, dace.Memlet("out[i]"))
+
+    sdfg = dace.SDFG("stack_arrays_in_parallel_map")
+    sdfg.add_array("a", ["m", "n"], dace.float64)
+    sdfg.add_array("out", ["m"], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("rows", {"i": "0:m"}, schedule=dace.ScheduleType.CPU_Multicore)
+    mapping = {"i": "i", "m": "m", "n": "n"}
+    nested = state.add_nested_sdfg(body, {"a": None}, {"out": None}, symbol_mapping=mapping)
+    state.add_memlet_path(state.add_read("a"), entry, nested, dst_conn="a", memlet=dace.Memlet("a[0:m, 0:n]"))
+    state.add_memlet_path(nested, exit_node, state.add_write("out"), src_conn="out", memlet=dace.Memlet("out[0:m]"))
+    return sdfg
+
+
+def test_stack_arrays_of_a_nest_in_a_parallel_map_share_one_buffer():
+    sdfg = stack_arrays_in_parallel_map_sdfg()
+    body = next(sd for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg)
+    assert MinimizeTransients().apply_pass(sdfg, {}) == 1
+    assert sum(name in body.arrays for name in ("first", "second")) == 1
+    a = np.arange(1.0, 13.0).reshape(3, 4).copy()
+    out = np.zeros(3)
+    sdfg(a=a, out=out, m=3, n=4)
+    assert np.array_equal(out, 5 * a[:, -1])
+
+
 if __name__ == "__main__":
     test_copied_out_transient_is_its_target_region()
     test_copied_in_transient_reads_its_source_region()
@@ -153,3 +226,5 @@ if __name__ == "__main__":
     test_copy_out_next_to_another_write_of_the_target_stays()
     test_transient_computed_from_its_target_region_stays()
     test_copy_in_read_after_a_second_reader_overwrites_it_stays()
+    test_transient_nothing_reads_leaves_no_isolated_source()
+    test_stack_arrays_of_a_nest_in_a_parallel_map_share_one_buffer()

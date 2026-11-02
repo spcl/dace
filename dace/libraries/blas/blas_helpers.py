@@ -273,6 +273,7 @@ def promote_operands(node, state, connectors, dtype: dtypes.typeclass) -> None:
     :param dtype: The element type the vendor call computes in.
     """
     from dace import Memlet  # Avoid import loop
+    from dace.libraries.standard.helper import call_scratch_lifetime, scratch_storage
     from dace.symbolic import symstr
 
     sdfg = state.sdfg
@@ -282,11 +283,13 @@ def promote_operands(node, state, connectors, dtype: dtypes.typeclass) -> None:
             continue
         subset = edge.data.subset
         shape = subset.size()
+        lifetime = call_scratch_lifetime(node, state, sdfg, *shape)
         name, desc = sdfg.add_transient(
             f"{node.label}{edge.dst_conn}_as_{dtype.to_string()}",
             shape,
             dtype,
-            storage=src_desc.storage,
+            storage=scratch_storage(src_desc.storage, lifetime),
+            lifetime=lifetime,
             find_new_name=True,
         )
         params = [f"__promote{d}" for d in range(len(shape))]

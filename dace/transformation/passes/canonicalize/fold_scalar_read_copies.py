@@ -16,6 +16,7 @@ from typing import Any
 
 from dace import SDFG, Memlet, data, properties, symbolic
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -82,7 +83,8 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: dict[str, int]) ->
     # The source node's own writes land before the copy reads it.
     before = reachable(state, copy.src, forward=False) | {copy.src}
     after = set.intersection(*(reachable(state, edge.dst) for edge in consumers))
-    if any(writer not in before and writer not in after for writer in writers(state, root.data)):
+    viewed = sdutil.get_last_view_node(state, root).data if isinstance(source, data.View) else root.data
+    if any(writer not in before and writer not in after for writer in writers(state, viewed)):
         return None
     return Memlet(data=root.data, subset=subset)
 

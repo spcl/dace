@@ -73,7 +73,7 @@ def copy_back(state: SDFGState, sdfg: SDFG, transient: nodes.AccessNode, uses: C
     whole, subset = copy.data.get_src_subset(copy, state), copy.data.get_dst_subset(copy, state)
     if not isinstance(whole, subsets.Range) or not isinstance(subset, subsets.Range):
         return None
-    if any(step != 1 for _, _, step in whole.ranges):
+    if any(step != 1 for _, _, step in (*whole.ranges, *subset.ranges)):
         return None
     if not whole.covers(write.data.get_dst_subset(write, state), sdfg.facts()):
         return None
@@ -104,6 +104,9 @@ def in_place(state: SDFGState, found: CopyBack) -> bool:
     facts = state.sdfg.facts()
     ahead = reachable(state, writes[0].src, forward=False) | {writes[0].src}
     for edge in state.in_edges(entry):
+        # A view may read any of the target.
+        if not edge.data.is_empty() and isinstance(state.sdfg.arrays[edge.data.data], data.View):
+            return False
         if edge.data.is_empty() or edge.data.data != target.data:
             continue
         for leaf in state.memlet_tree(edge).leaves():
@@ -152,6 +155,11 @@ class EliminateCopyBack(ppl.Pass):
         count = 0
         for sd in sdfg.all_sdfgs_recursive():
             uses = Counter(node.data for state in sd.states() for node in state.data_nodes())
+            # Control flow reads a container by name: one more use the fold cannot move.
+            for region in sd.all_control_flow_regions():
+                uses.update(region.used_symbols(all_symbols=True, with_contents=False))
+            for edge in sd.all_interstate_edges():
+                uses.update(edge.data.free_symbols)
             for state in sd.states():
                 for transient in list(state.data_nodes()):
                     if transient not in state.nodes():
