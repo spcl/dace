@@ -546,19 +546,25 @@ def _collective_block_dims(
     :raises ValueError: the kernel has thread-block maps of differing sizes, so codegen's
         over-approximated launch geometry is not something this can pin down.
     """
-    sdict = parent_state.scope_dict()
-    scope = sdict[node]
-    while scope is not None and scope.schedule not in (
-        dtypes.ScheduleType.GPU_Device,
-        dtypes.ScheduleType.GPU_Persistent,
-    ):
-        scope = sdict[scope]
+    state, inner = parent_state, node
+    while True:
+        sdict = state.scope_dict()
+        scope = sdict[inner]
+        while scope is not None and scope.schedule not in (
+            dtypes.ScheduleType.GPU_Device,
+            dtypes.ScheduleType.GPU_Persistent,
+        ):
+            scope = sdict[scope]
+        if scope is not None or state.sdfg.parent is None:
+            break
+        # A kernel's loop body is a nested SDFG: the kernel sits above it.
+        state, inner = state.sdfg.parent, state.sdfg.parent_nsdfg_node
     if scope is None:
         return devicelevel_block_size(parent_state.sdfg, parent_state, node)
 
     sizes = [
         _block_size_to_3d([symbolic.overapproximate(e) for e in m.range.size()[::-1]])
-        for m in _thread_block_maps(parent_state.scope_subgraph(scope))
+        for m in _thread_block_maps(state.scope_subgraph(scope))
     ]
     if scope.map.gpu_block_size is not None:
         sizes.append(_block_size_to_3d(scope.map.gpu_block_size))

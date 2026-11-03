@@ -272,6 +272,20 @@ class GPUPersistentKernel(SubgraphTransformation):
             else:
                 kernel_args_write.add(data)
 
+        # A kernel's thread keeps host data in a local that ends with the kernel: what only kernels touch outside this
+        # one has to live in device memory to reach them
+        for data in kernel_args_write:
+            desc = sdfg.arrays[data]
+            accesses = [(s, n) for s in sdfg.states() for n in s.data_nodes() if n.data == data]
+            if (
+                accesses
+                and desc.transient
+                and desc.storage in (StorageType.Default, StorageType.CPU_Heap)
+                and type(desc) is dace.data.Array
+                and all(self.reached_from_kernel(s, n) for s, n in accesses)
+            ):
+                desc.storage = StorageType.GPU_Global
+
         # Kernel SDFG is complete at this point
         if self.validate:
             kernel_sdfg.validate()
@@ -329,6 +343,14 @@ class GPUPersistentKernel(SubgraphTransformation):
         # Transformation is done
         if self.validate:
             sdfg.validate()
+
+    @staticmethod
+    def reached_from_kernel(state: SDFGState, node: nodes.AccessNode) -> bool:
+        """Whether every edge of ``node`` crosses the boundary of a GPU map."""
+        return all(
+            isinstance(other, nodes.EntryNode | nodes.ExitNode) and other.schedule in dace.dtypes.GPU_SCHEDULES
+            for other in [e.src for e in state.in_edges(node)] + [e.dst for e in state.out_edges(node)]
+        )
 
     @staticmethod
     def is_gpu_state(sdfg: SDFG, state: SDFGState) -> bool:
