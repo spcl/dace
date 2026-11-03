@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from typing import TypeGuard
 
 import dace
-from dace import SDFG, dtypes, properties, subsets, symbolic
+from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.optionals import required
 from dace.ordered import OrderedSet
@@ -25,6 +25,9 @@ InnerMap = tuple[SDFGState, nodes.MapEntry]
 
 #: ``absorb`` split the kernel instead: its state holds new kernels
 SPLIT = -1
+
+#: The maps of a lowered persistent kernel: the threads spread over them
+MAPS_IN_KERNEL = (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.GPU_ThreadBlock)
 
 
 def is_gpu_device_map(node: nodes.Node) -> TypeGuard[nodes.MapEntry]:
@@ -122,6 +125,16 @@ def same_iteration(inner_maps: list[InnerMap]) -> bool:
     return True
 
 
+def split_off(state: SDFGState, first: nodes.Node) -> None:
+    """Moves the top-level ``first``, with what it needs, into a state of its own ahead of the rest of ``state``."""
+    is_map = isinstance(first, nodes.MapEntry)
+    last = state.exit_node(first) if is_map else first
+    part = OrderedSet(state.scope_subgraph(first).nodes() if is_map else [first])
+    part.update(n for n in sdutil.find_upstream_nodes(first, state) if not isinstance(n, nodes.ExitNode))
+    part.update(e.dst for e in state.out_edges(last) if isinstance(e.dst, nodes.AccessNode))
+    helpers.state_fission(SubgraphView(state, list(part)))
+
+
 def separate_device_maps(sdfg: SDFG) -> bool:
     """Moves each top-level ``GPU_Device`` map of a state of ``sdfg``, with what it needs, into a state of its own
     ahead of the rest; returns whether any state was split."""
@@ -133,14 +146,32 @@ def separate_device_maps(sdfg: SDFG) -> bool:
             ]
             if len(entries) < 2:
                 break
-            first = entries[0]
-            exit_ = state.exit_node(first)
-            part = OrderedSet(state.scope_subgraph(first).nodes())
-            part.update(n for n in sdutil.find_upstream_nodes(first, state) if not isinstance(n, nodes.ExitNode))
-            part.update(e.dst for e in state.out_edges(exit_) if isinstance(e.dst, nodes.AccessNode))
-            helpers.state_fission(SubgraphView(state, list(part)))
+            split_off(state, entries[0])
             split = True
     return split
+
+
+def runs_code(state: SDFGState, node: nodes.Node) -> bool:
+    """Whether the top-level ``node`` is a map, a code node, or the target of an array copy."""
+    if isinstance(node, nodes.AccessNode):
+        plain = lambda n: not isinstance(n.desc(state.sdfg), data.Stream | data.View)
+        return plain(node) and any(isinstance(e.src, nodes.AccessNode) and plain(e.src) for e in state.in_edges(node))
+    return isinstance(node, nodes.MapEntry | nodes.CodeNode)
+
+
+def separate_mapped_code(state: SDFGState) -> None:
+    """Gives everything that runs code in a part of ``state`` that holds a map its own state, in dataflow order: a
+    persistent kernel runs such a part in every thread, and only states end in a grid barrier."""
+    while True:
+        top = [n for n in sdutil.dfs_topological_sort(state) if state.entry_node(n) is None and runs_code(state, n)]
+        for component in dace.sdfg.concurrent_subgraphs(state):
+            members = set(component.nodes())
+            ordered = [n for n in top if n in members]
+            if len(ordered) > 1 and has_map(members, MAPS_IN_KERNEL):
+                split_off(state, ordered[0])
+                break
+        else:
+            return
 
 
 def bound_check(map_entry: nodes.MapEntry) -> str:
@@ -399,12 +430,14 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         state, also in the NestedSDFGs that hold maps."""
         conditions = {"grid": f"{ids['blk']} == 0 and {ids['tid']} == 0", "block": f"{ids['tid']} == 0"}
         for state in [s for s in sdfg.states() if s is not id_state]:
+            separate_mapped_code(state)
+        for state in [s for s in sdfg.states() if s is not id_state]:
             region = state.parent_graph
             # The block of ``region`` the barrier follows
             last = state
             for component in dace.sdfg.concurrent_subgraphs(state):
                 component_nodes = list(component.nodes())
-                if has_map(component_nodes, (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.GPU_ThreadBlock)):
+                if has_map(component_nodes, MAPS_IN_KERNEL):
                     for node in component_nodes:
                         if isinstance(node, nodes.NestedSDFG) and state.entry_node(node) is None:
                             for name in ids.values():
