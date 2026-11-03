@@ -172,7 +172,7 @@ def find_backward_implementation(
 class ExpansionTemplate(xf.ExpandTransformation):
     """Module-level expansion class for operations during autodiff.
 
-    This class is used by BackwardPassGenerator._expand_nodes to expand operations
+    This class is used by BackwardPassGenerator.expand_nodes to expand operations
     that don't have backward implementations. It needs to be at module level for serialization.
 
     The class is dynamically configured before use by setting:

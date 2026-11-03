@@ -20,13 +20,14 @@ All transformations extend the ``TransformationBase`` class. There are three bui
 
 import abc
 import copy
+import importlib
 import inspect
 import pydoc
 import warnings
 from collections.abc import Callable
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from dace import serialize
+from dace import serialize, symbolic
 from dace.dtypes import ScheduleType
 from dace.properties import DictProperty, Property, SetProperty, make_properties
 from dace.sdfg import SDFG, SDFGState, dealias, infer_types, propagation
@@ -39,10 +40,51 @@ from dace.transformation import pass_pipeline as ppl
 
 PassT = TypeVar("PassT", bound=ppl.Pass)
 
+#: The graph a pattern is matched in: a state for single-state patterns, a control-flow region for multi-state ones.
+GraphT = TypeVar("GraphT", bound=ControlFlowRegion | SDFGState)
 
-def explicit_cf_compatible(cls: PassT) -> PassT:
+
+def explicit_cf_compatible(cls: type[PassT]) -> type[PassT]:
     cls.__explicit_cf_compatible__ = True
     return cls
+
+
+#: Packages holding the built-in transformations. Subclass discovery only sees classes whose defining
+#: module was imported, so name-based deserialization has to load these first.
+BUILTIN_TRANSFORMATION_PACKAGES = (
+    "dace.transformation.dataflow",
+    "dace.transformation.interstate",
+    "dace.transformation.subgraph",
+)
+
+
+def load_builtin_transformations() -> None:
+    """Import the packages holding the built-in transformations.
+
+    Both the ``dace.serialize`` type registry and ``PatternTransformation`` subclass discovery are
+    import-driven, so reading a saved transformation history needs these loaded -- after a bare
+    ``import dace`` they are not, and the names in the history resolve to nothing. Imported here
+    rather than at module level: every one of those packages imports this module.
+    """
+    for package in BUILTIN_TRANSFORMATION_PACKAGES:
+        importlib.import_module(package)
+
+
+def transformation_by_name(name: str, root: type["TransformationBase"]) -> type["TransformationBase"]:
+    """Resolve the transformation class called ``name`` below ``root``, for JSON deserialization.
+
+    An unresolved name used to surface as a bare ``StopIteration``, which the JSON reader swallowed
+    into a silently dropped element; it now raises.
+    """
+    load_builtin_transformations()
+    if root is PatternTransformation:
+        candidates = root.subclasses_recursive(all_subclasses=True)
+    else:
+        candidates = root.subclasses_recursive()
+    for cls in candidates:
+        if cls.__name__ == name:
+            return cls
+    raise TypeError(f"Unknown {root.__name__} {name!r}: no such class in any imported module")
 
 
 class TransformationBase(ppl.Pass):
@@ -67,7 +109,7 @@ class TransformationBase(ppl.Pass):
 
 
 @make_properties
-class PatternTransformation(TransformationBase):
+class PatternTransformation(TransformationBase, Generic[GraphT]):
     """
     Abstract class for pattern-matching transformations.
     Please extend either ``SingleStateTransformation`` or ``MultiStateTransformation``.
@@ -123,9 +165,7 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def can_be_applied(
-        self, graph: ControlFlowRegion | SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False
-    ) -> bool:
+    def can_be_applied(self, graph: GraphT, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         """Returns True if this transformation can be applied on the candidate
         matched subgraph.
 
@@ -140,7 +180,7 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def apply(self, graph: ControlFlowRegion | SDFGState, sdfg: SDFG) -> Any | None:
+    def apply(self, graph: GraphT, sdfg: SDFG) -> Any | None:
         """
         Applies this transformation instance on the matched pattern graph.
 
@@ -308,7 +348,7 @@ class PatternTransformation(TransformationBase):
         annotate: bool = True,
         permissive: bool = False,
         save: bool = True,
-        **where: nd.Node | SDFGState,
+        **where: nd.Node | ControlFlowBlock,
     ):
         """
         Applies `can_be_applied()` and/or `apply()` to a given subgraph, defined by
@@ -400,7 +440,7 @@ class PatternTransformation(TransformationBase):
         annotate: bool = True,
         permissive: bool = False,
         save: bool = True,
-        **where: nd.Node | SDFGState,
+        **where: nd.Node | ControlFlowBlock,
     ):
         """
         Applies this transformation to a given subgraph, defined by a set of
@@ -446,7 +486,7 @@ class PatternTransformation(TransformationBase):
         options: dict[str, Any] | None = None,
         expr_index: int = 0,
         permissive: bool = False,
-        **where: nd.Node | SDFGState,
+        **where: nd.Node | ControlFlowBlock,
     ) -> bool:
         """
         Checks if the given transformation can be applied to a subgraph, defined by
@@ -499,11 +539,7 @@ class PatternTransformation(TransformationBase):
 
     @staticmethod
     def from_json(json_obj: dict[str, Any], context: dict[str, Any] = None) -> "PatternTransformation":
-        xform = next(
-            ext
-            for ext in PatternTransformation.subclasses_recursive(all_subclasses=True)
-            if ext.__name__ == json_obj["transformation"]
-        )
+        xform = transformation_by_name(json_obj["transformation"], PatternTransformation)
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj.get("expr_index", 0)]
@@ -522,7 +558,7 @@ class PatternTransformation(TransformationBase):
 
 @make_properties
 @explicit_cf_compatible
-class SingleStateTransformation(PatternTransformation, abc.ABC):
+class SingleStateTransformation(PatternTransformation[SDFGState], abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within a single SDFG state.
     New transformations that extend this class must contain static ``PatternNode`` fields that represent the
@@ -578,7 +614,7 @@ class SingleStateTransformation(PatternTransformation, abc.ABC):
 
 
 @make_properties
-class MultiStateTransformation(PatternTransformation, abc.ABC):
+class MultiStateTransformation(PatternTransformation[ControlFlowRegion], abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within an SDFG state machine.
     New transformations that extend this class must contain static ``PatternNode``-annotated fields that represent the
@@ -686,6 +722,12 @@ class PatternNode(Generic[T]):
         state: SDFGState = t_graph.node(state_id)
         return state.node(node_id)
 
+    if TYPE_CHECKING:
+        # Assigning a node on an instance shadows the descriptor (it defines no ``__set__`` at run time, so it stays
+        # a non-data descriptor); the checkers are told what such an assignment may carry.
+
+        def __set__(self, instance: PatternTransformation, value: T) -> None: ...
+
 
 def carry_over_connectors(state: SDFGState, node: nd.LibraryNode, expansion: nd.CodeNode) -> None:
     """Add to ``expansion`` the wired connectors a pass added to ``node`` (e.g., a GPU stream).
@@ -702,6 +744,51 @@ def carry_over_connectors(state: SDFGState, node: nd.LibraryNode, expansion: nd.
             expansion.add_out_connector(conn, dtype=ctype)
 
 
+def adopt_top_level_schedule(expansion: SDFG, schedule: ScheduleType) -> None:
+    """Give the ``Default`` top-level maps and library nodes of an expansion, through top-level nested SDFGs, the
+    expanded node's ``schedule``: they ARE the node, not scopes nested under it. Inferred as nested, a top-level
+    Einsum's BatchedMatMul was ``Sequential`` and ran its batch on one thread.
+
+    :param expansion: the nested SDFG of an expansion.
+    :param schedule: the schedule of the library node it replaces.
+    """
+    for block in expansion.nodes():
+        if not isinstance(block, SDFGState):
+            continue
+        scopes = block.scope_dict()
+        for inner in block.nodes():
+            if scopes[inner] is not None:
+                continue
+            if isinstance(inner, (nd.EntryNode, nd.LibraryNode)) and inner.schedule is ScheduleType.Default:
+                inner.schedule = schedule
+            elif isinstance(inner, nd.NestedSDFG):
+                adopt_top_level_schedule(inner.sdfg, schedule)
+
+
+def share_out_no_small_axis(expansion: SDFG) -> None:
+    """Share out the leading ``SMALL`` axes of the ``CPU_Multicore`` maps a library expansion just made together with
+    the first larger one, as
+    :class:`~dace.transformation.passes.cpu_specialization.sequentialize_small_axes.SequentializeSmallAxes` does
+    for the maps that exist before code generation. A library node expands at code generation, after that
+    pass: velocity_tendencies at one block filled each ``(nblks, nlev, nproma)`` temporary in a map shared out
+    over ``nblks``, on one thread. A literal extent below ``SMALL_CONSTANT_EXTENT`` is ``SMALL`` too.
+
+    :param expansion: the nested SDFG of an expansion, already in its parent and with its schedules inferred.
+    """
+    # Avoid import loop
+    from dace.transformation.helpers import share_out_past_leading_small_axes
+
+    resolver = st.SymbolResolver()
+    candidates = [
+        (node, state)
+        for state in expansion.states()
+        for node in state.nodes()
+        if isinstance(node, nd.MapEntry) and node.map.schedule == ScheduleType.CPU_Multicore
+    ]
+    for entry, state in candidates:
+        share_out_past_leading_small_axes(state, entry, resolver)
+
+
 @make_properties
 class ExpandTransformation(PatternTransformation):
     """
@@ -712,6 +799,16 @@ class ExpandTransformation(PatternTransformation):
 
     This is an internal interface used to track the expansion of library nodes.
     """
+
+    #: The expansion emits device code and must therefore sit INSIDE a kernel, rather than being a
+    #: call host code issues. Only the expansion knows: a cub block reduce refuses to expand outside
+    #: a kernel, while the device-wide reduce next to it in the same library is a host-issued call.
+    #: Offloading reads this to decide whether a map around the node is a kernel or a host loop.
+    runs_inside_kernel = False
+
+    #: The expansion builds further library nodes, which ``set_fast_implementations`` must then pick
+    #: implementations for too (TensorDot's TTGT emits transposes and a Gemm).
+    composite = False
 
     @classmethod
     def expressions(clc):
@@ -725,7 +822,8 @@ class ExpandTransformation(PatternTransformation):
         return str(self._match_node)
 
     @staticmethod
-    def expansion(node: nd.LibraryNode, parent_state: SDFGState, parent_sdfg: SDFG, *args, **kwargs):
+    def expansion(*args: Any, **kwargs: Any) -> Any:
+        # Open signature on purpose: every expansion takes its own node type (and its own extra keywords).
         raise NotImplementedError("Must be implemented by subclass")
 
     @staticmethod
@@ -734,7 +832,11 @@ class ExpandTransformation(PatternTransformation):
 
     def apply(self, state, sdfg, *args, **kwargs):
         node = state.node(self.subgraph[type(self)._match_node])
-        expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
+        # Read while the node is still in place: the expansion is inferred as the nested SDFG it becomes.
+        enclosing = infer_types.enclosing_schedules(state, node)
+        # Expansions build their graphs from strings; parse the parent's symbols at their declared dtypes.
+        with symbolic.serialization_symbol_dtypes(sdfg.symbols, inherit=True):
+            expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
             # Connector names only: a type inferred for the library node (a scalar for a one-element
             # memlet) no longer holds once the connector stands for the whole container it is connected to
@@ -776,7 +878,9 @@ class ExpandTransformation(PatternTransformation):
         # Fix nested schedules and aliasing
         if isinstance(expansion, nd.NestedSDFG):
             dealias.integrate_nested_sdfg(expansion.sdfg)
-            infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [node.schedule], True)
+            adopt_top_level_schedule(expansion.sdfg, node.schedule)
+            infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [*enclosing, node.schedule], True)
+            share_out_no_small_axis(expansion.sdfg)
 
         type(self).postprocessing(sdfg, state, expansion)
 
@@ -1067,9 +1171,7 @@ class SubgraphTransformation(TransformationBase):
 
     @staticmethod
     def from_json(json_obj: dict[str, Any], context: dict[str, Any] = None) -> "SubgraphTransformation":
-        xform = next(
-            ext for ext in SubgraphTransformation.subclasses_recursive() if ext.__name__ == json_obj["transformation"]
-        )
+        xform = transformation_by_name(json_obj["transformation"], SubgraphTransformation)
 
         # Reconstruct transformation
         ret = xform()
@@ -1122,7 +1224,7 @@ def _subgraph_transformation_extract_sdfg_arg(*args) -> SDFG:
     raise TypeError(f'Unrecognized graph type "{type(subgraph).__name__}"')
 
 
-def single_level_sdfg_only(cls: PassT) -> PassT:
+def single_level_sdfg_only(cls: type[PassT]) -> type[PassT]:
 
     for function_name in ["apply_pass", "apply_to"]:
         _make_function_blocksafe(cls, function_name, lambda *args: args[1])

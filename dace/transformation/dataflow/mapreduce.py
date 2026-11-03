@@ -8,6 +8,7 @@ from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
+from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 
@@ -66,6 +67,19 @@ class MapReduceFusion(pm.SingleStateTransformation):
             return False
         if any(dest != reduce_node for _, _, dest, _, memlet in graph.out_edges(in_array)):
             return False
+
+        # Fused, the map accumulates into the output (seeded with the identity ahead of it), so nothing ahead of the
+        # reduction may read the output: not the map itself, nor a node the reduction does not precede.
+        reads, _ = mfhelper.scope_accesses(graph, graph.entry_node(tmap_exit), tmap_exit)
+        if any(name is None or name == out_data for name, _ in reads):
+            return False
+        for node in graph.data_nodes():
+            if (
+                node.data == out_data
+                and graph.out_degree(node) > 0
+                and not mfhelper.is_node_reachable_from(graph, reduce_node, node)
+            ):
+                return False
 
         # ``apply`` rewrites whichever in-edge of the exit carries the intermediate, and does not care
         # which node produced it -- so this check has to look at the same edge set. Reading only the
@@ -231,6 +245,11 @@ class MapWCRFusion(pm.SingleStateTransformation):
         tmap_exit = self.tmap_exit
         in_array = self.in_array
         rmap_entry = self.rmap_out_entry
+
+        # ``apply`` fuses the collapsed reduction nest with the map unchecked: their iteration spaces must agree.
+        collapsed = list(rmap_entry.map.range) + list(self.rmap_in_entry.map.range)
+        if sorted(map(str, collapsed)) != sorted(map(str, tmap_exit.map.range)):
+            return False
 
         # Make sure that the array is only accessed by the map and the reduce
         if any(src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)):

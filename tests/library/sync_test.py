@@ -57,7 +57,7 @@ def stream_barrier(name: str, connect: bool) -> tuple[dace.SDFG, dace.SDFGState,
 
 @pytest.mark.parametrize("backend", ["cuda", "hip"])
 def test_a_stream_barrier_waits_for_its_connected_stream_on_the_host(backend: str):
-    _, state, sync = stream_barrier(f"sync_stream_{backend}", connect=True)
+    sdfg, state, sync = stream_barrier(f"sync_stream_{backend}", connect=True)
     sync.expand(state, backend.upper())
     (tasklet,) = [n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)]
     assert tasklet.side_effects

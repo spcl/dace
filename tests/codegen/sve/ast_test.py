@@ -73,6 +73,24 @@ def test_compare_scalar_vector():
     assert "svcmplt" in code
 
 
+def test_scalar_input_is_read_through_its_connector():
+    """The SVE unparser types every name through the tasklet's connectors, so a scalar read that
+    the readable CPU generator inlines as ``alpha[0]`` has no type and aborts code generation."""
+
+    @dace.program
+    def program(alpha: dace.float64, X: dace.float64[N], Y: dace.float64[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << alpha
+                x << X[i]
+                y >> Y[i]
+                y = a * x
+
+    code = get_code(program)
+
+    assert "svdup_f64(a)" in code, code
+
+
 def test_if_block():
 
     @dace.program
@@ -171,3 +189,26 @@ if __name__ == "__main__":
     test_assign_new_variable()
     test_math_functions()
     test_fused_operations()
+
+
+def test_an_if_keeps_every_brace_outside_its_comments():
+
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[N]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                if a > 0.5:
+                    b = a
+                elif a > 0.25:
+                    b = 2 * a
+                else:
+                    b = 0.0
+
+    code = get_code(program)
+
+    lines = code.splitlines()
+    assert not [line for line in lines if "//" in line and "{" in line.split("//", 1)[1]]
+    braces = "".join(line.split("//", 1)[0] for line in lines)
+    assert braces.count("{") == braces.count("}")

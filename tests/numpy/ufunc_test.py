@@ -208,6 +208,31 @@ def test_ufunc_rint_u(A: dace.uint32[10]):
     return np.rint(A)
 
 
+def test_ufunc_rint_halfway():
+    """np.rint rounds halfway cases to the even integer, which C's round does not."""
+
+    @dace.program
+    def rint_f64(A: dace.float64[10]):
+        return np.rint(A)
+
+    @dace.program
+    def rint_f32(A: dace.float32[10]):
+        return np.rint(A)
+
+    @dace.program
+    def rint_c128(A: dace.complex128[10]):
+        return np.rint(A)
+
+    halfway = np.array([-3.5, -2.5, -1.5, -0.5, 0.5, 1.5, 2.5, 3.5, 2.4, -2.6])
+    for program, value in (
+        (rint_f64, halfway),
+        (rint_f32, halfway.astype(np.float32)),
+        (rint_c128, halfway + 1j * halfway[::-1]),
+    ):
+        result = program(value.copy())
+        assert np.array_equal(result, np.rint(value))
+
+
 @compare_numpy_output(check_dtype=True)
 def test_ufunc_sign_c(A: dace.complex64[10]):
     return np.sign(A)
@@ -1146,7 +1171,7 @@ def test_ufunc_modf_c(A: dace.complex64[10]):
 
 @compare_numpy_output(check_dtype=True)
 def test_ufunc_modf_f(A: dace.float32[10]):
-    Q, R = np.modfd(A)
+    Q, R = np.modf(A)
     return Q, R
 
 
@@ -1290,6 +1315,7 @@ if __name__ == "__main__":
     test_ufunc_rint_c()
     test_ufunc_rint_f()
     test_ufunc_rint_u()
+    test_ufunc_rint_halfway()
     test_ufunc_sign_c()
     test_ufunc_sign_f()
     test_ufunc_sign_u()

@@ -1,0 +1,83 @@
+name: dace-fortran
+
+# ICON velocity tendencies end to end: dace-fortran parses the Fortran, ConfigPropagation bakes the namelist
+# configuration into one SDFG per combination, and every variant is parallelized and compared against gfortran
+# (tests/corpus/velocity). On the CPU the comparison is bit for bit; the GPU stage offloads the same variants and checks
+# their structure.
+
+on:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: 1 # sync without updating uv.lock
+  UV_NO_DEV: 1 # don't install dev dependency group by default
+  # The dace-fortran ref the frontend comes from; v1.1a1 is the first one on the symbol repository.
+  DACE_FORTRAN_REF: v1.1a1
+  LLVM_VERSION: '22'
+  OMPI_MCA_pml: ob1
+  OMPI_MCA_btl: self,vader
+  UCX_VFS_ENABLE: n
+  HWLOC_COMPONENTS: -gl
+
+jobs:
+  velocity-tendencies:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: actions/checkout@v7
+      with:
+        repository: spcl/dace-fortran
+        ref: ${{ env.DACE_FORTRAN_REF }}
+        path: dace-fortran
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: '3.14'
+        enable-cache: true
+    - name: Install LLVM / MLIR / flang and the Fortran toolchain
+      run: |
+        if command -v flang-new-$LLVM_VERSION >/dev/null; then echo "/usr/lib/llvm-$LLVM_VERSION/bin" >> "$GITHUB_PATH"; exit 0; fi
+        echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null
+        sudo dpkg-reconfigure man-db
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+        sudo add-apt-repository -y "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-$LLVM_VERSION main"
+        sudo apt-get update
+        sudo apt-get install -y \
+          llvm-$LLVM_VERSION-dev libmlir-$LLVM_VERSION-dev mlir-$LLVM_VERSION-tools libflang-$LLVM_VERSION-dev \
+          flang-$LLVM_VERSION clang-$LLVM_VERSION gfortran cmake ninja-build \
+          libyaml-dev libblas-dev libopenblas-dev liblapacke-dev
+        echo "/usr/lib/llvm-$LLVM_VERSION/bin" >> "$GITHUB_PATH"
+        command -v flang-new-$LLVM_VERSION || sudo ln -sf /usr/lib/llvm-$LLVM_VERSION/bin/flang-$LLVM_VERSION /usr/local/bin/flang-new-$LLVM_VERSION
+    - name: Install DaCe, and dace-fortran over it
+      run: |
+        uv sync --group testing
+        # --no-deps: dace-fortran pins a DaCe commit, and this job tests the DaCe of this checkout
+        uv pip install --no-deps -e ./dace-fortran
+        uv pip install "fparser>0.2" nanobind networkx meson
+        echo "DACE_FORTRAN_BUILD_DIR=$RUNNER_TEMP/bridge" >> "$GITHUB_ENV"
+    - name: Build the HLFIR bridge
+      run: uv run python -c "import dace_fortran; dace_fortran.SDFGBuilder"
+    - name: Velocity tendencies pipeline
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        export DACE_FORTRAN_ROOT="$PWD/dace-fortran"
+        export PATH="$PATH:/usr/local/cuda/bin"
+        ulimit -s 65536 || true
+        uv run pytest --tb=short --timeout_method thread --timeout=3600 -p no:cacheprovider -m "not gpu" \
+          tests/corpus/velocity/velocity_pipeline_test.py

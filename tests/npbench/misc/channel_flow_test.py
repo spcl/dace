@@ -56,7 +56,7 @@ def build_up_b(
 
 @dace.program
 def pressure_poisson_periodic(p: dace.float64[ny, nx], dx: dace.float64, dy: dace.float64, b: dace.float64[ny, nx]):
-    pn = np.empty_like(p)
+    pn = np.zeros_like(p)
 
     for q in range(nit):
         pn[:] = p.copy()
@@ -223,7 +223,7 @@ def numpy_channel_flow(nit, u, v, dt, dx, dy, p, rho, nu, F):
         return b
 
     def pressure_poisson_periodic(nit, p, dx, dy, b):
-        pn = np.empty_like(p)
+        pn = np.zeros_like(p)
 
         for q in range(nit):
             pn = p.copy()

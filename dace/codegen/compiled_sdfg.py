@@ -131,11 +131,13 @@ class ReloadableDLL:
                 #  and then try to load that. We only do the copy if the new new name is
                 #  free. It seems that at least on LINUX there is some issue if we
                 #  overwrite a file that already exists.
+                #  An existing copy is skipped even when it is not loaded: it may hold an older build.
                 lib_filename = self._library_filename + f"_{counter}"
                 counter += 1
-                if pathlib.Path(lib_filename).exists():
+                while pathlib.Path(lib_filename).exists():
                     assert pathlib.Path(lib_filename).is_file()
-                    continue
+                    lib_filename = self._library_filename + f"_{counter}"
+                    counter += 1
 
                 # The file name is not taken, so make a copy. There might be a race condition
                 #  here in the presence of multiple processes.
@@ -187,6 +189,15 @@ class ReloadableDLL:
 
     def __deepcopy__(self, memodict={}):
         raise RuntimeError(f"Can not copy ReloadableDLL({self._library_filename})")
+
+
+def init_argument_values(argtuple: Sequence[Any]) -> tuple[Any, ...]:
+    """The plain Python values behind a marshalled ``__dace_init`` argument tuple.
+
+    :param argtuple: Marshalled init arguments, as built by ``CompiledSDFG.construct_arguments``.
+    :returns: One comparable value per argument.
+    """
+    return tuple(arg.value if isinstance(arg, ctypes._SimpleCData) else arg for arg in argtuple)
 
 
 class CompiledSDFG:
@@ -245,6 +256,15 @@ class CompiledSDFG:
         # Present exactly when a GPU target emitted its init/exit pair, which is a sharper test than
         # the ``has_gpu_code`` heuristic below.
         self._gpu_last_error = self.get_exported_function("__dace_gpu_last_error", restype=ctypes.c_int)
+        # Avoid import loop
+        from dace.sdfg.symbol_repo import program_assumptions
+
+        # The orders proofs took from symbol scales, checked against the symbol values of every call
+        self._assumptions = program_assumptions(sdfg)
+        self._check_assumptions = (
+            lib.get_symbol(f"__dace_check_assumptions_{sdfg.name}", restype=ctypes.c_int) if self._assumptions else None
+        )
+        self._initarg_names: tuple[str, ...] = ()
 
         # Cache SDFG return values
         self._return_syms: dict[str, Any] = None
@@ -275,7 +295,14 @@ class CompiledSDFG:
         # Cache SDFG argument properties
         self._typedict = self._sdfg.arglist()
         self._sig = self._sdfg.signature_arglist(with_types=False, arglist=self._typedict)
-        self._free_symbols = self._sdfg.free_symbols
+        # The set the init arguments are filtered by BELOW must be the one the generated
+        # ``__dace_init_`` signature was built from -- `SDFG.init_signature` takes
+        # `used_symbols(all_symbols=False)`, the symbols the code actually needs as arguments. The
+        # wider `free_symbols` additionally carries symbols that only appear in descriptor shapes,
+        # and passing one of those hands ctypes an extra positional value that shifts every later
+        # parameter: pgemv's `GM` sorts ahead of `Px`, so `Cblacs_gridinit` received an array extent
+        # as the process-grid width and BLACS aborted the whole job.
+        self._init_symbols = self._sdfg.used_symbols(all_symbols=False)
         self._constants = self._sdfg.constants
         self.argnames = argnames
 
@@ -301,6 +328,17 @@ class CompiledSDFG:
             for _, _, aval in self._sdfg.arrays_recursive()
             if aval.lifetime == dtypes.AllocationLifetime.External
         }
+
+        # A persistent transient is allocated in ``__dace_init``, i.e. ONCE, from the first call's
+        # symbol values. When its extent names a symbol the caller supplies per call, a later call
+        # with a larger value writes past that allocation -- silent out-of-bounds, a segfault on a
+        # good day. Detected here so the per-call comparison in ``fast_call`` costs nothing for the
+        # SDFGs that cannot hit it.
+        self.reinit_on_symbol_change = any(
+            aval.lifetime == dtypes.AllocationLifetime.Persistent and symbolic.issymbolic(aval.total_size)
+            for _, _, aval in self._sdfg.arrays_recursive()
+        )
+        self.init_symbol_values: tuple[Any, ...] | None = None
 
     def get_exported_function(self, name: str, restype=None) -> Callable[..., Any] | None:
         """
@@ -439,11 +477,30 @@ class CompiledSDFG:
     def _initialize(self, argtuple):
         if self._init is not None:
             res = ctypes.c_void_p(self._init(*argtuple))
-            if res == ctypes.c_void_p(0):
+            # ctypes pointers compare by identity, so the old ``== c_void_p(0)`` never matched and a
+            # failed initializer went on to be called with a null handle.
+            if res.value is None:
                 raise RuntimeError("DaCe application failed to initialize")
 
             self._libhandle = res
             self._initialized = True
+            self.init_symbol_values = init_argument_values(argtuple)
+
+    def reinitialize(self, argtuple):
+        """Free the init-time allocations and redo them for a new set of symbol values.
+
+        :param argtuple: The marshalled init arguments of the call that changed the symbols.
+        """
+        if self._exit is not None and self._initialized is True:
+            res: int = self._exit(self._libhandle)
+            self._initialized = False
+            if res != 0:
+                raise RuntimeError(
+                    f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(res)}'
+                )
+        self._initialized = False
+        self._libhandle = ctypes.c_void_p(0)
+        self._initialize(argtuple)
 
     def initialize(self, *args, **kwargs):
         """
@@ -608,7 +665,14 @@ with open(r"{temp_path}", "wb") as f:
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
                 self._lib.load()
+            # Checked with the library loaded: a failed call unloads it
+            if self._check_assumptions is not None:
+                self._raise_on_broken_assumption(initargs)
+            if self._initialized is False:
                 self._initialize(initargs)
+            elif self.reinit_on_symbol_change and init_argument_values(initargs) != self.init_symbol_values:
+                # The persistent (init-time) allocations were sized by the previous call's symbols.
+                self.reinitialize(initargs)
 
             with hooks.invoke_compiled_sdfg_call_hooks(self, callargs):
                 if self.do_not_execute is False:
@@ -627,6 +691,24 @@ with open(r"{temp_path}", "wb") as f:
             self._lib.unload()
             self._initialized = False
             raise
+
+    def _raise_on_broken_assumption(self, initargs: Sequence[Any]) -> None:
+        """Raises if the symbol values break a declared assumption or an order a proof took from the symbol scales."""
+        broken = self._check_assumptions(*initargs)
+        if broken == 0:
+            return
+        relation = self._assumptions[broken - 1]
+        values = ", ".join(
+            f"{name}={getattr(value, 'value', value)}"
+            for name, value in zip(self._initarg_names, initargs)
+            if name in symbolic.relation_names(relation)
+        )
+        from dace.sdfg.symbol_repo import relation_text
+
+        raise ValueError(
+            f'"{self._sdfg.name}" was optimized assuming {relation_text(relation)} (declared, or SMALL symbols being '
+            f"much smaller than the others), which does not hold for {values}"
+        )
 
     def __del__(self):
         if self._initialized is True:
@@ -666,6 +748,15 @@ with open(r"{temp_path}", "wb") as f:
                     f"The arguments were passed as both positional and keyword arguments: {set(positional_arguments.keys()).intersection(kwargs.keys())}"
                 )
             kwargs.update(positional_arguments)
+
+        # A shape symbol of a non-transient container is in the signature even when the code does not read it, so a
+        # caller passing only the arrays has it inferred from them, as a call through the frontend does.
+        missing_symbols = {name for name in self._sig if name not in kwargs and name in self._sdfg.symbols}
+        if missing_symbols:
+            from dace.frontend.python.parser import infer_symbols_from_datadescriptor
+
+            inferred = infer_symbols_from_datadescriptor(self._sdfg, kwargs, exclude=set(kwargs))
+            kwargs.update({name: value for name, value in inferred.items() if name in missing_symbols})
 
         # NOTE: This might invalidate the elements associated to the return values of
         #   all argument vectors that were created before.
@@ -714,7 +805,7 @@ with open(r"{temp_path}", "wb") as f:
             for aval, atype, aname in zip(arglist, argtypes, argnames)
         )
 
-        symbols = self._free_symbols
+        symbols = self._init_symbols
         callparams = tuple(
             (carg, aname)
             for arg, carg, aname in zip(arglist, cargs, argnames)
@@ -722,6 +813,7 @@ with open(r"{temp_path}", "wb") as f:
         )
         newargs = tuple(carg for carg, _aname in callparams)
         initargs = tuple(carg for carg, aname in callparams if aname in symbols)
+        self._initarg_names = tuple(aname for _carg, aname in callparams if aname in symbols)
 
         return (newargs, initargs)
 

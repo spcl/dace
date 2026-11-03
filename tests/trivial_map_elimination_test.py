@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
 
-import networkx as nx
+import networkx
 
 import dace
 from dace.transformation.dataflow import TrivialMapElimination
@@ -120,6 +120,96 @@ def trivial_map_pseudo_init_sdfg():
 
     sdfg.validate()
     return sdfg
+
+
+def ordered_trivial_map_sdfg():
+    """``A[0] = 1`` (access node A1), then a one-iteration map reading ``A[0]`` through a second access node A2 and
+    writing ``B[0]``, then ``A[0] = 2`` through A3; the two hazards on A are held only by empty ordering edges
+    ``A1 -> map entry`` and ``map exit -> writer of A3``."""
+    sdfg = dace.SDFG("trivial_map_ordering")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    first = state.add_tasklet("first", {}, {"o"}, "o = 1.0")
+    a1 = state.add_write("A")
+    state.add_edge(first, "o", a1, None, dace.Memlet("A[0]"))
+    entry, exit_ = state.add_map("map", dict(i="0:1"))
+    read = state.add_tasklet("read", {"x"}, {"y"}, "y = x")
+    state.add_memlet_path(state.add_read("A"), entry, read, dst_conn="x", memlet=dace.Memlet("A[0]"))
+    state.add_memlet_path(read, exit_, state.add_write("B"), src_conn="y", memlet=dace.Memlet("B[0]"))
+    state.add_nedge(a1, entry, dace.Memlet())
+    last = state.add_tasklet("last", {}, {"o"}, "o = 2.0")
+    state.add_edge(last, "o", state.add_write("A"), None, dace.Memlet("A[0]"))
+    state.add_nedge(exit_, last, dace.Memlet())
+    sdfg.validate()
+    return sdfg, state, first, read, last
+
+
+def test_removing_a_trivial_map_keeps_the_order_its_empty_edges_held():
+    sdfg, state, first, read, last = ordered_trivial_map_sdfg()
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    assert not any(isinstance(n, dace.nodes.MapEntry) for n in state.nodes())
+    sdfg.validate()
+    assert networkx.has_path(state._nx, first, read), "the write of A[0] no longer precedes its read"
+    assert networkx.has_path(state._nx, read, last), "the read of A[0] no longer precedes its overwrite"
+
+
+def data_ordered_trivial_map_sdfg():
+    """``t = 2 * u`` (``first``), then a one-iteration map whose ``use`` reads ``t`` and whose ``bump`` updates ``u``
+    in place. Only the map entry orders ``bump`` after ``first``'s read of ``u``: ``bump`` takes no input from ``t``
+    (warpx_boris_push on GPU, whose ``uz_p`` read the updated ``uz``)."""
+    sdfg = dace.SDFG("trivial_map_data_ordering")
+    for name in ("u", "t", "b"):
+        sdfg.add_array(name, [1], dace.float64)
+    state = sdfg.add_state()
+    u_in = state.add_read("u")
+    first = state.add_tasklet("first", {"x"}, {"y"}, "y = 2 * x")
+    t = state.add_access("t")
+    state.add_edge(u_in, None, first, "x", dace.Memlet("u[0]"))
+    state.add_edge(first, "y", t, None, dace.Memlet("t[0]"))
+    entry, exit_ = state.add_map("map", dict(i="0:1"))
+    use = state.add_tasklet("use", {"x"}, {"y"}, "y = x + 1")
+    state.add_memlet_path(t, entry, use, dst_conn="x", memlet=dace.Memlet("t[0]"))
+    state.add_memlet_path(use, exit_, state.add_write("b"), src_conn="y", memlet=dace.Memlet("b[0]"))
+    bump = state.add_tasklet("bump", {"x"}, {"y"}, "y = x + 1")
+    state.add_memlet_path(u_in, entry, bump, dst_conn="x", memlet=dace.Memlet("u[0]"))
+    state.add_memlet_path(bump, exit_, state.add_write("u"), src_conn="y", memlet=dace.Memlet("u[0]"))
+    sdfg.validate()
+    return sdfg, state, first, bump
+
+
+def test_removing_a_trivial_map_keeps_the_order_its_data_inputs_held():
+    sdfg, state, first, bump = data_ordered_trivial_map_sdfg()
+    assert networkx.has_path(state._nx, first, bump)
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    sdfg.validate()
+    assert networkx.has_path(state._nx, first, bump), "the read of u no longer precedes its in-place update"
+
+
+def test_removing_a_trivial_map_orders_a_nested_scope_by_its_entry():
+    """The in-place update of ``u`` sits in a nested map; its order after ``first`` must attach to the nested entry."""
+    sdfg = dace.SDFG("trivial_map_nested_data_ordering")
+    for name, size in (("u", 2), ("t", 1), ("b", 1)):
+        sdfg.add_array(name, [size], dace.float64)
+    state = sdfg.add_state()
+    u_in = state.add_read("u")
+    first = state.add_tasklet("first", {"x"}, {"y"}, "y = 2 * x")
+    t = state.add_access("t")
+    state.add_edge(u_in, None, first, "x", dace.Memlet("u[0]"))
+    state.add_edge(first, "y", t, None, dace.Memlet("t[0]"))
+    entry, exit_ = state.add_map("map", dict(i="0:1"))
+    use = state.add_tasklet("use", {"x"}, {"y"}, "y = x + 1")
+    state.add_memlet_path(t, entry, use, dst_conn="x", memlet=dace.Memlet("t[0]"))
+    state.add_memlet_path(use, exit_, state.add_write("b"), src_conn="y", memlet=dace.Memlet("b[0]"))
+    bump = state.add_tasklet("bump", {"x"}, {"y"}, "y = x + 1")
+    inner_entry, inner_exit = state.add_map("inner", dict(j="0:2"))
+    state.add_memlet_path(u_in, entry, inner_entry, bump, dst_conn="x", memlet=dace.Memlet("u[j]"))
+    state.add_memlet_path(bump, inner_exit, exit_, state.add_write("u"), src_conn="y", memlet=dace.Memlet("u[j]"))
+    sdfg.validate()
+    assert sdfg.apply_transformations(TrivialMapElimination) == 1
+    sdfg.validate()
+    assert state.scope_dict()[bump] is inner_entry
+    assert networkx.has_path(state._nx, first, inner_entry), "the read of u no longer precedes its in-place update"
 
 
 class TrivialMapEliminationTest(unittest.TestCase):
@@ -279,7 +369,7 @@ def test_an_ordering_edge_into_the_removed_map_still_orders_its_body():
 
     assert sdfg.apply_transformations(TrivialMapElimination) == 1
     sdfg.validate()
-    assert nx.has_path(state.nx, first, t1)
+    assert networkx.has_path(state.nx, first, t1)
 
 
 def test_a_body_node_the_entry_reaches_only_by_an_ordering_edge_stays_after_the_inputs():
@@ -305,7 +395,7 @@ def test_a_body_node_the_entry_reaches_only_by_an_ordering_edge_stays_after_the_
 
     assert sdfg.apply_transformations(TrivialMapElimination) == 1
     sdfg.validate()
-    assert nx.has_path(state.nx, c_first, t2)
+    assert networkx.has_path(state.nx, c_first, t2)
 
 
 def test_an_ordering_edge_out_of_the_removed_map_still_orders_its_body():
@@ -325,7 +415,7 @@ def test_an_ordering_edge_out_of_the_removed_map_still_orders_its_body():
 
     assert sdfg.apply_transformations(TrivialMapElimination) == 1
     sdfg.validate()
-    assert nx.has_path(state.nx, t1, t3)
+    assert networkx.has_path(state.nx, t1, t3)
 
 
 def test_the_order_reaches_a_nested_scope_at_its_entry():
@@ -347,12 +437,15 @@ def test_the_order_reaches_a_nested_scope_at_its_entry():
 
     assert sdfg.apply_transformations(TrivialMapElimination) == 1
     sdfg.validate()
-    assert nx.has_path(state.nx, first, t1)
+    assert networkx.has_path(state.nx, first, t1)
     assert state.scope_dict()[t1] is ie
     assert all(e.src is ie for e in state.in_edges(t1))
 
 
 if __name__ == "__main__":
+    test_removing_a_trivial_map_keeps_the_order_its_empty_edges_held()
+    test_removing_a_trivial_map_keeps_the_order_its_data_inputs_held()
+    test_removing_a_trivial_map_orders_a_nested_scope_by_its_entry()
     test_an_ordering_edge_into_the_removed_map_still_orders_its_body()
     test_a_body_node_the_entry_reaches_only_by_an_ordering_edge_stays_after_the_inputs()
     test_an_ordering_edge_out_of_the_removed_map_still_orders_its_body()

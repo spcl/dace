@@ -8,12 +8,13 @@ from dace import dtypes
 from dace import sdfg as sd
 from dace import subsets as sbs
 from dace.memlet import Memlet
+from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg import dealias
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SymbolResolver
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import transformation
 
@@ -76,14 +77,11 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 # Get inputs and outputs of the nested SDFG
                 map_exit = state.exit_node(node)
-                inputs = set()
-                outputs = set()
-                for edge in state.out_edges(node):
-                    if edge.data.data is not None:
-                        inputs.add(edge.data.data)
-                for edge in state.in_edges(map_exit):
-                    if edge.data.data is not None:
-                        outputs.add(edge.data.data)
+                inputs = OrderedSet(edge.data.data for edge in state.out_edges(node) if edge.data.data is not None)
+                outputs = OrderedSet(edge.data.data for edge in state.in_edges(map_exit) if edge.data.data is not None)
+
+                # The windows are united inside the map, which runs if they are accessed
+                facts = SymbolResolver().facts_in_scope(state, node)
 
                 # Create the nested SDFG and add all symbols
                 sym_mapping = {s: s for s in list(state.sdfg.symbols.keys()) + node.map.params}
@@ -102,8 +100,12 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 start_state = nsdfg.sdfg.add_state(is_start_block=True)
                 copy_mapping = {}
+                # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+                # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+                # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+                memo = {}
                 for n in body:
-                    new_n = copy.deepcopy(n)
+                    new_n = copy.deepcopy(n, memo)
                     start_state.add_node(new_n)
                     copy_mapping[n] = new_n
 
@@ -114,7 +116,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     if name is None or boundary_edge.data.subset is None:
                         continue
                     if name in windows:
-                        windows[name] = sbs.union(windows[name], boundary_edge.data.subset)
+                        windows[name] = sbs.union(windows[name], boundary_edge.data.subset, facts)
                     else:
                         windows[name] = copy.deepcopy(boundary_edge.data.subset)
 

@@ -2,12 +2,16 @@
 import math
 
 import numpy as np
+import pytest
 from scipy.signal import convolve2d
 
 import dace
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.state import StateSubgraphView
 from dace.transformation.dataflow import MapCollapse, MapExpansion, OTFMapFusion
 from dace.transformation.dataflow.otf_map_fusion import advanced_replace
+from dace.transformation.helpers import nest_state_subgraph
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -330,6 +334,18 @@ def test_trivial_fusion_nested_sdfg():
     res_fused = np.zeros((128,), dtype=np.int64)
     sdfg(A=nums, B=res_fused)
     assert (res == res_fused).all()
+
+
+def test_trivial_fusion_nested_sdfg_is_registered():
+    """The nested SDFG cloned out of the producer map resolves its ``cfg_id`` after fusion."""
+    sdfg = trivial_fusion_nested_sdfg.to_sdfg()
+    sdfg.simplify()
+    assert sdfg.apply_transformations(OTFMapFusion) == 1
+
+    nested = [n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert nested, "the fused map must still hold the cloned nested SDFG"
+    for nsdfg in nested:
+        assert sdfg.cfg_list[nsdfg.cfg_id] is nsdfg
 
 
 @dace.program
@@ -713,6 +729,8 @@ def hdiff(
 
 def test_hdiff():
     sdfg = hdiff.to_sdfg()
+    # np.where is a Merge library node, a map only once expanded
+    sdfg.expand_library_nodes()
     sdfg.simplify()
     assert count_maps(sdfg) == 20
 
@@ -730,6 +748,173 @@ def test_hdiff():
     sdfg(in_field=in_field, coeff=coeff, out_field=out_field_)
 
     assert np.allclose(out_field, out_field_)
+
+
+@dace.program
+def read_ahead_war(A: dace.float64[20], B: dace.float64[20]):
+    tmp = dace.define_local([19], dtype=A.dtype)
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            a << A[i + 1]
+            t >> tmp[i]
+
+            t = a * 2.0
+
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            t << tmp[i]
+            b << B[i]
+            a >> A[i]
+
+            a = t + b
+
+
+@dace.program
+def read_ahead_no_conflict(A: dace.float64[20], B: dace.float64[20], C: dace.float64[20]):
+    tmp = dace.define_local([19], dtype=A.dtype)
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            a << A[i + 1]
+            t >> tmp[i]
+
+            t = a * 2.0
+
+    for i in dace.map[0:19]:
+        with dace.tasklet:
+            t << tmp[i]
+            b << B[i]
+            c >> C[i]
+
+            c = t + b
+
+
+def test_read_ahead_write_is_not_fused():
+    """The producer reads ``A[i + 1]``, the consumer writes ``A[i]``: an anti-dependence that the
+    intermediate transient orders. Fused, both land in one map where lane ``i`` reads what lane
+    ``i + 1`` writes, so the transformation must refuse. The conflict-free twin -- identical apart
+    from the consumer writing ``C`` -- must still fuse, which is what makes this a test of the
+    hazard guard rather than of the shape."""
+    sdfg = read_ahead_war.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 2
+
+    assert sdfg.apply_transformations(OTFMapFusion) == 0, "the read-ahead anti-dependence must refuse fusion"
+    assert count_maps(sdfg) == 2
+
+    free = read_ahead_no_conflict.to_sdfg()
+    free.simplify()
+    assert count_maps(free) == 2
+    assert free.apply_transformations(OTFMapFusion) == 1, "non-vacuity: the same shape fuses when nothing clashes"
+    assert count_maps(free) == 1
+
+    rng = np.random.default_rng(20260823)
+    A = rng.random(20)
+    B = rng.random(20)
+    ref = A.copy()
+    ref[0:19] = A[1:20] * 2.0 + B[0:19]  # whole-RHS-then-assign, the semantics the two maps keep
+
+    got = A.copy()
+    sdfg(A=got, B=B)
+    assert np.allclose(got, ref)
+
+
+@dace.program
+def seidel_2d_like_war(A: dace.float64[N, N]):
+    """polybench seidel_2d reduced to the OTF hazard: the producer map reads
+    ``A[i, j + 2]`` and the consumer map writes ``A[i, j + 1]``. The intermediate
+    transient orders them, but fusing into one map creates a lane-crossing WAR."""
+    tmp = dace.define_local([N, N], dtype=A.dtype)
+    for i, j in dace.map[1 : N - 1, 0 : N - 3]:
+        with dace.tasklet:
+            a << A[i, j + 2]
+            t >> tmp[i, j]
+
+            t = a
+
+    for i, j in dace.map[1 : N - 1, 0 : N - 3]:
+        with dace.tasklet:
+            t << tmp[i, j]
+            a >> A[i, j + 1]
+
+            a = t
+
+
+def test_seidel_2d_like_war_refuses_fusion():
+    """The canonical seidel_2d pattern is a self-array WAR: fusing the producer
+    and consumer maps lets lane ``(i, j)`` read the value lane ``(i, j + 1)`` just
+    wrote, so OTFMapFusion must refuse."""
+    sdfg = seidel_2d_like_war.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 2
+
+    assert sdfg.apply_transformations(OTFMapFusion) == 0, "seidel_2d WAR must refuse fusion"
+    assert count_maps(sdfg) == 2
+
+    n = 8
+    A = np.random.default_rng(20260829).random((n, n))
+    ref = A.copy()
+    for i in range(1, n - 1):
+        for j in range(0, n - 3):
+            ref[i, j + 1] = ref[i, j + 2]
+
+    got = A.copy()
+    sdfg(A=got, N=n)
+    assert np.allclose(got, ref)
+
+
+@dace.program
+def masked_inplace_intermediate(rdo: dace.float64[N], eps: dace.float64, repl: dace.float64, out: dace.float64[N]):
+    """polybench correlation's stddev step: a producer defines every element of ``s``, and a later
+    map overwrites only the elements the mask selects, so the rest keep the producer's values."""
+    s = np.sqrt(rdo / N)
+    s[s <= eps] = repl
+    out[:] = s
+
+
+@dace.program
+def masked_other_intermediate(rdo: dace.float64[N], eps: dace.float64, repl: dace.float64, out: dace.float64[N]):
+    """The conflict-free twin: same producer, same mask, but the masked write lands in another array,
+    so the producer really is ``s``'s only definition."""
+    s = np.sqrt(rdo / N)
+    out[:] = np.where(s <= eps, repl, s)
+
+
+def test_second_writer_of_the_intermediate_is_not_fused():
+    """Fusion deletes the producer once the consumer stops reading it, which is sound only while
+    that producer is the intermediate's whole definition. Here a masked write reaches some elements
+    of ``s`` and leaves the rest holding what the producer wrote, so deleting it reads those
+    uninitialized -- wrong numbers on a graph that still validates."""
+    rng = np.random.default_rng(20260830)
+    n = 8
+    rdo = rng.random(n)
+    # Chosen so the mask is PARTIAL: an eps above every element writes the whole array and the bug
+    # cannot show, which is what makes the numeric half of this test load-bearing.
+    eps, repl = 0.15, 9.0
+    ref = np.sqrt(rdo / n)
+    assert 0 < np.count_nonzero(ref <= eps) < n, "the mask must be partial for this to test anything"
+    ref = np.where(ref <= eps, repl, ref)
+
+    sdfg = masked_inplace_intermediate.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 4
+    # The producer of ``rdo / N`` still fuses -- only the one that would delete ``s``'s definition
+    # is refused, so a blanket refusal would pass the numbers below and still be a regression.
+    assert sdfg.apply_transformations_repeated(OTFMapFusion) == 1
+    assert count_maps(sdfg) == 3
+
+    got = np.zeros(n)
+    sdfg(rdo=rdo.copy(), eps=eps, repl=repl, out=got, N=n)
+    assert np.allclose(got, ref), f"expected {ref}, got {got}"
+
+    free = masked_other_intermediate.to_sdfg()
+    free.simplify()
+    assert count_maps(free) == 3
+    assert free.apply_transformations_repeated(OTFMapFusion) == 2, "non-vacuity: one writer still fuses through"
+    assert count_maps(free) == 2
+
+    got = np.zeros(n)
+    free(rdo=rdo.copy(), eps=eps, repl=repl, out=got, N=n)
+    assert np.allclose(got, ref), f"expected {ref}, got {got}"
 
 
 def test_advanced_replace_nested_sdfg_symbol_mapping():
@@ -755,6 +940,375 @@ def test_advanced_replace_nested_sdfg_symbol_mapping():
     sdfg.validate()
 
 
+def producer_read_by_a_later_state() -> dace.SDFG:
+    """``T = A + 1`` feeds ``B = 2 T`` in one state, and a later state copies ``T`` into ``C``."""
+    sdfg = dace.SDFG("otf_producer_read_later")
+    for name in ("A", "B", "C"):
+        sdfg.add_array(name, [16], dace.float64)
+    sdfg.add_transient("T", [16], dace.float64)
+    first = sdfg.add_state("fused")
+    t = first.add_access("T")
+    first.add_mapped_tasklet(
+        "produce",
+        dict(i="0:16"),
+        {"a": dace.Memlet("A[i]")},
+        "o = a + 1.0",
+        {"o": dace.Memlet("T[i]")},
+        external_edges=True,
+        input_nodes={"A": first.add_read("A")},
+        output_nodes={"T": t},
+    )
+    first.add_mapped_tasklet(
+        "consume",
+        dict(j="0:16"),
+        {"x": dace.Memlet("T[j]")},
+        "y = 2.0 * x",
+        {"y": dace.Memlet("B[j]")},
+        external_edges=True,
+        input_nodes={"T": t},
+        output_nodes={"B": first.add_write("B")},
+    )
+    later = sdfg.add_state_after(first, "later")
+    later.add_mapped_tasklet(
+        "copy", dict(k="0:16"), {"x": dace.Memlet("T[k]")}, "y = x", {"y": dace.Memlet("C[k]")}, external_edges=True
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_producer_another_state_reads_is_kept():
+    """The fusion deleted the producer once the consumer in its own state stopped reading it,
+    though a later state still read the array: npbench vexx_k's scatter states then read
+    uninitialized device memory on the GPU canonicalize column."""
+    sdfg = producer_read_by_a_later_state()
+    assert sdfg.apply_transformations_repeated(OTFMapFusion) >= 1
+    writers = [n for s in sdfg.states() for n in s.data_nodes() if n.data == "T" and s.in_degree(n) > 0]
+    assert writers, "the producer of T is gone although the later state reads T"
+    sdfg.validate()
+    a = np.random.rand(16)
+    b, c = np.zeros(16), np.zeros(16)
+    sdfg(A=a, B=b, C=c)
+    assert np.allclose(b, 2.0 * (a + 1.0)) and np.allclose(c, a + 1.0)
+
+
+def producer_reading_its_own_output() -> dace.SDFG:
+    """A nested-SDFG producer updates ``T[i] = max(T[i], A[i])`` through one in/out connector, feeding ``B = 2 T``."""
+    inner = dace.SDFG("otf_inout_producer_body")
+    inner.add_symbol("i", dace.int64)
+    inner.add_array("t", [16], dace.float64)
+    inner.add_array("a", [16], dace.float64)
+    body = inner.add_state()
+    update = body.add_tasklet("update", {"x", "y"}, {"o"}, "o = max(x, y)")
+    body.add_edge(body.add_read("t"), None, update, "x", dace.Memlet("t[i]"))
+    body.add_edge(body.add_read("a"), None, update, "y", dace.Memlet("a[i]"))
+    body.add_edge(update, "o", body.add_write("t"), None, dace.Memlet("t[i]"))
+
+    sdfg = dace.SDFG("otf_producer_reading_its_own_output")
+    for name in ("A", "B"):
+        sdfg.add_array(name, [16], dace.float64)
+    sdfg.add_transient("T", [16], dace.float64)
+    init = sdfg.add_state("init")
+    init.add_mapped_tasklet("seed", dict(k="0:16"), {}, "o = 0.5", {"o": dace.Memlet("T[k]")}, external_edges=True)
+    fused = sdfg.add_state_after(init, "fused")
+    me, mx = fused.add_map("produce", dict(i="0:16"))
+    node = fused.add_nested_sdfg(inner, {"t": None, "a": None}, {"t": None}, {"i": "i"})
+    fused.add_memlet_path(fused.add_read("T"), me, node, dst_conn="t", memlet=dace.Memlet("T[i]"))
+    fused.add_memlet_path(fused.add_read("A"), me, node, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    t = fused.add_access("T")
+    fused.add_memlet_path(node, mx, t, src_conn="t", memlet=dace.Memlet("T[i]"))
+    fused.add_mapped_tasklet(
+        "consume",
+        dict(j="0:16"),
+        {"x": dace.Memlet("T[j]")},
+        "y = 2.0 * x",
+        {"y": dace.Memlet("B[j]")},
+        external_edges=True,
+        input_nodes={"T": t},
+        output_nodes={"B": fused.add_write("B")},
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_producer_reading_the_intermediate_is_not_fused():
+    """velocity_tendencies' running maximum ``__rdo0``: the copied producer would write the per-iteration
+    buffer through the connector it still reads ``T`` through, leaving one connector naming two containers."""
+    sdfg = producer_reading_its_own_output()
+    assert sdfg.apply_transformations_repeated(OTFMapFusion) == 0
+    sdfg.validate()
+    a = np.random.default_rng(20261009).random(16)
+    b = np.zeros(16)
+    sdfg(A=a, B=b)
+    assert np.allclose(b, 2.0 * np.maximum(0.5, a))
+
+
+def overwritten_producer_input(through_view):
+    """``A: t = 2 * x``; ``C: x = 5``, ordered after A; ``D: out = t + x``. A third map overwrites what the producer read
+    before the consumer runs, the producer reading ``x`` directly or through a view of it."""
+    n = 8
+    sdfg = dace.SDFG(f"otf_overwritten_producer_input_{through_view}")
+    sdfg.add_array("x", [n], dace.float64)
+    sdfg.add_array("out", [n], dace.float64)
+    sdfg.add_transient("t", [n], dace.float64)
+    state = sdfg.add_state()
+    x_in, t, x_out = state.add_read("x"), state.add_access("t"), state.add_access("x")
+    source = "x"
+    if through_view:
+        sdfg.add_view("xv", [n], dace.float64)
+        source, view = "xv", state.add_access("xv")
+        state.add_edge(x_in, None, view, "views", dace.Memlet(f"x[0:{n}]"))
+        x_in = view
+    state.add_mapped_tasklet(
+        "A",
+        {"i": f"0:{n}"},
+        {"a": dace.Memlet(f"{source}[i]")},
+        "b = 2 * a",
+        {"b": dace.Memlet("t[i]")},
+        input_nodes={source: x_in},
+        output_nodes={"t": t},
+        external_edges=True,
+    )
+    _, overwrite, _ = state.add_mapped_tasklet(
+        "C", {"i": f"0:{n}"}, {}, "o = 5.0", {"o": dace.Memlet("x[i]")}, output_nodes={"x": x_out}, external_edges=True
+    )
+    state.add_nedge(t, overwrite, dace.Memlet())
+    state.add_mapped_tasklet(
+        "D",
+        {"i": f"0:{n}"},
+        {"p": dace.Memlet("t[i]"), "q": dace.Memlet("x[i]")},
+        "r = p + q",
+        {"r": dace.Memlet("out[i]")},
+        input_nodes={"t": t, "x": x_out},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("through_view", [False, True])
+def test_a_producer_whose_input_is_overwritten_before_the_consumer_is_not_fused(through_view):
+    """cloudsc on GPU: fusion moves the producer's reads to the consumer, after the map that overwrites them, so every
+    fused element read the new ``x``. cloudsc's producer read a row view of the overwritten array."""
+    sdfg = overwritten_producer_input(through_view)
+    assert sdfg.apply_transformations(OTFMapFusion) == 0
+    x, out = np.arange(8, dtype=np.float64), np.zeros(8)
+    sdfg(x=x, out=out)
+    assert np.allclose(out, 2.0 * np.arange(8) + 5.0)
+
+
+@dace.program
+def fixed_columns_of_rows(A: dace.float64[12, 8], B: dace.float64[12]):
+    T = dace.define_local([12, 8], dtype=A.dtype)
+    for i, k in dace.map[0:12, 0:8]:
+        with dace.tasklet:
+            a << A[i, k]
+            t >> T[i, k]
+            t = a * 2.0
+    for j in dace.map[0:12]:
+        with dace.tasklet:
+            x << T[j, 4]
+            y << T[j, 7]
+            b >> B[j]
+            b = x + y
+
+
+@dace.program
+def whole_rows(A: dace.float64[12, 8], B: dace.float64[12]):
+    T = dace.define_local([12, 8], dtype=A.dtype)
+    for i, k in dace.map[0:12, 0:8]:
+        with dace.tasklet:
+            a << A[i, k]
+            t >> T[i, k]
+            t = a * 2.0
+    for j in dace.map[0:12]:
+        with dace.tasklet:
+            r << T[j, :]
+            b >> B[j]
+            b = r[0] + r[7]
+
+
+def test_a_producer_with_more_parameters_fuses_when_each_read_pins_them():
+    """``T[j, 4]`` of a ``T[i, k]`` producer pins ``i = j`` and ``k = 4``: the consumer recomputes both elements."""
+    sdfg = fixed_columns_of_rows.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 2
+    assert sdfg.apply_transformations(OTFMapFusion) == 1
+    assert count_maps(sdfg) == 1
+    A = np.random.rand(12, 8)
+    B = np.zeros(12)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, 2.0 * (A[:, 4] + A[:, 7]))
+
+
+def test_a_read_of_a_whole_row_leaves_a_producer_parameter_unsolved():
+    """``T[j, 0:8]`` binds ``i`` but no single ``k``: recomputing one producer iteration cannot supply it."""
+    sdfg = whole_rows.to_sdfg()
+    sdfg.simplify()
+    assert sdfg.apply_transformations(OTFMapFusion) == 0
+
+
+@dace.program
+def scale_then_neighbors(A: dace.float64[N], B: dace.float64[N]):
+    t = np.empty(N, dace.float64)
+    for i in dace.map[0:N]:
+        t[i] = A[i] * 2
+    for i in dace.map[1 : N - 1]:
+        B[i] = t[i - 1] + t[i + 1]
+
+
+def test_a_consumer_reading_a_window_through_a_nested_body_recomputes_each_element():
+    """A nested consumer reads ``t[i - 1], t[i + 1]`` as one window ``t[i - 1:i + 2]``."""
+    sdfg = scale_then_neighbors.to_sdfg(simplify=True)
+    state = sdfg.start_block
+    for entry in [n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)]:
+        body = [n for n in state.scope_children()[entry] if n is not state.exit_node(entry)]
+        nest_state_subgraph(sdfg, state, SubgraphView(state, body))
+    propagate_memlets_sdfg(sdfg)
+    A = np.random.rand(12)
+    expected = np.zeros(12)
+    expected[1:-1] = 2 * A[:-2] + 2 * A[2:]
+
+    assert sdfg.apply_transformations(OTFMapFusion, options={"recompute_windows": True}) == 1
+
+    B = np.zeros(12)
+    sdfg(A=A, B=B, N=12)
+    assert count_maps(sdfg) == 1
+    assert np.allclose(B, expected)
+
+
+def test_the_producer_copy_follows_graph_order():
+    """The copied producer body and its new ``__tmp`` transients come in graph order, not object-address order."""
+    sdfg = dace.SDFG("otf_copy_order")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_scalar("i_tmp", dace.int64, transient=True)
+    sdfg.add_scalar("f_tmp", dace.float64, transient=True)
+    sdfg.add_scalar("b_tmp", dace.bool, transient=True)
+    sdfg.add_array("T", [8], dace.float64, transient=True)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("producer", dict(i="0:8"))
+    first = state.add_tasklet("first", {"a"}, {"o"}, "o = int(a)")
+    to_float = state.add_tasklet("to_float", {"a"}, {"o"}, "o = a")
+    to_bool = state.add_tasklet("to_bool", {"a"}, {"o"}, "o = a > 0")
+    last = state.add_tasklet("last", {"a"}, {"o"}, "o = 1.0 if a else 0.0")
+    accesses = [state.add_access(name) for name in ("i_tmp", "f_tmp", "b_tmp")]
+    state.add_memlet_path(state.add_read("A"), entry, first, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    for src, access, dst in zip((first, to_float, to_bool), accesses, (to_float, to_bool, last)):
+        state.add_edge(src, "o", access, None, dace.Memlet(access.data))
+        state.add_edge(access, None, dst, "a", dace.Memlet(access.data))
+    state.add_memlet_path(last, exit_node, state.add_write("T"), src_conn="o", memlet=dace.Memlet("T[i]"))
+    inside = [n for n in state.nodes() if n is not entry and n in state.all_nodes_between(entry, exit_node)]
+    before = set(sdfg.arrays)
+
+    copies = OTFMapFusion()._copy_first_map_contents(sdfg, state, entry, exit_node)
+
+    assert [type(n) for n in copies] == [type(n) for n in inside]
+    new_names = [name for name in sdfg.arrays if name not in before]
+    assert [n.data for n in copies if isinstance(n, dace.nodes.AccessNode)] == new_names
+    assert [sdfg.arrays[name].dtype for name in new_names] == [dace.int64, dace.float64, dace.bool]
+
+
+def scaled_through_a_body_transient(name: str, offsets: tuple[int, ...], lut_transient: bool = True) -> dace.SDFG:
+    """``T[i] = 2 (A[i] + lut[i])`` through a body scalar ``s``, read by ``C[j] = sum(T[j + o] for o in offsets)``.
+
+    ``lut`` is read inside the producer body behind an empty memlet from its entry; as a transient, an earlier
+    state fills it with ``3 A``.
+    """
+    sdfg = dace.SDFG(name)
+    for array in ("A", "C"):
+        sdfg.add_array(array, [8], dace.float64)
+    sdfg.add_array("lut", [8], dace.float64, transient=lut_transient)
+    sdfg.add_array("T", [8], dace.float64, transient=True)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    init = sdfg.add_state("init")
+    if lut_transient:
+        init.add_mapped_tasklet(
+            "fill",
+            dict(k="0:8"),
+            {"a": dace.Memlet("A[k]")},
+            "l = 3.0 * a",
+            {"l": dace.Memlet("lut[k]")},
+            external_edges=True,
+        )
+    state = sdfg.add_state_after(init, "fuse")
+    entry, exit_node = state.add_map("producer", dict(i="0:8"))
+    add = state.add_tasklet("add", {"a": None, "l": None}, {"o": None}, "o = a + l")
+    scale = state.add_tasklet("scale", {"x": None}, {"o": None}, "o = 2.0 * x")
+    lut, body_scalar, t = state.add_access("lut"), state.add_access("s"), state.add_access("T")
+    state.add_memlet_path(state.add_read("A"), entry, add, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_nedge(entry, lut, dace.Memlet())
+    state.add_edge(lut, None, add, "l", dace.Memlet("lut[i]"))
+    state.add_edge(add, "o", body_scalar, None, dace.Memlet("s[0]"))
+    state.add_edge(body_scalar, None, scale, "x", dace.Memlet("s[0]"))
+    state.add_memlet_path(scale, exit_node, t, src_conn="o", memlet=dace.Memlet("T[i]"))
+    consumer_entry, consumer_exit = state.add_map("consumer", dict(j=f"0:{8 - max(offsets)}"))
+    inputs = {f"x{o}": None for o in offsets}
+    consume = state.add_tasklet("consume", inputs, {"y": None}, "y = " + " + ".join(inputs))
+    for o in offsets:
+        state.add_memlet_path(t, consumer_entry, consume, dst_conn=f"x{o}", memlet=dace.Memlet(f"T[j + {o}]"))
+    state.add_memlet_path(consume, consumer_exit, state.add_write("C"), src_conn="y", memlet=dace.Memlet("C[j]"))
+    sdfg.validate()
+    return sdfg
+
+
+def fuse_the_only_chain(sdfg: dace.SDFG) -> tuple[OTFMapFusion, dace.SDFGState]:
+    state = next(s for s in sdfg.states() if s.label == "fuse")
+    t = next(n for n in state.data_nodes() if n.data == "T")
+    consumer = state.out_edges(t)[0].dst
+    xform = OTFMapFusion()
+    xform.setup_match(
+        sdfg,
+        sdfg.cfg_id,
+        sdfg.node_id(state),
+        {
+            OTFMapFusion.first_map_exit: state.in_edges(t)[0].src,
+            OTFMapFusion.array: t,
+            OTFMapFusion.second_map_entry: consumer,
+        },
+        0,
+        override=True,
+    )
+    return xform, state
+
+
+def run_scaled(sdfg: dace.SDFG, offsets: tuple[int, ...], lut: np.ndarray | None = None) -> None:
+    a = np.random.rand(8)
+    c = np.zeros(8)
+    if lut is None:
+        sdfg(A=a, C=c)
+        lut = 3.0 * a
+    else:
+        sdfg(A=a, C=c, lut=lut)
+    t = 2.0 * (a + lut)
+    n = 8 - max(offsets)
+    assert np.allclose(c[:n], sum(t[o : o + n] for o in offsets))
+
+
+def test_a_copy_reads_a_transient_the_producer_only_reads_under_its_own_name():
+    """The copy for ``T[j]`` renamed ``lut`` too, and read a fresh, never-written transient instead of ``3 A``."""
+    sdfg = scaled_through_a_body_transient("otf_copy_keeps_read_transient", (0, 1))
+    xform, state = fuse_the_only_chain(sdfg)
+    assert xform.can_be_applied(state, 0, sdfg)
+    xform.apply(state, sdfg)
+
+    assert [n.data for n in state.data_nodes()].count("lut") == 2
+    sdfg.validate()
+    run_scaled(sdfg, (0, 1))
+
+
+def test_a_copy_adds_no_argument_for_a_global_the_producer_reads():
+    """A global read in the producer body is refused; applied anyway, its copy kept the global's name instead of
+    minting a non-transient ``__tmp`` that became a new SDFG argument."""
+    sdfg = scaled_through_a_body_transient("otf_copy_keeps_global", (0, 1), lut_transient=False)
+    xform, state = fuse_the_only_chain(sdfg)
+    assert not xform.can_be_applied(state, 0, sdfg)
+    arguments = list(sdfg.arglist())
+    xform.apply(state, sdfg)
+
+    assert list(sdfg.arglist()) == arguments
+    sdfg.validate()
+    run_scaled(sdfg, (0, 1), lut=np.random.rand(8))
+
+
 if __name__ == "__main__":
     # Solver
     test_solve()
@@ -770,6 +1324,7 @@ if __name__ == "__main__":
     test_trivial_fusion_permute()
     test_trivial_fusion_not_remove_map()
     test_trivial_fusion_nested_sdfg()
+    test_trivial_fusion_nested_sdfg_is_registered()
     test_trivial_fusion_none_connectors()
 
     # Defined subsets
@@ -780,6 +1335,8 @@ if __name__ == "__main__":
 
     # Recomputation
     test_recomputation_fusion()
+    test_a_producer_with_more_parameters_fuses_when_each_read_pins_them()
+    test_a_read_of_a_whole_row_leaves_a_producer_parameter_unsolved()
 
     # Local buffer
     test_local_storage_fusion()
@@ -789,5 +1346,17 @@ if __name__ == "__main__":
     test_matmuls()
     test_hdiff()
 
+    # Data hazards
+    test_read_ahead_write_is_not_fused()
+    test_seidel_2d_like_war_refuses_fusion()
+    test_second_writer_of_the_intermediate_is_not_fused()
+    test_a_producer_another_state_reads_is_kept()
+    for through_view in [False, True]:
+        test_a_producer_whose_input_is_overwritten_before_the_consumer_is_not_fused(through_view)
     # Symbol replacement
     test_advanced_replace_nested_sdfg_symbol_mapping()
+    test_a_producer_reading_the_intermediate_is_not_fused()
+    test_a_consumer_reading_a_window_through_a_nested_body_recomputes_each_element()
+    test_the_producer_copy_follows_graph_order()
+    test_a_copy_reads_a_transient_the_producer_only_reads_under_its_own_name()
+    test_a_copy_adds_no_argument_for_a_global_the_producer_reads()

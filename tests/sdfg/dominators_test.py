@@ -5,6 +5,7 @@ import pytest
 import dace
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.state import LoopRegion
 
 
 def build_cfg(shape: str) -> tuple[dace.SDFG, list[dace.SDFGState]]:
@@ -95,6 +96,29 @@ def test_code_is_generated_for_a_program_with_two_maps_over_a_transient():
     assert len(sdfg.generate_code()) > 0
 
 
+def test_a_loop_body_start_state_dominates_a_nested_loop_after_it():
+    """The state that opens a loop body dominates the nested loop it leads into; the transitive pass climbed past it.
+
+    Allocation placement takes this dominator: a buffer the inner loops use was allocated outside the body loop
+    and freed inside it, a double free (polybench symm after loop distribution).
+    """
+    sdfg = dace.SDFG("dominator_of_nested_loop_start")
+    init = sdfg.add_state("init", is_start_block=True)
+    outer = LoopRegion("outer", "i < 4", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(outer)
+    sdfg.add_edge(init, outer, dace.InterstateEdge())
+    opening = outer.add_state("opening", is_start_block=True)
+    inner = LoopRegion("inner", "j < 4", "j", "j = 0", "j = j + 1")
+    outer.add_node(inner)
+    outer.add_edge(opening, inner, dace.InterstateEdge())
+    body = inner.add_state("body", is_start_block=True)
+
+    idom = {}
+    sdutil.get_control_flow_block_dominators(sdfg, idom=idom)
+
+    assert idom[body] is opening, idom[body]
+
+
 if __name__ == "__main__":
     for shape in IDOM_BY_SHAPE:
         test_the_start_block_is_its_own_immediate_dominator(shape)
@@ -103,3 +127,4 @@ if __name__ == "__main__":
         test_block_parent_tree_roots_at_the_start_block(shape)
         test_control_flow_block_dominators_cover_every_block(shape)
     test_code_is_generated_for_a_program_with_two_maps_over_a_transient()
+    test_a_loop_body_start_state_dominates_a_nested_loop_after_it()

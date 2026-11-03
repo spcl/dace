@@ -49,8 +49,9 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: list[str], schedule: Sche
     new_sdfg = SDFG(original_name)
     for dname, value in sdfg.constants.items():
         new_sdfg.add_constant(dname, value)
+    predicates = sdfg.symbol_repo.params.predicates
     for dname, stype in sdfg.symbols.items():
-        new_sdfg.add_symbol(dname, stype)
+        new_sdfg.add_symbol(dname, stype, predicates=predicates.get(dname, frozenset()))
 
     changed_stride_state = new_sdfg.add_state("with_changed_strides", is_start_block=True)
     inputs, outputs = sdfg.read_and_write_sets()

@@ -191,6 +191,38 @@ def test_strided_slice_of_a_slice_keeps_its_step():
     assert any(r.ranges[1][2] == 2 for r in reads), f"the composed read must keep step 2, got {[str(r) for r in reads]}"
 
 
+def test_a_view_a_nested_sdfg_reads_under_renamed_symbols_is_kept():
+    """``v = A[3, S:N]`` read whole by a nested SDFG whose connector is ``[N - S0]`` with ``S0 -> S``: the connector
+    describes the view, so folding the view would leave it describing ``A`` (aes_graupel ``__inl1_flux_7``)."""
+    from dace.sdfg.propagation import propagate_memlets_state
+    from dace.transformation.dataflow import RemoveSliceView
+
+    N, S, S0 = (dace.symbol(name) for name in ("N", "S", "S0"))
+    inner = dace.SDFG("reads_a_view")
+    inner.add_array("v", [N - S0], dace.float64)
+    inner.add_array("o", [N - S0], dace.float64)
+    inner.add_state().add_mapped_tasklet(
+        "copy", {"i": "0:N-S0"}, {"x": dace.Memlet("v[i]")}, "y = x", {"y": dace.Memlet("o[i]")}, external_edges=True
+    )
+    sdfg = dace.SDFG("view_into_renamed_nest")
+    sdfg.add_array("A", [4, N], dace.float64)
+    sdfg.add_array("O", [N - S], dace.float64)
+    sdfg.add_view("v", [N - S], dace.float64)
+    state = sdfg.add_state()
+    view = state.add_access("v")
+    state.add_edge(state.add_read("A"), None, view, "views", dace.Memlet("A[3, S:N] -> [0:N-S]"))
+    nest = state.add_nested_sdfg(inner, {"v"}, {"o"}, {"N": "N", "S0": "S"})
+    state.add_edge(view, None, nest, "v", dace.Memlet("v[0:N-S]"))
+    state.add_edge(nest, "o", state.add_write("O"), None, dace.Memlet("O[0:N-S]"))
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(RemoveSliceView)
+
+    (edge,) = state.in_edges(nest)
+    assert inner.arrays["v"].is_equivalent(sdfg.arrays[edge.data.data], symbol_mapping=nest.symbol_mapping), edge.data
+    propagate_memlets_state(sdfg, state)
+
+
 if __name__ == "__main__":
     test_read_slice()
     test_read_slice2()
@@ -202,3 +234,4 @@ if __name__ == "__main__":
     test_view_slice_detect_complex(True)
     test_view_slice_detect_nonslice()
     test_strided_slice_of_a_slice_keeps_its_step()
+    test_a_view_a_nested_sdfg_reads_under_renamed_symbols_is_kept()

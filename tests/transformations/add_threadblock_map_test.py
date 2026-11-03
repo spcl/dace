@@ -202,6 +202,21 @@ def _run_and_compare(prog, A_host, B_host, constants=None):
     numpy.testing.assert_allclose(cupy.asnumpy(A_ref), cupy.asnumpy(A_out))
 
 
+def test_the_kernel_map_keeps_its_instrumentation():
+    """The tiling makes the instrumented kernel map the thread-block map; the timing stays with the kernel."""
+    sdfg = elementwise_symbolic.to_sdfg(simplify=True)
+    (kernel,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    kernel.map.instrument = dace.dtypes.InstrumentationType.GPU_Events
+    AddThreadBlockMap.apply_to(sdfg, map_entry=kernel)
+    instrumented = {
+        n.map.schedule: n.map.instrument for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)
+    }
+    assert instrumented == {
+        dace.dtypes.ScheduleType.GPU_Device: dace.dtypes.InstrumentationType.GPU_Events,
+        dace.dtypes.ScheduleType.GPU_ThreadBlock: dace.dtypes.InstrumentationType.No_Instrumentation,
+    }
+
+
 @pytest.mark.gpu
 def test_elementwise_constexpr_size():
     A = numpy.zeros(512, dtype=numpy.float64)
@@ -235,6 +250,7 @@ def test_elementwise_with_floor_div():
 
 
 if __name__ == "__main__":
+    test_the_kernel_map_keeps_its_instrumentation()
     test_elementwise_constexpr_size()
     test_elementwise_small_constexpr_size()
     for symbol_param in symbol_params:

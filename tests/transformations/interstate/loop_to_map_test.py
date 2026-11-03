@@ -602,7 +602,6 @@ def test_thread_local_transient_single_state():
     body = sdfg.add_state("body")
     end = sdfg.add_state("end")
 
-    sdfg.add_symbol("i", dace.int32)
     i = dace.symbol("i", dace.int32)
 
     sdfg.add_edge(begin, guard, dace.InterstateEdge(assignments={"i": 0}))
@@ -681,7 +680,6 @@ def test_thread_local_transient_multi_state():
     body1 = sdfg.add_state("body1")
     end = sdfg.add_state("end")
 
-    sdfg.add_symbol("i", dace.int32)
     i = dace.symbol("i", dace.int32)
 
     sdfg.add_edge(begin, guard, dace.InterstateEdge(assignments={"i": 0}))
@@ -1071,7 +1069,7 @@ def test_loop_to_map_round_trip_through_nested_sdfg_recovers_map():
 
 def test_symbol_mapping_applies_to_typed_inner_symbols():
     """The inner symbol keeps its declared dtype, so mapping it outward must match by name."""
-    from dace.transformation.interstate.loop_to_map import _through_symbol_mapping
+    from dace.transformation.interstate.loop_to_map import through_symbol_mapping
 
     inner = dace.SDFG("inner")
     inner.add_symbol("M", dace.int64)
@@ -1082,7 +1080,7 @@ def test_symbol_mapping_applies_to_typed_inner_symbols():
     state = outer.add_state()
     nsdfg = state.add_nested_sdfg(inner, {"x"}, set(), symbol_mapping={"M": "K + 1"})
     subset = dace.subsets.Range([(dace.symbol("M", dace.int64), dace.symbol("M", dace.int64), 1)])
-    result = _through_symbol_mapping(subset, nsdfg)
+    result = through_symbol_mapping(subset, nsdfg)
     assert {str(sym) for sym in result.ndrange()[0][0].free_symbols} == {"K"}
 
 
@@ -1268,6 +1266,26 @@ def test_transposed_read_and_write_alias_only_in_one_iteration():
     assert np.allclose(aa, ref)
 
 
+def test_symbolic_step_of_unknown_sign_stays_a_loop():
+    """A map runs its range upwards, so a loop is mapped only when the facts prove the sign of its step."""
+    N = dace.symbol("N")
+    S = dace.symbol("S")
+    P = dace.symbol("P", positive=True)
+
+    @dace.program
+    def unknown_step(A: dace.float64[N]):
+        for i in range(0, N, S):
+            A[i] = A[i] + 1
+
+    @dace.program
+    def positive_step(A: dace.float64[N]):
+        for i in range(0, N, P):
+            A[i] = A[i] + 1
+
+    assert unknown_step.to_sdfg(simplify=True).apply_transformations(LoopToMap) == 0
+    assert positive_step.to_sdfg(simplify=True).apply_transformations(LoopToMap) == 1
+
+
 def test_a_symbol_assigned_later_stays_out_of_the_mapping():
     """The nested SDFG a lift makes maps only the symbols it reads: a mapping entry is a read, and ``later`` is
     assigned only after the loop, so mapping it would make it a free symbol of the whole SDFG."""
@@ -1361,6 +1379,35 @@ def test_symbol_assigned_in_every_branch_before_its_read():
     assert np.array_equal(B, 2.0 * np.where(A > 0.5, 1.0, A))
 
 
+def loop_writing_a_fixed_element_per_state(state_count: int) -> LoopRegion:
+    sdfg = dace.SDFG("refusal_order")
+    sdfg.add_symbol("N", dace.int64)
+    loop = LoopRegion("for_i", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    states = [loop.add_state(f"s{k}", is_start_block=k == 0) for k in range(state_count)]
+    for k, state in enumerate(states):
+        sdfg.add_array(f"A{k}", (dace.symbol("N"),), dace.float64)
+        tasklet = state.add_tasklet("w", {}, {"o": dace.float64}, "o = 1.0")
+        state.add_edge(tasklet, "o", state.add_write(f"A{k}"), None, dace.Memlet(f"A{k}[0]"))
+    for src, dst in zip(states, states[1:]):
+        loop.add_edge(src, dst, dace.InterstateEdge())
+    return loop
+
+
+def test_refusal_reason_follows_block_order_not_memory_addresses():
+    """Companion passes act on the first refusal, so every rebuild must name the first state's write."""
+    keep_alive = []
+    reasons = []
+    for rebuild in range(12):
+        keep_alive.append([object() for _ in range(rebuild * 1543)])
+        loop = loop_writing_a_fixed_element_per_state(8)
+        sut = LoopToMap()
+        sut.loop = loop
+        assert not sut.can_be_applied(loop.parent_graph, 0, loop.sdfg)
+        reasons.append(sut.last_refusal.message)
+    assert all(reason.startswith("write to A0 ") for reason in reasons), reasons
+
+
 def test_a_symbol_the_body_assigns_in_a_branch_keeps_its_declared_type():
     """``j = 1 if i == 0 else start; A[i] = j`` with ``j`` an ``int32`` symbol: the nested body declares ``j`` as the
     parent did instead of inferring ``int64_t`` from the literal."""
@@ -1384,7 +1431,7 @@ def test_a_symbol_the_body_assigns_in_a_branch_keeps_its_declared_type():
 
     assert sdfg.apply_transformations(LoopToMap) == 1
 
-    nested = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+    nested = next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
     assert nested.sdfg.symbols["j"] == dace.int32
     assert "int64_t j;" not in "\n".join(obj.clean_code for obj in sdfg.generate_code())
     A = np.zeros(10)
@@ -1393,6 +1440,7 @@ def test_a_symbol_the_body_assigns_in_a_branch_keeps_its_declared_type():
 
 
 if __name__ == "__main__":
+    test_a_symbol_the_body_assigns_in_a_branch_keeps_its_declared_type()
     test_transient_read_only_on_interstate_edges_of_two_loops()
     test_symbol_assigned_in_every_branch_before_its_read()
     parser = argparse.ArgumentParser()
@@ -1437,6 +1485,7 @@ if __name__ == "__main__":
     test_loop_to_map_with_loop_invariant_if()
     test_dynamic_write_slab_separated_by_iteration_var()
     test_refuse_when_body_assigns_loop_range_symbol()
+    test_symbolic_step_of_unknown_sign_stays_a_loop()
     test_a_symbol_the_body_assigns_in_a_branch_keeps_its_declared_type()
 
 
@@ -1475,3 +1524,4 @@ def test_conditional_body_does_not_crash_the_match():
     sdfg(A=A)
     expected = np.array([(i + 1) if i % 2 == 0 else (i + 2) for i in range(20)], dtype=np.float64)
     assert np.allclose(A, expected)
+    test_refusal_reason_follows_block_order_not_memory_addresses()

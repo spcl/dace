@@ -2,9 +2,7 @@
 
 import collections
 
-import sympy as sp
-
-from dace import SDFG, InterstateEdge, SDFGState, properties, symbolic
+from dace import SDFG, InterstateEdge, SDFGState, properties
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
 from dace.sdfg.state import (
@@ -18,6 +16,7 @@ from dace.sdfg.state import (
 from dace.sdfg.validation import InvalidSDFGInterstateEdgeError, InvalidSDFGNodeError
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.lift_trivial_if import constant_truth
 
 
 @properties.make_properties
@@ -76,10 +75,8 @@ class DeadStateElimination(ppl.Pass):
                         # If only one branch is left, and it is unconditionally executed, inline it.
                         if len(node.branches) == 1:
                             cond, branch = node.branches[0]
-                            if cond is None or self._is_definitely_true(
-                                symbolic.pystr_to_symbolic(cond.as_string), sdfg
-                            ):
-                                node.parent_graph.add_node(branch)
+                            if cond is None or constant_truth(cond, node.sdfg) is True:
+                                node.parent_graph.add_node(branch, ensure_unique_name=True)
                                 for ie in cfg.in_edges(node):
                                     cfg.add_edge(ie.src, branch, ie.data)
                                 for oe in cfg.out_edges(node):
@@ -177,36 +174,29 @@ class DeadStateElimination(ppl.Pass):
         # Dead states are states that are not live (i.e., visited)
         return set(cfg.nodes()) - visited, dead_edges, edges_annotated
 
-    def _find_dead_branches(self, block: ConditionalBlock) -> list[tuple[CodeBlock, ControlFlowRegion]]:
-        dead_branches = []
-        unconditional = None
+    def _find_dead_branches(self, block: ConditionalBlock) -> list[tuple[CodeBlock | None, ControlFlowRegion]]:
+        # Arms test in order, so an always-true arm kills the arms after it, never the ones before it: those still
+        # run when their own guards hold. The ``else`` arm has no guard, and is an ordinary dead branch once an earlier
+        # arm is taken.
+        dead_branches: list[tuple[CodeBlock | None, ControlFlowRegion]] = []
+        taken = False
         for i, (cond, branch) in enumerate(block.branches):
-            if cond is None:
-                if not i == len(block.branches) - 1:
-                    raise InvalidSDFGNodeError(
-                        "Conditional block detected, where else branch is not the last branch.",
-                        sdfg=block.sdfg,
-                        state_id=block.block_id,
-                        node_id=None,
-                    )
-                break
-            # If an unconditional branch is found, ignore all other branches that follow this one.
-            if self._is_definitely_true(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
-                unconditional = branch
-                break
-        if unconditional is not None:
-            # Remove other (now never taken) branches
-            for cond, branch in block.branches:
-                if branch is not unconditional:
-                    dead_branches.append([cond, branch])
-        else:
-            # Check if any branches are certainly never taken.
-            for cond, branch in block.branches:
-                if cond is not None and self._is_definitely_false(
-                    symbolic.pystr_to_symbolic(cond.as_string), block.sdfg
-                ):
-                    dead_branches.append([cond, branch])
-
+            if cond is None and i != len(block.branches) - 1:
+                raise InvalidSDFGNodeError(
+                    "Conditional block detected, where else branch is not the last branch.",
+                    # ``block_id`` indexes the parent region, not the SDFG.
+                    sdfg=block.parent_graph,
+                    state_id=block.block_id,
+                    node_id=None,
+                )
+            if taken:
+                dead_branches.append((cond, branch))
+            elif cond is not None:
+                truth = constant_truth(cond, block.sdfg)
+                if truth is True:
+                    taken = True
+                elif truth is False:
+                    dead_branches.append((cond, branch))
         return dead_branches
 
     def report(self, pass_retval: set[SDFGState | Edge[InterstateEdge]]) -> str:
@@ -218,40 +208,8 @@ class DeadStateElimination(ppl.Pass):
 
     def is_definitely_taken(self, edge: InterstateEdge, sdfg: SDFG) -> bool:
         """Returns True iff edge condition definitely evaluates to True."""
-        if edge.is_unconditional():
-            return True
-
-        # Evaluate condition
-        return self._is_definitely_true(edge.condition_sympy(), sdfg)
-
-    def _is_definitely_true(self, cond: sp.Basic, sdfg: SDFG) -> bool:
-        if cond == True or cond == sp.Not(sp.logic.boolalg.BooleanFalse(), evaluate=False):
-            return True
-
-        # Evaluate non-optional arrays
-        cond = symbolic.evaluate_optional_arrays(cond, sdfg)
-        if cond == True:
-            return True
-
-        # Indeterminate or False condition
-        return False
+        return edge.is_unconditional() or constant_truth(edge.condition, sdfg) is True
 
     def is_definitely_not_taken(self, edge: InterstateEdge, sdfg: SDFG) -> bool:
         """Returns True iff edge condition definitely evaluates to False."""
-        if edge.is_unconditional():
-            return False
-
-        # Evaluate condition
-        return self._is_definitely_false(edge.condition_sympy(), sdfg)
-
-    def _is_definitely_false(self, cond: sp.Basic, sdfg: SDFG) -> bool:
-        if cond == False or cond == sp.Not(sp.logic.boolalg.BooleanTrue(), evaluate=False):
-            return True
-
-        # Evaluate non-optional arrays
-        cond = symbolic.evaluate_optional_arrays(cond, sdfg)
-        if cond == False:
-            return True
-
-        # Indeterminate or True condition
-        return False
+        return not edge.is_unconditional() and constant_truth(edge.condition, sdfg) is False

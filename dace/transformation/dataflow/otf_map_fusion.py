@@ -4,20 +4,38 @@ This module contains classes that implement the OTF map fusion transformation.
 """
 
 import copy
+import itertools
 
 import sympy
 
-from dace import dtypes, nodes, symbolic
+from dace import data as dt
+from dace import dtypes, nodes, subsets, symbolic
 from dace.memlet import Memlet
-from dace.properties import SymbolicProperty, make_properties
+from dace.properties import Property, SymbolicProperty, make_properties
 from dace.sdfg import dealias
 from dace.sdfg import nodes as nds
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView
+from dace.sdfg.state import SDFGState, StateSubgraphView, SymbolResolver
 from dace.transformation import transformation
 from dace.transformation.dataflow.local_storage import InLocalStorage, OutLocalStorage
 from dace.transformation.dataflow.stream_transient import AccumulateTransient
+
+
+def read_elsewhere(sdfg: SDFG, access_node: nodes.AccessNode) -> bool:
+    """Whether the data ``access_node`` holds is read other than through ``access_node``.
+
+    The fusion recomputes the producer only for the consumer in its own state. Another state that
+    reads the array still needs the producer's write: npbench vexx_k's scatter key and scatter
+    states read ``ikb`` after its producer was fused into an einsum operand and deleted, so the GPU
+    canonicalize column scattered through uninitialized device memory.
+    """
+    name = access_node.data
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            if node is not access_node and node.data == name and state.out_degree(node) > 0:
+                return True
+    return any(name in edge.data.read_symbols() for edge in sdfg.all_interstate_edges())
 
 
 @make_properties
@@ -32,6 +50,13 @@ class OTFMapFusion(transformation.SingleStateTransformation):
     second_map_entry = transformation.PatternNode(nds.EntryNode)
 
     identity = SymbolicProperty(category="Parameters", desc="Identity value to set", default=None, allow_none=True)
+    recompute_windows = Property(
+        dtype=bool,
+        default=False,
+        category="Parameters",
+        desc="Recompute each element of a window the second map reads (a stencil read through a nested SDFG), one "
+        "copy of the first map's content per element.",
+    )
 
     @classmethod
     def expressions(cls):
@@ -53,17 +78,85 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             if not sdfg.arrays[dnode.data].transient:
                 return False
 
-        # Condition: Equations solvable (dims(first map) <= dims(second map))
-        if len(first_map_entry.map.params) > len(self.second_map_entry.map.params):
+        # Condition: the two maps share no data hazard other than the intermediate itself.
+        # NOT covered by the scope walk above -- what a map reads through its ENTRY has its access
+        # node OUTSIDE the scope subgraph, so the walk never sees it. Fusion moves the first map's
+        # computation inside the second and deletes the intermediate that ordered them, so any
+        # hazard the intermediate used to separate becomes an intra-map, cross-LANE one:
+        #   * WAR -- first reads what second writes. polybench seidel_2d is exactly this: the
+        #     producer reads ``A[i, j+2]``, the consumer writes ``A[i, j+1]``, and the fused map
+        #     races above two threads while each map on its own is correct.
+        #   * RAW -- first writes what second reads: a consumer lane can reach the value before
+        #     the replicated producer that makes it.
+        #   * WAW -- both write the same element from different lanes.
+        # The intermediate is excluded on the write side only: producing it is the flow dependence
+        # this transformation exists to consume. RAW and WAW are unreachable while the single
+        # ``out_degree(first_map_exit) > 1`` condition above holds -- the first map then writes
+        # nothing but the intermediate -- and are kept so the hazard test stays complete if that
+        # condition is ever relaxed.
+        def touched(edges) -> dict[str, None]:
+            return dict.fromkeys(e.data.data for e in edges if e.data is not None and e.data.data is not None)
+
+        first_reads = touched(graph.in_edges(first_map_entry))
+        first_writes = touched(graph.out_edges(self.first_map_exit))
+        first_writes.pop(self.array.data, None)
+        second_reads = touched(graph.in_edges(self.second_map_entry))
+        second_writes = touched(graph.out_edges(graph.exit_node(self.second_map_entry)))
+        # Condition: the producer is the intermediate's ONLY writer in the state. Fusion deletes that
+        # producer once the consumer stops reading it, which is sound only if the write it removes was
+        # the array's whole definition. polybench correlation is the counterexample: ``stddev =
+        # sqrt(...)`` followed by ``stddev[stddev <= eps] = replacement``, whose masked write reaches
+        # some elements and leaves the rest holding what the producer wrote. Deleting the producer
+        # leaves those elements uninitialized -- wrong numbers, and a graph that still validates.
+        written = 0
+        for dnode in graph.data_nodes():
+            if dnode.data == self.array.data and graph.in_degree(dnode) > 0:
+                written += 1
+                if written > 1:
+                    return False
+        # A producer that also READS the intermediate updates it in place: its copy would write the
+        # per-iteration buffer while still reading the array, which no single buffer can stand for.
+        if (
+            self.array.data in first_reads
+            or not first_reads.keys().isdisjoint(second_writes)
+            or not first_writes.keys().isdisjoint(second_reads)
+            or not first_writes.keys().isdisjoint(second_writes)
+        ):
             return False
+
+        # Condition: nothing overwrites what the producer reads before the consumer runs. Fusion moves the producer's
+        # reads to the consumer's iterations, so a third node writing one of those containers anywhere but before the
+        # producer would now be read through. Compared on the viewed container: cloudsc's producer read the row view
+        # ``zqsmix_6`` of ``zqsmix``, which a later copy in the same state rewrote.
+        def viewed(node: nds.AccessNode) -> str:
+            if isinstance(sdfg.arrays[node.data], dt.View):
+                last = sdutil.get_last_view_node(graph, node)
+                return node.data if last is None else last.data
+            return node.data
+
+        read_roots = {
+            viewed(source)
+            for edge in graph.in_edges(first_map_entry)
+            if isinstance(source := graph.memlet_path(edge)[0].src, nds.AccessNode)
+        }
+        writers = [
+            n
+            for n in graph.data_nodes()
+            if graph.in_degree(n) > 0 and not isinstance(sdfg.arrays[n.data], dt.View) and n.data in read_roots
+        ]
+        if writers:
+            before = set(sdutil.dfs_conditional(graph, sources=[first_map_entry], reverse=True))
+            if any(w not in before for w in writers):
+                return False
 
         # Condition: Consumed is covered by produced data
         produce_edge = next(graph.edges_between(self.first_map_exit, self.array).__iter__())
         consume_edges = graph.edges_between(self.array, self.second_map_entry)
+        facts = SymbolResolver().facts_at(graph, self.array)
         for edge in consume_edges:
             read_memlet = edge.data
             write_memlet = produce_edge.data
-            if not write_memlet.subset.covers_precise(read_memlet.subset):
+            if not write_memlet.subset.covers_precise(read_memlet.subset, facts):
                 return False
 
         # First memlets
@@ -118,12 +211,24 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
             produce_memlet = produce_memlets[memlet.data]
             produce_subset = tuple(produce_memlet.subset.ranges)
-            param_mapping = OTFMapFusion.solve(
-                first_map_entry.map.params, produce_subset, self.second_map_entry.map.params, consume_subset
-            )
-
-            if param_mapping is None:
-                return False
+            window = OTFMapFusion.window_reads(produce_subset, consume_subset) if self.recompute_windows else None
+            for read in [consume_subset] if window is None else [read for _, read in window]:
+                param_mapping = OTFMapFusion.solve(
+                    first_map_entry.map.params, produce_subset, self.second_map_entry.map.params, read
+                )
+                if param_mapping is None:
+                    return False
+                # Condition: every producer parameter is SOLVED from the consumer's read -- by a consumer parameter
+                # or a constant, so a producer may have more parameters than the consumer (``T[i, 4]`` of a
+                # ``T[i, k]`` producer pins ``k = 4``). Fusion re-executes the producer body once per consumer
+                # iteration, so a parameter the read cannot pin down is one the copied body still names with
+                # nothing left to bind it -- the fused graph then reads a free symbol (or, worse, the same name a
+                # surviving sibling map defines, which validates and computes the wrong element). A producer whose
+                # body is a nested SDFG is exactly this case: it writes its whole output range ``t[0:N]`` from
+                # every iteration, which ``solve`` answers with a constant-interval entry that binds no parameter.
+                solved = {str(param) for param in param_mapping if not isinstance(param, tuple)}
+                if not solved.issuperset(first_map_entry.map.params):
+                    return False
 
         return True
 
@@ -253,18 +358,20 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             graph.remove_edge(edge)
 
         # Phase 3: OTF - copy content of first map for each memlet of second according to matches
+        reduced_connectors = []
         for array in consume_memlets:
             first_memlet = produce_memlets[array]
             first_accesses = tuple(first_memlet.subset.ranges)
             for second_accesses in consume_memlets[array]:
-                # Step 1: Infer index access of second map to new inputs with respect to original first map
-                mapping = OTFMapFusion.solve(
-                    first_map_entry.map.params, first_accesses, second_map_entry.map.params, second_accesses
-                )
+                # A window read is made element by element, each by its own copy of the first map's content
+                window = OTFMapFusion.window_reads(first_accesses, second_accesses) if self.recompute_windows else None
 
-                # Step 2: Add Temporary buffer
+                # Step 1: Add Temporary buffer
                 tmp_name = sdfg.temp_data_name()
-                shape = first_memlet.subset.size_exact()
+                if window is None:
+                    shape = first_memlet.subset.size_exact()
+                else:
+                    shape = [symbolic.pystr_to_symbolic(e - b + 1) for b, e, _ in second_accesses]
                 tmp_name, tmp_desc = sdfg.add_array(
                     tmp_name,
                     shape=shape,
@@ -278,85 +385,118 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 # Add edges from temporary buffer to second map's content
                 for edge in consume_memlets[array][second_accesses]:
                     otf_memlet = Memlet.from_array(dataname=tmp_name, datadesc=tmp_desc, wcr=None)
-                    # A nested SDFG connector follows the read into the per-iteration buffer
+                    # A nested SDFG connector follows the read into the per-iteration buffer once the state is whole
                     if isinstance(edge.dst, nds.NestedSDFG) and edge.dst_conn in edge.dst.sdfg.arrays:
                         if not edge.dst.sdfg.arrays[edge.dst_conn].is_equivalent(tmp_desc):
-                            dealias.reduce_connector(edge.dst.sdfg, edge.dst_conn, tmp_desc, offset=edge.data.subset)
+                            reduced_connectors.append((edge.dst.sdfg, edge.dst_conn, tmp_desc, edge.data.subset))
                     graph.add_edge(tmp_access, None, edge.dst, edge.dst_conn, otf_memlet)
 
-                # Step 3: Copy content of first map into second map
-                otf_nodes = self._copy_first_map_contents(sdfg, graph, first_map_entry, first_map_exit)
+                for position, read in [(None, second_accesses)] if window is None else window:
+                    # Step 2: Infer index access of second map to new inputs with respect to original first map
+                    mapping = OTFMapFusion.solve(
+                        first_map_entry.map.params, first_accesses, second_map_entry.map.params, read
+                    )
+                    # Step 3: Copy content of first map into second map
+                    otf_nodes = self._copy_first_map_contents(sdfg, graph, first_map_entry, first_map_exit)
+                    if position is None:
+                        written = Memlet.from_array(dataname=tmp_name, datadesc=tmp_desc, wcr=first_memlet.wcr)
+                        origin = copy.deepcopy(first_memlet.subset)
+                        origin.replace(
+                            {
+                                symbolic.pystr_to_symbolic(str(param)): symbolic.pystr_to_symbolic(str(value))
+                                for param, value in mapping.items()
+                                if not isinstance(param, tuple)
+                            }
+                        )
+                    else:
+                        written = Memlet(
+                            data=tmp_name, subset=subsets.Range.from_indices(list(position)), wcr=first_memlet.wcr
+                        )
+                        origin = subsets.Range.from_indices([b for b, _, _ in second_accesses])
 
-                # Connect the nodes to the otf_scalar and second map entry
-                for node in otf_nodes:
-                    # Connect new OTF nodes to tmp_access for write
-                    for edge in graph.edges_between(node, first_map_exit):
-                        otf_memlet = Memlet.from_array(dataname=tmp_name, datadesc=tmp_desc, wcr=first_memlet.wcr)
-                        # A nested SDFG connector follows the write into the per-iteration buffer
-                        if isinstance(edge.src, nds.NestedSDFG) and edge.src_conn in edge.src.sdfg.arrays:
-                            if not edge.src.sdfg.arrays[edge.src_conn].is_equivalent(tmp_desc):
-                                dealias.reduce_connector(
-                                    edge.src.sdfg, edge.src_conn, tmp_desc, offset=first_memlet.subset
-                                )
-                        graph.add_edge(edge.src, edge.src_conn, tmp_access, None, otf_memlet)
-                        graph.remove_edge(edge)
+                    # Connect the nodes to the otf_scalar and second map entry
+                    for node in otf_nodes:
+                        # Connect new OTF nodes to tmp_access for write
+                        for edge in graph.edges_between(node, first_map_exit):
+                            # A nested SDFG connector follows the write into the per-iteration buffer
+                            if isinstance(edge.src, nds.NestedSDFG) and edge.src_conn in edge.src.sdfg.arrays:
+                                if not edge.src.sdfg.arrays[edge.src_conn].is_equivalent(tmp_desc):
+                                    reduced_connectors.append((edge.src.sdfg, edge.src_conn, tmp_desc, origin))
+                            graph.add_edge(edge.src, edge.src_conn, tmp_access, None, copy.deepcopy(written))
+                            graph.remove_edge(edge)
 
-                    # Connect new OTF nodes to second map entry for read
-                    for edge in graph.edges_between(first_map_entry, node):
-                        memlet = copy.deepcopy(edge.data)
+                        # Connect new OTF nodes to second map entry for read
+                        for edge in graph.edges_between(first_map_entry, node):
+                            memlet = copy.deepcopy(edge.data)
 
-                        if edge.src_conn is not None:
-                            in_connector = edge.src_conn.replace("OUT", "IN")
-                            if in_connector in connector_mapping:
-                                out_connector = connector_mapping[in_connector].replace("IN", "OUT")
+                            if edge.src_conn is not None:
+                                in_connector = edge.src_conn.replace("OUT", "IN")
+                                if in_connector in connector_mapping:
+                                    out_connector = connector_mapping[in_connector].replace("IN", "OUT")
+                                else:
+                                    out_connector = edge.src_conn
+
+                                if out_connector not in second_map_entry.out_connectors:
+                                    second_map_entry.add_out_connector(out_connector)
                             else:
-                                out_connector = edge.src_conn
+                                out_connector = None
 
-                            if out_connector not in second_map_entry.out_connectors:
-                                second_map_entry.add_out_connector(out_connector)
-                        else:
-                            out_connector = None
+                            graph.add_edge(second_map_entry, out_connector, node, edge.dst_conn, memlet)
+                            graph.remove_edge(edge)
 
-                        graph.add_edge(second_map_entry, out_connector, node, edge.dst_conn, memlet)
-                        graph.remove_edge(edge)
+                    # Step 4: Rename all symbols of first map in copied content my matched symbol of second map
+                    otf_nodes.append(second_map_entry)
+                    otf_subgraph = StateSubgraphView(graph, otf_nodes)
+                    for param in mapping:
+                        if isinstance(param, tuple):
+                            # Constant intervals
+                            continue
 
-                # Step 4: Rename all symbols of first map in copied content my matched symbol of second map
-                otf_nodes.append(second_map_entry)
-                otf_subgraph = StateSubgraphView(graph, otf_nodes)
-                for param in mapping:
-                    if isinstance(param, tuple):
-                        # Constant intervals
-                        continue
-
-                    advanced_replace(otf_subgraph, str(param), str(mapping[param]))
+                        advanced_replace(otf_subgraph, str(param), str(mapping[param]))
 
         # Check if first_map is still consumed by some node
-        if graph.out_degree(intermediate_access_node) == 0:
+        if graph.out_degree(intermediate_access_node) == 0 and not read_elsewhere(sdfg, intermediate_access_node):
             graph.remove_node(intermediate_access_node)
 
-            subgraph = graph.scope_subgraph(first_map_entry, include_entry=True, include_exit=True)
             obsolete_nodes = graph.all_nodes_between(first_map_entry, first_map_exit) | {
                 first_map_entry,
                 first_map_exit,
             }
             graph.remove_nodes_from(obsolete_nodes)
 
+        for nsdfg, connector, desc, offset in reduced_connectors:
+            dealias.reduce_connector(nsdfg, connector, desc, offset=offset)
+
     def _copy_first_map_contents(
         self, sdfg: SDFG, graph: SDFGState, first_map_entry: nodes.MapEntry, first_map_exit: nodes.MapExit
     ):
-        inter_nodes = list(graph.all_nodes_between(first_map_entry, first_map_exit) - {first_map_entry})
+        # In graph order, not set order: the copies and their ``__tmp`` names must not depend on object addresses
+        between = graph.all_nodes_between(first_map_entry, first_map_exit)
+        inter_nodes = [node for node in graph.nodes() if node in between and node is not first_map_entry]
 
         # Add new nodes
-        new_inter_nodes = [copy.deepcopy(node) for node in inter_nodes]
+        # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+        # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+        # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+        memo = {}
+        new_inter_nodes = [copy.deepcopy(node, memo) for node in inter_nodes]
         for node in new_inter_nodes:
             graph.add_node(node)
 
         id_map = {graph.node_id(old): graph.node_id(new) for old, new in zip(inter_nodes, new_inter_nodes)}
 
-        # Rename transients
+        # Rename the transients the body writes: they are per-copy state. What the body only reads (behind an
+        # empty ordering memlet from the entry) is defined outside it and keeps its name, as does every global.
+        written = {
+            node.data: None
+            for node in inter_nodes
+            if isinstance(node, nodes.AccessNode)
+            and sdfg.arrays[node.data].transient
+            and any(not edge.data.is_empty() for edge in graph.in_edges(node))
+        }
         tmp_map = {}
         for node in new_inter_nodes:
-            if not isinstance(node, nodes.AccessNode) or node.data in tmp_map:
+            if not isinstance(node, nodes.AccessNode) or node.data in tmp_map or node.data not in written:
                 continue
 
             new_name = sdfg.temp_data_name()
@@ -377,14 +517,39 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             memlet.data = tmp_map.get(memlet.data, memlet.data)
             return memlet
 
+        inside = set(inter_nodes)
         for edge in graph.edges():
-            if edge.src in inter_nodes or edge.dst in inter_nodes:
-                src = map_node(edge.src) if edge.src in inter_nodes else edge.src
-                dst = map_node(edge.dst) if edge.dst in inter_nodes else edge.dst
+            if edge.src in inside or edge.dst in inside:
+                src = map_node(edge.src) if edge.src in inside else edge.src
+                dst = map_node(edge.dst) if edge.dst in inside else edge.dst
                 edge_data = map_memlet(edge.data)
                 graph.add_edge(src, edge.src_conn, dst, edge.dst_conn, edge_data)
 
         return new_inter_nodes
+
+    @staticmethod
+    def window_reads(produce_subset: tuple, consume_subset: tuple) -> list[tuple[tuple[int, ...], tuple]] | None:
+        """The single-element reads a consumer's read of a window stands for, each with its position in the window.
+
+        A consumer whose body is a nested SDFG reads a stencil ``t[i - 1], t[i + 1]`` as one window
+        ``t[i - 1:i + 2]``; a producer writing one element per iteration makes each element of the window once.
+        ``None`` when the read is no window of constant extent over a producer writing single elements, and for a
+        read of a single element, which needs no window.
+        """
+        if any(b != e for b, e, _ in produce_subset):
+            return None
+        extents = []
+        for b, e, s in consume_subset:
+            extent = symbolic.pystr_to_symbolic(e - b + 1)
+            if s != 1 or not extent.is_Integer:
+                return None
+            extents.append(int(extent))
+        if all(extent == 1 for extent in extents):
+            return None
+        return [
+            (offset, tuple((b + o, b + o, 1) for (b, _, _), o in zip(consume_subset, offset)))
+            for offset in itertools.product(*(range(extent) for extent in extents))
+        ]
 
     @staticmethod
     def solve(first_params: list[str], write_accesses: tuple, second_params: list[str], read_accesses: tuple):
@@ -494,12 +659,21 @@ def advanced_replace(subgraph: StateSubgraphView, s: str, s_: str) -> None:
             params = [s_ if p == s else p for p in node.map.params]
             node.map.params = params
         elif isinstance(node, nodes.NestedSDFG):
+            # A nested SDFG is its own symbol namespace, joined to this one only by ``symbol_mapping``
+            # (callee name -> caller expression). ``subgraph.replace`` already rewrote the values, which
+            # is the whole of an outer rename; descending renames the CALLEE's symbol instead, so the key
+            # binding it has to move with it -- and substituting an EXPRESSION (a solved index such as
+            # ``_i0 -> j - 1``) has no callee name to rename, so it must not descend at all.
+            if not dtypes.validate_name(s_):
+                continue
             for nsdfg in node.sdfg.all_sdfgs_recursive():
                 nsdfg.replace(s, s_)
-                # The symbol is renamed inside, so the enclosing node's mapping has to be keyed by the new name
-                parent_node = nsdfg.parent_nsdfg_node
-                if parent_node is not None and s in parent_node.symbol_mapping:
-                    parent_node.symbol_mapping[s_] = parent_node.symbol_mapping.pop(s)
+                nested_node = nsdfg.parent_nsdfg_node
+                if nested_node is not None and s in nested_node.symbol_mapping:
+                    # Rebuilt, not popped: mapping order is the order codegen defines the symbols in.
+                    nested_node.symbol_mapping = {
+                        (s_ if k == s else k): v for k, v in nested_node.symbol_mapping.items()
+                    }
                 for cfg in nsdfg.all_control_flow_regions():
                     cfg.replace(s, s_)
                     for nblock in cfg.nodes():

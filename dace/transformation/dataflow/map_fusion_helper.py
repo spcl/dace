@@ -1,19 +1,24 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import dataclasses
+import itertools
 from collections.abc import Iterable
 from typing import Any
 
+import sympy
+
 import dace
-from dace import symbolic
-from dace.sdfg import graph, validation
+from dace import subsets, symbolic
+from dace.sdfg import graph, propagation, validation
 from dace.sdfg import nodes as nodes
+from dace.sdfg import utils as sdutils
+from dace.sdfg.state import SymbolResolver
 from dace.transformation import helpers
 
 
 def find_parameter_remapping(
     first_map: nodes.Map,
     second_map: nodes.Map,
-    simplify_ranges: bool = False,
 ) -> dict[str, str] | None:
     """Computes the parameter remapping for the parameters of the _second_ map.
 
@@ -29,7 +34,6 @@ def find_parameter_remapping(
 
     :param first_map: The first map (these parameters will be replaced).
     :param second_map: The second map, these parameters acts as source.
-    :param simplify_ranges: Perform simplification on the range expressions.
 
     :note: This function currently fails if the renaming is not unique. Consider the
         case were the first map has the structure `for i, j in map[0:20, 0:20]` and it
@@ -52,16 +56,19 @@ def find_parameter_remapping(
     if len(first_params) != len(second_params):
         return None
 
-    if simplify_ranges:
-        simp = lambda e: symbolic.simplify_ext(symbolic.simplify(e))  # noqa: E731 [lambda-assignment]
-    else:
-        simp = lambda e: e  # noqa: E731 [lambda-assignment]
+    # A duplicated parameter collapses the `param -> range` dicts below, so the second pass
+    #  would map the same name twice; a `params`/`range` length mismatch makes the `zip()`
+    #  drop entries, so a name in the intersection is missing from the dict.
+    if len(set(first_params)) != len(first_params) or len(set(second_params)) != len(second_params):
+        return None
+    if len(first_params) != first_map.range.dims() or len(second_params) != second_map.range.dims():
+        return None
 
     first_rngs: dict[str, tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng) for param, rng in zip(first_params, first_map.range)
+        param: tuple(rng) for param, rng in zip(first_params, first_map.range)
     }
     second_rngs: dict[str, tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng) for param, rng in zip(second_params, second_map.range)
+        param: tuple(rng) for param, rng in zip(second_params, second_map.range)
     }
 
     # Parameters of the second map that have not yet been matched to a parameter
@@ -120,7 +127,6 @@ def rename_map_parameters(
     second_map: nodes.Map,
     second_map_entry: nodes.MapEntry,
     state: dace.SDFGState,
-    simplify_ranges: bool = False,
 ) -> None:
     """Replaces the map parameters of the second map with names from the first.
 
@@ -132,13 +138,11 @@ def rename_map_parameters(
     :param second_map: The second map, this map will be replaced.
     :param second_map_entry: The entry node of the second map.
     :param state: The SDFGState on which we operate.
-    :param simplify_ranges: Perform simplification on the range expressions.
     """
     # Compute the replacement dict.
     repl_dict: dict[str, str] = find_parameter_remapping(  # type: ignore[assignment]  # Guaranteed to be not `None`.
         first_map=first_map,
         second_map=second_map,
-        simplify_ranges=simplify_ranges,
     )
 
     if repl_dict is None:
@@ -147,16 +151,49 @@ def rename_map_parameters(
         return
 
     second_map_scope = state.scope_subgraph(entry_node=second_map_entry)
+    rename_capturing_inner_params(state, second_map_entry, set(repl_dict.values()))
     # Why is this thing in symbolic and not in replace?
-    symbolic.safe_replace(
-        mapping=repl_dict,
-        replace_callback=second_map_scope.replace_dict,
-    )
+    # The rename parses the new names from strings; type them as the second map declares the old ones.
+    declared = second_map_entry.new_symbols(state.sdfg, state, state.symbols_defined_at(second_map_entry))
+    renamed_dtypes = {repl_dict[p]: dtype for p, dtype in declared.items() if p in repl_dict}
+    with symbolic.serialization_symbol_dtypes(renamed_dtypes, inherit=True):
+        symbolic.safe_replace(
+            mapping=repl_dict,
+            replace_callback=second_map_scope.replace_dict,
+        )
 
     # For some odd reason the replace function does not modify the range and
     #  parameter of the map, so we will do it the hard way.
     second_map.params = copy.deepcopy(first_map.params)
     second_map.range = copy.deepcopy(first_map.range)
+
+
+def rename_capturing_inner_params(state: dace.SDFGState, map_entry: nodes.MapEntry, names: set[str]) -> None:
+    """Give each Map nested in ``map_entry``'s scope that binds one of ``names`` a fresh parameter instead, so renaming
+    ``map_entry``'s parameters to ``names`` cannot be captured by the inner Map."""
+    inner = [
+        node
+        for node in state.scope_subgraph(entry_node=map_entry, include_entry=False, include_exit=False).nodes()
+        if isinstance(node, nodes.MapEntry) and not names.isdisjoint(node.map.params)
+    ]
+    if not inner:
+        return
+    taken = set(state.sdfg.symbols) | set(state.sdfg.arrays) | names
+    taken.update(p for node in state.nodes() if isinstance(node, nodes.MapEntry) for p in node.map.params)
+    for node in inner:
+        repl: dict[str, str] = {}
+        for param in node.map.params:
+            if param not in names:
+                continue
+            k = 0
+            while f"{param}_{k}" in taken:
+                k += 1
+            repl[param] = f"{param}_{k}"
+            taken.add(repl[param])
+        declared = node.new_symbols(state.sdfg, state, state.symbols_defined_at(node))
+        with symbolic.serialization_symbol_dtypes({repl[p]: declared[p] for p in repl}, inherit=True):
+            symbolic.safe_replace(mapping=repl, replace_callback=state.scope_subgraph(entry_node=node).replace_dict)
+        node.map.params = [repl.get(p, p) for p in node.map.params]
 
 
 def get_new_conn_name(
@@ -223,10 +260,12 @@ def get_new_conn_name(
     # NOTE: One could also say that we should only do that if `edge_that_is_already_there`
     #   covers the new one, but since the order, is kind of arbitrary, we test if
     #   either one covers.
+    # Only a top-level Map consolidates (see above), so what holds around it is what holds in the state
+    facts = SymbolResolver().facts_at(state)
     return (
         (edge_that_is_already_present.dst_conn[3:], True)
-        if edge_that_is_already_present_subset.covers(edge_to_move_subset)
-        or edge_to_move_subset.covers(edge_that_is_already_present_subset)
+        if edge_that_is_already_present_subset.covers(edge_to_move_subset, facts)
+        or edge_to_move_subset.covers(edge_that_is_already_present_subset, facts)
         else (to_node.next_connector(old_conn), False)
     )
 
@@ -239,7 +278,7 @@ def relocate_nodes(
     scope_dict: dict,
     never_consolidate_edges: bool = False,
     consolidate_edges_only_if_not_extending: bool = True,
-) -> None:
+) -> list[str]:
     """Move the connectors and edges from `from_node` to `to_nodes` node.
 
     This function will only rewire the edges, it does not remove the nodes
@@ -253,6 +292,8 @@ def relocate_nodes(
     :param to_node: Node to which the edges should reconnect.
     :param state: The state in which the operation happens.
     :param sdfg: The SDFG that is modified.
+    :return: The connectors of `to_node`, without prefix, that now also carry what `from_node` carried: only their
+        outer memlets can have to grow, a relocated connector keeps its memlet.
 
     :note: After the relocation Memlet propagation should be run.
     """
@@ -263,17 +304,26 @@ def relocate_nodes(
     for empty_edge in list(filter(lambda e: e.data.is_empty(), state.in_edges(from_node))):
         helpers.redirect_edge(state, empty_edge, new_dst=to_node)
 
-    # We now ensure that there is only one empty Memlet from the `to_node` to any other node.
-    #  Although it is allowed, we try to prevent it.
-    empty_targets: set[nodes.Node] = set()
+    # We now ensure that there is only one empty Memlet between `to_node` and any
+    #  other node, i.e. we drop genuinely-duplicate empty Memlets while keeping every
+    #  distinct one. The key is the `(src, dst)` pair, NOT `dst` alone: empty Memlets
+    #  are ordering (WAW/WAR) dependencies, and two of them into `to_node` coming from
+    #  *different* source nodes encode *different* dependencies (e.g. the write-ordering
+    #  chains of two different arrays fused into one Map). Keying on `dst` alone would
+    #  collapse every empty in-edge (they all share `dst == to_node`) down to one,
+    #  dropping real dependencies and -- because the surviving one depends on edge
+    #  iteration order -- producing an order-dependent miscompile.
+    seen_empty_pairs: set[tuple[nodes.Node, nodes.Node]] = set()
     for empty_edge in list(filter(lambda e: e.data.is_empty(), state.all_edges(to_node))):
-        if empty_edge.dst in empty_targets:
+        pair = (empty_edge.src, empty_edge.dst)
+        if pair in seen_empty_pairs:
             state.remove_edge(empty_edge)
-        empty_targets.add(empty_edge.dst)
+        seen_empty_pairs.add(pair)
 
     # Relocation of the edges that carry data. A passthrough connector may carry several edges, all of which are
     #  relocated together, so each connector is handled once.
     relocated_connectors: set[str] = set()
+    reused_connectors: list[str] = []
     for edge_to_move in list(state.in_edges(from_node)):
         assert isinstance(edge_to_move.dst_conn, str)
 
@@ -286,6 +336,8 @@ def relocate_nodes(
             if dmr_symbol in to_node.in_connectors:
                 # Both Maps bind the same value to this dynamic map range (`can_topologically_be_fused()`): drop the duplicate.
                 state.remove_edge(edge_to_move)
+                if state.degree(edge_to_move.src) == 0:
+                    state.remove_node(edge_to_move.src)
             else:
                 if not to_node.add_in_connector(dmr_symbol, force=False):
                     raise RuntimeError(  # Might fail because of out connectors.
@@ -316,6 +368,11 @@ def relocate_nodes(
                     state.remove_edge(edge_to_move)
                     if state.degree(edge_to_move.src) == 0:
                         state.remove_node(edge_to_move.src)
+                    elif state.in_degree(edge_to_move.src) > 0 and not any(
+                        o.dst is to_node for o in state.out_edges(edge_to_move.src)
+                    ):
+                        # The reused edge reads another node of the data: what orders this one still orders the Map
+                        state.add_nedge(edge_to_move.src, to_node, dace.Memlet())
                 else:
                     helpers.redirect_edge(state, e, new_dst=to_node, new_dst_conn=dst_in_conn)
 
@@ -325,7 +382,9 @@ def relocate_nodes(
                 helpers.redirect_edge(state, e, new_src=to_node, new_src_conn=dst_out_conn)
 
             # If we have used new connectors we must add the new connector names.
-            if not conn_was_reused:
+            if conn_was_reused:
+                reused_connectors.append(new_conn)
+            else:
                 to_node.add_in_connector(dst_in_conn)
                 to_node.add_out_connector(dst_out_conn)
 
@@ -348,12 +407,160 @@ def relocate_nodes(
         )
     assert len(from_node.in_connectors) == 0
     assert len(from_node.out_connectors) == 0
+    return reused_connectors
+
+
+def propagate_connectors(state: dace.SDFGState, node: nodes.MapEntry | nodes.MapExit, connectors: list[str]) -> None:
+    """`propagation.propagate_node()` of `connectors`, given without prefix, only.
+
+    A fusion moves a connector with its memlet, which stays right: both Maps iterate the same range. The memlets it
+    changes are those of a connector that now also carries the other Map's edges, and of an intermediate rebuilt behind
+    the fused Map.
+    """
+    if not connectors:
+        return
+    sdfg = state.sdfg
+    entry_node = node if isinstance(node, nodes.EntryNode) else state.entry_node(node)
+    use_dst = not isinstance(node, nodes.EntryNode)
+    outer_prefix, inner_prefix = ("OUT_", "IN_") if use_dst else ("IN_", "OUT_")
+    scope_symbols = dace.sdfg.state.sdfg_scope_symbols(sdfg)
+    symbols = SymbolResolver(sdfg, scope_symbols)
+    defined_variables = state.symbols_defined_at(entry_node, scope_symbols).keys() | sdfg.constants.keys()
+    for connector in connectors:
+        if use_dst:
+            outer_edges = state.out_edges_by_connector(node, outer_prefix + connector)
+            inner_edges = state.in_edges_by_connector(node, inner_prefix + connector)
+        else:
+            outer_edges = state.in_edges_by_connector(node, outer_prefix + connector)
+            inner_edges = state.out_edges_by_connector(node, inner_prefix + connector)
+        inner_edge = next((e for e in inner_edges if not e.data.is_empty()), None)
+        if inner_edge is None:
+            continue
+        aligned_memlet = propagation.align_memlet(state, inner_edge, dst=use_dst)
+        for edge in list(outer_edges):
+            edge.data = propagation.propagate_memlet(
+                state,
+                aligned_memlet,
+                node,
+                True,
+                connector=connector,
+                defined_variables=defined_variables,
+                symbols=symbols,
+            )
+
+
+def safe_exit_node(
+    state: dace.SDFGState,
+    entry_node: nodes.EntryNode,
+) -> nodes.ExitNode | None:
+    """The exit node of `entry_node`'s scope, or `None` if the scope is no longer intact.
+
+    `SDFGState.exit_node()` raises a bare `StopIteration` when the exit node was removed and a
+    `KeyError` when the entry node itself is gone -- both reachable from a stale match, and the
+    former turns into a `RuntimeError` if it escapes into the matcher's generator (PEP 479).
+    """
+    try:
+        return state.exit_node(entry_node)
+    except (KeyError, StopIteration):
+        return None
+
+
+def scope_connectors_are_sound(
+    state: dace.SDFGState,
+    node: nodes.MapEntry | nodes.MapExit,
+) -> bool:
+    """`True` if `node`'s connectors and edges are shaped the way the rewrite assumes.
+
+    `relocate_nodes()` walks the in-edges of a scope node and moves the whole `IN_x`/`OUT_x`
+    group at once. A connector without an edge is therefore never visited (and trips the final
+    "everything was relocated" checks *after* the graph was rewritten), and a data edge without
+    a connector has no counterpart to follow into the scope. Both shapes are already rejected by
+    `SDFGState` validation, so refusing them here costs no valid SDFG.
+    """
+    bound_in_conns = {e.dst_conn for e in state.in_edges(node)}
+    bound_out_conns = {e.src_conn for e in state.out_edges(node)}
+    in_conns, out_conns = node.in_connectors, node.out_connectors
+
+    for conn in in_conns:
+        if conn not in bound_in_conns:
+            return False
+        if conn.startswith("IN_") and ("OUT_" + conn[3:]) not in out_conns:
+            return False
+    for conn in out_conns:
+        if conn not in bound_out_conns:
+            return False
+        if conn.startswith("OUT_") and ("IN_" + conn[4:]) not in in_conns:
+            return False
+
+    # The other direction: an edge naming a connector that was never declared is relocated as a
+    #  dynamic map range, which then collides on the target node.
+    if any(conn is not None and conn not in in_conns for conn in bound_in_conns):
+        return False
+    if any(conn is not None and conn not in out_conns for conn in bound_out_conns):
+        return False
+
+    # An empty Memlet is an ordering edge and legitimately carries no connector.
+    if None in bound_in_conns and any(e.dst_conn is None and not e.data.is_empty() for e in state.in_edges(node)):
+        return False
+    if None in bound_out_conns and any(e.src_conn is None and not e.data.is_empty() for e in state.out_edges(node)):
+        return False
+    return True
+
+
+def scope_contents(state: dace.SDFGState, entry: nodes.EntryNode) -> list[nodes.Node]:
+    """The nodes inside the scope of `entry` and its exit, not `entry`: `state.scope_subgraph()` without the walk
+    over the whole state that puts them in graph order. A probe asks this several times per candidate."""
+    children = state._scope_dict_tochildren_cached
+    if children is None:
+        children = state.scope_children()
+    contents: list[nodes.Node] = []
+    pending = [entry]
+    while pending:
+        for node in children[pending.pop()]:
+            contents.append(node)
+            if isinstance(node, nodes.EntryNode):
+                pending.append(node)
+    return contents
+
+
+def scope_edges(state: dace.SDFGState, entry: nodes.EntryNode, contents: list[nodes.Node]) -> Iterable[graph.Edge]:
+    """The edges of the scope of `entry`, whose `scope_contents()` are `contents`."""
+    return (
+        edge
+        for node in itertools.chain((entry,), contents)
+        if not (isinstance(node, nodes.ExitNode) and state.entry_node(node) is entry)
+        for edge in state.out_edges(node)
+    )
+
+
+def map_scope_data_is_known(
+    state: dace.SDFGState,
+    sdfg: dace.SDFG,
+    map_entry: nodes.MapEntry,
+    map_exit: nodes.MapExit,
+) -> bool:
+    """`True` if every array name the Map scope mentions still has a descriptor in `sdfg`.
+
+    A name that another transformation deleted surfaces as a `KeyError` deep inside the rewrite
+    (`AccessNode.desc()`, `Memlet.try_initialize()`, `sdfg.arrays[...]`), so it is refused here.
+    """
+    contents = scope_contents(state, map_entry)
+    boundary_edges = list(state.in_edges(map_entry)) + list(state.out_edges(map_exit))
+    for edge in itertools.chain(scope_edges(state, map_entry, contents), boundary_edges):
+        if edge.data is not None and edge.data.data is not None and edge.data.data not in sdfg.arrays:
+            return False
+    boundary_nodes = (e.src for e in state.in_edges(map_entry))
+    for node in itertools.chain(contents, boundary_nodes, (e.dst for e in state.out_edges(map_exit))):
+        if isinstance(node, nodes.AccessNode) and node.data not in sdfg.arrays:
+            return False
+    return True
 
 
 def is_node_reachable_from(
     graph: dace.SDFGState,
     begin: nodes.Node,
     end: nodes.Node,
+    ignore_empty_edges: bool = False,
 ) -> bool:
     """Test if the node `end` can be reached from `begin`.
 
@@ -364,10 +571,16 @@ def is_node_reachable_from(
     :param graph: The graph to operate on.
     :param begin: The start of the DFS.
     :param end: The node that should be located.
+    :param ignore_empty_edges: Do not traverse empty Memlets, i.e. only follow real
+        data flow. Used to tell an ordering-only connection apart from a data one.
     """
 
     def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
-        return (edge.dst for edge in graph.out_edges(node))
+        return (
+            edge.dst
+            for edge in graph.out_edges(node)
+            if not (ignore_empty_edges and edge.data is not None and edge.data.is_empty())
+        )
 
     to_visit: list[nodes.Node] = [begin]
     seen: set[nodes.Node] = set()
@@ -409,6 +622,562 @@ def is_parallel(
     return True
 
 
+@dataclasses.dataclass(slots=True)
+class FusionProbe:
+    """What the probes of one unchanged state share. Nothing here is a verdict: the driving pass makes a new one at
+    every fusion, and each probe outside such a pass makes its own."""
+
+    #: The resolver the probes of the unchanged SDFG share.
+    symbols: SymbolResolver = dataclasses.field(default_factory=SymbolResolver)
+    #: The nodes with a path to each node asked about, itself included.
+    ancestors: dict[nodes.Node, set[nodes.Node]] = dataclasses.field(default_factory=dict)
+    #: Per state, the writing access nodes of each container; a View binding writes nothing.
+    writers: dict[dace.SDFGState, dict[str, list[nodes.AccessNode]]] = dataclasses.field(default_factory=dict)
+    #: The Maps whose scope was seen to have only known data.
+    known_scopes: set[nodes.MapEntry] = dataclasses.field(default_factory=set)
+    #: The Maps whose boundary memlets are initialized.
+    initialized: set[nodes.MapEntry] = dataclasses.field(default_factory=set)
+
+    def scope_data_is_known(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, map_entry: nodes.MapEntry, map_exit: nodes.MapExit
+    ) -> bool:
+        """`map_scope_data_is_known()`, once per Map."""
+        if map_entry in self.known_scopes:
+            return True
+        if not map_scope_data_is_known(state, sdfg, map_entry, map_exit):
+            return False
+        self.known_scopes.add(map_entry)
+        return True
+
+    def initialize_boundary(
+        self, state: dace.SDFGState, sdfg: dace.SDFG, map_entry: nodes.MapEntry, map_exit: nodes.MapExit
+    ) -> None:
+        """Set `{src,dst}_subset` of the memlets through the scope nodes, the ones a probe reads. See
+        [issue 1708](https://github.com/spcl/dace/issues/1703)."""
+        if map_entry in self.initialized:
+            return
+        self.initialized.add(map_entry)
+        for edge in itertools.chain(
+            state.in_edges(map_entry), state.out_edges(map_entry), state.in_edges(map_exit), state.out_edges(map_exit)
+        ):
+            edge.data.try_initialize(sdfg, state, edge)
+
+    def upstream(self, state: dace.SDFGState, node: nodes.Node) -> set[nodes.Node]:
+        known = self.ancestors.get(node)
+        if known is None:
+            known = self.ancestors[node] = {node}
+            pending = [node]
+            while pending:
+                for edge in state.in_edges(pending.pop()):
+                    if edge.src not in known:
+                        known.add(edge.src)
+                        pending.append(edge.src)
+        return known
+
+    def reaches(self, state: dace.SDFGState, begin: nodes.Node, end: nodes.Node) -> bool:
+        """`is_node_reachable_from()`, sharing the walk between the questions about one `end`."""
+        return begin in self.upstream(state, end)
+
+    def is_parallel(self, state: dace.SDFGState, node1: nodes.Node, node2: nodes.Node) -> bool:
+        """`is_parallel()`, see `reaches()`."""
+        return not (self.reaches(state, node1, node2) or self.reaches(state, node2, node1))
+
+    def written(self, state: dace.SDFGState, name: str) -> list[nodes.AccessNode]:
+        index = self.writers.get(state)
+        if index is None:
+            index = self.writers[state] = {}
+            for node in state.data_nodes():
+                if not isinstance(node.desc(state.sdfg), dace.data.View) and any(
+                    not e.data.is_empty() for e in state.in_edges(node)
+                ):
+                    index.setdefault(node.data, []).append(node)
+        return index.get(name, [])
+
+
+def read_overtaken_by_write(
+    state: dace.SDFGState,
+    reader_entry: nodes.MapEntry,
+    reader_exit: nodes.MapExit,
+    later_entry: nodes.MapEntry,
+    probe: FusionProbe,
+) -> bool:
+    """Whether a container the Map ``reader_entry`` reads is written before ``later_entry`` by a node that does not
+    precede ``reader_entry``. Fused, the reader runs where ``later_entry`` does and would see that write.
+
+    ``x -> first -> t -> second`` beside ``x -> update -> x' -> ... -> second``: ``first`` reads ``x`` before
+    ``update`` writes it, the fused Map after.
+
+    :param state: The state of both Maps.
+    :param reader_entry: The entry of the Map whose reads move.
+    :param reader_exit: Its exit; what it writes itself is not another writer.
+    :param later_entry: The entry of the Map the reader is fused into.
+    :param probe: What the probes of this state share.
+    """
+    read: dict[str, None] = {}
+    for edge in state.in_edges(reader_entry):
+        if edge.data.is_empty():
+            continue
+        source = state.memlet_path(edge)[0].src
+        name = _dealias(state, source) if isinstance(source, nodes.AccessNode) else edge.data.data
+        if name is None:
+            return True
+        read[name] = None
+    # A write through a View is the write into the node it views
+    candidates = [node for name in read for node in probe.written(state, name)]
+    if not candidates:
+        return False
+    own = set(state.successors(reader_exit))
+    writers = [node for node in candidates if node not in own]
+    if not writers:
+        return False
+
+    def written_before(writer: nodes.AccessNode, entry: nodes.MapEntry) -> bool:
+        # The node itself or what writes it, so a written sink counts at its producer
+        upstream = probe.upstream(state, entry)
+        return writer in upstream or any(
+            e.src is not entry and e.src in upstream for e in state.in_edges(writer) if not e.data.is_empty()
+        )
+
+    return any(written_before(w, later_entry) and not written_before(w, reader_entry) for w in writers)
+
+
+def anti_dependences(
+    state: dace.SDFGState, first_entry: nodes.MapEntry, second_exit: nodes.MapExit
+) -> list[tuple[nodes.Node, nodes.Node]]:
+    """The ``(reader, writer)`` pairs of a fusion: a node of the first Map's body reads or writes a container that a
+    node of the second Map's body writes. Apart, the Map boundary runs it first; fused, only a path in the body does.
+
+    A nested scope stands for its whole body: a reader by its exit, a writer by its entry.
+
+    :param state: The state of both Maps.
+    :param first_entry: The entry of the first Map.
+    :param second_exit: The exit of the second Map.
+    """
+    readers: dict[str, list[nodes.Node]] = {}
+    for edge in state.out_edges(first_entry):
+        if edge.data.is_empty() or edge.data.data is None:
+            continue
+        reader = state.exit_node(edge.dst) if isinstance(edge.dst, nodes.EntryNode) else edge.dst
+        readers.setdefault(edge.data.data, []).append(reader)
+    for edge in state.in_edges(state.exit_node(first_entry)):
+        if not edge.data.is_empty() and edge.data.data is not None:
+            readers.setdefault(edge.data.data, []).append(edge.src)
+    pairs: list[tuple[nodes.Node, nodes.Node]] = []
+    for edge in state.in_edges(second_exit):
+        if edge.data.is_empty() or edge.data.data not in readers:
+            continue
+        writer = state.entry_node(edge.src) if isinstance(edge.src, nodes.ExitNode) else edge.src
+        pairs.extend((reader, writer) for reader in readers[edge.data.data] if reader is not writer)
+    return pairs
+
+
+def keep_anti_dependences(state: dace.SDFGState, pairs: list[tuple[nodes.Node, nodes.Node]]) -> None:
+    """Order each reader of :func:`anti_dependences` before its writer with an empty Memlet, where no path orders
+    the two either way. A path from the writer to the reader means the read consumes the write (an in-place
+    intermediate), and the edge would close a cycle."""
+    for reader, writer in pairs:
+        upstream = sdutils.find_upstream_nodes(writer, state)
+        if reader not in upstream and writer not in sdutils.find_upstream_nodes(reader, state):
+            state.add_nedge(reader, writer, dace.Memlet())
+
+
+def scope_accesses(
+    state: dace.SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit
+) -> tuple[list[tuple[str | None, Any]], list[tuple[str | None, Any]]]:
+    """The ``(container, outer memlet)`` reads and writes of the Map ``map_entry``, Views resolved (``None``: one
+    that does not resolve). The memlet of an access through a View is ``None``: its subset is the View's."""
+
+    def accesses(edges, endpoint):
+        found = []
+        for edge in edges:
+            if edge.data.is_empty():
+                continue
+            node = endpoint(edge)
+            name = _dealias(state, node) if isinstance(node, nodes.AccessNode) else edge.data.data
+            viewed = isinstance(node, nodes.AccessNode) and name != node.data
+            found.append((name, None if viewed else edge.data))
+        return found
+
+    reads = accesses(state.in_edges(map_entry), lambda e: state.memlet_path(e)[0].src)
+    writes = accesses(state.out_edges(map_exit), lambda e: state.memlet_path(e)[-1].dst)
+    return reads, writes
+
+
+def conflicting_accesses(
+    state: dace.SDFGState,
+    first: tuple[nodes.MapEntry, nodes.MapExit],
+    second: tuple[nodes.MapEntry, nodes.MapExit],
+) -> bool:
+    """Whether a write of one of two unordered Maps may meet an access of the other: fused into one scope, the two
+    bodies run in no fixed order, so ``x -> first -> y`` beside an in-place ``x -> second -> x'`` may read the new
+    value. Two reductions of one container commute and do not conflict."""
+    first_reads, first_writes = scope_accesses(state, *first)
+    second_reads, second_writes = scope_accesses(state, *second)
+    facts = None
+    for writes, others in ((first_writes, second_reads + second_writes), (second_writes, first_reads)):
+        for name, written in writes:
+            for other_name, other in others:
+                if name is None or other_name is None:
+                    return True
+                if name != other_name:
+                    continue
+                if written is None or other is None:
+                    return True
+                if written.wcr is not None and other.wcr is not None:
+                    continue
+                facts = state.sdfg.facts() if facts is None else facts
+                if subsets.intersects(written.subset, other.subset, facts) is not symbolic.Truth.FALSE:
+                    return True
+    return False
+
+
+def find_happens_before_connection(
+    state: dace.SDFGState,
+    first_map_entry: nodes.MapEntry,
+    second_map_entry: nodes.MapEntry,
+) -> list[graph.MultiConnectorEdge[dace.Memlet]] | None:
+    """The empty Memlets that are the *only* connection between the two Map scopes.
+
+    ``StateFusionExtended`` collapses an interstate edge and re-imposes the ordering it
+    used to enforce with empty (happens-before) Memlets. Two Maps that were in separate
+    states and had a WAR/WAW hazard therefore end up ordered but *not* connected by data.
+    Such Maps look non-parallel to `is_parallel()` even though fusing them may well be
+    legal, so this function recognises that situation.
+
+    The function returns the ordering edges if, and only if, `first_map_entry` is the
+    upstream Map and every connection to `second_map_entry` is an empty Memlet that
+    goes *directly* from the first Map (its MapExit, or an AccessNode that only the
+    first Map writes) into `second_map_entry`. In every other case -- the Maps are
+    parallel, the direction is reversed, real data flows between them, or a third node
+    sits in between and would lose its own ordering -- `None` is returned.
+
+    :param state: The state in which the two Maps are.
+    :param first_map_entry: Entry of the Map that must be the upstream one.
+    :param second_map_entry: Entry of the Map that must be the downstream one.
+    """
+    first_map_exit: nodes.MapExit | None = safe_exit_node(state, first_map_entry)
+    second_map_exit: nodes.MapExit | None = safe_exit_node(state, second_map_entry)
+    if first_map_exit is None or second_map_exit is None:
+        return None
+
+    # `first` has to be the upstream Map. If it is the downstream one we bail out; the
+    #  matcher also offers the swapped pair, which is the one that is handled.
+    if not is_node_reachable_from(graph=state, begin=first_map_exit, end=second_map_entry):
+        return None
+    if is_node_reachable_from(graph=state, begin=second_map_exit, end=first_map_entry):
+        return None
+
+    # If the Maps stay connected once the empty Memlets are ignored, then real data flows
+    #  between them. That is `MapFusionVertical`'s business, not ours.
+    if is_node_reachable_from(graph=state, begin=first_map_exit, end=second_map_entry, ignore_empty_edges=True):
+        return None
+
+    # Nodes that the first Map alone writes; an ordering edge may also start there
+    #  (that is the shape a WAW hazard produces).
+    own_outputs: set[nodes.Node] = {
+        e.dst
+        for e in state.out_edges(first_map_exit)
+        if isinstance(e.dst, nodes.AccessNode) and all(ie.src is first_map_exit for ie in state.in_edges(e.dst))
+    }
+
+    ordering_edges: list[graph.MultiConnectorEdge[dace.Memlet]] = []
+    for edge in state.edges():
+        if edge.data is None or not edge.data.is_empty():
+            continue
+        if edge.dst is not second_map_entry:
+            continue
+        if edge.src is not first_map_exit and edge.src not in own_outputs:
+            # Something else orders the second Map as well. Dropping the edge would
+            #  silently drop that dependency, so refuse.
+            return None
+        ordering_edges.append(edge)
+
+    # Every path from the first to the second Map must be covered, otherwise the Maps
+    #  would still not be parallel after the edges are removed.
+    if not ordering_edges:
+        return None
+    reachable_without = _is_reachable_ignoring(state, first_map_exit, second_map_entry, set(ordering_edges))
+    return None if reachable_without else ordering_edges
+
+
+def _is_reachable_ignoring(
+    state: dace.SDFGState,
+    begin: nodes.Node,
+    end: nodes.Node,
+    ignored_edges: set[graph.MultiConnectorEdge[dace.Memlet]],
+) -> bool:
+    """`is_node_reachable_from()` with a set of edges cut out of the graph."""
+    to_visit: list[nodes.Node] = [begin]
+    seen: set[nodes.Node] = set()
+    while to_visit:
+        node = to_visit.pop()
+        if node is end:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        to_visit.extend(e.dst for e in state.out_edges(node) if e not in ignored_edges)
+    return False
+
+
+def _scope_boundary_accesses(
+    state: dace.SDFGState,
+    map_entry: nodes.MapEntry,
+    param_repl: dict[str, str] | None,
+) -> tuple[dict[str, list[tuple[nodes.Node, subsets.Subset]]], dict[str, list[tuple[nodes.Node, subsets.Subset]]]]:
+    """Per-iteration reads and writes of a Map scope, keyed by data name.
+
+    The subsets are taken from the edges immediately *inside* the scope nodes, so they
+    describe what a single iteration touches (for a nested Map the propagated subset
+    covers all of its iterations, which is the conservative and correct thing here).
+    The node returned alongside a subset is the one an ordering edge has to attach to.
+
+    :param state: The state in which the Map is.
+    :param map_entry: The entry node of the Map.
+    :param param_repl: Renaming applied to the subsets, see `find_parameter_remapping()`.
+    """
+    map_exit: nodes.MapExit | None = safe_exit_node(state, map_entry)
+    if map_exit is None:
+        return None, None
+    reads: dict[str, list[tuple[nodes.Node, subsets.Subset]]] = {}
+    writes: dict[str, list[tuple[nodes.Node, subsets.Subset]]] = {}
+
+    read_side = (state.out_edges(map_entry), lambda e: e.dst, reads)
+    write_side = (state.in_edges(map_exit), lambda e: e.src, writes)
+    for edges, node_of, target in (read_side, write_side):
+        for edge in edges:
+            if edge.data is None or edge.data.is_empty() or edge.data.data is None:
+                continue
+            data, subset = _boundary_access(state, edge)
+            if data is None or subset is None:
+                return None, None
+            subset = copy.deepcopy(subset)
+            if param_repl:
+                symbolic.safe_replace(param_repl, subset.replace)
+            target.setdefault(data, []).append((node_of(edge), subset))
+    return reads, writes
+
+
+def _boundary_access(
+    state: dace.SDFGState,
+    edge: graph.MultiConnectorEdge[dace.Memlet],
+) -> tuple[str | None, subsets.Subset | None]:
+    """What a boundary edge really touches, or `(None, None)` if that cannot be determined.
+
+    A copy-Memlet names one END of the edge and carries the other in `other_subset`, so `data`
+    alone can name an inner buffer. Views resolve to what they view.
+    """
+    outer = _outer_data_of_boundary_edge(state, edge)
+    if outer is None:
+        return None, None
+    if edge.data.data == outer:
+        return outer, edge.data.subset
+    # The Memlet names the other end, so only `other_subset` describes the outer access.
+    return outer, edge.data.other_subset
+
+
+def _outer_data_of_boundary_edge(
+    state: dace.SDFGState,
+    edge: graph.MultiConnectorEdge[dace.Memlet],
+) -> str | None:
+    """The de-aliased array reached by following `edge` out through its scope node."""
+    connector = edge.dst_conn if isinstance(edge.dst, nodes.MapExit) else edge.src_conn
+    if connector is None or not connector.startswith(("IN_", "OUT_")):
+        return None
+    scope_node = edge.dst if isinstance(edge.dst, nodes.MapExit) else edge.src
+    if isinstance(scope_node, nodes.MapExit):
+        outer_edges = list(state.out_edges_by_connector(scope_node, "OUT_" + connector[3:]))
+        endpoints = [e.dst for e in outer_edges]
+    else:
+        outer_edges = list(state.in_edges_by_connector(scope_node, "IN_" + connector[4:]))
+        endpoints = [e.src for e in outer_edges]
+    if len(endpoints) != 1 or not isinstance(endpoints[0], nodes.AccessNode):
+        return None
+    return _dealias(state, endpoints[0])
+
+
+def resolve_view_source(
+    state: dace.SDFGState,
+    view_node: nodes.AccessNode,
+) -> nodes.AccessNode | None:
+    """The AccessNode that `view_node` ultimately views, or `None` if that is undecidable.
+
+    `sdutils.get_view_edge()` reports every ambiguous View shape it has no rule for by
+    returning `None` -- except one: a View with no incoming data edge and more than one
+    outgoing edge falls through to an unguarded `in_edges[0]` and raises `IndexError`
+    (`dace/sdfg/utils.py`). That escapes the `can_be_applied()` safety nets, which do not
+    list `IndexError`, so it is refused here instead. The shape only occurs on a malformed
+    state -- `SDFG.validate()` raises the very same `IndexError` on it -- so refusing it
+    costs no valid SDFG.
+
+    :param state: The state in which the View is.
+    :param view_node: The View AccessNode to resolve.
+    """
+    if state.out_degree(view_node) > 1 and not any(not e.data.is_empty() for e in state.in_edges(view_node)):
+        return None
+    return sdutils.get_last_view_node(state, view_node)
+
+
+def _dealias(state: dace.SDFGState, node: nodes.AccessNode) -> str | None:
+    """The name of the array `node` ultimately refers to, resolving Views."""
+    desc = node.desc(state.sdfg)
+    if not isinstance(desc, dace.data.View):
+        return node.data
+    viewed = resolve_view_source(state, node)
+    return None if viewed is None else viewed.data
+
+
+def _is_iteration_private(
+    first_subset: subsets.Subset,
+    second_subset: subsets.Subset,
+    params: list[sympy.Symbol],
+) -> bool:
+    """Whether two accesses of one array can only collide within the *same* iteration.
+
+    Fusing two Maps replaces a whole-Map ordering ("all of the first Map, then all of the
+    second") with a per-iteration one, so a hazard is only still covered if no iteration
+    can collide with a *different* iteration. That holds when some dimensions pin every
+    Map parameter: a dimension pins `p` if both accesses reduce to the same single point
+    there and that point is an injective function of `p` alone (`p`, `p + 1`, `2 * p`,
+    ...). Two distinct parameter tuples then differ in some `p`, hence differ in the
+    dimension that pins `p`, hence touch different elements.
+
+    :param first_subset: Subset accessed by the first Map, in its own parameters.
+    :param second_subset: Subset accessed by the second Map, already renamed.
+    :param params: The (common) Map parameters.
+    """
+    if first_subset is None or second_subset is None:
+        return False
+    if not isinstance(first_subset, subsets.Range) or not isinstance(second_subset, subsets.Range):
+        return False
+    if first_subset.dims() != second_subset.dims():
+        return False
+
+    pinned: set[sympy.Symbol] = set()
+    for (first_begin, first_end, _), (second_begin, second_end, _) in zip(first_subset.ranges, second_subset.ranges):
+        # A bound sympy can not handle leaves this dimension unproven, which only costs a refusal.
+        try:
+            first_begin = symbolic.pystr_to_symbolic(first_begin)
+            first_end = symbolic.pystr_to_symbolic(first_end)
+            second_begin = symbolic.pystr_to_symbolic(second_begin)
+            second_end = symbolic.pystr_to_symbolic(second_end)
+            # Only a single point in this dimension, and the same one on both sides, tells
+            #  us anything about iterations that are not the same.
+            if symbolic.simplify(first_begin - first_end) != 0 or symbolic.simplify(second_begin - second_end) != 0:
+                continue
+            if symbolic.simplify(first_begin - second_begin) != 0:
+                continue
+            for param in params:
+                if param not in first_begin.free_symbols:
+                    continue
+                if any(other in first_begin.free_symbols for other in params if other is not param):
+                    continue
+                # Injective in `param` iff shifting it by one always moves the point.
+                step = symbolic.simplify(first_begin.subs(param, param + 1) - first_begin)
+                if step != 0 and not step.free_symbols:
+                    pinned.add(param)
+        except (TypeError, ValueError, AttributeError, sympy.SympifyError, sympy.PolynomialError):
+            continue
+    return all(param in pinned for param in params)
+
+
+def analyze_happens_before_fusion(
+    state: dace.SDFGState,
+    sdfg: dace.SDFG,
+    first_map_entry: nodes.MapEntry,
+    second_map_entry: nodes.MapEntry,
+    param_repl: dict[str, str],
+) -> tuple[list[graph.MultiConnectorEdge[dace.Memlet]], list[tuple[nodes.Node, nodes.Node]]] | None:
+    """Plan the fusion of two Maps that are ordered by happens-before edges only.
+
+    Returns `None` if the Maps are not in that situation or if fusing them would not be
+    safe. Otherwise it returns the ordering edges that have to be *removed* (they would
+    become a self loop on the fused Map) together with the pairs of body nodes that have
+    to be re-connected by an empty Memlet *inside* the fused scope: the whole-Map
+    ordering the removed edges provided degenerates into a per-iteration one, and it is
+    those inner edges that provide it.
+
+    :param state: The state in which the two Maps are.
+    :param sdfg: The SDFG on which we operate.
+    :param first_map_entry: Entry of the upstream Map.
+    :param second_map_entry: Entry of the downstream Map.
+    :param param_repl: Renaming of the second Map's parameters, see `find_parameter_remapping()`.
+    """
+    ordering_edges = find_happens_before_connection(state, first_map_entry, second_map_entry)
+    if ordering_edges is None:
+        return None
+
+    # The subset analysis below reads only the edges that cross the scope nodes, so it never
+    #  books what an AccessNode *inside* a body touches, and a side effect is not expressed as
+    #  a Memlet at all. Refuse what it can never be completed for, and remember the rest.
+    inner_data: list[dict[str, None]] = []  # `dict` as an ordered set, one entry per Map
+    for map_entry in (first_map_entry, second_map_entry):
+        scope_data: dict[str, None] = {}
+        for node in state.scope_subgraph(map_entry, False, False).nodes():
+            if isinstance(node, nodes.AccessNode):
+                # Non-transient data is reachable from outside this state entirely, so the
+                #  "does the other Map name it too" test below would not bound the hazard.
+                if not sdfg.arrays[node.data].transient:
+                    return None
+                data = _dealias(state, node)
+                if data is None:
+                    return None
+                scope_data[data] = None
+            # A side effect takes part in an ordering that no Memlet describes, so dropping the
+            #  happens-before edge would silently turn a whole-Map ordering of the effects into a
+            #  per-iteration interleaving of them, with nothing below able to notice.
+            elif isinstance(node, nodes.CodeNode) and node.has_side_effects(sdfg):
+                return None
+        inner_data.append(scope_data)
+
+    first_reads, first_writes = _scope_boundary_accesses(state, first_map_entry, None)
+    second_reads, second_writes = _scope_boundary_accesses(state, second_map_entry, param_repl)
+    # An access the scan could not read hides every hazard it takes part in.
+    if first_reads is None or second_reads is None:
+        return None
+
+    # An inner access is invisible above, so it is only harmless while the OTHER Map does not
+    #  name the same data -- otherwise the two share a buffer through a hazard that the subset
+    #  test never gets to see, and the ordering edge would be deleted with nothing put in its
+    #  place. Transience is NOT the discriminator: sibling Map scopes sharing even a
+    #  `Scope`-lifetime transient get ONE allocation, folded up to their common parent scope by
+    #  `framecode.py`, so it is exactly as shared as a global would be.
+    first_inner, second_inner = inner_data[0].keys(), inner_data[1].keys()
+    first_touched = first_inner | first_reads.keys() | first_writes.keys()
+    second_touched = second_inner | second_reads.keys() | second_writes.keys()
+    if not first_inner.isdisjoint(second_touched) or not second_inner.isdisjoint(first_touched):
+        return None
+    params = [symbolic.pystr_to_symbolic(param) for param in first_map_entry.map.params]
+
+    # An ordering edge must end up in front of the second Map's access, and a nested scope
+    #  is ordered as a whole, i.e. after its exit resp. before its entry.
+    # Read once: nothing here mutates `state`, and `scope_dict()` copies the whole map per call.
+    scope = state.scope_dict()
+
+    def order_source(node: nodes.Node) -> nodes.Node | None:
+        return safe_exit_node(state, node) if isinstance(node, nodes.EntryNode) else node
+
+    def order_target(node: nodes.Node) -> nodes.Node | None:
+        return scope.get(node) if isinstance(node, nodes.ExitNode) else node
+
+    inner_pairs: list[tuple[nodes.Node, nodes.Node]] = []
+    # Read/read is not a hazard, the other three combinations are (WAW, RAW, WAR).
+    hazards = [(first_writes, second_writes), (first_writes, second_reads), (first_reads, second_writes)]
+    for first_side, second_side in hazards:
+        for data, first_accesses in first_side.items():
+            for first_node, first_subset in first_accesses:
+                for second_node, second_subset in second_side.get(data, []):
+                    if not _is_iteration_private(first_subset, second_subset, params):
+                        return None
+                    ordered_pair = (order_source(first_node), order_target(second_node))
+                    # A broken nested scope leaves nothing to attach the ordering edge to.
+                    if ordered_pair[0] is None or ordered_pair[1] is None:
+                        return None
+                    inner_pairs.append(ordered_pair)
+
+    return ordering_edges, list(dict.fromkeys(inner_pairs))
+
+
 def can_topologically_be_fused(
     first_map_entry: nodes.MapEntry,
     second_map_entry: nodes.MapEntry,
@@ -417,6 +1186,7 @@ def can_topologically_be_fused(
     permissive: bool = False,
     only_inner_maps: bool = False,
     only_toplevel_maps: bool = False,
+    scope: dict[nodes.Node, nodes.Node | None] | None = None,
 ) -> dict[str, str] | None:
     """Performs basic checks if the maps can be fused.
 
@@ -435,20 +1205,31 @@ def can_topologically_be_fused(
     :param graph: The SDFGState in which the maps are located.
     :param sdfg: The SDFG itself.
     :param permissive: Currently unused.
+    :param scope: The caller's own `graph.scope_dict()`, to save recomputing it. Sound because the
+        caller takes it inside the same match probe and the graph is not mutated in between; pass
+        `None` to have it read here.
 
     :note: It is invalid to call this function after nodes have been removed from the SDFG.
+    :note: `only_inner_maps` and `only_toplevel_maps` are mutually exclusive; the transformations
+        reject the combination in their constructor, i.e. it is a configuration error and never
+        reported from here.
     """
-    if only_inner_maps and only_toplevel_maps:
-        raise ValueError(
-            "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusionVertical instance."
-        )
 
     # Ensure that both have the same schedule
     if first_map_entry.map.schedule != second_map_entry.map.schedule:
         return None
 
+    # Node-local refusals first: an incompatible iteration space rejects the overwhelming majority
+    #  of candidate pairs, and everything below it has to walk the state.
+    #  We check here if we can rename the Map parameter of the second Map such that they
+    #  match the one of the first Map.
+    param_repl = find_parameter_remapping(first_map=first_map_entry.map, second_map=second_map_entry.map)
+    if param_repl is None:
+        return None
+
     # Fusing is only possible if the two entries are in the same scope.
-    scope = graph.scope_dict()
+    if scope is None:
+        scope = graph.scope_dict()
     if scope[first_map_entry] != scope[second_map_entry]:
         return None
     elif only_inner_maps:
@@ -458,14 +1239,50 @@ def can_topologically_be_fused(
         if scope[first_map_entry] is not None:
             return None
 
-    # A dynamic map range both Maps bind cannot be renamed, so both must bind it to the same value
+    # A colliding dynamic map range cannot be renamed, only dropped when both bind the same value.
     if not dynamic_map_ranges_agree(graph, first_map_entry, second_map_entry):
         return None
 
-    # We will now check if we can rename the Map parameter of the second Map such that they
-    #  match the one of the first Map.
-    param_repl = find_parameter_remapping(first_map=first_map_entry.map, second_map=second_map_entry.map)
     return param_repl
+
+
+def dynamic_map_range_source(
+    state: dace.SDFGState, edge: graph.MultiConnectorEdge
+) -> tuple[nodes.AccessNode, nodes.AccessNode] | None:
+    """
+    The access node a dynamic map range binding reads, as ``(root, viewed)``: the root of the binding's Memlet path,
+    and the data node it views if the root is a View (the root itself otherwise). ``None`` if the path does not start
+    at an access node, or the View cannot be resolved.
+
+    :param state: The state containing the binding.
+    :param edge: The edge into the dynamic map range connector.
+    """
+    root = state.memlet_path(edge)[0].src
+    if not isinstance(root, nodes.AccessNode):
+        return None
+    if not isinstance(root.desc(state.sdfg), dace.data.View):
+        return root, root
+    viewed = sdutils.get_last_view_node(state, root)
+    return (root, viewed) if viewed is not None else None
+
+
+def is_written_in_state(state: dace.SDFGState, data_name: str) -> bool:
+    """
+    Tests if any node of ``state`` writes ``data_name``, directly or through a View of it.
+
+    :param state: The state to scan.
+    :param data_name: The name of the (non-View) data.
+    """
+    for node in state.data_nodes():
+        if state.in_degree(node) == 0:
+            continue
+        if isinstance(node.desc(state.sdfg), dace.data.View):
+            viewed = sdutils.get_last_view_node(state, node)
+            if viewed is None or viewed.data == data_name:
+                return True
+        elif node.data == data_name:
+            return True
+    return False
 
 
 def dynamic_map_ranges_agree(state: dace.SDFGState, first: nodes.MapEntry, second: nodes.MapEntry) -> bool:
@@ -473,8 +1290,9 @@ def dynamic_map_ranges_agree(state: dace.SDFGState, first: nodes.MapEntry, secon
     Tests if every dynamic map range both Maps bind reads the same value, and no other one of the second Map collides
     with an out connector of the first.
 
-    Both bindings must read the same subset of the same data from the same source node. Reading one node is safe for
-    both Maps, also for a View, at the cost of not fusing Maps that read the same value through different nodes.
+    Both bindings must read the same element: either through the same root node of their Memlet paths, or from two
+    access nodes of the same data that nothing in the state writes, directly or through a View. Two different View
+    nodes may map the same subset to different elements, so they must be the same node.
 
     :param state: The state containing both Maps.
     :param first: The Map that receives the dynamic map ranges.
@@ -482,8 +1300,6 @@ def dynamic_map_ranges_agree(state: dace.SDFGState, first: nodes.MapEntry, secon
     """
     first_ranges = {conn for conn in first.in_connectors if not conn.startswith("IN_")}
     second_ranges = {conn for conn in second.in_connectors if not conn.startswith("IN_")}
-    if any(dmr in first.out_connectors for dmr in second_ranges - first_ranges):
-        return False
     for shared_dmr in first_ranges & second_ranges:
         dmr_edges = [next(iter(state.in_edges_by_connector(node, shared_dmr)), None) for node in (first, second)]
         if None in dmr_edges:
@@ -492,7 +1308,16 @@ def dynamic_map_ranges_agree(state: dace.SDFGState, first: nodes.MapEntry, secon
         if (
             dmr_source_first.data.data != dmr_source_second.data.data
             or dmr_source_first.data.subset != dmr_source_second.data.subset
-            or dmr_source_first.src is not dmr_source_second.src
         ):
             return False
-    return True
+        roots = [dynamic_map_range_source(state, edge) for edge in dmr_edges]
+        if None in roots:
+            return False
+        (root_first, viewed_first), (root_second, viewed_second) = roots
+        if root_first is root_second:
+            continue
+        if root_first is not viewed_first or root_second is not viewed_second:
+            return False
+        if root_first.data != root_second.data or is_written_in_state(state, root_first.data):
+            return False
+    return not any(dmr in first.out_connectors for dmr in second_ranges - first_ranges)

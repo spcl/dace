@@ -2,6 +2,7 @@
 import numpy as np
 
 import dace
+from dace.sdfg import infer_types
 from dace.transformation.passes.transient_reuse import TransientReuse
 
 M = dace.symbol("M")
@@ -39,8 +40,9 @@ def test_reuse():
     C_regression = np.zeros_like(C)
 
     sdfg = operation.to_sdfg(simplify=True)
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
     result = TransientReuse().apply_pass(sdfg, {})
-    assert len(result) == 2
+    assert result == {sdfg.cfg_id: {"A_E_matmul_A_B": "E_value"}}
     sdfg(A=A, B=B, C=C, D=D, M=m, N=n)
 
     C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), np.dot(B, D))

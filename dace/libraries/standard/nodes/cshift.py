@@ -28,7 +28,7 @@ def connector_array(sdfg: SDFG, name: str, memlet: dace.Memlet, outer: SDFG) -> 
     shape is the subset's and its strides the container's, scaled by the subset's steps. Returns the shape."""
     desc = outer.arrays[memlet.data]
     shape = memlet.subset.size()
-    strides = [stride * step for stride, (_, _, step) in zip(desc.strides, memlet.subset)]
+    strides = [stride * dim_range[2] for stride, dim_range in zip(desc.strides, memlet.subset)]
     sdfg.add_array(name, shape, desc.dtype, desc.storage, strides=strides)
     return shape
 

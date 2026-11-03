@@ -4,9 +4,11 @@ import copy
 import dace
 from dace import Memlet, nodes
 from dace.dtypes import ScheduleType, StorageType
+from dace.ordered import OrderedSet
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import AbstractControlFlowRegion
 from dace.transformation.transformation import SubgraphTransformation
 
@@ -17,7 +19,7 @@ class GPUPersistentKernel(SubgraphTransformation):
     This transformation takes a given subgraph of an SDFG and fuses the
     given states into a single persistent GPU kernel. Before this transformation can
     be applied the SDFG needs to be transformed to run on the GPU (e.g. with
-    the GPUTransformSDFG transformation).
+    ``apply_gpu_transformations``).
 
     If applicable the transform removes the selected states from the original
     SDFG and places a `launch` state in its place. The removed states will be
@@ -196,11 +198,13 @@ class GPUPersistentKernel(SubgraphTransformation):
                 new_symbols.add(k)
                 if k in sdfg.symbols and k not in kernel_sdfg.symbols:
                     kernel_sdfg.add_symbol(k, sdfg.symbols[k])
+        # A loop iterator is bound by its loop, not an SDFG symbol
+        scoped = scope_bound_names(kernel_sdfg)
         for blk in subgraph_blocks:
             if isinstance(blk, AbstractControlFlowRegion):
                 for k, v in blk.new_symbols(sdfg.symbols).items():
                     new_symbols.add(k)
-                    if k not in kernel_sdfg.symbols:
+                    if k not in kernel_sdfg.symbols and k not in scoped:
                         kernel_sdfg.add_symbol(k, v)
 
         # Setting entry node in nested SDFG if no entry guard was created
@@ -254,8 +258,8 @@ class GPUPersistentKernel(SubgraphTransformation):
 
         # read only data will be passed as input, writeable data will be passed
         # as 'output' otherwise kernel cannot write to data
-        kernel_args_read = set()
-        kernel_args_write = set()
+        kernel_args_read = OrderedSet()
+        kernel_args_write = OrderedSet()
         for data in kernel_args:
             data_accesses_read_only = [
                 state.in_degree(node) == 0
@@ -267,6 +271,20 @@ class GPUPersistentKernel(SubgraphTransformation):
                 kernel_args_read.add(data)
             else:
                 kernel_args_write.add(data)
+
+        # A kernel's thread keeps host data in a local that ends with the kernel: what only kernels touch outside this
+        # one has to live in device memory to reach them
+        for data in kernel_args_write:
+            desc = sdfg.arrays[data]
+            accesses = [(s, n) for s in sdfg.states() for n in s.data_nodes() if n.data == data]
+            if (
+                accesses
+                and desc.transient
+                and desc.storage in (StorageType.Default, StorageType.CPU_Heap)
+                and type(desc) is dace.data.Array
+                and all(self.reached_from_kernel(s, n) for s, n in accesses)
+            ):
+                desc.storage = StorageType.GPU_Global
 
         # Kernel SDFG is complete at this point
         if self.validate:
@@ -325,6 +343,14 @@ class GPUPersistentKernel(SubgraphTransformation):
         # Transformation is done
         if self.validate:
             sdfg.validate()
+
+    @staticmethod
+    def reached_from_kernel(state: SDFGState, node: nodes.AccessNode) -> bool:
+        """Whether every edge of ``node`` crosses the boundary of a GPU map."""
+        return all(
+            isinstance(other, nodes.EntryNode | nodes.ExitNode) and other.schedule in dace.dtypes.GPU_SCHEDULES
+            for other in [e.src for e in state.in_edges(node)] + [e.dst for e in state.out_edges(node)]
+        )
 
     @staticmethod
     def is_gpu_state(sdfg: SDFG, state: SDFGState) -> bool:

@@ -11,7 +11,22 @@ from dace import Memlet
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
+from dace.libraries.linalg.nodes.solve import gesv_core_program, restride
+from dace.libraries.standard.helper import (
+    GPU_RESIDENT_STORAGES,
+    call_scratch_lifetime,
+    host_accessible_info_storage,
+    scratch_storage,
+)
 from dace.transformation.transformation import ExpandTransformation
+
+
+def input_operand_storage(node, parent_state, parent_sdfg):
+    """Storage of the ``_ain`` operand, used to place the host-checkable ``devInfo`` scalar."""
+    for e in parent_state.in_edges(node):
+        if e.dst_conn == "_ain":
+            return parent_sdfg.arrays[e.data.data].storage
+    return dace.StorageType.Default
 
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
@@ -22,6 +37,9 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     else:
         (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides, n) = arr_desc
     dtype = in_dtype
+    # cuSOLVER writes ``devInfo`` through a raw pointer; the host-checkable status scalar must live in
+    # host-accessible (pinned) memory when the operand is GPU-resident.
+    info_storage = host_accessible_info_storage(input_operand_storage(node, parent_state, parent_sdfg))
 
     sdfg = dace.SDFG(f"{node.label}_sdfg")
 
@@ -29,8 +47,23 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     if not node.overwrite:
         ain_arr = a_arr
         a_arr = sdfg.add_array("_aout", out_shape, dtype=out_dtype, strides=out_strides)
-    ipiv_arr = sdfg.add_array("_pivots", [n], dtype=dace.int32, transient=True)
-    info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True)
+    lifetime = call_scratch_lifetime(node, parent_state, parent_sdfg, n)
+    ipiv_arr = sdfg.add_array(
+        "_pivots",
+        [n],
+        dtype=dace.int32,
+        transient=True,
+        storage=scratch_storage(dace.StorageType.Default, lifetime),
+        lifetime=lifetime,
+    )
+    info_arr = sdfg.add_array(
+        "_info",
+        [1],
+        dtype=dace.int32,
+        transient=True,
+        storage=scratch_storage(info_storage, lifetime),
+        lifetime=lifetime,
+    )
 
     state = sdfg.add_state(f"{node.label}_state")
 
@@ -74,18 +107,51 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     else:
         (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides, n) = arr_desc
     dtype = in_dtype
+    # cuSOLVER writes ``devInfo`` through a raw pointer; the host-checkable status scalar must live in
+    # host-accessible (pinned) memory when the operand is GPU-resident.
+    operand_storage = input_operand_storage(node, parent_state, parent_sdfg)
+    info_storage = host_accessible_info_storage(operand_storage)
 
     sdfg = dace.SDFG(f"{node.label}_sdfg")
 
     a_arr = sdfg.add_array("_ain", in_shape, dtype=in_dtype, strides=in_strides)
+    lifetime = call_scratch_lifetime(node, parent_state, parent_sdfg, n)
     if not node.overwrite:
         ain_arr = a_arr
-        a_arr = sdfg.add_array("_ainout", [n, n], dtype=in_dtype, transient=True)
+        a_arr = sdfg.add_array(
+            "_ainout",
+            [n, n],
+            dtype=in_dtype,
+            transient=True,
+            storage=scratch_storage(operand_storage, lifetime),
+            lifetime=lifetime,
+        )
         b_arr = sdfg.add_array("_aout", out_shape, dtype=out_dtype, strides=out_strides)
     else:
-        b_arr = sdfg.add_array("_b", [n, n], dtype=dtype, transient=True)
-    ipiv_arr = sdfg.add_array("_pivots", [n], dtype=dace.int32, transient=True)
-    info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True)
+        b_arr = sdfg.add_array(
+            "_b",
+            [n, n],
+            dtype=dtype,
+            transient=True,
+            storage=scratch_storage(operand_storage, lifetime),
+            lifetime=lifetime,
+        )
+    ipiv_arr = sdfg.add_array(
+        "_pivots",
+        [n],
+        dtype=dace.int32,
+        transient=True,
+        storage=scratch_storage(operand_storage, lifetime),
+        lifetime=lifetime,
+    )
+    info_arr = sdfg.add_array(
+        "_info",
+        [1],
+        dtype=dace.int32,
+        transient=True,
+        storage=scratch_storage(info_storage, lifetime),
+        lifetime=lifetime,
+    )
 
     state = sdfg.add_state(f"{node.label}_state")
 
@@ -110,13 +176,21 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         bin_name = "_aout"
         bout = state.add_access("_aout")
 
+    # The identity is written into the operand's own storage. When that storage is on the device, the map must
+    # run as a kernel because a host map over ``GPU_Global`` memory is invalid (quatrex_rgf's GPU inverse).
+    eye_schedule = (
+        dace.dtypes.ScheduleType.GPU_Device
+        if operand_storage in GPU_RESIDENT_STORAGES
+        else dace.dtypes.ScheduleType.Default
+    )
     _, _, mx = state.add_mapped_tasklet(
         "_eye_",
-        dict(__i0="0:n", __i1="0:n"),
+        dict(__i0=f"0:{n}", __i1=f"0:{n}"),
         {},
         "_out = (__i0 == __i1) ? 1 : 0;",
         dict(_out=Memlet.simple(bin_name, "__i0, __i1")),
         language=dace.dtypes.Language.CPP,
+        schedule=eye_schedule,
         external_edges=True,
     )
     bin = state.out_edges(mx)[0].dst
@@ -140,18 +214,41 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
 
 @dace.library.expansion
 class ExpandInvPure(ExpandTransformation):
+    """``A^-1`` as loops and tasklets, with no library behind it.
+
+    The same elimination the pure ``Solve`` runs, against the identity: inverting is solving with
+    ``n`` right-hand sides. Correct rather than fast, and an explicit inverse is rarely what a
+    numerical program wants in the first place -- it exists so a program that already asks for one
+    can be rendered.
+    """
+
     environments = []
 
     @staticmethod
-    def make_sdfg(node, parent_state, parent_sdfg):
-        raise NotImplementedError("Missing pure implementation of linalg.inv.")
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        if node.overwrite:
+            raise NotImplementedError(
+                "pure linalg.inv does not implement overwrite; the elimination needs the "
+                "original matrix while it builds the inverse."
+            )
+        (shape_ain, dtype, strides_ain, shape_aout, _, strides_aout, n) = node.validate(parent_sdfg, parent_state)
 
-    @staticmethod
-    def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
-        if node.dtype is None:
-            raise ValueError("Data type must be set to expand " + str(node) + ".")
-        return ExpandInvPure.make_sdfg(node, state, sdfg)
+        gesv_core = gesv_core_program(dtype, n, n)
+
+        @dace.program
+        def inv_pure(_ain: dtype[n, n], _aout: dtype[n, n]):
+            work = dace.define_local([n, n], dtype)
+            work[:] = _ain
+            columns = dace.define_local([n, n], dtype)
+            columns[:] = 0
+            for i in dace.map[0:n]:
+                columns[i, i] = 1
+            gesv_core(work, columns)
+            _aout[:] = columns
+
+        nsdfg = inv_pure.to_sdfg(simplify=True)
+        restride(nsdfg, (("_ain", shape_ain, strides_ain), ("_aout", shape_aout, strides_aout)), dtype)
+        return nsdfg
 
 
 @dace.library.expansion
@@ -187,10 +284,25 @@ class ExpandInvCuSolverDn(ExpandTransformation):
         return _make_sdfg_getrs(node, parent_state, parent_sdfg, "cuSolverDn")
 
 
+@dace.library.expansion
+class ExpandInvHipSolverDn(ExpandTransformation):
+    environments = [environments.hipsolverdn.hipSolverDn]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return _make_sdfg_getrs(node, parent_state, parent_sdfg, "hipSolverDn")
+
+
 @dace.library.node
 class Inv(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {"OpenBLAS": ExpandInvOpenBLAS, "MKL": ExpandInvMKL, "cuSolverDn": ExpandInvCuSolverDn}
+    implementations = {
+        "pure": ExpandInvPure,
+        "OpenBLAS": ExpandInvOpenBLAS,
+        "MKL": ExpandInvMKL,
+        "cuSolverDn": ExpandInvCuSolverDn,
+        "hipSolverDn": ExpandInvHipSolverDn,
+    }
     default_implementation = None
 
     overwrite = dace.properties.Property(dtype=bool, default=False, category="Semantics")

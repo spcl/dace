@@ -7,6 +7,7 @@ import numpy as np
 import dace
 import dace.libraries.standard as stdlib
 from dace.transformation.dataflow import MapFusionVertical, MapReduceFusion, MapWCRFusion
+from dace.transformation.passes import FuseMaps
 
 W = dace.symbol("W")
 H = dace.symbol("H")
@@ -304,6 +305,43 @@ def test_mapreduce_onemap():
     onetest(mapreduce_onemap)
 
 
+def test_fuse_maps_removes_the_reduced_intermediate():
+    """``FuseMaps``'s vertical phase must reach a Map that feeds a Reduce, not only a Map.
+
+    ``MapFusionVertical`` matches Map -> Map, so on its own it leaves the whole reduced array
+    materialized between the two. That intermediate is the size of the input, and it is why a
+    reduction over a computed expression costs a second pass over it.
+    """
+    N = 64
+
+    @dace.program
+    def reduce_a_product(a: dace.float64[N], b: dace.float64[N], out: dace.float64[1]):
+        out[0] = np.sum(a * b)
+
+    def sized_transients(sdfg):
+        return sorted(k for k, v in sdfg.arrays.items() if v.transient and v.total_size != 1)
+
+    without = reduce_a_product.to_sdfg(simplify=True)
+    FuseMaps(perform_vertical_map_fusion=False).apply_pass(without, {})
+    assert sized_transients(without), "nothing to remove: the test no longer covers the case"
+
+    with_it = reduce_a_product.to_sdfg(simplify=True)
+    FuseMaps().apply_pass(with_it, {})
+    assert not sized_transients(with_it), f"intermediate survived: {sized_transients(with_it)}"
+    assert not [n for n, _ in with_it.all_nodes_recursive() if isinstance(n, stdlib.Reduce)]
+    assert any(e.data.wcr for sd in with_it.all_sdfgs_recursive() for st in sd.states() for e in st.edges()), (
+        "the Reduce went away without leaving a WCR behind"
+    )
+
+    with_it.validate()
+    rng = np.random.default_rng(0)
+    a, b = rng.random(N), rng.random(N)
+    out = np.zeros(1)
+    with_it(a=a.copy(), b=b.copy(), out=out)
+    # A parallel WCR reassociates, so this is close, not bit-identical.
+    assert np.allclose(out[0], np.sum(a * b))
+
+
 def test_a_second_body_tasklet_does_not_break_the_match():
     """``apply`` finds the reduced intermediate among ALL the exit's in-edges, so ``can_be_applied``
     must too. Reading only the matched tasklet's own edges raised a bare StopIteration as soon as a
@@ -448,6 +486,39 @@ def test_a_reduction_into_an_offset_slice_keeps_the_offset():
     assert np.allclose(out, ref), out
 
 
+def test_a_map_reading_the_reduction_output_is_not_fused():
+    """Fused, the identity seed lands ahead of the map, which then reads it instead of the output's old value."""
+
+    def run(fuse: bool) -> np.ndarray:
+        sdfg = dace.SDFG(f"reduce_reads_output_{fuse}")
+        sdfg.add_array("O", (1,), dace.float64)
+        sdfg.add_array("A", (4,), dace.float64)
+        sdfg.add_array("T", (4,), dace.float64, transient=True)
+        state = sdfg.add_state()
+        intermediate = state.add_access("T")
+        state.add_mapped_tasklet(
+            "scale",
+            {"i": "0:4"},
+            {"_a": dace.Memlet("A[i]"), "_o": dace.Memlet("O[0]")},
+            "_b = _a * _o",
+            {"_b": dace.Memlet("T[i]")},
+            external_edges=True,
+            output_nodes={"T": intermediate},
+        )
+        reduction = stdlib.Reduce("sum", "lambda a, b: a + b", axes=None, identity=0)
+        state.add_node(reduction)
+        state.add_nedge(intermediate, reduction, dace.Memlet("T[0:4]"))
+        state.add_edge(reduction, None, state.add_write("O"), None, dace.Memlet("O[0]"))
+        if fuse:
+            FuseMaps().apply_pass(sdfg, {})
+        out = np.array([3.0])
+        sdfg(A=np.ones(4), O=out)
+        return out
+
+    assert run(False)[0] == 12.0
+    assert run(True)[0] == 12.0
+
+
 if __name__ == "__main__":
     test_basic()
     test_mmm()
@@ -456,7 +527,9 @@ if __name__ == "__main__":
     test_histogram()
     test_mapreduce_onemap()
     test_mapreduce_twomaps()
+    test_fuse_maps_removes_the_reduced_intermediate()
     test_a_second_body_tasklet_does_not_break_the_match()
     test_a_reduction_inside_an_outer_map_is_reinitialized_every_outer_iteration()
     test_a_reduction_written_straight_into_the_outer_map_exit_fuses()
     test_a_reduction_into_an_offset_slice_keeps_the_offset()
+    test_a_map_reading_the_reduction_output_is_not_fused()
