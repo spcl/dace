@@ -3,9 +3,9 @@
 
 :mod:`~dace.transformation.passes.analysis.smt_body` runs ONE tasklet body. A loop body after canonicalization is
 a region: tasklets in states, scalars passed between them through access nodes, symbols assigned on interstate
-edges, branches as :class:`~dace.sdfg.state.ConditionalBlock` and short constant-trip loops. This module runs such
-a region in program order, with C semantics on the containers' own types, and returns the value of every scalar
-and symbol it assigns.
+edges, branches as :class:`~dace.sdfg.state.ConditionalBlock` and short constant-trip loops. This module runs the
+step slice of such a region in program order, with C semantics on the containers' own types, and returns the value
+of every scalar and symbol the slice assigns.
 
 Every value is a ``width``-bit term holding the two's-complement extension of the container's type, and every
 write converts to the type written (:func:`~dace.transformation.passes.analysis.smt_body.fit`), as the generated
@@ -22,6 +22,7 @@ Anything else, from a map to a write into an array, makes the region unsupported
 """
 
 import ast
+from collections.abc import Mapping
 from typing import Any
 
 import numpy
@@ -29,17 +30,18 @@ import numpy
 from dace import data, dtypes
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState, StateSubgraphView
 from dace.transformation.passes.analysis import loop_analysis, smt_body
+from dace.transformation.passes.analysis.finite_state import StepSlice, step_dataflow
 
 #: Longest constant-trip loop the encoder unrolls.
 UNROLL_LIMIT = 64
 
 
-def value_type(sdfg: SDFG, name: str) -> tuple[int, bool] | None:
+def value_type(arrays: Mapping[str, data.Data], symbols: Mapping[str, Any], name: str) -> tuple[int, bool] | None:
     """``(bits, signed)`` of the integer container or symbol ``name``, else ``None``."""
-    dtype = sdfg.arrays[name].dtype if name in sdfg.arrays else sdfg.symbols.get(name)
+    dtype = arrays[name].dtype if name in arrays else symbols.get(name)
     if dtype is None or not numpy.issubdtype(dtype.type, numpy.integer):
         return None
     return dtype.bytes * 8, bool(numpy.issubdtype(dtype.type, numpy.signedinteger))
@@ -50,23 +52,28 @@ def is_scalar(desc: data.Data) -> bool:
 
 
 class RegionEncoder:
-    """Runs regions of ``sdfg`` symbolically; see the module docstring.
+    """Runs the ``step`` slice of regions of ``loop`` symbolically, on the graph itself; see the module docstring.
 
+    :ivar arrays: the containers of the slice; a name outside it is unsupported.
     :ivar inputs: every input the encoder created for an array read or a parameter, by its key, as a term of the
                   input's type.
     :ivar raw: the free variable under each input.
     """
 
-    def __init__(self, sdfg: SDFG, iterate: str, width: int = smt_body.DEFAULT_WIDTH):
-        self.sdfg = sdfg
-        self.iterate = iterate
+    def __init__(self, loop: LoopRegion, step: StepSlice, width: int = smt_body.DEFAULT_WIDTH):
+        sdfg = loop.sdfg
+        self.values = step.values
+        self.arrays = {name: sdfg.arrays[name] for name in step.tables | (step.values & sdfg.arrays.keys())}
+        self.symbols = {loop.loop_variable: dtypes.int64, **sdfg.symbols}
+        self.iterate = loop.loop_variable
         self.width = width
+        self.slices: dict[SDFGState, StateSubgraphView] = {}
         self.inputs: dict[str, Any] = {}
         self.raw: dict[str, Any] = {}
 
     def variable(self, key: str, name: str) -> Any | None:
         """The input variable for ``key``, of the type of container or symbol ``name``."""
-        kind = value_type(self.sdfg, name)
+        kind = value_type(self.arrays, self.symbols, name)
         if kind is None:
             return None
         if key not in self.inputs:
@@ -80,8 +87,8 @@ class RegionEncoder:
 
     def is_value(self, name: str) -> bool:
         """Whether ``name`` is an integer symbol or scalar, as opposed to an array or a function."""
-        desc = self.sdfg.arrays.get(name)
-        return value_type(self.sdfg, name) is not None and (desc is None or is_scalar(desc))
+        desc = self.arrays.get(name)
+        return value_type(self.arrays, self.symbols, name) is not None and (desc is None or is_scalar(desc))
 
     def is_input_index(self, index: str, env: dict[str, Any]) -> bool:
         """Whether an element read at ``index`` is an input: its index names only the loop variable and values
@@ -116,14 +123,16 @@ class RegionEncoder:
         return smt_body.encode_expr(flat.body, bound, self.width, signed=True)
 
     def assign(self, env: dict[str, Any], name: str, term: Any) -> dict[str, Any] | None:
-        kind = value_type(self.sdfg, name)
+        kind = value_type(self.arrays, self.symbols, name)
         if kind is None:
             return None
         return {**env, name: smt_body.fit(term, kind[0], kind[1], self.width)}
 
     def edge(self, env: dict[str, Any], edge: InterstateEdge) -> dict[str, Any] | None:
-        """``env`` after ``edge``'s assignments, run in order as the generated code runs them."""
+        """``env`` after the slice's assignments on ``edge``, run in order as the generated code runs them."""
         for name, rhs in edge.assignments.items():
+            if name not in self.values:
+                continue
             term = self.expression(rhs, env)
             env = None if term is None else self.assign(env, name, term)
             if env is None:
@@ -133,7 +142,7 @@ class RegionEncoder:
     def read(self, state: SDFGState, edge, env: dict[str, Any]) -> Any | None:
         """The value an edge into a tasklet carries."""
         name = edge.data.data
-        desc = self.sdfg.arrays.get(name)
+        desc = self.arrays.get(name)
         if desc is None or edge.data.is_empty():
             return None
         if is_scalar(desc):
@@ -143,10 +152,13 @@ class RegionEncoder:
         return self.variable(f"{name}[{edge.data.subset}]", name)
 
     def state(self, state: SDFGState, env: dict[str, Any]) -> dict[str, Any] | None:
-        """``env`` after the tasklets and scalar copies of ``state``, in topological order."""
+        """``env`` after the tasklets and scalar copies of the slice of ``state``, in topological order."""
+        if state not in self.slices:
+            self.slices[state] = StateSubgraphView(state, step_dataflow(state, self.values))
+        state = self.slices[state]
         for node in sdutil.dfs_topological_sort(state):
             if isinstance(node, nodes.AccessNode):
-                if not is_scalar(node.desc(self.sdfg)) and state.in_degree(node) > 0:
+                if not is_scalar(self.arrays[node.data]) and state.in_degree(node) > 0:
                     return None
                 for edge in state.in_edges(node):
                     if isinstance(edge.src, nodes.AccessNode):

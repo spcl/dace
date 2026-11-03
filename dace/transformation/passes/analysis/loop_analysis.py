@@ -3,6 +3,7 @@
 Various analyses concerning LopoRegions, and utility functions to get information about LoopRegions for other passes.
 """
 
+import ast
 import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -244,6 +245,28 @@ def enclosing_loops(block: ControlFlowBlock) -> set[LoopRegion]:
     return found
 
 
+def provably_runs(loop: LoopRegion, count: int, facts: symbolic.Facts) -> bool:
+    """Whether ``loop`` runs at least ``count`` iterations. A loop around it is running, so that loop's range is not
+    empty: ``for i in range(N): for j in range(1, N)`` runs at least ``N - 1`` times, whatever ``N`` is."""
+    start, end, stride = get_init_assignment(loop), get_loop_end(loop), get_loop_stride(loop)
+    if start is None or end is None or stride is None:
+        return False
+    spare = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1 - count)
+    if symbolic.provably_nonnegative(spare, facts):
+        return True
+    for outer in enclosing_loops(loop):
+        low, high = get_init_assignment(outer), get_loop_end(outer)
+        if (
+            low is not None
+            and high is not None
+            and not outer.inverted
+            and get_loop_stride(outer) == 1
+            and symbolic.provably_nonnegative(symbolic.simplify(spare - (high - low)), facts)
+        ):
+            return True
+    return False
+
+
 def written_names(region: ControlFlowRegion) -> set[str]:
     """The data containers and interstate-assigned symbols written anywhere in ``region``."""
     written: set[str] = set()
@@ -316,7 +339,7 @@ def range_holds(loop: LoopRegion, bounds: tuple, sdfg: "dace.SDFG") -> bool:
     start, end, step = (sympy.sympify(bound) for bound in bounds)
     reads = {name for bound in (start, end, step) for name in symbolic.free_symbols_and_functions(bound)}
     reads |= {name for bound in (start, end, step) for name in symbolic.arrays(bound)}
-    if iterator in symbolic.free_symbols_and_functions(start) or reads & sdfg.arrays.keys():
+    if iterator in symbolic.free_symbols_and_functions(start) or any(name in sdfg.arrays for name in reads):
         return False
     if interstate_bound_names(loop, loop) & (reads | {iterator}):
         return False
@@ -342,6 +365,19 @@ def get_assignments(statement) -> dict[str, str]:
         visitor.visit(code)
         assignments.update(visitor.assignments)
     return assignments
+
+
+def assigned_names(statement) -> set[str]:
+    """The keys of ``get_assignments(statement)``, without printing the right-hand sides."""
+    if statement is None:
+        return set()
+    names: set[str] = set()
+    for code in statement.code if isinstance(statement.code, list) else [statement.code]:
+        # An assignment is a statement, so none sits inside another: only other statements are walked
+        for node in (code,) if isinstance(code, ast.Assign) else ast.walk(code):
+            if isinstance(node, ast.Assign):
+                names.update(target.id for target in node.targets if isinstance(target, ast.Name))
+    return names
 
 
 def assignment_text(stmt: Optional["CodeBlock"], variable: str | None) -> str | None:

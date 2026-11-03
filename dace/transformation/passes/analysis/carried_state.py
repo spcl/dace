@@ -38,7 +38,7 @@ from typing import Any
 
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import canon_stats, smt_body, smt_dependence, smt_region
-from dace.transformation.passes.analysis.finite_state import StepSlice, step_sdfg, step_slices
+from dace.transformation.passes.analysis.finite_state import StepSlice, step_slices
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,16 +64,16 @@ def proves_gf2_affine(loop: LoopRegion, step: StepSlice) -> int | None:
     """The state's width when ``step`` is GF(2)-affine with a data-independent linear part, else ``None``."""
     if not smt_body.HAS_Z3:
         return None
-    sdfg = step_sdfg(loop, step)
-    kind = smt_region.value_type(sdfg, step.symbol)
+    sdfg = loop.sdfg
+    kind = smt_region.value_type(sdfg.arrays, sdfg.symbols, step.symbol)
     if kind is None:
         return None
     bits, signed = kind
-    encoder = smt_region.RegionEncoder(sdfg, loop.loop_variable)
+    encoder = smt_region.RegionEncoder(loop, step)
     width = encoder.width
     raw = smt_body.bitvec("carried_state", width)
     iterate = smt_body.bitvec("iterate", width)
-    after = encoder.region(sdfg, {step.symbol: smt_body.fit(raw, bits, signed, width), loop.loop_variable: iterate})
+    after = encoder.region(loop, {step.symbol: smt_body.fit(raw, bits, signed, width), loop.loop_variable: iterate})
     if after is None or step.symbol not in after:
         return None
     actual = after[step.symbol]

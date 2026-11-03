@@ -315,7 +315,8 @@ def step_sdfg(loop: LoopRegion, step: StepSlice) -> SDFG:
             del edge.data.assignments[lhs]
     for block in result.all_control_flow_blocks():
         if isinstance(block, SDFGState):
-            block.remove_nodes_from([node for node in block.nodes() if node not in step_dataflow(block, step.values)])
+            kept = step_dataflow(block, step.values)
+            block.remove_nodes_from([node for node in block.nodes() if node not in kept])
     for name in sorted(step.tables):
         desc = copy.deepcopy(sdfg.arrays[name])
         desc.transient = False

@@ -70,7 +70,7 @@ def folds_only(loop: LoopRegion, symbol: str) -> bool:
 
 def scan_node(loop: LoopRegion) -> tuple[StateScan, StepSlice] | None:
     """A :class:`StateScan` for ``loop``'s carried state, finite if it is, else GF(2)-affine, or ``None``. The structural
-    conditions go first: the proofs copy the body and ask z3."""
+    conditions go first: the proofs ask z3."""
     chain = straight_chain(loop)
     if chain is None:
         return None

@@ -230,7 +230,14 @@ def updates_shared(node: nodes.Tasklet, state: SDFGState, private: LanePrivate) 
     """Whether ``node`` writes a shared (not lane-private) container that it, or a node leading to it, reads:
     once per lane is wrong. The read may sit in an earlier tasklet (``s = acc[k] + t; acc[k] = s``)."""
     upstream = nx.ancestors(state._nx, node) | {node}
-    read = {edge.data.data for edge in state.edges() if edge.dst in upstream and not edge.data.is_empty()}
+    # Only an access node or a scope entry hands data on; any other edge carries a write, a sibling kernel's included
+    read = {
+        edge.data.data
+        for edge in state.edges()
+        if edge.dst in upstream
+        and not edge.data.is_empty()
+        and isinstance(edge.src, (nodes.AccessNode, nodes.EntryNode))
+    }
     return any(
         edge.data.data in read and (state.sdfg, edge.data.data) not in private
         for edge in state.out_edges(node)
