@@ -10,7 +10,6 @@ ones.
 That makes a redundant ordering edge easy to name: ``u -> v`` is redundant when ``v`` is
 still reachable from ``u`` over the remaining edges. Deleting it leaves the set of legal
 topological orders of the state exactly as it was, which is the whole content of the edge.
-An access node does nothing itself, so the same holds when every writer of ``u`` feeds ``v``.
 
 Only empty memlets are ever candidates. A zero-``volume`` NAMED memlet (``a[0:0]``) is a
 real reader, and ``volume`` is a separate symbolic property rather than the subset size, so
@@ -138,16 +137,6 @@ def restore_edges(state: SDFGState, snapshot: list[EdgeTuple]) -> None:
         state.add_edge(src, src_conn, dst, dst_conn, memlet)
 
 
-def writers_feed(state: SDFGState, src: nodes.Node, dst: nodes.Node) -> bool:
-    """Whether ``src`` is an access node whose every writer has an edge into ``dst``, so ``dst`` already runs after them."""
-    feeding = {e.src for e in state.in_edges(dst)}
-    return (
-        isinstance(src, nodes.AccessNode)
-        and state.in_degree(src) > 0
-        and all(e.src in feeding for e in state.in_edges(src))
-    )
-
-
 def is_order_hub(node: nodes.Node) -> bool:
     """Whether ``node`` is an ``order_hub`` tasklet :meth:`SDFGState.keep_order_through` inserted."""
     return (
@@ -237,7 +226,7 @@ def reduce_state(state: SDFGState) -> int:
         for parallel in state.edges_between(src, dst):
             if rank.get(id(parallel), r) > r:
                 ignored.add(id(parallel))
-        if not reaches(state, src, dst, ignored) and not writers_feed(state, src, dst):
+        if not reaches(state, src, dst, ignored):
             continue
         if snapshot is None:
             snapshot = [(e.src, e.src_conn, e.dst, e.dst_conn, e.data) for e in state.edges()]
