@@ -538,7 +538,9 @@ class Memlet:
             if str(symbol) != str(repl_dict[symbol]):
                 intermediate = symbolic.symbol("__dacesym_" + str(symbol))
                 repl_to_intermediate[symbolic.symbol(symbol)] = intermediate
-                repl_to_final[intermediate] = repl_dict[symbol]
+                # ``subs`` would parse a string into plain SymPy symbols, which no DaCe analysis sees
+                value = repl_dict[symbol]
+                repl_to_final[intermediate] = symbolic.pystr_to_symbolic(value) if isinstance(value, str) else value
 
         if len(repl_to_intermediate) > 0:
             if self.volume is not None and symbolic.issymbolic(self.volume):
