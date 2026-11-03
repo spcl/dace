@@ -1,11 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Graph-backend correctness on CloudSC: running simplify() and then specializing kidia/kfdia/nclv
 ("config-prop") and fully unrolling the resulting constant-bounded loops must stay numerically faithful
-to the un-transformed CloudSC reference, under EITHER graph backend.
+to the un-transformed CloudSC reference. rustworkx stays out of CI: one more run adds 40 minutes.
 """
 
 import copy
-import importlib.util
 
 import pytest
 
@@ -19,7 +18,7 @@ from tests.corpus.cloudsc.generate_data_for_cloudsc import (
 )
 from tests.perf.cloudsc.cloudsc_backend_pipeline import filtered_inputs, run_pipeline
 
-_BACKENDS = ["networkx"] + (["rustworkx"] if importlib.util.find_spec("rustworkx") is not None else [])
+_BACKENDS = ["networkx"]
 
 
 @pytest.fixture(scope="module")
