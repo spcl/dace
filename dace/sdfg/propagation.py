@@ -1589,6 +1589,10 @@ def propagate_memlets_nested_sdfg(
     }
     visible |= sdfg.constants.keys()
 
+    # The nest's own interstate edges read too; a connector read only there would otherwise keep its outer memlet,
+    # and one read in a state as well would lose these reads from it.
+    _merge_meta_read_candidates(sdfg, border_memlets, sdfg.arrays, symbols)
+
     # Collect contributions from top-level CFG blocks. Plain states contribute
     # directly, while control-flow regions aggregate their child blocks via
     # their own propagate_memlets implementations.

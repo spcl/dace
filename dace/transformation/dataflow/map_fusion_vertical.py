@@ -789,6 +789,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         mfhelper.keep_anti_dependences(graph, anti_dependences)
         self.join_in_place_outputs(graph, second_map_exit, in_place)
+        # The fused body now accesses them through nodes of its own: the analysis no longer holds for them.
+        self.forget_single_use(sdfg, in_place)
 
         # Put back the happens-before the rewrite took out of the graph, see
         #  `ordering_sources_of_intermediates`.
@@ -988,13 +990,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  modify inside the intermediate array.
             #  Since we do not allow for WCR, we do not check if the producer subsets intersects.
             producer_subsets: list[subsets.Subset] = []
-            conditional_write = False
             for producer_edge in producer_edges:
                 if producer_edge.data.is_empty():
                     continue
                 if isinstance(producer_edge.src, nodes.AccessNode) and self.is_view(producer_edge.src, sdfg):
                     return None
-                conditional_write = conditional_write or producer_edge.data.dynamic
                 if producer_edge.data.wcr is not None:
                     return None
                 # `compute_reduced_intermediate()` sizes the new intermediate from this subset
@@ -1136,7 +1136,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         # leaves it addressing more elements than the container holds.
                         if isinstance(final_consumer, nodes.AccessNode) and self.is_view(final_consumer, sdfg):
                             return None
-                        if isinstance(final_consumer, nodes.NestedSDFG):
+                        if reduced and isinstance(final_consumer, nodes.NestedSDFG):
                             if not self._check_if_nested_sdfg_can_be_handled(
                                 state=state,
                                 sdfg=sdfg,
@@ -1165,10 +1165,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 # We found a non exclusive intermediate, but we only exclusive ones were
                 #  requested. Thus the decomposition does not exist.
                 if self.require_exclusive_intermediates:
-                    return None
-
-                # What a conditional write skips keeps its old value here, which a buffer would not hold.
-                if conditional_write and reduced:
                     return None
 
                 # The intermediate data is used somewhere else, either in this or another state.
@@ -1219,14 +1215,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
                 shared_outputs.add(out_edge)
             else:
-                # An element a conditional write skips has no value the buffer could lose: this Map is the only
-                #  writer, so reading it is undefined either way, unless an earlier execution wrote it.
-                if (
-                    conditional_write
-                    and reduced
-                    and (intermediate_desc.lifetime != dtypes.AllocationLifetime.Scope or self._in_a_cycle(state))
-                ):
-                    return None
                 # The intermediate can be removed, as it is not used anywhere else.
                 exclusive_outputs.add(out_edge)
 
@@ -1381,7 +1369,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             is_in_place = inter_name in in_place
             if is_in_place:
                 new_inter_name, new_inter_desc, is_scalar = inter_name, inter_desc, False
-                new_inter_node = state.add_access(inter_name, copy.copy(inter_node.debuginfo))
+                # A body that fused this container in place before holds it in a node already, no copy onto itself
+                held = [
+                    e.src for e in pre_exit_edges if isinstance(e.src, nodes.AccessNode) and e.src.data == inter_name
+                ]
+                new_inter_node = held[0] if held else state.add_access(inter_name, copy.copy(inter_node.debuginfo))
             else:
                 (new_inter_shape_raw, new_inter_shape, squeezed_dims) = self.compute_reduced_intermediate(
                     producer_subset=producer_subset,
@@ -1433,13 +1425,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  that piece is the whole of it.
             for pre_exit_edge in pre_exit_edges:
                 if is_in_place:
-                    state.add_edge(
-                        pre_exit_edge.src,
-                        pre_exit_edge.src_conn,
-                        new_inter_node,
-                        None,
-                        copy.deepcopy(pre_exit_edge.data),
-                    )
+                    if pre_exit_edge.src is not new_inter_node:
+                        state.add_edge(
+                            pre_exit_edge.src,
+                            pre_exit_edge.src_conn,
+                            new_inter_node,
+                            None,
+                            copy.deepcopy(pre_exit_edge.data),
+                        )
                     continue
                 # Memlets have a lot of additional informations, to ensure that we get
                 #  all of them, we have to do it this way. The main reason for this is
@@ -2258,8 +2251,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         facts: symbolic.Facts,
     ) -> set[str]:
         """The intermediates of ``names`` the first Map reads and writes other than point-wise, or the second Map writes
-        as well (a buffer's write-back would undo that write): they are fused in place, see
-        ``has_read_write_dependency()``."""
+        as well (a buffer's write-back would undo that write), or writes conditionally (what it skips keeps its value,
+        which a buffer would not hold): they are fused in place, see ``has_read_write_dependency()``."""
         first_map_exit = state.exit_node(first_map_entry)
         reads = {node.data: node for node in self.get_access_set(first_map_entry, state)}
         writes = {node.data: node for node in self.get_access_set(first_map_exit, state)}
@@ -2271,6 +2264,16 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             ]
             if None in accessed or not self.test_if_subsets_are_point_wise(accessed[0] + accessed[1], facts):
                 in_place.add(name)
+        for edge in state.out_edges(first_map_exit):
+            if edge.src_conn is None or not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data in in_place:
+                continue
+            # If this Map is the only writer and nothing else keeps the element alive, reading a skipped one is undefined
+            if any(p.data.dynamic for p in state.in_edges_by_connector(first_map_exit, "IN_" + edge.src_conn[4:])) and (
+                self.is_shared_data(edge.dst, state, sdfg)
+                or edge.dst.desc(sdfg).lifetime != dtypes.AllocationLifetime.Scope
+                or self._in_a_cycle(state)
+            ):
+                in_place.add(edge.dst.data)
         return in_place
 
     def test_if_subsets_are_point_wise(self, subsets_to_check: list[subsets.Subset], facts: symbolic.Facts) -> bool:
@@ -2309,6 +2312,16 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  This means that the data accesses, described by this transformation is
         #  point wise
         return True
+
+    def forget_single_use(self, sdfg: SDFG, names: AbstractSet[str]) -> None:
+        """Stop the cached `FindSingleUseData` result from calling ``names`` single use."""
+        # Function-local import, see `is_shared_data()`.
+        from dace.transformation.passes.analysis import FindSingleUseData
+
+        cached = (self._pipeline_results or {}).get(FindSingleUseData.__name__)
+        for single_use in (cached, self._single_use_data):
+            if single_use is not None and sdfg in single_use:
+                single_use[sdfg] -= set(names)
 
     def is_shared_data(
         self,

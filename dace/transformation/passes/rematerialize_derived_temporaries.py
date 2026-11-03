@@ -241,8 +241,9 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                 if edge.data.data != name:
                     return None
                 # A read consumed by a deeper scope leaves memlets naming the temporary BELOW the node
-                # this rewrite rewires, and the descriptor is about to be deleted under them.
-                if isinstance(edge.dst, (nodes.EntryNode, nodes.ExitNode)):
+                # this rewrite rewires, and the descriptor is about to be deleted under them; a nest
+                # keeps indexing its connector, which a register cannot serve.
+                if isinstance(edge.dst, (nodes.EntryNode, nodes.ExitNode, nodes.NestedSDFG)):
                     return None
                 plan = self.plan_read(sdfg, state, entry2, edge, inverse, sources)
                 if plan is None:

@@ -323,6 +323,43 @@ def test_refuses_a_temporary_with_a_second_reader():
     assert arrays(sdfg) == before
 
 
+def test_refuses_a_temporary_a_nest_reads():
+    nest = dace.SDFG("remat_reader_nest")
+    nest.add_symbol("i", dace.int64)
+    nest.add_array("T", (8,), dace.float64)
+    nest.add_array("C", (8,), dace.float64)
+    inner = nest.add_state(is_start_block=True)
+    copy = inner.add_tasklet("copy", {"x"}, {"y"}, "y = x")
+    inner.add_edge(inner.add_read("T"), None, copy, "x", dace.Memlet("T[i]"))
+    inner.add_edge(copy, "y", inner.add_write("C"), None, dace.Memlet("C[i]"))
+
+    sdfg = dace.SDFG("remat_nest_consumer")
+    sdfg.add_array("A", (8,), dace.float64)
+    sdfg.add_array("C", (8,), dace.float64)
+    sdfg.add_transient("T", (8,), dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    temporary = state.add_access("T")
+    a = state.add_read("A")
+    state.add_mapped_tasklet(
+        "producer",
+        {"p": "0:8"},
+        {"x": dace.Memlet("A[p]")},
+        "y = 2 * x",
+        {"y": dace.Memlet("T[p]")},
+        input_nodes={"A": a},
+        output_nodes={"T": temporary},
+        external_edges=True,
+    )
+    entry, exit_node = state.add_map("consumer", {"i": "0:8"})
+    node = state.add_nested_sdfg(nest, {"T": None}, {"C": None}, {"i": "i"})
+    state.add_memlet_path(temporary, entry, node, dst_conn="T", memlet=dace.Memlet("T[i]"))
+    state.add_memlet_path(node, exit_node, state.add_write("C"), src_conn="C", memlet=dace.Memlet("C[i]"))
+    sdfg.validate()
+
+    assert not RematerializeDerivedTemporaries().apply_pass(sdfg, {})
+    assert "T" in sdfg.arrays
+
+
 def test_refuses_a_temporary_named_by_control_flow():
     """A container an interstate edge reads is live outside dataflow."""
     sdfg = fused(heat1d)
@@ -441,6 +478,7 @@ if __name__ == "__main__":
     test_refuses_when_the_needed_index_is_not_already_read(consumer_reads_far_index)
     test_refuses_when_the_consumer_writes_the_container()
     test_refuses_a_temporary_with_a_second_reader()
+    test_refuses_a_temporary_a_nest_reads()
     test_refuses_a_temporary_named_by_control_flow()
     test_heat3d_after_loop_to_map_and_fusion_drops_transients()
     test_heat3d_after_loop_to_map_and_fusion_is_bit_exact()
