@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 import dace
-from dace import SDFG, SDFGState, dtypes, nodes
+from dace import SDFG, SDFGState, nodes
 from dace.frontend.python.parser import DaceProgram
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
@@ -93,12 +93,7 @@ def program_for_node(
     for conn in connectors_to_remove:
         constant_folding.remove_node_and_computation(sdfg, state, node, conn)
 
-    sdfg = result.to_sdfg()
-
-    if node.schedule in dtypes.GPU_SCHEDULES:
-        sdfg.apply_gpu_transformations()
-
-    return sdfg
+    return result.to_sdfg()
 
 
 def empty_sdfg_for_node(

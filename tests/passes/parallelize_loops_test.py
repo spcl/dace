@@ -1508,7 +1508,6 @@ if __name__ == "__main__":
     test_a_container_assumed_private_is_left_out_of_the_dependence_test()
     test_a_break_under_a_guarded_branch_does_not_stop_the_read_order_walk()
 
-
     test_a_local_array_read_at_an_element_this_iteration_did_not_write_stays_a_loop()
     test_a_local_scratch_rewritten_at_the_element_it_reads_lifts()
     test_two_nested_writes_meeting_across_iterations_stay_a_loop()

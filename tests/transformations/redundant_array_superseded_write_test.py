@@ -100,6 +100,32 @@ def test_superseded_write_numerics(simplify):
     assert np.allclose(a, 2.0 * b)
 
 
+def test_zeroed_accumulator_keeps_its_zero():
+    sdfg = dace.SDFG("zeroed_accumulator")
+    sdfg.add_array("a", [4], dace.float64)
+    sdfg.add_array("out", [4], dace.float64)
+    sdfg.add_transient("acc", [4], dace.float64)
+    sdfg.add_transient("tmp", [4], dace.float64)
+    state = sdfg.add_state()
+    acc = state.add_access("acc")
+    acc.setzero = True
+    tmp = state.add_access("tmp")
+    state.add_mapped_tasklet(
+        "accumulate",
+        {"i": "0:4"},
+        {"__in": dace.Memlet("a[i]")},
+        "__out = __in",
+        {"__out": dace.Memlet("acc[i]", wcr="lambda x, y: x + y")},
+        external_edges=True,
+        output_nodes={"acc": acc},
+    )
+    state.add_nedge(acc, tmp, dace.Memlet("acc[0:4]"))
+    state.add_nedge(tmp, state.add_write("out"), dace.Memlet("tmp[0:4]"))
+    sdfg.simplify()
+
+    assert any(node.setzero for node in sdfg.start_block.data_nodes() if node.data in sdfg.arrays)
+
+
 if __name__ == "__main__":
     test_redundant_array_refuses_superseded_write()
     test_simplify_keeps_superseded_write_ordered()

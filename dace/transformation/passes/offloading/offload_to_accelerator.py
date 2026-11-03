@@ -20,6 +20,7 @@ from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.memlet_utils import can_memlet_be_turned_into_a_map, memlet_to_map
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.state import (
@@ -202,6 +203,9 @@ class OffloadToAccelerator(ppl.Pass):
         self._taskloop_heuristics = Config.get_bool("optimizer", "gpu_taskloop_heuristics")
         self.cache_scopes(sdfg)
 
+        if self.lift_accumulating_copies(sdfg):
+            self.cache_scopes(sdfg)
+
         # step 1: set schedule of maps and library nodes -> heuristic only!
         self.find_taskloops(sdfg)
         if self.isolate_small_kernel_axes(sdfg):
@@ -222,6 +226,22 @@ class OffloadToAccelerator(ppl.Pass):
         register_kernel_local_transients(sdfg)
 
         return self.device_resident(sdfg) or None
+
+    def lift_accumulating_copies(self, sdfg: SDFG) -> bool:
+        """Turn a top-level copy with a WCR into the map it is: no transfer accumulates, a kernel does.
+
+        :returns: whether any state changed.
+        """
+        lifted = False
+        for state in sdfg.states():
+            top = self._cached_scope_children[state][None]
+            for edge in list(state.edges()):
+                if edge.data.wcr is None or edge.data.is_empty() or edge.src not in top or edge.dst not in top:
+                    continue
+                if can_memlet_be_turned_into_a_map(edge, state, sdfg):
+                    memlet_to_map(edge, state, sdfg)
+                    lifted = True
+        return lifted
 
     @staticmethod
     def fill_device_constants(sdfg: SDFG) -> None:
@@ -515,22 +535,27 @@ class OffloadToAccelerator(ppl.Pass):
                     other = edge.dst if edge.src is node else edge.src
                     if self.touches_device_code(scopes, other):
                         device.add(node.data)
-                    elif self.is_container_copy(sdfg, node, other):
+                    elif self.is_container_copy(sdfg, state, node, other):
                         continue
                     elif not fallback and not hybrid:
                         host.add(node.data)
         return host, device, written
 
     @staticmethod
-    def is_container_copy(sdfg: SDFG, node: nodes.AccessNode, other: nodes.Node) -> bool:
+    def is_container_copy(sdfg: SDFG, state: SDFGState, node: nodes.AccessNode, other: nodes.Node) -> bool:
         """Whether the edge between ``node`` and ``other`` copies one container into another: no code runs
         on either side, so the copy says nothing about where either container belongs (a ``return x``
-        copied into ``__return``). A view is an alias, not a copy, and still counts as a use."""
-        return (
-            isinstance(other, nodes.AccessNode)
-            and not isinstance(sdfg.arrays.get(node.data), data.View)
-            and not isinstance(sdfg.arrays.get(other.data), data.View)
-        )
+        copied into ``__return``). A view is an alias, so code reached through one is a use of ``node``
+        and a view nothing but containers touch is the same copy (an expanded reshape on the device)."""
+        seen, pending = {node}, [other]
+        while pending:
+            current = pending.pop()
+            if not isinstance(current, nodes.AccessNode):
+                return False
+            seen.add(current)
+            if isinstance(sdfg.arrays.get(current.data), data.View):
+                pending.extend(n for e in state.all_edges(current) for n in (e.src, e.dst) if n not in seen)
+        return True
 
     def stage_on_host(self, sdfg: SDFG, name: str, write_back: bool) -> bool:
         """Give ``name`` a host copy, point every use at it, and copy at the SDFG's boundary.

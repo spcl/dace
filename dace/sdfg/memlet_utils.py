@@ -381,7 +381,7 @@ def memlet_to_map(
         maprange,
         dict(__inp=Memlet(data=av, subset=a_subset)),
         "__out = __inp",
-        dict(__out=Memlet(data=bv, subset=b_subset)),
+        dict(__out=Memlet(data=bv, subset=b_subset, wcr=edge.data.wcr)),
         schedule,
         external_edges=True,
         input_nodes={av: avnode},

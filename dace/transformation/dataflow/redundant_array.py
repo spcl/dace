@@ -458,6 +458,10 @@ class RedundantArray(pm.SingleStateTransformation):
         if graph.out_degree(in_array) != 1:
             return False
 
+        # Its writers accumulate onto the zero this access gives them, which ``out_array`` does not hold
+        if in_array.setzero:
+            return False
+
         if converts_element_type(in_desc, out_desc) and not conversion_survives_fold(
             graph, in_array, in_desc.dtype, writers=True
         ):

@@ -1040,9 +1040,8 @@ DACE_MATH_UNARY_LP(sqrt, dace::float16)
 DACE_MATH_UNARY_LP(sqrt, dace::bfloat16)
 // ``dace::float16`` IS ``half`` under CUDA, where dace/cuda/halfvec.cuh already declares a native
 // ``exp(half)``: a second, equally viable overload makes every fp16 ``exp`` ambiguous and nvcc
-// rejects the whole translation unit. halfvec gates that group on ``!__HIPCC__``, so HIP-on-NVIDIA
-// -- which defines both macros -- gets no ``exp(half)`` from either header unless excluded here.
-#if !defined(__CUDACC__) || defined(__HIPCC__)
+// rejects the whole translation unit. HIP compiles that header too, and gets its ``exp(half)`` there.
+#if !defined(__CUDACC__) && !defined(__HIPCC__)
 DACE_MATH_UNARY_LP(exp, dace::float16)
 #endif
 DACE_MATH_UNARY_LP(exp, dace::bfloat16)

@@ -549,7 +549,8 @@ class PureShape(ONNXForward):
             copy.deepcopy(data_desc),
         )
         nsdfg.arrays["data"].transient = False
-        nsdfg.add_array("shape", shape_val.shape, dtype=dace.int64)
+        nsdfg.add_datadesc("shape", copy.deepcopy(out_desc_with_name(node, state, sdfg, "shape")))
+        nsdfg.arrays["shape"].transient = False
         s = nstate.add_write("shape")
 
         for i, v in enumerate(shape_val):
