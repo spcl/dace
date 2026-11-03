@@ -1232,6 +1232,43 @@ def test_a_nest_behind_a_view_of_a_lifted_array_steps_as_the_view_does(layout):
     sdfg.validate()
 
 
+def test_a_slice_a_tasklet_walks_by_pointer_stays_consecutive():
+    """A C++ tasklet below a nest spells the strides it walks ``buf`` by, so the lift keeps them."""
+    inner = dace.SDFG("walker")
+    inner.add_array("b", [NZ], dace.float64, storage=GLOBAL)
+    inner.add_array("o", [NX], dace.float64, storage=GLOBAL)
+    walk = inner.add_state("walk", is_start_block=True)
+    tasklet = walk.add_tasklet(
+        "walk",
+        {"p": dtypes.pointer(dace.float64)},
+        {"r": None},
+        "r = p[1];",
+        language=dace.Language.CPP,
+    )
+    walk.add_edge(walk.add_read("b"), None, tasklet, "p", dace.Memlet.from_array("b", inner.arrays["b"]))
+    walk.add_edge(tasklet, "r", walk.add_write("o"), None, dace.Memlet("o[i]"))
+
+    sdfg = dace.SDFG("pointer_walk")
+    sdfg.add_array("A", [NX], dace.float64, storage=GLOBAL)
+    sdfg.add_transient("buf", [NZ], dace.float64, storage=GLOBAL)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("kernel", dict(i="0:NX"), schedule=GPU_DEVICE)
+    buf = state.add_access("buf")
+    produce = state.add_tasklet("produce", {}, {"o": None}, "o = 1.0")
+    state.add_edge(me, None, produce, None, dace.Memlet())
+    state.add_edge(produce, "o", buf, None, dace.Memlet("buf[0]"))
+    nest = state.add_nested_sdfg(inner, {"b": None}, {"o": None}, symbol_mapping=dict(i="i", NX=NX, NZ=NZ))
+    state.add_edge(buf, None, nest, "b", dace.Memlet("buf[0:NZ]"))
+    state.add_memlet_path(nest, mx, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i]"))
+    sdfg.validate()
+
+    lift(sdfg)
+
+    desc = sdfg.arrays["buf"]
+    assert list(desc.shape) == [NX, NZ]
+    assert list(desc.strides) == [NZ, 1]
+
+
 def kernels_over_per_thread_counts(names: tuple[str, ...], shape: str = "cnt + 1") -> dace.SDFG:
     """One device kernel per name of ``names``, in its own state, whose body does ``cnt = <name>[b]`` and fills a
     transient ``buf`` of ``shape``."""
@@ -1391,6 +1428,7 @@ if __name__ == "__main__":
     test_an_extent_a_thread_reads_through_an_index_runs_on_the_device()
     for layout in LAYOUTS:
         test_a_nest_behind_a_view_of_a_lifted_array_steps_as_the_view_does(layout)
+    test_a_slice_a_tasklet_walks_by_pointer_stays_consecutive()
     test_an_extent_shrinking_with_a_thread_count_is_not_sized_by_its_maximum()
     test_two_kernels_reading_one_count_name_fold_their_own_bound()
     test_an_extent_the_kernel_itself_stores_is_not_folded_before_the_launch()
