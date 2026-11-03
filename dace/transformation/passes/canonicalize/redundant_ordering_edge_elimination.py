@@ -139,13 +139,12 @@ def restore_edges(state: SDFGState, snapshot: list[EdgeTuple]) -> None:
 
 
 def writers_feed(state: SDFGState, src: nodes.Node, dst: nodes.Node) -> bool:
-    """Whether ``src`` is an access node whose every writer has an edge into ``dst``, so ``dst`` already runs after them.
-    A writer that is an access node does not count: each of its two copies runs on its own."""
+    """Whether ``src`` is an access node whose every writer has an edge into ``dst``, so ``dst`` already runs after them."""
     feeding = {e.src for e in state.in_edges(dst)}
     return (
         isinstance(src, nodes.AccessNode)
         and state.in_degree(src) > 0
-        and all(e.src in feeding and not isinstance(e.src, nodes.AccessNode) for e in state.in_edges(src))
+        and all(e.src in feeding for e in state.in_edges(src))
     )
 
 
