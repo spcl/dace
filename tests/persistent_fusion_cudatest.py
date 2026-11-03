@@ -297,8 +297,8 @@ def test_persistent_fusion():
 
     sdfg.apply_gpu_transformations(validate=False, simplify=False)  # Only validate after fusion
 
-    # All nodes but copy-in, copy-out, and init
-    content_nodes = set(sdfg.nodes()) - {sdfg.start_state, sdfg.sink_nodes()[0], s_init}
+    # All nodes but copy-in, copy-out, and init: GPU copies land right before the first use, so copy-in is two states
+    content_nodes = {node for node in sdfg.nodes() if not node.label.startswith("copy_")} - {s_init}
 
     subgraph = SubgraphView(sdfg, content_nodes)
     transform = GPUPersistentKernel()
