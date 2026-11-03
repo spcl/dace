@@ -350,11 +350,10 @@ def _rewrite_memlets_with_offset(
                 src_is_inner = isinstance(src, nodes.AccessNode) and src.data == inner_name
                 dst_is_inner = isinstance(dst, nodes.AccessNode) and dst.data == inner_name
                 if src_is_inner and dst_is_inner:
-                    # Both sides ARE the offset array: ``other_subset`` would need the offset too.
-                    # No current lowering produces this; refuse rather than drop it (miscompile).
-                    raise NotImplementedError(
-                        "Cannot offset a self-copy of the boundary array %r on both sides" % inner_name
-                    )
+                    # Both sides ARE the offset array. In place: the memlet keeps which side reads.
+                    memlet.other_subset = subsets.Range(outer_ranges(as_range(memlet.other_subset).ranges)[0])
+                    memlet.subset = subsets.Range(new_range_list)
+                    continue
                 new_memlet = Memlet(
                     data=memlet.data,
                     subset=subsets.Range(new_range_list),
