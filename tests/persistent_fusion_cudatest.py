@@ -17,10 +17,10 @@ def _make_sdfg():
     bfs = dace.SDFG("bfs")
 
     # Inputs to the BFS SDFG
-    bfs.add_array("col_index", shape=[nnz], dtype=dace.int32)
-    bfs.add_array("row_index", shape=[N + 1], dtype=dace.int32)
+    bfs.add_array("col_index", shape=[nnz], dtype=dace.uint32)
+    bfs.add_array("row_index", shape=[N + 1], dtype=dace.uint32)
     bfs.add_scalar("root", dtype=dace.int32)
-    bfs.add_array("result", shape=[N], dtype=dace.int32)
+    bfs.add_array("result", shape=[N], dtype=dace.uint32)
     bfs.add_symbol("depth", dace.int32)
 
     # Transients fot interstate data transfers
