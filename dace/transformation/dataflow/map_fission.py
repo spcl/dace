@@ -1101,6 +1101,9 @@ class MapFission(transformation.SingleStateTransformation):
             # NOTE: Memlet propagation should run to correct the outer edges
             # NOTE: Edges rewired outside the new Map scopes cannot refer to the map parameters
             full_map_ranges = [(0, sz - 1, 1) for sz in mapsize]
+            # A copy between two access nodes of the body is no component: it leaves the new maps like the
+            # border edges do, so it spans all iterations instead of naming the removed map's parameters
+            lifted_nodes = set(top_access)
             for node in subgraph.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in arrays:
                     is_scalar_like = node.data in scalar_like_arrays
@@ -1110,7 +1113,7 @@ class MapFission(transformation.SingleStateTransformation):
                             # NOTE: Do this only for the subset corresponding to `node.data`. If the edge is copying
                             # to/from another AccessNode, the other data may not need extra dimensions. For example, see
                             # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
-                            if e in outside_border_edges:
+                            if e in outside_border_edges or (e.src in lifted_nodes and e.dst in lifted_nodes):
                                 map_ranges = full_map_ranges
                                 # The external subset may still name the out-of-scope map parameters
                                 if (

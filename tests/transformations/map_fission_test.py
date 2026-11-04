@@ -1520,6 +1520,52 @@ def test_fission_declines_a_reduction_the_body_writes_twice():
     assert not MapFission.can_be_applied_to(sdfg, expr_index=1, map_entry=entry, nested_sdfg=body)
 
 
+_LEVELS = 5
+_COLUMNS = 11
+
+
+@dace.program
+def level_pass_with_carry(
+    x: dace.float64[_LEVELS, _COLUMNS],
+    p1: dace.float64[_LEVELS, _COLUMNS],
+    p2: dace.float64[_LEVELS, _COLUMNS],
+    y: dace.float64[_LEVELS, _COLUMNS],
+    carry: dace.float64[_COLUMNS],
+):
+    for j in dace.map[0:_COLUMNS]:
+        t = dace.define_local([_LEVELS], dace.float64)
+        for k in dace.map[0:_LEVELS]:
+            t[k] = x[k, j] * 2.0
+        for k in dace.map[0:_LEVELS]:
+            y[k, j] = t[k] + p1[k, j] * p2[k, j]
+        carry[j] = t[_LEVELS - 1]
+
+
+def test_a_copy_between_two_widened_transients_spans_the_iterations():
+    """The body copies one element of the widened ``t`` into the widened ``carry`` slice beside an inner map. The copy
+    leaves the new maps, so it must span all iterations: it kept the removed map's parameter ``j`` instead, an
+    undeclared symbol (a compile error, or the wrong element when a symbol of that name is in scope)."""
+    sdfg = level_pass_with_carry.to_sdfg(simplify=True)
+    reference = copy.deepcopy(sdfg)
+    reference.name = f"{sdfg.name}_reference"
+
+    assert sdfg.apply_transformations(MapFission) == 1
+    sdfg.validate()
+    for state in sdfg.states():
+        for edge in state.edges():
+            if isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode):
+                assert "j" not in {str(sym) for sym in edge.data.free_symbols}, edge.data
+
+    rng = np.random.default_rng(0)
+    inputs = {name: rng.random((_LEVELS, _COLUMNS)) for name in ("x", "p1", "p2")}
+    want = {"y": np.zeros((_LEVELS, _COLUMNS)), "carry": np.zeros(_COLUMNS)}
+    got = copy.deepcopy(want)
+    reference(**inputs, **want)
+    sdfg(**inputs, **got)
+    for name in want:
+        assert np.allclose(got[name], want[name]), name
+
+
 if __name__ == "__main__":
     test_subgraph()
     test_nested_sdfg()
@@ -1568,3 +1614,4 @@ if __name__ == "__main__":
     test_fission_declines_a_reduction_the_body_writes_twice()
     test_fission_widens_both_sides_of_a_copy_between_widened_transients("copy_names_both_sides", "0:2")
     test_fission_widens_both_sides_of_a_copy_between_widened_transients("copy_names_one_side", None)
+    test_a_copy_between_two_widened_transients_spans_the_iterations()
