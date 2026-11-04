@@ -89,6 +89,14 @@ def test_a_foreign_node_is_not_found():
         state.node_id(foreign)
 
 
+
+@pytest.mark.parametrize("position", [-1, 3])
+def test_a_position_outside_the_graph_is_not_found(position):
+    state = chain(1)
+    state.node(0)
+    with pytest.raises(gr.NodeNotFoundError):
+        state.node(position)
+
 def test_deepcopy_keeps_its_own_index():
     state = chain(4)
     sdfg = state.sdfg
@@ -138,6 +146,8 @@ if __name__ == "__main__":
     test_random_mutations_of_a_multigraph()
     test_removing_first_middle_and_last()
     test_a_foreign_node_is_not_found()
+    test_a_position_outside_the_graph_is_not_found(-1)
+    test_a_position_outside_the_graph_is_not_found(3)
     test_deepcopy_keeps_its_own_index()
     test_json_round_trip()
     test_transformation_ids_resolve_after_nodes_are_added()
