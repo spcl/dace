@@ -1641,6 +1641,35 @@ def test_a_copy_between_two_connector_arrays_is_corrected_for_each_end():
         assert np.allclose(got[name], want[name]), name
 
 
+def test_mapfission_refuses_a_column_map_with_one_inner_map_and_a_copy_beside_it():
+    """``doall j: {doall k: y[k, j] = ...; carry[j] = s[LEVELS - 1, j]}`` has one computational component. Fission
+    would remove the ``j`` map and leave the copy outside every map, still indexed by ``j``, so the match is refused.
+    Forcing it with ``verify=False`` produced an undefined ``j`` (a compile error, or the index of whatever symbol of
+    that name is in scope: an out-of-bounds write)."""
+    sdfg = dace.SDFG("column_map_with_inner_map_and_copy")
+    for name in ("s", "p1", "p2", "y"):
+        sdfg.add_array(name, [LEVELS, COLUMNS], dace.float64)
+    sdfg.add_array("carry", [COLUMNS], dace.float64)
+    state = sdfg.add_state()
+    s, p1, p2, y, carry = (state.add_access(name) for name in ("s", "p1", "p2", "y", "carry"))
+    column_entry, column_exit = state.add_map("columns", dict(j=f"0:{COLUMNS}"))
+    level_entry, level_exit = state.add_map("levels", dict(k=f"0:{LEVELS}"))
+    add = state.add_tasklet("add", {"a", "b", "c"}, {"o"}, "o = a + b * c")
+    for source, name, connector in ((s, "s", "a"), (p1, "p1", "b"), (p2, "p2", "c")):
+        state.add_memlet_path(
+            source, column_entry, level_entry, add, dst_conn=connector, memlet=dace.Memlet(f"{name}[k, j]")
+        )
+    state.add_memlet_path(add, level_exit, column_exit, y, src_conn="o", memlet=dace.Memlet("y[k, j]"))
+    last_level = state.add_access("s")
+    state.add_memlet_path(s, column_entry, last_level, memlet=dace.Memlet(f"s[{LEVELS - 1}, j]"))
+    inner_carry = state.add_access("carry")
+    state.add_nedge(last_level, inner_carry, dace.Memlet(data="s", subset=f"{LEVELS - 1}, j", other_subset="j"))
+    state.add_memlet_path(inner_carry, column_exit, carry, memlet=dace.Memlet("carry[j]"))
+    sdfg.validate()
+
+    assert not MapFission.can_be_applied_to(sdfg, map_entry=column_entry)
+
+
 if __name__ == "__main__":
     test_subgraph()
     test_nested_sdfg()
@@ -1691,3 +1720,4 @@ if __name__ == "__main__":
     test_fission_widens_both_sides_of_a_copy_between_widened_transients("copy_names_one_side", None)
     test_a_copy_between_two_widened_transients_spans_the_iterations()
     test_a_copy_between_two_connector_arrays_is_corrected_for_each_end()
+    test_mapfission_refuses_a_column_map_with_one_inner_map_and_a_copy_beside_it()
