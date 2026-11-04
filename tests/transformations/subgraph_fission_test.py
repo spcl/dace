@@ -112,3 +112,32 @@ def test_a_split_whose_state_cannot_be_cut_around_it_keeps_both_maps_nested():
     sdfg(**got, N=7)
     for name in "abc":
         assert np.allclose(got[name], want[name], rtol=1e-14, atol=0), name
+
+
+S = dace.symbol("S")
+
+
+@dace.program
+def scaled_body(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    for i in dace.map[0:N]:
+        t = a[i] * S
+        for k in range(3):
+            t = t + a[i]
+        b[i] = t
+        c[i] = b[i] + t
+
+
+def test_a_cut_whose_half_reassigns_a_symbol_read_before_it_is_refused():
+    """The second half reassigns ``S``, which the first half reads, so nesting that half hands ``S`` out as a scalar
+    the half writes; ``MapFission`` then refuses the split body, though it accepts the unsplit one. The check judged
+    only the unsplit body, so the menu offered the cut and ``apply`` raised mid-rewrite (cp2k_density_matrix_trs4,
+    symbol ``sink_slice_1``)."""
+    sdfg = scaled_body.to_sdfg(simplify=True)
+    _, _, nsdfg = body_of(sdfg)
+    blocks = list(sdutil.dfs_topological_sort(nsdfg.sdfg))
+    assert len(blocks) >= 3, [b.label for b in blocks]
+    (reset,) = nsdfg.sdfg.out_edges(blocks[1])
+    reset.data.assignments["S"] = "2"
+
+    assert fission_at(sdfg, 0) == 0
+    sdfg.validate()
