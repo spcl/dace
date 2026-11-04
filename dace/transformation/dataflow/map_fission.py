@@ -807,6 +807,10 @@ class MapFission(transformation.SingleStateTransformation):
             # An empty dependency edge has a one-element path and thus no
             # outside edge: store ``None``.
             edge_to_outer = {}
+            # The outer edge of each connector end of a body edge. A copy between two connector arrays is both an
+            # entry and an exit edge, so ``edge_to_outer`` holds one of its two outer edges and the end that was not
+            # recorded last would be corrected with the descriptor of the other
+            outer_of_end = {}
             for edge in external_edges_entry:
                 if self.expr_index == 0:
                     # Subgraphs use the corresponding outer map edges
@@ -818,6 +822,7 @@ class MapFission(transformation.SingleStateTransformation):
                     if outer_edge is None:
                         outer_edge = next(e for e in graph.out_edges(nsdfg_node) if e.src_conn == edge.src.data)
                     edge_to_outer[edge] = outer_edge
+                    outer_of_end[(edge, edge.src)] = outer_edge
 
             for edge in external_edges_exit:
                 if self.expr_index == 0:
@@ -828,6 +833,7 @@ class MapFission(transformation.SingleStateTransformation):
                     # Nested SDFGs use the internal map edges of the node
                     outer_edge = next(e for e in graph.out_edges(nsdfg_node) if e.src_conn == edge.dst.data)
                     edge_to_outer[edge] = outer_edge
+                    outer_of_end[(edge, edge.dst)] = outer_edge
 
             # Collect all border arrays
             arrays = MapFission._border_arrays(nsdfg_node.sdfg if self.expr_index == 1 else sdfg, state, subgraph)
@@ -1049,7 +1055,7 @@ class MapFission(transformation.SingleStateTransformation):
                             continue
                         corrected_nodes.add(node)
 
-                        outer_edge = edge_to_outer[edge]
+                        outer_edge = outer_of_end[(edge, node)]
                         desc = parent.arrays[node.data]
 
                         # Modify shape of internal array to match outer one
@@ -1076,9 +1082,16 @@ class MapFission(transformation.SingleStateTransformation):
                             for e in state.memlet_tree(internal_edge):
                                 if e.data.is_empty():
                                     continue  # ordering edge: no subset
+                                # A copy memlet naming the other container holds this node's side in ``other_subset``
+                                on_other_subset = e.data.data != node.data and e.data.other_subset is not None
                                 if not already_integrated:
-                                    e.data.subset.offset(desc.offset, False)
-                                    e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
+                                    if on_other_subset:
+                                        side = mm.Memlet(data=node.data, subset=dcpy(e.data.other_subset))
+                                        side.subset.offset(desc.offset, False)
+                                        e.data.other_subset = helpers.unsqueeze_memlet(side, outer_edge.data).subset
+                                    else:
+                                        e.data.subset.offset(desc.offset, False)
+                                        e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
                                 # NOTE: If the edge is outside of the new Map scope, then try to propagate it. This is
                                 # needed for edges directly connecting AccessNodes, because the standard memlet
                                 # propagation will stop at the first AccessNode outside the Map scope. For example, see
@@ -1086,10 +1099,17 @@ class MapFission(transformation.SingleStateTransformation):
                                 if not (scope_dict[e.src] and scope_dict[e.dst]):
                                     outside_border_edges.add(e)
                                     # Propagate only the subset of `node.data`; the other side of a copy is kept
-                                    other_subset = e.data.other_subset
-                                    e.data.other_subset = None
-                                    e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range, facts)
-                                    e.data.other_subset = other_subset
+                                    if on_other_subset:
+                                        side = mm.Memlet(data=node.data, subset=e.data.other_subset)
+                                        side = propagate_subset([side], desc, outer_map.params, outer_map.range, facts)
+                                        e.data.other_subset = side.subset
+                                    else:
+                                        other_subset = e.data.other_subset
+                                        e.data.other_subset = None
+                                        e.data = propagate_subset(
+                                            [e.data], desc, outer_map.params, outer_map.range, facts
+                                        )
+                                        e.data.other_subset = other_subset
 
                         # Only after offsetting memlets we can modify the
                         # overall offset. The memlets of an integrated nested SDFG were not offset, and still
