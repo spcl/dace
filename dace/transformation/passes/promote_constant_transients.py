@@ -60,8 +60,9 @@ class PromoteConstantTransients(ppl.Pass):
                     writes.setdefault(node.data, []).extend(
                         (state, e) for e in state.in_edges(node) if not e.data.is_empty()
                     )
-                    # A reference to the data writes it through another name.
-                    if any(e.dst_conn == "set" for e in state.out_edges(node)):
+                    # A reference to the data writes it through another name; a C++ tasklet taking it by pointer (an
+                    # expanded ``ExternalCall``) may bind a mutable pointer, which a ``constexpr`` array cannot.
+                    if any(e.dst_conn == "set" or pointer_read(e) for e in state.out_edges(node)):
                         skip.add(node.data)
             for name, desc in list(sdfg.arrays.items()):
                 if (
@@ -79,6 +80,18 @@ class PromoteConstantTransients(ppl.Pass):
                     remove_write(state, edge)
                 result.setdefault(sdfg.cfg_id, set()).add(name)
         return result or None
+
+
+def pointer_read(edge: MultiConnectorEdge) -> bool:
+    """Whether ``edge`` hands its data to a C++ tasklet through a pointer connector. The tasklet's code names the
+    array itself once its connectors are inlined, and may pass it on as ``T*``; a Python tasklet reads its inputs
+    through a ``const`` pointer the code generator declares, which a ``constexpr`` array binds to."""
+    dst = edge.dst
+    return (
+        isinstance(dst, nd.Tasklet)
+        and dst.language == dtypes.Language.CPP
+        and isinstance(dst.in_connectors.get(edge.dst_conn), dtypes.pointer)
+    )
 
 
 def is_candidate(desc: dt.Data) -> bool:
