@@ -447,9 +447,7 @@ class MapFission(transformation.SingleStateTransformation):
 
             # Fissioning a component across a conditional needs the branch
             # condition replicated into each fissioned map, currently not supported.
-            if any(
-                isinstance(cfg, ConditionalBlock) for cfg in nsdfg_node.sdfg.all_control_flow_regions(recursive=True)
-            ):
+            if not self.conditionals_stay_whole(nsdfg_node.sdfg, set(map_node.map.params)):
                 return False
 
             reduced = OrderedSet(
@@ -632,6 +630,38 @@ class MapFission(transformation.SingleStateTransformation):
             if self._copy_indices(state, e) is None:
                 return False
 
+        return True
+
+    @staticmethod
+    def conditionals_stay_whole(body: sd.SDFG, blocked: OrderedSet[str] | set[str]) -> bool:
+        """Whether every conditional in a nested-SDFG body can stay whole in one fissioned map.
+
+        Fission nests each top-level region of the body whole, so a ``ConditionalBlock`` lands in one map with all
+        its branches and no component is split across it. That is only sound while its conditions mean the same in
+        that map: they must read neither a map parameter nor a symbol the body assigns on an interstate edge (the
+        assignment would end up in another map). Both are followed into nested SDFGs through their symbol mappings.
+
+        :param body: The nested SDFG that is the body of the map (or a nested SDFG inside it).
+        :param blocked: The names in ``body`` whose value may differ between the fissioned maps: the map parameters,
+                        and for a nested SDFG the symbols mapped from them.
+        :returns: ``False`` if a conditional in ``body`` reads a blocked symbol.
+        """
+        blocked = set(blocked) | {name for edge in body.all_interstate_edges() for name in edge.data.assignments}
+        for block in body.all_control_flow_blocks():
+            if isinstance(block, ConditionalBlock) and any(
+                {str(sym) for sym in cond.get_free_symbols()} & blocked for cond, _branch in block.branches if cond
+            ):
+                return False
+        for state in body.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    mapped = {
+                        inner
+                        for inner, outer in node.symbol_mapping.items()
+                        if {str(sym) for sym in pystr_to_symbolic(str(outer)).free_symbols} & blocked
+                    }
+                    if not MapFission.conditionals_stay_whole(node.sdfg, mapped):
+                        return False
         return True
 
     @staticmethod
