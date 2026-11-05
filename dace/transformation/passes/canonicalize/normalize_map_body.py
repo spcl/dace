@@ -26,6 +26,7 @@ from dace.optionals import required
 from dace.sdfg import InterstateEdge, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_datadesc_names
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import map_scope
@@ -157,13 +158,50 @@ def co_written_connectors(state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.
 
 
 def bound_apart(keep: nodes.NestedSDFG, drop: nodes.NestedSDFG) -> dict[str, str]:
-    """Fresh names for the symbols ``drop`` binds to another value than ``keep`` binds the same name to."""
-    taken = dict.fromkeys([*keep.sdfg.symbols, *drop.sdfg.symbols, *keep.symbol_mapping, *drop.symbol_mapping])
+    """New names for the symbols of ``drop`` that cannot keep their name in the merged body:
+
+    * a symbol ``keep`` binds to another value than ``drop`` binds the same name to gets a fresh name;
+    * a symbol that a scope of ``keep`` binds (a map parameter or loop variable of its body) cannot also be a symbol of
+      the merged body. It moves onto the symbol ``keep`` already receives that outer value as (the lane hoist names its
+      copy ``<parameter>_lane`` and leaves the parameter itself to the body), else it gets a fresh name.
+    """
+    keep_bound = scope_bound_names(keep.sdfg)
+    drop_bound = scope_bound_names(drop.sdfg)
+    taken = dict.fromkeys(
+        [*keep.sdfg.symbols, *drop.sdfg.symbols, *keep.symbol_mapping, *drop.symbol_mapping, *keep_bound, *drop_bound]
+    )
     repl: dict[str, str] = {}
     for name, value in drop.symbol_mapping.items():
         if name in keep.symbol_mapping and str(keep.symbol_mapping[name]) != str(value):
             repl[name] = find_new_name(name, taken)
-            taken[repl[name]] = None
+        elif name in keep_bound:
+            same_value = (
+                other
+                for other, other_value in keep.symbol_mapping.items()
+                if str(other_value) == str(value)
+                and other not in keep_bound | drop_bound
+                and other not in drop.sdfg.symbols
+                and other not in drop.sdfg.arrays
+            )
+            repl[name] = next(same_value, None) or find_new_name(name, taken)
+        else:
+            continue
+        taken[repl[name]] = None
+    return repl
+
+
+def bound_apart_in_tail(base: SDFG, tail: SDFG) -> dict[str, str]:
+    """Fresh names for the parameters a scope of ``tail`` binds that ``base`` declares as symbols: sequenced into
+    ``base``, such a scope would bind a symbol of the merged body. The symbol is the one the rest of ``base`` reads, so
+    it is the scope's name that moves."""
+    clash = base.symbols.keys() & scope_bound_names(tail)
+    taken = dict.fromkeys(
+        [*base.symbols, *base.arrays, *tail.symbols, *tail.arrays, *scope_bound_names(base), *scope_bound_names(tail)]
+    )
+    repl: dict[str, str] = {}
+    for name in sorted(clash):
+        repl[name] = find_new_name(name, taken)
+        taken[repl[name]] = None
     return repl
 
 
@@ -324,6 +362,7 @@ class NormalizeMapBody(ppl.Pass):
             # replicates a producer per element it recomputes, each with its own ``_i0``): those are renamed apart
             symbol_repl = bound_apart(keep, drop)
             tail.replace_dict(symbol_repl)
+            tail.replace_dict(bound_apart_in_tail(base, tail))
             # Rename tail's data that collides with any base identifier, tracking how
             # drop's connectors were renamed so we can rewire the outer edges. DaCe forbids
             # an array name that also names a symbol, constant, or tasklet connector -- so

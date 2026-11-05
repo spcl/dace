@@ -24,6 +24,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.sdfg import scope_bound_names
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.dataflow import OTFMapFusion
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
@@ -622,3 +623,71 @@ def test_producers_of_one_window_merge_with_their_own_element_and_index():
     assert len([n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]) == 1
     sdfg(A=A, B=B, N=12)
     assert np.allclose(B, expected)
+
+
+def lane_binder_sibling() -> dace.SDFG:
+    """Receives the outer value as ``i_lane`` (the lane hoist's name for it) and binds ``i`` itself with a one-trip map."""
+    sd = dace.SDFG("lane_binder")
+    sd.add_array("x", [N], dace.float64)
+    sd.add_array("o", [N], dace.float64)
+    sd.add_symbol("i_lane", dace.int64)
+    st = sd.add_state("st")
+    me, mx = st.add_map("inner", {"i": "0:1"})
+    t = st.add_tasklet("t", {"a"}, {"r"}, "r = a + i")
+    st.add_memlet_path(st.add_access("x"), me, t, dst_conn="a", memlet=dace.Memlet("x[i_lane]"))
+    st.add_memlet_path(t, mx, st.add_access("o"), src_conn="r", memlet=dace.Memlet("o[i_lane]"))
+    return sd
+
+
+def outer_symbol_sibling() -> dace.SDFG:
+    """Takes the outer map parameter as an SDFG symbol of the same name, ``i``."""
+    sd = dace.SDFG("outer_symbol")
+    sd.add_array("x", [N], dace.float64)
+    sd.add_array("o", [N], dace.float64)
+    sd.add_symbol("i", dace.int64)
+    st = sd.add_state("st")
+    t = st.add_tasklet("t", {"a"}, {"r"}, "r = a + i")
+    st.add_edge(st.add_access("x"), None, t, "a", dace.Memlet("x[i]"))
+    st.add_edge(t, "r", st.add_access("o"), None, dace.Memlet("o[i]"))
+    return sd
+
+
+def symbol_vs_scope_siblings(binder_first: bool) -> dace.SDFG:
+    """``map i: { binder(A = X + 0) ; symbol(B = X + i) }``. The pipeline keeps the lane symbol aliased (``i_lane`` is
+    ``i``), so no ``convert_legacy_nested_sdfgs`` here: it would dealias ``i_lane`` and rename the inner ``i``."""
+    sdfg = dace.SDFG("symbol_vs_scope_siblings")
+    for arr in ("X", "A", "B"):
+        sdfg.add_array(arr, [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", {"i": "0:N"})
+    binder = (lane_binder_sibling(), "A", {"i_lane": "i", "N": "N"})
+    symbol = (outer_symbol_sibling(), "B", {"i": "i", "N": "N"})
+    read = state.add_read("X")
+    for inner, out, mapping in (binder, symbol) if binder_first else (symbol, binder):
+        node = state.add_nested_sdfg(inner, {"x"}, {"o"}, symbol_mapping=mapping)
+        state.add_memlet_path(read, me, node, dst_conn="x", memlet=dace.Memlet("X[0:N]"))
+        state.add_memlet_path(node, mx, state.add_write(out), src_conn="o", memlet=dace.Memlet(f"{out}[0:N]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("binder_first", [True, False])
+def test_merge_siblings_renames_a_symbol_the_other_sibling_binds(binder_first):
+    """One sibling opens a scope on ``i`` and takes the outer value as ``i_lane``; the other takes it as the symbol
+    ``i``. Copying that symbol into the first, which binds ``i`` with a map, raised ``NameCollisionError`` (and a merged
+    body that both declares and binds ``i`` is invalid). The symbol must move onto a fresh name or onto ``i_lane``."""
+    sdfg = symbol_vs_scope_siblings(binder_first)
+    sdfg.validate()
+
+    assert NormalizeMapBody().apply_pass(sdfg, {}) is not None, "the two siblings should merge"
+    sdfg.validate()
+    merged = [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG)]
+    assert len(merged) == 1, "siblings merged into one nested SDFG"
+    assert not set(merged[0].sdfg.symbols) & scope_bound_names(merged[0].sdfg), (
+        "a name is a symbol or scope-bound, not both"
+    )
+
+    n = 8
+    X = np.random.default_rng(0).random(n)
+    A, B = np.zeros(n), np.zeros(n)
+    sdfg(X=X.copy(), A=A, B=B, N=n)
+    assert np.allclose(A, X) and np.allclose(B, X + np.arange(n))
