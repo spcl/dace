@@ -88,7 +88,7 @@ def test_shared_tiles_code_structure():
     barrier after each copy also guards the slot the next copy overwrites. Generating the code needs no GPU."""
     sdfg = pipelined(tiled_add, 3)
     (code,) = [obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu"]
-    assert f"__shared__ double buf[{3 * TILE}];" in code
+    assert f"__shared__ __align__(128) double buf[{3 * TILE}];" in code
     main = code[code.index("for (t = 0;") :]
     main = main[: main.index("for (t = ", 1)]  # up to the epilogue
     assert main.index("% 3)") < main.index("GlobalToShared")
@@ -127,9 +127,9 @@ def test_blocked_gemm_code_structure(n_depth: int):
     """Both the loop over K tiles and the loop over N tiles get rings of shared tiles. Needs no GPU."""
     sdfg = pipelined(blocked_gemm, 2, n_depth)
     (code,) = [obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu"]
-    assert f"__shared__ double a_tile[{2 * BM * BK}];" in code
-    assert f"__shared__ double b_tile[{2 * BK * BN}];" in code
-    assert f"__shared__ double d_tile[{n_depth * BM * BN}];" in code
+    assert f"__shared__ __align__(128) double a_tile[{2 * BM * BK}];" in code
+    assert f"__shared__ __align__(128) double b_tile[{2 * BK * BN}];" in code
+    assert f"__shared__ __align__(128) double d_tile[{n_depth * BM * BN}];" in code
 
 
 @pytest.mark.gpu
@@ -171,7 +171,7 @@ def test_shared_tiles_depth_beyond_trip_count_code_structure(depth: int):
     """Depths up to and beyond the BLOCK / TILE = 4 iterations of the loop still allocate a ring of ``depth`` tiles."""
     sdfg = pipelined(tiled_add, depth)
     (code,) = [obj.clean_code for obj in sdfg.generate_code() if obj.language == "cu"]
-    assert f"__shared__ double buf[{depth * TILE}];" in code
+    assert f"__shared__ __align__(128) double buf[{depth * TILE}];" in code
     assert f"% {depth})" in code
 
 
