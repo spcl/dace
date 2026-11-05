@@ -1408,6 +1408,15 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         rng = subsets.Range(rng)
         if rng.num_elements() != 1:
             raise SyntaxError("Range subscripts disallowed in interstate edges")
+        desc = self.sdfg.arrays.get(target)
+        # A Scalar is one C variable. ``name[0]`` is what a length-1 array used to spell, and it does not
+        # compile once the descriptor is a Scalar (cp2k_density_matrix_trs4, extcall_doall189: an interstate
+        # edge assigns ``sink_slice_4 = __map_fusion_...___sc0_x0_3[0]``).
+        if isinstance(desc, data.Scalar) and desc.storage != dtypes.StorageType.GPU_Global:
+            if any(str(dim[0]) != "0" for dim in rng.ranges):
+                raise SyntaxError(f"Scalar {target} is one value; an interstate edge cannot subscript past it")
+            self.write(ptr(target, desc, self.sdfg, self.framecode))
+            return
 
         memlet = mmlt.Memlet(data=target, subset=rng)
         self.write(cpp_array_expr(self.sdfg, memlet, framecode=self.framecode))
