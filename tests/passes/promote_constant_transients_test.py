@@ -849,7 +849,8 @@ def test_data_bound_to_a_reference_is_not_promoted():
 def test_an_array_a_call_takes_by_pointer_is_not_promoted():
     """An expanded ``ExternalCall`` is a C++ tasklet taking each array through a pointer connector, which a
     ``constexpr`` array cannot bind to (NestForge's rk4_ensemble after subgraph-fission: ``invalid conversion from
-    'const double*' to 'double*'``). Codegen expands library nodes before this pass, so the tasklet is what it sees."""
+    'const double*' to 'double*'``). Codegen expands library nodes before this pass, so the tasklet is what it sees.
+    Generating the program is what failed to compile: the declaration of ``K`` must not be ``constexpr``."""
     sdfg = dace.SDFG("pointer_reads_constant")
     sdfg.add_array("K", [3], dace.float64, transient=True)
     sdfg.add_array("B", [3], dace.float64)
@@ -860,6 +861,11 @@ def test_an_array_a_call_takes_by_pointer_is_not_promoted():
     call = use.add_tasklet("call", {"k": pointer}, {"b": pointer}, "kernel(k, b);", language=dace.Language.CPP)
     use.add_edge(use.add_read("K"), None, call, "k", dace.Memlet("K[0:3]"))
     use.add_edge(call, "b", use.add_write("B"), None, dace.Memlet("B[0:3]"))
+
+    # generate_code copies the SDFG and runs the pass itself, which is the path that emitted
+    # ``constexpr double K[3]`` and then would not compile.
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "constexpr double K[" not in code
 
     res = _run(sdfg)
     assert "K" not in (res or {}).get(sdfg.cfg_id, {})
