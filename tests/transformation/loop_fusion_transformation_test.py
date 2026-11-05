@@ -211,13 +211,49 @@ def seq_outer_map_reduction_body(a: f64[N, N], b: f64[N], c: f64[N]):
         c[i] = c[i - 1] + b[i]
 
 
-def test_map_bodied_recurrence_pair_is_conservatively_refused():
-    # A cross-loop b-write / b-read dependence expressed through a MAP body carries subsets the v1
-    # point-wise classifier resolves conservatively, so LoopFusion refuses -- it never WRONGLY fuses, which
-    # is what matters. The un-fused program is the correct result (exact).
+def test_map_bodied_recurrence_pair_fuses_on_its_own_row():
+    # The cross-loop dependence is b[i, 0:N] written by the first map body and read by the second at the
+    # same i: each iteration touches only its own row, so the pair fuses (it used to be refused because
+    # the point-wise classifier calls two identical row subsets 'complex').
     before, after, applied, exact = run_fused(seq_outer_map_inner_2d, mk2d(names=("a", "b", "c")), 24)
     assert exact
+    assert applied == 1 and after == before - 1
+
+
+@dace.program
+def seq_outer_map_inner_2d_read_ahead(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
+    for i in range(1, N - 1):
+        for j in dace.map[0:N]:
+            b[i, j] = b[i - 1, j] + a[i, j]
+    for i in range(1, N - 1):
+        for j in dace.map[0:N]:
+            c[i, j] = c[i - 1, j] + b[i + 1, j]
+
+
+def test_map_bodied_read_ahead_of_the_next_row_is_refused():
+    # The second body reads row i + 1, which the first body writes only at the next iteration: fused, it
+    # would read the stale value, so the own-row rule must not accept it.
+    before, after, applied, exact = run_fused(seq_outer_map_inner_2d_read_ahead, mk2d(names=("a", "b", "c")), 24)
+    assert exact
     assert applied == 0 and after == before
+
+
+@dace.program
+def seq_outer_map_inner_2d_overwrite(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
+    for i in range(1, N):
+        for j in dace.map[0:N]:
+            c[i, j] = c[i - 1, j] + b[i, j]
+    for i in range(1, N):
+        for j in dace.map[0:N]:
+            b[i, j] = b[i - 1, j] * a[i, j]
+
+
+def test_map_bodied_own_row_overwrite_after_read_fuses():
+    # The first body reads row i of b before the second body overwrites it at the same i (an anti
+    # dependence on the own row): fused, the read still sees the value from before the overwrite.
+    before, after, applied, exact = run_fused(seq_outer_map_inner_2d_overwrite, mk2d(names=("a", "b", "c")), 24)
+    assert exact
+    assert applied == 1 and after == before - 1
 
 
 def test_fusable_outer_seq_loop_with_reduction_body():
