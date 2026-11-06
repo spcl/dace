@@ -1956,7 +1956,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         location: dict[str, symbolic.SymbolicType] | None = None,
         debuginfo: dtypes.DebugInfo | None = None,
         external_path: str | None = None,
-        defined_symbols: Optional[dict[str, dt.Data]] = None,
+        defined_symbols: dict[str, dt.Data] | None = None,
     ):
         """
         Adds a nested SDFG to the SDFG state.
