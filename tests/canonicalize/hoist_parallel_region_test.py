@@ -338,6 +338,58 @@ def test_sequential_map_around_a_parallel_map_is_refused():
     assert_declined(sdfg, "a Sequential map with a parallel map inside breaks replication-freedom (H)")
 
 
+def reduce_then_map_sdfg(name, extent):
+    """``for it in 0:N { s = sum(x[0:extent]); map i in 0:N: a[i] = a[i] + s }``: the shape fusing ``newdxx_g``'s
+    ``eigqts`` loop into its atom loop gives (an ``np.sum`` of a 3-vector before the parallel maps)."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("x", [extent], dace.float64)
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_transient("s", [1], dace.float64)
+    outer = loop_region(sdfg, "outer", "N")
+    head = outer.add_state("head", is_start_block=True)
+    reduce = head.add_reduce("lambda p, q: p + q", axes=None, identity=0)
+    head.add_edge(head.add_read("x"), None, reduce, None, dace.Memlet(f"x[0:{extent}]"))
+    head.add_edge(reduce, None, head.add_write("s"), None, dace.Memlet("s[0]"))
+    body = outer.add_state("body")
+    body.add_mapped_tasklet(
+        "add",
+        {"i": "0:N"},
+        {"in_a": dace.Memlet("a[i]"), "in_s": dace.Memlet("s[0]")},
+        "out = in_a + in_s",
+        {"out": dace.Memlet("a[i]")},
+        schedule=dtypes.ScheduleType.CPU_Multicore,
+        external_edges=True,
+    )
+    outer.add_edge(head, body, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+def test_small_reduction_in_the_loop_runs_once_in_the_team():
+    """A ``Reduce`` over three elements no longer refuses the team: it runs in a one-iteration ``omp for``, and the
+    map after it reads the sum the barrier publishes (spcl/NestForge#78, ``newdxx_g`` after the ``eigqts``
+    fusion)."""
+    sdfg = reduce_then_map_sdfg("small_reduce", 3)
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    assert teams(sdfg) == 1
+    reduces = [(n, st) for n, st in sdfg.all_nodes_recursive() if isinstance(n, dace.libraries.standard.Reduce)]
+    assert len(reduces) == 1
+    node, state = reduces[0]
+    scope = state.entry_node(node)
+    assert scope is not None and scope.map.schedule == dtypes.ScheduleType.CPU_Multicore
+    assert node.schedule == dtypes.ScheduleType.Sequential
+    sdfg.validate()
+    x, a = np.array([1.0, 2.0, 4.0]), np.zeros(37)
+    sdfg(x=x, a=a, N=37)
+    assert np.allclose(a, 37 * 7.0)
+
+
+def test_large_reduction_in_the_loop_is_refused():
+    """A ``Reduce`` over ``N`` elements is work, not a statement: one thread running it in the team would serialize
+    it, so the loop keeps its per-trip regions."""
+    assert_declined(reduce_then_map_sdfg("large_reduce", "N"), "a Reduce over N elements is not small")
+
+
 def test_a_read_inside_a_map_narrows_a_whole_fill_over_the_map_range():
     """A node inside a map (an in-place fusion leaves them) reads ``t[i]``: the hull is the map's range, not ``i``."""
     from dace.libraries.standard.nodes.fill import FillLibraryNode
