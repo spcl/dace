@@ -2026,9 +2026,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
-            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
+            defined_symbols: dict[str, symbolic.SymbolicType] | None = None
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
+                    if defined_symbols is None:
+                        defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
                     sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
 
         return s
