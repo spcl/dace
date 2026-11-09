@@ -247,17 +247,8 @@ end Ctx
 
 /-! ## Locations depend on the alias table only -/
 
-theorem Mem.resolveFuel_congr {m m' : Mem} (h : m.aliases = m'.aliases) :
-    ∀ (n : Nat) (l : Loc), m.resolveFuel n l = m'.resolveFuel n l
-  | 0, _ => rfl
-  | n + 1, l => by
-    simp only [Mem.resolveFuel, h]
-    cases m'.aliases l.name
-    · rfl
-    · exact Mem.resolveFuel_congr h n _
-
 theorem Mem.resolve_congr {m m' : Mem} (h : m.aliases = m'.aliases) (l : Loc) : m.resolve l = m'.resolve l :=
-  Mem.resolveFuel_congr h 64 l
+  Mem.resolveFuel_aliases h 64 l
 
 theorem Ctx.addr_congr (ctx : Ctx) (ρ : Valuation) {m m' : Mem} (h : m.aliases = m'.aliases) (n : Name)
     (idx : Idx) : ctx.addr ρ m n idx = ctx.addr ρ m' n idx := by

@@ -51,11 +51,6 @@ namespace Log.Eqv
 
 theorem refl (a : Log) : Log.Eqv a a := ⟨Log.Le.refl a, Log.Le.refl a⟩
 
-theorem symm {a b : Log} (h : Log.Eqv a b) : Log.Eqv b a := ⟨h.2, h.1⟩
-
-theorem trans {a b c : Log} (h₁ : Log.Eqv a b) (h₂ : Log.Eqv b c) : Log.Eqv a c :=
-  ⟨h₁.1.trans h₂.1, h₂.2.trans h₁.2⟩
-
 theorem seq {a' a b' b : Log} (ha : Log.Eqv a' a) (hb : Log.Eqv b' b) : Log.Eqv (a'.seq b') (a.seq b) :=
   ⟨ha.1.seq hb.1, ha.2.seq hb.2⟩
 

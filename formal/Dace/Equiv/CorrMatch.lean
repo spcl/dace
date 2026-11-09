@@ -365,10 +365,6 @@ structure NestedMapOk (ctx : Ctx) (inner : SDFG) (mapping : List (Sym × Expr)) 
 theorem Mem.allocAll_append (m : Mem) (a b : List Name) : (m.allocAll a).allocAll b = m.allocAll (a ++ b) := by
   simp [Mem.allocAll, List.foldl_append]
 
-theorem Log.dropNames_dropNames (g : Log) (a b : List Name) : (g.dropNames a).dropNames b = g.dropNames (a ++ b) := by
-  simp only [Log.dropNames, List.filter_filter, List.contains_append, Bool.not_or]
-  congr 1 <;> (apply List.filter_congr; intro x _; rw [Bool.and_comm])
-
 theorem nestedValuation_mapM {ctx : Ctx} {ρ : Valuation} {m : Mem} :
     ∀ (mapping : List (Sym × Expr)), (∀ p ∈ mapping, p.2 = .sym p.1 ∧ ctx.isScalarName p.1 = false) →
       (∃ vs, (mapping.mapM fun (x, e) => do
@@ -450,14 +446,6 @@ theorem bindCodeInputs_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNod
     | code k => rw [hE] at hd; cases hd
     | invalid => rw [hE] at hd; cases hd
 
-/-- Without code consumers of the outputs, a nested call ends with the inner
-memory with the dropped names freed and the inner log without them. -/
-theorem nestedFinish_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode} {dropped : List Name} {pre : St}
-    {m₂ : Mem} {g₂ : Log} (h : s.DataOuts n) :
-    nestedFinish ctx' ρ' s n dropped pre m₂ g₂ =
-      .ok { mem := m₂.allocAll dropped, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } :=
-  nestedFinish_data' h
-
 theorem nestedSetup_eq {ctx : Ctx} {ρ : Valuation} {s : State} {n : DNode} {inner : SDFG}
     {mapping : List (Sym × Expr)} {st : St} {conns : List (Name × Name)} (hck : nestedCheck inner = .ok ())
     (hb : nestedBindings ctx s n = .ok conns)
@@ -504,7 +492,7 @@ def IdleNodes (ctx : Ctx) (s : State) (xs : List NodeId) : Prop :=
 def DynNodes (tc : TCtx) (keys : List InKey) (ds : List SNode) : Prop :=
   List.Forall₂ (fun k n => ∃ m : Memlet, n = .dynScopeCopy k.conn m ∧ tc.inKey k.conn m = k) keys ds
 
-theorem DNode.isSimple_of_copyTarget' {n : DNode} (hk : DNode.isCopyTarget n = true) : n.isSimple = true := by
+theorem DNode.isSimple_of_copyTarget {n : DNode} (hk : DNode.isCopyTarget n = true) : n.isSimple = true := by
   unfold DNode.isCopyTarget at hk
   unfold DNode.isSimple
   split at hk <;> simp_all
@@ -716,7 +704,7 @@ theorem SegCorr.flat {ctx : Ctx} {tc : TCtx} {s : State} {o : List NodeId} {cs :
       refine .inl (.inl ?_)
       first
         | exact .inr ⟨_, hk⟩
-        | exact .inl (DNode.isSimple_of_copyTarget' hk)
+        | exact .inl (DNode.isSimple_of_copyTarget hk)
         | (left; simp [DNode.isSimple, hk])
     · exact ih id hid n' hn'
   | consume hn hk _ _ _ _ _ _ _ _ _ _ ih =>
@@ -1628,11 +1616,6 @@ theorem execSimple_copyTarget {ctx : Ctx} {ρ : Valuation} {n : DNode} (hk : DNo
   unfold DNode.isCopyTarget at hk
   split at hk <;> simp_all
 
-theorem DNode.isSimple_of_copyTarget {n : DNode} (hk : DNode.isCopyTarget n = true) : n.isSimple = true := by
-  unfold DNode.isCopyTarget at hk
-  unfold DNode.isSimple
-  split at hk <;> simp_all
-
 omit h he in
 /-- Idle nodes run as no-ops. -/
 theorem idle_run {ρ : Valuation} : ∀ {xs : List NodeId}, IdleNodes ctx s xs → ∀ st : St,
@@ -1836,7 +1819,7 @@ theorem nested_call (hw : ∀ op v, ctx.I.wcr op .undef v = .undef) {nd : DNode}
       rw [nestedFinish_data hout] at hnode
       simp only at hm₂ hg₂
       rw [Mem.Sim.eq_one hm₂] at hnode
-      rw [hg₂, Log.ren_one, Log.dropNames_nil'] at hnode
+      rw [hg₂, Log.ren_one, Log.dropNames_nil] at hnode
       exact .inr (.inr ⟨c, rfl, hnode⟩)
 
 omit h in
@@ -2145,7 +2128,6 @@ theorem map_node {id : NodeId} {n : DNode} {o : List NodeId} {cs : List SNode} {
                   rw [hc] at hx'
                   exact .inr (.inr ⟨y₂, hy' ▸ NodeExec.mapScope hk hset hy,
                     ih (cst := cst.withSt (y₂.shift cst.log)) hx' (hrel.afterNode hyv₂ ⟨rfl, rfl⟩)⟩)
-
 
 include h he in
 /-- **Matching of a dataflow segment** (see the module documentation). -/

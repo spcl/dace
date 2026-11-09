@@ -60,21 +60,7 @@ theorem map {a₂ a₁ : Option α} (f : α → β) (h : OptLe a₂ a₁) : OptL
   · exact .inl rfl
   · exact .inr rfl
 
-theorem mapM {f₂ f₁ : α → Option β} (hf : ∀ x, OptLe (f₂ x) (f₁ x)) :
-    ∀ xs : List α, OptLe (xs.mapM f₂) (xs.mapM f₁)
-  | [] => .inr rfl
-  | x :: xs => by
-    simp only [List.mapM_cons]
-    exact bind (hf x) fun y => bind (mapM hf xs) fun ys => .inr rfl
-
-theorem of_eq {a₂ a₁ : Option α} (h : a₂ = a₁) : OptLe a₂ a₁ := .inr h
-
 theorem some_iff {a₂ : Option α} {b : α} : OptLe a₂ (some b) ↔ a₂ = none ∨ a₂ = some b := Iff.rfl
-
-theorem eq_of_some {a₂ a₁ : Option α} {x : α} (h : OptLe a₂ a₁) (h₂ : a₂ = some x) : a₁ = some x := by
-  rcases h with h | h
-  · rw [h] at h₂; cases h₂
-  · rw [← h, h₂]
 
 end OptLe
 
@@ -164,16 +150,6 @@ theorem of_err {e' e : ErrReason} (h : e'.isUB = true ∨ e' = e) : ResSim R (.e
 theorem fmapEq {r₂ r₁ : Res α} (g : α → γ) (h : ResSim Eq r₂ r₁) : ResSim Eq (g <$> r₂) (g <$> r₁) :=
   bindEq (S := Eq) h fun a => ok rfl
 
-theorem filterMapM {τ : Type} {f₂ f₁ : τ → Res (Option α)} (hf : ∀ x, ResSim Eq (f₂ x) (f₁ x)) :
-    ∀ xs : List τ, ResSim Eq (xs.filterMapM f₂) (xs.filterMapM f₁)
-  | [] => ok rfl
-  | x :: xs => by
-    simp only [List.filterMapM_cons]
-    refine bindEq (hf x) fun b => ?_
-    cases b with
-    | none => exact filterMapM hf xs
-    | some b => exact fmapEq _ (filterMapM hf xs)
-
 theorem mapM_mem {τ : Type} {f₂ f₁ : τ → Res α} :
     ∀ (xs : List τ), (∀ x ∈ xs, ResSim Eq (f₂ x) (f₁ x)) → ResSim Eq (xs.mapM f₂) (xs.mapM f₁)
   | [], _ => ok rfl
@@ -191,13 +167,6 @@ theorem filterMapM_mem {τ : Type} {f₂ f₁ : τ → Res (Option α)} :
     cases b with
     | none => exact filterMapM_mem xs fun x' hx' => hf x' (List.mem_cons_of_mem _ hx')
     | some b => exact fmapEq _ (filterMapM_mem xs fun x' hx' => hf x' (List.mem_cons_of_mem _ hx'))
-
-theorem mapM {τ : Type} {f₂ f₁ : τ → Res α} (hf : ∀ x, ResSim Eq (f₂ x) (f₁ x)) :
-    ∀ xs : List τ, ResSim Eq (xs.mapM f₂) (xs.mapM f₁)
-  | [] => ok rfl
-  | x :: xs => by
-    simp only [List.mapM_cons]
-    exact bindEq (hf x) fun a => bindEq (mapM hf xs) fun as => ok rfl
 
 /-- If the simulating side fails, it is undefined behavior or the simulated
 side fails the same way. -/
@@ -360,10 +329,6 @@ theorem Loc.ren_inj {l l' : Loc} : l.ren π = l'.ren π ↔ l = l' := by
 
 theorem Loc.ren_elem (n : Name) (o : Int) : (Loc.elem n o).ren π = Loc.elem (π n) o := rfl
 
-/-- Every location is a renamed one. -/
-theorem Loc.ren_symm (l : Loc) : (l.ren π.symm).ren π = l := by
-  simp [Loc.ren]
-
 @[simp] theorem Loc.ren_one (l : Loc) : l.ren 1 = l := rfl
 @[simp] theorem AliasBinding.ren_one (b : AliasBinding) : b.ren 1 = b := rfl
 
@@ -494,13 +459,6 @@ theorem alloc (h : Mem.Sim π P L m₂ m₁) (n : Name) : Mem.Sim π P L (m₂.a
     split
     · rfl
     · exact h.queues l hl
-
-theorem allocCells (h : Mem.Sim π P L m₂ m₁) (n : Name) : Mem.Sim π P L (m₂.allocCells (π n)) (m₁.allocCells n) := by
-  refine ⟨h.aliases, h.aliasP, fun l hl => ?_, h.queues⟩
-  simp only [Mem.allocCells, Loc.ren_name, (Equiv.injective π).eq_iff]
-  split
-  · exact .inr rfl
-  · exact h.cells l hl
 
 /-- Allocating cells only on the simulating side keeps the simulation. -/
 theorem allocCells_left (h : Mem.Sim π P L m₂ m₁) (n : Name) (hL : L (π.symm n)) :
@@ -1694,12 +1652,6 @@ namespace SNames
 variable {π : Equiv.Perm Name} {P : Name → Prop} {L : Name → Prop} {ctx₂ ctx₁ : Ctx} {s : State} (hS : SNames π P ctx₂ ctx₁ s)
 include hS
 
-theorem nodeFilter {p₂ p₁ : DNode → Bool} (hp : ∀ n ∈ s.nodes, p₂ n = p₁ n) (id : NodeId) :
-    (s.node? id).filter p₂ = (s.node? id).filter p₁ := by
-  cases h : s.node? id with
-  | none => rfl
-  | some n => simp only [Option.filter_some, hp n (State.node?_mem h)]
-
 omit hS in
 theorem isViewDef_eq (ctx : Ctx) (e : DEdge) :
     ctx.isViewDef s e = State.isViewDefWith ctx.isView s e := rfl
@@ -2436,16 +2388,6 @@ theorem consumeSetup_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNo
   exact ResSim.bindEq (Ctx.evalIntR_sim hc ha.mem ρ₂ _ fun x hx =>
     hS.node_expr hn (by simp [DNode.exprNames, hk, hx])) fun np => ResSim.ok ⟨rfl, ha, hl, hP, rfl⟩
 
-theorem consumeCond_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNode} (hn : n ∈ s.nodes) {c : ConsumeNode}
-    (hk : n.kind = .consumeEntry c) {m₂ m₁ : Mem} (hm : Mem.Sim π P L m₂ m₁) (l : Loc) (q : List Val) :
-    ResSim Eq (consumeCond ctx₂ ρ c m₂ (l.ren π) q) (consumeCond ctx₁ ρ c m₁ l q) := by
-  unfold consumeCond
-  split
-  · exact ResSim.ok rfl
-  · rename_i e he
-    exact ResSim.map _ _ (Ctx.evalBoolR_sim hc (hm.setQueue l q) ρ _ fun x hx =>
-      hS.node_expr hn (by simp [DNode.exprNames, hk, he, hx])) fun a b h => by rw [h]
-
 omit hc in
 theorem taskStart_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (entry : NodeId) (c : ConsumeNode) (l : Loc)
     {priv₂ priv₁ : List Name} (hp : ∀ x, x ∈ priv₂ ↔ x ∈ priv₁.map π) {pre₂ pre₁ : St}
@@ -2532,15 +2474,6 @@ theorem nestedBindings_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n : D
     · exact ih acc
     · rfl
 
-theorem lookup_renConns (conns : List (Name × Name)) (n : Name) :
-    (renConns π conns).lookup n = (conns.lookup n).map π := by
-  induction conns with
-  | nil => rfl
-  | cons x xs ih =>
-    obtain ⟨c, l⟩ := x
-    simp only [renConns, List.map_cons, List.lookup] at ih ⊢
-    split <;> simp_all
-
 omit hc in
 theorem lookup_P {conns : List (Name × Name)} (hP : ∀ x ∈ conns, P x.2) {n l : Name}
     (h : conns.lookup n = some l) : P l := by
@@ -2591,11 +2524,6 @@ theorem nestedValuation_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : 
   refine ResSim.bindEq (Ctx.evalR_sim hc hm ρ xe.2 fun x hx => hS.node_expr hn ?_) fun v => ResSim.ok rfl
   simp only [DNode.exprNames, hk]
   exact List.mem_flatMap.2 ⟨xe, hxe, List.mem_cons_of_mem _ hx⟩
-
-/-- Contexts agreeing on every name agree on the names of any state. -/
-theorem SNames.ofAll (hall : ∀ x, Ctx.Strong π P ctx₂ ctx₁ x) (hsc : ScopeSim π P ctx₂ ctx₁) (s : State) :
-    SNames π P ctx₂ ctx₁ s :=
-  ⟨fun x _ => hall x, fun x _ => (hall x).good₀, fun _ => hsc⟩
 
 theorem bindCodeInputs_sim (hall : ∀ x, Ctx.Strong π P ctx₂ ctx₁ x) (ρ' : Valuation) (s : State) (n : DNode)
     {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) :

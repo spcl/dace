@@ -115,10 +115,6 @@ theorem Agree.refl (ctx : Ctx) : Agree ctx ctx := ⟨rfl, fun _ _ => rfl, fun _ 
 theorem Agree.symm {ctx' ctx : Ctx} (h : Agree ctx' ctx) : Agree ctx ctx' :=
   ⟨h.erase.symm, fun s e => (h.priv s e).symm, fun s => (h.stateT s).symm⟩
 
-theorem Agree.trans {a b c : Ctx} (h₁ : Agree a b) (h₂ : Agree b c) : Agree a c :=
-  ⟨h₁.erase.trans h₂.erase, fun s e => (h₁.priv s e).trans (h₂.priv s e), fun s => (h₁.stateT s).trans (h₂.stateT s)⟩
-
-
 /-- A function of the context that only reads its erased part agrees on
 agreeing contexts. -/
 theorem Agree.leaf {α : Sort _} {ctx' ctx : Ctx} (h : Agree ctx' ctx) (f : Ctx → α)
@@ -320,26 +316,6 @@ theorem SDFGExec.congr {ctx' ctx : Ctx} (h : Agree ctx' ctx) {ρ : Valuation} {m
   | .escape hr hc => .escape (RegionExec.congr h hr) hc
   | .run hr hc => .run (RegionExec.congr h hr) hc
 
-/-- **Context congruence** (control flow): agreeing contexts have the same
-block executions; likewise `RegionExec.congr_iff`, `StateExec.congr_iff`,
-`SDFGExec.congr_iff`, and one direction for every other relation
-(`NodeExec.congr`, …), the other following from `Agree.symm`. -/
-theorem BlockExec.congr_iff {ctx' ctx : Ctx} (h : Agree ctx' ctx) {cst : CSt} {b : Block} {r : Res (Ctl × CSt)} :
-    BlockExec ctx' cst b r ↔ BlockExec ctx cst b r :=
-  ⟨BlockExec.congr h, BlockExec.congr h.symm⟩
-
-theorem RegionExec.congr_iff {ctx' ctx : Ctx} (h : Agree ctx' ctx) {cst : CSt} {rg : Region}
-    {r : Res (Ctl × CSt)} : RegionExec ctx' cst rg r ↔ RegionExec ctx cst rg r :=
-  ⟨RegionExec.congr h, RegionExec.congr h.symm⟩
-
-theorem StateExec.congr_iff {ctx' ctx : Ctx} (h : Agree ctx' ctx) {cst : CSt} {s : State} {r : Res (Ctl × CSt)} :
-    StateExec ctx' cst s r ↔ StateExec ctx cst s r :=
-  ⟨StateExec.congr h, StateExec.congr h.symm⟩
-
-theorem SDFGExec.congr_iff {ctx' ctx : Ctx} (h : Agree ctx' ctx) {ρ : Valuation} {m : Mem} {g : SDFG}
-    {r : Res (Valuation × Mem × Log)} : SDFGExec ctx' ρ m g r ↔ SDFGExec ctx ρ m g r :=
-  ⟨SDFGExec.congr h, SDFGExec.congr h.symm⟩
-
 end CtxCongr
 
 /-! ## Matching up to equal errors -/
@@ -417,25 +393,6 @@ theorem of_rel {r' r : Res α} (hX : X r) (h : Res.Rel R r' r) : MatchedE R X r'
 
 theorem of_ub {r' : Res α} {e : ErrReason} (hX : X (.err e)) (he : e.isUB = true) : MatchedE R X r' :=
   ⟨_, hX, .inl ⟨e, rfl, he⟩⟩
-
-theorem of_matched {r' : Res α} (h : Matched R X r') : MatchedE R X r' := by
-  rcases h with ⟨e, he, hx⟩ | ⟨a', rfl, a, hx, hr⟩
-  · exact of_ub hx he
-  · exact of_rel hx hr
-
-/-- A `MatchedE` match is a `Matched` match unless `r'` is an error that `X`
-has as well. -/
-theorem matched_or_err {r' : Res α} (h : MatchedE R X r') : Matched R X r' ∨ ∃ e, r' = .err e ∧ X (.err e) := by
-  obtain ⟨r, hx, hb⟩ := h
-  rcases hb with ⟨e, rfl, he⟩ | hb
-  · exact .inl (.inl ⟨e, he, hx⟩)
-  · cases r' with
-    | ok a' =>
-      obtain ⟨a, rfl, ha⟩ := hb.ok_inv
-      exact .inl (.inr ⟨a', rfl, a, hx, ha⟩)
-    | err e =>
-      obtain rfl := hb.err_inv
-      exact .inr ⟨e, rfl, hx⟩
 
 theorem mono {R' : α → α → Prop} (hR : ∀ a' a, R a' a → R' a' a) (hX : ∀ r, X r → Y r) {r' : Res α}
     (h : MatchedE R X r') : MatchedE R' Y r' := by
@@ -1148,11 +1105,6 @@ theorem Region.countMentions_setBlockAt (t : Name) {i : BlockId} {b b' : Block}
     · cases h
 
 /-! ## Start memory and mention counts -/
-
-/-- Replacing a block keeps the start memory: it depends only on the
-descriptors (`Decisions.md#D68`). -/
-theorem SDFG.startMem_setBlockAt (g : SDFG) (p : List PathStep) (i : BlockId) (b' : Block) :
-    (g.setBlockAt p i b').startMem = g.startMem := rfl
 
 /-- Is every transient of `g` with `Scope` or `State` lifetime mentioned
 equally often by `b'` and `b` (`Region.countMentions`)?  Then replacing `b`

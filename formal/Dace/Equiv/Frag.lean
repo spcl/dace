@@ -54,39 +54,6 @@ namespace Matched
 
 variable {α : Type} {R : α → α → Prop} {X Y : Res α → Prop}
 
-/-- A normal outcome of `X` is matched by `X` itself. -/
-theorem of_ok (hR : ∀ a, R a a) {a : α} (h : X (.ok a)) : Matched R X (.ok a) :=
-  .inr ⟨a, rfl, a, h, hR a⟩
-
-/-- Undefined behavior in `X` matches everything. -/
-theorem of_ub {e : ErrReason} (he : e.isUB = true) (h : X (.err e)) (r' : Res α) : Matched R X r' :=
-  .inl ⟨e, he, h⟩
-
-/-- A non-UB error is never matched unless `X` may be undefined. -/
-theorem err_iff {e : ErrReason} : Matched R X (.err e) ↔ ∃ e', e'.isUB = true ∧ X (.err e') := by
-  constructor
-  · rintro (h | ⟨a', h, -⟩)
-    · exact h
-    · cases h
-  · exact .inl
-
-theorem mono {R' : α → α → Prop} (hR : ∀ a' a, R a' a → R' a' a) (hX : ∀ r, X r → Y r) {r' : Res α}
-    (h : Matched R X r') : Matched R' Y r' := by
-  rcases h with ⟨e, he, hx⟩ | ⟨a', h, a, hx, hr⟩
-  · exact .inl ⟨e, he, hX _ hx⟩
-  · exact .inr ⟨a', h, a, hX _ hx, hR _ _ hr⟩
-
-/-- Matching composes: if every outcome of `Y` is matched by `X`, then
-whatever `Y` matches, `X` matches. -/
-theorem trans (hR : ∀ a b c, R a b → R b c → R a c) (hYX : ∀ r, Y r → Matched R X r) {r' : Res α}
-    (h : Matched R Y r') : Matched R X r' := by
-  rcases h with ⟨e, he, hy⟩ | ⟨a', rfl, b, hy, hab⟩
-  · exact .inl (err_iff.mp (hYX _ hy))
-  · rcases hYX _ hy with hu | ⟨b', hb, c, hx, hbc⟩
-    · exact .inl hu
-    · cases hb
-      exact .inr ⟨a', rfl, c, hx, hR _ _ _ hab hbc⟩
-
 end Matched
 
 /-- Refinement is pointwise matching up to observational equality. -/
@@ -119,16 +86,9 @@ def CSt.Rel (a' a : CSt) : Prop :=
 
 theorem St.Rel.refl (a : St) : St.Rel a a := ⟨rfl, Log.Le.refl _, fun _ => rfl⟩
 
-theorem St.Rel.trans {a b c : St} (h₁ : St.Rel a b) (h₂ : St.Rel b c) : St.Rel a c :=
-  ⟨h₁.1.trans h₂.1, h₁.2.1.trans h₂.2.1, fun k => (h₁.2.2 k).trans (h₂.2.2 k)⟩
-
 theorem CSt.Rel.refl (a : CSt) : CSt.Rel a a := ⟨rfl, rfl, Log.Le.refl _⟩
 
 theorem CSt.Rel.trans {a b c : CSt} (h₁ : CSt.Rel a b) (h₂ : CSt.Rel b c) : CSt.Rel a c :=
   ⟨h₁.1.trans h₂.1, h₁.2.1.trans h₂.2.1, h₁.2.2.trans h₂.2.2⟩
-
-/-- The dataflow views of related control-flow states are related. -/
-theorem CSt.Rel.st {a' a : CSt} (h : CSt.Rel a' a) : St.Rel a'.st a.st :=
-  ⟨h.2.1, h.2.2, fun _ => rfl⟩
 
 end Dace

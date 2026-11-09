@@ -157,14 +157,6 @@ section Structure
 
 variable (L : String)
 
-theorem SNodes.retarget_eq : ∀ cs : List SNode, SNodes.retarget L cs = cs.map (SNode.retarget L)
-  | [] => rfl
-  | c :: cs => by simp [SNodes.retarget, SNodes.retarget_eq cs]
-
-theorem SNodes.retarget_append (a b : List SNode) :
-    SNodes.retarget L (a ++ b) = SNodes.retarget L a ++ SNodes.retarget L b := by
-  simp [SNodes.retarget_eq]
-
 theorem SNodes.hasLabel_append (a b : List SNode) :
     SNodes.hasLabel L (a ++ b) = (SNodes.hasLabel L a || SNodes.hasLabel L b) := by
   induction a with
@@ -537,47 +529,6 @@ end Rel
 section Gotos
 
 variable (L : String)
-
-theorem leafOut_ne_goto {R : Res CSt} {sc' : SibCtx} {l : String} {c : CSt} :
-    leafOut R ≠ .ok (sc', .goto l, c) := by
-  cases R <;> simp [leafOut]
-
-theorem stepLeaf_goto {tc : TCtx} {sc : SibCtx} {n : SNode} {cst : CSt} {r : Res NodeOut} {sc' : SibCtx} {l : String}
-    {c : CSt} (hs : stepLeaf tc sc n cst = some r) (hr : r = .ok (sc', .goto l, c)) : n = .goto (some l) := by
-  subst hr
-  cases n with
-  | goto t =>
-    cases t with
-    | none => simp [stepLeaf] at hs
-    | some l' => simp only [stepLeaf, Option.some.injEq, Res.ok.injEq, Prod.mk.injEq, TCtl.goto.injEq] at hs; rw [hs.2.1]
-  | dynScopeCopy target m =>
-    simp only [stepLeaf, Option.some.injEq] at hs
-    cases h : execDynScopeCopy tc cst.ρ sc.pending target m cst.st <;> rw [h] at hs <;> simp [Res.map] at hs
-  | stateLabel _ | breakNode | continueNode => simp [stepLeaf] at hs
-  | assign _ _ | taskletNode _ _ _ | libraryCall _ _ _ _ | copyNode _ _ | viewNode _ _ _ _ _ | refSetNode _ _ _ _ =>
-    simp only [stepLeaf, Option.some.injEq] at hs
-    exact absurd hs leafOut_ne_goto
-  | _ => simp [stepLeaf] at hs
-
-theorem scopeOut_goto {r : Res (TCtl × CSt)} {sc' : SibCtx} {l : String} {c : CSt}
-    (h : scopeOut r = .ok (sc', .goto l, c)) : r = .ok (.goto l, c) := by
-  rcases r with ⟨ctl, c'⟩ | e
-  · simp only [scopeOut, Res.map_ok, Res.ok.injEq, Prod.mk.injEq] at h
-    obtain ⟨-, rfl, rfl⟩ := h; rfl
-  · cases h
-
-theorem chainOut_goto {r : Res (TCtl × CSt)} {sc' : SibCtx} {l : String} {c : CSt}
-    (h : chainOut r = .ok (sc', .goto l, c)) : r = .ok (.goto l, c) := by
-  rcases r with ⟨ctl, c'⟩ | e
-  · simp only [chainOut, Res.map_ok, Res.ok.injEq, Prod.mk.injEq] at h
-    obtain ⟨-, rfl, rfl⟩ := h; rfl
-  · cases h
-
-theorem dataflowOut_goto {r : Res CSt} {sc' : SibCtx} {l : String} {c : CSt}
-    (h : dataflowOut r = .ok (sc', .goto l, c)) : False := by
-  rcases r with c' | e
-  · simp [dataflowOut] at h
-  · cases h
 
 theorem leafOut_ctl {R : Res CSt} {o : NodeOut} (h : leafOut R = .ok o) : o.2.1 = .normal := by
   cases R with

@@ -314,16 +314,6 @@ theorem Before.trans {o : List NodeId} (hnd : o.Nodup) {a b c : NodeId} (h₁ : 
   cases hj'
   exact (before_iff hnd).2 ⟨i, k, hi, hk, by omega⟩
 
-theorem Before.append_left {o : List NodeId} {a b : NodeId} (h : Before o a b) (p : List NodeId) :
-    Before (p ++ o) a b := by
-  obtain ⟨l₁, l₂, rfl, ha, hb⟩ := h
-  exact ⟨p ++ l₁, l₂, by simp, List.mem_append_right _ ha, hb⟩
-
-theorem Before.append_right {o : List NodeId} {a b : NodeId} (h : Before o a b) (q : List NodeId) :
-    Before (o ++ q) a b := by
-  obtain ⟨l₁, l₂, rfl, ha, hb⟩ := h
-  exact ⟨l₁, l₂ ++ q, by simp, ha, List.mem_append_left _ hb⟩
-
 theorem respectsEdges_iff {s : State} {o : List NodeId} (hnd : o.Nodup) :
     s.respectsEdges o = true ↔ ∀ e ∈ s.edges, e.src ∈ o → e.dst ∈ o → Before o e.src e.dst := by
   simp only [respectsEdges, List.all_eq_true]
@@ -565,27 +555,6 @@ end State
 /-- No node among `ids` is a view access node: binding views is a no-op. -/
 def ViewFree (ctx : Ctx) (s : State) (ids : List NodeId) : Prop :=
   ∀ id ∈ ids, ∀ n, s.node? id = some n → ∀ d, n.kind = .access d → ctx.isView d = false
-
-theorem List.foldlM_fixed {α β : Type} {f : β → α → Res β} {b : β} :
-    ∀ {l : List α}, (∀ x ∈ l, f b x = .ok b) → l.foldlM f b = .ok b
-  | [], _ => rfl
-  | x :: xs, h => by
-    rw [List.foldlM_cons, h x (List.mem_cons_self ..)]
-    exact List.foldlM_fixed fun y hy => h y (List.mem_cons_of_mem _ hy)
-
-theorem bindViews_viewFree {ctx : Ctx} {ρ : Valuation} {s : State} {ids : List NodeId} (h : ViewFree ctx s ids)
-    (st : St) : bindViews ctx ρ s ids st = .ok st := by
-  unfold bindViews
-  refine List.foldlM_fixed fun id hid => ?_
-  cases hn : s.node? id with
-  | none => rfl
-  | some n =>
-    dsimp only
-    split
-    · rename_i d hk
-      rw [h id hid n hn d hk]
-      rfl
-    · rfl
 
 /-- A scope list of the new state (a component, or the nodes of an enclosing
 scope) corresponds to one of the old state: the same nodes outside the
@@ -846,13 +815,6 @@ theorem forall₂_trRel_trans : ∀ {a b c : List (NodeId × Log)}, List.Forall�
   | _, _, _, .nil, .nil => .nil
   | _, _, _, .cons h₁ t₁, .cons h₂ t₂ => .cons ⟨h₁.1.trans h₂.1, h₁.2.trans h₂.2⟩ (forall₂_trRel_trans t₁ t₂)
 
-theorem SeqRelV.trans' : ∀ a b c : St × List (NodeId × Log), SeqRelV a b → SeqRelV b c → SeqRelV a c :=
-  fun _ _ _ h₁ h₂ => ⟨h₁.1.trans h₂.1, forall₂_trRel_trans h₁.2 h₂.2⟩
-
-theorem forall₂_le_refl : ∀ (t : List Log), List.Forall₂ Log.Le t t
-  | [] => .nil
-  | _ :: t => .cons (Log.Le.refl _) (forall₂_le_refl t)
-
 namespace MatchedE
 
 variable {α : Type} {R : α → α → Prop} {X : Res α → Prop}
@@ -896,13 +858,6 @@ theorem St.RelV.afterNode (st : St) {a' a : St} (h : St.RelV a' a) :
     (st.afterNode a').mem = (st.afterNode a).mem ∧ (st.afterNode a').vals = (st.afterNode a).vals ∧
       Log.Le (st.afterNode a').log (st.afterNode a).log :=
   ⟨h.1, h.2.1, Log.Le.seq (Log.Le.refl _) h.2.2⟩
-
-theorem merge_ok_free {w : WcrSem} {m m' : Mem} {gs : List Log} (h : merge w m gs = .ok m') :
-    Log.pairwiseFree gs = true := by
-  unfold merge at h
-  split at h
-  · assumption
-  · split at h <;> cases h
 
 theorem scopeFinish_below (hw : ctx.I.wcr.Lawful) (pre : St) {logs' logs : List Log}
     (h : List.Forall₂ Log.Le logs' logs) : Res.Below St.RelV (scopeFinish ctx pre logs') (scopeFinish ctx pre logs) := by

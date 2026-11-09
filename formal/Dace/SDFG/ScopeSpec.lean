@@ -329,16 +329,6 @@ theorem not_mem_scopeChainFuel {f : Nat} {id : NodeId} {L : List NodeId}
   rw [scopeChainFuel_det h1 h] at h2
   exact Nat.lt_irrefl _ h2
 
-theorem scopeChainFuel_nodup : ∀ {f : Nat} {id : NodeId} {L : List NodeId},
-    s.scopeChainFuel f id = some L → L.Nodup
-  | 0, _, _, h => by simp [scopeChainFuel] at h
-  | f + 1, id, L, h => by
-    simp only [scopeChainFuel] at h
-    split at h
-    · obtain ⟨L', hL', rfl⟩ := Option.map_eq_some_iff.mp h
-      exact List.nodup_cons.mpr ⟨not_mem_scopeChainFuel hL', scopeChainFuel_nodup hL'⟩
-    · cases h; simp
-
 /-- No element of the full chain `p :: L` of `p` has `p` as its parent. -/
 theorem not_parent_in_chain {f : Nat} {p y : NodeId} {L : List NodeId}
     (h : s.scopeChainFuel f p = some L) (hy : y ∈ p :: L) (hp : s.parent? y = some p) : False := by
@@ -464,9 +454,6 @@ theorem mem_scopeNodes (hwf : s.ScopeWF) {e id : NodeId} : id ∈ s.scopeNodes e
       rw [hL] at h
       have := scopeChainFuel_length hL
       exact chain_scopeNodesFuel hwf hL e h _ (by simp at this ⊢; omega)
-
-theorem mem_scopeNodes_node {e id : NodeId} (h : id ∈ s.scopeNodes e) : ∃ n ∈ s.nodes, n.id = id :=
-  mem_scopeNodesFuel_node h
 
 /-- Membership in `scopeNodes` through the parent: the scope of `e` contains
 its children and, transitively, the contents of its child entries. -/

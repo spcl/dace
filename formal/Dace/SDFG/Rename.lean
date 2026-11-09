@@ -82,8 +82,6 @@ variable {σ}
 @[simp] theorem ren_srcSubset (m : Memlet) : (m.ren σ).srcSubset = m.srcSubset := rfl
 @[simp] theorem ren_dstSubset (m : Memlet) : (m.ren σ).dstSubset = m.dstSubset := rfl
 theorem ren_symm (m : Memlet) : (m.ren σ).ren σ.symm = m := by cases m; simp [Memlet.ren]
-theorem ren_injective : Function.Injective (Memlet.ren σ) := fun a b h => by
-  rw [← ren_symm a, h, ren_symm]
 end Memlet
 
 namespace EdgeData
@@ -209,9 +207,6 @@ theorem nextEdges_ren (s : State) (e : DEdge) : (s.ren σ).nextEdges (e.ren σ) 
 theorem isRouting_ren (s : State) (e : DEdge) : (s.ren σ).isRouting (e.ren σ) = s.isRouting e := by
   simp [isRouting, isEntryNode_ren, isExitNode_ren]
 
-theorem isLeaf_ren (s : State) (e : DEdge) : (s.ren σ).isLeaf (e.ren σ) = s.isLeaf e := by
-  simp [isLeaf, isRouting_ren]
-
 theorem isDynamicInput_ren (s : State) (e : DEdge) : (s.ren σ).isDynamicInput (e.ren σ) = s.isDynamicInput e := by
   simp [isDynamicInput, isEntryNode_ren]
 
@@ -249,39 +244,6 @@ theorem pathEnd_ren (s : State) (e : DEdge) : (s.ren σ).pathEnd (e.ren σ) = (s
 theorem dstRootEdge_ren (s : State) (e : DEdge) : (s.ren σ).dstRootEdge (e.ren σ) = (s.dstRootEdge e).ren σ := by
   simp only [dstRootEdge, ren_edges, List.length_map]
   exact walkNext_ren s _ _ e
-
-theorem treeRootFuel_ren (s : State) : ∀ (k : Nat) (e : DEdge),
-    (s.ren σ).treeRootFuel k (e.ren σ) = (s.treeRootFuel k e).ren σ
-  | 0, e => rfl
-  | k + 1, e => by
-    simp only [treeRootFuel, DEdge.ren_src, DEdge.ren_dst, isEntryNode_ren, isExitNode_ren,
-      DEdge.ren_srcConn, DEdge.ren_dstConn, prevEdges_ren, nextEdges_ren]
-    split
-    · cases s.prevEdges e with
-      | nil => rfl
-      | cons f _ => exact treeRootFuel_ren s k f
-    · split
-      · cases s.nextEdges e with
-        | nil => rfl
-        | cons f _ => exact treeRootFuel_ren s k f
-      · rfl
-
-theorem treeRoot_ren (s : State) (e : DEdge) : (s.ren σ).treeRoot (e.ren σ) = (s.treeRoot e).ren σ := by
-  simp only [treeRoot, ren_edges, List.length_map]
-  exact treeRootFuel_ren s _ e
-
-theorem treeEdges_ren (s : State) (e : DEdge) :
-    (s.ren σ).treeEdges (e.ren σ) = (s.treeEdges e).map (DEdge.ren σ) := by
-  simp only [treeEdges, ren_edges, List.length_map]
-  exact closure_map _ DEdge.ren_injective (fun f => by rw [prevEdges_ren, nextEdges_ren, List.map_append]) _ e
-
-theorem treeLeaves_ren (s : State) (e : DEdge) :
-    (s.ren σ).treeLeaves (e.ren σ) = (s.treeLeaves e).map (DEdge.ren σ) := by
-  simp only [treeLeaves, treeEdges_ren, List.filter_map]
-  congr 1
-  apply List.filter_congr
-  intro f _
-  simp [Function.comp, isLeaf_ren]
 
 theorem chunkSource_ren (s : State) : ∀ (k : Nat) (e : DEdge),
     (s.ren σ).chunkSource k (e.ren σ) = s.chunkSource k e
@@ -413,9 +375,6 @@ def ErrReason.cls (e : ErrReason) : ErrReason := if e.isUB then .ambiguousTransi
 theorem ErrReason.isUB_cls (e : ErrReason) : e.cls.isUB = e.isUB := by
   unfold ErrReason.cls; split <;> simp_all [ErrReason.isUB]
 
-theorem ErrReason.cls_cls (e : ErrReason) : e.cls.cls = e.cls := by
-  unfold ErrReason.cls; split <;> simp_all [ErrReason.isUB]
-
 namespace Res
 
 /-- An outcome with its error erased to its class. -/
@@ -456,12 +415,6 @@ theorem er_foldlM_congr {γ : Type} {l : List γ} {f' f : α → γ → Res α}
   | cons x xs ih =>
     simp only [List.foldlM_cons]
     exact er_bind_congr (hf x List.mem_cons_self b) fun b' => ih (fun y hy => hf y (List.mem_cons_of_mem _ hy)) b'
-
-theorem er_ok_iff {r : Res α} {a : α} : r.er = ok a ↔ r = ok a := by
-  cases r <;> simp [er]
-
-theorem er_err_iff {r : Res α} : (∃ e, r.er = err e) ↔ ∃ e, r = err e := by
-  cases r <;> simp [er]
 
 end Res
 
@@ -1895,11 +1848,6 @@ theorem er_ok_inv {r' : Res α} {a : α} (h : r'.er = (ok a).er) : r' = ok a := 
   cases r' with
   | ok b => simp only [er, ok.injEq] at h; rw [h]
   | err e => simp [er] at h
-
-theorem er_of_err {r' : Res α} {e : ErrReason} (h : r'.er = (err e).er) {e₀ : ErrReason} (he : e₀.isUB = e.isUB) :
-    r'.er = (err e₀).er := by
-  obtain ⟨e', rfl, h'⟩ := er_err_inv h
-  simp [er, ErrReason.cls, h', he]
 
 end Res
 

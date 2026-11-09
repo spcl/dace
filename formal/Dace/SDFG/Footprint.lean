@@ -123,10 +123,6 @@ structure Le (P Q : LocPred) : Prop where
 
 theorem Le.refl (P : LocPred) : Le P P := ⟨fun _ h => h, fun _ h => h, fun _ _ h => h⟩
 
-theorem Le.trans {P Q R : LocPred} (h₁ : Le P Q) (h₂ : Le Q R) : Le P R :=
-  ⟨fun l h => h₂.read l (h₁.read l h), fun l h => h₂.write l (h₁.write l h),
-    fun op l h => h₂.wcr op l (h₁.wcr op l h)⟩
-
 /-- The locations hit by accesses of a list, by kind. -/
 def ofAccesses (ctx : Ctx) (m₀ : Mem) (ρ : Valuation) (A : List Access) : LocPred where
   read l := ∃ a ∈ A, a.kind = .read ∧ a.Hit ctx m₀ ρ l
@@ -398,23 +394,6 @@ theorem optFlatMap_mem {α β : Type} {f : α → Option (List β)} :
       · exact ⟨a, ha, fun c hc => List.mem_append_left _ hc⟩
       · obtain ⟨A, hA, hs⟩ := optFlatMap_mem hb x hx
         exact ⟨A, hA, fun c hc => List.mem_append_right _ (hs c hc)⟩
-    · cases h
-
-theorem mem_optFlatMap {α β : Type} {f : α → Option (List β)} :
-    ∀ {xs : List α} {B : List β}, optFlatMap f xs = some B → ∀ b ∈ B, ∃ x ∈ xs, ∃ A, f x = some A ∧ b ∈ A
-  | [], B, h, b, hb => by
-    simp only [optFlatMap, Option.some.injEq] at h
-    subst h
-    exact absurd hb List.not_mem_nil
-  | y :: ys, B, h, b, hb => by
-    simp only [optFlatMap] at h
-    split at h
-    · rename_i a c ha hc
-      cases h
-      rcases List.mem_append.1 hb with hb | hb
-      · exact ⟨y, List.mem_cons_self .., a, ha, hb⟩
-      · obtain ⟨x, hx, A, hA, hbA⟩ := mem_optFlatMap hc b hb
-        exact ⟨x, List.mem_cons_of_mem _ hx, A, hA, hbA⟩
     · cases h
 
 /-- Accesses of the copy along the in-edge `e` of an access or exit node
@@ -1201,15 +1180,6 @@ theorem OrderedExec.fp_log {ρ : Valuation} {s : State} {all direct : List NodeI
     (hal : st.mem.aliases = m₀.aliases) (hlog : st.log = Log.empty) :
     st'.mem.aliases = m₀.aliases ∧ st'.log.Within (LocPred.ofAccesses ctx m₀ ρ A) :=
   let ⟨h₁, h₂⟩ := OrderedExec.fp_step h rfl hinc hal
-  ⟨h₁, h₂ (hlog ▸ Log.Within.empty)⟩
-
-/-- A successful node started from an empty log (as every node of a
-sequential execution is, `St.forNode`) logs only within its footprint. -/
-theorem NodeExec.fp_log {ρ : Valuation} {s : State} {n : DNode} {st st' : St} {F : Nat} {A : List Access}
-    (h : NodeExec ctx ρ s n st (.ok st')) (hfp : nodeFp ctx s F n = some A) (hal : st.mem.aliases = m₀.aliases)
-    (hlog : st.log = Log.empty) :
-    st'.mem.aliases = m₀.aliases ∧ st'.log.Within (LocPred.ofAccesses ctx m₀ ρ A) :=
-  let ⟨h₁, h₂⟩ := NodeExec.fp_step h rfl hfp hal
   ⟨h₁, h₂ (hlog ▸ Log.Within.empty)⟩
 
 end Relations

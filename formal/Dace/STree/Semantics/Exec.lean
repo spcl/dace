@@ -333,46 +333,4 @@ theorem ListExec_nil {tc : TCtx} {full : List SNode} {gb : Bool} {sc : SibCtx} {
   | nil => rfl
   | nilPending hp' => rw [hp] at hp'; cases hp'
 
-theorem IterExec_nil {tc : TCtx} {params : List Sym} {body : List SNode} {priv : List Name} {pre : CSt}
-    {r : Res (List Log)} (h : IterExec tc params body priv pre [] r) : r = .ok [] := by
-  cases h; rfl
-
-/-- The dataflow view round-trips. -/
-theorem withSt_st_eq (cst : CSt) : cst.withSt cst.st = cst := CSt.withSt_st cst
-
-/-- A map over no points leaves the state unchanged. -/
-theorem scopeFinishT_nil (tc : TCtx) (pre : CSt) : scopeFinishT tc pre [] = .ok pre := by
-  unfold scopeFinishT
-  rw [scopeFinish_nil]
-  show Res.ok (pre.withSt pre.st) = Res.ok pre
-  rw [CSt.withSt_st]
-
-/-- Scopes are not leaves. -/
-theorem stepLeaf_mapScope (tc : TCtx) (sc : SibCtx) (mp : MapNode) (cs : List SNode) (cst : CSt) :
-    stepLeaf tc sc (.mapScope mp cs) cst = none := rfl
-
-/-- A map scope whose iteration space is empty leaves memory, valuation and
-log unchanged (and consumes the pending dynamic inputs). -/
-theorem NodeExec_mapScope_noPoints {tc : TCtx} {sc : SibCtx} {mp : MapNode} {cs : List SNode} {cst : CSt}
-    {ρ' : Valuation} {r : Res NodeOut}
-    (hs : mapSetupT tc sc mp cst = .ok (ρ', [])) (h : NodeExec tc sc (.mapScope mp cs) cst r) :
-    r = .ok ({}, .normal, cst) := by
-  cases h with
-  | pendingErr hn _ => simp [SNode.consumesPending, SNode.isDataflowScope] at hn
-  | leaf _ hl => rw [stepLeaf_mapScope] at hl; cases hl
-  | loop _ hl _ => simp [SNode.loop?] at hl
-  | mapSetupErr hs' => rw [hs] at hs'; cases hs'
-  | mapIterErr hs' hi =>
-    rw [hs] at hs'
-    cases hs'
-    exact absurd (IterExec_nil hi) (by simp)
-  | mapScope hs' hi =>
-    rw [hs] at hs'
-    cases hs'
-    have hl := IterExec_nil hi
-    simp only [Res.ok_inj] at hl
-    subst hl
-    rw [scopeFinishT_nil]
-    rfl
-
 end Dace.STree

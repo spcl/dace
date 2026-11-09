@@ -264,9 +264,6 @@ theorem nextEdges_relabel (s : State) (e : DEdge) :
 theorem isRouting_relabel (s : State) (e : DEdge) : (s.relabel φ).isRouting (e.relabel φ) = s.isRouting e := by
   simp [isRouting, isEntryNode_relabel, isExitNode_relabel]
 
-theorem isLeaf_relabel (s : State) (e : DEdge) : (s.relabel φ).isLeaf (e.relabel φ) = s.isLeaf e := by
-  simp [isLeaf, isRouting_relabel]
-
 theorem isDynamicInput_relabel (s : State) (e : DEdge) :
     (s.relabel φ).isDynamicInput (e.relabel φ) = s.isDynamicInput e := by
   simp [isDynamicInput, isEntryNode_relabel]
@@ -307,40 +304,6 @@ theorem dstRootEdge_relabel (s : State) (e : DEdge) :
     (s.relabel φ).dstRootEdge (e.relabel φ) = (s.dstRootEdge e).relabel φ := by
   simp only [dstRootEdge, relabel_edges, List.length_map]
   exact walkNext_relabel s _ _ e
-
-theorem treeRootFuel_relabel (s : State) : ∀ (k : Nat) (e : DEdge),
-    (s.relabel φ).treeRootFuel k (e.relabel φ) = (s.treeRootFuel k e).relabel φ
-  | 0, e => rfl
-  | k + 1, e => by
-    simp only [treeRootFuel, DEdge.relabel_src, DEdge.relabel_dst, isEntryNode_relabel, isExitNode_relabel,
-      DEdge.relabel_srcConn, DEdge.relabel_dstConn, prevEdges_relabel, nextEdges_relabel]
-    split
-    · cases s.prevEdges e with
-      | nil => rfl
-      | cons f _ => exact treeRootFuel_relabel s k f
-    · split
-      · cases s.nextEdges e with
-        | nil => rfl
-        | cons f _ => exact treeRootFuel_relabel s k f
-      · rfl
-
-theorem treeRoot_relabel (s : State) (e : DEdge) : (s.relabel φ).treeRoot (e.relabel φ) = (s.treeRoot e).relabel φ := by
-  simp only [treeRoot, relabel_edges, List.length_map]
-  exact treeRootFuel_relabel s _ e
-
-theorem treeEdges_relabel (s : State) (e : DEdge) :
-    (s.relabel φ).treeEdges (e.relabel φ) = (s.treeEdges e).map (DEdge.relabel φ) := by
-  simp only [treeEdges, relabel_edges, List.length_map]
-  exact closure_map _ DEdge.relabel_injective (fun f => by rw [prevEdges_relabel, nextEdges_relabel, List.map_append])
-    _ e
-
-theorem treeLeaves_relabel (s : State) (e : DEdge) :
-    (s.relabel φ).treeLeaves (e.relabel φ) = (s.treeLeaves e).map (DEdge.relabel φ) := by
-  simp only [treeLeaves, treeEdges_relabel, List.filter_map]
-  congr 1
-  apply List.filter_congr
-  intro f _
-  simp [Function.comp, isLeaf_relabel]
 
 theorem chunkSource_relabel (s : State) : ∀ (k : Nat) (e : DEdge),
     (s.relabel φ).chunkSource k (e.relabel φ) = (s.chunkSource k e).map φ
@@ -861,12 +824,6 @@ variable {φ}
 @[simp] theorem relabel_mem (st : St) : (st.relabel φ).mem = st.mem := rfl
 @[simp] theorem relabel_log (st : St) : (st.relabel φ).log = st.log := rfl
 @[simp] theorem relabel_vals (st : St) : (st.relabel φ).vals = relabelVals φ st.vals := rfl
-
-theorem relabel_symm (st : St) : (st.relabel φ).relabel φ.symm = st := by
-  rcases st with ⟨m, g, vs⟩
-  simp only [St.relabel, St.mapVals, relabelVals, List.map_map, St.mk.injEq, true_and]
-  conv => rhs; rw [← List.map_id vs]
-  exact List.map_congr_left fun x _ => by simp
 
 @[simp] theorem relabel_logged (st : St) (g : Log) : (st.relabel φ).logged g = (st.logged g).relabel φ := rfl
 @[simp] theorem relabel_forNode (st : St) : (st.relabel φ).forNode = st.forNode.relabel φ := rfl

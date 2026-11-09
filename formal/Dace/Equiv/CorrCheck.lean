@@ -135,7 +135,6 @@ theorem descFixed?_sound {σ : Equiv.Perm Name} {ctx : Ctx} (h : descFixed? σ c
   obtain ⟨p, hp, rfl⟩ := hd
   exact fixedB_iff.1 (List.all_eq_true.1 h p (List.mem_of_find?_eq_some hp))
 
-
 /-- `l₁` and `l₂` have the same members. -/
 def sameMembers? (l₁ l₂ : List Name) : Bool := l₁.all l₂.contains && l₂.all l₁.contains
 
@@ -1338,9 +1337,6 @@ variable {ctx : Ctx} {tc : TCtx} {s : State} (I₂ : Interp)
 theorem CopyShape.withI {n : DNode} (h : s.CopyShape ctx n) : s.CopyShape { ctx with I := I₂ } n :=
   ⟨h.noRef, h.dst⟩
 
-theorem SeqPlain.withI (h : SeqPlain ctx s) : SeqPlain { ctx with I := I₂ } s :=
-  ⟨h.plain, h.shapes, h.memlets, h.ranges, h.reduces, h.codeOut⟩
-
 theorem SegCorr.withI {o : List NodeId} {cs : List SNode} (h : SegCorr ctx tc s o cs) :
     SegCorr { ctx with I := I₂ } (tc.withI I₂) s o cs := by
   induction h with
@@ -1710,13 +1706,7 @@ def corr? (g : SDFG) (t : STree) : Bool :=
   | .ok () => true
   | .error _ => false
 
-
 /-! ## Main theorems -/
-
-/-- The tree with the same repository keeps the same names at start. -/
-theorem keepAtStart_eq {g : SDFG} {t : STree} (ha : t.containers = g.arrays) : t.keepAtStart = g.keepAtStart := by
-  funext n
-  simp only [STree.keepAtStart, SDFG.keepAtStart, ha]
 
 /-- **Soundness of the checker.** -/
 theorem corrCheck_sound {g : SDFG} {t : STree} (h : corrCheck g t = .ok ()) (I : Interp) : ProgCorr I g t := by

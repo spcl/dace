@@ -293,41 +293,10 @@ theorem sound : ∀ fuel : Nat, STree.Sound fuel
   | 0 => STree.sound_zero
   | fuel + 1 => STree.sound_succ (STree.sound fuel)
 
-theorem execNode_sound (fuel : Nat) {tc : TCtx} {sc : SibCtx} {n : SNode} {cst : CSt} {r : Res NodeOut}
-    (h : STree.execNode fuel tc sc n cst = some r) : STree.NodeExec tc sc n cst r :=
-  (STree.sound fuel).node h
-
 theorem execList_sound (fuel : Nat) {tc : TCtx} {full : List SNode} {gb : Bool} {sc : SibCtx} {nodes : List SNode}
     {cst : CSt} {r : Res (TCtl × CSt)} (h : STree.execList fuel tc full gb sc nodes cst = some r) :
     STree.ListExec tc full gb sc nodes cst r :=
   (STree.sound fuel).list h
-
-theorem execIter_sound (fuel : Nat) {tc : TCtx} {params : List Sym} {body : List SNode} {priv : List Name}
-    {pre : CSt} {pts : List Idx} {r : Res (List Log)}
-    (h : STree.execIter fuel tc params body priv pre pts = some r) : STree.IterExec tc params body priv pre pts r :=
-  (STree.sound fuel).iter h
-
-theorem execConsume_sound (fuel : Nat) {tc : TCtx} {ρ : Valuation} {c : ConsumeNode} {d : Name} {body : List SNode}
-    {l : Loc} {np : Int} {priv : List Name} {pre : CSt} {q : List Val} {r : Res (List Log × List Val × List Val)}
-    (h : STree.execConsume fuel tc ρ c d body l np priv pre q = some r) :
-    STree.ConsumeTasks tc ρ c d body l np priv pre q r :=
-  (STree.sound fuel).consume h
-
-theorem execLoop_sound (fuel : Nat) {tc : TCtx} {l : LoopMeta} {body : List SNode} {cst : CSt}
-    {r : Res (TCtl × CSt)} (h : STree.execLoop fuel tc l body cst = some r) : STree.LoopExec tc l body cst r :=
-  (STree.sound fuel).loop h
-
-theorem loopGuard_sound (fuel : Nat) {tc : TCtx} {l : LoopMeta} {body : List SNode} {cst : CSt}
-    {r : Res (TCtl × CSt)} (h : STree.loopGuard fuel tc l body cst = some r) : STree.LoopGuard tc l body cst r :=
-  (STree.sound fuel).guard h
-
-theorem loopIter_sound (fuel : Nat) {tc : TCtx} {l : LoopMeta} {body : List SNode} {cst : CSt}
-    {r : Res (TCtl × CSt)} (h : STree.loopIter fuel tc l body cst = some r) : STree.LoopIter tc l body cst r :=
-  (STree.sound fuel).liter h
-
-theorem loopTail_sound (fuel : Nat) {tc : TCtx} {l : LoopMeta} {body : List SNode} {cst : CSt}
-    {r : Res (TCtl × CSt)} (h : STree.loopTail fuel tc l body cst = some r) : STree.LoopTail tc l body cst r :=
-  (STree.sound fuel).tail h
 
 /-! ## Program level -/
 

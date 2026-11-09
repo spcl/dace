@@ -59,14 +59,6 @@ def SDFG.interface (g : SDFG) : List Name := interfaceOf g.arrays
 /-- The observable containers of a schedule tree (`Decisions.md#D63`). -/
 def STree.interface (t : STree) : List Name := interfaceOf t.containers
 
-theorem mem_interfaceOf {arrays : List (Name × DataDesc)} {n : Name} :
-    n ∈ interfaceOf arrays ↔ ∃ d, (n, d) ∈ arrays ∧ d.isObservable = true := by
-  unfold interfaceOf
-  simp only [List.mem_map, List.mem_filter]
-  constructor
-  · rintro ⟨⟨n', d⟩, ⟨h, ho⟩, rfl⟩; exact ⟨d, h, ho⟩
-  · rintro ⟨d, h, ho⟩; exact ⟨(n, d), ⟨h, ho⟩, rfl⟩
-
 /-! ## Programs -/
 
 /-- A program for the purpose of equivalence: its executions, its observable
@@ -118,9 +110,6 @@ def obsEq (iface : List Name) (m m' : Mem) : Prop :=
 namespace obsEq
 
 theorem refl (iface : List Name) (m : Mem) : obsEq iface m m := fun _ _ => ⟨rfl, rfl⟩
-
-theorem symm {iface : List Name} {m m' : Mem} (h : obsEq iface m m') : obsEq iface m' m :=
-  fun l hl => ⟨(h l hl).1.symm, (h l hl).2.symm⟩
 
 theorem trans {iface : List Name} {a b c : Mem} (h₁ : obsEq iface a b) (h₂ : obsEq iface b c) :
     obsEq iface a c :=

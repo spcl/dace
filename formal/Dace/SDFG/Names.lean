@@ -141,10 +141,6 @@ theorem State.mem_dataNames_node {s : State} {n : DNode} (hn : n ∈ s.nodes) {t
     t ∈ s.dataNames :=
   List.mem_append_left _ (List.mem_append_left _ (List.mem_flatMap.2 ⟨n, hn, ht⟩))
 
-theorem State.mem_dataNames_edge {s : State} {e : DEdge} (he : e ∈ s.edges) {t : Name} (ht : t ∈ e.dataNames) :
-    t ∈ s.dataNames :=
-  List.mem_append_left _ (List.mem_append_right _ (List.mem_flatMap.2 ⟨e, he, ht⟩))
-
 theorem State.mem_exprNames_node {s : State} {n : DNode} (hn : n ∈ s.nodes) {t : Name} (ht : t ∈ n.exprNames) :
     t ∈ s.exprNames :=
   List.mem_append_left _ (List.mem_flatMap.2 ⟨n, hn, ht⟩)

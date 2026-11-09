@@ -107,21 +107,6 @@ def seqPureP? (ctx : Ctx) (s : State) : Bool :=
       | .memlet _ => (s.dstEndpoint e).isData
       | .dep => true))
 
-/-- Decision procedure for `SeqPlain` (`seqPlain?_sound`). -/
-def seqPlain? (ctx : Ctx) (s : State) : Bool :=
-  ctx.g.arrays.all (fun (_, d) => !d.isStream && !d.isReference && !d.isView && ctx.rangePure d.fullRange) &&
-  s.edges.all (fun e => match e.data with
-    | .memlet m => m.srcSubset.all ctx.subsetPure && m.dstSubset.all ctx.subsetPure
-    | .dep => true) &&
-  s.nodes.all (fun n =>
-    (match n.kind with
-      | .mapEntry mp => ctx.rangePure mp.range
-      | .library l => (l.reduce.map fun p => p.identity.all ctx.exprPure).getD true
-      | _ => true) &&
-    (!n.isCode || (s.outEdges n.id).all fun e => match e.data with
-      | .memlet _ => (s.dstEndpoint e).isData
-      | .dep => true))
-
 /-- Decision procedure for `SeqPure` (`seqPure?_sound`). -/
 def seqPure? (ctx : Ctx) (s : State) : Bool :=
   ctx.g.arrays.all (fun (_, d) => !d.isStream && !d.isReference && !d.isView && ctx.rangePure d.fullRange) &&
@@ -137,80 +122,6 @@ def seqPure? (ctx : Ctx) (s : State) : Bool :=
     (!n.isCode || (s.outEdges n.id).all fun e => match e.data with
       | .memlet _ => (s.dstEndpoint e).isData
       | .dep => true))
-
-theorem seqPlain?_sound {ctx : Ctx} {s : State} (h : seqPlain? ctx s = true) : SeqPlain ctx s := by
-  simp only [seqPlain?, Bool.and_eq_true, List.all_eq_true] at h
-  obtain ⟨⟨harr, hedges⟩, hnodes⟩ := h
-  have hdesc : ∀ n d, ctx.desc? n = some d → ∃ x ∈ ctx.g.arrays, x.2 = d := by
-    intro n d hd
-    simp only [Ctx.desc?, SDFG.array?, Option.map_eq_some_iff] at hd
-    obtain ⟨x, hx, rfl⟩ := hd
-    exact ⟨x, List.mem_of_find?_eq_some hx, rfl⟩
-  have harr' : ∀ n d, ctx.desc? n = some d →
-      d.isStream = false ∧ d.isReference = false ∧ d.isView = false ∧ ctx.rangePure d.fullRange = true := by
-    intro n d hd
-    obtain ⟨x, hx, rfl⟩ := hdesc n d hd
-    have := harr x hx
-    simp only [Bool.not_eq_eq_eq_not, Bool.not_true] at this
-    exact ⟨this.1.1.1, this.1.1.2, this.1.2, this.2⟩
-  refine ⟨fun n d hd => ⟨(harr' n d hd).1, (harr' n d hd).2.1, (harr' n d hd).2.2.1⟩,
-    fun n d hd => (harr' n d hd).2.2.2, fun e he m hm => ?_, fun n hn mp hk => ?_,
-    fun n hn l props hk hr => ?_, fun n hn hc e he m hm => ?_⟩
-  · have := hedges e he
-    simp only [hm, Bool.and_eq_true] at this
-    exact this
-  · have := (hnodes n hn).1
-    simp only [hk] at this
-    exact this
-  · have := (hnodes n hn).1
-    simp only [hk, hr, Option.map_some, Option.getD_some] at this
-    exact this
-  · have := (hnodes n hn).2
-    simp only [hc, Bool.not_true, Bool.false_or, List.all_eq_true] at this
-    have := this e he
-    simp only [hm] at this
-    exact this
-
-theorem seqPureP?_sound {ctx : Ctx} {s : State} (h : seqPureP? ctx s = true) : SeqPureP ctx s := by
-  simp only [seqPureP?, Bool.and_eq_true, List.all_eq_true] at h
-  obtain ⟨⟨harr, hedges⟩, hnodes⟩ := h
-  have hdesc : ∀ n d, ctx.desc? n = some d → ∃ x ∈ ctx.g.arrays, x.2 = d := by
-    intro n d hd
-    simp only [Ctx.desc?, SDFG.array?, Option.map_eq_some_iff] at hd
-    obtain ⟨x, hx, rfl⟩ := hd
-    exact ⟨x, List.mem_of_find?_eq_some hx, rfl⟩
-  have harr' : ∀ n d, ctx.desc? n = some d →
-      d.isStream = false ∧ d.isReference = false ∧ d.isView = false ∧ ctx.rangePure d.fullRange = true := by
-    intro n d hd
-    obtain ⟨x, hx, rfl⟩ := hdesc n d hd
-    have := harr x hx
-    simp only [Bool.not_eq_eq_eq_not, Bool.not_true] at this
-    exact ⟨this.1.1.1, this.1.1.2, this.1.2, this.2⟩
-  refine ⟨⟨fun n d hd => ⟨(harr' n d hd).1, (harr' n d hd).2.1, (harr' n d hd).2.2.1⟩,
-    fun n d hd => (harr' n d hd).2.2.2, fun e he m hm => ?_, fun n hn mp hk => ?_,
-    fun n hn l props hk hr => ?_, fun n hn hc e he m hm => ?_⟩, fun n hn => ?_⟩
-  · have := hedges e he
-    simp only [hm, Bool.and_eq_true] at this
-    exact this
-  rotate_left 3
-  · have := (hnodes n hn).1.1
-    simp only [Bool.or_eq_true] at this
-    rcases this with h₁ | h₁
-    · exact .inl h₁
-    · right
-      cases hk : n.kind <;> simp [hk] at h₁
-      exact ⟨_, rfl⟩
-  · have := (hnodes n hn).1.2
-    simp only [hk] at this
-    exact this
-  · have := (hnodes n hn).1.2
-    simp only [hk, hr, Option.map_some, Option.getD_some] at this
-    exact this
-  · have := (hnodes n hn).2
-    simp only [hc, Bool.not_true, Bool.false_or, List.all_eq_true] at this
-    have := this e he
-    simp only [hm] at this
-    exact this
 
 theorem seqPure?_sound {ctx : Ctx} {s : State} (h : seqPure? ctx s = true) : SeqPure ctx s := by
   simp only [seqPure?, Bool.and_eq_true, List.all_eq_true] at h
@@ -911,20 +822,6 @@ theorem St.Footed.emptyLog {X : St → Res St → Prop} {st st' : St}
   have := hδ { st₂ with log := Log.empty } ⟨ha, hr⟩ hv
   rwa [St.step_emptyLog] at this
 
-/-- **Frame property of a node (`frame_ok`)**: a normal run from `st` with
-an empty log ends in the local view `δ` applied to `st.mem`, where `δ` is
-its log (*St-coherence*); from any `st₂` with the same alias table and
-code-edge values that agrees with `st` on the cells `δ` reads, the node
-runs normally with the same delta, ending in `δ` applied to `st₂.mem`. -/
-theorem NodeExec.frame_ok {ρ : Valuation} {n : DNode} {st st' : St} (hn : n ∈ s.nodes)
-    (hx : NodeExec ctx ρ s n { st with log := Log.empty } (.ok st')) :
-    st'.mem = st'.log.apply ctx.I.wcr st.mem ∧ st'.vals = st.vals ∧ st'.log.Plain ∧
-      ∀ st₂ : St, st₂.mem.aliases = st.mem.aliases → st₂.vals = st.vals →
-        (∀ l ∈ st'.log.reads, st₂.mem.cells l = st.mem.cells l) →
-        NodeExec ctx ρ s n { st₂ with log := Log.empty }
-          (.ok { mem := st'.log.apply ctx.I.wcr st₂.mem, log := st'.log, vals := st₂.vals }) :=
-  St.Footed.emptyLog (NodeExec.frame h hn hx _ rfl)
-
 /-- **Frame property of a scope body or component (`frame_ok`)**, as
 `NodeExec.frame_ok`. -/
 theorem OrderedExec.frame_ok {ρ : Valuation} {all direct : List NodeId} {st st' : St}
@@ -935,24 +832,6 @@ theorem OrderedExec.frame_ok {ρ : Valuation} {all direct : List NodeId} {st st'
         OrderedExec ctx ρ s all direct { st₂ with log := Log.empty }
           (.ok { mem := st'.log.apply ctx.I.wcr st₂.mem, log := st'.log, vals := st₂.vals }) :=
   St.Footed.emptyLog (OrderedExec.frame h hx _ rfl)
-
-/-- **St-coherence**: along a run from an empty log, the local view is the
-initial memory with the log applied. -/
-theorem NodeExec.coherent {ρ : Valuation} {n : DNode} {st st' : St} (hn : n ∈ s.nodes)
-    (hx : NodeExec ctx ρ s n { st with log := Log.empty } (.ok st')) :
-    st'.mem = st'.log.apply ctx.I.wcr st.mem :=
-  (NodeExec.frame_ok h hn hx).1
-
-theorem OrderedExec.coherent {ρ : Valuation} {all direct : List NodeId} {st st' : St}
-    (hx : OrderedExec ctx ρ s all direct { st with log := Log.empty } (.ok st')) :
-    st'.mem = st'.log.apply ctx.I.wcr st.mem :=
-  (OrderedExec.frame_ok h hx).1
-
-theorem SeqExec.coherent {ρ : Valuation} {ids : List NodeId} {st st' : St} {tr : List (NodeId × Log)}
-    (hx : SeqExec ctx ρ s ids { st with log := Log.empty } (.ok (st', tr))) :
-    st'.mem = st'.log.apply ctx.I.wcr st.mem := by
-  obtain ⟨δ, -, rfl, -⟩ := SeqExec.frame h hx _ _ rfl
-  rw [St.step_emptyLog]
 
 end FrameThm
 
@@ -969,12 +848,6 @@ section Coherence
 /-- The node runs by itself: a simple node or a map scope. -/
 def DNode.IsFlat (n : DNode) : Prop := n.isSimple = true ∨ ∃ mp, n.kind = .mapEntry mp
 
-/-- Do all blocks of a region hold states? -/
-def Region.statesOnly (rg : Region) : Bool :=
-  rg.blocks.all fun b => match b with
-    | .state _ => true
-    | _ => false
-
 /-- Every memlet out-edge of `n` ends at a container (not at a code node);
 empty memlets only order. -/
 def State.DataOuts (s : State) (n : DNode) : Prop :=
@@ -989,8 +862,6 @@ def DNode.NestedFlat (s : State) (n : DNode) : Prop :=
 /-- A node whose normal runs step the state by a delta (`NodeExec.steps`). -/
 def DNode.FlatIn (s : State) (n : DNode) : Prop := n.IsFlat ∨ n.NestedFlat s
 
-theorem DNode.FlatIn.of_flat {s : State} {n : DNode} (h : n.IsFlat) : n.FlatIn s := .inl h
-
 /-! ### Regions of states step the state by their log -/
 
 theorem applyAssigns_mem_log {ctx : Ctx} {cst c : CSt} {as : List (Sym × Expr)} (h : applyAssigns ctx cst as = .ok c) :
@@ -1003,7 +874,7 @@ theorem applyAssigns_mem_log {ctx : Ctx} {cst c : CSt} {as : List (Sym × Expr)}
     cases h
     exact ⟨rfl, rfl⟩
 
-theorem merge_ok_free' {w : WcrSem} {m m' : Mem} {gs : List Log} (h : merge w m gs = .ok m') :
+theorem merge_ok_free {w : WcrSem} {m m' : Mem} {gs : List Log} (h : merge w m gs = .ok m') :
     Log.pairwiseFree gs = true :=
   (merge_isOk_iff _ _ _).1 ⟨m', h⟩
 
@@ -1017,21 +888,13 @@ theorem StateExec.steps {ctx : Ctx} {cst : CSt} {s : State} {ctl : Ctl} {c : CSt
     split at hr
     · rename_i m' hm
       have hm' : m' = (Log.unionAll logs).apply ctx.I.wcr cst.mem := by
-        rw [merge_eq_apply _ _ (merge_ok_free' hm)] at hm
+        rw [merge_eq_apply _ _ (merge_ok_free hm)] at hm
         injection hm with h
         exact h.symm
       simp only [Res.ok.injEq, Prod.mk.injEq] at hr
       obtain ⟨-, rfl⟩ := hr
       exact ⟨_, hm', rfl⟩
     · cases hr
-
-theorem Region.statesOnly_block {rg : Region} (hs : rg.statesOnly = true) {bid : BlockId} {b : Block}
-    (hb : rg.block? bid = some b) : ∃ st, b = .state st := by
-  have hmem : b ∈ rg.blocks := List.mem_of_getElem? hb
-  have := List.all_eq_true.1 hs b hmem
-  cases b with
-  | state st => exact ⟨st, rfl⟩
-  | _ => simp at this
 
 /-- `c` is `cst` stepped by a delta. -/
 def CSt.Steps (ctx : Ctx) (cst c : CSt) : Prop := ∃ δ, c.mem = δ.apply ctx.I.wcr cst.mem ∧ c.log = cst.log.seq δ
@@ -1156,7 +1019,7 @@ theorem bindCodeInputs_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNod
 
 /-- Without code consumers of the outputs, a nested call ends with the inner
 memory with the dropped names freed and the inner log without them. -/
-theorem nestedFinish_data' {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode} {dropped : List Name} {pre : St}
+theorem nestedFinish_data {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode} {dropped : List Name} {pre : St}
     {m₂ : Mem} {g₂ : Log} (h : s.DataOuts n) :
     nestedFinish ctx' ρ' s n dropped pre m₂ g₂ =
       .ok { mem := m₂.allocAll dropped, log := pre.log.seq (g₂.dropNames dropped), vals := pre.vals } := by
@@ -1180,9 +1043,6 @@ theorem nestedFinish_data' {ctx' : Ctx} {ρ' : Valuation} {s : State} {n : DNode
         | data d sub => simp only; exact ih' acc
         | code k => rw [hE] at hd; cases hd ⟨mm, hdat⟩
         | invalid => simp only; exact ih' acc
-
-theorem Log.dropNames_nil' (g : Log) : g.dropNames [] = g := by
-  cases g; simp [Log.dropNames]
 
 variable {ctx : Ctx} {s : State} (h : SeqPlain ctx s)
 include h
@@ -1240,11 +1100,11 @@ theorem NodeExec.steps {ρ : Valuation} {n : DNode} {st a : St} (hn : n ∈ s.no
           cases hR with
           | start hR =>
             obtain ⟨δ, hm, hl⟩ := RegionAt.steps hR _ _ rfl
-            rw [nestedFinish_data' hout] at hr
+            rw [nestedFinish_data hout] at hr
             simp only [Res.ok_inj] at hr
             subst hr
             refine ⟨δ, ?_⟩
-            simp only [St.step, hm, hl, Log.empty_seq, Log.dropNames_nil']
+            simp only [St.step, hm, hl, Log.empty_seq, Log.dropNames_nil]
             rfl
 
 /-- A normal sequential run of simple nodes and map scopes steps the state
@@ -1280,26 +1140,6 @@ theorem OrderedExec.steps {ρ : Valuation} {all direct : List NodeId} {st st' : 
     cases hp
     exact SeqExec.steps h (fun i hi => hk i (by simpa using (List.mem_filter.1 hi).2)) hs
 
-/-- **St-coherence**: along a run from an empty log of a scope body or
-component whose direct nodes are simple nodes and map scopes, the local view
-is the initial memory with the log applied, and the code-edge values are
-unchanged. -/
-theorem OrderedExec.coh' {ρ : Valuation} {all direct : List NodeId} {st st' : St}
-    (hk : ∀ id ∈ direct, ∀ n, s.node? id = some n → n.FlatIn s)
-    (hx : OrderedExec ctx ρ s all direct { st with log := Log.empty } (.ok st')) :
-    st'.mem = st'.log.apply ctx.I.wcr st.mem ∧ st'.vals = st.vals := by
-  obtain ⟨δ, rfl⟩ := OrderedExec.steps h hk hx
-  rw [St.step_emptyLog]
-  exact ⟨rfl, rfl⟩
-
 end Coherence
-
-/-- **St-coherence on `SeqPureP`**: along a run from an empty log, the local
-view is the initial memory with the log applied, and the code-edge values
-are unchanged. -/
-theorem OrderedExec.coh {ctx : Ctx} {s : State} (h : SeqPureP ctx s) {ρ : Valuation} {all direct : List NodeId}
-    {st st' : St} (hx : OrderedExec ctx ρ s all direct { st with log := Log.empty } (.ok st')) :
-    st'.mem = st'.log.apply ctx.I.wcr st.mem ∧ st'.vals = st.vals :=
-  OrderedExec.coh' h.toSeqPlain (fun _ _ n hn => .inl (h.kinds n (List.mem_of_find?_eq_some hn))) hx
 
 end Dace

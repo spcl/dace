@@ -321,33 +321,4 @@ def SDFG.run (I : Interp) (g : SDFG) (ρ₀ : Valuation) (m₀ : Mem) (fuel : Na
 
 /-! ## Sanity lemmas -/
 
-theorem execSeq_zero (ctx : Ctx) (ρ : Valuation) (s : State) (ids : List NodeId) (st : St) :
-    execSeq 0 ctx ρ s ids st = none := by
-  simp [execSeq]
-
-theorem execSeq_nil (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (st : St) :
-    execSeq (fuel + 1) ctx ρ s [] st = some (.ok (st, [])) := by
-  simp [execSeq]
-
-theorem execIter_nil (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (entry : NodeId) (params : List Sym)
-    (priv : List Name) (pre : St) :
-    execIter (fuel + 1) ctx ρ s entry params priv pre [] = some (.ok []) := by
-  simp [execIter]
-
-theorem execComps_nil (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (m : Mem) :
-    execComps (fuel + 1) ctx ρ s m [] = some (.ok []) := by
-  simp [execComps]
-
-theorem execCond_nil (fuel : Nat) (ctx : Ctx) (cst : CSt) :
-    execCond (fuel + 1) ctx cst [] = some (.ok (.normal, cst)) := by
-  simp [execCond]
-
-/-- The empty node list is executed as `SeqExec.nil` derives it. -/
-theorem execSeq_nil_sound (fuel : Nat) (ctx : Ctx) (ρ : Valuation) (s : State) (st : St)
-    {r : Res (St × List (NodeId × Log))}
-    (h : execSeq (fuel + 1) ctx ρ s [] st = some r) : SeqExec ctx ρ s [] st r := by
-  rw [execSeq_nil] at h
-  cases h
-  exact SeqExec.nil
-
 end Dace

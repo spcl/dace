@@ -156,14 +156,6 @@ def Ctx.ren (ctx : Ctx) : Ctx :=
 
 end Syntax
 
-theorem SNodes.ren_eq (σ : Equiv.Perm Name) : ∀ cs : List SNode, SNodes.ren σ cs = cs.map (SNode.ren σ)
-  | [] => rfl
-  | c :: cs => by simp [SNodes.ren, SNodes.ren_eq σ cs]
-
-theorem SNodes.ren_append (σ : Equiv.Perm Name) (a b : List SNode) :
-    SNodes.ren σ (a ++ b) = SNodes.ren σ a ++ SNodes.ren σ b := by
-  simp [SNodes.ren_eq]
-
 @[simp] theorem Memlet.ren_data (σ : Equiv.Perm Name) (m : Memlet) : (m.ren σ).data = σ m.data := rfl
 @[simp] theorem Memlet.ren_dataSubset (σ : Equiv.Perm Name) (m : Memlet) : (m.ren σ).dataSubset = m.dataSubset := rfl
 @[simp] theorem Memlet.ren_otherSubset (σ : Equiv.Perm Name) (m : Memlet) :
@@ -242,17 +234,8 @@ include h
 theorem desc_fixed {x : Name} (hx : σ x = x) : ctx'.desc? x = ctx.desc? x := by
   have := h.desc x; rwa [hx] at this
 
-theorem cname_fixed {x : Name} (hx : σ x = x) : ctx'.cname x = ctx.cname x := by
-  have := h.cname x; rwa [hx] at this
-
 theorem isStream (n : Name) : ctx'.isStream (σ n) = ctx.isStream n := by
   simp [Ctx.isStream, h.desc]
-
-theorem isView (n : Name) : ctx'.isView (σ n) = ctx.isView n := by
-  simp [Ctx.isView, h.desc]
-
-theorem isReference (n : Name) : ctx'.isReference (σ n) = ctx.isReference n := by
-  simp [Ctx.isReference, h.desc]
 
 theorem elemOffset (ρ : Valuation) (d : DataDesc) (idx : Idx) : ctx'.elemOffset ρ d idx = ctx.elemOffset ρ d idx := by
   simp [Ctx.elemOffset, DataDesc.linearOffset, h.I]
@@ -375,10 +358,6 @@ theorem evalBool (ρ : Valuation) (m : Mem) (e : Expr) (he : NamesFixed σ e.nam
 theorem evalR (ρ : Valuation) (m : Mem) (e : Expr) (he : NamesFixed σ e.names) :
     ctx'.evalR ρ m e = ctx.evalR ρ m e := by
   simp only [Ctx.evalR, h.eval ρ m e he]
-
-theorem evalIntR (ρ : Valuation) (m : Mem) (e : Expr) (he : NamesFixed σ e.names) :
-    ctx'.evalIntR ρ m e = ctx.evalIntR ρ m e := by
-  simp only [Ctx.evalIntR, h.evalInt ρ m e he]
 
 theorem evalBoolR (ρ : Valuation) (m : Mem) (e : Expr) (he : NamesFixed σ e.names) :
     ctx'.evalBoolR ρ m e = ctx.evalBoolR ρ m e := by

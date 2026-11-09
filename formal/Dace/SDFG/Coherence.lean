@@ -668,7 +668,7 @@ theorem consumeFinish_stepTo {kv : Bool} {ctx : Ctx} {pre a : St} {l : Loc} {log
     rw [hm] at h
     simp only [Res.ok_inj] at h
     subst h
-    have hf := merge_ok_free' hm
+    have hf := merge_ok_free hm
     rw [merge_eq_apply _ _ hf] at hm
     injection hm with hm
     refine ⟨(Log.unionAll logs).seq { queues := [(l, .exclusive (rest ++ pushed))] }, ?_, ?_, fun _ => rfl⟩
@@ -733,12 +733,12 @@ theorem NodeExec.stepTo {ρ : Valuation} {n : DNode} {st a : St} (hk : n.CohIn s
             cases hR with
             | start hR =>
               obtain ⟨δ, hm, hl⟩ := RegionAt.steps hR _ _ rfl
-              rw [nestedFinish_data' hout] at hr
+              rw [nestedFinish_data hout] at hr
               simp only [Res.ok_inj] at hr
               subst hr
               refine ⟨δ, ?_, ?_, fun _ => rfl⟩
               · simp only [hm]; rfl
-              · simp only [hl, Log.empty_seq, Log.dropNames_nil']
+              · simp only [hl, Log.empty_seq, Log.dropNames_nil]
     · rw [hk'] at hc; cases hc
 
 /-- A normal sequential run of such nodes is a logged step. -/

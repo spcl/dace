@@ -60,8 +60,6 @@ namespace Memlet
 
 def inKey (c : Conn) (m : Memlet) : InKey := ⟨c, m.data, m.dataSubset, m.allowOob⟩
 def outKey (c : Conn) (m : Memlet) : OutKey := ⟨c, m.data, m.dataSubset, m.wcr, m.allowOob⟩
-def copyKey (target : Name) (m : Memlet) : CopyKey :=
-  ⟨target, m.data, m.dataSubset, m.otherSubset, m.wcr, m.allowOob⟩
 
 end Memlet
 
@@ -289,14 +287,6 @@ variable {ctx : Ctx} {tc : TCtx} (he : tc.ctx.eraseL = ctx.eraseL)
 theorem TCtx.inData_none {tc : TCtx} (hcons : tc.consumed = none) (m : Memlet) :
     tc.inData m = (m.data, m.dataSubset) := by
   simp [TCtx.inData, TCtx.isChunk, hcons]
-
-theorem TCtx.inKey_none {tc : TCtx} (hcons : tc.consumed = none) (c : Conn) (m : Memlet) :
-    tc.inKey c m = m.inKey c := by
-  simp [TCtx.inKey, TCtx.inData_none hcons, Memlet.inKey]
-
-theorem TCtx.copyKey_none {tc : TCtx} (hcons : tc.consumed = none) (t : Name) (m : Memlet) :
-    tc.copyKey t m = m.copyKey t := by
-  simp [TCtx.copyKey, TCtx.inData_none hcons, Memlet.copyKey]
 
 include he
 
@@ -707,24 +697,6 @@ theorem execCopyT_eq (target : Name) (m : Memlet) (st : St) :
   rcases hid : tc.inData m with ⟨d, sub⟩
   simp only
   rw [Ctx.leaf_eq he copyData (fun _ => rfl)]
-
-omit he in
-/-- **Map set-up** without dynamic inputs. -/
-theorem mapSetup_eq {n : DNode} {mp : MapNode} (hdyn : ∀ e ∈ s.inEdges n.id, s.isDynamicInput e = false)
-    (st : St) : mapSetup ctx ρ s n mp st = (ctx.rangePoints ρ st.mem mp.range).map fun pts => (ρ, st, pts) := by
-  unfold mapSetup bindDynamicInputs
-  rw [List.foldlM_fixed (fun e he' => by simp [hdyn e he'])]
-  simp only [Res.ok_bind]
-  cases ctx.rangePoints ρ st.mem mp.range <;> rfl
-
-omit ρ in
-/-- **Map set-up** in the tree, without pending dynamic inputs. -/
-theorem mapSetupT_eq {mp : MapNode} (cst : CSt) :
-    mapSetupT tc {} mp cst = (ctx.rangePoints cst.ρ cst.mem mp.range).map fun pts => (cst.ρ, pts) := by
-  have hρ : cst.ρ.setAll [] = cst.ρ := rfl
-  simp only [mapSetupT, Option.isSome_none, Bool.false_eq_true, ↓reduceIte, hρ]
-  rw [Ctx.leaf_eq he Ctx.rangePoints (fun _ => rfl)]
-  cases ctx.rangePoints cst.ρ cst.mem mp.range <;> rfl
 
 /-! ### Dynamic map inputs
 

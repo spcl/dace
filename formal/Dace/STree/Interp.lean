@@ -261,16 +261,4 @@ def run (I : Interp) (t : STree) (ρ₀ : Valuation) (m₀ : Mem) (fuel : Nat) :
 
 /-! ## Sanity lemmas -/
 
-theorem execList_zero (tc : TCtx) (full : List SNode) (gb : Bool) (sc : SibCtx) (nodes : List SNode) (cst : CSt) :
-    execList 0 tc full gb sc nodes cst = none := by
-  simp [execList]
-
-theorem execList_nil (fuel : Nat) (tc : TCtx) (full : List SNode) (gb : Bool) (sc : SibCtx) (cst : CSt)
-    (hp : sc.pending.isEmpty = true) : execList (fuel + 1) tc full gb sc [] cst = some (.ok (.normal, cst)) := by
-  simp [execList, hp]
-
-theorem execIter_nil (fuel : Nat) (tc : TCtx) (params : List Sym) (body : List SNode) (priv : List Name)
-    (pre : CSt) : execIter (fuel + 1) tc params body priv pre [] = some (.ok []) := by
-  simp [execIter]
-
 end Dace.STree

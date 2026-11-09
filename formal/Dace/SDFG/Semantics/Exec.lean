@@ -427,76 +427,14 @@ def SDFG.Exec (I : Interp) (g : SDFG) (ρ₀ : Valuation) (m₀ : Mem) (r : Res 
 theorem Log.seq_empty (g : Log) : g.seq Log.empty = g := by
   cases g; simp [Log.seq, Log.empty]
 
-/-- Sequential composition of a list of logs, in order. -/
-def Log.seqAll : List Log → Log
-  | [] => Log.empty
-  | g :: gs => g.seq (Log.seqAll gs)
-
-theorem SeqExec_nil {ctx : Ctx} {ρ : Valuation} {s : State} {st : St} {r : Res (St × List (NodeId × Log))}
-    (h : SeqExec ctx ρ s [] st r) : r = .ok (st, []) := by
-  cases h; rfl
-
-/-- The log of a sequential execution is the initial log followed by the
-deltas of its trace, in order. -/
-theorem SeqExec.log_eq {ctx : Ctx} {ρ : Valuation} {s : State} {ids : List NodeId} {st st₂ : St}
-    {tr : List (NodeId × Log)} (h : SeqExec ctx ρ s ids st (.ok (st₂, tr))) :
-    st₂.log = tr.foldl (fun g x => g.seq x.2) st.log := by
-  induction ids generalizing st st₂ tr with
-  | nil => cases h; rfl
-  | cons id rest ih =>
-    cases h with
-    | cons _ _ hr =>
-      have h' := ih hr
-      rw [h']
-      rfl
-
-/-- The same, with the trace's deltas composed first: the log is the
-initial log followed by `Log.seqAll` of the trace (by `Log.seq_assoc`), so
-that, for an execution starting with an empty log, it is exactly the
-sequential composition of the nodes' deltas. -/
-theorem SeqExec.log_eq_seqAll {ctx : Ctx} {ρ : Valuation} {s : State} {ids : List NodeId} {st st₂ : St}
-    {tr : List (NodeId × Log)} (h : SeqExec ctx ρ s ids st (.ok (st₂, tr))) :
-    st₂.log = st.log.seq (Log.seqAll (tr.map (·.2))) := by
-  rw [h.log_eq]
-  clear h
-  generalize st.log = L
-  induction tr generalizing L with
-  | nil => simp [Log.seqAll, Log.seq_empty]
-  | cons x xs ih =>
-    simp only [List.foldl_cons, List.map_cons, Log.seqAll]
-    rw [ih, Log.seq_assoc]
-
-theorem SeqExec.log_eq_seqAll_empty {ctx : Ctx} {ρ : Valuation} {s : State} {ids : List NodeId} {st st₂ : St}
-    {tr : List (NodeId × Log)} (h : SeqExec ctx ρ s ids st.forNode (.ok (st₂, tr))) :
-    st₂.log = Log.seqAll (tr.map (·.2)) := by
-  rw [h.log_eq_seqAll]
-  exact Log.empty_seq _
-
-theorem IterExec_nil {ctx : Ctx} {ρ : Valuation} {s : State} {entry : NodeId} {params : List Sym}
-    {priv : List Name} {pre : St} {r : Res (List Log)}
-    (h : IterExec ctx ρ s entry params priv pre [] r) : r = .ok [] := by
-  cases h; rfl
-
 theorem CompsExec_nil {ctx : Ctx} {ρ : Valuation} {s : State} {m : Mem} {r : Res (List Log)}
     (h : CompsExec ctx ρ s m [] r) : r = .ok [] := by
   cases h; rfl
-
-theorem CondExec_nil {ctx : Ctx} {cst : CSt} {r : Res (Ctl × CSt)}
-    (h : CondExec ctx cst [] r) : r = .ok (.normal, cst) := by
-  cases h; rfl
-
 
 theorem Log.unionAll_nil : Log.unionAll [] = Log.empty := rfl
 
 /-- Merging no logs leaves the memory unchanged. -/
 theorem merge_nil (w : WcrSem) (m : Mem) : merge w m [] = .ok m := rfl
-
-/-- A scope without iterations leaves the state unchanged. -/
-theorem scopeFinish_nil (ctx : Ctx) (pre : St) : scopeFinish ctx pre [] = .ok pre := by
-  unfold scopeFinish
-  rw [merge_nil]
-  show Res.ok { mem := pre.mem, log := pre.log.seq (Log.unionAll []), vals := pre.vals } = Res.ok pre
-  rw [Log.unionAll_nil, Log.seq_empty]
 
 /-- A state without components (no nodes) leaves memory and valuation
 unchanged. -/

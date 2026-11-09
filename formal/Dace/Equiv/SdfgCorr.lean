@@ -56,10 +56,6 @@ namespace Dace
 
 /-! ## Interfaces after replacing a block -/
 
-/-- The interface depends only on the descriptors. -/
-theorem SDFG.interface_setBlockAt (g : SDFG) (p : List PathStep) (i : BlockId) (b' : Block) :
-    (g.setBlockAt p i b').interface = g.interface := rfl
-
 /-! ## Rules -/
 
 /-- A permutation sending each `a` to `b` for the pairs `(a, b)` (when the
