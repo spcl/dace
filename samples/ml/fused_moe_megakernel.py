@@ -816,8 +816,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--tokens", type=int, nargs="+", default=[1, 8, 64, 512, 2048])
     parser.add_argument("--small", action="store_true", help="a small configuration, for testing")
-    # Two thread blocks per multiprocessor (as many as the shared memory of the tasks leaves room for)
-    pes = 2 * torch.cuda.get_device_properties().multi_processor_count
+    # Three thread blocks per multiprocessor (as many as the registers of the workers allow, 150 per thread)
+    pes = 3 * torch.cuda.get_device_properties().multi_processor_count
     parser.add_argument("--pes", type=int, default=pes, help="processing elements (thread blocks)")
     parser.add_argument("--profile", action="store_true", help="the time of every task instead of the comparison")
     args = parser.parse_args()
