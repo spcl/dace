@@ -22,8 +22,10 @@ from dace.sdfg.state import (
     ControlFlowBlock,
     ControlFlowRegion,
     LoopRegion,
+    NamedRegion,
     ReturnBlock,
 )
+from dace.utils import find_new_name
 
 
 def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | None = None) -> SDFGState:
@@ -764,6 +766,44 @@ def state_fission(
                     state_to_clean.remove_node(node)
 
     return first_state
+
+
+def isolate_in_instrumented_region(
+    state: SDFGState, nsdfg_node: nodes.NestedSDFG, test_if_applicable: bool = False
+) -> NamedRegion | bool:
+    """Isolates an instrumented nested SDFG in a ``NamedRegion`` with the label and the instrumentation of the node,
+    which then measures it: its code is measured as a whole after inlining as well. The state of the nested SDFG
+    becomes the region's only block, if the nested SDFG is all it computes (its other nodes are access nodes, with
+    edges to or from the nested SDFG, or between views and the data they view). Otherwise, the nested SDFG is
+    isolated in a state of its own first (see ``isolate_nested_sdfg``).
+
+    :param state: The state of the nested SDFG.
+    :param nsdfg_node: The nested SDFG node, which is no longer instrumented.
+    :param test_if_applicable: If ``True``, only returns whether the nested SDFG can be isolated.
+    :return: The region, or whether the nested SDFG can be isolated if ``test_if_applicable`` is ``True``.
+    """
+    alone = all(n is nsdfg_node or isinstance(n, nodes.AccessNode) for n in state.nodes()) and all(
+        nsdfg_node in (e.src, e.dst) or "views" in (e.src_conn, e.dst_conn) for e in state.edges()
+    )
+    if test_if_applicable:
+        return alone or isolate_nested_sdfg(state, nsdfg_node, test_if_applicable=True)
+    if not alone:
+        isolate_nested_sdfg(state, nsdfg_node)
+    graph = state.parent_graph
+    region = NamedRegion(find_new_name(nsdfg_node.label, {b.label for b in graph.nodes()}), sdfg=state.sdfg)
+    region.instrument = nsdfg_node.instrument
+    nsdfg_node.instrument = dtypes.InstrumentationType.No_Instrumentation
+    was_start = graph.start_block is state
+    graph.add_node(region)
+    for e in graph.in_edges(state):
+        graph.add_edge(e.src, region, e.data)
+    for e in graph.out_edges(state):
+        graph.add_edge(region, e.dst, e.data)
+    graph.remove_node(state)
+    region.add_node(state, is_start_block=True)
+    if was_start:
+        graph.start_block = graph.node_id(region)
+    return region
 
 
 def isolate_nested_sdfg(

@@ -21,6 +21,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
     Inlines a multi-state nested SDFG into a top-level SDFG. This only happens
     if the state has the nested SDFG node isolated (i.e., only containing it
     and input/output access nodes), and thus the state machines can be combined.
+
+    The code of an instrumented nested SDFG is measured as a whole: it is inlined into a ``NamedRegion`` with the
+    label and instrumentation of the nested SDFG node (see ``helpers.isolate_in_instrumented_region``), which
+    simplification does not inline.
     """
 
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
@@ -79,8 +83,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
-        if nested_sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
-            return False  # Measured as a whole: inlining would drop its instrumentation
 
         # Not nested in scope
         if state.entry_node(nested_sdfg) is not None:
@@ -168,10 +170,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for ise in sdfg.all_interstate_edges():
             outer_symbols.update(ise.data.new_symbols(sdfg, outer_symbols))
 
-        # Isolate the nested SDFG in a separate state.
-        predecessor_state, nsdfg_state, successor_state = helpers.isolate_nested_sdfg(
-            state=outer_state, nsdfg_node=nsdfg_node
-        )
+        # Isolate the nested SDFG in a separate state (in a region of its own, which measures it, if instrumented)
+        if nsdfg_node.instrument != dtypes.InstrumentationType.No_Instrumentation:
+            helpers.isolate_in_instrumented_region(outer_state, nsdfg_node)
+            nsdfg_state = outer_state
+        else:
+            _, nsdfg_state, _ = helpers.isolate_nested_sdfg(state=outer_state, nsdfg_node=nsdfg_node)
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)

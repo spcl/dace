@@ -33,7 +33,6 @@ from dace.properties import (
     CodeProperty,
     DebugInfoProperty,
     DictProperty,
-    EnumProperty,
     ListProperty,
     OptionalSDFGReferenceProperty,
     Property,
@@ -629,13 +628,6 @@ class SDFG(ControlFlowRegion):
         from_json=_nested_arrays_from_json,
     )
     symbols = DictProperty(str, dtypes.typeclass, category="General", desc="Global symbols for this SDFG")
-
-    instrument = EnumProperty(
-        dtype=dtypes.InstrumentationType,
-        category="Instrumentation",
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation,
-    )
 
     global_code = DictProperty(
         str, CodeBlock, category="Code Generation", desc="Code generated in a global scope on the output files."

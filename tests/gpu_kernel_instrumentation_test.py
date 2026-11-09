@@ -1,11 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""GPU_Events on nodes inside GPU kernels: an event per thread block, on the GPU's global timer."""
+"""GPU_Events on nodes and control flow regions inside GPU kernels: an event per thread block, on the GPU's global
+timer."""
 
 import numpy as np
 import pytest
 
 import dace
 from dace.sdfg import nodes
+from dace.sdfg.state import NamedRegion
 
 N = 8  # Thread blocks
 W = 64  # Threads per block
@@ -26,25 +28,34 @@ def rows(a: dace.float32[N, W] @ GPU_Global, b: dace.float32[N, W] @ GPU_Global)
         twice(a[i], b[i])
 
 
-def instrumented_rows() -> tuple[dace.SDFG, nodes.NestedSDFG]:
-    """``rows`` with the nested program of every thread block instrumented (before simplification, which keeps it)."""
+def instrumented(label: str) -> tuple[dace.SDFG, nodes.NestedSDFG]:
+    """``rows`` with a nested SDFG instrumented before simplification: the body of the map (``rows``), which stays a
+    nested SDFG in the scope of the map, or the call of ``twice`` at the top level of that body, which is inlined into
+    it as a region."""
     sdfg = rows.to_sdfg(simplify=False)
-    task = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG) and "twice" in n.label)
-    task.instrument = dace.InstrumentationType.GPU_Events
+    node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG) and n.label.endswith(label))
+    node.instrument = dace.InstrumentationType.GPU_Events
     sdfg.simplify()
-    return sdfg, task
+    return sdfg, node
 
 
-def test_inlining_keeps_instrumented_nested_sdfg():
-    sdfg, task = instrumented_rows()
-    assert any(n is task for n, _ in sdfg.all_nodes_recursive())
+def test_inlining_keeps_instrumented_nested_sdfg_in_a_scope():
+    sdfg, body = instrumented("test_rows")
+    assert any(n is body for n, _ in sdfg.all_nodes_recursive())
+    assert body.instrument == dace.InstrumentationType.GPU_Events
 
 
-@pytest.mark.gpu
-def test_event_per_thread_block():
+def test_inlining_turns_an_instrumented_call_into_a_region():
+    sdfg, call = instrumented("test_twice")
+    assert not any(n is call for n, _ in sdfg.all_nodes_recursive())
+    # (Its label ends with that of the call: inlining the region of the call statement prefixes it)
+    (region,) = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, NamedRegion)]
+    assert region.label.endswith(call.label) and region.instrument == dace.InstrumentationType.GPU_Events
+
+
+def check_event_per_thread_block(sdfg: dace.SDFG, name: str):
     import cupy
 
-    sdfg, task = instrumented_rows()
     a = cupy.random.rand(N, W).astype(np.float32)
     b = cupy.zeros((N, W), dtype=np.float32)
     sdfg(a=a, b=b)
@@ -56,7 +67,7 @@ def test_event_per_thread_block():
     assert sorted(e.additional_info["block"] for e in events) == list(range(N))
     assert sorted(e.tid for e in events) == list(range(N))  # A thread of the trace per thread block
     for e in events:
-        assert e.name == task.label
+        assert name.startswith(e.name)  # (Names in reports are truncated)
         assert e.duration >= 0
         assert e.additional_info["cycles"] > 0
         assert e.additional_info["sm"] >= 0
@@ -69,6 +80,20 @@ def test_event_per_thread_block():
 
 
 @pytest.mark.gpu
+def test_event_per_thread_block():
+    sdfg, body = instrumented("test_rows")
+    check_event_per_thread_block(sdfg, body.label)
+
+
+@pytest.mark.gpu
+def test_event_per_thread_block_of_a_region():
+    """The inlined call, a region in the kernel, measured as the nested SDFG would be."""
+    sdfg, _ = instrumented("test_twice")
+    (region,) = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, NamedRegion)]
+    check_event_per_thread_block(sdfg, region.label)
+
+
+@pytest.mark.gpu
 def test_per_thread_node_is_rejected():
     sdfg = rows.to_sdfg(simplify=True)
     tasklet = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet))
@@ -78,6 +103,8 @@ def test_per_thread_node_is_rejected():
 
 
 if __name__ == "__main__":
-    test_inlining_keeps_instrumented_nested_sdfg()
+    test_inlining_keeps_instrumented_nested_sdfg_in_a_scope()
+    test_inlining_turns_an_instrumented_call_into_a_region()
     test_event_per_thread_block()
+    test_event_per_thread_block_of_a_region()
     test_per_thread_node_is_rejected()

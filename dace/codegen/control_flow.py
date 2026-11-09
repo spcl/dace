@@ -236,6 +236,20 @@ def deallocation_on_exit(region: AbstractControlFlowRegion, codegen: "DaCeCodeGe
     return stream.getvalue()
 
 
+def _instrumentation(region: AbstractControlFlowRegion, codegen: "DaCeCodeGenerator", begin: bool) -> str:
+    """The code of the instrumentation of a region (other than an SDFG) at its beginning or end, if it has any. As
+    with ``allocation_on_entry``, the providers write to one stream, in place."""
+    instr = codegen._dispatcher.instrumentation.get(region.instrument)
+    if instr is None:
+        return ""
+    stream = CodeIOStream()
+    if begin:
+        instr.on_region_begin(region.sdfg, region.parent_graph, region, stream, stream)
+    else:
+        instr.on_region_end(region.sdfg, region.parent_graph, region, stream, stream)
+    return stream.getvalue()
+
+
 def control_flow_region_to_code(
     region: AbstractControlFlowRegion,
     dispatch_state: Callable[[SDFGState], str],
@@ -277,8 +291,13 @@ def control_flow_region_to_code(
         visited.add(node)
 
         expr += "__state_{}_{}:;\n".format(region.cfg_id, re.sub(r"\s+", "_", node.label))
+        instrumented = isinstance(node, AbstractControlFlowRegion) and (
+            node.instrument != dtypes.InstrumentationType.No_Instrumentation
+        )
         if isinstance(node, AbstractControlFlowRegion):
             expr += allocation_on_entry(node, codegen)
+        if instrumented:  # A block of its own: no jump crosses the declarations of the instrumentation
+            expr += "{\n" + _instrumentation(node, codegen, begin=True)
         if isinstance(node, SDFGState):
             if node.number_of_nodes() > 0:
                 expr += "{\n"
@@ -301,6 +320,8 @@ def control_flow_region_to_code(
             expr += control_flow_region_to_code(node, dispatch_state, codegen, symbols)
         else:
             raise NotImplementedError(f"Control flow block {type(node)} not implemented")
+        if instrumented:
+            expr += _instrumentation(node, codegen, begin=False) + "}\n"
         if isinstance(node, AbstractControlFlowRegion):
             expr += deallocation_on_exit(node, codegen)
 

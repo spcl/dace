@@ -1697,6 +1697,8 @@ def inline_control_flow_regions(
         # Control flow regions where the parent is a conditional block are not inlined.
         if block.parent_graph and type(block.parent_graph) == ConditionalBlock:
             continue
+        if block.instrument != dtypes.InstrumentationType.No_Instrumentation:
+            continue  # Measured as a whole: inlining would drop its instrumentation
         if block.inline(lower_returns=lower_returns)[0]:
             count += 1
     if eliminate_dead_states:

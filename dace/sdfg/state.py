@@ -2927,6 +2927,13 @@ class AbstractControlFlowRegion(
     start blocks there are, etc.
     """
 
+    instrument = EnumProperty(
+        dtype=dtypes.InstrumentationType,
+        category="Instrumentation",
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation,
+    )
+
     def __init__(
         self, label: str = "", sdfg: Optional["SDFG"] = None, parent: Optional["AbstractControlFlowRegion"] = None
     ):
