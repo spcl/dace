@@ -192,7 +192,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
         if nested_sdfg.no_inline:
             return False
         if nested_sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
-            return False  # Measured as a whole: inlining would drop its instrumentation
+            # Measured as a whole: inlined into a region of its own (see ``helpers.isolate_in_instrumented_region``)
+            if not helpers.isolate_in_instrumented_region(graph, nested_sdfg, test_if_applicable=True):
+                return False
         if len(nested_sdfg.sdfg.nodes()) != 1 or not isinstance(nested_sdfg.sdfg.nodes()[0], SDFGState):
             return False
 
@@ -396,6 +398,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nsdfg: SDFG = nsdfg_node.sdfg
 
         nstate: SDFGState = nsdfg.nodes()[0]
+
+        if nsdfg_node.instrument != dtypes.InstrumentationType.No_Instrumentation:
+            helpers.isolate_in_instrumented_region(state, nsdfg_node)
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None

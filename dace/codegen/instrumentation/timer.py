@@ -57,6 +57,12 @@ __state->report.add_completion("{timer_name}", "Timer", __dace_ts_start_{idstr},
         if state.instrument == dtypes.InstrumentationType.Timer:
             self.on_tend(f"State {state.label}", local_stream, sdfg, cfg, state)
 
+    def on_region_begin(self, sdfg, cfg, region, local_stream, global_stream):
+        self.on_tbegin(local_stream, sdfg, region)
+
+    def on_region_end(self, sdfg, cfg, region, local_stream, global_stream):
+        self.on_tend(f"{type(region).__name__} {region.label}", local_stream, sdfg, region)
+
     def _get_sobj(self, node):
         # Get object behind scope
         return node.map

@@ -5,7 +5,7 @@ from dace.memlet import Memlet
 from dace.registry import make_registry
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import ControlFlowRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, SDFGState
 
 
 @make_registry
@@ -94,6 +94,45 @@ class InstrumentationProvider:
         :param sdfg: The generated SDFG object.
         :param cfg: The generated Control Flow Region object.
         :param state: The generated SDFGState object.
+        :param local_stream: Code generator for the in-function code.
+        :param global_stream: Code generator for global (external) code.
+        """
+        pass
+
+    def on_region_begin(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        region: AbstractControlFlowRegion,
+        local_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ) -> None:
+        """Event called at the beginning of the code of a control flow region (other than an SDFG) instrumented with
+        this provider. The code of the region, from here to ``on_region_end``, is a C++ block of its own.
+
+        :param sdfg: The generated SDFG object.
+        :param cfg: The control flow region that contains ``region``.
+        :param region: The generated control flow region (e.g., a loop, a conditional block, or a named region).
+        :param local_stream: Code generator for the in-function code.
+        :param global_stream: The same stream as ``local_stream`` (code is generated in place, as are the allocations of
+                              a region): global code belongs in ``on_sdfg_begin``.
+        """
+        pass
+
+    def on_region_end(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        region: AbstractControlFlowRegion,
+        local_stream: CodeIOStream,
+        global_stream: CodeIOStream,
+    ) -> None:
+        """Event called at the end of the code of a control flow region (other than an SDFG) instrumented with this
+        provider.
+
+        :param sdfg: The generated SDFG object.
+        :param cfg: The control flow region that contains ``region``.
+        :param region: The generated control flow region.
         :param local_stream: Code generator for the in-function code.
         :param global_stream: Code generator for global (external) code.
         """

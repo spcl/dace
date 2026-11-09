@@ -10,7 +10,7 @@ from dace.codegen.instrumentation import InstrumentationProvider
 from dace.codegen.targets import framecode
 from dace.config import Config
 from dace.sdfg import SDFG, infer_types
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.lower_consume import LowerConsumeScopes
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
@@ -155,6 +155,8 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
             disp.instrumentation[node.instrument] = provider_mapping[node.instrument]
         elif isinstance(node, dace.nodes.MapExit):
             disp.instrumentation[node.map.instrument] = provider_mapping[node.map.instrument]
+        elif isinstance(node, AbstractControlFlowRegion):
+            disp.instrumentation[node.instrument] = provider_mapping[node.instrument]
 
     # Query instrumentation provider of SDFG
     if sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
