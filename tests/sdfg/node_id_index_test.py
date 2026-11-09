@@ -89,13 +89,13 @@ def test_a_foreign_node_is_not_found():
         state.node_id(foreign)
 
 
-
 @pytest.mark.parametrize("position", [-1, 3])
 def test_a_position_outside_the_graph_is_not_found(position):
     state = chain(1)
     state.node(0)
     with pytest.raises(gr.NodeNotFoundError):
         state.node(position)
+
 
 def test_deepcopy_keeps_its_own_index():
     state = chain(4)
