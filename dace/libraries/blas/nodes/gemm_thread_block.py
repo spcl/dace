@@ -195,6 +195,18 @@ def thread_block_implementation(node: nodes.LibraryNode, state: SDFGState, sdfg:
     return "ThreadBlockMMA" if mma_ineligibility(node, state, sdfg) is None else "ThreadBlock"
 
 
+def _rows_bound(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> int | float:
+    """An upper bound of the rows of a product: those of its output, or of the container its output is in (infinite
+    if not a constant)."""
+    for e in state.out_edges(node):
+        if e.src_conn == "_c":
+            size, dims = operand_view(e.data.subset, False)
+            for rows in (size[0], sdfg.arrays[e.data.data].shape[dims[0]]):
+                if not symbolic.issymbolic(rows, sdfg.constants):
+                    return int(symbolic.evaluate(rows, sdfg.constants))
+    return math.inf
+
+
 def _nested(node, operands: dict, product: _Product, code: str, threads: int, scratch: dict) -> SDFG:
     """A nested SDFG of one thread-block map of ``threads`` threads, around a C++ tasklet with ``code`` that reads the
     operands (``a``, ``b``, ``a_index``) and writes ``c`` and the transients in ``scratch``."""
@@ -276,6 +288,10 @@ class ExpandGemmThreadBlockMMA(ExpandTransformation):
         rows = MMA_ROWS
         if not symbolic.issymbolic(m, sdfg.constants):
             rows = min(MMA_ROWS, -(-int(symbolic.evaluate(m, sdfg.constants)) // 16) * 16)
+        # With a single chunk of rows (at most those of the output's container), the workspace is no longer used once
+        # the output is written: it may overlap the output (see ``StorageType.GPU_Shared.may_overlap_outputs``)
+        single_chunk = _rows_bound(node, state, sdfg) <= MMA_ROWS
+        done_with_workspace = "    __syncthreads();  // Every warp is done with the workspace, which may overlap c"
         operand, ctype = product.types[0], product.types[2].ctype
         mma_type = "bf16" if operand == dace.bfloat16 else "f16"
         chunks = MMA_K_STEP // 8
@@ -382,6 +398,7 @@ for (long long m0 = 0; m0 < M_TOTAL; m0 += MT) {{
         }}
     }}
     asm volatile("cp.async.wait_group 0;\\n" ::);
+{done_with_workspace if single_chunk else ""}
 
     // Accumulator fragment: rows lane / 4 and lane / 4 + 8, columns 2 * (lane % 4) and the next
     #pragma unroll
@@ -405,5 +422,6 @@ for (long long m0 = 0; m0 < M_TOTAL; m0 += MT) {{
 #endif
 __syncthreads();  // The product is complete for every thread of the block
 """
-        workspace = ([MMA_STAGES, rows + n, MMA_K_STEP], operand, dtypes.StorageType.GPU_Shared(dynamic=True))
+        storage = dtypes.StorageType.GPU_Shared(dynamic=True, may_overlap_outputs=single_chunk)
+        workspace = ([MMA_STAGES, rows + n, MMA_K_STEP], operand, storage)
         return _nested(node, operands, product, code, threads, {"_workspace": workspace})

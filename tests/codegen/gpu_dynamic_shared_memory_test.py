@@ -237,7 +237,15 @@ def test_storage_type_attribute():
         S.GPU_Global.dynamic
 
 
-@pytest.mark.parametrize("storage", [S.GPU_Shared, S.GPU_Shared(dynamic=True), S.GPU_Shared(dynamic=False)])
+@pytest.mark.parametrize(
+    "storage",
+    [
+        S.GPU_Shared,
+        S.GPU_Shared(dynamic=True),
+        S.GPU_Shared(dynamic=False),
+        S.GPU_Shared(dynamic=True, may_overlap_outputs=True),
+    ],
+)
 def test_storage_type_serialization(storage: S):
     sdfg = dace.SDFG("storage_serialization")
     sdfg.add_array("a", [4], dace.float32, storage=storage, transient=True)
@@ -569,7 +577,101 @@ def test_tasks_in_different_states_run():
     assert np.array_equal(cupy.asnumpy(B), np.broadcast_to(expected, B.shape))
 
 
+def _producer(value: int) -> dace.SDFG:
+    """A thread block's computation whose 16 KiB scratch may overlap its output (as a matrix product's workspace may
+    overlap its result): its threads fill the scratch and read it in reverse, and write ``out`` only once every thread
+    is done with the scratch."""
+    producer = dace.SDFG(f"producer{value}")
+    producer.add_array("out", [32], dace.float64)
+    storage = S.GPU_Shared(dynamic=True, may_overlap_outputs=True)
+    producer.add_array("s", [KIB16], dace.float64, storage=storage, transient=True)
+    state = producer.add_state("produce")
+    entry, exit_ = state.add_map("threads", {"j": "0:32"}, schedule=dace.ScheduleType.GPU_ThreadBlock)
+    code = f"""
+scratch[j] = {value} + j;
+__syncthreads();
+double v = scratch[31 - j];
+__syncthreads();  // Every thread is done with the scratch
+o = v;
+"""
+    tasklet = state.add_tasklet("produce", {}, {"scratch", "o"}, code, language=dace.Language.CPP)
+    state.add_nedge(entry, tasklet, dace.Memlet())
+    scratch = dace.Memlet(f"s[0:{KIB16}]", dynamic=True)
+    state.add_memlet_path(tasklet, exit_, state.add_write("s"), src_conn="scratch", memlet=scratch)
+    state.add_memlet_path(tasklet, exit_, state.add_write("out"), src_conn="o", memlet=dace.Memlet("out[j]"))
+    return producer
+
+
+def _producer_sdfg(written_before: bool) -> dace.SDFG:
+    """A kernel whose even thread blocks produce values into a shared container ``t`` and copy them out, and whose odd
+    ones run a task with a shared container of its own (that does not access ``t``). With ``written_before``, all
+    write ``t`` first."""
+    tb = dace.ScheduleType.GPU_ThreadBlock
+    body = dace.SDFG("producer_body")
+    body.add_symbol("i", dace.int64)
+    body.add_array("b", [2, 32], dace.float64, storage=S.GPU_Global)
+    body.add_array("t", [KIB16], dace.float64, storage=S.GPU_Shared, transient=True)
+    start = body.add_state("start", is_start_block=True)
+    if written_before:
+        start.add_mapped_tasklet("init", {"j": "0:32"}, {}, "w = 0", {"w": dace.Memlet("t[j]")}, schedule=tb,
+                                 external_edges=True)  # fmt: skip
+    produce, other = body.add_state("produce"), body.add_state("other")
+    body.add_edge(start, produce, dace.InterstateEdge("i % 2 == 0"))
+    body.add_edge(start, other, dace.InterstateEdge("i % 2 == 1"))
+    call = produce.add_nested_sdfg(_producer(100), set(), {"out"})
+    t = produce.add_access("t")
+    produce.add_edge(call, "out", t, None, dace.Memlet("t[0:32]"))
+    produce.add_mapped_tasklet("copy", {"j": "0:32"}, {"v": dace.Memlet("t[j]")}, "w = v", {"w": dace.Memlet("b[0, j]")},
+                               schedule=tb, external_edges=True, input_nodes={"t": t})  # fmt: skip
+    call.integrate_into_parent()
+    task = other.add_nested_sdfg(_task("task", 200), set(), {"y"})
+    other.add_edge(task, "y", other.add_write("b"), None, dace.Memlet("b[1, 0:32]"))
+    task.integrate_into_parent()
+
+    sdfg = dace.SDFG("producer_written_before" if written_before else "producer")
+    sdfg.add_array("B", [N, 2, 32], dace.float64, storage=S.GPU_Global)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("kernel", {"i": "0:N"}, schedule=dace.ScheduleType.GPU_Device)
+    call = state.add_nested_sdfg(body, set(), {"b"}, symbol_mapping={"i": "i"})
+    state.add_nedge(entry, call, dace.Memlet())
+    state.add_memlet_path(call, exit_, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i, 0:2, 0:32]"))
+    call.integrate_into_parent()
+    sdfg.validate()
+    return sdfg
+
+
+def test_scratch_overlaps_an_output_that_holds_no_values():
+    """``t`` holds no values until the producer writes it, whose scratch may overlap its output: the scratch starts at
+    ``t``, and so does the task's container in the other branch, where ``t`` holds no values either. Written before,
+    ``t`` keeps its memory (and stays static): 32 KiB rather than 16."""
+    code, _ = _generate(_producer_sdfg(written_before=False))
+    assert re.search(rf"LaunchKernel\(.*, {KIB16 * 8}, ", code) and "__shared__ __align__(16) double t" not in code
+    offsets = re.findall(r"\b[st] = \(double\*\)\(&__dace_dynsmem\w*\[(\w+)\]\);", code)
+    assert len(offsets) == 3 and len(set(offsets)) == 1, offsets
+
+    code, _ = _generate(_producer_sdfg(written_before=True))
+    assert re.search(rf"__shared__ __align__\(16\) double t\[{KIB16}\]", code)
+    assert re.search(rf"LaunchKernel\(.*, {KIB16 * 8}, ", code)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("written_before", [False, True])
+def test_scratch_overlapping_an_output_runs(written_before: bool):
+    import cupy
+
+    sdfg = _producer_sdfg(written_before)
+    B = cupy.zeros((4, 2, 32))
+    sdfg(B=B, N=4)
+    expected = np.zeros((4, 2, 32))
+    expected[0::2, 0] = 100 + np.arange(32)[::-1]  # Even blocks produce, odd ones run the task
+    expected[1::2, 1] = 200 + np.arange(32)[::-1]
+    assert np.array_equal(cupy.asnumpy(B), expected)
+
+
 if __name__ == "__main__":
+    test_scratch_overlaps_an_output_that_holds_no_values()
+    test_scratch_overlapping_an_output_runs(False)
+    test_scratch_overlapping_an_output_runs(True)
     test_tasks_in_different_states_share_shared_memory()
     test_tasks_in_different_states_run()
     test_storage_type_attribute()

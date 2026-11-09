@@ -25,6 +25,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import is_thread_block_level, kernel_scope
 from dace.transformation import gpu_helpers
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.analysis import StateReachability
 
 #: Alignment of every container in dynamic shared memory, which suffices for all types up to 16-byte vectors
 DYNAMIC_SHARED_MEMORY_ALIGNMENT = 16
@@ -214,6 +215,17 @@ class SharedMemoryLevel:
 
 
 @dataclass
+class _Overlap:
+    """A shared container of an SDFG that the threads of a block run together, which holds no values in some of its
+    states, as nothing writes it before them: their nested SDFGs may use its memory."""
+
+    name: str
+    #: The states, and in each, the nested SDFG that writes the container first (whose shared containers may overlap
+    #: its outputs), or None if no node of the state accesses the container
+    states: dict = field(default_factory=dict)
+
+
+@dataclass
 class KernelSharedMemory:
     """The shared memory layout of a GPU kernel."""
 
@@ -284,6 +296,15 @@ class PlanSharedMemory(ppl.Pass):
         limit = common.gpu_max_static_shared_memory()
         candidates: list[tuple[SDFG, str, int]] = []
         dynamic: set[tuple[SDFG, str]] = set()
+        # The containers whose memory nested SDFGs may use where they hold no values, which must be dynamic
+        overlaps: dict[int, _Overlap] = {}
+        found = self._overlap_in_kernel(sdfg, state, kernel_entry, kernel_level)
+        if found is not None:
+            overlaps[id(sdfg)] = found
+        for level_sdfg, _ in self._containers(sdfg, kernel_level, top_nested)[1:]:
+            found = self._overlap(level_sdfg)
+            if found is not None:
+                overlaps[id(level_sdfg)] = found
         for level_sdfg, names in self._containers(sdfg, kernel_level, top_nested):
             for name in names:
                 desc = level_sdfg.arrays[name]
@@ -300,7 +321,7 @@ class PlanSharedMemory(ppl.Pass):
                             "generator with `StorageType.GPU_Shared`."
                         )
                     plan.static_bytes += _aligned(int(symbolic.evaluate(size, level_sdfg.constants)))
-                elif placement is True or is_symbolic:
+                elif placement is True or is_symbolic or overlaps.get(id(level_sdfg), _Overlap("")).name == name:
                     dynamic.add((level_sdfg, name))
                 else:
                     candidates.append((level_sdfg, name, _aligned(int(symbolic.evaluate(size, level_sdfg.constants)))))
@@ -318,11 +339,14 @@ class PlanSharedMemory(ppl.Pass):
         # Make every decision explicit in the SDFG
         for level_sdfg, names in self._containers(sdfg, kernel_level, top_nested):
             for name in names:
-                level_sdfg.arrays[name].storage = dtypes.StorageType.GPU_Shared(dynamic=(level_sdfg, name) in dynamic)
+                desc = level_sdfg.arrays[name]
+                desc.storage = dtypes.StorageType.GPU_Shared(
+                    dynamic=(level_sdfg, name) in dynamic, may_overlap_outputs=desc.storage.may_overlap_outputs
+                )
 
         # Lay out dynamic shared memory
         if dynamic:
-            plan.dynamic_bytes = self._layout(sdfg, kernel_level, top_nested, 0, dynamic, plan.levels, False)
+            plan.dynamic_bytes = self._layout(sdfg, kernel_level, top_nested, 0, dynamic, plan.levels, False, overlaps)
             self._check_launch_symbols(state, kernel_entry, kernel_nodes, plan.dynamic_bytes)
         return plan
 
@@ -344,14 +368,21 @@ class PlanSharedMemory(ppl.Pass):
         dynamic: set[tuple[SDFG, str]],
         levels: list[SharedMemoryLevel],
         block_level: bool,
+        overlaps: dict[int, _Overlap],
     ) -> symbolic.SymbolicType:
         """
         Lays out the dynamic containers of an SDFG, followed by those of its nested SDFGs, starting at ``base``.
 
         :param block_level: Whether the threads of a block run the SDFG together, so that the nested SDFGs of different
                             states may share their part (see the class documentation).
+        :param overlaps: The container of every SDFG whose memory nested SDFGs may use (see ``_overlap``).
         :return: The end of the layout, in the symbols of ``sdfg``.
         """
+        overlap = overlaps.get(id(sdfg))  # Its states are those of ``groups``: of a block-level SDFG, or the kernel
+        if overlap is not None and (overlap.name not in names or (sdfg, overlap.name) not in dynamic):
+            overlap = None
+        if overlap is not None:  # The container last: what nested SDFGs place at its offset may extend past it
+            names = [n for n in names if n != overlap.name] + [overlap.name]
         level = SharedMemoryLevel(sdfg)
         # The base is aligned, and stays so across containers whose size is a multiple of the alignment
         cursor, cursor_alignment = base, DYNAMIC_SHARED_MEMORY_ALIGNMENT
@@ -363,6 +394,7 @@ class PlanSharedMemory(ppl.Pass):
             offset = cursor if cursor_alignment % alignment == 0 else symbolic.align(cursor, alignment)
             size = desc.total_size_in_bytes
             level.containers[name] = (offset, size)
+            shared_at = offset
             cursor = offset + size
             cursor_alignment = alignment if symbolic.is_multiple(size, alignment) else 1
 
@@ -371,9 +403,29 @@ class PlanSharedMemory(ppl.Pass):
         groups: dict = {}
         for nsdfg_node in nested:
             groups.setdefault(state_of.get(nsdfg_node) if block_level else None, []).append(nsdfg_node)
-        start, start_alignment, end = cursor, cursor_alignment, None
-        for group in groups.values():
-            group_end = self._layout_nested(sdfg, group, state_of, start, start_alignment, dynamic, levels)
+        start, start_alignment = cursor, cursor_alignment
+        end = start if overlap is not None else None
+        for key, group in groups.items():
+            if overlap is not None and key in overlap.states:
+                # The container holds no values in this state: its nested SDFGs start at it, the one that writes it
+                # first, if any, before the others (which then start after the container as well)
+                first = overlap.states[key]
+                rest = [n for n in group if n is not first]
+                rest_start, rest_alignment = shared_at, DYNAMIC_SHARED_MEMORY_ALIGNMENT
+                group_end = shared_at
+                if first is not None and first in group:
+                    group_end = self._layout_nested(
+                        sdfg, [first], state_of, shared_at, DYNAMIC_SHARED_MEMORY_ALIGNMENT, dynamic, levels, overlaps
+                    )
+                    rest_start, rest_alignment = _max(start, group_end), 1
+                group_end = _max(
+                    group_end,
+                    self._layout_nested(sdfg, rest, state_of, rest_start, rest_alignment, dynamic, levels, overlaps),
+                )
+            else:
+                group_end = self._layout_nested(
+                    sdfg, group, state_of, start, start_alignment, dynamic, levels, overlaps
+                )
             end = group_end if end is None else _max(end, group_end)
         if end is not None:
             cursor = end
@@ -392,6 +444,7 @@ class PlanSharedMemory(ppl.Pass):
         cursor_alignment: int,
         dynamic: set[tuple[SDFG, str]],
         levels: list[SharedMemoryLevel],
+        overlaps: dict[int, _Overlap],
     ) -> symbolic.SymbolicType:
         """Lays out the parts of nested SDFGs one after the other, starting at ``cursor``.
 
@@ -425,7 +478,7 @@ class PlanSharedMemory(ppl.Pass):
                 sdfg, state, nsdfg_node
             )
             inner_end = self._layout(
-                nsdfg, nested_names, _nested_sdfg_nodes(nsdfg), inner_base, dynamic, levels, inner_block_level
+                nsdfg, nested_names, _nested_sdfg_nodes(nsdfg), inner_base, dynamic, levels, inner_block_level, overlaps
             )
 
             # Translate the end of the nested part to the symbols of this SDFG
@@ -435,6 +488,80 @@ class PlanSharedMemory(ppl.Pass):
             )
             cursor_alignment = 1
         return cursor
+
+    def _overlap(self, sdfg: SDFG) -> _Overlap | None:
+        """
+        The shared container of an SDFG whose memory its nested SDFGs may use most often, or None. A container holds no
+        values in the states that nothing writes it before (on any path, and in no loop around them). In such a state
+        that does not access the container, nested SDFGs may use its memory. In such a state that does, they may too if
+        a single node writes it, a nested SDFG that the block's threads run together whose shared containers may
+        overlap its outputs (``StorageType.GPU_Shared.may_overlap_outputs``), and that does not read the container:
+        that nested SDFG's part starts at the container, which is laid out last.
+        """
+        candidates = sorted(
+            n for n, d in sdfg.arrays.items() if is_shared_container(d) and d.storage.dynamic is not False
+        )
+        states = list(sdfg.states())
+        if not candidates or not any(isinstance(n, nodes.NestedSDFG) for s in states for n in s.nodes()):
+            return None
+        reach = StateReachability().apply_pass(sdfg, None)[sdfg.cfg_id]
+        best, best_count = None, 0
+        for name in candidates:
+            accesses = {s: [n for n in s.data_nodes() if n.data == name] for s in states}
+            written = [s for s, ns in accesses.items() if any(not e.data.is_empty() for n in ns for e in s.in_edges(n))]
+            found = _Overlap(name)
+            for s in states:
+                if s in reach[s] or any(s in reach[t] for t in written if t is not s):
+                    continue  # It may hold values written before
+                if not accesses[s]:
+                    found.states[s] = None
+                    continue
+                writers = {e.src for n in accesses[s] for e in s.in_edges(n) if not e.data.is_empty()}
+                if len(writers) == 1 and self._writes_first(sdfg, s, next(iter(writers)), name, None):
+                    found.states[s] = next(iter(writers))
+            count = sum(1 for writer in found.states.values() if writer is not None)
+            if count > best_count:
+                best, best_count = found, count
+        return best
+
+    def _overlap_in_kernel(
+        self, sdfg: SDFG, state: SDFGState, kernel_entry: nodes.MapEntry, names: list[str]
+    ) -> _Overlap | None:
+        """The shared container of a kernel's level whose memory the nested SDFG that writes it may use (see
+        ``_overlap``), or None. Such a container holds no values before the kernel (see
+        ``PrivatizeKernelSharedMemory``); the nested SDFGs of the kernel are one group of the layout."""
+        kernel_nodes = state.scope_subgraph(kernel_entry).nodes()
+        for name in names:
+            if sdfg.arrays[name].storage.dynamic is False:
+                continue
+            accesses = [n for n in kernel_nodes if isinstance(n, nodes.AccessNode) and n.data == name]
+            writers = {e.src for n in accesses for e in state.in_edges(n) if not e.data.is_empty()}
+            if len(writers) == 1 and self._writes_first(sdfg, state, next(iter(writers)), name, kernel_entry):
+                return _Overlap(name, {None: next(iter(writers))})
+        return None
+
+    def _writes_first(self, sdfg: SDFG, state: SDFGState, writer: nodes.Node, name: str, scope) -> bool:
+        """Whether the only writer of a container in a state, which holds no values before it, may place its part at
+        the container: a nested SDFG in the given scope (not repeated in an inner one) that the block's threads run
+        together, whose shared containers may overlap its outputs, and that does not read the container."""
+        return (
+            isinstance(writer, nodes.NestedSDFG)
+            and state.entry_node(writer) is scope
+            and not any(isinstance(e.src, nodes.AccessNode) and e.src.data == name for e in state.in_edges(writer))
+            and is_thread_block_level(sdfg, state, writer)
+            and self._overlaps_its_outputs(writer)
+        )
+
+    def _overlaps_its_outputs(self, nsdfg_node: nodes.NestedSDFG) -> bool:
+        """Whether a nested SDFG has shared containers, all of which may overlap its outputs (and none deeper)."""
+        nsdfg = nsdfg_node.sdfg
+        names = sorted(n for n, d in nsdfg.arrays.items() if is_shared_container(d))
+        deeper = self._containers(nsdfg, names, _nested_sdfg_nodes(nsdfg))[1:]
+        return (
+            bool(names)
+            and all(nsdfg.arrays[n].storage.may_overlap_outputs for n in names)
+            and not any(level_names for _, level_names in deeper)
+        )
 
     @staticmethod
     def _check_launch_symbols(
