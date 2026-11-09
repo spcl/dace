@@ -45,9 +45,10 @@ tensor cores on GPUs that have them, staging the operands in a shared memory wor
 stored in blocks of 32 columns (``BlockMatrixOperands``, see ``dace.libraries.blas.blocked``), as inference engines pack
 their weights once: the 32 columns of the 128 rows of a tile that a product stages at a time are then contiguous.
 
-With ``--profile``, every task records its time on the GPU instead (the ``GPU_Events`` instrumentation of a node in a
-kernel: an event per thread block that runs it, on the GPU's global timer). The sample then prints the time of every
-kind of task, and the instrumentation report holds a timeline with a track per processing element.
+With ``--profile``, every task records its time on the GPU instead (the ``GPU_Events`` instrumentation of the task's
+call, which inlining keeps as a region of the kernel's code: an event per thread block that runs it, on the GPU's
+global timer). The kernel is otherwise the same. The sample then prints the time of every kind of task, and the
+instrumentation report holds a timeline with a track per processing element.
 
 The reference is the block in Hugging Face ``transformers``, which is also timed with each of its implementations of
 the experts. The kernel stores and rounds values in bfloat16 where ``transformers`` does. If vLLM is installed (it pins
@@ -557,14 +558,17 @@ def build(config: Gemma4TextConfig, num_pes: int, queue_size: int = 1 << 18, pro
                 )  # fmt: skip
 
     sdfg = moe_block.to_sdfg(simplify=False)
-    if profile:  # The nested SDFG of every task call (which stays a nested SDFG, rather than being inlined)
-        tasks = (expert_gate_up, dense_gate_up, expert_down, dense_down, route, top_k, output, scan)
-        names = {task.name: task.f.__name__ for task in tasks}
+    tasks = (expert_gate_up, dense_gate_up, expert_down, dense_down, route, top_k, output, scan)
+    names = {task.name: task.f.__name__ for task in tasks}
+    if profile:  # The nested SDFG of every task call, which inlining turns into a region with its instrumentation
         for node, state in sdfg.all_nodes_recursive():  # (The calls, not the nested SDFGs of the tasks' own maps)
             if isinstance(node, dace.nodes.NestedSDFG) and node.label in names and state.entry_node(node) is None:
                 node.label = names[node.label]
                 node.instrument = dace.InstrumentationType.GPU_Events
     sdfg.simplify(validate=False)  # As the frontend does: shared memory is valid once the program is on the GPU
+    for region in sdfg.all_control_flow_regions(recursive=True):  # Named after the task (inlining prefixes labels)
+        if region.instrument == dace.InstrumentationType.GPU_Events:
+            region.label = next(name for name in names.values() if region.label.endswith(name))
     # The gathers of rows and the transposed weights, read by the products themselves
     sdfg.apply_transformations_repeated([GatherIntoMatrixProduct, TransposeIntoMatrixProduct], validate=False)
     BlockMatrixOperands(WEIGHTS, BLOCK).apply_pass(sdfg, {})  # The program then takes the weights in blocks
