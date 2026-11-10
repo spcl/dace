@@ -20,6 +20,7 @@ C counterpart or an entry saying why it cannot.
 
 import ctypes
 import re
+import subprocess
 import textwrap
 
 import numpy as np
@@ -29,11 +30,13 @@ from dace import cpf_lowering, symbolic
 from dace.codegen.common import sym2cpp
 from dace.cpf_lowering import Dialect
 from tests.codegen.cpf.conftest import (
+    C_STANDARD,
     UNQUALIFIED_RUNTIME_FUNCTIONS,
     assert_standalone,
     build_standalone,
     compile_diagnostics,
     compile_standalone,
+    host_compiler,
 )
 
 #: The two standalone dialects, and what the harness calls each one's compiler.
@@ -1366,6 +1369,12 @@ C_MATHS_CASES = (
 def tgmath_agreement():
     """For each case: whether the function CPF names returns the same type and the same bits as the
     ``<tgmath.h>`` macro of the same name, from one compiled probe."""
+    # A gcc whose fixincludes copy of <bits/floatn.h> predates its glibc (SUSE gcc-14 on glibc 2.38)
+    # lacks __HAVE_FLOAT64X, and glibc's <tgmath.h> then #errors on the bare include.
+    command = [host_compiler("c"), "-std=" + C_STANDARD, "-fsyntax-only", "-x", "c", "-"]
+    header = subprocess.run(command, input="#include <tgmath.h>\n", capture_output=True, text=True)
+    if header.returncode != 0:
+        pytest.skip(f"this host's <tgmath.h> does not compile under {' '.join(command[:2])}: {header.stderr.strip()}")
     declarations, checks = [], []
     for index, (name, types) in enumerate(C_MATHS_CASES):
         base = cpf_lowering.C_TYPED_MATH[name][0]
