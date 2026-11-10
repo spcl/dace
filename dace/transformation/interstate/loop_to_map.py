@@ -1299,6 +1299,10 @@ def _writes_may_overlap(
     for (b1, e1, _), (b2, e2, _) in zip(nd1, nd2):
         if b1 != e1 or b2 != e2:  # non-point range dimension: cannot decide here
             continue
+        # A symbol varying inside an iteration is no constant: ``A[i, j]`` and ``A[i + 1, j + 1]`` under a loop over
+        # ``j`` meet in the next iteration (see :func:`_read_write_dims_disjoint`).
+        if varying & ({s.name for s in sp.sympify(b1).free_symbols} | {s.name for s in sp.sympify(b2).free_symbols}):
+            continue
         # Both writes index this dim by the same injective function of the iter var: a collision
         # forces the two iterations equal, so they coincide only within one iteration (program
         # order in the map body), never across distinct iterations.

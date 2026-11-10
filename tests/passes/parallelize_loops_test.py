@@ -1472,6 +1472,19 @@ def test_a_write_offset_by_an_inner_iterator_lifts_only_if_its_sweep_fits_the_st
     assert outer_loop_lifts(rows_of_a_flattened_array)
 
 
+@dace.program
+def two_writes_a_diagonal_apart(A: dace.float64[WN + 1, WM + 1], B: dace.float64[WN, WM], C: dace.float64[WN, WM]):
+    for i in range(WN):
+        for j in range(WM):
+            A[i, j] = B[i, j]
+            A[i + 1, j + 1] = C[i, j]
+
+
+def test_two_writes_kept_apart_only_by_an_inner_iterator_stay_a_loop():
+    """``j`` and ``j + 1`` differ within one inner iteration, not across the outer loop's."""
+    assert not outer_loop_lifts(two_writes_a_diagonal_apart)
+
+
 if __name__ == "__main__":
     test_lift_never_changes_a_surviving_blocks_free_symbols()
     test_reused_analysis_costs_no_maps_against_the_matcher()
@@ -1542,3 +1555,4 @@ if __name__ == "__main__":
     test_two_nested_writes_meeting_across_iterations_stay_a_loop()
     test_a_nested_read_on_its_own_connector_of_the_written_array_stays_a_loop()
     test_a_write_offset_by_an_inner_iterator_lifts_only_if_its_sweep_fits_the_stride()
+    test_two_writes_kept_apart_only_by_an_inner_iterator_stay_a_loop()
