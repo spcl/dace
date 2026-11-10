@@ -21,6 +21,7 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 """
 
 import os
+from collections.abc import Callable
 
 import sympy
 
@@ -231,8 +232,22 @@ def libnode_is_device_code(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG
     )
 
 
+def libnode_on_host(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> bool:
+    """``node`` is host code whose operands all live in host memory, so it runs the CPU library."""
+    operands = [edge.data.data for edge in state.all_edges(node) if not edge.data.is_empty()]
+    return (
+        bool(operands)
+        and node.schedule not in dtypes.GPU_SCHEDULES
+        and all(state.sdfg.arrays[name].storage not in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES for name in operands)
+        and not libnode_is_device_code(node, state, sdfg)
+    )
+
+
 def canonicalize_set_fast_implementations(
-    sdfg: SDFG, device: dtypes.DeviceType, small_dim: int = SMALL_MATMUL_DIM
+    sdfg: SDFG,
+    device: dtypes.DeviceType,
+    small_dim: int = SMALL_MATMUL_DIM,
+    selects: Callable[[nodes.LibraryNode, SDFGState], bool] | None = None,
 ) -> None:
     """Select library-node implementations for the canonicalize perf tail.
 
@@ -246,13 +261,27 @@ def canonicalize_set_fast_implementations(
     fusible/vectorizable and keeps a loop of small matmuls sequential instead of issuing serialized
     library calls. Symbolic- or large-dimensioned matmuls keep the fast BLAS implementation, and so
     does a node with no ``'rowwise'`` expansion.
+
+    On GPU a node a device graph keeps on the host, operands included (:func:`libnode_on_host`), is selected as
+    the CPU form selects it. ``selects`` restricts the selection to the nodes it accepts.
     """
-    set_fast_implementations(sdfg, device, blocklist=["MKL"], find_fast_library_fn=canonicalize_fast_library_priority)
+    if device == dtypes.DeviceType.GPU and selects is None:
+        canonicalize_set_fast_implementations(
+            sdfg, dtypes.DeviceType.CPU, small_dim, lambda node, state: libnode_on_host(node, state, sdfg)
+        )
+
+        def on_device(node: nodes.LibraryNode, state: SDFGState) -> bool:
+            return not libnode_on_host(node, state, sdfg)
+
+        selects = on_device
+    set_fast_implementations(
+        sdfg, device, blocklist=["MKL"], find_fast_library_fn=canonicalize_fast_library_priority, selects=selects
+    )
     gpu_priority = canonicalize_fast_library_priority(device) if device == dtypes.DeviceType.GPU else []
     # Probed once: without LIBXSMM_ROOT, locating LIBXSMM runs a library search per call.
     has_libxsmm = device == dtypes.DeviceType.CPU and libxsmm.LIBXSMM.is_installed()
     for node, state in sdfg.all_nodes_recursive():
-        if not isinstance(node, nodes.LibraryNode):
+        if not isinstance(node, nodes.LibraryNode) or selects is not None and not selects(node, state):
             continue
         impls = type(node).implementations
         # A node re-entered inside an outer parallel/repeated scope (a parallel parent map, an

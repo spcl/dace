@@ -78,20 +78,29 @@ def small_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
     return named
 
 
-def encloses_device_wide_libnode(state: SDFGState, entry: nodes.MapEntry, scope_children: dict) -> bool:
-    """Its scope holds a library node expanding to a call only host code can issue."""
+def is_kernel_refused_libnode(node: nodes.Node, state: SDFGState) -> bool:
+    """A device-wide library node with no in-kernel block lowering for its shape, so no kernel can run it."""
+    from dace.libraries.standard.block_reduce import gpu_block_implementation  # Avoid import loop
+
+    return is_device_wide_libnode(node, state) and gpu_block_implementation(node, state, state.sdfg) is None
+
+
+def encloses_device_wide_libnode(
+    state: SDFGState, entry: nodes.MapEntry, scope_children: dict, test=is_device_wide_libnode
+) -> bool:
+    """Its scope holds a library node expanding to a call only host code can issue (``test`` decides)."""
     for node in scope_children.get(entry, ()):
-        if is_device_wide_libnode(node, state):
+        if test(node, state):
             return True
-        if isinstance(node, nodes.MapEntry) and encloses_device_wide_libnode(state, node, scope_children):
+        if isinstance(node, nodes.MapEntry) and encloses_device_wide_libnode(state, node, scope_children, test):
             return True
-        if isinstance(node, nodes.NestedSDFG) and sdfg_holds_device_wide_libnode(node.sdfg):
+        if isinstance(node, nodes.NestedSDFG) and sdfg_holds_device_wide_libnode(node.sdfg, test):
             return True
     return False
 
 
-def sdfg_holds_device_wide_libnode(sdfg: SDFG) -> bool:
-    return any(is_device_wide_libnode(node, state) for node, state in sdfg.all_nodes_recursive())
+def sdfg_holds_device_wide_libnode(sdfg: SDFG, test=is_device_wide_libnode) -> bool:
+    return any(test(node, state) for node, state in sdfg.all_nodes_recursive())
 
 
 def sdfg_only_launches(sdfg: SDFG) -> bool:

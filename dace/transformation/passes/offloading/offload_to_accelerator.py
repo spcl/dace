@@ -70,7 +70,13 @@ from dace.transformation.passes.offloading.offloading_helpers import (
     traverse_same_level,
 )
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
-from dace.transformation.passes.offloading.taskloop import is_device_wide_libnode, sdfg_only_launches, taskloop_maps
+from dace.transformation.passes.offloading.taskloop import (
+    encloses_device_wide_libnode,
+    is_device_wide_libnode,
+    is_kernel_refused_libnode,
+    sdfg_only_launches,
+    taskloop_maps,
+)
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -1030,6 +1036,18 @@ class OffloadToAccelerator(ppl.Pass):
         self._host_map_entries = host_maps(sdfg, self._host_maps)
         # A host map launches the kernels under it; a pinned map keeps its whole subtree host code.
         self._host_pinned = maps_pinned_by_host_loops(sdfg)
+        # A map around a call no kernel can run would issue it on per-iteration operands from the host each
+        # iteration: the map, its operands and its calls stay host code, as in the CPU form.
+        host_calls = OrderedSet(
+            entry
+            for state, children in self._cached_scope_children.items()
+            for entry in children
+            if entry in self._taskloops
+            and entry.map.label not in self.taskloop_overrides
+            and encloses_device_wide_libnode(state, entry, children, is_kernel_refused_libnode)
+        )
+        self._taskloops -= host_calls
+        self._host_pinned |= host_calls
 
     def is_kernel(self, node: nodes.MapEntry, host_level: bool) -> bool:
         """Whether the map ``node``, at a host level or not, is a kernel: see :meth:`assign_schedules`."""
