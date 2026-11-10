@@ -250,11 +250,13 @@ def _match(sdfg: SDFG) -> tuple[LoopRegion, LoopRegion, list[SDFGState], list[SD
             e = edge_of.get((a, b))
             if e is not None:
                 sifted_lhs.update(dict.fromkeys(e.data.assignments.keys()))
-        if any(s in sifted_lhs for s in _body_written_names(inner)):
+        body_written = _body_written_names(inner)
+        if any(s in sifted_lhs for s in body_written):
             continue
-        # The inner header runs before any sifted statement, so it must not read what ``pre`` produces.
+        # The inner header runs before any sifted statement, so it must not read what ``pre`` produces; the guards
+        # read it in every iteration, so the body must not write it either.
         pre_written = {n.data for st in pre for n in st.data_nodes() if st.in_degree(n) > 0}
-        if loop_header_names(inner) & (pre_written | sifted_lhs.keys()):
+        if loop_header_names(inner) & (pre_written | sifted_lhs.keys() | body_written.keys()):
             continue
         return outer, inner, pre, post
     return None

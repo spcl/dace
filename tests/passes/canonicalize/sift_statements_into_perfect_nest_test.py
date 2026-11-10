@@ -487,5 +487,27 @@ def test_sifting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     sdfg.validate()
 
 
+def test_inner_loop_whose_body_moves_its_bound_is_refused():
+    """``for j <= M`` with ``M = M - 1`` in the body: the guard ``j == M`` would never meet the last iteration."""
+    sdfg = dace.SDFG("sift_moving_inner_bound")
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("b", [64], dace.int64)
+    sdfg.add_array("c", [2], dace.int64)
+    outer = LoopRegion("outer", "i < 2", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(outer, is_start_block=True)
+    inner = LoopRegion("inner", "j <= M", "j", "j = M - 2", "j = j + 1")
+    outer.add_node(inner, is_start_block=True)
+    body = inner.add_state("body", is_start_block=True)
+    body.add_edge(body.add_tasklet("t", {}, {"o"}, "o = 1"), "o", body.add_write("b"), None, dace.Memlet("b[j]"))
+    inner.add_edge(body, inner.add_state("bump"), dace.InterstateEdge(assignments={"M": "M - 1"}))
+    post = outer.add_state_after(inner, "post")
+    post.add_edge(post.add_tasklet("t", {}, {"o"}, "o = 1"), "o", post.add_write("c"), None, dace.Memlet("c[i]"))
+
+    assert sift_imperfect_nests(sdfg) == 0
+    b, c = np.zeros(64, dtype=np.int64), np.zeros(2, dtype=np.int64)
+    sdfg(b=b, c=c, M=20)
+    assert c.tolist() == [1, 1] and b.sum() == 4
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
