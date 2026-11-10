@@ -90,14 +90,6 @@ def test_view_idx_uses_view_strides():
     # The view is accessed directly through its index function, no copy-in temp.
     assert any("V[V_idx(" in ln for ln in code.splitlines()), "no V[V_idx(..)] access emitted:\n" + code
     assert "double inp =" not in code and "double inp;" not in code
-
-
-def test_view_no_pure_fallback():
-    """A View input never forces the classic connector copy: the readable body
-    references the view pointer directly."""
-    code = generated_for(strided_view_copy_sdfg, "view_nofallback", EXPERIMENTAL)
-    # Connector name gone from the body; view name present as an indexed pointer.
-    assert "V[V_idx(" in code
     assert "///////////////////" not in code
 
 
@@ -141,7 +133,6 @@ def test_view_idx_inside_kernel():
 
 if __name__ == "__main__":
     test_view_idx_uses_view_strides()
-    test_view_no_pure_fallback()
     test_view_access_bit_exact("cpu")
     test_view_access_bit_exact("gpu")
     test_view_idx_inside_kernel()

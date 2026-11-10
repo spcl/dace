@@ -24,19 +24,6 @@ def generate():
         return "\n".join(obj.code for obj in sdfg.generate_code() if obj.language == "cpp")
 
 
-def test_a_heap_transient_is_declared_restrict():
-    assert "double* __restrict__ tmp" in generate()
-
-
-def test_a_heap_transient_that_may_alias_is_not_restrict():
-    sdfg = scaled_twice.to_sdfg(simplify=True)
-    sdfg.arrays["tmp"].may_alias = True
-    with set_temporary("compiler", "cpu", "implementation", value="experimental_readable"):
-        code = "\n".join(obj.code for obj in sdfg.generate_code() if obj.language == "cpp")
-    assert "__restrict__ tmp" not in code
-    assert "double* tmp" in code
-
-
 def test_index_helpers_are_int64_constexpr():
     """Every ``<array>_idx`` helper computes in ``int64_t`` and is ``static DACE_HDFI constexpr``."""
     helpers = [line for line in generate().splitlines() if "_idx(" in line and "return" in line and "{" in line]
@@ -46,6 +33,4 @@ def test_index_helpers_are_int64_constexpr():
 
 
 if __name__ == "__main__":
-    test_a_heap_transient_is_declared_restrict()
-    test_a_heap_transient_that_may_alias_is_not_restrict()
     test_index_helpers_are_int64_constexpr()

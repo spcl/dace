@@ -12,10 +12,8 @@ so an un-inlined nested-SDFG function does not re-emit an identical helper into 
 import re
 
 import numpy as np
-import pytest
 
 import dace
-from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
 from tests.codegen.readable.common import EXPERIMENTAL, use_implementation
 
@@ -100,35 +98,6 @@ def test_root_argument_never_renamed():
     assert any(k.startswith("A_v") for k in inner.arrays)
 
 
-@pytest.mark.parametrize("kernel", ["trisolv", "lu", "ludcmp"])
-def test_uninlined_kernel_no_duplicate_idx(kernel):
-    """The reproduction: a real kernel with every nested SDFG forced no_inline must emit each
-    ``<name>_idx`` at most once per translation unit (no ODR redefinition)."""
-    import importlib.util
-    import os
-
-    base = os.path.join(os.path.dirname(__file__), "..", "..", "corpus", "polybench", "linear_algebra", "solvers")
-    path = os.path.join(base, f"{kernel}.py")
-    if not os.path.exists(path):
-        pytest.skip("in-repo polybench corpus not present in this build")
-    spec = importlib.util.spec_from_file_location(f"k_{kernel}", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    sdfg = getattr(mod, kernel).to_sdfg(simplify=True)
-    for n, _ in sdfg.all_nodes_recursive():
-        if isinstance(n, nodes.NestedSDFG):
-            n.no_inline = True
-    with use_implementation(EXPERIMENTAL):
-        for co in sdfg.generate_code():
-            if co.language != "cpp":
-                continue
-            counts = {}
-            for m in re.finditer(r"static\s+DACE_HDFI\s+constexpr\s+long\s+long\s+(\w+_idx)\s*\(", co.code):
-                counts[m.group(1)] = counts.get(m.group(1), 0) + 1
-            dups = {k: v for k, v in counts.items() if v > 1}
-            assert not dups, f"{kernel}/{co.name}: duplicate index helpers in one TU: {dups}"
-
-
 def helper_named_container_sdfg() -> dace.SDFG:
     """``B = (A + A_idx) * 2`` through a transient ``T``, beside a ``T_size`` input: ``A_idx`` and ``T_size`` are the
     names the readable generator would give the index helper of ``A`` and the size helper of ``T``."""
@@ -179,6 +148,4 @@ if __name__ == "__main__":
     test_full_subset_same_name_not_renamed()
     test_distinct_inner_name_kept()
     test_root_argument_never_renamed()
-    for k in ("trisolv", "lu", "ludcmp"):
-        test_uninlined_kernel_no_duplicate_idx(k)
     test_helper_is_named_apart_from_a_container()

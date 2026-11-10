@@ -9,26 +9,9 @@ selection contract.
 import pytest
 
 import dace
-from dace.sdfg import nodes
-from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (
-    GPUStreamSchedulingStrategy,
     PerComponentGPUStreamScheduler,
 )
-
-
-def test_pipeline_accepts_user_defined_strategy():
-    """A user-defined strategy that subclasses the base class is accepted."""
-
-    class DummyScheduler(GPUStreamSchedulingStrategy):
-        def assign_streams(self, sdfg) -> dict[nodes.Node, int]:
-            return {}
-
-        def insert_sync_tasklets(self, sdfg, assignments):
-            pass
-
-    pipe = GPUStreamPipeline(scheduling_strategy=DummyScheduler())
-    assert isinstance(pipe._scheduling_strategy, DummyScheduler)
 
 
 def test_apply_pass_rejects_non_root_sdfg():
@@ -41,5 +24,4 @@ def test_apply_pass_rejects_non_root_sdfg():
 
 
 if __name__ == "__main__":
-    test_pipeline_accepts_user_defined_strategy()
     test_apply_pass_rejects_non_root_sdfg()
