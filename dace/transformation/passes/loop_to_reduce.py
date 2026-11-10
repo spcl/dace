@@ -31,7 +31,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, Sym
 from dace.symbolic import AND, OR, Subscript, bitwise_and, bitwise_or
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR, reads_written_element, sole_access
 from dace.transformation.passes.analysis import loop_analysis
 
 #: The WCR of each update operator a ``Reduce`` folds: ``AugAssignToWCR.increment``'s, except subtraction, which is no
@@ -269,9 +269,8 @@ def forward_element_stores(sdfg: SDFG) -> int:
             # The update of that element, not any store
             if not any(e.data.data == store.dst.data and e.data.subset == element for e in state.in_edges(compute.src)):
                 continue
-            if any(n is not scalar and n.data == scalar.data for s in owner.states() for n in s.data_nodes()):
-                continue
-            if scalar.data in {str(s) for e in owner.all_interstate_edges() for s in e.data.free_symbols}:
+            # A branch or loop condition reads the scalar by name, like an interstate edge
+            if not sole_access(owner, scalar):
                 continue
             memlet = mm.Memlet(data=store.dst.data, subset=copy.deepcopy(element))
             state.add_edge(compute.src, compute.src_conn, store.dst, store.dst_conn, memlet)

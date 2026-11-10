@@ -1606,7 +1606,32 @@ def test_an_input_wider_than_the_accumulator_stays_a_loop():
     assert not LoopToReduce().apply_pass(sdfg, {})
 
 
+def test_a_staged_sum_a_branch_condition_reads_keeps_its_scalar():
+    n = dace.symbol("n")
+
+    @dace.program
+    def sum_with_reset(b: dace.float64[n], out: dace.float64[1]):
+        s = 0.0
+        for i in range(n):
+            s = s + b[i]
+            if s > 10.0:
+                s = 0.0
+        out[0] = s
+
+    sdfg = sum_with_reset.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="cpu")
+    b, out = np.random.default_rng(0).random(1000), np.zeros(1)
+    sdfg(b=b, out=out, n=1000)
+    expected = 0.0
+    for x in b:
+        expected = expected + x
+        if expected > 10.0:
+            expected = 0.0
+    assert out[0] == expected
+
+
 if __name__ == "__main__":
+    test_a_staged_sum_a_branch_condition_reads_keeps_its_scalar()
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()
     test_frontend_augassign_array_slice_is_lifted()
