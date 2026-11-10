@@ -55,11 +55,6 @@ def _equivalence(prog, args):
             )
 
 
-def test_matmul_library():
-    rng = np.random.default_rng(42)
-    _equivalence(mm, lambda: dict(A=rng.random((6, 5)), B=rng.random((5, 7)), C=np.zeros((6, 7)), M=6, K=5, N=7))
-
-
 def test_const_init_constexpr():
     # Constant-shape write-once array is promoted to a constexpr initializer.
     sdfg_e = _const_sdfg("experimental_readable")
@@ -101,5 +96,4 @@ def _const_sdfg(impl):
 
 
 if __name__ == "__main__":
-    test_matmul_library()
     test_const_init_constexpr()

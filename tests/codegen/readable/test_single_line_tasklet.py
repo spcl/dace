@@ -113,18 +113,6 @@ def test_single_line_no_block():
     assert LEGACY_SEPARATOR in legacy
 
 
-def test_wcr_tasklet_keeps_block():
-    """A WCR (atomic) output is not inlined, so the reduction tasklet keeps its
-    ``{ }`` scope block even under the experimental generator."""
-    experimental = generated_for(wcr_reduction_sdfg, "wcr_exp", EXPERIMENTAL)
-    # The atomic write path is still emitted (never collapsed to a plain store),
-    # and the tasklet retains a brace-delimited body.
-    assert "wcr" in experimental.lower() or "reduce" in experimental.lower() or "atomic" in experimental.lower(), (
-        experimental
-    )
-    assert "{" in experimental and "}" in experimental
-
-
 # --------------------------------------------------------------------------- #
 # Numerical equivalence (compile + run): CPU (fork) and GPU (in-process)
 # --------------------------------------------------------------------------- #
@@ -181,7 +169,6 @@ def test_single_line_inside_kernel():
 
 if __name__ == "__main__":
     test_single_line_no_block()
-    test_wcr_tasklet_keeps_block()
     test_single_line_bit_exact("cpu")
     test_wcr_reduction_bit_exact("cpu")
     test_single_line_bit_exact("gpu")

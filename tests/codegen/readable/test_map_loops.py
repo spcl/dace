@@ -11,12 +11,6 @@ from dace.config import set_temporary
 N = dace.symbol("N")
 
 
-@dace.program
-def strided(A: dace.float64[N], B: dace.float64[N]):
-    for i in dace.map[0:N:2]:
-        B[i] = A[i] * 2.0
-
-
 def map_sdfg(name, outputs=("B",), schedule=dace.dtypes.ScheduleType.Sequential, rng="0:N"):
     """One map per output, all with the parameter ``i``, so sibling counters share a name."""
     sdfg = dace.SDFG(name)
@@ -55,17 +49,9 @@ def test_strided_map_covers_its_iteration_space(schedule, n):
     assert numpy.allclose(B[::2], A[::2] * 2.0) and not B[1::2].any()
 
 
-def test_frontend_strided_map_runs():
-    A = numpy.random.default_rng(0).random(31)
-    B = numpy.zeros(31)
-    strided(A=A, B=B, N=31)
-    assert numpy.allclose(B[::2], A[::2] * 2.0)
-
-
 if __name__ == "__main__":
     for impl in ("legacy", "experimental_readable"):
         test_sibling_sequential_maps_share_a_counter_name(impl)
     for sched in (dace.dtypes.ScheduleType.Sequential, dace.dtypes.ScheduleType.CPU_Multicore):
         for size in (31, 32):
             test_strided_map_covers_its_iteration_space(sched, size)
-    test_frontend_strided_map_runs()

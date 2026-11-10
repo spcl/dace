@@ -242,3 +242,14 @@ def test_write_once_heap_bit_exact():
     legacy = run_write_once("const_run_legacy", LEGACY)
     experimental = run_write_once("const_run_readable", EXPERIMENTAL)
     assert_outputs_equivalent(legacy, experimental, "cpu", label="const_init_heap")
+
+
+if __name__ == "__main__":
+    test_fused_definition_with_restrict()
+    test_legacy_still_splits()
+    test_persistent_lifetime_stays_split()
+    test_may_alias_drops_restrict()
+    test_constant_extent_is_fused()
+    test_write_once_heap_data_is_not_pointee_const()
+    test_fused_definition_bit_exact()
+    test_write_once_heap_bit_exact()
