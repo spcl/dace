@@ -1257,7 +1257,13 @@ def validate_state(
             else:
                 dst_expr = e.data.dst_subset.num_elements()
 
-            if symbolic.inequal_symbols(src_expr, dst_expr):
+            mismatch = symbolic.inequal_symbols(src_expr, dst_expr)
+            if mismatch:
+                # a symbolic step needs the facts of the scope: ceiling((S * n + 1) / S) is n + 1 only for S >= 1
+                from dace.sdfg.state import SymbolResolver
+
+                mismatch = symbolic.inequal_symbols(src_expr, dst_expr, SymbolResolver().facts_at(state))
+            if mismatch:
                 error = InvalidSDFGEdgeError(
                     "Dimensionality mismatch between src/dst subsets", state.parent_graph, state_id, eid
                 )
