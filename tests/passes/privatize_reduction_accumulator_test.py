@@ -429,6 +429,32 @@ def test_a_map_nest_reducing_into_one_slot_accumulates_into_the_scalar():
     assert acc[0] == 1.0 + x.sum()
 
 
+def test_a_write_after_the_map_is_no_seed():
+    """``s[0] += x[i]`` then ``s[0] = s[0] * 2`` in one state: the later write is not the accumulator's seed."""
+    sdfg = dace.SDFG("privatize_write_after_map")
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_array("s", [1], dace.float64)
+    state = sdfg.add_state()
+    summed, doubled = state.add_access("s"), state.add_access("s")
+    _, _, map_exit = state.add_mapped_tasklet(
+        "reduce",
+        dict(i="0:N"),
+        {"a": dace.Memlet("x[i]")},
+        "o = a",
+        {"o": dace.Memlet("s[0]", wcr="lambda a, b: a + b")},
+        external_edges=True,
+        output_nodes={"s": summed},
+    )
+    tasklet = state.add_tasklet("double", {"a": None}, {"o": None}, "o = a * 2")
+    state.add_edge(summed, None, tasklet, "a", dace.Memlet("s[0]"))
+    state.add_edge(tasklet, "o", doubled, None, dace.Memlet("s[0]"))
+    assert not privatize_reduction_accumulator(state, map_exit, state.in_edges(map_exit)[0])
+    sdfg.validate()
+    s = np.array([1.0])
+    sdfg(x=np.arange(4.0), s=s, N=4)
+    assert s[0] == 14.0
+
+
 if __name__ == "__main__":
     test_array_slot_dot_product_privatized()
     test_two_reductions_get_unique_scalar_names()
@@ -438,3 +464,4 @@ if __name__ == "__main__":
     test_targeted_helper_refuses_non_wcr_edge()
     test_two_maps_reducing_into_one_slot_in_one_state_keep_both_sums()
     test_a_map_nest_reducing_into_one_slot_accumulates_into_the_scalar()
+    test_a_write_after_the_map_is_no_seed()

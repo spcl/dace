@@ -107,10 +107,14 @@ def privatize_reduction_accumulator(
     # *in-state* privatization (no priv_init/priv_wb states); otherwise fall
     # back to the cross-state init + writeback.
     in_state_init_an = None
+    after_map = dict.fromkeys(state.bfs_nodes(map_exit))
     for n in state.nodes():
         if not isinstance(n, nodes.AccessNode):
             continue
         if n is arr_node or n.data != arr_node.data:
+            continue
+        # A write after the map (``acc[c] = acc[c] * 2``) seeds nothing: reading the seed from it closes a cycle.
+        if n in after_map:
             continue
         # Only a non-empty in-edge is a write: an ordering memlet initialises nothing.
         if not any(e.data is not None and not e.data.is_empty() for e in state.in_edges(n)):
@@ -136,7 +140,7 @@ def privatize_reduction_accumulator(
     # The cross-state writeback would run after any access to ``arr`` that follows the map in this state.
     if in_state_init_an is None and any(
         isinstance(n, nodes.AccessNode) and n.data == arr_node.data and (n is not arr_node or state.out_degree(n))
-        for n in state.bfs_nodes(map_exit)
+        for n in after_map
     ):
         return False
 
