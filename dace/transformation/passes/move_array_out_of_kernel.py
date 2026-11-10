@@ -422,7 +422,8 @@ def read_in_kernel_sdfg(
 ) -> tuple[str, list[symbolic.SymbolicType]] | None:
     """``container[index]`` read in ``sdfg`` (a nest of ``hierarchy``) in the names of ``hierarchy[-1]``: through
     every nest's input binding and symbol mapping; ``None`` when a nest is handed something other than an array
-    window of the outer one."""
+    window of the outer one. A nest is handed the container's first element whatever window its edge names, so the
+    index is the parent's."""
     idx = [symbolic.pystr_to_symbolic(part) for part in index.split(",")] if index else []
     for inner in hierarchy[hierarchy.index(sdfg) : -1]:
         node, state = inner.parent_nsdfg_node, inner.parent
@@ -436,7 +437,7 @@ def read_in_kernel_sdfg(
         mapping = {
             symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(str(v)) for k, v in node.symbol_mapping.items()
         }
-        idx = [begin + symbolic.pystr_to_symbolic(i).subs(mapping) for (begin, end, step), i in zip(window, idx)]
+        idx = [symbolic.pystr_to_symbolic(i).subs(mapping) for i in idx]
         container = bound[0].data.data
     return container, idx
 
