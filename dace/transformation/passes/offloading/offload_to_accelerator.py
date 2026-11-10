@@ -45,6 +45,7 @@ from dace.transformation.passes.length_one_array_scalar_conversion import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
 )
+from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import small_count
 from dace.transformation.passes.offloading.host_maps import HostMapSpec, host_maps, maps_pinned_by_host_loops
 from dace.transformation.passes.offloading.offloading_helpers import (
     add_fallthrough_branches,
@@ -1082,7 +1083,7 @@ class OffloadToAccelerator(ppl.Pass):
         """``GPU_Device`` at a host level, ``Sequential`` below one; a taskloop keeps its body host-level.
 
         A map the offload keeps on the host that launches nothing runs as its CPU form does: ``CPU_Multicore``
-        unless canonicalization left it sequential; maps it holds then run inside its one parallel region. With no
+        unless canonicalization left it sequential or its iteration count is small; maps it holds then run inside its one parallel region. With no
         taskloops this is the old rule: top-level maps are the kernels.
         """
 
@@ -1100,7 +1101,9 @@ class OffloadToAccelerator(ppl.Pass):
                         node, dtypes.ScheduleType.GPU_Device if is_kernel else dtypes.ScheduleType.Sequential
                     )
                     walk(state, node, host_level and not is_kernel and not pinned)
-                    if host_level and not is_kernel and not was_sequential:
+                    if host_level and not is_kernel and not was_sequential and not small_count(
+                        node.map.range.num_elements(), state.sdfg.facts()
+                    ):
                         inner = self.host_maps_under(state, node)
                         if inner is not None:
                             node.map.schedule = dtypes.ScheduleType.CPU_Multicore
