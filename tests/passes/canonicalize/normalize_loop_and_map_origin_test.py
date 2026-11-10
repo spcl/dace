@@ -405,6 +405,25 @@ def test_map_whose_tasklet_assigns_the_parameter_is_left_unchanged():
     assert sdfg.to_json() == before
 
 
+def test_loop_whose_body_reassigns_its_start_symbol_is_left_unchanged():
+    """``for i = K; ...`` with ``K = K + 1`` in the body: ``a[i + K]`` would read the moved ``K``."""
+    sdfg = dace.SDFG("origin_start_reassigned")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("a", [16], dace.int64)
+    loop = LoopRegion("L", "i < 12", "i", "i = K", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    body.add_edge(body.add_tasklet("t", {}, {"o"}, "o = i"), "o", body.add_write("a"), None, dace.Memlet("a[i]"))
+    loop.add_edge(body, loop.add_state("bump"), dace.InterstateEdge(assignments={"K": "K + 1"}))
+    before = sdfg.to_json()
+
+    assert NormalizeLoopAndMapOrigin().apply_pass(sdfg, {}) is None
+    assert sdfg.to_json() == before
+    a = np.full(16, -1, dtype=np.int64)
+    sdfg(a=a, K=2)
+    assert np.array_equal(a[2:12], np.arange(2, 12)) and np.all(a[:2] == -1)
+
+
 if __name__ == "__main__":
     test_map_rebased_keeping_stride()
     test_map_value_preserving()
@@ -427,3 +446,4 @@ if __name__ == "__main__":
         test_rebased_map_shifts_the_parameter_in_every_statement_of_a_tasklet(language, code, rewritten, expected)
     test_rebased_loop_counter_is_shifted_inside_calls_in_loop_and_branch_conditions()
     test_map_whose_tasklet_assigns_the_parameter_is_left_unchanged()
+    test_loop_whose_body_reassigns_its_start_symbol_is_left_unchanged()

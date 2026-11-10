@@ -277,6 +277,12 @@ def written_names(region: ControlFlowRegion) -> set[str]:
     return written
 
 
+def body_writes(loop: LoopRegion, value: symbolic.SymbolicType) -> bool:
+    """Whether ``loop``'s body writes a name ``value`` reads: such a header value is not the same in every iteration."""
+    reads = symbolic.free_symbols_and_functions(value) | set(symbolic.arrays(value))
+    return bool(reads) and not reads.isdisjoint(written_names(loop))
+
+
 def loop_header_names(loop: LoopRegion) -> set[str]:
     """The names ``loop``'s init, condition and update read, its own iterator left out."""
     names: set[str] = set()

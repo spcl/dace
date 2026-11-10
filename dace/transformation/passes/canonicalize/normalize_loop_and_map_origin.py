@@ -252,6 +252,9 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
             return 0
         if loop_analysis.get_loop_end(loop) is None or loop_analysis.get_loop_stride(loop) is None:
             return 0
+        # The body would read ``var + start`` with the CURRENT start, not the one the loop began at
+        if loop_analysis.body_writes(loop, start):
+            return 0
         try:
             new_condition = add_to_rhs(loop.loop_condition.as_string, -start)
         except (ValueError, SyntaxError, TypeError):
