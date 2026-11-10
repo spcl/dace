@@ -17,7 +17,7 @@ def reduction_sdfg(node: "MaskReduction", state: dace.SDFGState, sdfg: dace.SDFG
     its own implementation."""
     in_edge = sdutil.in_edge_with_name(node, state, node.INPUT_CONNECTOR_NAME)
     out_edge = sdutil.out_edge_with_name(node, state, node.OUTPUT_CONNECTOR_NAME)
-    nsdfg = dace.SDFG(f"{node.label}_sdfg")
+    nsdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, state)
     shape = connector_array(nsdfg, node.INPUT_CONNECTOR_NAME, in_edge.data, sdfg)
     connector_array(nsdfg, node.OUTPUT_CONNECTOR_NAME, out_edge.data, sdfg)
     nsdfg.add_transient("_truth", shape, node.ELEMENT)
@@ -80,7 +80,7 @@ class ExpandMaskShortCircuit(ExpandTransformation):
                     _out[0] = decided_by
                     break
 
-        nsdfg = dace.SDFG(f"{node.label}_sdfg")
+        nsdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, parent_state)
         connector_array(nsdfg, "_mask", in_edge.data, parent_sdfg)
         connector_array(nsdfg, "_out", sdutil.out_edge_with_name(node, parent_state, "_out").data, parent_sdfg)
         return short_circuit.to_sdfg(_mask=nsdfg.arrays["_mask"], _out=nsdfg.arrays["_out"], simplify=True)

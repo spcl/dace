@@ -125,6 +125,11 @@ def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
         for s in ["BATCH", "sAM", "sAK", "sAB", "sBK", "sBN", "sBB", "sCM", "sCN", "sCB"]
     )
 
+    # The template's parameters, which the caller maps
+    for parameter in (M, K, N, BATCH, sAM, sAK, sAB, sBK, sBN, sBB, sCM, sCN, sCB):
+        if symbolic.issymbolic(parameter):
+            sdfg.add_symbol(parameter)
+
     batched = not symbolic.equal_valued(1, strides["BATCH"])
 
     _, xarr = sdfg.add_array(

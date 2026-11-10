@@ -54,7 +54,7 @@ class ExpandReducePure(pm.ExpandTransformation):
         axes = [axis for axis in axes if axis in isqdim]
 
         # Create nested SDFG
-        nsdfg = SDFG("reduce")
+        nsdfg = dace.sdfg.utils.expansion_sdfg("reduce", node, state)
 
         nsdfg.add_array(
             "_in",
@@ -195,7 +195,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
 
         # Create nested SDFG. The connectors are the outer containers themselves and every memlet inside is
         # absolute, as the nested SDFG contract requires: a dimension that is not iterated keeps its begin.
-        nsdfg = SDFG("reduce")
+        nsdfg = dace.sdfg.utils.expansion_sdfg("reduce", node, state)
         nsdfg.add_datadesc("_in", dcpy(input_data))
         nsdfg.add_datadesc("_out", dcpy(output_data))
         nsdfg.arrays["_in"].transient = False
@@ -1026,7 +1026,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             return pure_sdfg
 
         # Create nested SDFG
-        nsdfg = SDFG("reduce")
+        nsdfg = dace.sdfg.utils.expansion_sdfg("reduce", node, state)
 
         # Built rather than cloned: a clone would carry an ArrayView's class into the nested SDFG, and keep its
         # offset at the rank of the original shape.
@@ -1248,7 +1248,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 nstate.add_memlet_path(cond_tasklet, omx, w, src_conn="_output", memlet=outm)
 
         else:  # we are reducing a non-contiguous dimension
-            nested_sdfg = dace.SDFG("nested_sdfg")
+            nested_sdfg = dace.sdfg.utils.expansion_sdfg("nested_sdfg", node, state)
             start_state = nested_sdfg.add_state("start_state")
             real_state = nested_sdfg.add_state("real_state")
 

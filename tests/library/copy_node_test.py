@@ -1667,6 +1667,8 @@ def _pinned_transfer_threshold(value):
 def _cpu_copy_sdfg(extent, name):
     """Single-state CPU_Heap -> CPU_Heap ``CopyLibraryNode`` copy over ``0:extent``."""
     sdfg = dace.SDFG(name)
+    for symbol in dace.symbolic.symlist(extent).values():
+        sdfg.add_symbol(symbol)
     sdfg.add_array("src", [extent], dace.float64, dace.dtypes.StorageType.CPU_Heap)
     sdfg.add_array("dst", [extent], dace.float64, dace.dtypes.StorageType.CPU_Heap)
     state = sdfg.add_state("s")
@@ -1751,6 +1753,7 @@ def test_copy_symbolic_shapes_that_cannot_be_compared_are_not_refused():
     """``ceiling(N/2)`` vs ``floor(N/2)`` is "cannot tell", not "different" -- expansion must proceed."""
     n = dace.symbol("N_sym_cmp")
     sdfg = dace.SDFG("copy_symbolic_shape_cmp")
+    sdfg.add_symbol(n)
     sdfg.add_array("A", [n], dace.float64)
     sdfg.add_array("B", [n], dace.float64)
     state = sdfg.add_state("main")
@@ -1989,6 +1992,8 @@ def test_symbolic_extent_expansions_keep_their_ranges_symbolic():
     extent = R**K
 
     sdfg = dace.SDFG("symbolic_extent_copy")
+    sdfg.add_symbol(R)
+    sdfg.add_symbol(K)
     sdfg.add_array("src", [extent], dace.float64)
     sdfg.add_array("dst", [extent], dace.float64)
     state = sdfg.add_state("main")
@@ -2005,6 +2010,8 @@ def test_symbolic_extent_expansions_keep_their_ranges_symbolic():
     sdfg.validate()
 
     fill_sdfg = dace.SDFG("symbolic_extent_fill")
+    fill_sdfg.add_symbol(R)
+    fill_sdfg.add_symbol(K)
     fill_sdfg.add_array("out", [extent], dace.float64)
     fill_state = fill_sdfg.add_state("main")
     fill = FillLibraryNode("zero")

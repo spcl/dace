@@ -75,7 +75,7 @@ class ExpandGemmPure(ExpandTransformation):
 
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
-        sdfg = dace.SDFG(node.label + "_sdfg")
+        sdfg = dace.sdfg.utils.expansion_sdfg(node.label + "_sdfg", node, parent_state)
 
         adata, bdata, cdata = _get_matmul_operands(node, parent_state, parent_sdfg)
         edge_a, outer_array_a, shape_a, strides_a = _matrix_operand(adata)
@@ -409,7 +409,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
 
         # If buffers are not on the GPU, copy them
         if needs_copy:
-            nsdfg = dace.SDFG("nested_gemm")
+            nsdfg = dace.sdfg.utils.expansion_sdfg("nested_gemm", node, state)
             for name, desc in [("_a", adesc), ("_b", bdesc), ("_c", cdesc)]:
                 if isinstance(desc, dt.View):
                     dcopy = desc.as_array()

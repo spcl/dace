@@ -16,7 +16,7 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
 
         is_elementwise = in_desc.dtype.base_type == out_desc.dtype.base_type
 
-        sdfg = dace.SDFG(node.name)
+        sdfg = dace.sdfg.utils.expansion_sdfg(node.name, node, parent_state)
         in_desc_inner = copy.deepcopy(in_desc)
         in_desc_inner.transient = False
         sdfg.add_datadesc(in_edge.dst_conn, in_desc_inner)
@@ -45,7 +45,7 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
 
             sdfg.add_array(buffer_name, (large_veclen,), dtype, storage=out_desc.storage, transient=True)
 
-            nested_sdfg = dace.SDFG(f"{node.name}_nested")
+            nested_sdfg = dace.sdfg.utils.expansion_sdfg(f"{node.name}_nested", node, parent_state)
             nested_in_desc = copy.deepcopy(in_desc)
             nested_in_desc.transient = False
             nested_out_desc = copy.deepcopy(out_desc)

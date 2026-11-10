@@ -32,7 +32,7 @@ def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
         storage,
     ) = arr_desc
 
-    sdfg = dace.SDFG(f"{node.label}_sdfg")
+    sdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, parent_state)
 
     ain_arr = sdfg.add_array("_ain", ain_shape, dtype=ain_dtype, strides=ain_strides)
     ainout_arr = sdfg.add_array("_ainout", [n, n], dtype=ain_dtype, transient=True, storage=storage)

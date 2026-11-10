@@ -22,7 +22,7 @@ class ExpandPure(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg):
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
-        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        sdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, parent_state)
         _, inp_arr = sdfg.add_array(
             "_inp_tensor", inp_tensor.shape, inp_tensor.dtype, inp_tensor.storage, strides=inp_tensor.strides
         )

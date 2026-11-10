@@ -21,7 +21,7 @@ class ExpandPure(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg):
         left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
-        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        sdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, parent_state)
         _, left_arr = sdfg.add_array(
             "_left_tensor", left_tensor.shape, left_tensor.dtype, left_tensor.storage, strides=left_tensor.strides
         )
@@ -97,7 +97,7 @@ class ExpandTTGT(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg):
         left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
-        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        sdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, parent_state)
         _, left_arr = sdfg.add_array(
             "_left_tensor", left_tensor.shape, left_tensor.dtype, left_tensor.storage, strides=left_tensor.strides
         )

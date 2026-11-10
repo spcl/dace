@@ -43,7 +43,7 @@ class ExpandCShiftPure(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         if node.shift is None:
             raise ValueError(f"{node.label}: the shift must be set before expansion")
-        sdfg = SDFG(f"{node.label}_sdfg")
+        sdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, parent_state)
         shape = connector_array(sdfg, "_x", sdutil.in_edge_with_name(node, parent_state, "_x").data, parent_sdfg)
         connector_array(sdfg, "_out", sdutil.out_edge_with_name(node, parent_state, "_out").data, parent_sdfg)
         axis = node.dim - 1

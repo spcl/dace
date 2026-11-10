@@ -60,7 +60,7 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         check_one_device(outer_array_a, outer_array_b)
 
         # Create replacement SDFG
-        sdfg = dace.SDFG(node.label + "_sdfg")
+        sdfg = dace.sdfg.utils.expansion_sdfg(node.label + "_sdfg", node, parent_state)
 
         _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
@@ -385,7 +385,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
 
         # If buffers are not on the GPU, copy them
         if needs_copy:
-            nsdfg = dace.SDFG("nested_batched_matmul")
+            nsdfg = dace.sdfg.utils.expansion_sdfg("nested_batched_matmul", node, state)
             tasklet = dace.sdfg.nodes.Tasklet(
                 node.name,
                 {"__a": dtypes.pointer(adesc.dtype), "__b": dtypes.pointer(bdesc.dtype)},

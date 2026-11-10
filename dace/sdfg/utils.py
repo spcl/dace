@@ -2276,6 +2276,27 @@ def normalize_offsets(sdfg: SDFG):
                                     e1.data.other_subset.offset(off, False)
 
 
+def expansion_sdfg(label: str, node: nd.Node, state: SDFGState) -> SDFG:
+    """A fresh SDFG for expanding ``node``, with the symbols its edges and their descriptors name already declared with
+    the types they have at ``node``: a descriptor copied in later only names them.
+
+    :param label: Name of the new SDFG.
+    :param node: The node being expanded.
+    :param state: The state containing ``node``.
+    :return: The new SDFG.
+    """
+    sdfg = SDFG(label)
+    names: set[str] = set()
+    for edge in state.in_edges(node) + state.out_edges(node):
+        if edge.data.data is not None:
+            names |= {str(s) for s in state.sdfg.arrays[edge.data.data].free_symbols} | set(edge.data.free_symbols)
+    types = state.symbols_defined_at(node)
+    for name in sorted(names - node.in_connectors.keys() - node.out_connectors.keys()):
+        if name in types:
+            sdfg.add_symbol(name, types[name])
+    return sdfg
+
+
 def prune_symbols(sdfg: SDFG):
     """
     Prunes unused symbols from the SDFG and the NestedSDFG symbol mappings. This operation is done in place. See also

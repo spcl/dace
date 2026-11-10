@@ -239,6 +239,9 @@ class GPUPersistentKernel(SubgraphTransformation):
         # normal data will be added as kernel argument
         kernel_args = []
         for data in kernel_data:
+            for symbol in map(str, sdfg.arrays[data].free_symbols):
+                if symbol in sdfg.symbols and symbol not in kernel_sdfg.symbols:
+                    kernel_sdfg.add_symbol(symbol, sdfg.symbols[symbol])
             if data not in other_data and (
                 isinstance(sdfg.arrays[data], dace.data.Stream)
                 or (

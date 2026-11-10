@@ -21,7 +21,8 @@ class ExpandPure(ExpandTransformation):
         inputs = {node.TRUE_CONNECTOR_NAME: t, node.FALSE_CONNECTOR_NAME: f, node.MASK_CONNECTOR_NAME: mask}
         return broadcast_map_expansion(
             node.label,
-            parent_sdfg,
+            node,
+            parent_state,
             {c: (e.data, None) for c, e in inputs.items()},
             (node.OUTPUT_CONNECTOR_NAME, out.data),
             "_mrg_out_v = _mrg_t_v if _mrg_mask_v else _mrg_f_v",

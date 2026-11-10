@@ -138,7 +138,8 @@ def broadcast_indices(shape: Sequence, result: Sequence, axis: int | None = None
 
 def broadcast_map_expansion(
     label: str,
-    parent_sdfg: dace.SDFG,
+    node: dace.nodes.Node,
+    parent_state: dace.SDFGState,
     inputs: dict[str, tuple[dace.Memlet, int | None]],
     output: tuple[str, dace.Memlet],
     code: str,
@@ -156,10 +157,10 @@ def broadcast_map_expansion(
     out_conn, out_memlet = output
     result = out_memlet.subset.size()
     params = [f"__i{d}" for d in range(len(result))]
-    sdfg = dace.SDFG(f"{label}_sdfg")
+    sdfg = dace.sdfg.utils.expansion_sdfg(f"{label}_sdfg", node, parent_state)
 
     def operand(conn: str, memlet: dace.Memlet, indices: list[str]) -> dace.Memlet:
-        desc = parent_sdfg.arrays[memlet.data]
+        desc = parent_state.sdfg.arrays[memlet.data]
         strides = [stride * step for stride, (_, _, step) in zip(desc.strides, memlet.subset)]
         sdfg.add_array(conn, memlet.subset.size(), desc.dtype, desc.storage, strides=strides)
         return dace.Memlet(f"{conn}[{', '.join(indices)}]")

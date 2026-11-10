@@ -305,7 +305,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         axes = node.axes or list(range(input_dims))
 
         # Create nested SDFG
-        nsdfg = SDFG("reduce")
+        nsdfg = sdutil.expansion_sdfg("reduce", node, state)
 
         nsdfg.add_array(
             "_in", inedge.data.subset.size(), input_data.dtype, strides=input_data.strides, storage=input_data.storage

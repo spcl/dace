@@ -41,7 +41,7 @@ class ExpandGerPure(ExpandTransformation):
         if any(e.data.subset != sbs.Range.from_array(arrays[a]) for a, e in zip(outputs, out_edges)):
             raise NotImplementedError
 
-        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        sdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, parent_state)
         sdfg.add_symbol("M", int)
         sdfg.add_symbol("N", int)
         sdfg.add_symbol("alpha", arrays["_A"].dtype)

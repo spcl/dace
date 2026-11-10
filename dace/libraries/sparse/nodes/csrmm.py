@@ -80,7 +80,7 @@ class ExpandCSRMMPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state: SDFGState, sdfg: SDFG):
-        nsdfg = SDFG(node.label + "_nsdfg")
+        nsdfg = dace.sdfg.utils.expansion_sdfg(node.label + "_nsdfg", node, state)
 
         operands = _get_csrmm_operands(node, state, sdfg)
         nstate = nsdfg.add_state("state", is_start_block=True)
@@ -512,7 +512,7 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
 
         # If buffers are not on the GPU, copy them
         if needs_copy:
-            nsdfg = dace.SDFG("nested_gemm")
+            nsdfg = dace.sdfg.utils.expansion_sdfg("nested_gemm", node, state)
             copies = [("_a_rows", arows), ("_a_cols", acols), ("_a_vals", avals), ("_b", bdesc), ("_c", cdesc)]
             for name, desc in copies:
                 if isinstance(desc, dt.View):

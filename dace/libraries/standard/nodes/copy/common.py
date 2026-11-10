@@ -150,7 +150,7 @@ def _make_expansion_sdfg(
     # The label is built from data names, and a struct member carries a '.' -- the SDFG name reaches
     # C++ as an identifier (``dace/sdfg/sdfg.py`` sanitizes data names the same way).
     label = node.label.replace(".", "_")
-    sdfg = dace.SDFG(f"{label}_sdfg")
+    sdfg = dace.sdfg.utils.expansion_sdfg(f"{label}_sdfg", node, parent_state)
     sdfg.add_array(inp_name, in_shape_collapsed, inp.dtype, inp.storage, strides=in_strides_collapsed)
     sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
     # Match the ambient stream connector if the experimental GPU codegen wired one in.
