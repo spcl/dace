@@ -4,6 +4,7 @@ pytest configuration file.
 """
 
 import importlib.metadata
+import importlib.util
 import os
 import platform
 import shutil
@@ -327,11 +328,28 @@ def has_module(name: str) -> bool:
     return any(True for _ in importlib.metadata.distributions(name=name))
 
 
+def mpi_library_loads() -> bool:
+    """Whether ``from mpi4py import MPI`` finds an MPI library; mpi4py's finder answers without ``MPI_Init``."""
+    try:
+        return importlib.util.find_spec("mpi4py.MPI") is not None
+    except (ImportError, RuntimeError, RuntimeWarning):
+        return False
+
+
+def mkl_installed() -> bool:
+    """Whether the ``MKL`` expansions find ``mkl.h`` and ``mkl_rt`` here."""
+    from dace.libraries.blas.environments.intel_mkl import IntelMKL  # Imported late, as collection is.
+
+    return IntelMKL.is_installed()
+
+
 #: Markers a host may lack the means for, each with the check. Called once per session, at collection.
 _MARKER_NEEDS = {
     "ai": lambda: "ANTHROPIC_API_KEY" in os.environ,
     "arm_cross": lambda: platform.machine() == "aarch64" or shutil.which("aarch64-linux-gnu-g++") is not None,
+    "mkl": mkl_installed,
     "mlir": lambda: shutil.which("mlir-opt") is not None,
+    "mpi": mpi_library_loads,
     "scalapack": lambda: int(os.environ.get("OMPI_COMM_WORLD_SIZE", "1")) > 1,
     "sve": lambda: platform.machine() == "aarch64",
     "tensorflow": lambda: has_module("tensorflow"),
