@@ -383,36 +383,6 @@ required:
                             write-once data. This flag also governs GPU-kernel tasklets,
                             which are emitted through the shared CPU generator instance.
 
-                    codegen_params:
-                        type: dict
-                        title: CPU codegen parameters
-                        description: >
-                            Tuning knobs for the CPU code generators. Each names a source-level form
-                            that is SEMANTICALLY NEUTRAL but can move backend decisions -- the
-                            published mean coefficient of variation across semantically-equivalent
-                            loop forms is ~17% for clang ("compiler instability", Gong et al.
-                            OOPSLA'18), and the sign of any given knob is target-, compiler- and
-                            kernel-dependent. So none of these is hardcoded: every default reproduces
-                            the legacy generator's existing output, and each knob exists to be SWEPT
-                            and MEASURED per target rather than argued from first principles.
-
-                            EVERY key here MUST state which generator(s) it affects, on an
-                            ``Applies to:`` line -- ``legacy``, ``experimental_readable``, or both
-                            (see ``compiler.cpu.implementation``). A knob that names only
-                            ``experimental_readable`` is a no-op under ``legacy``, whose output stays
-                            byte-identical.
-                        required:
-                            scalar_decl:
-                                type: str
-                                default: eager
-                                title: Mutable scalar declaration placement
-                                description: >
-                                    Applies to: experimental_readable ONLY. Where a mutable scope-lifetime value scalar (a transient
-                                    ``dace.data.Scalar`` that is not an SDFG constant) is declared: ``eager`` (the default) emits ``T x;``
-                                    at the top of its scope; ``late`` emits ``T x;`` right before the first tasklet that uses it;
-                                    ``late_fused`` folds the declaration into that first write, ``T x = expr;``. ``late`` and
-                                    ``late_fused`` apply only where every use of the scalar is a direct-child tasklet of one scope;
-                                    any other scalar keeps the eager declaration. A readability / live-range form, not a speed lever.
             cuda:
                 type: dict
                 title: GPU
@@ -635,26 +605,18 @@ required:
                         type: bool
                         title: Insert Default __syncthreads() Tasklets
                         description: >
-                            If enabled, inserts default __syncthreads() tasklets during preprocessing
-                            in ExperimentalCUDACodeGen to ensure shared memory is ready before access.
-                            This is a simple safeguard for correctness - it may not be complete, but it
-                            does the job for basic SDFGs. Disable if you handle synchronization manually
-                            or use other mechanisms like async copies or pipelines.
+                            If enabled, the experimental CUDA code generator inserts a __syncthreads()
+                            barrier before shared memory is read. Disable if the SDFG synchronizes itself.
                         default: true
 
                     synchronize_on_exit:
                         type: bool
                         title: Synchronize GPU stream at SDFG exit
                         description: >
-                            If enabled (default), AutoGPUStreamScheduler appends a
-                            cudaStreamSynchronize at every GPU sink state, making each GPU SDFG
-                            synchronous on return. Disable only when the host application shares one
-                            GPU stream across all SDFG calls (so GPU->GPU hand-off is stream-ordered)
-                            and synchronizes at its own host-read boundaries -- this removes the
-                            per-SDFG host stall for GPU-resident pipelines (e.g. icon4py), which is
-                            the dominant cost on launch-bound stencils. Sink states that write
-                            host-visible (CPU) outputs are ALWAYS synchronized regardless of this
-                            setting, so numpy / copy-out SDFGs stay correct.
+                            If enabled, the GPU stream is synchronized at every GPU sink state, so an SDFG
+                            is synchronous on return. Disable only when the host application shares one GPU
+                            stream across all SDFG calls and synchronizes at its own host reads. Sink states
+                            that write host-visible outputs are synchronized regardless of this setting.
                         default: true
 
                     gpu_stream_name:

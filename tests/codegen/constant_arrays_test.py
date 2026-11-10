@@ -30,14 +30,14 @@ def test_tasklet_input_cpu():
         constexpr_tasklet_cpu()
 
 
-@pytest.mark.parametrize(
-    "value,expected",
-    [
-        (np.array([True, False, True]), ["true", "false"]),
-        (np.array([1 + 2j, 3 - 4j], dtype=np.complex64), ["dace::complex64(1.0, 2.0)", "dace::complex64(3.0, -4.0)"]),
-        (np.array([1 + 2j, 3 - 4j]), ["dace::complex128(1.0, 2.0)", "dace::complex128(3.0, -4.0)"]),
-    ],
-)
+CPP_LITERALS = [
+    (np.array([True, False, True]), ["true", "false"]),
+    (np.array([1 + 2j, 3 - 4j], dtype=np.complex64), ["dace::complex64(1.0, 2.0)", "dace::complex64(3.0, -4.0)"]),
+    (np.array([1 + 2j, 3 - 4j]), ["dace::complex128(1.0, 2.0)", "dace::complex128(3.0, -4.0)"]),
+]
+
+
+@pytest.mark.parametrize("value,expected", CPP_LITERALS)
 def test_constant_array_elements_are_cpp_literals(value, expected):
     """A constant array is emitted through sym2cpp, so no element carries Python syntax."""
     sdfg = dace.SDFG(f"const_literals_{value.dtype}")
@@ -80,4 +80,6 @@ def test_a_column_major_constant_is_read_by_index():
 if __name__ == "__main__":
     test_nsdfg_input()
     test_tasklet_input_cpu()
+    for value, expected in CPP_LITERALS:
+        test_constant_array_elements_are_cpp_literals(value, expected)
     test_a_column_major_constant_is_read_by_index()

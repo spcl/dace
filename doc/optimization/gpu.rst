@@ -19,10 +19,15 @@ To utilize GPUs, DaCe provides two basic elements:
     * Map schedules for running GPU kernels: :class:`~dace.dtypes.ScheduleType.GPU_Device` for a GPU kernel (grid) map,
       and :class:`~dace.dtypes.ScheduleType.GPU_ThreadBlock` for a map of threads in a single thread-block.
 
-The :class:`~dace.transformation.passes.offloading.offload_to_accelerator.OffloadToAccelerator` pass takes an existing SDFG and turns it into a GPU
-program. Run it on an SDFG with :func:`~dace.sdfg.sdfg.SDFG.apply_gpu_transformations`. The pass decides
-placement from the whole control flow rather than per kernel, and inserts a copy where an array's location
-actually changes.
+The :class:`~dace.transformation.passes.offloading.offload_to_accelerator.OffloadToAccelerator` pass takes an
+existing SDFG and turns it into a GPU program. Run it with :func:`~dace.sdfg.sdfg.SDFG.apply_gpu_transformations`.
+Top-level maps and library nodes become kernels; maps inside a kernel are sequential. The pass decides placement
+from the whole control flow, not per kernel, and inserts a copy where an array changes between host and device:
+loops, conditionals, ``break``, ``continue`` and ``return`` are supported, and the copies of a branch stay inside it.
+The control flow must be structured: the pass runs ``ControlFlowRaising`` first, and an ``UnstructuredControlFlow``
+region it cannot raise, or a block leaving through several or a conditional interstate edge, raises
+``NotImplementedError``. ``host_maps`` names maps that stay on the host so the maps under them become the kernels;
+maps holding a callback or a library call that only the host can issue stay on the host regardless.
 
 **Threads**: Each Map scope that has a ``GPU_Device`` schedule will create a GPU kernel call. The number of blocks,
 and threads in each block, are determined by the Map's parameters. The number of elements in a ``GPU_Device`` map will

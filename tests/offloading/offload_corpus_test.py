@@ -1,30 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The GPU pipeline over the npbench kernels, as far as a box without a GPU can take it.
+"""The GPU pipeline over the npbench kernels, up to the compiler: ``validate`` and ``generate_code`` need no GPU.
 
-``offload_to_accelerator_graphs_test.py`` and ``host_maps_test.py`` pin the pass's rules on graphs built to
-show one rule each. This file asks the other question -- whether those rules hold on kernels nobody
-wrote them for.
-
-It runs the SAME pipeline ``tests/npbench`` runs -- ``auto_optimize`` for the GPU, which is what
-calls ``apply_gpu_transformations`` -- and stops before the compiler. That last part is the point:
-those tests are all marked ``gpu``, so on a machine without one the offloading gets no corpus
-coverage at all, while ``validate`` plus ``generate_code`` needs neither a GPU nor a compiler and
-still catches the whole placement family -- a descriptor moved to the device that host code still
-reads fails ``validate`` with the container named, and a name minted into a reserved namespace
-fails at code generation.
-
-Running the whole pipeline rather than the pass alone is deliberate. ``auto_optimize`` picks library
-implementations (``set_fast_implementations``) before it offloads, and a raw parsed SDFG has none:
-offloading that directly leaves a host LAPACK call under a GPU schedule, which is a graph the
-pipeline never actually produces. Testing it would report bugs that cannot happen.
-
-The numerical question -- does the offloaded kernel compute what numpy computes -- stays in
-``tests/npbench``, behind ``-m gpu``, because answering it needs the device.
+The whole ``auto_optimize`` pipeline runs, not the pass alone, because it picks library implementations before it
+offloads. Numerical agreement with numpy stays in ``tests/npbench``, behind ``-m gpu``.
 """
 
-import importlib.util
+import importlib
 import pathlib
-import sys
 from types import ModuleType
 
 import pytest
@@ -32,42 +14,25 @@ import pytest
 import dace
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-#: Kernels are reached by loading each test module by path: ``tests/npbench`` is a directory of test
-#: files, not a package, so it cannot be walked as one.
-NPBENCH_ROOT = pathlib.Path(__file__).resolve().parent.parent / "npbench"
+#: ``tests/npbench`` is a directory of test files, not a package: its modules are the namespace package
+#: ``tests.npbench``, importable from the repository root.
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+NPBENCH_ROOT = REPO_ROOT / "tests" / "npbench"
 
-#: npbench test modules name their ``@dace.program`` ``<something>_kernel``.
 PROGRAM_SUFFIX = "_kernel"
 
 
 def load_module(path: pathlib.Path) -> ModuleType | None:
-    """Import one npbench test module from its path, or None if it will not import."""
-    name = "npbench_corpus_" + path.relative_to(NPBENCH_ROOT).with_suffix("").as_posix().replace("/", "_")
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+    """Import one npbench test module, or None if it will not import."""
     try:
-        spec.loader.exec_module(module)
-    except Exception:  # an optional dependency missing is not a statement about offloading
-        sys.modules.pop(name, None)
+        return importlib.import_module(".".join(path.relative_to(REPO_ROOT).with_suffix("").parts))
+    except Exception:
         return None
-    return module
 
 
-def npbench_programs() -> list:
-    """Every ``@dace.program`` reachable under ``tests/npbench``, as pytest params.
-
-    Every one of them, including the kernels whose own ``test_gpu`` upstream disabled. Those marks
-    record a RUNTIME verdict -- an illegal access, a std::runtime_error -- which says nothing about
-    whether the kernel lowers, and lowering is all this file claims. Following them cost five
-    kernels of coverage and hid two real bugs: the GPUAuto reduce cloning a view descriptor
-    (lenet) and a view left behind on the other side of a staged container (mandelbrot2).
-    """
-    found = []
+def npbench_programs() -> dict[str, dace.frontend.python.parser.DaceProgram]:
+    """Every ``@dace.program`` under ``tests/npbench``, also the ones whose own GPU test is disabled upstream."""
+    found = {}
     for path in sorted(NPBENCH_ROOT.rglob("*_test.py")):
         module = load_module(path)
         if module is None:
@@ -77,7 +42,7 @@ def npbench_programs() -> list:
                 continue
             obj = module.__dict__[attr]
             if isinstance(obj, dace.frontend.python.parser.DaceProgram):
-                found.append(pytest.param(obj, id=f"{path.stem}-{attr}"))
+                found[f"{path.stem}-{attr}"] = obj
     return found
 
 
@@ -89,25 +54,15 @@ def test_the_corpus_is_not_empty() -> None:
     assert len(PROGRAMS) > 20, f"expected the npbench corpus, found {len(PROGRAMS)} programs"
 
 
-@pytest.mark.parametrize("program", PROGRAMS)
+@pytest.mark.parametrize("program", PROGRAMS.values(), ids=list(PROGRAMS))
 def test_the_offloaded_kernel_validates_and_emits(program: dace.frontend.python.parser.DaceProgram) -> None:
-    """The GPU pipeline leaves a graph that validates and generates code.
-
-    ``validate`` is the load-bearing half: it names the container when a descriptor is moved to the
-    device that host code still reads. ``generate_code`` is what catches a name minted into a
-    namespace the runtime reserves.
-    """
-    try:
-        # Parsed the way tests/npbench parses: simplification follows the configuration, so this
-        # sees the same graph the pipeline does rather than a stricter one.
-        sdfg = program.to_sdfg()
-    except Exception as exc:  # a kernel the frontend cannot build is not a statement about offloading
-        pytest.skip(f"{program.name} does not parse: {type(exc).__name__}")
-
-    sdfg = auto_optimize(sdfg, dace.dtypes.DeviceType.GPU)
+    """The GPU pipeline leaves a graph that validates and generates code."""
+    sdfg = auto_optimize(program.to_sdfg(), dace.dtypes.DeviceType.GPU)
     sdfg.validate()
     assert sdfg.generate_code(), f"{program.name} generated nothing"
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_the_corpus_is_not_empty()
+    for program in PROGRAMS.values():
+        test_the_offloaded_kernel_validates_and_emits(program)

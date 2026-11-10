@@ -5,7 +5,6 @@ import copy
 import typing
 import warnings
 from collections.abc import Iterator
-from typing import TypeGuard
 
 from ordered_set import OrderedSet
 
@@ -19,6 +18,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegio
 from dace.transformation import helpers, transformation
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.map_fission import MapFission
+from dace.transformation.passes.lower_dynamic_thread_block_maps import guard_block
 
 InnerMap = tuple[SDFGState, nodes.MapEntry]
 
@@ -26,7 +26,7 @@ InnerMap = tuple[SDFGState, nodes.MapEntry]
 SPLIT = -1
 
 
-def is_gpu_device_map(node: nodes.Node) -> TypeGuard[nodes.MapEntry]:
+def is_gpu_device_map(node: nodes.Node) -> typing.TypeGuard[nodes.MapEntry]:
     return isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device
 
 
@@ -264,28 +264,32 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             inner_map.map.params = [fresh.get(p, p) for p in inner_map.map.params]
             inner_map.map.range = outer_range
 
+    def split(self, state: SDFGState, kernel: nodes.MapEntry) -> int:
+        """Splits ``kernel``, which would need a grid barrier between its maps, into one kernel per part; returns
+        ``SPLIT``, or 0 if the maps stay nested."""
+        children = [n for n in state.scope_children()[kernel] if n is not state.exit_node(kernel)]
+        matched = {"map_entry": kernel}
+        if len(children) == 1 and isinstance(children[0], nodes.NestedSDFG):
+            # Fission splits a nested SDFG at its states
+            matched["nested_sdfg"] = children[0]
+            separate_device_maps(children[0].sdfg)
+        try:
+            MapFission.apply_to(state.sdfg, expr_index=len(matched) - 1, verify=True, **matched)
+        except ValueError:
+            warnings.warn(
+                f"The device maps nested in {kernel.map.label} depend on each other across iterations and the "
+                "kernel cannot be split; they stay nested"
+            )
+            return 0
+        return SPLIT
+
     def absorb(self, state: SDFGState, kernel: nodes.MapEntry) -> int:
         """Absorb the outermost ``GPU_Device`` maps below ``kernel``; returns how many."""
         inner_maps = list(gpu_maps_below(state, kernel))
         if not inner_maps:
             return 0
         if not same_iteration(inner_maps):
-            # The merged kernel would need a grid barrier between the maps: split it into one kernel per part
-            children = [n for n in state.scope_children()[kernel] if n is not state.exit_node(kernel)]
-            matched = {"map_entry": kernel}
-            if len(children) == 1 and isinstance(children[0], nodes.NestedSDFG):
-                # Fission splits a nested SDFG at its states
-                matched["nested_sdfg"] = children[0]
-                separate_device_maps(children[0].sdfg)
-            try:
-                MapFission.apply_to(state.sdfg, expr_index=len(matched) - 1, verify=True, **matched)
-            except ValueError:
-                warnings.warn(
-                    f"The device maps nested in {kernel.map.label} depend on each other across iterations and the "
-                    "kernel cannot be split; they stay nested"
-                )
-                return 0
-            return SPLIT
+            return self.split(state, kernel)
         hoisted = self.hoisted_ranges(state, kernel, inner_maps)
         self.rename_params(inner_maps, self.fresh_param_names(state, kernel, inner_maps))
 
@@ -331,7 +335,18 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             )
         body = body_node.sdfg
 
-        # The grid position of the thread, read once
+        id_state, ids = self.add_grid_position(body)
+        lowered = self.stride_device_maps(body, id_state, ids)
+        if has_map([n for s in body.states() for n in s.nodes()], (dtypes.ScheduleType.GPU_Device,)):
+            raise NotImplementedError(f"The persistent kernel {kernel.map.label} has device maps nested in others")
+
+        self.synchronize(body, id_state, ids)
+        kernel.map.gpu_grid_syncs_lowered = True
+        return lowered
+
+    def add_grid_position(self, body: SDFG) -> tuple[SDFGState, dict[str, str]]:
+        """A start state of ``body`` that reads the grid position of the thread once; returns it and the symbols that
+        hold the block, the number of blocks, the thread and the number of threads of a block."""
         taken = OrderedSet(body.symbols) | OrderedSet(body.arrays) | OrderedSet(body.free_symbols)
         registers = {"blk": "blockIdx.x", "nblk": "gridDim.x", "tid": "threadIdx.x", "nthr": "blockDim.x"}
         ids = {}
@@ -344,7 +359,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         tasklet = id_state.add_tasklet(
             "persistent_ids",
             {},
-            {f"__{k}" for k in ids},
+            {f"__{k}": None for k in ids},
             "\n".join(f"__{k} = {registers[k]};" for k in ids),
             language=dtypes.Language.CPP,
         )
@@ -354,8 +369,11 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 tasklet, f"__{key}", id_state.add_write(f"{name}_value"), None, dace.Memlet(f"{name}_value[0]")
             )
             body.add_symbol(name, dtypes.int32)
-        blk, nblk, tid, nthr = (symbolic.pystr_to_symbolic(ids[k]) for k in ("blk", "nblk", "tid", "nthr"))
+        return id_state, ids
 
+    def stride_device_maps(self, body: SDFG, id_state: SDFGState, ids: dict[str, str]) -> int:
+        """Turns the device maps of ``body`` into sequential grid-stride loops; returns how many."""
+        blk, nblk, tid, nthr = (symbolic.pystr_to_symbolic(ids[k]) for k in ("blk", "nblk", "tid", "nthr"))
         lowered = 0
         for region_state in [s for s in body.states() if s is not id_state]:
             # Codegen runs a thread-block map with a dynamic range sequentially in each thread
@@ -379,11 +397,6 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 entry.map.schedule = dtypes.ScheduleType.Sequential
                 lowered += 1
             propagation.propagate_memlets_state(body, region_state)
-        if has_map([n for s in body.states() for n in s.nodes()], (dtypes.ScheduleType.GPU_Device,)):
-            raise NotImplementedError(f"The persistent kernel {kernel.map.label} has device maps nested in others")
-
-        self.synchronize(body, id_state, ids)
-        kernel.map.gpu_grid_syncs_lowered = True
         return lowered
 
     def synchronize(self, sdfg: SDFG, id_state: SDFGState | None, ids: dict[str, str]) -> None:
@@ -411,16 +424,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 # Guarded ahead of the rest of the state, which it does not depend on
                 whole = len(component_nodes) == state.number_of_nodes()
                 part = state if whole else helpers.state_fission(SubgraphView(state, component_nodes))
-                guard = ConditionalBlock(f"{part.label}_{scope}_guard", sdfg=region.sdfg, parent=region)
-                region.add_node(guard, is_start_block=region.start_block is part)
-                for edge in region.in_edges(part):
-                    region.add_edge(edge.src, guard, edge.data)
-                for edge in region.out_edges(part):
-                    region.add_edge(guard, edge.dst, edge.data)
-                region.remove_node(part)
-                branch = ControlFlowRegion(f"{part.label}_{scope}_only", sdfg=region.sdfg, parent=guard)
-                branch.add_node(part, is_start_block=True)
-                guard.add_branch(properties.CodeBlock(conditions[scope]), branch)
+                guard = guard_block(region, part, conditions[scope])
                 if whole:
                     last = guard
                     break

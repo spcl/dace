@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 import dace
-from dace.codegen import common
 from dace.sdfg import nodes
 
 N = dace.symbol("N")
@@ -75,16 +74,13 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         # initialized (see GPUTXMarkersProvider.on_sdfg_init_begin), and the provider's gate is
         # the rocTX availability, not the backend.
         rocm_path = os.getenv("ROCM_PATH", "/opt/rocm")
-        have_roctx = (
-            any(
-                os.path.isfile(path)
-                for path in (
-                    os.path.join(rocm_path, "roctracer/include/roctx.h"),
-                    os.path.join(rocm_path, "include/roctracer/roctx.h"),
-                )
+        have_roctx = any(
+            os.path.isfile(path)
+            for path in (
+                os.path.join(rocm_path, "roctracer/include/roctx.h"),
+                os.path.join(rocm_path, "include/roctracer/roctx.h"),
             )
-            and os.path.isfile(os.path.join(rocm_path, "lib/libroctx64.so"))
-        )
+        ) and os.path.isfile(os.path.join(rocm_path, "lib/libroctx64.so"))
         if backend == "hip" and not have_roctx:
             pytest.skip("rocTX is not available")
         ranges = ["sdfg", "copy", "state", "alloc", "dealloc", "exit"]
@@ -93,9 +89,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         code = sdfg.generate_code()[0].clean_code
         tx_include = re.search(r"#include <(nvtx3/nvToolsExt|roctx).h>", code)
         assert tx_include is not None
-        range_push = all(
-            re.search(rf'(nvtx|roctx)RangePush\("{name}', code) is not None for name in ranges
-        )
+        range_push = all(re.search(rf'(nvtx|roctx)RangePush\("{name}', code) is not None for name in ranges)
         assert range_push
         range_pop = re.search(r"(nvtx|roctx)RangePop\b", code)
         assert range_pop is not None

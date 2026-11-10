@@ -814,6 +814,9 @@ def test_a_container_passing_through_a_map_exit_is_not_a_copy():
     InsertExplicitCopies().apply_pass(sdfg, {})
 
     assert not [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
+    # Nor does the CPU code generator copy it: a copy would write the whole of B from each tile's slice
+    _assert_no_copynd(sdfg)
+    _run_and_check(sdfg, lambda A: A + 1.0)
 
 
 def _view_an_names(sdfg, state):

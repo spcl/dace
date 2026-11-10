@@ -129,6 +129,10 @@ def _build_block_reduction() -> dace.SDFG:
     state.add_edge(mxi, None, mx, None, Memlet.simple(B, "bi"))
     state.add_edge(mx, None, B, None, Memlet.simple(B, "0:2"))
     sdfg.fill_scope_connectors()
+    sdfg.apply_gpu_transformations()
+    # The offload makes everything inside a kernel Sequential; the block-wide reduce needs a thread-block map.
+    mei.map.schedule = dace.ScheduleType.GPU_ThreadBlock
+    red.schedule = dace.ScheduleType.Default
     return sdfg
 
 

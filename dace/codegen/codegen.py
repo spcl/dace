@@ -169,21 +169,6 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
-def sdfg_uses_gpu(sdfg: SDFG) -> bool:
-    """True when any descriptor lives in GPU storage or any scope/library node carries a GPU schedule."""
-    from dace.sdfg import nodes
-
-    if any(
-        desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared)
-        for _, _, desc in sdfg.arrays_recursive()
-    ):
-        return True
-    return any(
-        isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
-        for node, _ in sdfg.all_nodes_recursive()
-    )
-
-
 def unselected_cuda_target() -> str:
     """The CUDA target not chosen in ``compiler.cuda.implementation``. Both share the GPU schedule types,
     so instantiating both would register duplicate dispatchers."""
@@ -338,6 +323,7 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
 
     NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
     # Lower memlet access policies (e.g. loop-carried address cursors) to ordinary SDFG constructs on this
     # code-generation copy of the SDFG. This is a no-op unless a memlet carries a non-default policy. It must
     # follow InsertExplicitCopies (which moves the policy of a lifted copy onto the library node's operand
@@ -380,11 +366,9 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
         # GPU preprocessing, before the inlining below freezes accesses into tasklet code. Single-value transients
         # become Scalars, kernel outputs are widened back to length-1 arrays (a by-value Scalar cannot live in device
         # memory), and in-kernel arrays are lifted out of their kernels.
-        if sdfg_uses_gpu(sdfg):
-            from dace.transformation.pass_pipeline import Pipeline
-            from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
-                InferDefaultSchedulesAndStorages,
-            )
+        from dace.transformation.gpu_helpers import gpu_kernels
+
+        if gpu_kernels(sdfg):
             from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
             from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
             from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
@@ -392,7 +376,7 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
             ConvertLengthOneArraysToScalars(skip_gpu_outputs=True).apply_pass(sdfg, {})
             promote_gpu_scalars = PromoteScalarOutputsToArrays()
             promote_gpu_scalars.gpu = True
-            Pipeline([InferDefaultSchedulesAndStorages(), promote_gpu_scalars]).apply_pass(sdfg, {})
+            promote_gpu_scalars.apply_pass(sdfg, {})
             move_arrays = MoveArrayOutOfKernel()
             move_arrays.raise_on_unsupported = False
             move_arrays.apply_pass(sdfg, {})

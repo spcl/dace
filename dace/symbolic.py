@@ -1664,25 +1664,30 @@ def sympy_divide_fix(expr):
 
     int_floor = sympy.Function("int_floor")
 
-    processed = 1
-    while processed > 0:
-        processed = 0
-        for candidate in nexpr.find(sympy.Mul):
-            for i, arg in enumerate(candidate.args):
-                if isinstance(arg, sympy.Number) and abs(arg) >= 1:
-                    continue
-                if isinstance(arg, sympy.Number) and (1 / arg) == int(1 / arg):
-                    ri = i
-                    break
-            else:
-                continue
-            nexpr = nexpr.subs(
-                candidate,
-                int_floor(sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1 :])), int(1 / candidate.args[ri])),
-            )
-            processed += 1
+    # Rewrites each occurrence in place: ``subs`` would also rewrite an equal quotient inside an exponent
+    def rewrite(node):
+        if isinstance(node, sympy.Pow) and not node.exp.is_integer:
+            # The printer lowers a non-integer exponent's exact quotient itself
+            base = rewrite(node.base)
+            return node if base == node.base else node.func(base, node.exp)
+        args = tuple(rewrite(arg) for arg in node.args)
+        node = node if args == node.args else node.func(*args)
+        if not isinstance(node, sympy.Mul):
+            return node
+        # ``rest * (1/k)`` is the integer division ``rest / k``
+        ri = next(
+            (
+                i
+                for i, arg in enumerate(node.args)
+                if isinstance(arg, sympy.Number) and abs(arg) < 1 and 1 / arg == int(1 / arg)
+            ),
+            None,
+        )
+        if ri is None:
+            return node
+        return int_floor(sympy.Mul(*node.args[:ri], *node.args[ri + 1 :]), int(1 / node.args[ri]))
 
-    return nexpr
+    return rewrite(nexpr)
 
 
 @cache
@@ -2853,13 +2858,15 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         base = self._print(expr.args[0])
         exponent = self._print(expr.args[1])
 
-        # Special case for square root
         if self.cpp_mode:
-            try:
-                if float(exponent) == 0.5:
-                    return f"dace::math::sqrt({base})"
-            except ValueError:
-                pass
+            # Decided on the exponent, not its text: ``Rational(1, 2)`` prints ``1/2``, which ``float()`` rejects
+            if expr.args[1] == sympy.Rational(1, 2) or (expr.args[1].is_Float and float(expr.args[1]) == 0.5):
+                return f"dace::math::sqrt({base})"
+            # A bare ``p/q`` exponent is C++ integer division: ``pow(x, 1/3)`` is ``pow(x, 0)``, ``pow(x, N/3)`` too
+            if not expr.args[1].is_integer:
+                num, den = sympy.fraction(sympy.together(expr.args[1]))
+                if den != 1:
+                    return f"dace::math::rational_pow({base}, {self._print(num)}, {self._print(den)})"
 
         # Special case for integer powers
         try:
@@ -2872,13 +2879,16 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             res = f"({base})"
             for _ in range(1, int_exp):
                 res += f" * ({base})"
+            if int_exp > 1:
+                # One operand: bare, ``x / N**2`` prints ``x/(N) * (N)``, which is ``x``
+                res = f"({res})"
 
             if negative:
                 res = f"reciprocal({res})"
             return res
         except ValueError:
             if self.cpp_mode:
-                return f"dace::math::pow({self._print(expr.args[0])}, {self._print(expr.args[1])})"
+                return f"dace::math::pow({base}, {exponent})"
             else:
                 return f"({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})"
 
@@ -3059,31 +3069,9 @@ def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
     name, it substitutes them with the last symbol (as they appear in
     s.free_symbols).
     """
-    if not has_duplicate_symbol_names(sym):
-        return sym
     symdict = {s.name: s for s in sym.free_symbols}
     repldict = {s: symdict[s.name] for s in sym.free_symbols}
     return sym.subs(repldict)
-
-
-def has_duplicate_symbol_names(sym: Any) -> bool:
-    """
-    Whether ``sym`` holds two symbols that share a name but not their dtype or assumptions.
-
-    Symbol identity in DaCe is the name, so such a pair always denotes one value -- but SymPy
-    compares assumptions too, keeps both atoms, and then ``k - k`` does not fold to zero.
-
-    :param sym: expression to check; anything that is not symbolic answers False.
-    :return: True if some name occurs on more than one symbol.
-    """
-    if not isinstance(sym, sympy.Basic):
-        return False
-    symbols = sym.free_symbols
-    if len(symbols) < 2:
-        return False
-    # A dict rather than a set: insertion order is defined, so the answer cannot depend on the
-    # hash seed the way a set's iteration would.
-    return len({symbol_atom.name: None for symbol_atom in symbols}) != len(symbols)
 
 
 def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> tuple[sympy.Expr, sympy.Expr]:

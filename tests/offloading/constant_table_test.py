@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A table filled once with literals and read by kernels becomes an SDFG constant, so no copy ships it down.
 
-The shape of CloudSC's ``imelt[0:5] = 2, 3, 4, 3, -99``: filled by input-less tasklets in one state, read by
-kernels in later states. A constant is declared on both sides, so neither the host nor a kernel needs a copy.
+The shape of CloudSC's ``imelt[0:5] = 2, 3, 4, 3, -99``. A constant is declared on both sides.
 """
+
+import sys
 
 import numpy as np
 import pytest
@@ -20,9 +21,9 @@ TABLE = (1.0, 2.0, 0.5, -3.0)
 def fill_then_kernel(host_read: str | None = None, looped: bool = False, scalar_entry: bool = False) -> dace.SDFG:
     """``table`` filled by tasklets in one state, read as ``table[i % 4]`` by a map in the next.
 
-    ``host_read`` adds a host read: ``interstate`` of ``table[1]`` on the edge between the states, ``tasklet`` of
-    ``table[2]`` by a host tasklet after the kernel. ``looped`` puts the fill inside a loop, and ``scalar_entry``
-    fills one element from the scalar ``s`` instead of a literal.
+    ``host_read`` adds a host read of ``table[1]`` on the edge between the states (``interstate``) or of ``table[2]``
+    by a tasklet after the kernel (``tasklet``); ``looped`` fills inside a loop; ``scalar_entry`` fills one element
+    from the scalar ``s``.
     """
     sdfg = dace.SDFG(f"fill_then_kernel_{host_read}_{looped}_{scalar_entry}")
     sdfg.add_array("x", [N], dace.float64)
@@ -83,7 +84,10 @@ def table_copies(sdfg: dace.SDFG) -> list:
     ]
 
 
-@pytest.mark.parametrize("host_read", [None, "interstate", "tasklet"])
+HOST_READS = [None, "interstate", "tasklet"]
+
+
+@pytest.mark.parametrize("host_read", HOST_READS)
 def test_a_literal_table_is_a_constant_and_never_copied(host_read):
     sdfg = offloaded(host_read=host_read)
     assert list(sdfg.constants["table"]) == list(TABLE)
@@ -92,7 +96,10 @@ def test_a_literal_table_is_a_constant_and_never_copied(host_read):
     assert not [node for node in fill.nodes() if isinstance(node, dace.nodes.Tasklet)], "the fill still runs"
 
 
-@pytest.mark.parametrize("options", [{"looped": True}, {"scalar_entry": True}])
+UNFOLDED_OPTIONS = [{"looped": True}, {"scalar_entry": True}]
+
+
+@pytest.mark.parametrize("options", UNFOLDED_OPTIONS)
 def test_a_table_not_filled_once_with_literals_stays_an_array(options):
     """A fill that runs more than once, or one that reads a runtime value, is not a compile-time constant."""
     sdfg = offloaded(**options)
@@ -101,7 +108,7 @@ def test_a_table_not_filled_once_with_literals_stays_an_array(options):
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("host_read", [None, "interstate", "tasklet"])
+@pytest.mark.parametrize("host_read", HOST_READS)
 def test_a_constant_table_read_in_a_kernel_computes_what_numpy_computes(host_read):
     sdfg = offloaded(host_read=host_read)
     x = np.random.default_rng(3).random(N)
@@ -113,9 +120,8 @@ def test_a_constant_table_read_in_a_kernel_computes_what_numpy_computes(host_rea
         np.testing.assert_array_equal(first, [TABLE[2]])
 
 
-@pytest.mark.gpu
 def test_a_constant_table_is_declared_once_per_side_and_never_passed_to_a_kernel():
-    """Host code and the kernel each see one declaration; passed as an argument too, it was declared twice."""
+    """Host code and the kernel each declare the table once, and the kernel takes it as no argument."""
     sdfg = offloaded()
     objects = sdfg.generate_code()
     # The device translation unit is titled 'CUDA' on both GPU backends; HIP emits it as C++, not .cu
@@ -137,3 +143,15 @@ def test_a_table_filled_from_a_scalar_computes_what_numpy_computes():
     sdfg(x=x, y=y, s=0.5, first=np.zeros(1))
     table = np.array([0.5 if index == 2 else value for index, value in enumerate(TABLE)])
     np.testing.assert_array_equal(y, x * table[np.arange(N) % len(TABLE)])
+
+
+if __name__ == "__main__":
+    for host_read in HOST_READS:
+        test_a_literal_table_is_a_constant_and_never_copied(host_read)
+    for options in UNFOLDED_OPTIONS:
+        test_a_table_not_filled_once_with_literals_stays_an_array(options)
+    test_a_constant_table_is_declared_once_per_side_and_never_passed_to_a_kernel()
+    if len(sys.argv) > 1 and sys.argv[1] == "gpu":
+        for host_read in HOST_READS:
+            test_a_constant_table_read_in_a_kernel_computes_what_numpy_computes(host_read)
+        test_a_table_filled_from_a_scalar_computes_what_numpy_computes()

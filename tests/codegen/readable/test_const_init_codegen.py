@@ -248,4 +248,3 @@ if __name__ == "__main__":
     test_scalar_constant_subscript_lowered_to_bare_name()
     test_chain_scalar_stays_in_scope_of_its_readers()
     test_constexpr_table_passed_through_two_nested_sdfg_levels()
-    print("ok")

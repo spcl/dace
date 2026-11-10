@@ -338,15 +338,6 @@ def symbolic_range_tuple(value):
     return tuple(tuple_to_symexpr(v) for v in value)
 
 
-def equalize_range_entry(
-    bounds: tuple[symbolic.SymbolicType, ...] | symbolic.SymbolicType,
-) -> tuple[symbolic.SymbolicType, ...] | symbolic.SymbolicType:
-    """``symbolic.equalize_symbol`` on one range entry: a ``(begin, end, step)`` tuple or a single index."""
-    if isinstance(bounds, tuple):
-        return tuple(symbolic.equalize_symbol(entry) for entry in bounds)
-    return symbolic.equalize_symbol(bounds)
-
-
 def contiguous_run_length(
     sizes: Sequence[symbolic.SymbolicType], strides: Sequence[symbolic.SymbolicType]
 ) -> symbolic.SymbolicType | None:
@@ -609,8 +600,8 @@ class Range(Subset):
         for i in indices:
             rb, re, rs = self.ranges[i]
             if offset_end:
-                re = symbolic.equalize_symbol(re + mult * off[i])
-            self.ranges[i] = (symbolic.equalize_symbol(rb + mult * off[i]), re, rs)
+                re = re + mult * off[i]
+            self.ranges[i] = (rb + mult * off[i], re, rs)
 
     def offset_new(self, other, negative, indices=None, offset_end=True):
         if other is None:
@@ -945,11 +936,7 @@ class Range(Subset):
             )
 
         if isinstance(other, Range):
-            # Through ``equalize_symbol`` for the same reason ``offset`` does: composition adds a
-            # bound of this subset to one of ``other``, and the two can carry different mints of one
-            # name -- a map parameter's and a string-parsed memlet's. SymPy compares assumptions, so
-            # ``i + (M - i - 1)`` keeps both atoms instead of folding to ``M - 1``.
-            return Range(list(map(equalize_range_entry, new_subset)))
+            return Range(new_subset)
         else:
             raise NotImplementedError
 

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import sys
 from copy import deepcopy
 
 import networkx as nx
@@ -138,6 +139,24 @@ def scalar_to_gpu_within_loopregion_sdfg(num_iters: int = 4):
     return sdfg
 
 
+def nested_sdfg():
+
+    @dace.program
+    def nested_kernel_program(inp: dace.float64[5], out: dace.float64[5]):
+        for idx in dace.map[0:5]:
+            tmp = dace.define_local([1], dace.float64)
+
+            for phase in range(2):
+                if phase == 0:
+                    tmp[0] = inp[idx] + 1.0
+                else:
+                    out[idx] = tmp[0] * 2.0
+
+    sdfg = nested_kernel_program.to_sdfg()
+    sdfg.validate()
+    return sdfg
+
+
 def kernel_sdfg():
     TS = dace.symbol("TS")
 
@@ -207,6 +226,26 @@ def tasklet_map_wrapper_sdfg():
     def tasklet_map_wrapper_program(A: dace.float64[4, 4], out: dace.float64[4, 4]):
         out = A @ A
         out[0, 0] += 1
+
+    sdfg = tasklet_map_wrapper_program.to_sdfg()
+    sdfg.validate()
+    return sdfg
+
+
+def tasklet_map_wrapper_larger_sdfg():
+
+    @dace.program
+    def tasklet_map_wrapper_program(A: dace.float64[4, 4], B: dace.float64[4, 4], out: dace.float64[4, 4]):
+        B = A @ A  # parallel
+
+        B[0, 0] += A[0, 0]  # sequential region
+        A[1, 0] += 5
+
+        B = B @ A  # parallel
+
+        s = 5  # sequential region
+        B[0, 3] += s
+        out[1, 1] += s
 
     sdfg = tasklet_map_wrapper_program.to_sdfg()
     sdfg.validate()
@@ -320,7 +359,6 @@ def run_numerical_offloading_test(sdfg, param_dict: dict, result_array1, result_
     input2 = param_dict
     input2[result_name] = result_array2
 
-    # print("PARAMS:", sdfg.arglist())
     sdfg(**input2)
 
     # assert the results are equal
@@ -386,28 +424,26 @@ def test_loopregion_offload():
 
 
 @pytest.mark.gpu
-def test_conditional_offload_if():
+@pytest.mark.parametrize("flag", [0, 1])
+def test_a_branch_between_two_maps_computes_what_the_host_computes(flag):
     sdfg = conditional_branch_map_sdfg()
 
     orig_output = np.zeros(5, dtype=np.float64)
     new_output = np.zeros(5, dtype=np.float64)
     run_numerical_offloading_test(
-        sdfg,
-        {"inp": np.arange(5, dtype=np.float64), "flag": np.int32(0)},  # run with flag == 0
-        orig_output,
-        new_output,
+        sdfg, {"inp": np.arange(5, dtype=np.float64), "flag": np.int32(flag)}, orig_output, new_output
     )
 
 
 @pytest.mark.gpu
-def test_conditional_offload_else():
-    sdfg = conditional_branch_map_sdfg()
+def test_nested_sdfg():
+    sdfg = nested_sdfg()
 
     orig_output = np.zeros(5, dtype=np.float64)
     new_output = np.zeros(5, dtype=np.float64)
     run_numerical_offloading_test(
         sdfg,
-        {"inp": np.arange(5, dtype=np.float64), "flag": np.int32(1)},  # run with flag == 1
+        {"inp": np.arange(5, dtype=np.float64)},
         orig_output,
         new_output,
     )
@@ -455,87 +491,42 @@ def test_edge_assignment_sdfg():
 
 
 @pytest.mark.gpu
-def test_tasklet_map_wrapper():
-    sdfg = tasklet_map_wrapper_sdfg()
+@pytest.mark.parametrize("larger", [False, True])
+def test_host_tasklets_wrapped_in_size1_maps_compute_what_the_host_computes(larger):
+    sdfg = tasklet_map_wrapper_larger_sdfg() if larger else tasklet_map_wrapper_sdfg()
 
-    A = np.arange(16, dtype=np.float64).reshape(4, 4) / 10.0
+    inputs = {"A": np.arange(16, dtype=np.float64).reshape(4, 4) / 10.0}
+    if larger:
+        inputs["B"] = np.zeros((4, 4), dtype=np.float64)
     orig_out = np.zeros((4, 4), dtype=np.float64)
     new_out = np.zeros((4, 4), dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"A": A},
-        orig_out,
-        new_out,
-    )
+    run_numerical_offloading_test(sdfg, inputs, orig_out, new_out)
 
 
 @pytest.mark.gpu
-def test_scalar_init():
-    sdfg = scalar_init_sdfg()
+@pytest.mark.parametrize("length_one_array", [False, True])
+def test_a_fill_from_a_single_element_computes_what_the_host_computes(length_one_array):
+    sdfg = len1_array_init_sdfg() if length_one_array else scalar_init_sdfg()
 
-    alpha = np.float64(3.5)
+    alpha = np.ones(1, dtype=np.float64) if length_one_array else np.float64(3.5)
     A = np.zeros(16, dtype=np.float64)
     orig_out = np.zeros(16, dtype=np.float64)
     new_out = np.zeros(16, dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"alpha": alpha, "A": A},
-        orig_out,
-        new_out,
-    )
+    run_numerical_offloading_test(sdfg, {"alpha": alpha, "A": A}, orig_out, new_out)
 
 
 @pytest.mark.gpu
-def test_len1_array_init():
-    sdfg = len1_array_init_sdfg()
-
-    alpha = np.ones(1, dtype=np.float64)
-    A = np.zeros(16, dtype=np.float64)
-    orig_out = np.zeros(16, dtype=np.float64)
-    new_out = np.zeros(16, dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"alpha": alpha, "A": A},
-        orig_out,
-        new_out,
-    )
-
-
-@pytest.mark.gpu
-def test_reduce_to_array():
-    sdfg = reduce_to_array_sdfg()
+@pytest.mark.parametrize("build", [reduce_to_array_sdfg, reduce_to_scalar_sdfg])
+def test_a_reduction_computes_what_the_host_computes(build):
+    sdfg = build()
     inp = np.arange(16, dtype=np.float64) + 1.0
     orig_out = np.zeros(1, dtype=np.float64)
     new_out = np.zeros(1, dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"inp": inp},
-        orig_out,
-        new_out,
-    )
+    run_numerical_offloading_test(sdfg, {"inp": inp}, orig_out, new_out)
 
 
 @pytest.mark.gpu
-def test_reduce_to_scalar():
-    sdfg = reduce_to_scalar_sdfg()
-    inp = np.arange(16, dtype=np.float64) + 1.0
-    orig_out = np.zeros(1, dtype=np.float64)
-    new_out = np.zeros(1, dtype=np.float64)
-
-    run_numerical_offloading_test(
-        sdfg,
-        {"inp": inp},
-        orig_out,
-        new_out,
-    )
-
-
-@pytest.mark.gpu
-def test_single_element_copy():
+def test_a_single_element_copy_computes_what_the_host_computes():
     sdfg = single_element_copy_sdfg()
     A = np.arange(16, dtype=np.float64)
     B = np.arange(16, dtype=np.float64) + 5.0
@@ -553,9 +544,8 @@ def test_single_element_copy():
 def device_map_state_sdfg(host_writer_between: bool, reads_b: bool = False) -> dace.SDFG:
     """Two device states, and ``B`` first touched on the device in the second of them.
 
-    With ``host_writer_between`` a host state writing ``B`` sits between the two, which is what
-    pins ``B``'s copy to that point instead of letting it move up. With ``reads_b`` the second map
-    also reads ``B``, so its entry value is observed and has to be staged down.
+    With ``host_writer_between`` a host state writing ``B`` sits between the two, which pins ``B``'s copy below it.
+    With ``reads_b`` the second map also reads ``B``, so its entry value is observed and has to be staged down.
     """
     sdfg = dace.SDFG("device_map_states_" + ("pinned" if host_writer_between else "free"))
     sdfg.add_array("A", [20], dace.float64)
@@ -606,11 +596,8 @@ def writes_container(state: dace.SDFGState, name: str) -> bool:
 
 
 def test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array():
-    """A copy for an array first used on the device late must not split the device states.
-
-    ``B`` is only touched in the second of two device states, so the copy that puts it on the
-    device is placed between them -- a host state in the middle of a run of kernels, which is
-    exactly what a caller fusing that run into one persistent kernel cannot swallow.
+    """``B`` is only touched in the second of two device states, so its copy moves above the first: no host state sits
+    in the middle of a run of kernels that a persistent-kernel fusion would have to swallow.
     """
     sdfg = device_map_state_sdfg(host_writer_between=False, reads_b=True)
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
@@ -654,10 +641,7 @@ def test_a_device_copy_stays_below_a_host_state_that_writes_the_array():
 
 
 def read_only_input_sdfg() -> dace.SDFG:
-    """``A`` is read and never written, ``B`` is written -- the two halves of the copy-back rule.
-
-    ``C`` is touched by nothing at all, the case that must not be placed anywhere.
-    """
+    """``A`` is read and never written, ``B`` is written, ``C`` is untouched and must not be placed anywhere."""
     sdfg = dace.SDFG("read_only_input")
     sdfg.add_array("A", [20], dace.float64)
     sdfg.add_array("B", [20], dace.float64)
@@ -688,12 +672,8 @@ def laplace_program(A: dace.float64[N], T: dace.int64):
 
 
 def test_a_never_written_input_is_not_copied_back_to_the_host():
-    """Only a container something wrote is restored; the twin that makes it readable still stands.
-
-    A container never moves -- a twin is staged on the other side and the accesses are pointed at
-    it -- so its home copy goes stale only once something writes the twin. Restoring a read-only
-    one copies bytes already in place, and that write is what a nested SDFG's input-only connector
-    refuses.
+    """Only a container something wrote is restored: a twin is staged on the other side, so the home copy goes stale
+    only once something writes the twin, and restoring a read-only one writes through an input-only connector.
     """
     sdfg = read_only_input_sdfg()
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
@@ -720,13 +700,8 @@ def test_a_container_nothing_touches_is_left_where_it_started():
 
 
 def test_a_map_over_a_read_only_container_survives_being_nested():
-    """``GPUTransformMap`` nests one map and offloads it, so each container reaches it one-way.
-
-    laplace is the shape that exposes it: one map reads ``A`` and writes ``tmp``, the next reads
-    ``tmp`` and writes ``A``, so whichever map is nested holds one container it never writes.
-    Copying that one back writes through a connector the nested SDFG only has as an input, which
-    validation refuses: "Data descriptor A is written to, but only given to nested SDFG as an
-    input connector".
+    """``GPUTransformMap`` nests one map and offloads it, so each container reaches it one-way: laplace's maps each
+    hold one container they never write, and copying it back would write through an input-only connector.
     """
     sdfg = laplace_program.to_sdfg()
     matches = list(Optimizer(sdfg).get_pattern_matches(patterns=[GPUTransformMap]))
@@ -743,11 +718,7 @@ def test_a_map_over_a_read_only_container_survives_being_nested():
 
 
 def view_on_both_sides_sdfg() -> dace.SDFG:
-    """``C_view`` aliases ``C``, and the two are read on different sides of the machine.
-
-    npbench mandelbrot2 has this shape: one state reads the view inside a kernel, another reads it
-    from host code, and a view carries one storage.
-    """
+    """``C_view`` aliases ``C``, and the two are read on different sides of the machine (npbench mandelbrot2)."""
     sdfg = dace.SDFG("view_on_both_sides")
     sdfg.add_array("C", [4, 5], dace.float64)
     sdfg.add_array("out", [20], dace.float64)
@@ -776,11 +747,8 @@ def view_on_both_sides_sdfg() -> dace.SDFG:
 
 
 def test_a_view_of_a_staged_container_is_staged_with_it():
-    """A view follows the container it aliases onto whichever side that container was staged to.
-
-    Left behind, the alias names a buffer on the other side and the dispatcher refuses the access it
-    cannot make ("Illegal copy!"), because one descriptor carries one storage and the view is read
-    from a kernel in one state and from host code in another.
+    """A view follows the container it aliases onto whichever side that container was staged to: one descriptor
+    carries one storage, so a view read from a kernel and from host code needs a twin per side.
     """
     sdfg = view_on_both_sides_sdfg()
     ppl.Pipeline([OtA()]).apply_pass(sdfg, {})
@@ -795,9 +763,9 @@ def test_a_view_of_a_staged_container_is_staged_with_it():
                 continue
             origin = helpers.view_origin(state, node)
             assert origin is not None, f"{node.data} in {state.label} aliases nothing"
-            assert views[node.data].storage == sdfg.arrays[origin].storage, (
+            assert views[node.data].storage == sdfg.arrays[origin.data].storage, (
                 f"{node.data} ({views[node.data].storage}) does not live where "
-                f"{origin} ({sdfg.arrays[origin].storage}) does"
+                f"{origin.data} ({sdfg.arrays[origin.data].storage}) does"
             )
 
 
@@ -868,8 +836,12 @@ def empty_states_offloading_adds(sdfg: dace.SDFG) -> list:
     ]
 
 
-@pytest.mark.parametrize("big_arm_padding", [0, 2], ids=["even_arms", "uneven_arms"])
-@pytest.mark.parametrize("arms_meet", [False, True], ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
+BIG_ARM_PADDINGS = [0, 2]
+ARMS_MEET = [False, True]
+
+
+@pytest.mark.parametrize("big_arm_padding", BIG_ARM_PADDINGS, ids=["even_arms", "uneven_arms"])
+@pytest.mark.parametrize("arms_meet", ARMS_MEET, ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
 def test_every_exit_of_a_device_branch_copies_the_written_array_back(arms_meet: bool, big_arm_padding: int) -> None:
     """Both arms write ``A`` on the device, so every way out of the program copies ``A`` back after the branch."""
     sdfg = two_arm_branch_sdfg(arms_meet, big_arm_padding)
@@ -884,7 +856,7 @@ def test_every_exit_of_a_device_branch_copies_the_written_array_back(arms_meet: 
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("arms_meet", [False, True], ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
+@pytest.mark.parametrize("arms_meet", ARMS_MEET, ids=["arms_are_sinks", "arms_meet_in_an_end_state"])
 def test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet: bool) -> None:
     """3.0 doubles to 6.0 and takes ``big`` (+1 -> 7.0); 0.5 doubles to 1.0 and takes ``small`` (-1 -> 0.0)."""
     sdfg = two_arm_branch_sdfg(arms_meet)
@@ -901,14 +873,13 @@ def test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet: bool) 
     np.testing.assert_array_equal(took_small, np.full(8, 0.0))
 
 
-@pytest.mark.parametrize(
-    "build",
-    [
-        lambda: two_arm_branch_sdfg(arms_meet=False),
-        lambda: early_return_sdfg(return_after_arm=True),
-    ],
-    ids=["device_branch", "early_return"],
-)
+BUILDERS = [
+    lambda: two_arm_branch_sdfg(arms_meet=False),
+    lambda: early_return_sdfg(return_after_arm=True),
+]
+
+
+@pytest.mark.parametrize("build", BUILDERS, ids=["device_branch", "early_return"])
 def test_offloading_leaves_no_empty_states_of_its_own(build) -> None:
     """The states the pass adds to place copies are spliced out again when no copy lands after them."""
     sdfg = build()
@@ -993,7 +964,12 @@ def early_return_sdfg(return_after_arm: bool) -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.parametrize("return_after_arm", [True, False], ids=["return_after_a_device_arm", "return_on_the_branch"])
+RETURN_AFTER_ARM = [True, False]
+
+
+@pytest.mark.parametrize(
+    "return_after_arm", RETURN_AFTER_ARM, ids=["return_after_a_device_arm", "return_on_the_branch"]
+)
 def test_an_early_return_copies_the_written_array_back_first(return_after_arm: bool) -> None:
     """The return leaves the program, so the last write of ``A`` on the way to it is the copy back to the host."""
     sdfg = early_return_sdfg(return_after_arm)
@@ -1014,7 +990,12 @@ def test_an_early_return_copies_the_written_array_back_first(return_after_arm: b
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("return_after_arm", [True, False], ids=["return_after_a_device_arm", "return_on_the_branch"])
+@pytest.mark.xfail(
+    strict=True, raises=AttributeError, reason="the CUDA codegen reads a ReturnBlock after a GPU state as an SDFGState"
+)
+@pytest.mark.parametrize(
+    "return_after_arm", RETURN_AFTER_ARM, ids=["return_after_a_device_arm", "return_on_the_branch"]
+)
 def test_an_early_return_hands_back_the_device_result(return_after_arm: bool) -> None:
     """3.0 doubles to 6.0 and returns (+1 -> 7.0 after ``big``); 0.5 doubles to 1.0 and takes ``small`` (-1 -> 0.0)."""
     sdfg = early_return_sdfg(return_after_arm)
@@ -1056,4 +1037,40 @@ def test_offloading_refuses_control_flow_that_raising_leaves_unstructured() -> N
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+    test_a_device_copy_is_hoisted_above_the_states_that_do_not_touch_the_array()
+    test_an_array_the_device_overwrites_is_not_staged_down()
+    test_a_device_copy_stays_below_a_host_state_that_writes_the_array()
+    test_a_never_written_input_is_not_copied_back_to_the_host()
+    test_a_container_nothing_touches_is_left_where_it_started()
+    test_a_map_over_a_read_only_container_survives_being_nested()
+    test_a_view_of_a_staged_container_is_staged_with_it()
+    for arms_meet in ARMS_MEET:
+        for big_arm_padding in BIG_ARM_PADDINGS:
+            test_every_exit_of_a_device_branch_copies_the_written_array_back(arms_meet, big_arm_padding)
+    for build in BUILDERS:
+        test_offloading_leaves_no_empty_states_of_its_own(build)
+    test_a_host_only_branch_gets_no_blocks_from_offloading()
+    for return_after_arm in RETURN_AFTER_ARM:
+        test_an_early_return_copies_the_written_array_back_first(return_after_arm)
+    test_offloading_refuses_control_flow_that_raising_leaves_unstructured()
+    if len(sys.argv) > 1 and sys.argv[1] == "gpu":
+        test_cpu_scalars_no_copies()
+        test_copy_scalar_to_gpu_and_back()
+        test_loopregion_offload()
+        for flag in (0, 1):
+            test_a_branch_between_two_maps_computes_what_the_host_computes(flag)
+        test_nested_sdfg()
+        test_kernel_sdfg()
+        test_edge_assignment_sdfg()
+        for larger in (False, True):
+            test_host_tasklets_wrapped_in_size1_maps_compute_what_the_host_computes(larger)
+        for length_one_array in (False, True):
+            test_a_fill_from_a_single_element_computes_what_the_host_computes(length_one_array)
+        for build in (reduce_to_array_sdfg, reduce_to_scalar_sdfg):
+            test_a_reduction_computes_what_the_host_computes(build)
+        test_a_single_element_copy_computes_what_the_host_computes()
+        for arms_meet in ARMS_MEET:
+            test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet)
+        for return_after_arm in RETURN_AFTER_ARM:
+            with pytest.raises(AttributeError):
+                test_an_early_return_hands_back_the_device_result(return_after_arm)

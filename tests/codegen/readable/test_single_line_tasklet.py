@@ -19,14 +19,19 @@ on CPU and -- since the CUDA generator emits its device tasklets through the sam
 CPU generator instance -- inside ``__global__`` kernels.
 """
 
+import copy
 import re
 
+import numpy as np
 import pytest
 
 import dace
-from tests.codegen.readable.conftest import (
+from tests.codegen.readable.common import (
     EXPERIMENTAL,
     LEGACY,
+    TARGETS,
+    assert_outputs_equivalent,
+    run_isolated,
     use_implementation,
 )
 
@@ -78,8 +83,8 @@ def generated_for(build, name, implementation, gpu=False):
 
 def tasklet_body_line(code):
     """The single emitted line that stores into ``C`` through the index functions."""
-    # A GPU build names the device copies ``gpu_<name>`` or ``<name>_gpu``
-    lines = [ln.strip() for ln in code.splitlines() if all(re.search(rf"\b(gpu_)?{x}(_gpu)?_idx\(", ln) for x in "CAB")]
+    # A GPU build names the device copies ``gpu_<name>``
+    lines = [ln.strip() for ln in code.splitlines() if all(re.search(rf"\b(gpu_)?{x}_idx\(", ln) for x in "CAB")]
     assert lines, "no C[C_idx(..)] = A[A_idx(..)] + B[B_idx(..)] line found:\n" + code
     return lines[0]
 
@@ -87,7 +92,7 @@ def tasklet_body_line(code):
 # --------------------------------------------------------------------------- #
 # Codegen shape (no compile)
 # --------------------------------------------------------------------------- #
-def test_single_line_no_block(require_experimental):
+def test_single_line_no_block():
     """Experimental collapses the connector-free add tasklet onto one brace-free
     line with a ``// <label>`` comment; legacy keeps the ``{ /////// }`` block."""
     experimental = generated_for(add_2d_sdfg, "sl_exp", EXPERIMENTAL)
@@ -108,7 +113,7 @@ def test_single_line_no_block(require_experimental):
     assert LEGACY_SEPARATOR in legacy
 
 
-def test_wcr_tasklet_keeps_block(require_experimental):
+def test_wcr_tasklet_keeps_block():
     """A WCR (atomic) output is not inlined, so the reduction tasklet keeps its
     ``{ }`` scope block even under the experimental generator."""
     experimental = generated_for(wcr_reduction_sdfg, "wcr_exp", EXPERIMENTAL)
@@ -120,8 +125,50 @@ def test_wcr_tasklet_keeps_block(require_experimental):
     assert "{" in experimental and "}" in experimental
 
 
+# --------------------------------------------------------------------------- #
+# Numerical equivalence (compile + run): CPU (fork) and GPU (in-process)
+# --------------------------------------------------------------------------- #
+def run_variant(build, name, implementation, target, base):
+    """Compile + run one variant on a deep copy of ``base``; CPU forks, GPU runs
+    in-process (CUDA and ``os.fork`` do not mix)."""
+
+    def work():
+        sdfg = build(name)
+        if target == "gpu":
+            sdfg.apply_gpu_transformations()
+        arrays = copy.deepcopy(base)
+        sdfg.compile()(**arrays)
+        return {k: v for k, v in arrays.items() if isinstance(v, np.ndarray)}
+
+    with use_implementation(implementation):
+        return work() if target == "gpu" else run_isolated(work)
+
+
+@pytest.mark.parametrize("target", TARGETS)
+def test_single_line_bit_exact(target):
+    """The single-line add reproduces the legacy result exactly (CPU) / within a
+    tight tolerance (GPU)."""
+    base = dict(A=np.random.rand(6, 7), B=np.random.rand(6, 7), C=np.zeros((6, 7)))
+    legacy = run_variant(add_2d_sdfg, f"sl_run_leg_{target}", LEGACY, target, base)
+    experimental = run_variant(add_2d_sdfg, f"sl_run_exp_{target}", EXPERIMENTAL, target, base)
+    assert_outputs_equivalent(legacy, experimental, target, label="single_line_add")
+    # And it is the analytically correct value.
+    assert np.allclose(experimental["C"], base["A"] + base["B"])
+
+
+@pytest.mark.parametrize("target", TARGETS)
+def test_wcr_reduction_bit_exact(target):
+    """The WCR reduction (block-retained tasklet) is still equivalent to legacy."""
+    # Threads accumulate in any order; integer-valued inputs make every order sum to the same bits
+    base = dict(A=np.random.randint(0, 1000, 16).astype(np.float64), s=np.zeros(1))
+    legacy = run_variant(wcr_reduction_sdfg, f"wcr_run_leg_{target}", LEGACY, target, base)
+    experimental = run_variant(wcr_reduction_sdfg, f"wcr_run_exp_{target}", EXPERIMENTAL, target, base)
+    assert_outputs_equivalent(legacy, experimental, target, label="wcr_reduction")
+    assert np.allclose(experimental["s"][0], base["A"].sum())
+
+
 @pytest.mark.gpu
-def test_single_line_inside_kernel(require_experimental):
+def test_single_line_inside_kernel():
     """The connector-free single-line tasklet appears inside the ``__global__``
     kernel: the CUDA generator emits device tasklets through the shared CPU
     generator, so the readable form flows into device code too."""
@@ -133,12 +180,10 @@ def test_single_line_inside_kernel(require_experimental):
 
 
 if __name__ == "__main__":
-    from tests.codegen.readable.conftest import experimental_available
-
-    if not experimental_available():
-        print("experimental readable codegen not ready; skipping")
-    else:
-        test_single_line_no_block(None)
-        test_wcr_tasklet_keeps_block(None)
-        test_single_line_inside_kernel(None)
-        print("ok")
+    test_single_line_no_block()
+    test_wcr_tasklet_keeps_block()
+    test_single_line_bit_exact("cpu")
+    test_wcr_reduction_bit_exact("cpu")
+    test_single_line_bit_exact("gpu")
+    test_wcr_reduction_bit_exact("gpu")
+    test_single_line_inside_kernel()

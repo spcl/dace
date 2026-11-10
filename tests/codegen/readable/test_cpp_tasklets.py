@@ -32,7 +32,7 @@ from dace.codegen.exceptions import CompilationError, CompilerConfigurationError
 from dace.config import Config
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg import nodes
-from tests.codegen.readable.conftest import EXPERIMENTAL, LEGACY
+from tests.codegen.readable.common import EXPERIMENTAL, LEGACY
 
 N, M, K = (dace.symbol(s) for s in ("N", "M", "K"))
 
@@ -433,4 +433,3 @@ if __name__ == "__main__":
     test_gemm_pure_naive()
     test_gemm_openblas_pointers()
     test_gemm_cublas_gpu()
-    print("ok")

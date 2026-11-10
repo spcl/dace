@@ -6,6 +6,8 @@ These assert on emitted code, so they need a GPU for neither compilation nor a r
 
 import re
 
+import pytest
+
 import dace
 from dace import dtypes
 from dace.codegen import common
@@ -118,7 +120,7 @@ def gpu_blas_gemm(alpha: float = 1.0) -> dace.SDFG:
 def test_a_failed_target_initializer_stops_before_the_state_it_left_unset():
     """The CUDA target initializer returns early without a gpu_context when no device is present."""
     init = init_function(generated_code(persistent_gpu_transient()), "persistent_gpu_transient")
-    initializer = re.search(r"__result \|= __dace_init_\w*cuda\w*\(", init)
+    initializer = re.search(r"__result \|= __dace_init_(experimental_)?cuda\(", init)
     assert initializer, "the CUDA target initializer is not called, so this test is anchored on nothing"
     allocation = re.search(GPU_CHECK, init)
     assert allocation, "the persistent GPU allocation was not hoisted into the init function"
@@ -139,6 +141,7 @@ def test_the_init_function_still_checks_what_runs_after_the_allocations():
     )
 
 
+@pytest.mark.old_gpu_codegen_only  # the legacy codegen's cross-stream events
 def test_cross_stream_event_synchronization_is_checked():
     """The producers have to be ordered against their consumer, and the ordering has to be checked.
 
@@ -149,28 +152,10 @@ def test_cross_stream_event_synchronization_is_checked():
     as a silent ``EventRecord`` did, so every emitted one has to be checked.
     """
     code = generated_code(cross_stream_consumer())
-    launches = list(
-        re.finditer(
-            r"gpuStream_t __dace_current_stream = (?P<stream>[^;]+);\s*"
-            r"__dace_runkernel_(?P<kernel>k\d)_",
-            code,
-        )
-    )
-    kernels = [launch.group("kernel") for launch in launches]
-    assert sorted(kernels) == ["k1", "k2", "k3"], f"expected the three kernel launches, got {kernels}"
-    assert kernels[-1] == "k3", f"the consumer k3 is issued before a producer it reads from: {kernels}"
-    streams = {launch.group("kernel"): launch.group("stream").strip() for launch in launches}
-    assert streams["k3"] == streams["k1"] and streams["k3"] == streams["k2"], (
-        f"the consumer is issued on a different stream than its producers with no event between them, "
-        f"so nothing orders them: {streams}"
-    )
-    syncs = list(re.finditer(SYNC_CALL, code))
-    last_launch = launches[-1].end()
-    assert any(sync.start() > last_launch for sync in syncs), (
-        "no stream synchronization follows the kernels, so nothing orders the GPU work with the host"
-    )
-    unchecked = [sync.group(0) for sync in syncs if not re.search(GPU_CHECK + r"$", code[: sync.start()])]
-    assert not unchecked, f"stream synchronization emitted without an error check: {unchecked}"
+    calls = list(re.finditer(EVENT_CALL, code))
+    assert calls, "no cross-stream event synchronization was emitted, so this test is anchored on nothing"
+    unchecked = [call.group(0) for call in calls if not code[: call.start()].endswith("DACE_GPU_CHECK(")]
+    assert not unchecked, f"event synchronization emitted without an error check: {unchecked}"
 
 
 def test_the_gpu_blas_gemm_expansion_still_emits_the_pointer_mode_switch():

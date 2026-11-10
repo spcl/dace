@@ -393,6 +393,7 @@ def test_a_device_map_of_a_persistent_kernel_becomes_a_grid_stride_loop(tiled: b
     sdfg = persistent_kernel(tiled)
     assert lower(sdfg) == 1
     assert kernel_of(sdfg).map.gpu_grid_syncs_lowered
+    assert lower(sdfg) is None
     loop = strided_map(sdfg)
     assert loop.map.schedule == dace.dtypes.ScheduleType.Sequential
     first, _, step = loop.map.range[0]
@@ -470,6 +471,20 @@ def test_a_persistent_kernel_writes_global_memory_outside_its_maps_from_one_thre
     assert [dace.symbolic.pystr_to_symbolic(g) for g in guards] == [expected], guards
 
 
+@pytest.mark.old_gpu_codegen_only  # GPU_Persistent kernels: not supported by the experimental CUDA codegen
+@pytest.mark.gpu
+@pytest.mark.parametrize("tiled", [False, True])
+def test_the_lowered_persistent_kernel_computes_each_element_once(tiled: bool):
+    import cupy  # Only present on GPU runners.
+
+    sdfg = persistent_kernel(tiled)
+    sdfg.name = f"persistent_numeric_{'tiled' if tiled else 'flat'}"
+    a = cupy.arange(1000, dtype=cupy.float64)
+    expected = 2 * cupy.asnumpy(a)
+    sdfg(A=a, N=a.size)
+    assert np.array_equal(cupy.asnumpy(a), expected)
+
+
 if __name__ == "__main__":
     for inner_range, symbol_mapping, expected in [
         ("5:10", None, ("5", "9")),
@@ -493,3 +508,5 @@ if __name__ == "__main__":
         test_a_device_map_of_a_persistent_kernel_becomes_a_grid_stride_loop(tiled)
     test_a_persistent_kernel_writes_global_memory_outside_its_maps_from_one_thread()
     test_a_thread_block_map_with_a_dynamic_range_runs_in_each_thread_of_a_thread_strided_loop()
+    for tiled in [False, True]:
+        test_the_lowered_persistent_kernel_computes_each_element_once(tiled)

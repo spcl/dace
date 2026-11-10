@@ -37,7 +37,7 @@ import numpy as np
 
 import dace
 from dace.transformation.passes.promote_constant_transients import PromoteConstantTransients
-from tests.codegen.readable.conftest import (
+from tests.codegen.readable.common import (
     EXPERIMENTAL,
     LEGACY,
     assert_outputs_equivalent,
@@ -129,7 +129,16 @@ SPLIT_DECL = re.compile(r"double\s*\*\s*tmp\s*;")
 SPLIT_ALLOC = re.compile(r"(?<![\w>])tmp\s*=\s*" + ALIGNED_NEW)
 
 
-def test_legacy_still_splits(require_experimental):
+def test_fused_definition_with_restrict():
+    """The readable generator emits ONE fused definition carrying ``__restrict__``, not the split pair."""
+    code = code_for(heap_transient_sdfg, "fused_readable", EXPERIMENTAL)
+    assert FUSED.search(code), f"expected a fused restrict-qualified definition, got:\n{code}"
+    assert not SPLIT_DECL.search(code), f"declaration was not fused away:\n{code}"
+    # Exactly one statement mentions the allocation (the fused definition), i.e. no stray assignment.
+    assert len(SPLIT_ALLOC.findall(code)) == 1
+
+
+def test_legacy_still_splits():
     """The legacy generator keeps the split declaration + assignment (its output must not change)."""
     code = code_for(heap_transient_sdfg, "fused_legacy", LEGACY)
     assert SPLIT_DECL.search(code), f"legacy declaration disappeared:\n{code}"
@@ -138,7 +147,7 @@ def test_legacy_still_splits(require_experimental):
     assert "__restrict__ tmp" not in code
 
 
-def test_persistent_lifetime_stays_split(require_experimental):
+def test_persistent_lifetime_stays_split():
     """A Persistent transient's pointer lives in the state struct: the dispatcher hands the
     declaration and the allocation two different streams, so it must NOT be fused into a local
     definition (which would shadow the member and leave it unallocated)."""
@@ -149,7 +158,7 @@ def test_persistent_lifetime_stays_split(require_experimental):
     assert not FUSED.search(code), f"a state-struct member must not be fused into a local definition:\n{code}"
 
 
-def test_may_alias_drops_restrict(require_experimental):
+def test_may_alias_drops_restrict():
     """``may_alias`` marks data deliberately reachable through another pointer: still fused, but the
     no-alias promise must not be made (mirrors ``Array.as_arg``)."""
     code = code_for(may_alias_transient_sdfg, "fused_may_alias", EXPERIMENTAL)
@@ -157,7 +166,7 @@ def test_may_alias_drops_restrict(require_experimental):
     assert "__restrict__ tmp" not in code, f"restrict must be dropped for a may_alias array:\n{code}"
 
 
-def test_constant_extent_is_fused(require_experimental):
+def test_constant_extent_is_fused():
     """A COMPILE-TIME-CONSTANT extent is fused like a runtime one.
 
     ``dace::aligned_new_array`` takes the alignment as an argument, not as an attribute on the element
@@ -173,7 +182,7 @@ def test_constant_extent_is_fused(require_experimental):
     assert "DACE_ALIGN" not in code, f"the alignment attribute must not return:\n{code}"
 
 
-def test_write_once_heap_data_is_not_pointee_const(require_experimental):
+def test_write_once_heap_data_is_not_pointee_const():
     """Write-once data reaching the allocator is never emitted as pointee-``const``.
 
     ``s`` is read-only after its write, yet that write is emitted THROUGH the pointer, so
@@ -205,7 +214,7 @@ def run(build, name, implementation):
     return run_isolated(build_and_run)
 
 
-def test_fused_definition_bit_exact(require_experimental):
+def test_fused_definition_bit_exact():
     """The fused definition compiles and reproduces the legacy result bit-exactly."""
     legacy = run(heap_transient_sdfg, "fused_run_legacy", LEGACY)
     experimental = run(heap_transient_sdfg, "fused_run_readable", EXPERIMENTAL)
@@ -228,7 +237,7 @@ def run_write_once(name, implementation):
     return run_isolated(build_and_run)
 
 
-def test_write_once_heap_bit_exact(require_experimental):
+def test_write_once_heap_bit_exact():
     """Write-once heap data compiles under the readable generator and matches legacy."""
     legacy = run_write_once("const_run_legacy", LEGACY)
     experimental = run_write_once("const_run_readable", EXPERIMENTAL)

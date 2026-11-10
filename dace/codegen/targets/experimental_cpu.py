@@ -35,7 +35,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion
 from dace.sdfg.utils import dynamic_map_inputs
 from dace.utils import find_new_name
 
@@ -58,13 +58,6 @@ DECLARATOR_TOKENS = frozenset({"*", "&", ">"})
 INCLUDE_LINE = re.compile(r"^\s*#\s*include\s")
 PREPROCESSOR_IF = re.compile(r"^\s*#\s*if")
 PREPROCESSOR_ENDIF = re.compile(r"^\s*#\s*endif")
-
-
-def scalar_decl() -> str:
-    """Where a mutable scope scalar is declared, per ``codegen_params.scalar_decl``: ``eager`` (the default, ``T x;``
-    at the top of its scope), ``late`` (``T x;`` right before its first use) or ``late_fused`` (``T x = expr;``, the
-    declaration is the first write)."""
-    return Config.get("compiler", "cpu", "codegen_params", "scalar_decl")
 
 
 def counter_init_assigns_only(loop: LoopRegion) -> bool:
@@ -168,31 +161,6 @@ def loop_variable_in_instrument_conditions(loop: LoopRegion, name: str) -> bool:
     return False
 
 
-def code_blocks_of(value) -> tuple[CodeBlock, ...]:
-    """The ``CodeBlock`` values reachable from one property value: bare, or inside a list / dict.
-
-    Properties are how a DaCe node stores everything it lowers to code, so walking them finds the code
-    of a node class this file has never heard of -- which is the point: an unanticipated code-bearing
-    property must make the deferral gate refuse, not silently see nothing."""
-    if isinstance(value, CodeBlock):
-        return (value,)
-    if isinstance(value, dict):
-        return tuple(v for v in value.values() if isinstance(v, CodeBlock))
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return tuple(v for v in value if isinstance(v, CodeBlock))
-    return ()
-
-
-def identifiers_in(blocks) -> set[str]:
-    """Identifier tokens of a sequence of ``CodeBlock``s."""
-    names: set[str] = set()
-    for block in blocks:
-        text = block.as_string
-        if text:
-            names |= set(IDENTIFIER_TOKENS.findall(text))
-    return names
-
-
 def size_qualifier(is_constant: bool) -> str:
     """Qualifier for an ``<array>_size`` helper: ``consteval`` for a constant extent under C++20+
     (folds it at compile time), else ``constexpr`` (the same qualifier as the index functions)."""
@@ -200,18 +168,6 @@ def size_qualifier(is_constant: bool) -> str:
         return INDEX_FUNCTION_QUALIFIER
     standard = int(str(Config.get("compiler", "cpp_standard")).strip())
     return SIZE_CONSTEVAL_QUALIFIER if standard >= 20 else INDEX_FUNCTION_QUALIFIER
-
-
-def index_ctype(desc: dt.Data, flat: symbolic.SymbolicType) -> str:
-    """The narrowest integer that holds every flat index of ``desc``, ``flat`` over ``__d<i>`` dimension symbols.
-
-    Narrower than ``int`` gains nothing, as C++ promotes to it anyway; a size the compiler cannot see stays 64-bit.
-    """
-    corner = {f"__d{i}": symbolic.pystr_to_symbolic(str(s)) - 1 for i, s in enumerate(desc.shape)}
-    largest = abs(
-        symbolic.pystr_to_symbolic(str(flat)).subs({symbolic.pystr_to_symbolic(k): v for k, v in corner.items()})
-    )
-    return "int32_t" if largest.is_Integer and largest < 2**31 else "int64_t"
 
 
 def format_index_access(ptrname: str, fnname: str, indices: list[str], extra: list[str]) -> str:
@@ -307,19 +263,6 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # Per-native-tasklet cache: id(node) -> {connector_name: cpp_access}. An entry means the
         # connector is accessed directly (scalar index / base pointer) instead of via a copy-in/out.
         self._cpp_inline: dict[int, dict[str, str]] = {}
-        # scalar_decl = late: a mutable scope-lifetime value scalar whose ``T x;`` declaration
-        # was deferred by allocate_array is held here until the first tasklet that uses it is emitted
-        # (see late_declarable_scalar / emit_pending_late_decls). ptrname -> declaration info. Empty in
-        # the default ``eager`` mode, so the emit hook is a no-op and the output stays byte-identical.
-        self._late_pending: dict[str, dict] = {}
-        # Caches for the deferral gate (late_declarable_scalar), all keyed by id() of frozen codegen-
-        # time objects. ``_eager_alloc_scopes`` is built once from the frame's allocation plan;
-        # ``_node_references`` / ``_nested_free_names`` memoize the per-node and per-nested-SDFG name
-        # sweeps, whose value is None for "not analysable" (which the gate reads as a refusal).
-        self._eager_alloc_scopes: dict[tuple[int, str], list] | None = None
-        self._name_owners: dict[int, dict[str, set[int]] | None] = {}
-        self._node_references: dict[int, set[str] | None] = {}
-        self._nested_free_names: dict[int, set[str] | None] = {}
 
     def emit_interstate_variable_declaration(self, name, dtype, callsite_stream, sdfg):
         """LoopRegion counters are declared inside their own ``for``-init clause in the readable
@@ -446,17 +389,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             # whatever token the caller writes next (e.g. the map's closing brace).
             line = re.sub(r"[ \t]*////__(DACE:|CODEGEN;).*", "", inner_body).strip()
             if line:
-                # This is the ONLY point that knows both that the tasklet is emitted brace-free at the
-                # enclosing scope AND what its statement reads, which is exactly what a fused
-                # declaration needs: `T x = expr;` is only in scope for later readers if this line is
-                # not wrapped in a brace of its own.
-                line = self.fuse_pending_decl(node, line)
-                self.emit_pending_late_decls(cfg, state_id, node, callsite_stream)
                 callsite_stream.write("%s  // %s\n" % (line, node.label), cfg, state_id, node)
                 return
-        # Braced (or multi-statement) body: a declaration folded into it would be scoped to that brace,
-        # so any pending declaration is emitted as its own line ahead of the block instead.
-        self.emit_pending_late_decls(cfg, state_id, node, callsite_stream)
         callsite_stream.write("{  // %s" % node.label, cfg, state_id, node)
         callsite_stream.write(inner_body, cfg, state_id, node)
         callsite_stream.write(postamble)
@@ -718,13 +652,6 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         allocation_stream,
         allocate_nested_data: bool = True,
     ):
-        # scalar_decl = late: a MUTABLE scope-lifetime value scalar whose declaration is provably
-        # safe to move keeps its `T x;` out of the scope
-        # preamble; it is registered now (so reads resolve) and the declaration is emitted just before
-        # its first-use tasklet (emit_pending_late_decls). Eager mode / any non-deferrable scalar falls
-        # through to the base declaration below unchanged.
-        if self.defer_scalar_declaration(sdfg, dfg, node, nodedesc):
-            return
         super().allocate_array(
             sdfg,
             cfg,
@@ -835,316 +762,6 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     # -- readable array indexing ----------------------------------------------
 
-    # -- late scalar declarations (scalar_decl = late / late_fused) ------
-
-    def defer_scalar_declaration(self, sdfg, dfg, node, desc) -> bool:
-        """Register a mutable scope scalar as a deferred (late) declaration and return True, or return
-        False to leave it to the base eager declaration.
-
-        Deferral moves ``T x;`` out of the scope preamble and re-emits it just before the first tasklet
-        that uses ``x``, giving a shorter live range. It is applied ONLY where provably sound: an eager
-        ``T x;`` and a deferred one are visible to exactly the same uses only when every use lives in the
-        one scope the deferred declaration lands in, as a direct-child tasklet of it. See
-        ``late_declarable_scalar`` for the full gate. Returns False in the default ``eager`` mode."""
-        placement = self.late_declarable_scalar(sdfg, dfg, node, desc)
-        if placement is None:
-            return False
-        scope_tasklets, setzero = placement
-        ptrname = self.ptr(node.data, desc, sdfg)
-        # Register the read/write type now so accesses between here and the deferred declaration resolve
-        # exactly as the eager declaration would (there are none in emission order -- the scope preamble
-        # precedes every tasklet -- but the registration must exist before the first use is emitted).
-        self._dispatcher.defined_vars.add(ptrname, DefinedType.Scalar, desc.dtype.ctype)
-        state: SDFGState = dfg
-        # Tasklets that WRITE the scalar: only one of those can carry a fused ``T x = expr;`` binding.
-        # A ``setzero`` scalar is never fused -- its ``T x = 0;`` init is the declaration already.
-        writers = {id(edge.src) for an in state.data_nodes() if an.data == node.data for edge in state.in_edges(an)}
-        self._late_pending[ptrname] = {
-            "ctype": desc.dtype.ctype,
-            "ptrname": ptrname,
-            "setzero": setzero,
-            "tasklets": {id(t) for t in scope_tasklets},
-            "writers": writers,
-            "fusable": scalar_decl() == "late_fused" and not setzero,
-        }
-        return True
-
-    def late_declarable_scalar(self, sdfg, dfg, node, desc) -> tuple[set[nodes.Tasklet], bool] | None:
-        """Whether ``desc`` (the scalar being allocated at ``node`` in state ``dfg``) may have its
-        declaration deferred to first use, per ``scalar_decl``. Returns ``(neighbor_tasklets,
-        setzero)`` when deferrable, else ``None`` (keep the eager declaration).
-
-        Sound only for a plain transient VALUE scalar (never a view/reference/stream, a const write-once
-        scalar, a len-1 array, or a heap/device/GPU-global scalar) whose EVERY access in the state is a
-        direct-child tasklet of ONE scope. That single-scope, tasklet-only shape guarantees the
-        first-use tasklet is emitted into the same brace the eager declaration would occupy, so the
-        deferred ``T x;`` precedes -- and is visible to -- every use. Anything else falls back to eager.
-
-        The two obligations at the end are stated as REFUSALS over all uses rather than as searches for
-        a known use shape, because a search only ever finds what it was written to look for:
-
-        1. the scope the frame's allocation planner picked for the eager declaration must be exactly the
-           scope this deferral lands in (``eager_allocation_scope``). Any use anywhere in the SDFG that
-           pushes that scope outwards -- another state, an interstate edge, a loop or branch condition, a
-           code node naming the container as a free symbol -- makes the scopes differ and refuses here,
-           without this method enumerating those shapes at all;
-        2. nothing anywhere in the SDFG but those access nodes and their neighbour tasklets may mention
-           the name at all (``name_owners``), since the deferred declaration sits at the FIRST of those
-           tasklets rather than at the top of the brace, so even a use inside the same brace can precede
-           it. That check starts from every mention of the name and proves the mentions are the expected
-           ones, so a use shape nobody anticipated lands outside the permitted set and refuses."""
-        # ``late`` re-emits the skipped ``T x;`` at first use; ``late_fused`` folds it into the first write, and
-        # falls back to ``late`` for a candidate it cannot fuse (a braced first-use tasklet).
-        if scalar_decl() == "eager":
-            return None
-        # A plain mutable value scalar only. GPU-global scalars are device pointers, and heap/persistent
-        # ones do not live in a plain brace.
-        if not isinstance(desc, dt.Scalar) or isinstance(desc, (dt.View, dt.Reference, dt.Stream)):
-            return None
-        if not desc.transient or node.data in sdfg.constants_prop:
-            return None
-        if desc.lifetime != dtypes.AllocationLifetime.Scope:
-            return None
-        if desc.storage not in (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap):
-            return None
-        if not isinstance(dfg, SDFGState):
-            return None
-        state: SDFGState = dfg
-        name = node.data
-        access_nodes = [n for n in state.data_nodes() if n.data == name]
-        if not access_nodes:
-            return None
-        scope_dict = state.scope_dict()
-        # Every access must live in ONE scope -- state top level (``None``) or one map's body. That is
-        # the brace the eager declaration occupies too: a map's scope transients are declared inside its
-        # innermost loop body, exactly where its tasklets are emitted, so a declaration deferred within
-        # that scope lands in the same brace and is re-entered per iteration exactly as the eager one is.
-        # A scalar spread over two scopes has no single brace that dominates every use.
-        scopes = {scope_dict[n] for n in access_nodes}
-        if len(scopes) != 1:
-            return None
-        scope = scopes.pop()
-        neighbor_tasklets: set[nodes.Tasklet] = set()
-        has_write = False
-        for an in access_nodes:
-            if state.in_degree(an) > 0:
-                has_write = True
-            elif state.out_degree(an) > 0:
-                # Read from a source this state never wrote: the value comes from a PREVIOUS execution
-                # of the state. An eager declaration at scope top persists across executions and carries
-                # it; a deferred one inside the state's brace is re-declared each time the state runs
-                # (the brace sits inside the loop), so the carried value would silently become
-                # uninitialized. Not a deferral target.
-                return None
-            for edge in state.all_edges(an):
-                other = edge.dst if edge.src is an else edge.src
-                # Every reader/writer must be a plain tasklet in the SAME scope; a copy / map / nested
-                # SDFG / library-node neighbour is not the single-brace direct-child shape we require.
-                if not isinstance(other, nodes.Tasklet) or scope_dict[other] is not scope:
-                    return None
-                neighbor_tasklets.add(other)
-        # A mutable transient must be written before it is read; without a write there is no first-use
-        # point that dominates the reads, so it is not a safe deferral target.
-        if not has_write or not neighbor_tasklets:
-            return None
-        # Obligation 1: the eager declaration's scope must BE the scope this deferral lands in. Any use
-        # outside it -- in any shape, anywhere in the SDFG -- has already moved the planner's answer.
-        if self.eager_allocation_scope(sdfg, name) is not (state if scope is None else scope):
-            return None
-        # Obligation 2: NOTHING in the SDFG other than those accesses and their neighbour tasklets may
-        # mention the name. The deferred declaration sits at the first of those tasklets rather than at
-        # the top of the brace, so even a use inside the same scope can precede it.
-        owners = self.name_owners(sdfg)
-        if owners is None:
-            return None
-        permitted = {id(n) for n in access_nodes} | {id(t) for t in neighbor_tasklets}
-        if not owners.get(name, frozenset()) <= permitted:
-            return None
-        return neighbor_tasklets, node.setzero
-
-    def eager_allocation_scope(self, sdfg: SDFG, name: str) -> nodes.EntryNode | SDFGState | SDFG | None:
-        """The scope the frame's allocation planner picked for ``name``'s EAGER declaration in ``sdfg``
-        (a ``MapEntry``, an ``SDFGState`` or an ``SDFG``), or ``None`` when it recorded no entry -- or
-        more than one, a multi-site shape this generator does not model.
-
-        This is where the deferral gate inverts. ``determine_allocation_lifetime`` has already walked
-        every use of every container -- access nodes, code nodes naming it as a free symbol, interstate
-        edges, loop and conditional-block conditions -- to pick the innermost scope that dominates them
-        all. Re-deriving that here as a list of "can I see a use?" scans means every use shape this file
-        failed to anticipate reads as "no use found", which is a silent miss. Asking the planner instead
-        makes the deferral's obligation exactly what it claims to be -- an eager ``T x;`` and a deferred
-        one are interchangeable -- and turns an unanticipated use into a scope mismatch, i.e. a refusal.
-        """
-        table = self._eager_alloc_scopes
-        if table is None:
-            table = {}
-            # (SDFG, container) -> the to_allocate keys that mention it. Built once: the plan is fixed
-            # for the whole code generation run.
-            for alloc_scope, entries in self._frame.to_allocate.items():
-                for tsdfg, _, alloc_node, _, _, _ in entries:
-                    table.setdefault((id(tsdfg), alloc_node.data), []).append(alloc_scope)
-            self._eager_alloc_scopes = table
-        found = table.get((id(sdfg), name))
-        if found is None or len(found) != 1:
-            return None
-        return found[0]
-
-    def name_owners(self, sdfg: SDFG) -> dict[str, set[int]] | None:
-        """Every name mentioned anywhere in ``sdfg`` mapped to the ``id``s of the dataflow nodes that
-        may mention it, or ``None`` if some node could not be analysed (which refuses every candidate in
-        that SDFG). Built once per SDFG: the graph is frozen for the whole code generation run.
-
-        This is the "every use of this name" side of the deferral gate. A memlet's names are charged to
-        BOTH endpoints, so an edge is covered exactly when its two nodes are; a name on an interstate
-        edge or in a loop / branch condition is charged to the SDFG itself, an owner no candidate can
-        ever permit, so it always refuses. Names are read out with a crude tokenizer rather than with
-        ``used_symbols``, which filters to registered SYMBOLS and so cannot see a data container named
-        as a free name in a C++ tasklet body -- the shape that motivated this rewrite.
-        """
-        key = id(sdfg)
-        if key in self._name_owners:
-            return self._name_owners[key]
-        owners: dict[str, set[int]] = {}
-
-        def charge(names, owner_id: int) -> None:
-            for used in names:
-                owners.setdefault(used, set()).add(owner_id)
-
-        result: dict[str, set[int]] | None = owners
-        for state in sdfg.states():
-            for graph_node in state.nodes():
-                references = self.node_name_references(graph_node, sdfg)
-                if references is None:
-                    result = None
-                    break
-                charge(references, id(graph_node))
-            if result is None:
-                break
-            for edge in state.edges():
-                names = set(edge.data.free_symbols)
-                if edge.data.data:
-                    names.add(edge.data.data)
-                charge(names, id(edge.src))
-                charge(names, id(edge.dst))
-        if result is not None:
-            for edge in sdfg.all_interstate_edges():
-                charge(edge.data.read_symbols() | set(edge.data.assignments.keys()), key)
-            for block in sdfg.all_control_flow_blocks():
-                charge(self.code_property_names(block), key)
-            for region in sdfg.all_control_flow_regions():
-                # ``get_meta_codeblocks`` is the region class's own answer for loop control / branch
-                # conditions, which a ConditionalBlock keeps in ``_branches``, not in a property.
-                charge(identifiers_in(region.get_meta_codeblocks()), key)
-        self._name_owners[key] = result
-        return result
-
-    def node_name_references(self, graph_node: nodes.Node, sdfg: SDFG) -> set[str] | None:
-        """Every name the C++ lowered from ``graph_node`` may reference, or ``None`` when that cannot be
-        decided. Property-driven rather than class-driven, so a node holding its body in a code property
-        this file never heard of is still covered; a node whose body is NOT in a property it can read
-        returns ``None`` and refuses the candidate rather than under-reporting its references."""
-        key = id(graph_node)
-        if key in self._node_references:
-            return self._node_references[key]
-        if isinstance(graph_node, nodes.AccessNode):
-            references: set[str] | None = {graph_node.data, graph_node.root_data}
-        elif isinstance(graph_node, nodes.NestedSDFG):
-            # A nested SDFG is emitted as an inline block, so a name it does not define itself resolves
-            # to the ENCLOSING scope's C++ -- exactly like a free name in a tasklet body. ``None`` (an
-            # unloaded external nest) propagates as a refusal.
-            nested = self.nested_free_names(graph_node.sdfg) if graph_node.sdfg is not None else None
-            references = (
-                None if nested is None else set(graph_node.free_symbols) | self.code_property_names(graph_node) | nested
-            )
-        elif isinstance(graph_node, nodes.Tasklet):
-            # RTLTasklet included: ``_used_identifiers`` tokenizes ``node.code`` for any tasklet language.
-            references = (
-                set(graph_node.free_symbols) | self.code_property_names(graph_node) | self._used_identifiers(graph_node)
-            )
-        elif isinstance(graph_node, nodes.CodeNode):
-            # A library node that survived to codegen lowers through its own ``generate_code`` -- code
-            # this file cannot read from a property -- so its references are unknown and it refuses.
-            references = None
-        else:
-            # Scope/other nodes (Map/Consume entry & exit, ...) carry no body: their only names are the
-            # symbols in their properties (map ranges etc.), which ``free_symbols`` reports in full.
-            references = set(graph_node.free_symbols)
-        self._node_references[key] = references
-        return references
-
-    def nested_free_names(self, nested: SDFG) -> set[str] | None:
-        """Names used anywhere inside ``nested`` that it does not define itself, so they resolve to the
-        enclosing scope. ``None`` if any node in it could not be analysed."""
-        key = id(nested)
-        if key in self._nested_free_names:
-            return self._nested_free_names[key]
-        names: set[str] = set()
-        result: set[str] | None = names
-        for inner_state in nested.states():
-            for graph_node in inner_state.nodes():
-                references = self.node_name_references(graph_node, nested)
-                if references is None:
-                    result = None
-                    break
-                names |= references
-            if result is None:
-                break
-            for edge in inner_state.edges():
-                names |= edge.data.free_symbols
-                if edge.data.data:
-                    names.add(edge.data.data)
-        if result is not None:
-            for edge in nested.all_interstate_edges():
-                names |= edge.data.read_symbols() | set(edge.data.assignments.keys())
-            for block in nested.all_control_flow_blocks():
-                names |= self.code_property_names(block)
-            for region in nested.all_control_flow_regions():
-                names |= identifiers_in(region.get_meta_codeblocks())
-            # A name the nest defines itself is declared inside its own block and shadows the outer one.
-            result = names - (nested.arrays.keys() | nested.symbols.keys() | nested.constants_prop.keys())
-        self._nested_free_names[key] = result
-        return result
-
-    def code_property_names(self, holder) -> set[str]:
-        """Identifier tokens of every ``CodeBlock`` property of ``holder`` (a node or a control-flow
-        block): the loop init / condition / update of a ``LoopRegion``, a library node's code, a
-        tasklet's ``code_init`` / ``code_exit``, and whatever a future class stores the same way."""
-        names: set[str] = set()
-        for _, value in holder.properties():
-            names |= identifiers_in(code_blocks_of(value))
-        return names
-
-    def fuse_pending_decl(self, tasklet, line: str) -> str:
-        """Fold a pending declaration into ``line``, the brace-free single statement of ``tasklet``,
-        turning ``x = expr;`` into ``T x = expr;`` -- the declaration IS the first write. Returns the
-        line unchanged (leaving the declaration pending, to be emitted on its own) unless
-        ``scalar_decl`` is ``late_fused`` and this line is genuinely that scalar's first write.
-
-        The write must be spelled by this line: the scalar is deferred on the strength of its DATAFLOW
-        (see ``late_declarable_scalar``), but only the emitted text proves the statement really is
-        ``x = ...`` and not, say, a read of ``x`` feeding another store."""
-        for ptrname, info in list(self._late_pending.items()):
-            if not info["fusable"] or id(tasklet) not in info["writers"]:
-                continue
-            if not re.match(r"%s\s*=[^=]" % re.escape(ptrname), line):
-                continue
-            del self._late_pending[ptrname]
-            return "%s %s" % (info["ctype"], line)
-        return line
-
-    def emit_pending_late_decls(self, cfg, state_id, tasklet, callsite_stream) -> None:
-        """Emit the deferred ``T x;`` declaration of every scalar this ``tasklet`` is the first to use,
-        immediately before the tasklet body. A no-op (and byte-identical) unless a declaration was
-        deferred (``scalar_decl`` other than ``eager``)."""
-        if not self._late_pending:
-            return
-        for ptrname, info in list(self._late_pending.items()):
-            if id(tasklet) not in info["tasklets"]:
-                continue
-            zero = " = 0" if info["setzero"] else ""
-            callsite_stream.write("%s %s%s;" % (info["ctype"], info["ptrname"], zero), cfg, state_id, tasklet)
-            del self._late_pending[ptrname]
-
     def array_index_access(self, sdfg, desc, data_name: str):
         """Registers (once) the ``<array>_idx`` index function for ``data_name`` and returns
         ``(ptrname, fnname, ndim, extra_syms)``, or None if the access is a plain by-value scalar."""
@@ -1196,8 +813,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         extra_names = [str(s) for s in extra]
 
         base = re.sub(r"\W", "_", data_name)
-        ctype = index_ctype(desc, flatexpr)
-        sig = (ndim, tuple(str(s) for s in desc.strides), tuple(str(o) for o in desc.offset), ctype)
+        sig = (ndim, tuple(str(s) for s in desc.strides), tuple(str(o) for o in desc.offset))
         key = (base, sig)
         if key in self._index_sig_to_name:
             return self._index_sig_to_name[key], extra_names
@@ -1210,6 +826,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         fnname = self.unshadowed_helper_name(fnname, self._index_functions)
         self._index_sig_to_name[key] = fnname
 
+        ctype = "int64_t"
         params = ["%s %s" % (ctype, str(d)) for d in dim_syms]
         params += ["%s %s" % (ctype, s) for s in extra_names]
         body = sym2cpp(flatexpr)

@@ -56,6 +56,10 @@ def mangle_dace_state_struct_name(sdfg: SDFG | str) -> str:
     return type_name
 
 
+def readable_cpu_codegen_active() -> bool:
+    return Config.get("compiler", "cpu", "implementation") == "experimental_readable"
+
+
 def copy_expr(
     dispatcher,
     sdfg,

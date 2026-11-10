@@ -34,7 +34,6 @@ from dace.sdfg.state import (
     LoopRegion,
     SDFGState,
     StateSubgraphView,
-    UnstructuredControlFlow,
 )
 
 
@@ -1435,48 +1434,6 @@ def concurrent_subgraphs(graph):
     # them. Sort according to original order of nodes
     all_nodes = graph.nodes()
     return [ScopeSubgraphView(graph, [n for n in all_nodes if n in sg], None) for sg in subgraphs]
-
-
-def separate_maps(state, dfg, schedule):
-    """Separates the given ScopeSubgraphView into subgraphs with and without
-    maps of the given schedule type. The function assumes that the given
-    ScopeSubgraph view does not contain any concurrent segments (i.e. pass
-    it through concurrent_subgraphs first). Only top level maps will be
-    accounted for, if the desired schedule occurs in another (undesired)
-    map, it will be ignored.
-
-    Returns a list with the subgraph views in order of the original DFG.
-    ScopeSubgraphViews for the parts with maps, StateSubgraphViews for the
-    parts without maps."""
-
-    from dace import nodes
-    from dace.sdfg.scope import StateSubgraphView
-
-    sorted_nodes = list(dfs_topological_sort(dfg, dfg.source_nodes()[0]))
-    nodes_to_skip = [dfg.source_nodes()[0], dfg.sink_nodes()[0]]
-    result = []
-
-    current = []
-    for node in sorted_nodes:
-        if node in nodes_to_skip:
-            continue
-        if isinstance(node, nodes.MapEntry):
-            if node.map.schedule == schedule:
-                result.append(StateSubgraphView(state, current))
-                result.append(state.scope_subgraph(node))
-                nodes_to_skip += result[-1].nodes()
-                current = []
-            else:
-                temp_nodes = state.scope_subgraph(node).nodes()
-                nodes_to_skip += temp_nodes
-                current += temp_nodes
-        else:
-            current.append(node)
-
-    if len(current) > 0:
-        result.append(StateSubgraphView(state, current))
-
-    return result
 
 
 def _transients_in_scope(sdfg, outer_scope, scope_dict, include_nested):
@@ -2958,38 +2915,3 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
 
         if expanded_something:
             states.append(state)
-
-
-def unstructured_control_flow(sdfg: SDFG, recursive: bool = False) -> Generator[ControlFlowBlock, None, None]:
-    """Yield what makes the control flow of ``sdfg`` unstructured.
-
-    Structured control flow branches only through ``ConditionalBlock`` and loops only through ``LoopRegion``, so every
-    region is a line of blocks joined by unconditional edges. This yields each ``UnstructuredControlFlow`` region and
-    each block that leaves through more than one interstate edge or through a conditional one.
-
-    :param sdfg: The SDFG to inspect.
-    :param recursive: Whether to inspect nested SDFGs as well.
-    """
-    for region in sdfg.all_control_flow_regions(recursive=recursive):
-        if isinstance(region, UnstructuredControlFlow):
-            yield region
-        elif isinstance(region, ControlFlowRegion):
-            for block in region.nodes():
-                out_edges = region.out_edges(block)
-                if len(out_edges) > 1 or (out_edges and not out_edges[0].data.is_unconditional()):
-                    yield block
-
-
-def require_structured_control_flow(sdfg: SDFG, consumer: str) -> None:
-    """Raise if ``sdfg`` or an SDFG nested in it still has unstructured control flow, which ``consumer`` does not support.
-
-    :param sdfg: The SDFG to inspect.
-    :param consumer: The pass or pipeline that relies on structured control flow, named in the error.
-    :raises NotImplementedError: If any block makes the control flow unstructured; the message names every one.
-    """
-    offending = [block.label for block in unstructured_control_flow(sdfg, recursive=True)]
-    if offending:
-        raise NotImplementedError(
-            f"{consumer} requires structured control flow, which ControlFlowRaising could not "
-            f"produce: these blocks branch through interstate edges: {offending}"
-        )

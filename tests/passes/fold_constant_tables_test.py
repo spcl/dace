@@ -14,8 +14,8 @@ TABLE = (2.0, 3.0, 4.0, -99.0)
 def table_then_use(skip: int = -1, looped: bool = False, rewrite: bool = False) -> dace.SDFG:
     """``table[k] = TABLE[k]`` by one tasklet per element, then ``out[i] = table[i] * 2``.
 
-    ``skip`` leaves one element unfilled, ``looped`` puts the fill in a loop, ``rewrite`` writes ``table[0]`` again
-    in the second state.
+    ``skip`` leaves one element unfilled, ``looped`` fills inside a loop, ``rewrite`` writes ``table[0]`` again in
+    the second state.
     """
     sdfg = dace.SDFG(f"table_then_use_{skip + 1}_{looped}_{rewrite}")
     sdfg.add_array("out", [len(TABLE)], dace.float64)
@@ -61,9 +61,18 @@ def test_a_table_filled_once_with_literals_becomes_a_constant():
     np.testing.assert_array_equal(out, np.array(TABLE) * 2.0)
 
 
-@pytest.mark.parametrize("options", [{"skip": 1}, {"looped": True}, {"rewrite": True}])
+UNFOLDED_OPTIONS = [{"skip": 1}, {"looped": True}, {"rewrite": True}]
+
+
+@pytest.mark.parametrize("options", UNFOLDED_OPTIONS)
 def test_a_table_not_filled_once_with_literals_is_left_alone(options):
     """A partial fill, a fill that runs more than once, and a table written again are not compile-time constants."""
     sdfg = table_then_use(**options)
     assert FoldConstantTables().apply_pass(sdfg, {}) is None
     assert "table" not in sdfg.constants
+
+
+if __name__ == "__main__":
+    test_a_table_filled_once_with_literals_becomes_a_constant()
+    for options in UNFOLDED_OPTIONS:
+        test_a_table_not_filled_once_with_literals_is_left_alone(options)

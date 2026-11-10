@@ -6,18 +6,17 @@ from copy import deepcopy
 
 from ordered_set import OrderedSet
 
+import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace import Memlet, data, dtypes
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-from dace.sdfg import SDFG, nodes
-from dace.sdfg.scope import is_devicelevel_gpu
-from dace.sdfg.state import SDFGState
+from dace.sdfg import SDFG, SDFGState, nodes
 
 
 def host_level_nested_sdfgs(
     state: SDFGState, host_maps: OrderedSet[nodes.MapEntry], entry: nodes.MapEntry | None = None
 ) -> Iterator[nodes.NestedSDFG]:
     """Nested SDFGs at ``state``'s top level or under host maps only: one below a kernel is device code."""
-    for node in state.scope_children().get(entry, ()):
+    for node in state.scope_children()[entry]:
         if isinstance(node, nodes.NestedSDFG):
             yield node
         elif isinstance(node, nodes.MapEntry) and node in host_maps:
@@ -30,24 +29,9 @@ def prepare_body(sdfg: SDFG, state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> 
     inherit_binding_storage(sdfg, state, nsdfg_node)
 
 
-def read_outside_a_kernel(sdfg: SDFG, name: str) -> bool:
-    """``name`` is read somewhere in ``sdfg`` that no device schedule covers, or by an interstate edge."""
-    for nested in sdfg.all_sdfgs_recursive():
-        for state in nested.states():
-            for node in state.data_nodes():
-                if node.data == name and state.out_degree(node) > 0 and not is_devicelevel_gpu(nested, state, node):
-                    return True
-        if any(name in edge.data.used_arrays(nested.arrays) for edge in nested.all_interstate_edges()):
-            return True
-    return False
-
-
 def stage_device_scalar_bindings(sdfg: SDFG, state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> None:
-    """Copy a device element bound to a scalar connector the body reads on the host into a host scalar.
-
-    A scalar connector names one element by reference, so a host read of it through a device binding is
-    invalid (npbench azimint_hist reads ``bin_edges[i]`` in a host subtraction).
-    """
+    """Copy a device element bound to a scalar connector the body reads on the host into a host scalar: a scalar
+    connector names one element by reference, so a host read through a device binding is invalid."""
     body = nsdfg_node.sdfg
     for edge in state.in_edges(nsdfg_node):
         if (
@@ -58,29 +42,27 @@ def stage_device_scalar_bindings(sdfg: SDFG, state: SDFGState, nsdfg_node: nodes
             continue
         if sdfg.arrays[edge.data.data].storage not in GPU_RESIDENT_STORAGES:
             continue
-        if not read_outside_a_kernel(body, edge.dst_conn):
+        if not helpers.is_read(body, edge.dst_conn, outside_kernels=True):
             continue
-        host_name, _ = sdfg.add_scalar(
+        host_scalar, _ = sdfg.add_scalar(
             f"{edge.dst_conn}_host",
             body.arrays[edge.dst_conn].dtype,
             transient=True,
             storage=dtypes.StorageType.Default,
             find_new_name=True,
         )
-        staged = state.add_access(host_name)
-        # The edge's own source, so the old one is not left isolated once this edge goes.
-        source = edge.src if isinstance(edge.src, nodes.AccessNode) else state.add_read(edge.data.data)
+        staged = state.add_access(host_scalar)
         state.remove_edge(edge)
-        state.add_edge(source, edge.src_conn, staged, None, deepcopy(edge.data))
-        state.add_edge(staged, None, nsdfg_node, edge.dst_conn, Memlet.from_array(host_name, sdfg.arrays[host_name]))
+        # From the edge's own source and connector: a binding through a host map stays inside the map.
+        state.add_edge(edge.src, edge.src_conn, staged, None, deepcopy(edge.data))
+        state.add_edge(
+            staged, None, nsdfg_node, edge.dst_conn, Memlet.from_array(host_scalar, sdfg.arrays[host_scalar])
+        )
 
 
 def inherit_binding_storage(sdfg: SDFG, state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> None:
-    """Give each inner array bound to a connector the storage of the outer array it binds.
-
-    Arrays only: a scalar connector names one element by reference, so the outer storage says nothing about
-    where the body may read it.
-    """
+    """Give each inner array bound to a connector the storage of the outer array it binds; a scalar connector is
+    left alone, since the outer storage says nothing about where the body reads it."""
     for edge in state.all_edges(nsdfg_node):
         connector = edge.dst_conn if edge.dst is nsdfg_node else edge.src_conn
         if edge.data.is_empty() or connector is None or connector not in nsdfg_node.sdfg.arrays:

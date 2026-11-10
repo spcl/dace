@@ -493,7 +493,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         idstr = f"{sdfg.name}_{state_id}_{node_id}"
 
         if node.out_connectors:
-            dtype = next(iter(node.out_connectors.values())).base_type
+            dtype = next(node.out_connectors.values())
         else:
             dtype = sdfg.arrays[output_memlet.data].dtype
 
@@ -722,7 +722,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         output_memlet = output_edge.data
 
         if node.out_connectors:
-            dtype = next(iter(node.out_connectors.values())).base_type
+            dtype = next(node.out_connectors.values())
         else:
             dtype = sdfg.arrays[output_memlet.data].dtype
         output_type = dtype.ctype
