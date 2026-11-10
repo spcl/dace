@@ -53,6 +53,21 @@ def test_a_gemm_in_a_parallel_map_lowers_to_libxsmm(dtype, trans_a, beta):
     assert np.allclose(c, expected, rtol=1e-5 if dtype == dace.float32 else 1e-12)
 
 
+def test_a_scaled_gemm_in_a_parallel_map_keeps_its_coefficients():
+    """``libxsmm_dgemm`` computes with alpha 1 and beta 0 or 1 whatever it is passed."""
+    sdfg = batch_of_gemms(dace.float64, False, 0.5)
+    sdfg.name = "libxsmm_batch_scaled"
+    gemm = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Gemm))
+    gemm.alpha = 0.25
+    canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.CPU)
+    assert gemm.implementation == "LIBXSMM"
+    rng = np.random.default_rng(2)
+    a, x, c = rng.random((7, 9, 5)), rng.random((7, 5, 81)), rng.random((7, 9, 81))
+    expected = 0.25 * (a @ x) + 0.5 * c
+    sdfg(A=a, X=x, C=c, B=7)
+    assert np.allclose(c, expected)
+
+
 def test_a_top_level_gemm_keeps_openblas():
     """A GEMM no parallel region encloses is a threaded call: OpenBLAS with its shape plan, not LIBXSMM."""
     sdfg = dace.SDFG("libxsmm_top_level")
@@ -111,6 +126,7 @@ if __name__ == "__main__":
         for trans_a in [False, True]:
             for beta in [0.0, 1.0]:
                 test_a_gemm_in_a_parallel_map_lowers_to_libxsmm(dtype, trans_a, beta)
+    test_a_scaled_gemm_in_a_parallel_map_keeps_its_coefficients()
     test_a_top_level_gemm_keeps_openblas()
     test_a_batch_of_small_products_lowers_to_libxsmm(0.0)
     test_a_batch_of_small_products_lowers_to_libxsmm(1.0)
