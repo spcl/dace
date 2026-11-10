@@ -1846,7 +1846,9 @@ def test_host_scalar_endpoint_memcpy_takes_its_address():
     state = sdfg.add_state("s0")
     state.add_nedge(state.add_read("s"), state.add_write("gs"), dace.Memlet("s"))
     state.add_nedge(state.add_read("gs"), state.add_write("out"), dace.Memlet("gs"))
-    code = _generated_code(sdfg)
+    # The connector binding is the legacy generator's; the readable one inlines the connectors away
+    with dace.config.set_temporary("compiler", "cpu", "implementation", value="legacy"):
+        code = _generated_code(sdfg)
     assert "MemcpyAsync(_cpy_out, _cpy_in" in code
     assert "_cpy_in = &s;" in code, code
 
@@ -1865,7 +1867,9 @@ def test_opaque_handle_endpoint_is_not_addressed():
     state.add_edge(state.add_access("h"), None, tasklet, "_h", dace.memlet.Memlet("h"))
     state.add_edge(tasklet, "_o", state.add_write("out"), None, dace.memlet.Memlet("out[0]"))
 
-    code = _generated_code(sdfg)
+    # The connector binding is the legacy generator's; the readable one inlines the connectors away
+    with dace.config.set_temporary("compiler", "cpu", "implementation", value="legacy"):
+        code = _generated_code(sdfg)
     assert "MPI_Comm _h = h;" in code, code
     assert "&h" not in code, code
 
@@ -1879,7 +1883,11 @@ def test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope():
     state = sdfg.add_state("s0")
     state.add_nedge(state.add_read("A"), state.add_write("gA"), dace.Memlet("A[0:64]"))
     state.add_nedge(state.add_read("gA"), state.add_write("B"), dace.Memlet("gA[0:64]"))
-    with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1):
+    # The connector binding is the legacy generator's; the readable one inlines the connectors away
+    with (
+        dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1),
+        dace.config.set_temporary("compiler", "cpu", "implementation", value="legacy"),
+    ):
         code = _generated_code(sdfg)
     stream_decl = code.find("__dace_current_stream = ")
     memcpy_call = code.find("MemcpyAsync(_cpy_out, _cpy_in")

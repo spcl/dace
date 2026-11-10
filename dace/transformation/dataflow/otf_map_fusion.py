@@ -346,8 +346,10 @@ class OTFMapFusion(transformation.SingleStateTransformation):
     ):
         inter_nodes = list(graph.all_nodes_between(first_map_entry, first_map_exit) - {first_map_entry})
 
-        # Add new nodes
-        new_inter_nodes = [copy.deepcopy(node) for node in inter_nodes]
+        # Add new nodes. One memo for the whole clone: a scope's entry and exit share a single Map
+        # object, and a per-node deepcopy hands them one copy each (an unbalanced map brace in codegen).
+        memo = {}
+        new_inter_nodes = [copy.deepcopy(node, memo) for node in inter_nodes]
         for node in new_inter_nodes:
             graph.add_node(node)
 
