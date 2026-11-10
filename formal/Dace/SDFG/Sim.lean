@@ -948,6 +948,10 @@ structure CSt.Sim (π : Equiv.Perm Name) (P : Name → Prop) (L : Name → Prop)
 def St.SimR {α : Type} (π : Equiv.Perm Name) (P : Name → Prop) (L : Name → Prop) (x₂ x₁ : α × St) : Prop :=
   x₂.1 = x₁.1 ∧ St.Sim π P L x₂.2 x₁.2
 
+theorem Ctx.Strong.isStream_eq {π : Equiv.Perm Name} {P : Name → Prop} {ctx₂ ctx₁ : Ctx} {d : Name}
+    (hd : Ctx.Strong π P ctx₂ ctx₁ d) : ctx₂.isStream d = ctx₁.isStream d := by
+  simp only [Ctx.isStream, hd.desc]
+
 namespace St.Sim
 
 variable {π : Equiv.Perm Name} {P : Name → Prop} {L : Name → Prop} {st₂ st₁ : St}
@@ -1173,29 +1177,45 @@ theorem lowerCorner_sim {m₂ m₁ : Mem} (hm : Mem.Sim π P L m₂ m₁) {n : N
         simp only at hr
         exact List.mem_flatMap.2 ⟨r, List.mem_of_mem_head? hr, List.mem_flatMap.2 ⟨dim, hdim, by simp [Dim.names, hx]⟩⟩
 
+/-- Simulation of a leaf function built from the primitive accesses: follows
+the bind structure of both sides (`ResSim.bind`, `ResSim.bindEq`,
+`ResSim.foldlM`, case splits), closing every primitive step with its
+simulation lemma; hypotheses are found by assumption. -/
+syntax "res_sim" " [" term,* "]" : tactic
+
+open Lean in
+macro_rules
+  | `(tactic| res_sim [$ts,*]) => do
+    let alts ← ts.getElems.mapM fun t => `(tacticSeq| exact $t)
+    `(tactic|
+      repeat' first
+        | exact ResSim.err _
+        | exact ResSim.ok ‹_›
+        | exact ResSim.ok ⟨rfl, ‹_›⟩
+        | (first $[| $alts]*)
+        | refine ResSim.bindEq (by first $[| $alts]*) (fun _ => ?_)
+        | (refine ResSim.bind (by first $[| $alts]*) (fun x y hxy => ?_)
+           first
+             | (obtain ⟨_, _⟩ := x; obtain ⟨_, _⟩ := y; obtain ⟨hv, hs⟩ : _ = _ ∧ _ := hxy
+                simp only at hv hs ⊢; subst hv; have := St.Sim.mem hs)
+             | (have := St.Sim.mem hxy))
+        | (refine ResSim.foldlM (fun _ _ _ hab => ?_) _ ‹_›; have := St.Sim.mem hab)
+        | split)
+
+set_option hygiene false in
+/-- `res_sim` with the primitive accesses of a container. -/
+local macro "leaf_sim" : tactic => `(tactic|
+  res_sim [Ctx.pointsOf_sim hc ‹_› ρ ‹_› _ ‹_›, streamPoint_sim hc ρ ‹_› ‹_› _ ‹_›, lowerCorner_sim hc ρ ‹_› ‹_› _ ‹_›,
+    St.read_sim hc ρ ‹_› (Ctx.Strong.good₀ ‹_›) _ _, St.readMany_sim hc ρ ‹_› (Ctx.Strong.good₀ ‹_›) _ _, St.store_sim hc ρ ‹_› hu (Ctx.Strong.good₀ ‹_›) _ _ _ _,
+    St.queue_sim hc ρ ‹_› (Ctx.Strong.good₀ ‹_›) _, St.push_sim hc ρ ‹_› (Ctx.Strong.good₀ ‹_›) _ _, St.popN_sim hc ρ ‹_› (Ctx.Strong.good₀ ‹_›) _ _])
+
 theorem readScalarData_sim {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) {d : Name} (hd : Ctx.Strong π P ctx₂ ctx₁ d)
     (sub : Option Subset) (hs : ∀ x ∈ optSubsetNames sub, Ctx.Good₀ π P ctx₂ ctx₁ x) (oob : Bool) :
     ResSim (St.SimR π P L) (readScalarData ctx₂ ρ d sub oob st₂) (readScalarData ctx₁ ρ d sub oob st₁) := by
   unfold readScalarData
-  refine ResSim.bindEq (Ctx.pointsOf_sim hc h.mem ρ hd sub hs) fun pts => ?_
-  split
-  · rw [show ctx₂.isStream d = ctx₁.isStream d by simp only [Ctx.isStream, hd.desc]]
-    refine ResSim.ite (c := ctx₁.isStream d) (fun _ => ?_) (fun _ => ?_)
-    · exact ResSim.bind (St.popN_sim hc ρ h hd.good₀ _ 1) fun x y hxy => by
-        obtain ⟨hv, hs⟩ := hxy
-        obtain ⟨v₂, a₂⟩ := x
-        obtain ⟨v₁, a₁⟩ := y
-        simp only at hv hs ⊢
-        subst hv
-        exact ResSim.ok ⟨rfl, hs⟩
-    · exact ResSim.bind (St.read_sim hc ρ h hd.good₀ _ oob) fun x y hxy => by
-        obtain ⟨hv, hs⟩ := hxy
-        obtain ⟨v₂, a₂⟩ := x
-        obtain ⟨v₁, a₁⟩ := y
-        simp only at hv hs ⊢
-        subst hv
-        exact ResSim.ok ⟨rfl, hs⟩
-  · exact ResSim.err _
+  try simp only [Ctx.Strong.isStream_eq hd]
+  have hm := h.mem
+  leaf_sim
 
 theorem readEdgeScalar_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {e : DEdge} (he : e ∈ s.edges)
     {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) :
@@ -1216,35 +1236,9 @@ theorem copyData_sim {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) {sd : Na
     (oob : Bool) :
     ResSim (St.Sim π P L) (copyData ctx₂ ρ st₂ sd ssub dd dsub w oob) (copyData ctx₁ ρ st₁ sd ssub dd dsub w oob) := by
   unfold copyData
-  rw [show ctx₂.isStream sd = ctx₁.isStream sd by simp only [Ctx.isStream, hsd.desc],
-    show ctx₂.isStream dd = ctx₁.isStream dd by simp only [Ctx.isStream, hdd.desc]]
-  split
-  · exact ResSim.err _
-  · refine ResSim.bindEq (Ctx.pointsOf_sim hc h.mem ρ hdd dsub hds) fun dpts => ?_
-    refine ResSim.bindEq (streamPoint_sim hc ρ h.mem hsd ssub hss) fun sp => ?_
-    refine ResSim.bind (St.popN_sim hc ρ h hsd.good₀ sp dpts.length) fun x y ⟨hv, hs⟩ => ?_
-    obtain ⟨vs₂, a₂⟩ := x
-    obtain ⟨vs₁, a₁⟩ := y
-    simp only at hv hs ⊢
-    subst hv
-    exact ResSim.foldlM (fun qv b₂ b₁ hb => St.store_sim hc ρ hb hu hdd.good₀ qv.1 oob w qv.2) _ hs
-  · refine ResSim.bindEq (Ctx.pointsOf_sim hc h.mem ρ hsd ssub hss) fun spts => ?_
-    refine ResSim.bindEq (streamPoint_sim hc ρ h.mem hdd dsub hds) fun dp => ?_
-    refine ResSim.bind (St.readMany_sim hc ρ h hsd.good₀ spts oob) fun x y ⟨hv, hs⟩ => ?_
-    obtain ⟨vs₂, a₂⟩ := x
-    obtain ⟨vs₁, a₁⟩ := y
-    simp only at hv hs ⊢
-    subst hv
-    exact St.push_sim hc ρ hs hdd.good₀ dp vs₂
-  · refine ResSim.bindEq (Ctx.pointsOf_sim hc h.mem ρ hsd ssub hss) fun spts => ?_
-    refine ResSim.bindEq (Ctx.pointsOf_sim hc h.mem ρ hdd dsub hds) fun dpts => ?_
-    refine ResSim.foldlM (fun pq b₂ b₁ hb => ?_) _ h
-    exact ResSim.bind (St.read_sim hc ρ hb hsd.good₀ pq.1 oob) fun x y ⟨hv, hs⟩ => by
-      obtain ⟨v₂, a₂⟩ := x
-      obtain ⟨v₁, a₁⟩ := y
-      simp only at hv hs ⊢
-      subst hv
-      exact St.store_sim hc ρ hs hu hdd.good₀ pq.2 oob w v₂
+  try simp only [Ctx.Strong.isStream_eq hsd, Ctx.Strong.isStream_eq hdd]
+  have hm := h.mem
+  leaf_sim
 
 include hu in
 theorem execCopy_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {e : DEdge} (he : e ∈ s.edges) {st₂ st₁ : St}
@@ -1423,14 +1417,9 @@ theorem storeScalar_sim {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) {d : 
     (w : Option WcrOp) (oob : Bool) (v : Val) :
     ResSim (St.Sim π P L) (storeScalar ctx₂ ρ st₂ d sub w oob v) (storeScalar ctx₁ ρ st₁ d sub w oob v) := by
   unfold storeScalar
-  rw [show ctx₂.isStream d = ctx₁.isStream d by simp only [Ctx.isStream, hd.desc]]
-  refine ResSim.ite (c := ctx₁.isStream d) (fun _ => ?_) (fun _ => ?_)
-  · exact ResSim.bindEq (streamPoint_sim hc ρ h.mem hd sub hs) fun p => St.push_sim hc ρ h hd.good₀ p [v]
-  · refine ResSim.bindEq (Ctx.pointsOf_sim hc h.mem ρ hd sub hs) fun pts => ?_
-    split
-    · exact St.store_sim hc ρ h hu hd.good₀ _ oob w v
-    · exact ResSim.err _
-    · exact ResSim.err _
+  try simp only [Ctx.Strong.isStream_eq hd]
+  have hm := h.mem
+  leaf_sim
 
 theorem applyScalar_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n : DNode) {st₂ st₁ : St}
     (h : St.Sim π P L st₂ st₁) (c : Conn) (v : Val) :
@@ -1476,19 +1465,9 @@ theorem storeArrayWrite_sim {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) {
     ResSim (St.Sim π P L) (storeArrayWrite ctx₂ ρ st₂ d sub w oob rel v)
       (storeArrayWrite ctx₁ ρ st₁ d sub w oob rel v) := by
   unfold storeArrayWrite
-  rw [show ctx₂.isStream d = ctx₁.isStream d by simp only [Ctx.isStream, hd.desc]]
-  refine ResSim.ite (c := ctx₁.isStream d) (fun _ => ResSim.err _) (fun _ => ?_)
-  refine ResSim.bindEq (lowerCorner_sim hc ρ h.mem hd sub hs) fun lo => ?_
-  by_cases hl : rel.length = lo.length
-  · rw [if_pos hl, if_pos hl]
-    refine ResSim.bindEq (Ctx.pointsOf_sim hc h.mem ρ hd sub hs) fun pts => ?_
-    by_cases hc' : pts.contains (List.zipWith (· + ·) lo rel) = true
-    · rw [if_pos hc', if_pos hc']
-      exact St.store_sim hc ρ h hu hd.good₀ _ oob w v
-    · rw [if_neg hc', if_neg hc']
-      exact ResSim.err _
-  · rw [if_neg hl, if_neg hl]
-    exact ResSim.err _
+  try simp only [Ctx.Strong.isStream_eq hd]
+  have hm := h.mem
+  leaf_sim
 
 theorem applyArrayWrite_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n : DNode) {st₂ st₁ : St}
     (h : St.Sim π P L st₂ st₁) (c : Conn) (rel : Idx) (v : Val) :
@@ -1530,9 +1509,9 @@ theorem pushTo_sim {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) {d : Name}
     (sub : Option Subset) (hs : ∀ x ∈ optSubsetNames sub, Ctx.Good₀ π P ctx₂ ctx₁ x) (vs : List Val) :
     ResSim (St.Sim π P L) (pushTo ctx₂ ρ st₂ d sub vs) (pushTo ctx₁ ρ st₁ d sub vs) := by
   unfold pushTo
-  rw [show ctx₂.isStream d = ctx₁.isStream d by simp only [Ctx.isStream, hd.desc]]
-  refine ResSim.ite (c := ctx₁.isStream d) (fun _ => ?_) (fun _ => ResSim.err _)
-  exact ResSim.bindEq (streamPoint_sim hc ρ h.mem hd sub hs) fun p => St.push_sim hc ρ h hd.good₀ p vs
+  try simp only [Ctx.Strong.isStream_eq hd]
+  have hm := h.mem
+  leaf_sim
 
 omit hu in
 theorem applyPush_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n : DNode) {st₂ st₁ : St}
@@ -1567,10 +1546,9 @@ theorem popFrom_sim {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) {d : Name
     (sub : Option Subset) (hs : ∀ x ∈ optSubsetNames sub, Ctx.Good₀ π P ctx₂ ctx₁ x) (k : Nat) :
     ResSim (St.Sim π P L) (popFrom ctx₂ ρ st₂ d sub k) (popFrom ctx₁ ρ st₁ d sub k) := by
   unfold popFrom
-  rw [show ctx₂.isStream d = ctx₁.isStream d by simp only [Ctx.isStream, hd.desc]]
-  refine ResSim.ite (c := ctx₁.isStream d) (fun _ => ?_) (fun _ => ResSim.err _)
-  refine ResSim.bindEq (streamPoint_sim hc ρ h.mem hd sub hs) fun p => ?_
-  exact ResSim.bind (St.popN_sim hc ρ h hd.good₀ p k) fun x y ⟨_, hs⟩ => ResSim.ok hs
+  try simp only [Ctx.Strong.isStream_eq hd]
+  have hm := h.mem
+  leaf_sim
 
 omit hu in
 theorem applyPop_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n : DNode) {st₂ st₁ : St}
