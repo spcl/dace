@@ -122,6 +122,7 @@ class ScalarRefRewriter(ast.NodeTransformer):
         if (
             isinstance(node.value, ast.Name)
             and node.value.id in self.rename
+            and not isinstance(index, (ast.Slice, ast.Tuple))
             and symbolic.pystr_to_symbolic(ast.unparse(index)) == 0
         ):
             return ast.copy_location(ast.Name(id=self.rename[node.value.id], ctx=node.ctx), node)
