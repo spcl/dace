@@ -2,7 +2,7 @@
 import copy
 import itertools
 import warnings
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from collections.abc import Set as AbstractSet
 from typing import (
     Any,
@@ -2061,7 +2061,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if read_subsets is None or write_subsets is None:
                 return True
             all_subsets: list[subsets.Subset] = read_subsets + write_subsets
-            if not self.test_if_subsets_are_point_wise(all_subsets, facts):
+            if not self.test_if_subsets_are_point_wise(all_subsets, facts, first_map_entry.map.params):
                 # A privatized copy would hide the first Map's own writes from its reads; the intermediate is then
                 #  fused in place, which needs no other iteration of the first Map to write what either Map reads.
                 second_reads = self.find_subsets(
@@ -2109,9 +2109,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             all_subsets = read_subsets + write_subsets
             # Now we can test if these subsets are point wise, or a read another iteration's write cannot reach:
             #  lulesh's ``a[i, 4]`` from ``a[i, 2]`` and ``a[i, 3]``
-            if not self.test_if_subsets_are_point_wise(all_subsets, facts) and not self.other_iterations_miss(
-                first_map_entry.map, write_subsets, read_subsets, facts
-            ):
+            if not self.test_if_subsets_are_point_wise(
+                all_subsets, facts, first_map_entry.map.params
+            ) and not self.other_iterations_miss(first_map_entry.map, write_subsets, read_subsets, facts):
                 return True
             del all_subsets
 
@@ -2262,7 +2262,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 self.find_subsets(node=node, scope_node=scope_node, state=state, sdfg=sdfg, param_repl=None)
                 for node, scope_node in ((reads[name], first_map_entry), (writes[name], first_map_exit))
             ]
-            if None in accessed or not self.test_if_subsets_are_point_wise(accessed[0] + accessed[1], facts):
+            if None in accessed or not self.test_if_subsets_are_point_wise(
+                accessed[0] + accessed[1], facts, first_map_entry.map.params
+            ):
                 in_place.add(name)
         for edge in state.out_edges(first_map_exit):
             if edge.src_conn is None or not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data in in_place:
@@ -2276,7 +2278,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 in_place.add(edge.dst.data)
         return in_place
 
-    def test_if_subsets_are_point_wise(self, subsets_to_check: list[subsets.Subset], facts: symbolic.Facts) -> bool:
+    def test_if_subsets_are_point_wise(
+        self, subsets_to_check: list[subsets.Subset], facts: symbolic.Facts, params: Collection[str]
+    ) -> bool:
         """Point wise means that they are all the same.
 
         If a series of subsets are point wise it means that all Memlets, access
@@ -2285,8 +2289,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         If the subsets originates from different maps, then they must have been
         renamed.
 
+        Equal subsets name one element per iteration only if they follow the iteration. A subset that
+        mentions no parameter of the Map and spans more than one element (the whole array, as a body that
+        indexes through another array leaves it) is touched whole by every iteration: the iterations overlap,
+        so it is not point wise however equal the subsets are.
+
         :param subsets_to_check: The list of subsets that should be checked.
         :param facts: The facts that hold where the subsets are accessed.
+        :param params: The parameters of the first Map, the ones the subsets are written in.
         """
         # Fewer than two subsets means we never saw both sides of the access -- e.g. the node only
         #  reaches the scope through ORDERING edges, so `find_subsets()` found nothing to compare.
@@ -2306,6 +2316,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if not master_subset.covers(subset, facts):
                 return False
             if not subset.covers(master_subset, facts):
+                return False
+
+        # Equal to each other, but only a subset that follows the iteration names a different element in each.
+        if isinstance(master_subset, subsets.Range):
+            single_element = all(begin == end for begin, end, _ in master_subset.ranges)
+            if not single_element and {str(symbol) for symbol in master_subset.free_symbols}.isdisjoint(params):
                 return False
 
         # All subsets are equal to the master subset, thus they are equal to each other.
