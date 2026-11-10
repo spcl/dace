@@ -8,7 +8,6 @@ from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
 from dace.sdfg import nodes
-from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -23,12 +22,14 @@ class ExpandSymmPure(ExpandTransformation):
         m, n = sdfg.arrays["_Cin"].shape
         init = sdfg.add_state(f"{node.label}_init")
         # As in BLAS, beta == 0 does not read C, so NaN there does not reach the result
-        zero = equal_valued(0, node.beta)
+        zero = blas_helpers.is_literal_scale(node, "beta", node.beta, 0)
+        alpha, alpha_inputs = blas_helpers.scale_term(node, "alpha", node.alpha)
+        beta, beta_inputs = blas_helpers.scale_term(node, "beta", node.beta)
         init.add_mapped_tasklet(
             "scale_c",
             {"__i": f"0:{m}", "__j": f"0:{n}"},
-            {} if zero else {"__c": dace.Memlet("_Cin[__i, __j]")},
-            "__out = 0" if zero else f"__out = ({node.beta}) * __c",
+            {} if zero else {"__c": dace.Memlet("_Cin[__i, __j]"), **beta_inputs},
+            "__out = 0" if zero else f"__out = {beta} * __c",
             {"__out": dace.Memlet("_Cout[__i, __j]")},
             external_edges=True,
         )
@@ -43,8 +44,9 @@ class ExpandSymmPure(ExpandTransformation):
                 "__a": dace.Memlet(f"_A[{row}, {col}]"),
                 "__mirror": dace.Memlet(f"_A[{col}, {row}]"),
                 "__b": dace.Memlet(b),
+                **alpha_inputs,
             },
-            f"__out = ({node.alpha}) * (__a if {symmetric_element(node.uplo, row, col)} else __mirror) * __b",
+            f"__out = {alpha} * (__a if {symmetric_element(node.uplo, row, col)} else __mirror) * __b",
             {"__out": dace.Memlet("_Cout[__i, __j]", wcr="lambda a, b: a + b")},
             external_edges=True,
         )
@@ -66,7 +68,8 @@ def symm_call(node, state, sdfg, environment=None) -> SDFG:
         # Row-major C = A B is column-major C^T = B^T A^T = B^T A: the side and the stored triangle flip, the
         # dimensions swap
         gpu = gpu_dialect.gpu_call(a.desc.dtype)
-        scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
+        values = blas_helpers.scales(node, alpha=node.alpha, beta=node.beta)
+        scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, **values)
         right, upper = node.side != layout.row_major, node.uplo != layout.row_major
         rows, cols = (n, m) if layout.row_major else (m, n)
         call = (
@@ -75,10 +78,10 @@ def symm_call(node, state, sdfg, environment=None) -> SDFG:
             f"{gpu.pointer('__Cout')}, {sym2cpp(ldc)})"
         )
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
-        return blas_helpers.in_place_call(
-            node, state, sdfg, "_Cin", "_Cout", code, overwrites=equal_valued(0, node.beta)
-        )
-    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
+        overwrites = blas_helpers.is_literal_scale(node, "beta", node.beta, 0)
+        return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", code, overwrites=overwrites)
+    values = blas_helpers.scales(node, alpha=node.alpha, beta=node.beta)
+    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, **values)
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
     side = "CblasRight" if node.side else "CblasLeft"
     uplo = "CblasUpper" if node.uplo else "CblasLower"
@@ -86,9 +89,8 @@ def symm_call(node, state, sdfg, environment=None) -> SDFG:
         f"cblas_{prefix.lower()}symm({order}, {side}, {uplo}, {sym2cpp(m)}, {sym2cpp(n)}, {arg['alpha']}, __A, {sym2cpp(lda)}, __B, {sym2cpp(ldb)}, "
         f"{arg['beta']}, __Cout, {sym2cpp(ldc)});"
     )
-    return blas_helpers.in_place_call(
-        node, state, sdfg, "_Cin", "_Cout", scalars + call, overwrites=equal_valued(0, node.beta)
-    )
+    overwrites = blas_helpers.is_literal_scale(node, "beta", node.beta, 0)
+    return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", scalars + call, overwrites=overwrites)
 
 
 @library.node
@@ -110,7 +112,8 @@ class Symm(nodes.LibraryNode):
 
     def __init__(self, name, side=False, uplo=False, alpha=1, beta=0, **kwargs):
         super().__init__(name, inputs=["_A", "_B", "_Cin"], outputs=["_Cout"], **kwargs)
-        self.side, self.uplo, self.alpha, self.beta = side, uplo, alpha, beta
+        self.side, self.uplo = side, uplo
+        self.alpha, self.beta = blas_helpers.real_scale(alpha), blas_helpers.real_scale(beta)
 
     def validate(self, sdfg, state):
         blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_B", "_Cin", "_Cout")
@@ -128,7 +131,9 @@ class Symm(nodes.LibraryNode):
 def symm_libnode(pv, sdfg: SDFG, state: SDFGState, A, B, C, result=None, side=False, uplo=False, alpha=1, beta=0):
     """Adds a :class:`Symm` writing ``alpha * A @ B + beta * C`` to ``result``, by default ``C``."""
     result = result if result is not None else C
-    node = Symm("symm", side=side, uplo=uplo, alpha=alpha, beta=beta)
+    node = Symm("symm", side=side, uplo=uplo)
+    node.alpha = blas_helpers.connect_scale(sdfg, state, node, "alpha", alpha)
+    node.beta = blas_helpers.connect_scale(sdfg, state, node, "beta", beta)
     for name, connector in ((A, "_A"), (B, "_B"), (C, "_Cin")):
         state.add_edge(state.add_read(name), None, node, connector, mm.Memlet(name))
     state.add_edge(node, "_Cout", state.add_write(result), None, mm.Memlet(result))

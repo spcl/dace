@@ -8,7 +8,6 @@ from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
 from dace.sdfg import nodes
-from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -44,13 +43,21 @@ class ExpandSyrkPure(ExpandTransformation):
             external_edges=True,
         )
         # As in BLAS, only the referenced triangle of C is updated, and beta == 0 does not read it
-        scaled_c = "" if equal_valued(0, node.beta) else f" + ({node.beta}) * __c"
+        alpha, alpha_inputs = blas_helpers.scale_term(node, "alpha", node.alpha)
+        beta, beta_inputs = blas_helpers.scale_term(node, "beta", node.beta)
+        zero = blas_helpers.is_literal_scale(node, "beta", node.beta, 0)
+        scaled_c = "" if zero else f" + {beta} * __c"
         update = sdfg.add_state_after(product, f"{node.label}_update")
         update.add_mapped_tasklet(
             "update",
             {"__i": f"0:{n}", "__j": f"0:{n}"},
-            {"__c": dace.Memlet("_Cin[__i, __j]"), "__p": dace.Memlet("_product[__i, __j]")},
-            f"__out = ({node.alpha}) * __p{scaled_c} if {symmetric_element(node.uplo, '__i', '__j')} else __c",
+            {
+                "__c": dace.Memlet("_Cin[__i, __j]"),
+                "__p": dace.Memlet("_product[__i, __j]"),
+                **alpha_inputs,
+                **beta_inputs,
+            },
+            f"__out = {alpha} * __p{scaled_c} if {symmetric_element(node.uplo, '__i', '__j')} else __c",
             {"__out": dace.Memlet("_Cout[__i, __j]")},
             external_edges=True,
         )
@@ -72,7 +79,8 @@ def syrk_call(node, state, sdfg, environment=None) -> SDFG:
     if environment is not None:
         # In column-major order a row-major A reads as A^T and C as C^T: the transposition and the triangle flip
         gpu = gpu_dialect.gpu_call(a.desc.dtype)
-        scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
+        values = blas_helpers.scales(node, alpha=node.alpha, beta=node.beta)
+        scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, **values)
         upper, trans = node.uplo != layout.row_major, node.transA != layout.row_major
         call = (
             f"{gpu.routine('syrk')}({gpu_dialect.HANDLE}, {gpu_dialect.fill(upper)}, {gpu_dialect.op(trans)}, {sym2cpp(c.shape[0])}, {sym2cpp(k)}, "
@@ -80,7 +88,8 @@ def syrk_call(node, state, sdfg, environment=None) -> SDFG:
         )
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
         return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", code)
-    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
+    values = blas_helpers.scales(node, alpha=node.alpha, beta=node.beta)
+    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, **values)
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
     uplo = "CblasUpper" if node.uplo else "CblasLower"
     trans = "CblasTrans" if node.transA else "CblasNoTrans"
@@ -110,7 +119,8 @@ class Syrk(nodes.LibraryNode):
 
     def __init__(self, name, uplo=False, transA=False, alpha=1, beta=0, **kwargs):
         super().__init__(name, inputs=["_A", "_Cin"], outputs=["_Cout"], **kwargs)
-        self.uplo, self.transA, self.alpha, self.beta = uplo, transA, alpha, beta
+        self.uplo, self.transA = uplo, transA
+        self.alpha, self.beta = blas_helpers.real_scale(alpha), blas_helpers.real_scale(beta)
 
     def validate(self, sdfg, state):
         blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_Cin", "_Cout")
@@ -128,7 +138,9 @@ class Syrk(nodes.LibraryNode):
 def syrk_libnode(pv, sdfg: SDFG, state: SDFGState, A, C, result=None, uplo=False, transA=False, alpha=1, beta=0):
     """Adds a :class:`Syrk` writing ``alpha * A @ A^T + beta * C`` to ``result``, by default ``C``."""
     result = result if result is not None else C
-    node = Syrk("syrk", uplo=uplo, transA=transA, alpha=alpha, beta=beta)
+    node = Syrk("syrk", uplo=uplo, transA=transA)
+    node.alpha = blas_helpers.connect_scale(sdfg, state, node, "alpha", alpha)
+    node.beta = blas_helpers.connect_scale(sdfg, state, node, "beta", beta)
     for name, connector in ((A, "_A"), (C, "_Cin")):
         state.add_edge(state.add_read(name), None, node, connector, mm.Memlet(name))
     state.add_edge(node, "_Cout", state.add_write(result), None, mm.Memlet(result))
