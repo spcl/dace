@@ -8,10 +8,11 @@ outside ``S`` sees no write either way (``A[0, :] = A[0, :] / A[1, :]``), and a 
 ``kidia:kfdia`` of a ``klon`` array) folds the same way: the map's writes all lie in what the copy takes.
 """
 
+import copy
 from collections import Counter
 from dataclasses import dataclass
 
-from dace import SDFG, SDFGState, data, subsets, symbolic
+from dace import SDFG, SDFGState, data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -50,6 +51,50 @@ def placed(write: subsets.Range, subset: subsets.Range, found: CopyBack) -> subs
     for dim, origin, (begin, _, _) in zip(found.kept, found.origin, write.ranges):
         begins[dim] = begins[dim] + begin - origin
     return subsets.Range([(begin, begin, 1) for begin in begins])
+
+
+def lifted(write: subsets.Range, subset: subsets.Range, found: CopyBack) -> subsets.Range:
+    """``write`` of the transient, restated in the target's index space. Unlike :func:`placed` it keeps a range's
+    length, so a connector that described the whole transient can describe the target."""
+    ranges = list(subset.ranges)
+    for dim, origin, (begin, end, step) in zip(found.kept, found.origin, write.ranges):
+        base = ranges[dim][0]
+        ranges[dim] = (base + begin - origin, base + end - origin, step)
+    return subsets.Range(ranges)
+
+
+def restate_connector(
+    node: nodes.NestedSDFG,
+    connector: str,
+    target: data.Data,
+    found: CopyBack,
+    subset: subsets.Range,
+    parent: SDFG,
+) -> None:
+    """The connector described the transient this fold replaced. It now has to describe ``target``, and the memlets
+    inside move with :func:`lifted`. Symbols the target's shape uses are declared on the nested SDFG and mapped to
+    the parent's symbol of the same name (``back``'s ``T`` on viterbi)."""
+    described = copy.deepcopy(target)
+    described.transient = False
+    declare(node, parent, (str(sym) for sym in described.free_symbols))
+    node.sdfg.arrays[connector] = described
+    for graph in node.sdfg.all_sdfgs_recursive():
+        for state in graph.states():
+            for edge in state.edges():
+                if edge.data.data == connector and isinstance(edge.data.subset, subsets.Range):
+                    edge.data.subset = lifted(edge.data.subset, subset, found)
+                    declare(node, parent, edge.data.subset.free_symbols)
+
+
+def declare(node: nodes.NestedSDFG, parent: SDFG, names) -> None:
+    """Give the nested SDFG every symbol the restated connector uses, mapped to the parent's symbol of that name."""
+    for name in names:
+        if name in node.sdfg.arrays:
+            continue
+        if name not in node.sdfg.symbols:
+            node.sdfg.add_symbol(name, parent.symbols.get(name, dtypes.int64))
+        if name not in node.symbol_mapping:
+            node.symbol_mapping[name] = symbolic.pystr_to_symbolic(name)
 
 
 def copy_back(state: SDFGState, sdfg: SDFG, transient: nodes.AccessNode, uses: Counter[str]) -> CopyBack | None:
@@ -130,6 +175,8 @@ def eliminate(state: SDFGState, sdfg: SDFG, found: CopyBack, uses: Counter[str])
     (inner,) = [e for e in state.in_edges(found.map_exit) if e.dst_conn == "IN_" + outer.src_conn[4:]]
     write = inner.data.get_dst_subset(inner, state)
     inner.data = Memlet(data=target.data, subset=placed(write, subset, found))
+    if isinstance(inner.src, nodes.NestedSDFG) and inner.src_conn in inner.src.sdfg.arrays:
+        restate_connector(inner.src, inner.src_conn, sdfg.arrays[target.data], found, subset, sdfg)
     state.add_edge(found.map_exit, outer.src_conn, target, copy.dst_conn, Memlet(data=target.data, subset=subset))
     state.remove_node(found.transient)
     uses[found.transient.data] -= 1

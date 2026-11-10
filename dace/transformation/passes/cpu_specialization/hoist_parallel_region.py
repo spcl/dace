@@ -62,8 +62,12 @@ refused where it cannot:
   it. It becomes a worksharing map over the copied elements; a copy that re-linearizes has no
   element-for-element map and is refused;
 - a library node whose expansion is one map over its output's elements (``np.where``'s
-  ``MergeLibraryNode``, a ``FillLibraryNode``) is expanded into that map and shared out; any other
-  library node, and any nested SDFG, is refused.
+  ``MergeLibraryNode``, a ``FillLibraryNode``) is expanded into that map and shared out;
+- a ``Reduce`` over provably few elements (:func:`small_reduction`, ``np.sum`` of a 3-vector) is a statement
+  like a tasklet: it runs sequentially in a one-iteration ``CPU_Multicore`` map, once, with a barrier after.
+  Refused, it cost ``newdxx_g`` its team: the atom loop the ``eigqts`` fusion produced ran its ``ngms`` maps
+  as per-atom ``parallel for`` and its hot ``ih`` map on one thread (12x on 72 cores, spcl/NestForge#78);
+- any other library node, and any nested SDFG, is refused.
 
 :func:`share_out_bulk_statements` makes the repairs. A loop is hoisted only if it already holds a
 ``CPU_Multicore`` map: one whose maps the cost model all made sequential has nothing worth a team. And
@@ -108,7 +112,7 @@ import copy
 from typing import Any
 
 from dace import SDFG, Memlet, data, dtypes, properties, subsets
-from dace.libraries.standard.nodes import FillLibraryNode, MergeLibraryNode
+from dace.libraries.standard.nodes import FillLibraryNode, MergeLibraryNode, Reduce
 from dace.sdfg import memlet_utils, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
@@ -126,6 +130,7 @@ from dace.sdfg.state import (
 )
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import small_count
 from dace.transformation.passes.loop_fission import LoopFission, _block_rw, _independent_block_groups
 
 #: The schedule whose maps become ``#pragma omp for`` once a ``CPU_Persistent`` scope encloses them.
@@ -215,6 +220,24 @@ def shares_out_as_a_map(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> b
 def elementwise(node: nodes.Node) -> bool:
     """Whether ``node`` is a library node whose ``pure`` expansion is one map over its output's elements."""
     return isinstance(node, (FillLibraryNode, MergeLibraryNode))
+
+
+def small_reduction(node: nodes.Node, state: SDFGState, resolver: SymbolResolver) -> bool:
+    """Whether ``node`` is a ``Reduce`` over provably few input elements (``SequentializeSmallAxes``' notion of
+    small): one thread finishes it in about the time a fork takes, so in a team it is a statement run once.
+
+    :param node: a node at the top level of ``state``.
+    :param state: the state holding ``node``.
+    :param resolver: gives the facts at ``node``.
+    :returns: ``True`` if ``node`` may run as a one-iteration worksharing map.
+    """
+    if not isinstance(node, Reduce):
+        return False
+    edges = [e for e in state.in_edges(node) if not e.data.is_empty()]
+    if len(edges) != 1:
+        return False
+    subset = edges[0].data.get_dst_subset(edges[0], state) or edges[0].data.subset
+    return subset is not None and small_count(subset.num_elements(), resolver.facts_at(state, node))
 
 
 def expand_in_place(node: nodes.LibraryNode, state: SDFGState) -> list[nodes.MapEntry]:
@@ -428,7 +451,11 @@ def replication_free(loop: LoopRegion, resolver: SymbolResolver, memo: dict[node
         if not all(element_copy(edge, block) or shares_out_as_a_map(edge, block) for edge in bulk_copies(block)):
             return False
         for node in top_level_nodes(block):
-            if isinstance(node, (nodes.AccessNode, nodes.Tasklet)) or elementwise(node):
+            if (
+                isinstance(node, (nodes.AccessNode, nodes.Tasklet))
+                or elementwise(node)
+                or small_reduction(node, block, resolver)
+            ):
                 continue
             if isinstance(node, (nodes.MapEntry, nodes.MapExit)) and node.map.schedule == WORKSHARED:
                 entry = block.entry_node(node) if isinstance(node, nodes.MapExit) else node
@@ -481,7 +508,11 @@ def repairs_amortized(loop: LoopRegion, resolver: SymbolResolver, memo: dict[nod
                 region = innermost_loop(region, loop)
                 covered.add(id(region))
         if bulk_copies(block) or any(
-            isinstance(n, nodes.Tasklet) or elementwise(n) or sequential_leaf_map(n, block) for n in top
+            isinstance(n, nodes.Tasklet)
+            or elementwise(n)
+            or sequential_leaf_map(n, block)
+            or small_reduction(n, block, resolver)
+            for n in top
         ):
             repaired.add(id(innermost_loop(block, loop)))
     return repaired <= covered
@@ -931,11 +962,16 @@ class HoistParallelRegion(ppl.Pass):
         :param sdfg: the SDFG owning ``loop``.
         """
         replicated, private = replicable_tasklets(sdfg, loop)
+        resolver = SymbolResolver()
         for block in loop.all_control_flow_blocks():
             if isinstance(block, SDFGState):
                 for node in top_level_nodes(block):
                     # A statement outside a worksharing construct would run once per THREAD. One
                     # iteration of ``omp for`` runs it once, on one thread, with the barrier kept.
                     if isinstance(node, nodes.Tasklet) and node not in replicated:
+                        xfh.wrap_code_node_in_unit_map(block, node, WORKSHARED, "_single")
+                    elif small_reduction(node, block, resolver):
+                        # Inside the ``omp for`` it must not open a team of its own
+                        node.schedule = dtypes.ScheduleType.Sequential
                         xfh.wrap_code_node_in_unit_map(block, node, WORKSHARED, "_single")
         outline(loop, sdfg, top_level_loop_locals(sdfg, loop) - private)

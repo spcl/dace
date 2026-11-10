@@ -261,6 +261,14 @@ def nested_sdfg_shape_symbols(state: SDFGState) -> set[str]:
     return names
 
 
+def connector_shape_symbols(sd: SDFG) -> set[str]:
+    """Symbols in the shapes of the connector arrays of a nested ``sd``: the parent's container has that shape, so a
+    substitution into the nested descriptor alone would leave the connector describing a window of it."""
+    if sd.parent is None:
+        return set()
+    return {str(s) for desc in sd.arrays.values() if not desc.transient for s in desc.free_symbols}
+
+
 def scope_bound_names(state: SDFGState) -> set[str]:
     """The names a scope of ``state`` binds: a value naming one means something else inside that scope."""
     sdfg = state.sdfg
@@ -517,7 +525,8 @@ class SymbolPropagation(ppl.Pass):
         # The substitution reaches descriptors only, so a key none of them names rewrites nothing.
         if candidates:
             shape_names = {str(s) for desc in sd.arrays.values() for s in desc.free_symbols}
-            candidates = {sym: rhs for sym, rhs in candidates.items() if sym in shape_names}
+            pinned = connector_shape_symbols(sd)
+            candidates = {sym: rhs for sym, rhs in candidates.items() if sym in shape_names and sym not in pinned}
         safe_subs = {}
         if candidates:
             constants = set(sd.constants_prop.keys())

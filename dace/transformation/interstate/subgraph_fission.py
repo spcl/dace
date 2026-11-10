@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Split a map whose body is a nested SDFG into two maps at a chosen block of that body."""
 
+import copy
+
 from dace import properties
 from dace import sdfg as sd
 from dace.ordered import OrderedSet
@@ -29,6 +31,29 @@ def drop_uninitialized_inputs(body: sd.SDFG) -> None:
                     if state.degree(edge.src) == 0:
                         state.remove_node(edge.src)
             written.update(edge.data.data for edge in state.out_edges(nest))
+
+
+def nest_halves(body: sd.SDFG, index: int) -> None:
+    """Nest the top-level blocks of ``body`` up to ``index`` and the blocks after it into one nested SDFG each."""
+    blocks = list(sdutil.dfs_topological_sort(body))
+    for group in (blocks[: index + 1], blocks[index + 1 :]):
+        if len(group) == 1 and isinstance(group[0], sd.SDFGState):
+            # nest_sdfg_subgraph leaves a lone state in place, and MapFission would split it per component
+            group = [group[0], body.add_state_after(group[0])]
+        helpers.nest_sdfg_subgraph(body, gr.SubgraphView(body, group))
+
+
+def halves_export_a_symbol(body: sd.SDFG, index: int) -> bool:
+    """Whether nesting the halves hands a symbol out of one: ``nest_sdfg_subgraph`` then has the half write it to a
+    scalar and assigns it back on an edge after the half, an assignment reading data the half wrote from the map's
+    inputs, which ``MapFission`` refuses. Judged on a copy of the body, nested as ``apply`` nests it
+    (cp2k_density_matrix_trs4: ``sink_slice_1`` assigned in a loop two levels inside the second half)."""
+    trial = copy.deepcopy(body)
+    try:
+        nest_halves(trial, index)
+    except NotImplementedError:  # a half with several sinks, which apply could not nest either
+        return True
+    return any(edge.data.assignments for edge in trial.edges())
 
 
 @properties.make_properties
@@ -65,21 +90,18 @@ class SubgraphFission(transformation.SingleStateTransformation):
         if not outs[0].data.is_unconditional() or outs[0].data.assignments:
             return False
         # MapFission judges the unsplit body at least as strictly as the split one: nesting the halves hides their
-        # interstate assignments from the map parameters it refuses
-        return map_fission.MapFission.can_be_applied_to(
+        # interstate assignments from the map parameters it refuses, unless a half hands a symbol out of itself
+        if not map_fission.MapFission.can_be_applied_to(
             sdfg, expr_index=1, map_entry=self.map_entry, nested_sdfg=self.nested_sdfg
-        )
+        ):
+            return False
+        index = list(sdutil.dfs_topological_sort(body)).index(cut)
+        return not halves_export_a_symbol(body, index)
 
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
         entry, nsdfg, cut = self.map_entry, self.nested_sdfg, self.cut_block()
         body = nsdfg.sdfg
-        blocks = list(sdutil.dfs_topological_sort(body))
-        index = blocks.index(cut)
-        for group in (blocks[: index + 1], blocks[index + 1 :]):
-            if len(group) == 1 and isinstance(group[0], sd.SDFGState):
-                # nest_sdfg_subgraph leaves a lone state in place, and MapFission would split it per component
-                group = [group[0], body.add_state_after(group[0])]
-            helpers.nest_sdfg_subgraph(body, gr.SubgraphView(body, group))
+        nest_halves(body, list(sdutil.dfs_topological_sort(body)).index(cut))
         drop_uninitialized_inputs(body)
         # MapFission moves the two maps inside the nested SDFG; inlining it leaves them in two states. Inlining is
         # cleanup: when the state cannot be split around the nested SDFG (an ordering edge to a later writer of its
