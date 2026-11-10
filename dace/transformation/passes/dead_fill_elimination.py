@@ -280,8 +280,8 @@ def dead_part_of_fill_map(
     state: SDFGState, entry: nodes.MapEntry, reads: Reads | None = None
 ) -> tuple[nodes.AccessNode, tuple] | None:
     """The array a top-level map writes element for element, and what of it a copy in the same state overwrites before
-    anything reads it: the :func:`copy_leaves` of that copy, or all of it when the map is alone with it and the control
-    flow after overwrites it; ``None`` when nothing of the map's work is dead."""
+    anything reads it: the :func:`copy_leaves` of that copy, or all of it when a map there or the control flow after
+    overwrites it (:func:`covers_every_element`); ``None`` when nothing of the map's work is dead."""
     exit_node = state.exit_node(entry)
     out_edges = state.out_edges(exit_node)
     if len(out_edges) != 1 or not isinstance(out_edges[0].dst, nodes.AccessNode):
@@ -303,6 +303,8 @@ def dead_part_of_fill_map(
         if written not in reachable:
             continue
         left = copy_leaves(state, written, desc)
+        if left is None and covers_every_element(state, written, desc, reads=reads):
+            left = (-1, ())
         if left is None:
             continue
         downstream = set(state.bfs_nodes(written))
