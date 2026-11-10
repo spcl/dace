@@ -2151,6 +2151,8 @@ class OffloadToAccelerator(ppl.Pass):
         placed: dict[tuple[Any, str], dict[str, set[bool]]] = {}
         # Fills of containers nothing writes, by direction: placed ONCE, at the program's entry.
         entry_fills: dict[bool, OrderedSet[str]] = {True: OrderedSet(), False: OrderedSet()}
+        # Copies of a container no enclosing loop writes, by (outermost such loop, container): see ``place_copy``.
+        deferred: dict[tuple[LoopRegion, str], list[tuple[Any, Any, bool]]] = {}
 
         def twin_of(name: str) -> str:
             return self._get_host_name(name) if is_array_stored_on_GPU(sdfg, name) else self._get_gpu_name(name)
@@ -2181,21 +2183,20 @@ class OffloadToAccelerator(ppl.Pass):
             entry_fills[to_gpu] |= constant
             array_names = OrderedSet(name for name in array_names if name not in constant)
             # A copy inside loops that write neither side of a container moves the same bytes every trip: it is made
-            # once, ahead of the outermost such loop (fv3's index tables, filled before the time loop).
+            # once, ahead of the outermost such loop (fv3's index tables, filled before the time loop). Decided after
+            # the traversal: only a container the loop moves in ONE direction is.
             if array_names and not in_sequential_specialization_arm(after if after is not None else before):
-                hoisted: dict[LoopRegion, OrderedSet[str]] = {}
+                kept = OrderedSet()
                 for name in array_names:
                     loop = invariant_loop(after if after is not None else before, name)
-                    if loop is not None:
-                        hoisted.setdefault(loop, OrderedSet()).add(name)
-                for loop, names in hoisted.items():
-                    done = placed.setdefault((loop, "before"), {})
-                    fresh = OrderedSet(name for name in names if done.get(name) != {to_gpu})
-                    for name in fresh:
-                        done.setdefault(name, set()).add(to_gpu)
-                    if fresh:
-                        self.create_interstate_copy(sdfg, None, loop, fresh, to_gpu=to_gpu)
-                    array_names = OrderedSet(name for name in array_names if name not in names)
+                    if loop is None:
+                        kept.add(name)
+                    else:
+                        deferred.setdefault((loop, name), []).append((before, after, to_gpu))
+                array_names = kept
+            place_now(before, after, array_names, to_gpu)
+
+        def place_now(before, after, array_names, to_gpu: bool):
             point = (after, "before") if after is not None else (before, "after")
             directions = placed.setdefault(point, {})
             fresh = OrderedSet(name for name in array_names if directions.get(name) != {to_gpu})
@@ -2284,6 +2285,15 @@ class OffloadToAccelerator(ppl.Pass):
             return outermost
 
         traverse_IR(IR, eval)
+        # A loop that asks for both directions of a container holds it on either side in turn: one copy ahead of the
+        # loop cannot serve both, and two would overwrite the side that is current. Those copies stay where they were.
+        for (loop, name), requests in deferred.items():
+            directions = {to_gpu for _, _, to_gpu in requests}
+            if len(directions) == 1:
+                place_now(None, loop, OrderedSet([name]), directions.pop())
+            else:
+                for before, after, to_gpu in requests:
+                    place_now(before, after, OrderedSet([name]), to_gpu)
         for to_gpu, names in entry_fills.items():
             if names:
                 self.create_interstate_copy(sdfg, None, sdfg.start_block, names, to_gpu=to_gpu)
