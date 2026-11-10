@@ -107,8 +107,37 @@ def test_a_transpose_two_products_read_folds_into_both():
     np.testing.assert_allclose(E, D @ A.T)
 
 
+def test_a_transposed_view_whose_size_is_spelled_unlike_its_extents_folds():
+    """ls3df_scf's ``proj.reshape(-1, nproj).T @ psi``: the view's ``total_size`` is ``nproj*(Lb**3 - 1) + nproj``."""
+    sdfg = dace.SDFG("transpose_of_reshaped_view")
+    sdfg.add_array("A", [G, G, G, P], dace.float64)
+    sdfg.add_array("B", [G**3, S], dace.float64)
+    sdfg.add_array("C", [P, S], dace.float64)
+    sdfg.add_view("V", [G**3, P], dace.float64)
+    sdfg.arrays["V"].total_size = P * (G**3 - 1) + P
+    sdfg.add_array("T", [P, G**3], dace.float64, transient=True)
+    state = sdfg.add_state()
+    view, temp = state.add_access("V"), state.add_access("T")
+    state.add_edge(state.add_read("A"), None, view, "views", dace.Memlet.from_array("A", sdfg.arrays["A"]))
+    transpose = Transpose("transpose", dtype=dace.float64)
+    state.add_edge(view, None, transpose, "_inp", dace.Memlet.from_array("V", sdfg.arrays["V"]))
+    state.add_edge(transpose, "_out", temp, None, dace.Memlet.from_array("T", sdfg.arrays["T"]))
+    product = MatMul("product")
+    state.add_edge(temp, None, product, "_a", dace.Memlet.from_array("T", sdfg.arrays["T"]))
+    state.add_edge(state.add_read("B"), None, product, "_b", dace.Memlet.from_array("B", sdfg.arrays["B"]))
+    state.add_edge(product, "_c", state.add_write("C"), None, dace.Memlet.from_array("C", sdfg.arrays["C"]))
+
+    assert transposes_as_blas_flags(sdfg) == 1
+    assert not transposes(sdfg) and product.transA
+    rng = np.random.default_rng(9)
+    A, B, C = rng.random((3, 3, 3, 7)), rng.random((27, 5)), np.zeros((7, 5))
+    sdfg(A=A, B=B, C=C, G=3, P=7, S=5)
+    np.testing.assert_allclose(C, A.reshape(27, 7).T @ B)
+
+
 if __name__ == "__main__":
     test_a_gemm_on_a_window_of_a_transpose_keeps_the_transpose()
     test_a_transposed_gemm_operand_is_read_in_place()
     test_a_transpose_an_elementwise_map_reads_stays_a_copy()
     test_a_transpose_two_products_read_folds_into_both()
+    test_a_transposed_view_whose_size_is_spelled_unlike_its_extents_folds()

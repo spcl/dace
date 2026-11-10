@@ -5,7 +5,7 @@
 takes a transposed operand by its ``transA``/``transB`` flag. A transpose several products read folds into each.
 """
 
-from dace import SDFG, data
+from dace import SDFG, data, symbolic
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.gemv import Gemv
 from dace.libraries.blas.nodes.matmul import MatMul
@@ -31,6 +31,14 @@ def transpose_flag(node: nodes.Node, connector: str) -> str | None:
     return None
 
 
+def covers(memlet: Memlet, desc: data.Data) -> bool:
+    """Whether ``memlet`` is all of ``desc``, by extent: a view spells its ``total_size`` unlike their product."""
+    return len(memlet.subset) == len(desc.shape) and all(
+        symbolic.equal_valued(0, b) and symbolic.equal_valued(1, s) and not symbolic.inequal_symbols(e, n - 1)
+        for (b, e, s), n in zip(memlet.subset, desc.shape)
+    )
+
+
 def fold_one(sdfg: SDFG, state: SDFGState, transpose: nodes.LibraryNode, access_counts: dict[str, int]) -> bool:
     """Feed ``transpose``'s input straight into the BLAS operands that are the only readers of the transient it
     writes, each with its transpose flag flipped. Returns whether it did."""
@@ -43,7 +51,7 @@ def fold_one(sdfg: SDFG, state: SDFGState, transpose: nodes.LibraryNode, access_
     src_desc, out_desc = sdfg.arrays[src.data], sdfg.arrays[out.data]
     if not out_desc.transient or isinstance(out_desc, data.View) or access_counts.get(out.data) != 1:
         return False
-    if len(src_desc.shape) != 2 or ins[0].data.subset.num_elements() != src_desc.total_size:
+    if len(src_desc.shape) != 2 or not covers(ins[0].data, src_desc):
         return False
     readers = state.out_edges(out)
     if state.in_degree(out) != 1 or not readers:
@@ -51,7 +59,7 @@ def fold_one(sdfg: SDFG, state: SDFGState, transpose: nodes.LibraryNode, access_
     for reader in readers:
         if reader.data.is_empty() or transpose_flag(reader.dst, reader.dst_conn) is None:
             return False
-        if reader.data.subset.num_elements() != out_desc.total_size:
+        if not covers(reader.data, out_desc):
             return False  # the operand is a window of the transpose, not the flipped matrix
     for reader in readers:
         flag = transpose_flag(reader.dst, reader.dst_conn)
