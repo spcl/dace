@@ -11,6 +11,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import infer_types, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
