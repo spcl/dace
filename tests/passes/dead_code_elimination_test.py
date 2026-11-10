@@ -1,6 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Various tests for dead code elimination passes."""
 
+import typing
+
 import numpy as np
 import pytest
 
@@ -1209,6 +1211,12 @@ def test_a_tasklet_left_without_outputs_leaves_its_map():
     assert dead not in state.nodes() and live in state.nodes()
 
 
+def test_dde_annotations_name_only_imported_types():
+    # Python < 3.14 evaluates annotations at class creation, so an unimported name there breaks `import dace`
+    hints = typing.get_type_hints(DeadDataflowElimination._closes_scope_only)
+    assert hints["edge"] is dace.sdfg.graph.MultiConnectorEdge
+
+
 if __name__ == "__main__":
     test_dse_simple()
     test_dse_unconditional()
@@ -1255,3 +1263,4 @@ if __name__ == "__main__":
     test_two_inlined_branches_of_one_name_stay_distinct()
     test_dead_map_with_an_ordering_edge_out_goes_whole()
     test_a_tasklet_left_without_outputs_leaves_its_map()
+    test_dde_annotations_name_only_imported_types()
