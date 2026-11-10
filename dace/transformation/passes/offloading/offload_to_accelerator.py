@@ -990,11 +990,13 @@ class OffloadToAccelerator(ppl.Pass):
     def host_level_nested_sdfgs(self, state: SDFGState, entry: nodes.MapEntry | None):
         """Nested SDFGs under ``entry`` reached through taskloops and host maps only -- one below a kernel is device
         code. A host map's body launches the kernels under it, so it is a host level as a taskloop's is (ICON's block
-        loop reads ``i_endidx`` on the host)."""
+        loop reads ``i_endidx`` on the host); a pinned map's body is host code whole."""
         for node in self._cached_scope_children[state].get(entry, ()):
             if isinstance(node, nodes.NestedSDFG):
                 yield node
-            elif isinstance(node, nodes.MapEntry) and (node in self._taskloops or node in self._host_map_entries):
+            elif isinstance(node, nodes.MapEntry) and (
+                node in self._taskloops or node in self._host_map_entries or node in self._host_pinned
+            ):
                 yield from self.host_level_nested_sdfgs(state, node)
 
     def inherit_binding_storage(self, sdfg: SDFG, state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> None:
