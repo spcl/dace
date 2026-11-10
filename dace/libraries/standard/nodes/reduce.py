@@ -263,7 +263,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         )
 
         # Reserved connector names: an array named a, b or o must not collide once the expansion is inlined
-        t = nstate.add_tasklet("identity", {"__a", "__b"}, {"__o"}, "__o = __b")
+        t = nstate.add_tasklet("identity", {"__a": None, "__b": None}, {"__o": None}, "__o = __b")
 
         # Connect everything
         r = nstate.add_read("_in")

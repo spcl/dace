@@ -2,6 +2,8 @@
 """The sequential ``Reduce`` expansion that ``auto`` picks inside a parallel map keeps the input type until the
 store."""
 
+import warnings
+
 import numpy as np
 
 import dace
@@ -31,3 +33,22 @@ def test_mixed_type_sum_keeps_the_input_type_until_the_store():
     a, b = np.arange(N, dtype=np.int32), np.zeros(1)
     sdfg(A=a, B=b)
     assert b[0] == float(a.sum())
+
+
+def test_sequential_expansion_names_its_connectors_in_order():
+    sdfg = reduce_sdfg("reduce_ordered_connectors", "lambda a, b: a + b", dace.float64, dace.float64, 0)
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, Reduce):
+            node.implementation = "pure-seq"
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message="Using sets for connectors")
+        sdfg.expand_library_nodes()
+
+    identity = next(n for n, _ in sdfg.all_nodes_recursive() if n.label == "identity")
+    assert list(identity.in_connectors) == ["__a", "__b"]
+
+
+if __name__ == "__main__":
+    test_mixed_type_sum_keeps_the_input_type_until_the_store()
+    test_sequential_expansion_names_its_connectors_in_order()
