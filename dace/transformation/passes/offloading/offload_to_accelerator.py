@@ -1081,7 +1081,9 @@ class OffloadToAccelerator(ppl.Pass):
     def assign_schedules(self, sdfg: SDFG, host_level: bool = True) -> None:
         """``GPU_Device`` at a host level, ``Sequential`` below one; a taskloop keeps its body host-level.
 
-        With no taskloops this is the old rule: top-level maps are the kernels.
+        A map the offload keeps on the host that launches nothing runs as its CPU form does: ``CPU_Multicore``
+        unless canonicalization left it sequential; maps it holds then run inside its one parallel region. With no
+        taskloops this is the old rule: top-level maps are the kernels.
         """
 
         def walk(state: SDFGState, entry, host_level: bool) -> None:
@@ -1093,10 +1095,17 @@ class OffloadToAccelerator(ppl.Pass):
                         continue
                     pinned = node in self._host_pinned
                     is_kernel = self.is_kernel(node, host_level)
+                    was_sequential = node.map.schedule == dtypes.ScheduleType.Sequential
                     self.set_schedule(
                         node, dtypes.ScheduleType.GPU_Device if is_kernel else dtypes.ScheduleType.Sequential
                     )
                     walk(state, node, host_level and not is_kernel and not pinned)
+                    if host_level and not is_kernel and not was_sequential:
+                        inner = self.host_maps_under(state, node)
+                        if inner is not None:
+                            node.map.schedule = dtypes.ScheduleType.CPU_Multicore
+                            for scope in inner:  # one parallel region: the outermost map is the threaded one
+                                scope.map.schedule = dtypes.ScheduleType.Sequential
 
                 elif isinstance(node, nodes.LibraryNode):
                     self.set_schedule(
@@ -1110,6 +1119,26 @@ class OffloadToAccelerator(ppl.Pass):
 
         for state in sdfg.states():
             walk(state, None, host_level)
+
+    def host_maps_under(self, state: SDFGState, entry: nodes.MapEntry) -> list[nodes.MapEntry] | None:
+        """The threaded maps in the scope of ``entry``, nested SDFGs included; None when the scope holds device work."""
+        threaded = []
+        pending = list(self._cached_scope_children[state].get(entry, ()))
+        while pending:
+            node = pending.pop()
+            if isinstance(node, (nodes.MapEntry, nodes.LibraryNode)) and has_GPU_schedule(node):
+                return None
+            if isinstance(node, nodes.MapEntry):
+                if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                    threaded.append(node)
+                pending += self._cached_scope_children[state].get(node, ())
+            elif isinstance(node, nodes.NestedSDFG):
+                for n, _ in node.sdfg.all_nodes_recursive():
+                    if isinstance(n, (nodes.MapEntry, nodes.LibraryNode)) and has_GPU_schedule(n):
+                        return None
+                    if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                        threaded.append(n)
+        return threaded
 
     def isolate_host_library_nodes(self, sdfg: SDFG) -> bool:
         """Give each library node kept on the host a state of its own when its state has device work.
