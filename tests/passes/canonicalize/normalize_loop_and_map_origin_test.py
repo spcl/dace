@@ -405,9 +405,10 @@ def test_map_whose_tasklet_assigns_the_parameter_is_left_unchanged():
     assert sdfg.to_json() == before
 
 
-def test_loop_whose_body_reassigns_its_start_symbol_is_left_unchanged():
+@pytest.mark.parametrize("normalizer", [NormalizeLoopAndMapOrigin, NormalizeLoopsAndMaps])
+def test_loop_whose_body_reassigns_its_start_symbol_is_left_unchanged(normalizer):
     """``for i = K; ...`` with ``K = K + 1`` in the body: ``a[i + K]`` would read the moved ``K``."""
-    sdfg = dace.SDFG("origin_start_reassigned")
+    sdfg = dace.SDFG(f"start_reassigned_{normalizer.__name__}")
     sdfg.add_symbol("K", dace.int64)
     sdfg.add_array("a", [16], dace.int64)
     loop = LoopRegion("L", "i < 12", "i", "i = K", "i = i + 1")
@@ -417,7 +418,7 @@ def test_loop_whose_body_reassigns_its_start_symbol_is_left_unchanged():
     loop.add_edge(body, loop.add_state("bump"), dace.InterstateEdge(assignments={"K": "K + 1"}))
     before = sdfg.to_json()
 
-    assert NormalizeLoopAndMapOrigin().apply_pass(sdfg, {}) is None
+    assert normalizer().apply_pass(sdfg, {}) is None
     assert sdfg.to_json() == before
     a = np.full(16, -1, dtype=np.int64)
     sdfg(a=a, K=2)
@@ -446,4 +447,5 @@ if __name__ == "__main__":
         test_rebased_map_shifts_the_parameter_in_every_statement_of_a_tasklet(language, code, rewritten, expected)
     test_rebased_loop_counter_is_shifted_inside_calls_in_loop_and_branch_conditions()
     test_map_whose_tasklet_assigns_the_parameter_is_left_unchanged()
-    test_loop_whose_body_reassigns_its_start_symbol_is_left_unchanged()
+    test_loop_whose_body_reassigns_its_start_symbol_is_left_unchanged(NormalizeLoopAndMapOrigin)
+    test_loop_whose_body_reassigns_its_start_symbol_is_left_unchanged(NormalizeLoopsAndMaps)

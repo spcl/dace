@@ -150,6 +150,9 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
             return False  # Conservative: only the affine canonical forms.
         if start == 0 and step == 1:
             return False
+        # The body would read ``start + step * var`` with the CURRENT start and step
+        if loop_analysis.body_writes(loop, start) or loop_analysis.body_writes(loop, step):
+            return False
 
         n = dace.symbolic.int_floor(end - start, step) + 1
         repldict = {str(var): f"(({start}) + ({step}) * {var})"}
