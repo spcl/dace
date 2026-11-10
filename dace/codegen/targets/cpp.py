@@ -1401,6 +1401,13 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         desc = self.sdfg.arrays[name]
         self.write(ptr(name, desc, self.sdfg, self.framecode))
 
+    def _is_pointer(self, name: str) -> bool:
+        """Whether the generated code holds ``name`` as a pointer where this edge is emitted."""
+        try:
+            return self.framecode.dispatcher.defined_vars.get(name)[0] == DefinedType.Pointer
+        except (AttributeError, KeyError):
+            return False
+
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice
 
@@ -1412,7 +1419,12 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         # A Scalar is one C variable. ``name[0]`` is what a length-1 array used to spell, and it does not
         # compile once the descriptor is a Scalar (cp2k_density_matrix_trs4, extcall_doall189: an interstate
         # edge assigns ``sink_slice_4 = __map_fusion_...___sc0_x0_3[0]``).
-        if isinstance(desc, data.Scalar) and desc.storage != dtypes.StorageType.GPU_Global:
+        # A Scalar a function takes by pointer (a kernel's or a nested SDFG's written scalar) is dereferenced below.
+        if (
+            isinstance(desc, data.Scalar)
+            and desc.storage != dtypes.StorageType.GPU_Global
+            and not self._is_pointer(ptr(target, desc, self.sdfg, self.framecode))
+        ):
             if any(str(dim[0]) != "0" for dim in rng.ranges):
                 raise SyntaxError(f"Scalar {target} is one value; an interstate edge cannot subscript past it")
             self.write(ptr(target, desc, self.sdfg, self.framecode))
