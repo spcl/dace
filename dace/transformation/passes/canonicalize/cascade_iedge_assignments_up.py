@@ -562,7 +562,8 @@ def _cascade_once(sdfg: SDFG) -> int:
                 continue
             # Snapshot keys -- we mutate the dict as we go.
             for key, rhs in list(edge.data.assignments.items()):
-                dest = _find_destination(cfg, key, rhs, sdfg, edge.src, cache)
+                # ``cfg.sdfg``: the names ``rhs`` reads are declared by the SDFG owning the edge
+                dest = _find_destination(cfg, key, rhs, cfg.sdfg, edge.src, cache)
                 if dest is None:
                     continue
                 child = _direct_child(dest, cfg)
