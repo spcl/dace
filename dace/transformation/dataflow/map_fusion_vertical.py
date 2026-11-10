@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import collections
 import copy
 import itertools
 import warnings
@@ -1912,33 +1913,27 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Get the read and write sets of the different maps, note that Views
         #  are not resolved yet.
         access_sets: list[dict[str, nodes.AccessNode]] = []
+        # The container each access resolves to, Views followed, and the ones a scope node reaches more than once.
+        resolved_sets: list[set[str]] = []
+        repeated: list[set[str]] = []
         for scope_node in [first_map_entry, first_map_exit, second_map_entry, second_map_exit]:
             access_set: set[nodes.AccessNode] = self.get_access_set(scope_node, state)
             access_sets.append({node.data: node for node in access_set})
-            # If two different access nodes of the same scoping node refers to the
-            #  same data, then we consider this as a dependency we can not handle.
-            #  It is only a problem for the intermediate nodes and might be possible
-            #  to handle, but doing so is hard, so we just forbid it.
-            if len(access_set) != len(access_sets[-1]):
-                return True
-        read_map_1, write_map_1, read_map_2, write_map_2 = access_sets
-
-        # It might be possible that there are views, so we have to resolve them.
-        #  We also already get the name of the data container.
-        #  Note that `len(real_read_map_1) <= len(read_map_1)` holds because of Views.
-        resolved_sets: list[set[str]] = []
-        for unresolved_set in [read_map_1, write_map_1, read_map_2, write_map_2]:
-            resolved_names: set[str] = set()
-            for node in unresolved_set.values():
+            resolved_names: list[str] = []
+            for node in access_set:
                 tracked = self.track_view(node, state, sdfg) if self.is_view(node, sdfg) else node
                 # A broken view chain hides what the access really touches.
                 if tracked is None:
                     return True
-                resolved_names.add(tracked.data)
-            resolved_sets.append(resolved_names)
-            # Different views onto one location: forbid. This reports a HAZARD, so `True`.
-            if len(unresolved_set) != len(resolved_sets[-1]):
-                return True
+                resolved_names.append(tracked.data)
+            resolved_sets.append(set(resolved_names))
+            repeated.append({name for name, count in collections.Counter(resolved_names).items() if count > 1})
+        read_map_1, write_map_1, read_map_2, write_map_2 = access_sets
+        # One container through two access nodes, or two Views, of one scope node is a dependency this function
+        #  does not analyse. Every test below is about data a Map writes: read twice and written by neither Map,
+        #  the container is an input like any other.
+        if repeated[1] or repeated[3] or (repeated[0] | repeated[2]) & (resolved_sets[1] | resolved_sets[3]):
+            return True
         real_read_map_1, real_write_map_1, real_read_map_2, real_write_map_2 = resolved_sets
 
         # We do not allow that the first and second Map each write to the same data.
