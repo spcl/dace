@@ -746,9 +746,6 @@ def ingest(target: str) -> Stages:
         # and not an opaque library node; the SimplifyPass right after inlines their nested SDFGs
         (INGEST, ExpandIndexRemaps()),
         (INGEST, SimplifyPass(pass_options=CANON_SIMPLIFY_OPTIONS)),
-        # Simplify mints views (a copy folded by ArrayElimination, a slice bound by an inlined body): the input
-        # reaches the same form whether or not the caller simplified it first
-        (INGEST, RemoveViews()),
         # A table filled once with literals (CloudSC's ``iphase``) is a constant host code and every kernel read alike,
         # before a fusion moves its fill into a loop
         (INGEST, FoldConstantTables()),
