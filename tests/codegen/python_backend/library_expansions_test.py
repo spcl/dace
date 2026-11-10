@@ -528,6 +528,22 @@ def test_an_argmax_returns_the_first_of_tied_extremes_and_its_value():
     assert (v[0], i[0]) == (7.0, 1)
 
 
+@pytest.mark.parametrize("tie", ["first", "last"])
+def test_an_argmax_follows_the_loop_on_nan_data_and_ties(tie):
+    arrays = {"a": ([9], dace.float64), "v": ([1], dace.float64), "i": ([1], dace.int64)}
+    node = ArgReduce(f"argmax_nan_{tie}", op="max", tie=tie)
+    sdfg = wired_sdfg(node, arrays, {"_in": "a[0:9]"}, {"_out_val": "v[0]", "_out_idx": "i[0]"})
+    for data, first, last in (
+        ([np.nan, 9, 3, 9, 0, 0, 2, 1, 5], 0, 0),
+        ([1.0, 9, np.nan, 9, 0, 0, 2, 1, np.nan], 1, 3),
+    ):
+        v, i = np.zeros(1), np.zeros(1, dtype=np.int64)
+        with python_backend():
+            sdfg(a=np.array(data), v=v, i=i)
+        expected = first if tie == "first" else last
+        assert i[0] == expected and np.array_equal(v, [data[expected]], equal_nan=True), (data, v[0], i[0])
+
+
 @pytest.mark.gpu
 def test_an_argmax_of_a_gpu_array_leaves_its_answers_on_the_host():
     import cupy

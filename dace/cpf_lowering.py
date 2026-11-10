@@ -943,13 +943,27 @@ ARG_VALUE_CTYPES: tuple[str, ...] = (
 ARG_INDEX_CTYPES: tuple[str, ...] = ("int32_t", "int64_t")
 
 
-def arg_pair_declare(op: str) -> str:
-    """The ``arg_<op>_pair`` reduction over every pair :data:`ARG_VALUE_CTYPES` x :data:`ARG_INDEX_CTYPES` names."""
+def arg_pair_declare(op: str, last: bool) -> str:
+    """The ``arg_<op>[_last]_pair`` reduction over every pair :data:`ARG_VALUE_CTYPES` x :data:`ARG_INDEX_CTYPES`
+    names."""
     pairs = ", ".join(f"arg_pair<{v}, {i}>" for i in ARG_INDEX_CTYPES for v in ARG_VALUE_CTYPES)
     lowest = "true" if op == "max" else "false"
+    kind = f"{op}_last" if last else op
     return (
-        f"#pragma omp declare reduction(arg_{op}_pair : {pairs} : omp_out = arg_{op}_combine(omp_out, omp_in)) "
-        f"initializer(arg_seed(omp_priv, {lowest}))"
+        f"#pragma omp declare reduction(arg_{kind}_pair : {pairs} : omp_out = arg_{kind}_combine(omp_out, omp_in)) "
+        f"initializer(arg_seed(omp_priv, {lowest}, {'true' if last else 'false'}))"
+    )
+
+
+def arg_step_cpp(op: str, last: bool) -> str:
+    """``arg_<op>[_last]_step``: a better value, or with ``last`` an equal one too, replaces the held pair."""
+    better = "arg_greater(v, held.__ar_v)" if op == "max" else "arg_greater(held.__ar_v, v)"
+    name = f"arg_{op}_last_step" if last else f"arg_{op}_step"
+    take = f"{better} || v == held.__ar_v" if last else better
+    return (
+        "template <typename V, typename I>\n"
+        f"static inline arg_pair<V, I> {name}(const arg_pair<V, I> &held, const V &v, I i) {{\n"
+        f"    return {take} ? arg_pair<V, I>{{v, i}} : held;\n}}"
     )
 
 
@@ -973,16 +987,23 @@ ARG_REDUCTION_CPP: dict[str, str] = {
             "        return a > b;",
             "    }",
             "}",
-            "template <typename V, typename I>",
-            "static inline arg_pair<V, I> arg_max_combine(const arg_pair<V, I> &out, const arg_pair<V, I> &in) {",
-            "    return (arg_greater(in.__ar_v, out.__ar_v) || (in.__ar_v == out.__ar_v && in.__ar_i < out.__ar_i)) "
-            "? in : out;",
+            "template <bool Max, bool Last, typename V, typename I>",
+            "static inline arg_pair<V, I> arg_combine(const arg_pair<V, I> &out, const arg_pair<V, I> &in) {",
+            "    if (!(out.__ar_v == out.__ar_v) || !(in.__ar_v == in.__ar_v))",
+            "        return out.__ar_v == out.__ar_v ? in : out;",
+            "    const bool better = Max ? arg_greater(in.__ar_v, out.__ar_v) : arg_greater(out.__ar_v, in.__ar_v);",
+            "    const bool wins_tie = Last ? in.__ar_i > out.__ar_i : in.__ar_i < out.__ar_i;",
+            "    return (better || (in.__ar_v == out.__ar_v && wins_tie)) ? in : out;",
             "}",
-            "template <typename V, typename I>",
-            "static inline arg_pair<V, I> arg_min_combine(const arg_pair<V, I> &out, const arg_pair<V, I> &in) {",
-            "    return (arg_greater(out.__ar_v, in.__ar_v) || (in.__ar_v == out.__ar_v && in.__ar_i < out.__ar_i)) "
-            "? in : out;",
-            "}",
+            *(
+                "template <typename V, typename I>\n"
+                f"static inline arg_pair<V, I> arg_{op}{'_last' if last else ''}_combine("
+                "const arg_pair<V, I> &out, const arg_pair<V, I> &in) {\n"
+                f"    return arg_combine<{str(op == 'max').lower()}, {str(last).lower()}>(out, in);\n"
+                "}"
+                for last in (False, True)
+                for op in ("max", "min")
+            ),
             "template <typename V>",
             "static inline V arg_bound(bool lowest) {",
             "    if constexpr (arg_is_complex<V>::value) {",
@@ -995,21 +1016,20 @@ ARG_REDUCTION_CPP: dict[str, str] = {
             "    }",
             "}",
             "template <typename V, typename I>",
-            "static inline void arg_seed(arg_pair<V, I> &priv, bool lowest) {",
-            "    priv = arg_pair<V, I>{arg_bound<V>(lowest), std::numeric_limits<I>::max()};",
+            "static inline void arg_seed(arg_pair<V, I> &priv, bool lowest, bool last = false) {",
+            "    priv = arg_pair<V, I>{arg_bound<V>(lowest), "
+            "last ? std::numeric_limits<I>::lowest() : std::numeric_limits<I>::max()};",
             "}",
-            arg_pair_declare("max"),
-            arg_pair_declare("min"),
+            *(arg_pair_declare(op, last) for last in (False, True) for op in ("max", "min")),
         ]
     ),
     "arg_pair_of": "template <typename V, typename I>\n"
     "static inline arg_pair<V, I> arg_pair_of(const V &v, I i) { return arg_pair<V, I>{v, i}; }",
-    "arg_max_step": "template <typename V, typename I>\n"
-    "static inline arg_pair<V, I> arg_max_step(const arg_pair<V, I> &held, const V &v, I i) {\n"
-    "    return arg_greater(v, held.__ar_v) ? arg_pair<V, I>{v, i} : held;\n}",
-    "arg_min_step": "template <typename V, typename I>\n"
-    "static inline arg_pair<V, I> arg_min_step(const arg_pair<V, I> &held, const V &v, I i) {\n"
-    "    return arg_greater(held.__ar_v, v) ? arg_pair<V, I>{v, i} : held;\n}",
+    **{
+        f"arg_{op}{'_last' if last else ''}_step": arg_step_cpp(op, last)
+        for last in (False, True)
+        for op in ("max", "min")
+    },
 }
 INLINE_DEFINITIONS.update(ARG_REDUCTION_CPP)
 
@@ -1130,8 +1150,7 @@ LOW_PRECISION_MATH_CALL: "re.Pattern" = re.compile(
 DEFINITION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     **{f"cpf_lowp_{name}": ("cpf_lowp_base",) for name in LOW_PRECISION_MATH},
     "arg_pair_of": ("arg_pair",),
-    "arg_max_step": ("arg_pair",),
-    "arg_min_step": ("arg_pair",),
+    **{f"arg_{op}{last}_step": ("arg_pair",) for op in ("max", "min") for last in ("", "_last")},
     **{
         reduce_name(operation, parallel): (f"cpf_{operation}",)
         for operation in ("min", "max")
@@ -3062,8 +3081,8 @@ C_DTYPE_ALTERNATION: str = "|".join(sorted(C_SCALAR_SPELLINGS, key=len, reverse=
 #: The name of a typed instantiation: its family, then one dace type per type parameter
 #: (``cpf_scan_incl_sum_int8_int64_int64``). No group captures, so it can join another alternation.
 C_INSTANCE_NAMES: str = (
-    r"cpf_(?:scan_(?:incl|excl)_(?:sum|product|min|max)|reduce_(?:seq_)?(?:%s)|arg_pair_of|arg_max_step"
-    r"|arg_min_step|atomic_max|atomic_min|detect_collision_sized"
+    r"cpf_(?:scan_(?:incl|excl)_(?:sum|product|min|max)|reduce_(?:seq_)?(?:%s)|arg_pair_of"
+    r"|arg_(?:max|min)(?:_last)?_step|atomic_max|atomic_min|detect_collision_sized"
     r"|detect_collision|sort)(?:_(?:%s))+" % ("|".join(REDUCE_OPERATIONS), C_DTYPE_ALTERNATION)
 )
 
@@ -3076,7 +3095,7 @@ C_INSTANCE_NAME: "re.Pattern" = re.compile(
 
 #: A typed argmax / argmin piece: its family, then the value's and the index's dace types.
 C_ARG_INSTANCE_NAME: "re.Pattern" = re.compile(
-    r"cpf_(arg_pair_of|arg_max_step|arg_min_step)_(%s)_(%s)" % (C_DTYPE_ALTERNATION, C_DTYPE_ALTERNATION)
+    r"cpf_(arg_pair_of|arg_(?:max|min)(?:_last)?_step)_(%s)_(%s)" % (C_DTYPE_ALTERNATION, C_DTYPE_ALTERNATION)
 )
 
 
@@ -3098,9 +3117,9 @@ C_ARG_BOUNDS: dict[str, tuple[str, str]] = {
 
 
 def c_arg_pair_definition(value: str, index: str) -> str:
-    """The (value, index) pair of ``value`` x ``index`` in C: its struct, constructor, combiners and the two
-    ``arg_max_pair`` / ``arg_min_pair`` OpenMP reductions over it, as ``dace/arg_reduction.h`` declares them. A
-    complex value orders lexicographically, real part first."""
+    """The (value, index) pair of ``value`` x ``index`` in C: its struct, constructor, combiners and the four
+    ``arg_max[_last]_pair`` / ``arg_min[_last]_pair`` OpenMP reductions over it, as ``dace/arg_reduction.h``
+    declares them. A complex value orders lexicographically, real part first."""
     v, i = C_SCALAR_SPELLINGS[value], C_SCALAR_SPELLINGS[index]
     pair, tag = f"cpf_arg_pair_{value}_{index}", f"{value}_{index}"
     if value in C_COMPLEX_DTYPES:
@@ -3117,23 +3136,32 @@ def c_arg_pair_definition(value: str, index: str) -> str:
         ("max", "cpf_arg_greater_%s(in.__ar_v, out.__ar_v)", lowest),
         ("min", "cpf_arg_greater_%s(out.__ar_v, in.__ar_v)", highest),
     ):
-        lines += [
-            f"static inline {pair} cpf_arg_{op}_combine_{tag}({pair} out, {pair} in) {{",
-            f"    return ({better % tag} || (in.__ar_v == out.__ar_v && in.__ar_i < out.__ar_i)) ? in : out;",
-            "}",
-            f"#pragma omp declare reduction(arg_{op}_pair : {pair} : omp_out = cpf_arg_{op}_combine_{tag}(omp_out, omp_in)) "
-            f"initializer(omp_priv = cpf_arg_pair_of_{tag}({seed}, {index.upper()}_MAX))",
-        ]
+        for kind, wins_tie, neutral_index in ((op, "<", "MAX"), (f"{op}_last", ">", "MIN")):
+            lines += [
+                f"static inline {pair} cpf_arg_{kind}_combine_{tag}({pair} out, {pair} in) {{",
+                "    if (!(out.__ar_v == out.__ar_v) || !(in.__ar_v == in.__ar_v))",
+                "        return out.__ar_v == out.__ar_v ? in : out;",
+                f"    return ({better % tag} || (in.__ar_v == out.__ar_v && in.__ar_i {wins_tie} out.__ar_i))",
+                "        ? in : out;",
+                "}",
+                f"#pragma omp declare reduction(arg_{kind}_pair : {pair} : "
+                f"omp_out = cpf_arg_{kind}_combine_{tag}(omp_out, omp_in)) "
+                f"initializer(omp_priv = cpf_arg_pair_of_{tag}({seed}, {index.upper()}_{neutral_index}))",
+            ]
     return "\n".join(lines)
 
 
-def c_arg_step_definition(op: str, value: str, index: str) -> str:
-    """One thread's argmax / argmin step over the pair of ``value`` x ``index``: a strictly better value wins."""
+def c_arg_step_definition(kind: str, value: str, index: str) -> str:
+    """One thread's argmax / argmin step over the pair of ``value`` x ``index``: a strictly better value wins, and
+    an equal one too for a ``_last`` kind."""
     v, i, tag = C_SCALAR_SPELLINGS[value], C_SCALAR_SPELLINGS[index], f"{value}_{index}"
     pair = f"cpf_arg_pair_{tag}"
+    op = kind.removesuffix("_last")
     better = f"cpf_arg_greater_{tag}(v, held.__ar_v)" if op == "max" else f"cpf_arg_greater_{tag}(held.__ar_v, v)"
+    if kind != op:
+        better += " || v == held.__ar_v"
     return (
-        f"static inline {pair} cpf_arg_{op}_step_{tag}({pair} held, {v} v, {i} i) {{\n"
+        f"static inline {pair} cpf_arg_{kind}_step_{tag}({pair} held, {v} v, {i} i) {{\n"
         f"    return {better} ? cpf_arg_pair_of_{tag}(v, i) : held;\n}}"
     )
 
@@ -4634,7 +4662,7 @@ C_NATIVE_CTYPE_DTYPES: dict[str, str] = {
 #: ``dace::arg_pair<V, I>`` and its calls, ``arg_pair_of`` / ``arg_max_step`` / ``arg_min_step``, as the
 #: ``ArgReduce`` CPU lowering writes them once :func:`rewrite_ctypes` has spelled ``V`` and ``I`` in C.
 C_ARG_PIECE: "re.Pattern" = re.compile(
-    r"(?:::)?(?:\bdace::)?\barg_(pair|pair_of|max_step|min_step)\s*<\s*([^<>,]+?)\s*,\s*([^<>,]+?)\s*>"
+    r"(?:::)?(?:\bdace::)?\barg_(pair|pair_of|(?:max|min)(?:_last)?_step)\s*<\s*([^<>,]+?)\s*,\s*([^<>,]+?)\s*>"
 )
 
 

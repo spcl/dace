@@ -97,13 +97,80 @@ def test_arg_reduce_strided_input(op, stride):
     assert idx[0] == expected_j, f"slice-local index: got {idx[0]}, expected {expected_j}"
 
 
-def sequential_arg_extreme(seq, op):
-    """The answer the loop being lifted computes: a strict comparison, so the FIRST extreme wins."""
+def sequential_arg_extreme(seq, op, tie="first"):
+    """The answer the loop being lifted computes: ``tie='first'`` is a strict guard (the FIRST extreme wins),
+    ``'last'`` a non-strict one (the LAST wins). A comparison with NaN is false, so a NaN is never taken."""
     best, best_j = seq[0], 0
     for j in range(1, len(seq)):
-        if (seq[j] > best) if op == "max" else (seq[j] < best):
+        better = (seq[j] > best) if op == "max" else (seq[j] < best)
+        if better or (tie == "last" and seq[j] == best):
             best, best_j = seq[j], j
     return best, best_j
+
+
+def nan_and_tie_cases(n):
+    """Repeated extremes, with NaN at the start, the middle, the end, at every odd position (so every thread chunk,
+    block lane or CUB tile of the parallel lowerings starts at a NaN), at every even position, and everywhere."""
+    base = np.round(2 * np.random.default_rng(0xB21 + n).standard_normal(n))
+    cases = {"ties": base}
+    for name, where in (
+        ("nan_first", [0]),
+        ("nan_mid", [n // 2]),
+        ("nan_last", [n - 1]),
+        ("nan_odd", slice(1, n, 2)),
+        ("nan_even", slice(0, n, 2)),
+        ("nan_all", slice(0, n)),
+    ):
+        cases[name] = base.copy()
+        cases[name][where] = np.nan
+    return cases
+
+
+def assert_loop_answer(name, a, op, tie, val, idx):
+    exp_v, exp_j = sequential_arg_extreme(list(a), op, tie)
+    assert idx == exp_j and np.array_equal([val], [exp_v], equal_nan=True), (
+        f"{name} (n={a.size}, {op}, tie={tie}): got ({val}, {idx}), the loop gives ({exp_v}, {exp_j})"
+    )
+
+
+def tie_sdfg(name, op, tie, impl, storage=dace.StorageType.Default):
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N], dace.float64, storage=storage)
+    sdfg.add_array("val", [1], dace.float64)
+    sdfg.add_array("idx", [1], dace.int64)
+    state = sdfg.add_state()
+    node = ArgReduce("argreduce", op=op, tie=tie)
+    node.implementation = impl
+    state.add_node(node)
+    state.add_edge(state.add_read("a"), None, node, "_in", dace.Memlet("a[0:N]"))
+    state.add_edge(node, "_out_val", state.add_write("val"), None, dace.Memlet("val[0]"))
+    state.add_edge(node, "_out_idx", state.add_write("idx"), None, dace.Memlet("idx[0]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("op", ["max", "min"])
+@pytest.mark.parametrize("tie", ["first", "last"])
+@pytest.mark.parametrize("impl", ["pure", "CPU"])
+def test_arg_reduce_follows_the_loop_on_nan_data_and_ties(op, tie, impl):
+    """Each expansion answers what ``best = a[0]; if a[i] OP best`` answers, ``OP`` strict or not: a NaN seed is
+    kept, any other NaN is never taken, and equal extremes resolve to the first or the last."""
+    csdfg = tie_sdfg(f"argreduce_nan_{op}_{tie}_{impl}", op, tie, impl).compile()
+    for n in (1, 2, 9, 4097):
+        for name, a in nan_and_tie_cases(n).items():
+            val, idx = np.zeros(1), np.zeros(1, dtype=np.int64)
+            csdfg(a=a.copy(), val=val, idx=idx, N=n)
+            assert_loop_answer(name, a, op, tie, val[0], idx[0])
+
+
+@pytest.mark.parametrize("op", ["max", "min"])
+def test_arg_reduce_tie_last_breaks_to_last(op):
+    """Non-strict comparison -> the LAST occurrence of the extreme wins, on every CPU expansion."""
+    a = np.array([1.0, 5.0, 2.0, 5.0, 0.0, 0.0]) if op == "max" else np.array([3.0, 0.0, 1.0, 0.0, 2.0])
+    expected = 3
+    for impl in ("pure", "CPU"):
+        val, idx = np.zeros(1), np.zeros(1, dtype=np.int64)
+        tie_sdfg(f"argreduce_tie_last_{op}_{impl}", op, "last", impl)(a=a, val=val, idx=idx, N=a.shape[0])
+        assert idx[0] == expected, f"{op}/{impl}: got {idx[0]}, expected the last extreme at {expected}"
 
 
 @pytest.mark.parametrize("op", ["max", "min"])
@@ -449,6 +516,51 @@ def test_the_cuda_expansion_matches_the_sequential_scan_through_the_gather(op, t
             f"slice-local and break the tie toward the FIRST occurrence"
         )
     assert n_elems == len(seq), "the gather did not present one element per strided position"
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("op", ["max", "min"])
+@pytest.mark.parametrize("transform", ["", "abs"])
+def test_the_cuda_expansion_with_tie_last_follows_the_loop_on_nan_data(op, transform):
+    """``tie='last'`` folds (value, index) pairs instead of calling CUB's ArgMax, through both operand shapes."""
+    import cupy
+
+    sdfg = tie_sdfg(f"argreduce_gpu_last_{op}_{transform or 'id'}", op, "last", "CUDA", dace.StorageType.GPU_Global)
+    next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ArgReduce)).transform = transform
+    csdfg = sdfg.compile()
+    for n in (1, 2, 9, 100003):
+        for name, a in nan_and_tie_cases(n).items():
+            val, idx = np.zeros(1), np.zeros(1, dtype=np.int64)
+            csdfg(a=cupy.asarray(a), val=val, idx=idx, N=n)
+            assert_loop_answer(name, np.abs(a) if transform else a, op, "last", val[0], idx[0])
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("op", ["max", "min"])
+@pytest.mark.parametrize("tie", ["first", "last"])
+def test_the_block_expansion_follows_the_loop_on_nan_data_and_ties(op, tie):
+    """One kernel iteration per row, each row one case: lanes that start at a NaN must not decide the answer."""
+    import cupy
+
+    rows = 7
+    sdfg = dace.SDFG(f"argreduce_block_nan_{op}_{tie}")
+    sdfg.add_array("A", [rows, N], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("val", [rows], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("idx", [rows], dace.int64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("rows", {"r": f"0:{rows}"}, schedule=dace.ScheduleType.GPU_Device)
+    node = ArgReduce("argreduce", op=op, tie=tie)
+    node.implementation = "CUDA (block)"
+    state.add_memlet_path(state.add_read("A"), entry, node, dst_conn="_in", memlet=dace.Memlet("A[r, 0:N]"))
+    for conn, data in (("_out_val", "val"), ("_out_idx", "idx")):
+        state.add_memlet_path(node, exit_node, state.add_write(data), src_conn=conn, memlet=dace.Memlet(f"{data}[r]"))
+    for n in (9, 1000):
+        cases = nan_and_tie_cases(n)
+        assert len(cases) == rows
+        val, idx = cupy.zeros(rows), cupy.zeros(rows, dtype=np.int64)
+        sdfg(A=cupy.asarray(np.stack(list(cases.values()))), val=val, idx=idx, N=n)
+        for r, (name, a) in enumerate(cases.items()):
+            assert_loop_answer(name, a, op, tie, float(val[r]), int(idx[r]))
 
 
 if __name__ == "__main__":

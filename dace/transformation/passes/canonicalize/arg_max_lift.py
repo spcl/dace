@@ -99,15 +99,12 @@ index refers to:
   sequential loop keeps the FIRST occurrence. ``ArgReduce`` scans with the same
   strict comparison, so a plain forward arg-reduce matches it directly.
 * **non-strict** (``>=`` / ``<=``) -- the carrier IS updated on a tie, so the
-  sequential loop keeps the LAST occurrence. This is lifted by reversing the
-  scanned order before the (still strict, first-wins) arg-reduce: the first
-  occurrence of the extreme in the reversed sequence is exactly the last one in
-  the forward sequence. The rewrite materialises the reversed gather with a
-  parallel map and maps the returned position back (``i = end - idx``), so the
-  lifted shape stays fully parallel and bit-exact with the sequential loop.
+  sequential loop keeps the LAST occurrence. ``ArgReduce(tie='last')`` scans
+  forward from the same seed with the same non-strict comparison, so it matches
+  the loop on NaN data too (a NaN never compares true).
 
 The extreme VALUE is identical under either guard, so the value-only reduction
-(no index carrier) needs no reversal.
+(no index carrier) needs no tie rule.
 
 The choice is exposed as the :attr:`ArgMaxLift.tie_break` knob -- ``'infer'``
 (the default: derive it from the guard's strictness exactly as above),
@@ -256,7 +253,7 @@ class _Match(NamedTuple):
     """A matched argmax/argmin loop. Fields are the carrier (``x`` in s314) and input array, the
     loop bounds, the optional index carrier (``index`` in s315, symbol carriers only), the optional
     unary gather transform, the affine gather ``a[gather_base + gather_coeff*i]`` (s318: ``c = inc``)
-    and ``last_wins`` (non-strict guard under ``tie_break='infer'``: reduce over the reversed gather).
+    and ``last_wins`` (non-strict guard under ``tie_break='infer'``: ``ArgReduce(tie='last')``).
     """
 
     op: dtypes.ReductionType
@@ -504,12 +501,10 @@ class ArgMaxLift(ppl.Pass):
 
     def _resolve_last_wins(self, op_ast: CompareOp, has_index: bool) -> bool:
         """The tie rule for this match: True -> keep the LAST occurrence of the
-        extreme (arg-reduce over the reversed gather), False -> the FIRST (the
-        plain forward arg-reduce).
+        extreme (``tie='last'``), False -> the FIRST (``tie='first'``).
 
         Without an index carrier the rule is unobservable (both tie choices yield
-        the same extreme value), so it stays False and the rewrite skips the
-        reversal. Otherwise ``tie_break`` decides: ``'infer'`` reads it off the
+        the same extreme value), so it stays False. Otherwise ``tie_break`` decides: ``'infer'`` reads it off the
         guard's strictness -- the sequential loop updates the carrier on a tie
         under ``>=`` / ``<=`` (keeping the last) but not under ``>`` / ``<``
         (keeping the first) -- while ``'first'`` / ``'last'`` pin it.
@@ -811,11 +806,9 @@ class ArgMaxLift(ppl.Pass):
         # Tie-break semantics (``tie_break``; 'infer' reads it off the guard's
         # strictness): a non-strict guard (``>=`` / ``<=``) updates the carrier on
         # a TIE, so the sequential loop keeps the LAST occurrence's index, while a
-        # strict guard keeps the FIRST. The ArgReduce scan is always strict
-        # (first-wins), so the last-wins shape is lifted by arg-reducing over the
-        # REVERSED gather (first-of-reversed IS last-of-forward); the rewrite maps
-        # the position back. The extreme VALUE is identical under either rule, so
-        # the value-only reduction (no index carrier) needs no reversal.
+        # strict guard keeps the FIRST; ArgReduce's ``tie`` states which. The
+        # extreme VALUE is identical under either rule, so the value-only
+        # reduction (no index carrier) needs none.
         last_wins = self._resolve_last_wins(op_ast, idx_carrier_name is not None)
 
         return _Match(
@@ -932,9 +925,7 @@ class ArgMaxLift(ppl.Pass):
         # The nest always tracks one index per loop, so the tie rule is always
         # observable and ``tie_break`` always applies: under the default 'infer'
         # the guard's strictness picks the occurrence -- a non-strict guard
-        # (``>=`` / ``<=``) keeps the LAST one in row-major order, which the
-        # rewrite lifts by arg-reducing over the reversed flat order (the flat
-        # ArgReduce itself is strict / first-wins).
+        # (``>=`` / ``<=``) keeps the LAST one in row-major order (``tie='last'``).
         last_wins = self._resolve_last_wins(op_ast, True)
         op = CMP_AST_TO_RTYPE[op_ast]
 
@@ -1059,12 +1050,7 @@ class ArgMaxLift(ppl.Pass):
         whole (contiguous) array, decomposing the flat index back into the index
         carriers (``idx_t = (mflat // stride_t) % shape_t``, ``stride_t`` the product
         of the extents inside ``t``; in 2-D ``mflat // ncols`` and ``mflat % ncols``).
-
-        Under a non-strict guard (``m.last_wins``) the sequential nest keeps the
-        LAST row-major occurrence while the ArgReduce scan keeps the first, so the
-        arg-reduce runs over a REVERSED copy of the array (``rev[k] =
-        aa_flat[total-1-k]``, materialised by a parallel map) and the returned
-        position is mapped back with ``mflat = total - 1 - idx``.
+        A non-strict guard (``m.last_wins``) keeps the LAST row-major occurrence: ``tie='last'``.
         """
         from dace.libraries.standard.nodes import ArgReduce
 
@@ -1077,36 +1063,7 @@ class ArgMaxLift(ppl.Pass):
             f"_argmax2d_idx_{outer_loop.label}", dtypes.int64, transient=True, find_new_name=True
         )
 
-        total = symbolic.simplify(functools.reduce(operator.mul, m.shape))
         argmax_state = m.parent.add_state(outer_loop.label + "_argreduce2d")
-        entry_state = argmax_state
-        rev_buf = None
-        if m.last_wins:
-            # Reversed flat copy: rev[flat(i)] = aa[shape-1-i], whose forward flat position is exactly
-            # ``total-1 - flat(i)``. The map is a pure gather (a bijection on the flat index), so the
-            # materialisation stays fully parallel.
-            rev_buf, _ = sdfg.add_array(
-                f"_argmax2d_rev_{outer_loop.label}", [total], desc.dtype, transient=True, find_new_name=True
-            )
-            mat_state = m.parent.add_state(outer_loop.label + "_argreduce2d_rev")
-            # Symbolic bounds and subsets, never a rendered string: ``sym2cpp`` spells a symbolic
-            # extent as C++ (``dace::math::ipow(R, K)``), and the range parser splits on ':', so
-            # the qualified name comes back as bogus tokens.
-            params = ["_i", "_j"] if len(m.shape) == 2 else [f"_i{t}" for t in range(len(m.shape))]
-            syms = [symbolic.symbol(p) for p in params]
-            rev = [symbolic.simplify(dim - 1) - sym for dim, sym in zip(m.shape, syms, strict=True)]
-            flat = syms[0]
-            for dim, sym in zip(m.shape[1:], syms[1:], strict=True):
-                flat = flat * dim + sym
-            mat_state.add_mapped_tasklet(
-                name="reverse_gather2d",
-                map_ranges={p: (0, dim - 1, 1) for p, dim in zip(params, m.shape, strict=True)},
-                inputs={"__in": mm.Memlet(data=m.input_array, subset=subsets.Range([(r, r, 1) for r in rev]))},
-                code="__out = __in",
-                outputs={"__out": mm.Memlet(data=rev_buf, subset=subsets.Range([(flat, flat, 1)]))},
-                external_edges=True,
-            )
-            entry_state = mat_state
 
         # Re-route inbound edges, dropping pre-loop seeds of every carrier.
         for ie in list(m.parent.in_edges(outer_loop)):
@@ -1114,20 +1071,15 @@ class ArgMaxLift(ppl.Pass):
             for k in (m.carrier_name, *m.idx_names):
                 new_assigns.pop(k, None)
             m.parent.add_edge(
-                ie.src, entry_state, dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
+                ie.src, argmax_state, dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
             )
             m.parent.remove_edge(ie)
-        if m.last_wins:
-            m.parent.add_edge(entry_state, argmax_state, dace.InterstateEdge())
 
-        # Forward flat position of the winner: the reduce's own index when the scan
-        # ran forward, mirrored through the array when it ran over the reversed copy.
-        flat = idx_buf if not m.last_wins else f"(({symbolic.symstr(symbolic.simplify(total - 1))}) - {idx_buf})"
         assignments = {m.carrier_name: val_buf}
         for t, (name, dim) in enumerate(zip(m.idx_names, m.shape, strict=True)):
             inside = m.shape[t + 1 :]
             stride = symbolic.symstr(symbolic.simplify(functools.reduce(operator.mul, inside))) if inside else None
-            position = f"int_floor({flat}, {stride})" if stride is not None else flat
+            position = f"int_floor({idx_buf}, {stride})" if stride is not None else idx_buf
             assignments[name] = position if t == 0 else f"py_mod({position}, {symbolic.symstr(dim)})"
         bind_state = m.parent.add_state(outer_loop.label + "_argreduce2d_bind")
         m.parent.add_edge(argmax_state, bind_state, dace.InterstateEdge(assignments=assignments))
@@ -1139,14 +1091,10 @@ class ArgMaxLift(ppl.Pass):
         wv = argmax_state.add_write(val_buf)
         wi = argmax_state.add_write(idx_buf)
         op = "max" if m.op == dtypes.ReductionType.Max else "min"
-        node = ArgReduce(name=f"{outer_loop.label}_argreduce2d", op=op)
+        node = ArgReduce(name=f"{outer_loop.label}_argreduce2d", op=op, tie="last" if m.last_wins else "first")
         argmax_state.add_node(node)
-        if m.last_wins:
-            read = argmax_state.add_read(required(rev_buf))
-            in_memlet = mm.Memlet(data=rev_buf, subset=subsets.Range([(0, symbolic.simplify(total - 1), 1)]))
-        else:
-            read = argmax_state.add_read(m.input_array)
-            in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(0, dim - 1, 1) for dim in desc.shape]))
+        read = argmax_state.add_read(m.input_array)
+        in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(0, dim - 1, 1) for dim in desc.shape]))
         argmax_state.add_edge(read, None, node, "_in", in_memlet)
         argmax_state.add_edge(node, "_out_val", wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
         argmax_state.add_edge(node, "_out_idx", wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
@@ -1896,8 +1844,7 @@ class ArgMaxLift(ppl.Pass):
 
         Value and index land in fresh transient scalars bound back as ``carrier := val_buf`` and
         ``idx_carrier := slice_lo + idx_buf``; the seed iedges are dropped (the slice extends to
-        ``start - 1``). Under ``m.last_wins`` the scan runs over a reversed copy and
-        ``idx_carrier := end - idx_buf``.
+        ``start - 1``). ``m.last_wins`` asks the scan for ``tie='last'``.
         """
         from dace.libraries.standard.nodes import ArgReduce
 
@@ -1914,27 +1861,6 @@ class ArgMaxLift(ppl.Pass):
         lo_is_zero = bool(symbolic.simplify(slice_lo) == 0)
 
         argmax_state = m.parent.add_state(m.loop.label + "_argreduce")
-        entry_state = argmax_state
-        rev_buf = None
-        if m.last_wins:
-            # Reversed copy of the scanned slice: rev[_j] = a[end - _j], _j in
-            # 0:n. This path only ever sees the unit gather (a[i]), so the array
-            # position and the iteration index coincide.
-            n_elems = symbolic.simplify(end + 1 - slice_lo)
-            rev_buf, _ = sdfg.add_array(
-                f"_argmax_rev_{m.loop.label}", [n_elems], arr_dtype, transient=True, find_new_name=True
-            )
-            mat_state = m.parent.add_state(m.loop.label + "_argreduce_rev")
-            rev = end - symbolic.symbol("_j")
-            mat_state.add_mapped_tasklet(
-                name="reverse_gather",
-                map_ranges={"_j": (0, n_elems - 1, 1)},
-                inputs={"__in": mm.Memlet(data=m.input_array, subset=subsets.Range([(rev, rev, 1)]))},
-                code="__out = __in",
-                outputs={"__out": mm.Memlet(data=rev_buf, subset="_j")},
-                external_edges=True,
-            )
-            entry_state = mat_state
 
         # Re-route inbound edges, dropping pre-loop binds of BOTH carriers.
         for ie in list(m.parent.in_edges(m.loop)):
@@ -1942,20 +1868,14 @@ class ArgMaxLift(ppl.Pass):
             new_assigns.pop(m.carrier_name, None)
             new_assigns.pop(required(m.idx_carrier_name), None)
             m.parent.add_edge(
-                ie.src, entry_state, dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
+                ie.src, argmax_state, dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
             )
             m.parent.remove_edge(ie)
-        if m.last_wins:
-            m.parent.add_edge(entry_state, argmax_state, dace.InterstateEdge())
 
         # Bind state: re-materialise both carrier symbols from the scalars (bare
         # names). The index recovers the original-array position from the
-        # slice-local one: forward -> add the slice base; reversed -> mirror it
-        # through the slice's top end.
-        if m.last_wins:
-            idx_rhs = f"(({symbolic.symstr(end)}) - {idx_buf})"
-        else:
-            idx_rhs = idx_buf if lo_is_zero else f"({symbolic.symstr(slice_lo)} + {idx_buf})"
+        # slice-local one by adding the slice base.
+        idx_rhs = idx_buf if lo_is_zero else f"({symbolic.symstr(slice_lo)} + {idx_buf})"
         bind_state = m.parent.add_state(m.loop.label + "_argreduce_bind")
         m.parent.add_edge(
             argmax_state,
@@ -1970,14 +1890,10 @@ class ArgMaxLift(ppl.Pass):
         wv = argmax_state.add_write(val_buf)
         wi = argmax_state.add_write(idx_buf)
         op = "max" if m.op == dtypes.ReductionType.Max else "min"
-        node = ArgReduce(name=f"{m.loop.label}_argreduce", op=op)
+        node = ArgReduce(name=f"{m.loop.label}_argreduce", op=op, tie="last" if m.last_wins else "first")
         argmax_state.add_node(node)
-        if m.last_wins:
-            read = argmax_state.add_read(required(rev_buf))
-            in_memlet = mm.Memlet(data=rev_buf, subset=subsets.Range([(0, symbolic.simplify(end - slice_lo), 1)]))
-        else:
-            read = argmax_state.add_read(m.input_array)
-            in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(slice_lo, end, 1)]))
+        read = argmax_state.add_read(m.input_array)
+        in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(slice_lo, end, 1)]))
         argmax_state.add_edge(read, None, node, "_in", in_memlet)
         argmax_state.add_edge(node, "_out_val", wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
         argmax_state.add_edge(node, "_out_idx", wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
@@ -2057,8 +1973,7 @@ class ArgMaxLift(ppl.Pass):
         """Replace a transformed argmax/argmin with index over an affine gather (TSVC s318,
         ``max(|a[inc*i]|)``) by one ``ArgReduce`` reading the strided slice ``a[pos_lo : pos_hi : coeff]``
         directly, ``transform`` applied per element; ``index := iter_lo + idx_buf``. Both carrier seeds
-        are dropped (the slice's first element subsumes them). Under ``m.last_wins`` the scan runs over
-        a materialized reversed gather and ``index := end - idx_buf``.
+        are dropped (the slice's first element subsumes them). ``m.last_wins`` asks for ``tie='last'``.
         """
         from dace.libraries.standard.nodes import ArgReduce
 
@@ -2078,50 +1993,23 @@ class ArgMaxLift(ppl.Pass):
         val_buf, _ = sdfg.add_scalar(f"_argfi_val_{m.loop.label}", arr_dtype, transient=True, find_new_name=True)
         idx_buf, _ = sdfg.add_scalar(f"_argfi_idx_{m.loop.label}", dtypes.int64, transient=True, find_new_name=True)
 
-        # Forward scan reads the gather in place. Only the reversed order needs a materialised
-        # copy: ``buf[_j]`` holds iteration ``end - _j`` (position ``pos_hi - coeff*_j``), which
-        # covers exactly the same positions in the opposite direction, and a memlet range cannot
-        # be walked downward.
         argmax_state = m.parent.add_state(m.loop.label + "_argfi_reduce")
-        entry_state = argmax_state
-        buf = None
-        if m.last_wins:
-            buf, _ = sdfg.add_array(
-                f"_argfi_buf_{m.loop.label}", [n_elems], arr_dtype, transient=True, find_new_name=True
-            )
-            mat_state = m.parent.add_state(m.loop.label + "_argfi")
-            in_idx = pos_hi - coeff * symbolic.symbol("_j")
-            mat_state.add_mapped_tasklet(
-                name="transform_gather_idx",
-                map_ranges={"_j": (0, n_elems - 1, 1)},
-                inputs={"__in": mm.Memlet(data=m.input_array, subset=subsets.Range([(in_idx, in_idx, 1)]))},
-                code=f"__out = {m.transform}(__in)",
-                outputs={"__out": mm.Memlet(data=buf, subset="_j")},
-                external_edges=True,
-            )
-            entry_state = mat_state
 
-        # Re-route inbound edges to the first state of the replacement, dropping the pre-loop
-        # binds of BOTH carriers (the arg-reduce over the slice subsumes them).
+        # Re-route inbound edges, dropping the pre-loop binds of BOTH carriers (the arg-reduce over
+        # the slice subsumes them).
         for ie in list(m.parent.in_edges(m.loop)):
             new_assigns = dict(ie.data.assignments or {})
             new_assigns.pop(m.carrier_name, None)
             new_assigns.pop(required(m.idx_carrier_name), None)
             m.parent.add_edge(
-                ie.src, entry_state, dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
+                ie.src, argmax_state, dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
             )
             m.parent.remove_edge(ie)
-        if m.last_wins:
-            m.parent.add_edge(entry_state, argmax_state, dace.InterstateEdge())
 
         # Bind state: value carrier := val_buf; index carrier := iter_lo + idx_buf
         # (idx_buf is the slice-local position; iter_lo recovers the iteration).
-        # The reversed buffer mirrors it instead: iteration ``end - idx_buf``.
         lo_is_zero = bool(symbolic.simplify(iter_lo) == 0)
-        if m.last_wins:
-            idx_rhs = f"(({symbolic.symstr(end)}) - {idx_buf})"
-        else:
-            idx_rhs = idx_buf if lo_is_zero else f"({symbolic.symstr(iter_lo)} + {idx_buf})"
+        idx_rhs = idx_buf if lo_is_zero else f"({symbolic.symstr(iter_lo)} + {idx_buf})"
         bind_state = m.parent.add_state(m.loop.label + "_argfi_bind")
         m.parent.add_edge(
             argmax_state,
@@ -2136,18 +2024,17 @@ class ArgMaxLift(ppl.Pass):
         wv = argmax_state.add_write(val_buf)
         wi = argmax_state.add_write(idx_buf)
         op = "max" if m.op == dtypes.ReductionType.Max else "min"
-        if m.last_wins:
-            read = argmax_state.add_read(required(buf))
-            in_memlet = mm.Memlet(data=buf, subset=subsets.Range([(0, symbolic.simplify(n_elems - 1), 1)]))
-            # The transform is already applied while materialising the reversed copy.
-            node = ArgReduce(name=f"{m.loop.label}_argfi_argreduce", op=op)
-        else:
-            read = argmax_state.add_read(m.input_array)
-            # ``volume`` is stated rather than left to the subset: a subset counts itself as
-            # ``ceiling((hi - lo + 1) / step)``, which a symbolic stride (s318's ``inc``) leaves
-            # unresolved. The iteration count is known here exactly.
-            in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(pos_lo, pos_hi, coeff)]), volume=n_elems)
-            node = ArgReduce(name=f"{m.loop.label}_argfi_argreduce", op=op, transform=m.transform)
+        read = argmax_state.add_read(m.input_array)
+        # ``volume`` is stated rather than left to the subset: a subset counts itself as
+        # ``ceiling((hi - lo + 1) / step)``, which a symbolic stride (s318's ``inc``) leaves
+        # unresolved. The iteration count is known here exactly.
+        in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(pos_lo, pos_hi, coeff)]), volume=n_elems)
+        node = ArgReduce(
+            name=f"{m.loop.label}_argfi_argreduce",
+            op=op,
+            transform=m.transform,
+            tie="last" if m.last_wins else "first",
+        )
         argmax_state.add_node(node)
         argmax_state.add_edge(read, None, node, "_in", in_memlet)
         argmax_state.add_edge(node, "_out_val", wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))

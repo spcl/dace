@@ -345,10 +345,14 @@ def scan(o: Operands) -> str:
 
 
 def arg_reduce(o: Operands) -> str:
-    # Both answers are host values whatever side the operand lives on; argmax keeps the first extreme
+    # Both answers are host values whatever side the operand lives on. The loop seeds from element 0 and a NaN never
+    # compares true, so a NaN seed is the answer and any other NaN is skipped (``nanarg``); ``tie='last'`` keeps the
+    # last extreme, the first one of the reversed scan.
     node = o.node
     values = o["_in"] if not node.transform else f"{node.transform}({o['_in']})"
-    code = f"__arv = {values}\n_out_idx = int({o.xp}.arg{node.op}(__arv))\n"
+    find = f"{o.xp}.nanarg{node.op}"
+    pick = f"{find}(__arv)" if node.tie == "first" else f"__arv.size - 1 - {find}(__arv[::-1])"
+    code = f"__arv = {o.xp}.ravel({values})\n_out_idx = 0 if __arv[0] != __arv[0] else int({pick})\n"
     return code + ("_out_val = __arv[_out_idx].item()" if "_out_val" in o.outputs else "")
 
 
