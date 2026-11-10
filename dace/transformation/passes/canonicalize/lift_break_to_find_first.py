@@ -204,6 +204,12 @@ class PredicateBuilder(ast.NodeTransformer):
         self.match.symbols.add(node.id)
         return node
 
+    def visit_BinOp(self, node: ast.BinOp) -> ast.expr:
+        # The search tests indices past the hit, where a divisor read from data may be zero and trap.
+        if isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)) and not isinstance(node.right, ast.Constant):
+            raise ValueError("the test divides by a value that is not a constant")
+        return self.generic_visit(node)
+
     def visit_Subscript(self, node: ast.Subscript) -> ast.expr:
         if not isinstance(node.value, ast.Name) or node.value.id not in self.sdfg.arrays:
             raise ValueError(f"the test subscripts {ast.unparse(node.value)}, which is not a container")
@@ -261,6 +267,9 @@ class LiftBreakToFindFirst(ppl.Pass):
     def match(self, sdfg: SDFG, loop: LoopRegion) -> Match | None:
         """The match for ``loop``, or ``None`` when it is not the pattern or the lift is not sound."""
         jumps = loop_jumps(loop)
+        # A do-while runs its first body before the test of the range, which the search does not.
+        if loop.inverted:
+            return None
         if len(jumps) != 1 or not isinstance(jumps[0], BreakBlock):
             return None
         if get_init_assignment(loop) is None or get_loop_end(loop) is None or get_loop_stride(loop) != 1:
