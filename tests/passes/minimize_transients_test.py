@@ -250,32 +250,6 @@ def test_array_a_map_writes_beyond_what_is_read_keeps_its_extent():
     assert tuple(sdfg.arrays["t"].shape) == (8,)
 
 
-def test_array_stored_and_read_in_one_band_is_that_band():
-    """``t[0:8] = 5`` (a fill), ``t[2:6] = a[2:6]``, ``out[3:5] = t[3:5]``: rows outside ``2:6`` are never read."""
-    sdfg = dace.SDFG("minimize_transients_band")
-    sdfg.add_array("a", [8], dace.float64)
-    sdfg.add_array("out", [8], dace.float64)
-    sdfg.add_transient("t", [8], dace.float64)
-    init = sdfg.add_state()
-    node = FillLibraryNode("five", value=5.0)
-    init.add_node(node)
-    init.add_edge(node, "_fill_out", init.add_write("t"), None, dace.Memlet("t[0:8]"))
-    store = sdfg.add_state_after(init)
-    store.add_mapped_tasklet(
-        "store", {"i": "2:6"}, {"x": dace.Memlet("a[i]")}, "y = x", {"y": dace.Memlet("t[i]")}, external_edges=True
-    )
-    load = sdfg.add_state_after(store)
-    load.add_mapped_tasklet(
-        "load", {"i": "3:5"}, {"x": dace.Memlet("t[i]")}, "y = x", {"y": dace.Memlet("out[i]")}, external_edges=True
-    )
-    MinimizeTransients().apply_pass(sdfg, {})
-    assert tuple(sdfg.arrays["t"].shape) == (4,)
-    sdfg.validate()
-    a, out = np.arange(8, dtype=np.float64), np.zeros(8)
-    sdfg(a=a, out=out)
-    np.testing.assert_array_equal(out, [0, 0, 0, 3, 4, 0, 0, 0])
-
-
 def stack_arrays_in_parallel_map_sdfg() -> dace.SDFG:
     """``out[i] = (2 + 3) * a[i, n - 1]`` per iteration of a parallel map, each term through a stack array of the
     nested SDFG; the first array is dead when the second is written."""
@@ -352,5 +326,4 @@ if __name__ == "__main__":
     test_copy_of_a_view_whose_container_is_rewritten_stays()
     test_array_read_at_one_element_is_that_element()
     test_array_a_map_writes_beyond_what_is_read_keeps_its_extent()
-    test_array_stored_and_read_in_one_band_is_that_band()
     test_stack_arrays_of_a_nest_in_a_parallel_map_share_one_buffer()

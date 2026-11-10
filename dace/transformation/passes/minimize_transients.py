@@ -57,7 +57,7 @@ class Contraction:
                 for edge in state.all_edges(node):
                     if edge.data.is_empty():
                         continue
-                    if isinstance(edge.src, FillLibraryNode) and edge.data.subset.covers_precise(box, self.facts):
+                    if isinstance(edge.src, FillLibraryNode):
                         edge.data.subset = subsets.Range(box.ranges)
                     for tree in state.memlet_tree(edge).traverse_children(include_self=True):
                         memlet = tree.edge.data
@@ -75,9 +75,6 @@ class Contraction:
         """The box of ``name`` that covers everything read of it, if the buffer can be cut to it; else ``None``."""
         sd = self.sdfg
         reads: list[subsets.Subset | None] = []
-        #: What a fill writes, and what anything else does.
-        filled: list[subsets.Subset | None] = []
-        stored: list[subsets.Subset | None] = []
         for state, node in where:
             # Under a map the subsets name its parameters: no one box.
             if state.entry_node(node) is not None:
@@ -104,27 +101,28 @@ class Contraction:
                             return None
                 if edge.src is node:
                     reads.append(edge.data.get_src_subset(edge, state))
-                else:
-                    written = edge.data.get_dst_subset(edge, state)
-                    (filled if isinstance(edge.src, FillLibraryNode) else stored).append(written)
-        if not reads or not all(isinstance(subset, subsets.Range) for subset in (*reads, *filled, *stored)):
+        if not reads or not all(isinstance(read, subsets.Range) for read in reads):
             return None
         if self.facts is None:
             self.facts = sd.facts()
-        facts = self.facts
+        box = next((r for r in reads if all(r.covers_precise(other, self.facts) for other in reads)), None)
+        if box is None or any(step != 1 for _, _, step in box.ranges) or {str(s) for s in box.free_symbols} & varying:
+            return None
         desc = sd.arrays[name]
-        # The box is one of the subsets: the first that holds every read and every store, and is not the whole array.
-        for box in (*reads, *stored):
-            if any(step != 1 for _, _, step in box.ranges) or {str(s) for s in box.free_symbols} & varying:
-                continue
-            if all(symbolic.equal(size, extent) is True for size, extent in zip(box.size(), desc.shape)):
-                continue
-            if not all(box.covers_precise(other, facts) for other in (*reads, *stored)):
-                continue
-            # A fill is cut to the box or lies in it.
-            if all(fill.covers_precise(box, facts) or box.covers_precise(fill, facts) for fill in filled):
-                return box
-        return None
+        if all(symbolic.equal(size, extent) is True for size, extent in zip(box.size(), desc.shape)):
+            return None
+        for state, node in where:
+            for edge in state.in_edges(node):
+                if edge.data.is_empty():
+                    continue
+                written = edge.data.get_dst_subset(edge, state)
+                if not isinstance(written, subsets.Range):
+                    return None
+                if isinstance(edge.src, FillLibraryNode) and written.covers_precise(box, self.facts):
+                    continue
+                if not box.covers_precise(written, self.facts):
+                    return None
+        return box
 
 
 @dataclass(slots=True)
