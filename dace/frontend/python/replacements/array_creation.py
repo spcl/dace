@@ -1,4 +1,4 @@
-# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains replacements for array-filling methods (zeros, ones, etc.)
 """
@@ -70,10 +70,9 @@ def _numpy_full(
     if isinstance(shape, (Number, str)) or symbolic.issymbolic(shape):
         shape = [shape]
 
-    shape, promoted = promote_size_scalars_in_shape(pv, sdfg, shape)
-    if promoted:
-        # Promotion opens a state to carry the symbol assignment; the fill has to follow it.
-        state = pv.last_block
+    shape = promote_size_scalars_in_shape(pv, sdfg, shape)
+    # Promotion opens a state to carry the symbol assignment; the fill has to follow it.
+    state = pv.last_block
     if any(isinstance(s, str) for s in shape):
         raise DaceSyntaxError(
             pv,

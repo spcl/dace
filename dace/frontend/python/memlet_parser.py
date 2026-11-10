@@ -23,8 +23,8 @@ class MemletExpr:
     new_axes: list[int]
     arrdims: dict[int, str]
     #: ``subset`` indices of dims from a slice/full-range (kept as axes) vs a scalar index (collapsed).
-    #: numpy: ``A[:, 1:2]`` keeps the axis, ``A[:, 1]`` drops it. ``None`` = untracked (squeeze all singletons).
-    slice_dims: list[int] | None = None
+    #: numpy: ``A[:, 1:2]`` keeps the axis, ``A[:, 1]`` drops it. Empty = untracked (squeeze all singletons).
+    slice_dims: list[int]
 
 
 def inner_eval_ast(defined, node, additional_syms=None):
@@ -220,7 +220,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 
 def parse_memlet_subset(
     array: data.Data, node: ast.Name | ast.Subscript, das: dict[str, Any], parsed_slice: Any = None
-) -> tuple[subsets.Range, list[int], dict[int, str], list[int] | None]:
+) -> tuple[subsets.Range, list[int], dict[int, str], list[int]]:
     """
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
@@ -230,8 +230,8 @@ def parse_memlet_subset(
     :param node: AST node representing whole array or subset thereof.
     :param das: Dictionary of defined arrays and symbols mapped to their values.
     :return: A 4-tuple of (subset, list of new axis indices, index-to-array-dimension correspondence,
-             list of subset dimensions that came from a slice/full range and must not be squeezed --
-             or ``None`` when that provenance was not tracked).
+             list of subset dimensions that came from a slice/full range and must not be squeezed,
+             empty when that provenance was not tracked).
     """
     # Get memlet range
     ndslice = [(0, s - 1, 1) for s in array.shape]
@@ -270,7 +270,7 @@ def parse_memlet_subset(
             subset = subset.compose(subset_array[i])
 
         # 1:1 with ``subset`` only for a single subscript; nested A[i][j] narrows the space, leave untracked.
-        slice_dims = list(offsets) if len(ast_ndslices) == 1 else None
+        slice_dims = list(offsets) if len(ast_ndslices) == 1 else []
     else:  # entire range -- every dim survives
         subset = _ndslice_to_subset(ndslice)
         slice_dims = list(range(len(array.shape)))
