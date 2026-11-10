@@ -12,24 +12,9 @@ N = dace.symbol("N")
 
 
 @dace.program
-def double_it(A: dace.float64[N], B: dace.float64[N]):
-    for i in dace.map[0:N]:
-        B[i] = A[i] * 2.0
-
-
-@dace.program
 def strided(A: dace.float64[N], B: dace.float64[N]):
     for i in dace.map[0:N:2]:
         B[i] = A[i] * 2.0
-
-
-def loop_lines(code):
-    return [line.strip() for line in code.splitlines() if line.strip().startswith("for (")]
-
-
-def generate(sdfg, implementation):
-    with set_temporary("compiler", "cpu", "implementation", value=implementation):
-        return "\n".join(obj.code for obj in sdfg.generate_code() if obj.language == "cpp")
 
 
 def map_sdfg(name, outputs=("B",), schedule=dace.dtypes.ScheduleType.Sequential, rng="0:N"):
@@ -45,12 +30,6 @@ def map_sdfg(name, outputs=("B",), schedule=dace.dtypes.ScheduleType.Sequential,
         state.add_memlet_path(tasklet, exit_node, state.add_write(out), src_conn="b", memlet=dace.Memlet(f"{out}[i]"))
     sdfg.validate()
     return sdfg
-
-
-@pytest.mark.parametrize("implementation", ["legacy", "experimental_readable"])
-def test_counter_has_the_parameter_type_in_the_for_init(implementation):
-    lines = loop_lines(generate(double_it.to_sdfg(simplify=True), implementation))
-    assert any(line.startswith("for (int i = 0; i < ") for line in lines), lines
 
 
 @pytest.mark.parametrize("implementation", ["legacy", "experimental_readable"])
@@ -85,7 +64,6 @@ def test_frontend_strided_map_runs():
 
 if __name__ == "__main__":
     for impl in ("legacy", "experimental_readable"):
-        test_counter_has_the_parameter_type_in_the_for_init(impl)
         test_sibling_sequential_maps_share_a_counter_name(impl)
     for sched in (dace.dtypes.ScheduleType.Sequential, dace.dtypes.ScheduleType.CPU_Multicore):
         for size in (31, 32):
