@@ -371,6 +371,8 @@ def _legal_to_hoist_into(
     # invariant value; the new one redundant-but-harmless co-exists, and
     # subsequent cleanup (or another canonicalize iteration) can dedupe.
     for e in parent.edges():
+        if e.src in preds and key in e.data.read_symbols():
+            return False  # L3: an edge ahead of ``child`` would observe the moved assignment
         if e.dst is child:
             continue
         for lhs, e_rhs in e.data.assignments.items():
@@ -406,8 +408,9 @@ def _find_destination(
         reads = cache.block_reads(b)
         if reads is None or key in reads:
             return None
-        # L5, for the edges of the region itself: an assignment behind a condition does not always run
-        if any(not e.data.is_unconditional() for e in edge_region.out_edges(b)):
+        # L5, for the edges of the region itself: an assignment behind a condition does not always run.
+        # L3, for those edges: an assignment ahead of ours that reads ``key`` reads the value from before it.
+        if any(not e.data.is_unconditional() or key in e.data.read_symbols() for e in edge_region.out_edges(b)):
             return None
     dest: ControlFlowRegion = edge_region
     walker: ControlFlowRegion = edge_region

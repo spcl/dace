@@ -913,5 +913,22 @@ def test_a_conditional_edge_keeps_its_assignment():
     assert _apply(sdfg) == 0
 
 
+def test_an_assignment_ahead_that_reads_the_symbol_blocks_the_hoist():
+    """``m = k + 1`` runs ahead of ``k = M + 2`` and reads the entry value in the first iteration."""
+    sdfg, loop = _loop_after_entry("i < 1", assignments={"k": "3"})
+    sdfg.name = "hoist_refusal_read_on_an_edge_ahead"
+    sdfg.add_symbol("m", dace.int64)
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state("second")
+    third = loop.add_state("third")
+    loop.add_edge(first, second, InterstateEdge(assignments={"m": "k + 1"}))
+    loop.add_edge(second, third, InterstateEdge(assignments={"k": "M + 2"}))
+    _write_symbol(third, "m")
+    assert _apply(sdfg) == 0
+    out = np.zeros(1, np.int64)
+    sdfg(out=out, M=10, N=1)
+    assert out[0] == 4
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
