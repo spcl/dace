@@ -852,6 +852,12 @@ class NormalizeWCR(ppl.Pass):
             # A partial sized by a symbol this SDFG does not define (a triangular ``i + 1`` extent) would leak it.
             if {str(sym) for sym in priv_desc.free_symbols} - set(sdfg.symbols.keys()):
                 continue
+            # A body folding into its out-only scalar connector folds onto the private: start it at the identity
+            if isinstance(src, nodes.NestedSDFG) and accumulates_into(src.sdfg, {src_conn}):
+                op = _op_from_wcr(e.data.wcr)
+                if op is None:
+                    continue
+                self._seed_state(src.sdfg, src_conn, inner, op)
             priv_name = sdfg.add_datadesc(f"_wcr_priv_{src.label}_{src_conn}", priv_desc, find_new_name=True)
             priv_node = state.add_access(priv_name)
             state.add_edge(src, src_conn, priv_node, None, Memlet(data=priv_name, subset=self._full_subset(priv_desc)))

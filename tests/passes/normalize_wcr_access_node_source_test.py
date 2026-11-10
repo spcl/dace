@@ -701,6 +701,41 @@ def test_a_seed_inside_a_loop_indexing_the_accumulator_resets_only_its_column():
     assert np.array_equal(out, x)
 
 
+def test_body_folding_into_a_scalar_connector_it_reads_again_keeps_the_product():
+    """The body folds ``_out *= src[i]`` and reads ``_out`` back in that state: its private must start at one."""
+    n = 16
+    sdfg = dace.SDFG("nsdfg_wcr_fold_read_again")
+    sdfg.add_array("src", [n], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    state = sdfg.add_state("m")
+    body = dace.SDFG("body_fold_read_again")
+    body.add_array("_in", [1], dace.float64)
+    body.add_array("_out", [1], dace.float64)
+    body.add_scalar("_seen", dace.float64, transient=True)
+    bstate = body.add_state("b")
+    fold = bstate.add_tasklet("fold", {"x"}, {"o"}, "o = x")
+    out = bstate.add_access("_out")
+    bstate.add_edge(bstate.add_read("_in"), None, fold, "x", dace.Memlet("_in[0]"))
+    bstate.add_edge(fold, "o", out, None, dace.Memlet("_out[0]", wcr="lambda a, b: a * b"))
+    look = bstate.add_tasklet("look", {"y"}, {"z"}, "z = y")
+    bstate.add_edge(out, None, look, "y", dace.Memlet("_out[0]"))
+    bstate.add_edge(look, "z", bstate.add_write("_seen"), None, dace.Memlet("_seen[0]"))
+    me, mx = state.add_map("m", {"i": f"0:{n}"})
+    nnode = state.add_nested_sdfg(body, {"_in": None}, {"_out": None})
+    state.add_memlet_path(state.add_read("src"), me, nnode, dst_conn="_in", memlet=dace.Memlet("src[i]"))
+    state.add_memlet_path(
+        nnode, mx, state.add_write("acc"), src_conn="_out", memlet=dace.Memlet("acc[0]", wcr="lambda a, b: a * b")
+    )
+    convert_legacy_nested_sdfgs(sdfg)
+    sdfg.validate()
+    NormalizeWCR().apply_pass(sdfg, {})
+
+    src = np.random.default_rng(2).uniform(0.95, 1.05, size=n)
+    acc = np.array([2.0])
+    sdfg(src=src, acc=acc)
+    assert np.isclose(acc[0], 2.0 * np.prod(src)), f"got {acc[0]}, expected {2.0 * np.prod(src)}"
+
+
 if __name__ == "__main__":
     import sys
 
