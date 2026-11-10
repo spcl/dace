@@ -4039,13 +4039,37 @@ class CPUCodeGen(TargetCodeGenerator):
             for names in groups.values()
         ]
         g = len(groups)
+        # An order an enclosing loop leaves invariant lives in the state struct; its pre-pass reruns once a state
+        # ahead of that loop sets the stale flag, or for a different team
+        stale = node.map.omp_range_privatize_stale
+        cached = stale is not None and stale in sdfg.arrays
+        if cached:
+            self._frame.statestruct.append(f"std::shared_ptr<void> {prefix}_cache;")
+            flag = self.ptr(stale, sdfg.arrays[stale], sdfg)
+            lines += [
+                f"bool {prefix}_reuse;",
+                f"dace::range_private::Order& {order} = dace::range_private::cached_order(__state->{prefix}_cache, "
+                f"{flag}, {prefix}_nt, {trips}, {g}, {prefix}_reuse);",
+                f"{flag} = false;",
+            ]
+        else:
+            lines.append(f"dace::range_private::Order {order}({prefix}_nt, {trips}, {g});")
         lines += [
-            f"dace::range_private::Order {order}({prefix}_nt, {trips}, {g});",
             f"const int64_t {prefix}_rb[{g}] = {{{', '.join(f'(int64_t)({b})' for b in row_bytes)}}};",
             f"#pragma omp parallel num_threads({prefix}_nt)",
             "{",
             f"const int {prefix}_t = omp_get_thread_num();",
             f"const int {prefix}_T = omp_get_num_threads();",
+        ]
+        if cached:
+            lines += [
+                f"if (!({prefix}_reuse && {prefix}_T == {order}.teams())) {{",
+                f"if ({prefix}_reuse) {{",
+                "#pragma omp single",
+                f"{order}.restart();",
+                "}",
+            ]
+        lines += [
             f"for (int64_t {prefix}_k = {order}.first({prefix}_t, {prefix}_T); "
             f"{prefix}_k < {order}.first({prefix}_t + 1, {prefix}_T); ++{prefix}_k) {{",
             *self._range_private_params(sdfg, state, node, f"{prefix}_k"),
@@ -4067,6 +4091,7 @@ class CPUCodeGen(TargetCodeGenerator):
             f"{order}.note({prefix}_t, {prefix}_k, {prefix}_lo, {prefix}_hi, {prefix}_n);",
             "}",
             f"{order}.arrange({prefix}_t, {prefix}_T, {prefix}_rb);",
+            *(["}"] if cached else []),
         ]
         for i, names in enumerate(groups.values()):
             for name in names:

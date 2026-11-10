@@ -212,6 +212,24 @@ def gather_sum(idx: dace.int64[N], val: dace.float64[M], out: dace.float64[N]):
         out[i] += val[idx[i]]
 
 
+@dace.program
+def scatter_relax_steps(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[M]):
+    for t in range(T):
+        for i in dace.map[0:N]:
+            out[idx[i]] += val[i]
+        for i in dace.map[0:N]:
+            val[i] = 0.5 * val[i] + 0.001 * out[idx[i]]
+
+
+@dace.program
+def scatter_moving_index(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[M]):
+    for t in range(T):
+        for i in dace.map[0:N]:
+            out[idx[i]] += val[i]
+        for i in dace.map[0:N]:
+            idx[i] = (idx[i] + 7) % M
+
+
 def _canonical(program) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
     canonicalize(sdfg, target="cpu")
@@ -678,6 +696,61 @@ def test_a_row_stride_spelled_as_a_power_is_contiguous():
     assert _contiguous_rows(desc)
 
 
+def _map_state(sdfg: dace.SDFG, m: nodes.Map) -> dace.SDFGState:
+    return next(s for n, s in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry) and n.map is m)
+
+
+def _enclosing_loops(state: dace.SDFGState) -> list:
+    loops, block = [], state.parent_graph
+    while block is not state.sdfg:
+        if isinstance(block, dace.sdfg.state.LoopRegion):
+            loops.append(block)
+        block = block.parent_graph
+    return loops
+
+
+def test_an_invariant_index_is_inspected_once_per_loop_entry():
+    """The time loop writes ``val`` and ``out`` but not ``idx``: a state ahead of the loop marks the order stale,
+    the map rebuilds it only then, and a second call with other indices rebuilds it again."""
+    sdfg, code = _specialize(scatter_relax_steps, "relax_steps")
+    _assert_range_privatized(sdfg, code)
+    (m,) = _marked_maps(sdfg)
+    assert m.omp_range_privatize_stale is not None
+    state = _map_state(sdfg, m)
+    loops = _enclosing_loops(state)
+    writers = [s for s in state.sdfg.states() if any(n.data == m.omp_range_privatize_stale for n in s.data_nodes())]
+    assert loops and len(writers) == 1
+    assert all(writers[0] not in list(loop.states()) for loop in loops), "the pre-pass trigger must leave the loop"
+    assert "dace::range_private::cached_order(" in code
+    with set_temporary("compiler", "cpu", "implementation", value="experimental_readable"):
+        csdfg = sdfg.compile()
+    for seed in (11, 12):
+        rng = np.random.default_rng(seed)
+        idx, val, out = rng.integers(0, MV, NV), rng.random(NV), rng.random(MV)
+        ref, rval = out.copy(), val.copy()
+        for _ in range(3):
+            np.add.at(ref, idx, rval)
+            rval = 0.5 * rval + 0.001 * ref[idx]
+        csdfg(idx=idx, val=val, out=out, N=NV, M=MV, T=3)
+        assert np.allclose(out, ref, rtol=1e-12, atol=1e-12) and np.allclose(val, rval, rtol=1e-12, atol=1e-12)
+
+
+def test_an_index_the_loop_rewrites_is_inspected_every_execution():
+    sdfg, code = _specialize(scatter_moving_index, "moving_index")
+    _assert_range_privatized(sdfg, code)
+    (m,) = _marked_maps(sdfg)
+    assert m.omp_range_privatize_stale is None and _enclosing_loops(_map_state(sdfg, m))
+    assert "cached_order(" not in code
+    rng = np.random.default_rng(13)
+    idx, val, out = rng.integers(0, MV, NV), rng.random(NV), np.zeros(MV)
+    ref, ridx = out.copy(), idx.copy()
+    for _ in range(3):
+        np.add.at(ref, ridx, val)
+        ridx = (ridx + 7) % MV
+    _run(sdfg, idx=idx, val=val, out=out, N=NV, M=MV, T=3)
+    assert np.allclose(out, ref, rtol=1e-12, atol=1e-12) and np.array_equal(idx, ridx)
+
+
 if __name__ == "__main__":
     for p, m in [("sorted", MV), ("random", MV), ("reversed", MV), ("equal", MV), ("extremes", MV), ("random", 100003)]:
         test_float_sum_matches_add_at(p, m)
@@ -712,3 +785,5 @@ if __name__ == "__main__":
     test_a_persistent_accumulator_of_a_range_privatized_map_is_privatized_through_a_local_alias()
     test_an_index_read_through_a_view_of_the_map_state_is_sliced()
     test_a_row_stride_spelled_as_a_power_is_contiguous()
+    test_an_invariant_index_is_inspected_once_per_loop_entry()
+    test_an_index_the_loop_rewrites_is_inspected_every_execution()
