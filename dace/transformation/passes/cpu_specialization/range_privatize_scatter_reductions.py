@@ -12,7 +12,7 @@ import ast
 from dataclasses import dataclass, field
 from typing import Any
 
-from dace import SDFG, data, dtypes, properties, symbolic
+from dace import SDFG, Memlet, data, dtypes, properties, symbolic
 from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg.state import (
@@ -852,10 +852,99 @@ def range_private_accumulators(state: SDFGState, map_entry: nodes.MapEntry) -> d
     return out
 
 
+def _index_reads(stmts: tuple, names: dict, local: dict) -> None:
+    """Collects into ``names`` every name the statement tree ``stmts`` reads, into ``local`` those it defines."""
+    for stmt in stmts:
+        if isinstance(stmt, Let):
+            local[stmt.name] = None
+            exprs = [stmt.expr]
+        elif isinstance(stmt, Row):
+            exprs = [stmt.expr, stmt.weight]
+        elif isinstance(stmt, Guard):
+            exprs = [stmt.cond]
+        elif isinstance(stmt, Loop):
+            local[stmt.var] = None
+            exprs = [stmt.init, stmt.cond, stmt.update]
+        else:
+            local.update(dict.fromkeys(stmt.vars))
+            exprs = [x for rng in stmt.ranges for x in rng]
+        for e in exprs:
+            tree = ast.parse(e if isinstance(e, str) else symbolic.symstr(e), mode="eval")
+            names.update(dict.fromkeys(n.id for n in ast.walk(tree) if isinstance(n, ast.Name)))
+        if not isinstance(stmt, (Let, Row)):
+            _index_reads(stmt.body, names, local)
+
+
+def _loop_changes(loop: LoopRegion) -> tuple[dict, dict]:
+    """The data ``loop``'s body writes and the symbols it assigns, loop variables included."""
+    written, assigned = {}, {}
+    for region in loop.all_control_flow_regions():
+        if isinstance(region, LoopRegion):
+            assigned[region.loop_variable] = None
+        for edge in region.edges():
+            assigned.update(dict.fromkeys(edge.data.assignments))
+    for st in loop.states():
+        written.update(dict.fromkeys(n.data for n in st.data_nodes() if st.in_degree(n) > 0))
+    return written, assigned
+
+
+def invariant_loop(
+    state: SDFGState, map_entry: nodes.MapEntry, accumulators: dict[str, tuple], changes: dict
+) -> LoopRegion | None:
+    """The outermost loop enclosing ``map_entry`` in its SDFG whose body writes nothing its pre-pass reads: the
+    index arrays and symbols of ``accumulators``' writes, the map's range and the accumulators' row strides.
+
+    :param changes: ``{loop: _loop_changes(loop)}``, filled as loops are visited.
+    """
+    sdfg = state.sdfg
+    loops, block = [], state.parent_graph
+    while block is not sdfg:
+        if isinstance(block, LoopRegion):
+            loops.append(block)
+        block = block.parent_graph
+    if not loops or state.entry_node(map_entry) is not None:
+        return None
+    if any(not c.startswith("IN_") for c in map_entry.in_connectors):
+        return None
+    names, local = {}, dict.fromkeys(map_entry.map.params)
+    for _redtype, sources in accumulators.values():
+        for site in sources.sites:
+            _index_reads(site, names, local)
+    names.update(dict.fromkeys(map(str, map_entry.map.range.free_symbols)))
+    for name in accumulators:
+        names.update(dict.fromkeys(map(str, sdfg.arrays[name].free_symbols)))
+    reads = [n for n in names if n not in local]
+    if any(isinstance(sdfg.arrays.get(n), data.View) or getattr(sdfg.arrays.get(n), "may_alias", False) for n in reads):
+        return None
+    hoist = None
+    for loop in loops:
+        if loop not in changes:
+            changes[loop] = _loop_changes(loop)
+        written, assigned = changes[loop]
+        if any(n in written or n in assigned for n in reads):
+            break
+        hoist = loop
+    return hoist
+
+
+def mark_stale_ahead(sdfg: SDFG, loop: LoopRegion, map_entry: nodes.MapEntry) -> None:
+    """Adds a persistent flag that a new state ahead of ``loop`` sets, and names it on ``map_entry``'s map."""
+    persistent = dtypes.AllocationLifetime.Persistent
+    name, _desc = sdfg.add_scalar(
+        "range_private_stale", dtypes.bool_, transient=True, lifetime=persistent, find_new_name=True
+    )
+    parent = loop.parent_graph
+    st = parent.add_state_before(loop, label=f"{name}_set", is_start_block=parent.start_block is loop)
+    tasklet = st.add_tasklet(f"{name}_set", {}, {"__out"}, "__out = True")
+    st.add_edge(tasklet, "__out", st.add_write(name), None, Memlet(f"{name}[0]"))
+    map_entry.map.omp_range_privatize_stale = name
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class RangePrivatizeScatterReductions(ppl.Pass):
-    """Sets ``Map.omp_range_privatize`` on every parallel CPU map with a range-privatizable array scatter."""
+    """Sets ``Map.omp_range_privatize`` on every parallel CPU map with a range-privatizable array scatter, and
+    ``Map.omp_range_privatize_stale`` where an enclosing loop leaves its pre-pass invariant."""
 
     CATEGORY: str = "Optimization Preparation"
 
@@ -870,12 +959,18 @@ class RangePrivatizeScatterReductions(ppl.Pass):
 
         :return: The marked maps as ``(cfg id, map label)``, or ``None`` if none qualified.
         """
-        marked = set()
+        marked, hoists, changes = set(), [], {}
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.MapEntry) and not node.map.omp_range_privatize:
-                        if range_private_accumulators(state, node):
+                        accumulators = range_private_accumulators(state, node)
+                        if accumulators:
                             node.map.omp_range_privatize = True
                             marked.add((nsdfg.cfg_id, node.map.label))
+                            loop = invariant_loop(state, node, accumulators, changes)
+                            if loop is not None:
+                                hoists.append((nsdfg, loop, node))
+        for nsdfg, loop, node in hoists:
+            mark_stale_ahead(nsdfg, loop, node)
         return marked or None

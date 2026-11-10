@@ -135,15 +135,33 @@ class Order {
 
   Order(int nthreads, int64_t n, int groups)
       : n_(std::max<int64_t>(n, 0)), groups_(groups), stats_(nthreads), keys_(new int64_t[std::max<int64_t>(n, 1)]) {
-    for (Stats& s : stats_) {
-      s.lo.assign(groups, kNone);
-      s.hi.assign(groups, std::numeric_limits<int64_t>::min());
-      s.updates.assign(groups, 0);
-      s.dlo.assign(groups, kNone);
-      s.dhi.assign(groups, std::numeric_limits<int64_t>::min());
-      s.owned.assign(groups, 0);
-    }
+    restart();
   }
+
+  // Forgets the order, so the pre-pass can ``note`` and ``arrange`` again. One thread, outside the passes.
+  void restart() {
+    for (Stats& s : stats_) {
+      s = Stats();
+      s.lo.assign(groups_, kNone);
+      s.hi.assign(groups_, std::numeric_limits<int64_t>::min());
+      s.updates.assign(groups_, 0);
+      s.dlo.assign(groups_, kNone);
+      s.dhi.assign(groups_, std::numeric_limits<int64_t>::min());
+      s.owned.assign(groups_, 0);
+    }
+    perm_.reset();
+    bounds_.clear();
+    teams_ = 0;
+  }
+
+  // Whether this order, once ``arrange``d by a team of ``nthreads``, is the one a new ``Order(nthreads, n, groups)``
+  // would build from the same indices.
+  bool fits(int nthreads, int64_t n, int groups) const {
+    return teams_ == nthreads && int(stats_.size()) == nthreads && n_ == std::max<int64_t>(n, 0) && groups_ == groups;
+  }
+
+  // The size of the team that ``arrange``d this order, 0 before.
+  int teams() const { return teams_; }
 
   // The first iteration of chunk ``t`` of ``nthreads``: the even split until ``arrange`` moves it.
   int64_t first(int t, int nthreads) const { return bounds_.empty() ? n_ * t / nthreads : bounds_[t]; }
@@ -184,6 +202,9 @@ class Order {
   // a row of every accumulator of group ``g``). Every thread decides alike from the published spans.
   void arrange(int t, int nthreads, const int64_t* row_bytes) {
 #pragma omp barrier
+    if (t == 0) {
+      teams_ = nthreads;
+    }
     int64_t kmin = kNone, kmax = std::numeric_limits<int64_t>::min(), unsorted = 0, sorted = 0;
     for (int s = 0; s < nthreads; ++s) {
       kmin = std::min(kmin, stats_[s].kmin);
@@ -390,7 +411,20 @@ class Order {
   std::vector<Stats> stats_;
   std::unique_ptr<int64_t[]> keys_, perm_;
   std::vector<int64_t> bounds_;
+  int teams_ = 0;
 };
+
+// The order a range-privatized map keeps in ``cache`` across executions: the cached one if ``stale`` is unset and it
+// ``fits``, then ``reuse`` is set and the pre-pass may be skipped, else a new one stored there.
+inline Order& cached_order(std::shared_ptr<void>& cache, bool stale, int nthreads, int64_t n, int groups, bool& reuse) {
+  Order* order = static_cast<Order*>(cache.get());
+  reuse = !stale && order != nullptr && order->fits(nthreads, n, groups);
+  if (!reuse) {
+    cache = std::make_shared<Order>(nthreads, n, groups);
+    order = static_cast<Order*>(cache.get());
+  }
+  return *order;
+}
 
 }  // namespace range_private
 }  // namespace dace

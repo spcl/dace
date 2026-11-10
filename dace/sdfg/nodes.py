@@ -1397,6 +1397,15 @@ class Map:
         "(set by RangePrivatizeScatterReductions)",
         serialize_if=lambda m: m.omp_range_privatize,
     )
+    omp_range_privatize_stale = Property(
+        dtype=str,
+        default=None,
+        allow_none=True,
+        category="Scheduling",
+        desc="Persistent bool a state ahead of an enclosing loop sets: a range-privatized map re-runs its index "
+        "pre-pass only while it is set, else reuses the order of its previous execution",
+        serialize_if=lambda m: m.omp_range_privatize_stale is not None,
+    )
     proven_parallel = Property(
         dtype=bool,
         default=False,
