@@ -287,6 +287,34 @@ def test_sequential_minmax_wcr_gets_no_simd(impl):
     assert not any("simd" in p for p in pragmas), pragmas
 
 
+def test_an_integer_maximum_vectorizes_as_a_reduction_and_matches_numpy():
+    """An integer maximum is the same in any order, so its loop takes ``simd reduction(max:register)``; the
+    floating-point one above keeps its order."""
+    import numpy as np
+
+    def build(name):
+        sdfg = dace.SDFG(name)
+        sdfg.add_array("A", [101], dace.int32)
+        sdfg.add_array("best", [1], dace.int32)
+        state = sdfg.add_state()
+        state.add_mapped_tasklet(
+            "m",
+            {"i": "0:101"},
+            {"a": dace.Memlet("A[i]")},
+            "o = a + 1",
+            {"o": dace.Memlet("best[0]", wcr="lambda u, v: max(u, v)")},
+            schedule=dtypes.ScheduleType.Sequential,
+            external_edges=True,
+        )
+        return sdfg
+
+    assert omp_pragmas(build("seq_int_max")) == ["#pragma omp simd reduction(max:__acc_0_0_best)"]
+    A = np.random.default_rng(4).integers(-1000, 1000, 101).astype(np.int32)
+    best = np.array([-5000], dtype=np.int32)
+    build("seq_int_max_run")(A=A, best=best)
+    assert best[0] == A.max() + 1
+
+
 @pytest.mark.parametrize("impl", IMPLS)
 def test_sequential_scatter_wcr_gets_no_simd(impl):
     """A WCR whose target subset depends on the map's own iteration variable (scatter, e.g. a

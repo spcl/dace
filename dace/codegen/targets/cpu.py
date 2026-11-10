@@ -2017,6 +2017,9 @@ class CPUCodeGen(TargetCodeGenerator):
         for frame in reversed(self._seq_accumulator_stack):
             acc = frame.get(memlet.data)
             if acc is not None and str(memlet.subset) == str(acc["subset"]):
+                if acc["op"] in ("min", "max"):
+                    than = "<" if acc["op"] == "min" else ">"
+                    return f"{acc['var']} = ({inname}) {than} {acc['var']} ? ({inname}) : {acc['var']}"
                 return f"{acc['var']} = {acc['var']} {acc['op']} ({inname})"
         _omp_covered = any(memlet.data in frame for frame in self._omp_reduction_scope_stack)
         # A range-privatized accumulator a thread may instead update in place: atomic under its flag.
@@ -3711,7 +3714,10 @@ class CPUCodeGen(TargetCodeGenerator):
             if any(sname in map_param_set for sname in (str(x) for x in iedge.data.subset.free_symbols)):
                 continue
             op_str = _REDUCTION_TO_OMP_OP.get(operations.detect_reduction_type(iedge.data.wcr))
-            if op_str not in ("+", "*", "&", "|", "^", "&&", "||"):
+            # An integer minimum or maximum is exact in any order; a floating-point one orders NaN by its operands
+            if op_str not in ("+", "*", "&", "|", "^", "&&", "||") and not (
+                op_str in ("min", "max") and desc is not None and desc.dtype in dtypes.INT_TYPES
+            ):
                 continue
             # THIS map being sequential is not enough: an enclosing parallel scope makes the
             # target shared, and a register accumulator would drop every other thread's
