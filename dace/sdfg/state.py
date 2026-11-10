@@ -2278,6 +2278,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         debuginfo: dtypes.DebugInfo | None = None,
         external_path: str | None = None,
         bound_inside: AbstractSet[str] = frozenset(),
+        defined_symbols: dict[str, dt.Data] | None = None,
     ):
         """
         Adds a nested SDFG to the SDFG state.
@@ -2298,6 +2299,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         :param external_path: Path to an external SDFG file. Used when ``sdfg`` parameter is None.
         :param bound_inside: Free symbols of the nested SDFG that the caller binds inside it next (e.g., by moving
                              a loop in); they are neither mapped nor declared.
+        :param defined_symbols: The result of ``self.defined_symbols()``, for callers that add
+                                many nested SDFGs to one state while the SDFG does not change;
+                                it is computed here if not given.
         :return: The created NestedSDFG node.
         :raises ValueError: If neither sdfg nor external_path is provided.
         :note: Once the node's edges are connected, call ``NestedSDFG.integrate_into_parent()`` on the returned
@@ -2351,8 +2355,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             # Add new global symbols to nested SDFG
             undeclared = [(sym, symval) for sym, symval in s.symbol_mapping.items() if sym not in sdfg.symbols]
             if undeclared:
-                wanted = {str(s) for _, value in undeclared for s in symbolic.pystr_to_symbolic(value).free_symbols}
-                defined_symbols = self._enclosing_iterator_symbols(wanted)
+                if defined_symbols is None:
+                    wanted = {str(s) for _, value in undeclared for s in symbolic.pystr_to_symbolic(value).free_symbols}
+                    defined_symbols = self._enclosing_iterator_symbols(wanted)
                 if defined_symbols is None:
                     defined_symbols = self._defined_symbols_for_nesting()
                 for sym, symval in undeclared:
