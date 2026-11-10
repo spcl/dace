@@ -116,8 +116,8 @@ from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 #: practice; the loop breaks as soon as a round changes nothing.
 MAX_ROUNDS = 8
 
-#: A loop's iterator and its init, condition and update statements as text.
-LoopHeader = tuple[str | None, str | None, str | None, str | None]
+#: A loop's iterator and its init, condition and update statements as text, and whether a jump targets it.
+LoopHeader = tuple[str | None, str | None, str | None, str | None, bool]
 
 
 def loop_header(loop: LoopRegion) -> LoopHeader:
@@ -128,6 +128,8 @@ def loop_header(loop: LoopRegion) -> LoopHeader:
         None if init is None else init.as_string,
         None if condition is None else condition.as_string,
         None if update is None else update.as_string,
+        # A single trip is spliced only without a ``break`` or ``continue``: two loops of one header differ here
+        bool(loop_analysis.loop_jumps(loop)),
     )
 
 

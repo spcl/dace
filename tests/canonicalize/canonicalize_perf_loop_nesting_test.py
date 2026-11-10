@@ -16,9 +16,11 @@ import numpy as np
 import pytest
 
 import dace
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.canonicalize.perfect_loop_nesting import eliminate_trivial_loops
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -97,6 +99,35 @@ def test_refusal_leaves_sdfg_byte_identical():
     result = PerfectLoopNesting().apply_pass(sdfg, {})
     assert result is None, "the carried recurrence must be refused"
     assert sdfg.to_json() == before, "refusal mutated the SDFG (iterator rename / symbol drop)"
+
+
+def test_single_trip_loop_with_a_break_is_kept_beside_a_twin_without_one():
+    """Two single-trip loops of one header: the one holding a ``break`` stays, or the break leaves the outer loop."""
+    sdfg = dace.SDFG("perfect_nesting_twin_headers")
+    sdfg.add_array("a", [4], dace.int64)
+    sdfg.add_array("b", [4], dace.int64)
+    outer = LoopRegion("outer", "j < 4", "j", "j = 0", "j = j + 1")
+    sdfg.add_node(outer, is_start_block=True)
+    plain = LoopRegion("plain", "i < 1", "i", "i = 0", "i = i + 1")
+    jumping = LoopRegion("jumping", "i < 1", "i", "i = 0", "i = i + 1")
+    outer.add_node(plain, is_start_block=True)
+    outer.add_edge(plain, jumping, dace.InterstateEdge())
+    guard = ConditionalBlock("guard")
+    jumping.add_node(guard, is_start_block=True)
+    leave = ControlFlowRegion("leave")
+    leave.add_node(BreakBlock("leave_now"), is_start_block=True)
+    guard.add_branch(CodeBlock("j == 1"), leave)
+    for loop, name, before in ((plain, "a", None), (jumping, "b", guard)):
+        state = loop.add_state(f"write_{name}", is_start_block=before is None)
+        if before is not None:
+            loop.add_edge(before, state, dace.InterstateEdge())
+        state.add_edge(state.add_tasklet("t", {}, {"o"}, "o = 1"), "o", state.add_write(name), None,
+                       dace.Memlet(f"{name}[j + i]"))
+
+    assert eliminate_trivial_loops(sdfg, {}) == 1
+    a, b = np.zeros(4, dtype=np.int64), np.zeros(4, dtype=np.int64)
+    sdfg(a=a, b=b)
+    assert a.tolist() == [1, 1, 1, 1] and b.tolist() == [1, 0, 1, 1]
 
 
 if __name__ == "__main__":
