@@ -1069,5 +1069,4 @@ if __name__ == "__main__":
         for arms_meet in ARMS_MEET:
             test_a_device_branch_returns_the_result_of_the_arm_it_took(arms_meet)
         for return_after_arm in RETURN_AFTER_ARM:
-            with pytest.raises(AttributeError):
-                test_an_early_return_hands_back_the_device_result(return_after_arm)
+            test_an_early_return_hands_back_the_device_result(return_after_arm)
