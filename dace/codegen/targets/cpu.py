@@ -4900,5 +4900,8 @@ def hands_on_unchanged(
         isinstance(src_node, nodes.AccessNode)
         and isinstance(dst_node, nodes.AccessNode)
         and src_node.data == dst_node.data
-        and all(e.data.data == src_node.data and e.data.other_subset is None for e in dfg.memlet_path(edge))
+        and all(
+            e.data.data == src_node.data and (e.data.other_subset is None or e.data.other_subset == e.data.subset)
+            for e in dfg.memlet_path(edge)
+        )
     )

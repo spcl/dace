@@ -405,6 +405,16 @@ class InsertExplicitCopies(ppl.Pass):
         identity = inner_node.data == outer.data and edge.data.other_subset is None
         if identity and (drop_scope_alias if stage_in else drop_scope_exit_alias)(state, edge, inner_node):
             return False
+        # A container handed on through the map exit as itself, also when the edge spells the
+        # one subset twice (MapFusionVertical's in-place intermediate), moves nothing; both code generators emit
+        # nothing for it (``hands_on_unchanged``), a lifted copy would copy the slice onto itself in every iteration.
+        if (
+            not stage_in
+            and inner_node.data == outer.data
+            and edge.data.wcr is None
+            and (edge.data.other_subset is None or edge.data.other_subset == edge.data.subset)
+        ):
+            return False
         outer_desc = sdfg.arrays[outer.data]
         # A dtype change is fine: the copy node's selector lowers a converting copy to a casting tasklet.
         if outer_desc.storage not in self._STANDARD_STORAGES or inner_desc.storage not in self._STANDARD_STORAGES:

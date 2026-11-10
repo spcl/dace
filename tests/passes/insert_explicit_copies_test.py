@@ -863,19 +863,14 @@ def build_pass_through_with_second_reader_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
-def test_a_pass_through_that_is_read_again_is_an_identity_copy_of_its_own_slice():
-    """When the access node carrying the pass-through cannot be dropped, the copy that stays covers the slice the
-    iteration owns on both sides: deriving its far side from the array would write the slice over the array's start."""
+def test_a_pass_through_that_is_read_again_copies_nothing():
+    """A container handed on through the map exit as itself moves nothing, also when the access node carrying it
+    cannot be dropped: a lifted copy would copy the iteration's slice onto itself every iteration."""
     sdfg = build_pass_through_with_second_reader_sdfg("same_container_through_exit_read_again")
     InsertExplicitCopies().apply_pass(sdfg, {})
     sdfg.validate()
 
-    state = sdfg.start_state
-    copies = [n for n in state.nodes() if isinstance(n, CopyLibraryNode)]
-    assert len(copies) == 1
-    (src_edge,) = state.in_edges(copies[0])
-    (dst_edge,) = state.out_edges(copies[0])
-    assert src_edge.data.subset == dst_edge.data.subset == dace.subsets.Range.from_string(f"bi:bi+{_TILE}")
+    assert not [n for n in sdfg.start_state.nodes() if isinstance(n, CopyLibraryNode)]
 
     A = np.arange(_N_STAGE, dtype=np.float64)
     B = np.zeros(_N_STAGE)
@@ -1715,7 +1710,7 @@ if __name__ == "__main__":
     test_lift_stage_in_copy()
     test_lift_stage_out_copy()
     test_a_container_passing_through_a_map_exit_is_not_a_copy()
-    test_a_pass_through_that_is_read_again_is_an_identity_copy_of_its_own_slice()
+    test_a_pass_through_that_is_read_again_copies_nothing()
     test_lift_stage_in_copy_through_view()
     test_lift_stage_out_copy_through_view()
     test_lift_stage_in_copy_chained_map_entries()
