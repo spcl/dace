@@ -199,8 +199,10 @@ class Order {
 
   // Every thread of the team, after its pre-pass: sorts when the private rows of all threads unsorted exceed
   // ``kSortBytesPerThread`` per thread and ``kSortGain`` times their estimate sorted (``row_bytes[g]``: the bytes of
-  // a row of every accumulator of group ``g``). Every thread decides alike from the published spans.
-  void arrange(int t, int nthreads, const int64_t* row_bytes) {
+  // a row of every accumulator of group ``g``). An unsorted order in which every thread would update every group
+  // atomically (``atomic[g]``: all accumulators of group ``g`` can) is kept: the sort would buy private rows the
+  // atomic updates already do without. Every thread decides alike from the published spans.
+  void arrange(int t, int nthreads, const int64_t* row_bytes, const bool* atomic) {
 #pragma omp barrier
     if (t == 0) {
       teams_ = nthreads;
@@ -226,6 +228,17 @@ class Order {
       return;
     }
     if (unsorted <= kSortBytesPerThread * nthreads) {
+      own(t, nthreads, dlo, dhi);
+      return;
+    }
+    bool atomics = true;
+    for (int s = 0; s < nthreads; ++s) {
+      for (int g = 0; g < groups_; ++g) {
+        const int64_t rows = stats_[s].hi[g] - stats_[s].lo[g] + 1;
+        atomics = atomics && (rows <= 0 || (atomic[g] && rows > kRowsPerUpdate * stats_[s].updates[g]));
+      }
+    }
+    if (atomics) {
       own(t, nthreads, dlo, dhi);
       return;
     }

@@ -4038,6 +4038,7 @@ class CPUCodeGen(TargetCodeGenerator):
             " + ".join(f"{cpp.sym2cpp(sdfg.arrays[n].strides[0])} * {sdfg.arrays[n].dtype.bytes}" for n in names)
             for names in groups.values()
         ]
+        atomic_groups = [str(all(plan["flags"][n] is not None for n in names)).lower() for names in groups.values()]
         g = len(groups)
         # An order an enclosing loop leaves invariant lives in the state struct; its pre-pass reruns once a state
         # ahead of that loop sets the stale flag, or for a different team
@@ -4060,6 +4061,7 @@ class CPUCodeGen(TargetCodeGenerator):
             lines.append(f"dace::range_private::Order {order}({prefix}_nt, {trips}, {g});")
         lines += [
             f"const int64_t {prefix}_rb[{g}] = {{{', '.join(f'(int64_t)({b})' for b in row_bytes)}}};",
+            f"const bool {prefix}_at[{g}] = {{{', '.join(atomic_groups)}}};",
             f"#pragma omp parallel num_threads({prefix}_nt)",
             "{",
             f"const int {prefix}_t = omp_get_thread_num();",
@@ -4094,7 +4096,7 @@ class CPUCodeGen(TargetCodeGenerator):
         lines += [
             f"{order}.note({prefix}_t, {prefix}_k, {prefix}_lo, {prefix}_hi, {prefix}_n);",
             "}",
-            f"{order}.arrange({prefix}_t, {prefix}_T, {prefix}_rb);",
+            f"{order}.arrange({prefix}_t, {prefix}_T, {prefix}_rb, {prefix}_at);",
             *(["}"] if cached else []),
         ]
         for i, names in enumerate(groups.values()):

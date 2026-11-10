@@ -323,6 +323,24 @@ def test_iterations_sorted_by_row_match_add_at_and_repeat_bitwise():
     assert np.array_equal(first, second)
 
 
+def test_a_sparse_random_scatter_over_a_large_array_matches_add_at():
+    """Every chunk spans all rows with few updates per row and the rows exceed the sort threshold: each thread
+    updates the shared rows atomically, in iteration order, and the order is not sorted for private rows no thread
+    would open."""
+    sdfg, code = _specialize(scatter_sum, "sum_sparse_large", threads=8)
+    _assert_range_privatized(sdfg, code)
+    assert "__rp0_order.arrange(__rp0_t, __rp0_T, __rp0_rb, __rp0_at);" in code
+    assert "const bool __rp0_at[1] = {true};" in code
+    n, m = 1 << 16, 1 << 21
+    idx = _indices("random", n, m)
+    val = np.random.default_rng(7).random(n)
+    out = np.random.default_rng(8).random(m)
+    ref = out.copy()
+    np.add.at(ref, idx, val)
+    _run(sdfg, idx=idx, val=val, out=out, N=n, M=m)
+    assert np.allclose(out, ref, rtol=1e-12, atol=1e-12)
+
+
 def test_block_rows_split_by_no_chunk_are_written_in_place_bitwise():
     """A blocked-CSR scatter: block row ``r``'s nine products land on ``3r .. 3r + 2`` in any order, and the even
     chunk boundaries cut block rows. Each boundary moves to the next block row, so every thread alone writes its
@@ -758,6 +776,7 @@ def test_an_index_the_loop_rewrites_is_inspected_every_execution():
 if __name__ == "__main__":
     for p, m in [("sorted", MV), ("random", MV), ("reversed", MV), ("equal", MV), ("extremes", MV), ("random", 100003)]:
         test_float_sum_matches_add_at(p, m)
+    test_a_sparse_random_scatter_over_a_large_array_matches_add_at()
     test_block_rows_split_by_no_chunk_are_written_in_place_bitwise()
     for n in (0, 1, 3):
         test_fewer_iterations_than_threads(n)
