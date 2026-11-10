@@ -28,7 +28,7 @@ CONFIG_NAMES = tuple(DOMAINS)
 #: pruning the configuration branches buys, so a change here is a change in what the pipeline removes.
 MAPS = {(0, 1): 34, (0, 2): 26, (1, 1): 27, (1, 2): 19}
 #: Block maps kept on the host and the kernels they launch, per (lvn_only, istep).
-OFFLOADED = {(0, 1): (8, 28), (0, 2): (7, 22), (1, 1): (6, 21), (1, 2): (5, 15)}
+OFFLOADED = {(0, 1): (8, 24), (0, 2): (7, 18), (1, 1): (6, 19), (1, 2): (5, 13)}
 
 
 def dace_fortran_root() -> Path:
