@@ -19,7 +19,7 @@ from typing import Any
 
 from dace import SDFG, InterstateEdge, symbolic
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, rehome_claimed_block
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, rehome_claimed_block
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
@@ -32,10 +32,14 @@ def single_guard(block: ConditionalBlock) -> tuple[CodeBlock, ControlFlowRegion]
 
 
 def changed_by(block: ConditionalBlock) -> set[str]:
-    """The names ``block`` may change: the symbols it assigns and the containers it writes."""
+    """The names ``block`` may change: the symbols it assigns, the loop variables its loops leave set, and the
+    containers it writes."""
     changed: set[str] = set()
     for edge in block.all_interstate_edges(recursive=True):
         changed |= edge.data.assignments.keys()
+    for region in block.all_control_flow_regions(recursive=True):
+        if isinstance(region, LoopRegion) and region.loop_variable:
+            changed.add(region.loop_variable)
     for state in block.states():
         changed |= {node.data for node in state.data_nodes() if state.in_degree(node) > 0}
     return changed
