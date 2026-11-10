@@ -95,20 +95,51 @@ def _check_range(subset, a, itersym, b, step, span=None, memo: dict | None = Non
     return found
 
 
-def offset_by_a_varying_symbol(subset: subsets.Subset | None, itersym, varying: set[str]) -> bool:
-    """Whether ``subset`` is pinned to the iteration only by ``i + b`` with ``b`` varying inside an iteration: ``A[i + j]``
-    under a loop over ``j`` overlaps across ``i``. ``A[8 * i + j]``, a flattened index, is left to :func:`_check_range`.
-    """
-    found = False
-    for rb, _, _ in subset.ndrange() if subset is not None else ():
-        rb = _align_itersym(sp.sympify(rb), itersym)
-        coeff = rb.coeff(itersym)
-        if coeff == 0:
-            continue
-        if abs(coeff) != 1 or not varying & {str(s) for s in (rb - coeff * itersym).free_symbols}:
-            return False
-        found = True
-    return found
+def moves_within_an_iteration(subset: subsets.Subset | None, itersym, varying: set[str]) -> bool:
+    """Whether a dimension of ``subset`` names both the iterator and a symbol varying inside an iteration: ``A[2 * i + j]``
+    under a loop over ``j`` is not one element per iteration, whatever :func:`_check_range` reads off its ``a*i+b``."""
+    for rng in subset.ndrange() if subset is not None and varying else ():
+        names = {s.name for bound in rng[:2] for s in sp.sympify(bound).free_symbols}
+        if itersym.name in names and names & varying:
+            return True
+    return False
+
+
+def pinned_once_swept(
+    sdfg: SDFG, data: str, subset: subsets.Subset, loop: LoopRegion, varying: set[str], facts: symbolic.Facts
+) -> subsets.Range:
+    """What one iteration of ``loop`` touches of ``data`` through ``subset``, as the dimensions that hold still in it:
+    ``subset`` widened over the iterators of the loops and maps inside ``loop``, less every dimension still naming a
+    symbol of ``varying`` (one the body assigns, or an iterator of unknown range)."""
+    from dace.sdfg.propagation import propagate_subset  # avoid an import cycle
+
+    ranges: dict[str, subsets.Range | None] = {}
+
+    def note(name: str, rng: subsets.Range | None) -> None:
+        # One name over two ranges is no single box
+        ranges[name] = rng if name not in ranges or ranges[name] == rng else None
+
+    for region in loop.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region is not loop and region.loop_variable:
+            bounds = [f(region) for f in (loop_analysis.get_init_assignment, loop_analysis.get_loop_end)]
+            stride = loop_analysis.get_loop_stride(region)
+            known = None not in bounds and stride is not None and step_direction(stride, facts) == 1
+            note(region.loop_variable, subsets.Range([(*bounds, stride)]) if known else None)
+    for state in loop.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                for param, rng in zip(node.map.params, node.map.range):
+                    note(param, subsets.Range([rng]))
+    for _ in range(len(ranges)):
+        named = sorted(n for n in subset.free_symbols if ranges.get(n) is not None)
+        if not named:
+            break
+        subset = propagate_subset(
+            [memlet.Memlet(data=data, subset=subset)], sdfg.arrays[data], [named[0]], ranges[named[0]], facts
+        ).subset
+    return subsets.Range(
+        [rng for rng in subset.ndrange() if not varying & {s.name for b in rng[:2] for s in sp.sympify(b).free_symbols}]
+    )
 
 
 def through_symbol_mapping(subset: subsets.Subset, nsdfg_node: nodes.NestedSDFG) -> subsets.Subset:
@@ -683,6 +714,29 @@ def rmw_edges(states: Iterable[SDFGState], names: frozenset[str] | None = None) 
     return writes, reads, containers
 
 
+def stores_may_meet(loop: LoopRegion, names: Iterable[str]) -> bool:
+    """Whether two stores of ``loop`` into one container of ``names``, at different subsets and not both accumulating,
+    may share an element across two iterations: a contract on how one store is indexed keeps its own instances apart,
+    not ``A[idx[i]]`` and ``A[i]``."""
+    bounds = [f(loop) for f in (loop_analysis.get_init_assignment, loop_analysis.get_loop_end)]
+    step = loop_analysis.get_loop_stride(loop)
+    if None in bounds or step is None:
+        return True
+    itersym, varying = symbolic.pystr_to_symbolic(loop.loop_variable), loop_varying_symbols(loop)
+    stores: dict[str, dict[str, memlet.Memlet]] = defaultdict(dict)
+    for state in loop.states():
+        for dn in state.data_nodes():
+            for e in state.in_edges(dn) if dn.data in names else ():
+                if counted_write(state.sdfg, state, dn, e):
+                    stored = destination_memlet(e, state, dn, None)
+                    stores[dn.data].setdefault(str(stored.subset), stored)
+    return any(
+        (x.wcr is None or y.wcr is None) and _writes_may_overlap(x, y, itersym, step, *bounds, varying)
+        for found in stores.values()
+        for x, y in itertools.combinations(found.values(), 2)
+    )
+
+
 def reduction_family(wcr: str) -> str:
     """What identifies a WCR's operator: a difference accumulates like a sum; any other reducer stands for itself."""
     op = wcr_operator(wcr)
@@ -1133,7 +1187,7 @@ def _read_write_dims_disjoint(
     return False
 
 
-def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, itersym) -> bool:
+def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, itersym, varying: set[str]) -> bool:
     """True iff some point dimension indexes both ``read`` and ``write`` by the SAME injective
     affine function of the iteration variable (see :func:`_same_injective_index`).
 
@@ -1153,6 +1207,9 @@ def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, iter
         return False
     for (rb, re_, _), (wb, we_, _) in zip(rnd, wnd):
         if rb != re_ or wb != we_:  # only point dimensions carry an injective index
+            continue
+        # ``A[i + j, 5]`` read and ``A[i + j, i]`` written under a loop over ``j``: the same index, in two iterations
+        if varying & {s.name for s in sp.sympify(rb).free_symbols}:
             continue
         if _same_injective_index(rb, wb, itersym):
             return True
@@ -1267,6 +1324,10 @@ def _writes_may_overlap(
         return True
     for (b1, e1, _), (b2, e2, _) in zip(nd1, nd2):
         if b1 != e1 or b2 != e2:  # non-point range dimension: cannot decide here
+            continue
+        # A symbol varying inside an iteration is no constant: ``A[i, j]`` and ``A[i + 1, j + 1]`` under a loop over
+        # ``j`` meet in the next iteration (see :func:`_read_write_dims_disjoint`).
+        if varying & ({s.name for s in sp.sympify(b1).free_symbols} | {s.name for s in sp.sympify(b2).free_symbols}):
             continue
         # Both writes index this dim by the same injective function of the iter var: a collision
         # forces the two iterations equal, so they coincide only within one iteration (program
@@ -2402,13 +2463,19 @@ class LoopLift:
                             closed_forms,
                             self,
                         )
+                        stored = in_closed_form(e.data.get_dst_subset(e, state), closed_forms)
                         if (
                             reason is None
                             and not self.waives(dn.data, permissive)
-                            and offset_by_a_varying_symbol(
-                                in_closed_form(e.data.get_dst_subset(e, state), closed_forms),
+                            and moves_within_an_iteration(stored, itersym, varying)
+                            # One iteration's writes, over its inner iterators, must stay clear of another's
+                            and not _check_range(
+                                pinned_once_swept(sdfg, dn.data, stored, self.loop, varying, self.solver_facts.symbols),
+                                a,
                                 itersym,
-                                varying - {itervar},
+                                b,
+                                step,
+                                end - start,
                             )
                         ):
                             reason = (
@@ -2753,7 +2820,7 @@ class LoopLift:
             # to coincide. The overlap is then confined to one iteration (program order in the map
             # body preserves it) and is never a cross-iteration RAW. Mirrors the write/write
             # injective-index rule in :func:`_writes_may_overlap`.
-            if _read_write_same_iteration(read, write, itersym):
+            if _read_write_same_iteration(read, write, itersym, varying):
                 continue
             # Same-iteration collision across SEVERAL dimensions at once: the iteration variable can
             # land in DIFFERENT dimensions of the read and the write (a transpose), so no single

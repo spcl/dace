@@ -1443,6 +1443,60 @@ def test_a_nested_read_on_its_own_connector_of_the_written_array_stays_a_loop():
     assert loop in sdfg.nodes()
 
 
+WN = dace.symbol("WN", dtype=dace.int64, positive=True)
+WM = dace.symbol("WM", dtype=dace.int64, positive=True)
+
+
+@dace.program
+def rows_wider_than_the_stride(A: dace.float64[2 * WN + WM], B: dace.float64[WN, WM]):
+    for i in range(WN):
+        for j in range(WM):
+            A[2 * i + j] = B[i, j]
+
+
+@dace.program
+def rows_of_a_flattened_array(A: dace.float64[20 * WN], B: dace.float64[WN, 20]):
+    for i in range(WN):
+        for j in range(20):
+            A[20 * i + j] = B[i, j]
+
+
+def outer_loop_lifts(program) -> bool:
+    sdfg = program.to_sdfg(simplify=True)
+    return ParallelizeLoops().accepts(next(b for b in sdfg.nodes() if isinstance(b, LoopRegion)))
+
+
+def test_a_write_offset_by_an_inner_iterator_lifts_only_if_its_sweep_fits_the_stride():
+    """``A[2 * i + j]`` over ``j < WM`` meets the next iteration's row; ``A[20 * i + j]`` over ``j < 20`` does not."""
+    assert not outer_loop_lifts(rows_wider_than_the_stride)
+    assert outer_loop_lifts(rows_of_a_flattened_array)
+
+
+@dace.program
+def two_writes_a_diagonal_apart(A: dace.float64[WN + 1, WM + 1], B: dace.float64[WN, WM], C: dace.float64[WN, WM]):
+    for i in range(WN):
+        for j in range(WM):
+            A[i, j] = B[i, j]
+            A[i + 1, j + 1] = C[i, j]
+
+
+def test_two_writes_kept_apart_only_by_an_inner_iterator_stay_a_loop():
+    """``j`` and ``j + 1`` differ within one inner iteration, not across the outer loop's."""
+    assert not outer_loop_lifts(two_writes_a_diagonal_apart)
+
+
+@dace.program
+def column_read_through_a_moving_row(A: dace.float64[WN + WM, WN], B: dace.float64[WN, WM]):
+    for i in range(WN):
+        for j in range(WM):
+            A[i + j, i] = A[i + j, 5] + B[i, j]
+
+
+def test_a_read_sharing_an_index_that_moves_inside_the_iteration_stays_a_loop():
+    """Row ``i + j`` is the same expression in the read and the write, yet iteration 5 stores what the others read."""
+    assert not outer_loop_lifts(column_read_through_a_moving_row)
+
+
 if __name__ == "__main__":
     test_lift_never_changes_a_surviving_blocks_free_symbols()
     test_reused_analysis_costs_no_maps_against_the_matcher()
@@ -1512,3 +1566,6 @@ if __name__ == "__main__":
     test_a_local_scratch_rewritten_at_the_element_it_reads_lifts()
     test_two_nested_writes_meeting_across_iterations_stay_a_loop()
     test_a_nested_read_on_its_own_connector_of_the_written_array_stays_a_loop()
+    test_a_write_offset_by_an_inner_iterator_lifts_only_if_its_sweep_fits_the_stride()
+    test_two_writes_kept_apart_only_by_an_inner_iterator_stay_a_loop()
+    test_a_read_sharing_an_index_that_moves_inside_the_iteration_stays_a_loop()

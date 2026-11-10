@@ -60,7 +60,7 @@ from dace.sdfg.sdfg import memoize_facts
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.interstate.loop_to_map import Refusal
+from dace.transformation.interstate.loop_to_map import Refusal, stores_may_meet
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.loop_specialization import label_arms, version_block
 from dace.transformation.passes.scatter_conflict_guard import (
@@ -360,7 +360,8 @@ def needs_contract(
     targets = {w.target for joint_loop, w in joint_writes if joint_loop is loop}
     for scattered, _window in _scatter_idx_targets_for_loop(loop, owner).values():
         targets |= scattered
-    return lifts(loop, owner, frozenset(targets), probes)
+    # The check proves one store's index one-to-one; the waiver below is of every conflict on its target
+    return not stores_may_meet(loop, targets) and lifts(loop, owner, frozenset(targets), probes)
 
 
 #: The refusals of a loop whose only conflicts may be its scatter's: colliding stores and the reads among them.
