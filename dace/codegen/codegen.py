@@ -12,7 +12,6 @@ from dace.config import Config
 from dace.sdfg import SDFG, infer_types
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
-from dace.transformation.passes.move_array_out_of_kernel import KERNEL_SCHEDULES, MoveArrayOutOfKernel
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
@@ -178,6 +177,12 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
     :param validate: If True, validates the SDFG before generating the code.
     :return: List of code objects that correspond to files to compile.
     """
+    # Lowering is not program history; recorded, the first expansion deep-copies the SDFG into ``orig_sdfg``
+    with config.set_temporary("store_history", value=False):
+        return lower_and_generate_code(sdfg, validate)
+
+
+def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
     from dace.codegen.target import TargetCodeGenerator  # Avoid import loop
 
     # Before compiling, validate SDFG correctness
@@ -233,16 +238,16 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
         # them to decide pointer vs. value. Storage defaults above already hold.
         infer_types.infer_connector_types(sdfg)
 
+    # Lower memlet access policies (e.g. loop-carried address cursors) to ordinary SDFG constructs on this
+    # code-generation copy of the SDFG. This is a no-op unless a memlet carries a non-default policy. It must
+    # follow InsertExplicitCopies (which moves the policy of a lifted copy onto the library node's operand
+    # memlet) and precede library-node expansion (whose generated code addresses the rewritten operands).
+    from dace.transformation.passes.memlet_access_policy_lowering import LowerMemletAccessPolicies
+
+    LowerMemletAccessPolicies().apply_pass(sdfg, {})
+
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
-
-    # A kernel cannot declare a per-thread array of symbolic size: it becomes a GPU-global array outside the kernel,
-    # one slice per kernel iteration.
-    if any(
-        isinstance(node, dace.nodes.MapEntry) and node.map.schedule in KERNEL_SCHEDULES
-        for node, _ in sdfg.all_nodes_recursive()
-    ):
-        MoveArrayOutOfKernel(only_variable_length=True).apply_pass(sdfg, {})
 
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
