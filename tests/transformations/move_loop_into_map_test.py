@@ -797,3 +797,50 @@ if __name__ == "__main__":
     test_the_cpu_interchange_gate_leaves_a_branching_body_alone()
     test_loop_bound_symbols_are_declared_in_the_nested_sdfg()
     test_an_update_ahead_of_the_map_keeps_the_loop_outside()
+
+
+def window_scan(name: str, window: str) -> tuple[dace.SDFG, LoopRegion]:
+    """``for k in 1:7: map i: a[k, i] = 0.5 * a[k - 1, i] + a[k, i]``, the body a nested SDFG whose read connector is
+    the one memlet ``window`` (``a[k - 1:k + 1, i]`` for the scan shape, as a fused scan body gets it)."""
+    inner = dace.SDFG(f"{name}_body")
+    inner.add_array("a", (7, 13), dace.float64)
+    inner.add_symbol("i", dace.int64)
+    inner.add_symbol("k", dace.int64)
+    istate = inner.add_state("level", is_start_block=True)
+    tasklet = istate.add_tasklet("level", {"prev", "cur"}, {"y"}, "y = 0.5 * prev + cur")
+    read = istate.add_read("a")
+    istate.add_edge(read, None, tasklet, "prev", dace.Memlet("a[k - 1, i]"))
+    istate.add_edge(read, None, tasklet, "cur", dace.Memlet("a[k, i]"))
+    istate.add_edge(tasklet, "y", istate.add_write("a"), None, dace.Memlet("a[k, i]"))
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", (7, 13), dace.float64)
+    loop = LoopRegion("kloop", "k < 7", "k", "k = 1", "k = k + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("scan", is_start_block=True)
+    entry, exit_ = state.add_map("scan", {"i": "0:13"})
+    node = state.add_nested_sdfg(inner, {"a"}, {"a"}, {"i": "i", "k": "k"})
+    state.add_memlet_path(state.add_read("a"), entry, node, dst_conn="a", memlet=dace.Memlet(window))
+    state.add_memlet_path(node, exit_, state.add_write("a"), src_conn="a", memlet=dace.Memlet("a[k, i]"))
+    sdfg.validate()
+    return sdfg, loop
+
+
+def test_a_read_window_that_slides_with_the_loop_moves_into_the_map():
+    """The scan reads ``a[k - 1:k + 1, i]`` through one memlet and writes ``a[k, i]``: the window is not an index, but
+    it starts where the loop variable says and keeps its width, so the loop moves into the map per lane."""
+    sdfg, loop = window_scan("sliding_window_scan", "a[k - 1:k + 1, i]")
+    assert MoveLoopIntoMap.can_be_applied_to(sdfg, loop=loop)
+    rng = np.random.default_rng(3)
+    want = dict(a=rng.random((7, 13)))
+    got = copy.deepcopy(want)
+    copy.deepcopy(sdfg)(**want)
+    MoveLoopIntoMap.apply_to(sdfg, loop=loop)
+    assert not any(isinstance(b, LoopRegion) for b in sdfg.nodes())
+    sdfg(**got)
+    assert np.allclose(got["a"], want["a"])
+
+
+def test_a_read_window_that_grows_with_the_loop_is_refused():
+    """``a[0:k + 1, i]`` widens with ``k``: it is no window, so the index rule still refuses the interchange."""
+    sdfg, loop = window_scan("growing_window_scan", "a[0:k + 1, i]")
+    assert not MoveLoopIntoMap.can_be_applied_to(sdfg, loop=loop)

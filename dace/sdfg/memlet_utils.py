@@ -326,42 +326,32 @@ def memlet_to_map(
         copy_shape = dst_subset_size
         copy_a = False
 
-    if tuple(src_subset_size) == tuple(dst_subset_size):
-        # The two subsets have exactly the same shape, so we can just copying with an offset.
+    if same_size(src_subset_size, dst_subset_size):
+        # The two subsets have exactly the same shape, so we can just copying with an offset and a step.
         #  We use another index variables for the tests only.
         maprange = {f"__j{i}": (0, s - 1, 1) for i, s in enumerate(copy_shape)}
-        a_index = [symbolic.pystr_to_symbolic(f"__j{i} + ({src_subset[i][0]})") for i in range(len(copy_shape))]
-        b_index = [symbolic.pystr_to_symbolic(f"__j{i} + ({dst_subset[i][0]})") for i in range(len(copy_shape))]
+        indices = [symbolic.pystr_to_symbolic(f"__j{i}") for i in range(len(copy_shape))]
+        a_index = list(src_subset.coord_at(indices))
+        b_index = list(dst_subset.coord_at(indices))
     elif red_src_subset_size == red_dst_subset_size and (len(red_dst_subset_size) > 0):
         # If we remove all size 1 dimensions that the two subsets have the same size.
         #  This is essentially the memlet `a[0:10, 2, 0:10] -> 0:10, 10:20`
         #  We use another index variable only for the tests but we would have to
         #  recreate the index anyways.
         maprange = {f"__j{i}": (0, s - 1, 1) for i, s in enumerate(red_src_subset_size)}
-        cnt = itertools.count(0)
-        a_index = [
-            symbolic.pystr_to_symbolic(f"{src_subset[i][0]}")
-            if s == 1
-            else symbolic.pystr_to_symbolic(f"__j{next(cnt)} + ({src_subset[i][0]})")
-            for i, s in enumerate(src_subset_size)
-        ]
-        cnt = itertools.count(0)
-        b_index = [
-            symbolic.pystr_to_symbolic(f"{dst_subset[i][0]}")
-            if s == 1
-            else symbolic.pystr_to_symbolic(f"__j{next(cnt)} + ({dst_subset[i][0]})")
-            for i, s in enumerate(dst_subset_size)
-        ]
+        a_index = squeezed_coordinates(src_subset, src_subset_size)
+        b_index = squeezed_coordinates(dst_subset, dst_subset_size)
     else:
         # We have to delinearize and linearize
         #  We use another index variable for the tests.
         maprange = {f"__i{i}": (0, s - 1, 1) for i, s in enumerate(copy_shape)}
+        indices = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
         if copy_a:
-            a_index = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
-            b_index = _memlet_to_copy_delinearize_linearize(bdesc, copy_shape, edge.data.get_dst_subset(edge, state))
+            a_index = list(src_subset.coord_at(indices))
+            b_index = reshaped_coordinates(dst_subset, dst_subset_size, copy_shape, indices)
         else:
-            a_index = _memlet_to_copy_delinearize_linearize(adesc, copy_shape, edge.data.get_src_subset(edge, state))
-            b_index = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
+            a_index = reshaped_coordinates(src_subset, src_subset_size, copy_shape, indices)
+            b_index = list(dst_subset.coord_at(indices))
 
     a_subset = subsets.Range([(ind, ind, 1) for ind in a_index])
     b_subset = subsets.Range([(ind, ind, 1) for ind in b_index])
@@ -435,24 +425,48 @@ def can_memlet_be_turned_into_a_map(
     return True
 
 
-def _memlet_to_copy_delinearize_linearize(
-    desc: data.Array, copy_shape: tuple[symbolic.SymbolicType], rng: subsets.Range
-) -> tuple[symbolic.SymbolicType]:
-    indices = [symbolic.pystr_to_symbolic(f"__i{i}") for i in range(len(copy_shape))]
+def same_size(first: Iterable[symbolic.SymbolicType], second: Iterable[symbolic.SymbolicType]) -> bool:
+    """Whether two subset sizes are the same in every dimension: structurally, or their difference simplifies to 0."""
+    first, second = tuple(first), tuple(second)
+    if first == second:
+        return True
+    return len(first) == len(second) and all(
+        a == b or symbolic.simplify(a - b) == 0 for a, b in zip(first, second, strict=True)
+    )
 
-    # Special case for when both dimensionalities are equal
-    if tuple(desc.shape) == tuple(copy_shape):
-        return subsets.Range([(ind, ind, 1) for ind in indices])
 
-    if rng is not None:  # Deal with offsets and strides in range
-        indices = rng.coord_at(indices)
+def squeezed_coordinates(subset: subsets.Range, size: Iterable[symbolic.SymbolicType]) -> list[symbolic.SymbolicType]:
+    """Coordinates of ``subset`` where a dimension of size one is fixed at its start and the other dimensions follow the
+    map indices ``__j0, __j1, ...`` in order, each as ``begin + index * step``."""
+    counter = itertools.count(0)
+    coordinates = []
+    for (begin, end, step), extent in zip(subset.ndrange(), size, strict=True):
+        if extent == 1:
+            coordinates.append(symbolic.pystr_to_symbolic(begin))
+        else:
+            coordinates.append(symbolic.pystr_to_symbolic(f"__j{next(counter)}") * step + begin)
+    return coordinates
 
-    linear_index = sum(indices[i] * data._prod(copy_shape[i + 1 :]) for i in range(len(indices)))
 
-    cur_index = [0] * len(desc.shape)
-    divide_by = 1
-    for i in reversed(range(len(desc.shape))):
-        cur_index[i] = (linear_index / divide_by) % desc.shape[i]
-        divide_by = divide_by * desc.shape[i]
+def reshaped_coordinates(
+    subset: subsets.Range,
+    size: tuple[symbolic.SymbolicType, ...],
+    copy_shape: tuple[symbolic.SymbolicType, ...],
+    indices: list[symbolic.SymbolicType],
+) -> list[symbolic.SymbolicType]:
+    """Coordinates in ``subset`` of the element a copy over ``copy_shape`` reaches at ``indices``.
 
-    return subsets.Range([(ind, ind, 1) for ind in cur_index])
+    The copied elements are matched in row-major order: ``indices`` are linearized over ``copy_shape``, delinearized
+    over the subset's own ``size`` and then placed with the subset's begin and step. A subset of the copy's own shape
+    is indexed directly.
+    """
+    if tuple(size) == tuple(copy_shape):
+        return list(subset.coord_at(indices))
+    linear = sum(indices[i] * data._prod(copy_shape[i + 1 :]) for i in range(len(indices)))
+    positions: list[symbolic.SymbolicType] = [0] * len(size)
+    block = 1
+    for dim in reversed(range(len(size))):
+        position = linear if block == 1 else symbolic.int_floor(linear, block)
+        positions[dim] = position % size[dim] if dim > 0 else position
+        block = block * size[dim]
+    return list(subset.coord_at(positions))

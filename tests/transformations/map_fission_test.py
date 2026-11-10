@@ -1520,6 +1520,156 @@ def test_fission_declines_a_reduction_the_body_writes_twice():
     assert not MapFission.can_be_applied_to(sdfg, expr_index=1, map_entry=entry, nested_sdfg=body)
 
 
+LEVELS = 5
+COLUMNS = 11
+
+
+@dace.program
+def level_pass_with_carry(
+    x: dace.float64[LEVELS, COLUMNS],
+    p1: dace.float64[LEVELS, COLUMNS],
+    p2: dace.float64[LEVELS, COLUMNS],
+    y: dace.float64[LEVELS, COLUMNS],
+    carry: dace.float64[COLUMNS],
+):
+    for j in dace.map[0:COLUMNS]:
+        t = dace.define_local([LEVELS], dace.float64)
+        for k in dace.map[0:LEVELS]:
+            t[k] = x[k, j] * 2.0
+        for k in dace.map[0:LEVELS]:
+            y[k, j] = t[k] + p1[k, j] * p2[k, j]
+        carry[j] = t[LEVELS - 1]
+
+
+def test_a_copy_between_two_widened_transients_spans_the_iterations():
+    """The body copies one element of the widened ``t`` into the widened ``carry`` slice beside an inner map. The copy
+    leaves the new maps, so it must span all iterations: it kept the removed map's parameter ``j`` instead, an
+    undeclared symbol (a compile error, or the wrong element when a symbol of that name is in scope)."""
+    sdfg = level_pass_with_carry.to_sdfg(simplify=True)
+    reference = copy.deepcopy(sdfg)
+    reference.name = f"{sdfg.name}_reference"
+
+    assert sdfg.apply_transformations(MapFission) == 1
+    sdfg.validate()
+    for state in sdfg.states():
+        for edge in state.edges():
+            if isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode):
+                assert "j" not in {str(sym) for sym in edge.data.free_symbols}, edge.data
+
+    rng = np.random.default_rng(0)
+    inputs = {name: rng.random((LEVELS, COLUMNS)) for name in ("x", "p1", "p2")}
+    want = {"y": np.zeros((LEVELS, COLUMNS)), "carry": np.zeros(COLUMNS)}
+    got = copy.deepcopy(want)
+    reference(**inputs, **want)
+    sdfg(**inputs, **got)
+    for name in want:
+        assert np.allclose(got[name], want[name]), name
+
+
+def column_body_with_copy_between_connectors() -> dace.SDFG:
+    """Map over ``j`` around a nested SDFG with three states: ``s[k, j] = 2 * x[k, j]``, the copy ``c[j] = s[LEVELS - 1,
+    j]`` between two connector arrays of different rank, and ``d[j] = s[0, j] + 1`` reading ``s`` again."""
+    sdfg = dace.SDFG("column_body_with_copy_between_connectors")
+    for name in ("X", "S"):
+        sdfg.add_array(name, [LEVELS, COLUMNS], dace.float64)
+    for name in ("C", "D"):
+        sdfg.add_array(name, [COLUMNS], dace.float64)
+    state = sdfg.add_state()
+    map_entry, map_exit = state.add_map("columns", dict(j=f"0:{COLUMNS}"))
+    body = dace.SDFG("body")
+    for name in ("x", "s"):
+        body.add_array(name, [LEVELS, COLUMNS], dace.float64)
+    for name in ("c", "d"):
+        body.add_array(name, [COLUMNS], dace.float64)
+    fill, copy, reread = body.add_state("fill"), body.add_state("copy"), body.add_state("reread")
+    body.add_edge(fill, copy, dace.InterstateEdge())
+    body.add_edge(copy, reread, dace.InterstateEdge())
+
+    levels_entry, levels_exit = fill.add_map("levels", dict(k=f"0:{LEVELS}"))
+    double = fill.add_tasklet("double", {"i"}, {"o"}, "o = i * 2.0")
+    fill.add_memlet_path(fill.add_read("x"), levels_entry, double, dst_conn="i", memlet=dace.Memlet("x[k, j]"))
+    fill.add_memlet_path(double, levels_exit, fill.add_write("s"), src_conn="o", memlet=dace.Memlet("s[k, j]"))
+
+    copy.add_nedge(
+        copy.add_read("s"),
+        copy.add_write("c"),
+        dace.Memlet(data="c", subset="j", other_subset=f"{LEVELS - 1}, j"),
+    )
+
+    increment = reread.add_tasklet("increment", {"i"}, {"o"}, "o = i + 1.0")
+    reread.add_edge(reread.add_read("s"), None, increment, "i", dace.Memlet("s[0, j]"))
+    reread.add_edge(increment, "o", reread.add_write("d"), None, dace.Memlet("d[j]"))
+
+    nested = state.add_nested_sdfg(body, {"x"}, {"s", "c", "d"}, symbol_mapping={"j": "j"})
+    state.add_memlet_path(
+        state.add_read("X"), map_entry, nested, dst_conn="x", memlet=dace.Memlet(f"X[0:{LEVELS}, 0:{COLUMNS}]")
+    )
+    state.add_memlet_path(
+        nested, map_exit, state.add_write("S"), src_conn="s", memlet=dace.Memlet(f"S[0:{LEVELS}, 0:{COLUMNS}]")
+    )
+    for name in ("c", "d"):
+        state.add_memlet_path(
+            nested,
+            map_exit,
+            state.add_write(name.upper()),
+            src_conn=name,
+            memlet=dace.Memlet(f"{name.upper()}[0:{COLUMNS}]"),
+        )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_copy_between_two_connector_arrays_is_corrected_for_each_end():
+    """A copy between two connector arrays is both an entry and an exit edge of the body. The outer edge of its source
+    end was overwritten by the one of its destination end, so ``s`` was corrected with the descriptor of ``c``: a
+    later access node of ``s`` then offset a two-dimensional subset by a one-dimensional offset (``IndexError``), and
+    the copy's own subset was offset on the wrong side."""
+    sdfg = column_body_with_copy_between_connectors()
+    reference = copy.deepcopy(sdfg)
+    reference.name = f"{sdfg.name}_reference"
+
+    assert sdfg.apply_transformations(MapFission) == 1
+    sdfg.validate()
+
+    rng = np.random.default_rng(0)
+    x = rng.random((LEVELS, COLUMNS))
+    want = {"S": np.zeros((LEVELS, COLUMNS)), "C": np.zeros(COLUMNS), "D": np.zeros(COLUMNS)}
+    got = copy.deepcopy(want)
+    reference(X=x, **want)
+    sdfg(X=x, **got)
+    for name in want:
+        assert np.allclose(got[name], want[name]), name
+
+
+def test_mapfission_refuses_a_column_map_with_one_inner_map_and_a_copy_beside_it():
+    """``doall j: {doall k: y[k, j] = ...; carry[j] = s[LEVELS - 1, j]}`` has one computational component. Fission
+    would remove the ``j`` map and leave the copy outside every map, still indexed by ``j``, so the match is refused.
+    Forcing it with ``verify=False`` produced an undefined ``j`` (a compile error, or the index of whatever symbol of
+    that name is in scope: an out-of-bounds write)."""
+    sdfg = dace.SDFG("column_map_with_inner_map_and_copy")
+    for name in ("s", "p1", "p2", "y"):
+        sdfg.add_array(name, [LEVELS, COLUMNS], dace.float64)
+    sdfg.add_array("carry", [COLUMNS], dace.float64)
+    state = sdfg.add_state()
+    s, p1, p2, y, carry = (state.add_access(name) for name in ("s", "p1", "p2", "y", "carry"))
+    column_entry, column_exit = state.add_map("columns", dict(j=f"0:{COLUMNS}"))
+    level_entry, level_exit = state.add_map("levels", dict(k=f"0:{LEVELS}"))
+    add = state.add_tasklet("add", {"a", "b", "c"}, {"o"}, "o = a + b * c")
+    for source, name, connector in ((s, "s", "a"), (p1, "p1", "b"), (p2, "p2", "c")):
+        state.add_memlet_path(
+            source, column_entry, level_entry, add, dst_conn=connector, memlet=dace.Memlet(f"{name}[k, j]")
+        )
+    state.add_memlet_path(add, level_exit, column_exit, y, src_conn="o", memlet=dace.Memlet("y[k, j]"))
+    last_level = state.add_access("s")
+    state.add_memlet_path(s, column_entry, last_level, memlet=dace.Memlet(f"s[{LEVELS - 1}, j]"))
+    inner_carry = state.add_access("carry")
+    state.add_nedge(last_level, inner_carry, dace.Memlet(data="s", subset=f"{LEVELS - 1}, j", other_subset="j"))
+    state.add_memlet_path(inner_carry, column_exit, carry, memlet=dace.Memlet("carry[j]"))
+    sdfg.validate()
+
+    assert not MapFission.can_be_applied_to(sdfg, map_entry=column_entry)
+
+
 if __name__ == "__main__":
     test_subgraph()
     test_nested_sdfg()
@@ -1568,3 +1718,6 @@ if __name__ == "__main__":
     test_fission_declines_a_reduction_the_body_writes_twice()
     test_fission_widens_both_sides_of_a_copy_between_widened_transients("copy_names_both_sides", "0:2")
     test_fission_widens_both_sides_of_a_copy_between_widened_transients("copy_names_one_side", None)
+    test_a_copy_between_two_widened_transients_spans_the_iterations()
+    test_a_copy_between_two_connector_arrays_is_corrected_for_each_end()
+    test_mapfission_refuses_a_column_map_with_one_inner_map_and_a_copy_beside_it()

@@ -2,10 +2,12 @@
 import copy
 
 import numpy as np
+import pytest
 
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
+from dace.sdfg.dealias import windowed_connectors
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes import ConstantPropagation, ScalarToSymbolPromotion, SymbolPropagation
@@ -961,6 +963,41 @@ def test_a_substitution_into_a_descriptor_is_reported():
     assert SymbolPropagation().apply_pass(sdfg, {}) is not None
 
 
+@pytest.mark.parametrize("propagation, value", [(SymbolPropagation, "n + 1"), (ConstantPropagation, "4")])
+def test_a_connector_shape_keeps_the_symbol_the_nested_body_binds(propagation, value):
+    """The body binds ``ext`` to a value and the parent's container is sized by its own ``ext``, so the connector must
+    keep describing that container: substituting the binding would leave a window of it."""
+    inner = dace.SDFG("inner_binds_extent")
+    inner.add_symbol("n", dace.int64)
+    inner.add_symbol("ext", dace.int64)
+    inner.add_array("a", ["ext"], dace.float64)
+    inner.add_array("b", [1], dace.float64)
+    first = inner.add_state("first", is_start_block=True)
+    body = inner.add_state("body")
+    inner.add_edge(first, body, dace.InterstateEdge(assignments={"ext": value}))
+    t = body.add_tasklet("t", {"x"}, {"y"}, "y = x")
+    body.add_edge(body.add_read("a"), None, t, "x", dace.Memlet("a[0]"))
+    body.add_edge(t, "y", body.add_write("b"), None, dace.Memlet("b[0]"))
+
+    sdfg = dace.SDFG("parent_sized_by_its_own_extent")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_symbol("ext", dace.int64)
+    sdfg.add_array("A", ["ext"], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    state = sdfg.add_state()
+    call = state.add_nested_sdfg(inner, {"a"}, {"b"}, {"n": "n", "ext": "ext"})
+    state.add_edge(state.add_read("A"), None, call, "a", dace.Memlet("A[0:ext]"))
+    state.add_edge(call, "b", state.add_write("B"), None, dace.Memlet("B[0]"))
+    sdfg.validate()
+    assert windowed_connectors(inner) == {}
+
+    propagation().apply_pass(sdfg, {})
+
+    assert windowed_connectors(inner) == {}, "the connector no longer describes the container it is wired to"
+    assert inner.arrays["a"].shape == sdfg.arrays["A"].shape
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_loop_carried_symbol()
     test_nested_loop_carried_symbol()
@@ -973,6 +1010,7 @@ if __name__ == "__main__":
     test_read_only_scalar_safe_to_propagate()
     test_a_container_value_does_not_reach_a_state()
     test_cloudsc_kidia_kfdia_promote_then_propagate()
+    test_a_connector_shape_keeps_the_symbol_the_nested_body_binds()
     test_carried_index_symbol_not_propagated_stale()
     test_dead_iedge_assignment_eliminated_after_substitution()
     test_dead_iedge_chain_unravels_to_fixed_point()

@@ -66,6 +66,7 @@ from dace import dtypes, symbolic
 from dace.optionals import required
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.narrowing import as_expr, as_range, free_symbol_names
+from dace.sdfg.state import AbstractControlFlowRegion
 from dace.subsets import Range, Subset
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 
@@ -270,10 +271,18 @@ def _reaching_ise_assignment(state: SDFGState, symbol: str, inner_sdfg: SDFG | N
     states, so a one-level BFS over ``state``'s region edges is a complete reaching-def (no
     parent-CFG ascent).
 
+    Before that lowering the pre-condition does not hold: an ``if`` block between the assignment and
+    ``state`` can reassign ``symbol`` on one branch (an index clamped to ``0`` or ``n - 1`` at the
+    border of a grid). The walk cannot say which assignment reaches ``state``, and returning the one
+    on the region edge silently drops the clamp. So when it walks past a nested region (conditional,
+    loop or plain) that assigns ``symbol`` anywhere inside it, it returns ``None``: unresolved, the
+    symbol stays in the subset.
+
     :param state: The access state (an :class:`SDFGState`).
     :param symbol: Symbol whose reaching definition is sought.
     :param inner_sdfg: Unused (kept for call-site symmetry / future use).
-    :returns: RHS expression string, or ``None`` when no assignment reaches.
+    :returns: RHS expression string, or ``None`` when no assignment reaches or when a nested region
+        on the way also assigns ``symbol``.
     """
     region = state.parent_graph
     if region is None:
@@ -287,6 +296,10 @@ def _reaching_ise_assignment(state: SDFGState, symbol: str, inner_sdfg: SDFG | N
                 assigns = e.data.assignments if e.data is not None else {}
                 if symbol in assigns:
                     return str(assigns[symbol])
+                if isinstance(e.src, AbstractControlFlowRegion) and any(
+                    symbol in inner.data.assignments for inner in e.src.all_interstate_edges(recursive=True)
+                ):
+                    return None  # a branch inside ``e.src`` may reassign ``symbol``: which value reaches is unknown
                 if id(e.src) not in visited:
                     visited.add(id(e.src))
                     nxt.append(e.src)

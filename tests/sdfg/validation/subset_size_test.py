@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.state import LoopRegion
 
 
 def _make_sdfg_with_zero_sized_an_to_an_memlet() -> tuple[dace.SDFG, dace.SDFGState]:
@@ -98,7 +99,26 @@ def test_copy_size_mismatch_at_a_code_node():
         sdfg.validate()
 
 
+def test_strided_copy_with_a_symbolic_step_is_valid():
+    """
+    A strided slice with a symbolic step ``S`` (a max-pool tap, inside the loop over the window) holds
+    ``ceiling((S * M + 1) / S)`` elements, which is ``M + 1`` once the loop over ``range(S)`` shows ``S`` is a positive
+    integer; the check has to use the facts of the scope for that.
+    """
+    S, M = dace.symbol("S"), dace.symbol("M")
+    sdfg = dace.SDFG("strided_copy_with_a_symbolic_step")
+    sdfg.add_array("A", [S * M + 1], dace.float64)
+    sdfg.add_array("B", [M + 1], dace.float64)
+    loop = LoopRegion("window", "k < S", "k", "k = 0", "k = k + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state(is_start_block=True)
+    state.add_nedge(state.add_read("A"), state.add_write("B"), dace.Memlet("A[0:S*M + 1:S] -> [0:M + 1]"))
+
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_an_to_an_memlet_with_zero_size()
     test_an_to_an_memlet_with_negative_size()
     test_copy_size_mismatch_at_a_code_node()
+    test_strided_copy_with_a_symbolic_step_is_valid()

@@ -447,9 +447,7 @@ class MapFission(transformation.SingleStateTransformation):
 
             # Fissioning a component across a conditional needs the branch
             # condition replicated into each fissioned map, currently not supported.
-            if any(
-                isinstance(cfg, ConditionalBlock) for cfg in nsdfg_node.sdfg.all_control_flow_regions(recursive=True)
-            ):
+            if not self.conditionals_stay_whole(nsdfg_node.sdfg, set(map_node.map.params)):
                 return False
 
             reduced = OrderedSet(
@@ -635,6 +633,38 @@ class MapFission(transformation.SingleStateTransformation):
         return True
 
     @staticmethod
+    def conditionals_stay_whole(body: sd.SDFG, blocked: OrderedSet[str] | set[str]) -> bool:
+        """Whether every conditional in a nested-SDFG body can stay whole in one fissioned map.
+
+        Fission nests each top-level region of the body whole, so a ``ConditionalBlock`` lands in one map with all
+        its branches and no component is split across it. That is only sound while its conditions mean the same in
+        that map: they must read neither a map parameter nor a symbol the body assigns on an interstate edge (the
+        assignment would end up in another map). Both are followed into nested SDFGs through their symbol mappings.
+
+        :param body: The nested SDFG that is the body of the map (or a nested SDFG inside it).
+        :param blocked: The names in ``body`` whose value may differ between the fissioned maps: the map parameters,
+                        and for a nested SDFG the symbols mapped from them.
+        :returns: ``False`` if a conditional in ``body`` reads a blocked symbol.
+        """
+        blocked = set(blocked) | {name for edge in body.all_interstate_edges() for name in edge.data.assignments}
+        for block in body.all_control_flow_blocks():
+            if isinstance(block, ConditionalBlock) and any(
+                {str(sym) for sym in cond.get_free_symbols()} & blocked for cond, region in block.branches if cond
+            ):
+                return False
+        for state in body.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    mapped = {
+                        inner
+                        for inner, outer in node.symbol_mapping.items()
+                        if {str(sym) for sym in pystr_to_symbolic(str(outer)).free_symbols} & blocked
+                    }
+                    if not MapFission.conditionals_stay_whole(node.sdfg, mapped):
+                        return False
+        return True
+
+    @staticmethod
     def fission_makes_progress(subgraphs, total_components) -> bool:
         """Whether fissioning a nested SDFG would yield anything other than its input.
 
@@ -807,6 +837,10 @@ class MapFission(transformation.SingleStateTransformation):
             # An empty dependency edge has a one-element path and thus no
             # outside edge: store ``None``.
             edge_to_outer = {}
+            # The outer edge of each connector end of a body edge. A copy between two connector arrays is both an
+            # entry and an exit edge, so ``edge_to_outer`` holds one of its two outer edges and the end that was not
+            # recorded last would be corrected with the descriptor of the other
+            outer_of_end = {}
             for edge in external_edges_entry:
                 if self.expr_index == 0:
                     # Subgraphs use the corresponding outer map edges
@@ -818,6 +852,7 @@ class MapFission(transformation.SingleStateTransformation):
                     if outer_edge is None:
                         outer_edge = next(e for e in graph.out_edges(nsdfg_node) if e.src_conn == edge.src.data)
                     edge_to_outer[edge] = outer_edge
+                    outer_of_end[(edge, edge.src)] = outer_edge
 
             for edge in external_edges_exit:
                 if self.expr_index == 0:
@@ -828,6 +863,7 @@ class MapFission(transformation.SingleStateTransformation):
                     # Nested SDFGs use the internal map edges of the node
                     outer_edge = next(e for e in graph.out_edges(nsdfg_node) if e.src_conn == edge.dst.data)
                     edge_to_outer[edge] = outer_edge
+                    outer_of_end[(edge, edge.dst)] = outer_edge
 
             # Collect all border arrays
             arrays = MapFission._border_arrays(nsdfg_node.sdfg if self.expr_index == 1 else sdfg, state, subgraph)
@@ -1049,7 +1085,7 @@ class MapFission(transformation.SingleStateTransformation):
                             continue
                         corrected_nodes.add(node)
 
-                        outer_edge = edge_to_outer[edge]
+                        outer_edge = outer_of_end[(edge, node)]
                         desc = parent.arrays[node.data]
 
                         # Modify shape of internal array to match outer one
@@ -1076,9 +1112,16 @@ class MapFission(transformation.SingleStateTransformation):
                             for e in state.memlet_tree(internal_edge):
                                 if e.data.is_empty():
                                     continue  # ordering edge: no subset
+                                # A copy memlet naming the other container holds this node's side in ``other_subset``
+                                on_other_subset = e.data.data != node.data and e.data.other_subset is not None
                                 if not already_integrated:
-                                    e.data.subset.offset(desc.offset, False)
-                                    e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
+                                    if on_other_subset:
+                                        side = mm.Memlet(data=node.data, subset=dcpy(e.data.other_subset))
+                                        side.subset.offset(desc.offset, False)
+                                        e.data.other_subset = helpers.unsqueeze_memlet(side, outer_edge.data).subset
+                                    else:
+                                        e.data.subset.offset(desc.offset, False)
+                                        e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
                                 # NOTE: If the edge is outside of the new Map scope, then try to propagate it. This is
                                 # needed for edges directly connecting AccessNodes, because the standard memlet
                                 # propagation will stop at the first AccessNode outside the Map scope. For example, see
@@ -1086,10 +1129,17 @@ class MapFission(transformation.SingleStateTransformation):
                                 if not (scope_dict[e.src] and scope_dict[e.dst]):
                                     outside_border_edges.add(e)
                                     # Propagate only the subset of `node.data`; the other side of a copy is kept
-                                    other_subset = e.data.other_subset
-                                    e.data.other_subset = None
-                                    e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range, facts)
-                                    e.data.other_subset = other_subset
+                                    if on_other_subset:
+                                        side = mm.Memlet(data=node.data, subset=e.data.other_subset)
+                                        side = propagate_subset([side], desc, outer_map.params, outer_map.range, facts)
+                                        e.data.other_subset = side.subset
+                                    else:
+                                        other_subset = e.data.other_subset
+                                        e.data.other_subset = None
+                                        e.data = propagate_subset(
+                                            [e.data], desc, outer_map.params, outer_map.range, facts
+                                        )
+                                        e.data.other_subset = other_subset
 
                         # Only after offsetting memlets we can modify the
                         # overall offset. The memlets of an integrated nested SDFG were not offset, and still
@@ -1101,6 +1151,9 @@ class MapFission(transformation.SingleStateTransformation):
             # NOTE: Memlet propagation should run to correct the outer edges
             # NOTE: Edges rewired outside the new Map scopes cannot refer to the map parameters
             full_map_ranges = [(0, sz - 1, 1) for sz in mapsize]
+            # A copy between two access nodes of the body is no component: it leaves the new maps like the
+            # border edges do, so it spans all iterations instead of naming the removed map's parameters
+            lifted_nodes = set(top_access)
             for node in subgraph.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in arrays:
                     is_scalar_like = node.data in scalar_like_arrays
@@ -1110,7 +1163,7 @@ class MapFission(transformation.SingleStateTransformation):
                             # NOTE: Do this only for the subset corresponding to `node.data`. If the edge is copying
                             # to/from another AccessNode, the other data may not need extra dimensions. For example, see
                             # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
-                            if e in outside_border_edges:
+                            if e in outside_border_edges or (e.src in lifted_nodes and e.dst in lifted_nodes):
                                 map_ranges = full_map_ranges
                                 # The external subset may still name the out-of-scope map parameters
                                 if (

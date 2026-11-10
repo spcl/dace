@@ -467,6 +467,8 @@ class LoopFusion(transformation.MultiStateTransformation):
             # there while fused it sees the RUNNING one (`for i: s = a[i]` then `for i: d[i] = d[i-1] + s`).
             for write in w1.get(arr, []):
                 for read in r2.get(arr, []):
+                    if self.own_row(read, write, ivar):
+                        continue
                     cls = classifier.dep_class(read, write, ivar, facts=facts)[0]
                     if cls not in ("RAW", "none") and not apart(read, write):
                         return False
@@ -476,6 +478,8 @@ class LoopFusion(transformation.MultiStateTransformation):
             # location held before the second loop ran at all.
             for read in r1.get(arr, []):
                 for write in w2.get(arr, []):
+                    if self.own_row(read, write, ivar):
+                        continue
                     cls = classifier.dep_class(read, write, ivar, facts=facts)[0]
                     if cls not in ("WAR", "none") and not apart(read, write):
                         return False
@@ -536,6 +540,37 @@ class LoopFusion(transformation.MultiStateTransformation):
         if sa is None or sb is None:
             return False
         return sa.intersects(sb, SymbolResolver().facts_at(loop)) is symbolic.Truth.FALSE
+
+    @staticmethod
+    def own_row(a: subsets.Range, b: subsets.Range, ivar: str) -> bool:
+        """Whether ``a`` and ``b`` both index one dimension at exactly the iterator, so that iteration ``i``
+        touches only its own slice ``[..., i, ...]`` of the container through either access.
+
+        ``dep_class`` reads point accesses only: a loop whose body is a map touches a whole row
+        (``p[i, 0:N]``), and two identical rows come back ``'complex'``. Such a pair needs no classifier:
+        body 1 and body 2 meet on a slice that no other iteration touches through these accesses, and fused
+        body 2 still runs after body 1 within the iteration, so a value body 1 stores there is the one body 2
+        reads (flow), and a value body 1 reads there is still the one from before body 2 (anti). Every
+        other pair of the same container is checked on its own, so ``p[i + 1, 0:N]`` next to ``p[i, 0:N]``
+        is still refused.
+
+        :param a: One access, in the merged iterator's namespace.
+        :param b: The other access, in the same namespace.
+        :param ivar: The merged loop iterator.
+        """
+        if a is None or b is None:
+            return False
+        ra, rb = list(a.ndrange()), list(b.ndrange())
+        if len(ra) != len(rb):
+            return False
+        it = symbolic.pystr_to_symbolic(ivar)
+        return any(
+            _symbolically_equal(sa, it)
+            and _symbolically_equal(ea, it)
+            and _symbolically_equal(sb, it)
+            and _symbolically_equal(eb, it)
+            for (sa, ea, step_a), (sb, eb, step_b) in zip(ra, rb)
+        )
 
     @staticmethod
     def _same_point(a, b) -> bool:

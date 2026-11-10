@@ -8,6 +8,7 @@ import numpy as np
 
 import dace
 from dace.sdfg import nodes
+from dace.sdfg.dealias import windowed_connectors
 from dace.transformation.passes.canonicalize.eliminate_copy_back import EliminateCopyBack
 
 N, M, K = dace.symbol("N"), dace.symbol("M"), dace.symbol("K")
@@ -168,6 +169,41 @@ def test_a_stepped_copy_back_stays():
     assert EliminateCopyBack().apply_pass(sdfg, {}) is None
 
 
+def test_folding_a_nested_writer_onto_a_wider_array_restates_the_connector():
+    """The body wrote the transient, so its connector describes that transient. Folding the copy onto a row of ``A``
+    wires the connector to ``A``; it has to describe ``A``, not the transient (viterbi ``__rdo0`` / ``back``)."""
+    sdfg = dace.SDFG("nested_copy_back")
+    sdfg.add_array("A", [3, 4], dace.int64)
+    sdfg.add_transient("t", [4], dace.int64)
+    body = dace.SDFG("loop_body")
+    body.add_symbol("i", dace.int64)
+    body.add_array("t", [4], dace.int64)
+    inner = body.add_state()
+    task = inner.add_tasklet("set", {}, {"o"}, "o = 3")
+    inner.add_edge(task, "o", inner.add_write("t"), None, dace.Memlet("t[i]"))
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("update", {"i": "0:4"})
+    nested = state.add_nested_sdfg(body, set(), {"t"}, {"i": "i"})
+    transient = state.add_access("t")
+    state.add_nedge(entry, nested, dace.Memlet())
+    state.add_memlet_path(nested, exit_node, transient, src_conn="t", memlet=dace.Memlet("t[i]"))
+    state.add_nedge(transient, state.add_write("A"), dace.Memlet("t[0:4] -> [1, 0:4]"))
+    sdfg.validate()
+    assert EliminateCopyBack().apply_pass(sdfg, {}) == 1
+    leaked = [
+        conn
+        for node, parent in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.NestedSDFG) and node.sdfg is not None
+        for conn in windowed_connectors(node.sdfg)
+    ]
+    assert leaked == []
+    got = np.zeros((3, 4), dtype=np.int64)
+    sdfg(A=got)
+    expected = np.zeros((3, 4), dtype=np.int64)
+    expected[1, :] = 3
+    assert np.array_equal(got, expected)
+
+
 if __name__ == "__main__":
     test_a_slice_update_writes_its_target_in_place()
     test_a_read_of_the_neighbouring_element_keeps_the_copy_back()
@@ -177,3 +213,4 @@ if __name__ == "__main__":
     test_a_read_inside_the_slice_at_another_element_keeps_the_copy_back()
     test_a_sibling_read_of_the_written_element_keeps_the_copy_back()
     test_a_stepped_copy_back_stays()
+    test_folding_a_nested_writer_onto_a_wider_array_restates_the_connector()
