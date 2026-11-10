@@ -474,6 +474,33 @@ def test_a_symbol_only_the_kernel_reads_stays_an_argument_of_the_program():
     assert np.array_equal(a, np.arange(float(SIZE)) + (np.arange(SIZE) < SIZE // 2))
 
 
+S = dace.symbol("S", dtype=dace.int64)
+
+
+def strided_total() -> dace.SDFG:
+    """``out[0] = sum(a[0:N:S])`` as one Reduce, its input memlet the only place the stride ``S`` appears."""
+    sdfg = dace.SDFG("extcall_library_stride")
+    sdfg.add_symbol("S", dace.int64)
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    state = sdfg.add_state()
+    reduce = Reduce("total", "lambda x, y: x + y", identity=0.0)
+    state.add_node(reduce)
+    state.add_edge(state.add_read("a"), None, reduce, None, dace.Memlet("a[0:N:S]"))
+    state.add_edge(reduce, None, state.add_write("out"), None, dace.Memlet("out[0]"))
+    return sdfg
+
+
+def test_the_stride_a_library_node_reads_is_an_argument_of_its_call():
+    """The memlet into a library node names its stride; the expansion reads it, so the call passes it."""
+    sdfg = strided_total()
+    assert "S" not in sdfg.used_symbols(all_symbols=False), "the case: only the library node's memlet names S"
+
+    (call,) = passes.outline_to_external_calls(sdfg, library_nodes=True)
+
+    assert "S" in call.abi_order
+
+
 N2 = dace.symbol("N2", dtype=dace.int64)
 
 

@@ -97,6 +97,9 @@ def nest_sdfg_subgraph(
             rset, wset = state.read_and_write_sets()
             read_set |= rset
             write_set |= wset
+            # A node joined by empty memlets alone orders its neighbors and moves no data, so neither set names its
+            # container, yet the nest holds the node and needs the descriptor
+            read_set |= {n.data for n in state.data_nodes()} - rset - wset
             # Add to write set also scalars between tasklets
             for src_node in state.nodes():
                 if not isinstance(src_node, nodes.Tasklet):

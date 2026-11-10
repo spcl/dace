@@ -61,7 +61,18 @@ def replace_with_external_call(state: SDFGState, nsdfg: nodes.NestedSDFG, name: 
     # reserved symbols (__dace_num_threads) are defined by the region's frame code, never passed (SDFG.arglist's rule)
     # the kernel's entry takes what its body uses and what its arguments' shapes name, not all the program's symbols
     shapes = {str(s) for desc in nsdfg.sdfg.arrays.values() if not desc.transient for s in desc.free_symbols}
-    used = {str(s) for s in nsdfg.sdfg.used_symbols(all_symbols=False)} | (shapes & set(nsdfg.sdfg.free_symbols))
+    # a library node's memlets count whole: its expansion reads the full range, strides included (CPF renders it expanded)
+    library = {
+        str(s)
+        for st in nsdfg.sdfg.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.LibraryNode)
+        for e in st.all_edges(n)
+        for s in e.data.used_symbols(all_symbols=True)
+    }
+    used = {str(s) for s in nsdfg.sdfg.used_symbols(all_symbols=False)} | (
+        (shapes | library) & set(nsdfg.sdfg.free_symbols)
+    )
     symbols = [s for s in sorted(used) if not s.startswith("__dace")]
     state.remove_node(nsdfg)
     node.symbol = name

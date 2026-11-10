@@ -1011,6 +1011,33 @@ def test_inlining_keeps_the_declared_type_of_a_loop_variable():
     np.testing.assert_array_equal(data, np.arange(10.0))
 
 
+def test_a_container_only_an_ordering_node_names_goes_into_the_nest():
+    """An access node joined by empty memlets alone orders two tasklets and moves no data. The read and write sets
+    do not name its container, and the nest still holds the node."""
+    sdfg = dace.SDFG("ordering_node")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_transient("order", [1], dace.float64)
+    loop = LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    first = state.add_tasklet("first", {}, {"o"}, "o = 1.0")
+    second = state.add_tasklet("second", {}, {"o"}, "o = 2.0")
+    state.add_edge(first, "o", state.add_write("A"), None, dace.Memlet("A[i]"))
+    order = state.add_access("order")
+    state.add_nedge(first, order, dace.Memlet())
+    state.add_nedge(order, second, dace.Memlet())
+    state.add_edge(second, "o", state.add_write("A"), None, dace.Memlet("A[i]"))
+
+    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
+
+    (nsdfg,) = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.NestedSDFG)]
+    assert "order" in nsdfg.sdfg.arrays and "order" not in sdfg.arrays
+    sdfg.validate()
+    A = np.zeros(4)
+    sdfg(A=A)
+    assert np.array_equal(A, np.full(4, 2.0))
+
+
 if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
@@ -1049,3 +1076,4 @@ if __name__ == "__main__":
     test_a_symbol_the_subgraph_assigns_keeps_its_declared_type()
     test_inlining_the_nest_back_keeps_the_declared_type()
     test_inlining_keeps_the_declared_type_of_a_loop_variable()
+    test_a_container_only_an_ordering_node_names_goes_into_the_nest()
