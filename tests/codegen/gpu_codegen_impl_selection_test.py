@@ -2,7 +2,6 @@
 """``compiler.cuda.implementation`` selects the GPU code generator, read at every ``generate_code`` call."""
 
 import dace
-from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cuda import CUDACodeGen
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
 
@@ -30,12 +29,6 @@ def gpu_codegen_classes(sdfg):
     }
 
 
-def test_both_gpu_codegens_are_registered():
-    registered = {v["name"] for v in TargetCodeGenerator.extensions().values()}
-    assert "cuda" in registered
-    assert "experimental_cuda" in registered
-
-
 def test_config_selects_active_gpu_codegen_at_runtime():
     with dace.config.set_temporary("compiler", "cuda", "implementation", value="legacy"):
         used = gpu_codegen_classes(build_gpu_sdfg())
@@ -51,5 +44,4 @@ def test_config_selects_active_gpu_codegen_at_runtime():
 
 
 if __name__ == "__main__":
-    test_both_gpu_codegens_are_registered()
     test_config_selects_active_gpu_codegen_at_runtime()

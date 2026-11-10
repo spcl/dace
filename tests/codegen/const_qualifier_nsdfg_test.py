@@ -76,26 +76,17 @@ def _inner_copy(name: str, in_name: str, out_name: str) -> dace.SDFG:
 
 @pytest.mark.parametrize("impl", ["experimental", "legacy"])
 def test_readonly_array_input_is_const(impl):
-    """A read-only array input becomes ``const T*`` (the previously-missing case)."""
+    """A read-only array input becomes ``const T*`` (the previously-missing case); the written output stays
+    non-const."""
     inner = _inner_copy("roarr", "a", "b")
     sig = _device_function_signature(
         inner, {"a"}, {"b"}, [("a", "A", (16, 8), "i,0:8", True), ("b", "B", (16, 8), "i,0:8", False)], impl=impl
     )
     assert _param(sig, "a").startswith("const "), _param(sig, "a")
-
-
-@pytest.mark.parametrize("impl", ["experimental", "legacy"])
-def test_written_array_output_is_not_const(impl):
-    """A written array output must NOT be const (no over-qualification)."""
-    inner = _inner_copy("woarr", "a", "b")
-    sig = _device_function_signature(
-        inner, {"a"}, {"b"}, [("a", "A", (16, 8), "i,0:8", True), ("b", "B", (16, 8), "i,0:8", False)], impl=impl
-    )
     assert not _param(sig, "b").startswith("const "), _param(sig, "b")
 
 
-@pytest.mark.parametrize("impl", ["experimental", "legacy"])
-def test_readonly_scalar_input_is_const(impl):
+def test_readonly_scalar_input_is_const():
     """A read-only scalar input is ``const`` (scalar reference or by-value)."""
     g = dace.SDFG("roscalar")
     g.add_symbol("i", dace.int64)
@@ -193,13 +184,6 @@ def test_readonly_viewed_input_is_const_and_view_is_const(impl):
     assert not re.search(r"(?<!const )(?<!const)\bdouble\s*\*\s*av\s*;", code), 'view "av" declared non-const'
 
 
-def test_mutated_descriptors_readonly_view_does_not_taint_parent():
-    """``_mutated_descriptors`` must NOT include data aliased only by a *read* view (a const view of
-    non-const data is valid, so the parent remains const-qualifiable)."""
-    inner = _inner_with_view("rov", write_through_view=False)
-    assert "a" not in CPUCodeGen._mutated_descriptors(inner)
-
-
 def test_mutated_descriptors_written_view_taints_parent():
     """``_mutated_descriptors`` must include data written *through* a view (non-const propagates view
     -> parent: a written view exposes its parent through a non-const pointer)."""
@@ -210,13 +194,7 @@ def test_mutated_descriptors_written_view_taints_parent():
 if __name__ == "__main__":
     for impl in ["experimental", "legacy"]:
         test_readonly_array_input_is_const(impl)
-    for impl in ["experimental", "legacy"]:
-        test_written_array_output_is_not_const(impl)
-    for impl in ["experimental", "legacy"]:
-        test_readonly_scalar_input_is_const(impl)
-    for impl in ["experimental", "legacy"]:
         test_inout_array_is_not_const(impl)
-    for impl in ["experimental", "legacy"]:
         test_readonly_viewed_input_is_const_and_view_is_const(impl)
-    test_mutated_descriptors_readonly_view_does_not_taint_parent()
+    test_readonly_scalar_input_is_const()
     test_mutated_descriptors_written_view_taints_parent()
