@@ -17,6 +17,8 @@ import pytest
 
 import dace
 from dace import subsets
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
@@ -196,3 +198,45 @@ def test_iplusoffset_kernel_emits_no_gather():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def clamped_read(clamp: bool) -> dace.SDFG:
+    """``c = i - 1`` on an edge, optionally ``if c < 0: c = 0``, then ``out[i] = A[c]``: the border clamp of a
+    stencil. The reassignment sits in a nested region, off the edges of the region holding the read."""
+    sdfg = dace.SDFG("clamped_read" if clamp else "plain_read")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_symbol("c", dace.int64)
+    head = sdfg.add_state("head", is_start_block=True)
+    read = sdfg.add_state("read")
+    if clamp:
+        conditional = ConditionalBlock("clamp")
+        sdfg.add_node(conditional)
+        branch = ControlFlowRegion("clamp_body")
+        conditional.add_branch(CodeBlock("c < 0"), branch)
+        first = branch.add_state("first", is_start_block=True)
+        second = branch.add_state("second")
+        branch.add_edge(first, second, dace.InterstateEdge(assignments={"c": "0"}))
+        sdfg.add_edge(head, conditional, dace.InterstateEdge(assignments={"c": "i - 1"}))
+        sdfg.add_edge(conditional, read, dace.InterstateEdge())
+    else:
+        sdfg.add_edge(head, read, dace.InterstateEdge(assignments={"c": "i - 1"}))
+    tasklet = read.add_tasklet("copy", {"a"}, {"o"}, "o = a")
+    read.add_edge(read.add_access("A"), None, tasklet, "a", dace.Memlet("A[c]"))
+    read.add_edge(tasklet, "o", read.add_access("out"), None, dace.Memlet("out[i]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_unconditional_definition_is_inlined():
+    sdfg = clamped_read(clamp=False)
+    assert PropagateIndexSubsets().apply_pass(sdfg, {}) == 1
+    assert _a_subsets(sdfg) == ["i - 1"]
+
+
+def test_definition_reassigned_in_a_conditional_is_not_inlined():
+    # Inlining ``c = i - 1`` would read A[-1] where the program reads the clamped A[0] (mg_vcycle, NestForge#84).
+    sdfg = clamped_read(clamp=True)
+    assert PropagateIndexSubsets().apply_pass(sdfg, {}) is None
+    assert _a_subsets(sdfg) == ["c"]

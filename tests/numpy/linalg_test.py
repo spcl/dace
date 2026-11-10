@@ -91,6 +91,26 @@ def test_tensordot_01():
         assert np.allclose(tensordot_0(A.copy(), B.copy()), tensordot_0.f(A, B))
 
 
+def test_tensordot_ttgt_of_a_slice():
+    """A slice of a larger array (a convolution tap, resnet's ``pad_act[:, ki:ki + H, kj:kj + W, :]``) keeps the
+    strides of the array it is cut from, so TTGT cannot view it as a matrix in place; it read the wrong elements."""
+
+    @dace.program
+    def tap_left(P: dace.float64[2, 6, 6, 3], K: dace.float64[3, 4]):
+        return np.tensordot(P[:, 1:5, 1:5, :], K, axes=([3], [0]))
+
+    @dace.program
+    def tap_right(K: dace.float64[4, 3], P: dace.float64[3, 6, 6]):
+        return np.tensordot(K, P[:, 1:5, 1:5], axes=([1], [0]))
+
+    rng = np.random.default_rng(0)
+    p4, k34 = rng.random((2, 6, 6, 3)), rng.random((3, 4))
+    k43, p3 = rng.random((4, 3)), rng.random((3, 6, 6))
+    with dace.config.set_temporary("library", "linalg", "default_implementation", value="TTGT"):
+        assert np.allclose(tap_left(p4.copy(), k34.copy()), np.tensordot(p4[:, 1:5, 1:5, :], k34, axes=([3], [0])))
+        assert np.allclose(tap_right(k43.copy(), p3.copy()), np.tensordot(k43, p3[:, 1:5, 1:5], axes=([1], [0])))
+
+
 @pytest.mark.gpu
 def test_tensordot_02():
 
@@ -240,6 +260,7 @@ if __name__ == "__main__":
     test_linalg_cholesky()
     test_tensordot_0()
     test_tensordot_01()
+    test_tensordot_ttgt_of_a_slice()
     test_tensordot_02()
     test_tensordot_1()
     test_tensordot_11()

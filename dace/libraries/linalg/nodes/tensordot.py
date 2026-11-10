@@ -112,6 +112,29 @@ class ExpandPure(ExpandTransformation):
         return sdfg
 
 
+def collapsible(arr: dace.data.Array, start: int, stop: int) -> bool:
+    """Whether dimensions ``start:stop`` of ``arr`` lie in memory as one: each stride is the next dimension's extent
+    times its stride, provably. A slice of a larger array (``a[:, 1:H + 1, 1:W + 1, :]``) does not."""
+    return all(
+        symbolic.equal(arr.strides[i], arr.shape[i + 1] * arr.strides[i + 1]) is True for i in range(start, stop - 1)
+    )
+
+
+def matrix_ready(arr: dace.data.Array, split: int) -> bool:
+    """Whether ``arr`` can be viewed as the matrix of its dimensions before and from ``split``."""
+    return collapsible(arr, 0, split) and collapsible(arr, split, len(arr.shape))
+
+
+def contiguous_copy(sdfg: dace.SDFG, state: dace.SDFGState, name: str) -> str:
+    """A C-ordered transient copy of ``name``, written in ``state``, which the GEMM can view as a matrix."""
+    arr = sdfg.arrays[name]
+    copy_name, copy_desc = sdfg.add_array(
+        f"{name}_contiguous", arr.shape, arr.dtype, arr.storage, transient=True, find_new_name=True
+    )
+    state.add_nedge(state.add_read(name), state.add_write(copy_name), dace.Memlet.from_array(name, arr))
+    return copy_name
+
+
 @library.expansion
 class ExpandTTGT(ExpandTransformation):
     """
@@ -170,6 +193,11 @@ class ExpandTTGT(ExpandTransformation):
             left_axes.extend(node.left_axes)
             left_tt = _transpose(None, sdfg, state, "_left_tensor", left_axes, outname="ttgt_left_transposed")
             left_tt_arr = sdfg.arrays[left_tt]
+        # An operand left in place keeps the strides of the array it was cut from; the GEMM views it as a matrix
+        left_split = len(node.left_axes) if transA else len(left_arr.shape) - len(node.left_axes)
+        if left_tt == "_left_tensor" and not matrix_ready(left_arr, left_split):
+            left_tt = contiguous_copy(sdfg, state, "_left_tensor")
+            left_tt_arr = sdfg.arrays[left_tt]
 
         if transB:
             right_tt = "_right_tensor"
@@ -178,6 +206,10 @@ class ExpandTTGT(ExpandTransformation):
             right_axes = list(node.right_axes)
             right_axes.extend([i for i in range(len(right_arr.shape)) if i not in node.right_axes])
             right_tt = _transpose(None, sdfg, state, "_right_tensor", right_axes, outname="ttgt_right_transposed")
+            right_tt_arr = sdfg.arrays[right_tt]
+        right_split = len(right_arr.shape) - len(node.right_axes) if transB else len(node.right_axes)
+        if right_tt == "_right_tensor" and not matrix_ready(right_arr, right_split):
+            right_tt = contiguous_copy(sdfg, state, "_right_tensor")
             right_tt_arr = sdfg.arrays[right_tt]
 
         from dace.libraries.blas import Gemm  # Avoid import loop
@@ -266,14 +298,21 @@ class ExpandTTGT(ExpandTransformation):
             state.add_edge(dot_anode, None, tasklet, "_inp_tensor", dace.Memlet.from_array(dot_name, dot_arr))
             state.add_edge(tasklet, "_out_tensor", out_node, None, dace.Memlet.from_array("_out_tensor", out_arr))
         else:
-            out_strides = [out_arr.strides[len(left_tt_arr.shape) - len(node.left_axes) - 1], out_arr.strides[-1]]
+            out_split = len(left_tt_arr.shape) - len(node.left_axes)
+            # An output cut from a larger array is written through a C-ordered temporary, then copied into place
+            gemm_out, gemm_arr = "_out_tensor", out_arr
+            if not matrix_ready(out_arr, out_split):
+                gemm_out, gemm_arr = sdfg.add_temp_transient(list(out_arr.shape), out_arr.dtype, out_arr.storage)
+            out_strides = [gemm_arr.strides[out_split - 1], gemm_arr.strides[-1]]
             out_vname, out_view = sdfg.add_view(
-                "__gemm_out", out_shape, out_arr.dtype, out_arr.storage, strides=out_strides, find_new_name=True
+                "__gemm_out", out_shape, gemm_arr.dtype, gemm_arr.storage, strides=out_strides, find_new_name=True
             )
-            out_anode = state.add_access("_out_tensor")
+            out_anode = state.add_access(gemm_out)
             out_vnode = state.add_access(out_vname)
             state.add_edge(tasklet, "_c", out_vnode, None, dace.Memlet.from_array(out_vname, out_view))
-            state.add_edge(out_vnode, "views", out_anode, None, dace.Memlet.from_array("_out_tensor", out_arr))
+            state.add_edge(out_vnode, "views", out_anode, None, dace.Memlet.from_array(gemm_out, gemm_arr))
+            if gemm_out != "_out_tensor":
+                state.add_nedge(out_anode, state.add_write("_out_tensor"), dace.Memlet.from_array(gemm_out, gemm_arr))
 
         return sdfg
 

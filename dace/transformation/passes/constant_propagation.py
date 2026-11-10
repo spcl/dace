@@ -16,7 +16,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
-from dace.transformation.passes.symbol_propagation import loop_bound_symbols, scope_bound_names
+from dace.transformation.passes.symbol_propagation import connector_shape_symbols, loop_bound_symbols, scope_bound_names
 
 
 class _UnknownValue:
@@ -709,6 +709,8 @@ class ConstantPropagation(ppl.Pass):
                         symbols_in_data_with_multiple_values.add(k)
                     values[k] = v
 
+        # A nested SDFG's connector keeps the shape of the container it is wired to, which this SDFG cannot restate.
+        symbols_in_data_with_multiple_values |= connector_shape_symbols(sdfg) & symbols_in_data.keys()
         return set(symbols_in_data), symbols_in_data_with_multiple_values
 
     def _propagate(self, symbols: dict[str, Any], new_symbols: dict[str, Any]) -> bool:

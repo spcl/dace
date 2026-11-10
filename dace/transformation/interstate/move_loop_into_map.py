@@ -80,6 +80,25 @@ def _collect_nested_lane_accesses(body: SDFGState, nsdfg: nodes.NestedSDFG, read
                 bucket.append((name, sbs.Range(rewritten)))
 
 
+def slides_with(rng: tuple, itervar: str) -> bool:
+    """Whether the range ``rng`` (begin, end, step) is a window of fixed width that moves with ``itervar``, such as
+    ``s[k - 1:k + 1]``: a scan that reads the previous level next to the level it is at, both behind one memlet
+    into a nested body.
+
+    Read through such a window, every loop iteration still reads at a position the loop variable picks (the
+    window's start, which the caller requires to be injective, like an index), so after the interchange each map
+    lane still reads what its own earlier iterations left, in the same order. A window whose width depends on
+    ``itervar`` (``s[0:k]``) is a growing prefix and is not accepted; neither is a window on the write side, whose
+    overlapping writes the index rule is there to refuse.
+
+    :param rng: One dimension of a subset, as ``(begin, end, step)``.
+    :param itervar: The loop variable.
+    """
+    begin, end = rng[0], rng[1]
+    width = symbolic.pystr_to_symbolic(end) - symbolic.pystr_to_symbolic(begin)
+    return diff(width, symbol(itervar)) == 0
+
+
 def _differs_on_map_axis(read: sbs.Subset, write: sbs.Subset, mparams: set[str]) -> bool:
     """True if ``read`` and ``write`` address a different position on some dimension indexed by
     a map parameter.
@@ -869,7 +888,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
 
         facts = SymbolResolver().facts_at(body)
 
-        def test_subset_dependency(subset: sbs.Subset, mparams: set[int]) -> tuple[bool, list[int]]:
+        def test_subset_dependency(subset: sbs.Subset, mparams: set[int], read: bool) -> tuple[bool, list[int]]:
             dims = []
             for i, r in enumerate(subset):
                 if not isinstance(r, (list, tuple)):
@@ -884,8 +903,8 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
                     else:
                         # Strong checks
                         if not permissive:
-                            # Only indices allowed
-                            if len(r) > 1 and r[0] != r[1]:
+                            # Only indices allowed, except a read window that slides with the loop
+                            if len(r) > 1 and r[0] != r[1] and not (read and slides_with(r, itervar)):
                                 return (False, [])
                             derivative = diff(r[0], symbol(itervar))
                             # Index function must be injective
@@ -917,7 +936,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
                                 access = body.memlet_path(e)[0].src
                             else:
                                 access = body.memlet_path(e)[-1].dst
-                            passed, dims = test_subset_dependency(subset, mparams)
+                            passed, dims = test_subset_dependency(subset, mparams, read=i == 0)
                             if not passed:
                                 return False
                             if dims:

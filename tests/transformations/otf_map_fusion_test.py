@@ -991,6 +991,42 @@ def test_a_producer_another_state_reads_is_kept():
     assert np.allclose(b, 2.0 * (a + 1.0)) and np.allclose(c, a + 1.0)
 
 
+def test_an_empty_memlet_into_the_consumer_is_not_fused():
+    """``T = A + 1``, then a map ``B = 2 A`` ordered after ``T`` by an empty memlet only. The check called
+    ``covers_precise`` on the empty memlet's ``None`` subset and raised ``AttributeError`` (efficientnet_b1's
+    NestForge move menu); an edge that reads nothing gives the consumer nothing to recompute."""
+    sdfg = dace.SDFG("otf_empty_memlet_consumer")
+    for name in ("A", "B"):
+        sdfg.add_array(name, [16], dace.float64)
+    sdfg.add_transient("T", [16], dace.float64)
+    state = sdfg.add_state()
+    a, t = state.add_read("A"), state.add_access("T")
+    produce_tasklet, produce_entry, produce_exit = state.add_mapped_tasklet(
+        "produce",
+        dict(i="0:16"),
+        {"a": dace.Memlet("A[i]")},
+        "o = a + 1.0",
+        {"o": dace.Memlet("T[i]")},
+        external_edges=True,
+        input_nodes={"A": a},
+        output_nodes={"T": t},
+    )
+    consume_tasklet, consume_entry, consume_exit = state.add_mapped_tasklet(
+        "consume",
+        dict(j="0:16"),
+        {"x": dace.Memlet("A[j]")},
+        "y = 2.0 * x",
+        {"y": dace.Memlet("B[j]")},
+        external_edges=True,
+        input_nodes={"A": a},
+        output_nodes={"B": state.add_write("B")},
+    )
+    state.add_nedge(t, consume_entry, dace.Memlet())
+    sdfg.validate()
+    where = dict(first_map_exit=produce_exit, array=t, second_map_entry=consume_entry)
+    assert not OTFMapFusion.can_be_applied_to(sdfg, **where)
+
+
 def producer_reading_its_own_output() -> dace.SDFG:
     """A nested-SDFG producer updates ``T[i] = max(T[i], A[i])`` through one in/out connector, feeding ``B = 2 T``."""
     inner = dace.SDFG("otf_inout_producer_body")
@@ -1351,6 +1387,7 @@ if __name__ == "__main__":
     test_seidel_2d_like_war_refuses_fusion()
     test_second_writer_of_the_intermediate_is_not_fused()
     test_a_producer_another_state_reads_is_kept()
+    test_an_empty_memlet_into_the_consumer_is_not_fused()
     for through_view in [False, True]:
         test_a_producer_whose_input_is_overwritten_before_the_consumer_is_not_fused(through_view)
     # Symbol replacement
