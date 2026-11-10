@@ -1833,16 +1833,30 @@ class OffloadToAccelerator(ppl.Pass):
         traverse_same_level(IR, gather_data, children)
 
         if IR.type == OffloadingIRNode.OPEN_LOOP:
-            # An array the body uses only under its conditionals is still wanted where they use it. Left to the
-            # predecessor's location, the loop's tail copied it back there and the arm fetched it again, a round
-            # trip per iteration (amg_setup's level loop, whose whole body is ``if n > 100``). A fallback arm
-            # copies inside itself and has no say.
-            def gather_nested(node: OffloadingIRNode):
-                block = required(node.open).block if node.type == OffloadingIRNode.CLOSE else node.block
-                if node is not IR and not in_sequential_specialization_arm(block):
-                    gather_data(node)
-
-            self.traverse_IR_after_predecessors(IR, gather_nested)
+            # An array the body uses only under its conditionals is wanted where every path through the body first
+            # uses it. Left to the predecessor's location, the loop's tail copied it back there and the arm fetched
+            # it again, a round trip per iteration (amg_setup's level loop, whose whole body is ``if n > 100``).
+            # Paths that disagree leave it to the predecessor; a fallback arm copies inside itself and has no say.
+            order: list[OffloadingIRNode] = []
+            self.traverse_IR_after_predecessors(IR, order.append)
+            first: dict[OffloadingIRNode, dict[str, bool | None]] = {}
+            for node in reversed(order):
+                found: dict[str, bool | None] = {}
+                for next in node.next:
+                    for name, side in first[next].items():
+                        found[name] = side if found.get(name, side) == side else None
+                if (
+                    node is not IR
+                    and node.type != OffloadingIRNode.CLOSE
+                    and not isinstance(node.block, nodes.NestedSDFG)
+                    and not in_sequential_specialization_arm(node.block)
+                ):
+                    found.update(dict.fromkeys(node.gpu_set, True))
+                    found.update(dict.fromkeys(node.cpu_set, False))
+                first[node] = found
+            for name, side in first[IR].items():
+                if side is not None:
+                    location_on_gpu.setdefault(name, side)
 
         # populate IR sets
         IR.gpu_set = OrderedSet(array_name for array_name in location_on_gpu if location_on_gpu[array_name])
