@@ -104,9 +104,30 @@ def test_a_reader_naming_its_destination_reads_at_the_offset():
     assert np.array_equal(C, A[2:5])
 
 
+def test_a_flat_view_of_the_copy_keeps_the_copy():
+    """``t = q[1:4, 1:4]`` read through a flat view of ``t``: ``q``'s rows are longer, so the view cannot take ``q``."""
+    sdfg = dace.SDFG("forward_offset_flat_view")
+    sdfg.add_array("q", [4, 4], dace.float64)
+    sdfg.add_array("out", [9], dace.float64)
+    sdfg.add_transient("t", [3, 3], dace.float64)
+    sdfg.add_view("v", [9], dace.float64)
+    first = sdfg.add_state("copy", is_start_block=True)
+    second = sdfg.add_state_after(first, "read")
+    first.add_nedge(first.add_read("q"), first.add_write("t"), dace.Memlet("q[1:4, 1:4] -> [0:3, 0:3]"))
+    view = second.add_access("v")
+    second.add_nedge(second.add_read("t"), view, dace.Memlet("t[0:3, 0:3]"))
+    second.add_nedge(view, second.add_write("out"), dace.Memlet("v[0:9] -> [0:9]"))
+    sdfg.validate()
+    ForwardOffsetCopies().apply_pass(sdfg, {})
+    q, out = np.arange(16.0).reshape(4, 4), np.zeros(9)
+    sdfg(q=q, out=out)
+    assert np.array_equal(out, q[1:, 1:].ravel())
+
+
 if __name__ == "__main__":
     test_a_shifted_copy_read_in_a_later_state_reads_its_source()
     test_a_write_to_the_source_between_keeps_the_copy()
     test_a_device_to_host_transfer_is_not_forwarded()
     test_rebound_offset_symbol_keeps_the_copy()
     test_a_reader_naming_its_destination_reads_at_the_offset()
+    test_a_flat_view_of_the_copy_keeps_the_copy()

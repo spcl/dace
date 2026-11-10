@@ -26,7 +26,7 @@ Contract, per copy edge ``A -> B``:
 from collections import defaultdict
 from typing import Any
 
-from dace import SDFG, data, properties, subsets
+from dace import SDFG, data, properties, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -119,11 +119,23 @@ class ForwardOffsetCopies(ppl.Pass):
         readers = [st for st, n in uses if n is not dst]
         if any(st.parent_graph is not region for st in readers):
             return None
-        # Every leaf of a reader's memlet trees is code or another access node, never a nested SDFG
+        # Every leaf of a reader's memlet trees is code or another access node, never a nested SDFG; one that
+        # addresses the buffer through its strides (a view, a library node, a tasklet taking more than one element)
+        # reads the source only when it is laid out like the copy.
+        laid_out = all(symbolic.equal(x, y) is True for x, y in zip(a.strides, b.strides))
         for st, n in uses:
             for out in st.out_edges(n):
-                if any(isinstance(t.dst, nodes.NestedSDFG) for t in st.memlet_tree(out).leaves()):
-                    return None
+                for leaf in st.memlet_tree(out).leaves():
+                    if isinstance(leaf.dst, nodes.NestedSDFG):
+                        return None
+                    end = leaf.dst
+                    addressed = (
+                        isinstance(end, nodes.LibraryNode)
+                        or (isinstance(end, nodes.AccessNode) and isinstance(sdfg.arrays[end.data], data.View))
+                        or (isinstance(end, nodes.Tasklet) and symbolic.equal(leaf.data.num_elements(), 1) is not True)
+                    )
+                    if addressed and not laid_out:
+                        return None
         if _writes_besides(state, src.data, edge) or any(_writes(st, src.data) for st in set(readers) - {state}):
             return None
         after = _reach(region, state, region.successors)
