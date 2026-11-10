@@ -83,7 +83,7 @@ from dace import SDFG, dtypes, properties, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.graph import NodeNotFoundError
 from dace.sdfg.narrowing import as_basic, as_expr, as_range
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import BreakBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -907,6 +907,9 @@ class UntileLoops(ppl.Pass):
                 candidate, outer.loop_variable, K_expr, K_const, outer_limit=symbolic.simplify(outer_end + 1)
             )
             if match is None:
+                continue
+            # A ``break`` leaves one tile; in the collapsed loop it would leave them all
+            if any(isinstance(jump, BreakBlock) for jump in loop_analysis.loop_jumps(candidate)):
                 continue
             cand_case, cand_stride, cand_needs_div, cand_clamped = match
             audit = self.audit_candidate(

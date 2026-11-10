@@ -9,8 +9,9 @@ import pytest
 
 import dace
 from dace import symbolic
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
@@ -1243,6 +1244,28 @@ def test_fresh_iterator_never_reuses_an_unrolled_loops_name():
     assert np.array_equal(a[[0, 4]], np.tile(np.tril(np.ones((4, 4)), -1), (2, 1, 1)))
 
 
+def test_a_tile_loop_left_by_break_is_not_collapsed():
+    """``for i in 0:8:4: for ii in i:i+4: if ii == 1: break`` leaves the first tile only, not the whole range."""
+    sdfg = dace.SDFG("untile_break_in_tile")
+    sdfg.add_array("a", [8], dace.int64)
+    outer = LoopRegion("outer", "i < 8", "i", "i = 0", "i = i + 4")
+    sdfg.add_node(outer, is_start_block=True)
+    inner = LoopRegion("inner", "ii < i + 4", "ii", "ii = i", "ii = ii + 1")
+    outer.add_node(inner, is_start_block=True)
+    guard = ConditionalBlock("guard")
+    inner.add_node(guard, is_start_block=True)
+    leave = ControlFlowRegion("leave")
+    leave.add_node(BreakBlock("leave_now"), is_start_block=True)
+    guard.add_branch(CodeBlock("ii == 1"), leave)
+    state = inner.add_state_after(guard, "write")
+    state.add_edge(state.add_tasklet("t", {}, {"o"}, "o = 1"), "o", state.add_write("a"), None, dace.Memlet("a[ii]"))
+
+    assert UntileLoops().apply_pass(sdfg, {}) is None
+    a = np.zeros(8, dtype=np.int64)
+    sdfg(a=a)
+    assert a.tolist() == [1, 0, 0, 0, 1, 1, 1, 1]
+
+
 if __name__ == "__main__":
     test_fresh_iterator_never_reuses_an_unrolled_loops_name()
     for program in NOT_UNTILABLE:
@@ -1280,3 +1303,4 @@ if __name__ == "__main__":
     test_a_clamped_two_level_tile_collapses_to_the_flat_stencil()
     test_a_clamped_tile_with_swapped_inner_axes_collapses()
     test_a_four_level_cascade_of_nested_clamps_collapses_completely()
+    test_a_tile_loop_left_by_break_is_not_collapsed()
