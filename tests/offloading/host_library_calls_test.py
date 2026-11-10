@@ -29,14 +29,14 @@ def gpu_final(name: str) -> dace.SDFG:
 
 
 def outer_maps(sdfg: dace.SDFG) -> list[nodes.MapEntry]:
-    return [n for n, s in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry) and s.entry_node(n) is None]
+    return [n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.MapEntry) and s.entry_node(n) is None]
 
 
 def test_a_map_around_an_inverse_is_threaded_on_the_host_with_the_cpu_library():
     sdfg = gpu_final("host_library_calls_structure")
     libraries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
 
-    assert [m.map.schedule for m in outer_maps(sdfg) if "i" in m.map.params] == [dace.ScheduleType.CPU_Multicore]
+    assert [m.map.schedule for m in outer_maps(sdfg)] == [dace.ScheduleType.CPU_Multicore]
     assert libraries and not any(n.schedule in dace.dtypes.GPU_SCHEDULES for n in libraries)
     assert not {n.implementation for n in libraries} & {"cuBLAS", "hipBLAS", "cuSolverDn", "hipSolverDn"}
 
