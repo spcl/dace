@@ -726,7 +726,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 if name in tasklet.location:
                     scope_manager.open(condition=location_condition(name, index_expr, tasklet.location[name]))
 
+            old_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
             self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            self._cpu_codegen.calling_codegen = old_codegen
 
     def declare_array(
         self,
