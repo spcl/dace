@@ -385,10 +385,17 @@ def test_loop_split_is_deterministic():
     way there would show up here as a different hash.
     """
     hashes = []
+    # Run from the repository root, so ``tests`` is this tree's and not another one on PYTHONPATH.
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     for seed in ("0", "12345"):
         env = {**os.environ, "PYTHONHASHSEED": seed}
         out = subprocess.run(
-            [sys.executable, "-c", _DETERMINISM, __file__], capture_output=True, text=True, check=True, env=env
+            [sys.executable, "-c", _DETERMINISM, __file__],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+            cwd=root,
         )
         hashes.append(out.stdout.strip().splitlines()[-1])
     assert hashes[0] == hashes[1]
