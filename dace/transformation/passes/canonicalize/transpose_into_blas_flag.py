@@ -61,6 +61,13 @@ def fold_one(sdfg: SDFG, state: SDFGState, transpose: nodes.LibraryNode, access_
             return False
         if not covers(reader.data, out_desc):
             return False  # the operand is a window of the transpose, not the flipped matrix
+    # One reader is ordered before a later write of the source by whatever ordered the transpose before it; a second
+    # reader need not be (``t = A.T; C = t @ B; A = C; D = t @ C``). A view's source is written under another name.
+    if len(readers) > 1 and (
+        isinstance(src_desc, data.View)
+        or any(n.data == src.data and n is not src and state.in_degree(n) > 0 for n in state.data_nodes())
+    ):
+        return False
     for reader in readers:
         flag = transpose_flag(reader.dst, reader.dst_conn)
         setattr(reader.dst, flag, not getattr(reader.dst, flag))

@@ -135,9 +135,38 @@ def test_a_transposed_view_whose_size_is_spelled_unlike_its_extents_folds():
     np.testing.assert_allclose(C, A.reshape(27, 7).T @ B)
 
 
+def test_a_transpose_read_again_after_its_source_is_rewritten_stays_a_copy():
+    """``t = A.T; C = t @ B; A = C; E = t @ C``: folded, the second product would read ``A`` unordered with its write."""
+    sdfg = dace.SDFG("transpose_source_rewritten")
+    for name in "ABCE":
+        sdfg.add_array(name, [4, 4], dace.float64)
+    sdfg.add_array("T", [4, 4], dace.float64, transient=True)
+    state = sdfg.add_state()
+    temp, mid = state.add_access("T"), state.add_access("C")
+    transpose = Transpose("transpose", dtype=dace.float64)
+    state.add_edge(state.add_read("A"), None, transpose, "_inp", dace.Memlet("A[0:4, 0:4]"))
+    state.add_edge(transpose, "_out", temp, None, dace.Memlet("T[0:4, 0:4]"))
+    first, second = MatMul("first"), MatMul("second")
+    state.add_edge(temp, None, first, "_a", dace.Memlet("T[0:4, 0:4]"))
+    state.add_edge(state.add_read("B"), None, first, "_b", dace.Memlet("B[0:4, 0:4]"))
+    state.add_edge(first, "_c", mid, None, dace.Memlet("C[0:4, 0:4]"))
+    state.add_edge(mid, None, state.add_write("A"), None, dace.Memlet("C[0:4, 0:4]"))
+    state.add_edge(temp, None, second, "_a", dace.Memlet("T[0:4, 0:4]"))
+    state.add_edge(mid, None, second, "_b", dace.Memlet("C[0:4, 0:4]"))
+    state.add_edge(second, "_c", state.add_write("E"), None, dace.Memlet("E[0:4, 0:4]"))
+
+    assert transposes_as_blas_flags(sdfg) == 0
+    rng = np.random.default_rng(10)
+    A, B = rng.random((4, 4)), rng.random((4, 4))
+    C, E, before = np.zeros((4, 4)), np.zeros((4, 4)), A.copy()
+    sdfg(A=A, B=B, C=C, E=E)
+    np.testing.assert_allclose(E, before.T @ (before.T @ B))
+
+
 if __name__ == "__main__":
     test_a_gemm_on_a_window_of_a_transpose_keeps_the_transpose()
     test_a_transposed_gemm_operand_is_read_in_place()
     test_a_transpose_an_elementwise_map_reads_stays_a_copy()
     test_a_transpose_two_products_read_folds_into_both()
     test_a_transposed_view_whose_size_is_spelled_unlike_its_extents_folds()
+    test_a_transpose_read_again_after_its_source_is_rewritten_stays_a_copy()
