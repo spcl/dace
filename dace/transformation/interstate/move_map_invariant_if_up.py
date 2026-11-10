@@ -45,9 +45,10 @@ Conservative -- only fires when:
   by the hoisted conditional). A state with more maps is split first, upstream
   map first, until the guarded map has a state of its own.
 
-A map whose body also holds unguarded work unswitches when every guard in it is a single ``if`` branch, all
-conditions are provably equal (:func:`~dace.symbolic.guards_equal`) and map-invariant, and no node of the map writes
-what a condition reads: ``map: { B; NSDFG: if c: A }`` becomes ``if c: { map: { B; A } } else: { map: { B } }``.
+A map whose body holds several guards, or unguarded work beside one, unswitches when every guard in it is a single
+``if`` branch, all conditions are provably equal (:func:`~dace.symbolic.guards_equal`) and map-invariant, and no node
+of the map writes what a condition reads: ``map: { B; NSDFG: if c: A }`` becomes
+``if c: { map: { B; A } } else: { map: { B } }``, and ``map: { if c: A; if c: B }`` becomes ``if c: { map: { A; B } }``.
 
 Anything else is a no-op.
 """
@@ -320,7 +321,9 @@ def _equal_guards_at(st: SDFGState, me: MapEntry) -> list[NestedSDFG] | None:
             continue
         guards.append(ns)
         conditions.append(_outer_condition(st, ns, cb.branches[0][0]))
-    if not guards or not any(isinstance(n, (Tasklet, NestedSDFG)) and n not in guards for n in body):
+    unguarded = any(isinstance(n, (Tasklet, NestedSDFG)) and n not in guards for n in body)
+    # A lone guard with nothing beside it is ``_match``'s case.
+    if not guards or (len(guards) == 1 and not unguarded):
         return None
     if not all(symbolic.guards_equal(conditions[0], c) for c in conditions[1:]):
         return None
