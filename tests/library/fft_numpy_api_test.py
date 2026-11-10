@@ -353,6 +353,39 @@ def test_norm_none_is_backward():
     np.testing.assert_allclose(default_norm(x=x, N=5), np.fft.ifft(x))
 
 
+def test_a_scalar_length_is_read_into_a_symbol():
+    @dace.program
+    def resized(x: dace.complex128[8], n: dace.int64, out: dace.complex128[4]):
+        out[:] = np.fft.fft(x, n=n)
+
+    @dace.program
+    def half_spectrum(x: dace.float64[8], n: dace.int64, out: dace.complex128[3]):
+        out[:] = np.fft.rfft(x, n=n)
+
+    @dace.program
+    def frequencies(n: dace.int64, out: dace.float64[4]):
+        out[:] = np.fft.fftfreq(n)
+
+    for program in (resized, half_spectrum, frequencies):
+        sdfg = program.to_sdfg(simplify=False)
+        assert "n" in sdfg.arrays, "the scalar stays an argument"
+        reads = [
+            v for e in sdfg.all_interstate_edges() for k, v in e.data.assignments.items() if k.startswith("__sym_n")
+        ]
+        assert reads == ["n"]
+
+    x = np.arange(8.0)
+    out = np.zeros(4, dtype=np.complex128)
+    resized(x + 0j, 4, out)
+    np.testing.assert_allclose(out, np.fft.fft(x + 0j, n=4), rtol=0, atol=1e-12)
+    half = np.zeros(3, dtype=np.complex128)
+    half_spectrum(x, 4, half)
+    np.testing.assert_allclose(half, np.fft.rfft(x, n=4), rtol=0, atol=1e-12)
+    freq = np.zeros(4)
+    frequencies(4, freq)
+    np.testing.assert_allclose(freq, np.fft.fftfreq(4), rtol=0, atol=0)
+
+
 if __name__ == "__main__":
     for implementation in ("pure", "FFTW3"):
         test_the_real_input_family_keeps_half_the_spectrum(implementation)
@@ -369,3 +402,4 @@ if __name__ == "__main__":
     test_a_typed_extent_is_not_resized_to_itself()
     test_a_one_point_axis_is_a_scaled_copy()
     test_norm_none_is_backward()
+    test_a_scalar_length_is_read_into_a_symbol()

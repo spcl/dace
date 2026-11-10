@@ -31,11 +31,12 @@ class ExpandGerPure(ExpandTransformation):
         node.validate(parent_sdfg, parent_state)
         sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
         m, n = sdfg.arrays["_res"].shape
+        alpha, scale_inputs = blas_helpers.scale_term(node, "alpha", node.alpha)
         sdfg.add_state().add_mapped_tasklet(
             "ger",
             {"_i": f"0:{m}", "_j": f"0:{n}"},
-            {"a": mm.Memlet("_A[_i, _j]"), "xin": mm.Memlet("_x[_i]"), "yin": mm.Memlet("_y[_j]")},
-            f"aout = ({node.alpha}) * xin * yin + a",
+            {"a": mm.Memlet("_A[_i, _j]"), "xin": mm.Memlet("_x[_i]"), "yin": mm.Memlet("_y[_j]"), **scale_inputs},
+            f"aout = {alpha} * xin * yin + a",
             {"aout": mm.Memlet("_res[_i, _j]")},
             external_edges=True,
         )
@@ -54,7 +55,7 @@ def ger_call(node, state, sdfg, environment=None) -> SDFG:
     if layout is None or prefix is None:
         return ExpandGerPure.expansion(node, state, sdfg)
     routine = f"{prefix}geru" if res.desc.dtype.is_complex() else f"{prefix}ger"
-    scalars, arg = blas_helpers.scalar_arguments(res.desc.dtype, alpha=node.alpha)
+    scalars, arg = blas_helpers.scalar_arguments(res.desc.dtype, **blas_helpers.scales(node, alpha=node.alpha))
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
     (m, n), (lda,) = res.shape, layout.leading
     call = (
@@ -69,7 +70,7 @@ def ger_gpu_call(node, state, sdfg, environment, layout, res, x, y) -> SDFG:
     outer product of ``y`` and ``x``: the two vectors and the two dimensions swap."""
     gpu = gpu_dialect.gpu_call(res.desc.dtype)
     routine = gpu.routine("geru" if res.desc.dtype.is_complex() else "ger")
-    scalars, arg = gpu_dialect.scalar_pointers(gpu, res.desc.dtype, alpha=node.alpha)
+    scalars, arg = gpu_dialect.scalar_pointers(gpu, res.desc.dtype, **blas_helpers.scales(node, alpha=node.alpha))
     (m, n), (lda,) = res.shape, layout.leading
     first, second = (("__y", y), ("__x", x)) if layout.row_major else (("__x", x), ("__y", y))
     rows, cols = (n, m) if layout.row_major else (m, n)
@@ -118,7 +119,7 @@ class Ger(LibraryNode):
         self.n = n
         self.m = m
 
-        self.alpha = alpha
+        self.alpha = blas_helpers.real_scale(alpha)
 
     def compare(self, other):
 
@@ -197,8 +198,9 @@ def ger_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, A, x, y, out
     A_in, x_in, y_in = (state.add_read(name) for name in (A, x, y))
     out = state.add_write(output)
 
-    libnode = Ger("ger", alpha=alpha)
+    libnode = Ger("ger")
     state.add_node(libnode)
+    libnode.alpha = blas_helpers.connect_scale(sdfg, state, libnode, "alpha", alpha)
 
     # Connect nodes
     state.add_edge(A_in, None, libnode, "_A", mm.Memlet(A))

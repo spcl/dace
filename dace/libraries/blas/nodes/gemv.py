@@ -70,13 +70,17 @@ class ExpandGemvPure(ExpandTransformation):
         _, array_a = sdfg.add_array("_A", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
         _, array_x = sdfg.add_array("_x", shape_x, dtype_x, strides=strides_x, storage=outer_array_x.storage)
         _, array_y = sdfg.add_array("_y", shape_y, dtype_y, strides=strides_y, storage=outer_array_y.storage)
+        blas_helpers.add_scale_scalars(sdfg, node, parent_state, parent_sdfg)
 
-        mul_program = f"__out = ({node.alpha}) * __A * __x"
+        alpha, alpha_inputs = blas_helpers.scale_term(node, "alpha", node.alpha)
+        beta, beta_inputs = blas_helpers.scale_term(node, "beta", node.beta)
+        zero = blas_helpers.is_literal_scale(node, "beta", node.beta, 0)
+        mul_program = f"__out = {alpha} * __A * __x"
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        if node.beta == 0:
+        if zero:
             mul_out, mul_out_array = "_y", array_y
             output_nodes = None
         else:
@@ -104,6 +108,7 @@ class ExpandGemvPure(ExpandTransformation):
             {
                 "__A": dace.Memlet("_A[{}]".format("__i1, __i0" if node.transA else "__i0, __i1")),
                 "__x": dace.Memlet("_x[__i1]"),
+                **alpha_inputs,
             },
             mul_program,
             {"__out": dace.Memlet(f"{mul_out}[__i0]", wcr="lambda x, y: x + y")},
@@ -111,18 +116,19 @@ class ExpandGemvPure(ExpandTransformation):
             output_nodes=output_nodes,
         )
 
-        add_program = f"__y_out = (({node.beta}) * __y_in) + __tmp"
+        add_program = f"__y_out = ({beta} * __y_in) + __tmp"
 
         memlet_idx = "__i"
 
         # addition map
-        if node.beta != 0:
+        if not zero:
             state.add_mapped_tasklet(
                 "_Add_",
                 {"__i": f"0:{N}"},
                 {
                     "__y_in": dace.Memlet(f"_y[{memlet_idx}]"),
                     "__tmp": dace.Memlet(f"{mul_out}[__i]"),
+                    **beta_inputs,
                 },
                 add_program,
                 {"__y_out": dace.Memlet("_y[__i]")},
@@ -190,16 +196,10 @@ class ExpandGemvCuBLAS(ExpandTransformation):
             1.0: f"__state->cublas_handle.Constants().{runtimetype}Pone()",
             0.0: f"__state->cublas_handle.Constants().{runtimetype}Zero()",
         }
-        if node.alpha not in constants or node.beta not in constants:
-            # Deal with complex input constants
-            if isinstance(node.alpha, complex):
-                alpha = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
-            else:
-                alpha = f"{dtype.ctype}({node.alpha})"
-            if isinstance(node.beta, complex):
-                beta = f"{dtype.ctype}({node.beta.real}, {node.beta.imag})"
-            else:
-                beta = f"{dtype.ctype}({node.beta})"
+        wired = any(connector in node.in_connectors for connector in blas_helpers.SCALE_CONNECTORS)
+        if wired or node.alpha not in constants or node.beta not in constants:
+            alpha = f"{dtype.ctype}({blas_helpers.scale_text(node, 'alpha', node.alpha)})"
+            beta = f"{dtype.ctype}({blas_helpers.scale_text(node, 'beta', node.beta)})"
 
             # Set pointer mode to host
             call_prefix += f"""dace::blas::CheckCublasError(
@@ -255,8 +255,8 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen
-        alpha = f"{dtype.ctype}({node.alpha})"
-        beta = f"{dtype.ctype}({node.beta})"
+        alpha = f"{dtype.ctype}({blas_helpers.scale_text(node, 'alpha', node.alpha)})"
+        beta = f"{dtype.ctype}({blas_helpers.scale_text(node, 'beta', node.beta)})"
 
         m = m or node.m
         n = n or node.n
@@ -411,12 +411,11 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
             name, location=location, inputs={"_A", "_x", "_y"} if beta != 0 else {"_A", "_x"}, outputs={"_y"}
         )
         self.transA = transA
-        self.alpha = alpha
-        self.beta = beta
+        self.alpha = blas_helpers.real_scale(alpha)
+        self.beta = blas_helpers.real_scale(beta)
 
     def validate(self, sdfg, state):
-        in_edges = state.in_edges(self)
-        if len(in_edges) not in [2, 3]:
+        if len(blas_helpers.data_in_edges(self, state)) not in [2, 3]:
             raise ValueError("Expected 2 or 3 inputs to GEMV")
         size_y_in = None
         for _, _, _, dst_conn, memlet in state.in_edges(self):
@@ -467,16 +466,19 @@ def gemv_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, A, x, y, al
     A_in, x_in = (state.add_read(name) for name in (A, x))
     y_out = state.add_write(y)
 
-    libnode = Gemv("gemv", transA=trans, alpha=alpha, beta=beta)
+    libnode = Gemv("gemv", transA=trans)
     state.add_node(libnode)
 
     # Connect nodes
     state.add_edge(A_in, None, libnode, "_A", mm.Memlet(A))
     state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
     state.add_edge(libnode, "_y", y_out, None, mm.Memlet(y))
+    libnode.alpha = blas_helpers.connect_scale(sdfg, state, libnode, "alpha", alpha)
+    libnode.beta = blas_helpers.connect_scale(sdfg, state, libnode, "beta", beta)
 
     if beta != 0:
         y_in = state.add_read(y)
+        libnode.add_in_connector("_y")
         state.add_edge(y_in, None, libnode, "_y", mm.Memlet(y))
 
     return []

@@ -264,7 +264,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         )
 
         # Reserved connector names: an array named a, b or o must not collide once the expansion is inlined
-        t = nstate.add_tasklet("identity", {"__a", "__b"}, {"__o"}, "__o = __b")
+        t = nstate.add_tasklet("identity", {"__a": None, "__b": None}, {"__o": None}, "__o = __b")
 
         # Connect everything
         r = nstate.add_read("_in")
@@ -1190,7 +1190,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     "o = b",
                 )
             else:
-                id = nstate.add_tasklet("identity", {"a", "b"}, {"o"}, "o = b")
+                id = nstate.add_tasklet("identity", {"a": None, "b": None}, {"o": None}, "o = b")
 
             if vectorize:
                 # add a vec_reduce tasklet
@@ -1394,9 +1394,9 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                     "reduce_values", {"_i": f"_b0:{schedule.sequential[0]}:16"}, schedule=dtypes.ScheduleType.Sequential
                 )
 
-            id = real_state.add_tasklet("identity", {"a", "b"}, {"o"}, "o = b")
+            id = real_state.add_tasklet("identity", {"a": None, "b": None}, {"o": None}, "o = b")
             # tasklet for reducing partial results to shared memory
-            id_smem = real_state.add_tasklet("identity_smem", {"a", "b"}, {"o"}, "o = b")
+            id_smem = real_state.add_tasklet("identity_smem", {"a": None, "b": None}, {"o": None}, "o = b")
 
             # Connect everything
             r = nstate.add_read("_in")

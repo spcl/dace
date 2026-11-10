@@ -7,7 +7,6 @@ from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.sdfg import nodes
-from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -28,12 +27,14 @@ class ExpandSymvPure(ExpandTransformation):
         n = sdfg.arrays["_x"].shape[0]
         init = sdfg.add_state(f"{node.label}_init")
         # As in BLAS, beta == 0 does not read y, so NaN there does not reach the result
-        zero = equal_valued(0, node.beta)
+        zero = blas_helpers.is_literal_scale(node, "beta", node.beta, 0)
+        alpha, alpha_inputs = blas_helpers.scale_term(node, "alpha", node.alpha)
+        beta, beta_inputs = blas_helpers.scale_term(node, "beta", node.beta)
         init.add_mapped_tasklet(
             "scale_y",
             {"__i": f"0:{n}"},
-            {} if zero else {"__y": dace.Memlet("_yin[__i]")},
-            "__out = 0" if zero else f"__out = ({node.beta}) * __y",
+            {} if zero else {"__y": dace.Memlet("_yin[__i]"), **beta_inputs},
+            "__out = 0" if zero else f"__out = {beta} * __y",
             {"__out": dace.Memlet("_yout[__i]")},
             external_edges=True,
         )
@@ -41,8 +42,13 @@ class ExpandSymvPure(ExpandTransformation):
         product.add_mapped_tasklet(
             "symv",
             {"__i": f"0:{n}", "__j": f"0:{n}"},
-            {"__aij": dace.Memlet("_A[__i, __j]"), "__aji": dace.Memlet("_A[__j, __i]"), "__x": dace.Memlet("_x[__j]")},
-            f"__out = ({node.alpha}) * (__aij if {symmetric_element(node.uplo, '__i', '__j')} else __aji) * __x",
+            {
+                "__aij": dace.Memlet("_A[__i, __j]"),
+                "__aji": dace.Memlet("_A[__j, __i]"),
+                "__x": dace.Memlet("_x[__j]"),
+                **alpha_inputs,
+            },
+            f"__out = {alpha} * (__aij if {symmetric_element(node.uplo, '__i', '__j')} else __aji) * __x",
             {"__out": dace.Memlet("_yout[__i]", wcr="lambda a, b: a + b")},
             external_edges=True,
         )
@@ -57,7 +63,8 @@ def symv_call(node, state, sdfg, environment=None) -> SDFG:
         # A row-major symmetric matrix is its own transpose in column-major order, with the other triangle stored
         layout = gpu_dialect.required_layout(node, a)
         gpu = gpu_dialect.gpu_call(a.desc.dtype)
-        scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, alpha=node.alpha, beta=node.beta)
+        values = blas_helpers.scales(node, alpha=node.alpha, beta=node.beta)
+        scalars, arg = gpu_dialect.scalar_pointers(gpu, a.desc.dtype, **values)
         upper = node.uplo != layout.row_major
         call = (
             f"{gpu.routine('symv')}({gpu_dialect.HANDLE}, {gpu_dialect.fill(upper)}, {sym2cpp(x.shape[0])}, {arg['alpha']}, "
@@ -65,23 +72,22 @@ def symv_call(node, state, sdfg, environment=None) -> SDFG:
             f"{gpu.pointer('__yout')}, {sym2cpp(yout.strides[0])})"
         )
         code = gpu_dialect.call_code(gpu, environment, node, scalars, call)
-        return blas_helpers.in_place_call(
-            node, state, sdfg, "_yin", "_yout", code, overwrites=equal_valued(0, node.beta)
-        )
+        overwrites = blas_helpers.is_literal_scale(node, "beta", node.beta, 0)
+        return blas_helpers.in_place_call(node, state, sdfg, "_yin", "_yout", code, overwrites=overwrites)
     layout = blas_helpers.matrix_layout(a)
     # CBLAS has no complex symv
     if layout is None or prefix is None or a.desc.dtype.is_complex():
         return ExpandSymvPure.expansion(node, state, sdfg)
-    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, alpha=node.alpha, beta=node.beta)
+    values = blas_helpers.scales(node, alpha=node.alpha, beta=node.beta)
+    scalars, arg = blas_helpers.scalar_arguments(a.desc.dtype, **values)
     order = "CblasRowMajor" if layout.row_major else "CblasColMajor"
     uplo = "CblasUpper" if node.uplo else "CblasLower"
     call = (
         f"cblas_{prefix.lower()}symv({order}, {uplo}, {sym2cpp(x.shape[0])}, {arg['alpha']}, __A, {sym2cpp(layout.leading[0])}, __x, "
         f"{sym2cpp(x.strides[0])}, {arg['beta']}, __yout, {sym2cpp(yout.strides[0])});"
     )
-    return blas_helpers.in_place_call(
-        node, state, sdfg, "_yin", "_yout", scalars + call, overwrites=equal_valued(0, node.beta)
-    )
+    overwrites = blas_helpers.is_literal_scale(node, "beta", node.beta, 0)
+    return blas_helpers.in_place_call(node, state, sdfg, "_yin", "_yout", scalars + call, overwrites=overwrites)
 
 
 @library.node
@@ -102,7 +108,7 @@ class Symv(nodes.LibraryNode):
 
     def __init__(self, name, uplo=False, alpha=1, beta=0, **kwargs):
         super().__init__(name, inputs=["_A", "_x", "_yin"], outputs=["_yout"], **kwargs)
-        self.uplo, self.alpha, self.beta = uplo, alpha, beta
+        self.uplo, self.alpha, self.beta = uplo, blas_helpers.real_scale(alpha), blas_helpers.real_scale(beta)
 
     def validate(self, sdfg, state):
         blas_helpers.require_one_dtype(self, state, sdfg, "_A", "_x", "_yin", "_yout")
@@ -119,7 +125,9 @@ class Symv(nodes.LibraryNode):
 def symv_libnode(pv, sdfg: SDFG, state: SDFGState, A, x, y, result=None, alpha=1, beta=0, uplo=False):
     """Adds a :class:`Symv` writing ``alpha * A @ x + beta * y`` to ``result``, by default ``y``."""
     result = result if result is not None else y
-    node = Symv("symv", uplo=uplo, alpha=alpha, beta=beta)
+    node = Symv("symv", uplo=uplo)
+    node.alpha = blas_helpers.connect_scale(sdfg, state, node, "alpha", alpha)
+    node.beta = blas_helpers.connect_scale(sdfg, state, node, "beta", beta)
     for name, connector in ((A, "_A"), (x, "_x"), (y, "_yin")):
         state.add_edge(state.add_read(name), None, node, connector, mm.Memlet(name))
     state.add_edge(node, "_yout", state.add_write(result), None, mm.Memlet(result))

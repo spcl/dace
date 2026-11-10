@@ -547,6 +547,29 @@ def test_arrayized_conditional_write_keeps_the_value_on_the_path_that_does_not_w
     assert x[0] == 5.0
 
 
+def test_folded_zero_index_on_interstate_edge_is_stripped():
+    """``p[1 - 1]`` (an offset-specialized Fortran index) on an interstate edge collapses to the staged
+    scalar; a leftover ``scal_p[1 - 1]`` subscripts a scalar and fails to compile."""
+    sdfg = dace.SDFG("folded_zero_index")
+    sdfg.add_array("p", [1], dace.int64)
+    sdfg.add_array("out", [1], dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state("s1")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"s": "p[1 - 1]"}))
+    t = s1.add_tasklet("w", {}, {"o"}, "o = s + 1")
+    s1.add_edge(t, "o", s1.add_write("out"), None, dace.Memlet("out[0]"))
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    exprs = [e.data.assignments["s"] for e in sdfg.all_interstate_edges() if "s" in e.data.assignments]
+    assert len(exprs) == 1 and exprs[0].startswith("scal_p") and "[" not in exprs[0], exprs
+    p = np.array([41], dtype=np.int64)
+    out = np.zeros(1, dtype=np.int64)
+    sdfg(p=p, out=out)
+    assert out[0] == 42
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

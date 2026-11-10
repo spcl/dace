@@ -908,6 +908,7 @@ class LoopToMap(xf.MultiStateTransformation):
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
 
         # Add NestedSDFG node
+        read_set, write_set = dict.fromkeys(sorted(read_set)), dict.fromkeys(sorted(write_set))
         cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
         passed_on: dict[str, dtypes.typeclass] = {}
         if sdfg.parent:
