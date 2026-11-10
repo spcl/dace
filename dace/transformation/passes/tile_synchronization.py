@@ -151,7 +151,9 @@ class InsertTileSync(ppl.Pass):
         #: The barriers this run inserted, with their states
         self.inserted: list[tuple[SDFGState, Sync]] = []
         for (state, node), scope in walk.barriers.items():
-            order = list(walk.order[state])
+            # Only the nodes of the kernel the barrier is in; a state may hold several kernels
+            kernel = state.entry_node(node)
+            order = [inner for inner in walk.order[state] if state.entry_node(inner) is kernel]
             position = order.index(node)
             self.inserted.append((state, insert_barrier(state, order[:position], order[position:], scope)))
         return len(self.inserted) or None

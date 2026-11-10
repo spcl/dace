@@ -332,7 +332,7 @@ def resolve_gather_deps(idx_shape: Sequence[int | sympy.Basic], widths: Sequence
         return None
     deps = []
     for d in range(K):
-        if has_one_marker(idx_shape[d]):
+        if idx_shape[d] == 1 or has_one_marker(idx_shape[d]):
             continue  # broadcast dim -- not a dependency
         if not extents_equal(idx_shape[d], widths[d]):
             return None  # non-marker extent disagrees with the tile width

@@ -36,6 +36,31 @@ def test_the_slots_of_a_circular_buffer_carry_their_own_tokens():
     assert Token("buf", slot(k), ROW).shifted("k", None).subset is None
 
 
+L = dace.symbol("L")
+
+
+@dace.program
+def two_row_sums(A: dace.float64[L, 64], B: dace.float64[L, 64], S: dace.float64[L], T: dace.float64[L]):
+    for r in dace.map[0:L]:
+        S[r : r + 1] = dace.tile.sum(dace.tile.exp(A[r, :]))
+    for r in dace.map[0:L]:
+        T[r : r + 1] = dace.tile.sum(dace.tile.exp(B[r, :]))
+
+
+def test_a_barrier_orders_only_the_nodes_of_its_own_kernel():
+    """Two kernels in one state: each barrier connects only to nodes inside the kernel it synchronizes."""
+    sdfg = two_row_sums.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    sync = InsertTileSync()
+    assert sync.apply_pass(sdfg, {}) == 4
+    for state, barrier in sync.inserted:
+        kernel = state.entry_node(barrier)
+        neighbours = [e.src for e in state.in_edges(barrier)] + [e.dst for e in state.out_edges(barrier)]
+        assert all(n is kernel or state.entry_node(n) is kernel for n in neighbours)
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_an_elementwise_chain_keeps_every_element_on_its_thread()
     test_the_slots_of_a_circular_buffer_carry_their_own_tokens()
+    test_a_barrier_orders_only_the_nodes_of_its_own_kernel()

@@ -93,6 +93,13 @@ def test_scalar_gather_index():
     node.validate(sdfg, state)
 
 
+def test_a_literal_one_extent_is_a_broadcast_like_the_marker():
+    from dace.libraries.tileops.lanes import resolve_gather_deps
+
+    assert resolve_gather_deps((4, 1), (4, 8)) == (0,)
+    assert resolve_gather_deps((4, dace.symbolic.ONE), (4, 8)) == (0,)
+
+
 def test_mixed_gather_dims_distinct_shapes():
     """Two gather dims, each with a different lane-dependency shape.
 
@@ -348,6 +355,7 @@ if __name__ == "__main__":
     test_1d_gather_on_dim0()
     test_2d_gather_on_dim0_with_full_shape()
     test_scalar_gather_index()
+    test_a_literal_one_extent_is_a_broadcast_like_the_marker()
     test_mixed_gather_dims_distinct_shapes()
     test_full_nd_gather()
     test_refuse_index_shape_not_cartesian()
