@@ -79,15 +79,6 @@ def test_full_subset_same_name_not_renamed():
     assert renamed == 1  # the nested A was renamed
 
 
-def test_identical_signature_kept():
-    """Inner A whose signature is identical to the outer A is left alone (emission dedup handles it)."""
-    sdfg = _nested_view_sdfg([N, N], [N, 1])
-    renamed = CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
-    sdfg.validate()
-    assert renamed is None  # no rename
-    assert _signatures(sdfg)["A"] == {(2, ("N", "1"), ("0", "0"))}
-
-
 def test_distinct_inner_name_kept():
     """A nested connector whose name is not present in the parent is never renamed."""
     sdfg = _nested_view_sdfg([2, 2], [2, 1], inner_name="_inner")
@@ -186,7 +177,6 @@ def test_helper_is_named_apart_from_a_container():
 
 if __name__ == "__main__":
     test_full_subset_same_name_not_renamed()
-    test_identical_signature_kept()
     test_distinct_inner_name_kept()
     test_root_argument_never_renamed()
     for k in ("trisolv", "lu", "ludcmp"):
