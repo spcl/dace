@@ -264,26 +264,24 @@ class NormalizeWCR(ppl.Pass):
         if is_data_dependent_scatter_sink(nsdfg, oc):
             return False
 
-        # (a) A scalar WCR edge inside the body writing `oc` into a pure-sink AccessNode.
-        wcr_edge = None
-        wcr_state = None
-        for ist in inner.states():
-            for e in ist.edges():
-                if (
-                    e.data is not None
-                    and e.data.wcr is not None
-                    and e.data.data == oc
-                    and e.data.subset is not None
-                    and e.data.subset.num_elements() == 1
-                    and isinstance(e.dst, nodes.AccessNode)
-                    and e.dst.data == oc
-                    and ist.out_degree(e.dst) == 0
-                ):
-                    if wcr_edge is not None:
-                        return False  # more than one write-only reduction sink -> not this shape
-                    wcr_edge, wcr_state = e, ist
-        if wcr_edge is None:
+        # (a) The scalar WCR edges inside the body writing `oc` into a pure-sink AccessNode: one, or one per
+        # branch or statement folding the same operator (``if c: s += x else: s += y``).
+        sinks = [
+            (e, ist)
+            for ist in inner.states()
+            for e in ist.edges()
+            if e.data is not None
+            and e.data.wcr is not None
+            and e.data.data == oc
+            and e.data.subset is not None
+            and e.data.subset.num_elements() == 1
+            and isinstance(e.dst, nodes.AccessNode)
+            and e.dst.data == oc
+            and ist.out_degree(e.dst) == 0
+        ]
+        if not sinks or len({e.data.wcr for e, _ in sinks}) != 1:
             return False
+        wcr_edge, wcr_state = sinks[0]
 
         op = _op_from_wcr(wcr_edge.data.wcr)
         if op is None:
@@ -328,7 +326,7 @@ class NormalizeWCR(ppl.Pass):
         #   multiple writes per invocation): keep the seeded body-local ``_nnr_priv``
         #   accumulator. Never surface a still-masked write as unconditional -- that would
         #   run the masked body on every lane.
-        if self._write_runs_unconditionally_once(inner, wcr_state, oc, wcr_edge):
+        if len(sinks) == 1 and self._write_runs_unconditionally_once(inner, wcr_state, oc, wcr_edge):
             plain = copy.deepcopy(wcr_edge.data)
             plain.wcr = None
             wcr_state.add_edge(wcr_edge.src, wcr_edge.src_conn, wcr_edge.dst, wcr_edge.dst_conn, plain)
@@ -336,23 +334,24 @@ class NormalizeWCR(ppl.Pass):
         else:
             priv_desc = self._seed_desc(oc_desc)
             priv = inner.add_datadesc(f"_nnr_priv_{oc}", priv_desc, find_new_name=True)
-            priv_node = wcr_state.add_access(priv)
             # ``_nnr_priv`` sums the addends a subtraction takes away: the boundary's ``a - b`` subtracts that sum once.
             inner_wcr = "lambda a, b: a + b" if _binop_expr_from_wcr(wcr_str) == "-" else wcr_str
-            # The whole memlet path into the accumulator names it, through every scope the write leaves.
-            for edge in wcr_state.memlet_path(wcr_edge):
-                if edge is not wcr_edge and edge.data.data == oc:
-                    edge.data.data = priv
-                    if edge.data.wcr is not None:
-                        edge.data.wcr = inner_wcr
-            new_data = copy.deepcopy(wcr_edge.data)
-            new_data.data = priv
-            new_data.wcr = inner_wcr
-            wcr_state.add_edge(wcr_edge.src, wcr_edge.src_conn, priv_node, None, new_data)
-            old_sink = wcr_edge.dst
-            wcr_state.remove_edge(wcr_edge)
-            if wcr_state.degree(old_sink) == 0:
-                wcr_state.remove_node(old_sink)
+            for wcr_edge, wcr_state in sinks:
+                priv_node = wcr_state.add_access(priv)
+                # The whole memlet path into the accumulator names it, through every scope the write leaves.
+                for edge in wcr_state.memlet_path(wcr_edge):
+                    if edge is not wcr_edge and edge.data.data == oc:
+                        edge.data.data = priv
+                        if edge.data.wcr is not None:
+                            edge.data.wcr = inner_wcr
+                new_data = copy.deepcopy(wcr_edge.data)
+                new_data.data = priv
+                new_data.wcr = inner_wcr
+                wcr_state.add_edge(wcr_edge.src, wcr_edge.src_conn, priv_node, None, new_data)
+                old_sink = wcr_edge.dst
+                wcr_state.remove_edge(wcr_edge)
+                if wcr_state.degree(old_sink) == 0:
+                    wcr_state.remove_node(old_sink)
             self._seed_state(inner, priv, priv_desc, op)
             self._copyback_state(inner, priv, oc, oc_desc)
 

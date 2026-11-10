@@ -32,6 +32,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from tests.corpus import corpus_suite as CS
 from tests.npbench.misc.azimint_naive_test import dace_azimint_naive
@@ -836,6 +837,26 @@ def test_a_seed_keeps_the_value_a_caller_wrote_into_its_transient():
     assert out.tolist() == [100.0, 101.0, 102.0, 103.0]
 
 
+def test_a_sum_folded_in_both_branches_starts_from_its_identity():
+    n = dace.symbol("n")
+
+    @dace.program
+    def sum_in_both_branches(b: dace.float64[n], out: dace.float64[1]):
+        s = 0.0
+        for i in range(n):
+            if b[i] > 0.5:
+                s += b[i]
+            else:
+                s += 2.0 * b[i]
+        out[0] = s
+
+    sdfg = sum_in_both_branches.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="cpu")
+    b, out = np.random.default_rng(0).random(1000), np.zeros(1)
+    sdfg(b=b, out=out, n=1000)
+    assert np.allclose(out[0], np.where(b > 0.5, b, 2.0 * b).sum())
+
+
 if __name__ == "__main__":
     import sys
 
@@ -848,3 +869,4 @@ if __name__ == "__main__":
     test_a_min_over_a_caller_array_starts_from_its_value()
     test_a_read_write_element_shared_by_an_outer_map_keeps_its_wcr()
     test_a_seed_keeps_the_value_a_caller_wrote_into_its_transient()
+    test_a_sum_folded_in_both_branches_starts_from_its_identity()

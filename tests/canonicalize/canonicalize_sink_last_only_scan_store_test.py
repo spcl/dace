@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`SinkLastOnlyScanStore`: a scan read only at its last element loses its dead stores and keeps
-its summation order."""
+"""Tests for :class:`SinkLastOnlyScanStore`: a scan read only at its last element loses its dead stores and is left
+a reduction."""
 
 import numpy as np
 
@@ -70,18 +70,17 @@ def _acc_written_after_store(a: dace.float64[N], out: dace.float64[1]):
     out[0] = scan[N - 1]
 
 
-def test_scans_read_at_last_keep_one_store_and_the_sequential_order():
+def test_scans_read_at_last_keep_one_store_and_become_a_reduction():
     sdfg = _two_scans_read_at_last.to_sdfg(simplify=True)
     assert _apply(sdfg) == 2
     sdfg.validate()
     sdfg = _two_scans_read_at_last.to_sdfg(simplify=True)
     canonicalize(sdfg)
-    assert _num_loops(sdfg) == 1
-    assert not any(isinstance(n, dace.nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
+    assert _num_loops(sdfg) == 0
     a, b, out = np.random.rand(1000), np.random.rand(1000), np.zeros(2)
     sdfg(a=a, b=b, out=out, N=1000)
-    # Bit-identical to the sequential cumsum: the summation order is kept
-    assert out[0] == np.cumsum(a * a)[-1] and out[1] == np.cumsum(a * b)[-1]
+    # A reduction: the sum may be reassociated
+    assert np.allclose(out, [np.cumsum(a * a)[-1], np.cumsum(a * b)[-1]], rtol=1e-12, atol=0)
 
 
 def test_scan_read_at_another_index_is_refused():
@@ -97,7 +96,7 @@ def test_accumulator_written_after_the_store_is_refused():
 
 
 if __name__ == "__main__":
-    test_scans_read_at_last_keep_one_store_and_the_sequential_order()
+    test_scans_read_at_last_keep_one_store_and_become_a_reduction()
     test_scan_read_at_another_index_is_refused()
     test_scan_read_in_the_loop_is_refused()
     test_accumulator_written_after_the_store_is_refused()
