@@ -631,7 +631,8 @@ class PhaseFixpoint(ppl.Pass):
     """Run fresh instances of a list of units, in order, until a round changes nothing, at most ``max_rounds``.
 
     With ``drivers`` set, only a change by a unit of one of those class names earns another round. Fresh units
-    every round: several units keep per-apply state.
+    every round: several units keep per-apply state. ``at_fixpoint`` says whether the last round changed nothing; a
+    fixpoint stopped by its round cap is not there.
     """
 
     CATEGORY: str = "Canonicalization"
@@ -644,6 +645,7 @@ class PhaseFixpoint(ppl.Pass):
         self.factory = factory
         self.max_rounds = max_rounds
         self.drivers = drivers
+        self.at_fixpoint = False
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -668,6 +670,7 @@ class PhaseFixpoint(ppl.Pass):
                 changed = changed or unit_changed
                 again = again or (unit_changed and (not self.drivers or type(unit).__name__ in self.drivers))
             rounds += changed
+            self.at_fixpoint = not changed
             if not again:
                 break
         return rounds or None
@@ -1122,7 +1125,8 @@ def build_stages(
         validate,
     )
     s += recompose(lift, lift_copy, target)
-    # Once more after the lifts recompose ends with: what they exposed fuses too
+    # Once more after the lifts recompose ends with: what they exposed fuses too. Skipped when the first run settled
+    # and none of them changed the graph (``Settled``).
     s += [(FUSE, maximal_fusion(target))]
     s += finish()
     prepared([unit for stage_label, unit in s])
@@ -1227,33 +1231,41 @@ SETTLED_UNITS: tuple[type[ppl.Pass], ...] = (
     SymbolDedup,
     PrivatizeScalars,
     PrivatizeScalarsAndArrays,
+    PhaseFixpoint,
 )
 
 
 class Settled:
     """The change clock of one run of units: a unit of :data:`SETTLED_UNITS` is skipped when no unit has
     changed the graph since it last ran. Keyed by class: these units take no options, and the one that does runs
-    every time with it set."""
+    every time with it set. A :class:`PhaseFixpoint` is keyed by its name too, and counts as run only once it is at
+    its fixpoint."""
 
     __slots__ = ("clock", "ran_at")
 
     def __init__(self) -> None:
         self.clock = 0
-        self.ran_at: dict[type, int] = {}
+        self.ran_at: dict[Any, int] = {}
 
     @staticmethod
     def tracked(unit: ppl.Pass) -> bool:
         return type(unit) in SETTLED_UNITS and not getattr(unit, "multistate", False)
 
+    @staticmethod
+    def key(unit: ppl.Pass) -> Any:
+        return (PhaseFixpoint, unit.name) if isinstance(unit, PhaseFixpoint) else type(unit)
+
     def skip(self, unit: ppl.Pass) -> bool:
-        return self.tracked(unit) and self.ran_at.get(type(unit)) == self.clock
+        return self.tracked(unit) and self.ran_at.get(self.key(unit)) == self.clock
 
     def record(self, unit: ppl.Pass, changed: bool, dirties: bool = True) -> None:
         """Note that ``unit`` ran; ``dirties`` is whether its change earns the settled units another run."""
         if changed and dirties:
             self.clock += 1
-        if self.tracked(unit):
-            self.ran_at[type(unit)] = self.clock
+        if self.tracked(unit) and getattr(unit, "at_fixpoint", True):
+            self.ran_at[self.key(unit)] = self.clock
+        elif self.tracked(unit):
+            self.ran_at.pop(self.key(unit), None)
 
 
 @properties.make_properties
