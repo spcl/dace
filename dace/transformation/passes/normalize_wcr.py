@@ -852,8 +852,13 @@ class NormalizeWCR(ppl.Pass):
             # A partial sized by a symbol this SDFG does not define (a triangular ``i + 1`` extent) would leak it.
             if {str(sym) for sym in priv_desc.free_symbols} - set(sdfg.symbols.keys()):
                 continue
-            # A body folding into its out-only scalar connector folds onto the private: start it at the identity
-            if isinstance(src, nodes.NestedSDFG) and accumulates_into(src.sdfg, {src_conn}):
+            # A body that reads back what it folds into its out-only scalar connector reads the private: start it at
+            #  the identity. A body that only accumulates by WCR stays one state, the shape reductions are lowered from.
+            if isinstance(src, nodes.NestedSDFG) and any(
+                isinstance(n, nodes.AccessNode) and n.data == src_conn and st.out_degree(n) > 0
+                for st in src.sdfg.states()
+                for n in st.nodes()
+            ):
                 op = _op_from_wcr(e.data.wcr)
                 if op is None:
                     continue
