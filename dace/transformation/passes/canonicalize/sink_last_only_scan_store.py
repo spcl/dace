@@ -7,8 +7,8 @@ Shape (cp2k ``cumsum(...)[-1]``)::
         acc = acc + x[i]      ->        acc = acc + x[i]
         scan[i] = acc               scan[N - 1] = acc
 
-Every element but the last is dead, so the per-iteration stores go. What is left is a plain accumulation, a
-reduction the later lifts may reassociate.
+Every element but the last is dead, so the per-iteration stores go. The loop is pinned sequential:
+a cumsum fixes the summation order, and reassociating it changes results (cp2k flips a branch).
 
 Contract, per loop ``L`` (``i`` from 0, step 1, last value ``e``, no break/continue) and transient
 array ``scan``:
@@ -118,7 +118,7 @@ def _last_subset(subset: Range, loop_var: str, end) -> Range | None:
 
 @properties.make_properties
 class SinkLastOnlyScanStore(ppl.Pass):
-    """Replace a loop's stores into a scan read only at its last element by one store after it."""
+    """Replace a loop's stores into a scan read only at its last element by one store after it; pin the loop."""
 
     CATEGORY: str = "Optimization Preparation"
 
@@ -197,6 +197,7 @@ class SinkLastOnlyScanStore(ppl.Pass):
                 stores.append((state, edge, acc, last))
         if not stores:
             return 0
+        loop.pinned_sequential = True
         after = loop.parent_graph.add_state_after(loop, label=f"{loop.label}_last")
         for state, edge, acc, last in stores:
             scan = edge.dst
