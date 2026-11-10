@@ -224,6 +224,91 @@ def test_interstate_read_after_the_fill_keeps_it():
     assert fills(sdfg) == 1
 
 
+def filled_then_shifted(read: str, as_map: bool = False, one_state: bool = False) -> dace.SDFG:
+    """``tmp = zeros(N + 2)``; ``tmp[i + 1] = b[i]`` for ``i`` in ``0:N``; ``out = tmp[read]``; the first two share a
+    state when ``one_state``."""
+    sdfg = dace.SDFG(f"filled_then_shifted_{abs(hash(read))}_{as_map}_{one_state}")
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_transient("tmp", [N + 2], dace.float64)
+    zero = sdfg.add_state("zero", is_start_block=True)
+    zeroed = zero.add_access("tmp")
+    if as_map:
+        zero.add_mapped_tasklet(
+            "zeros",
+            {"i": "0:N + 2"},
+            {},
+            "__o = 0.0",
+            {"__o": dace.Memlet("tmp[i]")},
+            output_nodes={"tmp": zeroed},
+            external_edges=True,
+        )
+    else:
+        fill = FillLibraryNode("memset_tmp", value=0)
+        zero.add_node(fill)
+        zero.add_edge(fill, fill.OUTPUT_CONNECTOR_NAME, zeroed, None, dace.Memlet("tmp[0:N + 2]"))
+    write = zero if one_state else sdfg.add_state_after(zero, "write")
+    b = write.add_read("b")
+    if one_state:
+        write.add_nedge(zeroed, b, dace.Memlet())
+    write.add_mapped_tasklet(
+        "shift",
+        {"i": "0:N"},
+        {"__b": dace.Memlet("b[i]")},
+        "__t = __b",
+        {"__t": dace.Memlet("tmp[i + 1]")},
+        input_nodes={"b": b},
+        external_edges=True,
+    )
+    done = sdfg.add_state_after(write, "done")
+    done.add_nedge(done.add_read("tmp"), done.add_write("out"), dace.Memlet(f"tmp[{read}] -> [0:N]"))
+    return sdfg
+
+
+def run_shifted(sdfg: dace.SDFG) -> tuple[np.ndarray, np.ndarray]:
+    b = np.random.rand(9)
+    out = np.full(9, np.nan)
+    sdfg(b=b, out=out, N=9)
+    return b, out
+
+
+def test_fill_a_shifted_overwrite_covers_every_read_of_is_dropped():
+    sdfg = filled_then_shifted("1:N + 1")
+    assert DeadFillElimination().apply_pass(sdfg, {}) == 1
+    assert fills(sdfg) == 0
+    sdfg.validate()
+    b, out = run_shifted(sdfg)
+    assert np.array_equal(out, b)
+
+
+def test_zeros_map_a_shifted_overwrite_covers_every_read_of_is_dropped():
+    sdfg = filled_then_shifted("1:N + 1", as_map=True)
+    assert DeadFillElimination().apply_pass(sdfg, {}) == 1
+    maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    assert [str(m.map.range) for m in maps] == ["0:N"]
+    sdfg.validate()
+    b, out = run_shifted(sdfg)
+    assert np.array_equal(out, b)
+
+
+def test_zeros_map_a_shifted_map_overwrites_in_its_state_is_dropped():
+    sdfg = filled_then_shifted("1:N + 1", as_map=True, one_state=True)
+    assert DeadFillElimination().apply_pass(sdfg, {}) == 1
+    maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)]
+    assert [str(m.map.range) for m in maps] == ["0:N"]
+    sdfg.validate()
+    b, out = run_shifted(sdfg)
+    assert np.array_equal(out, b)
+
+
+def test_fill_kept_when_a_read_reaches_one_element_past_the_overwrite():
+    sdfg = filled_then_shifted("0:N")
+    assert DeadFillElimination().apply_pass(sdfg, {}) is None
+    assert fills(sdfg) == 1
+    b, out = run_shifted(sdfg)
+    assert out[0] == 0 and np.array_equal(out[1:], b[:-1])
+
+
 if __name__ == "__main__":
     test_overwritten_memset_is_dropped()
     test_memset_kept_when_the_map_misses_elements()
@@ -235,6 +320,10 @@ if __name__ == "__main__":
     test_memset_kept_when_the_loop_is_guarded_without_else()
     test_memset_every_branch_overwrites_is_dropped()
     test_memset_in_a_branch_overwritten_after_it_is_dropped()
+    test_fill_a_shifted_overwrite_covers_every_read_of_is_dropped()
+    test_zeros_map_a_shifted_overwrite_covers_every_read_of_is_dropped()
+    test_zeros_map_a_shifted_map_overwrites_in_its_state_is_dropped()
+    test_fill_kept_when_a_read_reaches_one_element_past_the_overwrite()
 
 
 def zeros_then_prefix_copy(prefix: str) -> dace.SDFG:

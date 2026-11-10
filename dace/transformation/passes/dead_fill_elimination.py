@@ -45,16 +45,23 @@ workspace. The fill must be constant and the array's only access outside the loo
 run unconditionally in one iteration -- in the body or in unit-stride loops nested in it, outside conditionals and
 nested SDFGs -- and no iteration may read the transient before writing it.
 
+Outside a loop, the overwrite need not cover the whole array, only every subset of it that anything reads: an element
+nobody reads never shows its fill. The write may index an axis by ``p + c`` (``al[i + 2]`` over ``0:n + 3``). A read
+whose subset is not a range over symbols that no interstate edge, loop or scope rebinds (a control-flow read, a read
+through a written View) counts as unknown and keeps the fill.
+
 Anything else (a partial or indirect write, a conditional one without ``else``, a read in between, a
 nested SDFG writing it) keeps the memset.
 """
 
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import Any
 
 from dace import SDFG, data, properties, symbolic
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg import nodes
+from dace.sdfg.sdfg import interstate_bound_names
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     BreakBlock,
@@ -74,17 +81,74 @@ from dace.transformation.passes.analysis import loop_analysis
 Fixed = dict[int, symbolic.SymbolicType]
 
 
+@dataclass(slots=True)
+class Reads:
+    """Every subset of each array of ``sdfg`` that something reads, gathered in one walk on first use: out edges of its
+    access nodes, WCR writes and writes out of a nested SDFG (which may read first). ``None`` marks an array read where
+    no range says what: in control flow, through a written View, or at an index naming a ``bound`` symbol (one an
+    interstate edge, a loop or a scope assigns)."""
+
+    sdfg: SDFG
+    boxes: dict[str, list[Range] | None] | None = None
+    bound: set[str] = field(default_factory=set)
+
+    def gather(self) -> dict[str, list[Range] | None]:
+        self.bound = interstate_bound_names(self.sdfg)
+        states = list(self.sdfg.states())
+        for state in states:
+            for entry in (n for n in state.nodes() if isinstance(n, nodes.MapEntry)):
+                self.bound.update(entry.map.params)
+                self.bound.update(c for c in entry.in_connectors if not c.startswith("IN_"))
+        boxes: dict[str, list[Range] | None] = {}
+        for region in self.sdfg.all_control_flow_regions():
+            boxes.update(dict.fromkeys(control_reads(region)))
+        for state in states:
+            for node in state.data_nodes():
+                for edge in state.all_edges(node):
+                    if boxes.get(node.data, []) is None or edge.data.is_empty():
+                        continue
+                    if edge.src is node:
+                        subset = edge.data.get_src_subset(edge, state)
+                    elif isinstance(edge.src, nodes.AccessNode) and isinstance(edge.src.desc(self.sdfg), data.View):
+                        subset = None
+                    elif edge.data.wcr is not None or isinstance(edge.src, nodes.NestedSDFG):
+                        subset = edge.data.get_dst_subset(edge, state)
+                    else:
+                        continue
+                    if isinstance(subset, Range) and not subset.free_symbols & self.bound:
+                        boxes.setdefault(node.data, []).append(subset)
+                    else:
+                        boxes[node.data] = None
+        return boxes
+
+    def covered_by(self, name: str, box: Range) -> bool:
+        """Whether ``box``, over symbols nothing rebinds, holds every subset of ``name`` that is read."""
+        if self.boxes is None:
+            self.boxes = self.gather()
+        reads = self.boxes.get(name, [])
+        if reads is None or box.free_symbols & self.bound:
+            return False
+        facts = self.sdfg.facts(self.bound)
+        return all(box.covers(read, facts) for read in reads)
+
+
 def covers_every_element(
-    state: SDFGState, written: nodes.AccessNode, desc: data.Array, fixed: Fixed | None = None
+    state: SDFGState,
+    written: nodes.AccessNode,
+    desc: data.Array,
+    fixed: Fixed | None = None,
+    reads: Reads | None = None,
 ) -> bool:
     """Whether ``written``'s only writer is a map storing each element of ``desc`` exactly once, unread.
 
-    With ``fixed``, each axis it names holds that one index instead, and the rest is covered once.
+    With ``fixed``, each axis it names holds that one index instead, and the rest is covered once. Without, given
+    ``reads``, every element read suffices.
     """
     fixed = fixed or {}
+    reads = None if fixed else reads
     in_edges = state.in_edges(written)
     if len(in_edges) == 1 and isinstance(in_edges[0].src, nodes.AccessNode):
-        return copy_covers(state, in_edges[0], desc, fixed)
+        return copy_covers(state, in_edges[0], desc, fixed, reads)
     if len(in_edges) != 1 or not isinstance(in_edges[0].src, nodes.MapExit):
         return False
     outer = in_edges[0]
@@ -97,32 +161,45 @@ def covers_every_element(
         return False
     ranges = dict(zip(entry.map.params, entry.map.range.ranges))
     seen = set()
-    for axis, ((begin, end, step), extent) in enumerate(zip(inner[0].data.subset.ranges, desc.shape)):
+    box = []
+    for axis, (begin, end, step) in enumerate(inner[0].data.subset.ranges):
         if axis in fixed:
             if begin != end or symbolic.simplify(begin - fixed[axis]) != 0:
                 return False
             continue
-        param = str(begin)
-        if begin != end or param not in ranges or param in seen:
+        # ``p + c``: one parameter with unit coefficient, the offset free of every parameter.
+        params = [s for s in symbolic.pystr_to_symbolic(begin).free_symbols if str(s) in ranges]
+        if begin != end or len(params) != 1 or str(params[0]) in seen:
             return False
-        seen.add(param)
-        low, high, stride = ranges[param]
-        if symbolic.simplify(low) != 0 or stride != 1 or symbolic.simplify(high + 1 - extent) != 0:
+        offset = symbolic.simplify(begin - params[0])
+        if any(str(s) in ranges for s in offset.free_symbols):
             return False
+        seen.add(str(params[0]))
+        low, high, stride = ranges[str(params[0])]
+        if stride != 1:
+            return False
+        box.append((low + offset, high + offset, 1))
     # One parameter per axis and no other: a parameter left over repeats the stores, so it is still a map whose
     # iterations outnumber the elements -- kept, not reasoned about.
     if len(seen) != len(desc.shape) - len(fixed) or len(entry.map.params) != len(seen):
         return False
-    return all(e.data.data != written.data for e in state.in_edges(entry))
+    if any(e.data.data == written.data for e in state.in_edges(entry)):
+        return False
+    extents = [extent for axis, extent in enumerate(desc.shape) if axis not in fixed]
+    if all(symbolic.simplify(b) == 0 and symbolic.simplify(e + 1 - n) == 0 for (b, e, _), n in zip(box, extents)):
+        return True
+    return reads is not None and reads.covered_by(written.data, Range(box))
 
 
-def copy_covers(state: SDFGState, edge, desc: data.Array, fixed: Fixed) -> bool:
-    """Whether the copy ``edge`` writes every element of ``desc`` (``fixed`` axes at that one index)."""
+def copy_covers(state: SDFGState, edge, desc: data.Array, fixed: Fixed, reads: Reads | None = None) -> bool:
+    """Whether the copy ``edge`` writes every element of ``desc`` (``fixed`` axes at that one index) or read."""
     if edge.data.dynamic or edge.data.wcr is not None or edge.src.data == edge.dst.data:
         return False
     subset = edge.data.get_dst_subset(edge, state)
     if subset is None or len(subset.ranges) != len(desc.shape):
         return False
+    if reads is not None and isinstance(subset, Range) and reads.covered_by(edge.dst.data, subset):
+        return True
     for axis, ((begin, end, step), extent) in enumerate(zip(subset.ranges, desc.shape)):
         if axis in fixed:
             if begin != end or symbolic.simplify(begin - fixed[axis]) != 0:
@@ -132,11 +209,13 @@ def copy_covers(state: SDFGState, edge, desc: data.Array, fixed: Fixed) -> bool:
     return True
 
 
-def overwritten_in_state(state: SDFGState, name: str, desc: data.Array, fixed: Fixed | None = None) -> bool:
+def overwritten_in_state(
+    state: SDFGState, name: str, desc: data.Array, fixed: Fixed | None = None, reads: Reads | None = None
+) -> bool:
     """Whether a map in ``state`` overwrites ``name`` (``fixed`` axes at one index) before the state reads it."""
     accesses = [n for n in state.data_nodes() if n.data == name]
     for written in accesses:
-        if not covers_every_element(state, written, desc, fixed):
+        if not covers_every_element(state, written, desc, fixed, reads):
             continue
         downstream = set(state.bfs_nodes(written))
         if all(n is written or n in downstream for n in accesses):
@@ -144,7 +223,7 @@ def overwritten_in_state(state: SDFGState, name: str, desc: data.Array, fixed: F
     return False
 
 
-def dead_fill(state: SDFGState, fill: FillLibraryNode) -> nodes.AccessNode | None:
+def dead_fill(state: SDFGState, fill: FillLibraryNode, reads: Reads | None = None) -> nodes.AccessNode | None:
     """The access node ``fill`` writes, when the fill is dead; ``None`` otherwise."""
     if any(not e.data.is_empty() for e in state.in_edges(fill)):
         return None
@@ -164,12 +243,12 @@ def dead_fill(state: SDFGState, fill: FillLibraryNode) -> nodes.AccessNode | Non
     others = [n for n in state.data_nodes() if n.data == zeroed.data and n is not zeroed]
     reachable = set(state.bfs_nodes(zeroed))
     for written in others:
-        if written not in reachable or not covers_every_element(state, written, desc):
+        if written not in reachable or not covers_every_element(state, written, desc, reads=reads):
             continue
         downstream = set(state.bfs_nodes(written))
         if all(n is written or n in downstream for n in others):
             return zeroed
-    if not others and overwritten_after(state, zeroed.data, desc):
+    if not others and overwritten_after(state, zeroed.data, desc, reads):
         return zeroed
     return None
 
@@ -197,9 +276,12 @@ def copy_leaves(state: SDFGState, written: nodes.AccessNode, desc: data.Array) -
     return left
 
 
-def dead_part_of_fill_map(state: SDFGState, entry: nodes.MapEntry) -> tuple[nodes.AccessNode, tuple] | None:
+def dead_part_of_fill_map(
+    state: SDFGState, entry: nodes.MapEntry, reads: Reads | None = None
+) -> tuple[nodes.AccessNode, tuple] | None:
     """The array a top-level map writes element for element, and what of it a copy in the same state overwrites before
-    anything reads it: the :func:`copy_leaves` of that copy; ``None`` when nothing of the map's work is dead."""
+    anything reads it: the :func:`copy_leaves` of that copy, or all of it when a map there or the control flow after
+    overwrites it (:func:`covers_every_element`); ``None`` when nothing of the map's work is dead."""
     exit_node = state.exit_node(entry)
     out_edges = state.out_edges(exit_node)
     if len(out_edges) != 1 or not isinstance(out_edges[0].dst, nodes.AccessNode):
@@ -221,11 +303,15 @@ def dead_part_of_fill_map(state: SDFGState, entry: nodes.MapEntry) -> tuple[node
         if written not in reachable:
             continue
         left = copy_leaves(state, written, desc)
+        if left is None and covers_every_element(state, written, desc, reads=reads):
+            left = (-1, ())
         if left is None:
             continue
         downstream = set(state.bfs_nodes(written))
         if all(n is written or n in downstream for n in others):
             return zeroed, left
+    if not others and overwritten_after(state, zeroed.data, desc, reads):
+        return zeroed, (-1, ())
     return None
 
 
@@ -309,20 +395,23 @@ def unconditional_successor(graph: ControlFlowRegion, block: ControlFlowBlock, n
     return out_edges[0].dst
 
 
-def overwritten_by(block: ControlFlowBlock, name: str, desc: data.Array, fixed: Fixed) -> bool:
+def overwritten_by(
+    block: ControlFlowBlock, name: str, desc: data.Array, fixed: Fixed, reads: Reads | None = None
+) -> bool:
     """Whether executing ``block`` overwrites ``name`` whole (``fixed`` axes at one index) before it reads it."""
     if isinstance(block, SDFGState):
-        return overwritten_in_state(block, name, desc, fixed)
+        return overwritten_in_state(block, name, desc, fixed, reads)
     if isinstance(block, ConditionalBlock):
         if name in control_reads(block) or not any(condition is None for condition, _ in block.branches):
             return False
         return all(
-            overwritten_from(branch, branch.start_block, name, desc, fixed) is True for _, branch in block.branches
+            overwritten_from(branch, branch.start_block, name, desc, fixed, reads) is True
+            for _, branch in block.branches
         )
     if isinstance(block, LoopRegion):
         return not fixed and overwritten_by_loop(block, name, desc)
     if isinstance(block, ControlFlowRegion) and block.nodes():
-        return overwritten_from(block, block.start_block, name, desc, fixed) is True
+        return overwritten_from(block, block.start_block, name, desc, fixed, reads) is True
     return False
 
 
@@ -350,7 +439,12 @@ def overwritten_by_loop(loop: LoopRegion, name: str, desc: data.Array) -> bool:
 
 
 def overwritten_from(
-    graph: ControlFlowRegion, block: ControlFlowBlock | None, name: str, desc: data.Array, fixed: Fixed
+    graph: ControlFlowRegion,
+    block: ControlFlowBlock | None,
+    name: str,
+    desc: data.Array,
+    fixed: Fixed,
+    reads: Reads | None = None,
 ) -> bool | None:
     """Follow ``graph``'s unconditional chain from ``block`` to the first block touching ``name``.
 
@@ -359,12 +453,12 @@ def overwritten_from(
     """
     while block is not None:
         if touches(block, name):
-            return overwritten_by(block, name, desc, fixed)
+            return overwritten_by(block, name, desc, fixed, reads)
         block = unconditional_successor(graph, block, name)
     return None
 
 
-def overwritten_after(state: SDFGState, name: str, desc: data.Array) -> bool:
+def overwritten_after(state: SDFGState, name: str, desc: data.Array, reads: Reads | None = None) -> bool:
     """Whether the control flow after ``state`` overwrites ``name`` whole before anything reads it."""
     block: ControlFlowBlock = state
     while True:
@@ -372,7 +466,7 @@ def overwritten_after(state: SDFGState, name: str, desc: data.Array) -> bool:
         following = unconditional_successor(graph, block, name)
         while following is not None:
             if touches(following, name):
-                return overwritten_by(following, name, desc, {})
+                return overwritten_by(following, name, desc, {}, reads)
             block, following = following, unconditional_successor(graph, following, name)
         # The chain ran out untouched: at the end of a plain region or a branch, control passes on after it.
         if (
@@ -553,9 +647,12 @@ class DeadFillElimination(ppl.Pass):
         """
         removed = 0
         for sd in sdfg.all_sdfgs_recursive():
+            # Gathered once per SDFG: what a removal drops is a fill's write or a fill map's reads, so the reads stay
+            # a superset.
+            reads = Reads(sd)
             for state in sd.states():
                 for fill in [n for n in state.nodes() if isinstance(n, FillLibraryNode)]:
-                    zeroed = dead_fill(state, fill)
+                    zeroed = dead_fill(state, fill, reads)
                     if zeroed is None:
                         continue
                     drop_fill(state, fill, zeroed)
@@ -563,7 +660,7 @@ class DeadFillElimination(ppl.Pass):
                 for entry in [
                     n for n, scope in state.scope_dict().items() if isinstance(n, nodes.MapEntry) and scope is None
                 ]:
-                    dead = dead_part_of_fill_map(state, entry)
+                    dead = dead_part_of_fill_map(state, entry, reads)
                     if dead is not None:
                         narrow_fill_map(state, entry, *dead)
                         removed += 1
