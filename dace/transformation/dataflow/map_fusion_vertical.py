@@ -691,10 +691,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assert (not self.require_exclusive_intermediates) or (len(shared_outputs) == 0)
 
         # See `partition_first_outputs()`: moved behind the fused Map it would close a cycle
+        ordered: set[str] = set()
         for edge in list(pure_outputs):
             if edge.data.is_empty() and any(e.dst is second_map_entry for e in graph.out_edges(edge.dst)):
                 graph.remove_edge(edge)
                 pure_outputs.remove(edge)
+            for ordering in graph.edges_between(edge.dst, second_map_entry) if not edge.data.is_empty() else ():
+                graph.remove_edge(ordering)
+                ordered.add(edge.dst.data)
 
         # Also before the rewiring: the reads of the first Map the second Map's writes must stay behind
         anti_dependences = mfhelper.anti_dependences(graph, first_map_entry, second_map_exit)
@@ -789,7 +793,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         second_map_exit.map = first_map_entry.map
 
         mfhelper.keep_anti_dependences(graph, anti_dependences)
-        self.join_in_place_outputs(graph, second_map_exit, in_place)
+        self.join_in_place_outputs(graph, second_map_exit, in_place | ordered)
         # The fused body now accesses them through nodes of its own: the analysis no longer holds for them.
         self.forget_single_use(sdfg, in_place)
 
@@ -889,6 +893,27 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if not probe.reaches(state, intermediate_node, second_map_entry):
                 if self.require_all_intermediates:  # We do not allow pure output nodes.
                     return None
+                pure_outputs.add(out_edge)
+                continue
+
+            # A node that only orders the second Map after this write hands nothing on: every way from it to that Map
+            #  is an empty Memlet into its entry, and its body holds no node of the container. Fused, one Map makes
+            #  both accesses, which `has_read_write_dependency()` has judged, and `apply()` drops the edges.
+            if (
+                self.relaxed_dataflow
+                and not self.require_all_intermediates
+                and isinstance(intermediate_node, nodes.AccessNode)
+                and not out_edge.data.is_empty()
+                and all(
+                    e.dst is second_map_entry and e.data.is_empty()
+                    for e in state.out_edges(intermediate_node)
+                    if e.dst is second_map_entry or probe.reaches(state, e.dst, second_map_entry)
+                )
+                and not any(
+                    isinstance(n, nodes.AccessNode) and n.data == intermediate_node.data
+                    for n in mfhelper.scope_contents(state, second_map_entry)
+                )
+            ):
                 pure_outputs.add(out_edge)
                 continue
 

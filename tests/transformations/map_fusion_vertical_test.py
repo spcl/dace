@@ -4515,6 +4515,36 @@ def test_input_read_through_two_nodes_fuses(through_view: bool):
     assert np.allclose(ref["out"], res["out"])
 
 
+def test_an_output_that_only_orders_the_second_map_is_a_pure_output():
+    """The first Map writes ``t`` and ``b[:, 0]``, the second reads ``t`` and writes ``b[:, 1]``, ordered after the
+    first Map's ``b`` by an empty Memlet."""
+    sdfg = dace.SDFG(unique_name("output_that_only_orders"))
+    sdfg.add_array("a", [10], dace.float64)
+    sdfg.add_array("b", [10, 2], dace.float64)
+    sdfg.add_transient("t", [10], dace.float64)
+    state = sdfg.add_state()
+    t, first_b = state.add_access("t"), state.add_access("b")
+    entry, exit_node = state.add_map("first", {"i": "0:10"})
+    tasklet = state.add_tasklet("first", {"_a"}, {"_t", "_b"}, "_t = _a + 1.0; _b = 2.0 * _a")
+    state.add_memlet_path(state.add_access("a"), entry, tasklet, dst_conn="_a", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(tasklet, exit_node, t, src_conn="_t", memlet=dace.Memlet("t[i]"))
+    state.add_memlet_path(tasklet, exit_node, first_b, src_conn="_b", memlet=dace.Memlet("b[i, 0]"))
+    _, second, _ = state.add_mapped_tasklet(
+        "second", {"i": "0:10"}, {"_t": dace.Memlet("t[i]")}, "_b = 3.0 * _t", {"_b": dace.Memlet("b[i, 1]")},
+        external_edges=True, input_nodes={"t": t},
+    )  # fmt: skip
+    state.add_nedge(first_b, second, dace.Memlet())
+    sdfg.validate()
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+    assert sdfg.apply_transformations_repeated(MapFusionVertical(relaxed_dataflow=True), validate_all=True) == 1
+    assert count_nodes(sdfg, nodes.MapEntry) == 1
+    assert "t" not in sdfg.arrays and sum(n.data == "b" for n in state.data_nodes()) == 1
+    compile_and_run_sdfg(sdfg, **res)
+    assert np.allclose(ref["b"], res["b"])
+
+
 if __name__ == "__main__":
     test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in_place()
     test_fusion_intrinsic_memlet_direction()
@@ -4585,3 +4615,4 @@ if __name__ == "__main__":
     test_a_conditional_write_fuses_only_into_an_intermediate_nothing_else_keeps_alive(True)
     test_input_read_through_two_nodes_fuses(False)
     test_input_read_through_two_nodes_fuses(True)
+    test_an_output_that_only_orders_the_second_map_is_a_pure_output()
