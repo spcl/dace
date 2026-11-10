@@ -135,7 +135,6 @@ def test_non_gpu_len1_array_untouched():
 def _build_block_reduction() -> dace.SDFG:
     """GPU-transformed SDFG whose length-1 ``tB`` is the output of a cub block ``Reduce``."""
     from dace.memlet import Memlet
-    from dace.transformation.interstate import GPUTransformSDFG
 
     sdfg = dace.SDFG("block_reduction")
     sdfg.add_array("A", (128,), dace.float32)
@@ -160,7 +159,10 @@ def _build_block_reduction() -> dace.SDFG:
     state.add_edge(mxi, None, mx, None, Memlet.simple(B, "bi"))
     state.add_edge(mx, None, B, None, Memlet.simple(B, "0:2"))
     sdfg.fill_scope_connectors()
-    sdfg.apply_transformations(GPUTransformSDFG, options={"sequential_innermaps": False})
+    sdfg.apply_gpu_transformations()
+    # The offload makes everything inside a kernel Sequential; the block-wide reduce needs a thread-block map.
+    mei.map.schedule = dace.ScheduleType.GPU_ThreadBlock
+    red.schedule = dace.ScheduleType.Default
     return sdfg
 
 

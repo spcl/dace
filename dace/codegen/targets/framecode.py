@@ -186,7 +186,8 @@ class DaCeCodeGenerator:
             if isinstance(csttype, data.Array):
                 stored = constant_as_stored(csttype, cstval)
                 const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(stored.size) + "] = {"
-                const_str += ", ".join(str(value) for value in stored.flat) + "};\n"
+                # sym2cpp, not str: a numpy bool prints as Python 'True', and a complex as '(1+2j)'.
+                const_str += ", ".join(sym2cpp(value) for value in stored.flat) + "};\n"
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write(f"constexpr {csttype.dtype.ctype} {cstname} = {sym2cpp(cstval)};\n", sdfg)
