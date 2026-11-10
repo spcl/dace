@@ -2405,10 +2405,15 @@ def get_control_flow_block_dominators(
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
         for k in idom.keys():
             if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
-                next_dom = idom[k.parent_graph]
+                region = k.parent_graph
+                next_dom = idom[region]
                 while next_dom.parent_graph is not sdfg and next_dom is next_dom.parent_graph.start_block:
-                    next_dom = idom[next_dom.parent_graph]
-                idom[k] = next_dom
+                    region = next_dom.parent_graph
+                    next_dom = idom[region]
+                # A region that starts the SDFG is the root: its first block becomes the root instead
+                idom[k] = (
+                    k if next_dom is region and not isinstance(region, (LoopRegion, ConditionalBlock)) else next_dom
+                )
         changed = True
         while changed:
             changed = False
@@ -2462,13 +2467,18 @@ def get_control_flow_block_dominators(
             if k.parent_graph is not sdfg and (
                 k is sinks_per_cfg[k.parent_graph] or isinstance(k.parent_graph, ConditionalBlock)
             ):
-                next_pdom = ipostdom[k.parent_graph]
+                region = k.parent_graph
+                next_pdom = ipostdom[region]
                 while next_pdom.parent_graph is not sdfg and (
                     next_pdom is sinks_per_cfg[next_pdom.parent_graph]
                     or isinstance(next_pdom.parent_graph, ConditionalBlock)
                 ):
-                    next_pdom = ipostdom[next_pdom.parent_graph]
-                ipostdom[k] = next_pdom
+                    region = next_pdom.parent_graph
+                    next_pdom = ipostdom[region]
+                # A region that ends the SDFG is the root: its last block becomes the root instead
+                ipostdom[k] = (
+                    k if next_pdom is region and not isinstance(region, (LoopRegion, ConditionalBlock)) else next_pdom
+                )
         changed = True
         while changed:
             changed = False
