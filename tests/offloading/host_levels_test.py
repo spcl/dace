@@ -176,7 +176,9 @@ def rows_scaled_by_a_device_element() -> dace.SDFG:
     sdfg.add_array("A", [4], dace.float64)
     sdfg.add_array("out", [4, 8], dace.float64)
     sdfg.add_array("t", [1], dace.float64, transient=True)
-    init = sdfg.add_state("init")
+    zero = sdfg.add_state("zero")
+    zero.add_edge(zero.add_tasklet("zero", {}, {"r"}, "r = 0.0"), "r", zero.add_write("t"), None, dace.Memlet("t[0]"))
+    init = sdfg.add_state_after(zero, "init")
     init.add_mapped_tasklet(
         "total",
         {"k": "0:4"},
