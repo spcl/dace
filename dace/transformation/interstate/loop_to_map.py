@@ -859,8 +859,11 @@ class LoopToMap(xf.MultiStateTransformation):
                 continue
             nsdfg.add_node(block)
         for e in self.loop.edges():
-            nsymbols.update({s: sdfg.symbols[s] for s in e.data.assignments.keys() if s in sdfg.symbols})
             nsdfg.add_edge(e.src, e.dst, e.data)
+        # Every symbol the body assigns, also inside its branches, keeps the type the parent declares; inferring it
+        # from the assigned expression widens ``j = 1 if c else start`` from ``int`` to ``int64_t``.
+        for e in self.loop.all_interstate_edges():
+            nsymbols.update({s: sdfg.symbols[s] for s in e.data.assignments.keys() if s in sdfg.symbols})
 
         # Add NestedSDFG arrays
         for name in read_set | write_set:
@@ -878,8 +881,10 @@ class LoopToMap(xf.MultiStateTransformation):
         # Add NestedSDFG node
         cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
         if sdfg.parent:
+            # Only what the loop body uses: a mapped symbol it never reads is an unused mapping
+            used = nsdfg.free_symbols
             for s in sdfg.parent_nsdfg_node.symbol_mapping.keys():
-                if s not in cnode.symbol_mapping:
+                if s in used and s not in cnode.symbol_mapping:
                     cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
                     # Other passes map symbols without declaring them; type it off the symbol.
                     nsdfg.symbols[s] = sdfg.symbols.get(s, symbolic.symbol(s).dtype)

@@ -7,6 +7,7 @@ import pytest
 import dace
 from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutils
+from dace.sdfg.graph import SubgraphView
 from dace.transformation.dataflow import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.interstate import InlineSDFG
@@ -629,11 +630,9 @@ def test_strided_fission_step2():
     strided_two_ops(A=A, B=B_ref)
 
     sdfg = strided_two_ops.to_sdfg()
-    sdfg.save("before.sdfg")
     assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
 
     sdfg(A=A, B=B_test)
-    sdfg.save("after.sdfg")
     assert np.allclose(B_test, B_ref)
 
 
@@ -1149,6 +1148,178 @@ def test_fission_keeps_copy_into_a_wider_array_valid():
     assert np.allclose(dqdt, expected)
 
 
+_NC = dace.symbol("NC")
+
+
+@dace.program
+def column_copy(a: dace.float64[_NC, _NC + 2], b: dace.float64[_NC, _NC + 2], c: dace.float64[_NC, _NC + 2]):
+    for j in dace.map[0 : _NC + 2]:
+        t = a[:, j] * 2.0
+        u = t + 1.0
+        b[:, j] = t
+        c[:, j] = u
+
+
+@dace.program
+def row_copy(a: dace.float64[_NC + 2, _NC], b: dace.float64[_NC + 2, _NC], c: dace.float64[_NC + 2, _NC]):
+    for j in dace.map[0 : _NC + 2]:
+        t = a[j, :] * 2.0
+        u = t + 1.0
+        b[j, :] = t
+        c[j, :] = u
+
+
+@dace.program
+def row_copy_through_inner_maps(
+    a: dace.float64[_NC + 2, _NC], b: dace.float64[_NC + 2, _NC], c: dace.float64[_NC + 2, _NC]
+):
+    for j in dace.map[0 : _NC + 2]:
+        t = np.empty([_NC], dace.float64)
+        for i in dace.map[0:_NC]:
+            t[i] = a[j, i] * 2.0
+        for i in dace.map[0:_NC]:
+            c[j, i] = t[i] + 1.0
+        b[j, :] = t
+
+
+@dace.program
+def column_copy_through_inner_maps(
+    a: dace.float64[_NC, _NC + 2], b: dace.float64[_NC, _NC + 2], c: dace.float64[_NC, _NC + 2]
+):
+    for j in dace.map[0 : _NC + 2]:
+        t = np.empty([_NC], dace.float64)
+        for i in dace.map[0:_NC]:
+            t[i] = a[i, j] * 2.0
+        for i in dace.map[0:_NC]:
+            c[i, j] = t[i] + 1.0
+        b[:, j] = t
+
+
+def _fission_matches_reference(program, shape, simplify=True):
+    """Applies MapFission once and compares ``b`` and ``c`` against the unfissioned SDFG; returns the SDFG."""
+    sdfg = program.to_sdfg(simplify=simplify)
+    sdfg.name = f"{sdfg.name}_{int(simplify)}"
+    reference = copy.deepcopy(sdfg)
+    reference.name = f"{sdfg.name}_reference"
+
+    assert sdfg.apply_transformations(MapFission) == 1
+    sdfg.validate()
+
+    rng = np.random.default_rng(0)
+    a = rng.random(shape)
+    want = {name: np.zeros(shape) for name in "bc"}
+    got = copy.deepcopy(want)
+    reference(a=a, **want, NC=3)
+    sdfg(a=a, **got, NC=3)
+    for name in "bc":
+        assert np.array_equal(got[name], want[name]), name
+    return sdfg
+
+
+def test_a_copy_taking_the_map_dimension_after_another_becomes_a_copy_map():
+    """Fission widens ``t`` to ``t[j, :]`` but ``b[:, j]`` takes ``j`` second: one lifted copy would pair the two
+    dimensions out of order, so the copy is replicated per iteration as an elementwise map."""
+    sdfg = _fission_matches_reference(column_copy, (3, 5))
+    copies = [
+        e
+        for s in sdfg.states()
+        for e in s.edges()
+        if isinstance(e.src, dace.nodes.AccessNode) and isinstance(e.dst, dace.nodes.AccessNode)
+    ]
+    assert not copies
+
+
+def test_a_lifted_copy_of_a_transient_with_another_consumer_is_kept():
+    """``t`` also feeds ``u``, so it is no sink of the map body: its copy into ``b`` was dropped, leaving ``b``
+    isolated. The copy pairs dimensions in order and stays one copy outside the maps."""
+    sdfg = _fission_matches_reference(row_copy, (5, 3))
+    copies = [
+        (e.src.data, e.dst.data)
+        for s in sdfg.states()
+        for e in s.edges()
+        if isinstance(e.src, dace.nodes.AccessNode) and isinstance(e.dst, dace.nodes.AccessNode)
+    ]
+    assert copies == [("t", "b")]
+
+
+@pytest.mark.parametrize("program, shape", [(row_copy, (5, 3)), (column_copy, (3, 5))])
+def test_fission_of_a_nested_sdfg_folds_a_slice_view_that_moves_with_the_map(program, shape):
+    """The map body is a nested SDFG reading ``a`` through the view ``a[j, :]`` (``a[:, j]``). Fission widened the
+    view's memlet to all of ``a`` but not the view, so every iteration read the first row (column)."""
+    _fission_matches_reference(program, shape, simplify=False)
+
+
+@pytest.mark.parametrize(
+    "program, shape", [(row_copy_through_inner_maps, (5, 3)), (column_copy_through_inner_maps, (3, 5))]
+)
+def test_fission_widens_an_inner_connector_sharing_the_coordinates_of_a_widened_transient(program, shape):
+    """The inner maps' nested SDFGs index ``t`` directly (same descriptor as outside). Fission made each a view of the
+    one element ``t[j, i]`` and the inner ``t[i]`` then indexed past it; the connector is widened like ``t``."""
+    _fission_matches_reference(program, shape, simplify=False)
+
+
+def test_an_ordering_edge_out_of_the_map_is_kept_on_the_fissioned_maps():
+    """A later writer is ordered after the map by an empty memlet off its exit. MapFission read that memlet's
+    descriptor (``KeyError: None``); the order must survive the split."""
+    A, expected = config()
+    B = np.random.rand(2)
+    sdfg = mapfission_sdfg()
+    sdfg.add_array("D", [1], dace.float64)
+    state = sdfg.nodes()[0]
+    topmap = next(node for node in state.nodes() if isinstance(node, nodes.MapEntry) and node.label == "outer")
+    body = nest_state_subgraph(sdfg, state, state.scope_subgraph(topmap, include_entry=False, include_exit=False))
+    later = state.add_tasklet("later", {}, {"out"}, "out = 7.0")
+    state.add_edge(later, "out", state.add_write("D"), None, dace.Memlet("D[0]"))
+    state.add_nedge(state.exit_node(topmap), later, dace.Memlet())
+
+    assert sdfg.apply_transformations(MapFission) > 0
+
+    assert later in state.successors(body), "the later writer must stay ordered after the split maps"
+    D = np.zeros(1)
+    sdfg(A=A, B=B, D=D)
+    assert np.allclose(B, expected) and D[0] == 7.0
+
+
+@dace.program
+def scale_and_sum(A: dace.float64[16], B: dace.float64[16], S: dace.float64[1]):
+    for i in dace.map[0:16]:
+        B[i] = 2 * A[i]
+        S[0] += A[i] + 1
+
+
+def nested_body_reducing_through_an_access_node(program) -> dace.SDFG:
+    """``map { nested SDFG } -> access node -wcr-> map exit``: the body nested, the reduction left outside it."""
+    sdfg = program.to_sdfg(simplify=True)
+    state = sdfg.start_block
+    entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry))
+    for e in [e for e in state.in_edges(state.exit_node(entry)) if e.data.wcr]:
+        name, _ = sdfg.add_scalar("partial", sdfg.arrays[e.data.data].dtype, transient=True, find_new_name=True)
+        partial = state.add_access(name)
+        state.add_edge(e.src, e.src_conn, partial, None, dace.Memlet(name))
+        state.add_edge(partial, None, e.dst, e.dst_conn, e.data)
+        state.remove_edge(e)
+    leaves = {e.src for e in state.in_edges(state.exit_node(entry)) if e.data.wcr}
+    body = [n for n in state.scope_children()[entry] if n is not state.exit_node(entry) and n not in leaves]
+    nest_state_subgraph(sdfg, state, SubgraphView(state, body))
+    return sdfg
+
+
+def test_fission_of_a_nested_body_keeps_the_reduction_it_leaves_through_an_access_node():
+    sdfg = nested_body_reducing_through_an_access_node(scale_and_sum)
+    A = np.arange(16.0)
+    B, S = np.zeros(16), np.zeros(1)
+
+    assert sdfg.apply_transformations(MapFission) == 1
+
+    sdfg(A=A, B=B, S=S)
+    (nest,) = [n for n in sdfg.start_block.nodes() if isinstance(n, nodes.NestedSDFG)]
+    inner = [n for s in nest.sdfg.states() for n in s.nodes() if isinstance(n, nodes.MapEntry)]
+    assert not any(isinstance(n, nodes.MapEntry) for n in sdfg.start_block.nodes())
+    assert len(inner) > 1
+    assert np.allclose(B, 2 * A)
+    assert S[0] == (A + 1).sum()
+
+
 if __name__ == "__main__":
     test_subgraph()
     test_nested_sdfg()
@@ -1179,3 +1350,13 @@ if __name__ == "__main__":
     test_fission_promoted_transient_of_nested_sdfg()
     test_mapfission_keeps_connector_offset()
     test_fission_keeps_copy_into_a_wider_array_valid()
+    test_a_copy_taking_the_map_dimension_after_another_becomes_a_copy_map()
+    test_a_lifted_copy_of_a_transient_with_another_consumer_is_kept()
+    test_fission_of_a_nested_sdfg_folds_a_slice_view_that_moves_with_the_map(row_copy, (5, 3))
+    test_fission_of_a_nested_sdfg_folds_a_slice_view_that_moves_with_the_map(column_copy, (3, 5))
+    test_fission_widens_an_inner_connector_sharing_the_coordinates_of_a_widened_transient(
+        row_copy_through_inner_maps, (5, 3)
+    )
+    test_fission_widens_an_inner_connector_sharing_the_coordinates_of_a_widened_transient(
+        column_copy_through_inner_maps, (3, 5)
+    )

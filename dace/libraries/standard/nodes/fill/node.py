@@ -20,6 +20,7 @@ class FillLibraryNode(nodes.LibraryNode):
 
     implementations = {}
     default_implementation = "Auto"
+    bridges_storage = True
 
     OUTPUT_CONNECTOR_NAME = "_fill_out"
     VALUE_CONNECTOR_NAME = "_fill_val"

@@ -31,7 +31,7 @@ def _cart_create(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dims: ShapeTy
     pgrid_name = sdfg.add_pgrid(dims, name=name)
 
     # Dummy tasklet adds MPI variables to the program's state.
-    from dace.libraries.mpi import Dummy
+    from dace.libraries.comm import Dummy
 
     tasklet = Dummy(
         pgrid_name,
@@ -92,7 +92,7 @@ def _cart_sub(
     pgrid_ndims = sum([bool(c) for c in color])
 
     # Dummy tasklet adds MPI variables to the program's state.
-    from dace.libraries.mpi import Dummy
+    from dace.libraries.comm import Dummy
 
     tasklet = Dummy(
         pgrid_name,
@@ -178,7 +178,7 @@ def _bcast(
 ):
 
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
-    from dace.libraries.mpi.nodes.bcast import Bcast
+    from dace.libraries.comm.nodes.bcast import Bcast
 
     libnode = Bcast("_Bcast_", fcomm)
     desc = sdfg.arrays[buffer]
@@ -187,8 +187,7 @@ def _bcast(
     if isinstance(root, str) and root in sdfg.arrays.keys():
         root_node = state.add_read(root)
     else:
-        storage = desc.storage
-        root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        root_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         root_node = state.add_access(root_name)
         root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, f"__out = {root}")
         state.add_edge(root_tasklet, "__out", root_node, None, Memlet.simple(root_name, "0"))
@@ -251,7 +250,7 @@ def _Reduce(
 ):
 
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
-    from dace.libraries.mpi.nodes.reduce import Reduce
+    from dace.libraries.comm.nodes.reduce import Reduce
 
     libnode = Reduce("_Reduce_", op)
     desc = sdfg.arrays[buffer]
@@ -260,8 +259,7 @@ def _Reduce(
     if isinstance(root, str) and root in sdfg.arrays.keys():
         root_node = state.add_read(root)
     else:
-        storage = desc.storage
-        root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        root_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         root_node = state.add_access(root_name)
         root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, f"__out = {root}")
         state.add_edge(root_tasklet, "__out", root_node, None, Memlet.simple(root_name, "0"))
@@ -279,7 +277,7 @@ def _Reduce(
 @oprepo.replaces("dace.comm.Alltoall")
 def _alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inbuffer: str, outbuffer: str, grid: str = None):
 
-    from dace.libraries.mpi.nodes.alltoall import Alltoall
+    from dace.libraries.comm.nodes.alltoall import Alltoall
 
     libnode = Alltoall("_Alltoall_")
     in_desc = sdfg.arrays[inbuffer]
@@ -322,7 +320,7 @@ def _allreduce(
 
     from mpi4py import MPI
 
-    from dace.libraries.mpi.nodes.allreduce import Allreduce
+    from dace.libraries.comm.nodes.allreduce import Allreduce
 
     if isinstance(op, MPI.Op):
         op = _mpi4py_to_MPI(MPI, op)
@@ -375,7 +373,7 @@ def _scatter(
 ):
 
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
-    from dace.libraries.mpi.nodes.scatter import Scatter
+    from dace.libraries.comm.nodes.scatter import Scatter
 
     libnode = Scatter("_Scatter_")
     in_desc = sdfg.arrays[in_buffer]
@@ -385,8 +383,7 @@ def _scatter(
     if isinstance(root, str) and root in sdfg.arrays.keys():
         root_node = state.add_read(root)
     else:
-        storage = in_desc.storage
-        root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        root_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         root_node = state.add_access(root_name)
         root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, f"__out = {root}")
         state.add_edge(root_tasklet, "__out", root_node, None, Memlet.simple(root_name, "0"))
@@ -409,7 +406,7 @@ def _gather(
 ):
 
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
-    from dace.libraries.mpi.nodes.gather import Gather
+    from dace.libraries.comm.nodes.gather import Gather
 
     libnode = Gather("_Gather_")
     in_desc = sdfg.arrays[in_buffer]
@@ -419,8 +416,7 @@ def _gather(
     if isinstance(root, str) and root in sdfg.arrays.keys():
         root_node = state.add_read(root)
     else:
-        storage = in_desc.storage
-        root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        root_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         root_node = state.add_access(root_name)
         root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, f"__out = {root}")
         state.add_edge(root_tasklet, "__out", root_node, None, Memlet.simple(root_name, "0"))
@@ -445,7 +441,7 @@ def _send(
     tag: str | sp.Expr | Number = 0,
 ):
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
-    from dace.libraries.mpi.nodes.send import Send
+    from dace.libraries.comm.nodes.send import Send
 
     libnode = Send("_Send_")
 
@@ -469,8 +465,7 @@ def _send(
         dst_name = dst
         dst_node = state.add_read(dst_name)
     else:
-        storage = desc.storage
-        dst_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        dst_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         dst_node = state.add_access(dst_name)
         dst_tasklet = state.add_tasklet("_set_dst_", {}, {"__out"}, f"__out = {dst}")
         state.add_edge(dst_tasklet, "__out", dst_node, None, Memlet.simple(dst_name, "0"))
@@ -483,8 +478,7 @@ def _send(
         tag_name = tag
         tag_node = state.add_read(tag)
     else:
-        storage = desc.storage
-        tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        tag_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         tag_node = state.add_access(tag_name)
         tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, f"__out = {tag}")
         state.add_edge(tag_tasklet, "__out", tag_node, None, Memlet.simple(tag_name, "0"))
@@ -558,7 +552,7 @@ def _isend(
     grid: str = None,
 ):
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
-    from dace.libraries.mpi.nodes.isend import Isend
+    from dace.libraries.comm.nodes.isend import Isend
 
     ret_req = False
     if not request:
@@ -600,8 +594,7 @@ def _isend(
         dst_name = dst
         dst_node = state.add_read(dst_name)
     else:
-        storage = desc.storage
-        dst_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        dst_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         dst_node = state.add_access(dst_name)
         dst_tasklet = state.add_tasklet("_set_dst_", {}, {"__out"}, f"__out = {dst}")
         state.add_edge(dst_tasklet, "__out", dst_node, None, Memlet.simple(dst_name, "0"))
@@ -614,8 +607,7 @@ def _isend(
         tag_name = tag
         tag_node = state.add_read(tag)
     else:
-        storage = desc.storage
-        tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        tag_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         tag_node = state.add_access(tag_name)
         tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, f"__out = {tag}")
         state.add_edge(tag_tasklet, "__out", tag_node, None, Memlet.simple(tag_name, "0"))
@@ -701,7 +693,7 @@ def _recv(
     tag: str | sp.Expr | Number = 0,
 ):
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
-    from dace.libraries.mpi.nodes.recv import Recv
+    from dace.libraries.comm.nodes.recv import Recv
 
     libnode = Recv("_Recv_")
 
@@ -725,8 +717,7 @@ def _recv(
         src_name = src
         src_node = state.add_read(src_name)
     else:
-        storage = desc.storage
-        src_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        src_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         src_node = state.add_access(src_name)
         src_tasklet = state.add_tasklet("_set_src_", {}, {"__out"}, f"__out = {src}")
         state.add_edge(src_tasklet, "__out", src_node, None, Memlet.simple(src_name, "0"))
@@ -739,8 +730,7 @@ def _recv(
         tag_name = tag
         tag_node = state.add_read(tag)
     else:
-        storage = desc.storage
-        tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        tag_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         tag_node = state.add_access(tag_name)
         tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, f"__out = {tag}")
         state.add_edge(tag_tasklet, "__out", tag_node, None, Memlet.simple(tag_name, "0"))
@@ -815,7 +805,7 @@ def _irecv(
 ):
 
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
-    from dace.libraries.mpi.nodes.irecv import Irecv
+    from dace.libraries.comm.nodes.irecv import Irecv
 
     ret_req = False
     if not request:
@@ -855,8 +845,7 @@ def _irecv(
         src_name = src
         src_node = state.add_read(src_name)
     else:
-        storage = desc.storage
-        src_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        src_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         src_node = state.add_access(src_name)
         src_tasklet = state.add_tasklet("_set_src_", {}, {"__out"}, f"__out = {src}")
         state.add_edge(src_tasklet, "__out", src_node, None, Memlet.simple(src_name, "0"))
@@ -869,8 +858,7 @@ def _irecv(
         tag_name = tag
         tag_node = state.add_read(tag)
     else:
-        storage = desc.storage
-        tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        tag_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         tag_node = state.add_access(tag_name)
         tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, f"__out = {tag}")
         state.add_edge(tag_tasklet, "__out", tag_node, None, Memlet.simple(tag_name, "0"))
@@ -948,7 +936,7 @@ def _pgrid_irecv(
 @oprepo.replaces("dace.comm.Wait")
 def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
 
-    from dace.libraries.mpi.nodes.wait import Wait
+    from dace.libraries.comm.nodes.wait import Wait
 
     libnode = Wait("_Wait_")
 
@@ -982,7 +970,7 @@ def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
 @oprepo.replaces("dace.comm.Waitall")
 def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
 
-    from dace.libraries.mpi.nodes.wait import Waitall
+    from dace.libraries.comm.nodes.wait import Waitall
 
     libnode = Waitall("_Waitall_")
 
@@ -1046,7 +1034,7 @@ def _define_subarray(
     # Generate subgraph only if process-grid is set, i.e., the sub-array will be used for collective scatter/gather ops.
     if process_grid:
         # Dummy tasklet adds MPI variables to the program's state.
-        from dace.libraries.mpi import Dummy
+        from dace.libraries.comm import Dummy
 
         tasklet = Dummy(
             subarray_name,
@@ -1108,7 +1096,7 @@ def _block_scatter(
         pv, sdfg, state, in_buffer, out_buffer, process_grid=scatter_grid, correspondence=correspondence
     )
 
-    from dace.libraries.mpi import BlockScatter
+    from dace.libraries.comm import BlockScatter
 
     libnode = BlockScatter("_BlockScatter_")
 
@@ -1173,7 +1161,7 @@ def _block_gather(
         pv, sdfg, state, out_buffer, in_buffer, process_grid=gather_grid, correspondence=correspondence
     )
 
-    from dace.libraries.mpi import BlockGather
+    from dace.libraries.comm import BlockGather
 
     libnode = BlockGather("_BlockGather_")
 
@@ -1231,7 +1219,7 @@ def _redistribute(
     name = pv.get_target_name()
     rdistrarray_name = sdfg.add_rdistrarray(in_subarray, out_subarray, name=name)
 
-    from dace.libraries.mpi import Dummy, Redistribute
+    from dace.libraries.comm import Dummy, Redistribute
 
     tasklet = Dummy(
         rdistrarray_name,

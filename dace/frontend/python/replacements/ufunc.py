@@ -149,8 +149,8 @@ ufuncs = dict(
         operator="Mod",
         inputs=["__in1", "__in2"],
         outputs=["__out"],
-        code="__out = py_mod(__in1, __in2)",
-        reduce="lambda a, b: py_mod(a, b)",
+        code="__out = PyMod(__in1, __in2)",
+        reduce="lambda a, b: PyMod(a, b)",
         initial=np.remainder.identity,
     ),
     mod=dict(
@@ -158,8 +158,8 @@ ufuncs = dict(
         operator="Mod",
         inputs=["__in1", "__in2"],
         outputs=["__out"],
-        code="__out = py_mod(__in1, __in2)",
-        reduce="lambda a, b: py_mod(a, b)",
+        code="__out = PyMod(__in1, __in2)",
+        reduce="lambda a, b: PyMod(a, b)",
         initial=np.mod.identity,
     ),
     fmod=dict(
@@ -167,8 +167,8 @@ ufuncs = dict(
         operator="Mod",
         inputs=["__in1", "__in2"],
         outputs=["__out"],
-        code="__out = cpp_mod(__in1, __in2)",
-        reduce="lambda a, b: cpp_mod(a, b)",
+        code="__out = CMod(__in1, __in2)",
+        reduce="lambda a, b: CMod(a, b)",
         initial=np.fmod.identity,
     ),
     divmod=dict(

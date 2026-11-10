@@ -26,5 +26,22 @@ def test_replace_keys_reaches_nested_region():
     assert "cur" not in list(region.edges())[0].data.assignments
 
 
+def test_replacing_a_symbol_by_an_expression_keeps_its_assignment_target():
+    sdfg = dace.SDFG("replace_keys_expression")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("M", dace.int64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state("second")
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"N": "M", "k": "N + 1"}))
+
+    sdfg.replace_dict({"N": "M + 1"}, replace_keys=True)
+
+    assignments = sdfg.edges()[0].data.assignments
+    # An expression is not a name: it replaces the use of N, while N stays the target of its assignment
+    assert set(assignments) == {"N", "k"}
+    assert dace.symbolic.pystr_to_symbolic(assignments["k"]) == dace.symbolic.pystr_to_symbolic("M + 2")
+
+
 if __name__ == "__main__":
     test_replace_keys_reaches_nested_region()
+    test_replacing_a_symbol_by_an_expression_keeps_its_assignment_target()

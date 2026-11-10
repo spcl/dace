@@ -304,6 +304,68 @@ dimensions:
   b = np.random.rand(20)
   example_with_undefined(a, b)
 
+.. _division-modulo:
+
+Modulo Semantics
+^^^^^^^^^^^^^^^^
+
+Languages disagree on the sign of a remainder. C and Fortran's ``MOD`` truncate the quotient toward zero, so the
+remainder takes the sign of the dividend. Python, NumPy and Fortran's ``MODULO`` floor the quotient, so the remainder
+takes the sign of the divisor:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Rounding of the quotient
+     - ``-7`` and ``3``
+     - ``7`` and ``-3``
+   * - truncating (C ``%``, Fortran ``MOD``)
+     - ``-1``
+     - ``1``
+   * - floored (Python ``%``, Fortran ``MODULO``)
+     - ``2``
+     - ``-2``
+
+The SDFG gives each spelling one meaning, wherever it appears: tasklet code, memlet subsets, map ranges, inter-state
+edge conditions and assignments, and any other symbolic expression. **A bare** ``%`` **is always C's modulo.** A
+frontend whose source language means something else emits the function for that language instead:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Spelling
+     - Semantics
+     - Emitted by
+     - Generated C++
+   * - ``a % b``, ``CMod(a, b)``
+     - truncating
+     - the default meaning of ``%``; ``numpy.fmod``
+     - ``a % b``, or ``c_mod(a, b)``, which also takes floating point
+   * - ``PyMod(a, b)``, ``Mod(a, b)``
+     - floored
+     - Python frontend for ``%``, ``numpy.mod`` and ``numpy.remainder``
+     - ``py_mod(a, b)``
+   * - ``FtnMod(a, b)``
+     - truncating
+     - Fortran frontend for ``MOD``, ``AMOD`` and ``DMOD``
+     - ``ftn_mod(a, b)``
+   * - ``FtnModulo(a, b)``
+     - floored
+     - Fortran frontend for ``MODULO``
+     - ``ftn_modulo(a, b)``
+
+Tasklet code does not inherit the semantics of the language it is written in. A tasklet created with
+:func:`~dace.sdfg.state.SDFGState.add_tasklet` whose Python code reads ``b = a % 3`` computes C's modulo; code that
+wants Python's modulo calls ``PyMod(a, 3)``. The Python frontend rewrites the ``%`` of a ``@dace.program`` into
+``PyMod`` before it creates tasklets or symbolic expressions, so a program keeps Python's semantics.
+
+In the symbolic engine, ``%`` and ``FtnMod`` parse to :class:`~dace.symbolic.CMod`, while ``PyMod`` and ``FtnModulo``
+parse to SymPy's ``Mod``, whose own rules (constant folding, ``Mod(i + N, N) == Mod(i, N)``) are the floored ones. A
+constant folds by its own rounding: ``CMod(-7, 3)`` is ``-1`` and ``Mod(-7, 3)`` is ``2``. When the dividend is
+provably nonnegative and the divisor provably positive the two agree, and ``CMod`` becomes SymPy's ``Mod``, so
+simplification sees a single form. Printed back, SymPy's ``Mod`` reads ``a % b`` only in that agreeing case and
+``Mod(a, b)`` otherwise, so a serialized SDFG loads with the meaning it was saved with.
+
 
 .. _connectors:
 
@@ -379,6 +441,78 @@ a read and a write). Several fields describe the data being moved:
         value of ``data``.
 
 There are more properties you can set, see :class:`~dace.memlet.Memlet` for a full list.
+
+**Memlet access policies**: A leaf memlet (one that produces an address in generated code: a memlet connected to a tasklet
+or library node, or a copy between two access nodes) carries an ``access_policy`` property, a
+:class:`~dace.sdfg.memlet_access_policy.MemletAccessPolicy`, that describes *how its addressing is realized* in generated code.
+The policy is purely descriptive: it never changes the semantics of the SDFG, and it is lowered to ordinary SDFG
+constructs (symbols, loop statements, reference containers) in the code-generation window by
+:class:`~dace.transformation.passes.memlet_access_policy_lowering.LowerMemletAccessPolicies`, so that code generation itself knows
+nothing about policies. Memlet paths are global: nested SDFGs receive whole containers, so a path continues through
+the chain of nested SDFGs down to the leaf memlets inside them, and a policy may place the address computation of
+its leaf memlet anywhere along that path (e.g., relative to a loop of an enclosing SDFG). Two kinds exist today:
+
+  * :class:`~dace.sdfg.memlet_access_policies.copy_on_access.CopyOnAccess` (the default): the full offset expression is evaluated at every
+    access and data moves at the access (or through the copy library node inserted for access-node-to-access-node
+    copies). This is the behavior every SDFG had before access policies existed; it is not serialized.
+  * :class:`~dace.sdfg.memlet_access_policies.loop_cursor.LoopCursor`: the memlet's element offset is affine in the induction variable of
+    an enclosing :class:`~dace.sdfg.state.LoopRegion`. The record names the loop and states the number of elements the
+    address advances per iteration (``step``), the loop-invariant part of the base offset (``base_invariant``), the
+    part that depends on thread/lane map parameters (``lane_part``), and optionally the cursor's integer type
+    (``cursor_type``, a DaCe data type; ``None`` picks int32 when the array extent provably fits, else int64).
+    Policies of this kind can be attached by hand, by a tuner, or by the
+    :class:`~dace.transformation.passes.memlet_access_policies.assign_loop_cursors.AssignLoopCursors` analysis pass:
+
+.. code-block:: python
+
+  # Attach loop-cursor policies to every affine leaf memlet in every loop (default scope: only GPU kernels)
+  AssignLoopCursors(scope='all').apply_pass(sdfg, {})
+  for edge in state.edges():
+      print(edge.data, edge.data.access_policy)  # e.g., A[i, 3] -> LoopCursor(loop='for_1', var=i, step=16, ...)
+
+Lowering a loop-cursor policy materializes one loop-carried integer *cursor symbol* per cursor class (memlets of
+the same array and loop whose offsets differ only by a loop-invariant *immediate*), assigned in the loop's init
+statement and advanced in its update statement, and one flat :class:`~dace.data.Reference` per array, set once to the
+array's base at SDFG entry. Each such memlet is rewritten to address ``flat[cursor + immediate]``; a
+non-contiguous read is rewritten to a small *window* reference that is set to that address once per iteration and
+accessed with the memlet's original shape. A class is anchored at the lowest member offset (or, for a stencil-like
+neighbourhood, at its centre) so that the base of an array window is applied once, on loop entry. In loop nests an
+inner cursor is initialized from the outer loop's cursor, so a nest walks each array with one addition per loop
+level, and successive inner nests under one outer loop keep sharing the outer loop's cursors. When the loop is in an
+enclosing SDFG, its cursor is passed to the nested SDFGs between the loop and the memlet as a symbol, and the flat
+reference is set at the entry of the memlet's own SDFG. For example, the loop
+
+.. code-block:: python
+
+  for i in range(N):
+      B[i] = A[i, 3] + 2 * A[i, 7]
+
+(with ``A`` of shape ``[N, 16]``) is generated as follows (schematically). With the default copy-on-access policy,
+every access evaluates its full offset expression:
+
+.. code-block:: c
+
+  for (i = 0; i < N; i = i + 1) {
+      B[i] = A[(16 * i) + 3] + 2 * A[(16 * i) + 7];
+  }
+
+With loop-cursor policies, the offsets become two cursors that advance by one addition per iteration, and the
+second access to ``A`` shares the first one's cursor with an immediate of 4:
+
+.. code-block:: c
+
+  float* __dace_flat_A = A;   // set once, at SDFG entry
+  float* __dace_flat_B = B;
+  for (i = 0, __dace_cur_A_for_1 = 3, __dace_cur_B_for_1 = 0; i < N;
+       i = i + 1, __dace_cur_A_for_1 = __dace_cur_A_for_1 + 16, __dace_cur_B_for_1 = __dace_cur_B_for_1 + 1) {
+      __dace_flat_B[__dace_cur_B_for_1] = __dace_flat_A[__dace_cur_A_for_1] + 2 * __dace_flat_A[(__dace_cur_A_for_1 + 4)];
+  }
+
+Cursor symbols, flat references and the rewritten memlets only exist on the code-generation copy of the SDFG (or on
+an SDFG the lowering pass was applied to explicitly); the SDFG that transformations and tuners see keeps only the
+descriptive records. Because a policy is a claim about the memlet's subset, the lowering pass re-derives it: a
+policy that no longer matches its memlet (e.g., after a transformation changed the subset) is dropped with a
+warning and the memlet falls back to copy-on-access, so a stale policy can never produce incorrect code.
 
 Memlet subsets and volumes are used for analyzing (or estimating, if dynamic) data movement patterns and costs.
 A memlet's ``subset`` does not necessarily mean that all values in that subset would be read at runtime. It rather acts as a

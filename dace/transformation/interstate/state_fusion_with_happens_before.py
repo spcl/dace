@@ -4,23 +4,24 @@
 import networkx as nx
 
 from dace import data as dt
-from dace import memlet, sdfg
+from dace import memlet, properties, sdfg, subsets
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, SDFGState
+from dace.sdfg.validation import InvalidSDFGEdgeError, validate_state
 from dace.transformation import transformation
-from dace.transformation.interstate.state_fusion import StateFusion, read_only_data_nodes
+from dace.transformation.interstate.state_fusion import StateFusion
 
 
 # Helper class for finding connected component correspondences
 class CCDesc:
     def __init__(
         self,
-        first_input_nodes: set[nodes.AccessNode],
-        first_output_nodes: set[nodes.AccessNode],
-        second_input_nodes: set[nodes.AccessNode],
-        second_output_nodes: set[nodes.AccessNode],
+        first_input_nodes: list[nodes.AccessNode],
+        first_output_nodes: list[nodes.AccessNode],
+        second_input_nodes: list[nodes.AccessNode],
+        second_output_nodes: list[nodes.AccessNode],
     ) -> None:
         self.first_inputs = {n.data for n in first_input_nodes}
         self.first_input_nodes = first_input_nodes
@@ -36,7 +37,38 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
+def is_start_block(graph, block) -> bool:
+    """``graph.start_block is block``, without the getter's raise on a region with several unpinned sources."""
+    try:
+        return graph.start_block is block
+    except ValueError:
+        return False
+
+
+def in_state_order(node_iter, order: dict[nodes.Node, int]) -> list[nodes.Node]:
+    """Nodes sorted by their position in ``state.nodes()`` (``order``). Nodes hash by ``id()``, so set order
+    differs between runs, and several decisions below are first-match-wins over such sets."""
+    return sorted(node_iter, key=order.__getitem__)
+
+
+def read_consumers(state: SDFGState, owner_sdfg: sdfg.SDFG, node: nodes.AccessNode) -> list[nodes.Node]:
+    """The nodes reading ``node`` in ``state``. A View is a pointer, so its read happens where the view is consumed."""
+    consumers: list[nodes.Node] = []
+    pending = [e.dst for e in state.out_edges(node)]
+    for consumer in pending:
+        if (
+            isinstance(consumer, nodes.AccessNode)
+            and isinstance(owner_sdfg.arrays.get(consumer.data), dt.View)
+            and state.out_degree(consumer) > 0
+        ):
+            pending.extend(e.dst for e in state.out_edges(consumer))
+        else:
+            consumers.append(consumer)
+    return consumers
+
+
 @transformation.explicit_cf_compatible
+@properties.make_properties
 class StateFusionExtended(transformation.MultiStateTransformation):
     """Implements the state-fusion transformation extended to fuse states with RAW and WAW dependencies.
     An empty memlet is used to represent a dependency between two subgraphs with RAW and WAW dependencies.
@@ -52,6 +84,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     first_state = transformation.PatternNode(sdfg.SDFGState)
     second_state = transformation.PatternNode(sdfg.SDFGState)
 
+    strict_validate = properties.Property(
+        dtype=bool, default=False, desc="Run ``sdfg.validate()`` after ``apply``, on top of the fused-state check."
+    )
+
     @staticmethod
     def annotates_memlets():
         return False
@@ -62,7 +98,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.connections_to_make = []
+        # ``(kind, first_nodes, second_nodes)`` happens-before edges recorded by the match, wired by ``apply``
+        self._connections_to_make = []
+        self._matched_permissive = False
 
     @staticmethod
     def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> list[CCDesc]:
@@ -78,17 +116,18 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 if len(outnames1 & inpnames2) > 0:
                     g.add_edge((0, i), (1, j))
 
-        # Construct result out of connected components of the bipartite graph
+        # Construct result out of connected components of the bipartite graph, sorted: their order is the
+        # order in which happens-before edges are recorded
         result = []
-        for cc in nx.weakly_connected_components(g):
-            input1, output1, input2, output2 = set(), set(), set(), set()
+        for cc in sorted(sorted(cc) for cc in nx.weakly_connected_components(g)):
+            input1, output1, input2, output2 = [], [], [], []
             for gind, cind in cc:
                 if gind == 0:
-                    input1 |= first_cc_input[cind]
-                    output1 |= first_cc_output[cind]
+                    input1 += first_cc_input[cind]
+                    output1 += first_cc_output[cind]
                 else:
-                    input2 |= second_cc_input[cind]
-                    output2 |= second_cc_output[cind]
+                    input2 += second_cc_input[cind]
+                    output2 += second_cc_output[cind]
             result.append(CCDesc(input1, output1, input2, output2))
 
         return result
@@ -97,13 +136,33 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     memlets_intersect = staticmethod(StateFusion.memlets_intersect)
     has_path = StateFusion.has_path
     _check_all_paths = StateFusion._check_all_paths
-    _check_paths = StateFusion._check_paths
+
+    def _check_paths(self, first_state, second_state, match_nodes, nodes_first, nodes_second, first_read, second_read):
+        # Ordered when one match node is reached from every first-state node and its second-state partner
+        # reaches every second-state node; any such match proves it, whichever position it sits in (s253)
+        for match, second_match in match_nodes.items():
+            if all(nx.has_path(first_state._nx, n, match) for n in nodes_first) and all(
+                nx.has_path(second_state._nx, second_match, n) for n in nodes_second
+            ):
+                return True
+        # Not ordered by dataflow. Only an actual overlap is a hazard.
+        return not StateFusionExtended.memlets_intersect(
+            first_state, nodes_first, first_read, second_state, nodes_second, second_read
+        )
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        # We keep it alive, such that `apply()` can use it later. A refused match must not leave a
+        # half-filled recorder behind.
+        self._connections_to_make.clear()
+        self._matched_permissive = permissive
+        if self._check_fusible(graph, sdfg, permissive):
+            return True
+        self._connections_to_make.clear()
+        return False
+
+    def _check_fusible(self, graph, sdfg, permissive: bool) -> bool:
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
-        # We keep it alive, such that `apply()` can use it later.
-        self.connections_to_make.clear()
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -157,6 +216,12 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 if dst == second_state:
                     return False
 
+        # A side effect (I/O, a callback, a stateful library call) is ordered by the interstate edge, not by
+        # dataflow; fused, it could be reordered or run concurrently. ``NestedSDFG.has_side_effects`` recurses.
+        for state in (first_state, second_state):
+            if any(isinstance(n, nodes.CodeNode) and n.has_side_effects(sdfg) for n in state.nodes()):
+                return False
+
         if not permissive:
             # Strict mode that inhibits state fusion if Python callbacks are involved
             if Config.get_bool("frontend", "dont_fuse_callbacks"):
@@ -164,12 +229,29 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     if node.data == "__pystate":
                         return False
 
-            # Library nodes and nested SDFGs carry dependencies fusion cannot see.
-            # Tasklet callbacks are governed by dont_fuse_callbacks above.
-            for state in (first_state, second_state):
-                for node in state.nodes():
-                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and node.has_side_effects(sdfg):
-                        return False
+            first_scope = first_state.scope_dict()
+            top_writes: dict[str, int] = {}
+            scoped_writes: set[str] = set()
+            for n in first_state.data_nodes():
+                if first_state.in_degree(n) == 0:
+                    continue
+                if first_scope[n] is None:
+                    top_writes[n.data] = top_writes.get(n.data, 0) + 1
+                else:
+                    scoped_writes.add(n.data)
+            # A container the first state writes only inside a scope has no top-level node the second state's
+            # access could merge with or be ordered after (crc16's ``c_0``)
+            if (scoped_writes - top_writes.keys()) & {n.data for n in second_state.data_nodes()}:
+                return False
+            # A transient with two top-level producers in the first state that the second state writes again:
+            # the common-data-node merge could bind a reader to the wrong producer, which no ordering edge
+            # repairs (nbody's ``__rdo0``)
+            for n in top_level_nodes(second_state):
+                if not isinstance(n, nodes.AccessNode) or second_state.in_degree(n) == 0:
+                    continue
+                desc = sdfg.arrays[n.data]
+                if desc.transient and not isinstance(desc, dt.View) and top_writes.get(n.data, 0) >= 2:
+                    return False
 
             # If second state has other input edges, there might be issues
             # Exceptions are when none of the states contain dataflow, unless
@@ -182,29 +264,157 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             ) != 1:
                 return False
 
-            # Get connected components.
-            first_cc = list(nx.weakly_connected_components(first_state._nx))
-            second_cc = list(nx.weakly_connected_components(second_state._nx))
+            # Get connected components, in state order (see `in_state_order`)
+            first_order = {n: i for i, n in enumerate(first_state.nodes())}
+            second_order = {n: i for i, n in enumerate(second_state.nodes())}
+            first_cc = sorted(
+                (in_state_order(cc, first_order) for cc in nx.weakly_connected_components(first_state._nx)),
+                key=lambda cc: first_order[cc[0]],
+            )
+            second_cc = sorted(
+                (in_state_order(cc, second_order) for cc in nx.weakly_connected_components(second_state._nx)),
+                key=lambda cc: second_order[cc[0]],
+            )
 
             # Find source/sink (data) nodes
-            first_input = read_only_data_nodes(first_state)
-            first_output = {
-                node
-                for node in first_state.scope_children()[None]
-                if isinstance(node, nodes.AccessNode) and node not in first_input
-            }
-            second_input = read_only_data_nodes(second_state)
-            second_output = {
-                node
-                for node in second_state.scope_children()[None]
-                if isinstance(node, nodes.AccessNode) and node not in second_input
-            }
+            top1, top2 = top_level_nodes(first_state), top_level_nodes(second_state)
+            first_input = in_state_order(
+                [n for n in first_state.source_nodes() if isinstance(n, nodes.AccessNode)], first_order
+            )
+            first_input_set = set(first_input)
+            first_output = in_state_order(
+                [n for n in top1 if isinstance(n, nodes.AccessNode) and n not in first_input_set], first_order
+            )
+            second_input = in_state_order(
+                [n for n in second_state.source_nodes() if isinstance(n, nodes.AccessNode)], second_order
+            )
+            second_input_set = set(second_input)
+            second_output = in_state_order(
+                [n for n in top2 if isinstance(n, nodes.AccessNode) and n not in second_input_set], second_order
+            )
+            first_output_set, second_output_set = set(first_output), set(second_output)
+
+            def by_data(node_list) -> dict[str, list[nodes.AccessNode]]:
+                result: dict[str, list[nodes.AccessNode]] = {}
+                for n in node_list:
+                    result.setdefault(n.data, []).append(n)
+                return result
+
+            first_input_by_data = by_data(first_input)
+            first_output_by_data = by_data(first_output)
+            second_output_by_data = by_data(second_output)
+
+            # WCR is a read-modify-write: a second-state ``a(+)= ...`` implicitly reads the value the first
+            # state wrote, through no edge (covariance ``mean[:] = 0; mean(+)= ...``). A transient scalar seed
+            # fuses, with every second-state source leading to the accumulation ordered after the seed writer;
+            # any other seeded container keeps its states apart.
+            first_written: dict[str, list] = {}
+            first_writers: dict[str, list[nodes.AccessNode]] = {}
+            for n in first_output:
+                for e in first_state.in_edges(n):
+                    if not e.data.is_empty():
+                        ss = e.data.get_dst_subset(e, first_state) or e.data.subset
+                        if ss is not None:
+                            first_written.setdefault(n.data, []).append(ss)
+                            first_writers.setdefault(n.data, []).append(n)
+            second_sources = second_state.source_nodes()
+            for e in second_state.edges() if first_written else ():
+                if e.data.wcr is None or e.data.data not in first_written:
+                    continue
+                wsub = e.data.get_dst_subset(e, second_state) or e.data.subset
+                if wsub is not None and all(subsets.intersects(wsub, fs) is False for fs in first_written[e.data.data]):
+                    continue
+                seed = sdfg.arrays[e.data.data]
+                accumulated = second_state.memlet_path(e)[-1].dst
+                if (
+                    not (isinstance(seed, dt.Scalar) and seed.transient)
+                    or not isinstance(accumulated, nodes.AccessNode)
+                    or accumulated not in top2
+                    or not any(
+                        nx.has_path(second_state._nx, i, accumulated) for i in second_sources if i is not accumulated
+                    )
+                ):
+                    return False
+                self._connections_to_make.append(
+                    ("seed", list(dict.fromkeys(first_writers[e.data.data])), [accumulated])
+                )
+
+            # WAR (anti-dependency): the first state reads ``d`` and the second overwrites an overlapping
+            # element. The read happens at the reader's consumer, so every consumer is ordered before the
+            # second-state writer by a happens-before edge, recorded here and wired in ``apply``. An empty
+            # in-edge (a prior fusion's ordering edge) is not a write.
+            def has_data_write(n):
+                return any(not e.data.is_empty() for e in first_state.in_edges(n))
+
+            first_out_data = {n.data for n in first_output if has_data_write(n)}
+            first_read_subsets: dict[str, list] = {}
+            first_readers: dict[str, list[nodes.AccessNode]] = {}
+            for rn in first_state.data_nodes():
+                if first_scope[rn] is not None:
+                    continue
+                for re in first_state.out_edges(rn):
+                    # A single-sided copy memlet names only the destination
+                    ss = re.data.get_src_subset(re, first_state) or re.data.get_dst_subset(re, first_state)
+                    if ss is not None:
+                        first_read_subsets.setdefault(rn.data, []).append(ss)
+                        first_readers.setdefault(rn.data, []).append(rn)
+
+            def ordering_endpoints(readers) -> list[nodes.Node] | None:
+                """Where each read completes. A scope entry stands in for its exit (an edge out of an entry
+                would pull the second state into the scope); a library node for its outputs (it counts its
+                edges). ``None``: a scope without an exit, refuse."""
+                endpoints = []
+                for rn in readers:
+                    for cons in read_consumers(first_state, sdfg, rn):
+                        if isinstance(cons, nodes.EntryNode):
+                            cons = first_state.exit_node(cons)
+                            if cons is None:
+                                return None
+                        elif isinstance(cons, nodes.LibraryNode):
+                            endpoints.extend([se.dst for se in first_state.out_edges(cons)] or [cons])
+                            continue
+                        endpoints.append(cons)
+                return list(dict.fromkeys(endpoints))
+
+            def ordered_by_existing_dataflow(consumers, we) -> bool:
+                # The write's value flows from a second-state source the first state produces, and every
+                # consumer of the read reaches that producer
+                if not consumers:
+                    return False
+                for a in nx.ancestors(second_state._nx, we.src) | {we.src}:
+                    if not isinstance(a, nodes.AccessNode) or a.data not in first_out_data:
+                        continue
+                    if second_state.in_degree(a) != 0:
+                        continue  # re-written inside the second state: not a merge point
+                    producers = [n for n in first_output_by_data[a.data] if has_data_write(n)]
+                    if producers and all(any(nx.has_path(first_state._nx, c, p) for p in producers) for c in consumers):
+                        return True
+                return False
+
+            for wnode in second_output:
+                if wnode.data not in first_read_subsets:
+                    continue
+                consumers = None
+                for we in second_state.in_edges(wnode):
+                    wsub = we.data.get_dst_subset(we, second_state) or we.data.get_src_subset(we, second_state)
+                    if wsub is None:
+                        continue
+                    if consumers is None:
+                        consumers = ordering_endpoints(first_readers[wnode.data])
+                        if consumers is None:
+                            return False
+                    if ordered_by_existing_dataflow(consumers, we):
+                        continue
+                    if any(subsets.intersects(wsub, rs) is not False for rs in first_read_subsets[wnode.data]):
+                        if consumers:
+                            self._connections_to_make.append(("war", consumers, [wnode]))
+                        break
 
             # Find source/sink (data) nodes by connected component
-            first_cc_input = [cc.intersection(first_input) for cc in first_cc]
-            first_cc_output = [cc.intersection(first_output) for cc in first_cc]
-            second_cc_input = [cc.intersection(second_input) for cc in second_cc]
-            second_cc_output = [cc.intersection(second_output) for cc in second_cc]
+            first_cc_input = [[n for n in cc if n in first_input_set] for cc in first_cc]
+            first_cc_output = [[n for n in cc if n in first_output_set] for cc in first_cc]
+            second_cc_input = [[n for n in cc if n in second_input_set] for cc in second_cc]
+            second_cc_output = [[n for n in cc if n in second_output_set] for cc in second_cc]
 
             # Apply transformation in case all paths to the second state's
             # nodes go through the same access node, which implies sequential
@@ -220,11 +430,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # appears in more than one CC, fail
             matches = first_output_names & second_input_names
             for match in matches:
-                cc_appearances = 0
-                for cc in first_cc_output:
-                    if len([n for n in cc if n.data == match]) > 0:
-                        cc_appearances += 1
-                if cc_appearances > 1:
+                if sum(1 for cc in first_cc_output if any(n.data == match for n in cc)) > 1:
                     return False
 
             # Recreate fused connected component correspondences, and then
@@ -233,12 +439,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 first_cc_input, first_cc_output, second_cc_input, second_cc_output
             )
 
-            if len(resulting_ccs) > 1:
-                # Declared side effects would race across parallel components.
-                for state in (first_state, second_state):
-                    for node in state.nodes():
-                        if isinstance(node, nodes.Tasklet) and node.side_effects:
-                            return False
+            # The leaf (topological) instance of each name in the first state
+            first_leaf_by_data: dict[str, nodes.AccessNode] = {}
+            for x in reversed(list(nx.topological_sort(first_state._nx))):
+                if isinstance(x, nodes.AccessNode) and x.data not in first_leaf_by_data:
+                    first_leaf_by_data[x.data] = x
 
             # Check for data races
             for fused_cc in resulting_ccs:
@@ -246,53 +451,46 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 # states, without a read in between
                 write_write_candidates = (fused_cc.first_outputs & fused_cc.second_outputs) - fused_cc.second_inputs
 
-                # Find the leaf (topological) instances of the matches
-                order = [
-                    x
-                    for x in reversed(list(nx.topological_sort(first_state._nx)))
-                    if isinstance(x, nodes.AccessNode) and x.data in fused_cc.first_outputs
-                ]
                 # Those nodes will be the connection points upon fusion
+                cc_second_inputs = in_state_order(fused_cc.second_input_nodes, second_order)
                 match_nodes: dict[nodes.AccessNode, nodes.AccessNode] = {
-                    next(n for n in order if n.data == match): next(
-                        n for n in fused_cc.second_input_nodes if n.data == match
-                    )
-                    for match in (fused_cc.first_outputs & fused_cc.second_inputs)
+                    first_leaf_by_data[match]: next(n for n in cc_second_inputs if n.data == match)
+                    for match in sorted(fused_cc.first_outputs & fused_cc.second_inputs)
                 }
 
                 # If we have potential candidates, check if there is a
                 # path from the first write to the second write (in that
                 # case, there is no hazard):
-                for cand in write_write_candidates:
-                    nodes_first = [n for n in first_output if n.data == cand]
-                    nodes_second = [n for n in second_output if n.data == cand]
+                for cand in sorted(write_write_candidates):
+                    nodes_first = first_output_by_data.get(cand, [])
+                    nodes_second = second_output_by_data.get(cand, [])
 
                     # If there is a path for the candidate that goes through
                     # the match nodes in both states, there is no conflict
                     if not self._check_paths(
-                        first_state, second_state, match_nodes, nodes_first, nodes_second, second_input, False, False
+                        first_state, second_state, match_nodes, nodes_first, nodes_second, False, False
                     ):
                         return False
                 # End of write-write hazard check
 
-                first_inout = fused_cc.first_inputs | fused_cc.first_outputs
+                first_inout = sorted(fused_cc.first_inputs | fused_cc.first_outputs)
                 for other_cc in resulting_ccs:
                     # NOTE: Special handling for `other_cc is fused_cc`
                     if other_cc is fused_cc:
                         # Checking for potential Read-Write data races
                         for d in first_inout:
                             if d in other_cc.second_outputs:
-                                nodes_second = [n for n in second_output if n.data == d]
+                                nodes_second = second_output_by_data.get(d, [])
                                 # Read-Write race
                                 if d in fused_cc.first_inputs:
-                                    nodes_first = [n for n in first_input if n.data == d]
+                                    nodes_first = first_input_by_data.get(d, [])
                                 else:
                                     nodes_first = []
                                 for n2 in nodes_second:
                                     for e in second_state.in_edges(n2):
                                         path = second_state.memlet_path(e)
                                         src = path[0].src
-                                        if src in second_input and src.data in fused_cc.first_outputs:
+                                        if src in second_input_set and src.data in fused_cc.first_outputs:
                                             for n1 in fused_cc.first_output_nodes:
                                                 if n1.data == src.data:
                                                     for n0 in nodes_first:
@@ -307,48 +505,22 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                     first_state, second_state, match_nodes, nodes_first, nodes_second, True, False
                                 ):
                                     return False
-
-                                # Same-cc write-after-read: first reads ``d``,
-                                # second writes it, ``d`` not a first output.
-                                # Safe fusion would need a dependency edge to
-                                # every first-state sink reading ``d``; refuse
-                                # instead and keep the two states separate.
-                                if d in fused_cc.first_inputs:
-                                    nodes_first_read = [n for n in first_input if n.data == d]
-                                    if StateFusionExtended.memlets_intersect(
-                                        first_state, nodes_first_read, True, second_state, nodes_second, False
-                                    ):
-                                        return False
+                                # Same-cc write-after-read is ordered by the WAR edges recorded above
 
                         continue
                     # If an input/output of a connected component in the first
                     # state is an output of another connected component in the
                     # second state, we have a potential data race (Read-Write
-                    # or Write-Write)
+                    # or Write-Write). Read-Write is ordered by the WAR edges recorded above.
                     for d in first_inout:
-                        if d in other_cc.second_outputs:
-                            # Check for intersection (if None, fusion is ok)
-                            nodes_second = [n for n in second_output if n.data == d]
-                            # Read-Write race (write-after-read / anti-
-                            # dependency): the first state reads ``d`` and the
-                            # second writes it. Safely fusing would require a
-                            # dependency edge to every first-state sink reading
-                            # ``d`` (arbitrarily fanned out); refuse instead and
-                            # keep the two states separate.
-                            if d in fused_cc.first_inputs:
-                                nodes_first = [n for n in first_input if n.data == d]
-                                if StateFusionExtended.memlets_intersect(
-                                    first_state, nodes_first, True, second_state, nodes_second, False
-                                ):
-                                    return False
-                            # Write-Write race
-                            if d in fused_cc.first_outputs:
-                                nodes_first = [n for n in first_output if n.data == d]
-                                if StateFusionExtended.memlets_intersect(
-                                    first_state, nodes_first, False, second_state, nodes_second, False
-                                ):
-                                    self.connections_to_make.append([nodes_first, nodes_second])
-                                    # return False
+                        if d in other_cc.second_outputs and d in fused_cc.first_outputs:
+                            # Write-Write race: the second write must stay last, so order it after the first
+                            nodes_first = first_output_by_data.get(d, [])
+                            nodes_second = second_output_by_data.get(d, [])
+                            if StateFusionExtended.memlets_intersect(
+                                first_state, nodes_first, False, second_state, nodes_second, False
+                            ):
+                                self._connections_to_make.append(("waw", nodes_first, nodes_second))
                     # End of data race check
 
                 # Read-after-write dependencies: if there is an output of the
@@ -357,7 +529,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 # Otherwise, there may be a RAW due to topological sort or
                 # concurrency.
                 second_inout = (fused_cc.first_inputs | fused_cc.first_outputs) & fused_cc.second_outputs
-                for inout in second_inout:
+                for inout in sorted(second_inout):
                     nodes_first = [n for n in match_nodes if n.data == inout]
                     if any(first_state.out_degree(n) > 0 for n in nodes_first):
                         return False
@@ -365,15 +537,18 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     # If we have potential candidates, check if there is a
                     # path from the first read to the second write (in that
                     # case, there is no hazard):
-                    nodes_first = {
-                        n for n in fused_cc.first_input_nodes | fused_cc.first_output_nodes if n.data == inout
-                    }
-                    nodes_second = {n for n in fused_cc.second_output_nodes if n.data == inout}
+                    nodes_first = in_state_order(
+                        {n for n in fused_cc.first_input_nodes + fused_cc.first_output_nodes if n.data == inout},
+                        first_order,
+                    )
+                    nodes_second = in_state_order(
+                        {n for n in fused_cc.second_output_nodes if n.data == inout}, second_order
+                    )
 
                     # If there is a path for the candidate that goes through
                     # the match nodes in both states, there is no conflict
                     if not self._check_paths(
-                        first_state, second_state, match_nodes, nodes_first, nodes_second, second_input, True, False
+                        first_state, second_state, match_nodes, nodes_first, nodes_second, True, False
                     ):
                         return False
 
@@ -411,8 +586,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
 
-        # This will populate `self.connections_to_make`.
-        self.can_be_applied(graph, 0, sdfg)
+        # This will populate `self._connections_to_make`, in the mode the match was made in. A refusal leaves
+        # it incomplete, and wiring part of the happens-before edges would drop an ordering.
+        if not self.can_be_applied(graph, self.expr_index, sdfg, permissive=self._matched_permissive):
+            return
 
         # Remove interstate edge(s)
         edges = graph.edges_between(first_state, second_state)
@@ -424,33 +601,28 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         # Special case 1: first state is empty
         if first_state.is_empty():
+            was_start = is_start_block(graph, first_state)
             sdutil.change_edge_dest(graph, first_state, second_state)
             graph.remove_node(first_state)
-            if graph.start_block == first_state:
+            if was_start and len(graph.source_nodes()) != 1:
                 graph.start_block = graph.node_id(second_state)
             return
 
         # Special case 2: second state is empty
         if second_state.is_empty():
+            was_start = is_start_block(graph, second_state)
             sdutil.change_edge_src(graph, second_state, first_state)
             sdutil.change_edge_dest(graph, second_state, first_state)
             graph.remove_node(second_state)
-            if graph.start_block == second_state:
+            if was_start and len(graph.source_nodes()) != 1:
                 graph.start_block = graph.node_id(first_state)
             return
 
         # Normal case: both states are not empty
 
         # Find source/sink (data) nodes
-        first_input = [node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)]
-        first_output = [node for node in first_state.sink_nodes() if isinstance(node, nodes.AccessNode)]
-
         top2 = top_level_nodes(second_state)
-
-        # first input = first input - first output
-        first_input = [
-            node for node in first_input if next((x for x in first_output if x.data == node.data), None) is None
-        ]
+        second_sources = set(second_state.source_nodes())
 
         # NOTE: We exclude Views from the process of merging common data nodes because it may lead to double edges.
         second_mid = [
@@ -469,6 +641,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             for x in reversed(list(nx.topological_sort(first_state._nx)))
             if isinstance(x, nodes.AccessNode) and sdict[x] is None
         ]
+        # A seeded accumulation is ordered by its ``seed`` entry; its WAW edges would land on second-state
+        # sources that may merge upstream of the seed and close a cycle (ludcmp ``w``)
+        seeded = {n for kind, _, second_nodes in self._connections_to_make if kind == "seed" for n in second_nodes}
         for node in second_state.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 # update parent information
@@ -478,22 +653,31 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             if node not in first_state.nodes():
                 first_state.add_node(node)
 
-            for conn in self.connections_to_make:
-                if node in conn[1]:
-                    for i in top2:
-                        if i not in list(second_state.source_nodes()):
-                            continue
-                        paths = second_state.all_nodes_between(i, node)
-                        direct_edges = second_state.edges_between(i, node)
-
-                        if (paths != None and len(paths) > 0) or len(direct_edges) > 0:
-                            for j in conn[0]:
-                                if j in first_output:
-                                    first_state.add_nedge(j, i, memlet.Memlet())
+            # Wire the recorded happens-before edges onto every second-state source leading to the hazard node
+            for kind, first_nodes, second_nodes in self._connections_to_make:
+                if node not in second_nodes or (kind == "waw" and node in seeded):
+                    continue
+                for i in top2:
+                    if i not in second_sources or (i is not node and not nx.has_path(second_state._nx, i, node)):
+                        continue
+                    if kind == "seed" and isinstance(i, nodes.AccessNode):
+                        # A source AccessNode may merge upstream of the seed writer (ludcmp ``w = y[i]``); order
+                        # its consumers instead, or ``i`` itself for a library node (it counts its inputs)
+                        for j in first_nodes:
+                            for k in dict.fromkeys(e.dst for e in second_state.out_edges(i)):
+                                if not nx.has_path(second_state._nx, k, node):
+                                    continue
+                                target = i if isinstance(k, nodes.LibraryNode) else k
+                                if not first_state.edges_between(j, target):
+                                    first_state.add_nedge(j, target, memlet.Memlet())
+                        continue
+                    for j in first_nodes:
+                        first_state.add_nedge(j, i, memlet.Memlet())
         for src, src_conn, dst, dst_conn, data in second_state.edges():
             first_state.add_edge(src, src_conn, dst, dst_conn, data)
 
         top = top_level_nodes(first_state)
+        waw_flagged = {n for kind, _, second_nodes in self._connections_to_make if kind == "waw" for n in second_nodes}
 
         # Merge common (data) nodes
         merged_nodes = set()
@@ -508,12 +692,16 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # If not source node, try to connect every memlet-intersecting candidate
             if not source_node:
                 for cand in candidates:
+                    # A flagged write-write pair stays two nodes, ordered by the edge wired above
+                    if node in waw_flagged and first_state.in_degree(cand) > 0:
+                        continue
                     if StateFusionExtended.memlets_intersect(first_state, [cand], False, second_state, [node], True):
                         if nx.has_path(first_state._nx, cand, node):  # Do not create cycles
                             continue
                         sdutil.change_edge_src(first_state, cand, node)
                         sdutil.change_edge_dest(first_state, cand, node)
                         first_state.remove_node(cand)
+                        merged_nodes.add(cand)
                 continue
 
             if len(candidates) == 0:
@@ -536,10 +724,27 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             merged_nodes.add(n)
 
         # Redirect edges and remove second state
+        was_start = is_start_block(graph, second_state)
         sdutil.change_edge_src(graph, second_state, first_state)
         graph.remove_node(second_state)
-        if graph.start_block == second_state:
+        if was_start and len(graph.source_nodes()) != 1:
             graph.start_block = graph.node_id(first_state)
 
         # Technically unneeded, but better to keep track.
-        self.connections_to_make.clear()
+        self._connections_to_make.clear()
+
+        self._post_apply_check(first_state, sdfg)
+
+    def _post_apply_check(self, fused_state: SDFGState, sdfg) -> None:
+        """Validate the fused state, so a bad merge fails here instead of in codegen.
+
+        :raises InvalidSDFGEdgeError: on an invalid edge, e.g. a ``memlet.data`` naming neither endpoint.
+        """
+        try:
+            validate_state(fused_state, sdfg=sdfg, initialized_transients=set(sdfg.arrays))
+        except InvalidSDFGEdgeError as ex:
+            raise InvalidSDFGEdgeError(
+                f"StateFusionExtended produced an invalid edge: {ex.message}", ex.sdfg, ex.state_id, ex.edge_id
+            ) from ex
+        if self.strict_validate:
+            sdfg.validate()
