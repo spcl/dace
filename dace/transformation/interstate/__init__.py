@@ -20,6 +20,7 @@ from .loop_overwrite_elimination import LoopOverwriteElimination
 from .loop_peeling import LoopPeeling
 from .loop_to_map import LoopToMap
 from .move_loop_into_map import MoveLoopIntoMap
+from .move_if_into_map import MoveIfIntoMap
 from .trivial_loop_elimination import TrivialLoopElimination
 from .multistate_inline import InlineMultistateSDFG
 from .move_assignment_outside_if import MoveAssignmentOutsideIf
