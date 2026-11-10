@@ -2356,7 +2356,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             undeclared = [(sym, symval) for sym, symval in s.symbol_mapping.items() if sym not in sdfg.symbols]
             if undeclared:
                 if defined_symbols is None:
-                    wanted = {str(s) for _, value in undeclared for s in symbolic.pystr_to_symbolic(value).free_symbols}
+                    wanted = {
+                        str(free)
+                        for sym, value in undeclared
+                        for free in symbolic.pystr_to_symbolic(value).free_symbols
+                    }
                     defined_symbols = self._enclosing_iterator_symbols(wanted)
                 if defined_symbols is None:
                     defined_symbols = self._defined_symbols_for_nesting()
