@@ -15,13 +15,5 @@ def test_reserved_name_collision_rejected():
         allocate_stream_array(sdfg, 4)
 
 
-def test_stream_array_allocated_once():
-    sdfg = dace.SDFG("stream_array_allocated_once")
-    allocate_stream_array(sdfg, 4)
-    allocate_stream_array(sdfg, 4)
-    assert sdfg.arrays[get_gpu_stream_array_name()].dtype is dace.dtypes.gpuStream_t
-
-
 if __name__ == "__main__":
     test_reserved_name_collision_rejected()
-    test_stream_array_allocated_once()

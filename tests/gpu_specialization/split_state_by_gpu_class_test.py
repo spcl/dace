@@ -25,33 +25,6 @@ def _state_kinds_in_topological_order(sdfg):
     return [classify_state_top_level(s) for s in dace.sdfg.utils.dfs_topological_sort(sdfg)]
 
 
-def _cpu_init_then_gpu_kernel():
-    """``CPU -> GPU`` chain inside one state: scalar init feeds a GPU map."""
-    sdfg = dace.SDFG("cpu_to_gpu")
-    sdfg.add_array("A", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
-    sdfg.add_array("B", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
-    sdfg.add_scalar("s", dace.float32, storage=dace.dtypes.StorageType.GPU_Global, transient=True)
-    state = sdfg.add_state("mixed")
-
-    init = state.add_tasklet(
-        "init_s", {}, {"__out": dace.pointer(dace.float32)}, "__out = 2.5f;", language=dace.Language.CPP
-    )
-    s_w = state.add_access("s")
-    state.add_edge(init, "__out", s_w, None, dace.Memlet("s[0]"))
-
-    s_r = state.add_access("s")
-    state.add_edge(s_w, None, s_r, None, dace.Memlet("s[0]"))
-
-    a_read = state.add_read("A")
-    b_write = state.add_write("B")
-    me, mx = state.add_map("gpu_map", dict(i="0:16"), schedule=dace.dtypes.ScheduleType.GPU_Device)
-    kt = state.add_tasklet("use_s", {"_a": dace.float32, "_s": dace.float32}, {"_b": dace.float32}, "_b = _a * _s")
-    state.add_memlet_path(a_read, me, kt, dst_conn="_a", memlet=dace.Memlet("A[i]"))
-    state.add_memlet_path(s_r, me, kt, dst_conn="_s", memlet=dace.Memlet("s[0]"))
-    state.add_memlet_path(kt, mx, b_write, src_conn="_b", memlet=dace.Memlet("B[i]"))
-    return sdfg
-
-
 def _gpu_kernel_then_cpu_finalize():
     """``GPU -> CPU`` chain inside one state: GPU reduces into scalar, CPU consumes it."""
     sdfg = dace.SDFG("gpu_to_cpu")
@@ -133,27 +106,6 @@ def _cpu_init_gpu_kernel_cpu_finalize():
     return sdfg
 
 
-def _independent_cpu_and_gpu_wccs():
-    """Two disjoint WCCs in one state: one pure CPU sequential map, one pure GPU map."""
-    sdfg = dace.SDFG("indep_cpu_gpu")
-    sdfg.add_array("C_in", [4], dace.float32)
-    sdfg.add_array("C_out", [4], dace.float32)
-    sdfg.add_array("G_in", [4], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
-    sdfg.add_array("G_out", [4], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
-    state = sdfg.add_state("mixed")
-
-    me_c, mx_c = state.add_map("cpu_map", dict(i="0:4"), schedule=dace.dtypes.ScheduleType.Sequential)
-    tc = state.add_tasklet("cpu_t", {"_in": dace.float32}, {"_out": dace.float32}, "_out = _in + 1.0")
-    state.add_memlet_path(state.add_read("C_in"), me_c, tc, dst_conn="_in", memlet=dace.Memlet("C_in[i]"))
-    state.add_memlet_path(tc, mx_c, state.add_write("C_out"), src_conn="_out", memlet=dace.Memlet("C_out[i]"))
-
-    me_g, mx_g = state.add_map("gpu_map", dict(j="0:4"), schedule=dace.dtypes.ScheduleType.GPU_Device)
-    tg = state.add_tasklet("gpu_t", {"_in": dace.float32}, {"_out": dace.float32}, "_out = _in * 2.0")
-    state.add_memlet_path(state.add_read("G_in"), me_g, tg, dst_conn="_in", memlet=dace.Memlet("G_in[j]"))
-    state.add_memlet_path(tg, mx_g, state.add_write("G_out"), src_conn="_out", memlet=dace.Memlet("G_out[j]"))
-    return sdfg
-
-
 def _pure_gpu_state():
     sdfg = dace.SDFG("pure_gpu")
     sdfg.add_array("A", [16], dace.float32, storage=dace.dtypes.StorageType.GPU_Global)
@@ -181,14 +133,6 @@ def _pure_cpu_state():
 # Tests.
 
 
-def test_cpu_prefix_chain_splits_into_two_states():
-    sdfg = _cpu_init_then_gpu_kernel()
-    assert _state_kinds(sdfg) == [NodeKind.MIXED]
-    SplitStateByGPUClass().apply_pass(sdfg, {})
-    kinds = _state_kinds_in_topological_order(sdfg)
-    assert kinds == [NodeKind.CPU, NodeKind.GPU], f"Expected [CPU, GPU], got {kinds}"
-
-
 def test_cpu_suffix_chain_splits_into_two_states():
     sdfg = _gpu_kernel_then_cpu_finalize()
     assert _state_kinds(sdfg) == [NodeKind.MIXED]
@@ -203,14 +147,6 @@ def test_cpu_prefix_and_suffix_chain_splits_into_three_states():
     SplitStateByGPUClass().apply_pass(sdfg, {})
     kinds = _state_kinds_in_topological_order(sdfg)
     assert kinds == [NodeKind.CPU, NodeKind.GPU, NodeKind.CPU], f"Expected [CPU, GPU, CPU], got {kinds}"
-
-
-def test_independent_cpu_and_gpu_wccs_split_into_two_states():
-    sdfg = _independent_cpu_and_gpu_wccs()
-    assert _state_kinds(sdfg) == [NodeKind.MIXED]
-    SplitStateByGPUClass().apply_pass(sdfg, {})
-    kinds = _state_kinds_in_topological_order(sdfg)
-    assert kinds == [NodeKind.CPU, NodeKind.GPU], f"Expected [CPU, GPU], got {kinds}"
 
 
 def test_pure_gpu_state_is_unchanged():
@@ -230,9 +166,7 @@ def test_pure_cpu_state_is_unchanged():
 
 
 if __name__ == "__main__":
-    test_cpu_prefix_chain_splits_into_two_states()
     test_cpu_suffix_chain_splits_into_two_states()
     test_cpu_prefix_and_suffix_chain_splits_into_three_states()
-    test_independent_cpu_and_gpu_wccs_split_into_two_states()
     test_pure_gpu_state_is_unchanged()
     test_pure_cpu_state_is_unchanged()

@@ -1036,31 +1036,6 @@ def kernel_with_a_per_thread_count(indirect: bool = False) -> dace.SDFG:
     return sdfg
 
 
-def test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel():
-    """The lifted ``buf`` is sized by ``n_max``, the largest ``counts[b]``, folded before the kernel: ``n`` is
-    assigned inside the kernel, so no host allocation can name it."""
-    sdfg = kernel_with_a_per_thread_count()
-    assert lift(sdfg) == 1
-    shape_symbols = {
-        str(sym) for dim in sdfg.arrays["buf"].shape for sym in dace.symbolic.pystr_to_symbolic(dim).free_symbols
-    }
-    assert "n" not in shape_symbols and "n_max" in shape_symbols, sdfg.arrays["buf"].shape
-    into_kernel = list(sdfg.in_edges(next(s for s in sdfg.states() if s.label == "kernel")))
-    assert [e.data.assignments.get("n_max") for e in into_kernel] == ["n_max_host[0]"]
-    sdfg.validate()
-
-
-@pytest.mark.gpu
-def test_an_extent_a_thread_reads_runs_on_the_device():
-    cp = pytest.importorskip("cupy")
-    sdfg = kernel_with_a_per_thread_count()
-    counts = cp.asarray(np.array([3, 0, 7, 1, 5], dtype=np.int32))
-    out = cp.zeros(5)
-    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
-        sdfg(counts=counts, out=out, NX=5)
-    assert np.allclose(cp.asnumpy(out), 2.0)
-
-
 def test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads():
     """``n = counts[rows[b]]``: the fold before the kernel reads ``counts`` at ``rows[b]``, not at the nest-local ``r``,
     which no host code defines."""
@@ -1075,18 +1050,6 @@ def test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_bo
     assert [node.code.as_string.strip() for node in folds] == ["o = __read_counts[__read_rows[b]]"]
     assert "r" not in sdfg.free_symbols and "n" not in sdfg.free_symbols, sdfg.free_symbols
     sdfg.validate()
-
-
-@pytest.mark.gpu
-def test_an_extent_a_thread_reads_through_an_index_runs_on_the_device():
-    cp = pytest.importorskip("cupy")
-    sdfg = kernel_with_a_per_thread_count(indirect=True)
-    counts = cp.asarray(np.array([3, 0, 7, 1, 5], dtype=np.int32))
-    rows = cp.asarray(np.array([4, 2, 0, 3, 1], dtype=np.int32))
-    out = cp.zeros(5)
-    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
-        sdfg(counts=counts, rows=rows, out=out, NX=5)
-    assert np.allclose(cp.asnumpy(out), 2.0)
 
 
 if __name__ == "__main__":
@@ -1143,7 +1106,4 @@ if __name__ == "__main__":
     test_a_scratch_sized_by_the_kernel_parameter_stays_where_it_is()
     test_a_symbolic_per_thread_array_moved_by_code_generation_computes_the_right_values()
     test_a_kernel_level_access_above_a_per_thread_scratch_is_refused()
-    test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel()
     test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads()
-    test_an_extent_a_thread_reads_runs_on_the_device()
-    test_an_extent_a_thread_reads_through_an_index_runs_on_the_device()

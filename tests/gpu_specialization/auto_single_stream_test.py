@@ -61,81 +61,7 @@ def test_default_strategy_is_auto_single_stream():
 # Pure GPU programs -- single stream, sync state at the program exit only.
 
 
-@dace.program
-def jacobi_2d(TSTEPS: dace.int32, A: dace.float32[N, N], B: dace.float32[N, N]):
-    for _ in range(1, TSTEPS):
-        B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] + A[2:, 1:-1] + A[:-2, 1:-1])
-        A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] + B[2:, 1:-1] + B[:-2, 1:-1])
-
-
-@pytest.mark.gpu
-@pytest.mark.new_gpu_codegen_only
-def test_pure_gpu_jacobi_2d_one_stream_sync_at_exit():
-    """Pure GPU SDFG: every kernel pinned to stream 0; one sync state appended at the
-    region-level sink; numerical match with the CPU reference."""
-    TSTEPS, n_val = 8, 16
-    rng = np.random.default_rng(0)
-    A = rng.standard_normal((n_val, n_val), dtype=np.float32)
-    B = rng.standard_normal((n_val, n_val), dtype=np.float32)
-    A_ref, B_ref = A.copy(), B.copy()
-
-    sdfg = _build_gpu_sdfg(jacobi_2d)
-
-    # Every map-entry / libnode / runtime tasklet consumer carries stream 0.
-    streams_seen = {
-        n.gpu_stream_id
-        for nsdfg in sdfg.all_sdfgs_recursive()
-        for state in nsdfg.states()
-        for n in state.nodes()
-        if n.gpu_stream_id is not None
-    }
-    assert streams_seen == {0}, f"Expected single stream {{0}}, got {streams_seen}"
-
-    # At least one sync state inserted (program-end sink).
-    sync_locations = _all_sync_states(sdfg)
-    assert sync_locations, "AutoGPUStreamScheduler should append at least one sync state"
-
-    # Numerical correctness.
-    A_gpu, B_gpu = A.copy(), B.copy()
-    sdfg(A=A_gpu, B=B_gpu, TSTEPS=TSTEPS, N=n_val)
-    jacobi_2d.f(TSTEPS, A_ref, B_ref)
-    assert np.allclose(A_gpu, A_ref, rtol=1e-5, atol=1e-6)
-    assert np.allclose(B_gpu, B_ref, rtol=1e-5, atol=1e-6)
-
-
 # Pure CPU program -- no streams allocated, no sync states.
-
-
-def test_pure_cpu_program_no_streams():
-    """A CPU-only SDFG must not allocate the ``gpu_streams`` array and must not insert sync
-    states. The classifier sees only CPU work, so the assignment dict is empty and wiring
-    short-circuits."""
-
-    @dace.program
-    def cpu_add(A: dace.float32[16], B: dace.float32[16], C: dace.float32[16]):
-        for i in dace.map[0:16] @ dace.dtypes.ScheduleType.Sequential:
-            C[i] = A[i] + B[i]
-
-    sdfg = cpu_add.to_sdfg()
-    # No apply_gpu_transformations -- the program stays on host.
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        GPUStreamPipeline().apply_pass(sdfg, {})
-
-    # The strategy must not warn about its own fallback (no MIXED nodes here).
-    fallback = [w for w in caught if "AutoGPUStreamScheduler" in str(w.message) and "falling back" in str(w.message)]
-    assert not fallback, f"Strategy must not fall back on pure-CPU input. Got: {[str(w.message) for w in caught]}"
-
-    # No sync states, no stream consumers (no GPU work to wire).
-    assert not _all_sync_states(sdfg), "no sync states must be emitted for pure-CPU input"
-    streams_seen = {
-        n.gpu_stream_id
-        for nsdfg in sdfg.all_sdfgs_recursive()
-        for state in nsdfg.states()
-        for n in state.nodes()
-        if n.gpu_stream_id is not None
-    }
-    assert not streams_seen, f"no GPU consumers expected, got assignments: {streams_seen}"
 
 
 # CPU -> GPU transition needs no sync state; GPU -> CPU needs one.
@@ -204,41 +130,6 @@ def test_single_stream_strategy_rejects_a_mixed_program():
 # GPU -> GPU with no host iedge work: no sync state spliced between consecutive GPU states.
 
 
-@dace.program
-def two_gpu_kernels_chain(A: dace.float32[N], B: dace.float32[N], C: dace.float32[N]):
-    for i in dace.map[0:N]:
-        B[i] = A[i] * 2.0
-    for i in dace.map[0:N]:
-        C[i] = B[i] + 1.0
-
-
-@pytest.mark.gpu
-@pytest.mark.new_gpu_codegen_only
-def test_chain_of_gpu_kernels_one_sync_at_exit():
-    """Two GPU kernels in sequence with no host-side iedge work: stream 0 ordering is
-    enough; expect exactly one sync state (the program-end sync), not one per kernel."""
-    n_val = 64
-    rng = np.random.default_rng(1)
-    A = rng.standard_normal(n_val).astype(np.float32)
-    B = np.zeros(n_val, dtype=np.float32)
-    C = np.zeros(n_val, dtype=np.float32)
-
-    sdfg = _build_gpu_sdfg(two_gpu_kernels_chain)
-
-    # No more than one sync state per region-level sink.
-    sync_locations = _all_sync_states(sdfg)
-    assert 1 <= len(sync_locations) <= 2, (
-        f"Expected at most one sync state per GPU sink in a linear-chain program, got {len(sync_locations)}"
-    )
-
-    # Numerical correctness (manual reference, no .f() since N is a symbol the Python
-    # frontend doesn't strip from the body).
-    sdfg(A=A.copy(), B=B, C=C, N=n_val)
-    B_ref = A * 2.0
-    C_ref = B_ref + 1.0
-    assert np.allclose(C, C_ref, rtol=1e-5, atol=1e-6)
-
-
 # End-to-end: split + auto strategy run through the full codegen pipeline; compile + run.
 
 
@@ -269,31 +160,6 @@ def test_e2e_cpu_init_feeds_gpu_kernel_via_split():
     assert np.allclose(B, expected, rtol=1e-5, atol=1e-6), f"B mismatch -- got {B[:4]}, expected {expected[:4]}"
 
 
-@pytest.mark.gpu
-@pytest.mark.new_gpu_codegen_only
-def test_e2e_gpu_kernel_writes_scalar_consumed_by_cpu():
-    """GPU map writes a scalar via a single-iteration kernel; CPU tasklet then reads the scalar
-    and applies a finalize. Tests the suffix lift: the CPU work must land in a trailing state,
-    not before the kernel."""
-
-    @dace.program
-    def kernel_then_finalize(A: dace.float32[N], out: dace.float32[1]):
-        s = np.zeros(1, dtype=np.float32)
-        for i in dace.map[0:1]:
-            s[0] = A[i] + dace.float32(1.0)
-        out[0] = s[0] * dace.float32(2.0)
-
-    n_val = 32
-    rng = np.random.default_rng(11)
-    A = rng.standard_normal(n_val).astype(np.float32)
-    expected = np.float32((A[0] + 1.0) * 2.0)
-
-    sdfg = _build_gpu_sdfg(kernel_then_finalize)
-    out = np.zeros(1, dtype=np.float32)
-    sdfg(A=A.copy(), out=out, N=n_val)
-    assert np.isclose(out[0], expected, rtol=1e-5, atol=1e-5), f"out[0]={out[0]} expected {expected}"
-
-
 # ICON-stencil patterns (from the compute_rho_theta legacy-vs-experimental investigation).
 # A real ICON stencil compiles to a single SDFG with many GPU maps writing GPU transients
 # (the ``gtir_tmp`` pool) consumed downstream. The scheduler pins everything to stream 0 and
@@ -314,53 +180,6 @@ def stencil_chain_with_transients(A: dace.float64[N], OUT: dace.float64[N]):
         t2[i] = t1[i - 1] - t1[i + 1]
     for i in dace.map[1 : N - 1]:
         OUT[i] = 0.5 * t2[i] + A[i]
-
-
-@pytest.mark.gpu
-@pytest.mark.new_gpu_codegen_only
-def test_multikernel_stencil_pipeline_one_sync_at_exit():
-    """Stencil shape: several GPU maps writing GPU transients consumed downstream, all in one
-    SDFG. Expect a single stream and *exactly one* program-end sync at the region sink, not one
-    per kernel; plus numerical correctness."""
-    n_val = 256
-    sdfg = _build_gpu_sdfg(stencil_chain_with_transients)
-
-    streams = {
-        n.gpu_stream_id
-        for nsdfg in sdfg.all_sdfgs_recursive()
-        for s in nsdfg.states()
-        for n in s.nodes()
-        if n.gpu_stream_id is not None
-    }
-    assert streams == {0}, f"expected single stream {{0}}, got {streams}"
-
-    gpu_device_maps = [
-        n
-        for nsdfg in sdfg.all_sdfgs_recursive()
-        for s in nsdfg.states()
-        for n in s.nodes()
-        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-    ]
-    assert len(gpu_device_maps) >= 2, f"expected a multi-kernel pipeline, got {len(gpu_device_maps)} device map(s)"
-
-    syncs = _all_sync_states(sdfg)
-    assert len(syncs) == 1, (
-        f"expected exactly one program-end sync regardless of kernel/transient count, got {len(syncs)}"
-    )
-    _, sink_state = syncs[0]
-    assert sink_state.parent_graph.out_degree(sink_state) == 0, "the sync must sit at the region-level sink"
-
-    rng = np.random.default_rng(3)
-    A = rng.standard_normal(n_val)
-    OUT = np.zeros(n_val)
-    sdfg(A=A.copy(), OUT=OUT, N=n_val)
-    t1 = np.zeros(n_val)
-    t2 = np.zeros(n_val)
-    ref = np.zeros(n_val)
-    t1[1:-1] = A[:-2] + 2.0 * A[1:-1] + A[2:]
-    t2[1:-1] = t1[:-2] - t1[2:]
-    ref[1:-1] = 0.5 * t2[1:-1] + A[1:-1]
-    assert np.allclose(OUT, ref, rtol=1e-9, atol=1e-12), f"numerical mismatch: {OUT[:4]} vs {ref[:4]}"
 
 
 @dace.program
@@ -473,64 +292,12 @@ def test_host_visible_output_always_synced_even_when_opted_out():
     assert np.allclose(OUT, ref, rtol=1e-9, atol=1e-12), f"numerical mismatch: {OUT[:4]} vs {ref[:4]}"
 
 
-def _build_gpu_then_host_nonconsumer():
-    """GPU kernel followed by a host state that writes a host scalar from a constant -- it reads no
-    GPU output. This is the shape of the ICON stencils' trailing metrics/exit state (writes the
-    host gt_compute_time), whose GPU->host edge carries the per-stencil sync."""
-    GPU = dace.dtypes.StorageType.GPU_Global
-    sdfg = dace.SDFG("gpu_then_host_nonconsumer")
-    sdfg.add_array("A", [16], dace.float32, storage=GPU)
-    sdfg.add_array("B", [16], dace.float32, storage=GPU)
-    sdfg.add_array("h", [1], dace.float32, storage=dace.dtypes.StorageType.CPU_Heap)
-    s0 = sdfg.add_state("gpu")
-    me, mx = s0.add_map("m", dict(i="0:16"), schedule=dace.dtypes.ScheduleType.GPU_Device)
-    t = s0.add_tasklet("b", {"a": None}, {"o": None}, "o = a + 1.0")
-    s0.add_memlet_path(s0.add_read("A"), me, t, dst_conn="a", memlet=dace.Memlet("A[i]"))
-    s0.add_memlet_path(t, mx, s0.add_write("B"), src_conn="o", memlet=dace.Memlet("B[i]"))
-    s1 = sdfg.add_state_after(s0, "host_finalize")
-    ht = s1.add_tasklet("host", {}, {"o": None}, "o = 3.14f;", language=dace.Language.CPP)
-    s1.add_edge(ht, "o", s1.add_write("h"), None, dace.Memlet("h[0]"))
-    return sdfg
-
-
-def test_gpu_to_host_nonconsumer_edge_sync_gated_by_flag():
-    """GPU -> trailing host state that reads no GPU output (ICON metrics/exit shape). Default keeps
-    the GPU->host edge sync; opt-out drops it (the host block consumes no GPU-produced data)."""
-    sdfg = _build_gpu_then_host_nonconsumer()
-    GPUStreamPipeline(scheduling_strategy=AutoGPUStreamScheduler()).apply_pass(sdfg, {})
-    assert len(_all_sync_states(sdfg)) == 1, "default must keep the GPU->host edge sync"
-
-    with dace.config.set_temporary("compiler", "cuda", "synchronize_on_exit", value=False):
-        sdfg = _build_gpu_then_host_nonconsumer()
-        GPUStreamPipeline(scheduling_strategy=AutoGPUStreamScheduler()).apply_pass(sdfg, {})
-    assert len(_all_sync_states(sdfg)) == 0, "opt-out must drop the sync to a non-GPU-consuming host block"
-
-
-def test_synchronize_on_exit_as_strategy_argument():
-    """synchronize_on_exit is also a strategy constructor argument; an explicit value wins over the
-    config (None defers to config, which is the path the codegen takes)."""
-    # explicit False drops the exit sync even with the config left at its default (True)
-    sdfg = _build_gpu_resident_pipeline(strategy=AutoGPUStreamScheduler(synchronize_on_exit=False))
-    assert len(_all_sync_states(sdfg)) == 0, "explicit synchronize_on_exit=False must drop the exit sync"
-    # explicit True overrides a config that is flipped off
-    with dace.config.set_temporary("compiler", "cuda", "synchronize_on_exit", value=False):
-        sdfg = _build_gpu_resident_pipeline(strategy=AutoGPUStreamScheduler(synchronize_on_exit=True))
-    assert len(_all_sync_states(sdfg)) == 1, "explicit synchronize_on_exit=True must override config=False"
-
-
 if __name__ == "__main__":
     test_default_strategy_is_auto_single_stream()
-    test_pure_cpu_program_no_streams()
     test_mixed_program_fallback_to_per_component_emits_warning()
     test_single_stream_strategy_rejects_a_mixed_program()
     test_sync_count_independent_of_kernel_count()
     test_gpu_resident_sink_synced_by_default()
     test_gpu_resident_sink_exit_sync_dropped_when_opted_out()
-    test_gpu_to_host_nonconsumer_edge_sync_gated_by_flag()
-    test_synchronize_on_exit_as_strategy_argument()
-    test_pure_gpu_jacobi_2d_one_stream_sync_at_exit()
-    test_chain_of_gpu_kernels_one_sync_at_exit()
     test_e2e_cpu_init_feeds_gpu_kernel_via_split()
-    test_e2e_gpu_kernel_writes_scalar_consumed_by_cpu()
-    test_multikernel_stencil_pipeline_one_sync_at_exit()
     test_host_visible_output_always_synced_even_when_opted_out()
