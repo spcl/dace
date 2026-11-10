@@ -7,7 +7,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-from dace.transformation.subgraph import SubgraphFusion
+from dace.transformation.subgraph import StencilTiling, SubgraphFusion
 
 N = dace.symbol("N")
 
@@ -124,11 +124,41 @@ def test_an_ordering_edge_from_the_intermediate_is_not_fused():
     fusion = chain.fuse()
     assert not fusion.can_be_applied(chain.sdfg, fusion.subgraph_view(chain.sdfg))
 
-    # ``CompositeFusion`` applies after ``StencilTiling`` without asking: the graph stays as it was
-    before = len(chain.state.nodes()), len(chain.state.edges())
-    fusion.apply(chain.sdfg)
-    assert (len(chain.state.nodes()), len(chain.state.edges())) == before
-    chain.sdfg.validate()
+
+@pytest.mark.parametrize("ordered", [False, True])
+def test_stencil_tiling_refuses_an_ordered_intermediate(ordered: bool):
+    """``CompositeFusion`` fuses the tiled maps without asking again, so the tiling declines what the fusion would."""
+    sdfg = dace.SDFG(f"empty_memlet_stencil_{ordered}")
+    for array in "AC":
+        sdfg.add_array(array, [N], dace.float64)
+    sdfg.add_transient("B", [N], dace.float64)
+    state = sdfg.add_state("stencil")
+    a, b = state.add_read("A"), state.add_access("B")
+    first = state.add_mapped_tasklet(
+        "first",
+        {"i": "0:N"},
+        {"a": dace.Memlet("A[i]")},
+        "b = a + 1",
+        {"b": dace.Memlet("B[i]")},
+        external_edges=True,
+        input_nodes={"A": a},
+        output_nodes={"B": b},
+    )
+    second = state.add_mapped_tasklet(
+        "second",
+        {"i": "1:N - 1"},
+        {"l": dace.Memlet("B[i - 1]"), "r": dace.Memlet("B[i + 1]")},
+        "c = l + r",
+        {"c": dace.Memlet("C[i]")},
+        external_edges=True,
+        input_nodes={"B": b},
+    )
+    if ordered:
+        state.add_nedge(b, second[1], dace.Memlet())
+    sdfg.validate()
+    subgraph = SubgraphView(state, [*Chain.scope(first), b, *Chain.scope(second)])
+
+    assert StencilTiling.can_be_applied(sdfg, subgraph) != ordered
 
 
 def test_an_ordering_edge_into_the_intermediate_is_not_fused():
@@ -250,6 +280,8 @@ if __name__ == "__main__":
     test_an_ordering_edge_into_both_maps_orders_the_fused_map_once()
     test_an_ordering_edge_out_of_a_map_follows_the_fused_map()
     test_an_ordering_edge_from_the_intermediate_is_not_fused()
+    for ordered in [False, True]:
+        test_stencil_tiling_refuses_an_ordered_intermediate(ordered)
     test_an_ordering_edge_into_the_intermediate_is_not_fused()
     test_tasklets_without_inputs_fuse()
     for case in ["one_node", "two_nodes"]:
