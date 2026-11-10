@@ -124,6 +124,9 @@ def match_copy_chain(
     # Every non-access node must be a pure copy tasklet (rejects arithmetic bodies).
     if any(not _is_copy_tasklet(n) for n in others):
         return None
+    # A WCR edge accumulates into the sink: ``B[i, j] += A[j, i]`` is no copy.
+    if any(e.data.wcr is not None for e in state.edges()):
+        return None
     ends = single_source_and_sink(state, access)
     if ends is None:
         return None

@@ -19,7 +19,9 @@ import dace
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
 from dace.transformation.passes.canonicalize.loop_to_transpose import LoopToTranspose
 
 N = dace.symbol("N")
@@ -298,6 +300,40 @@ def test_a_scratch_read_after_the_nest_keeps_the_nest():
     assert np.array_equal(B, A.T) and out[0] == A[3, 2]
 
 
+@dace.program
+def transpose_accumulated(A: dace.float64[N, N], B: dace.float64[N, N]):
+    for i in range(N):
+        for j in range(N):
+            B[i, j] += A[j, i]
+
+
+@dace.program
+def symmetrize_accumulated(X: dace.float64[N, N]):
+    for i in range(N - 1):
+        for j in range(i + 1, N):
+            X[j, i] += X[i, j]
+
+
+def test_a_wcr_copy_accumulates_and_stays_a_nest():
+    """``B[i, j] += A[j, i]`` as a WCR edge off a copy tasklet is no copy for either lift of the chain."""
+    rng = np.random.default_rng(7)
+    A, B = rng.random((5, 5)), rng.random((5, 5))
+    for program, lift in ((transpose_accumulated, LoopToTranspose), (symmetrize_accumulated, LoopToSymmetrize)):
+        sdfg = program.to_sdfg(simplify=True)
+        sdfg.name = f"{program.name}_wcr"
+        assert sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=True, validate=False) == 1
+        assert lift().apply_pass(sdfg, {}) is None
+        assert not _libnodes(sdfg)
+    got = B.copy()
+    sdfg = transpose_accumulated.to_sdfg(simplify=True)
+    sdfg.name = "transpose_accumulated_wcr_run"
+    sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=True, validate=False)
+    LoopToTranspose().apply_pass(sdfg, {})
+    sdfg(A=A.copy(), B=got, N=5)
+    assert np.allclose(got, B + A.T)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
     test_a_scratch_read_after_the_nest_keeps_the_nest()
+    test_a_wcr_copy_accumulates_and_stays_a_nest()
