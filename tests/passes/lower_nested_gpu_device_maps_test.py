@@ -471,6 +471,19 @@ def test_a_persistent_kernel_writes_global_memory_outside_its_maps_from_one_thre
     assert [dace.symbolic.pystr_to_symbolic(g) for g in guards] == [expected], guards
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("tiled", [False, True])
+def test_the_lowered_persistent_kernel_computes_each_element_once(tiled: bool):
+    import cupy  # Only present on GPU runners.
+
+    sdfg = persistent_kernel(tiled)
+    sdfg.name = f"persistent_numeric_{'tiled' if tiled else 'flat'}"
+    a = cupy.arange(1000, dtype=cupy.float64)
+    expected = 2 * cupy.asnumpy(a)
+    sdfg(A=a, N=a.size)
+    assert np.array_equal(cupy.asnumpy(a), expected)
+
+
 if __name__ == "__main__":
     for inner_range, symbol_mapping, expected in [
         ("5:10", None, ("5", "9")),
