@@ -519,6 +519,14 @@ def _is_scalar(edge: "gr.MultiConnectorEdge[Memlet]", memlet_path: list["gr.Mult
         if isinstance(conntype, dtypes.pointer):
             return False
 
+    # A nested SDFG that binds the connector to an array is handed a pointer, whatever window the edge names
+    from dace import data as dt
+    from dace.sdfg import nodes as nd
+
+    dst = memlet_path[-1].dst
+    if isinstance(dst, nd.NestedSDFG) and isinstance(dst.sdfg.arrays.get(dst_conn), dt.Array):
+        return False
+
     # If the memlet is dynamically accessed, it may also not be a scalar
     if edge.data.dynamic and (edge.data.volume == -1 or edge.data.volume == 0):
         return False

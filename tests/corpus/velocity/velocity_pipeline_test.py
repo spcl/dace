@@ -28,7 +28,7 @@ CONFIG_NAMES = tuple(DOMAINS)
 #: pruning the configuration branches buys, so a change here is a change in what the pipeline removes.
 MAPS = {(0, 1): 34, (0, 2): 26, (1, 1): 27, (1, 2): 19}
 #: Block maps kept on the host and the kernels they launch, per (lvn_only, istep).
-OFFLOADED = {(0, 1): (8, 28), (0, 2): (7, 22), (1, 1): (6, 21), (1, 2): (5, 15)}
+OFFLOADED = {(0, 1): (8, 27), (0, 2): (7, 21), (1, 1): (6, 21), (1, 2): (5, 15)}
 
 
 def dace_fortran_root() -> Path:
@@ -123,14 +123,15 @@ def test_cpu_pipeline_matches_gfortran(lvn_only, istep, monkeypatch):
 
 @pytest.mark.parametrize("lvn_only, istep", sorted(OFFLOADED))
 def test_gpu_offload_launches_from_the_block_loops(lvn_only, istep, tmp_path):
-    """Every block loop stays a host loop and launches its column work: what the GPU runner runs, checked anywhere."""
+    """Every block loop stays a host loop and launches its column work: what the GPU runner runs, checked anywhere.
+    A block loop that launches nothing (the maximum over the blocks' CFL numbers) is threaded as in the CPU form."""
     sdfg = velocity_sdfg(tmp_path)
     pipeline(sdfg, config(lvn_only, istep), "gpu")
     sdfg.validate()
 
     hosts = block_maps(sdfg)
     assert (len(hosts), kernels(sdfg)) == OFFLOADED[lvn_only, istep]
-    assert all(entry.map.schedule == dace.ScheduleType.Sequential for entry in hosts)
+    assert all(entry.map.schedule in (dace.ScheduleType.Sequential, dace.ScheduleType.CPU_Multicore) for entry in hosts)
     assert any(code.title == "CUDA" for code in sdfg.generate_code())
 
 

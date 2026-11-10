@@ -181,6 +181,8 @@ class OffloadToAccelerator(ppl.Pass):
         self._no_copy_in_needed: OrderedSet[str] = OrderedSet()
         #: States the current analysis round found touching one container from both sides.
         self._hybrid_states: OrderedSet[SDFGState] = OrderedSet()
+        #: Arrays the host code of launching nests reads in the state being analyzed: no wrapper lifts that code.
+        self._launcher_host_reads: OrderedSet[str] = OrderedSet()
         self._cached_scopes: dict[SDFGState, dict] = {}
         self._cached_scope_children: dict[SDFGState, dict] = {}
         self._loop_jump_entries: list[OffloadingIRNode] = []
@@ -1487,6 +1489,8 @@ class OffloadToAccelerator(ppl.Pass):
                 gpu_set |= names
             elif connector in inner_cpu:
                 cpu_set |= names
+        if self.is_device_work(node):
+            self._launcher_host_reads |= cpu_set
         return gpu_set, cpu_set
 
     def get_data_locations_of_state(self, sdfg: SDFG, state: SDFGState) -> tuple[OrderedSet[str], OrderedSet[str]]:
@@ -1496,6 +1500,7 @@ class OffloadToAccelerator(ppl.Pass):
         #  - non-nested toplevel scopes -> add accessed data to cpu set
         gpu_set: OrderedSet[str] = OrderedSet()
         cpu_set: OrderedSet[str] = OrderedSet()
+        outer_reads, self._launcher_host_reads = self._launcher_host_reads, OrderedSet()
 
         # The analysis phase never mutates, so the scope map cached for this round is the current one.
         top_level_nodes = self._cached_scope_children[state][None]
@@ -1576,10 +1581,15 @@ class OffloadToAccelerator(ppl.Pass):
                 if name in sdfg.arrays and sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global
             )
         overlap = (gpu_set & cpu_set) | (resident - pinned)
+        # What only the host code of a launching nest reads stays on the host: the wrappers lift free host work, not
+        # a nest's control flow, which would fetch the array back on every execution (ICON's block loops read
+        # ``end_index`` on an interstate edge of the body that launches their kernels).
+        held = (self._launcher_host_reads - gpu_set) | pinned
+        self._launcher_host_reads = outer_reads
         if overlap:
             self._hybrid_states.add(state)
-            gpu_set |= cpu_set - pinned
-            cpu_set &= pinned
+            gpu_set |= cpu_set - held
+            cpu_set &= held
 
         return gpu_set, cpu_set
 
