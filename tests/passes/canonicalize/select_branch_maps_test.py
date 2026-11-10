@@ -185,6 +185,48 @@ def test_a_one_element_array_condition_keeps_a_valid_select():
     assert np.array_equal(z, np.arange(4.0) * 3 + 1)
 
 
+def test_a_gather_the_guard_protects_stays_a_branch():
+    """``out[i] = A[idx[i]]`` in a tasklet handed all of ``A``: ``idx`` may be valid only where the guard holds."""
+    sdfg = dace.SDFG("select_guarded_gather")
+    for name in ("A", "out", "B"):
+        sdfg.add_array(name, [N], dace.float64)
+    sdfg.add_array("idx", [N], dace.int64)
+    sdfg.add_symbol("flag", dace.int64)
+    block = ConditionalBlock("pick")
+    sdfg.add_node(block, is_start_block=True)
+    then, other = ControlFlowRegion("then", sdfg=sdfg), ControlFlowRegion("other", sdfg=sdfg)
+    block.add_branch(CodeBlock("flag == 5"), then)
+    block.add_branch(None, other)
+    then.add_state("gather", is_start_block=True).add_mapped_tasklet(
+        "gather",
+        dict(i="0:N"),
+        {"a": dace.Memlet("A[0:N]"), "j": dace.Memlet("idx[i]")},
+        "o = a[j]",
+        {"o": dace.Memlet("out[i]")},
+        external_edges=True,
+    )
+    other.add_state("scale", is_start_block=True).add_mapped_tasklet(
+        "scale",
+        dict(i="0:N"),
+        {"a": dace.Memlet("A[i]")},
+        "o = a * 2.0",
+        {"o": dace.Memlet("out[i]")},
+        external_edges=True,
+    )
+    sdfg.add_state_after(block, "after").add_mapped_tasklet(
+        "plus",
+        dict(i="0:N"),
+        {"a": dace.Memlet("out[i]")},
+        "o = a + 1.0",
+        {"o": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
+    assert SelectBranchMaps().apply_pass(sdfg, {}) is None
+    A, out, B = np.arange(1.0, 9.0), np.zeros(8), np.zeros(8)
+    sdfg(A=A, idx=np.full(8, 2**40, dtype=np.int64), out=out, B=B, flag=0, N=8)
+    assert np.array_equal(out, 2.0 * A)
+
+
 if __name__ == "__main__":
     test_a_branch_the_guard_protects_stays_a_branch()
     test_branch_maps_without_a_fusion_partner_stay_apart()
@@ -194,3 +236,4 @@ if __name__ == "__main__":
     test_a_condition_on_a_scalar_is_handed_to_the_select()
     test_an_arm_behind_an_interstate_condition_stays_a_branch()
     test_a_one_element_array_condition_keeps_a_valid_select()
+    test_a_gather_the_guard_protects_stays_a_branch()

@@ -913,5 +913,67 @@ def test_a_conditional_edge_keeps_its_assignment():
     assert _apply(sdfg) == 0
 
 
+def test_an_assignment_ahead_that_reads_the_symbol_blocks_the_hoist():
+    """``m = k + 1`` runs ahead of ``k = M + 2`` and reads the entry value in the first iteration."""
+    sdfg, loop = _loop_after_entry("i < 1", assignments={"k": "3"})
+    sdfg.name = "hoist_refusal_read_on_an_edge_ahead"
+    sdfg.add_symbol("m", dace.int64)
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state("second")
+    third = loop.add_state("third")
+    loop.add_edge(first, second, InterstateEdge(assignments={"m": "k + 1"}))
+    loop.add_edge(second, third, InterstateEdge(assignments={"k": "M + 2"}))
+    _write_symbol(third, "m")
+    assert _apply(sdfg) == 0
+    out = np.zeros(1, np.int64)
+    sdfg(out=out, M=10, N=1)
+    assert out[0] == 4
+
+
+def test_a_read_after_the_branch_holding_a_zero_trip_loop_blocks_the_hoist():
+    """With ``N == 0`` the assignment never runs, and the read after the conditional keeps ``k = 3``."""
+    sdfg = dace.SDFG("hoist_refusal_read_after_the_branch")
+    sdfg.add_array("out", [1], dace.int64)
+    for name in ("k", "M", "N"):
+        sdfg.add_symbol(name, dace.int64)
+    block = ConditionalBlock("guard")
+    sdfg.add_node(block)
+    sdfg.add_edge(sdfg.add_state("entry", is_start_block=True), block, InterstateEdge(assignments={"k": "3"}))
+    branch = ControlFlowRegion("then", sdfg=sdfg)
+    block.add_branch(dace.properties.CodeBlock("M > 0"), branch)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    branch.add_node(loop, is_start_block=True)
+    first = loop.add_state("first", is_start_block=True)
+    loop.add_edge(first, loop.add_state("second"), InterstateEdge(assignments={"k": "N + 5"}))
+    _write_symbol(sdfg.add_state_after(block, "after"), "k")
+    assert _apply(sdfg) == 0
+    out = np.zeros(1, np.int64)
+    sdfg(out=out, M=1, N=0)
+    assert out[0] == 3
+
+
+def test_an_array_read_in_a_nested_sdfg_does_not_move_past_a_zero_trip_loop():
+    """The array ``k = a[M]`` reads is declared by the nested SDFG that holds the loop."""
+    inner, loop = _loop_after_entry("i < N")
+    inner.add_array("a", [10], dace.int64)
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state("second")
+    loop.add_edge(first, second, InterstateEdge(assignments={"k": "a[M]"}))
+    _write_symbol(second, "k")
+    sdfg = dace.SDFG("hoist_refusal_array_read_in_a_nest")
+    sdfg.add_array("A", [10], dace.int64)
+    sdfg.add_array("O", [1], dace.int64)
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_symbol("N", dace.int64)
+    state = sdfg.add_state("call", is_start_block=True)
+    nest = state.add_nested_sdfg(inner, {"a": None}, {"out": None}, symbol_mapping={"M": "M", "N": "N"})
+    state.add_edge(state.add_read("A"), None, nest, "a", dace.Memlet("A[0:10]"))
+    state.add_edge(nest, "out", state.add_write("O"), None, dace.Memlet("O[0]"))
+    assert _apply(sdfg) == 0
+    out = np.zeros(1, np.int64)
+    sdfg(A=np.arange(10, dtype=np.int64), O=out, M=4, N=2)
+    assert out[0] == 4
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

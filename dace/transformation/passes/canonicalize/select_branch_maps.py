@@ -70,6 +70,12 @@ def branch_map(region: ControlFlowRegion) -> tuple[SDFGState, nodes.MapEntry] | 
         return None
     if any(e.data.wcr is not None for e in scope.edges()):
         return None
+    # A tasklet handed several elements picks one in its code: no memlet shows that index in range without the guard.
+    if any(
+        isinstance(e.dst, nodes.Tasklet) and not e.data.is_empty() and e.data.subset.num_elements() != 1
+        for e in scope.edges()
+    ):
+        return None
     if any(
         not isinstance(e.src, nodes.Tasklet) for e in state.in_edges(state.exit_node(entry)) if not e.data.is_empty()
     ):

@@ -217,9 +217,12 @@ def _dedup_boundary_aliases(state: SDFGState, keep: nodes.NestedSDFG) -> None:
     # Symbol-mapping dedup: group keys by the outer value they bind to, and
     # collapse each >=2 group onto one canonical key (prefer the key whose name
     # already IS the bound value, e.g. the map parameter).
+    # A key the nest assigns holds the bound value only up to that edge: it aliases no other key.
+    assigned = {name for edge in base.all_interstate_edges() for name in edge.data.assignments}
     groups: dict[str, list[str]] = {}
     for k, v in keep.symbol_mapping.items():
-        groups.setdefault(str(v), []).append(k)
+        if k not in assigned:
+            groups.setdefault(str(v), []).append(k)
     sym_repl: dict[str, str] = {}
     for value_str, keys in groups.items():
         if len(keys) < 2:

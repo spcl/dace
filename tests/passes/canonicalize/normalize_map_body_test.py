@@ -622,3 +622,42 @@ def test_producers_of_one_window_merge_with_their_own_element_and_index():
     assert len([n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]) == 1
     sdfg(A=A, B=B, N=12)
     assert np.allclose(B, expected)
+
+
+def symbol_writer(name: str, symbol: str, out: str, bump: bool) -> dace.SDFG:
+    inner = dace.SDFG(name)
+    inner.add_array(out, [8], dace.int64)
+    inner.add_symbol(symbol, dace.int64)
+    inner.add_symbol("i", dace.int64)
+    first = inner.add_state("first", is_start_block=True)
+    second = inner.add_state("second")
+    inner.add_edge(first, second, dace.InterstateEdge(assignments={symbol: f"{symbol} + 1"} if bump else {}))
+    tasklet = second.add_tasklet("write", {}, {"o"}, f"o = {symbol}")
+    second.add_edge(tasklet, "o", second.add_write(out), None, dace.Memlet(f"{out}[i]"))
+    return inner
+
+
+def test_a_symbol_the_nest_reassigns_is_no_alias_of_its_bound_value():
+    """Both siblings bind a symbol to ``i``; the first advances its own before writing it."""
+    sdfg = dace.SDFG("alias_reassigned_in_the_nest")
+    sdfg.add_array("B", [8], dace.int64)
+    sdfg.add_array("C", [8], dace.int64)
+    state = sdfg.add_state("main", is_start_block=True)
+    entry, exit_node = state.add_map("m", dict(i="0:8"))
+    first = state.add_nested_sdfg(
+        symbol_writer("advance", "p", "B", True), {}, {"B": None}, symbol_mapping={"p": "i", "i": "i"}
+    )
+    second = state.add_nested_sdfg(
+        symbol_writer("keep", "q", "C", False), {}, {"C": None}, symbol_mapping={"q": "i", "i": "i"}
+    )
+    for nest, name in ((first, "B"), (second, "C")):
+        state.add_nedge(entry, nest, dace.Memlet())
+        state.add_memlet_path(nest, exit_node, state.add_write(name), src_conn=name, memlet=dace.Memlet(f"{name}[0:8]"))
+
+    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1
+
+    sdfg.validate()
+    B, C = np.zeros(8, np.int64), np.zeros(8, np.int64)
+    sdfg(B=B, C=C)
+    assert np.array_equal(B, np.arange(1, 9))
+    assert np.array_equal(C, np.arange(8))

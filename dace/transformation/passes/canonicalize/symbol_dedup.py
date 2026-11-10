@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dace import SDFG, properties
+from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
@@ -87,16 +88,12 @@ class SymbolDedup(ppl.Pass):
             return text.strip()
 
     def _protected_symbols(self, sdfg: SDFG) -> dict[str, None]:
-        """Symbols that must never be dropped: externally-required free symbols,
-        parameters bound by the parent nested-SDFG mapping, and loop variables
-        (whose updates live in loop metadata, not interstate edges)."""
+        """Symbols that must never be dropped: externally-required free symbols and
+        parameters bound by the parent nested-SDFG mapping."""
         protected: dict[str, None] = dict.fromkeys(map(str, sdfg.free_symbols))
         nsdfg = sdfg.parent_nsdfg_node
         if nsdfg is not None:
             protected.update(dict.fromkeys(nsdfg.symbol_mapping.keys()))
-        for cfg in sdfg.all_control_flow_regions(recursive=False):
-            if isinstance(cfg, LoopRegion) and cfg.loop_variable:
-                protected[str(cfg.loop_variable)] = None
         return protected
 
     def _dedup_sdfg(self, sdfg: SDFG) -> int:
@@ -124,6 +121,19 @@ class SymbolDedup(ppl.Pass):
         classes = [syms for syms in by_signature.values() if len(syms) >= 2]
         if not classes:
             return 0
+        # A loop header assigns its variable as well: it equals the others only until that loop runs. A map
+        # parameter shadows its name: a use renamed to it inside the map would read the parameter.
+        scoped = {
+            str(cfg.loop_variable)
+            for cfg in sdfg.all_control_flow_regions(recursive=False)
+            if isinstance(cfg, LoopRegion) and cfg.loop_variable
+        }
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.MapEntry):
+                    scoped.update(node.map.params)
+        classes = [[sym for sym in syms if sym not in scoped] for syms in classes]
+        classes = [syms for syms in classes if len(syms) >= 2]
         protected = self._protected_symbols(sdfg)
 
         # 3. Per equivalence class, keep one canonical symbol (shortest name, ties

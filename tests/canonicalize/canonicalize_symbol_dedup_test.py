@@ -11,6 +11,7 @@ value-preserving.
 import numpy as np
 
 import dace
+from dace.sdfg.state import LoopRegion
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
@@ -229,6 +230,39 @@ def test_symbol_dedup_partial_def_sites_not_merged():
     assert {"s1": "idx[0]", "s2": "idx[0]"} in assignments
     assert {"s2": "idx[0]"} in assignments
     sdfg.validate()
+
+
+def test_a_loop_variable_stays_apart_from_a_symbol_assigned_with_it():
+    """``i`` and ``ii`` are both set to ``M``, then the loop counts ``i`` and reads ``ii``."""
+    sdfg = dace.SDFG("dedup_loop_variable")
+    sdfg.add_array("out", [1], dace.int64)
+    sdfg.add_symbol("M", dace.int64)
+    loop = LoopRegion("loop", "i < 2", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(
+        sdfg.add_state("entry", is_start_block=True), loop, dace.InterstateEdge(assignments={"i": "M", "ii": "M"})
+    )
+    body = loop.add_state("body", is_start_block=True)
+    body.add_edge(body.add_tasklet("t", {}, {"o"}, "o = ii"), "o", body.add_write("out"), None, dace.Memlet("out[0]"))
+    assert SymbolDedup().apply_pass(sdfg, {}) is None
+    out = np.zeros(1, np.int64)
+    sdfg(out=out, M=7)
+    assert out[0] == 7
+
+
+def test_a_symbol_named_like_a_map_parameter_stays_apart():
+    """``k`` and ``kk`` are both set to ``M``; a map over ``k`` reads ``kk``."""
+    sdfg = dace.SDFG("dedup_map_parameter")
+    sdfg.add_array("out", [4], dace.int64)
+    sdfg.add_symbol("M", dace.int64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state("second")
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"k": "M", "kk": "M"}))
+    second.add_mapped_tasklet("m", dict(k="0:4"), {}, "o = kk", {"o": dace.Memlet("out[k]")}, external_edges=True)
+    assert SymbolDedup().apply_pass(sdfg, {}) is None
+    out = np.zeros(4, np.int64)
+    sdfg(out=out, M=7)
+    assert np.array_equal(out, np.full(4, 7))
 
 
 def test_symbols_of_different_dtypes_stay_apart():

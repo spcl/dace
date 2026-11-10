@@ -258,6 +258,27 @@ def test_copy_store_is_read_at_its_destination_index():
     assert stores_of(sdfg, "a") == 2
 
 
+def test_a_dynamic_killing_store_refuses():
+    """``if b[i] > 0: a[i] = b[i]`` then ``a[i + 1] = c[i]``: the first store may not happen, so the second stays."""
+    sdfg = dace.SDFG("dynamic_killing_store")
+    for name in "abc":
+        sdfg.add_array(name, [N], dace.float64)
+    loop = LoopRegion("l", "i < N - 1", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    first = loop.add_state("first", is_start_block=True)
+    second = loop.add_state_after(first, "second")
+    kill = first.add_tasklet("kill", {"x"}, {"o"}, "if x > 0:\n    o = x")
+    first.add_edge(first.add_read("b"), None, kill, "x", dace.Memlet("b[i]"))
+    first.add_edge(kill, "o", first.add_write("a"), None, dace.Memlet("a[i]", dynamic=True))
+    store = second.add_tasklet("store", {"x"}, {"o"}, "o = x")
+    second.add_edge(second.add_read("c"), None, store, "x", dace.Memlet("c[i]"))
+    second.add_edge(store, "o", second.add_write("a"), None, dace.Memlet("a[i + 1]"))
+    assert DeadCarriedStoreElimination().apply_pass(sdfg, {}) is None
+    a, c = np.zeros(8), np.arange(1.0, 9.0)
+    sdfg(a=a, b=-np.ones(8), c=c, N=8)
+    assert np.array_equal(a[1:], c[:-1])
+
+
 if __name__ == "__main__":
     test_s244_is_rewritten_and_still_computes()
     test_s244_parallelizes_through_the_pipeline()
@@ -273,3 +294,4 @@ if __name__ == "__main__":
     test_a_sibling_consuming_the_store_refuses()
     test_a_sibling_reading_BEFORE_the_store_is_still_dead()
     test_copy_store_is_read_at_its_destination_index()
+    test_a_dynamic_killing_store_refuses()
