@@ -56,7 +56,6 @@ from dace.transformation.interstate import InlineSDFG
 from dace.transformation.passes.bound_data_dependent_extents import BoundDataDependentExtents
 from dace.transformation.passes.canonicalize.beta_fold import BetaFold
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
-from dace.transformation.passes.canonicalize.move_loop_into_map_gated import MoveLoopIntoMapGated
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
 from dace.transformation.passes.canonicalize.split_map_local_transients import SplitMapLocalTransients
@@ -785,9 +784,7 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
     # Before the offload reads a map around a small GEMM as a host loop of vendor calls.
     SpecializeSmallGemms(dtypes.DeviceType.GPU).apply_pass(sdfg, {})
     # Before the offload makes a level map the kernel: its planes, along the contiguous axis, are the threads.
-    if demote_uncoalesced_level_maps(sdfg):
-        # The level loops are new to the launch rule: one that can run inside its planes makes the nest one launch.
-        MoveLoopIntoMapGated(target="gpu").apply_pass(sdfg, {})
+    demote_uncoalesced_level_maps(sdfg)
     # Before the offload decides what a kernel can own: a buffer sized per iteration by data is allocated by the host.
     BoundDataDependentExtents().apply_pass(sdfg, {})
     apply_gpu_storage(sdfg)

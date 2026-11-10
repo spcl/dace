@@ -5,8 +5,6 @@ the level alone counts, a plane range read per level refuses."""
 import numpy as np
 
 import dace
-from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.cpu_specialization.demote_level_maps import (
     demote_strided_level_maps,
@@ -173,19 +171,6 @@ def test_a_level_map_over_contiguous_planes_is_demoted_for_the_gpu():
     assert np.allclose(out, 2.0 * w)
 
 
-def test_the_offload_runs_a_demoted_level_loop_inside_its_plane_kernel():
-    """Demoted and left on the host, the level loop launches the plane kernel once per level."""
-    sdfg = level_planes.to_sdfg(simplify=True)
-    offload_to_gpu(sdfg)
-    kernels = [
-        n
-        for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device
-    ]
-    assert len(kernels) == 1 and kernels[0].map.params == ["__i0", "__i1"], [k.map for k in kernels]
-    assert not [block for block in sdfg.nodes() if isinstance(block, LoopRegion)]
-
-
 def test_a_map_over_the_contiguous_axis_stays_the_gpu_kernel():
     sdfg = column_planes.to_sdfg(simplify=True)
     assert demote_uncoalesced_level_maps(sdfg) == 0
@@ -202,6 +187,5 @@ if __name__ == "__main__":
     test_an_atom_map_gathering_its_own_row_is_demoted()
     test_an_atom_map_with_one_per_atom_plane_is_still_demoted()
     test_a_level_map_over_contiguous_planes_is_demoted_for_the_gpu()
-    test_the_offload_runs_a_demoted_level_loop_inside_its_plane_kernel()
     test_a_map_over_the_contiguous_axis_stays_the_gpu_kernel()
     test_a_row_map_reducing_into_its_own_element_stays_the_gpu_kernel()
