@@ -152,9 +152,40 @@ def test_an_update_reading_another_iteration_stays_apart():
     assert sdfg.apply_transformations_repeated(relaxed_fusion()) == 0
 
 
+def test_a_piece_computed_from_an_earlier_piece_fuses_without_a_cycle():
+    """Three Maps write columns 0, 1, 2 of ``a``, each from the columns before it: fused in place, the second fusion
+    finds two pieces of ``a`` in the body, one computed from the other."""
+    sdfg = dace.SDFG("pieces_of_one_container")
+    sdfg.add_transient("a", [SIZE, 3], dace.float64)
+    sdfg.add_array("out", [SIZE, 3], dace.float64)
+    sdfg.add_array("c", [SIZE], dace.float64)
+    state = sdfg.add_state()
+    chain = [state.add_access("a") for _ in range(3)]
+    state.add_mapped_tasklet(
+        "first", {"i": f"0:{SIZE}"}, {"q": dace.Memlet("c[i]")}, "o = q + 1", {"o": dace.Memlet("a[i, 0]")},
+        output_nodes={"a": chain[0]}, external_edges=True,
+    )  # fmt: skip
+    state.add_mapped_tasklet(
+        "second", {"i": f"0:{SIZE}"}, {"p": dace.Memlet("a[i, 0]")}, "o = -p", {"o": dace.Memlet("a[i, 1]")},
+        input_nodes={"a": chain[0]}, output_nodes={"a": chain[1]}, external_edges=True,
+    )  # fmt: skip
+    state.add_mapped_tasklet(
+        "third", {"i": f"0:{SIZE}"}, {"p": dace.Memlet("a[i, 0]"), "r": dace.Memlet("a[i, 1]")}, "o = p - 2 * r",
+        {"o": dace.Memlet("a[i, 2]")}, input_nodes={"a": chain[1]}, output_nodes={"a": chain[2]}, external_edges=True,
+    )  # fmt: skip
+    state.add_nedge(chain[2], state.add_access("out"), dace.Memlet(f"a[0:{SIZE}, 0:3]"))
+    sdfg.validate()
+    assert sdfg.apply_transformations_repeated(relaxed_fusion(), validate_all=True) == 2
+    assert top_level_maps(sdfg) == 1
+    array, values = np.zeros((SIZE, 3)), np.arange(1.0, SIZE + 1)
+    sdfg(out=array, c=values)
+    assert np.array_equal(array, np.stack([values + 1, -(values + 1), 3 * (values + 1)], axis=1))
+
+
 if __name__ == "__main__":
     test_a_row_recurrence_and_its_reader_fuse_in_place()
     test_a_reader_of_another_iterations_row_is_refused()
     test_maps_whose_bodies_are_nested_sdfgs_fuse_through_an_array_the_first_updates_point_wise()
     test_two_updates_of_one_container_fuse_in_place()
     test_an_update_reading_another_iteration_stays_apart()
+    test_a_piece_computed_from_an_earlier_piece_fuses_without_a_cycle()

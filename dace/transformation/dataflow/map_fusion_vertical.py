@@ -1370,11 +1370,16 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             is_in_place = inter_name in in_place
             if is_in_place:
                 new_inter_name, new_inter_desc, is_scalar = inter_name, inter_desc, False
-                # A body that fused this container in place before holds it in a node already, no copy onto itself
+                # A body that fused this container in place before holds it in a node already, no copy onto itself.
+                #  Beside other pieces that node is not where they end: one computed from it (lulesh's ``a[i, 4]``
+                #  from ``a[i, 2]``) would write back into what it reads.
                 held = [
                     e.src for e in pre_exit_edges if isinstance(e.src, nodes.AccessNode) and e.src.data == inter_name
                 ]
-                new_inter_node = held[0] if held else state.add_access(inter_name, copy.copy(inter_node.debuginfo))
+                if len(pre_exit_edges) == 1 and held:
+                    new_inter_node = held[0]
+                else:
+                    new_inter_node = state.add_access(inter_name, copy.copy(inter_node.debuginfo))
             else:
                 (new_inter_shape_raw, new_inter_shape, squeezed_dims) = self.compute_reduced_intermediate(
                     producer_subset=producer_subset,
@@ -1426,7 +1431,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  that piece is the whole of it.
             for pre_exit_edge in pre_exit_edges:
                 if is_in_place:
-                    if pre_exit_edge.src is not new_inter_node:
+                    if pre_exit_edge.src in held:
+                        # Already in the container: the node all pieces end in only has to come after it
+                        if pre_exit_edge.src is not new_inter_node and not state.edges_between(
+                            pre_exit_edge.src, new_inter_node
+                        ):
+                            state.add_nedge(pre_exit_edge.src, new_inter_node, dace.Memlet())
+                    else:
                         state.add_edge(
                             pre_exit_edge.src,
                             pre_exit_edge.src_conn,
