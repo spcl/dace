@@ -1,8 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the InlineTaskletConnectors pass."""
 
+import functools
+
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import nodes as dnodes
@@ -11,17 +12,22 @@ from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletCo
 N, M = dace.symbol("N"), dace.symbol("M")
 
 
-@pytest.fixture(autouse=True)
-def readable_cpu_generator():
+def readable_cpu_generator(test):
     """Only the readable generator emits a tasklet whose connectors the pass inlined."""
-    with dace.config.set_temporary("compiler", "cpu", "implementation", value="experimental_readable"):
-        yield
+
+    @functools.wraps(test)
+    def run(*args, **kwargs):
+        with dace.config.set_temporary("compiler", "cpu", "implementation", value="experimental_readable"):
+            return test(*args, **kwargs)
+
+    return run
 
 
 def _tasklets(sdfg):
     return [n for st in sdfg.states() for n in st.nodes() if isinstance(n, dnodes.Tasklet)]
 
 
+@readable_cpu_generator
 def test_elementwise_inlined_and_valid():
 
     @dace.program
@@ -41,6 +47,7 @@ def test_elementwise_inlined_and_valid():
     sdfg.validate()
 
 
+@readable_cpu_generator
 def test_stencil_offsets():
 
     @dace.program
@@ -56,6 +63,7 @@ def test_stencil_offsets():
     sdfg.validate()
 
 
+@readable_cpu_generator
 def test_idempotent():
 
     @dace.program
@@ -69,6 +77,7 @@ def test_idempotent():
     assert second is None  # nothing left to inline
 
 
+@readable_cpu_generator
 def test_wcr_output_not_inlined():
     # A reduction's WCR output connector must be preserved (it goes through the
     # atomic resolve path), while its non-WCR input may be inlined.
@@ -89,6 +98,7 @@ def test_wcr_output_not_inlined():
                         assert e.src_conn in n.code.as_string
 
 
+@readable_cpu_generator
 def test_shadowed_connector_not_inlined():
 
     # A lambda parameter sharing a connector's name denotes the parameter inside the lambda,
@@ -131,6 +141,7 @@ def read_after_write_sdfg(name: str, read_index: str, body: str = "o_x = x_in + 
     return sdfg
 
 
+@readable_cpu_generator
 def test_a_read_of_an_element_another_output_writes_keeps_its_copy():
     """Inlined, ``o_y`` would read the ``X[2i]`` that ``o_x`` just wrote."""
     sdfg = read_after_write_sdfg("inline_aliased_read", "2 * i")
@@ -146,6 +157,7 @@ def test_a_read_of_an_element_another_output_writes_keeps_its_copy():
     assert np.array_equal(Y, X[0::2] * 2.0)
 
 
+@readable_cpu_generator
 def test_a_read_disjoint_from_another_outputs_write_is_inlined():
     sdfg = read_after_write_sdfg("inline_disjoint_read", "2 * i + 1")
     InlineTaskletConnectors().apply_pass(sdfg, {})
@@ -161,6 +173,7 @@ def test_a_read_disjoint_from_another_outputs_write_is_inlined():
     assert np.array_equal(Y, X[1::2] * 2.0)
 
 
+@readable_cpu_generator
 def test_a_read_that_precedes_the_aliased_write_is_inlined():
     sdfg = read_after_write_sdfg("inline_read_before_write", "2 * i", body="o_y = x_in * 2.0\no_x = x_in + 1.0")
     InlineTaskletConnectors().apply_pass(sdfg, {})
@@ -176,6 +189,7 @@ def test_a_read_that_precedes_the_aliased_write_is_inlined():
     assert np.array_equal(Y, X[0::2] * 2.0)
 
 
+@readable_cpu_generator
 def test_a_read_after_the_aliased_write_inside_one_branch_keeps_its_copy():
     branch = "if x_in > -1e300:\n    o_x = x_in + 1.0\n    o_y = x_in * 2.0\nelse:\n    o_x = x_in\n    o_y = x_in"
     sdfg = read_after_write_sdfg("inline_branch_read_after_write", "2 * i", body=branch)
@@ -209,6 +223,7 @@ def _keyword_named_input_sdfg():
     return sdfg
 
 
+@readable_cpu_generator
 def test_a_container_named_like_a_python_keyword_is_not_inlined():
     """``in`` is not a name the rewritten body could carry.
 
@@ -224,6 +239,7 @@ def test_a_container_named_like_a_python_keyword_is_not_inlined():
     sdfg.validate()
 
 
+@readable_cpu_generator
 def test_the_writer_and_the_reader_of_a_transient_agree():
     """A container is inlined in its reader only if its WRITER is inlined too.
 
@@ -241,6 +257,7 @@ def test_the_writer_and_the_reader_of_a_transient_agree():
     assert declares, f"the transient A is used but never declared:\n{body}"
 
 
+@readable_cpu_generator
 def test_the_keyword_named_program_still_computes():
     sdfg = _keyword_named_input_sdfg()
     out = np.array([0.0])
@@ -257,4 +274,8 @@ if __name__ == "__main__":
     test_a_container_named_like_a_python_keyword_is_not_inlined()
     test_the_writer_and_the_reader_of_a_transient_agree()
     test_the_keyword_named_program_still_computes()
+    test_a_read_of_an_element_another_output_writes_keeps_its_copy()
+    test_a_read_disjoint_from_another_outputs_write_is_inlined()
+    test_a_read_that_precedes_the_aliased_write_is_inlined()
+    test_a_read_after_the_aliased_write_inside_one_branch_keeps_its_copy()
     print("ok")
