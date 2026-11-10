@@ -121,5 +121,24 @@ def test_strided_negative_loop_value_preserving(n):
     assert np.allclose(got, ref), f"stride -2 rewrite changed the touched indices for N={n}"
 
 
+def test_loop_whose_body_reassigns_its_start_symbol_is_left_unchanged():
+    """``for i = K; i >= 0; i -= 1`` with ``K = K - 1`` in the body: the rebinding would read the moved ``K``."""
+    sdfg = dace.SDFG("negative_stride_start_reassigned")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("a", [16], dace.int64)
+    loop = LoopRegion("L", "i >= 0", "i", "i = K", "i = i - 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    body.add_edge(body.add_tasklet("t", {}, {"o"}, "o = i"), "o", body.add_write("a"), None, dace.Memlet("a[i]"))
+    loop.add_edge(body, loop.add_state("bump"), dace.InterstateEdge(assignments={"K": "K - 1"}))
+    before = sdfg.to_json()
+
+    assert NormalizeNegativeStride().apply_pass(sdfg, {}) is None
+    assert sdfg.to_json() == before
+    a = np.full(16, -1, dtype=np.int64)
+    sdfg(a=a, K=12)
+    assert np.array_equal(a[:13], np.arange(13)) and np.all(a[13:] == -1)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

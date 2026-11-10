@@ -96,7 +96,8 @@ class NormalizeNegativeStride(ppl.Pass):
             return False
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
-        if start is None or end is None:
+        # The rebinding ``i = start + stride * j`` reads ``start`` in every iteration
+        if start is None or end is None or loop_analysis.body_writes(loop, start):
             return False
         try:
             trip = symbolic.simplify(symbolic.int_floor(start - end, -stride) + 1)
