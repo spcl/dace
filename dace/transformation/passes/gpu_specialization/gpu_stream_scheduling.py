@@ -8,7 +8,6 @@ SDFGs share its decisions and a non-root :meth:`apply_pass` raises.
 """
 
 import copy
-import re
 import warnings
 from collections import defaultdict
 from collections.abc import Callable
@@ -21,9 +20,7 @@ import dace
 from dace import SDFG, SDFGState, data, dtypes, properties
 from dace.codegen import common
 from dace.config import Config
-from dace.libraries.standard.helper import CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES
-from dace.libraries.standard.nodes.copy import CopyLibraryNode
-from dace.libraries.standard.nodes.fill import FillLibraryNode
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import NodeT
@@ -242,79 +239,6 @@ def edge_sync_node(edge, state: SDFGState) -> nodes.Node | None:
     if is_already_lowered_gpu_runtime_call(src):
         return src
     return None
-
-
-def state_has_host_boundary_copy(state: SDFGState) -> bool:
-    """Whether ``state`` transfers between host and device: a copy libnode across the storage boundary
-    (before expansion) or a lowered host<->device memcpy tasklet (after)."""
-    for node in state.nodes():
-        if isinstance(node, CopyLibraryNode) and crosses_host_device(node.src_storage(state), node.dst_storage(state)):
-            return True
-        if isinstance(node, nodes.Tasklet) and HOST_DEVICE_MEMCPY.search(node.code.as_string):
-            return True
-    return False
-
-
-def not_on_device_reason(node, nsdfg: SDFG, state: SDFGState) -> str | None:
-    """One-line reason ``node`` does not run on the device, or ``None`` if it does."""
-    if isinstance(node, nodes.Tasklet):
-        if is_devicelevel_gpu(nsdfg, state, node) or is_already_lowered_gpu_runtime_call(node):
-            return None
-        return "host-level Tasklet that isn't a recognized GPU runtime call"
-    if isinstance(node, nodes.LibraryNode):
-        if (
-            isinstance(node, (CopyLibraryNode, FillLibraryNode))
-            or node.schedule == dtypes.ScheduleType.GPU_Device
-            or is_devicelevel_gpu(nsdfg, state, node)
-        ):
-            return None
-        return f"LibraryNode with schedule {node.schedule} outside a GPU_Device scope"
-    return None
-
-
-def require_all_on_device(sdfg: SDFG) -> None:
-    """:raises ValueError: A Tasklet or LibraryNode anywhere in ``sdfg`` runs on the host."""
-    offenders = [
-        f"{type(node).__name__} '{node.label}' in state '{state.label}' (SDFG '{nsdfg.name}'): {why}"
-        for nsdfg in sdfg.all_sdfgs_recursive()
-        for state in nsdfg.states()
-        for node in state.nodes()
-        for why in [not_on_device_reason(node, nsdfg, state)]
-        if why is not None
-    ]
-    if offenders:
-        raise ValueError(
-            "The monolithic single-stream mode requires every Tasklet/LibraryNode to run on-device. "
-            "Offenders:\n  - " + "\n  - ".join(offenders)
-        )
-
-
-def monolithic_sync_states(sdfg: SDFG) -> dict[SDFGState, OrderedSet]:
-    """Stream 0 is synchronized after every host<->device transfer state and at every program-sink state;
-    device-side work shares the stream and runs in submission order."""
-    state_end = {
-        state: OrderedSet([0])
-        for nsdfg in sdfg.all_sdfgs_recursive()
-        for state in nsdfg.states()
-        if state_has_host_boundary_copy(state)
-    }
-    for sink in sdfg.sink_nodes():
-        if isinstance(sink, SDFGState):
-            state_end.setdefault(sink, OrderedSet([0]))
-    return state_end
-
-
-#: A lowered host<->device memcpy in either backend.
-HOST_DEVICE_MEMCPY = re.compile(r"(cuda|hip)Memcpy(HostToDevice|DeviceToHost)")
-
-
-def crosses_host_device(src: dtypes.StorageType, dst: dtypes.StorageType) -> bool:
-    return (src in CPU_RESIDENT_STORAGES and dst in GPU_RESIDENT_STORAGES) or (
-        src in GPU_RESIDENT_STORAGES and dst in CPU_RESIDENT_STORAGES
-    )
-
-
-# Auto single-stream strategy -- state-classified single stream, per-component fallback
 
 
 class NodeKind(Enum):
@@ -566,11 +490,12 @@ def pooled_gpu_access_nodes(sdfg: SDFG) -> list[nodes.AccessNode]:
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
+class AutoGPUStreamScheduler(GPUStreamSchedulingStrategy):
     """Stream 0 everywhere, syncs only at CPU/GPU boundaries.
 
     Classifies every top-level node as ``CPU`` / ``GPU`` / ``MIXED``. A ``MIXED`` node (work that
-    cannot be single-streamed) raises; :class:`AutoGPUStreamScheduler` falls back instead. Otherwise
+    cannot be single-streamed) makes the whole SDFG fall back to
+    :class:`PerComponentGPUStreamScheduler`, with a warning. Otherwise
     every GPU consumer binds to stream 0 and
     :meth:`insert_sync_tasklets` splices a one-tasklet *sync state* between any GPU state and
     (a) a CPU successor, (b) a successor via an iedge that reads a GPU-written array, or
@@ -579,17 +504,13 @@ class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
 
     The CPU -> GPU direction needs no sync: the host is sequential, so the stream-0 launch
     queues after the CPU work naturally.
-
-    With ``monolithic``, every Tasklet/LibraryNode must run on the device (a host one raises instead of
-    falling back), and stream 0 is synchronized only after host<->device transfer states and at program sinks.
     """
 
-    def __init__(self, synchronize_on_exit: bool | None = None, monolithic: bool = False):
+    def __init__(self, synchronize_on_exit: bool | None = None):
         # ``None`` (the default, and the codegen path) defers to
         # ``compiler.cuda.synchronize_on_exit`` so the host app controls it from outside; an
         # explicit value overrides. See :meth:`should_synchronize_on_exit`.
         self._synchronize_on_exit: bool | None = synchronize_on_exit
-        self._monolithic: bool = monolithic
         # Analysis below is per-instance, rebuilt every ``assign_streams`` call (one SDFG per run).
         self._per_component_fallback: PerComponentGPUStreamScheduler | None = None
         self._state_kinds: dict[SDFGState, NodeKind] = {}
@@ -622,10 +543,6 @@ class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         if is_stream_wiring_applied(sdfg):
             return persisted_stream_assignments(sdfg)
 
-        if self._monolithic:
-            require_all_on_device(sdfg)
-            return pin_to_stream_zero([node for node, _, _ in find_inner_gpu_consumers(sdfg)])
-
         # Only root blocks are classified; nested SDFGs fold into their state, so syncs stay at the root.
         self._state_kinds = {block: classify_root_block(block) for block in sdfg.nodes()}
         # A state SplitStateByGPUClass refused (``GPU -> CPU -> GPU``) has no single place for a block-level sync.
@@ -643,10 +560,14 @@ class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         return pin_to_stream_zero(consumers + pooled_gpu_access_nodes(sdfg))
 
     def assign_mixed_streams(self, sdfg: SDFG, offenders: list[str]) -> dict[nodes.Node, int]:
-        raise ValueError(
-            f"{type(self).__name__}: {len(offenders)} top-level node(s) mix host and GPU work "
-            f"(first: {offenders[0]}); use AutoGPUStreamScheduler or PerComponentGPUStreamScheduler."
+        warnings.warn(
+            f"AutoGPUStreamScheduler: {len(offenders)} top-level node(s) mix host and GPU work "
+            f"(first: {offenders[0]}); falling back to PerComponentGPUStreamScheduler.",
+            UserWarning,
+            stacklevel=3,
         )
+        self._per_component_fallback = PerComponentGPUStreamScheduler()
+        return self._per_component_fallback.assign_streams(sdfg)
 
     def insert_sync_tasklets(self, sdfg: SDFG, assignments: dict[nodes.Node, int]):
         """Splice sync states between GPU and CPU iedges; append after GPU sinks.
@@ -664,9 +585,6 @@ class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
         """
         if self._per_component_fallback is not None:
             self._per_component_fallback.insert_sync_tasklets(sdfg, assignments)
-            return
-        if self._monolithic:
-            insert_state_end_syncs(sdfg, monolithic_sync_states(sdfg), assignments)
             return
         if not self._state_kinds:
             # ``assign_streams`` short-circuited (pipeline already applied): no cached
@@ -780,23 +698,6 @@ class SingleStreamGPUScheduler(GPUStreamSchedulingStrategy):
             if not sink_writes_host_visible_output(state) and not self.should_synchronize_on_exit():
                 continue
             append_program_end_sync_state(state.parent_graph, state, stream_array_name)
-
-
-@properties.make_properties
-@transformation.explicit_cf_compatible
-class AutoGPUStreamScheduler(SingleStreamGPUScheduler):
-    """Default GPU stream strategy: :class:`SingleStreamGPUScheduler`, but an SDFG with a node that mixes host and
-    GPU work falls back to :class:`PerComponentGPUStreamScheduler` as a whole, with a warning."""
-
-    def assign_mixed_streams(self, sdfg: SDFG, offenders: list[str]) -> dict[nodes.Node, int]:
-        warnings.warn(
-            f"AutoGPUStreamScheduler: {len(offenders)} top-level node(s) classified as MIXED "
-            f"(first: {offenders[0]}); falling back to PerComponentGPUStreamScheduler.",
-            UserWarning,
-            stacklevel=3,
-        )
-        self._per_component_fallback = PerComponentGPUStreamScheduler()
-        return self._per_component_fallback.assign_streams(sdfg)
 
 
 # Stream-array allocation + propagation.

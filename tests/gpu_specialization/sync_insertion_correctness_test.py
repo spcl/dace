@@ -59,11 +59,7 @@ def _count_sync_tasklets(sdfg: dace.SDFG) -> int:
 
 
 def _build_gpu_sdfg(program) -> dace.SDFG:
-    """``to_sdfg -> auto_optimize(GPU) -> GPUStreamPipeline``.
-
-    Mirrors ``tests/gpu_specialization/monolithic_single_stream_test.py:_build_gpu_sdfg``
-    so the build path is identical to what other sync-count tests use.
-    """
+    """``to_sdfg -> auto_optimize(GPU) -> GPUStreamPipeline``."""
     sdfg = program.to_sdfg(simplify=True)
     sdfg = auto_optimize(sdfg, dace.dtypes.DeviceType.GPU)
     GPUStreamPipeline().apply_pass(sdfg, {})

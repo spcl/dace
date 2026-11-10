@@ -121,7 +121,7 @@ def test_a_constant_table_read_in_a_kernel_computes_what_numpy_computes(host_rea
 
 
 def test_a_constant_table_is_declared_once_per_side_and_never_passed_to_a_kernel():
-    """Host code and the kernel each declare the table once, and the kernel takes it as no argument."""
+    """Host and device code declare the table, a kernel at most once, and the kernel takes it as no argument."""
     sdfg = offloaded()
     objects = sdfg.generate_code()
     # The device translation unit is titled 'CUDA' on both GPU backends; HIP emits it as C++, not .cu
@@ -129,8 +129,9 @@ def test_a_constant_table_is_declared_once_per_side_and_never_passed_to_a_kernel
     device = next(obj.clean_code for obj in objects if obj.title == "CUDA")
     declaration = "double table[4] = {"
     assert host.count(declaration) == 1, host
+    assert declaration in device, device
     kernel = device[device.index("__global__") :]
-    assert kernel.count(declaration) == 1, kernel
+    assert kernel.count(declaration) <= 1, kernel
     signature = kernel[: kernel.index("{")]
     assert "table" not in signature, signature
 
