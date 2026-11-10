@@ -1090,14 +1090,14 @@ def offloaded_scatter_rows() -> dace.SDFG:
     return finalize_for_target(sdfg, "gpu")
 
 
-def test_a_scatter_fallback_keeps_its_row_map_on_the_host():
+def test_a_scatter_through_an_operator_chain_is_one_reduction():
+    """``acc[agg[i]] = acc[agg[i]] + a + b`` is one update of the accumulator, so the row loop needs no guarded
+    sequential fallback: the scatter is a reduction into ``acc``."""
     sdfg = offloaded_scatter_rows()
-    fallback = [
+    assert not [
         b for b in sdfg.all_control_flow_blocks(recursive=True) if isinstance(b, LoopRegion) and b.pinned_sequential
     ]
-    assert fallback, "the scatter no longer canonicalizes to a guarded fallback loop"
-    maps = [n for loop in fallback for st in loop.states() for n in st.nodes() if isinstance(n, dace.nodes.MapEntry)]
-    assert maps and all(n.map.schedule not in dtypes.GPU_SCHEDULES for n in maps), [n.map.schedule for n in maps]
+    assert [e for e, _ in sdfg.all_edges_recursive() if getattr(e.data, "data", None) == "acc" and e.data.wcr is not None]
 
 
 @pytest.mark.gpu
