@@ -914,7 +914,7 @@ class CPPUnparser:
             negated = isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub)
             quotient = t.right.operand if negated else t.right
             if isinstance(quotient, ast.BinOp) and isinstance(quotient.op, ast.Div):
-                self.write("dace::math::pow(")
+                self.write("dace::math::rational_pow(")
                 self.dispatch(t.left)
                 self.write(", -(" if negated else ", ")
                 self.dispatch(quotient.left)
