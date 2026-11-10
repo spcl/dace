@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dace import SDFG, properties
+from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
@@ -120,13 +121,18 @@ class SymbolDedup(ppl.Pass):
         classes = [syms for syms in by_signature.values() if len(syms) >= 2]
         if not classes:
             return 0
-        # A loop header assigns its variable as well: it equals the others only until that loop runs.
-        loop_variables = {
+        # A loop header assigns its variable as well: it equals the others only until that loop runs. A map
+        # parameter shadows its name: a use renamed to it inside the map would read the parameter.
+        scoped = {
             str(cfg.loop_variable)
             for cfg in sdfg.all_control_flow_regions(recursive=False)
             if isinstance(cfg, LoopRegion) and cfg.loop_variable
         }
-        classes = [[sym for sym in syms if sym not in loop_variables] for syms in classes]
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.MapEntry):
+                    scoped.update(node.map.params)
+        classes = [[sym for sym in syms if sym not in scoped] for syms in classes]
         classes = [syms for syms in classes if len(syms) >= 2]
         protected = self._protected_symbols(sdfg)
 

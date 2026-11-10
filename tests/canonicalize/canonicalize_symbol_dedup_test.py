@@ -250,6 +250,21 @@ def test_a_loop_variable_stays_apart_from_a_symbol_assigned_with_it():
     assert out[0] == 7
 
 
+def test_a_symbol_named_like_a_map_parameter_stays_apart():
+    """``k`` and ``kk`` are both set to ``M``; a map over ``k`` reads ``kk``."""
+    sdfg = dace.SDFG("dedup_map_parameter")
+    sdfg.add_array("out", [4], dace.int64)
+    sdfg.add_symbol("M", dace.int64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state("second")
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"k": "M", "kk": "M"}))
+    second.add_mapped_tasklet("m", dict(k="0:4"), {}, "o = kk", {"o": dace.Memlet("out[k]")}, external_edges=True)
+    assert SymbolDedup().apply_pass(sdfg, {}) is None
+    out = np.zeros(4, np.int64)
+    sdfg(out=out, M=7)
+    assert np.array_equal(out, np.full(4, 7))
+
+
 def test_symbols_of_different_dtypes_stay_apart():
     sdfg = _make_duplicate_gather_sdfg("dedup_dtypes")
     sdfg.symbol_repo.set_type("s2", dace.int32)
