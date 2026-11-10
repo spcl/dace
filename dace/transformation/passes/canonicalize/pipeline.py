@@ -679,10 +679,6 @@ def rail(label: str = CLEANUP) -> Stages:
     return [*_inline_single_state(label), (label, StructuralCleanup())]
 
 
-def unique_iterators() -> ppl.Pass:
-    return UniqueLoopIterators()
-
-
 def clean_anti_dependency_units() -> list[ppl.Pass]:
     """CleanAntiDependency (WAR, WAW) by renaming: per-scope versions of a container wherever a dominating write
     allows it, per-iteration copies of a constant slot a loop rewrites before reading. A scratch buffer's copies are
@@ -743,7 +739,7 @@ def ingest(target: str) -> Stages:
         (INGEST, CollapseNoOpCast()),
         (INGEST, RewriteModuloToPyMod()),
         (INGEST, NormalizeNegativeStride()),
-        (INGEST, unique_iterators()),
+        (INGEST, UniqueLoopIterators()),
         (INGEST, ContinueToCondition()),
         (INGEST, SupplyNumThreads()),
         # np.roll / broadcast_to / np.where as their pure maps from the start, so every normalization below sees a map
@@ -797,7 +793,7 @@ def normalize_statements(
     s += [(label, NormalizeNegativeStride()), (label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
     s += [(label, RerollUnrolledLoops()), (label, UntileLoops()), (label, FuseConsecutiveLoops())]
     if unroll_limit > 0:
-        s += [(label, ShortLoopUnroll(unroll_limit)), (label, unique_iterators()), (label, SymbolSSA())]
+        s += [(label, ShortLoopUnroll(unroll_limit)), (label, UniqueLoopIterators()), (label, SymbolSSA())]
     s += [
         (
             label,
@@ -814,7 +810,7 @@ def normalize_statements(
     ]
     if perfect_loop_nesting:
         s += [(label, PerfectLoopNesting(target=target))]
-    s += [(label, unique_iterators()), (label, PatternApplyOnceEverywhere([TrivialLoopElimination()]))]
+    s += [(label, UniqueLoopIterators()), (label, PatternApplyOnceEverywhere([TrivialLoopElimination()]))]
     s += [(label, LoopStridePermutation())]
     if normalize_loop_and_map_origin:
         s += [(label, NormalizeLoopAndMapOrigin())]
@@ -900,7 +896,7 @@ def derive_parallelism(
     s += [(label, PropagateSymbols())]
     # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted copy's
     # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
-    s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, unique_iterators()), (label, SymbolSSA())]
+    s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, UniqueLoopIterators()), (label, SymbolSSA())]
     # A split or peel can leave a plain recurrence the lifting segment never saw (``y[i] = s[i] + y[i - 1]`` on the
     # ``[K:N)`` half of an ``if i < K`` body); lift it, on the split's segments only, before the levels below
     # settle it as sequential.
@@ -958,7 +954,7 @@ def derive_parallelism(
     s += [(label, FuseLoops())]
     s += [(label, Parallelize(target=target, hold_sibling_chains=False))]
     # The time loop a wavefront skew made keeps the skew's name until here
-    s += [(label, unique_iterators())]
+    s += [(label, UniqueLoopIterators())]
     return s
 
 
