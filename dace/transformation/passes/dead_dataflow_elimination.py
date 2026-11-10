@@ -362,9 +362,6 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                 # while a sibling access node still reads the same data.
                 if isinstance(e.dst, nodes.AccessNode) and e.dst.data == node.data:
                     return False
-                # The ordering only vanishes with the producer; one with another successor survives it.
-                if any(succ is not node for pe in state.in_edges(node) for succ in state.successors(pe.src)):
-                    return False
         elif any(e.dst not in dead_nodes and not self._closes_scope_only(node, e) for e in state.out_edges(node)):
             return False
 

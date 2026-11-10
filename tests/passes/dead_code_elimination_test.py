@@ -912,6 +912,7 @@ def test_dde_keeps_an_ordering_edge_whose_producer_is_live():
 
     Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
     sdfg.validate()
+    assert tnode not in state.nodes(), "the unread transient survived"
     assert state.in_degree(src) == 1, "the happens-before edge into the reader source was dropped"
 
     A = np.zeros(4)
