@@ -213,19 +213,19 @@ def gather_sum(idx: dace.int64[N], val: dace.float64[M], out: dace.float64[N]):
 
 
 @dace.program
-def scatter_relax_steps(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[M]):
+def scatter_relax_steps(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[M], w: dace.float64[N, M]):
     for t in range(T):
         for i in dace.map[0:N]:
             out[idx[i]] += val[i]
-        for i in dace.map[0:N]:
-            val[i] = 0.5 * val[i] + 0.001 * out[idx[i]]
+        val[:] = 0.5 * val + 0.001 * (w @ out)
 
 
 @dace.program
-def scatter_moving_index(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[M]):
+def scatter_moving_index(idx: dace.int64[N], val: dace.float64[N], out: dace.float64[M], w: dace.float64[N, M]):
     for t in range(T):
         for i in dace.map[0:N]:
             out[idx[i]] += val[i]
+        val[:] = 0.5 * val + 0.001 * (w @ out)
         for i in dace.map[0:N]:
             idx[i] = (idx[i] + 7) % M
 
@@ -709,9 +709,19 @@ def _enclosing_loops(state: dace.SDFGState) -> list:
     return loops
 
 
+def _relax_reference(idx, val, out, w, moving: bool):
+    idx, val, out = idx.copy(), val.copy(), out.copy()
+    for _ in range(3):
+        np.add.at(out, idx, val)
+        val = 0.5 * val + 0.001 * (w @ out)
+        idx = (idx + 7) % MV if moving else idx
+    return idx, val, out
+
+
 def test_an_invariant_index_is_inspected_once_per_loop_entry():
     """The time loop writes ``val`` and ``out`` but not ``idx``: a state ahead of the loop marks the order stale,
-    the map rebuilds it only then, and a second call with other indices rebuilds it again."""
+    the map rebuilds it only then, and a second call with other indices rebuilds it again. The matrix-vector
+    product keeps the loop out of a hoisted team, where the map would not open its own region."""
     sdfg, code = _specialize(scatter_relax_steps, "relax_steps")
     _assert_range_privatized(sdfg, code)
     (m,) = _marked_maps(sdfg)
@@ -726,13 +736,10 @@ def test_an_invariant_index_is_inspected_once_per_loop_entry():
         csdfg = sdfg.compile()
     for seed in (11, 12):
         rng = np.random.default_rng(seed)
-        idx, val, out = rng.integers(0, MV, NV), rng.random(NV), rng.random(MV)
-        ref, rval = out.copy(), val.copy()
-        for _ in range(3):
-            np.add.at(ref, idx, rval)
-            rval = 0.5 * rval + 0.001 * ref[idx]
-        csdfg(idx=idx, val=val, out=out, N=NV, M=MV, T=3)
-        assert np.allclose(out, ref, rtol=1e-12, atol=1e-12) and np.allclose(val, rval, rtol=1e-12, atol=1e-12)
+        idx, val, out, w = rng.integers(0, MV, NV), rng.random(NV), rng.random(MV), rng.random((NV, MV))
+        _ridx, rval, rout = _relax_reference(idx, val, out, w, moving=False)
+        csdfg(idx=idx, val=val, out=out, w=w, N=NV, M=MV, T=3)
+        assert np.allclose(out, rout, rtol=1e-10) and np.allclose(val, rval, rtol=1e-10)
 
 
 def test_an_index_the_loop_rewrites_is_inspected_every_execution():
@@ -742,13 +749,10 @@ def test_an_index_the_loop_rewrites_is_inspected_every_execution():
     assert m.omp_range_privatize_stale is None and _enclosing_loops(_map_state(sdfg, m))
     assert "cached_order(" not in code
     rng = np.random.default_rng(13)
-    idx, val, out = rng.integers(0, MV, NV), rng.random(NV), np.zeros(MV)
-    ref, ridx = out.copy(), idx.copy()
-    for _ in range(3):
-        np.add.at(ref, ridx, val)
-        ridx = (ridx + 7) % MV
-    _run(sdfg, idx=idx, val=val, out=out, N=NV, M=MV, T=3)
-    assert np.allclose(out, ref, rtol=1e-12, atol=1e-12) and np.array_equal(idx, ridx)
+    idx, val, out, w = rng.integers(0, MV, NV), rng.random(NV), np.zeros(MV), rng.random((NV, MV))
+    ridx, rval, rout = _relax_reference(idx, val, out, w, moving=True)
+    _run(sdfg, idx=idx, val=val, out=out, w=w, N=NV, M=MV, T=3)
+    assert np.allclose(out, rout, rtol=1e-10) and np.allclose(val, rval, rtol=1e-10) and np.array_equal(idx, ridx)
 
 
 if __name__ == "__main__":

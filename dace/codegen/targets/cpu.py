@@ -4042,7 +4042,11 @@ class CPUCodeGen(TargetCodeGenerator):
         # An order an enclosing loop leaves invariant lives in the state struct; its pre-pass reruns once a state
         # ahead of that loop sets the stale flag, or for a different team
         stale = node.map.omp_range_privatize_stale
-        cached = stale is not None and stale in sdfg.arrays
+        cached = (
+            stale in sdfg.arrays
+            and sdfg.arrays[stale].transient
+            and sdfg.arrays[stale].lifetime == dtypes.AllocationLifetime.Persistent
+        )
         if cached:
             self._frame.statestruct.append(f"std::shared_ptr<void> {prefix}_cache;")
             flag = self.ptr(stale, sdfg.arrays[stale], sdfg)
