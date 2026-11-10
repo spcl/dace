@@ -268,3 +268,18 @@ def test_binop_with_a_scalar_output_lowers_to_a_scalar_assignment():
     assert "tile_binop<" not in code, f"ISA pointer call must not be emitted for scalar output:\n{code}"
     assert "for" not in code, f"scalar output must be a single assignment, no lane loop:\n{code}"
     assert code.strip().startswith("_c"), f"expected `_c = ...` assignment, got:\n{code}"
+
+
+if __name__ == "__main__":
+    test_binop_validate_refuses_scalar_output_when_any_input_is_tile()
+    test_binop_validate_accepts_scalar_output_when_all_inputs_non_tile()
+    test_binop_pure_expansion_emits_single_assignment_for_scalar_output()
+    test_binop_pure_expansion_keeps_tile_loop_when_any_input_is_tile()
+    test_unop_validate_refuses_scalar_output_when_input_is_tile()
+    test_unop_pure_expansion_emits_single_assignment_for_scalar_output()
+    test_ite_validate_refuses_scalar_output()
+    test_ite_symbol_arm_omits_connector_and_inlines()
+    test_ite_symbol_cond_omits_mask_connector_and_inlines()
+    test_ite_symbol_requires_expr()
+    test_unop_with_a_scalar_output_lowers_to_a_scalar_assignment()
+    test_binop_with_a_scalar_output_lowers_to_a_scalar_assignment()

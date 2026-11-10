@@ -14,7 +14,7 @@
 #include "pi.h"
 #include "types.h"
 
-#ifdef __CUDACC__
+#ifdef DACE_THRUST_COMPLEX
 #include <thrust/complex.h>
 #endif
 
@@ -817,7 +817,7 @@ DACE_CONSTEXPR DACE_HDFI T exp(const T& a) {
   return (T)std::exp(a);
 }
 
-#ifdef __CUDACC__
+#ifdef DACE_THRUST_COMPLEX
 template <typename T>
 DACE_CONSTEXPR DACE_HDFI thrust::complex<T> pow(const thrust::complex<T>& a, const thrust::complex<T>& b) {
   return (thrust::complex<T>)thrust::pow(a, b);
@@ -872,7 +872,7 @@ static DACE_HDFI dace::float16 pow(const dace::float16& a, const dace::float16& 
 // type, double for an integral base as ``int ** float`` in NumPy). Dividing in F avoids integer division and half
 // overflow.
 template <typename T, typename P, typename Q>
-DACE_HDFI auto pow(const T& a, const P& p, const Q& q) {
+DACE_HDFI auto rational_pow(const T& a, const P& p, const Q& q) {
   using R = typename std::conditional<std::is_integral<T>::value, double, T>::type;
   using F = typename std::conditional<std::is_integral<T>::value, double, decltype(a + 0.0f)>::type;
   const F e = F(p) / F(q);
@@ -1133,7 +1133,7 @@ DACE_CONSTEXPR std::complex<T> exp(const std::complex<T>& a) {
   return std::exp(a);
 }
 
-#ifdef __CUDACC__
+#ifdef DACE_THRUST_COMPLEX
 template <typename T>
 DACE_CONSTEXPR DACE_HDFI thrust::complex<T> exp(const thrust::complex<T>& a) {
   return thrust::exp(a);
@@ -1145,7 +1145,7 @@ DACE_CONSTEXPR std::complex<T> conj(const std::complex<T>& a) {
   return std::conj(a);
 }
 
-#ifdef __CUDACC__
+#ifdef DACE_THRUST_COMPLEX
 template <typename T>
 DACE_CONSTEXPR DACE_HDFI thrust::complex<T> conj(const thrust::complex<T>& a) {
   return thrust::conj(a);

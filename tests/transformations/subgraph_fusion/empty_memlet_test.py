@@ -7,7 +7,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-from dace.transformation.subgraph import SubgraphFusion
+from dace.transformation.subgraph import StencilTiling, SubgraphFusion
 
 N = dace.symbol("N")
 
@@ -249,30 +249,29 @@ def test_an_ordering_edge_on_a_scope_connector_still_orders_the_body():
     np.testing.assert_allclose(arrays["C"], 2 * (arrays["A"] + 1))
 
 
-def test_fuse_leaves_a_dynamic_map_range_input_unfused():
-    """``fuse`` called without ``can_be_applied`` leaves the maps as they are rather than drop the range input."""
+def assert_not_fused(chain: Chain) -> None:
+    """Neither ``SubgraphFusion`` nor ``StencilTiling`` (after which ``CompositeFusion`` fuses without asking)
+    accepts the chain."""
+    fusion = chain.fuse()
+    assert not fusion.can_be_applied(chain.sdfg, fusion.subgraph_view(chain.sdfg))
+    assert not StencilTiling.can_be_applied(chain.sdfg, fusion.subgraph_view(chain.sdfg))
+
+
+def test_a_dynamic_map_range_input_of_one_map_is_not_fused():
+    """Only the second map reads ``lim`` through a dynamic map range connector: the maps may have different ranges."""
     chain = Chain("empty_memlet_fuse_dynamic_range")
     chain.sdfg.add_scalar("lim", dace.int64)
     entry = chain.second[1]
     entry.add_in_connector("lim")
     chain.state.add_edge(chain.state.add_read("lim"), None, entry, "lim", dace.Memlet("lim[0]"))
-
-    SubgraphFusion().fuse(chain.sdfg, chain.state, [chain.first[1], entry])
-
-    chain.sdfg.validate()
-    assert {chain.first[1], entry} <= set(chain.state.nodes())
+    assert_not_fused(chain)
 
 
-def test_fuse_leaves_a_map_ordered_after_another_unfused():
-    """An empty memlet from the first map's exit into the second map's entry orders the maps whole; ``fuse`` called
-    without ``can_be_applied`` leaves them as they are."""
+def test_a_map_ordered_after_another_is_not_fused():
+    """An empty memlet from the first map's exit into the second map's entry orders the maps whole."""
     chain = Chain("empty_memlet_fuse_exit_to_entry")
     chain.state.add_nedge(chain.first[2], chain.second[1], dace.Memlet())
-
-    SubgraphFusion().fuse(chain.sdfg, chain.state, [chain.first[1], chain.second[1]])
-
-    chain.sdfg.validate()
-    assert {chain.first[1], chain.second[1]} <= set(chain.state.nodes())
+    assert_not_fused(chain)
 
 
 def test_an_ordering_edge_beside_a_data_edge_adds_no_empty_memlet():
@@ -297,14 +296,7 @@ def test_an_ordering_edge_from_the_intermediate_is_not_fused():
     third = chain.mapped("third", "a", "A", "d = a", "d", "D")
     chain.state.add_nedge(chain.b, third[1], dace.Memlet())
     chain.fused += chain.scope(third)
-    fusion = chain.fuse()
-    assert not fusion.can_be_applied(chain.sdfg, fusion.subgraph_view(chain.sdfg))
-
-    # ``CompositeFusion`` applies after ``StencilTiling`` without asking: the graph stays as it was
-    before = len(chain.state.nodes()), len(chain.state.edges())
-    fusion.apply(chain.sdfg)
-    assert (len(chain.state.nodes()), len(chain.state.edges())) == before
-    chain.sdfg.validate()
+    assert_not_fused(chain)
 
 
 if __name__ == "__main__":
@@ -317,7 +309,7 @@ if __name__ == "__main__":
     for case in ["written", "other_element"]:
         test_maps_that_may_read_different_dynamic_range_values_are_not_fused(case)
     test_an_ordering_edge_on_a_scope_connector_still_orders_the_body()
-    test_fuse_leaves_a_dynamic_map_range_input_unfused()
-    test_fuse_leaves_a_map_ordered_after_another_unfused()
+    test_a_dynamic_map_range_input_of_one_map_is_not_fused()
+    test_a_map_ordered_after_another_is_not_fused()
     test_an_ordering_edge_beside_a_data_edge_adds_no_empty_memlet()
     test_an_ordering_edge_from_the_intermediate_is_not_fused()

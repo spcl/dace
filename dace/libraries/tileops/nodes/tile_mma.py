@@ -137,7 +137,7 @@ class TileMMA(TileOp):
             (b_desc, "_b", (K_inner, N)),
             (c_desc, "_c", (M, N)),
         ):
-            shape = tuple(desc.shape) if hasattr(desc, "shape") else ()
+            shape = tuple(desc.shape)
             if len(shape) != 2 or tuple(int(s) for s in shape) != expected:
                 raise ValueError(f"{self.label}: {name!r} descriptor shape {shape} != expected {expected}")
 

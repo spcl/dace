@@ -55,3 +55,20 @@ def test_fused_maps_compute_the_same_values_with_or_without_validation(validate:
     assert count_maps(sdfg) == 1
     sdfg(a=a, b=b)
     assert np.allclose(b, (a + 1.0) * 2.0)
+
+
+def test_main_name_is_fuse_maps():
+    """dace-fortran imports main's ``passes.full_map_fusion.FullMapFusion``; it fuses as ``FuseMaps`` does."""
+    from dace.transformation.passes.full_map_fusion import FullMapFusion
+
+    sdfg = copy.deepcopy(two_elementwise_maps.to_sdfg(simplify=True))
+    FullMapFusion(validate=True).apply_pass(sdfg, {})
+    assert count_maps(sdfg) == 1
+
+
+if __name__ == "__main__":
+    test_fuse_maps_without_validation_fuses_an_sdfg_validation_would_reject()
+    test_fuse_maps_with_validation_rejects_the_same_sdfg()
+    for validate in [True, False]:
+        test_fused_maps_compute_the_same_values_with_or_without_validation(validate)
+    test_main_name_is_fuse_maps()

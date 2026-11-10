@@ -37,6 +37,7 @@ from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import (
     assigned_stream_expr,
     generate_sync_debug_call,
     host_read_device_copies,
+    issues_on_gpu_stream,
     num_gpu_streams,
 )
 from dace.config import Config
@@ -201,9 +202,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
-                self._kernel_arglists[node] = state.scope_subgraph(node).arglist(
-                    defined_syms, shared_transients[state.parent]
-                )
+                # A constant array is declared in the device code, so it is not an argument as well
+                constants = state.sdfg.constants
+                arglist = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
+                self._kernel_arglists[node] = {name: desc for name, desc in arglist.items() if name not in constants}
                 self._kernel_arglists[node].update(dynamic_map_input_args(state, node))
 
     @property
@@ -604,7 +606,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if launch_arguments:
                 if not isinstance(state.sdfg.arrays[destination.data], dt.Scalar):
                     continue
-            elif consumer.gpu_stream_id is not None and consumer.gpu_stream_id == producer.gpu_stream_id:
+            elif issues_on_gpu_stream(consumer) and consumer.gpu_stream_id == producer.gpu_stream_id:
                 continue  # Consumer issues on the copy's stream, which already orders the two.
             key = (cfg.cfg_id, state_id, destination)
             if key in self._synchronized_d2h:
@@ -649,7 +651,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         cfg_id = state.parent_graph.cfg_id
         state_id = state.parent_graph.node_id(state)
         for destination, producer in host_read_device_copies(state, node):
-            if node.gpu_stream_id is not None and node.gpu_stream_id == producer.gpu_stream_id:
+            if issues_on_gpu_stream(node) and node.gpu_stream_id == producer.gpu_stream_id:
                 continue
             if (cfg_id, state_id, destination) not in self._synchronized_d2h:
                 return True

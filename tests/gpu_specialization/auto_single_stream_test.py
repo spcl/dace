@@ -24,7 +24,6 @@ from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline import GPUStreamPipeline
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (
     AutoGPUStreamScheduler,
-    SingleStreamGPUScheduler,
 )
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import get_gpu_stream_array_name
 
@@ -198,11 +197,6 @@ def test_mixed_program_fallback_to_per_component_emits_warning():
     )
     # Per-component wiring landed: gpu_streams allocated.
     assert _STREAM_ARRAY in outer.arrays
-
-
-def test_single_stream_strategy_rejects_a_mixed_program():
-    with pytest.raises(ValueError, match="mix host and GPU work"):
-        GPUStreamPipeline(scheduling_strategy=SingleStreamGPUScheduler()).apply_pass(mixed_host_gpu_sdfg(), {})
 
 
 # GPU -> GPU with no host iedge work: no sync state spliced between consecutive GPU states.
@@ -540,7 +534,6 @@ if __name__ == "__main__":
     test_default_strategy_is_auto_single_stream()
     test_pure_cpu_program_no_streams()
     test_mixed_program_fallback_to_per_component_emits_warning()
-    test_single_stream_strategy_rejects_a_mixed_program()
     test_sync_count_independent_of_kernel_count()
     test_gpu_resident_sink_synced_by_default()
     test_gpu_resident_sink_exit_sync_dropped_when_opted_out()

@@ -997,17 +997,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # See function documentation for an explanation of these variables
         node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph, map_entries)
         (in_nodes, intermediate_nodes, out_nodes) = node_config
-        # Callers that skip ``can_be_applied`` (``CompositeFusion`` after ``StencilTiling``) leave the graph unchanged
-        if not same_dynamic_inputs(graph, map_entries) or orders_after_a_whole_map(
-            graph, map_entries, map_exits, intermediate_nodes
-        ):
-            return
-
-        if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
-            # Fusion would leave ordering edges that re-enter the fused maps and
-            # create cycles (e.g. an external node ordered between two maps that
-            # both read/write the same non-transient array). Keep the graph unchanged.
-            return
 
         if self.debug:
             print("SubgraphFusion::In_nodes", in_nodes)

@@ -147,3 +147,17 @@ def test_pure_expansion_8x8():
     actual = C.copy()
     sdfg.compile()(A=A.copy(), B=B.copy(), C=actual)
     np.testing.assert_allclose(actual, expected, rtol=1e-12)
+
+
+if __name__ == "__main__":
+    test_constructor_validates_widths_length()
+    test_constructor_validates_positive_dims()
+    test_connectors_omit_cin_when_beta_zero()
+    test_connectors_include_cin_when_beta_nonzero()
+    test_pure_expansion_matches_numpy(1, 0)
+    test_pure_expansion_matches_numpy(1, 1)
+    test_pure_expansion_matches_numpy(2, 0)
+    test_pure_expansion_matches_numpy(2, 3)
+    test_validate_rejects_shape_mismatch()
+    test_validate_rejects_mixed_dtype()
+    test_pure_expansion_8x8()

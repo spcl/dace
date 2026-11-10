@@ -1514,7 +1514,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # then we can skip synchronization.
                 next_states = sdutil.get_next_nonempty_states(sdfg, state)
                 if next_states and len(streams_to_sync) == 1:
-                    if all(self._begin_streams(sdfg, ns) == streams_to_sync.keys() for ns in next_states):
+                    # A non-state successor (e.g. a return) starts no stream: synchronize
+                    if all(
+                        isinstance(ns, SDFGState) and self._begin_streams(sdfg, ns) == streams_to_sync.keys()
+                        for ns in next_states
+                    ):
                         # Relax synchronization
                         streams_to_sync = {}
 

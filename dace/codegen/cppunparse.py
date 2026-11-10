@@ -1434,7 +1434,7 @@ class CPPUnparser:
             if quotient is not None:
                 numerator, denominator, negated = quotient
                 if not cpf_lowering.standalone():
-                    self.write("dace::math::pow(")
+                    self.write("dace::math::rational_pow(")
                     self.dispatch(t.left)
                     self.write(", -(" if negated else ", ")
                     self.dispatch(numerator)
@@ -1453,19 +1453,6 @@ class CPPUnparser:
                     exponent = "(-%s)" % exponent
                 types = (base_type, exponent_type) if cpf_lowering.standalone_c() else None
                 self.write(runtime_call("dace::math::pow", [self.render(t.left), exponent], types))
-                return
-
-            # A ``p/q`` exponent is C++ integer division: ``pow(x, 1/3)`` is ``pow(x, 0)``
-            negated = isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub)
-            quotient = t.right.operand if negated else t.right
-            if isinstance(quotient, ast.BinOp) and isinstance(quotient.op, ast.Div):
-                self.write("dace::math::pow(")
-                self.dispatch(t.left)
-                self.write(", -(" if negated else ", ")
-                self.dispatch(quotient.left)
-                self.write("), " if negated else ", ")
-                self.dispatch(quotient.right)
-                self.write(")")
                 return
 
             # General pow operator
