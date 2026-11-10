@@ -2,6 +2,8 @@
 """Maps that only LAUNCH work stay on the host; their bodies become the kernels.
 ICON's shape: an ``nblks`` map over one nested SDFG of ``nproma``/``nlev`` maps."""
 
+from collections.abc import Callable
+
 from dace import symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
@@ -78,6 +80,9 @@ def small_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
     return named
 
 
+LibnodeTest = Callable[[nodes.Node, SDFGState], bool]
+
+
 def is_kernel_refused_libnode(node: nodes.Node, state: SDFGState) -> bool:
     """A device-wide library node left to selection with no in-kernel block lowering for its shape, so no kernel can
     run it. A lowering the caller chose places the node itself."""
@@ -91,7 +96,7 @@ def is_kernel_refused_libnode(node: nodes.Node, state: SDFGState) -> bool:
 
 
 def encloses_device_wide_libnode(
-    state: SDFGState, entry: nodes.MapEntry, scope_children: dict, test=is_device_wide_libnode
+    state: SDFGState, entry: nodes.MapEntry, scope_children: dict, test: LibnodeTest = is_device_wide_libnode
 ) -> bool:
     """Its scope holds a library node expanding to a call only host code can issue (``test`` decides)."""
     for node in scope_children.get(entry, ()):
@@ -104,7 +109,7 @@ def encloses_device_wide_libnode(
     return False
 
 
-def sdfg_holds_device_wide_libnode(sdfg: SDFG, test=is_device_wide_libnode) -> bool:
+def sdfg_holds_device_wide_libnode(sdfg: SDFG, test: LibnodeTest = is_device_wide_libnode) -> bool:
     return any(test(node, state) for node, state in sdfg.all_nodes_recursive())
 
 
