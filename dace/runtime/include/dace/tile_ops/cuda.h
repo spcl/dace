@@ -8,6 +8,11 @@
 // Guarded on the device compiler, not the vendor: __CUDACC__ alone would make every tile op
 // vanish (fall back to scalar) under HIP.
 
+#if !defined(__CUDACC__) && !defined(__HIPCC__)
+// A host translation unit gets the host bodies of the same signatures, which a CPU tile op may include too
+#include "dace/tile_ops/scalar.h"
+#else
+
 #include <cmath>
 #include <cstdint>
 #include <type_traits>
@@ -648,3 +653,5 @@ DACE_DFI typename std::enable_if<VLEN == 1, void>::type tile_gather(Dst&& dst, c
 
 }  // namespace tileops
 }  // namespace dace
+
+#endif  // __CUDACC__ || __HIPCC__
