@@ -136,3 +136,17 @@ def test_tile_scatter_refuses_mask_wrong_dtype():
     sdfg, state, node = _build_store_with_mask(mask_shape=(4, 8), dtype=dace.int64)
     with pytest.raises(ValueError, match=r"dtype.*must be bool_"):
         node.validate(sdfg, state)
+
+
+if __name__ == "__main__":
+    test_tilemaskgen_accepts_locked_descriptor()
+    test_tilemaskgen_refuses_shape_mismatch()
+    test_tilemaskgen_refuses_wrong_dtype()
+    test_tilemaskgen_refuses_non_register_storage()
+    test_tilemaskgen_refuses_non_transient_mask()
+    test_tile_gather_accepts_locked_mask()
+    test_tile_gather_refuses_mask_shape_mismatch()
+    test_tile_gather_refuses_non_register_mask_storage()
+    test_tile_gather_refuses_non_transient_mask()
+    test_tile_scatter_accepts_locked_mask()
+    test_tile_scatter_refuses_mask_wrong_dtype()

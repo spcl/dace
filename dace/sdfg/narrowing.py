@@ -50,11 +50,6 @@ def as_basic(value: SymbolicLike) -> sympy.Basic:
     return expr
 
 
-def simplified(value: SymbolicLike) -> sympy.Expr:
-    """``symbolic.simplify`` of ``value``, narrowed to ``sympy.Expr``."""
-    return as_expr(symbolic.simplify(as_expr(value)))
-
-
 def as_range(subset: subsets.Subset | None) -> subsets.Range:
     """``subset`` as a :class:`~dace.subsets.Range`.
 
@@ -72,29 +67,3 @@ def as_map_entry(node: nodes.Node | None) -> nodes.MapEntry:
     if not isinstance(node, nodes.MapEntry):
         raise TypeError(f"expected a MapEntry, got {type(node).__name__}")
     return node
-
-
-def free_symbols(expr: sympy.Basic) -> set[sympy.Symbol]:
-    """Free symbols of ``expr`` narrowed from sympy's ``set[Basic]`` to ``set[Symbol]``.
-
-    :param expr: A sympy expression, relational or boolean.
-    :returns: Its free symbols.
-    :raises TypeError: If a free symbol is not a ``sympy.Symbol`` (an ``Indexed`` object, for example).
-    """
-    result: set[sympy.Symbol] = set()
-    for s in expr.free_symbols:
-        if not isinstance(s, sympy.Symbol):
-            raise TypeError(f"free symbol {s!r} of {expr} is not a sympy.Symbol")
-        result.add(s)
-    return result
-
-
-def free_symbol_names(value: symbolic.SymbolicType | int | float) -> set[str]:
-    """Names of the free symbols of a subset bound or stride; a Python number has none.
-
-    A :class:`~dace.symbolic.SymExpr` contributes the symbols of its main expression.
-    """
-    expr = value.expr if isinstance(value, symbolic.SymExpr) else value
-    if isinstance(expr, sympy.Basic):
-        return {str(s) for s in expr.free_symbols}
-    return set()
