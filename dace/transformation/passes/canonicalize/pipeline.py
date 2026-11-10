@@ -603,7 +603,9 @@ RECOMPOSE = "recompose"
 FUSE = "fuse"
 #: Everything recompose does once fusion settled, out-of-phase lifts included.
 AFTER_FUSION = "after_fusion"
-#: The between-phase rail, and the cleanup of the raised input.
+#: The raised and simplified input, before any phase.
+INGEST = "ingest"
+#: The between-phase rail.
 CLEANUP = "cleanup"
 #: The terminal bookkeeping.
 FINISH = "finish"
@@ -733,32 +735,32 @@ def ingest(target: str) -> Stages:
     s: Stages = [
         # The contract's compile-time half from the start: every proof below reads the sizes as nonnegative (a
         # symbolic loop step ``n3`` orients its map); ``AssumeSymbolConstraints`` adds the runtime check at the end
-        (CLEANUP, SetSymbolNonnegativeAssumptions()),
-        (CLEANUP, ControlFlowRaising()),
-        (CLEANUP, RequireStructuredControlFlow()),
-        (CLEANUP, RemoveViews()),
-        (CLEANUP, EliminateTrivialTasklets()),
-        (CLEANUP, FoldScalarReadCopies()),
-        (CLEANUP, CollapseNoOpCast()),
-        (CLEANUP, RewriteModuloToPyMod()),
-        (CLEANUP, NormalizeNegativeStride()),
-        (CLEANUP, unique_iterators()),
-        (CLEANUP, ContinueToCondition()),
-        (CLEANUP, SupplyNumThreads()),
+        (INGEST, SetSymbolNonnegativeAssumptions()),
+        (INGEST, ControlFlowRaising()),
+        (INGEST, RequireStructuredControlFlow()),
+        (INGEST, RemoveViews()),
+        (INGEST, EliminateTrivialTasklets()),
+        (INGEST, FoldScalarReadCopies()),
+        (INGEST, CollapseNoOpCast()),
+        (INGEST, RewriteModuloToPyMod()),
+        (INGEST, NormalizeNegativeStride()),
+        (INGEST, unique_iterators()),
+        (INGEST, ContinueToCondition()),
+        (INGEST, SupplyNumThreads()),
         # np.roll / broadcast_to / np.where as their pure maps from the start, so every normalization below sees a map
         # and not an opaque library node; the SimplifyPass right after inlines their nested SDFGs
-        (CLEANUP, ExpandIndexRemaps()),
-        (CLEANUP, SimplifyPass(pass_options=CANON_SIMPLIFY_OPTIONS)),
+        (INGEST, ExpandIndexRemaps()),
+        (INGEST, SimplifyPass(pass_options=CANON_SIMPLIFY_OPTIONS)),
         # A table filled once with literals (CloudSC's ``iphase``) is a constant host code and every kernel read alike,
         # before a fusion moves its fill into a loop
-        (CLEANUP, FoldConstantTables()),
+        (INGEST, FoldConstantTables()),
         # A while loop that counts gets its counter here, so every later pass sees a counted loop.
-        (CLEANUP, WhileToFor()),
+        (INGEST, WhileToFor()),
         # After simplification: the raised guard of a break still reads its condition through a separate
         # preparation region before it, which the matcher does not see through.
-        (CLEANUP, LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
+        (INGEST, LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
     ]
-    return s + [(CLEANUP, StructuralCleanup())]
+    return s + [(INGEST, StructuralCleanup())]
 
 
 def normalize_statements(
