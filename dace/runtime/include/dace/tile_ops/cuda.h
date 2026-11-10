@@ -113,8 +113,14 @@ DACE_DFI T tile_apply(T a, T b) {
     r = (af != bf) ? C(1) : C(0);
   else if constexpr (Op == '&')
     r = (af && bf) ? C(1) : C(0);
-  else /* '|' */
+  else if constexpr (Op == '|')
     r = (af || bf) ? C(1) : C(0);
+  else if constexpr (Op == '%')
+    r = c_mod(af, bf);
+  else if constexpr (Op == 'p')
+    r = py_mod(af, bf);
+  else
+    static_assert(Op != Op, "unknown tile binary op code");
   return static_cast<T>(r);
 }
 
