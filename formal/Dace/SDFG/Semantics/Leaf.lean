@@ -173,6 +173,11 @@ def execCopy (ctx : Ctx) (ρ : Valuation) (s : State) (e : DEdge) (st : St) : Re
 
 /-! ## Code nodes (tasklets and library nodes) -/
 
+/-- The values `vs` read at the points `pts`, addressed relative to the
+lower corner `lo`. -/
+def arrayOfRead (lo : Idx) (pts : List Idx) (vs : List Val) : Idx → Option Val := fun rel =>
+  if rel.length = lo.length then List.lookup (List.zipWith (· + ·) lo rel) (pts.zip vs) else none
+
 /-- Bind a container endpoint to an input connector (`Decisions.md#D40`): a
 single-point subset is a scalar, any other subset a pointer connector
 addressed relative to the subset's lower corner (`Ctx.lowerCorner`; its
@@ -194,18 +199,8 @@ def bindInData (ctx : Ctx) (ρ : Valuation) (d : Name) (sub : Option Subset) (oo
       pure (.scalar v, st)
     | _ => do
       let lo ← ctx.lowerCorner ρ st.mem d sub
-      let (_, st) ← st.readMany ctx ρ d pts oob
-      let m := st.mem
-      let get : Idx → Option Val := fun rel =>
-        if rel.length = lo.length then
-          let abs := List.zipWith (· + ·) lo rel
-          if pts.contains abs then
-            match ctx.loc ρ m d abs oob with
-            | .ok l => some (m.read l)
-            | .err _ => none
-          else none
-        else none
-      pure (.array get, st)
+      let (vs, st) ← st.readMany ctx ρ d pts oob
+      pure (.array (arrayOfRead lo pts vs), st)
 
 /-- Bind one input connector of a code node from its leaf edge; code values
 come from `St.vals`. -/

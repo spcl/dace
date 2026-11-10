@@ -706,26 +706,6 @@ theorem readMany_ok {n : Name} {oob : Bool} :
           · have := hd l' hl'
             simpa [logged] using this
 
-/-- Conversely, `readMany` succeeds when all its points have locations. -/
-theorem readMany_of_forall₂ {n : Name} {oob : Bool} :
-    ∀ (pts : List Idx) (ls : List Loc) (acc : List Val) (st : St),
-      List.Forall₂ (fun p l => ctx.loc ρ st.mem n p oob = .ok l) pts ls →
-      (∀ l ∈ ls, (st.mem.read l).isUndef = false) →
-      pts.foldlM (fun (acc, st) p => do
-        let (v, st) ← st.read ctx ρ n p oob
-        pure (acc ++ [v], st)) (acc, st) =
-        .ok (acc ++ ls.map st.mem.read, st.logged { reads := ls.map st.mem.resolve })
-  | [], [], acc, st, .nil, _ => by simp [logged_reads_nil]
-  | p :: ps, l :: ls, acc, st, .cons hl hf, hd => by
-    have e := readMany_of_forall₂ ps ls (acc ++ [st.mem.read l]) (st.logged { reads := [st.mem.resolve l] }) hf
-      (fun l' hl' => by simpa [logged] using hd l' (List.mem_cons_of_mem _ hl'))
-    rw [logged_reads_logged] at e
-    simp only [List.foldlM_cons, read, hl, hd l List.mem_cons_self, Res.ok_bind, Bool.false_eq_true, if_false,
-      Res.pure_eq]
-    refine Eq.trans ?_ (e.trans ?_)
-    · rfl
-    · simp [logged]
-
 end St
 
 end Dace

@@ -70,7 +70,6 @@ import Dace.Equiv.RegionRules
 import Dace.SDFG.Rename
 import Dace.Equiv.RenameRule
 import Dace.Equiv.SdfgCorr
-import Dace.Legacy.BindInData
 
 /-!
 # DaCe formal semantics

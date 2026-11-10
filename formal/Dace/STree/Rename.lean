@@ -454,19 +454,6 @@ theorem popN (st : St) (n : Name) (idx : Idx) (k : Nat) :
 
 end Ctx.Ren
 
-/-- Reading a location as an optional value only depends on its result. -/
-theorem Res.matchLoc (m : Mem) : ∀ (r₂ r₁ : Res Loc), r₂.get? = r₁.get? →
-    (match r₂ with
-      | .ok l => some (m.read l)
-      | .err _ => none) =
-    (match r₁ with
-      | .ok l => some (m.read l)
-      | .err _ => none)
-  | .ok _, .ok _, hr => by simp only [Res.get?, Option.some.injEq] at hr; subst hr; rfl
-  | .ok _, .err _, hr => by simp only [Res.get?, reduceCtorEq] at hr
-  | .err _, .ok _, hr => by simp only [Res.get?, reduceCtorEq] at hr
-  | .err _, .err _, _ => rfl
-
 /-! ## Leaf functions -/
 
 namespace Ctx.Ren
@@ -608,15 +595,6 @@ theorem bindInData (d : Name) {sub : Option Subset} (hsub : NamesFixed σ (optSu
     split
     · simp only [Res.get?_bind, h.read]
     · simp only [Res.get?_bind, h.lowerCorner hD ρ st.mem d hsub, h.readMany]
-      congr 1; funext lo; congr 1; funext p
-      obtain ⟨vs, st'⟩ := p
-      simp only [Res.get?_pure, Option.some.injEq, Prod.mk.injEq, and_true]
-      congr 1; funext rel
-      split
-      · split
-        · exact Res.matchLoc st'.mem _ _ (h.loc ρ st'.mem d _ oob)
-        · rfl
-      · rfl
 
 omit hD in
 theorem reinterprets (d base : Name) : ctx'.reinterprets (σ d) (σ base) = ctx.reinterprets d base := by

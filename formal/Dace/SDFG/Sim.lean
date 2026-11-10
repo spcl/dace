@@ -1254,90 +1254,13 @@ theorem execCopy_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {e : DEdge} 
       exact copyData_sim hc ρ hu h hsd ssub hss hdd dsub hds _ _
     · exact ResSim.err _
 
-omit hc in
-theorem forall₂_loc_mem' {ctx : Ctx} {ρ : Valuation} {m : Mem} {d : Name} {oob : Bool} {pts : List Idx}
-    {ls : List Loc} (hf : List.Forall₂ (fun p l => ctx.loc ρ m d p oob = .ok l) pts ls) {p : Idx} (hp : p ∈ pts) :
-    ∃ l ∈ ls, ctx.loc ρ m d p oob = .ok l := by
-  induction hf with
-  | nil => cases hp
-  | cons hl _ ih =>
-    rcases List.mem_cons.1 hp with rfl | hp
-    · exact ⟨_, List.mem_cons_self .., hl⟩
-    · obtain ⟨l, hl', h⟩ := ih hp
-      exact ⟨l, List.mem_cons_of_mem _ hl', h⟩
-
-omit hc in
-/-- After a normal `readMany`, every point's cell is initialized. -/
-theorem St.readMany_defined {ctx : Ctx} {ρ : Valuation} {st st' : St} {n : Name} {pts : List Idx} {oob : Bool}
-    {vs : List Val} (h : st.readMany ctx ρ n pts oob = .ok (vs, st')) :
-    st'.mem = st.mem ∧ ∀ p ∈ pts, ∀ l, ctx.loc ρ st.mem n p oob = .ok l → (st.mem.read l).isUndef = false := by
-  unfold St.readMany at h
-  obtain ⟨ls, hf, -, rfl, hd⟩ := St.readMany_ok ctx ρ pts [] st vs st' h
-  refine ⟨rfl, fun p hp l hl => ?_⟩
-  obtain ⟨l', hl', hloc⟩ := forall₂_loc_mem' hf hp
-  rw [hl] at hloc
-  cases hloc
-  exact hd l hl'
-
 theorem bindInData_sim {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) {d : Name} (hd : Ctx.Strong π P ctx₂ ctx₁ d)
     (sub : Option Subset) (hs : ∀ x ∈ optSubsetNames sub, Ctx.Good₀ π P ctx₂ ctx₁ x) (oob : Bool) :
     ResSim (St.SimR π P L) (bindInData ctx₂ ρ d sub oob st₂) (bindInData ctx₁ ρ d sub oob st₁) := by
   unfold bindInData
-  rw [show ctx₂.isStream d = ctx₁.isStream d by simp only [Ctx.isStream, hd.desc]]
-  refine ResSim.ite (c := ctx₁.isStream d) (fun _ => ?_) (fun _ => ?_)
-  · refine ResSim.bindEq (streamPoint_sim hc ρ h.mem hd sub hs) fun p => ?_
-    exact ResSim.bindEq (St.queue_sim hc ρ h hd.good₀ p) fun q => ResSim.ok ⟨rfl, h⟩
-  · refine ResSim.bindEq (Ctx.pointsOf_sim hc h.mem ρ hd sub hs) fun pts => ?_
-    split
-    · exact ResSim.bind (St.read_sim hc ρ h hd.good₀ _ oob) fun x y hxy => by
-        obtain ⟨v₂, a₂⟩ := x
-        obtain ⟨v₁, a₁⟩ := y
-        obtain ⟨hv, hs⟩ := hxy
-        simp only at hv hs ⊢
-        subst hv
-        exact ResSim.ok ⟨rfl, hs⟩
-    · refine ResSim.bindEq (lowerCorner_sim hc ρ h.mem hd sub hs) fun lo => ?_
-      cases hr₂ : st₂.readMany ctx₂ ρ d pts oob with
-      | err e =>
-        have := St.readMany_sim hc ρ h hd.good₀ pts oob
-        rw [hr₂] at this
-        obtain ⟨_, -, hu'⟩ := ResSim.err_inv' this rfl
-        rcases hu' with hu' | h₁
-        · exact ResSim.ub hu' _
-        · rw [h₁]; exact ResSim.err _
-      | ok x₂ =>
-        obtain ⟨vs₂, a₂⟩ := x₂
-        have hs' := St.readMany_sim hc ρ h hd.good₀ pts oob
-        rw [hr₂] at hs'
-        rcases hs' with ⟨e, he, -⟩ | ⟨e, -, he⟩ | ⟨a, b, ha, hb, hab⟩
-        · cases he
-        · cases he
-        · cases ha
-          obtain ⟨vs₁, a₁⟩ := b
-          obtain ⟨-, hst⟩ := hab
-          simp only at hst
-          rw [hb]
-          simp only [Res.ok_bind, Res.pure_eq]
-          refine ResSim.ok ⟨?_, hst⟩
-          obtain ⟨hm₂, hd₂⟩ := St.readMany_defined hr₂
-          obtain ⟨hm₁, -⟩ := St.readMany_defined hb
-          simp only [hm₂, hm₁]
-          congr 1
-          funext rel
-          split
-          · split
-            · next hc' =>
-              rw [Ctx.loc_sim hc h.mem ρ hd.good₀]
-              cases hl : ctx₁.loc ρ st₁.mem d (List.zipWith (· + ·) lo rel) oob with
-              | err e => rfl
-              | ok l =>
-                simp only [Res.map]
-                have hdef := hd₂ _ (by simpa using hc') (l.ren π) (by rw [Ctx.loc_sim hc h.mem ρ hd.good₀, hl]; rfl)
-                rcases h.mem.read (Ctx.locP hc h.mem ρ hd.good₀ hl) with h₁ | h₁
-                · rw [h₁] at hdef; cases hdef
-                · rw [h₁]
-            · rfl
-          · rfl
+  try simp only [Ctx.Strong.isStream_eq hd]
+  have hm := h.mem
+  leaf_sim
 
 theorem bindIn_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {e : DEdge} (he : e ∈ s.edges) {st₂ st₁ : St}
     (h : St.Sim π P L st₂ st₁) :

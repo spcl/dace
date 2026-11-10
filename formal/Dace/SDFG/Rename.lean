@@ -908,20 +908,7 @@ theorem bindInData (d : Name) {sub : Option Subset} (hs : ∀ x ∈ optSubsetNam
     split
     · exact Res.er_bind_congr (h.read st d _ oob) fun _ => rfl
     · refine Res.er_bind_congr (h.lowerCorner _ d hs) fun lo => ?_
-      refine Res.er_bind_congr (h.readMany st d pts oob) fun ⟨_, st'⟩ => ?_
-      simp only [Res.er_pure]
-      congr 3
-      funext rel
-      split
-      · split
-        · have hl := h.loc (ρ := ρ) st'.mem d (List.zipWith (· + ·) lo rel) oob
-          revert hl
-          generalize ctx'.loc ρ st'.mem (σ d) (List.zipWith (· + ·) lo rel) oob = x'
-          generalize ctx.loc ρ st'.mem d (List.zipWith (· + ·) lo rel) oob = x
-          intro hl
-          cases x' <;> cases x <;> simp_all [Res.er]
-        · rfl
-      · rfl
+      exact Res.er_bind_congr (h.readMany st d pts oob) fun _ => rfl
 
 theorem bindIn {e : DEdge} (he : e ∈ s.edges) (st : St) :
     (Dace.bindIn ctx' ρ (s.ren σ) (e.ren σ) st).er = (Dace.bindIn ctx ρ s e st).er := by

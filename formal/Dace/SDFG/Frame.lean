@@ -295,90 +295,17 @@ theorem execCopy_foot {e : DEdge} (he : e ∈ s.edges) : Foot ctx.I.wcr (fun st 
       | exact Foot.err _
       | exact copyData_foot ρ h _ _ _ _ _ _ (h.srcEndpoint_pure he hs) (h.dstEndpoint_pure he ht)
 
-omit h in
-theorem forall₂_loc_mem {m : Mem} {d : Name} {oob : Bool} {pts : List Idx} {ls : List Loc}
-    (hf : List.Forall₂ (fun p l => ctx.loc ρ m d p oob = .ok l) pts ls) {p : Idx} (hp : p ∈ pts) :
-    ∃ l ∈ ls, ctx.loc ρ m d p oob = .ok l := by
-  induction hf with
-  | nil => cases hp
-  | cons hl _ ih =>
-    rcases List.mem_cons.1 hp with rfl | hp
-    · exact ⟨_, List.mem_cons_self, hl⟩
-    · obtain ⟨l, hl', he⟩ := ih hp
-      exact ⟨l, List.mem_cons_of_mem _ hl', he⟩
-
-omit h in
-/-- The pointer-connector branch of `bindInData`: the connector reads the
-cells that `readMany` logged. -/
-theorem bindInData_array_foot (d : Name) (sub : Option Subset) (oob : Bool) (pts : List Idx)
-    (hp : ctx.pointsPure d sub = true) :
-    FootA ctx.I.wcr (fun st => do
-      let lo ← ctx.lowerCorner ρ st.mem d sub
-      let (_, st) ← st.readMany ctx ρ d pts oob
-      let m := st.mem
-      let get : Idx → Option Val := fun rel =>
-        if rel.length = lo.length then
-          let abs := List.zipWith (· + ·) lo rel
-          if pts.contains abs then
-            match ctx.loc ρ m d abs oob with
-            | .ok l => some (m.read l)
-            | .err _ => none
-          else none
-        else none
-      pure (ConnIn.array get, st)) := by
-  refine FootA.bind_det (fun st st₂ _ => ctx.lowerCorner_pure ρ _ _ hp) (fun lo => ?_)
-  intro st a st' hr
-  dsimp only at hr
-  cases hrm : st.readMany ctx ρ d pts oob with
-  | err e => rw [hrm] at hr; cases hr
-  | ok r =>
-    obtain ⟨vs, st₁⟩ := r
-    rw [hrm] at hr
-    simp only [Res.ok_bind, Res.pure_eq, Res.ok_inj, Prod.mk.injEq] at hr
-    obtain ⟨rfl, rfl⟩ := hr
-    unfold St.readMany at hrm
-    obtain ⟨ls, hf, -, rfl, hd⟩ := St.readMany_ok ctx ρ pts [] st vs st₁ hrm
-    refine ⟨{ reads := ls.map st.mem.resolve }, ⟨rfl, rfl⟩, rfl, fun st₂ hag hv => ?_⟩
-    have hf₂ : List.Forall₂ (fun p l => ctx.loc ρ st₂.mem d p oob = .ok l) pts ls :=
-      hf.imp fun p l hl => (ctx.loc_congr ρ hag.1 d p oob).trans hl
-    have hd₂ : ∀ l ∈ ls, (st₂.mem.read l).isUndef = false := fun l hl => by
-      simp only [Mem.read, Mem.resolve_congr hag.1 l]
-      rw [hag.2 _ (List.mem_map_of_mem hl)]
-      exact hd l hl
-    have hrm₂ := St.readMany_of_forall₂ ctx ρ pts ls [] st₂ hf₂ hd₂
-    have hres : ls.map st₂.mem.resolve = ls.map st.mem.resolve :=
-      List.map_congr_left fun l _ => Mem.resolve_congr hag.1 l
-    dsimp only
-    unfold St.readMany
-    rw [hrm₂]
-    simp only [Res.ok_bind, Res.pure_eq, Res.ok_inj, Prod.mk.injEq, hres]
-    refine ⟨?_, rfl⟩
-    congr 1
-    funext rel
-    split
-    · split
-      · next hc =>
-        have habs : List.zipWith (· + ·) lo rel ∈ pts := by simpa using hc
-        obtain ⟨l, hl, hloc⟩ := forall₂_loc_mem ρ hf habs
-        have hloc₂ : ctx.loc ρ (st₂.logged { reads := ls.map st.mem.resolve }).mem d
-            (List.zipWith (· + ·) lo rel) oob = .ok l := (ctx.loc_congr ρ hag.1 _ _ _).trans hloc
-        have hloc₁ : ctx.loc ρ (st.logged { reads := ls.map st.mem.resolve }).mem d
-            (List.zipWith (· + ·) lo rel) oob = .ok l := hloc
-        rw [hloc₁, hloc₂]
-        simp only [St.logged, Mem.read, Mem.resolve_congr hag.1 l]
-        rw [hag.2 _ (List.mem_map_of_mem hl)]
-      · rfl
-    · rfl
-
 theorem bindInData_foot (d : Name) (sub : Option Subset) (oob : Bool) (hp : ctx.pointsPure d sub = true) :
     FootA ctx.I.wcr (fun st => bindInData ctx ρ d sub oob st) := by
   unfold bindInData
   simp only [h.isStream, Bool.false_eq_true, ↓reduceIte]
   refine FootA.bind_det (fun st st₂ _ => ctx.pointsOf_pure ρ _ _ hp) (fun pts => ?_)
   rcases pts with _ | ⟨p, _ | ⟨q, rest⟩⟩
-  · exact bindInData_array_foot ρ d sub oob [] hp
+  · exact FootA.bind_det (fun st st₂ _ => ctx.lowerCorner_pure ρ _ _ hp) fun lo =>
+      FootA.bind (St.readMany_foot ctx ρ _ d _ oob) (fun vs => FootA.pure (ConnIn.array (arrayOfRead lo _ vs)))
   · exact FootA.bind (St.read_foot ctx ρ _ d p oob) (fun v => FootA.pure (ConnIn.scalar v))
-  · exact bindInData_array_foot ρ d sub oob _ hp
+  · exact FootA.bind_det (fun st st₂ _ => ctx.lowerCorner_pure ρ _ _ hp) fun lo =>
+      FootA.bind (St.readMany_foot ctx ρ _ d _ oob) (fun vs => FootA.pure (ConnIn.array (arrayOfRead lo _ vs)))
 
 theorem bindIn_foot {e : DEdge} (he : e ∈ s.edges) : FootA ctx.I.wcr (fun st => bindIn ctx ρ s e st) := by
   unfold bindIn
