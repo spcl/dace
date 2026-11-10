@@ -377,24 +377,21 @@ class ShortLoopUnroll(ppl.Pass):
         return not _unfusable_branchy_body(loop)  # a branchy body local fusion cannot re-merge
 
     @staticmethod
-    def unroll_one(loop: LoopRegion) -> bool | None:
-        """Unroll ``loop``: True on success, None when LoopUnroll refuses it, False when apply raised part-way.
+    def unroll_one(loop: LoopRegion) -> bool:
+        """Unroll ``loop``; False, graph untouched, when LoopUnroll refuses it.
 
-        Applicability is decided first, on its own, so a refusal (graph untouched, not a modification) is
-        distinguishable from a mid-apply failure (possibly half-rewritten, a modification). ``annotate=False``
-        skips the per-apply full-SDFG propagation; the pass propagates once at its end.
+        Applicability is decided before any mutation, so the rewrite either completes or the graph stays as it was;
+        an exception inside ``apply`` propagates. ``annotate=False`` skips the per-apply full-SDFG propagation; the
+        pass propagates once at its end.
         """
         from dace.transformation.interstate.loop_unroll import LoopUnroll
 
         try:
             if not LoopUnroll.can_be_applied_to(sdfg=loop.sdfg, loop=loop):
-                return None
-        except Exception:
-            return None
-        try:
-            LoopUnroll().apply_to(sdfg=loop.sdfg, loop=loop, annotate=False, verify=False)
+                return False
         except Exception:
             return False
+        LoopUnroll().apply_to(sdfg=loop.sdfg, loop=loop, annotate=False, verify=False)
         return True
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
@@ -403,28 +400,16 @@ class ShortLoopUnroll(ppl.Pass):
         Re-collects after each unroll since unrolling rewrites the control-flow
         structure (and may expose newly-constant inner loops).
 
-        :returns: The number of loops unrolled; ``0`` when no unroll completed but one raised
-                  part-way through ``apply`` (see below), leaving a possibly half-rewritten
-                  loop; ``None`` only when the SDFG was left untouched.
-
-        ``apply_pass`` returning ``None`` means "did not modify the SDFG", and callers act
-        on it: the pipeline skips its per-stage ``validate()`` and leaves ``self._modified``
-        alone (stale analyses, early ``FixedPointPipeline`` exit). A partial rewrite reported
-        as ``None`` would therefore go unvalidated, so it reports ``0`` -- "modified, but
-        nothing of my own kind completed".
+        :returns: The number of loops unrolled, ``None`` when the SDFG was left untouched.
         """
         if self.unroll_limit <= 0:
             return None
         unrolled = 0
-        # Unrolls that raised part-way through ``LoopUnroll.apply``. Counted separately from
-        # ``unrolled`` so they feed the return value (the graph may be half-rewritten) without
-        # triggering the completed-unroll propagation below.
-        partial = 0
         # Trip count per loop OBJECT, for this call. It reads only the loop header and
         # ``sdfg.constants``; no step here rewrites a live loop's header (an unroll substitutes
         # into fresh copies), and the keys stay referenced, so no id is reused.
         trips: dict[LoopRegion, int | None] = {}
-        # Loops LoopUnroll refused or failed on. The gates are re-judged every level instead: unrolling inner
+        # Loops LoopUnroll refused. The gates are re-judged every level instead: unrolling inner
         # loops can fold a guard away and make a branchy body unrollable.
         refused: set[LoopRegion] = set()
         while True:
@@ -438,13 +423,8 @@ class ShortLoopUnroll(ppl.Pass):
             touched: list[ControlFlowRegion] = []
             for loop in [loop for loop in eligible if _loop_depth(loop) == depth]:
                 parent = loop.parent_graph
-                outcome = self.unroll_one(loop)
-                if not outcome:
-                    refused.add(loop)  # refused (None) or raised part-way (False); never retried in this call
-                if outcome is None:
-                    continue  # not unrollable in this context; leave it for LoopToMap
-                if not outcome:
-                    partial += 1  # raised inside apply: the rewrite may be half-done
+                if not self.unroll_one(loop):
+                    refused.add(loop)  # not unrollable in this context; leave it for LoopToMap
                     continue
                 unrolled += 1
                 if parent is not None and all(parent is not seen for seen in touched):
@@ -458,7 +438,7 @@ class ShortLoopUnroll(ppl.Pass):
 
             propagate_memlets_sdfg(sdfg)
             return unrolled
-        return 0 if partial else None
+        return None
 
 
 @properties.make_properties
