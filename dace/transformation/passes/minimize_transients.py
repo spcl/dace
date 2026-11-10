@@ -7,122 +7,14 @@ from typing import Any
 from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
 from dace.config import Config
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
-from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.transient_reuse import BufferSharing, StateOrder, sharing_storages
 from dace.transformation.transformation import explicit_cf_compatible
 
 #: Storages a coalesced pair may mix: all of them are plain host memory the other side's code can address.
 HOST_STORAGES = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register)
-
-
-@dataclass(slots=True)
-class Contraction:
-    """One SDFG's contraction: a transient of which only one box is ever read keeps that box alone. What is written
-    outside it is never observed: a fill is cut to the box, and any other write must lie inside it. The box names
-    only symbols that hold one value for a whole run of the SDFG, so it is the same box at every access."""
-
-    sdfg: SDFG
-    facts: symbolic.Facts | None = None
-
-    def run(self) -> int:
-        sd = self.sdfg
-        skip: set[str] = set()
-        varying: set[str] = set()
-        for edge in sd.all_interstate_edges():
-            skip |= edge.data.free_symbols
-            varying |= edge.data.assignments.keys()
-        for region in sd.all_control_flow_regions():
-            skip |= region.used_symbols(all_symbols=True, with_contents=False)
-            if isinstance(region, LoopRegion) and region.loop_variable:
-                varying.add(region.loop_variable)
-        uses: dict[str, list[tuple[SDFGState, nodes.AccessNode]]] = {}
-        for state in sd.states():
-            for node in state.data_nodes():
-                desc = sd.arrays[node.data]
-                if type(desc) is data.Array and desc.transient and not desc.may_alias and node.data not in skip:
-                    uses.setdefault(node.data, []).append((state, node))
-        contracted = 0
-        for name, where in uses.items():
-            box = self.read_box(name, where, varying)
-            if box is None:
-                continue
-            # A copy: the box is the subset of one of the memlets moved below.
-            box = subsets.Range(box.ranges)
-            origin = [begin for begin, _, _ in box.ranges]
-            for state, node in where:
-                for edge in state.all_edges(node):
-                    if edge.data.is_empty():
-                        continue
-                    if isinstance(edge.src, FillLibraryNode):
-                        edge.data.subset = subsets.Range(box.ranges)
-                    for tree in state.memlet_tree(edge).traverse_children(include_self=True):
-                        memlet = tree.edge.data
-                        if memlet.data == name:
-                            memlet.subset.offset(origin, True)
-                        elif tree.edge is edge:
-                            memlet.other_subset.offset(origin, True)
-            sd.arrays[name].set_shape(box.size())
-            contracted += 1
-        return contracted
-
-    def read_box(
-        self, name: str, where: list[tuple[SDFGState, nodes.AccessNode]], varying: set[str]
-    ) -> subsets.Range | None:
-        """The box of ``name`` that covers everything read of it, if the buffer can be cut to it; else ``None``."""
-        sd = self.sdfg
-        reads: list[subsets.Subset | None] = []
-        for state, node in where:
-            # Under a map the subsets name its parameters: no one box.
-            if state.entry_node(node) is not None:
-                return None
-            for edge in state.all_edges(node):
-                if edge.data.is_empty():
-                    continue
-                other = edge.dst if edge.src is node else edge.src
-                if edge.data.wcr is not None or (
-                    isinstance(other, nodes.AccessNode) and isinstance(other.desc(sd), (data.View, data.Reference))
-                ):
-                    return None
-                # Whatever keeps a descriptor or a pointer of its own to the buffer sees its layout.
-                for tree in state.memlet_tree(edge).traverse_children(include_self=True):
-                    for end in (tree.edge.src, tree.edge.dst):
-                        if isinstance(end, nodes.NestedSDFG):
-                            return None
-                        if isinstance(end, nodes.LibraryNode) and not isinstance(end, FillLibraryNode):
-                            return None
-                        if (
-                            isinstance(end, nodes.Tasklet)
-                            and symbolic.equal(tree.edge.data.num_elements(), 1) is not True
-                        ):
-                            return None
-                if edge.src is node:
-                    reads.append(edge.data.get_src_subset(edge, state))
-        if not reads or not all(isinstance(read, subsets.Range) for read in reads):
-            return None
-        if self.facts is None:
-            self.facts = sd.facts()
-        box = next((r for r in reads if all(r.covers_precise(other, self.facts) for other in reads)), None)
-        if box is None or any(step != 1 for _, _, step in box.ranges) or {str(s) for s in box.free_symbols} & varying:
-            return None
-        desc = sd.arrays[name]
-        if all(symbolic.equal(size, extent) is True for size, extent in zip(box.size(), desc.shape)):
-            return None
-        for state, node in where:
-            for edge in state.in_edges(node):
-                if edge.data.is_empty():
-                    continue
-                written = edge.data.get_dst_subset(edge, state)
-                if not isinstance(written, subsets.Range):
-                    return None
-                if isinstance(edge.src, FillLibraryNode) and written.covers_precise(box, self.facts):
-                    continue
-                if not box.covers_precise(written, self.facts):
-                    return None
-        return box
 
 
 @dataclass(slots=True)
@@ -522,10 +414,9 @@ def walk(state: SDFGState, start: nodes.Node, forward: bool) -> set:
 class MinimizeTransients(ppl.Pass):
     """Fewer, smaller and longer-lived transients.
 
-    1. Contract, in every SDFG: a transient of which one box only is ever read is that box (:class:`Contraction`).
-    2. Coalesce: a transient living in one state and copied whole to or from a region of another container is that
-       region (:class:`Coalescing`).
-    3. Share and lift: transients whose uses never overlap share one buffer, and outside every parallel map scope every
+    1. Coalesce, in every SDFG: a transient living in one state and copied whole to or from a region of another
+       container is that region (:class:`Coalescing`).
+    2. Share and lift: transients whose uses never overlap share one buffer, and outside every parallel map scope every
        buffer sized by symbols bound on entry is ``Persistent``
        (:class:`~dace.transformation.passes.transient_reuse.BufferSharing`, :func:`sharing_storages`).
 
@@ -548,7 +439,6 @@ class MinimizeTransients(ppl.Pass):
             storages.append(dtypes.StorageType.GPU_Global)
         changed = 0
         for sd in sdfg.all_sdfgs_recursive():
-            changed += Contraction(sd).run()
             changed += Coalescing(sd).run()
             shared = sharing_storages(sd, tuple(storages))
             if shared:
