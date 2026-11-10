@@ -5,9 +5,8 @@ Dependent kernels have nothing to overlap, so this is the cheapest correct sched
 streams and eight syncs). The kernels sit in a host ``nblocks`` map, the CLOUDSC shape. Codegen only.
 """
 
+import functools
 import re
-
-import pytest
 
 import dace
 from dace import dtypes
@@ -50,7 +49,8 @@ def build_multi_kernel_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def generate_source() -> str:
+@functools.lru_cache(maxsize=None, typed=True)
+def generated_source() -> str:
     sdfg = build_multi_kernel_sdfg()
     sdfg.validate()
     with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
@@ -59,29 +59,23 @@ def generate_source() -> str:
     return "\n".join(obj.clean_code for obj in objects)
 
 
-@pytest.fixture(scope="module")
-def generated_source() -> str:
-    return generate_source()
+def test_every_kernel_is_generated():
+    assert generated_source().count("__global__ void") == 3
 
 
-def test_every_kernel_is_generated(generated_source: str):
-    assert generated_source.count("__global__ void") == 3
-
-
-def test_all_kernels_use_stream_zero(generated_source: str):
+def test_all_kernels_use_stream_zero():
     """No kernel may be handed a stream other than 0."""
-    streams = set(re.findall(r"streams\[(\d+)\]", generated_source))
+    streams = set(re.findall(r"streams\[(\d+)\]", generated_source()))
     assert streams == {"0"}, sorted(streams)
 
 
-def test_synchronises_once(generated_source: str):
+def test_synchronises_once():
     """One stream sync for the whole program, not one per kernel."""
-    syncs = re.findall(r"(?:cuda|hip)StreamSynchronize", generated_source)
+    syncs = re.findall(r"(?:cuda|hip)StreamSynchronize", generated_source())
     assert len(syncs) == 1, f"expected a single sync, found {len(syncs)}"
 
 
 if __name__ == "__main__":
-    source = generate_source()
-    test_every_kernel_is_generated(source)
-    test_all_kernels_use_stream_zero(source)
-    test_synchronises_once(source)
+    test_every_kernel_is_generated()
+    test_all_kernels_use_stream_zero()
+    test_synchronises_once()
