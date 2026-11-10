@@ -726,3 +726,4 @@ if __name__ == "__main__":
     test_gpu_rejected_fill_map_stays_valid()
     test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_scope()
     test_data_bound_to_a_reference_is_not_promoted()
+    test_opaque_transient_written_a_literal_is_not_promoted()
