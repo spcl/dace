@@ -132,6 +132,11 @@ class FuseMapsAtSharedAxes(ppl.Pass):
         """Split the producer (the consumer when ``split_consumer``) at ``axes`` and fuse the outer map with the other
         map through ``node``: ``None`` when fused, else the entry of the split map merged back as it was."""
         split = consumer if split_consumer else producer
+        # The split propagates the memlets on the map's boundary anew; a refused split puts these back
+        boundary = {("in", e.src, e.src_conn, e.dst_conn): e.data for e in state.in_edges(split)}
+        boundary.update(
+            {("out", e.dst, e.src_conn, e.dst_conn): e.data for e in state.out_edges(state.exit_node(split))}
+        )
         original = list(split.map.params)
         collapse = split.map.collapse
         # A thread block sized for all of the split map's axes fits none of the maps it splits into
@@ -167,7 +172,11 @@ class FuseMapsAtSharedAxes(ppl.Pass):
             fusion.apply(state, sdfg)
             forget_all_facts(sdfg)
             return None
-        merged, _ = sdutil.merge_maps(state, outer, state.exit_node(outer), inner, state.exit_node(inner))
+        merged, merged_exit = sdutil.merge_maps(state, outer, state.exit_node(outer), inner, state.exit_node(inner))
+        for edge in state.in_edges(merged):
+            edge.data = boundary.get(("in", edge.src, edge.src_conn, edge.dst_conn), edge.data)
+        for edge in state.out_edges(merged_exit):
+            edge.data = boundary.get(("out", edge.dst, edge.src_conn, edge.dst_conn), edge.data)
         reorder(merged, original)
         merged.map.collapse = collapse
         merged.map.gpu_block_size = block
