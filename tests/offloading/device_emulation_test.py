@@ -105,12 +105,27 @@ def return_after_a_kernel(A: dace.float64[N], B: dace.float64[N], c: dace.int64)
         B[i] = A[i] * 2.0
 
 
+@dace.program
+def host_use_under_a_loop_conditional(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], c: dace.int64):
+    for i in dace.map[0:N]:
+        A[i] = B[i] * 2.0
+    for k in range(4):
+        if k < c:
+            for j in range(1, N):
+                A[j] = A[j] + A[j - 1]
+        else:
+            C[0] = C[0] + 1.0
+    for i in dace.map[0:N]:
+        B[i] = A[i] + 1.0
+
+
 PROGRAMS = {
     "host_write_then_kernel_arm": host_write_then_kernel_arm,
     "host_read_on_an_edge": lambda: host_read_on_an_edge.to_sdfg(simplify=True),
     "host_write_in_a_loop_arm": lambda: host_write_in_a_loop_arm.to_sdfg(simplify=True),
     "break_after_host_read": lambda: break_after_host_read.to_sdfg(simplify=True),
     "return_after_a_kernel": lambda: return_after_a_kernel.to_sdfg(simplify=True),
+    "host_use_under_a_loop_conditional": lambda: host_use_under_a_loop_conditional.to_sdfg(simplify=True),
 }
 
 

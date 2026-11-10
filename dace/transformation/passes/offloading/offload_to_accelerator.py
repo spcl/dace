@@ -1831,6 +1831,18 @@ class OffloadToAccelerator(ppl.Pass):
         # traverse graph
         traverse_same_level(IR, gather_data, children)
 
+        if IR.type == OffloadingIRNode.OPEN_LOOP:
+            # An array the body uses only under its conditionals is still wanted where they use it. Left to the
+            # predecessor's location, the loop's tail copied it back there and the arm fetched it again, a round
+            # trip per iteration (amg_setup's level loop, whose whole body is ``if n > 100``). A fallback arm
+            # copies inside itself and has no say.
+            def gather_nested(node: OffloadingIRNode):
+                block = required(node.open).block if node.type == OffloadingIRNode.CLOSE else node.block
+                if node is not IR and not in_sequential_specialization_arm(block):
+                    gather_data(node)
+
+            self.traverse_IR_after_predecessors(IR, gather_nested)
+
         # populate IR sets
         IR.gpu_set = OrderedSet(array_name for array_name in location_on_gpu if location_on_gpu[array_name])
         IR.cpu_set = OrderedSet(array_name for array_name in location_on_gpu if not location_on_gpu[array_name])

@@ -60,6 +60,27 @@ def test_the_nest_still_computes_the_reference():
     assert np.allclose(got, expected)
 
 
+@dace.program
+def guarded_recurrence(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], c: dace.int64):
+    for i in dace.map[0:N]:
+        A[i] = B[i] * 2.0
+    for k in range(4):
+        if k < c:
+            for j in range(1, N):
+                A[j] = A[j] + A[j - 1]
+        else:
+            C[0] = C[0] + 1.0
+
+
+def test_a_loop_using_an_array_only_under_a_conditional_copies_it_at_its_boundary():
+    sdfg = guarded_recurrence.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations()
+    loop = next(b for b in sdfg.nodes() if isinstance(b, LoopRegion))
+    inside = [s.label for s in loop.states() if s.label.startswith("copy_")]
+    assert not inside, inside
+
+
 if __name__ == "__main__":
+    test_a_loop_using_an_array_only_under_a_conditional_copies_it_at_its_boundary()
     test_an_enclosing_loop_does_not_copy_back_what_the_inner_loop_already_did()
     test_the_nest_still_computes_the_reference()
