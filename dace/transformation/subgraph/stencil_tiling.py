@@ -11,6 +11,7 @@ import dace
 from dace import dtypes, subsets, symbolic
 from dace.properties import Property, ShapeProperty, make_properties
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import _propagate_node
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
@@ -205,10 +206,10 @@ class StencilTiling(transformation.SubgraphTransformation):
         if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
             return False
         # ``SubgraphFusion`` is applied to the tiled maps without asking again, so what it refuses on any range is
-        # refused here: an intermediate ordered against a map, and dynamic range inputs that may differ
-        if subgraph_fusion.orders_an_intermediate(
-            graph, map_entries, map_exits, intermediate_nodes
-        ) or not subgraph_fusion.same_dynamic_inputs(graph, map_entries):
+        # refused here: an intermediate ordered against a map, and a dynamic map range input
+        if subgraph_fusion.orders_an_intermediate(graph, map_entries, map_exits, intermediate_nodes) or any(
+            sdutil.has_dynamic_map_inputs(graph, entry) for entry in map_entries
+        ):
             return False
         # 1.5 nodes that are both intermediate and out nodes
         # are not supported in StencilTiling

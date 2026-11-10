@@ -2,6 +2,7 @@
 """``SubgraphFusion`` with empty memlets (ordering edges, no connectors) on the maps it fuses."""
 
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg import nodes
