@@ -7,8 +7,8 @@ GPU to observe.
 """
 
 import copy
+import functools
 import tempfile
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -114,21 +114,18 @@ PROGRAMS = {
 }
 
 
-def build_both(name: str, folder: Path) -> tuple:
-    """The original and the offloaded program, built in a folder of their own: parallel workers share names."""
+@functools.lru_cache(maxsize=None, typed=True)
+def build_both(name: str) -> tuple:
+    """The original and the offloaded program, built once, in a folder of their own: parallel workers share names."""
     original = PROGRAMS[name]()
-    with dace.config.set_temporary("default_build_folder", value=str(folder)):
+    with dace.config.set_temporary("default_build_folder", value=tempfile.mkdtemp(prefix=f"{name}_")):
         return original.compile(), offloaded_on_the_host(original).compile()
 
 
-@pytest.fixture(scope="module", params=sorted(PROGRAMS))
-def compiled(request, tmp_path_factory):
-    return build_both(request.param, tmp_path_factory.mktemp(request.param))
-
-
+@pytest.mark.parametrize("program", sorted(PROGRAMS))
 @pytest.mark.parametrize("c", CONDITIONS)
-def test_the_offloaded_program_computes_what_the_original_computes(compiled, c):
-    reference, offloaded = compiled
+def test_the_offloaded_program_computes_what_the_original_computes(program, c):
+    reference, offloaded = build_both(program)
     rng = np.random.default_rng(7)
     inputs = {name: rng.random(LENGTH) + 1.0 for name in "ABC"}
     want = {name: value.copy() for name, value in inputs.items()}
@@ -143,8 +140,6 @@ def test_the_offloaded_program_computes_what_the_original_computes(compiled, c):
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as root:
-        for name in sorted(PROGRAMS):
-            both = build_both(name, Path(root) / name)
-            for c in CONDITIONS:
-                test_the_offloaded_program_computes_what_the_original_computes(both, c)
+    for program in sorted(PROGRAMS):
+        for c in CONDITIONS:
+            test_the_offloaded_program_computes_what_the_original_computes(program, c)
