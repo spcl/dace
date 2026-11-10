@@ -21,9 +21,9 @@ concurrency:
 env:
   UV_FROZEN: 1 # sync without updating uv.lock
   UV_NO_DEV: 1 # don't install dev dependency group by default
-  # The dace-fortran commit the frontend comes from: head of its extended-compat branch, which follows extended's
-  # symbol-table API. A commit, not a branch, so a dace-fortran push cannot change what this job tests.
-  DACE_FORTRAN_REF: 215f7cb478ecd32322d54f4a26cba43e7545c7cb
+  # The dace-fortran main commit the frontend comes from. A commit, not a branch, so a dace-fortran push cannot
+  # change what this job tests.
+  DACE_FORTRAN_REF: 104553cb1737e9dbf6466c3199d6d9b130314bf0
   LLVM_VERSION: '22'
   OMPI_MCA_pml: ob1
   OMPI_MCA_btl: self,vader
