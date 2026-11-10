@@ -10,7 +10,6 @@ from typing import Any
 from dace import properties, subsets, symbolic
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, nodes
-from dace.sdfg import tasklet_utils as tutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlets_state
 from dace.sdfg.sdfg import forget_facts, memoize_facts
@@ -191,13 +190,6 @@ def loop_order_key(loop: LoopRegion) -> tuple[int, int]:
     return (sdfg_level, depth)
 
 
-def only_checks(loop: LoopRegion) -> bool:
-    """Whether ``loop`` does nothing but evaluate abort guards: nothing to gain from a map, and the checks of a proof
-    stay in front of what they guard."""
-    code = [node for state in loop.states() for node in state.nodes() if isinstance(node, nodes.CodeNode)]
-    return bool(code) and all(tutil.is_abort_guard(node) for node in code)
-
-
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ParallelizeLoops(ppl.Pass):
@@ -344,7 +336,7 @@ class ParallelizeLoops(ppl.Pass):
         # A known-parallel loop is mapped as it is: no sibling chain holds it, and its scale is the CPU specialization's
         # to settle.
         known_parallel = loop_analysis.is_known_parallel(loop)
-        if not proven and not known_parallel and (only_checks(loop) or self.holds_back(xform, loop)):
+        if not proven and not known_parallel and self.holds_back(xform, loop):
             return False
         if expanded:
             # avoid an import cycle
