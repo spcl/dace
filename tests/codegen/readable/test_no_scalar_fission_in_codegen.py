@@ -58,9 +58,8 @@ def reassign_scalar_sdfg(name):
 def assignment_targets(code):
     """Every assignment target in the emitted body, so a versioned name would show up as ``s_0``.
 
-    Matches every spelling a write to ``s`` can take: a bare ``s = (...)``, a ``const double s = (...)``,
-    and the ``double s = (...)`` binding ``scalar_decl = late_fused`` produces for a mutable scalar's FIRST
-    write.
+    Matches every spelling a write to ``s`` can take: a bare ``s = (...)`` and a declaration that initializes it,
+    ``const double s = (...)`` or ``double s = (...)``.
     """
     targets = []
     for raw in code.splitlines():
