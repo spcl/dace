@@ -12,6 +12,7 @@ from typing import Any
 
 from dace import SDFG, data, properties, symbolic
 from dace.ordered import OrderedSet
+from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
@@ -673,6 +674,29 @@ class PhaseFixpoint(ppl.Pass):
         return rounds or None
 
 
+@transformation.explicit_cf_compatible
+class SimplifyAsParsed(ppl.Pass):
+    """The frontend's ``to_sdfg(simplify=True)``: each nested SDFG simplified before its parent. Simplify is a
+    fixpoint and the later phases depend on where it fused, so with it first the form does not depend on whether the
+    caller simplified."""
+
+    CATEGORY: str = "Canonicalization"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Everything
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self) -> set[type[ppl.Pass] | ppl.Pass]:
+        return set()
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> bool | None:
+        nested = [node.sdfg for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.NestedSDFG)]
+        changed = [SimplifyPass().apply_pass(sd, {}) is not None for sd in [*reversed(nested), sdfg]]
+        return any(changed) or None
+
+
 def rail(label: str = CLEANUP) -> Stages:
     """The between-phase cleanup: flatten single-state bodies (an un-inlined body reports whole-array memlets),
     then the structural cleanup."""
@@ -728,6 +752,7 @@ def statement_round() -> list[ppl.Pass]:
 def ingest(target: str) -> Stages:
     """Raise structured control flow and settle one spelling, then the first ``SimplifyPass`` and cleanup."""
     s: Stages = [
+        (INGEST, SimplifyAsParsed()),
         # The contract's compile-time half from the start: every proof below reads the sizes as nonnegative (a
         # symbolic loop step ``n3`` orients its map); ``AssumeSymbolConstraints`` adds the runtime check at the end
         (INGEST, SetSymbolNonnegativeAssumptions()),
