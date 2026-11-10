@@ -1821,7 +1821,12 @@ def distributed_compile(sdfg: SDFG | None, comm, *, validate: bool = True) -> cs
     return func
 
 
-def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> set[SDFGState]:
+def is_empty_state(block: ControlFlowBlock) -> bool:
+    """Whether ``block`` is a state without nodes; any other block (a region, a return) is not empty."""
+    return isinstance(block, SDFGState) and block.number_of_nodes() == 0
+
+
+def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> set[ControlFlowBlock]:
     """
     From the given state, return the next set of states that are reachable
     in the SDFG, skipping empty states. Traversal stops at the non-empty
@@ -1839,13 +1844,11 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> set[SDFGState]:
     # Traverse children until states are not empty
     for succ in state.parent_graph.successors(state):
         result |= set(
-            dfs_conditional(
-                state.parent_graph, sources=[succ], condition=lambda parent, _: parent.number_of_nodes() == 0
-            )
+            dfs_conditional(state.parent_graph, sources=[succ], condition=lambda parent, _: is_empty_state(parent))
         )
 
     # Filter out empty states
-    result = {s for s in result if not s.number_of_nodes() == 0}
+    result = {s for s in result if not is_empty_state(s)}
 
     return result
 
