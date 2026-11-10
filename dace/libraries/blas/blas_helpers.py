@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import warnings
 from copy import deepcopy as dc
+from numbers import Real
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -312,6 +313,80 @@ def blas_prefix(dtype: dtypes.typeclass) -> str | None:
     return None if func == "H" else func
 
 
+#: The optional scalar inputs of a BLAS node: a scale that is no real literal is data, and reaches the node here.
+SCALE_CONNECTORS = ("_alpha", "_beta")
+
+
+def real_scale(value: Any) -> Any:
+    """``value`` for a symbolic scale property, which would read a complex number as a symbol named ``I``."""
+    if isinstance(value, (complex, np.complexfloating)):
+        raise ValueError(f"The complex scale {value} is data: wire it to a scale connector with connect_scale")
+    return value
+
+
+def connect_scale(sdfg: "dace.SDFG", state: "dace.SDFGState", node: nodes.LibraryNode, name: str, value: Any) -> Any:
+    """Wires a scale that is no real literal to the connector ``_{name}`` of ``node``.
+
+    :param sdfg: The SDFG of the state.
+    :param state: The state of the node.
+    :param node: The node.
+    :param name: ``alpha`` or ``beta``.
+    :param value: A real literal, a complex number, a symbolic expression, or the name of a scalar container.
+    :return: The value of the node's property: ``value`` for a real literal, which needs no connector, otherwise 1.
+    """
+    if isinstance(value, Real):
+        return value
+    connector = f"_{name}"
+    node.add_in_connector(connector)
+    if isinstance(value, str) and value in sdfg.arrays:
+        state.add_edge(state.add_read(value), None, node, connector, dace.Memlet(value))
+        return 1
+    complex_value = isinstance(value, (complex, np.complexfloating))
+    dtype = dtypes.complex128 if complex_value else dtypes.float64
+    code = f"__out = dace.complex128({value.real}, {value.imag})" if complex_value else f"__out = {value}"
+    scalar, _ = sdfg.add_scalar(f"__scale_{name}", dtype, transient=True, find_new_name=True)
+    tasklet = state.add_tasklet(f"{name}_value", {}, {"__out"}, code)
+    access = state.add_access(scalar)
+    state.add_edge(tasklet, "__out", access, None, dace.Memlet(scalar))
+    state.add_edge(access, None, node, connector, dace.Memlet(scalar))
+    return 1
+
+
+def is_literal_scale(node: nodes.LibraryNode, name: str, value: Any, number: int) -> bool:
+    """Whether the scale ``name`` is known to equal ``number``: a wired scale is known only at run time."""
+    return f"_{name}" not in node.in_connectors and symbolic.equal_valued(number, value)
+
+
+def scale_term(node: nodes.LibraryNode, name: str, value: Any) -> tuple[str, dict[str, "dace.Memlet"]]:
+    """The scale ``name`` as a Python tasklet term, and the tasklet inputs the term needs."""
+    if f"_{name}" in node.in_connectors:
+        return f"__{name}", {f"__{name}": dace.Memlet(f"_{name}[0]")}
+    return f"({value})", {}
+
+
+def scale_text(node: nodes.LibraryNode, name: str, value: Any, pattern: str = "_{name}") -> Any:
+    """The scale ``name`` for a vendor call: the tasklet connector ``pattern`` names if wired, otherwise ``value``."""
+    return pattern.format(name=name) if f"_{name}" in node.in_connectors else value
+
+
+def scales(node: nodes.LibraryNode, **values: Any) -> dict[str, Any]:
+    """:func:`scale_text` of each of ``values``, as :func:`in_place_call` names the connectors."""
+    return {name: scale_text(node, name, value, "_{name}_value") for name, value in values.items()}
+
+
+def data_in_edges(node: nodes.LibraryNode, state: "dace.SDFGState") -> list:
+    """The input edges of ``node`` that carry operands, not scales."""
+    return [edge for edge in state.in_edges(node) if edge.dst_conn not in SCALE_CONNECTORS]
+
+
+def add_scale_scalars(nsdfg: "dace.SDFG", node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG") -> None:
+    """Declares each scale wired to ``node`` as a scalar of the nested SDFG ``nsdfg``."""
+    for connector in SCALE_CONNECTORS:
+        if connector in node.in_connectors:
+            desc = sdfg.arrays[sdutil.in_edge_with_name(node, state, connector).data.data]
+            nsdfg.add_scalar(connector, desc.dtype)
+
+
 def scalar_arguments(dtype: dtypes.typeclass, **values: Any) -> tuple[str, dict[str, str]]:
     """Declares each of ``values`` as a scalar of ``dtype``; returns the declarations and, per name, the argument
     passing it to CBLAS: the value itself to a real routine, its address to a complex one."""
@@ -347,8 +422,11 @@ def connector_sdfg(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace
     """A nested SDFG with one array per connector of ``node``, in the shape and strides of its :func:`operand`."""
     nsdfg = dace.SDFG(f"{node.label}_sdfg")
     for connector in list(node.in_connectors) + list(node.out_connectors):
+        if connector in SCALE_CONNECTORS:
+            continue
         desc, shape, strides = operand(node, state, sdfg, connector)
         nsdfg.add_array(connector, shape, desc.dtype, desc.storage, strides=strides)
+    add_scale_scalars(nsdfg, node, state, sdfg)
     # A C++ tasklet hides the symbols it names from inference: declare what the node reads, typed as where it sits
     defined = state.symbols_defined_at(node)
     for name in sorted(node.free_symbols - nsdfg.symbols.keys()):
@@ -384,7 +462,7 @@ def in_place_call(
     """
     nsdfg = connector_sdfg(node, state, sdfg)
     # The source stays a tasklet input even when unused, so the outer graph keeps its read
-    reads = {f"_{c}": c for c in node.in_connectors}
+    reads = {f"{c}_value" if c in SCALE_CONNECTORS else f"_{c}": c for c in node.in_connectors}
     if overwrites or same_memory(node, state, source, target):
         call_state = nsdfg.add_state(f"{node.label}_call")
     else:
@@ -398,7 +476,10 @@ def in_place_call(
         # The call reads ``target`` too, so the copy into it is not dead
         reads[f"_{target}_before"] = target
     # Pointers even for one element, whose memlet would bind a value
-    pointers = {connector: dtypes.pointer(nsdfg.arrays[name].dtype) for connector, name in reads.items()}
+    pointers = {
+        connector: nsdfg.arrays[name].dtype if name in SCALE_CONNECTORS else dtypes.pointer(nsdfg.arrays[name].dtype)
+        for connector, name in reads.items()
+    }
     written = {f"_{target}": dtypes.pointer(nsdfg.arrays[target].dtype)}
     tasklet = call_state.add_tasklet(node.label, pointers, written, code, language=dtypes.Language.CPP)
     for connector, name in reads.items():
