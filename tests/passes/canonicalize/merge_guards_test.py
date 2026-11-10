@@ -6,8 +6,8 @@ import numpy as np
 
 import dace
 from dace.properties import CodeBlock
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-from dace.transformation.passes.canonicalize.merge_guards import MergeGuards
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.transformation.passes.canonicalize.merge_guards import MergeGuards, changed_by, merge_consecutive
 
 
 def guard(
@@ -86,6 +86,18 @@ def test_a_second_guard_reading_what_the_first_body_writes_stays_apart():
     sdfg.add_edge(one, two, dace.InterstateEdge())
     sdfg.validate()
     assert MergeGuards().apply_pass(sdfg, {}) is None
+
+
+def test_a_loop_variable_left_by_the_first_guard_keeps_the_second_apart():
+    """``if c > 0: for c in ...: pass`` then ``if c <= 0``: the second tests the value the loop left in ``c``."""
+    sdfg = two_guards("merge_guards_loop_variable", "c > 0", "c <= 0")
+    one = sdfg.start_block
+    body = one.branches[0][1]
+    loop = LoopRegion("l", "c > 5", "c", "c = -1", "c = c + 1", sdfg=sdfg)
+    loop.add_state("l_body", is_start_block=True)
+    body.add_edge(body.sink_nodes()[0], loop, dace.InterstateEdge())
+    assert "c" in changed_by(one)
+    assert not merge_consecutive(one, sdfg.successors(one)[0])
 
 
 def test_a_link_with_assignments_keeps_its_guards_apart():

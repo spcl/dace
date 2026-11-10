@@ -71,6 +71,15 @@ def test_reads_what_the_body_writes(a: dace.float64[N], b: dace.float64[N]):
             break
 
 
+@dace.program
+def divides_by_data(a: dace.int64[N], out_index: dace.int64[1]):
+    out_index[0] = -1
+    for i in range(N):
+        if 12 // a[i] > 3:
+            out_index[0] = i
+            break
+
+
 def lifted(program, name: str, chunk: int = 64) -> tuple[dace.SDFG, int | None]:
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = name
@@ -128,6 +137,12 @@ def test_the_body_runs_exactly_below_the_hit(program, hit, chunk):
 
 def test_a_test_that_reads_what_the_body_writes_is_refused():
     sdfg, result = lifted(test_reads_what_the_body_writes, "lift_ff_refused")
+    assert result is None and has_break(sdfg) and not find_firsts(sdfg)
+
+
+def test_a_test_dividing_by_data_is_refused():
+    """``12 // a[i]`` past the hit may divide by zero where the sequential loop never tested."""
+    sdfg, result = lifted(divides_by_data, "lift_ff_divides")
     assert result is None and has_break(sdfg) and not find_firsts(sdfg)
 
 
@@ -244,3 +259,4 @@ if __name__ == "__main__":
     for hit in (17, 0, None):
         test_the_pure_search_is_python_sdfg_components_and_finds_the_first_hit(hit)
     test_a_test_that_gathers_through_the_counter_keeps_the_loop()
+    test_a_test_dividing_by_data_is_refused()

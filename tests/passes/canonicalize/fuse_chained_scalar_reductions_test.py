@@ -184,6 +184,31 @@ def test_a_step_whose_increment_is_an_expression_keeps_its_value():
     assert s[0] == 4 * x.sum()
 
 
+def test_narrow_increments_widen_before_they_combine():
+    """``s: int64``, ``s = s + x[i]; s = s + x[i]`` with ``x: int32`` near its maximum: the fused increment
+    ``x[i] + x[i]`` must not wrap in 32 bits."""
+    sdfg = dace.SDFG("widening_chain")
+    sdfg.add_array("s", [1], dace.int64)
+    sdfg.add_array("x", [4], dace.int32)
+    loop = LoopRegion("L", "i < 4", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state(is_start_block=True)
+    acc = state.add_read("s")
+    for _ in range(2):
+        step = state.add_tasklet("step", {"acc", "v"}, {"o"}, "o = acc + v")
+        state.add_edge(acc, None, step, "acc", dace.Memlet("s[0]"))
+        state.add_edge(state.add_read("x"), None, step, "v", dace.Memlet("x[i]"))
+        acc = state.add_access("s")
+        state.add_edge(step, "o", acc, None, dace.Memlet("s[0]"))
+    x = np.full(4, 2**31 - 1, dtype=np.int32)
+    s = np.zeros(1, dtype=np.int64)
+
+    assert FuseChainedScalarReductions().apply_pass(sdfg, {}) == 1
+    sdfg(s=s, x=x)
+
+    assert s[0] == 2 * int(x.astype(np.int64).sum())
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
     test_a_step_whose_increment_is_an_expression_keeps_its_value()
