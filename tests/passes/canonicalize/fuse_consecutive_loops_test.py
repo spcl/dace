@@ -271,8 +271,44 @@ def test_bodies_that_only_look_alike_are_not_fused(program):
     assert FuseConsecutiveLoops().apply_pass(sdfg, {}) is None
 
 
+@dace.program
+def _two_ranges_two_outputs(a: dace.float64[N], out: dace.float64[N]):
+    first = np.zeros((N,), dtype=np.float64)
+    second = np.zeros((N,), dtype=np.float64)
+    for i in range(0, N // 2):
+        first[i] = a[i] * 2.0
+    for i in range(N // 2, N):
+        second[i] = a[i] * 2.0
+    out[:] = first - second
+
+
+def test_scratch_of_a_nested_sdfg_is_judged_in_its_own_sdfg():
+    """Two loops of a nested SDFG write two arrays read after them; the parent holds the same names in one state."""
+    inner = _two_ranges_two_outputs.to_sdfg(simplify=True)
+    sdfg = dace.SDFG("scratch_of_a_nested_sdfg")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("O", [N], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {"a": None}, {"out": None}, symbol_mapping={"N": "N"})
+    state.add_edge(state.add_access("A"), None, node, "a", dace.Memlet("A[0:N]"))
+    state.add_edge(node, "out", state.add_access("O"), None, dace.Memlet("O[0:N]"))
+    other = sdfg.add_state_after(state)
+    for name in [name for name, desc in inner.arrays.items() if desc.transient]:
+        sdfg.add_transient(name, [1], dace.float64)
+        tasklet = other.add_tasklet("zero", {}, {"o"}, "o = 0.0")
+        other.add_edge(tasklet, "o", other.add_access(name), None, dace.Memlet(f"{name}[0]"))
+    sdfg.validate()
+
+    assert FuseConsecutiveLoops().apply_pass(sdfg, {}) is None
+    a = np.random.default_rng(0).random(8)
+    out = np.zeros(8)
+    sdfg(A=a, O=out, N=8)
+    assert np.allclose(out, np.concatenate([2.0 * a[:4], -2.0 * a[4:]]))
+
+
 if __name__ == "__main__":
     test_fused_range_keeps_the_iterations_of_an_empty_side()
     test_bodies_that_only_look_alike_are_not_fused(_swapped_scratches)
     test_bodies_that_only_look_alike_are_not_fused(_different_reductions)
     test_bodies_that_only_look_alike_are_not_fused(_iterators_read_after)
+    test_scratch_of_a_nested_sdfg_is_judged_in_its_own_sdfg()

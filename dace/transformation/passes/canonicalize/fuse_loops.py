@@ -69,7 +69,7 @@ class FuseLoops(ppl.Pass):
             changed = True
             while changed:
                 changed = False
-                for cfg in list(sd.all_control_flow_regions(recursive=True)):
+                for cfg in list(sd.all_control_flow_regions()):
                     if isinstance(cfg, ControlFlowRegion) and self._fuse_one(sd, cfg):
                         fused += 1
                         changed = True
