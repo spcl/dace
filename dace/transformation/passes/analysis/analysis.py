@@ -964,6 +964,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
             ]
 
             anames = sdfg.arrays.keys()
+            # AccessSets spans every nested SDFG, the dominator tree only this one; each nested SDFG gets its own turn
+            own_blocks = [b for b in sdfg.all_control_flow_blocks() if b in access_sets]
             for desc in sdfg.arrays:
                 desc_states_with_nodes = OrderedSet(access_nodes[desc].keys())
                 for state in desc_states_with_nodes:
@@ -973,8 +975,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         )
                         result[desc][write].add((state, read_node))
                 # Ensure accesses to interstate edges are also considered.
-                for block, accesses in access_sets.items():
-                    if desc in accesses[0]:
+                for block in own_blocks:
+                    if desc in access_sets[block][0]:
                         out_edges = block.parent_graph.out_edges(block)
                         for oedge in out_edges:
                             syms = oedge.data.free_symbols & anames
