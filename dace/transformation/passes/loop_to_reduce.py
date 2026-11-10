@@ -31,7 +31,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, Sym
 from dace.symbolic import AND, OR, Subscript, bitwise_and, bitwise_or
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
-from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR, reads_written_element, sole_access
+from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR, sole_access
 from dace.transformation.passes.analysis import loop_analysis
 
 #: The WCR of each update operator a ``Reduce`` folds: ``AugAssignToWCR.increment``'s, except subtraction, which is no
@@ -198,6 +198,7 @@ def collapse_accumulator_chains(sdfg: SDFG) -> int:
     # An integer accumulator's load was a symbol assignment; demoted, ``o[b] -> o_index -> (o_index + 1) -> o[b]``
     # matches no ``AugAssignToWCR`` shape until the copy folds.
     count += FoldScalarReadCopies(reads_only=True).apply_pass(sdfg, {}) or 0
+    count += reassociate_accumulator_chains(sdfg)
     count += _augassign_to_wcr_per_state(sdfg)
     return count
 
@@ -278,6 +279,107 @@ def forward_element_stores(sdfg: SDFG) -> int:
             owner.remove_data(scalar.data, validate=False)
             forwarded += 1
     return forwarded
+
+
+class ChainStep(NamedTuple):
+    """One ``out = carried <op> operand`` tasklet of an accumulator chain."""
+
+    tasklet: nodes.Tasklet
+    carried: gr.MultiConnectorEdge[mm.Memlet]
+    operand: gr.MultiConnectorEdge[mm.Memlet]
+    op: str
+
+
+def accumulator_chain(state: SDFGState, read: nodes.AccessNode) -> list[ChainStep] | None:
+    """The tasklets of ``s = ((s <op> a) <op> b) ...`` from the accumulator's only read to its store, each staged
+    through a private scalar of the accumulator's type; ``None`` if ``read`` starts no such chain of two or more."""
+    owner = state.sdfg
+    dtype = owner.arrays[read.data].dtype
+    load = edge = state.out_edges(read)[0]
+    steps: list[ChainStep] = []
+    while isinstance(edge.dst, nodes.Tasklet):
+        tasklet = edge.dst
+        ins, outs = data_in_edges(state, tasklet), data_out_edges(state, tasklet)
+        if (
+            len(ins) != 2
+            or len(outs) != 1
+            or state.degree(tasklet) != 3
+            or tasklet.language is not dtypes.Language.Python
+        ):
+            return None
+        found = AugAssignToWCR.name_increment(tasklet, outs[0].src_conn, edge.dst_conn)
+        operand = ins[0] if ins[1] is edge else ins[1]
+        if found is None or found[1].id != operand.dst_conn:
+            return None
+        steps.append(ChainStep(tasklet, edge, operand, found[0]))
+        edge = outs[0]
+        staged = edge.dst
+        if not isinstance(staged, nodes.AccessNode):
+            return None
+        if staged.data != read.data:
+            # The staging scalar, then the next operator or the store
+            if (
+                state.in_degree(staged) != 1
+                or state.out_degree(staged) != 1
+                or owner.arrays[staged.data].dtype != dtype
+            ):
+                return None
+            edge = state.out_edges(staged)[0]
+            if isinstance(edge.dst, nodes.Tasklet):
+                continue
+        if not (isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == read.data):
+            return None
+        store = mm.Memlet(data=read.data, subset=edge.data.get_dst_subset(edge, state))
+        if len(steps) < 2 or load.data.data != read.data or load.data.subset != store.subset:
+            return None
+        ops = {step.op for step in steps}
+        # One order-independent operator, or a signed sum
+        if len(ops) != 1 and not ops <= {"+", "-"}:
+            return None
+        last = steps[-1].operand.data.data
+        if last is None or owner.arrays[last].dtype != dtype:
+            return None
+        # A partial result read elsewhere would change
+        if not all(sole_access(owner, step.carried.src) for step in steps[1:]):
+            return None
+        return steps
+    return None
+
+
+def reassociate_accumulator_chains(sdfg: SDFG) -> int:
+    """Move the accumulator of an update ``s = ((s <op> a) <op> b) <op> c`` to its last operator,
+    ``s = s <op> ((c <op> a) <op> b)``: the single update ``AugAssignToWCR`` matches. ``<op>`` is one
+    order-independent operator, or ``+`` and ``-`` mixed with the running value on the left of every ``-``.
+    Only the association changes, so floating-point results may differ by rounding.
+
+    :returns: how many updates were reassociated.
+    """
+    count = 0
+    for state in sdfg.states():
+        for read in state.data_nodes():
+            if state.out_degree(read) != 1:
+                continue
+            steps = accumulator_chain(state, read)
+            if steps is None:
+                continue
+            first, last = steps[0], steps[-1]
+            if last.op == "-":
+                # ``s - (c - a + b)`` for ``s + a - b - c``: the partial sum is taken away once, every sign flipped
+                for step in steps[:-1]:
+                    (out,) = step.tasklet.out_connectors
+                    sign = "+" if step.op == "-" else "-"
+                    step.tasklet.code = properties.CodeBlock(
+                        f"{out} = {step.carried.dst_conn} {sign} {step.operand.dst_conn}"
+                    )
+            for edge, dst, conn in (
+                (last.operand, first.tasklet, first.carried.dst_conn),
+                (first.carried, last.tasklet, last.carried.dst_conn),
+                (last.carried, last.tasklet, last.operand.dst_conn),
+            ):
+                state.remove_edge(edge)
+                state.add_edge(edge.src, edge.src_conn, dst, conn, edge.data)
+            count += 1
+    return count
 
 
 #: ``{PatternNode: node}`` binding for one ``AugAssignToWCR`` candidate.

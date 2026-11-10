@@ -1630,7 +1630,65 @@ def test_a_staged_sum_a_branch_condition_reads_keeps_its_scalar():
     assert out[0] == expected
 
 
+def run_accumulation(program, reference):
+    sdfg = program.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="cpu")
+    rng = np.random.default_rng(0)
+    a, b, out = rng.random(1000), rng.random(1000), np.zeros(1)
+    sdfg(a=a, b=b, out=out, n=1000)
+    s = 0.0
+    for x, y in zip(a, b):
+        s = reference(s, x, y)
+    # Reassociated when lifted: equal up to rounding
+    assert np.allclose(out[0], s, rtol=1e-10, atol=0)
+    return any(isinstance(node, LoopRegion) for node, _ in sdfg.all_nodes_recursive())
+
+
+def test_a_sum_chain_over_the_accumulator_is_a_reduction():
+    n = dace.symbol("n")
+
+    @dace.program
+    def sum_between_operands(a: dace.float64[n], b: dace.float64[n], out: dace.float64[1]):
+        s = 0.0
+        for i in range(n):
+            s = a[i] + s + b[i]
+        out[0] = s
+
+    @dace.program
+    def signed_sum(a: dace.float64[n], b: dace.float64[n], out: dace.float64[1]):
+        s = 0.0
+        for i in range(n):
+            s = s - a[i] + b[i] - 0.5 * a[i]
+        out[0] = s
+
+    assert not run_accumulation(sum_between_operands, lambda s, x, y: x + s + y)
+    assert not run_accumulation(signed_sum, lambda s, x, y: s - x + y - 0.5 * x)
+
+
+def test_a_mixed_operator_update_of_the_accumulator_stays_a_loop():
+    n = dace.symbol("n")
+
+    @dace.program
+    def scaled_then_added(a: dace.float64[n], b: dace.float64[n], out: dace.float64[1]):
+        s = 0.0
+        for i in range(n):
+            s = s * a[i] + b[i]
+        out[0] = s
+
+    @dace.program
+    def subtracted_from_an_operand(a: dace.float64[n], b: dace.float64[n], out: dace.float64[1]):
+        s = 0.0
+        for i in range(n):
+            s = a[i] - s + b[i]
+        out[0] = s
+
+    assert run_accumulation(scaled_then_added, lambda s, x, y: s * x + y)
+    assert run_accumulation(subtracted_from_an_operand, lambda s, x, y: x - s + y)
+
+
 if __name__ == "__main__":
+    test_a_sum_chain_over_the_accumulator_is_a_reduction()
+    test_a_mixed_operator_update_of_the_accumulator_stays_a_loop()
     test_a_staged_sum_a_branch_condition_reads_keeps_its_scalar()
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()
