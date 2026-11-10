@@ -529,6 +529,7 @@ def test_a_device_map_of_a_persistent_kernel_becomes_a_grid_stride_loop(tiled: b
     sdfg = persistent_kernel(tiled)
     assert lower(sdfg) == 1
     assert kernel_of(sdfg).map.gpu_grid_syncs_lowered
+    assert lower(sdfg) is None
     loop = strided_map(sdfg)
     assert loop.map.schedule == dace.dtypes.ScheduleType.Sequential
     first, _, step = loop.map.range[0]
@@ -648,3 +649,5 @@ if __name__ == "__main__":
         test_a_device_map_of_a_persistent_kernel_becomes_a_grid_stride_loop(tiled)
     test_a_persistent_kernel_writes_global_memory_outside_its_maps_from_one_thread()
     test_a_thread_block_map_with_a_dynamic_range_runs_in_each_thread_of_a_thread_strided_loop()
+    for tiled in [False, True]:
+        test_the_lowered_persistent_kernel_computes_each_element_once(tiled)

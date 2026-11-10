@@ -7,6 +7,7 @@ import dace
 from dace.codegen import common
 from dace.libraries.standard.nodes.sync import Sync, SyncScope
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.lower_dynamic_thread_block_maps import LowerDynamicThreadBlockMaps
 
@@ -106,8 +107,39 @@ def test_the_dynamic_maps_of_a_kernel_share_one_queue_state():
     assert code.count("__shared__ int __dace_dynmap_state[") == 1
 
 
+def test_what_is_ordered_after_a_dynamic_map_still_runs_after_it():
+    """An empty memlet out of the map orders a write behind it; the lowering must not run that write first."""
+
+    @dace.program
+    def ordered(A_row: dace.int32[H + 1], A_val: dace.float32[nnz], b: dace.float32[H], c: dace.float32[H]):
+        for i in dace.map[0:H]:
+            for j in dace.map[A_row[i] : A_row[i + 1]]:
+                b[i] += A_val[j]
+            c[i] = 1.0
+
+    sdfg = ordered.to_sdfg(simplify=True)
+    sdfg.name = "lower_dynamic_ordered"
+    sdfg.apply_gpu_transformations()
+    for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry) and node.map.schedule == dace.ScheduleType.Sequential:
+            node.map.schedule = dace.ScheduleType.GPU_ThreadBlock_Dynamic
+            kernel = state.entry_node(node)
+            (write,) = [n for n in state.nodes() if isinstance(n, nodes.Tasklet) and state.entry_node(n) is kernel]
+            state.add_nedge(state.exit_node(node), write, dace.Memlet())
+    assert LowerDynamicThreadBlockMaps().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    (threads,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG) and "_threads" in n.label]
+    order = list(sdutil.dfs_topological_sort(threads.sdfg))
+    queue = next(b for b in order if isinstance(b, dace.SDFGState))
+    guarded = next(b for b in order if isinstance(b, ConditionalBlock))
+    assert any(isinstance(n, nodes.NestedSDFG) for n in queue.nodes())
+    assert order.index(queue) < order.index(guarded)
+
+
 if __name__ == "__main__":
     test_the_kernel_gets_a_thread_block_map_and_the_dynamic_map_a_queue()
     test_the_queue_follows_the_warp_size("cuda", 32, 8192)
     test_the_queue_follows_the_warp_size("hip", 64, 4)
     test_the_dynamic_maps_of_a_kernel_share_one_queue_state()
+    test_what_is_ordered_after_a_dynamic_map_still_runs_after_it()
