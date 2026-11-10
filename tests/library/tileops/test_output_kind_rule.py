@@ -71,27 +71,6 @@ def test_binop_validate_accepts_scalar_output_when_all_inputs_non_tile():
     node.validate(sdfg, state)
 
 
-def test_binop_pure_expansion_emits_single_assignment_for_scalar_output():
-    """For Scalar+Scalar inputs + Scalar output the pure expansion is a single
-    assignment, no K-fold lane loop."""
-    sdfg = dace.SDFG("binop_pure_scalar")
-    sdfg.add_scalar("A", dace.float64, transient=True)
-    sdfg.add_scalar("B", dace.float64, transient=True)
-    sdfg.add_scalar("C", dace.float64, transient=True)
-    state = sdfg.add_state("s")
-    node = TileBinop("bn", widths=(8,), op="+", kind_a="Scalar", kind_b="Scalar")
-    state.add_node(node)
-    state.add_edge(state.add_access("A"), None, node, "_a", Memlet("A"))
-    state.add_edge(state.add_access("B"), None, node, "_b", Memlet("B"))
-    state.add_edge(node, "_c", state.add_access("C"), None, Memlet("C"))
-    sdfg.expand_library_nodes()
-    state = next(s for s in sdfg.states())
-    tasklet = next(n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet))
-    code = tasklet.code.as_string
-    assert "for" not in code, f"expected no tile loop in Scalar-output body, got:\n{code}"
-    assert code.strip().startswith("_c"), f"expected `_c = ...` assignment, got:\n{code}"
-
-
 def test_binop_pure_expansion_keeps_tile_loop_when_any_input_is_tile():
     """Tile + Scalar inputs + Tile output -> body has the K-fold lane loop."""
     sdfg = dace.SDFG("binop_pure_tile")
@@ -123,24 +102,6 @@ def test_unop_validate_refuses_scalar_output_when_input_is_tile():
     state.add_edge(node, "_c", state.add_access("C"), None, Memlet("C"))
     with pytest.raises(NotImplementedError, match=r"output-kind rule violated"):
         node.validate(sdfg, state)
-
-
-def test_unop_pure_expansion_emits_single_assignment_for_scalar_output():
-    """Scalar input + Scalar output -> single assignment, no lane loop."""
-    sdfg = dace.SDFG("unop_pure_scalar")
-    sdfg.add_scalar("A", dace.float64, transient=True)
-    sdfg.add_scalar("C", dace.float64, transient=True)
-    state = sdfg.add_state("s")
-    node = TileUnop("un", widths=(8,), op="abs", kind_a="Scalar")
-    state.add_node(node)
-    state.add_edge(state.add_access("A"), None, node, "_a", Memlet("A"))
-    state.add_edge(node, "_c", state.add_access("C"), None, Memlet("C"))
-    sdfg.expand_library_nodes()
-    state = next(s for s in sdfg.states())
-    tasklet = next(n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet))
-    code = tasklet.code.as_string
-    assert "for" not in code
-    assert code.strip().startswith("_c")
 
 
 def test_ite_validate_refuses_scalar_output():
@@ -273,10 +234,8 @@ def test_binop_with_a_scalar_output_lowers_to_a_scalar_assignment():
 if __name__ == "__main__":
     test_binop_validate_refuses_scalar_output_when_any_input_is_tile()
     test_binop_validate_accepts_scalar_output_when_all_inputs_non_tile()
-    test_binop_pure_expansion_emits_single_assignment_for_scalar_output()
     test_binop_pure_expansion_keeps_tile_loop_when_any_input_is_tile()
     test_unop_validate_refuses_scalar_output_when_input_is_tile()
-    test_unop_pure_expansion_emits_single_assignment_for_scalar_output()
     test_ite_validate_refuses_scalar_output()
     test_ite_symbol_arm_omits_connector_and_inlines()
     test_ite_symbol_cond_omits_mask_connector_and_inlines()

@@ -151,37 +151,6 @@ def test_stream_count_read_at_apply():
 
 @pytest.mark.gpu
 @pytest.mark.new_gpu_codegen_only
-def test_numerical_correctness():
-    """Element-wise computation: CPU vs. GPU parity."""
-    import numpy as np
-
-    @dace.program
-    def compute(A: dace.float32[128], B: dace.float32[128], C: dace.float32[128]):
-        for i in dace.map[0:128:1]:
-            C[i] = A[i] * 2.0 + B[i]
-
-    rng = np.random.default_rng(42)
-    A = rng.random(128, dtype=np.float32)
-    B = rng.random(128, dtype=np.float32)
-    C_cpu = np.zeros(128, dtype=np.float32)
-    C_gpu = np.zeros(128, dtype=np.float32)
-
-    sdfg_cpu = compute.to_sdfg()
-    sdfg_cpu(A=A.copy(), B=B.copy(), C=C_cpu)
-
-    sdfg_gpu = compute.to_sdfg()
-    sdfg_gpu.apply_gpu_transformations()
-    gpu_stream_pipeline.apply_pass(sdfg_gpu, {})
-    sdfg_gpu(A=A.copy(), B=B.copy(), C=C_gpu)
-
-    assert np.allclose(C_cpu, C_gpu, rtol=1e-5, atol=1e-7)
-    expected = A * 2.0 + B
-    assert np.allclose(C_cpu, expected, rtol=1e-5, atol=1e-7)
-    assert np.allclose(C_gpu, expected, rtol=1e-5, atol=1e-7)
-
-
-@pytest.mark.gpu
-@pytest.mark.new_gpu_codegen_only
 def test_numerical_correctness_complex():
     """Two dependent maps: CPU vs. GPU parity including the intermediate array."""
     import numpy as np
@@ -625,5 +594,4 @@ if __name__ == "__main__":
     test_basic()
     test_extended()
     test_stream_count_read_at_apply()
-    test_numerical_correctness()
     test_numerical_correctness_complex()

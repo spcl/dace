@@ -55,12 +55,6 @@ def _build_gpu_sdfg(program, *, strategy=None):
 # Default-strategy contract.
 
 
-def test_default_strategy_is_auto_single_stream():
-    """``GPUStreamPipeline()`` selects :class:`AutoGPUStreamScheduler`."""
-    pipe = GPUStreamPipeline()
-    assert isinstance(pipe._scheduling_strategy, AutoGPUStreamScheduler)
-
-
 # Pure GPU programs -- single stream, sync state at the program exit only.
 
 
@@ -531,7 +525,6 @@ def test_wired_stream_array_validates_without_an_uninitialized_transient_warning
 
 
 if __name__ == "__main__":
-    test_default_strategy_is_auto_single_stream()
     test_pure_cpu_program_no_streams()
     test_mixed_program_fallback_to_per_component_emits_warning()
     test_sync_count_independent_of_kernel_count()

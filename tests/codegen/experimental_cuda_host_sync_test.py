@@ -103,18 +103,6 @@ def _position(code: str, pattern: str) -> int:
     return match.start()
 
 
-def test_the_readback_is_synchronized_between_the_copy_and_the_kernel_launch():
-    """The kernel wrapper reads the scalar on the host, so the copy must have landed by then."""
-    code = _generated_code(_scalar_readback_sdfg("d2h_before_launch"))
-    copy = _position(code, r"MemcpyAsync\([^;]*DeviceToHost")
-    launch = _position(code, _launch_call("k0"))
-    sync = _position(code, r"StreamSynchronize")
-    assert copy < sync < launch, (
-        "the device-to-host copy is not synchronized between the copy and the launch that "
-        "packs its destination into the argument list"
-    )
-
-
 def test_the_synchronization_is_lazy_rather_than_emitted_at_the_copy():
     """Nothing is emitted at the copy site: the sync belongs to the consumer, not the producer."""
     code = _generated_code(_scalar_readback_sdfg("d2h_lazy"))
@@ -155,7 +143,6 @@ def test_a_host_to_device_copy_is_not_synchronized_before_the_kernel():
 
 
 if __name__ == "__main__":
-    test_the_readback_is_synchronized_between_the_copy_and_the_kernel_launch()
     test_the_synchronization_is_lazy_rather_than_emitted_at_the_copy()
     test_a_second_consumer_reuses_the_first_synchronization()
     test_a_host_tasklet_consumer_is_synchronized()

@@ -114,13 +114,6 @@ def _expected(n: int, m: int):
 
 
 @pytest.mark.gpu
-def test_field_operator_compile():
-    """Compile-only smoke for the reconstructed field_operator topology."""
-    sdfg = _build_field_operator_sdfg()
-    sdfg.compile()
-
-
-@pytest.mark.gpu
 def test_field_operator_roundtrip_and_run():
     """Mid-flight save/load: build -> compile (warms pipeline) -> save -> reload -> compile -> run."""
     sdfg = _build_field_operator_sdfg()
@@ -147,5 +140,4 @@ def test_field_operator_roundtrip_and_run():
 
 
 if __name__ == "__main__":
-    test_field_operator_compile()
     test_field_operator_roundtrip_and_run()
