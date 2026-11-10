@@ -119,6 +119,21 @@ def test_a_loop_body_start_state_dominates_a_nested_loop_after_it():
     assert idom[body] is opening, idom[body]
 
 
+def test_a_region_that_starts_and_ends_the_sdfg_roots_both_trees_at_its_own_blocks():
+    """A plain region as the first and last block: its first block is the dominator root and its last block the
+    post-dominator root, so walking either tree up terminates instead of cycling between the two."""
+    sdfg = dace.SDFG("dominators_in_a_region")
+    region = dace.sdfg.state.ControlFlowRegion("body", sdfg=sdfg)
+    sdfg.add_node(region, is_start_block=True)
+    first = region.add_state("first", is_start_block=True)
+    last = region.add_state_after(first, "last")
+
+    idom, ipostdom = {}, {}
+    sdutil.get_control_flow_block_dominators(sdfg, idom, None, ipostdom, None)
+    assert idom[first] is first and idom[last] is first
+    assert ipostdom[last] is last and ipostdom[first] is last
+
+
 if __name__ == "__main__":
     for shape in IDOM_BY_SHAPE:
         test_the_start_block_is_its_own_immediate_dominator(shape)
@@ -128,3 +143,4 @@ if __name__ == "__main__":
         test_control_flow_block_dominators_cover_every_block(shape)
     test_code_is_generated_for_a_program_with_two_maps_over_a_transient()
     test_a_loop_body_start_state_dominates_a_nested_loop_after_it()
+    test_a_region_that_starts_and_ends_the_sdfg_roots_both_trees_at_its_own_blocks()

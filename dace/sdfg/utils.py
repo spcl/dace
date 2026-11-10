@@ -2648,7 +2648,10 @@ def get_control_flow_block_dominators(
                 while next_dom is region and region.parent_graph is not sdfg:
                     region = region.parent_graph
                     next_dom = idom[region]
-                idom[k] = next_dom
+                # A plain region that starts the SDFG is the root: its first block becomes the root instead
+                idom[k] = (
+                    k if next_dom is region and not isinstance(region, (LoopRegion, ConditionalBlock)) else next_dom
+                )
         changed = True
         while changed:
             changed = False
@@ -2702,13 +2705,16 @@ def get_control_flow_block_dominators(
             if k.parent_graph is not sdfg and (
                 k is sinks_per_cfg[k.parent_graph] or isinstance(k.parent_graph, ConditionalBlock)
             ):
-                next_pdom = ipostdom[k.parent_graph]
-                while next_pdom.parent_graph is not sdfg and (
-                    next_pdom is sinks_per_cfg[next_pdom.parent_graph]
-                    or isinstance(next_pdom.parent_graph, ConditionalBlock)
-                ):
-                    next_pdom = ipostdom[next_pdom.parent_graph]
-                ipostdom[k] = next_pdom
+                region = k.parent_graph
+                next_pdom = ipostdom[region]
+                # Only a region that closes its parent is its own post-dominator there; climb past it, never past a block.
+                while next_pdom is region and region.parent_graph is not sdfg:
+                    region = region.parent_graph
+                    next_pdom = ipostdom[region]
+                # A plain region that ends the SDFG is the root: its last block becomes the root instead
+                ipostdom[k] = (
+                    k if next_pdom is region and not isinstance(region, (LoopRegion, ConditionalBlock)) else next_pdom
+                )
         changed = True
         while changed:
             changed = False
