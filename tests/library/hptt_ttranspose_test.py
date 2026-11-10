@@ -48,6 +48,32 @@ def test_hptt_inside_an_sdfg_that_names_its_output_out_tensor_validates():
     sdfg.validate()
 
 
+@dace.program
+def ttgt_conv_tap(x: dace.float64[2, 3, 6, 5], w: dace.float64[4, 3]):
+    return np.tensordot(x[:, :, 1:5, 1:4], w, axes=([1], [1]))
+
+
+def test_hptt_leaves_a_strided_ttgt_operand_to_the_pure_transpose():
+    """TTGT transposes a convolution window held in a container of the window's shape with the input's strides; HPTT
+    reads it packed (NestForge #87), so the transpose takes the pure expansion."""
+    sdfg = ttgt_conv_tap.to_sdfg(simplify=True)
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.libraries.linalg.TensorDot):
+            node.implementation = "TTGT"
+    sdfg.expand_library_nodes(recursive=False)
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, TensorTranspose):
+            node.implementation = "HPTT"
+    with pytest.warns(UserWarning, match="HPTT takes no stride array"):
+        sdfg.expand_library_nodes()
+    code = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
+    assert not any("TensorTranspose(perm" in c for c in code), code
+    if "HPTT_ROOT" in os.environ:
+        rng = np.random.default_rng(6)
+        x, w = rng.random((2, 3, 6, 5)), rng.random((4, 3))
+        np.testing.assert_allclose(sdfg(x=x, w=w), np.tensordot(x[:, :, 1:5, 1:4], w, axes=([1], [1])))
+
+
 def transpose_sdfg(name: str, dtype) -> tuple[dace.SDFG, dace.SDFGState, TensorTranspose]:
     sdfg = dace.SDFG(name)
     sdfg.add_array("x", (4, 8, 3), dtype)
@@ -175,3 +201,4 @@ if __name__ == "__main__":
     test_the_sequential_transpose_writes_a_slice_of_a_larger_output()
     test_a_transpose_between_two_host_storages_validates()
     test_hptt_inside_an_sdfg_that_names_its_output_out_tensor_validates()
+    test_hptt_leaves_a_strided_ttgt_operand_to_the_pure_transpose()
