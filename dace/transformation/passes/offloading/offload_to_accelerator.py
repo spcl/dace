@@ -732,6 +732,7 @@ class OffloadToAccelerator(ppl.Pass):
 
         # step 4: insert copies based on IR
         self.eval_IR(sdfg, sdfgIR)
+        self.drop_copies_of_unchanged_data(sdfg)
         remove_empty_return_entries(entries)
         remove_empty_fallthrough_branches(fallthroughs)
 
@@ -1831,6 +1832,32 @@ class OffloadToAccelerator(ppl.Pass):
         # traverse graph
         traverse_same_level(IR, gather_data, children)
 
+        if IR.type == OffloadingIRNode.OPEN_LOOP:
+            # An array the body uses only under its conditionals is wanted where every path through the body first
+            # uses it. Left to the predecessor's location, the loop's tail copied it back there and the arm fetched
+            # it again, a round trip per iteration (amg_setup's level loop, whose whole body is ``if n > 100``).
+            # Paths that disagree leave it to the predecessor; a fallback arm copies inside itself and has no say.
+            order: list[OffloadingIRNode] = []
+            self.traverse_IR_after_predecessors(IR, order.append)
+            first: dict[OffloadingIRNode, dict[str, bool | None]] = {}
+            for node in reversed(order):
+                found: dict[str, bool | None] = {}
+                for next in node.next:
+                    for name, side in first[next].items():
+                        found[name] = side if found.get(name, side) == side else None
+                if (
+                    node is not IR
+                    and node.type != OffloadingIRNode.CLOSE
+                    and not isinstance(node.block, nodes.NestedSDFG)
+                    and not in_sequential_specialization_arm(node.block)
+                ):
+                    found.update(dict.fromkeys(node.gpu_set, True))
+                    found.update(dict.fromkeys(node.cpu_set, False))
+                first[node] = found
+            for name, side in first[IR].items():
+                if side is not None:
+                    location_on_gpu.setdefault(name, side)
+
         # populate IR sets
         IR.gpu_set = OrderedSet(array_name for array_name in location_on_gpu if location_on_gpu[array_name])
         IR.cpu_set = OrderedSet(array_name for array_name in location_on_gpu if not location_on_gpu[array_name])
@@ -2314,6 +2341,94 @@ class OffloadToAccelerator(ppl.Pass):
         if name.startswith("__return"):
             return f"buffer__return{name[8:]}_gpu"
         return f"{name}_gpu"
+
+    def twin_copies(self, sdfg: SDFG, state: SDFGState) -> list | None:
+        """The edges of a state that only copies whole containers to or from their twins, each named once; else None."""
+        if state.number_of_nodes() == 0 or len({node.data for node in state.data_nodes()}) != state.number_of_nodes():
+            return None
+        copies = list(state.edges())
+        for edge in copies:
+            src, dst, memlet = edge.src, edge.dst, edge.data
+            if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)):
+                return None
+            if not self.are_twins(src.data, dst.data) or memlet.is_empty() or memlet.wcr is not None or memlet.dynamic:
+                return None
+            descs = (sdfg.arrays[src.data], sdfg.arrays[dst.data])
+            if any(type(desc) is not data.Array for desc in descs) or descs[0].shape != descs[1].shape:
+                return None
+            whole = [subsets.Range.from_array(desc) for desc in descs]
+            if memlet.get_src_subset(edge, state) != whole[0] or memlet.get_dst_subset(edge, state) != whole[1]:
+                return None
+        return copies if 2 * len(copies) == state.number_of_nodes() else None
+
+    def drop_copies_of_unchanged_data(self, sdfg: SDFG) -> None:
+        """Remove each copy between a container and its twin whose destination already holds the value.
+
+        The placement records where a container is wanted, not whether its two sides differ: a host read, a kernel
+        read and a second host read copied the same bytes to the host twice, and a loop's tail sent back what its
+        body only read (amg_setup's ``cur_data`` and ``nxt_data``, whole CSR arrays per level). The two sides are
+        equal from a whole copy between them until either is written, and a copy that runs with them equal on every
+        path into it moves nothing. A loop starts with the pairs equal on entry that nothing in it writes. In a
+        nested SDFG two connectors may name one outer container, so a write to any of them ends every such pair.
+        """
+        aliased = (
+            OrderedSet(name for name, desc in sdfg.arrays.items() if not desc.transient)
+            if sdfg.parent_nsdfg_node is not None
+            else OrderedSet()
+        )
+        copies = {state: self.twin_copies(sdfg, state) for state in sdfg.states()}
+        redundant: list = []
+
+        def pair(edge) -> frozenset:
+            return frozenset((edge.src.data, edge.dst.data))
+
+        def after(state: SDFGState, equal: set, record: bool = False) -> set:
+            if copies[state] is None:
+                written = OrderedSet(node.data for node in state.data_nodes() if state.in_degree(node) > 0)
+                if written & aliased:
+                    written |= aliased
+                return {both for both in equal if both.isdisjoint(written)}
+            for edge in copies[state]:
+                if record and pair(edge) in equal:
+                    redundant.append((state, edge))
+                written = aliased if edge.dst.data in aliased else {edge.dst.data}
+                equal = {both for both in equal if both.isdisjoint(written)} | {pair(edge)}
+            return equal
+
+        def flow(region: ControlFlowRegion, equal: set) -> set | None:
+            leaving: dict = {}
+            for block in sdutil.dfs_topological_sort(region, [region.start_block]):
+                arriving = [leaving.get(e.src, set()) for e in region.in_edges(block)]
+                reached = [found for found in arriving if found is not None]
+                if block is region.start_block:
+                    reached.append(equal)
+                if not reached or isinstance(block, (ReturnBlock, BreakBlock, ContinueBlock)):
+                    leaving[block] = None
+                    continue
+                entering = set.intersection(*reached)
+                if isinstance(block, SDFGState):
+                    leaving[block] = after(block, entering, record=True)
+                elif isinstance(block, ConditionalBlock):
+                    arms = [flow(arm, set(entering)) for _, arm in block.branches]
+                    if all(condition is not None for condition, _ in block.branches):
+                        arms.append(entering)
+                    arms = [found for found in arms if found is not None]
+                    leaving[block] = set.intersection(*arms) if arms else None
+                elif isinstance(block, LoopRegion):
+                    # Whatever the path through the body, a pair nothing in it writes stays equal
+                    for state in block.states():
+                        entering = entering & after(state, set(entering))
+                    flow(block, set(entering))
+                    leaving[block] = entering
+                else:
+                    leaving[block] = flow(block, entering)
+            ends = [leaving[block] for block in region.sink_nodes() if leaving.get(block) is not None]
+            return set.intersection(*ends) if ends else None
+
+        flow(sdfg, set())
+        for state, edge in redundant:
+            state.remove_edge(edge)
+            state.remove_nodes_from([edge.src, edge.dst])
 
     # OPTIMIZATION: a size-1 map is cheaper than the copies around host work beside a kernel
 
