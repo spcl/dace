@@ -20,7 +20,7 @@ from dace.utils import prod
 def extreme_index_sdfg(node: "ExtremeIndex", state: SDFGState, sdfg: SDFG) -> SDFG:
     """Without ``dim``, ``_idx`` is the subscript of the extreme element, one entry per dimension, as ``MINLOC``
     returns it; with ``dim``, the index along ``dim`` per remaining coordinate."""
-    nsdfg = SDFG(f"{node.label}_sdfg")
+    nsdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, state)
     shape = connector_array(nsdfg, "_x", sdutil.in_edge_with_name(node, state, "_x").data, sdfg)
     connector_array(nsdfg, "_idx", sdutil.out_edge_with_name(node, state, "_idx").data, sdfg)
     masked = "_mask" in node.in_connectors

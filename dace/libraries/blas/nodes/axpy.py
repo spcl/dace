@@ -34,7 +34,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
         a = node.a
         n = node.n / x_outer.dtype.veclen
 
-        axpy_sdfg = dace.SDFG("axpy")
+        axpy_sdfg = dace.sdfg.utils.expansion_sdfg("axpy", node, parent_state)
         axpy_state = axpy_sdfg.add_state("axpy")
 
         x_inner = x_outer.clone()

@@ -23,7 +23,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
         (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides, n) = arr_desc
     dtype = in_dtype
 
-    sdfg = dace.SDFG(f"{node.label}_sdfg")
+    sdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, parent_state)
 
     a_arr = sdfg.add_array("_ain", in_shape, dtype=in_dtype, strides=in_strides)
     if not node.overwrite:
@@ -75,7 +75,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides, n) = arr_desc
     dtype = in_dtype
 
-    sdfg = dace.SDFG(f"{node.label}_sdfg")
+    sdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, parent_state)
 
     a_arr = sdfg.add_array("_ain", in_shape, dtype=in_dtype, strides=in_strides)
     if not node.overwrite:

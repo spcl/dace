@@ -10,6 +10,7 @@ from copy import deepcopy
 from dace import SDFG, SDFGState, library, nodes, properties
 from dace import transformation as xf
 from dace.frontend.common import einsum
+from dace.sdfg.utils import expansion_sdfg
 
 
 # Define the library node itself
@@ -43,7 +44,7 @@ class SpecializeEinsum(xf.ExpandTransformation):
     @staticmethod
     def expansion(node: Einsum, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
         # Make an SDFG for the expansion
-        sdfg = SDFG("einsum")
+        sdfg = expansion_sdfg("einsum", node, parent_state)
         state = sdfg.add_state()
 
         # Add the given arrays (as given by memlets) to the expansion SDFG

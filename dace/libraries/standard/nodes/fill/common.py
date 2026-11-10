@@ -83,7 +83,7 @@ def make_fill_skeleton(
     out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
-    sdfg = dace.SDFG(f"{node.label}_sdfg")
+    sdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, parent_state)
     sdfg.add_array(out_name, out_shape_collapsed, out.dtype, out.storage, strides=out_strides_collapsed)
     sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 

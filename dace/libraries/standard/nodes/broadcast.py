@@ -18,7 +18,7 @@ class ExpandBroadcastPure(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         src, dst, axis = node.validate(parent_sdfg, parent_state)
         return broadcast_map_expansion(
-            node.label, parent_sdfg, {"_src": (src.data, axis)}, ("_dst", dst.data), "_dst_v = _src_v"
+            node.label, node, parent_state, {"_src": (src.data, axis)}, ("_dst", dst.data), "_dst_v = _src_v"
         )
 
 

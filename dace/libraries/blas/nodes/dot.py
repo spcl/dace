@@ -32,7 +32,7 @@ class ExpandDotPure(ExpandTransformation):
         dtype_x = desc_x.dtype.type
         dtype_y = desc_y.dtype.type
         dtype_result = desc_res.dtype.type
-        sdfg = dace.SDFG(node.label + "_sdfg")
+        sdfg = dace.sdfg.utils.expansion_sdfg(node.label + "_sdfg", node, parent_state)
 
         if desc_x.dtype.veclen > 1 or desc_y.dtype.veclen > 1:
             raise NotImplementedError("Pure expansion not implemented for vector types.")

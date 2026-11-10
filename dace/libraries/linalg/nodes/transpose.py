@@ -65,7 +65,7 @@ class ExpandTransposePure(ExpandTransformation):
         out_edge, out_outer_array, out_shape, out_strides = _get_transpose_output(node, parent_state, parent_sdfg)
         dtype = node.dtype
 
-        sdfg = dace.SDFG(node.label + "_sdfg")
+        sdfg = dace.sdfg.utils.expansion_sdfg(node.label + "_sdfg", node, parent_state)
         state = sdfg.add_state(node.label + "_state")
 
         _, in_array = sdfg.add_array("_inp", in_shape, dtype, strides=in_strides, storage=in_outer_array.storage)

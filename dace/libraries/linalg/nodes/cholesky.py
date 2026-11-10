@@ -18,7 +18,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     dtype = inp_desc.dtype
     storage = inp_desc.storage
 
-    sdfg = dace.SDFG(f"{node.label}_sdfg")
+    sdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, parent_state)
 
     ain_arr = sdfg.add_array("_a", inp_shape, dtype=dtype, strides=inp_desc.strides)
     bout_arr = sdfg.add_array("_b", out_shape, dtype=dtype, strides=out_desc.strides)

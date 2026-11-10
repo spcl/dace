@@ -345,7 +345,7 @@ def reject_overlapping_output(
 
 def connector_sdfg(node: nodes.LibraryNode, state: "dace.SDFGState", sdfg: "dace.SDFG") -> "dace.SDFG":
     """A nested SDFG with one array per connector of ``node``, in the shape and strides of its :func:`operand`."""
-    nsdfg = dace.SDFG(f"{node.label}_sdfg")
+    nsdfg = dace.sdfg.utils.expansion_sdfg(f"{node.label}_sdfg", node, state)
     for connector in list(node.in_connectors) + list(node.out_connectors):
         desc, shape, strides = operand(node, state, sdfg, connector)
         nsdfg.add_array(connector, shape, desc.dtype, desc.storage, strides=strides)

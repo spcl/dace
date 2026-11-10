@@ -79,7 +79,7 @@ class ExpandGemmPure(ExpandTransformation):
 
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
-        sdfg = dace.SDFG(node.label + "_sdfg")
+        sdfg = dace.sdfg.utils.expansion_sdfg(node.label + "_sdfg", node, parent_state)
 
         adata, bdata, cdata = _get_matmul_operands(node, parent_state, parent_sdfg)
         edge_a, outer_array_a, shape_a, strides_a = _matrix_operand(adata)
@@ -414,7 +414,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
 
         # If buffers are not on the GPU, copy them
         if needs_copy:
-            nsdfg = dace.SDFG("nested_gemm")
+            nsdfg = dace.sdfg.utils.expansion_sdfg("nested_gemm", node, state)
             lifetime = dtypes.AllocationLifetime.Scope
             # Each connector points at its operand's window, and densification may have rewired the edges
             for name, operand in zip(("_a", "_b", "_c"), _get_matmul_operands(node, state, sdfg)):

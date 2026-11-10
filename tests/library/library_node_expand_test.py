@@ -3,12 +3,14 @@
 import copy
 import os
 import sys
+import warnings
 
 import numpy as np
 import pytest
 
 import dace
 from dace import SDFG, SDFGState, library
+from dace.libraries.standard import Reduce
 from dace.transformation.transformation import ExpandTransformation
 
 # Add the test library to the path
@@ -227,6 +229,24 @@ def test_expansion_with_keyword_arguments():
     assert found_tiled_map2, "Could not find the tiled_map in the second expanded SDFG"
 
 
+def test_an_expansion_declares_shape_symbols_with_their_real_type():
+    """A fresh expansion SDFG names the outer symbols through descriptors it copies: their type is the outer one."""
+    sdfg = dace.SDFG("expansion_symbol_types")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [dace.symbol("N", dace.int64)], dace.float64)
+    sdfg.add_scalar("r", dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    node = Reduce("reduce", "lambda a, b: a + b", axes=None, identity=0)
+    state.add_node(node)
+    state.add_edge(state.add_read("A"), None, node, None, dace.Memlet("A[0:N]"))
+    state.add_edge(node, None, state.add_write("r"), None, dace.Memlet("r[0]"))
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*is not declared.*")
+        sdfg.expand_library_nodes()
+    types = [s.symbols["N"] for s in sdfg.all_sdfgs_recursive() if s is not sdfg and "N" in s.symbols]
+    assert types and all(t == dace.int64 for t in types)
+
+
 if __name__ == "__main__":
     test_new_library_node_expand_interface()
     test_old_library_node_expand_interface()
@@ -237,3 +257,4 @@ if __name__ == "__main__":
     test_functional_correctness()
     test_implementation_override()
     test_expansion_with_keyword_arguments()
+    test_an_expansion_declares_shape_symbols_with_their_real_type()

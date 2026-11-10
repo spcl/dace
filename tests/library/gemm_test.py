@@ -206,6 +206,8 @@ def do_test_mkl(params):
 
 def test_gemm_symbolic():
     sdfg = dace.SDFG("gemm")
+    for symbol in (M, K, L, N, O):
+        sdfg.add_symbol(symbol)
     state = sdfg.add_state()
     A, A_arr = sdfg.add_array("A", [M, K], dace.float64)
     B, B_arr = sdfg.add_array("B", [L, N], dace.float64)
@@ -228,6 +230,8 @@ def test_gemm_symbolic():
 
 def test_gemm_symbolic_1():
     sdfg = dace.SDFG("gemm")
+    for symbol in (M, K, N):
+        sdfg.add_symbol(symbol)
     state = sdfg.add_state()
     A, A_arr = sdfg.add_array("A", [M, K], dace.float64)
     B, B_arr = sdfg.add_array("B", [K + 2, N], dace.float64)

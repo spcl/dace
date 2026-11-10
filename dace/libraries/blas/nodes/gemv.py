@@ -42,7 +42,7 @@ class ExpandGemvPure(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         node.validate(parent_sdfg, parent_state)
-        sdfg = dace.SDFG(node.label + "_sdfg")
+        sdfg = dace.sdfg.utils.expansion_sdfg(node.label + "_sdfg", node, parent_state)
         (
             (edge_a, outer_array_a, shape_a, strides_a),
             (edge_x, outer_array_x, _, _, shape_x, strides_x),
