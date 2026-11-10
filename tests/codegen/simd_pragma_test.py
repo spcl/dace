@@ -234,16 +234,48 @@ def test_map_with_uninlinable_nested_loop_gets_no_simd(impl, schedule):
 
 
 @pytest.mark.parametrize("impl", IMPLS)
-def test_sequential_fixed_sum_wcr_gets_no_simd(impl):
-    """A Sequential map lowers ANY WCR write to a plain, non-atomic ``wcr_fixed::reduce`` in the
-    loop body -- an accumulation into a fixed location carries across iterations, which is exactly
-    what ``simd`` asserts does not happen. The mark is withheld for every WCR here, fixed-target
-    reduction included; the reduction-clause path belongs to the CPU_Multicore pragma."""
+def test_sequential_fixed_sum_wcr_gets_simd_reduction(impl):
+    """A Sequential map that accumulates into one fixed element holds it in a register for the loop, and the loop
+    then vectorizes as a reduction over that register. The lanes reassociate the sum; nothing else changes."""
     with temporary_config():
         Config.set("compiler", "cpu", "implementation", value=impl)
         sdfg = leaf_map_sdfg("seq_sum_" + impl, dtypes.ScheduleType.Sequential, wcr="lambda a, b: a + b")
         pragmas = omp_pragmas(sdfg)
-    assert not any("simd" in p for p in pragmas), pragmas
+    assert pragmas == ["#pragma omp simd reduction(+:__acc_0_0_acc)"], pragmas
+
+
+def row_sums_sdfg(name: str) -> dace.SDFG:
+    """``out[i] += A[i, j] * x[j]`` as ONE Sequential map over ``(i, j)``: the accumulated element moves with ``i``
+    and stays put over ``j``."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", [6, 37], dace.float64)
+    sdfg.add_array("x", [37], dace.float64)
+    sdfg.add_array("out", [6], dace.float64)
+    state = sdfg.add_state()
+    state.add_mapped_tasklet(
+        "rows",
+        {"i": "0:6", "j": "0:37"},
+        {"a": dace.Memlet("A[i, j]"), "b": dace.Memlet("x[j]")},
+        "o = a * b",
+        {"o": dace.Memlet("out[i]", wcr="lambda u, v: u + v")},
+        schedule=dtypes.ScheduleType.Sequential,
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_a_row_reduction_vectorizes_its_inner_loop_and_matches_numpy():
+    """The innermost loop gets a map of its own; the row's element is its register, reduced across the lanes."""
+    import numpy as np
+
+    sdfg = row_sums_sdfg("seq_row_sums")
+    assert any(p.startswith("#pragma omp simd reduction(+:__acc_") for p in omp_pragmas(sdfg)), omp_pragmas(sdfg)
+    rng = np.random.default_rng(3)
+    A, x, out = rng.random((6, 37)), rng.random(37), rng.random(6)
+    ref = out + A @ x
+    row_sums_sdfg("seq_row_sums_run")(A=A, x=x, out=out)
+    assert np.allclose(out, ref, rtol=1e-13, atol=0)
 
 
 @pytest.mark.parametrize("impl", IMPLS)

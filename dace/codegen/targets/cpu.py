@@ -3695,10 +3695,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # Into an access node, or into the exit of an enclosing map (a row reduction under a parallel map)
             if len(out_edges) != 1 or not isinstance(out_edges[0].dst, (nodes.AccessNode, nodes.MapExit)):
                 continue
-            # Under a sequential map the enclosing map holds the register: two would store over each other
-            if isinstance(out_edges[0].dst, nodes.MapExit) and out_edges[0].dst.map.schedule in (
-                dtypes.ScheduleType.Sequential,
-                dtypes.ScheduleType.Default,
+            # Under a sequential map that holds the register itself (the element does not move with its parameters)
+            # two would store over each other; an element that moves with them is this map's to hold
+            if (
+                isinstance(out_edges[0].dst, nodes.MapExit)
+                and out_edges[0].dst.map.schedule in (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default)
+                and not {str(s) for s in iedge.data.subset.free_symbols} & set(out_edges[0].dst.map.params)
             ):
                 continue
             desc = sdfg.arrays.get(iedge.data.data)
@@ -3739,6 +3741,29 @@ class CPUCodeGen(TargetCodeGenerator):
             var = f"__acc_{len(self._seq_accumulator_stack)}_{len(out)}_{iedge.data.data}"
             out.append((iedge.data.data, iedge.data.subset, op_str, desc.dtype.ctype, target, var))
         return out
+
+    def _simd_reduction_clause(self, state: SDFGState, map_entry: nodes.MapEntry) -> str | None:
+        """The ``reduction`` clauses of a sequential map's ``simd`` loop: one variable per accumulation its exit takes,
+        each held in a register by this map or one around it (:meth:`_collect_sequential_accumulators`). ``""``
+        for a map that accumulates nothing, ``None`` if an accumulation still goes to memory."""
+        by_op: dict[str, list[str]] = {}
+        for edge in state.in_edges(state.exit_node(map_entry)):
+            if edge.data.is_empty() or edge.data.wcr is None:
+                continue
+            held = next(
+                (
+                    frame[edge.data.data]
+                    for frame in reversed(self._seq_accumulator_stack)
+                    if edge.data.data in frame and str(frame[edge.data.data]["subset"]) == str(edge.data.subset)
+                ),
+                None,
+            )
+            if held is None:
+                return None
+            names = by_op.setdefault(held["op"], [])
+            if held["var"] not in names:
+                names.append(held["var"])
+        return "".join(f" reduction({op}:{', '.join(names)})" for op, names in by_op.items())
 
     def _bind_reduction_aliases(self, sdfg: SDFG, names: list[str]) -> str:
         """Bind each persistent accumulator in ``names`` to its local alias for the map about to open; returns the
@@ -4442,8 +4467,11 @@ class CPUCodeGen(TargetCodeGenerator):
                     and node.map.schedule == dtypes.ScheduleType.Sequential
                     and self.renders_simd(sdfg, state_dfg, node)
                 ):
-                    pragma = "#pragma omp simd"
-                    will_have_openmp = True
+                    # A loop that accumulates carries the clause only with every accumulator in a register
+                    clause = self._simd_reduction_clause(state_dfg, node)
+                    if clause is not None:
+                        pragma = "#pragma omp simd" + clause
+                        will_have_openmp = True
 
                 init = "%s %s = %s" % (loop_ctypes[i], var, cpp.sym2cpp(begin))
                 if pragma is not None:
