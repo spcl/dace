@@ -1485,6 +1485,18 @@ def test_two_writes_kept_apart_only_by_an_inner_iterator_stay_a_loop():
     assert not outer_loop_lifts(two_writes_a_diagonal_apart)
 
 
+@dace.program
+def column_read_through_a_moving_row(A: dace.float64[WN + WM, WN], B: dace.float64[WN, WM]):
+    for i in range(WN):
+        for j in range(WM):
+            A[i + j, i] = A[i + j, 5] + B[i, j]
+
+
+def test_a_read_sharing_an_index_that_moves_inside_the_iteration_stays_a_loop():
+    """Row ``i + j`` is the same expression in the read and the write, yet iteration 5 stores what the others read."""
+    assert not outer_loop_lifts(column_read_through_a_moving_row)
+
+
 if __name__ == "__main__":
     test_lift_never_changes_a_surviving_blocks_free_symbols()
     test_reused_analysis_costs_no_maps_against_the_matcher()
@@ -1556,3 +1568,4 @@ if __name__ == "__main__":
     test_a_nested_read_on_its_own_connector_of_the_written_array_stays_a_loop()
     test_a_write_offset_by_an_inner_iterator_lifts_only_if_its_sweep_fits_the_stride()
     test_two_writes_kept_apart_only_by_an_inner_iterator_stay_a_loop()
+    test_a_read_sharing_an_index_that_moves_inside_the_iteration_stays_a_loop()

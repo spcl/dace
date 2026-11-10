@@ -1164,7 +1164,7 @@ def _read_write_dims_disjoint(
     return False
 
 
-def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, itersym) -> bool:
+def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, itersym, varying: set[str]) -> bool:
     """True iff some point dimension indexes both ``read`` and ``write`` by the SAME injective
     affine function of the iteration variable (see :func:`_same_injective_index`).
 
@@ -1184,6 +1184,9 @@ def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, iter
         return False
     for (rb, re_, _), (wb, we_, _) in zip(rnd, wnd):
         if rb != re_ or wb != we_:  # only point dimensions carry an injective index
+            continue
+        # ``A[i + j, 5]`` read and ``A[i + j, i]`` written under a loop over ``j``: the same index, in two iterations
+        if varying & {s.name for s in sp.sympify(rb).free_symbols}:
             continue
         if _same_injective_index(rb, wb, itersym):
             return True
@@ -2794,7 +2797,7 @@ class LoopLift:
             # to coincide. The overlap is then confined to one iteration (program order in the map
             # body preserves it) and is never a cross-iteration RAW. Mirrors the write/write
             # injective-index rule in :func:`_writes_may_overlap`.
-            if _read_write_same_iteration(read, write, itersym):
+            if _read_write_same_iteration(read, write, itersym, varying):
                 continue
             # Same-iteration collision across SEVERAL dimensions at once: the iteration variable can
             # land in DIFFERENT dimensions of the read and the write (a transpose), so no single
