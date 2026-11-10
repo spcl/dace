@@ -1023,6 +1023,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     return None
                 if producer_edge.data.wcr is not None:
                     return None
+                # A conditional writer fused into its consumer wraps the consumer's statements in the writer's guard,
+                #  one nested SDFG each: warpx's per-particle maps went from 37 to 1603 nested SDFGs, 1.7x slower.
+                if producer_edge.data.dynamic:
+                    return None
                 # `compute_reduced_intermediate()` sizes the new intermediate from this subset
                 #  and `compute_offset_subset()` walks it dimension by dimension, so a subset
                 #  that is not a `Range` has neither `size()` nor
