@@ -126,6 +126,7 @@ from dace.transformation.passes.loop_to_reduce import (
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.loop_to_state_scan import LoopToStateScan
 from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
+from dace.transformation.passes.minimize_transients import ContractTransients
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
@@ -1068,6 +1069,8 @@ def finish() -> Stages:
     s += [
         (FINISH, OptionalArrayInference()),
         (FINISH, ConvertLengthOneArraysToScalars()),
+        # Cut to what is stored and read, a filled array is overwritten whole by the map that follows its fill
+        (FINISH, ContractTransients()),
         (FINISH, DeadFillElimination()),
         (FINISH, PruneUnreferencedTransients()),
         (FINISH, InlineControlFlowRegions()),

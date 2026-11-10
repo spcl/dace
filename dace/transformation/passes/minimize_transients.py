@@ -521,6 +521,25 @@ def walk(state: SDFGState, start: nodes.Node, forward: bool) -> set:
 
 @properties.make_properties
 @explicit_cf_compatible
+class ContractTransients(ppl.Pass):
+    """:class:`Contraction` alone, in every SDFG. Canonicalization runs it ahead of its last dead fill elimination: a
+    fill of an array cut to what is stored and read is a fill the next whole-array write makes dead."""
+
+    CATEGORY: str = "Memory Footprint Reduction"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Descriptors | ppl.Modifies.Memlets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return bool(modified & (ppl.Modifies.Nodes | ppl.Modifies.Memlets))
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> int | None:
+        """:returns: How many transients were contracted, or None if none."""
+        return sum(Contraction(sd).run() for sd in sdfg.all_sdfgs_recursive()) or None
+
+
+@properties.make_properties
+@explicit_cf_compatible
 class MinimizeTransients(ppl.Pass):
     """Fewer, smaller and longer-lived transients.
 
