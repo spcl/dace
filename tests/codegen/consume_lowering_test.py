@@ -228,6 +228,27 @@ def test_scope_body_uses_element():
     assert np.array_equal(out, np.where(expected % 2 == 1, expected * expected, -1))
 
 
+def test_an_ordering_edge_into_the_scope_orders_the_map():
+    """An empty memlet into the consume entry has no connector; it orders the map that replaces the scope."""
+    sdfg, state, entry = _fill_and_consume(
+        "consume_ordered",
+        4,
+        2,
+        "o = s",
+        {"o": dace.Memlet("out[0]", wcr="lambda a, b: a + b")},
+        {"out": ([1], dace.int32), "flag": ([1], dace.int32)},
+    )
+    flag = state.add_write("flag")
+    state.add_edge(state.add_tasklet("before", {}, {"f"}, "f = 1"), "f", flag, None, dace.Memlet("flag[0]"))
+    state.add_nedge(flag, entry, dace.Memlet())
+
+    assert LowerConsumeScopes().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    (pe_map,) = [n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry)]
+    assert any(e.src is flag and e.data.is_empty() for e in state.in_edges(pe_map))
+
+
 if __name__ == "__main__":
     test_recursive_pushes_with_several_pes()
     test_body_uses_pe_index()
@@ -237,3 +258,4 @@ if __name__ == "__main__":
     test_consume_in_map()
     test_lowering_leaves_no_consume_scope()
     test_scope_body_uses_element()
+    test_an_ordering_edge_into_the_scope_orders_the_map()

@@ -224,7 +224,8 @@ def lower_consume(sdfg: SDFG, state: SDFGState, entry: nodes.ConsumeEntry) -> no
     for e in list(state.in_edges(entry)):
         if e is stream_edge:
             continue
-        map_entry.add_in_connector(e.dst_conn, entry.in_connectors[e.dst_conn])
+        if e.dst_conn is not None:
+            map_entry.add_in_connector(e.dst_conn, entry.in_connectors[e.dst_conn])
         state.add_edge(e.src, e.src_conn, map_entry, e.dst_conn, e.data)
     for e in list(state.out_edges(entry)):
         if e.src_conn is not None:
