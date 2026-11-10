@@ -1,9 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """HIP as a dialect of the CUDA libraries.
 
-The GPU library expansions are written against cuBLAS, cuSOLVER, cuTENSOR and cuFFT. hipBLAS, hipSOLVER, hipTensor
-and hipFFT mirror those name for name, so a HIP expansion is the CUDA expansion with its code renamed through the
-tables below, applied in order.
+The GPU library expansions are written against the CUDA libraries, which their HIP counterparts mirror name for name,
+so a HIP expansion is the CUDA expansion with its code renamed through a table such as ``FFT``, applied in order.
 """
 
 import ctypes.util
@@ -16,39 +15,6 @@ import shutil
 from dace import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-#: Runtime and data-type names every library shares.
-RUNTIME = (
-    ("cuDoubleComplex", "hipDoubleComplex"),
-    ("cuComplex", "hipComplex"),
-    ("CUDA_R_", "HIP_R_"),
-    ("CUDA_C_", "HIP_C_"),
-    ("cudaMalloc", "hipMalloc"),
-    ("cudaMemcpy", "hipMemcpy"),
-    ("cudaMemset", "hipMemset"),
-    ("cudaFree", "hipFree"),
-)
-
-#: cuBLAS to hipBLAS. hipBLAS has no tensor-op algorithm; its default picks one where the device has it.
-BLAS = (
-    ("CUBLAS_GEMM_DEFAULT_TENSOR_OP", "HIPBLAS_GEMM_DEFAULT"),
-    ("cublas", "hipblas"),
-    ("CUBLAS_", "HIPBLAS_"),
-) + RUNTIME
-
-#: cuSOLVER to hipSOLVER. cuSOLVER takes cuBLAS's fill-mode and operation enums, hipSOLVER its own.
-SOLVER = (
-    ("cusolverDn", "hipsolverDn"),
-    ("CUSOLVER_", "HIPSOLVER_"),
-    ("CUBLAS_", "HIPSOLVER_"),
-) + RUNTIME
-
-
-#: cuTENSOR 2 to hipTensor 2.
-TENSOR = (
-    ("cutensor", "hiptensor"),
-    ("CUTENSOR_", "HIPTENSOR_"),
-) + RUNTIME
-
 #: cuFFT to hipFFT: a prefix swap, except the inverse direction.
 FFT = (
     ("CUFFT_INVERSE", "HIPFFT_BACKWARD"),
@@ -56,9 +22,6 @@ FFT = (
     ("CUFFT_", "HIPFFT_"),
     ("cuFFT", "hipFFT"),
 )
-
-#: The GPU BLAS each GPU solver implementation pairs with, for the transposes around a solver call.
-GPU_SOLVER_BLAS = {"cuSolverDn": "cuBLAS", "hipSolverDn": "hipBLAS"}
 
 
 def rocm_roots() -> list[pathlib.Path]:
