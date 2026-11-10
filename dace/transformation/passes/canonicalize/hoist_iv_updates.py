@@ -180,33 +180,15 @@ def _split_iv_component_to_sibling_loop(
         parent.add_edge(ie.src, iv_loop, ie.data)
     parent.add_edge(iv_loop, loop, dace.InterstateEdge())
 
-    # ``iv_loop`` is currently a deep copy of ``loop`` and therefore contains a
-    # copy of the entire compound body. Strip everything that isn't part of the
-    # IV component (i.e., keep only the IV's deepcopy-equivalent nodes), and on
-    # the original side strip the IV component out so the residual body still
-    # contains the other statements.
+    # ``iv_loop`` is a deep copy of ``loop``: keep the IV component in the copy and everything else in the original.
+    # A deep copy keeps the node order, so a copied node is told from the others by its position: two statements
+    # with one label and one code (a helper inlined twice) are different nodes.
     iv_state = list(iv_loop.nodes())[0]
-    component_labels = dict.fromkeys(id_for(n) for n in component)
-    for n in list(iv_state.nodes()):
-        if id_for(n) not in component_labels:
-            iv_state.remove_node(n)
-    for n in list(state.nodes()):
-        if id_for(n) in component_labels:
-            state.remove_node(n)
-
-
-def id_for(n: nodes.Node) -> tuple[str, ...]:
-    """A stable "structural id" for a node, so we can match deepcopy-pair nodes
-    by their visible shape (label/data + type) without relying on Python ``id``.
-
-    ``label`` is missing only on ``Node``, ``EntryNode`` and ``ExitNode``, which are abstract
-    bases; every node that can sit in a state resolves it.
-    """
-    if isinstance(n, nodes.AccessNode):
-        return ("access", n.data)
-    if isinstance(n, nodes.Tasklet):
-        return ("tasklet", n.label, n.code.as_string)
-    return (type(n).__name__, n.label)
+    for original, copied in zip(list(state.nodes()), list(iv_state.nodes())):
+        if original in component:
+            state.remove_node(original)
+        else:
+            iv_state.remove_node(copied)
 
 
 @properties.make_properties

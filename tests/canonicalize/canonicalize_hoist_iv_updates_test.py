@@ -255,5 +255,26 @@ def test_a_statement_on_the_accumulators_container_keeps_the_body_whole():
     assert HoistInductionVariableUpdates().apply_pass(sdfg, {}) is None
 
 
+def test_two_statements_with_one_label_and_code_are_told_apart():
+    """A helper inlined twice gives two updates with one label and one code: only the hoisted one moves."""
+    sdfg = dace.SDFG("hoist_iv_twin_statements")
+    for name in "abc":
+        sdfg.add_array(name, [8], dace.float64)
+    loop = LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    for name, label, code, index in (("a", "scale", "__in * 2.0", "0"), ("b", "scale", "__in * 2.0", "0"),
+                                     ("c", "other", "__in + 1.0", "i")):
+        tasklet = state.add_tasklet(label, {"__in"}, {"__out"}, f"__out = {code}")
+        state.add_edge(state.add_read(name), None, tasklet, "__in", dace.Memlet(f"{name}[{index}]"))
+        state.add_edge(tasklet, "__out", state.add_write(name), None, dace.Memlet(f"{name}[{index}]"))
+
+    assert HoistInductionVariableUpdates().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    a, b, c = np.ones(8), np.ones(8), np.ones(8)
+    sdfg(a=a, b=b, c=c)
+    assert a[0] == 16.0 and b[0] == 16.0 and np.array_equal(c, [2.0] * 4 + [1.0] * 4)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
