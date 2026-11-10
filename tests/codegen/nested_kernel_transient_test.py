@@ -9,9 +9,11 @@ import dace
 
 def make_gpu_a_persistent(sdfg: dace.SDFG) -> None:
     """Make the device copy of ``A`` persistent; the experimental codegen lifts it out of the kernel under a
-    name that merely contains ``A_gpu``."""
+    name that merely contains ``A_gpu`` (the offloading's copy) or ``gpu_A`` (a local of that name)."""
     arrays = sdfg.cfg_list[-1].arrays
-    arrays[next(name for name in arrays if "A_gpu" in name)].lifetime = dace.AllocationLifetime.Persistent
+    arrays[
+        next(name for name in arrays if "A_gpu" in name or "gpu_A" in name)
+    ].lifetime = dace.AllocationLifetime.Persistent
 
 
 def _test_kernel_transient(persistent: bool):
