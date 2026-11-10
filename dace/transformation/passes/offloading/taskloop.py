@@ -79,10 +79,15 @@ def small_operands(node: nodes.LibraryNode, state: SDFGState) -> bool:
 
 
 def is_kernel_refused_libnode(node: nodes.Node, state: SDFGState) -> bool:
-    """A device-wide library node with no in-kernel block lowering for its shape, so no kernel can run it."""
+    """A device-wide library node left to selection with no in-kernel block lowering for its shape, so no kernel can
+    run it. A lowering the caller chose places the node itself."""
     from dace.libraries.standard.block_reduce import gpu_block_implementation  # Avoid import loop
 
-    return is_device_wide_libnode(node, state) and gpu_block_implementation(node, state, state.sdfg) is None
+    return (
+        is_device_wide_libnode(node, state)
+        and node.implementation in (None, "Auto")
+        and gpu_block_implementation(node, state, state.sdfg) is None
+    )
 
 
 def encloses_device_wide_libnode(
