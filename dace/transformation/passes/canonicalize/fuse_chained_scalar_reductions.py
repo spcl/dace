@@ -332,7 +332,8 @@ class FuseChainedScalarReductions(ppl.Pass):
                 f"_fuse_red_{idx}",
                 dict.fromkeys(["__in1", "__in2"]),
                 dict.fromkeys(["__out"]),
-                f"__out = (__in1 {op_str} __in2)",
+                # In the accumulator type: narrower increments widen before they combine, as each step did.
+                f"__out = (dace.{dtype.to_string()}(__in1) {op_str} dace.{dtype.to_string()}(__in2))",
             )
             if cur_scalar_node is None:
                 st.add_edge(
