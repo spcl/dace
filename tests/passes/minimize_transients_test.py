@@ -4,6 +4,7 @@ import pytest
 
 import dace
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.transformation.passes.minimize_transients import MinimizeTransients
 
 
@@ -210,6 +211,45 @@ def test_copy_of_a_view_whose_container_is_rewritten_stays():
     assert "t" in sdfg.arrays
 
 
+def last_element_sdfg(name: str, fill: bool) -> dace.SDFG:
+    """``t[0:8] = 5`` by a fill node or by a map, ``t[7] += a[3]``, ``out = t[7]``: only ``t[7]`` is ever read."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_transient("t", [8], dace.float64)
+    init = sdfg.add_state()
+    if fill:
+        node = FillLibraryNode("five", value=5.0)
+        init.add_node(node)
+        init.add_edge(node, "_fill_out", init.add_write("t"), None, dace.Memlet("t[0:8]"))
+    else:
+        init.add_mapped_tasklet("five", {"i": "0:8"}, {}, "y = 5.0", {"y": dace.Memlet("t[i]")}, external_edges=True)
+    update = sdfg.add_state_after(init)
+    add = update.add_tasklet("add", {"x", "old"}, {"y"}, "y = old + x")
+    update.add_edge(update.add_read("a"), None, add, "x", dace.Memlet("a[3]"))
+    update.add_edge(update.add_read("t"), None, add, "old", dace.Memlet("t[7]"))
+    update.add_edge(add, "y", update.add_write("t"), None, dace.Memlet("t[7]"))
+    last = sdfg.add_state_after(update)
+    last.add_nedge(last.add_read("t"), last.add_write("out"), dace.Memlet("t[7] -> [0]"))
+    return sdfg
+
+
+def test_array_read_at_one_element_is_that_element():
+    sdfg = last_element_sdfg("minimize_transients_last_element", fill=True)
+    MinimizeTransients().apply_pass(sdfg, {})
+    assert tuple(sdfg.arrays["t"].shape) == (1,)
+    sdfg.validate()
+    a, out = np.arange(8, dtype=np.float64), np.zeros(1)
+    sdfg(a=a, out=out)
+    assert out[0] == 8.0
+
+
+def test_array_a_map_writes_beyond_what_is_read_keeps_its_extent():
+    sdfg = last_element_sdfg("minimize_transients_last_element_of_map", fill=False)
+    MinimizeTransients().apply_pass(sdfg, {})
+    assert tuple(sdfg.arrays["t"].shape) == (8,)
+
+
 def stack_arrays_in_parallel_map_sdfg() -> dace.SDFG:
     """``out[i] = (2 + 3) * a[i, n - 1]`` per iteration of a parallel map, each term through a stack array of the
     nested SDFG; the first array is dead when the second is written."""
@@ -284,4 +324,6 @@ if __name__ == "__main__":
     test_copy_of_a_view_reads_the_view(False)
     test_copy_of_a_view_reads_the_view(True)
     test_copy_of_a_view_whose_container_is_rewritten_stays()
+    test_array_read_at_one_element_is_that_element()
+    test_array_a_map_writes_beyond_what_is_read_keeps_its_extent()
     test_stack_arrays_of_a_nest_in_a_parallel_map_share_one_buffer()
