@@ -658,6 +658,13 @@ def _restate_container(
                 continue
             for stmt in code.code:
                 replacer.visit(stmt)
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not isinstance(node, nd.NestedSDFG):
+                continue
+            for sym, value in list(node.symbol_mapping.items()):
+                if name in str(value):
+                    node.symbol_mapping[sym] = astutils.unparse(replacer.visit(ast.parse(str(value))))
 
     for state in sdfg.states():
         for edge in state.edges():
