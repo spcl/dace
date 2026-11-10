@@ -447,6 +447,9 @@ class MaterializeLoopExitSymbols(ppl.Pass):
                 continue
             if reassigned_after(parent, loop, post_blocks, sym_name):
                 continue
+            # A body that writes what the header reads runs a count the header does not give
+            if not loop_analysis.loop_header_names(loop).isdisjoint(loop_analysis.written_names(loop)):
+                return count
             # The seed is the pre-loop value: a body symbol's own name, read on an edge BEFORE the loop (after
             # it the name already holds the exit value), or the iterator's init expression.
             seed = sym_name

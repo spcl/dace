@@ -247,5 +247,24 @@ def test_a_loop_left_by_break_keeps_its_counted_exit_value():
     assert out[0] == 3, out
 
 
+def test_a_loop_whose_body_moves_its_bound_keeps_its_counted_exit_value():
+    """``for i < M`` with ``M = M - 1`` in the body runs half the trips the header names."""
+    sdfg = dace.SDFG("exit_symbol_moving_bound")
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_array("out", [1], dace.int64)
+    loop = LoopRegion("L", "i < M", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    loop.add_edge(body, loop.add_state("bump"), dace.InterstateEdge(assignments={"M": "M - 1", "k": "k + 2"}))
+    after = sdfg.add_state_after(loop, "after")
+    after.add_edge(after.add_tasklet("t", {}, {"o"}, "o = k"), "o", after.add_write("out"), None, dace.Memlet("out[0]"))
+
+    assert MaterializeLoopExitSymbols().apply_pass(sdfg, {}) is None
+    out = np.zeros(1, dtype=np.int64)
+    sdfg(out=out, M=10, k=0)
+    assert out[0] == 10, out
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
