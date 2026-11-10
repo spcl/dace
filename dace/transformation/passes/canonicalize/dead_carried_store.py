@@ -158,7 +158,8 @@ def find_killed_store(loop: LoopRegion, body: list[SDFGState], stride: int) -> t
                 written = edge.data.get_dst_subset(edge, state)
                 # Another output of the tasklet still needs it, which the drop could not keep valid.
                 shared = isinstance(edge.src, nodes.Tasklet) and len(edge.src.out_connectors) > 1
-                if edge.data.wcr is not None or written is None or shared:
+                # A dynamic store may not happen, so it kills nothing.
+                if edge.data.wcr is not None or edge.data.dynamic or written is None or shared:
                     ambiguous.add(node.data)
                     continue
                 spot = constant_offset_on_axis(written, loop.loop_variable)
