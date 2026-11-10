@@ -59,11 +59,11 @@ def test_dump_gpu():
 
     # Verify instrumented data
     dreport = sdfg.get_instrumented_data()
-    assert dreport.keys() == {"A", "gpu_A", "tmp", "gpu___return", "__return"}
+    assert dreport.keys() == {"A", "A_gpu", "tmp", "buffer__return_gpu", "__return"}
     assert np.allclose(dreport["A"], A)
-    assert np.allclose(dreport["gpu_A"], A)
+    assert np.allclose(dreport["A_gpu"], A)
     assert np.allclose(dreport["tmp"], A + 1)
-    assert np.allclose(dreport["gpu___return"], A + 6)
+    assert np.allclose(dreport["buffer__return_gpu"], A + 6)
     assert np.allclose(dreport["__return"], A + 6)
 
 
