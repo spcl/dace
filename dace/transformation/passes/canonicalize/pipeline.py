@@ -195,9 +195,8 @@ def _structural_cleanup(label: str) -> list[tuple[str, ppl.Pass]]:
     ``RedundantOrderingEdgeElimination`` last, since fusion is what makes ordering edges redundant.
     Fusion unions assignments, so duplicates it mints wait for the next boundary's symbol phase.
 
-    Placed only where a phase ends: ``coalesce`` (x2; map fusion re-nests bodies, seidel_2d),
-    ``lower``, ``loop_to_scan``, ``reduction_to_wcr_map``, ``fuse`` (x2) and ``end``. ``SymbolSSA``
-    is not part of it: the runs after ``ShortLoopUnroll`` and at ``ssa`` already cover it.
+    Placed only where a phase ends (see the recipe comment below). ``SymbolSSA`` is not part of it: the runs after
+    ``ShortLoopUnroll`` and at the head of ``derive_parallelism`` already cover it.
 
     :param label: The owning stage label.
     :returns: ``(stage_label, pass)`` pairs, in order.
@@ -545,7 +544,7 @@ class _ThenIfChanged(ppl.Pass):
 # ``privatize_scatter_reductions``: whole-buffer map WCR so CPU emits an OpenMP array-section
 #   reduction instead of atomics (azimint_hist ~200x -> ~1x vs numpy). CPU only.
 # ``normalize_loop_and_map_origin``: rebase ranges to 0 keeping the stride (``NormalizeLoopsAndMaps``
-#   folded it and lost TSVC s172's map); see the AB note at its wiring below.
+#   folded it and lost TSVC s172's map); off on both targets.
 CPU_DEFAULTS: dict[str, Any] = {
     "interchange_carry_with_map": True,
     "scatter_to_guarded_maps": True,
@@ -577,8 +576,8 @@ FIND_FIRST_CHUNK: dict[str, int] = {"cpu": 1 << 20, "gpu": 1 << 21}
 # The recipe
 # The phased canonicalization recipe: the paper's phases in order, with a structural cleanup between them.
 #
-# Phases (mpr paper, Fig. "phases"): normalize statements, lift semantics, derive parallelism, then recompose
-# (fusion and the final tidy). Specialization is a separate call (``finalize_for_target``).
+# Phases (mpr paper, Fig. "phases"): ingest, normalize statements, lift semantics, derive parallelism, then recompose
+# (maximal fusion and what it exposes) and finish. Specialization is a separate call (``finalize_for_target``).
 #
 # - ``StructuralCleanup`` runs at the start, after lowering, before derivation, before fusion, whose rounds run it
 #   too, and at the head of ``finish``; nowhere else is it the reason a phase ends.
@@ -603,7 +602,9 @@ RECOMPOSE = "recompose"
 FUSE = "fuse"
 #: Everything recompose does once fusion settled, out-of-phase lifts included.
 AFTER_FUSION = "after_fusion"
-#: The between-phase rail, and the cleanup of the raised input.
+#: The raised and simplified input, before any phase.
+INGEST = "ingest"
+#: The between-phase rail.
 CLEANUP = "cleanup"
 #: The terminal bookkeeping.
 FINISH = "finish"
@@ -678,10 +679,6 @@ def rail(label: str = CLEANUP) -> Stages:
     return [*_inline_single_state(label), (label, StructuralCleanup())]
 
 
-def unique_iterators() -> ppl.Pass:
-    return UniqueLoopIterators()
-
-
 def clean_anti_dependency_units() -> list[ppl.Pass]:
     """CleanAntiDependency (WAR, WAW) by renaming: per-scope versions of a container wherever a dominating write
     allows it, per-iteration copies of a constant slot a loop rewrites before reading. A scratch buffer's copies are
@@ -733,32 +730,32 @@ def ingest(target: str) -> Stages:
     s: Stages = [
         # The contract's compile-time half from the start: every proof below reads the sizes as nonnegative (a
         # symbolic loop step ``n3`` orients its map); ``AssumeSymbolConstraints`` adds the runtime check at the end
-        (CLEANUP, SetSymbolNonnegativeAssumptions()),
-        (CLEANUP, ControlFlowRaising()),
-        (CLEANUP, RequireStructuredControlFlow()),
-        (CLEANUP, RemoveViews()),
-        (CLEANUP, EliminateTrivialTasklets()),
-        (CLEANUP, FoldScalarReadCopies()),
-        (CLEANUP, CollapseNoOpCast()),
-        (CLEANUP, RewriteModuloToPyMod()),
-        (CLEANUP, NormalizeNegativeStride()),
-        (CLEANUP, unique_iterators()),
-        (CLEANUP, ContinueToCondition()),
-        (CLEANUP, SupplyNumThreads()),
+        (INGEST, SetSymbolNonnegativeAssumptions()),
+        (INGEST, ControlFlowRaising()),
+        (INGEST, RequireStructuredControlFlow()),
+        (INGEST, RemoveViews()),
+        (INGEST, EliminateTrivialTasklets()),
+        (INGEST, FoldScalarReadCopies()),
+        (INGEST, CollapseNoOpCast()),
+        (INGEST, RewriteModuloToPyMod()),
+        (INGEST, NormalizeNegativeStride()),
+        (INGEST, UniqueLoopIterators()),
+        (INGEST, ContinueToCondition()),
+        (INGEST, SupplyNumThreads()),
         # np.roll / broadcast_to / np.where as their pure maps from the start, so every normalization below sees a map
         # and not an opaque library node; the SimplifyPass right after inlines their nested SDFGs
-        (CLEANUP, ExpandIndexRemaps()),
-        (CLEANUP, SimplifyPass(pass_options=CANON_SIMPLIFY_OPTIONS)),
+        (INGEST, ExpandIndexRemaps()),
+        (INGEST, SimplifyPass(pass_options=CANON_SIMPLIFY_OPTIONS)),
         # A table filled once with literals (CloudSC's ``iphase``) is a constant host code and every kernel read alike,
         # before a fusion moves its fill into a loop
-        (CLEANUP, FoldConstantTables()),
+        (INGEST, FoldConstantTables()),
         # A while loop that counts gets its counter here, so every later pass sees a counted loop.
-        (CLEANUP, WhileToFor()),
+        (INGEST, WhileToFor()),
         # After simplification: the raised guard of a break still reads its condition through a separate
         # preparation region before it, which the matcher does not see through.
-        (CLEANUP, LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
+        (INGEST, LiftBreakToFindFirst(chunk=FIND_FIRST_CHUNK[target])),
     ]
-    return s + [(CLEANUP, StructuralCleanup())]
+    return s + [(INGEST, StructuralCleanup())]
 
 
 def normalize_statements(
@@ -796,7 +793,7 @@ def normalize_statements(
     s += [(label, NormalizeNegativeStride()), (label, EliminateTrivialTasklets()), (label, StructuralCleanup())]
     s += [(label, RerollUnrolledLoops()), (label, UntileLoops()), (label, FuseConsecutiveLoops())]
     if unroll_limit > 0:
-        s += [(label, ShortLoopUnroll(unroll_limit)), (label, unique_iterators()), (label, SymbolSSA())]
+        s += [(label, ShortLoopUnroll(unroll_limit)), (label, UniqueLoopIterators()), (label, SymbolSSA())]
     s += [
         (
             label,
@@ -813,7 +810,7 @@ def normalize_statements(
     ]
     if perfect_loop_nesting:
         s += [(label, PerfectLoopNesting(target=target))]
-    s += [(label, unique_iterators()), (label, PatternApplyOnceEverywhere([TrivialLoopElimination()]))]
+    s += [(label, UniqueLoopIterators()), (label, PatternApplyOnceEverywhere([TrivialLoopElimination()]))]
     s += [(label, LoopStridePermutation())]
     if normalize_loop_and_map_origin:
         s += [(label, NormalizeLoopAndMapOrigin())]
@@ -899,7 +896,7 @@ def derive_parallelism(
     s += [(label, PropagateSymbols())]
     # Peeling copies a loop with the symbols its body assigns; SSA names each copy's apart, or the lifted copy's
     # inner symbols shadow the other's and memlet propagation carries them out of the nested SDFG.
-    s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, unique_iterators()), (label, SymbolSSA())]
+    s += [(label, CascadeInterstateEdgeAssignmentsUp()), (label, UniqueLoopIterators()), (label, SymbolSSA())]
     # A split or peel can leave a plain recurrence the lifting segment never saw (``y[i] = s[i] + y[i - 1]`` on the
     # ``[K:N)`` half of an ``if i < K`` body); lift it, on the split's segments only, before the levels below
     # settle it as sequential.
@@ -957,7 +954,7 @@ def derive_parallelism(
     s += [(label, FuseLoops())]
     s += [(label, Parallelize(target=target, hold_sibling_chains=False))]
     # The time loop a wavefront skew made keeps the skew's name until here
-    s += [(label, unique_iterators())]
+    s += [(label, UniqueLoopIterators())]
     return s
 
 
@@ -1028,7 +1025,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
         (label, EmptyLoopElimination()),
         (label, PatternApplyOnceEverywhere([MoveIfIntoMap()])),
     ]
-    s += [*_inline_single_state(label), (label, StructuralCleanup())]
+    s += rail(label)
     # A memset the control flow after it overwrites unread (velocity's zeta_value, swept level by level) goes before
     # fusion, so its state does not stand between the maps; the finish runs it again for the fills lifted after.
     s += [(label, DeadFillElimination())]
@@ -1158,13 +1155,9 @@ StageFactory = Callable[[], list[ppl.Pass]]
 def _stage_runs() -> list[tuple[str, int, int]]:
     """Split the flat recipe into contiguous runs of one stage label.
 
-    A label may appear in several places in the recipe (``clean``,
-    ``cascade_iedges_up`` and ``peel`` all do). Grouping by label alone would
-    gather those separated occurrences at the position of the first one and so
-    reorder the recipe -- which silently breaks documented constraints, e.g.
-    ``RemoveViews`` must run before the ``loop_to_symm`` / ``lift_inv`` lifts read
-    the raw frontend shape while the rest of the ``clean`` block runs after them,
-    and both halves are labelled ``clean``. Runs preserve the real order.
+    A label may appear in several places in the recipe (``lift_semantics``, ``cleanup`` and ``fuse`` all do).
+    Grouping by label alone would gather those separated occurrences at the position of the first one and so
+    reorder the recipe: the out-of-phase lifts run where the shape they match exists. Runs preserve the real order.
 
     :returns: ``(label, start, stop)`` index ranges into the flat recipe.
     """
@@ -1272,7 +1265,7 @@ class CanonicalizationPipeline(ppl.Pass):
     applied once, imperatively, as ``auto_optimize`` does. A single
     :class:`~dace.transformation.pass_pipeline.Pipeline` cannot be used because
     it forbids duplicate pass types and the recipe reuses ``SimplifyPass`` and
-    ``PatternMatchAndApplyRepeated`` across stages. Composites that need
+    ``StructuralCleanup`` across stages. Composites that need
     iteration iterate internally; the pipeline itself does not re-run.
 
     :param validate: Validate the SDFG once at the end. OFF by default -- validation is a whole-SDFG
@@ -1284,8 +1277,8 @@ class CanonicalizationPipeline(ppl.Pass):
                          iterations (0 disables).
     :param peel_limit: Best-effort loop peeling before parallelize (0 disables); defaults to
                        ``optimizer.canonicalization.peel_limit``.
-    :param perfect_loop_nesting: Run ``PerfectLoopNesting`` at the fission stage. ON by
-                                 default -- see the ruling at the fission stage below.
+    :param perfect_loop_nesting: Run ``PerfectLoopNesting`` at the end of ``normalize_statements``. ON by
+                                 default.
     :param target: ``'cpu'`` (default) or ``'gpu'``. Picks the per-target knob
                    preset (see ``CPU_DEFAULTS`` / ``GPU_DEFAULTS``). Any
                    explicit knob argument (e.g. ``interchange_carry_with_map=...``)
@@ -1294,8 +1287,8 @@ class CanonicalizationPipeline(ppl.Pass):
                                        ``LoopRegion`` INTO the per-column Map so
                                        the scan runs sequential-per-thread.
                                        ``None`` (default) -> per-target preset.
-    :param normalize_loop_and_map_origin: Run ``NormalizeLoopAndMapOrigin`` right before the
-                                          ``loop_to_x`` stage. ``None`` (default) -> per-target
+    :param normalize_loop_and_map_origin: Run ``NormalizeLoopAndMapOrigin`` at the end of
+                                          ``normalize_statements``. ``None`` (default) -> per-target
                                           preset (off on both targets; see ``CPU_DEFAULTS``).
     :param specialize_constants: Optional ``{symbol or scalar argument: value}`` map (e.g.
                              CloudSC's ``{'nclv': 5, 'yrecldp_nssopt': 1}``, or a kernel's shape
@@ -1328,8 +1321,8 @@ class CanonicalizationPipeline(ppl.Pass):
         default=False,
         desc="Validate the SDFG after EVERY stage that reported a modification, which pinpoints the "
         "stage that produced an invalid SDFG instead of only catching it at the end. OFF by default: "
-        "it is one whole-SDFG walk per modifying stage, and the recipe has 235 of them, so on a large "
-        "graph it costs more than the passes it watches. Turn it on to bisect a stage that produced "
+        "it is one whole-SDFG walk per modifying stage, so on a large graph it costs more than the passes "
+        "it watches. Turn it on to bisect a stage that produced "
         "an invalid SDFG; the end-of-pipeline ``validate`` still catches the break either way.",
     )
     dump_dir = properties.Property(
@@ -1356,7 +1349,7 @@ class CanonicalizationPipeline(ppl.Pass):
     scatter_to_guarded_maps = properties.Property(
         dtype=bool,
         default=True,
-        desc="Run ScatterToGuardedMaps in the scatter stage to lift scatter loops with a sort-based guard.",
+        desc="Run ScatterToGuardedMaps in derive_parallelism to lift scatter loops with a sort-based guard.",
     )
     privatize_scatter_reductions = properties.Property(
         dtype=bool,
@@ -1367,7 +1360,7 @@ class CanonicalizationPipeline(ppl.Pass):
     normalize_loop_and_map_origin = properties.Property(
         dtype=bool,
         default=False,
-        desc="Run NormalizeLoopAndMapOrigin right before the loop_to_x stage, rebasing every Map range / "
+        desc="Run NormalizeLoopAndMapOrigin at the end of normalize_statements, rebasing every Map range / "
         "LoopRegion counter to a 0-based begin while keeping the stride. Off by default on both targets "
         "(see CPU_DEFAULTS).",
     )
@@ -1375,9 +1368,7 @@ class CanonicalizationPipeline(ppl.Pass):
         dtype=bool,
         default=True,
         desc="Distribute a loop over its data-independent statement groups (PerfectLoopNesting) so "
-        "each statement parallelizes on its own axes. On by default since the pass stopped grouping "
-        "through LoopFission -- see the fission-stage comment for what that changed and for the "
-        "CloudSC gate that has not yet been re-run.",
+        "each statement parallelizes on its own axes. On by default.",
     )
 
     assume_parallel_guards = properties.Property(
@@ -1631,7 +1622,7 @@ def canonicalize(
                                    -> per-target preset (CPU=True, GPU=False).
     :param normalize_loop_and_map_origin: Rebase every Map range / ``LoopRegion`` counter to a
                                    0-based begin, keeping the stride (``NormalizeLoopAndMapOrigin``),
-                                   right before the ``loop_to_x`` stage. ``None`` (default) ->
+                                   at the end of ``normalize_statements``. ``None`` (default) ->
                                    per-target preset (off on both targets).
     :param assume_parallel_guards: Assume every parallel-guard condition holds --
                                    ``ParallelizeUnderConstraint`` and
@@ -1642,10 +1633,8 @@ def canonicalize(
                                    the sound guards.
     :param perfect_loop_nesting: Distribute a loop over its data-independent statement groups
                                  (``PerfectLoopNesting``) so each statement gets its own complete
-                                 nest and parallelizes on its own axes. ``True`` (default) since
-                                 the pass stopped grouping through ``LoopFission``; the
-                                 fission-stage comment records what that changed and which gate
-                                 is still outstanding. Pass ``False`` to keep bodies undistributed.
+                                 nest and parallelizes on its own axes. ``True`` (default); pass ``False`` to
+                                 keep bodies undistributed.
     :param specialize_constants: Optional ``{symbol or scalar argument: value}`` baked in via
                              ``specialize_symbols`` / ``specialize_scalars`` (cloudsc-style,
                              recursive into nested SDFGs) before canonicalization, so symbolic trip counts

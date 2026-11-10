@@ -142,7 +142,7 @@ def matrix(size: int = SIZE) -> np.ndarray:
 def normalized(program) -> dace.SDFG:
     """``program`` as the phased recipe hands it to ``lift_semantics``: the phases before it, no lift run."""
     sdfg = program.to_sdfg(simplify=False)
-    canonicalize(sdfg, validate=True, target="gpu", stages=["cleanup", "normalize_statements"])
+    canonicalize(sdfg, validate=True, target="gpu", stages=["ingest", "normalize_statements"])
     return sdfg
 
 

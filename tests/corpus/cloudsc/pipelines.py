@@ -397,8 +397,8 @@ CANON_FINISH = "finish"
 def _canon_coarse_phases(target: str, assume_parallel_guards: bool) -> list[Phase]:
     """The canonicalization recipe grouped into the four :data:`_CANON_ORDER` super-phases, one per recipe phase.
 
-    The recipe puts a structural cleanup (label :data:`_CANON_RAIL`) at its start and between the first two phases,
-    so ``loop_to_x`` begins where a cleanup run ends; the ingest cleanup joins ``normalize``, ``parallelize`` begins
+    The recipe puts a structural cleanup (label :data:`_CANON_RAIL`) between lifting and derivation,
+    so ``loop_to_x`` begins where a cleanup run ends; the ingest joins ``normalize``, ``parallelize`` begins
     at :data:`CANON_RECOMPOSE` and ``finalize`` at :data:`CANON_FINISH`. Grouping by the cleanup runs rather than by label keeps the out-of-phase lifts (labelled
     ``lift_semantics`` where their matcher needs another phase's shape) inside the phase they run in. Sound
     max-parallelism defaults (peel_limit=4)."""
