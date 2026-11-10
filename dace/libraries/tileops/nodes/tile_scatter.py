@@ -4,8 +4,6 @@
 Symmetric to :class:`~dace.libraries.tileops.nodes.tile_gather.TileGather`.
 """
 
-import sympy
-
 import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
@@ -306,9 +304,7 @@ class TileScatter(TileOp):
                 # a plain ``simplify`` (``i - i`` stays). ``inequal_symbols`` equalizes same-name
                 # symbols first, so a genuine full tile reads equal and only a real partial-tile size
                 # trips the guard.
-                if actual is None or any(
-                    dace.symbolic.inequal_symbols(sympy.sympify(a), sympy.sympify(e)) for a, e in zip(actual, expected)
-                ):
+                if actual is None or not dace.symbolic.shapes_equal(actual, expected):
                     raise NotImplementedError(
                         f"{self.label}: non-full-tile structured store -- dest memlet "
                         f"subset sizes {subset_sizes} on dims {dims} != widths {expected}. Per user "

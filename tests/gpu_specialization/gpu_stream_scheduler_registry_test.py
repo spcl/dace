@@ -28,7 +28,7 @@ def test_pipeline_default_strategy_is_auto():
 
 
 def test_pipeline_accepts_explicit_strategy_instance():
-    strategy = AutoGPUStreamScheduler(monolithic=True)
+    strategy = AutoGPUStreamScheduler()
     pipe = GPUStreamPipeline(scheduling_strategy=strategy)
     assert pipe._scheduling_strategy is strategy
 

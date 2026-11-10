@@ -872,7 +872,7 @@ static DACE_HDFI dace::float16 pow(const dace::float16& a, const dace::float16& 
 // type, double for an integral base as ``int ** float`` in NumPy). Dividing in F avoids integer division and half
 // overflow.
 template <typename T, typename P, typename Q>
-DACE_HDFI auto pow(const T& a, const P& p, const Q& q) {
+DACE_HDFI auto rational_pow(const T& a, const P& p, const Q& q) {
   using R = typename std::conditional<std::is_integral<T>::value, double, T>::type;
   using F = typename std::conditional<std::is_integral<T>::value, double, decltype(a + 0.0f)>::type;
   const F e = F(p) / F(q);

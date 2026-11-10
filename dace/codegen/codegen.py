@@ -163,6 +163,15 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
+def passes_thread_local_data(state: SDFGState, node: "dace.nodes.NestedSDFG") -> bool:
+    """Whether the nested SDFG is handed thread-local data: it receives the calling thread's pointer, and its parallel
+    maps share that one. Inlined, each of their threads would read its own copy of the ``threadprivate`` variable."""
+    return any(
+        e.data.data is not None and state.sdfg.arrays[e.data.data].storage == dtypes.StorageType.CPU_ThreadLocal
+        for e in state.all_edges(node)
+    )
+
+
 def inline_host_nested_sdfgs(sdfg: SDFG, validate: bool = True) -> None:
     """Flatten the nested SDFGs the CPU target emits, leaving device-level nests where they are.
 
@@ -192,6 +201,7 @@ def inline_host_nested_sdfgs(sdfg: SDFG, validate: bool = True) -> None:
         and isinstance(parent, SDFGState)
         and (
             is_devicelevel_gpu(parent.sdfg, parent, node)
+            or passes_thread_local_data(parent, node)
             or any(
                 not same_scalar_kind(declared, mapped)
                 for _, declared, mapped in mapped_symbol_types(parent, node, resolver.defined_at)

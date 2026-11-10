@@ -292,21 +292,21 @@ def test_infinity_cpp_lowering():
 def test_fractional_power_cpp_lowering():
     # ``1/2`` and ``1/3`` are integer division in C++: ``pow(M, 1/2)`` would be ``pow(M, 0)``
     assert symstr(pystr_to_symbolic("sqrt(M)"), cpp_mode=True) == "(dace::math::sqrt(M))"
-    assert symstr(pystr_to_symbolic("M**(1/3)"), cpp_mode=True) == "(dace::math::pow(M, 1, 3))"
-    assert symstr(pystr_to_symbolic("M**(-2/3)"), cpp_mode=True) == "(dace::math::pow(M, -2, 3))"
+    assert symstr(pystr_to_symbolic("M**(1/3)"), cpp_mode=True) == "(dace::math::rational_pow(M, 1, 3))"
+    assert symstr(pystr_to_symbolic("M**(-2/3)"), cpp_mode=True) == "(dace::math::rational_pow(M, -2, 3))"
 
 
 def test_symbolic_fractional_power_cpp_lowering():
     # ``N/3`` in the exponent is integer division in C++ as well
-    assert symstr(pystr_to_symbolic("M**(N/3)"), cpp_mode=True) == "(dace::math::pow(M, N, 3))"
-    assert symstr(pystr_to_symbolic("M**(2*N/3)"), cpp_mode=True) == "(dace::math::pow(M, 2*N, 3))"
-    assert symstr(pystr_to_symbolic("M**(1/N)"), cpp_mode=True) == "(dace::math::pow(M, 1, N))"
+    assert symstr(pystr_to_symbolic("M**(N/3)"), cpp_mode=True) == "(dace::math::rational_pow(M, N, 3))"
+    assert symstr(pystr_to_symbolic("M**(2*N/3)"), cpp_mode=True) == "(dace::math::rational_pow(M, 2*N, 3))"
+    assert symstr(pystr_to_symbolic("M**(1/N)"), cpp_mode=True) == "(dace::math::rational_pow(M, 1, N))"
 
 
 def test_equal_quotient_outside_an_exponent_stays_floored():
     expr = pystr_to_symbolic("M**(N/3) + N/3")
     assert symstr(expr) == "((M) ** (N/3) + int_floor(N, 3))"
-    assert symstr(expr, cpp_mode=True) == "(dace::math::pow(M, N, 3) + py_floor(N, 3))"
+    assert symstr(expr, cpp_mode=True) == "(dace::math::rational_pow(M, N, 3) + py_floor(N, 3))"
 
 
 def test_interstate_fractional_power_is_a_real_power():
@@ -326,7 +326,12 @@ def test_interstate_fractional_power_is_a_real_power():
         second.add_edge(tasklet, conn, out, None, dace.Memlet(f"out[{i}]"))
 
     code = sdfg.generate_code()[0].clean_code
-    for lowered in ("pow(M, 1, 3)", "pow(M, N, 3)", "pow(M, -2, 3)", "pow(M, -(N), 3)"):
+    for lowered in (
+        "rational_pow(M, 1, 3)",
+        "rational_pow(M, N, 3)",
+        "rational_pow(M, -2, 3)",
+        "rational_pow(M, -(N), 3)",
+    ):
         assert f"dace::math::{lowered}" in code
 
     result = numpy.zeros(4)

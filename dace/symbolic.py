@@ -4787,7 +4787,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 num, den = sympy.fraction(sympy.together(expr.args[1]))
                 if den != 1:
                     if self.dialect is cpf_lowering.Dialect.RUNTIME:
-                        return f"dace::math::pow({base}, {self._print(num)}, {self._print(den)})"
+                        return f"dace::math::rational_pow({base}, {self._print(num)}, {self._print(den)})"
                     exponent_type = self.c_power_exponent_type(self.c_type(expr.args[0]))
                     saved, self.fp_ctype = self.fp_ctype, ("float" if exponent_type == "float32" else "double")
                     exponent = "(%s / %s)" % (

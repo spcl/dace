@@ -26,6 +26,7 @@ from dace.sdfg.sdfg import SDFG, memoize_facts
 from dace.sdfg.state import SymbolResolver
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.pass_pipeline import Modifies
+from dace.transformation.passes.gpu_shared_memory import is_shared_container
 
 
 class InlineTaskletConnectors(ppl.Pass):
@@ -139,6 +140,10 @@ class InlineTaskletConnectors(ppl.Pass):
         # into its source, so it is inlined like any Array. dt.Reference stays excluded explicitly:
         # ArrayReference subclasses Array, so it would otherwise pass the first test.
         if not isinstance(desc, (dt.Array, dt.Scalar)) or isinstance(desc, (dt.Reference, dt.ContainerArray)):
+            return None
+        # The CUDA preprocess may place a shared container in the dynamic shared memory buffer, under a new name the
+        # memlets follow but a frozen tasklet body would not.
+        if is_shared_container(desc):
             return None
         # WCR outputs must go through the atomic resolve path.
         if is_output and memlet.wcr is not None:
