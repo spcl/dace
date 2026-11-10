@@ -95,20 +95,51 @@ def _check_range(subset, a, itersym, b, step, span=None, memo: dict | None = Non
     return found
 
 
-def offset_by_a_varying_symbol(subset: subsets.Subset | None, itersym, varying: set[str]) -> bool:
-    """Whether ``subset`` is pinned to the iteration only by ``i + b`` with ``b`` varying inside an iteration: ``A[i + j]``
-    under a loop over ``j`` overlaps across ``i``. ``A[8 * i + j]``, a flattened index, is left to :func:`_check_range`.
-    """
-    found = False
-    for rb, _, _ in subset.ndrange() if subset is not None else ():
-        rb = _align_itersym(sp.sympify(rb), itersym)
-        coeff = rb.coeff(itersym)
-        if coeff == 0:
-            continue
-        if abs(coeff) != 1 or not varying & {str(s) for s in (rb - coeff * itersym).free_symbols}:
-            return False
-        found = True
-    return found
+def moves_within_an_iteration(subset: subsets.Subset | None, itersym, varying: set[str]) -> bool:
+    """Whether a dimension of ``subset`` names both the iterator and a symbol varying inside an iteration: ``A[2 * i + j]``
+    under a loop over ``j`` is not one element per iteration, whatever :func:`_check_range` reads off its ``a*i+b``."""
+    for rng in subset.ndrange() if subset is not None and varying else ():
+        names = {s.name for bound in rng[:2] for s in sp.sympify(bound).free_symbols}
+        if itersym.name in names and names & varying:
+            return True
+    return False
+
+
+def pinned_once_swept(
+    sdfg: SDFG, data: str, subset: subsets.Subset, loop: LoopRegion, varying: set[str], facts: symbolic.Facts
+) -> subsets.Range:
+    """What one iteration of ``loop`` touches of ``data`` through ``subset``, as the dimensions that hold still in it:
+    ``subset`` widened over the iterators of the loops and maps inside ``loop``, less every dimension still naming a
+    symbol of ``varying`` (one the body assigns, or an iterator of unknown range)."""
+    from dace.sdfg.propagation import propagate_subset  # avoid an import cycle
+
+    ranges: dict[str, subsets.Range | None] = {}
+
+    def note(name: str, rng: subsets.Range | None) -> None:
+        # One name over two ranges is no single box
+        ranges[name] = rng if name not in ranges or ranges[name] == rng else None
+
+    for region in loop.all_control_flow_regions():
+        if isinstance(region, LoopRegion) and region is not loop and region.loop_variable:
+            bounds = [f(region) for f in (loop_analysis.get_init_assignment, loop_analysis.get_loop_end)]
+            stride = loop_analysis.get_loop_stride(region)
+            known = None not in bounds and stride is not None and step_direction(stride, facts) == 1
+            note(region.loop_variable, subsets.Range([(*bounds, stride)]) if known else None)
+    for state in loop.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                for param, rng in zip(node.map.params, node.map.range):
+                    note(param, subsets.Range([rng]))
+    for _ in range(len(ranges)):
+        named = sorted(n for n in subset.free_symbols if ranges.get(n) is not None)
+        if not named:
+            break
+        subset = propagate_subset(
+            [memlet.Memlet(data=data, subset=subset)], sdfg.arrays[data], [named[0]], ranges[named[0]], facts
+        ).subset
+    return subsets.Range(
+        [rng for rng in subset.ndrange() if not varying & {s.name for b in rng[:2] for s in sp.sympify(b).free_symbols}]
+    )
 
 
 def through_symbol_mapping(subset: subsets.Subset, nsdfg_node: nodes.NestedSDFG) -> subsets.Subset:
@@ -2402,13 +2433,19 @@ class LoopLift:
                             closed_forms,
                             self,
                         )
+                        stored = in_closed_form(e.data.get_dst_subset(e, state), closed_forms)
                         if (
                             reason is None
                             and not self.waives(dn.data, permissive)
-                            and offset_by_a_varying_symbol(
-                                in_closed_form(e.data.get_dst_subset(e, state), closed_forms),
+                            and moves_within_an_iteration(stored, itersym, varying)
+                            # One iteration's writes, over its inner iterators, must stay clear of another's
+                            and not _check_range(
+                                pinned_once_swept(sdfg, dn.data, stored, self.loop, varying, self.solver_facts.symbols),
+                                a,
                                 itersym,
-                                varying - {itervar},
+                                b,
+                                step,
+                                end - start,
                             )
                         ):
                             reason = (
