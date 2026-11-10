@@ -8,6 +8,7 @@
 
 #include <iterator>
 
+#include "arg_reduction.h"
 #include "cub_scratch.cuh"
 #include "cuda/gpucub.cuh"
 
@@ -119,17 +120,19 @@ struct StridedGather {
   __host__ __device__ __forceinline__ T operator()(long long j) const { return xf(base[j * stride]); }
 };
 
-/// Random-access iterator over :struct:`StridedGather` with an explicit iterator category; rocPRIM's ArgMax
-/// requires ``random_access_iterator_tag``, which thrust-backed iterators do not report.
-template <typename T, typename Xf>
+/// Random-access iterator over an index functor (:struct:`StridedGather`, :struct:`IndexedPair`) with an explicit
+/// iterator category; rocPRIM's ArgMax requires ``random_access_iterator_tag``, which thrust-backed iterators do not
+/// report.
+template <typename F>
 struct GatherIterator {
+  using T = typename F::result_type;
   using iterator_category = ::std::random_access_iterator_tag;
   using value_type = T;
   using difference_type = long long;
   using pointer = void;
   using reference = T;  // a computed element has no storage to refer to
 
-  StridedGather<T, Xf> gather;
+  F gather;
   difference_type index;
 
   __host__ __device__ __forceinline__ T operator*() const { return gather(index); }
@@ -177,16 +180,16 @@ struct GatherIterator {
   __host__ __device__ __forceinline__ bool operator>=(const GatherIterator& o) const { return index >= o.index; }
 };
 
-template <typename T, typename Xf>
-__host__ __device__ __forceinline__ GatherIterator<T, Xf> operator+(long long n, const GatherIterator<T, Xf>& it) {
+template <typename F>
+__host__ __device__ __forceinline__ GatherIterator<F> operator+(long long n, const GatherIterator<F>& it) {
   return it + n;
 }
 
 /// The iterator CUB reduces over when the operand is strided and/or transformed. ``Xf`` is named
 /// explicitly by the caller; ``T`` is deduced from ``base``.
 template <typename Xf, typename T>
-inline GatherIterator<T, Xf> gather_iterator(const T* base, long long stride) {
-  return GatherIterator<T, Xf>{StridedGather<T, Xf>{base, stride, Xf{}}, 0};
+inline GatherIterator<StridedGather<T, Xf>> gather_iterator(const T* base, long long stride) {
+  return GatherIterator<StridedGather<T, Xf>>{StridedGather<T, Xf>{base, stride, Xf{}}, 0};
 }
 
 #if DACE_CUB_ARG_REDUCE_SPLIT_OUTPUTS
@@ -205,6 +208,8 @@ using ArgBuf = ::gpucub::KeyValuePair<int, T>;
 /// Which extremum an :func:`arg_reduce` call looks for. ``out`` is null only on CUB's
 /// size-query call, which never dereferences it.
 struct ArgMaxOp {
+  template <typename T>
+  using Buf = ArgBuf<T>;
   template <typename InIt, typename T>
   static gpuError_t call(void* scratch, size_t& needed, InIt in, ArgBuf<T>* out, long long items, gpuStream_t stream) {
 #if DACE_CUB_ARG_REDUCE_SPLIT_OUTPUTS
@@ -217,6 +222,8 @@ struct ArgMaxOp {
 };
 
 struct ArgMinOp {
+  template <typename T>
+  using Buf = ArgBuf<T>;
   template <typename InIt, typename T>
   static gpuError_t call(void* scratch, size_t& needed, InIt in, ArgBuf<T>* out, long long items, gpuStream_t stream) {
 #if DACE_CUB_ARG_REDUCE_SPLIT_OUTPUTS
@@ -228,26 +235,72 @@ struct ArgMinOp {
   }
 };
 
+/// ``j -> (in[j], j)``, the pairs :struct:`ArgPairOp` folds. A NaN past position 0 becomes the neutral
+/// pair: the loop never takes one, and the fold would otherwise read it as the NaN seed it keeps.
+template <typename InIt, typename T>
+struct IndexedPair {
+  InIt in;
+  ::dace::arg_pair<T, long long> neutral;
+  using result_type = ::dace::arg_pair<T, long long>;
+  __host__ __device__ __forceinline__ result_type operator()(long long j) const {
+    const T v = in[j];
+    return (j == 0 || v == v) ? result_type{v, j} : neutral;
+  }
+};
+
+/// An arg-reduction that folds (value, index) pairs by ``DeviceReduce::Reduce`` with the ``dace/arg_reduction.h``
+/// combiner: ``Last`` is a non-strict (``>=`` / ``<=``) guard, ties to the HIGHER index, which CUB's ArgMax / ArgMin
+/// cannot say.
+template <bool Max, bool Last>
+struct ArgPairOp {
+  template <typename T>
+  using Buf = ::dace::arg_pair<T, long long>;
+  struct Combine {
+    template <typename P>
+    __host__ __device__ __forceinline__ P operator()(const P& out, const P& in) const {
+      return ::dace::arg_combine<Max, Last>(out, in);
+    }
+  };
+  template <typename InIt, typename T>
+  static gpuError_t call(void* scratch, size_t& needed, InIt in, Buf<T>* out, long long items, gpuStream_t stream) {
+    Buf<T> neutral;
+    ::dace::arg_seed(neutral, Max, Last);
+    const GatherIterator<IndexedPair<InIt, T>> pairs{IndexedPair<InIt, T>{in, neutral}, 0};
+    return ::gpucub::DeviceReduce::Reduce(scratch, needed, pairs, out, items, Combine{}, neutral, stream);
+  }
+};
+
+template <typename T>
+inline void arg_answer(const ArgBuf<T>& got, T* val_out, long long* idx_out) {
+  if (val_out != nullptr) *val_out = got.value;
+  *idx_out = (long long)got.key;
+}
+template <typename T>
+inline void arg_answer(const ::dace::arg_pair<T, long long>& got, T* val_out, long long* idx_out) {
+  if (val_out != nullptr) *val_out = got.__ar_v;
+  *idx_out = got.__ar_i;
+}
+
 /// Arg-reduction over a device sequence, answered on the host. ``val_out`` may be null; ties break toward
-/// the lower index.
+/// the lower index, or the higher one under :struct:`ArgPairOp`.
 template <typename Op, typename InIt, typename T>
 inline gpuError_t arg_reduce(InIt in, T* val_out, long long* idx_out, long long items, gpuStream_t stream) {
+  using Buf = typename Op::template Buf<T>;
   size_t needed = 0;
-  gpuError_t status = Op::call(nullptr, needed, in, (ArgBuf<T>*)nullptr, items, stream);
+  gpuError_t status = Op::call(nullptr, needed, in, (Buf*)nullptr, items, stream);
   if (status != gpuSuccess) return status;
-  const size_t head = ((sizeof(ArgBuf<T>) + 255) / 256) * 256;
+  const size_t head = ((sizeof(Buf) + 255) / 256) * 256;
   void* scratch = get_scratch<ReduceTag>(head + needed, stream, &status);
   if (scratch == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;
-  ArgBuf<T>* dev = (ArgBuf<T>*)scratch;
+  Buf* dev = (Buf*)scratch;
   status = Op::call((char*)scratch + head, needed, in, dev, items, stream);
   if (status != gpuSuccess) return status;
-  ArgBuf<T> host;
-  status = gpuMemcpyAsync(&host, dev, sizeof(ArgBuf<T>), gpuMemcpyDeviceToHost, stream);
+  Buf host;
+  status = gpuMemcpyAsync(&host, dev, sizeof(Buf), gpuMemcpyDeviceToHost, stream);
   if (status != gpuSuccess) return status;
   status = gpuStreamSynchronize(stream);
   if (status != gpuSuccess) return status;
-  if (val_out != nullptr) *val_out = host.value;
-  *idx_out = (long long)host.key;
+  arg_answer(host, val_out, idx_out);
   return gpuSuccess;
 }
 

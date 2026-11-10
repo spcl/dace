@@ -4,14 +4,13 @@
 The sequential source ``if a[i] OP x: x = a[i]; index = i`` picks a different one
 of several equal extremes depending on the guard's strictness: a strict ``>`` /
 ``<`` never updates on a tie, so it keeps the FIRST occurrence; a non-strict
-``>=`` / ``<=`` DOES update, so it keeps the LAST. The lifted ``ArgReduce`` scans
-with a strict comparison (``_OP_CPP['max'] == '>'``) and so is first-occurrence
-only, while ``ArgMaxLift`` maps BOTH ``ast.Gt`` and ``ast.GtE`` to Max (see
-``CMP_AST_TO_RTYPE``).
+``>=`` / ``<=`` DOES update, so it keeps the LAST. The default ``ArgReduce`` scan
+(``tie='first'``) is strict and so first-occurrence only, while ``ArgMaxLift`` maps
+BOTH ``ast.Gt`` and ``ast.GtE`` to Max (see ``CMP_AST_TO_RTYPE``).
 
-ArgMaxLift resolves this by arg-reducing over the REVERSED gather for the
-non-strict shape (first-of-reversed == last-of-forward), so both forms lift and
-each keeps its own sequential tie semantics. These tests build argmax/argmin
+ArgMaxLift resolves this with ``ArgReduce(tie='last')`` for the non-strict shape, a
+forward scan with the same non-strict comparison, so both forms lift and each keeps
+its own sequential tie semantics, NaN data included. These tests build argmax/argmin
 loops over arrays whose extreme appears at MORE THAN ONE position and assert the
 lift fires and the value AND index are bit-exact with the sequential reference.
 """
@@ -196,9 +195,8 @@ def _build_strided_abs_argmax_index_sdfg(label: str, op: str):
 
 @pytest.mark.parametrize("op,expected_idx", [(">", 0), (">=", 4), ("<", 1), ("<=", 5)])
 def test_strided_abs_index_tie_breaking_s318(op, expected_idx):
-    """The strided abs+index path (TSVC s318) lifts under BOTH guards: the buffer
-    it materialises is filled in reverse iteration order for the non-strict guard,
-    so the ArgReduce's first-wins scan yields the sequential LAST occurrence."""
+    """The strided abs+index path (TSVC s318) lifts under BOTH guards and keeps each
+    guard's occurrence: FIRST for the strict one, LAST for the non-strict one."""
     from dace.libraries.standard.nodes import ArgReduce
 
     inc, n = 2, 6
@@ -355,8 +353,8 @@ def test_tie_break_knob_overrides_the_inferred_rule(op, knob, ref_op):
 @pytest.mark.parametrize("knob", ["first", "last"])
 def test_tie_break_knob_is_a_noop_for_the_value_only_shape(knob):
     """Without an index carrier the tie rule is unobservable -- both choices yield
-    the same extreme VALUE -- so ``last_wins`` stays False and the rewrite skips
-    the reversal whatever the knob says."""
+    the same extreme VALUE -- so ``last_wins`` stays False whatever the knob
+    says."""
 
     @dace.program
     def s314(a: dace.float64[N], result: dace.float64[1]):
@@ -370,7 +368,7 @@ def test_tie_break_knob_is_a_noop_for_the_value_only_shape(knob):
     loop = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable)
     m = ArgMaxLift(tie_break=knob)._match(loop, sdfg)
     assert m is not None and m.idx_carrier_name is None
-    assert m.last_wins is False, "no index tracked -> the tie rule is unobservable, so no reversal"
+    assert m.last_wins is False, "no index tracked -> the tie rule is unobservable"
 
 
 # Break / early-exit loops: refused, under EVERY tie rule.
@@ -583,13 +581,113 @@ def test_a_scan_starting_at_the_seed_element_is_lifted():
     assert result[0] == a.min()
 
 
+# NaN data: a comparison with NaN is false, so the loop keeps a NaN seed and never takes any other NaN.
+
+
+def _nan_cases(n):
+    base = np.round(2 * np.random.default_rng(0xB21 + n).standard_normal(n))
+    cases = {"ties": base}
+    for name, where in (("nan_first", [0]), ("nan_mid", [n // 2]), ("nan_last", [n - 1]), ("nan_odd", slice(1, n, 2))):
+        cases[name] = base.copy()
+        cases[name][where] = np.nan
+    return cases
+
+
+def _assert_lifted_without_a_reversed_copy(sdfg, tie):
+    from dace.libraries.standard.nodes import ArgReduce
+
+    assert _num_loops(sdfg) == 0, "the sequential loop must be gone"
+    (node,) = [nd for nd, _ in sdfg.all_nodes_recursive() if isinstance(nd, ArgReduce)]
+    assert node.tie == tie, f"the lift must ask the scan for tie={tie!r}, got {node.tie!r}"
+    copies = [name for sd in sdfg.all_sdfgs_recursive() for name, desc in sd.arrays.items() if desc.transient]
+    assert not [name for name in copies if "_rev" in name or "_argfi_buf" in name], f"reversed copies: {copies}"
+
+
+@pytest.mark.parametrize("op", [">", ">=", "<", "<="])
+def test_index_lift_follows_the_loop_on_nan_data(op):
+    tag = {">": "gt", ">=": "ge", "<": "lt", "<=": "le"}[op]
+    sdfg = _build_symbol_argmax_index_ge(f"nan_index_{tag}", op=op)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    _assert_lifted_without_a_reversed_copy(sdfg, "last" if op in (">=", "<=") else "first")
+    csdfg = sdfg.compile()
+    for n in (2, 9, 4097):
+        for name, a in _nan_cases(n).items():
+            exp_val, exp_idx = _sequential_argextreme(a, op)
+            val, idx = np.zeros(1), np.zeros(1, dtype=np.int64)
+            csdfg(a=a.copy(), result=val, idx_result=idx, N=n)
+            assert idx[0] == exp_idx and np.array_equal(val, [exp_val], equal_nan=True), (
+                f"{name} n={n} {op!r}: got ({val[0]}, {idx[0]}), the loop gives ({exp_val}, {exp_idx})"
+            )
+
+
+@pytest.mark.parametrize("op", [">", ">="])
+def test_strided_abs_index_lift_follows_the_loop_on_nan_data(op):
+    inc, n = 2, 9
+    sdfg = _build_strided_abs_argmax_index_sdfg(f"nan_s318_{'ge' if op == '>=' else 'gt'}", op=op)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    _assert_lifted_without_a_reversed_copy(sdfg, "last" if op == ">=" else "first")
+    csdfg = sdfg.compile()
+    for name, strided in _nan_cases(n).items():
+        a = np.zeros(inc * n)
+        a[::inc] = strided
+        exp_val, exp_idx = _sequential_argextreme(np.abs(strided), op)
+        val, idx = np.zeros(1), np.zeros(1, dtype=np.int64)
+        csdfg(a=a, result=val, idx_result=idx, N=n, inc=inc, AL=a.size)
+        assert idx[0] == exp_idx and np.array_equal(val, [exp_val], equal_nan=True), (
+            f"{name} {op!r}: got ({val[0]}, {idx[0]}), the loop gives ({exp_val}, {exp_idx})"
+        )
+
+
+MN = dace.symbol("MN")
+
+
+@dace.program
+def _nest_ge(aa: dace.float64[MN, MN], out: dace.float64[3]):
+    maxv = aa[0, 0]
+    xindex = 0
+    yindex = 0
+    for i in range(MN):
+        for j in range(MN):
+            if aa[i, j] >= maxv:
+                maxv = aa[i, j]
+                xindex = i
+                yindex = j
+    out[0] = maxv
+    out[1] = float(xindex)
+    out[2] = float(yindex)
+
+
+def test_2d_non_strict_nest_lift_follows_the_loop_on_nan_data():
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = _nest_ge.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, peel_limit=4)
+    _assert_lifted_without_a_reversed_copy(sdfg, "last")
+    csdfg = sdfg.compile()
+    m = 7
+    for name, flat in _nan_cases(m * m).items():
+        exp_val, exp_idx = _sequential_argextreme(flat, ">=")
+        out = np.zeros(3)
+        csdfg(aa=flat.reshape(m, m).copy(), out=out, MN=m)
+        got = (int(out[1]), int(out[2]))
+        assert got == divmod(exp_idx, m) and np.array_equal(out[:1], [exp_val], equal_nan=True), (
+            f"{name}: got {out}, the loop gives ({exp_val}, {divmod(exp_idx, m)})"
+        )
+
+
 if __name__ == "__main__":
     for _op, _idx in ((">", 0), (">=", 2), ("<", 1), ("<=", 3)):
         test_index_tie_breaking_matches_sequential(_op, _idx)
         test_index_lift_bit_exact_on_random_and_all_equal(_op)
+        test_index_lift_follows_the_loop_on_nan_data(_op)
     for _op, _idx in ((">", 0), (">=", 4), ("<", 1), ("<=", 5)):
         test_strided_abs_index_tie_breaking_s318(_op, _idx)
+    test_strided_abs_index_lift_follows_the_loop_on_nan_data(">")
+    test_strided_abs_index_lift_follows_the_loop_on_nan_data(">=")
     test_2d_index_tie_breaking_matches_sequential(">", True)
     test_2d_index_tie_breaking_matches_sequential(">=", False)
+    test_2d_non_strict_nest_lift_follows_the_loop_on_nan_data()
     test_a_scan_starting_at_the_seed_element_is_lifted()
     print("ok")

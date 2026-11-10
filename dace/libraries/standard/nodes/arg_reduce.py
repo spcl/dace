@@ -36,13 +36,14 @@ Expansions:
   ``dace::cub::gather_iterator``, so the same one streaming pass serves it
   without staging a copy.
 
-Tie-breaking matches the TSVC sequential source ``if a[i] OP best: best = a[i];
-idx = i`` -- a STRICT comparison, so the FIRST occurrence of the extreme value
-wins (a strictly-greater/lesser test never updates on a tie). Every parallel
-combine below therefore also breaks ties toward the LOWER index, which is what
-makes the answer independent of how the range was split. The ``_in`` index
-is slice-local (``0 .. N-1``); the lift adds the slice base to recover the
-original-array position.
+Tie-breaking matches the sequential source ``best = a[0]; if a[i] OP best: best = a[i];
+idx = i``. :attr:`ArgReduce.tie` names the guard: ``'first'`` a STRICT ``>`` / ``<`` (a tie never
+updates, the FIRST extreme wins), ``'last'`` a non-strict ``>=`` / ``<=`` (the LAST one wins). Every
+parallel combine breaks ties the same way, toward the lower or the higher index, which is what makes
+the answer independent of how the range was split. NaN follows the loop too: a comparison with NaN is
+false, so a NaN element is never taken and a NaN at position 0 (the seed) is never replaced. The
+``_in`` index is slice-local (``0 .. N-1``); the lift adds the slice base to recover the original-array
+position.
 """
 
 from collections.abc import Callable
@@ -61,8 +62,13 @@ from dace.transformation.transformation import ExpandTransformation
 
 _OP_CPP = {"max": ">", "min": "<"}
 #: The ``dace/cub_compat.cuh`` tag that picks the CUB routine, and with it the spelling that
-#: is not deprecated on the toolkit in front of us.
-_OP_TAG = {"max": "ArgMaxOp", "min": "ArgMinOp"}
+#: is not deprecated on the toolkit in front of us, by (op, tie).
+_OP_TAG = {
+    ("max", "first"): "ArgMaxOp",
+    ("min", "first"): "ArgMinOp",
+    ("max", "last"): "ArgPairOp<true, true>",
+    ("min", "last"): "ArgPairOp<false, true>",
+}
 #: Unary element transforms, spelled for C++. A closed map rather than a passthrough: the name
 #: reaches the generated source verbatim, so an unknown one must be refused, not pasted.
 #: ``std::abs``, not ``dace::math::abs``: the latter namespace holds only the ``typeless_nan``
@@ -157,6 +163,11 @@ def _writeback(has_val: bool) -> str:
     return ("_out_val = __ar_best.__ar_v;\n" if has_val else "") + "_out_idx = __ar_best.__ar_i;"
 
 
+def tie_suffix(node: "ArgReduce") -> str:
+    """``'_last'`` for a non-strict scan, which names the ``dace/arg_reduction.h`` step, combine and reduction."""
+    return "_last" if node.tie == "last" else ""
+
+
 def _connectors(has_val: bool):
     return dict.fromkeys(("_out_val", "_out_idx") if has_val else ("_out_idx",))
 
@@ -191,9 +202,10 @@ class ExpandArgReducePure(ExpandTransformation):
         seed = tasklet_state(
             nsdfg, "seed", f"v = {read.format('x')}\ni = 0", {"x": Memlet(element(nsdfg, "_in", "0"))}, best
         )
-        # A strict comparison keeps the FIRST extreme element, as the sequential source does.
+        # The guard of the sequential source: strict keeps the FIRST extreme element, non-strict the LAST.
+        compare = _OP_CPP[node.op] + ("=" if node.tie == "last" else "")
         step_code = (
-            f"c = {read.format('x')}\nif c {_OP_CPP[node.op]} v:\n    nv = c\n    ni = {SCAN_INDEX}\n"
+            f"c = {read.format('x')}\nif c {compare} v:\n    nv = c\n    ni = {SCAN_INDEX}\n"
             f"else:\n    nv = v\n    ni = i"
         )
         step = tasklet_state(
@@ -218,8 +230,10 @@ class ExpandArgReduceCPU(ExpandTransformation):
     """Parallel CPU lowering: the ``arg_max_pair`` / ``arg_min_pair`` OpenMP reductions over a (value, index) pair.
 
     argmax is associative on the PAIR, not on the value alone -- combining two partial results has
-    to carry the index that produced the winning value, and break ties toward the LOWER index so
-    the result matches the sequential scan element-for-element. A plain ``reduction(max:val)``
+    to carry the index that produced the winning value, and break ties toward the LOWER index (the
+    HIGHER one under ``tie='last'``) so the result matches the sequential scan element-for-element.
+    Threads start from the neutral pair, never from an element, so the only NaN pair is the seed
+    ``a[0]``, which the combiner keeps as the loop does. A plain ``reduction(max:val)``
     cannot express that. The pair, its per-thread step and the combiners are declared once, in
     ``dace/arg_reduction.h`` (and as CPF definitions); a complex value orders lexicographically.
 
@@ -237,12 +251,13 @@ class ExpandArgReduceCPU(ExpandTransformation):
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         in_dtype, it, n_str, read, has_val = _scan_context(node, parent_state, parent_sdfg)
         types = f"<{in_dtype.ctype}, {it}>"
+        kind = node.op + tie_suffix(node)
         # Seeded from element 0, the input slice is never empty; each thread starts from the neutral pair.
         code = (
             f"dace::arg_pair{types} __ar_best = dace::arg_pair_of{types}({read('0')}, 0);\n"
-            f"#pragma omp parallel for reduction(arg_{node.op}_pair : __ar_best)\n"
+            f"#pragma omp parallel for reduction(arg_{kind}_pair : __ar_best)\n"
             f"for ({it} __i = 1; __i < ({n_str}); ++__i) {{\n"
-            f"    __ar_best = dace::arg_{node.op}_step{types}(__ar_best, {read('__i')}, __i);\n"
+            f"    __ar_best = dace::arg_{kind}_step{types}(__ar_best, {read('__i')}, __i);\n"
             f"}}\n" + _writeback(has_val)
         )
         return nodes.Tasklet(
@@ -263,7 +278,9 @@ class ExpandArgReduceCUDA(ExpandTransformation):
     result buffer, and the copy back to the two host scalars. That is also where the toolkit split
     lives: CCCL 2.8 / hipCUB 4.0 deprecated CUB's ``KeyValuePair`` output in favour of two separate
     output iterators, and warnings are errors. ``ArgMax`` breaks ties toward the LOWER index, which
-    is the first-occurrence rule the sequential source has.
+    is the first-occurrence rule the sequential source has. ``tie='last'`` has no CUB routine, so it
+    folds (value, index) pairs with ``DeviceReduce::Reduce`` and the ``dace/arg_reduction.h``
+    combiner instead (``dace::cub::ArgPairOp``).
     """
 
     # Filled in on first expansion to dodge the sort<->standard import cycle.
@@ -316,7 +333,7 @@ class ExpandArgReduceCUDA(ExpandTransformation):
             # No ``DACE_GPU_CHECK`` in this body: the macro reports through ``__state``, which a
             # free function in the CUDA unit does not have. The status is returned to the host
             # tasklet instead, and the ``DACE_GPU_CHECK`` around the call there reports it.
-            f"    return ::dace::cub::arg_reduce<::dace::cub::{_OP_TAG[node.op]}>("
+            f"    return ::dace::cub::arg_reduce<::dace::cub::{_OP_TAG[node.op, node.tie]}>("
             f"{operand}, __ar_val, __ar_idx, __ar_items, __ar_stream);\n"
             f"}}\n",
             "cuda",
@@ -345,9 +362,10 @@ class ExpandArgReduceCUDA(ExpandTransformation):
 class ExpandArgReduceCUDABlock(ExpandTransformation):
     """In-kernel lowering: one thread block scans the slice, then ``gpucub::BlockReduce`` folds the pairs.
 
-    Each lane keeps the first extreme of its block-strided elements; the pair fold breaks ties toward the
-    lower index (``dace::arg_max_combine``), so the answer is the sequential one. A lane past the end holds
-    index ``-1`` and loses every fold. Every lane receives both answers.
+    Each lane keeps the first (``tie='last'``: the last) extreme of its block-strided elements; the pair fold
+    breaks ties the same way (``dace::arg_max_combine``), so the answer is the sequential one. A lane past the end
+    holds index ``-1`` and loses every fold. A NaN past position 0 does not start a lane, as the loop never takes
+    one. Every lane receives both answers.
     """
 
     runs_inside_kernel = True
@@ -382,18 +400,19 @@ class ExpandArgReduceCUDABlock(ExpandTransformation):
         pair = f"dace::arg_pair<{vt}, {it}>"
         fn = _transform_spelling(node.transform, in_desc.dtype)
         element = f"__arin[__ari * ({symbolic.symstr(in_desc.strides[0])})]"
+        kind = node.op + tie_suffix(node)
         idstr = global_code_id(parent_sdfg, parent_state, node)
         fold = (
             f"[] (const {pair} &__arl, const {pair} &__arr) {{ return __arl.__ar_i < 0 ? __arr : "
-            f"(__arr.__ar_i < 0 ? __arl : dace::arg_{node.op}_combine(__arl, __arr)); }}"
+            f"(__arr.__ar_i < 0 ? __arl : dace::arg_{kind}_combine(__arl, __arr)); }}"
         )
         code = (
             f"{pair} __ar_best = {{{vt}(), ({it})-1}};\n"
             f"for (long long __ari = threadIdx.x; __ari < (long long)({symbolic.symstr(_count(edges['_in']))}); "
             f"__ari += {BLOCK_LANES}) {{\n"
             f"    const {vt} __arx = {element if fn is None else f'{fn}({element})'};\n"
-            f"    if (__ar_best.__ar_i < 0) __ar_best = {{__arx, ({it})__ari}};\n"
-            f"    else __ar_best = dace::arg_{node.op}_step(__ar_best, __arx, ({it})__ari);\n"
+            f"    if (__ar_best.__ar_i >= 0) __ar_best = dace::arg_{kind}_step(__ar_best, __arx, ({it})__ari);\n"
+            f"    else if (__ari == 0 || __arx == __arx) __ar_best = {{__arx, ({it})__ari}};\n"
             f"}}\n"
             + block_allreduce_code(idstr, pair, BLOCK_LANES, "__ar_best", fold, "__ar_best")
             + "\n"
@@ -467,14 +486,27 @@ class ArgReduce(nodes.LibraryNode):
         "arg-reduce over f(a[...]) without materialising f(a[...]) first.",
     )
 
-    def __init__(self, name: str, op: str = "max", transform: str = "", location: str | None = None):
+    tie = properties.Property(
+        dtype=str,
+        default="first",
+        choices={"first", "last"},
+        desc="Which of equal extremes wins: 'first' (a strict `>` / `<` loop guard) or 'last' (a non-strict "
+        "`>=` / `<=` one).",
+    )
+
+    def __init__(
+        self, name: str, op: str = "max", transform: str = "", location: str | None = None, tie: str = "first"
+    ):
         if op not in _OP_CPP:
             raise ValueError(f"ArgReduce: op must be 'max' or 'min', got {op!r}")
         if transform not in _TRANSFORM_CPP:
             raise ValueError(f"ArgReduce: transform must be one of {sorted(_TRANSFORM_CPP)}, got {transform!r}")
+        if tie not in ("first", "last"):
+            raise ValueError(f"ArgReduce: tie must be 'first' or 'last', got {tie!r}")
         super().__init__(name, location=location, inputs={"_in"}, outputs=OrderedSet(("_out_val", "_out_idx")))
         self.op = op
         self.transform = transform
+        self.tie = tie
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Require ``_in`` and ``_out_idx``; ``_out_val`` is optional.

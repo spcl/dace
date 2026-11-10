@@ -269,8 +269,8 @@ def test_3d_argmax_nest_lifts_to_one_flat_argreduce_and_keeps_the_first_maximum(
 
 
 def test_4d_argmax_nest_with_a_non_strict_guard_keeps_the_last_maximum():
-    """A 4-D nest under ``>=`` keeps the LAST of equal maxima in row-major order; the lift reverses the flat order
-    and maps the position back, through all four indices."""
+    """A 4-D nest under ``>=`` keeps the LAST of equal maxima in row-major order; the lift scans with ``tie='last'``
+    and decomposes the flat position through all four indices."""
 
     @dace.program
     def argmax4d_last(aa: dace.float64[P, Q, R, S], out: dace.float64[5]):

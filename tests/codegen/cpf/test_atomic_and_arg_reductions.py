@@ -96,13 +96,13 @@ def test_a_conflicting_complex_sum_is_one_atomic_per_component(language):
     assert np.allclose(out, expected, rtol=1e-12)
 
 
-def arg_reduce_sdfg(name: str, op: str, dtype: dace.typeclass) -> dace.SDFG:
+def arg_reduce_sdfg(name: str, op: str, dtype: dace.typeclass, tie: str = "first") -> dace.SDFG:
     sdfg = dace.SDFG(name)
     sdfg.add_array("a", [N], dtype)
     sdfg.add_array("val", [1], dtype)
     sdfg.add_array("idx", [1], dace.int64)
     state = sdfg.add_state()
-    node = ArgReduce("argreduce", op=op)
+    node = ArgReduce("argreduce", op=op, tie=tie)
     state.add_node(node)
     state.add_edge(state.add_read("a"), None, node, "_in", dace.Memlet("a[0:N]"))
     state.add_edge(node, "_out_val", state.add_write("val"), None, dace.Memlet("val[0]"))
@@ -113,20 +113,26 @@ def arg_reduce_sdfg(name: str, op: str, dtype: dace.typeclass) -> dace.SDFG:
 @pytest.mark.parametrize("language", ["c", "c++"])
 @pytest.mark.parametrize("op", ["max", "min"])
 @pytest.mark.parametrize("dtype", [dace.float64, dace.int32, dace.complex128], ids=str)
-def test_argmax_and_argmin_reduce_through_the_declared_pair_and_keep_the_first_extreme(language, op, dtype):
-    sdfg = arg_reduce_sdfg(f"cpf_arg_{op}_{dtype.to_string()}_{'c' if language == 'c' else 'cpp'}", op, dtype)
+@pytest.mark.parametrize("tie", ["first", "last"])
+def test_argmax_and_argmin_reduce_through_the_declared_pair_and_keep_the_tied_extreme(language, op, dtype, tie):
+    lang = "c" if language == "c" else "cpp"
+    sdfg = arg_reduce_sdfg(f"cpf_arg_{op}_{dtype.to_string()}_{tie}_{lang}", op, dtype, tie)
     rng = np.random.default_rng(3)
     a = (rng.integers(0, 50, size=SIZE) + (1j * rng.integers(0, 50, size=SIZE) if dtype.is_complex() else 0)).astype(
         dtype.type
     )
-    # Two copies of the extreme, far apart: the lower index must win however the threads split the range.
+    # Two copies of the extreme, far apart: the tie rule must win however the threads split the range.
     extreme = a.max() if op == "max" else a.min()
     a[SIZE - 3] = extreme
+    if dtype == dace.float64:
+        a[1::2] = np.nan  # every thread's chunk starts at a NaN, which the loop never takes
     val, idx = np.zeros(1, dtype=dtype.type), np.zeros(1, dtype=np.int64)
 
     code = rendered_run(sdfg, language, {"a": a, "val": val, "idx": idx, "N": SIZE})
 
-    assert f"reduction(arg_{op}_pair : __ar_best)" in code and "critical" not in code, code
+    kind = op if tie == "first" else f"{op}_last"
+    assert f"reduction(arg_{kind}_pair : __ar_best)" in code and "critical" not in code, code
     assert "omp_orig" not in code, "icx 2026.2 at -O2 loses a thread's update on a reduction seeded from omp_orig"
-    expected = int(np.argmax(a) if op == "max" else np.argmin(a))
+    hits = np.flatnonzero(a == (a[~np.isnan(a)].max() if op == "max" else a[~np.isnan(a)].min()))
+    expected = int(hits[0] if tie == "first" else hits[-1])
     assert idx[0] == expected and val[0] == a[expected]
