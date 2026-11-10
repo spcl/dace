@@ -29,6 +29,28 @@ def _get_or_eval_sdfg_first_arg(func, sdfg):
     return func
 
 
+def constant_as_stored(desc: data.Array, value: Any) -> np.ndarray:
+    """The elements of constant ``value`` in the order ``desc`` lays them out in memory.
+
+    ``value`` holds the elements by index, and the code reads element ``i`` at ``sum(i * strides)``: a Fortran-ordered
+    constant written in index order reads its transpose. A value that is not of the descriptor's shape, or a
+    descriptor with symbolic strides, is written in index order.
+    """
+    value = np.asarray(value)
+    try:
+        shape = tuple(int(extent) for extent in desc.shape)
+        strides = tuple(int(stride) for stride in desc.strides)
+        size = int(desc.total_size)
+    except TypeError:
+        return value
+    if value.shape != shape or not value.size:
+        return value
+    offsets = sum(index * stride for index, stride in zip(np.indices(shape), strides))
+    stored = np.zeros(max(size, int(offsets.max()) + 1), dtype=value.dtype)
+    stored[offsets] = value
+    return stored
+
+
 class DaCeCodeGenerator:
     """DaCe code generator class that writes the generated code for SDFG
     state machines, and uses a dispatcher to generate code for
@@ -154,12 +176,9 @@ class DaCeCodeGenerator:
         # Write constants
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, data.Array):
-                const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(cstval.size) + "] = {"
-                it = np.nditer(cstval, order="C")
-                for i in range(cstval.size - 1):
-                    const_str += str(it[0]) + ", "
-                    it.iternext()
-                const_str += str(it[0]) + "};\n"
+                stored = constant_as_stored(csttype, cstval)
+                const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(stored.size) + "] = {"
+                const_str += ", ".join(str(value) for value in stored.flat) + "};\n"
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write(f"constexpr {csttype.dtype.ctype} {cstname} = {sym2cpp(cstval)};\n", sdfg)
@@ -1105,6 +1124,15 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
+                # Further loop-carried symbols defined by the init statement (e.g. address cursors)
+                for name, rhs in loop_analysis.get_assignments(cfr.init_statement).items():
+                    if name == cfr.loop_variable or name in interstate_symbols:
+                        continue
+                    if name in global_symbols:
+                        interstate_symbols[name] = global_symbols[name]
+                    else:
+                        interstate_symbols[name] = infer_expr_type(rhs, global_symbols)
+                        global_symbols[name] = interstate_symbols[name]
 
             for e in cfr.dfs_edges(cfr.start_block):
                 symbols = e.data.new_symbols(sdfg, global_symbols)

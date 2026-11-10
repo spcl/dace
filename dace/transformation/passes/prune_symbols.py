@@ -43,7 +43,8 @@ class RemoveUnusedSymbols(ppl.Pass):
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
                                  pipeline, an empty dictionary is expected.
         :param initial_symbols: If not None, sets values of initial symbols.
-        :return: A set of propagated constants, or None if nothing was changed.
+        :return: The symbols removed; an empty set when only dead interstate assignments were deleted; ``None``
+                 only when the SDFG is untouched, since pipelines read ``None`` as "not modified".
         """
         result: set[str] = set()
 
@@ -53,10 +54,12 @@ class RemoveUnusedSymbols(ppl.Pass):
         used_symbols = self.used_symbols(sdfg)
 
         # Remove unused symbols from interstate edge assignments.
+        modified = False
         for isedge in sdfg.all_interstate_edges():
             edge_symbols_to_consider = set(isedge.data.assignments.keys())
             for sym in edge_symbols_to_consider - used_symbols:
                 del isedge.data.assignments[sym]
+                modified = True
 
         # Remove unused symbols from the SDFG's symbols repository.
         for sym in repository_symbols_to_consider - used_symbols:
@@ -76,11 +79,15 @@ class RemoveUnusedSymbols(ppl.Pass):
                         self.symbols = set()
                         nres = self.apply_pass(node.sdfg, _)
                         self.symbols = old_symbols
-                        if nres:
+                        # An empty set still means the nested run modified something
+                        if nres is not None:
+                            modified = True
                             result.update(nres)
 
         # Return result
-        return result or None
+        if result:
+            return result
+        return set() if modified else None
 
     def report(self, pass_retval: set[str]) -> str:
         return f"Removed {len(pass_retval)} unused symbols: {pass_retval}."

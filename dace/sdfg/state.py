@@ -799,11 +799,12 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             update = {k: v for k, v in update.items() if v is not None}
             dic.update(update)
 
-        # Add data-descriptor free symbols
+        # Add data-descriptor free symbols the SDFG does not declare: a declaration wins over the type of the symbol
+        # object a shape holds
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 if sym.dtype is not None:
-                    defined_syms[str(sym)] = sym.dtype
+                    defined_syms.setdefault(str(sym), sym.dtype)
 
         # Add inter-state symbols
         try:
@@ -4125,8 +4126,12 @@ class LoopRegion(ControlFlowRegion):
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
         if self.init_statement is not None:
-            # Loops with no initialization statement do not redefine the loop variable
+            # Loops with no initialization statement do not redefine the loop variable. The init statement may
+            # also define further loop-carried symbols (e.g. address cursors), one assignment per statement.
             defined_syms.add(self.loop_variable)
+            for stmt in self.init_statement.code if isinstance(self.init_statement.code, list) else []:
+                if isinstance(stmt, ast.Assign):
+                    defined_syms.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
 
             free_syms |= self.init_statement.get_free_symbols()
         if self.update_statement is not None:

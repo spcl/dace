@@ -71,7 +71,7 @@ def test_a_stream_reset_is_ordered_against_the_pushes_of_its_state():
         after = code[reset.end() :]
         push = after.find(f"{reset.group(1)}.push(")
         assert push != -1, f"stream {reset.group(1)} is reset but never pushed to"
-        barrier = after.find("__gbar.Sync();")
+        barrier = after.find("cooperative_groups::this_grid().sync();")
         assert barrier != -1 and barrier < push, (
             f"stream {reset.group(1)} is pushed to without a grid barrier after its reset: a block "
             "that enters the state late rewinds the queue head under a block that already pushed"
