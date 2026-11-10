@@ -124,6 +124,17 @@ theorem foldlM {τ : Type} {f₂ : α → τ → Res α} {f₁ : β → τ → R
     simp only [List.foldlM_cons]
     exact bind (hf x _ _ h) fun a' b' h' => foldlM hf xs h'
 
+/-- Simulation along a `foldlM` over the same list, knowing the element is a
+member. -/
+theorem foldlM_mem {τ : Type} {f₂ : α → τ → Res α} {f₁ : β → τ → Res β} :
+    ∀ (xs : List τ), (∀ x ∈ xs, ∀ a b, R a b → ResSim R (f₂ a x) (f₁ b x)) → ∀ {a : α} {b : β}, R a b →
+      ResSim R (xs.foldlM f₂ a) (xs.foldlM f₁ b)
+  | [], _, _, _, h => ok h
+  | x :: xs, hf, _, _, h => by
+    simp only [List.foldlM_cons]
+    exact bind (hf x List.mem_cons_self _ _ h) fun _ _ h' =>
+      foldlM_mem xs (fun y hy => hf y (List.mem_cons_of_mem _ hy)) h'
+
 theorem bindEq {r₂ r₁ : Res α} {f₂ : α → Res γ} {f₁ : α → Res δ} (h : ResSim Eq r₂ r₁)
     (hf : ∀ a, ResSim S (f₂ a) (f₁ a)) : ResSim S (r₂ >>= f₂) (r₁ >>= f₁) :=
   bind h fun a b hab => hab ▸ hf a
@@ -1283,55 +1294,27 @@ theorem bindInputs_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n : DNode
     (h : St.Sim π P L st₂ st₁) :
     ResSim (St.SimR π P L) (bindInputs ctx₂ ρ s n st₂) (bindInputs ctx₁ ρ s n st₁) := by
   unfold bindInputs
-  have hfold : ∀ (es : List DEdge), (∀ e ∈ es, e ∈ s.edges) → ∀ {a : List (Conn × ConnIn) × St}
-      {b : List (Conn × ConnIn) × St}, St.SimR π P L a b →
-      ResSim (St.SimR π P L)
-        (es.foldlM (fun (acc, st) e =>
-          match e.data with
-          | .dep => pure (acc, st)
-          | .memlet _ => do
-            let (ci, st) ← bindIn ctx₂ ρ s e st
-            match ci with
-            | some c => pure (acc ++ [(e.dstConn.getD "", c)], st)
-            | none => pure (acc, st)) a)
-        (es.foldlM (fun (acc, st) e =>
-          match e.data with
-          | .dep => pure (acc, st)
-          | .memlet _ => do
-            let (ci, st) ← bindIn ctx₁ ρ s e st
-            match ci with
-            | some c => pure (acc ++ [(e.dstConn.getD "", c)], st)
-            | none => pure (acc, st)) b) := by
-    intro es hes
-    induction es with
-    | nil => intro a b hab; exact ResSim.ok hab
-    | cons e es ih =>
-      intro a b hab
-      obtain ⟨acc₂, a₂⟩ := a
-      obtain ⟨acc₁, a₁⟩ := b
-      obtain ⟨hacc, ha⟩ := hab
-      simp only at hacc ha
-      subst hacc
-      simp only [List.foldlM_cons]
-      refine ResSim.bind (R := St.SimR π P L) ?_ fun x y hxy => ih (fun e' he' => hes e' (List.mem_cons_of_mem _ he')) hxy
-      split
-      · exact ResSim.ok ⟨rfl, ha⟩
-      · refine ResSim.bind (bindIn_sim hc ρ hS (hes e List.mem_cons_self) ha) fun x y hxy => ?_
-        obtain ⟨c₂, a₂'⟩ := x
-        obtain ⟨c₁, a₁'⟩ := y
-        obtain ⟨hv, hs⟩ := hxy
-        simp only at hv hs ⊢
-        subst hv
-        split
-        · exact ResSim.ok ⟨rfl, hs⟩
-        · exact ResSim.ok ⟨rfl, hs⟩
-  refine ResSim.bind (hfold _ (fun e he => State.mem_inEdges he) ⟨rfl, h⟩) fun x y hxy => ?_
-  obtain ⟨bs₂, a₂⟩ := x
-  obtain ⟨bs₁, a₁⟩ := y
-  obtain ⟨hv, hs⟩ := hxy
-  simp only at hv hs ⊢
-  subst hv
-  exact ResSim.ok ⟨rfl, hs⟩
+  refine ResSim.bind (ResSim.foldlM_mem (R := St.SimR π P L) _ (fun e he a b hab => ?_) ⟨rfl, h⟩) fun x y hxy => ?_
+  · obtain ⟨acc₂, a₂⟩ := a
+    obtain ⟨acc₁, a₁⟩ := b
+    obtain ⟨hacc, ha⟩ := hab
+    simp only at hacc ha ⊢
+    subst hacc
+    split
+    · exact ResSim.ok ⟨rfl, ha⟩
+    · refine ResSim.bind (bindIn_sim hc ρ hS (State.mem_inEdges he) ha) fun x y hxy => ?_
+      obtain ⟨c₂, a₂'⟩ := x
+      obtain ⟨c₁, a₁'⟩ := y
+      obtain ⟨hv, hs⟩ := hxy
+      simp only at hv hs ⊢
+      subst hv
+      split <;> exact ResSim.ok ⟨rfl, hs⟩
+  · obtain ⟨bs₂, a₂⟩ := x
+    obtain ⟨bs₁, a₁⟩ := y
+    obtain ⟨hv, hs⟩ := hxy
+    simp only at hv hs ⊢
+    subst hv
+    exact ResSim.ok ⟨rfl, hs⟩
 
 include hu
 
@@ -1348,39 +1331,16 @@ theorem applyScalar_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n : DNod
     (h : St.Sim π P L st₂ st₁) (c : Conn) (v : Val) :
     ResSim (St.Sim π P L) (applyScalar ctx₂ ρ s n st₂ c v) (applyScalar ctx₁ ρ s n st₁ c v) := by
   unfold applyScalar
-  suffices ∀ es : List DEdge, (∀ e ∈ es, e ∈ s.edges) → ∀ {a b : St}, St.Sim π P L a b →
-      ResSim (St.Sim π P L) (es.foldlM (fun st e =>
-        match e.data with
-        | .dep => pure st
-        | .memlet m =>
-          match s.dstEndpoint e with
-          | .code key => pure (st.setVal key v)
-          | .data d sub => storeScalar ctx₂ ρ st d sub m.wcr m.allowOob v
-          | _ => .err (.malformed s!"output connector '{c}' without a valid destination")) a)
-        (es.foldlM (fun st e =>
-        match e.data with
-        | .dep => pure st
-        | .memlet m =>
-          match s.dstEndpoint e with
-          | .code key => pure (st.setVal key v)
-          | .data d sub => storeScalar ctx₁ ρ st d sub m.wcr m.allowOob v
-          | _ => .err (.malformed s!"output connector '{c}' without a valid destination")) b) from
-    this _ (fun e he => State.edge_of_outEdgesOn he) h
-  intro es hes
-  induction es with
-  | nil => intro a b hab; exact ResSim.ok hab
-  | cons e es ih =>
-    intro a b hab
-    simp only [List.foldlM_cons]
-    refine ResSim.bind ?_ fun x y hxy => ih (fun e' he' => hes e' (List.mem_cons_of_mem _ he')) hxy
-    split
-    · exact ResSim.ok hab
-    · split
-      · exact ResSim.ok (hab.setVal _ v)
-      · rename_i d sub hdst
-        obtain ⟨hd, hs⟩ := hS.dst (hes e List.mem_cons_self) hdst
-        exact storeScalar_sim hc ρ hu hab hd sub hs _ _ v
-      · exact ResSim.err _
+  refine ResSim.foldlM_mem _ (fun e he a b hab => ?_) h
+  beta_reduce
+  split
+  · exact ResSim.ok hab
+  · split
+    · exact ResSim.ok (hab.setVal _ v)
+    · rename_i d sub hdst
+      obtain ⟨hd, hs⟩ := hS.dst (State.edge_of_outEdgesOn he) hdst
+      exact storeScalar_sim hc ρ hu hab hd sub hs _ _ v
+    · exact ResSim.err _
 
 theorem storeArrayWrite_sim {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) {d : Name} (hd : Ctx.Strong π P ctx₂ ctx₁ d)
     (sub : Option Subset) (hs : ∀ x ∈ optSubsetNames sub, Ctx.Good₀ π P ctx₂ ctx₁ x)
@@ -1396,36 +1356,15 @@ theorem applyArrayWrite_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n : 
     (h : St.Sim π P L st₂ st₁) (c : Conn) (rel : Idx) (v : Val) :
     ResSim (St.Sim π P L) (applyArrayWrite ctx₂ ρ s n st₂ c rel v) (applyArrayWrite ctx₁ ρ s n st₁ c rel v) := by
   unfold applyArrayWrite
-  suffices ∀ es : List DEdge, (∀ e ∈ es, e ∈ s.edges) → ∀ {a b : St}, St.Sim π P L a b →
-      ResSim (St.Sim π P L) (es.foldlM (fun st e =>
-        match e.data with
-        | .dep => pure st
-        | .memlet m =>
-          match s.dstEndpoint e with
-          | .data d sub => storeArrayWrite ctx₂ ρ st d sub m.wcr m.allowOob rel v
-          | _ => .err (.malformed s!"array write through connector '{c}' to a non-container")) a)
-        (es.foldlM (fun st e =>
-        match e.data with
-        | .dep => pure st
-        | .memlet m =>
-          match s.dstEndpoint e with
-          | .data d sub => storeArrayWrite ctx₁ ρ st d sub m.wcr m.allowOob rel v
-          | _ => .err (.malformed s!"array write through connector '{c}' to a non-container")) b) from
-    this _ (fun e he => State.edge_of_outEdgesOn he) h
-  intro es hes
-  induction es with
-  | nil => intro a b hab; exact ResSim.ok hab
-  | cons e es ih =>
-    intro a b hab
-    simp only [List.foldlM_cons]
-    refine ResSim.bind ?_ fun x y hxy => ih (fun e' he' => hes e' (List.mem_cons_of_mem _ he')) hxy
-    split
-    · exact ResSim.ok hab
-    · split
-      · rename_i d sub hdst
-        obtain ⟨hd, hs⟩ := hS.dst (hes e List.mem_cons_self) hdst
-        exact storeArrayWrite_sim hc ρ hu hab hd sub hs _ _ rel v
-      · exact ResSim.err _
+  refine ResSim.foldlM_mem _ (fun e he a b hab => ?_) h
+  beta_reduce
+  split
+  · exact ResSim.ok hab
+  · split
+    · rename_i d sub hdst
+      obtain ⟨hd, hs⟩ := hS.dst (State.edge_of_outEdgesOn he) hdst
+      exact storeArrayWrite_sim hc ρ hu hab hd sub hs _ _ rel v
+    · exact ResSim.err _
 
 omit hu in
 theorem pushTo_sim {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) {d : Name} (hd : Ctx.Strong π P ctx₂ ctx₁ d)
@@ -1441,28 +1380,13 @@ theorem applyPush_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n : DNode)
     (h : St.Sim π P L st₂ st₁) (c : Conn) (vs : List Val) :
     ResSim (St.Sim π P L) (applyPush ctx₂ ρ s n st₂ c vs) (applyPush ctx₁ ρ s n st₁ c vs) := by
   unfold applyPush
-  suffices ∀ es : List DEdge, (∀ e ∈ es, e ∈ s.edges) → ∀ {a b : St}, St.Sim π P L a b →
-      ResSim (St.Sim π P L) (es.foldlM (fun st e =>
-        match s.dstEndpoint e with
-        | .data d sub => pushTo ctx₂ ρ st d sub vs
-        | _ => .err (.malformed s!"push through connector '{c}' to a non-container")) a)
-        (es.foldlM (fun st e =>
-        match s.dstEndpoint e with
-        | .data d sub => pushTo ctx₁ ρ st d sub vs
-        | _ => .err (.malformed s!"push through connector '{c}' to a non-container")) b) from
-    this _ (fun e he => State.edge_of_outEdgesOn he) h
-  intro es hes
-  induction es with
-  | nil => intro a b hab; exact ResSim.ok hab
-  | cons e es ih =>
-    intro a b hab
-    simp only [List.foldlM_cons]
-    refine ResSim.bind ?_ fun x y hxy => ih (fun e' he' => hes e' (List.mem_cons_of_mem _ he')) hxy
-    split
-    · rename_i d sub hdst
-      obtain ⟨hd, hs⟩ := hS.dst (hes e List.mem_cons_self) hdst
-      exact pushTo_sim hc ρ hab hd sub hs vs
-    · exact ResSim.err _
+  refine ResSim.foldlM_mem _ (fun e he a b hab => ?_) h
+  beta_reduce
+  split
+  · rename_i d sub hdst
+    obtain ⟨hd, hs⟩ := hS.dst (State.edge_of_outEdgesOn he) hdst
+    exact pushTo_sim hc ρ hab hd sub hs vs
+  · exact ResSim.err _
 
 omit hu in
 theorem popFrom_sim {st₂ st₁ : St} (h : St.Sim π P L st₂ st₁) {d : Name} (hd : Ctx.Strong π P ctx₂ ctx₁ d)
@@ -1759,50 +1683,19 @@ theorem execCopiesInto_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n : D
     (h : St.Sim π P L st₂ st₁) :
     ResSim (St.Sim π P L) (execCopiesInto ctx₂ ρ s n st₂) (execCopiesInto ctx₁ ρ s n st₁) := by
   unfold execCopiesInto
-  suffices ∀ es : List DEdge, (∀ e ∈ es, e ∈ s.edges) → ∀ {a b : St}, St.Sim π P L a b →
-      ResSim (St.Sim π P L) (es.foldlM (fun st e =>
-        match e.data with
-        | .dep => pure st
-        | .memlet _ =>
-          if ctx₂.isViewDef s e || s.isRouting e then pure st
-          else
-            match refSetTarget? ctx₂ s e with
-            | some d => refSet ctx₂ ρ s e d st
-            | none =>
-              match s.srcEndpoint e with
-              | .data _ _ => execCopy ctx₂ ρ s e st
-              | _ => pure st) a)
-        (es.foldlM (fun st e =>
-        match e.data with
-        | .dep => pure st
-        | .memlet _ =>
-          if ctx₁.isViewDef s e || s.isRouting e then pure st
-          else
-            match refSetTarget? ctx₁ s e with
-            | some d => refSet ctx₁ ρ s e d st
-            | none =>
-              match s.srcEndpoint e with
-              | .data _ _ => execCopy ctx₁ ρ s e st
-              | _ => pure st) b) from
-    this _ (fun e he => State.mem_inEdges he) h
-  intro es hes
-  induction es with
-  | nil => intro a b hab; exact ResSim.ok hab
-  | cons e es ih =>
-    intro a b hab
-    simp only [List.foldlM_cons]
-    refine ResSim.bind ?_ fun x y hxy => ih (fun e' he' => hes e' (List.mem_cons_of_mem _ he')) hxy
-    have he := hes e List.mem_cons_self
+  refine ResSim.foldlM_mem _ (fun e he a b hab => ?_) h
+  have he := State.mem_inEdges he
+  beta_reduce
+  split
+  · exact ResSim.ok hab
+  · rw [hS.isViewDef, hS.refSetTarget?]
+    refine ResSim.ite (c := ctx₁.isViewDef s e || s.isRouting e) (fun _ => ResSim.ok hab) (fun _ => ?_)
     split
-    · exact ResSim.ok hab
-    · rw [hS.isViewDef, hS.refSetTarget?]
-      refine ResSim.ite (c := ctx₁.isViewDef s e || s.isRouting e) (fun _ => ResSim.ok hab) (fun _ => ?_)
-      split
-      · rename_i d hd
-        exact refSet_sim hc ρ hS he (hS.data d (refSetTarget?_names hd)) hab
-      · split
-        · exact execCopy_sim hc ρ hu hS he hab
-        · exact ResSim.ok hab
+    · rename_i d hd
+      exact refSet_sim hc ρ hS he (hS.data d (refSetTarget?_names hd)) hab
+    · split
+      · exact execCopy_sim hc ρ hu hS he hab
+      · exact ResSim.ok hab
 
 include hu in
 theorem execSimple_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) {n : DNode} (hn : n ∈ s.nodes) {st₂ st₁ : St}
@@ -1828,53 +1721,23 @@ theorem bindDynamicInputs_sim {s : State} (hS : SNames π P ctx₂ ctx₁ s) (n 
     (h : St.Sim π P L st₂ st₁) :
     ResSim (St.SimR π P L) (bindDynamicInputs ctx₂ ρ s n st₂) (bindDynamicInputs ctx₁ ρ s n st₁) := by
   unfold bindDynamicInputs
-  suffices ∀ es : List DEdge, (∀ e ∈ es, e ∈ s.edges) → ∀ {a b : Valuation × St}, St.SimR π P L a b →
-      ResSim (St.SimR π P L) (es.foldlM (fun (ρ, st) e =>
-        if s.isDynamicInput e then
-          match e.data, e.dstConn with
-          | .memlet _, some c => do
-            let (v?, st) ← readEdgeScalar ctx₂ ρ s e st
-            match v? with
-            | some v => pure (Valuation.set ρ c v, st)
-            | none => pure (ρ, st)
-          | _, _ => pure (ρ, st)
-        else pure (ρ, st)) a)
-        (es.foldlM (fun (ρ, st) e =>
-        if s.isDynamicInput e then
-          match e.data, e.dstConn with
-          | .memlet _, some c => do
-            let (v?, st) ← readEdgeScalar ctx₁ ρ s e st
-            match v? with
-            | some v => pure (Valuation.set ρ c v, st)
-            | none => pure (ρ, st)
-          | _, _ => pure (ρ, st)
-        else pure (ρ, st)) b) from
-    this _ (fun e he => State.mem_inEdges he) ⟨rfl, h⟩
-  intro es hes
-  induction es with
-  | nil => intro a b hab; exact ResSim.ok hab
-  | cons e es ih =>
-    intro a b hab
-    obtain ⟨ρ₂, a₂⟩ := a
-    obtain ⟨ρ₁, a₁⟩ := b
-    obtain ⟨hρ, ha⟩ := hab
-    simp only at hρ ha
-    subst hρ
-    simp only [List.foldlM_cons]
-    refine ResSim.bind ?_ fun x y hxy => ih (fun e' he' => hes e' (List.mem_cons_of_mem _ he')) hxy
-    split
-    · split
-      · refine ResSim.bind (readEdgeScalar_sim hc ρ₂ hS (hes e List.mem_cons_self) ha) fun x y hxy => ?_
-        obtain ⟨v₂, b₂⟩ := x
-        obtain ⟨v₁, b₁⟩ := y
-        obtain ⟨hv, hs⟩ := hxy
-        simp only at hv hs ⊢
-        subst hv
-        split
-        · exact ResSim.ok ⟨rfl, hs⟩
-        · exact ResSim.ok ⟨rfl, hs⟩
-      · exact ResSim.ok ⟨rfl, ha⟩
+  refine ResSim.foldlM_mem (R := St.SimR π P L) _ (fun e he a b hab => ?_) ⟨rfl, h⟩
+  obtain ⟨ρ₂, a₂⟩ := a
+  obtain ⟨ρ₁, a₁⟩ := b
+  obtain ⟨hρ, ha⟩ := hab
+  simp only at hρ ha ⊢
+  subst hρ
+  split
+  · split
+    · refine ResSim.bind (readEdgeScalar_sim hc ρ₂ hS (State.mem_inEdges he) ha) fun x y hxy => ?_
+      obtain ⟨v₂, b₂⟩ := x
+      obtain ⟨v₁, b₁⟩ := y
+      obtain ⟨hv, hs⟩ := hxy
+      simp only at hv hs ⊢
+      subst hv
+      split <;> exact ResSim.ok ⟨rfl, hs⟩
     · exact ResSim.ok ⟨rfl, ha⟩
+  · exact ResSim.ok ⟨rfl, ha⟩
 
 /-- The result of a scope set-up: the same valuation and points, simulating
 states. -/
