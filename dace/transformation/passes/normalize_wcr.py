@@ -266,20 +266,19 @@ class NormalizeWCR(ppl.Pass):
 
         # (a) The scalar WCR edges inside the body writing `oc` into a pure-sink AccessNode: one, or one per
         # branch or statement folding the same operator (``if c: s += x else: s += y``).
-        sinks = []
-        for ist in inner.states():
-            for e in ist.edges():
-                if (
-                    e.data is not None
-                    and e.data.wcr is not None
-                    and e.data.data == oc
-                    and e.data.subset is not None
-                    and e.data.subset.num_elements() == 1
-                    and isinstance(e.dst, nodes.AccessNode)
-                    and e.dst.data == oc
-                    and ist.out_degree(e.dst) == 0
-                ):
-                    sinks.append((e, ist))
+        sinks = [
+            (e, ist)
+            for ist in inner.states()
+            for e in ist.edges()
+            if e.data is not None
+            and e.data.wcr is not None
+            and e.data.data == oc
+            and e.data.subset is not None
+            and e.data.subset.num_elements() == 1
+            and isinstance(e.dst, nodes.AccessNode)
+            and e.dst.data == oc
+            and ist.out_degree(e.dst) == 0
+        ]
         if not sinks or len({e.data.wcr for e, _ in sinks}) != 1:
             return False
         wcr_edge, wcr_state = sinks[0]
