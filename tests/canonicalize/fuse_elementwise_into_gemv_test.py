@@ -7,6 +7,7 @@ import numpy as np
 import dace
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.fuse_elementwise_into_gemv import FuseElementwiseIntoGemv
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
@@ -81,8 +82,26 @@ def test_the_lowered_gemv_avoids_the_names_of_the_sdfg():
     sdfg.validate()
 
 
+@dace.program
+def output_scales_the_matrix(a: dace.float64[N, N], v: dace.float64[N], y: dace.float64[N]):
+    y[:] = (a * y) @ v
+
+
+def test_a_product_into_a_vector_its_matrix_reads_keeps_the_library_node():
+    """``y = (a * y) @ v``: the lowered product would zero ``y`` unordered with the map that reads it."""
+    sdfg = output_scales_the_matrix.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    finalize_for_target(sdfg, "cpu")
+    rng = np.random.default_rng(9)
+    a, v, y = rng.random((6, 6)), rng.random(6), rng.random(6)
+    expected = (a * y) @ v
+    sdfg(a=a, v=v, y=y, N=6)
+    np.testing.assert_allclose(y, expected)
+
+
 if __name__ == "__main__":
     test_a_gemv_over_a_private_elementwise_matrix_fuses_away_the_matrix()
     test_a_gemm_keeps_its_library_node()
     test_a_matrix_with_another_reader_keeps_the_library_node()
     test_the_lowered_gemv_avoids_the_names_of_the_sdfg()
+    test_a_product_into_a_vector_its_matrix_reads_keeps_the_library_node()

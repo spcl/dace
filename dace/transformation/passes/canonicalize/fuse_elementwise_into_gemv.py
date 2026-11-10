@@ -116,6 +116,9 @@ class FuseElementwiseIntoGemv(ppl.Pass):
         mat_node, vec_node, out_node = src, vec.src, out.dst
         if not isinstance(vec_node, nodes.AccessNode):
             return 0
+        # ``y = (a * y) @ v``: the init below would zero ``y`` unordered with the read that builds the matrix
+        if any(n.data == out_name and n is not out_node for n in state.data_nodes()):
+            return 0
         state.remove_node(node)
         # A connector may not take the name of a container, symbol or constant of the SDFG
         taken = set(sdfg.arrays) | set(sdfg.symbols) | set(sdfg.constants)
