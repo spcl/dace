@@ -200,6 +200,50 @@ def test_a_copy_naming_the_other_container_keeps_the_extent():
     assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) is None
 
 
+def scratch_written_by_a_nest(index: str) -> dace.SDFG:
+    """``b[i] = 2 * (a[i] + 1)`` per map iteration: a nested SDFG stores ``a[i] + 1`` to ``t[index]`` of its own
+    full-extent descriptor of the map-local ``t``, and the map body reads ``t[i]``."""
+    body = dace.SDFG(f"scratch_written_by_a_nest_body_{index}")
+    for symbol in ("i", "n"):
+        body.add_symbol(symbol, dace.int64)
+    body.add_array("a", ["n"], dace.float64)
+    body.add_array("t", ["n"], dace.float64)
+    inner = body.add_state()
+    store = inner.add_tasklet("store", {"x"}, {"y"}, "y = x + 1")
+    inner.add_edge(inner.add_read("a"), None, store, "x", dace.Memlet("a[i]"))
+    inner.add_edge(store, "y", inner.add_write("t"), None, dace.Memlet(f"t[{index}]"))
+    sdfg = dace.SDFG(f"scratch_written_by_a_nest_{index}")
+    sdfg.add_array("a", ["n"], dace.float64)
+    sdfg.add_array("b", ["n"], dace.float64)
+    sdfg.add_transient("t", ["n"], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map("rows", {"i": "0:n"})
+    nested = state.add_nested_sdfg(body, {"a": None}, {"t": None}, symbol_mapping={"i": "i", "n": "n"})
+    scratch = state.add_access("t")
+    use = state.add_tasklet("use", {"x"}, {"y"}, "y = 2 * x")
+    state.add_memlet_path(state.add_read("a"), entry, nested, dst_conn="a", memlet=dace.Memlet("a[i]"))
+    state.add_edge(nested, "t", scratch, None, dace.Memlet("t[i]"))
+    state.add_edge(scratch, None, use, "x", dace.Memlet("t[i]"))
+    state.add_memlet_path(use, exit_node, state.add_write("b"), src_conn="y", memlet=dace.Memlet("b[i]"))
+    return sdfg
+
+
+def test_a_scratch_a_nest_indexes_at_the_box_shrinks_with_the_nest_descriptor():
+    sdfg = scratch_written_by_a_nest("i")
+    assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) == 1
+    body = next(sd for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg)
+    assert tuple(sdfg.arrays["t"].shape) == tuple(body.arrays["t"].shape) == (1,)
+    sdfg.validate()
+    a, b = np.arange(6.0), np.zeros(6)
+    sdfg(a=a, b=b, n=6)
+    np.testing.assert_array_equal(b, 2 * (a + 1))
+
+
+def test_a_scratch_a_nest_indexes_elsewhere_keeps_its_extent():
+    sdfg = scratch_written_by_a_nest("0")
+    assert ShrinkMapLocalTransients().apply_pass(sdfg, {}) is None
+
+
 if __name__ == "__main__":
     test_map_body_local_transient_shrinks_to_the_box_it_names()
     test_finalize_leaves_no_symbolically_sized_stack_array()
@@ -208,3 +252,5 @@ if __name__ == "__main__":
     test_a_nested_body_scratch_shrinks_to_the_box_its_symbol_names()
     test_a_nested_scratch_whose_symbol_is_reassigned_keeps_its_extent()
     test_a_copy_naming_the_other_container_keeps_the_extent()
+    test_a_scratch_a_nest_indexes_at_the_box_shrinks_with_the_nest_descriptor()
+    test_a_scratch_a_nest_indexes_elsewhere_keeps_its_extent()
