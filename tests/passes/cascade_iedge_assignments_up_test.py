@@ -930,5 +930,27 @@ def test_an_assignment_ahead_that_reads_the_symbol_blocks_the_hoist():
     assert out[0] == 4
 
 
+def test_a_read_after_the_branch_holding_a_zero_trip_loop_blocks_the_hoist():
+    """With ``N == 0`` the assignment never runs, and the read after the conditional keeps ``k = 3``."""
+    sdfg = dace.SDFG("hoist_refusal_read_after_the_branch")
+    sdfg.add_array("out", [1], dace.int64)
+    for name in ("k", "M", "N"):
+        sdfg.add_symbol(name, dace.int64)
+    block = ConditionalBlock("guard")
+    sdfg.add_node(block)
+    sdfg.add_edge(sdfg.add_state("entry", is_start_block=True), block, InterstateEdge(assignments={"k": "3"}))
+    branch = ControlFlowRegion("then", sdfg=sdfg)
+    block.add_branch(dace.properties.CodeBlock("M > 0"), branch)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    branch.add_node(loop, is_start_block=True)
+    first = loop.add_state("first", is_start_block=True)
+    loop.add_edge(first, loop.add_state("second"), InterstateEdge(assignments={"k": "N + 5"}))
+    _write_symbol(sdfg.add_state_after(block, "after"), "k")
+    assert _apply(sdfg) == 0
+    out = np.zeros(1, np.int64)
+    sdfg(out=out, M=1, N=0)
+    assert out[0] == 3
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

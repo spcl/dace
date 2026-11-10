@@ -433,6 +433,12 @@ def _find_destination(
         return None
     if not _lands_without_race(dest, _direct_child(dest, edge_region), key, rhs):
         return None
+    # L7 above ``dest``: a loop below it may run no iteration, and what follows the block holding ``dest`` reads ``key``
+    block: ControlFlowBlock = dest
+    while block.parent_graph is not None:
+        if isinstance(block.parent_graph, ControlFlowRegion) and _read_after(block.parent_graph, block, key, cache):
+            return None
+        block = block.parent_graph
     return dest
 
 
