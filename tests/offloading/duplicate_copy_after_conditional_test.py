@@ -73,6 +73,25 @@ def test_a_loop_ending_in_a_conditional_copies_back_to_the_device_once():
     assert not repeated, repeated
 
 
+@dace.program
+def reads_on_both_sides(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
+    for i in dace.map[0:N]:
+        A[i] = B[i] * 2.0
+    for k in range(4):
+        for j in range(1, N):
+            B[j] = B[j - 1] + A[j]
+        for i in dace.map[0:N]:
+            C[i] = C[i] + A[i] * B[i]
+
+
+def test_a_loop_that_only_reads_an_array_on_both_sides_does_not_copy_it():
+    sdfg = reads_on_both_sides.to_sdfg(simplify=True)
+    ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
+    sdfg.validate()
+    inside = [copy for copy in host_device_copies(sdfg) if copy[2] != sdfg.label and {"A", "A_gpu"} == set(copy[:2])]
+    assert not inside, inside
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("c", [0, 1, 2, 3])
 def test_the_offloaded_loop_computes_what_numpy_computes(c):
