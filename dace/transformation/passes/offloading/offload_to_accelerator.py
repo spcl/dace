@@ -39,6 +39,7 @@ from dace.sdfg.utils import require_structured_control_flow
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import TrivialMapElimination
 from dace.transformation.helpers import isolate_nested_sdfg, isolate_small_map_axes
+from dace.transformation.interstate.map_loop_interchange import isolate_map
 from dace.transformation.passes import FuseMaps
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import small_count
@@ -70,7 +71,13 @@ from dace.transformation.passes.offloading.offloading_helpers import (
     traverse_same_level,
 )
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
-from dace.transformation.passes.offloading.taskloop import is_device_wide_libnode, sdfg_only_launches, taskloop_maps
+from dace.transformation.passes.offloading.taskloop import (
+    encloses_device_wide_libnode,
+    is_device_wide_libnode,
+    is_kernel_refused_libnode,
+    sdfg_only_launches,
+    taskloop_maps,
+)
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.transformation import explicit_cf_compatible
 
@@ -984,11 +991,13 @@ class OffloadToAccelerator(ppl.Pass):
     def host_level_nested_sdfgs(self, state: SDFGState, entry: nodes.MapEntry | None):
         """Nested SDFGs under ``entry`` reached through taskloops and host maps only -- one below a kernel is device
         code. A host map's body launches the kernels under it, so it is a host level as a taskloop's is (ICON's block
-        loop reads ``i_endidx`` on the host)."""
+        loop reads ``i_endidx`` on the host); a pinned map's body is host code whole."""
         for node in self._cached_scope_children[state].get(entry, ()):
             if isinstance(node, nodes.NestedSDFG):
                 yield node
-            elif isinstance(node, nodes.MapEntry) and (node in self._taskloops or node in self._host_map_entries):
+            elif isinstance(node, nodes.MapEntry) and (
+                node in self._taskloops or node in self._host_map_entries or node in self._host_pinned
+            ):
                 yield from self.host_level_nested_sdfgs(state, node)
 
     def inherit_binding_storage(self, sdfg: SDFG, state: SDFGState, nsdfg_node: nodes.NestedSDFG) -> None:
@@ -1030,6 +1039,18 @@ class OffloadToAccelerator(ppl.Pass):
         self._host_map_entries = host_maps(sdfg, self._host_maps)
         # A host map launches the kernels under it; a pinned map keeps its whole subtree host code.
         self._host_pinned = maps_pinned_by_host_loops(sdfg)
+        # A map around a call no kernel can run would issue it on per-iteration operands from the host each
+        # iteration: the map, its operands and its calls stay host code, as in the CPU form.
+        host_calls = OrderedSet(
+            entry
+            for state, children in self._cached_scope_children.items()
+            for entry in children
+            if entry in self._taskloops
+            and entry.map.label not in self.taskloop_overrides
+            and encloses_device_wide_libnode(state, entry, children, is_kernel_refused_libnode)
+        )
+        self._taskloops -= host_calls
+        self._host_pinned |= host_calls
 
     def is_kernel(self, node: nodes.MapEntry, host_level: bool) -> bool:
         """Whether the map ``node``, at a host level or not, is a kernel: see :meth:`assign_schedules`."""
@@ -1151,7 +1172,8 @@ class OffloadToAccelerator(ppl.Pass):
 
         :meth:`assign_schedules` puts every host-level library node on the device, so one it left off was kept on
         the host by the caller (NestForge's CPU-placed kernels). Beside device work, its state would be hybrid: the
-        resolution moves every array of the state to the device, and the host call reads device memory.
+        resolution moves every array of the state to the device, and the host call reads device memory. A pinned
+        map is host code whole, so it gets a state of its own the same way.
 
         :returns: whether any state was split.
         """
@@ -1162,10 +1184,16 @@ class OffloadToAccelerator(ppl.Pass):
             scopes = state.scope_dict()
             top = [node for node in state.nodes() if scopes[node] is None]
             for node in top:
-                if not isinstance(node, nodes.LibraryNode) or has_GPU_schedule(node):
+                pinned = node in self._host_pinned
+                if not (pinned or isinstance(node, nodes.LibraryNode)) or has_GPU_schedule(node):
                     continue
                 if not any(self.is_device_work(other) for other in top if other is not node):
                     continue
+                if pinned:
+                    isolated = isolate_map(state, node)
+                    pending += [state, *isolated.parent_graph.predecessors(isolated)]
+                    changed = True
+                    break
                 if not isolate_nested_sdfg(state, node, test_if_applicable=True):
                     continue
                 pre, _, post = isolate_nested_sdfg(state, node)
