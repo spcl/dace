@@ -253,6 +253,32 @@ def test_minimal_loop_over_map_hoists():
     sdfg.validate()
 
 
+def test_the_team_is_sized_to_the_work_one_trip_shares_out():
+    """Every thread of the team joins the barrier after each trip's map, so a team of the machine's size around a
+    short row costs more than the row: the region takes at most one thread per
+    ``compiler.cpu.parallel_min_work_per_thread`` iterations of the largest map a trip runs, decided at run time."""
+    sdfg = loop_over_map_sdfg("sized_team")
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    (team,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry) and n.map.schedule == dtypes.ScheduleType.CPU_Persistent]
+    assert team.map.omp_team_work == N
+    with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_thread", value=1024):
+        code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "#pragma omp parallel num_threads(((N) / 1024) < 1 ? 1 : (" in code, code
+    with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_thread", value=0):
+        code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "num_threads" not in code
+
+
+def test_a_triangular_trip_sizes_the_team_by_its_longest_row():
+    """``for it in 0:N { map i in it:N }``: the loop variable is no symbol ahead of the region, the longest row is."""
+    sdfg = dace.SDFG("sized_team_triangular")
+    sdfg.add_array("a", [N], dace.float64)
+    mapped_state(loop_region(sdfg, "outer", "N"), "body", "a", "1.0", ["it:N"])
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    (team,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry) and n.map.schedule == dtypes.ScheduleType.CPU_Persistent]
+    assert dace.symbolic.simplify(team.map.omp_team_work - N) == 0, team.map.omp_team_work
+
+
 def test_second_run_adds_no_second_team():
     """Idempotent: the hoisted loop now sits inside a map scope, which the walk never descends into."""
     sdfg = loop_over_map_sdfg("idempotent")
@@ -1419,6 +1445,8 @@ if __name__ == "__main__":
     test_s115_keeps_every_store_inside_a_worksharing_map()
     test_wavefront_reaching_into_the_neighbouring_tile_is_still_correct()
     test_minimal_loop_over_map_hoists()
+    test_the_team_is_sized_to_the_work_one_trip_shares_out()
+    test_a_triangular_trip_sizes_the_team_by_its_longest_row()
     test_second_run_adds_no_second_team()
     test_nested_sdfg_inside_the_map_keeps_its_parent_pointers(pytest.MonkeyPatch())
     test_top_level_sequential_map_in_the_loop_is_shared_out()

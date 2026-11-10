@@ -4265,6 +4265,14 @@ class CPUCodeGen(TargetCodeGenerator):
 
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
                 map_header += "#pragma omp parallel"
+                # A team no larger than the work one trip shares out pays for: every thread joins every barrier
+                work, share = node.map.omp_team_work, int(Config.get("compiler", "cpu", "parallel_min_work_per_thread"))
+                if share > 0 and node.map.omp_num_threads <= 0 and (symbolic.issymbolic(work) or int(work) > 0):
+                    team = f"(({sym2cpp(work)}) / {share})"
+                    map_header += (
+                        f" num_threads({team} < 1 ? 1 : ({team} < omp_get_max_threads() ? (int){team} : "
+                        "omp_get_max_threads()))"
+                    )
 
             # OpenMP schedule properties
             if not in_persistent and not range_private:

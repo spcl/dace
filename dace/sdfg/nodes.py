@@ -1382,6 +1382,14 @@ class Map:
         "baking one machine's constant into the graph",
         serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES,
     )
+    omp_team_work = SymbolicProperty(
+        default=0,
+        category="Scheduling",
+        desc="Iterations one execution of the loop under a CPU_Persistent map shares out among its team (set by "
+        "HoistParallelRegion); the team takes at most one thread per "
+        "compiler.cpu.parallel_min_work_per_thread of them. 0 emits no clause",
+        serialize_if=lambda m: m.schedule == dtypes.ScheduleType.CPU_Persistent,
+    )
     omp_simd = Property(
         dtype=bool,
         default=False,
