@@ -158,7 +158,9 @@ def test_the_same_sdfg_renders_byte_identically_across_fresh_processes(tmp_path:
     the next node to expand by GUID -- it must pick by graph order instead.
     """
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(dace.__file__)))
-    env = dict(os.environ, PYTHONHASHSEED="0", PYTHONPATH=repo_root)
+    # Ahead of the caller's path, not instead of it: that path may be what provides pytest.
+    path = os.pathsep.join(filter(None, (repo_root, os.environ.get("PYTHONPATH"))))
+    env = dict(os.environ, PYTHONHASHSEED="0", PYTHONPATH=path)
     runs = []
     for run_index in range(2):
         # A file, not stdout: DACE_testing_serialization=1 makes generate_code print to stdout.
