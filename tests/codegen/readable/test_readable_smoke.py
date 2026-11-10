@@ -19,7 +19,7 @@ import numpy as np
 
 import dace
 from dace.config import Config
-from tests.codegen.readable.conftest import max_abs_diff, tolerance_for
+from tests.codegen.readable.common import max_abs_diff, tolerance_for
 
 N, M, K = (dace.symbol(s) for s in ("N", "M", "K"))
 
@@ -143,4 +143,3 @@ if __name__ == "__main__":
     test_jacobi_stencil()
     test_transient()
     test_const_init_constexpr()
-    print("ok")

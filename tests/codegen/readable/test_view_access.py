@@ -24,9 +24,10 @@ import pytest
 
 import dace
 from dace import subsets
-from tests.codegen.readable.conftest import (
+from tests.codegen.readable.common import (
     EXPERIMENTAL,
     LEGACY,
+    TARGETS,
     assert_outputs_equivalent,
     run_isolated,
     use_implementation,
@@ -79,7 +80,7 @@ def view_index_body(code):
 # --------------------------------------------------------------------------- #
 # Codegen shape (no compile)
 # --------------------------------------------------------------------------- #
-def test_view_idx_uses_view_strides(require_experimental):
+def test_view_idx_uses_view_strides():
     """``V_idx`` linearizes with the VIEW's strides ``[16, 2]`` -- ``16*d0 + 2*d1``
     -- and the access is connector-free (``V[V_idx(...)]`` in the body)."""
     code = generated_for(strided_view_copy_sdfg, "view_inspect", EXPERIMENTAL)
@@ -91,7 +92,7 @@ def test_view_idx_uses_view_strides(require_experimental):
     assert "double inp =" not in code and "double inp;" not in code
 
 
-def test_view_no_pure_fallback(require_experimental):
+def test_view_no_pure_fallback():
     """A View input never forces the classic connector copy: the readable body
     references the view pointer directly."""
     code = generated_for(strided_view_copy_sdfg, "view_nofallback", EXPERIMENTAL)
@@ -117,7 +118,8 @@ def run_variant(build, name, implementation, target, base):
         return work() if target == "gpu" else run_isolated(work)
 
 
-def test_view_access_bit_exact(require_experimental, target):
+@pytest.mark.parametrize("target", TARGETS)
+def test_view_access_bit_exact(target):
     """The strided-view copy reproduces the legacy result (bit-exact CPU / tight
     tolerance GPU) and equals the analytical ``A[:, ::2]``."""
     base = dict(A=np.random.rand(8, 16), C=np.zeros((8, 8)))
@@ -128,7 +130,7 @@ def test_view_access_bit_exact(require_experimental, target):
 
 
 @pytest.mark.gpu
-def test_view_idx_inside_kernel(require_experimental):
+def test_view_idx_inside_kernel():
     """``V[V_idx(...)]`` (view strides) appears inside the ``__global__`` kernel."""
     code = generated_for(strided_view_copy_sdfg, "view_gpu_inspect", EXPERIMENTAL, gpu=True)
     assert "__global__" in code, "no CUDA kernel emitted"
@@ -138,14 +140,8 @@ def test_view_idx_inside_kernel(require_experimental):
 
 
 if __name__ == "__main__":
-    from tests.codegen.readable.conftest import experimental_available
-
-    if not experimental_available():
-        print("experimental readable codegen not ready; skipping")
-    else:
-        test_view_idx_uses_view_strides(None)
-        test_view_no_pure_fallback(None)
-        test_view_access_bit_exact(None, "cpu")
-        test_view_access_bit_exact(None, "gpu")
-        test_view_idx_inside_kernel(None)
-        print("ok")
+    test_view_idx_uses_view_strides()
+    test_view_no_pure_fallback()
+    test_view_access_bit_exact("cpu")
+    test_view_access_bit_exact("gpu")
+    test_view_idx_inside_kernel()

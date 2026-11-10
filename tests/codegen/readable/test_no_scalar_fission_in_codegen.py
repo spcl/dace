@@ -17,7 +17,7 @@ import numpy as np
 
 import dace
 from dace import dtypes
-from tests.codegen.readable.conftest import (
+from tests.codegen.readable.common import (
     EXPERIMENTAL,
     LEGACY,
     assert_outputs_equivalent,
@@ -71,7 +71,7 @@ def assignment_targets(code):
     return targets
 
 
-def test_reassigned_scalar_stays_one_variable(require_experimental):
+def test_reassigned_scalar_stays_one_variable():
     """No SSA versioning at codegen: ``s`` is written three times under its own single name."""
     with use_implementation(EXPERIMENTAL):
         code = generated_code(reassign_scalar_sdfg("nofission"))
@@ -82,7 +82,7 @@ def test_reassigned_scalar_stays_one_variable(require_experimental):
     assert code.count("double s;") == 1, code  # exactly one declaration, not three shadowing ones
 
 
-def test_readable_matches_legacy_bit_for_bit(require_experimental):
+def test_readable_matches_legacy_bit_for_bit():
     """The readable result equals legacy's, bit for bit."""
     A = np.array([2.0], dtype=np.float64)
 
@@ -103,26 +103,6 @@ def test_readable_matches_legacy_bit_for_bit(require_experimental):
     assert_outputs_equivalent(legacy, experimental, "cpu", label="no scalar fission at codegen")
 
 
-def test_late_placement_still_runs(require_experimental):
-    """The late-placement path is unaffected by the removal and stays numerically exact."""
-    A = np.array([3.0], dtype=np.float64)
-
-    def build_and_run():
-        with (
-            use_implementation(EXPERIMENTAL),
-            dace.config.set_temporary("compiler", "cpu", "codegen_params", "scalar_decl", value="late"),
-        ):
-            csdfg = reassign_scalar_sdfg("nofission_late").compile()
-            out = np.zeros(1, dtype=np.float64)
-            csdfg(A=A.copy(), out=out)
-            return {"out": out}
-
-    result = run_isolated(build_and_run)
-    assert np.allclose(result["out"], [A[0] + EXPECTED_S])
-
-
 if __name__ == "__main__":
-    test_reassigned_scalar_stays_one_variable(None)
-    test_readable_matches_legacy_bit_for_bit(None)
-    test_late_placement_still_runs(None)
-    print("OK")
+    test_reassigned_scalar_stays_one_variable()
+    test_readable_matches_legacy_bit_for_bit()

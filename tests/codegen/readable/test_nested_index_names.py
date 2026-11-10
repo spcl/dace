@@ -17,7 +17,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
-from tests.codegen.readable.conftest import EXPERIMENTAL, use_implementation
+from tests.codegen.readable.common import EXPERIMENTAL, use_implementation
 
 N = dace.symbol("N")
 
@@ -192,4 +192,3 @@ if __name__ == "__main__":
     for k in ("trisolv", "lu", "ludcmp"):
         test_uninlined_kernel_no_duplicate_idx(k)
     test_helper_is_named_apart_from_a_container()
-    print("ok")

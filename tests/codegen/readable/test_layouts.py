@@ -37,7 +37,7 @@ import pytest
 
 import dace
 from dace.dtypes import StorageType
-from tests.codegen.readable.conftest import EXPERIMENTAL, LEGACY, run_isolated, use_implementation
+from tests.codegen.readable.common import EXPERIMENTAL, LEGACY, run_isolated, use_implementation
 
 
 # --------------------------------------------------------------------------- #
@@ -185,7 +185,7 @@ def index_function_body(code):
 # --------------------------------------------------------------------------- #
 # Cases
 # --------------------------------------------------------------------------- #
-def test_fortran_column_major(require_experimental):
+def test_fortran_column_major():
     """Case 1: column-major / Fortran strides ``[1, 6]`` on a ``(6, 8)`` transient."""
     base = dict(A=np.random.rand(6, 8), B=np.zeros((6, 8)))
     build = lambda name: elementwise_2d_sdfg(
@@ -201,7 +201,7 @@ def test_fortran_column_major(require_experimental):
     assert "6 * __d1" in body, body
 
 
-def test_padded_row_strides(require_experimental):
+def test_padded_row_strides():
     """Case 2: rows padded to 16 elements -- strides ``[16, 1]`` on ``(6, 8)``."""
     base = dict(A=np.random.rand(6, 8), B=np.zeros((6, 8)))
     build = lambda name: elementwise_2d_sdfg(
@@ -216,7 +216,7 @@ def test_padded_row_strides(require_experimental):
     assert "16 * __d0" in body, body
 
 
-def test_nonzero_offset(require_experimental):
+def test_nonzero_offset():
     """Case 3: non-zero descriptor ``offset [1, 2]`` (C strides ``[8, 1]``).
 
     Access is restricted to ``i<5, j<6`` so ``max_index + offset < shape`` (DaCe
@@ -238,7 +238,7 @@ def test_nonzero_offset(require_experimental):
     assert "+ 10" in body, body
 
 
-def test_strided_stencil(require_experimental):
+def test_strided_stencil():
     """Case 4: ``i-1``/``i+1`` stencil on a stride-2 ``T[32]`` transient."""
     n = 32
     base = dict(A=np.random.rand(n), B=np.zeros(n))
@@ -255,7 +255,7 @@ def test_strided_stencil(require_experimental):
     assert "2 * __d0" in body, body
 
 
-def test_offset_strided_stencil(require_experimental):
+def test_offset_strided_stencil():
     """Case 5: ``i-1``/``i+1`` stencil on a strided ``T[32]`` with ``offset [1]``.
 
     Confirms the ``i - 1`` subtraction lowers correctly through ``T_idx`` when the
@@ -278,7 +278,7 @@ def test_offset_strided_stencil(require_experimental):
     assert "3 * __d0" in body and "+ 3" in body, body
 
 
-def test_alignment(require_experimental):
+def test_alignment():
     """Case 6: heap transient allocated with the same aligned ``new[]`` as the legacy generator."""
     n = 200
     base = dict(A=np.random.rand(n), B=np.zeros(n))

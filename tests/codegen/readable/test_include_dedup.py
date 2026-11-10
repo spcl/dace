@@ -15,7 +15,7 @@ import pytest
 
 import dace
 from dace.codegen.targets.experimental_cpu import deduplicate_includes
-from tests.codegen.readable.conftest import EXPERIMENTAL, use_implementation
+from tests.codegen.readable.common import EXPERIMENTAL, use_implementation
 
 #: Two headers every tasklet below asks for, so N tasklets produce N copies without the dedupe.
 TASKLET_GLOBAL_CODE = "#include <cmath>\n#include <cstdio>"

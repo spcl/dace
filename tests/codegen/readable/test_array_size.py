@@ -28,7 +28,7 @@ import numpy as np
 import dace
 from dace.config import Config
 from dace.dtypes import StorageType
-from tests.codegen.readable.conftest import EXPERIMENTAL, LEGACY, run_isolated, use_implementation
+from tests.codegen.readable.common import EXPERIMENTAL, LEGACY, run_isolated, use_implementation
 
 
 # --------------------------------------------------------------------------- #
@@ -200,7 +200,7 @@ def allocation_line(code: str, array: str) -> str:
 # --------------------------------------------------------------------------- #
 # Cases
 # --------------------------------------------------------------------------- #
-def test_symbolic_size_helper(require_experimental):
+def test_symbolic_size_helper():
     """Symbolic ``T[N*M]`` heap transient -> ``constexpr T_size(int64_t M, int64_t N)``."""
     n, m = dace.symbol("N"), dace.symbol("M")
     build = lambda name: heap_pipeline_1d(name, n * m, "0:N*M")
@@ -217,7 +217,7 @@ def test_symbolic_size_helper(require_experimental):
     assert "dace::aligned_new_array<double>(T_size(M, N), 64)" in allocation_line(code, "T")
 
 
-def test_ipow_size_helper(require_experimental):
+def test_ipow_size_helper():
     """``total_size = ipow(N, 2)`` (``T[N*N]``) -> single-symbol ``constexpr T_size(int64_t N)``."""
     n = dace.symbol("N")
     build = lambda name: heap_pipeline_1d(name, n * n, "0:N*N")
@@ -235,7 +235,7 @@ def test_ipow_size_helper(require_experimental):
     assert "dace::aligned_new_array<double>(T_size(N), 64)" in allocation_line(code, "T")
 
 
-def test_constant_size_helper(require_experimental):
+def test_constant_size_helper():
     """Constant-size ``CPU_Heap`` transient -> nullary ``T_size()``: ``consteval`` under C++20,
     degrading to ``constexpr`` under C++17 (``consteval`` is not a keyword before C++20)."""
     build = lambda name: heap_pipeline_1d(name, 200, "0:200")
@@ -252,7 +252,7 @@ def test_constant_size_helper(require_experimental):
     assert "dace::aligned_new_array<double>(T_size(), 64)" in allocation_line(code, "T")
 
 
-def test_bare_single_symbol_not_wrapped(require_experimental):
+def test_bare_single_symbol_not_wrapped():
     """A bare single-symbol size ``T[N]`` is NOT wrapped (wrapping ``N`` is no win)."""
     n = dace.symbol("N")
     build = lambda name: heap_pipeline_1d(name, n, "0:N")
@@ -266,7 +266,7 @@ def test_bare_single_symbol_not_wrapped(require_experimental):
     assert "dace::aligned_new_array<double>(N, 64)" in allocation_line(code, "T")
 
 
-def test_distinct_size_helpers_across_nested_sdfgs(require_experimental):
+def test_distinct_size_helpers_across_nested_sdfgs():
     """Same transient name ``T`` at two sizes across a nested SDFG -> distinct helpers."""
     build = nested_same_name_sdfg
     base = dict(A=np.random.rand(5), B=np.zeros(5), N=5, M=3)
@@ -286,9 +286,8 @@ def test_distinct_size_helpers_across_nested_sdfgs(require_experimental):
 
 
 if __name__ == "__main__":
-    test_symbolic_size_helper(None)
-    test_ipow_size_helper(None)
-    test_constant_size_helper(None)
-    test_bare_single_symbol_not_wrapped(None)
-    test_distinct_size_helpers_across_nested_sdfgs(None)
-    print("ok")
+    test_symbolic_size_helper()
+    test_ipow_size_helper()
+    test_constant_size_helper()
+    test_bare_single_symbol_not_wrapped()
+    test_distinct_size_helpers_across_nested_sdfgs()

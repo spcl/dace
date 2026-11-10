@@ -1,27 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared fixtures + skip gates for the experimental "readable" CPU code generator.
-
-This suite proves that the experimental generator
-(``compiler.cpu.implementation = experimental``) is numerically equivalent to the
-``legacy`` generator across the npbench, polybench, tsvc and tsvc_2_5 corpora, on
-CPU and GPU.
-
-The readable generator is developed in a parallel task and is not ready yet.
-:func:`experimental_available` gates the whole suite: until the generator is
-wired up it returns ``False`` and every test skips, so
-``pytest tests/codegen/readable`` is green today and flips on automatically once
-the feature lands.
-
-The gate is deliberately stronger than "did it raise": today the code generator
-ignores the ``implementation`` key and silently falls back to legacy (byte-
-identical output), so an exception-only probe would wrongly report the feature as
-ready. The probe therefore also requires the experimental output to *differ* from
-legacy on a trivial SDFG (the readable form emits per-array ``_idx`` index
-functions and ``const``/``constexpr`` initialization, which legacy never does).
-"""
+"""Helpers shared by the tests of the readable CPU code generator: pinning a generator, running a build in a
+process of its own, and comparing its outputs with the legacy generator's."""
 
 import ctypes
-import functools
 import os
 import signal
 import tempfile
@@ -46,14 +27,15 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 import numpy as np
 import pytest
 
-import dace
-from dace.config import Config, set_temporary
+from dace.config import set_temporary
 
 #: The two CPU code generators under test.
 LEGACY = "legacy"
 EXPERIMENTAL = "experimental_readable"
 #: Config path selecting the CPU generator implementation.
 IMPLEMENTATION_KEY = ("compiler", "cpu", "implementation")
+#: Codegen targets of the equivalence tests; the GPU one needs ``-m gpu``.
+TARGETS = ["cpu", pytest.param("gpu", marks=pytest.mark.gpu)]
 
 
 def use_implementation(implementation):
@@ -61,64 +43,9 @@ def use_implementation(implementation):
     return set_temporary(*IMPLEMENTATION_KEY, value=implementation)
 
 
-@pytest.fixture(autouse=True)
-def restore_cpu_implementation():
-    """Undo a test's ``Config.set`` of the generator, so a later test in the same worker runs the default one."""
-    with set_temporary(*IMPLEMENTATION_KEY, value=Config.get(*IMPLEMENTATION_KEY)):
-        yield
-
-
-def trivial_elementwise_sdfg(name):
-    """A tiny ``b[i] = a[i] + 1`` map SDFG, built with the low-level API.
-
-    Constructed directly (not via ``@dace.program``) so the probe is self-
-    contained and works from any interpreter.
-    """
-    sdfg = dace.SDFG(name)
-    sdfg.add_array("a", [8], dace.float64)
-    sdfg.add_array("b", [8], dace.float64)
-    state = sdfg.add_state("main")
-    read, write = state.add_read("a"), state.add_write("b")
-    entry, exit_node = state.add_map("m", {"i": "0:8"})
-    tasklet = state.add_tasklet("t", {"inp"}, {"out"}, "out = inp + 1.0")
-    state.add_memlet_path(read, entry, tasklet, dst_conn="inp", memlet=dace.Memlet("a[i]"))
-    state.add_memlet_path(tasklet, exit_node, write, src_conn="out", memlet=dace.Memlet("b[i]"))
-    return sdfg
-
-
 def generated_code(sdfg):
     """Concatenated generated C++ for ``sdfg`` (codegen only, no compile)."""
     return "\n".join((obj.clean_code or obj.code) for obj in sdfg.generate_code())
-
-
-@functools.lru_cache(maxsize=1)
-def experimental_available():
-    """True iff the experimental readable CPU generator is wired up and active.
-
-    All of the following must hold, else the feature is "not ready" and the whole
-    suite skips:
-
-    1. the ``compiler.cpu.implementation`` config key exists;
-    2. code generation under ``experimental`` does not raise on a trivial SDFG;
-    3. that generated code DIFFERS from the ``legacy`` output for the same SDFG
-       (a silent legacy fallback -- today's state -- produces identical bytes).
-    """
-    try:
-        Config.get(*IMPLEMENTATION_KEY)
-    except Exception:  # noqa: BLE001 - key absent -> feature not present
-        return False
-    try:
-        # One SDFG object generated under each config: the ONLY difference is the
-        # generator, so this is deterministic (unlike two separately-built SDFGs,
-        # whose names DaCe may deduplicate, spuriously diverging the output).
-        sdfg = trivial_elementwise_sdfg("readable_probe")
-        with use_implementation(LEGACY):
-            legacy_code = generated_code(sdfg)
-        with use_implementation(EXPERIMENTAL):
-            experimental_code = generated_code(sdfg)
-    except Exception:  # noqa: BLE001 - generator under development raised -> not ready
-        return False
-    return experimental_code != legacy_code
 
 
 def to_host(value):
@@ -240,32 +167,3 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
             assert np.allclose(lv, ev, rtol=rtol, atol=atol, equal_nan=True), (
                 f"{label}/{name}: experimental GPU codegen diverges from legacy, max|diff|={max_abs_diff(lv, ev):.3e}"
             )
-
-
-# --------------------------------------------------------------------------- #
-# Fixtures
-# --------------------------------------------------------------------------- #
-@pytest.fixture
-def require_experimental():
-    """Skip the test unless the readable generator is wired up (see the gate)."""
-    if not experimental_available():
-        pytest.skip("experimental readable codegen not ready")
-
-
-@pytest.fixture(
-    params=[
-        pytest.param("cpu", id="cpu"),
-        pytest.param("gpu", id="gpu", marks=pytest.mark.gpu),
-    ]
-)
-def target(request):
-    """Codegen target. The GPU variant carries ``@pytest.mark.gpu`` (select with ``-m gpu``)."""
-    return request.param
-
-
-@pytest.fixture(params=[LEGACY, EXPERIMENTAL])
-def codegen_variant(request):
-    """A single CPU generator implementation. Available for future single-variant
-    tests; the equivalence tests here drive both variants within one test and
-    compare, so they do not consume this fixture."""
-    return request.param
