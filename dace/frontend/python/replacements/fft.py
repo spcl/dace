@@ -11,6 +11,7 @@ from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, symbolic
 from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.replacements.array_creation_dace import promote_size_scalars_in_shape
 from dace.frontend.python.replacements.array_manipulation import _numpy_roll as numpy_roll
 from dace.frontend.python.replacements.utils import ProgramVisitor
 
@@ -120,7 +121,8 @@ def add_fft_node(
             lengths[-1] = 2 * (desc.shape[transformed[-1]] - 1)
     elif len(lengths) != len(transformed):
         raise ValueError(f"{len(lengths)} transform lengths for {len(transformed)} axes")
-    lengths = [symbolic.pystr_to_symbolic(n) for n in lengths]
+    lengths = [symbolic.pystr_to_symbolic(n) for n in promote_size_scalars_in_shape(pv, sdfg, lengths)]
+    state = pv.last_block  # Promotion opens a state to carry the symbol assignment
     stored = sp.floor(lengths[-1] / 2) + 1
 
     in_shape, out_shape = list(desc.shape), list(desc.shape)
@@ -299,7 +301,8 @@ def add_fft_frequencies(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, n, d, 
     """
     if isinstance(d, str):
         raise NotImplementedError("numpy.fft.fftfreq with a spacing computed at runtime")
-    n = symbolic.pystr_to_symbolic(scalar_argument(n))
+    n = symbolic.pystr_to_symbolic(promote_size_scalars_in_shape(pv, sdfg, [scalar_argument(n)])[0])
+    state = pv.last_block  # Promotion opens a state to carry the symbol assignment
     count = sp.floor(n / 2) + 1 if half_spectrum else n
     name = pv.add_temp_transient([count], dtypes.float64)[0]
     total = f"({float(d)!r} * {sym2cpp(n)})"
