@@ -404,12 +404,10 @@ class ExpandBatchedMatMulLIBXSMM(ExpandTransformation):
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdesc.dtype.ctype, func)
         opt["pragma"] = "#pragma omp parallel for\n        " if shares_out_batch(node, state, sdfg) else ""
         code = """
-        const char __ta = '{ta}', __tb = '{tb}';
-        const libxsmm_blasint __m = {M}, __n = {N}, __k = {K}, __lda = {lda}, __ldb = {ldb}, __ldc = {ldc};
-        const {dtype} __alpha = {alpha}, __beta = {beta};
+        const dace::blas::SmallGemm<{dtype}> __gemm('{ta}', '{tb}', {M}, {N}, {K}, {lda}, {ldb}, {ldc}, {alpha}, {beta});
         {pragma}for (int64_t __ib = 0; __ib < {BATCH}; ++__ib) {{
-            libxsmm_{func}(&__ta, &__tb, &__m, &__n, &__k, &__alpha, (({dtype}*){x}) + __ib*{stride_a}, &__lda,
-                           (({dtype}*){y}) + __ib*{stride_b}, &__ldb, &__beta, (({dtype}*)_c) + __ib*{stride_c}, &__ldc);
+            __gemm((({dtype}*){x}) + __ib*{stride_a}, (({dtype}*){y}) + __ib*{stride_b},
+                   (({dtype}*)_c) + __ib*{stride_c});
         }}""".format_map(opt)
         return dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP

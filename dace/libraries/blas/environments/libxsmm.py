@@ -20,7 +20,7 @@ class LIBXSMM:
     cmake_link_flags: list[str] = []
     cmake_files: list[str] = []
 
-    headers = ["libxsmm.h"]
+    headers = ["libxsmm.h", "../include/dace_libxsmm.h"]
     state_fields: list[str] = []
     init_code = "libxsmm_init();"
     finalize_code = ""

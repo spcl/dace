@@ -790,9 +790,8 @@ class ExpandGemmLIBXSMM(ExpandTransformation):
             "__beta", "_beta", node.beta, scalars.get("_beta"), dtype
         )
         code += (
-            "const char __ta = '{ta}', __tb = '{tb}';\n"
-            "const libxsmm_blasint __m = {M}, __n = {N}, __k = {K}, __lda = {lda}, __ldb = {ldb}, __ldc = {ldc};\n"
-            "libxsmm_{func}(&__ta, &__tb, &__m, &__n, &__k, &__alpha, {x}, &__lda, {y}, &__ldb, &__beta, _c, &__ldc);"
+            "dace::blas::SmallGemm<{dtype}>('{ta}', '{tb}', {M}, {N}, {K}, {lda}, {ldb}, {ldc}, __alpha, __beta)"
+            "({x}, {y}, _c);"
         ).format_map(opt)
         return dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
