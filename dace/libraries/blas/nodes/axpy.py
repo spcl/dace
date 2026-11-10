@@ -104,7 +104,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     def __init__(self, name, a=None, n=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_x", "_y"}, outputs={"_res"}, **kwargs)
-        self.a = blas_helpers.real_scale(a) or dace.symbolic.symbol("a")
+        self.a = dace.symbolic.symbol("a") if a is None else blas_helpers.real_scale(a)
         self.n = n or dace.symbolic.symbol("n")
 
     def compare(self, other):

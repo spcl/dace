@@ -41,7 +41,7 @@ import itertools
 from collections.abc import Callable
 
 import dace
-from dace import Memlet, dtypes, properties, subsets
+from dace import Memlet, dtypes, properties, subsets, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, nodes
 from dace.sdfg import utils as sdutil
@@ -109,7 +109,8 @@ def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
 
 
 class ScalarRefRewriter(ast.NodeTransformer):
-    """Collapse ``old[0]`` (or ``old[0, 0]``) to ``new`` and rename a bare ``old`` to ``new``.
+    """Collapse ``old[0]`` (any index that folds to zero, e.g. ``old[1 - 1]`` after offset specialization) to ``new``
+    and rename a bare ``old`` to ``new``.
 
     :param rename: Mapping from each rewritten descriptor's old name to its new name.
     """
@@ -123,7 +124,7 @@ class ScalarRefRewriter(ast.NodeTransformer):
         if (
             isinstance(node.value, ast.Name)
             and node.value.id in self.rename
-            and all(isinstance(i, ast.Constant) and i.value == 0 for i in indices)
+            and all(not isinstance(i, ast.Slice) and symbolic.pystr_to_symbolic(ast.unparse(i)) == 0 for i in indices)
         ):
             return ast.copy_location(ast.Name(id=self.rename[node.value.id], ctx=node.ctx), node)
         return self.generic_visit(node)

@@ -115,6 +115,11 @@ def test_a_complex_scale_on_a_symbolic_property_is_refused():
         Scal("scal", a=1j)
 
 
+def test_a_zero_scale_stays_zero():
+    """``a=0`` is a value, not a request for the default symbol ``a``."""
+    assert Axpy("axpy", a=0).a == 0
+
+
 def symbolic_scale_sdfg(name: str) -> dace.SDFG:
     """A scale assigned to a symbol on an inter-state edge, wired to a Scal in the next state."""
     sdfg = dace.SDFG(name)
@@ -180,6 +185,7 @@ if __name__ == "__main__":
                 test_a_complex_scale_reaches_the_expansion(name, implementation)
         test_gemv_reads_wired_scales(implementation)
     test_a_complex_scale_on_a_symbolic_property_is_refused()
+    test_a_zero_scale_stays_zero()
     test_simplify_keeps_a_wired_symbol()
     test_replace_reaches_a_wired_symbol()
     test_a_wired_scale_survives_a_json_round_trip()
