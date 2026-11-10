@@ -160,6 +160,9 @@ def test_a_conflicting_wcr_renders_as_an_atomic_that_says_it_is_not_reduced():
     assert "#pragma omp atomic update\n" in code, "a conflicting accumulation must render as an atomic"
     assert "NOT parallel-reduced" in code, "the atomic must carry the hint that says it is not reduced"
     assert "reduction(" not in code, "a conflicting scatter has no tree-reducible form to fold into"
+    kinds = render_sdfg(scatter.to_sdfg(simplify=True), hints="kinds").code
+    assert "#pragma omp atomic update\n" in kinds, "the kinds rendering keeps the atomic"
+    assert "NOT parallel-reduced" not in kinds, "the kinds rendering writes the class word and nothing else"
 
     rng = np.random.default_rng(0)
     # Deliberately repeated: with distinct indices the write would not conflict and this would

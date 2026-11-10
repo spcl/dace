@@ -64,9 +64,6 @@ SMALL_GRID_BLOCKS = DEVICE_GRID_BLOCKS
 #: 10-100 ms totals these kernels run in.
 LAUNCH_HINT_FLOOR = 1000
 
-#: What a launch costs on this class of device, in microseconds. Used only to price the hint.
-LAUNCH_LATENCY_US = 4
-
 #: The hint's opening words, matched to keep a re-run from recording the same finding twice.
 PERSISTENT_KERNEL_LEAD = "one kernel launch per trip of an enclosing sequential loop"
 
@@ -75,10 +72,7 @@ PERSISTENT_KERNEL = (
     "filling {blocks} blocks of {threads} threads and ending in a device-wide barrier.\n"
     "Alternative: one persistent kernel that holds the grid across the whole loop and replaces each "
     "launch boundary with a grid-wide barrier.\n"
-    "GPU: the persistent form is the one that removes this cost -- at ~{latency} us per launch the "
-    "launches alone are ~{cost} us. MEASURED on this shape at the sizes it ships with: 39 to 90 "
-    "blocks per launch on a 304-CU MI300A, so each launch underfills the device as well as paying "
-    "for itself.\n"
+    "GPU: the persistent form is the one that removes the per-launch latency.\n"
     "Not taken here: a grid-wide barrier needs a cooperative launch and a grid sized to what the "
     "device can hold resident, neither of which this pass establishes. Recorded, not decided.\n"
     "Both are correct. Measure before choosing."
@@ -273,8 +267,6 @@ class GridStrideKernels(ppl.Pass):
             launches=launches,
             blocks=symbolic.simplify(entry.map.range.num_elements()),
             threads=symbolic.simplify(inner.map.range.num_elements()) if inner is not None else "block-sized",
-            latency=LAUNCH_LATENCY_US,
-            cost=symbolic.simplify(launches * LAUNCH_LATENCY_US),
         )
         record(entry, hint)
         # Also on the innermost enclosing loop, because that is where a reader meets it: the CUDA

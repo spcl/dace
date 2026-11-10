@@ -2126,9 +2126,13 @@ class CPUCodeGen(TargetCodeGenerator):
                 "one scalar location. Scalarize the map before rendering."
             )
         hint = (
-            f"// conflicting accumulation on {target} -- NOT parallel-reduced: the writers can collide, so "
-            "this serializes.\n"
-            "// Reducing it into a tree is an optimization the canonicalization did not find.\n"
+            (
+                f"// conflicting accumulation on {target} -- NOT parallel-reduced: the writers can collide, so "
+                "this serializes.\n"
+                "// Reducing it into a tree is an optimization the canonicalization did not find.\n"
+            )
+            if cpf_lowering.hint_detail() is cpf_lowering.HintDetail.PROOFS
+            else ""
         )
         if cpf_lowering.device():
             return hint + standalone_gpu_atomic(
