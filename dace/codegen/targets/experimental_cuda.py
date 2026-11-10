@@ -179,9 +179,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
-                self._kernel_arglists[node] = state.scope_subgraph(node).arglist(
-                    defined_syms, shared_transients[state.parent]
-                )
+                # A constant array is declared in the device code, so it is not an argument as well
+                constants = state.sdfg.constants
+                arglist = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
+                self._kernel_arglists[node] = {name: desc for name, desc in arglist.items() if name not in constants}
                 self._kernel_arglists[node].update(dynamic_map_input_args(state, node))
 
     @property
