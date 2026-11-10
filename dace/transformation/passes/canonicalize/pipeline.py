@@ -1029,7 +1029,7 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
         (label, EmptyLoopElimination()),
         (label, PatternApplyOnceEverywhere([MoveIfIntoMap()])),
     ]
-    s += [*_inline_single_state(label), (label, StructuralCleanup())]
+    s += rail(label)
     # A memset the control flow after it overwrites unread (velocity's zeta_value, swept level by level) goes before
     # fusion, so its state does not stand between the maps; the finish runs it again for the fills lifted after.
     s += [(label, DeadFillElimination())]
