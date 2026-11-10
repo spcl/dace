@@ -714,6 +714,29 @@ def rmw_edges(states: Iterable[SDFGState], names: frozenset[str] | None = None) 
     return writes, reads, containers
 
 
+def stores_may_meet(loop: LoopRegion, names: Iterable[str]) -> bool:
+    """Whether two stores of ``loop`` into one container of ``names``, at different subsets and not both accumulating,
+    may share an element across two iterations: a contract on how one store is indexed keeps its own instances apart,
+    not ``A[idx[i]]`` and ``A[i]``."""
+    bounds = [f(loop) for f in (loop_analysis.get_init_assignment, loop_analysis.get_loop_end)]
+    step = loop_analysis.get_loop_stride(loop)
+    if None in bounds or step is None:
+        return True
+    itersym, varying = symbolic.pystr_to_symbolic(loop.loop_variable), loop_varying_symbols(loop)
+    stores: dict[str, dict[str, memlet.Memlet]] = defaultdict(dict)
+    for state in loop.states():
+        for dn in state.data_nodes():
+            for e in state.in_edges(dn) if dn.data in names else ():
+                if counted_write(state.sdfg, state, dn, e):
+                    stored = destination_memlet(e, state, dn, None)
+                    stores[dn.data].setdefault(str(stored.subset), stored)
+    return any(
+        (x.wcr is None or y.wcr is None) and _writes_may_overlap(x, y, itersym, step, *bounds, varying)
+        for found in stores.values()
+        for x, y in itertools.combinations(found.values(), 2)
+    )
+
+
 def reduction_family(wcr: str) -> str:
     """What identifies a WCR's operator: a difference accumulates like a sum; any other reducer stands for itself."""
     op = wcr_operator(wcr)

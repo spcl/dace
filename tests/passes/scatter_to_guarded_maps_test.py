@@ -326,6 +326,22 @@ def test_the_contract_waives_only_the_scatter_and_a_carried_counter_stays_sequen
     assert np.array_equal(kept[: len(order)], order)
 
 
+@dace.program
+def scatter_beside_a_direct_store(a: dace.float64[N], b: dace.float64[N], ip: dace.int64[N]):
+    for i in range(N):
+        if b[i] > 0.5:
+            a[ip[i]] = b[i]
+        else:
+            a[i] = -b[i]
+
+
+def test_a_direct_store_beside_the_scatter_is_not_under_its_contract():
+    """A permutation keeps ``a[ip[i]]`` apart from itself, not from ``a[i]`` of another iteration."""
+    sdfg = scatter_beside_a_direct_store.to_sdfg(simplify=True)
+    assert ScatterToGuardedMaps(emit_unparallelized_else_branch=True).apply_pass(sdfg, {}) is None
+    assert _count_guard_nodes(sdfg) == 0
+
+
 # Symbolic-stride scatter forms (TSVC-2.5)
 
 
@@ -948,6 +964,7 @@ if __name__ == "__main__":
     test_a_hoisted_count_is_not_read_ahead_of_its_guard()
     test_an_index_only_a_nested_sdfg_names_is_guarded_there()
     test_the_contract_waives_only_the_scatter_and_a_carried_counter_stays_sequential()
+    test_a_direct_store_beside_the_scatter_is_not_under_its_contract()
     with pytest.MonkeyPatch.context() as mp:
         test_the_contract_probes_read_each_sdfgs_facts_once(mp)
 
