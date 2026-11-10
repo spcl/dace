@@ -5,7 +5,7 @@ import copy
 
 import sympy
 
-from dace import SDFG, SDFGState, dtypes, nodes, properties, symbolic
+from dace import SDFG, Memlet, SDFGState, dtypes, nodes, properties, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python import astutils
 from dace.sdfg import utils as sdutil
@@ -375,6 +375,9 @@ class LiftEinsum(xf.SingleStateTransformation):
         # Add new subgraph
         state.add_node(einsum)
         for e in state.in_edges(self.map_entry):
+            if e.data.is_empty():  # an ordering edge orders the einsum as it ordered the map
+                state.add_edge(e.src, e.src_conn, einsum, None, Memlet())
+                continue
             for operand in operands.get(e.dst_conn, ()):  # einsum tensor operands
                 data = copy.deepcopy(e.data)
                 if restrict:
@@ -383,6 +386,9 @@ class LiftEinsum(xf.SingleStateTransformation):
             if e.dst_conn in coeff_map_conns:  # runtime scalar coefficient (not restricted)
                 state.add_edge(e.src, e.src_conn, einsum, coeff_map_conns[e.dst_conn], e.data)
         for e in state.out_edges(map_exit):
+            if e.data.is_empty():
+                state.add_edge(einsum, None, e.dst, e.dst_conn, Memlet())
+                continue
             for hop in state.memlet_path(e)[1:] if e.data.wcr is not None else ():
                 hop.data.wcr = None  # Cancel WCR now that it is nested in the einsum, out to the outermost scope
             data = e.data
