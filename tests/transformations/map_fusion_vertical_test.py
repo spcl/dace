@@ -4284,20 +4284,14 @@ def test_fusion_rebases_a_nested_producer_below_an_inner_map():
     assert np.allclose(b, 2.0 * a + 1.0)
 
 
-@pytest.mark.parametrize("looped", [False, True])
-def test_a_conditional_write_fuses_in_place_when_something_keeps_the_intermediate_alive(looped: bool):
-    """An element skipped on this execution holds nothing a reader may rely on, unless an earlier loop trip wrote it:
-    then only the container itself holds it."""
-    sdfg = dace.SDFG(unique_name(f"conditional_producer_{looped}"))
+def test_a_conditional_producer_is_not_fused():
+    """Fusing a conditional writer into its reader puts the reader's statements under the writer's guard, one nested
+    SDFG each; the two maps stay apart and compute what they computed."""
+    sdfg = dace.SDFG(unique_name("conditional_producer"))
     for name in "AB":
         sdfg.add_array(name, (10,), dace.float64)
     sdfg.add_array("T", (10,), dace.float64, transient=True)
-    if looped:
-        loop = LoopRegion("loop", "t < 2", "t", "t = 0", "t = t + 1")
-        sdfg.add_node(loop, is_start_block=True)
-        state = loop.add_state(is_start_block=True)
-    else:
-        state = sdfg.add_state(is_start_block=True)
+    state = sdfg.add_state(is_start_block=True)
     intermediate = state.add_access("T")
     state.add_mapped_tasklet(
         "maybe",
@@ -4320,44 +4314,7 @@ def test_a_conditional_write_fuses_in_place_when_something_keeps_the_intermediat
 
     FuseMaps().apply_pass(sdfg, {})
 
-    assert count_nodes(state, nodes.MapEntry) == 1
-    assert (
-        any(isinstance(n, nodes.AccessNode) and n.data == "T" and state.entry_node(n) for n in state.nodes()) == looped
-    )
-
-
-def test_an_intermediate_fused_in_place_is_not_single_use_any_more():
-    """A second reader fuses the conditional write in place; the last reader must not then delete the container."""
-    sdfg = dace.SDFG(unique_name("in_place_then_exclusive"))
-    for name in "ABC":
-        sdfg.add_array(name, (10,), dace.float64)
-    sdfg.add_array("T", (10,), dace.float64, transient=True)
-    state = sdfg.add_state(is_start_block=True)
-    intermediate = state.add_access("T")
-    state.add_mapped_tasklet(
-        "maybe",
-        {"i": "0:10"},
-        {"_a": dace.Memlet("A[i]")},
-        "if _a > 0:\n\t_b = _a",
-        {"_b": dace.Memlet("T[i]", dynamic=True)},
-        external_edges=True,
-        output_nodes={"T": intermediate},
-    )
-    for reader, output in (("first", "B"), ("second", "C")):
-        state.add_mapped_tasklet(
-            reader,
-            {"j": "0:10"},
-            {"_a": dace.Memlet("T[j]")},
-            "_b = _a",
-            {"_b": dace.Memlet(f"{output}[j]")},
-            external_edges=True,
-            input_nodes={"T": intermediate},
-        )
-
-    FuseMaps().apply_pass(sdfg, {})
-
-    assert count_nodes(state, nodes.MapEntry) == 1
-    assert "T" in sdfg.arrays
+    assert count_nodes(state, nodes.MapEntry) == 2
     assert not any(
         e.src.data == e.dst.data
         for e in state.edges()
@@ -4611,8 +4568,6 @@ if __name__ == "__main__":
     test_maps_writing_one_output_fuse_only_where_their_writes_are_disjoint(0, False)
     test_maps_accumulating_into_one_output_stay_apart()
     test_map_fusion_conditional_write_of_a_shared_element_not_fused()
-    test_a_conditional_write_fuses_only_into_an_intermediate_nothing_else_keeps_alive(False)
-    test_a_conditional_write_fuses_only_into_an_intermediate_nothing_else_keeps_alive(True)
     test_input_read_through_two_nodes_fuses(False)
     test_input_read_through_two_nodes_fuses(True)
     test_an_output_that_only_orders_the_second_map_is_a_pure_output()
