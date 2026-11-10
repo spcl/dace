@@ -24,8 +24,9 @@ and, when the loop body is the test alone, one ``FindFirst`` over the whole rang
 Chunking is what makes the body's second read of the predicate's arrays a cache hit and bounds the
 search past the hit to one chunk; :data:`FIND_FIRST_HINT` records the alternatives on the node.
 
-Sound when ``p`` reads nothing the loop writes: then every test sees the values the sequential loop
-saw, all tests can run before any body, and the iterations below the hit run exactly ``pre; post``.
+Sound when ``p`` reads nothing the loop writes and every element it reads through the counter exists at
+every index of the range (the search tests indices past the hit): then every test sees the values the
+sequential loop saw, all tests can run before any body, and the iterations below the hit run exactly ``pre; post``.
 ``effect`` runs once, after them, exactly where the sequential loop ran it. Refused when the loop
 counter or a symbol the body assigns is read after the loop (the sequential loop leaks its last
 value), when the test reads data the loop writes, or when the body holds another jump.
@@ -283,7 +284,43 @@ class LiftBreakToFindFirst(ppl.Pass):
             return None
         if not self.private_to_loop(sdfg, match):
             return None
+        if not self.reads_stay_in_bounds(sdfg, match):
+            return None
         return match
+
+    def reads_stay_in_bounds(self, sdfg: SDFG, match: Match) -> bool:
+        """Whether every element the test reads through the counter exists at every index of the range.
+
+        The search evaluates the test past the hit, where the sequential loop read nothing: ``a[idx[i]]`` behind
+        a sentinel is refused, and so is an affine index not proven inside its dimension. An index the counter
+        does not move is read by the first iteration already.
+        """
+        facts = sdfg.facts()
+        for name, reads in match.reads.items():
+            for read in reads:
+                for dim, extent in zip(read, sdfg.arrays[name].shape):
+                    parts = list(ast.walk(ast.parse(dim, mode="eval")))
+                    if not any(isinstance(n, ast.Name) and n.id == INDEX_NAME for n in parts):
+                        continue
+                    if any(isinstance(n, ast.Subscript) for n in parts):
+                        return False
+                    # One instance per name: the bounds are reparsed, the extent carries the declared symbol
+                    expr, low, high, extent = symbolic.equalize_symbols_across(
+                        symbolic.pystr_to_symbolic(dim),
+                        get_init_assignment(match.loop),
+                        get_loop_end(match.loop),
+                        extent,
+                    )
+                    index = next(s for s in expr.free_symbols if str(s) == INDEX_NAME)
+                    slope = expr.diff(index)
+                    if not slope.is_number:
+                        return False
+                    first, last = (low, high) if slope >= 0 else (high, low)
+                    if not symbolic.provably_le(0, expr.subs(index, first), facts) or not symbolic.provably_le(
+                        expr.subs(index, last), extent - 1, facts
+                    ):
+                        return False
+        return True
 
     def build_predicate(self, sdfg: SDFG, match: Match) -> bool:
         """Fill ``match.predicate`` from the test and the assignments that feed it; ``False`` if impossible."""

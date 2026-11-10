@@ -201,6 +201,30 @@ def test_the_pure_search_is_python_sdfg_components_and_finds_the_first_hit(hit):
     assert out_value[0] == (-1.0 if hit is None else 0.95)
 
 
+@dace.program
+def capture_behind_a_sentinel(a: dace.float64[M], idx: dace.int64[N], out_index: dace.int64[1]):
+    out_index[0] = -1
+    for i in range(N):
+        if a[idx[i]] > 0.5:
+            out_index[0] = i
+            break
+
+
+def test_a_test_that_gathers_through_the_counter_keeps_the_loop():
+    """``a[idx[i]]``: past the hit ``idx`` holds no valid index, and the search would read there."""
+    sdfg, result = lifted(capture_behind_a_sentinel, "lift_ff_sentinel")
+    a = np.zeros(16)
+    a[7] = 1.0
+    idx = np.full(4096, 2**40, np.int64)
+    idx[:10], idx[10] = 3, 7
+    out_index = np.zeros(1, np.int64)
+
+    sdfg(a=a, idx=idx, out_index=out_index, N=idx.size, M=a.size)
+
+    assert result is None and not find_firsts(sdfg)
+    assert out_index[0] == 10
+
+
 if __name__ == "__main__":
     test_capture_finds_the_first_hit_and_runs_the_effect_once(17)
     test_capture_finds_the_first_hit_and_runs_the_effect_once(0)
@@ -219,3 +243,4 @@ if __name__ == "__main__":
         test_a_two_dimensional_test_reads_the_element_it_names("pure", hit)
     for hit in (17, 0, None):
         test_the_pure_search_is_python_sdfg_components_and_finds_the_first_hit(hit)
+    test_a_test_that_gathers_through_the_counter_keeps_the_loop()
