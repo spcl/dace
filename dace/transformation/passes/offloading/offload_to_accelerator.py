@@ -2177,6 +2177,22 @@ class OffloadToAccelerator(ppl.Pass):
                 constant = OrderedSet()
             entry_fills[to_gpu] |= constant
             array_names = OrderedSet(name for name in array_names if name not in constant)
+            # A copy inside loops that write neither side of a container moves the same bytes every trip: it is made
+            # once, ahead of the outermost such loop (fv3's index tables, filled before the time loop).
+            if array_names and not in_sequential_specialization_arm(after if after is not None else before):
+                hoisted: dict[LoopRegion, OrderedSet[str]] = {}
+                for name in array_names:
+                    loop = invariant_loop(after if after is not None else before, name)
+                    if loop is not None:
+                        hoisted.setdefault(loop, OrderedSet()).add(name)
+                for loop, names in hoisted.items():
+                    done = placed.setdefault((loop, "before"), {})
+                    fresh = OrderedSet(name for name in names if done.get(name) != {to_gpu})
+                    for name in fresh:
+                        done.setdefault(name, set()).add(to_gpu)
+                    if fresh:
+                        self.create_interstate_copy(sdfg, None, loop, fresh, to_gpu=to_gpu)
+                    array_names = OrderedSet(name for name in array_names if name not in names)
             point = (after, "before") if after is not None else (before, "after")
             directions = placed.setdefault(point, {})
             fresh = OrderedSet(name for name in array_names if directions.get(name) != {to_gpu})
@@ -2244,6 +2260,26 @@ class OffloadToAccelerator(ppl.Pass):
         self._correct_transient_storage_locations(sdfg, IR)
         self._insert_copy_names(sdfg, IR)
         written |= self.written_arrays(sdfg)
+        # Per loop, the containers written in it; taken before any copy state is added.
+        loop_writes = {
+            loop: {node.data for state in loop.all_states() for node in state.data_nodes() if state.in_degree(node)}
+            for loop in sdfg.all_control_flow_regions()
+            if isinstance(loop, LoopRegion)
+        }
+
+        def invariant_loop(block, name: str) -> LoopRegion | None:
+            """The outermost loop around ``block`` inside which neither ``name`` nor its twin is written."""
+            outermost = None
+            region = block.parent_graph
+            while region is not None and not isinstance(region, SDFG):
+                if isinstance(region, LoopRegion):
+                    writes = loop_writes.get(region, ())
+                    if name in writes or twin_of(name) in writes:
+                        break
+                    outermost = region
+                region = region.parent_graph
+            return outermost
+
         traverse_IR(IR, eval)
         for to_gpu, names in entry_fills.items():
             if names:
