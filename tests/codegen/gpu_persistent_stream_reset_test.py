@@ -16,7 +16,6 @@ import re
 import pytest
 
 import dace
-from dace.config import set_temporary
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import GPUPersistentKernel
 
@@ -68,11 +67,7 @@ def push_and_drain() -> dace.SDFG:
 
 
 def test_a_stream_reset_is_ordered_against_the_pushes_of_its_state():
-    # A persistent kernel over a Stream is legacy-codegen territory: the experimental generator
-    # cannot allocate Stream descriptors, so apply_gpu_transformations refuses the program and
-    # ``push_and_drain`` would hand back an untransformed two-state SDFG with no kernel in it.
-    with set_temporary("compiler", "cuda", "implementation", value="legacy"):
-        code = "\n".join(obj.clean_code for obj in push_and_drain().generate_code())
+    code = "\n".join(obj.clean_code for obj in push_and_drain().generate_code())
 
     resets = list(re.finditer(r"(\w+)\.reset\(\);", code))
     assert resets, "no stream reset was emitted, so this test would pass vacuously"

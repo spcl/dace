@@ -618,10 +618,8 @@ class Range(Subset):
         return Range(
             [
                 (
-                    symbolic.equalize_symbol(self.ranges[i][0] + mult * off[i]),
-                    self.ranges[i][1]
-                    if not offset_end
-                    else symbolic.equalize_symbol(self.ranges[i][1] + mult * off[i]),
+                    self.ranges[i][0] + mult * off[i],
+                    self.ranges[i][1] if not offset_end else (self.ranges[i][1] + mult * off[i]),
                     self.ranges[i][2],
                 )
                 for i in indices

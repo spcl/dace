@@ -2,6 +2,9 @@
 """Shared memory declared in nested SDFGs of a kernel, at several depths and in sibling nested SDFGs, placed
 statically or dynamically by ``gpu_shared_memory.PlanSharedMemory``."""
 
+import numpy as np
+import pytest
+
 import dace
 from dace import dtypes
 from dace.memlet import Memlet

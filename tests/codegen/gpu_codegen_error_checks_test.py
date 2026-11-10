@@ -15,9 +15,7 @@ from dace.libraries import blas
 from dace.libraries.blas.nodes.gemm import ExpandGemmCuBLAS, ExpandGemmRocBLAS
 
 BAILOUT = r"if \(__result\)"
-# Matches DACE_GPU_CHECK and its _RETURN/_RETURN_VAL variants, either backend target.
-GPU_CHECK = r"DACE_GPU_CHECK\w*\("
-SYNC_CALL = r"(?:cuda|hip)StreamSynchronize\("
+EVENT_CALL = r"(?:cuda|hip)(?:EventRecord|StreamWaitEvent)\("
 #: The vendor BLAS expansion of the configured GPU backend, and the call spellings it emits
 GPU_BLAS = ExpandGemmCuBLAS if common.get_gpu_backend() == "cuda" else ExpandGemmRocBLAS
 GPU_BLAS_IMPLEMENTATION = "cuBLAS" if GPU_BLAS is ExpandGemmCuBLAS else "rocBLAS"
@@ -118,23 +116,23 @@ def gpu_blas_gemm(alpha: float = 1.0) -> dace.SDFG:
 
 
 def test_a_failed_target_initializer_stops_before_the_state_it_left_unset():
-    """The CUDA target initializer returns early without a gpu_context when no device is present."""
+    """``__dace_init_cuda`` returns early without a gpu_context when no device is present."""
     init = init_function(generated_code(persistent_gpu_transient()), "persistent_gpu_transient")
     initializer = re.search(r"__result \|= __dace_init_(experimental_)?cuda\(", init)
     assert initializer, "the CUDA target initializer is not called, so this test is anchored on nothing"
-    allocation = re.search(GPU_CHECK, init)
+    allocation = re.search(r"DACE_GPU_CHECK\(", init)
     assert allocation, "the persistent GPU allocation was not hoisted into the init function"
     bailout = re.search(BAILOUT, init[initializer.end() : allocation.start()])
     assert bailout, (
-        "the persistent GPU allocation runs even when the CUDA target initializer failed, and every "
-        "GPU check in it dereferences the gpu_context that the failed initializer never constructed"
+        "the persistent GPU allocation runs even when __dace_init_cuda failed, and every DACE_GPU_CHECK "
+        "in it dereferences the gpu_context that the failed initializer never constructed"
     )
 
 
 def test_the_init_function_still_checks_what_runs_after_the_allocations():
     """Environment and SDFG-level init code can fail too, so the later guard has to stay."""
     init = init_function(generated_code(persistent_gpu_transient()), "persistent_gpu_transient")
-    allocation = re.search(GPU_CHECK, init)
+    allocation = re.search(r"DACE_GPU_CHECK\(", init)
     assert allocation, "the persistent GPU allocation was not hoisted into the init function"
     assert re.search(BAILOUT, init[allocation.end() :]), (
         "nothing checks __result after the allocation and init code, so a failure there returns a live state"
@@ -143,14 +141,7 @@ def test_the_init_function_still_checks_what_runs_after_the_allocations():
 
 @pytest.mark.old_gpu_codegen_only  # the legacy codegen's cross-stream events
 def test_cross_stream_event_synchronization_is_checked():
-    """The producers have to be ordered against their consumer, and the ordering has to be checked.
-
-    The experimental CUDA target establishes cross-stream ordering without events: every kernel of
-    the state is issued on the same stream in dependency order (stream FIFO replaces
-    ``StreamWaitEvent``), and the host is blocked on that stream by a ``StreamSynchronize`` before
-    anything may read the results. A silent ``StreamSynchronize`` failure loses that ordering just
-    as a silent ``EventRecord`` did, so every emitted one has to be checked.
-    """
+    """A silent EventRecord failure loses the ordering it was supposed to establish."""
     code = generated_code(cross_stream_consumer())
     calls = list(re.finditer(EVENT_CALL, code))
     assert calls, "no cross-stream event synchronization was emitted, so this test is anchored on nothing"

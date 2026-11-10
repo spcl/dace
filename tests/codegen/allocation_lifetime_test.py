@@ -373,20 +373,20 @@ def test_nested_persistent():
 def test_persistent_scalar():
 
     @dace.program
-    def persistent_scalar(a: dace.float64[20]):
+    def perscal(a: dace.float64[20]):
         tmp = dace.define_local_scalar(dace.float64, lifetime=dace.AllocationLifetime.Persistent)
         tmp[:] = a[1] + 1
         return tmp
 
     a = np.random.rand(20)
-    b = persistent_scalar(a)
+    b = perscal(a)
     assert np.allclose(b, a[1] + 1)
 
 
 def test_persistent_scalar_in_map():
 
     @dace.program
-    def persistent_scalar_in_map(a: dace.float64[20, 20]):
+    def perscal(a: dace.float64[20, 20]):
         tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp2 = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp[:] = 1
@@ -398,14 +398,14 @@ def test_persistent_scalar_in_map():
                 aa = 5
 
     a = np.random.rand(20, 20)
-    persistent_scalar_in_map(a)
+    perscal(a)
     assert np.allclose(a[1, 2], 5)
 
 
 def test_persistent_array_access():
 
     @dace.program
-    def persistent_array_access(a: dace.float64[20]):
+    def perscal(a: dace.float64[20]):
         tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp2 = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
         tmp[:] = 1
@@ -416,7 +416,7 @@ def test_persistent_array_access():
             aa = 5
 
     a = np.random.rand(20)
-    persistent_array_access(a)
+    perscal(a)
     assert np.allclose(a[3], 5)
 
 
@@ -564,90 +564,6 @@ def test_scope_multisize():
     assert len(re.findall(r"aligned_delete_array\(|delete\[\]", code)) == 2
 
     sdfg()
-
-
-@pytest.mark.parametrize("schedule", [dace.ScheduleType.Sequential, dace.ScheduleType.CPU_Multicore])
-def test_code_only_container_read_scope(schedule):
-    """A transient Scalar written via an AccessNode in one nested-SDFG state and read
-    ONLY from a sibling state's tasklet CODE (free name -- no connector/memlet/AccessNode).
-    The allocation-scope analysis must count the code-only use, or the declaration lands
-    inside the writing state's brace scope and the read does not compile (the cloudsc
-    ``zqe_5`` shape, produced by SymbolPropagation folding ``zqe = zqe_5`` into tasklet
-    code). Regression test for determine_allocation_lifetime's code-instance collection.
-    """
-    sdfg = dace.SDFG(f"code_only_read_{schedule.name}")
-    sdfg.add_array("A", [16], dace.float64)
-    sdfg.add_array("B", [16], dace.float64)
-    state = sdfg.add_state("main")
-
-    nest = dace.SDFG("nest")
-    nest.add_symbol("i", dace.int64)
-    nest.add_array("a_in", [16], dace.float64)
-    nest.add_array("b_out", [16], dace.float64)
-    nest.add_scalar("zqe", dace.float64, transient=True)
-
-    # State A: write zqe through a proper AccessNode.
-    st_a = nest.add_state("stA")
-    ra = st_a.add_read("a_in")
-    tw = st_a.add_tasklet("writer", {"a"}, {"o"}, "o = a * 2.0")
-    wz = st_a.add_write("zqe")
-    st_a.add_edge(ra, None, tw, "a", dace.Memlet("a_in[i]"))
-    st_a.add_edge(tw, "o", wz, None, dace.Memlet("zqe[0]"))
-
-    # State B: read zqe ONLY from tasklet code (no AccessNode / memlet).
-    st_b = nest.add_state_after(st_a, "stB")
-    rb = st_b.add_read("a_in")
-    tr = st_b.add_tasklet("reader", {"__in_b"}, {"__out"}, "__out = min(zqe, __in_b)")
-    wb = st_b.add_write("b_out")
-    st_b.add_edge(rb, None, tr, "__in_b", dace.Memlet("a_in[i]"))
-    st_b.add_edge(tr, "__out", wb, None, dace.Memlet("b_out[i]"))
-
-    me, mx = state.add_map("m", dict(i="0:16"), schedule=schedule)
-    nsdfg = state.add_nested_sdfg(nest, inputs={"a_in"}, outputs={"b_out"})
-    an_a = state.add_read("A")
-    an_b = state.add_write("B")
-    state.add_memlet_path(an_a, me, nsdfg, dst_conn="a_in", memlet=dace.Memlet("A[i]"))
-    state.add_memlet_path(nsdfg, mx, an_b, src_conn="b_out", memlet=dace.Memlet("B[i]"))
-
-    a = np.random.rand(16)
-    b = np.zeros(16)
-    sdfg(A=a, B=b)
-    # b = min(2a, a) = a for a >= 0.
-    assert np.allclose(b, a)
-
-
-def view_read_without_an_access_node(name: str, from_code: bool) -> dace.SDFG:
-    """A View whose EARLIEST use names it with no AccessNode -- from tasklet code, or from an
-    interstate edge. The allocation analysis fabricates an access node for such a use, and that node
-    is not in the state graph, so every graph query on it raises."""
-    sdfg = dace.SDFG(name)
-    sdfg.add_array("inp", [8], dace.float64)
-    sdfg.add_array("out", [8], dace.float64)
-    sdfg.add_array("buf", [8], dace.float64, transient=True)
-    sdfg.add_view("v", [8], dace.float64)
-
-    s0 = sdfg.add_state("s0", is_start_block=True)
-    code = "y = x + v" if from_code else "y = x"
-    t0 = s0.add_tasklet("first", {"x"}, {"y"}, code)
-    s0.add_edge(s0.add_read("inp"), None, t0, "x", dace.Memlet("inp[0]"))
-    s0.add_edge(t0, "y", s0.add_write("buf"), None, dace.Memlet("buf[0]"))
-
-    s1 = sdfg.add_state("s1")
-    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={} if from_code else {"k": "v"}))
-    vn = s1.add_access("v")
-    s1.add_edge(s1.add_read("buf"), None, vn, "views", dace.Memlet("buf[0:8]"))
-    t1 = s1.add_tasklet("use", {"x"}, {"y"}, "y = x * 2.0")
-    s1.add_edge(vn, None, t1, "x", dace.Memlet("v[0]"))
-    s1.add_edge(t1, "y", s1.add_write("out"), None, dace.Memlet("out[0]"))
-    return sdfg
-
-
-@pytest.mark.parametrize("from_code", [True, False])
-def test_view_read_without_an_access_node(from_code):
-    """Both fabricated-node sources reach is_nonfree_sym_dependent, whose View branch queries the
-    node's edges, so a view is never stood in for."""
-    sdfg = view_read_without_an_access_node(f"view_no_access_node_{int(from_code)}", from_code)
-    sdfg.generate_code()
 
 
 def test_multisize():
@@ -829,14 +745,7 @@ if __name__ == "__main__":
     test_branched_allocation("singlevalue")
     # test_branched_allocation('multivalue')
     # test_scope_multisize()
-    test_code_only_container_read_scope(dace.ScheduleType.Sequential)
-    test_code_only_container_read_scope(dace.ScheduleType.CPU_Multicore)
-    test_view_read_without_an_access_node(True)
-    test_view_read_without_an_access_node(False)
     test_multisize()
-    test_deferred_scalar_nested_sdfg_same_scope()
-    test_deferred_scalar_cpp_tasklet_same_scope()
-    test_deferred_scalar_still_applies()
     test_a_view_does_not_reallocate_the_array_it_views()
     test_dominator_tree_matches_the_transitive_closure()
     test_container_read_only_from_tasklet_code()

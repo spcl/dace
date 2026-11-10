@@ -657,16 +657,7 @@ class CPUCodeGen(TargetCodeGenerator):
             return
         elif nodedesc.storage == dtypes.StorageType.Register:
             allocate_register_array(
-                name,
-                nodedesc,
-                arrsize,
-                node,
-                cfg,
-                state_id,
-                declaration_stream,
-                allocation_stream,
-                define_var,
-                sdfg.constants,
+                name, nodedesc, arrsize, node, cfg, state_id, declaration_stream, allocation_stream, define_var
             )
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
@@ -2742,7 +2733,6 @@ def allocate_register_array(
     declaration_stream: CodeIOStream,
     allocation_stream: CodeIOStream,
     define_var,
-    constants: dict,
 ) -> None:
     """Declare a register (stack) array; a ``gpuStream_t`` array instead aliases the context's streams."""
     if nodedesc.dtype == dtypes.gpuStream_t:
@@ -2757,7 +2747,7 @@ def allocate_register_array(
         raise NotImplementedError("Start offset unsupported for registers")
     # A VLA is neither alignable nor brace-initializable, so it zeroes by assignment. Its bound
     # must be positive, while a symbolic extent may evaluate to zero.
-    variable_length_array = symbolic.issymbolic(arrsize, constants)
+    variable_length_array = symbolic.issymbolic(arrsize, cfg.sdfg.constants)
     bound = cpp.sym2cpp(symbolic.sympy.Max(1, arrsize) if variable_length_array else arrsize)
     alignment = "" if variable_length_array else "  DACE_ALIGN(64)"
     if node.setzero and not variable_length_array:

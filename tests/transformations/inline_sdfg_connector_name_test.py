@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``InlineSDFG`` and ``InlineMultistateSDFG`` name an inlined transient apart from the connectors of the parent's code nodes, which validation
+"""``InlineSDFG`` names an inlined transient apart from the connectors of the parent's code nodes, which validation
 forbids data to share (an expanded copy's tasklet reads ``_cpy_in``, and so is named every copy nest's local view)."""
 
 import numpy as np

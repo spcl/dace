@@ -11,7 +11,6 @@ from networkx import MultiDiGraph
 from ordered_set import OrderedSet
 
 from dace import data, dtypes, subsets, symbolic, typeclass
-from dace.data import View
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, graph, nodes, utils
@@ -406,9 +405,7 @@ def nest_state_subgraph(
             continue
         name = edge.data.data
         if name not in nested_names:
-            desc = sdfg.arrays[edge.data.data]
-            # A view is a plain array in the nest: what it views stays outside
-            datadesc = desc.as_array() if isinstance(desc, View) else copy.deepcopy(desc)
+            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
             datadesc.transient = False
             nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
         new_name = nested_names[name]
@@ -418,9 +415,7 @@ def nest_state_subgraph(
             continue
         name = edge.data.data
         if name not in nested_names:
-            desc = sdfg.arrays[edge.data.data]
-            # A view is a plain array in the nest: what it views stays outside
-            datadesc = desc.as_array() if isinstance(desc, View) else copy.deepcopy(desc)
+            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
             datadesc.transient = False
             nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
         new_name = nested_names[name]

@@ -557,37 +557,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if key in self._synchronized_d2h:
                 continue
             self._synchronized_d2h.add(key)
-            gpu_stream = self.issued_stream_expression(state, producer)
+            gpu_stream = assigned_stream_expr(producer)
             callsite_stream.write(
                 sync_code(SyncScope.STREAM, self.backend, stream=gpu_stream) + "\n", cfg, state_id, consumer
             )
-
-    def issued_stream_expression(self, state: SDFGState, producer: nodes.Node) -> str:
-        """The stream ``producer`` issued its work on, spelled exactly as at the issue site.
-
-        A lifted copy names its stream through its ``__dace_current_stream`` connector, so the wait
-        renders that connector's memlet: the stream manager's context-array expression is a different
-        stream object than the ``gpu_streams`` element the copy read, and waiting on it orders nothing.
-        A producer without a wired stream connector falls back to the assigned stream.
-        """
-        from dace.codegen.targets.experimental_cpu import ExperimentalCPUCodeGen, format_index_access
-        from dace.libraries.standard.helper import CURRENT_STREAM_NAME
-
-        for edge in state.in_edges(producer):
-            if edge.dst_conn != CURRENT_STREAM_NAME or edge.data is None or edge.data.data is None:
-                continue
-            parts = None
-            if isinstance(self._cpu_codegen, ExperimentalCPUCodeGen):
-                parts = self._cpu_codegen.array_index_access(
-                    state.sdfg, state.sdfg.arrays[edge.data.data], edge.data.data
-                )
-            if parts is None:
-                return cpp.cpp_array_expr(state.sdfg, edge.data, framecode=self._frame)
-            ptrname, fnname, extra_syms = parts[0], parts[1], parts[3]
-            return format_index_access(
-                ptrname, fnname, [str(index) for index in edge.data.subset.min_element()], extra_syms
-            )
-        return assigned_stream_expr(producer)
 
     def reads_unsynchronized_device_copy(self, state: SDFGState, node: nodes.Node) -> bool:
         """Whether ``node`` is a host node whose first read of a device-to-host copy is still unsynced."""
@@ -752,15 +725,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 if name in tasklet.location:
                     scope_manager.open(condition=location_condition(name, index_expr, tasklet.location[name]))
 
-            # Tag this as device (.cu) generation so the delegate's generated-function dedup keys on
-            # the .cu owner, not the host TU -- otherwise a ``<name>_idx`` helper flushed here lands in
-            # the .cu under the host key and is re-emitted under the device key = a C++ redefinition.
-            old_codegen = self._cpu_codegen.calling_codegen
-            self._cpu_codegen.calling_codegen = self
-            try:
-                self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-            finally:
-                self._cpu_codegen.calling_codegen = old_codegen
+            self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def declare_array(
         self,
