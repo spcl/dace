@@ -263,8 +263,11 @@ def test_two_statements_with_one_label_and_code_are_told_apart():
     loop = LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1", sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
     state = loop.add_state("body", is_start_block=True)
-    for name, label, code, index in (("a", "scale", "__in * 2.0", "0"), ("b", "scale", "__in * 2.0", "0"),
-                                     ("c", "other", "__in + 1.0", "i")):
+    for name, label, code, index in (
+        ("a", "scale", "__in * 2.0", "0"),
+        ("b", "scale", "__in * 2.0", "0"),
+        ("c", "other", "__in + 1.0", "i"),
+    ):
         tasklet = state.add_tasklet(label, {"__in"}, {"__out"}, f"__out = {code}")
         state.add_edge(state.add_read(name), None, tasklet, "__in", dace.Memlet(f"{name}[{index}]"))
         state.add_edge(tasklet, "__out", state.add_write(name), None, dace.Memlet(f"{name}[{index}]"))

@@ -121,8 +121,9 @@ def test_single_trip_loop_with_a_break_is_kept_beside_a_twin_without_one():
         state = loop.add_state(f"write_{name}", is_start_block=before is None)
         if before is not None:
             loop.add_edge(before, state, dace.InterstateEdge())
-        state.add_edge(state.add_tasklet("t", {}, {"o"}, "o = 1"), "o", state.add_write(name), None,
-                       dace.Memlet(f"{name}[j + i]"))
+        state.add_edge(
+            state.add_tasklet("t", {}, {"o"}, "o = 1"), "o", state.add_write(name), None, dace.Memlet(f"{name}[j + i]")
+        )
 
     assert eliminate_trivial_loops(sdfg, {}) == 1
     a, b = np.zeros(4, dtype=np.int64), np.zeros(4, dtype=np.int64)
