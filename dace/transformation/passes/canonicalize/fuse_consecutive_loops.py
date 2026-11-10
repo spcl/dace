@@ -205,7 +205,7 @@ class FuseConsecutiveLoops(ppl.Pass):
                 # state, which is exactly what this index tracks, so it goes stale the
                 # moment one fires -- the next sweep iteration rebuilds it fresh.
                 scratch_index = self._build_scratch_index(sd)
-                for cfg in list(sd.all_control_flow_regions(recursive=True)):
+                for cfg in list(sd.all_control_flow_regions()):
                     if self._fuse_one(cfg, scratch_index):
                         fused += 1
                         changed = True

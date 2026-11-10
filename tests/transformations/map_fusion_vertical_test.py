@@ -4480,6 +4480,71 @@ def test_map_fusion_conditional_write_of_a_shared_element_not_fused():
     assert np.array_equal(run(True), expected)
 
 
+@pytest.mark.parametrize("through_view", [False, True])
+def test_input_read_through_two_nodes_fuses(through_view: bool):
+    """The second Map reads ``x``, which neither Map writes, through two access nodes (or the array and a View)."""
+    sdfg = dace.SDFG(unique_name(f"input_through_two_nodes_{through_view}"))
+    state = sdfg.add_state()
+    for name in ("a", "x", "out"):
+        sdfg.add_array(name, [10], dace.float64)
+    sdfg.add_transient("t", [10], dace.float64)
+    t = state.add_access("t")
+    state.add_mapped_tasklet(
+        "first", {"i": "0:10"}, {"_a": dace.Memlet("a[i]")}, "_t = _a + 1.0", {"_t": dace.Memlet("t[i]")},
+        external_edges=True, output_nodes={"t": t},
+    )  # fmt: skip
+    other, again = state.add_access("x"), "x"
+    if through_view:
+        state.remove_node(other)
+        sdfg.add_view("v", [10], dace.float64)
+        other, again = state.add_access("v"), "v"
+        state.add_edge(state.add_access("x"), None, other, "views", dace.Memlet("x[0:10]"))
+    entry, exit_node = state.add_map("second", {"i": "0:10"})
+    tasklet = state.add_tasklet("second", {"_t", "_x", "_y"}, {"_o"}, "_o = _t * _x + _y")
+    state.add_memlet_path(t, entry, tasklet, dst_conn="_t", memlet=dace.Memlet("t[i]"))
+    state.add_memlet_path(state.add_access("x"), entry, tasklet, dst_conn="_x", memlet=dace.Memlet("x[i]"))
+    state.add_memlet_path(other, entry, tasklet, dst_conn="_y", memlet=dace.Memlet(f"{again}[9 - i]"))
+    state.add_memlet_path(tasklet, exit_node, state.add_access("out"), src_conn="_o", memlet=dace.Memlet("out[i]"))
+    sdfg.validate()
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+    assert sdfg.apply_transformations_repeated(MapFusionVertical, validate=True, validate_all=True) == 1
+    assert count_nodes(sdfg, nodes.MapEntry) == 1 and "t" not in {n.data for n in state.data_nodes()}
+    compile_and_run_sdfg(sdfg, **res)
+    assert np.allclose(ref["out"], res["out"])
+
+
+def test_an_output_that_only_orders_the_second_map_is_a_pure_output():
+    """The first Map writes ``t`` and ``b[:, 0]``, the second reads ``t`` and writes ``b[:, 1]``, ordered after the
+    first Map's ``b`` by an empty Memlet."""
+    sdfg = dace.SDFG(unique_name("output_that_only_orders"))
+    sdfg.add_array("a", [10], dace.float64)
+    sdfg.add_array("b", [10, 2], dace.float64)
+    sdfg.add_transient("t", [10], dace.float64)
+    state = sdfg.add_state()
+    t, first_b = state.add_access("t"), state.add_access("b")
+    entry, exit_node = state.add_map("first", {"i": "0:10"})
+    tasklet = state.add_tasklet("first", {"_a"}, {"_t", "_b"}, "_t = _a + 1.0; _b = 2.0 * _a")
+    state.add_memlet_path(state.add_access("a"), entry, tasklet, dst_conn="_a", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(tasklet, exit_node, t, src_conn="_t", memlet=dace.Memlet("t[i]"))
+    state.add_memlet_path(tasklet, exit_node, first_b, src_conn="_b", memlet=dace.Memlet("b[i, 0]"))
+    _, second, _ = state.add_mapped_tasklet(
+        "second", {"i": "0:10"}, {"_t": dace.Memlet("t[i]")}, "_b = 3.0 * _t", {"_b": dace.Memlet("b[i, 1]")},
+        external_edges=True, input_nodes={"t": t},
+    )  # fmt: skip
+    state.add_nedge(first_b, second, dace.Memlet())
+    sdfg.validate()
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+    assert sdfg.apply_transformations_repeated(MapFusionVertical(relaxed_dataflow=True), validate_all=True) == 1
+    assert count_nodes(sdfg, nodes.MapEntry) == 1
+    assert "t" not in sdfg.arrays and sum(n.data == "b" for n in state.data_nodes()) == 1
+    compile_and_run_sdfg(sdfg, **res)
+    assert np.allclose(ref["b"], res["b"])
+
+
 if __name__ == "__main__":
     test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in_place()
     test_fusion_intrinsic_memlet_direction()
@@ -4548,3 +4613,6 @@ if __name__ == "__main__":
     test_map_fusion_conditional_write_of_a_shared_element_not_fused()
     test_a_conditional_write_fuses_only_into_an_intermediate_nothing_else_keeps_alive(False)
     test_a_conditional_write_fuses_only_into_an_intermediate_nothing_else_keeps_alive(True)
+    test_input_read_through_two_nodes_fuses(False)
+    test_input_read_through_two_nodes_fuses(True)
+    test_an_output_that_only_orders_the_second_map_is_a_pure_output()

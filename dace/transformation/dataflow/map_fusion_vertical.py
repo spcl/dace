@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import collections
 import copy
 import itertools
 import warnings
@@ -690,10 +691,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assert (not self.require_exclusive_intermediates) or (len(shared_outputs) == 0)
 
         # See `partition_first_outputs()`: moved behind the fused Map it would close a cycle
+        ordered: set[str] = set()
         for edge in list(pure_outputs):
             if edge.data.is_empty() and any(e.dst is second_map_entry for e in graph.out_edges(edge.dst)):
                 graph.remove_edge(edge)
                 pure_outputs.remove(edge)
+            for ordering in graph.edges_between(edge.dst, second_map_entry) if not edge.data.is_empty() else ():
+                graph.remove_edge(ordering)
+                ordered.add(edge.dst.data)
 
         # Also before the rewiring: the reads of the first Map the second Map's writes must stay behind
         anti_dependences = mfhelper.anti_dependences(graph, first_map_entry, second_map_exit)
@@ -788,7 +793,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         second_map_exit.map = first_map_entry.map
 
         mfhelper.keep_anti_dependences(graph, anti_dependences)
-        self.join_in_place_outputs(graph, second_map_exit, in_place)
+        self.join_in_place_outputs(graph, second_map_exit, in_place | ordered)
         # The fused body now accesses them through nodes of its own: the analysis no longer holds for them.
         self.forget_single_use(sdfg, in_place)
 
@@ -888,6 +893,27 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if not probe.reaches(state, intermediate_node, second_map_entry):
                 if self.require_all_intermediates:  # We do not allow pure output nodes.
                     return None
+                pure_outputs.add(out_edge)
+                continue
+
+            # A node that only orders the second Map after this write hands nothing on: every way from it to that Map
+            #  is an empty Memlet into its entry, and its body holds no node of the container. Fused, one Map makes
+            #  both accesses, which `has_read_write_dependency()` has judged, and `apply()` drops the edges.
+            if (
+                self.relaxed_dataflow
+                and not self.require_all_intermediates
+                and isinstance(intermediate_node, nodes.AccessNode)
+                and not out_edge.data.is_empty()
+                and all(
+                    e.dst is second_map_entry and e.data.is_empty()
+                    for e in state.out_edges(intermediate_node)
+                    if e.dst is second_map_entry or probe.reaches(state, e.dst, second_map_entry)
+                )
+                and not any(
+                    isinstance(n, nodes.AccessNode) and n.data == intermediate_node.data
+                    for n in mfhelper.scope_contents(state, second_map_entry)
+                )
+            ):
                 pure_outputs.add(out_edge)
                 continue
 
@@ -1369,11 +1395,16 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             is_in_place = inter_name in in_place
             if is_in_place:
                 new_inter_name, new_inter_desc, is_scalar = inter_name, inter_desc, False
-                # A body that fused this container in place before holds it in a node already, no copy onto itself
+                # A body that fused this container in place before holds it in a node already, no copy onto itself.
+                #  Beside other pieces that node is not where they end: one computed from it (lulesh's ``a[i, 4]``
+                #  from ``a[i, 2]``) would write back into what it reads.
                 held = [
                     e.src for e in pre_exit_edges if isinstance(e.src, nodes.AccessNode) and e.src.data == inter_name
                 ]
-                new_inter_node = held[0] if held else state.add_access(inter_name, copy.copy(inter_node.debuginfo))
+                if len(pre_exit_edges) == 1 and held:
+                    new_inter_node = held[0]
+                else:
+                    new_inter_node = state.add_access(inter_name, copy.copy(inter_node.debuginfo))
             else:
                 (new_inter_shape_raw, new_inter_shape, squeezed_dims) = self.compute_reduced_intermediate(
                     producer_subset=producer_subset,
@@ -1425,7 +1456,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  that piece is the whole of it.
             for pre_exit_edge in pre_exit_edges:
                 if is_in_place:
-                    if pre_exit_edge.src is not new_inter_node:
+                    if pre_exit_edge.src in held:
+                        # Already in the container: the node all pieces end in only has to come after it
+                        if pre_exit_edge.src is not new_inter_node and not state.edges_between(
+                            pre_exit_edge.src, new_inter_node
+                        ):
+                            state.add_nedge(pre_exit_edge.src, new_inter_node, dace.Memlet())
+                    else:
                         state.add_edge(
                             pre_exit_edge.src,
                             pre_exit_edge.src_conn,
@@ -1912,33 +1949,27 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Get the read and write sets of the different maps, note that Views
         #  are not resolved yet.
         access_sets: list[dict[str, nodes.AccessNode]] = []
+        # The container each access resolves to, Views followed, and the ones a scope node reaches more than once.
+        resolved_sets: list[set[str]] = []
+        repeated: list[set[str]] = []
         for scope_node in [first_map_entry, first_map_exit, second_map_entry, second_map_exit]:
             access_set: set[nodes.AccessNode] = self.get_access_set(scope_node, state)
             access_sets.append({node.data: node for node in access_set})
-            # If two different access nodes of the same scoping node refers to the
-            #  same data, then we consider this as a dependency we can not handle.
-            #  It is only a problem for the intermediate nodes and might be possible
-            #  to handle, but doing so is hard, so we just forbid it.
-            if len(access_set) != len(access_sets[-1]):
-                return True
-        read_map_1, write_map_1, read_map_2, write_map_2 = access_sets
-
-        # It might be possible that there are views, so we have to resolve them.
-        #  We also already get the name of the data container.
-        #  Note that `len(real_read_map_1) <= len(read_map_1)` holds because of Views.
-        resolved_sets: list[set[str]] = []
-        for unresolved_set in [read_map_1, write_map_1, read_map_2, write_map_2]:
-            resolved_names: set[str] = set()
-            for node in unresolved_set.values():
+            resolved_names: list[str] = []
+            for node in access_set:
                 tracked = self.track_view(node, state, sdfg) if self.is_view(node, sdfg) else node
                 # A broken view chain hides what the access really touches.
                 if tracked is None:
                     return True
-                resolved_names.add(tracked.data)
-            resolved_sets.append(resolved_names)
-            # Different views onto one location: forbid. This reports a HAZARD, so `True`.
-            if len(unresolved_set) != len(resolved_sets[-1]):
-                return True
+                resolved_names.append(tracked.data)
+            resolved_sets.append(set(resolved_names))
+            repeated.append({name for name, count in collections.Counter(resolved_names).items() if count > 1})
+        read_map_1, write_map_1, read_map_2, write_map_2 = access_sets
+        # One container through two access nodes, or two Views, of one scope node is a dependency this function
+        #  does not analyse. Every test below is about data a Map writes: read twice and written by neither Map,
+        #  the container is an input like any other.
+        if repeated[1] or repeated[3] or (repeated[0] | repeated[2]) & (resolved_sets[1] | resolved_sets[3]):
+            return True
         real_read_map_1, real_write_map_1, real_read_map_2, real_write_map_2 = resolved_sets
 
         # We do not allow that the first and second Map each write to the same data.

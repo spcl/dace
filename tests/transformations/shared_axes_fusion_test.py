@@ -128,8 +128,42 @@ def test_partial_reduce_fusion_with_other_producer_outputs():
     assert np.allclose(dsum, 3 * (x - y))
 
 
+def test_a_refused_split_leaves_the_boundary_memlets_as_they_were():
+    """The consumer reads another iteration's row, so the split is merged back; the memlets its propagation made for
+    the map's boundary must not stay."""
+    size = dace.symbol("M", dace.int64)
+    sdfg = dace.SDFG("refused_split")
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("a", [size, 3], dace.float64)
+    sdfg.add_array("out", [size], dace.float64)
+    sdfg.add_transient("t", [size, 3], dace.float64)
+    st = sdfg.add_state()
+    t_node = st.add_access("t")
+    st.add_mapped_tasklet(
+        "prod", {"i": "0:M", "k": "0:3"}, {"__a": dace.Memlet("a[i, k]")}, "__t = 2 * __a", {"__t": dace.Memlet("t[i, k]")},
+        external_edges=True, output_nodes={"t": t_node},
+    )  # fmt: skip
+    st.add_mapped_tasklet(
+        "cons", {"i": "0:M"}, {"__t": dace.Memlet("t[M - 1 - i, 0]")}, "__o = __t", {"__o": dace.Memlet("out[i]")},
+        external_edges=True, input_nodes={"t": t_node},
+    )  # fmt: skip
+
+    def boundary() -> list[dace.Memlet]:
+        (entry,) = [n for n in st.nodes() if isinstance(n, nodes.MapEntry) and n.map.label.startswith("prod")]
+        return [e.data for e in st.in_edges(entry) + st.out_edges(st.exit_node(entry))]
+
+    before = boundary()
+    assert FuseMapsAtSharedAxes().apply_pass(sdfg, {}) is None
+    assert all(now is then for now, then in zip(boundary(), before, strict=True))
+    a = np.random.rand(5, 3)
+    out = np.zeros(5)
+    sdfg(a=a, out=out, M=5)
+    assert np.allclose(out, 2 * a[::-1, 0])
+
+
 if __name__ == "__main__":
     test_vertical_fusion_rename_is_not_captured_by_inner_map()
     test_lower_dim_producer_fuses_into_consumer_outer_axes()
     test_lower_dim_producer_keeps_consumer_loop_order()
     test_partial_reduce_fusion_with_other_producer_outputs()
+    test_a_refused_split_leaves_the_boundary_memlets_as_they_were()

@@ -105,7 +105,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
         """
         reordered = 0
         for sd in sdfg.all_sdfgs_recursive():
-            for cfg in list(sd.all_control_flow_regions(recursive=True)):
+            for cfg in list(sd.all_control_flow_regions()):
                 if not isinstance(cfg, ControlFlowRegion):
                     continue
                 # A move rewires edges of ``cfg`` only; a refused triple stays refused.
