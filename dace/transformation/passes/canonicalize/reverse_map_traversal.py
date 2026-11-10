@@ -54,8 +54,8 @@ def access_coefficients(
     rather than guessed at.
 
     :param symbols: the resolver to read the facts at ``entry`` from, if the caller asks about several parameters.
-    :returns: one entry per (edge, dimension) the parameter appears in -- ``1``/``-1`` for an
-        ascending/descending access, or ``None`` for the whole map if any use is non-affine.
+    :returns: ``-1`` per (edge, dimension) the parameter descends in, ``[1]`` as soon as one access ascends, or
+        ``None`` for the whole map if a use before that is non-affine.
     """
     sym = symbolic.pystr_to_symbolic(param)
     # Only a symbolic coefficient needs the facts at ``entry``; a number's sign is its own
@@ -81,7 +81,9 @@ def access_coefficients(
                     if coeff.is_Number:
                         if coeff == 0:
                             return None
-                        signs.append(-1 if coeff < 0 else 1)
+                        if coeff > 0:
+                            return [1]  # one ascending access keeps the map as it is, whatever the rest reads
+                        signs.append(-1)
                         continue
                     if facts is None:
                         facts = (SymbolResolver() if symbols is None else symbols).facts_at(state, entry)
@@ -94,7 +96,7 @@ def access_coefficients(
                         symbolic.ask(symbolic.predicate_relation(symbolic.Predicate.POSITIVE, required(coeff)), facts)
                         is symbolic.Truth.TRUE
                     ):
-                        signs.append(1)
+                        return [1]
                     else:
                         return None  # a sign we cannot decide is not a direction we may flip
     return signs
