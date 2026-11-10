@@ -1097,7 +1097,9 @@ def test_a_scatter_through_an_operator_chain_is_one_reduction():
     assert not [
         b for b in sdfg.all_control_flow_blocks(recursive=True) if isinstance(b, LoopRegion) and b.pinned_sequential
     ]
-    assert [e for e, _ in sdfg.all_edges_recursive() if getattr(e.data, "data", None) == "acc" and e.data.wcr is not None]
+    assert [
+        e for e, _ in sdfg.all_edges_recursive() if getattr(e.data, "data", None) == "acc" and e.data.wcr is not None
+    ]
 
 
 @pytest.mark.gpu

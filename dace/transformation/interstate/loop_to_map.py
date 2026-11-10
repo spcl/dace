@@ -211,8 +211,7 @@ def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span, star
                 found = True
                 # ``b[i]`` and ``b[i + 1]`` are each one-to-one, and meet across two iterations
                 if str(outer) not in written and not all(
-                    meet_within_one_iteration(outer, other, itersym, step, start, varying)
-                    for other in written.values()
+                    meet_within_one_iteration(outer, other, itersym, step, start, varying) for other in written.values()
                 ):
                     return False
                 written[str(outer)] = outer
