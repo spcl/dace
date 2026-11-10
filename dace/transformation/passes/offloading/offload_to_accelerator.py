@@ -2262,7 +2262,7 @@ class OffloadToAccelerator(ppl.Pass):
         written |= self.written_arrays(sdfg)
         # Per loop, the containers written in it; taken before any copy state is added.
         loop_writes = {
-            loop: {node.data for state in loop.all_states() for node in state.data_nodes() if state.in_degree(node)}
+            loop: {node.data for state in loop.states() for node in state.data_nodes() if state.in_degree(node)}
             for loop in sdfg.all_control_flow_regions()
             if isinstance(loop, LoopRegion)
         }
