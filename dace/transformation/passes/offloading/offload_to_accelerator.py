@@ -1346,6 +1346,8 @@ class OffloadToAccelerator(ppl.Pass):
             is_gpu = is_gpu or map_entry.map.schedule in dtypes.GPU_SCHEDULES  # TODO Q: how not to hardcode?
             is_taskloop = map_entry in self._taskloops
             host_level = host_level and is_taskloop
+            # A host map launches the kernels under it as a taskloop does, so its body says where its data lives
+            launcher = is_taskloop or map_entry in self._host_map_entries
 
             # get all nodes within this map's scope
             map_nodes = [n for n, parent in self._cached_scopes[state].items() if parent is map_entry]
@@ -1354,7 +1356,7 @@ class OffloadToAccelerator(ppl.Pass):
             input_and_output = get_data_used_by_incoming_access_nodes(
                 sdfg, state, map_entry
             ) | get_data_used_by_outgoing_access_nodes(sdfg, state, state.exit_node(map_entry))
-            if is_taskloop:
+            if launcher:
                 pass  # transparent for now, resolved below once the body has spoken
             elif is_gpu:
                 gpu_set |= input_and_output
@@ -1416,7 +1418,7 @@ class OffloadToAccelerator(ppl.Pass):
                         f"{map_entry} in state {state}"
                     )
 
-            if is_taskloop:
+            if launcher:
                 # Unclaimed by the body means device data, or every iteration pays for a copy of it.
                 gpu_set |= input_and_output - cpu_set
 
