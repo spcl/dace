@@ -79,15 +79,15 @@ def cpp_fractional_pow(
         oi >> OI[0]
         o_big >> O_BIG[0]
         """
-        static_assert(std::is_same<decltype(dace::math::pow(h, 1, 2)), dace::float16>::value, "half stays half");
-        static_assert(std::is_same<decltype(dace::math::pow(f, 1, 3)), float>::value, "float stays float");
-        static_assert(std::is_same<decltype(dace::math::pow(d, -2, 3)), double>::value, "double stays double");
-        static_assert(std::is_same<decltype(dace::math::pow(i, 1, 3)), double>::value, "int becomes double");
-        oh = dace::math::pow(h, 1, 2);
-        of = dace::math::pow(f, 1, 3);
-        od = dace::math::pow(d, -2, 3);
-        oi = dace::math::pow(i, 1, 3);
-        o_big = dace::math::pow(h, 100000, 100000);
+        static_assert(std::is_same<decltype(dace::math::rational_pow(h, 1, 2)), dace::float16>::value, "half stays half");
+        static_assert(std::is_same<decltype(dace::math::rational_pow(f, 1, 3)), float>::value, "float stays float");
+        static_assert(std::is_same<decltype(dace::math::rational_pow(d, -2, 3)), double>::value, "double stays double");
+        static_assert(std::is_same<decltype(dace::math::rational_pow(i, 1, 3)), double>::value, "int becomes double");
+        oh = dace::math::rational_pow(h, 1, 2);
+        of = dace::math::rational_pow(f, 1, 3);
+        od = dace::math::rational_pow(d, -2, 3);
+        oi = dace::math::rational_pow(i, 1, 3);
+        o_big = dace::math::rational_pow(h, 100000, 100000);
         """
 
 

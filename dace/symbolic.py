@@ -2837,7 +2837,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             if not expr.args[1].is_integer:
                 num, den = sympy.fraction(sympy.together(expr.args[1]))
                 if den != 1:
-                    return f"dace::math::pow({base}, {self._print(num)}, {self._print(den)})"
+                    return f"dace::math::rational_pow({base}, {self._print(num)}, {self._print(den)})"
 
         # Special case for integer powers
         try:
