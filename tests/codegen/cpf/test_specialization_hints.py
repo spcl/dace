@@ -40,7 +40,7 @@ from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
     PARALLEL,
     SEQUENTIAL_PINNED,
     SEQUENTIAL_PROVEN,
-    UNSURE,
+    UNKNOWN,
     WAVEFRONT_FRONT,
     AnnotateLoopKinds,
     loop_header_names,
@@ -211,7 +211,7 @@ def test_ordinary_codegen_carries_no_hint():
     assert "traded a tiled map for a flat one." not in ordinary
 
 
-# Naming what every loop is: parallel, sequential (carried or pinned), unsure, and the wavefront roles.
+# Naming what every loop is: parallel, sequential (carried or pinned), unknown, and the wavefront roles.
 
 
 def loops_of(sdfg: dace.SDFG):
@@ -322,8 +322,8 @@ def test_a_proven_carried_dependence_is_rendered_as_a_proof_and_names_it():
     assert proofs, rendered
     # The hint carries the ACCESS that carries the dependence, which is what a reader acts on.
     assert "b[" in proofs[0], proofs
-    # The row axis is proven; nothing here is merely unsure.
-    assert not [line for line in rendered if line.startswith("// unsure")]
+    # The row axis is proven; nothing here is merely unknown.
+    assert not [line for line in rendered if line.startswith("// unknown")]
 
 
 def test_a_declined_dependence_test_is_not_rendered_as_a_proof():
@@ -333,12 +333,12 @@ def test_a_declined_dependence_test_is_not_rendered_as_a_proof():
     anything about data. Calling that a carried dependence would be a claim the pipeline never
     made, and would send a reader looking for a recurrence that is not there.
     """
-    rendered = comment_lines(named(breaking_sdfg("cpf_kind_unsure")))
-    unsure = [line for line in rendered if line.startswith("// unsure -- ")]
-    assert unsure, rendered
-    # The refusal names WHERE the test stopped, which is what separates unsure from proven.
-    assert "Break" in unsure[0], unsure
-    # "carried" is the proven wording, and an unsure loop must never borrow it.
+    rendered = comment_lines(named(breaking_sdfg("cpf_kind_unknown")))
+    unknown = [line for line in rendered if line.startswith("// unknown -- ")]
+    assert unknown, rendered
+    # The refusal names WHERE the test stopped, which is what separates unknown from proven.
+    assert "Break" in unknown[0], unknown
+    # "carried" is the proven wording, and an unknown loop must never borrow it.
     assert not [line for line in rendered if line.startswith("// sequential -- carried:")]
 
 
@@ -369,9 +369,9 @@ def test_an_access_under_a_data_dependent_branch_proves_no_carried_dependence():
 
 def test_a_loop_that_was_never_examined_says_exactly_that():
     """A while loop has no iteration variable, so nothing ever asked whether it carries a dependence.
-    That is as open as a declined test, so it is ``unsure`` too, with the reason saying why."""
+    That is as open as a declined test, so it is ``unknown`` too, with the reason saying why."""
     rendered = comment_lines(named(unexamined_sdfg("cpf_kind_unexamined")))
-    assert "// " + UNSURE.format(reason=NO_COUNTER).splitlines()[0] in rendered, rendered
+    assert "// " + UNKNOWN.format(reason=NO_COUNTER).splitlines()[0] in rendered, rendered
     assert not [line for line in rendered if line.startswith("// sequential -- carried:")]
 
 
@@ -501,7 +501,7 @@ def test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering():
 def test_a_guarded_recurrence_is_not_proven_through_its_guard():
     """s275: a guarded column recurrence. Canonicalize moves the guard ``aa[0, i] > 0`` inside the sequential loop,
     so the recurrence's accesses sit under a branch the data decides, and an access a branch may skip proves no
-    dependence: the loop stays unsure, never ``sequential -- carried``."""
+    dependence: the loop stays unknown, never ``sequential -- carried``."""
 
     @dace.program
     def guarded_columns(aa: dace.float64[N, N], bb: dace.float64[N, N]):
@@ -515,7 +515,7 @@ def test_a_guarded_recurrence_is_not_proven_through_its_guard():
     AnnotateLoopKinds().apply_pass(sdfg, {})
     hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
-    assert hints[0][0].startswith("unsure -- "), hints
+    assert hints[0][0].startswith("unknown -- "), hints
 
 
 def test_an_inner_loop_carried_dependence_is_proven_in_one_outer_iteration():
@@ -655,7 +655,7 @@ def test_writes_the_test_cannot_separate_are_proven_by_a_witness():
     assert {5 * first, 3 * first} & {5 * second, 3 * second}, carried
 
 
-def test_a_distance_set_by_an_argument_stays_unsure():
+def test_a_distance_set_by_an_argument_stays_unknown():
     """``a[i] = a[i - k]`` with ``k`` an argument: ``k`` is fixed but unknown, and ``k = 0`` carries nothing, so a
     witness that picks ``k = 1`` proves nothing about the program."""
 
@@ -665,7 +665,7 @@ def test_a_distance_set_by_an_argument_stays_unsure():
             a[i] = a[i - k] + 1.0
 
     rendered = comment_lines(named(shift_by.to_sdfg(simplify=True)))
-    assert [line for line in rendered if line.startswith("// unsure -- ")], rendered
+    assert [line for line in rendered if line.startswith("// unknown -- ")], rendered
     assert not [line for line in rendered if line.startswith("// sequential -- carried:")], rendered
 
 
@@ -866,7 +866,7 @@ if __name__ == "__main__":
     test_no_carried_dependence_is_claimed_for_independent_elements()
     test_a_pinned_independent_loop_does_not_read_as_parallel()
     test_writes_the_test_cannot_separate_are_proven_by_a_witness()
-    test_a_distance_set_by_an_argument_stays_unsure()
+    test_a_distance_set_by_an_argument_stays_unknown()
     test_a_conflict_only_under_a_branch_is_not_witnessed()
     test_a_triangular_solve_is_proven_through_its_row_copy()
     test_a_guarded_loop_names_its_guard_on_both_arms()

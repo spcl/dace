@@ -108,7 +108,7 @@ def remaining_outcome(loop: Any) -> str:
         return "small"
     if "loop body contains a" in hint and "StructureView" not in hint:
         return "early_exit"
-    if hint.startswith("unsure"):
+    if hint.startswith("unknown"):
         refusal = kinds.refusal_reason(loop)
         return "small" if getattr(refusal, "kind", None) is loop_to_map.Refusal.SMALL else "unknown"
     return "parallel_unlifted"

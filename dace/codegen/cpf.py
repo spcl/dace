@@ -1352,7 +1352,7 @@ def preamble(
 CONTRACT_LINES = [
     "// Already parallelized, with basic heuristics applied. Every loop names its class first:",
     "//   parallel, sequential -- settled; their parallelism needs no further reasoning.",
-    "//   unsure               -- open; the only loops whose parallelism is worth reasoning about.",
+    "//   unknown              -- open; the only loops whose parallelism is worth reasoning about.",
     "// Spend the effort on heuristic optimizations and restructuring.",
 ]
 

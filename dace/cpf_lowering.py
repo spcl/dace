@@ -196,7 +196,7 @@ class HintDetail(enum.Enum):
 KIND_WORDS: tuple[tuple[str, str], ...] = (
     ("parallel -- ", "par"),
     ("sequential -- ", "seq"),
-    ("unsure -- ", "unknown"),
+    ("unknown -- ", "unknown"),
 )
 
 _hint_detail: HintDetail = HintDetail.PROOFS

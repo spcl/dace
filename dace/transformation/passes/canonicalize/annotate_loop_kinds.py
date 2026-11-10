@@ -47,11 +47,11 @@ from dace.transformation.interstate.loop_to_map import LoopRefusal, Refusal
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
 
 # Three classes, named by the first word of every loop hint: ``parallel`` and ``sequential`` are
-# settled and need no further dependence reasoning, ``unsure`` is the only open one. A role (a
+# settled and need no further dependence reasoning, ``unknown`` is the only open one. A role (a
 # wavefront axis, an inner tile) follows the class word as a qualifier, never replaces it.
 
 #: The first words of every loop hint: its class (see the three below).
-CLASS_PREFIXES = ("parallel -- ", "sequential -- ", "unsure -- ")
+CLASS_PREFIXES = ("parallel -- ", "sequential -- ", "unknown -- ")
 
 #: A Map. Data-parallel by construction, whatever schedule it ends up carrying.
 PARALLEL = (
@@ -83,13 +83,13 @@ SEQUENTIAL_PROVEN_OVER_DOALL = (
 
 #: A loop the dependence test declined to answer, or never examined. NOT the same fact as the line
 #: above: not proven, and the wording has to keep saying so in one word.
-UNSURE = (
-    "unsure -- {reason}\n"
+UNKNOWN = (
+    "unknown -- {reason}\n"
     "open: not proven either way; kept sequential to be safe, and may well be parallel -- a fact about the "
     "indices (a bound, a permutation) settles it"
 )
 
-#: The ``UNSURE`` reason of a loop the dependence test never answered for; the specific cause follows a colon.
+#: The ``UNKNOWN`` reason of a loop the dependence test never answered for; the specific cause follows a colon.
 NEVER_EXAMINED = "never examined for dependences"
 #: ... because the loop has no single iteration counter to test (a while loop).
 NO_COUNTER = f"{NEVER_EXAMINED}: no single iteration counter (a while loop)"
@@ -166,7 +166,7 @@ def refusal_reason(loop: LoopRegion, session: Any = None) -> LoopRefusal | str |
         applicable = ParallelizeLoops().accepts(loop, probe, session=session)
     except Exception as error:  # pylint: disable=broad-exception-caught
         # A comment must not be able to fail the compilation that asked for it. Nothing downstream
-        # reads a hint, so a probe with no answer leaves the loop unsure and says so.
+        # reads a hint, so a probe with no answer leaves the loop unknown and says so.
         return f"{NEVER_EXAMINED}: the dependence test failed ({type(error).__name__})"
     finally:
         loop.pinned_sequential = pinned
@@ -628,12 +628,12 @@ def loop_hint(loop: LoopRegion, session: Any = None) -> str:
     if reason is None:
         return SEQUENTIAL_PINNED if loop.pinned_sequential else PARALLEL
     if isinstance(reason, str):
-        return UNSURE.format(reason=reason)
+        return UNKNOWN.format(reason=reason)
     access = proof_of_carry(loop, reason)
     if access is not None:
         text = SEQUENTIAL_PROVEN_OVER_DOALL if over_doall_nest(loop) else SEQUENTIAL_PROVEN
         return text.format(reason=access, why=proven_why(access))
-    return UNSURE.format(reason=carrying_access(reason))
+    return UNKNOWN.format(reason=carrying_access(reason))
 
 
 def over_doall_nest(loop: LoopRegion) -> bool:
