@@ -1,7 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
 
 import dace
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.transformation.passes.minimize_transients import MinimizeTransients
 
 
@@ -156,6 +158,58 @@ def test_transient_nothing_reads_leaves_no_isolated_source():
     sdfg.validate()
 
 
+def copy_of_view_sdfg(name: str, copy_node: bool, clobber: bool = False) -> dace.SDFG:
+    """``t = v.copy()`` for ``v`` the reshaping view of ``m``, by an edge or a copy node, then ``a = 2 * t``;
+    ``clobber`` rewrites ``m`` where the readers of ``t`` may still run."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("m", [2, 4], dace.float64)
+    sdfg.add_view("v", [8], dace.float64)
+    sdfg.add_transient("t", [8], dace.float64)
+    state = sdfg.add_state()
+    v, t = state.add_access("v"), state.add_access("t")
+    state.add_edge(state.add_read("m"), None, v, "views", dace.Memlet("m[0:2, 0:4] -> [0:8]"))
+    if copy_node:
+        node = CopyLibraryNode("copy")
+        state.add_node(node)
+        state.add_edge(v, None, node, "_cpy_in", dace.Memlet("v[0:8]"))
+        state.add_edge(node, "_cpy_out", t, None, dace.Memlet("t[0:8]"))
+    else:
+        state.add_nedge(v, t, dace.Memlet("v[0:8] -> [0:8]"))
+    state.add_mapped_tasklet(
+        "scale",
+        {"i": "0:8"},
+        {"x": dace.Memlet("t[i]")},
+        "y = 2 * x",
+        {"y": dace.Memlet("a[i]")},
+        external_edges=True,
+        input_nodes={"t": t},
+        output_nodes={"a": state.add_write("a")},
+    )
+    if clobber:
+        state.add_mapped_tasklet(
+            "zero", {"i": "0:2", "j": "0:4"}, {}, "y = 0", {"y": dace.Memlet("m[i, j]")}, external_edges=True
+        )
+    return sdfg
+
+
+@pytest.mark.parametrize("copy_node", [False, True])
+def test_copy_of_a_view_reads_the_view(copy_node: bool):
+    sdfg = copy_of_view_sdfg(f"minimize_transients_copy_of_view_{int(copy_node)}", copy_node)
+    assert MinimizeTransients().apply_pass(sdfg, {}) == 1
+    assert "t" not in sdfg.arrays
+    sdfg.validate()
+    a, m = np.zeros(8), np.arange(8, dtype=np.float64).reshape(2, 4)
+    sdfg(a=a, m=m)
+    np.testing.assert_array_equal(a, 2 * m.reshape(8))
+
+
+def test_copy_of_a_view_whose_container_is_rewritten_stays():
+    sdfg = copy_of_view_sdfg("minimize_transients_copy_of_clobbered_view", copy_node=True, clobber=True)
+    assert MinimizeTransients().apply_pass(sdfg, {}) is None
+    assert "t" in sdfg.arrays
+
+
 def stack_arrays_in_parallel_map_sdfg() -> dace.SDFG:
     """``out[i] = (2 + 3) * a[i, n - 1]`` per iteration of a parallel map, each term through a stack array of the
     nested SDFG; the first array is dead when the second is written."""
@@ -227,4 +281,7 @@ if __name__ == "__main__":
     test_transient_computed_from_its_target_region_stays()
     test_copy_in_read_after_a_second_reader_overwrites_it_stays()
     test_transient_nothing_reads_leaves_no_isolated_source()
+    test_copy_of_a_view_reads_the_view(False)
+    test_copy_of_a_view_reads_the_view(True)
+    test_copy_of_a_view_whose_container_is_rewritten_stays()
     test_stack_arrays_of_a_nest_in_a_parallel_map_share_one_buffer()

@@ -2,10 +2,13 @@
 """Fewer, longer-lived transients: coalesce copies, share non-interfering buffers, allocate once."""
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from dace import SDFG, SDFGState, data, dtypes, properties, subsets, symbolic
 from dace.config import Config
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.transient_reuse import BufferSharing, StateOrder, sharing_storages
 from dace.transformation.transformation import explicit_cf_compatible
@@ -38,6 +41,37 @@ class Placement:
 
 
 @dataclass(slots=True)
+class Copy:
+    """A copy between two access nodes: one edge, or the two edges of a copy node that has no other."""
+
+    src: nodes.AccessNode
+    dst: nodes.AccessNode
+    #: The edge leaving ``src`` and the one entering ``dst``: the same edge unless a copy node sits between them.
+    out: Any
+    into: Any
+    read: subsets.Subset | None
+    written: subsets.Subset | None
+
+    @staticmethod
+    def at(state: SDFGState, edge) -> "Copy | None":
+        src, dst = edge.src, edge.dst
+        if not isinstance(src, nodes.AccessNode) or edge.data.is_empty() or edge.data.wcr is not None:
+            return None
+        if isinstance(dst, nodes.AccessNode):
+            return Copy(
+                src, dst, edge, edge, edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
+            )
+        if not isinstance(dst, CopyLibraryNode) or state.in_degree(dst) != 1 or state.out_degree(dst) != 1:
+            return None
+        last = state.out_edges(dst)[0]
+        if not isinstance(last.dst, nodes.AccessNode) or last.data.wcr is not None:
+            return None
+        if edge.data.data != src.data or last.data.data != last.dst.data:
+            return None
+        return Copy(src, last.dst, edge, last, edge.data.subset, last.data.subset)
+
+
+@dataclass(slots=True)
 class Coalescing:
     """One SDFG's copy coalescing: a transient whose whole life is one state and that is copied whole to or from
     a region of another container is renamed onto that region, and the copy goes. Copy related, the two hold the
@@ -51,6 +85,9 @@ class Coalescing:
     #: Containers interstate edges or control-flow code read.
     control: set[str] = field(default_factory=set)
     facts: symbolic.Facts | None = None
+    #: In the state at hand: per view, the container it views, and the edges binding the views.
+    viewed: dict[str, str] = field(default_factory=dict)
+    bindings: set = field(default_factory=set)
 
     def run(self) -> int:
         self.facts = self.sdfg.facts()
@@ -64,7 +101,7 @@ class Coalescing:
             self.control |= region.used_symbols(all_symbols=True, with_contents=False)
         coalesced = 0
         for state in self.sdfg.states():
-            if any(isinstance(n.desc(self.sdfg), (data.View, data.Reference)) for n in state.data_nodes()):
+            if not self.resolve_views(state):
                 continue
             changed = True
             while changed:
@@ -76,21 +113,45 @@ class Coalescing:
                         break
         return coalesced
 
-    def coalesce(self, state: SDFGState, edge) -> bool:
-        src, dst = edge.src, edge.dst
-        if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)) or src.data == dst.data:
-            return False
-        if edge.data.is_empty() or edge.data.wcr is not None:
-            return False
-        for transient, other, into in ((dst, src, False), (src, dst, True)):
-            placement = self.placement(state, edge, transient, other)
-            if placement is None or not self.isolated(state, edge, transient, other, into, placement):
+    def resolve_views(self, state: SDFGState) -> bool:
+        """Fill ``viewed`` and ``bindings`` for ``state``; False if a view's container is not known by name."""
+        self.viewed, self.bindings = {}, set()
+        for node in state.data_nodes():
+            desc = node.desc(self.sdfg)
+            if isinstance(desc, data.Reference):
+                return False
+            if not isinstance(desc, data.View):
                 continue
-            self.rename(state, edge, transient, other, placement)
+            edge = sdutil.get_view_edge(state, node)
+            if edge is None:
+                return False
+            path = state.memlet_path(edge)
+            container = path[0].src if edge.dst is node else path[-1].dst
+            if not isinstance(container, nodes.AccessNode):
+                return False
+            if self.viewed.setdefault(node.data, container.data) != container.data:
+                return False
+            self.bindings.update(path)
+        for name in self.viewed:
+            while self.viewed[name] in self.viewed:
+                self.viewed[name] = self.viewed[self.viewed[name]]
+        return True
+
+    def coalesce(self, state: SDFGState, edge) -> bool:
+        copy = Copy.at(state, edge)
+        if copy is None or copy.src.data == copy.dst.data:
+            return False
+        for transient, other, into in ((copy.dst, copy.src, False), (copy.src, copy.dst, True)):
+            placement = self.placement(state, copy, transient, other)
+            if placement is None or not self.isolated(state, copy, transient, other, into, placement):
+                continue
+            self.rename(state, copy, transient, other, placement)
             return True
         return False
 
-    def placement(self, state: SDFGState, edge, transient: nodes.AccessNode, other: nodes.AccessNode) -> Placement:
+    def placement(
+        self, state: SDFGState, copy: Copy, transient: nodes.AccessNode, other: nodes.AccessNode
+    ) -> Placement:
         """Where ``transient`` lands in ``other`` if the pair may be coalesced at all, else ``None``."""
         sd = self.sdfg
         desc, target = sd.arrays[transient.data], sd.arrays[other.data]
@@ -98,15 +159,25 @@ class Coalescing:
             return None
         if desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.External):
             return None
-        if type(target) not in (data.Array, data.Scalar) or desc.dtype != target.dtype:
+        if type(target) not in (data.Array, data.Scalar, data.ArrayView) or desc.dtype != target.dtype:
+            return None
+        # Accesses through a view of the transient are not its own; it becomes a view only where it is copied from one
+        # into its single access node, whose readers leave the view's binding the edge it was.
+        if transient.data in self.viewed.values():
+            return None
+        if isinstance(target, data.View) and not (
+            transient is copy.dst
+            and self.occurrences[transient.data][state] == 1
+            and [e for e in state.all_edges(other) if not e.data.is_empty() and e is not copy.out]
+            == [e for e in state.in_edges(other) if e in self.bindings]
+            and self.keeps_binding(state, transient)
+        ):
             return None
         if desc.storage != target.storage and not (desc.storage in HOST_STORAGES and target.storage in HOST_STORAGES):
             return None
         if transient.data in self.control or list(self.occurrences.get(transient.data, {})) != [state]:
             return None
-        inward = transient is edge.dst
-        mine = edge.data.get_dst_subset(edge, state) if inward else edge.data.get_src_subset(edge, state)
-        theirs = edge.data.get_src_subset(edge, state) if inward else edge.data.get_dst_subset(edge, state)
+        mine, theirs = (copy.written, copy.read) if transient is copy.dst else (copy.read, copy.written)
         whole = subsets.Range.from_array(desc)
         if not isinstance(theirs, subsets.Range) or not (mine or whole).covers_precise(whole, self.facts):
             return None
@@ -120,13 +191,22 @@ class Coalescing:
             return None
         # Library nodes address the buffer through its strides; element memlets do not.
         laid_out = all(symbolic.equal(desc.strides[t], target.strides[d]) is True for t, d in zip(kept, dims))
+        # A nested SDFG keeps its own descriptor of the buffer: right only if the container is laid out like it.
+        twin = (
+            laid_out
+            and not unit
+            and len(target.shape) == len(kept)
+            and theirs.covers_precise(subsets.Range.from_array(target), self.facts)
+            and all(symbolic.equal(x, y) is True for x, y in zip(desc.offset, target.offset))
+            and symbolic.equal(desc.start_offset, target.start_offset) is True
+        )
         for node in state.data_nodes():
             if node.data != transient.data:
                 continue
             for e in state.all_edges(node):
                 for tree in state.memlet_tree(e).traverse_children(include_self=True):
                     for end in (tree.edge.src, tree.edge.dst):
-                        if isinstance(end, nodes.NestedSDFG):
+                        if isinstance(end, nodes.NestedSDFG) and not twin:
                             return None
                         # So do tasklets taking more than one element: a pointer they index linearly.
                         addressed = isinstance(end, nodes.LibraryNode) or (
@@ -137,8 +217,20 @@ class Coalescing:
                             return None
         return Placement(other.data, theirs, dims, unit)
 
+    def keeps_binding(self, state: SDFGState, transient: nodes.AccessNode) -> bool:
+        """Whether a view node with one binding in-edge still binds through it once it takes ``transient``'s readers
+        (:func:`~dace.sdfg.utils.get_view_edge`)."""
+        readers = [e for e in state.out_edges(transient) if not e.data.is_empty()]
+        return len(readers) != 1 or not isinstance(state.memlet_path(readers[0])[-1].dst, nodes.AccessNode)
+
     def isolated(
-        self, state: SDFGState, edge, transient: nodes.AccessNode, other: nodes.AccessNode, into: bool, at: Placement
+        self,
+        state: SDFGState,
+        copy: Copy,
+        transient: nodes.AccessNode,
+        other: nodes.AccessNode,
+        into: bool,
+        at: Placement,
     ) -> bool:
         """Whether the transient's values are exactly the copied region's while it lives: copied out (``into``),
         every access of it precedes the copy; copied in, the copy is its only write. No access of the container
@@ -157,15 +249,16 @@ class Coalescing:
             # The copy is the container's only write here: another one is ordered against the copy, not the producers.
             if any(n is not other and n.data == other.data and state.in_degree(n) > 0 for n in state.data_nodes()):
                 return False
-        elif any(not e.data.is_empty() for n in mine for e in state.in_edges(n) if e.src is not other):
+        elif any(not e.data.is_empty() for n in mine for e in state.in_edges(n) if e is not copy.into):
             return False
         # The transient's edges move onto the container's node: none may join the two or close a cycle through it.
-        if len(state.edges_between(transient, other)) + len(state.edges_between(other, transient)) != 1:
+        direct = len(state.edges_between(transient, other)) + len(state.edges_between(other, transient))
+        if direct != int(copy.out is copy.into):
             return False
         after_other = state_downstream(state, other)
-        if any(e.src is not other and e.src in after_other for e in state.in_edges(transient)):
+        if any(e is not copy.into and e.src in after_other for e in state.in_edges(transient)):
             return False
-        if any(e.dst is not other and other in state_downstream(state, e.dst) for e in state.out_edges(transient)):
+        if any(e is not copy.out and other in state_downstream(state, e.dst) for e in state.out_edges(transient)):
             return False
         order = StateOrder.of(state, scope[transient])
         written = [n for n in mine if any(not e.data.is_empty() for e in state.in_edges(n))]
@@ -179,9 +272,9 @@ class Coalescing:
                 return False
         writers = [order.top(e.src) for n in written for e in state.in_edges(n) if not e.data.is_empty()]
         readers = [
-            order.top(e.dst) for n in mine for e in state.out_edges(n) if e is not edge and not e.data.is_empty()
+            order.top(e.dst) for n in mine for e in state.out_edges(n) if e is not copy.out and not e.data.is_empty()
         ]
-        for where, writes, subset in self.accesses(state, order, other, edge, into):
+        for where, writes, subset in self.accesses(state, order, other, copy.into if into else copy.out, into):
             if subset is not None and subsets.intersects(subset, at.subset, self.facts) is symbolic.Truth.FALSE:
                 continue
             if into:
@@ -202,10 +295,12 @@ class Coalescing:
         """Who touches ``other``'s container in ``order``'s scope, apart from the copy: ``(node, writes, subset)``,
         ``node`` directly in that scope. ``other``'s readers run after the copy, so they count only copied in."""
         found = []
-        name = other.data
+        name = self.viewed.get(other.data, other.data)
         for node in state.data_nodes():
-            if node.data != name:
+            if self.viewed.get(node.data, node.data) != name:
                 continue
+            # Through another name of the container, any of it may be touched.
+            exact = node.data == other.data
             place = order.top(node)
             # Ordered around the whole scope; through the scope's connectors its accesses are listed below.
             if place is None:
@@ -213,30 +308,32 @@ class Coalescing:
                     found.append((order.within, True, None))
                 continue
             found.extend(
-                (order.top(e.src) or place, True, e.data.get_dst_subset(e, state))
+                (order.top(e.src) or place, True, e.data.get_dst_subset(e, state) if exact else None)
                 for e in state.in_edges(node)
-                if e is not copy_edge and not e.data.is_empty()
+                if e is not copy_edge and e not in self.bindings and not e.data.is_empty()
             )
             if node is other and into:
                 continue
             found.extend(
-                (order.top(e.dst) or place, False, e.data.get_src_subset(e, state))
+                (order.top(e.dst) or place, False, e.data.get_src_subset(e, state) if exact else None)
                 for e in state.out_edges(node)
-                if e is not copy_edge and not e.data.is_empty()
+                if e is not copy_edge and e not in self.bindings and not e.data.is_empty()
             )
         if order.within is not None:
             found.extend(
-                (order.top(e.dst), False, e.data.subset) for e in state.out_edges(order.within) if e.data.data == name
+                (order.top(e.dst), False, e.data.subset if e.data.data == other.data else None)
+                for e in state.out_edges(order.within)
+                if self.viewed.get(e.data.data, e.data.data) == name
             )
         return found
 
-    def rename(self, state: SDFGState, edge, transient: nodes.AccessNode, other: nodes.AccessNode, at: Placement):
+    def rename(self, state: SDFGState, copy: Copy, transient: nodes.AccessNode, other: nodes.AccessNode, at: Placement):
         old = transient.data
         mine = [n for n in state.data_nodes() if n.data == old]
         done = set()
         for node in mine:
             for e in state.all_edges(node):
-                if e is edge:
+                if e is copy.out or e is copy.into:
                     continue
                 for tree_edge in state.memlet_tree(e).traverse_children(include_self=True):
                     tree_edge = tree_edge.edge
@@ -266,7 +363,11 @@ class Coalescing:
                             else (tree_edge.data.get_src_subset(tree_edge, state))
                         )
                         memlet.other_subset = at.place(side or subsets.Range.from_array(self.sdfg.arrays[old]))
-        state.remove_edge(edge)
+        if copy.out is copy.into:
+            state.remove_edge(copy.out)
+        else:
+            # Not ``remove_node``: the order the copy carried is the merged node itself.
+            state.detach_node(copy.out.dst)
         for node in mine:
             node.data = at.target
         # The copy's two ends are one access node now.
