@@ -2,6 +2,7 @@
 """Contains functionality to load, use, and invoke compiled SDFG libraries."""
 
 import ctypes
+import filecmp
 import os
 import pathlib
 import pickle
@@ -131,13 +132,17 @@ class ReloadableDLL:
                 #  and then try to load that. We only do the copy if the new new name is
                 #  free. It seems that at least on LINUX there is some issue if we
                 #  overwrite a file that already exists.
-                #  An existing copy is skipped even when it is not loaded: it may hold an older build.
                 lib_filename = self._library_filename + f"_{counter}"
                 counter += 1
-                while pathlib.Path(lib_filename).exists():
-                    assert pathlib.Path(lib_filename).is_file()
+                # A leftover copy of an older build is skipped, never loaded in place of the library
+                while pathlib.Path(lib_filename).exists() and not filecmp.cmp(
+                    self._library_filename, lib_filename, shallow=False
+                ):
                     lib_filename = self._library_filename + f"_{counter}"
                     counter += 1
+                if pathlib.Path(lib_filename).exists():
+                    # A copy of this build is reused unless it is loaded too, so repeated runs add no copies
+                    continue
 
                 # The file name is not taken, so make a copy. There might be a race condition
                 #  here in the presence of multiple processes.
