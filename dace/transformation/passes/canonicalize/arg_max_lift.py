@@ -418,6 +418,12 @@ IDENTITY_RHS: tuple[tuple[type[ast.operator], int], ...] = ((ast.Add, 0), (ast.S
 IDENTITY_LHS: tuple[tuple[type[ast.operator], int], ...] = ((ast.Add, 0), (ast.Mult, 1))
 
 
+def _may_hold_nan(dtype: dtypes.typeclass) -> bool:
+    """A last-wins lift arg-reduces the REVERSED gather, which seeds from the last element: with a NaN in the data
+    its answer differs from the forward loop's, which never lets a NaN replace the carrier. Integers hold no NaN."""
+    return dtype.type is not None and not issubclass(dtype.type, (int, bool, np.integer, np.bool_))
+
+
 def strip_identity(expr: ast.AST) -> ast.AST:
     """``expr`` with outer identity arithmetic (``+ 0``, ``- 0``, ``* 1``, ``/ 1``) peeled off.
 
@@ -817,6 +823,8 @@ class ArgMaxLift(ppl.Pass):
         # the position back. The extreme VALUE is identical under either rule, so
         # the value-only reduction (no index carrier) needs no reversal.
         last_wins = self._resolve_last_wins(op_ast, idx_carrier_name is not None)
+        if last_wins and _may_hold_nan(sdfg.arrays[input_array].dtype):
+            return None
 
         return _Match(
             op=op,
@@ -942,7 +950,7 @@ class ArgMaxLift(ppl.Pass):
         if len(set(loop_vars)) != len(loop_vars):
             return None
         array = self._resolve_gather_2d(loops[-1], gather_sym, loop_vars, sdfg)
-        if array is None:
+        if array is None or (last_wins and _may_hold_nan(sdfg.arrays[array].dtype)):
             return None
         # Value carrier must be a symbol; the true-branch must write exactly the
         # value (from the same gather) plus one index carrier per loop.
