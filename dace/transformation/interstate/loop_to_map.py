@@ -157,7 +157,7 @@ def through_symbol_mapping(subset: subsets.Subset, nsdfg_node: nodes.NestedSDFG)
     return outer
 
 
-def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span, start=0) -> bool:
+def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span, start, varying: set[str]) -> bool:
     """Whether every write to ``conn``'s array INSIDE ``nsdfg_node`` is indexed by the (mapped)
     iteration variable.
 
@@ -177,10 +177,12 @@ def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span, star
     :param itersym: outer loop iteration symbol.
     :param span: ``end - start`` of the outer loop, see :func:`_check_range`.
     :param start: The first iterate of the outer loop.
+    :param varying: Symbols varying inside one outer iteration, see :func:`loop_varying_symbols`.
     :returns: True iff every inner write to ``conn`` is iter-indexed, and any two distinct ones never meet.
     """
     found = False
     written: dict[str, subsets.Subset] = {}
+    varying = varying | loop_varying_symbols(nsdfg_node.sdfg)
     for state in nsdfg_node.sdfg.states():
         for dn in state.data_nodes():
             if dn.data != conn or state.in_degree(dn) == 0:
@@ -194,7 +196,7 @@ def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span, star
                 if e.data is None or e.data.wcr is not None:
                     return False
                 if isinstance(e.src, nodes.NestedSDFG):
-                    if not nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, span, start):
+                    if not nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, span, start, varying):
                         return False
                     found = True
                     continue
@@ -202,24 +204,30 @@ def nested_writes_iter_indexed(nsdfg_node, conn, itersym, a, b, step, span, star
                 if dst_subset is None:
                     return False
                 outer = through_symbol_mapping(dst_subset, nsdfg_node)
-                if not _check_range(outer, a, itersym, b, step, span):
+                if not _check_range(outer, a, itersym, b, step, span) or moves_within_an_iteration(
+                    outer, itersym, varying
+                ):
                     return False
                 found = True
                 # ``b[i]`` and ``b[i + 1]`` are each one-to-one, and meet across two iterations
                 if str(outer) not in written and not all(
-                    meet_within_one_iteration(outer, other, itersym, step, start) for other in written.values()
+                    meet_within_one_iteration(outer, other, itersym, step, start, varying)
+                    for other in written.values()
                 ):
                     return False
                 written[str(outer)] = outer
     return found
 
 
-def meet_within_one_iteration(first: subsets.Subset, second: subsets.Subset, itersym, step, start=0) -> bool:
+def meet_within_one_iteration(
+    first: subsets.Subset, second: subsets.Subset, itersym, step, start, varying: set[str]
+) -> bool:
     """Whether two subsets of one body never share an element across two iterations: some dimension is the same
     one-to-one index in both, or keeps them apart in any iteration pair."""
     return any(
         low == high
         and other_low == other_high
+        and not varying & {s.name for s in sp.sympify(low).free_symbols | sp.sympify(other_low).free_symbols}
         and (
             _same_injective_index(low, other_low, itersym)
             or _dim_provably_disjoint(low, other_low, itersym, step, start)
@@ -240,7 +248,7 @@ def nested_write_subsets(nsdfg_node, conn) -> list[subsets.Subset]:
     ]
 
 
-def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step, writes=(), start=0) -> bool:
+def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step, writes, start, varying: set[str]) -> bool:
     """Whether every read of ``conn``'s array INSIDE ``nsdfg_node`` matches the SAME ``a*i+b``
     pattern as the writes, or is loop-invariant.
 
@@ -253,6 +261,7 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step, writes=(), 
     :returns: True if no carried-read pattern found; False if any inner read hits the carrier
               array outside the write's affine form.
     """
+    varying = varying | loop_varying_symbols(nsdfg_node.sdfg)
     for state in nsdfg_node.sdfg.states():
         for dn in state.data_nodes():
             if dn.data != conn or state.out_degree(dn) == 0:
@@ -263,7 +272,7 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step, writes=(), 
                     continue
                 if isinstance(e.dst, nodes.NestedSDFG):
                     # The read enters another nested SDFG; descend.
-                    if not nested_reads_match_writes(e.dst, e.dst_conn, itersym, a, b, step, writes, start):
+                    if not nested_reads_match_writes(e.dst, e.dst_conn, itersym, a, b, step, writes, start, varying):
                         return False
                     continue
                 src_subset = e.data.get_src_subset(e, state)
@@ -281,7 +290,7 @@ def nested_reads_match_writes(nsdfg_node, conn, itersym, a, b, step, writes=(), 
                 # itersym-dependent read: must match the writes' a*i+b, else it's a carried read.
                 if not _check_range(outer, a, itersym, b, step):
                     return False
-                if not all(meet_within_one_iteration(outer, write, itersym, step, start) for write in writes):
+                if not all(meet_within_one_iteration(outer, write, itersym, step, start, varying) for write in writes):
                     return False
     return True
 
@@ -628,6 +637,7 @@ def write_refusal(
     start,
     end,
     step,
+    varying: set[str],
     permissive: bool,
     ctx: Optional["LiftContext"],
     facts: Any = None,
@@ -658,7 +668,7 @@ def write_refusal(
         # NestedSDFG body propagates a whole-array external write hiding an
         # inner per-iteration write; look past the connector.
         if not ok and isinstance(e.src, nodes.NestedSDFG):
-            ok = nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, end - start, start)
+            ok = nested_writes_iter_indexed(e.src, e.src_conn, itersym, a, b, step, end - start, start, varying)
             # NSDFG descent only proves WRITE uniqueness. A carried READ at a
             # DIFFERENT iter position (``a[i+1]`` while writing ``a[i]``) is a
             # forward/backward dependence that races. Require every inner read
@@ -666,7 +676,9 @@ def write_refusal(
             # The same array can enter on a connector of its own.
             read_as = {e.src_conn, *(r.dst_conn for r in state.in_edges(e.src) if r.data.data == dn.data)}
             writes = nested_write_subsets(e.src, e.src_conn) if ok else []
-            if ok and not all(nested_reads_match_writes(e.src, c, itersym, a, b, step, writes, start) for c in read_as):
+            if ok and not all(
+                nested_reads_match_writes(e.src, c, itersym, a, b, step, writes, start, varying) for c in read_as
+            ):
                 ok = False
         if not ok and not permissive:
             verdicts = None if ctx is None else ctx.invariants.smt_injective
@@ -1123,7 +1135,7 @@ def observable_from(
     return not seen.isdisjoint(read_by_control_flow)
 
 
-def loop_varying_symbols(loop: LoopRegion) -> set[str]:
+def loop_varying_symbols(loop: ControlFlowRegion) -> set[str]:
     """Symbols whose value can change *while* ``loop`` runs, other than its own iterator:
     the iterators of loops and maps nested inside its body, and everything its
     interstate edges assign.
@@ -2457,6 +2469,7 @@ class LoopLift:
                             start,
                             end,
                             step,
+                            varying,
                             self.waives(dn.data, permissive),
                             ctx,
                             self.solver_facts,
@@ -2688,6 +2701,7 @@ class LoopLift:
         b = sp.Wild("b", exclude=[itersym])
         # The probe visits the writes in this order, and a write that fails refuses the loop by itself. Only the
         # states the access index lists can hold ``name``; a state it misses only defers to the full analysis.
+        varying = loop_varying_symbols(self.loop)
         writes: list[memlet.Memlet] = []
         holders = set(ctx.access_states.get(name, ()))
         accesses = [(st, dn) for st in loop_states if st in holders for dn in st.data_nodes() if dn.data == name]
@@ -2706,6 +2720,7 @@ class LoopLift:
                     start,
                     end,
                     step,
+                    varying,
                     self.waives(name, permissive),
                     ctx,
                     self.solver_facts,
@@ -2716,7 +2731,6 @@ class LoopLift:
                 writes.append(w.data)
         if kind == "write" or not writes:
             return None
-        varying = loop_varying_symbols(self.loop)
         for st, dn in accesses:
             for e in st.out_edges(dn):
                 if e.data is None or e.data.is_empty():

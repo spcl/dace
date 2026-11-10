@@ -1439,7 +1439,42 @@ def test_a_symbol_the_body_assigns_in_a_branch_keeps_its_declared_type():
     assert np.array_equal(A, np.array([1.0] + [7.0] * 9))
 
 
+def nested_body_with_inner_sweep(name: str):
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("b", [21], dace.float64)
+    loop = LoopRegion("outer", "i < 9", "i", "i = 0", "i = i + 1", sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    inner = dace.SDFG(f"{name}_body")
+    inner.add_symbol("i", dace.int32)
+    inner.add_array("b", [21], dace.float64)
+    sweep = LoopRegion("sweep", "j < 4", "j", "j = 0", "j = j + 1", sdfg=inner)
+    inner.add_node(sweep, is_start_block=True)
+    st = sweep.add_state("write", is_start_block=True)
+    t = st.add_tasklet("store", {}, {"o"}, "o = i")
+    st.add_edge(t, "o", st.add_write("b"), None, dace.Memlet("b[2 * i + j]"))
+    body = loop.add_state("body", is_start_block=True)
+    nsdfg = body.add_nested_sdfg(inner, {}, {"b": None}, symbol_mapping={"i": "i"})
+    body.add_edge(nsdfg, "b", body.add_write("b"), None, dace.Memlet("b[0:21]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_nested_write_offset_by_an_inner_iterator_keeps_the_loop():
+    """``b[2 * i + j]`` written by a nested loop over ``j`` overlaps the next iteration's writes."""
+    sdfg = nested_body_with_inner_sweep("nested_inner_sweep_write")
+    sdfg.apply_transformations_repeated(LoopToMap)
+    assert any(isinstance(n, LoopRegion) and n.label == "outer" for n in sdfg.nodes())
+    b = np.zeros(21)
+    sdfg(b=b)
+    expected = np.zeros(21)
+    for i in range(9):
+        for j in range(4):
+            expected[2 * i + j] = i
+    assert np.allclose(b, expected)
+
+
 if __name__ == "__main__":
+    test_nested_write_offset_by_an_inner_iterator_keeps_the_loop()
     test_a_symbol_the_body_assigns_in_a_branch_keeps_its_declared_type()
     test_transient_read_only_on_interstate_edges_of_two_loops()
     test_symbol_assigned_in_every_branch_before_its_read()
