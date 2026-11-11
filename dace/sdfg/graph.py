@@ -666,22 +666,20 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._nodes = OrderedDict()
         # {(src, dst): edge}
         self._edges = OrderedDict()
-        # {node: position}, built by ``node_id``; a removal shifts later positions, so it drops the index
+        # {node: position}, built by ``node_id``, and its inverse, built by ``node``; a removal shifts later positions, so it drops both
         self._node_indices: dict[NodeT, int] | None = None
+        self._node_list: list[NodeT] | None = None
 
     @property
     def nx(self):
         return self._nx
 
     def node(self, id: int) -> NodeT:
-        try:
-            if id >= 0:
-                # Same result as the scan below, without a Python-level loop over the nodes
-                return next(itertools.islice(self._nodes.keys(), id, None))
-            else:
-                return next(n for i, n in enumerate(self._nodes.keys()) if i == id)
-        except StopIteration:
+        if self._node_list is None:
+            self._node_list = list(self._nodes)
+        if id < 0 or id >= len(self._node_list):
             raise NodeNotFoundError
+        return self._node_list[id]
 
     def node_id(self, node: NodeT) -> int:
         if self._node_indices is None:
@@ -710,6 +708,8 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._nx.add_node(node)
         if self._node_indices is not None:
             self._node_indices[node] = len(self._node_indices)
+        if self._node_list is not None:
+            self._node_list.append(node)
 
     def add_edge(self, src: NodeT, dst: NodeT, data: EdgeT = None):
         t = (src, dst)
@@ -743,6 +743,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
             raise ValueError("reorder_nodes expects a permutation of the current node list")
         self._nodes = reordered
         self._node_indices = None
+        self._node_list = None
         # networkx has no reordering API; popping and re-inserting each node in the wanted order
         # moves it to the end of every backing dict, so after one sweep they read in ``order``.
         for n in order:
@@ -756,6 +757,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
                 self.remove_edge(edge)
             del self._nodes[node]
             self._node_indices = None
+            self._node_list = None
             self._nx.remove_node(node)
         except KeyError:
             pass
@@ -827,6 +829,7 @@ class OrderedMultiDiGraph(OrderedDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         # {edge: edge}
         self._edges = OrderedDict()
         self._node_indices: dict[NodeT, int] | None = None
+        self._node_list: list[NodeT] | None = None
 
     def add_edge(self, src: NodeT, dst: NodeT, data: EdgeT) -> MultiEdge[EdgeT]:
         key = self._nx.add_edge(src, dst, data=data)
@@ -1052,8 +1055,8 @@ def copy_graph_field(owner: Any, name: str, value: Any, memo: dict[int, Any]) ->
             return copy_node_index(value, memo)
         if name == "_edges":
             return copy_edge_index(value, memo)
-        if name == "_node_indices":
-            # Rebuilt on first ``node_id``
+        if name in ("_node_indices", "_node_list"):
+            # Rebuilt on first ``node_id`` / ``node``
             return None
     return copy_value(value, memo)
 
