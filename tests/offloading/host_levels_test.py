@@ -269,7 +269,11 @@ def test_an_array_only_a_launching_body_reads_on_the_host_stays_on_the_host_in_a
     state = next(state for state in sdfg.states() if state.label == "rows")
     call = next(node for node in state.nodes() if isinstance(node, dace.nodes.NestedSDFG))
     assert [edge.data.data for edge in state.in_edges(call) if edge.dst_conn == "factor"] == ["factor"]
-    assert not any(isinstance(n, dace.nodes.AccessNode) and n.data.startswith("factor") for b in call.sdfg.states() for n in b.nodes())
+    assert not any(
+        isinstance(n, dace.nodes.AccessNode) and n.data.startswith("factor")
+        for b in call.sdfg.states()
+        for n in b.nodes()
+    )
 
 
 @pytest.mark.gpu
