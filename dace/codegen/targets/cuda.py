@@ -83,6 +83,16 @@ def _expr(val):
     return val
 
 
+#: Connectors through which memory engine copies and waits use an mbarrier in ``GPU_Shared`` memory
+_MBARRIER_CONNECTORS = ("_tma_bar", "_bar")
+
+
+def _only_feeds_mbarrier_operations(state: SDFGState, node: nodes.AccessNode) -> bool:
+    """Whether every read of ``node`` is the mbarrier of a memory engine copy or wait, which synchronize through the
+    barrier itself and need no ``__syncthreads()`` before them."""
+    return all(state.memlet_path(e)[-1].dst_conn in _MBARRIER_CONNECTORS for e in state.out_edges(node))
+
+
 def cpu_to_gpu_cpred(sdfg, state, src_node, dst_node):
     """Copy predicate from CPU to GPU that determines when a copy is illegal.
     Returns True if copy is illegal, False otherwise.
@@ -1546,6 +1556,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
                     and state.in_degree(node) == 0
                     and state.out_degree(node) > 0
+                    and not _only_feeds_mbarrier_operations(state, node)
                 ):
                     if not self._scope_has_collaborative_copy:
                         callsite_stream.write("__syncthreads();", cfg, state.block_id)
