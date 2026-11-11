@@ -350,7 +350,8 @@ def test_overwrite_elimination_loop_dep2():
             for j in range(i, 9, 1):
                 A[0] = B[j]
 
-    _test_for_unchanged_behavior(tester, 2, 2)
+    # The inner loop runs no iteration at i == 9, so neither loop may be replaced by its last iteration.
+    _test_for_unchanged_behavior(tester, 2, 0)
 
 
 def test_overwrite_elimination_possibly_zero_trip_loop():
