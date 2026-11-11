@@ -84,7 +84,45 @@ def test_coarsened_kernels_compute_what_numpy_does(factors):
     np.testing.assert_allclose(cp.asnumpy(b), w * a)
 
 
+@dace.program
+def row_sums(A: dace.float64[N, M], s: dace.float64[N]):
+    for i, j in dace.map[0:N, 0:M]:
+        s[i] += A[i, j]
+
+
+@dace.program
+def histogram(idx: dace.int64[N], w: dace.float64[N], h: dace.float64[64]):
+    for i in dace.map[0:N]:
+        h[idx[i]] += w[i]
+
+
+def kernel_params(program) -> list[str]:
+    sdfg = program.to_sdfg(simplify=True)
+    canonicalize(sdfg, target="gpu")
+    offload_to_gpu(sdfg)
+    finalize_for_target(sdfg, "gpu")
+    return [
+        p
+        for n, s in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device
+        for p in n.map.params
+    ]
+
+
+def test_a_scatter_target_sized_by_the_iteration_space_is_not_coarsened():
+    """``s[i] += A[i, j]``: ``s`` has as many elements as the kernel has rows, so no block holds a private copy once
+    ``N`` is large, and coarsening for one would serialize the kernel (gem: one block of a few working threads)."""
+    assert not any(p.startswith("c_") for p in kernel_params(row_sums))
+
+
+def test_a_scatter_target_of_its_own_size_is_coarsened():
+    """``h[idx[i]] += w[i]`` into 64 bins: the block-private copy pays, so the kernel is coarsened for it."""
+    assert any(p.startswith("c_") for p in kernel_params(histogram))
+
+
 if __name__ == "__main__":
+    test_a_scatter_target_sized_by_the_iteration_space_is_not_coarsened()
+    test_a_scatter_target_of_its_own_size_is_coarsened()
     test_the_outer_axis_becomes_a_serial_loop_of_each_thread()
     test_a_named_parameter_is_coarsened_and_factor_one_changes_nothing()
     test_two_parameters_are_coarsened_into_a_tile_per_thread()

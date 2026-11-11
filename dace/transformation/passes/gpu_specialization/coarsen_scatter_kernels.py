@@ -45,12 +45,17 @@ class CoarsenScatterKernels(ppl.Pass):
             if xfh.gpu_map_has_explicit_threadblocks(state, kernel):
                 continue
             params = set(kernel.map.params)
+            extent = {str(sym) for sym in kernel.map.range.free_symbols}
             targets = [
-                state.sdfg.arrays[e.data.data]
+                desc
                 for e in state.in_edges(state.exit_node(kernel))
                 if e.data.wcr is not None
                 and (e.data.dynamic or {str(sym) for sym in e.data.subset.free_symbols} & params)
-                and shared_scatter_target(state.sdfg, state, kernel, e.data.data, state.sdfg.arrays[e.data.data])
+                and shared_scatter_target(
+                    state.sdfg, state, kernel, e.data.data, desc := state.sdfg.arrays[e.data.data]
+                )
+                # A target sized by the iteration space grows with it: no block holds it once that is large
+                and not symbolic.free_symbols_and_functions(desc.total_size) & extent
             ]
             if not targets:
                 continue
