@@ -106,5 +106,11 @@ def test_pure():
     run_test(configs, "pure")
 
 
+def test_a_zero_scale_stays_zero():
+    """``a=0`` is a value, not a request for the default symbol ``a``."""
+    assert blas.Axpy("axpy", a=0).a == 0
+
+
 if __name__ == "__main__":
     test_pure()
+    test_a_zero_scale_stays_zero()
