@@ -132,7 +132,6 @@ from dace.sdfg.state import (
 )
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.cpu_specialization.sequentialize_small_axes import small_count
 from dace.transformation.passes.loop_fission import LoopFission, _block_rw, _independent_block_groups
 
@@ -811,27 +810,17 @@ def outlinable(sdfg: SDFG, loop: LoopRegion) -> bool:
 
 def shared_work(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """The most iterations a worksharing map at the top level of ``loop``'s states shares out in one execution, in
-    symbols defined ahead of ``loop``: a loop variable takes the end of its range that gives more. ``None`` if a
-    loop of the nest has no closed range or an extent reads a symbol the nest assigns."""
-    bounds = {}
-    for inner in (loop, *(b for b in loop.all_control_flow_blocks() if isinstance(b, LoopRegion))):
-        start, end = loop_analysis.get_init_assignment(inner), loop_analysis.get_loop_end(inner)
-        if start is None or end is None:
-            return None
-        bounds[symbolic.pystr_to_symbolic(inner.loop_variable)] = (start, end)
+    symbols defined ahead of ``loop``. ``None`` if an extent reads a loop variable or a symbol the nest assigns: a
+    wavefront's rows are longest in the middle of its range, so neither end bounds them."""
     work = sympy.Integer(0)
     for block in loop.all_control_flow_blocks():
-        if not isinstance(block, SDFGState):
-            continue
-        for node in top_level_nodes(block):
-            if isinstance(node, nodes.MapEntry) and node.map.schedule == WORKSHARED:
-                size = symbolic.pystr_to_symbolic(node.map.range.num_elements())
-                for var, (start, end) in reversed(bounds.items()):
-                    if var in size.free_symbols:
-                        size = sympy.Max(size.subs(var, start), size.subs(var, end))
-                work = sympy.Max(work, size)
-    assigned = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
-    if any(str(s) in assigned or s in bounds for s in work.free_symbols):
+        if isinstance(block, SDFGState):
+            for node in top_level_nodes(block):
+                if isinstance(node, nodes.MapEntry) and node.map.schedule == WORKSHARED:
+                    work = sympy.Max(work, symbolic.pystr_to_symbolic(node.map.range.num_elements()))
+    inside = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
+    inside |= {b.loop_variable for b in (loop, *loop.all_control_flow_blocks()) if isinstance(b, LoopRegion)}
+    if any(str(s) in inside for s in work.free_symbols):
         return None
     return work
 
