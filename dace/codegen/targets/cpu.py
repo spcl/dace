@@ -428,6 +428,10 @@ def register_gpu_block_reduction(red: dict, covered: dict) -> str:
 _FLAT_TID = "(threadIdx.x + blockDim.x * (threadIdx.y + blockDim.y * threadIdx.z))"
 
 
+#: Element types an OpenMP ``reduction`` clause combines without a declared reduction.
+SIMD_REDUCTION_TYPES = dtypes.INT_TYPES | {dtypes.bool_, dtypes.float32, dtypes.float64}
+
+
 def _block_threads(red: dict) -> int:
     return red["block_x"] * red["block_y"] * red["block_z"]
 
@@ -3764,7 +3768,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 ),
                 None,
             )
-            if held is None:
+            # OpenMP defines the clause for the arithmetic types only (no std::complex)
+            if held is None or state.sdfg.arrays[edge.data.data].dtype not in SIMD_REDUCTION_TYPES:
                 return None
             names = by_op.setdefault(held["op"], [])
             if held["var"] not in names:

@@ -752,12 +752,13 @@ def statement_round() -> list[ppl.Pass]:
 def ingest(target: str) -> Stages:
     """Raise structured control flow and settle one spelling, then the first ``SimplifyPass`` and cleanup."""
     s: Stages = [
-        (INGEST, SimplifyAsParsed()),
         # The contract's compile-time half from the start: every proof below reads the sizes as nonnegative (a
         # symbolic loop step ``n3`` orients its map); ``AssumeSymbolConstraints`` adds the runtime check at the end
         (INGEST, SetSymbolNonnegativeAssumptions()),
         (INGEST, ControlFlowRaising()),
         (INGEST, RequireStructuredControlFlow()),
+        # Once the control flow is structured: simplify does not converge on a graph that is not
+        (INGEST, SimplifyAsParsed()),
         (INGEST, RemoveViews()),
         (INGEST, EliminateTrivialTasklets()),
         (INGEST, FoldScalarReadCopies()),
