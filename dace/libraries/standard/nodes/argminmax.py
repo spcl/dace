@@ -6,10 +6,17 @@ the second the smallest (largest, for ``back``) index holding it.
 """
 
 import dace
-from dace import SDFG, SDFGState, dtypes, library, properties
+from dace import SDFG, SDFGState, data, dtypes, library, properties
 from dace import memlet as mm
+from dace.codegen.common import global_code_id
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.standard.helper import connector_array, fortran_axis, map_ranges, reduced_coordinates
+from dace.libraries.standard.helper import (
+    connector_array,
+    fortran_axis,
+    in_kernel_block_or,
+    map_ranges,
+    reduced_coordinates,
+)
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.symbolic import symstr
@@ -119,6 +126,61 @@ class ExpandExtremeIndexPure(ExpandTransformation):
         return extreme_index_sdfg(node, parent_state, parent_sdfg)
 
 
+class ExpandExtremeIndexCUDABlock(ExpandTransformation):
+    """In-kernel lowering of a whole-array ``MINLOC`` / ``MAXLOC``: each lane keeps the first (``back``: the last)
+    extreme of its block-strided selected elements, and ``gpucub::BlockReduce`` folds the (value, position) pairs with
+    the tie rule of the ``ArgReduce`` lowerings. A lane that selected nothing holds position ``-1`` and loses every
+    fold; a NaN is never taken."""
+
+    runs_inside_kernel = True
+    environments: list[type] = []
+
+    @classmethod
+    def expansion(cls, node, parent_state, parent_sdfg, **kwargs):
+        from dace.codegen.targets.cpp import sym2cpp
+        from dace.libraries.sort.environments.cub import BlockCollectives
+        from dace.libraries.standard.block_reduce import (
+            BLOCK_COLLECTIVE_THREADS,
+            block_allreduce_code,
+            block_tasklet_sdfg,
+            linear_element,
+        )
+
+        cls.environments = [BlockCollectives]
+        idstr = global_code_id(parent_sdfg, parent_state, node)
+        kind = node.FUNC + ("_last" if node.back else "")
+
+        def code(arrays: dict[str, data.Data]) -> str:
+            x, idx = arrays["_x"], arrays["_idx"]
+            vt, pair = x.dtype.ctype, f"dace::arg_pair<{x.dtype.ctype}, long long>"
+            count = sym2cpp(prod(x.shape))
+            selected = f"{linear_element('__b_mask', arrays['_mask'], '__bri')} != 0" if "_mask" in arrays else "true"
+            fold = (
+                f"[] (const {pair} &__xil, const {pair} &__xir) {{ return __xil.__ar_i < 0 ? __xir : "
+                f"(__xir.__ar_i < 0 ? __xil : dace::arg_{kind}_combine(__xil, __xir)); }}"
+            )
+            no_match = -1 if node.back else count
+            decode = "\n".join(
+                f"__b_idx[{d} * ({sym2cpp(idx.strides[0])})] = "
+                f"(__xi_pos / ({sym2cpp(prod(x.shape[d + 1 :]))})) % ({sym2cpp(x.shape[d])}) + {int(node.one_based)};"
+                for d in range(len(x.shape))
+            )
+            return (
+                f"{pair} __xi_best = {{{vt}(), -1LL}};\n"
+                f"for (long long __bri = threadIdx.x; __bri < (long long)({count}); __bri += {BLOCK_COLLECTIVE_THREADS}) {{\n"
+                f"    if (!({selected})) continue;\n"
+                f"    const {vt} __xi_x = {linear_element('__b_x', x, '__bri')};\n"
+                f"    if (__xi_best.__ar_i >= 0) __xi_best = dace::arg_{kind}_step(__xi_best, __xi_x, __bri);\n"
+                f"    else if (__xi_x == __xi_x) __xi_best = {{__xi_x, __bri}};\n"
+                f"}}\n"
+                + block_allreduce_code(idstr, pair, BLOCK_COLLECTIVE_THREADS, "__xi_best", fold, "__xi_best")
+                + f"\nconst long long __xi_pos = __xi_best.__ar_i < 0 ? (long long)({no_match}) : __xi_best.__ar_i;\n"
+                + decode
+            )
+
+        return block_tasklet_sdfg(node, parent_state, parent_sdfg, code)
+
+
 @library.expansion
 class ExpandArgMinPure(ExpandExtremeIndexPure):
     pass
@@ -126,6 +188,16 @@ class ExpandArgMinPure(ExpandExtremeIndexPure):
 
 @library.expansion
 class ExpandArgMaxPure(ExpandExtremeIndexPure):
+    pass
+
+
+@library.expansion
+class ExpandArgMinCUDABlock(ExpandExtremeIndexCUDABlock):
+    pass
+
+
+@library.expansion
+class ExpandArgMaxCUDABlock(ExpandExtremeIndexCUDABlock):
     pass
 
 
@@ -162,8 +234,12 @@ class ExtremeIndex(nodes.LibraryNode):
 class ArgMin(ExtremeIndex):
     """Index of the smallest element: Fortran ``MINLOC``, numpy ``argmin``."""
 
-    implementations = {"pure": ExpandArgMinPure}
-    default_implementation = "pure"
+    implementations = {
+        "Auto": in_kernel_block_or(ExpandArgMinPure),
+        "pure": ExpandArgMinPure,
+        "CUDA (block)": ExpandArgMinCUDABlock,
+    }
+    default_implementation = "Auto"
     FUNC = "min"
 
 
@@ -171,8 +247,12 @@ class ArgMin(ExtremeIndex):
 class ArgMax(ExtremeIndex):
     """Index of the largest element: Fortran ``MAXLOC``, numpy ``argmax``."""
 
-    implementations = {"pure": ExpandArgMaxPure}
-    default_implementation = "pure"
+    implementations = {
+        "Auto": in_kernel_block_or(ExpandArgMaxPure),
+        "pure": ExpandArgMaxPure,
+        "CUDA (block)": ExpandArgMaxCUDABlock,
+    }
+    default_implementation = "Auto"
     FUNC = "max"
 
 

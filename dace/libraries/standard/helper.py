@@ -541,3 +541,33 @@ def connector_array(
     strides = [stride * step for stride, (_, _, step) in zip(desc.strides, memlet.subset)]
     sdfg.add_array(name, shape, dtype or desc.dtype, desc.storage, strides=strides)
     return shape
+
+
+def in_kernel_block_or(fallback: type) -> type:
+    """The ``'Auto'`` lowering of a node whose only other choice is ``fallback``: the thread-block collective inside a
+    GPU kernel (:func:`~dace.libraries.standard.block_reduce.in_kernel_block_implementation`), ``fallback`` anywhere
+    else."""
+    from dace import library
+    from dace.transformation.transformation import ExpandTransformation
+
+    class ExpandBlockOr(ExpandTransformation):
+        environments: list[type] = []
+
+        @staticmethod
+        def expansion(node, parent_state, parent_sdfg, *args, **kwargs):
+            from dace.libraries.standard.block_reduce import in_kernel_block_implementation, release_kernel_block_size
+
+            block = in_kernel_block_implementation(node, parent_state)
+            if block is None:
+                ExpandBlockOr.environments = list(fallback.environments)
+                return fallback.expansion(node, parent_state, parent_sdfg, *args, **kwargs)
+            release_kernel_block_size(node, parent_state)
+            node.implementation = block
+            chosen = type(node).implementations[block]
+            expanded = chosen.expansion(node, parent_state, parent_sdfg)
+            # after the expansion: it may fill its environments inside ``expansion()``
+            ExpandBlockOr.environments = list(chosen.environments)
+            return expanded
+
+    ExpandBlockOr.__name__ = ExpandBlockOr.__qualname__ = f"{fallback.__name__}BlockOr"
+    return library.expansion(ExpandBlockOr)

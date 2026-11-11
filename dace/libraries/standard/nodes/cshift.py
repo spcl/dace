@@ -9,6 +9,7 @@ import enum
 
 import dace
 from dace import SDFG, library, properties
+from dace.libraries.standard.helper import in_kernel_block_or
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation.transformation import ExpandTransformation
@@ -63,6 +64,20 @@ class ExpandCShiftPure(ExpandTransformation):
         return sdfg
 
 
+@library.expansion
+class ExpandCShiftCUDABlock(ExpandTransformation):
+    """In-kernel lowering: the ``pure`` map spread over the block's lanes."""
+
+    runs_inside_kernel = True
+    environments: list[type] = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        from dace.libraries.standard.block_reduce import spread_over_lanes
+
+        return spread_over_lanes(ExpandCShiftPure.expansion(node, parent_state, parent_sdfg), node.label)
+
+
 @library.node
 class CShift(nodes.LibraryNode):
     """Rotates ``_x`` by ``shift`` positions along ``dim`` into ``_out``.
@@ -72,8 +87,12 @@ class CShift(nodes.LibraryNode):
     direction is named on the node instead of negated by each caller.
     """
 
-    implementations = {"pure": ExpandCShiftPure}
-    default_implementation = "pure"
+    implementations = {
+        "Auto": in_kernel_block_or(ExpandCShiftPure),
+        "pure": ExpandCShiftPure,
+        "CUDA (block)": ExpandCShiftCUDABlock,
+    }
+    default_implementation = "Auto"
 
     dim = properties.Property(dtype=int, default=1, desc="Fortran 1-based axis to rotate along.")
     shift = properties.SymbolicProperty(allow_none=True, default=None, desc="Positions to shift by, set by expansion.")
