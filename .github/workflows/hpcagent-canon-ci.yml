@@ -52,6 +52,27 @@ jobs:
         repository: spcl/HPCAgent-Bench
         path: hpcagent-bench
 
+    - name: Unprivileged user namespaces (the grading seal)
+      # The bench validates against its reference in a sealed child (hpcagent_bench/seal.py), which needs
+      # unprivileged user namespaces; Ubuntu restricts them via AppArmor. Same switch as the bench's own CI
+      # (.github/actions/setup). Without it every row is validated=0: "seal: cannot enter new namespaces".
+      run: |
+        knob=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+        if [ -e "$knob" ] && [ "$(cat "$knob")" != 0 ]; then echo 0 | sudo tee "$knob" > /dev/null; fi
+        unshare --user --map-root-user true
+
+    - name: The npbench tag
+      # The bench dropped its npbench tag in v0.3.0; this restores it on main's kernel names
+      # (mandelbrot1/2 renamed, cholesky2 and covariance2 removed).
+      working-directory: hpcagent-bench
+      run: |
+        echo "adi, arc_distance, atax, azimint_hist, azimint_naive, bicg, cavity_flow, channel_flow, cholesky, compute,
+        contour_integral, conv2d, correlation, covariance, crc16, deriche, doitgen, durbin, fdtd_2d, floyd_warshall, gemm,
+        gemm_long_k, gemm_tall_skinny, gemver, gesummv, go_fast, gramschmidt, hdiff, heat_3d, jacobi_1d, jacobi_2d, k2mm,
+        k3mm, lenet, lu, ludcmp, mandelbrot_escape_count, mandelbrot_escape_stamp, mlp, mvt, nbody, nussinov, resnet,
+        scattering_self_energies, seidel_2d, softmax, spmv, stockham_fft, symm, syr2k, syrk, trisolv, trmm, vadv" \
+          > hpcagent_bench/tags/npbench.txt
+
     - name: Install the bench over the checkout
       # The bench pins dace to a spcl/dace@extended commit in its own ``[tool.uv.sources]``, so installing it
       # pulls that commit over the branch under test. Reinstalling the checkout with ``--no-deps`` puts it back,
@@ -111,7 +132,12 @@ jobs:
       # is dropped to fit a clock. What the caps buy is that a hung kernel costs its own tag's
       # remainder instead of the whole gate: the bench records each kernel as it finishes, so every
       # kernel that finished before the kill is still in the file the gate step reads.
+      #
+      # env.sh + ``ulimit -s`` are the bench's documented launch (README quick start): grading refuses a
+      # process started without OMP_STACKSIZE/OMP_THREAD_LIMIT and the stack at its hard limit.
       run: |
+        . hpcagent_bench/cluster/env.sh
+        ulimit -s "$(ulimit -H -s)"
         set +e
         timeout --kill-after=60 30m \
           python -m hpcagent_bench.cli run-framework \
@@ -130,20 +156,26 @@ jobs:
       # --summarize exit codes: 0 = every row green; 1 = the DBs have rows and some crashed,
       # failed, or disagreed with numpy (a real result, tolerated for now); 2 = the DBs are
       # missing, unreadable, or have zero data rows (the sweep ran nothing -- never tolerated).
-      # No continue-on-error: a 0-kernel crashed run must not report success.
+      # No continue-on-error: a 0-kernel crashed run must not report success. Each DB is summarized on
+      # its own, so a leg that wrote nothing fails even when the other has rows, and a leg with no
+      # validated row fails too: that is the harness not checking, not a per-kernel failure.
       run: |
         set +e
-        python -m hpcagent_bench.cli run-framework --summarize \
-          canon_cpu_npbench.db canon_cpu_llr40.db
-        code=$?
-        set -e
-        if [ "$code" -ge 2 ]; then
-          echo "::error::the sweep produced no rows -- it crashed before running any kernel"
-          exit 1
-        fi
-        if [ "$code" -eq 1 ]; then
-          echo "::warning::known per-kernel failures remain; tolerated until the corpus is clean"
-        fi
+        validated='import pathlib, sys; from hpcagent_bench.support.collect import canon_db as c
+        sys.exit(not any(r["validated"] == 1 for r in c.read(pathlib.Path(sys.argv[1]))))'
+        red=0
+        for db in canon_cpu_npbench.db canon_cpu_llr40.db; do
+          python -m hpcagent_bench.cli run-framework --summarize "$db"
+          code=$?
+          if [ "$code" -ge 2 ]; then
+            echo "::error::$db has no rows -- that leg crashed before running any kernel"; red=1
+          elif ! python -c "$validated" "$db"; then
+            echo "::error::$db has no validated row -- the harness compared nothing"; red=1
+          elif [ "$code" -eq 1 ]; then
+            echo "::warning::$db: known per-kernel failures remain; tolerated until the corpus is clean"
+          fi
+        done
+        exit $red
 
     - name: Keep the verdicts
       if: always()
