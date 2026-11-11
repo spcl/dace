@@ -256,7 +256,7 @@ def _free_names(expr: str) -> frozenset[str]:
 
 
 def _match(
-    sdfg: SDFG, require_full_hoist: bool = False
+    sdfg: SDFG, require_full_hoist: bool = False, target: MapEntry | None = None
 ) -> tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock] | None:
     """Find a single-map state whose map body is one ``NestedSDFG`` guarding a
     map-invariant ``ConditionalBlock``.
@@ -267,7 +267,7 @@ def _match(
     # ``allow_inner_defs=False``: this path re-expresses the condition through
     # ``symbol_mapping`` only, so a body-defined condition symbol would be left
     # behind undefined. Those reach the guard via ``_match_inner`` instead.
-    for st, me, ns, cb in _candidates(sdfg, allow_inner_defs=False, require_full_hoist=require_full_hoist):
+    for st, me, ns, cb in hoist_candidates(sdfg, False, require_full_hoist, target):
         if st.entry_node(me) is None and _sole_top_level_map(st, me):
             return st, me, ns, cb
     return None
@@ -296,12 +296,16 @@ def _sole_top_level_map(st: SDFGState, me: MapEntry) -> bool:
     return True
 
 
-def _match_equal_guards(sdfg: SDFG) -> tuple[SDFGState, MapEntry, list[NestedSDFG]] | None:
+def match_equal_guards(
+    sdfg: SDFG, target: MapEntry | None = None
+) -> tuple[SDFGState, MapEntry, list[NestedSDFG]] | None:
     """A single-map state whose map body holds unguarded work next to guard nested SDFGs that unswitch together
     (module docstring); ``(state, map_entry, guard_nsdfgs)`` or ``None``."""
     for sd in sdfg.all_sdfgs_recursive():
         for st in sd.states():
             for me in [n for n in st.nodes() if isinstance(n, MapEntry) and st.entry_node(n) is None]:
+                if target is not None and me is not target:
+                    continue
                 guards = _equal_guards_at(st, me)
                 if guards is not None and _sole_top_level_map(st, me):
                     return st, me, guards
@@ -391,7 +395,9 @@ def _enclosing_map_params(st: SDFGState, me: MapEntry) -> set[str]:
     return params
 
 
-def _candidates(sdfg: SDFG, allow_inner_defs: bool = True, require_full_hoist: bool = False):
+def hoist_candidates(
+    sdfg: SDFG, allow_inner_defs: bool = True, require_full_hoist: bool = False, target: MapEntry | None = None
+):
     """Yield every ``(state, map_entry, nsdfg, cond_block)`` whose guard is
     invariant w.r.t. that map's own parameters, at any scope depth.
 
@@ -400,36 +406,46 @@ def _candidates(sdfg: SDFG, allow_inner_defs: bool = True, require_full_hoist: b
     :param require_full_hoist: Accept only guards that clear the *whole* map
         chain -- invariant w.r.t. every enclosing map's parameters too, so the
         nest is not split partway up.
+    :param target: Yield only the candidate at this map entry, if given.
     :returns: An iterator of candidate tuples.
     """
     # ``states()`` stops at the nested-SDFG boundary, so recurse explicitly:
     # after an inner map is isolated, its guard lives one nesting level down.
     for sd in sdfg.all_sdfgs_recursive():
         for st in sd.states():
-            for me in [n for n in st.nodes() if isinstance(n, MapEntry)]:
-                cand = _candidate_at(st, me, allow_inner_defs)
-                if cand is None:
-                    continue
-                # A guard whose branch still contains a map is exactly what
-                # ``MoveIfIntoMap`` produces when it pushes a guard down to
-                # co-locate inner maps for fusion. Hoisting it back one level
-                # would undo that and the two passes would trade the guard back
-                # and forth. Taking it only when it clears the ENTIRE chain
-                # breaks the tie: the guard leaves the nest altogether, which
-                # is a strict win and not a move ``MoveIfIntoMap`` will reverse
-                # (it only ever pushes a guard into maps below it).
-                if require_full_hoist or _branch_holds_a_map(cand[3]):
-                    outer = _enclosing_map_params(st, me)
-                    if outer and not all(
-                        _condition_invariant(c, cand[2], st, outer, allow_inner_defs)
-                        for c, _b in cand[3].branches
-                        if c is not None
-                    ):
-                        continue
-                yield cand
+            for me in [n for n in st.nodes() if isinstance(n, MapEntry) and (target is None or n is target)]:
+                cand = hoistable_at(st, me, allow_inner_defs, require_full_hoist)
+                if cand is not None:
+                    yield cand
 
 
-def _split_map_producers(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
+def hoistable_at(
+    st: SDFGState, me: MapEntry, allow_inner_defs: bool, require_full_hoist: bool
+) -> tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock] | None:
+    """The candidate at ``me`` if :func:`hoist_candidates` would yield it."""
+    cand = _candidate_at(st, me, allow_inner_defs)
+    if cand is None:
+        return None
+    # A guard whose branch still contains a map is exactly what
+    # ``MoveIfIntoMap`` produces when it pushes a guard down to
+    # co-locate inner maps for fusion. Hoisting it back one level
+    # would undo that and the two passes would trade the guard back
+    # and forth. Taking it only when it clears the ENTIRE chain
+    # breaks the tie: the guard leaves the nest altogether, which
+    # is a strict win and not a move ``MoveIfIntoMap`` will reverse
+    # (it only ever pushes a guard into maps below it).
+    if require_full_hoist or _branch_holds_a_map(cand[3]):
+        outer = _enclosing_map_params(st, me)
+        if outer and not all(
+            _condition_invariant(c, cand[2], st, outer, allow_inner_defs)
+            for c, branch in cand[3].branches
+            if c is not None
+        ):
+            return None
+    return cand
+
+
+def split_map_producers(sdfg: SDFG, require_full_hoist: bool = False, target: MapEntry | None = None) -> bool:
     """Move the dataflow that only feeds a hoistable map into a state of its own, before it.
 
     A demoted guard is written into a scalar right before the map that reads it, and state fusion puts that write in
@@ -438,7 +454,7 @@ def _split_map_producers(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
 
     :returns: Whether a state was split.
     """
-    for st, me, _ns, _cb in _candidates(sdfg, allow_inner_defs=False, require_full_hoist=require_full_hoist):
+    for st, me, *guard in hoist_candidates(sdfg, False, require_full_hoist, target):
         if st.entry_node(me) is not None:
             continue
         top = [n for n in st.nodes() if st.entry_node(n) is None]
@@ -455,7 +471,7 @@ def _split_map_producers(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
     return False
 
 
-def _split_off_first_map(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
+def split_off_first_map(sdfg: SDFG, require_full_hoist: bool = False, target: MapEntry | None = None) -> bool:
     """Give a hoistable top-level map a state of its own: move the first map of its state, with what it reads, into
     a new state before it.
 
@@ -466,7 +482,7 @@ def _split_off_first_map(sdfg: SDFG, require_full_hoist: bool = False) -> bool:
 
     :returns: Whether a state was split.
     """
-    for st, me, _ns, _cb in _candidates(sdfg, allow_inner_defs=False, require_full_hoist=require_full_hoist):
+    for st, me, *guard in hoist_candidates(sdfg, False, require_full_hoist, target):
         if st.entry_node(me) is not None:
             continue
         top_maps = [n for n in st.nodes() if isinstance(n, MapEntry) and st.entry_node(n) is None]
@@ -530,7 +546,7 @@ def _candidate_at(
 
 
 def _match_inner(
-    sdfg: SDFG, require_full_hoist: bool = False
+    sdfg: SDFG, require_full_hoist: bool = False, target: MapEntry | None = None
 ) -> tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock] | None:
     """Find a guard that is invariant w.r.t. an *inner* map of a chain, so it
     can be hoisted to sit between that map and its parent.
@@ -538,7 +554,7 @@ def _match_inner(
     :param sdfg: The SDFG to scan (recursively).
     :returns: ``(state, map_entry, nsdfg, cond_block)`` or ``None``.
     """
-    for st, me, ns, cb in _candidates(sdfg, require_full_hoist=require_full_hoist):
+    for st, me, ns, cb in hoist_candidates(sdfg, True, require_full_hoist, target):
         if st.entry_node(me) is None:
             continue
         if _liftable_prelude(ns, st, {str(p) for p in me.map.params}) is None:
@@ -691,29 +707,49 @@ class MoveMapInvariantIfUp(ppl.Pass):
         :param sdfg: The SDFG to transform in place.
         :returns: Number of guards hoisted, or ``None`` if none.
         """
+        count, structural_changes = self.hoist_guards(sdfg, None)
+        return (count + structural_changes) or None
+
+    def apply_to_map(self, state: SDFGState, map_entry: MapEntry) -> bool:
+        """Hoist the invariant guard of one map out of that map, leaving every other map's guard in place.
+
+        The steps :meth:`apply_pass` takes to expose the guard (splitting the map's state, nesting an inner map of a
+        chain) may change the graph even when the hoist is then refused.
+
+        :param state: The state holding the map.
+        :param map_entry: The entry of the map whose guard is hoisted.
+        :returns: Whether the guard was hoisted.
+        """
+        return self.hoist_guards(state.sdfg, map_entry)[0] > 0
+
+    def hoist_guards(self, sdfg: SDFG, target: MapEntry | None) -> tuple[int, int]:
+        """Hoist guards out of their maps, only out of ``target`` if given, until none remain.
+
+        :returns: The number of guards hoisted and of structural changes that hoisted none.
+        """
         count = 0
         structural_changes = 0
         isolated: set[tuple[int, str]] = set()
         while True:
-            m = _match(sdfg, self.require_full_hoist)
+            m = _match(sdfg, self.require_full_hoist, target)
             if m is not None:
                 self._move(*m)
                 count += 1
                 continue
-            equal = _match_equal_guards(sdfg)
+            equal = match_equal_guards(sdfg, target)
             if equal is not None:
                 self._move_equal_guards(*equal)
                 count += 1
                 continue
-            if _split_map_producers(sdfg, self.require_full_hoist):
+            if split_map_producers(sdfg, self.require_full_hoist, target):
                 continue
-            if _split_off_first_map(sdfg, self.require_full_hoist):
+            if split_off_first_map(sdfg, self.require_full_hoist, target):
                 continue
             # No top-level candidate left; try to expose one by isolating an
             # inner map of a chain into its own nested SDFG. That makes its
             # state a single-map state, which the top-level path above then
             # hoists on the next iteration.
-            inner = _match_inner(sdfg, self.require_full_hoist)
+            inner = _match_inner(sdfg, self.require_full_hoist, target)
             if inner is None:
                 break
             # Isolation nests the inner map before it can know whether the
@@ -731,7 +767,7 @@ class MoveMapInvariantIfUp(ppl.Pass):
             if not progressed:
                 structural_changes += 1
                 break
-        return (count + structural_changes) or None
+        return count, structural_changes
 
     @staticmethod
     def _isolate_inner_map(st: SDFGState, me: MapEntry, ns: NestedSDFG, cb: ConditionalBlock) -> bool:
