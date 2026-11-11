@@ -28,12 +28,19 @@ def operand_array(nsdfg: dace.SDFG, name: str, edge: MultiConnectorEdge, outer: 
     :returns: The declared descriptor; a single element is a one-element array.
     """
     desc = outer.arrays[edge.data.data]
+    shape, strides = operand_view(edge, outer)
+    nsdfg.add_array(name, shape, desc.dtype, strides=strides, storage=desc.storage)
+    return nsdfg.arrays[name]
+
+
+def operand_view(edge: MultiConnectorEdge, outer: dace.SDFG) -> tuple[list, list]:
+    """``(shape, strides)`` of what a connector sees through ``edge`` (see :func:`operand_array`)."""
+    desc = outer.arrays[edge.data.data]
     subset = edge.data.subset
     kept = [dim for dim, (begin, end, step) in enumerate(subset.ranges) if begin != end]
     shape = [subset.size()[dim] for dim in kept] or [1]
     strides = [desc.strides[dim] * subset.ranges[dim][2] for dim in kept] or [1]
-    nsdfg.add_array(name, shape, desc.dtype, strides=strides, storage=desc.storage)
-    return nsdfg.arrays[name]
+    return shape, strides
 
 
 def element(nsdfg: dace.SDFG, name: str, position: str) -> str:

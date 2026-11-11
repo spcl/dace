@@ -147,6 +147,7 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
     """
     from dace.libraries.fft.nodes.fft import FourierTransform
     from dace.libraries.fft.nodes.fft import block_refusal as fft_block_refusal
+    from dace.libraries.lapack.block import ExpandLapackBlock
     from dace.libraries.standard.nodes.reduce import Reduce, block_strided_refusal
     from dace.libraries.standard.nodes.scan import Scan, block_refusal
     from dace.libraries.standard.nodes.state_scan import StateScan, block_chunks
@@ -171,6 +172,9 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
     if isinstance(node, StateScan) and block_chunks(node) is None:
         return None
     if isinstance(node, whole_array_nodes()) and node.dim not in (None, -1):
+        return None
+    expansion = impls[block]
+    if issubclass(expansion, ExpandLapackBlock) and expansion.refusal(node, state, sdfg or state.sdfg) is not None:
         return None
     if isinstance(node, lane_nodes) and holds_thread_block_maps(node, state):
         return None

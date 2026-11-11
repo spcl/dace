@@ -9,6 +9,17 @@ from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
+from dace.libraries.lapack.block import (
+    BLOCK_LAPACK,
+    ExpandLapackBlock,
+    columns,
+    copy_code,
+    cpp,
+    info_code,
+    mat,
+    order,
+    pointer,
+)
 from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
@@ -140,6 +151,20 @@ ExpandGetrfHipSolverDn = hip_dialect.hip_expansion(
 )
 
 
+@dace.library.expansion
+class ExpandGetrfBlock(ExpandLapackBlock):
+    """In-kernel LU with partial pivoting by one thread block (``block_lapack::getrf``)."""
+
+    @classmethod
+    def body(cls, node, ops, uid):
+        return (
+            copy_code(ops, "_xin", "_xout")
+            + f"const int __info = dace::block_lapack::getrf({mat(ops, '_xout')}, {order(ops, '_xin')}, "
+            + f"{columns(ops, '_xin')}, {pointer('_ipiv', False)}, {cpp(ops['_ipiv'].strides[0])});\n"
+            + info_code(ops, "__info")
+        )
+
+
 @dace.library.node
 class Getrf(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -148,6 +173,7 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandGetrfMKL,
         "cuSolverDn": ExpandGetrfCuSolverDn,
         "hipSolverDn": ExpandGetrfHipSolverDn,
+        BLOCK_LAPACK: ExpandGetrfBlock,
     }
     default_implementation = None
 

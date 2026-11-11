@@ -12,6 +12,7 @@ from dace.codegen import common
 from dace.libraries import hip_dialect
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import Potrf, environments
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock, copy_code, mat, order
 from dace.libraries.linalg.nodes.solve import restride
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, call_scratch_lifetime, scratch_storage
@@ -218,6 +219,27 @@ class ExpandCholeskyHipSolverDn(ExpandTransformation):
         return _make_sdfg(node, parent_state, parent_sdfg, "hipSolverDn")
 
 
+@dace.library.expansion
+class ExpandCholeskyBlock(ExpandLapackBlock):
+    """In-kernel Cholesky by one thread block: ``block_lapack::potrf`` on a copy, the other triangle zeroed."""
+
+    matrix = "_a"
+
+    @classmethod
+    def body(cls, node, ops, uid):
+        n = order(ops, "_a")
+        other = "__i < __j" if node.lower else "__i > __j"
+        return (
+            copy_code(ops, "_a", "_b")
+            + f"const auto __f = {mat(ops, '_b')};\n"
+            + f"dace::block_lapack::potrf(__f, {n}, {'true' if node.lower else 'false'});\n"
+            + f"for (long __e = threadIdx.x; __e < {n} * {n}; __e += blockDim.x) {{\n"
+            + f"    const long __i = __e / {n}, __j = __e % {n};\n"
+            + f"    if ({other}) __f(__i, __j) = 0;\n"
+            + "}\n__syncthreads();\n"
+        )
+
+
 @dace.library.node
 class Cholesky(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -227,6 +249,7 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandCholeskyMKL,
         "cuSolverDn": ExpandCholeskyCuSolverDn,
         "hipSolverDn": ExpandCholeskyHipSolverDn,
+        BLOCK_LAPACK: ExpandCholeskyBlock,
     }
     default_implementation = None
 
