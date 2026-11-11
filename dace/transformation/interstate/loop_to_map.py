@@ -879,6 +879,7 @@ class LoopToMap(xf.MultiStateTransformation):
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
 
         # Add NestedSDFG node
+        read_set, write_set = dict.fromkeys(sorted(read_set)), dict.fromkeys(sorted(write_set))
         cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
         if sdfg.parent:
             # Only what the loop body uses: a mapped symbol it never reads is an unused mapping

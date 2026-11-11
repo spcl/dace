@@ -22,7 +22,8 @@ Staging one non-transient means:
 * the signature descriptor ``alpha`` (a length-1 ``Array``) is KEPT,
 * a fresh transient ``Scalar`` ``scal_alpha`` is introduced and every body reference to ``alpha`` is
   repointed to it,
-* a copy-IN ``scal_alpha = alpha[0]`` is prepended in a new start state (only if ``alpha`` is read),
+* a copy-IN ``scal_alpha = alpha[0]`` is prepended in a new start state (only if ``alpha`` is read or
+  written: the copy-out reads the old value on a path that does not write),
 * a copy-OUT ``alpha[0] = scal_alpha`` is appended in a new sink state (only if ``alpha`` is written).
 
 The whole SDFG body then computes on the plain scalar while the signature is unchanged. The inverse
@@ -40,7 +41,7 @@ import itertools
 from collections.abc import Callable
 
 import dace
-from dace import Memlet, dtypes, properties, subsets
+from dace import Memlet, dtypes, properties, subsets, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG, InterstateEdge, SDFGState, nodes
 from dace.sdfg import utils as sdutil
@@ -108,7 +109,8 @@ def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
 
 
 class ScalarRefRewriter(ast.NodeTransformer):
-    """Collapse ``old[0]`` to ``new`` and rename a bare ``old`` to ``new``.
+    """Collapse ``old[0]`` (any index that folds to zero, e.g. ``old[1 - 1]`` after offset specialization) to ``new``
+    and rename a bare ``old`` to ``new``.
 
     :param rename: Mapping from each rewritten descriptor's old name to its new name.
     """
@@ -118,11 +120,11 @@ class ScalarRefRewriter(ast.NodeTransformer):
 
     def visit_Subscript(self, node: ast.Subscript):
         index = node.slice.value if isinstance(node.slice, ast.Index) else node.slice
+        indices = index.elts if isinstance(index, ast.Tuple) else [index]
         if (
             isinstance(node.value, ast.Name)
             and node.value.id in self.rename
-            and isinstance(index, ast.Constant)
-            and index.value == 0
+            and all(not isinstance(i, ast.Slice) and symbolic.pystr_to_symbolic(ast.unparse(i)) == 0 for i in indices)
         ):
             return ast.copy_location(ast.Name(id=self.rename[node.value.id], ctx=node.ctx), node)
         return self.generic_visit(node)
@@ -480,6 +482,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             elif stage_nontransients:
                 is_read = descriptor_is_read(sdfg, arr_name)
                 is_written = descriptor_is_written(sdfg, arr_name)
+                is_read |= is_written  # the copy-out reads the old value on a path that does not write
                 # Fresh name every time (find_new_name): a re-run over an already-staged array never
                 # collides with the scalar an earlier run created.
                 scal_name, _ = sdfg.add_scalar(
@@ -628,6 +631,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
             elif stage_nontransients:
                 is_read = descriptor_is_read(sdfg, name)
                 is_written = descriptor_is_written(sdfg, name)
+                is_read |= is_written  # the copy-out reads the old value on a path that does not write
                 # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
                 # name leaves every rename target a tuple and the first Memlet built from it raises
                 # ``Invalid type "tuple" for property data``. The forward pass unpacks the same way.

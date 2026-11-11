@@ -2364,7 +2364,13 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return super()._print_Integer(expr)
 
     def _print_Float(self, expr):
-        return _format_float(float(sympy_numeric_fix(expr)))
+        nf = sympy_numeric_fix(expr)
+        if not math.isfinite(float(nf)):
+            # The value exceeds a C double (e.g. Fortran ``HUGE``, just over the max):
+            # let sympy print its own shortest decimal instead of overflowing through
+            # ``float()`` to a spurious ``inf`` (which would then render as ``inf.0``).
+            return super()._print_Float(nf)
+        return _format_float(float(nf))
 
     def _print_Add(self, expr):
         # Sort arguments deterministically using SymPy's default_sort_key
@@ -2703,6 +2709,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         self._settings["full_prec"] = False
 
     def _print_Float(self, expr):
+        # Shortest round-tripping form, always keeping one fractional digit so an
+        # integer-valued float stays floating-point (``5.0``, not ``5``).
         nf = sympy_numeric_fix(expr)
         if not math.isfinite(float(nf)):
             # Beyond a double (Fortran ``HUGE``): sympy's own decimal, not ``inf``
@@ -2722,6 +2730,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) in self.arrays:
             indices = ", ".join(self._print(arg) for arg in expr.args)
             return f"{expr.func}[{indices}]"
+        if self.cpp_mode and str(expr.func) == "int_floor":
+            return "((%s) / (%s))" % (self._print(expr.args[0]), self._print(expr.args[1]))
         if self.cpp_mode and str(expr.func) in TYPECAST_CPP:
             return f"{TYPECAST_CPP[str(expr.func)]}({self._print(expr.args[0])})"
         if str(expr.func) == "AND":

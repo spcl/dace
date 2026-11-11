@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import warnings
-from copy import deepcopy as dc
 
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.codegen.common import sym2cpp
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.transformation.transformation import ExpandTransformation
@@ -16,11 +16,14 @@ def _get_transpose_input(node, state, sdfg):
     """Returns the transpose input edge, array, and shape."""
     for edge in state.in_edges(node):
         if edge.dst_conn == "_inp":
-            subset = dc(edge.data.subset)
-            idx = subset.squeeze()
-            size = subset.size()
+            size, idx = blas_helpers.matrix_view(edge.data.subset)
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
-            return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
+            return (
+                edge,
+                outer_array,
+                (size[0], size[1]),
+                tuple(blas_helpers.stepped_strides(outer_array, edge.data.subset)[d] for d in idx[:2]),
+            )
     raise ValueError('Transpose input connector "_inp" not found.')
 
 
@@ -28,22 +31,27 @@ def _get_transpose_output(node, state, sdfg):
     """Returns the transpose output edge, array, and shape."""
     for edge in state.out_edges(node):
         if edge.src_conn == "_out":
-            subset = dc(edge.data.subset)
-            idx = subset.squeeze()
-            size = subset.size()
+            size, idx = blas_helpers.matrix_view(edge.data.subset)
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
-            return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
+            return (
+                edge,
+                outer_array,
+                (size[0], size[1]),
+                tuple(blas_helpers.stepped_strides(outer_array, edge.data.subset)[d] for d in idx[:2]),
+            )
     raise ValueError('Transpose output connector "_out" not found.')
 
 
 def _leading_dimensions(node, state, sdfg):
     """The row strides of the row-major input and output, which BLAS takes as their leading dimensions, or ``None``
     if a row is not contiguous (a vendor transpose cannot read it; the pure expansion can)."""
-    _, _, _, (in_row, in_col) = _get_transpose_input(node, state, sdfg)
-    _, _, _, (out_row, out_col) = _get_transpose_output(node, state, sdfg)
-    if in_col != 1 or out_col != 1:
+    _, in_desc, in_shape, in_strides = _get_transpose_input(node, state, sdfg)
+    _, out_desc, out_shape, out_strides = _get_transpose_output(node, state, sdfg)
+    if in_strides[1] != 1 or out_strides[1] != 1:
         return None
-    return sym2cpp(in_row), sym2cpp(out_row)
+    source = blas_helpers.Operand(in_desc, in_shape, in_strides)
+    target = blas_helpers.Operand(out_desc, out_shape, out_strides)
+    return sym2cpp(blas_helpers.leading_dimension(source, 0)), sym2cpp(blas_helpers.leading_dimension(target, 0))
 
 
 @dace.library.expansion
@@ -137,7 +145,7 @@ class ExpandTransposeMKL(ExpandTransformation):
             return ExpandTransposePure.expansion(node, state, sdfg)
         lda, ldb = leading
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
-        code = f"mkl_{func}('R', 'T', {m}, {n}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
+        code = f"mkl_{func}('R', 'T', {sym2cpp(m)}, {sym2cpp(n)}, {alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -187,7 +195,7 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         # Adaptations for BLAS API
         order = "CblasRowMajor"
         trans = "CblasTrans"
-        code = f"cblas_{func}({order}, {trans}, {m}, {n}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
+        code = f"cblas_{func}({order}, {trans}, {sym2cpp(m)}, {sym2cpp(n)}, {cast}{alpha}, {cast}_inp, {lda}, {cast}_out, {ldb});"
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
         )
@@ -241,6 +249,11 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
         return tasklet
 
 
+ExpandTransposeHipBLAS = hip_dialect.hip_expansion(
+    ExpandTransposeCuBLAS, blas_environments.hipblas.hipBLAS, hip_dialect.BLAS
+)
+
+
 @dace.library.node
 class Transpose(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -249,6 +262,8 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandTransposeMKL,
         "OpenBLAS": ExpandTransposeOpenBLAS,
         "cuBLAS": ExpandTransposeCuBLAS,
+        "hipBLAS": ExpandTransposeHipBLAS,
+        "rocBLAS": ExpandTransposeHipBLAS,
     }
     default_implementation = "pure"
 
@@ -264,19 +279,15 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one input to transpose operation")
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_inp":
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                in_size = subset.size()
+                in_size, _ = blas_helpers.matrix_view(memlet.subset)
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from transpose operation")
         out_memlet = out_edges[0].data
         if len(in_size) != 2:
             raise ValueError("Transpose operation only supported on matrices")
-        out_subset = dc(out_memlet.subset)
-        out_subset.squeeze()
-        out_size = out_subset.size()
+        out_size, _ = blas_helpers.matrix_view(out_memlet.subset)
         if len(out_size) != 2:
             raise ValueError("Transpose operation only supported on matrices")
-        if list(out_size) != [in_size[1], in_size[0]]:
+        if not blas_helpers.extents_agree(list(out_size), [in_size[1], in_size[0]]):
             raise ValueError("Output to transpose operation must agree in the m and n dimensions")

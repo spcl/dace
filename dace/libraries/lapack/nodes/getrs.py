@@ -5,6 +5,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import environments
@@ -99,14 +100,15 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
 
         # NOTE: In the case where the RHS is only a single vector (1D array),
         # cuSOLVER still expects ldb to be the "number of rows"
+        nrhs = rows_rhs
         if len(desc_rhs.shape) == 1:
-            stride_rhs = rows_rhs
+            nrhs, stride_rhs = 1, rows_rhs
 
         code = (
             environments.cusolverdn.cuSolverDn.handle_setup_code(node)
             + f"""
                 cusolverDn{func}(
-                    __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {cols_rhs},
+                    __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {nrhs},
                     ({cuda_type}*)_a, {stride_a}, _ipiv, ({cuda_type}*)_rhs_in, {stride_rhs}, _res);
                 """
         )
@@ -121,10 +123,20 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
         return tasklet
 
 
+ExpandGetrsHipSolverDn = hip_dialect.hip_expansion(
+    ExpandGetrsCuSolverDn, environments.hipsolverdn.hipSolverDn, hip_dialect.SOLVER
+)
+
+
 @dace.library.node
 class Getrs(dace.sdfg.nodes.LibraryNode):
     # Global properties
-    implementations = {"OpenBLAS": ExpandGetrsOpenBLAS, "MKL": ExpandGetrsMKL, "cuSolverDn": ExpandGetrsCuSolverDn}
+    implementations = {
+        "OpenBLAS": ExpandGetrsOpenBLAS,
+        "MKL": ExpandGetrsMKL,
+        "cuSolverDn": ExpandGetrsCuSolverDn,
+        "hipSolverDn": ExpandGetrsHipSolverDn,
+    }
     default_implementation = None
 
     # Object fields
@@ -186,7 +198,7 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
         stride_rhs = desc_rhs.strides[sqdims2[0]]
         shape_rhs = squeezed2.size()
         rows_rhs = shape_rhs[0]
-        if len(desc_rhs.shape) < 2:
+        if len(shape_rhs) < 2:
             cols_rhs = 1
         else:
             cols_rhs = shape_rhs[1]

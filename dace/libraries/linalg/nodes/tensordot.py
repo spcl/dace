@@ -5,6 +5,7 @@ import collections
 
 import dace
 from dace import library, nodes, properties
+from dace.libraries import hip_dialect
 from dace.libraries.linalg import environments
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
@@ -376,11 +377,14 @@ class ExpandCuTensor(ExpandTransformation):
         return tasklet
 
 
+ExpandHipTensor = hip_dialect.hip_expansion(ExpandCuTensor, environments.hipTensor, hip_dialect.TENSOR)
+
+
 @library.node
 class TensorDot(nodes.LibraryNode):
     """Implements tensor dot-product."""
 
-    implementations = {"pure": ExpandPure, "TTGT": ExpandTTGT, "cuTENSOR": ExpandCuTensor}
+    implementations = {"pure": ExpandPure, "TTGT": ExpandTTGT, "cuTENSOR": ExpandCuTensor, "hipTensor": ExpandHipTensor}
     default_implementation = None
 
     left_axes = properties.ListProperty(

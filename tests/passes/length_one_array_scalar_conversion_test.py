@@ -16,6 +16,8 @@ import pytest
 
 import dace
 import dace.data as dd
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes import (
     ConvertLengthOneArraysToScalars,
     ConvertScalarsToLengthOneArrays,
@@ -489,6 +491,83 @@ def test_control_flow_only_gate_gets_a_copyin():
     )
     assert writers > 0, f"{scal} is read from control flow but has no writer: the copy-in was dropped"
     sdfg.validate()
+
+
+def conditional_write(sdfg: dace.SDFG, subset: str) -> None:
+    """``if c > 0: x = 1``: the write does not dominate the copy-out."""
+    guard = ConditionalBlock("guard")
+    sdfg.add_node(guard, is_start_block=True)
+    branch = ControlFlowRegion("write", sdfg=sdfg)
+    guard.add_branch(CodeBlock("c > 0.0"), branch)
+    state = branch.add_state("write", is_start_block=True)
+    tasklet = state.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    state.add_edge(tasklet, "o", state.add_write("x"), None, dace.Memlet(subset))
+
+
+def assert_copied_in(sdfg: dace.SDFG, source: str) -> None:
+    copyin = next(s for s in sdfg.states() if s.label.startswith("stage_copyin"))
+    assert source in [n.data for n in copyin.source_nodes()]
+
+
+def test_conditional_write_keeps_the_value_on_the_path_that_does_not_write():
+    sdfg = dace.SDFG("staged_conditional_write")
+    sdfg.add_scalar("c", dace.float64)
+    sdfg.add_array("x", [1], dace.float64)
+    conditional_write(sdfg, "x[0]")
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+    assert_copied_in(sdfg, "x")
+
+    x = np.array([5.0])
+    sdfg(c=-1.0, x=x)
+    assert x[0] == 5.0
+    sdfg(c=1.0, x=x)
+    assert x[0] == 1.0
+
+
+def test_arrayized_conditional_write_keeps_the_value_on_the_path_that_does_not_write():
+    inner = dace.SDFG("arrayized_conditional_write_inner")
+    inner.add_scalar("c", dace.float64)
+    inner.add_scalar("x", dace.float64)
+    conditional_write(inner, "x")
+
+    ConvertScalarsToLengthOneArrays(preserve_abi=True).apply_pass(inner, {})
+    assert_copied_in(inner, "x")
+
+    sdfg = dace.SDFG("arrayized_conditional_write")
+    sdfg.add_scalar("c", dace.float64)
+    sdfg.add_array("x", [1], dace.float64)
+    state = sdfg.add_state("call")
+    call = state.add_nested_sdfg(inner, {"c": None}, {"x": None})
+    state.add_edge(state.add_read("c"), None, call, "c", dace.Memlet("c"))
+    state.add_edge(call, "x", state.add_write("x"), None, dace.Memlet("x[0]"))
+
+    x = np.array([5.0])
+    sdfg(c=-1.0, x=x)
+    assert x[0] == 5.0
+
+
+def test_folded_zero_index_on_interstate_edge_is_stripped():
+    """``p[1 - 1]`` (an offset-specialized Fortran index) on an interstate edge collapses to the staged
+    scalar; a leftover ``scal_p[1 - 1]`` subscripts a scalar and fails to compile."""
+    sdfg = dace.SDFG("folded_zero_index")
+    sdfg.add_array("p", [1], dace.int64)
+    sdfg.add_array("out", [1], dace.int64)
+    sdfg.add_symbol("s", dace.int64)
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state("s1")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"s": "p[1 - 1]"}))
+    t = s1.add_tasklet("w", {}, {"o"}, "o = s + 1")
+    s1.add_edge(t, "o", s1.add_write("out"), None, dace.Memlet("out[0]"))
+
+    ConvertLengthOneArraysToScalars(preserve_abi=True).apply_pass(sdfg, {})
+
+    exprs = [e.data.assignments["s"] for e in sdfg.all_interstate_edges() if "s" in e.data.assignments]
+    assert len(exprs) == 1 and exprs[0].startswith("scal_p") and "[" not in exprs[0], exprs
+    p = np.array([41], dtype=np.int64)
+    out = np.zeros(1, dtype=np.int64)
+    sdfg(p=p, out=out)
+    assert out[0] == 42
 
 
 if __name__ == "__main__":

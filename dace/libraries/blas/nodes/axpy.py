@@ -6,6 +6,7 @@ from dace import SDFG, SDFGState
 from dace import data as dt
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import blas_helpers
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -31,7 +32,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
         y_outer = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, "_y")).data.data]
         res_outer = parent_sdfg.arrays[next(parent_state.out_edges_by_connector(node, "_res")).data.data]
 
-        a = node.a
+        a, scale_inputs = blas_helpers.scale_term(node, "alpha", node.a)
         n = node.n / x_outer.dtype.veclen
 
         axpy_sdfg = dace.SDFG("axpy")
@@ -47,6 +48,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
         axpy_sdfg.add_datadesc("_x", x_inner)
         axpy_sdfg.add_datadesc("_y", y_inner)
         axpy_sdfg.add_datadesc("_res", res_inner)
+        blas_helpers.add_scale_scalars(axpy_sdfg, node, parent_state, parent_sdfg)
 
         x_in = axpy_state.add_read("_x")
         y_in = axpy_state.add_read("_y")
@@ -55,7 +57,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
         vec_map_entry, vec_map_exit = axpy_state.add_map("axpy", {"i": f"0:{n}"}, schedule=schedule)
 
         axpy_tasklet = axpy_state.add_tasklet(
-            "axpy", ["x_conn", "y_conn"], ["z_conn"], f"z_conn = {a} * x_conn + y_conn"
+            "axpy", ["x_conn", "y_conn", *scale_inputs], ["z_conn"], f"z_conn = {a} * x_conn + y_conn"
         )
 
         # Access container either as an array or as a stream
@@ -68,6 +70,11 @@ class ExpandAxpyVectorized(ExpandTransformation):
         axpy_state.add_memlet_path(
             y_in, vec_map_entry, axpy_tasklet, dst_conn="y_conn", memlet=dace.Memlet(f"_y[{index}]")
         )
+
+        for connector, memlet in scale_inputs.items():
+            axpy_state.add_memlet_path(
+                axpy_state.add_read(memlet.data), vec_map_entry, axpy_tasklet, dst_conn=connector, memlet=memlet
+            )
 
         index = "0" if isinstance(res_inner, dt.Stream) else "i"
         axpy_state.add_memlet_path(
@@ -97,7 +104,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     def __init__(self, name, a=None, n=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_x", "_y"}, outputs={"_res"}, **kwargs)
-        self.a = dace.symbolic.symbol("a") if a is None else a
+        self.a = dace.symbolic.symbol("a") if a is None else blas_helpers.real_scale(a)
         self.n = n or dace.symbolic.symbol("n")
 
     def compare(self, other):
@@ -109,7 +116,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     def validate(self, sdfg, state):
 
-        in_edges = state.in_edges(self)
+        in_edges = blas_helpers.data_in_edges(self, state)
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to axpy")
 
@@ -144,8 +151,9 @@ def axpy_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, a, x, y, re
     x_in, y_in = (state.add_read(name) for name in (x, y))
     res = state.add_write(result)
 
-    libnode = Axpy("axpy", a=a)
+    libnode = Axpy("axpy")
     state.add_node(libnode)
+    libnode.a = blas_helpers.connect_scale(sdfg, state, libnode, "alpha", a)
 
     # Connect nodes
     state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))

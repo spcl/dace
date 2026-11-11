@@ -43,3 +43,26 @@ def test_loop_body_maps_only_the_symbols_it_uses():
     sdfg(a=a, b=b, N=8, M=3)
     assert np.array_equal(a, np.arange(8) + 1.0)
     assert np.array_equal(b, [2.0, 0.0, 0.0])
+
+
+@dace.program
+def two_reads_two_writes(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    for i in range(N):
+        c[i] = a[i] + b[i]
+        d[i] = a[i] - b[i]
+
+
+def test_loop_body_connectors_are_ordered():
+    sdfg = two_reads_two_writes.to_sdfg(simplify=False)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message="Using sets for connectors")
+        assert sdfg.apply_transformations_repeated(LoopToMap) == 1
+
+    body = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+    assert list(body.in_connectors) == ["a", "b"] and list(body.out_connectors) == ["c", "d"]
+
+
+if __name__ == "__main__":
+    test_loop_body_maps_only_the_symbols_it_uses()
+    test_loop_body_connectors_are_ordered()

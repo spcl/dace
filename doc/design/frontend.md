@@ -34,7 +34,7 @@ Four-Pass Pipeline Architecture:
 
 DaCe currently has several language frontends:
 - **Python Frontend**: Located in `dace/frontend/python/`
-- **Fortran Frontend**: Located in `dace/frontend/fortran/`
+- **Fortran Frontend**: The separate [dace-fortran](https://github.com/spcl/dace-fortran) package
 - **TensorFlow/Octave frontends**: Additional specialized frontends
 
 Each frontend implements direct AST-to-SDFG conversion with language-specific preprocessing.
@@ -54,13 +54,7 @@ The Python frontend preprocessing pipeline in `preprocessing.py` includes:
    - **ConditionalCodeResolver**: Resolves compile-time conditionals
    - **DeadCodeEliminator**: Removes unreachable code
 
-### 1.3 Fortran Frontend Analysis
-
-The Fortran frontend in `fortran_parser.py`:
-- **AST_translator**: Direct translation from Fortran AST to SDFG
-- Methods like `call2sdfg()`, `binop2sdfg()`, `forstmt2sdfg()` directly generate SDFG constructs
-
-### 1.4 Current Limitations
+### 1.3 Current Limitations
 
 1. **Code Duplication**: Similar patterns (loops, conditionals, function calls) implemented separately in each frontend
 2. **Maintainability**: Bug fixes and optimizations must be replicated across frontends
