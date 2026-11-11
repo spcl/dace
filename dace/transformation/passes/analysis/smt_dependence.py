@@ -56,11 +56,20 @@ def _pow_to_mul(base, exp):
     if exp == 0:
         return required(z3).IntVal(1)
     if exp < 0:
-        return required(z3).IntVal(0)  # unsupported negative exponent; conservative
+        return None  # a fraction, not an integer term
     out = base
     for _ in range(exp - 1):
         out = out * base
     return out
+
+
+def _power(base: Any, exp: Any) -> Any:
+    """``base ** exp`` for a symbolic ``exp``: uninterpreted, but at least 1 for ``base >= 1`` and ``exp >= 0``."""
+    if base is None or exp is None or not required(z3).is_int(_z3_int(exp)):
+        return None
+    base, exp = _z3_int(base), _z3_int(exp)
+    value = required(z3).Function("fn_pow", *[required(z3).IntSort()] * 3)(base, exp)
+    return required(z3).If(required(z3).And(base >= 1, exp >= 0, value < 1), 1, value)
 
 
 def _array_rank(arr: Any) -> int:
@@ -143,7 +152,7 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: dict[str, Any], arr_cache: dict[str,
         exp = expr.exp
         if isinstance(exp, (int, sp.Integer)):
             return _pow_to_mul(base, int(exp))
-        return None
+        return _power(base, _sympy_to_z3(exp, sym_cache, arr_cache))
 
     if isinstance(expr, sp.Add):
         terms = [_sympy_to_z3(a, sym_cache, arr_cache) for a in expr.args]
@@ -181,33 +190,40 @@ def _sympy_to_z3(expr: sp.Basic, sym_cache: dict[str, Any], arr_cache: dict[str,
             out = required(z3).If(a < out, a, out)
         return out
 
-    if isinstance(expr, sp.floor):
+    if isinstance(expr, (sp.floor, sp.ceiling)):
         # Rational inner expressions fail translation above, so the argument is already an
-        # integer term and floor is the identity on it.
+        # integer term and floor (ceiling) is the identity on it.
         return _sympy_to_z3(expr.args[0], sym_cache, arr_cache)
 
-    if isinstance(expr, sp.Mod):
-        a = _sympy_to_z3(expr.args[0], sym_cache, arr_cache)
-        b = _sympy_to_z3(expr.args[1], sym_cache, arr_cache)
-        if a is None or b is None:
-            return None
-        # z3's `%` is SMT-LIB `mod`, which matches sympy's Mod for positive divisors --
-        # the only divisors that appear in subscripts. SRem would diverge on negative
-        # dividends and let the solver certify a false disjointness.
-        return _z3_int(a) % _z3_int(b)
-
-    if isinstance(expr, symbolic.int_floor):
-        a = _sympy_to_z3(expr.args[0], sym_cache, arr_cache)
-        b = _sympy_to_z3(expr.args[1], sym_cache, arr_cache)
-        if a is None or b is None:
-            return None
-        # SMT-LIB `div` floors for a positive divisor only; floor(a / b) = floor(-a / -b) covers a negative one
-        a, b = _z3_int(a), _z3_int(b)
-        return required(z3).If(b < 0, (-a) / (-b), a / b)
-
-    if isinstance(expr, sp.Function):
-        # Opaque functions are not modeled.
+    if not isinstance(expr, sp.Function):
         return None
+    args = [_sympy_to_z3(a, sym_cache, arr_cache) for a in expr.args]
+    if any(a is None or not required(z3).is_int(_z3_int(a)) for a in args):
+        return None
+    args = [_z3_int(a) for a in args]
+    name = type(expr).__name__
+    If = required(z3).If
+    if isinstance(expr, sp.Abs):
+        return If(args[0] < 0, -args[0], args[0])
+    if len(args) == 2:
+        a, b = args
+        # SMT-LIB ``div``/``mod`` floor for a positive divisor only; the negative one goes through ``-a / -b``
+        floor = If(b < 0, (-a) / (-b), a / b)
+        if isinstance(expr, symbolic.int_floor):
+            return floor
+        if isinstance(expr, symbolic.int_ceil):
+            return -If(b < 0, a / (-b), (-a) / b)
+        # Python's floored modulo (``py_mod`` is its spelling for the code generator): the sign of the divisor
+        if isinstance(expr, sp.Mod) or name == "py_mod":
+            return If(b < 0, -((-a) % (-b)), a % b)
+        # C's truncated modulo: the sign of the dividend
+        if isinstance(expr, symbolic.CMod):
+            return If(a < 0, -((-a) % If(b < 0, -b, b)), a % If(b < 0, -b, b))
+        if isinstance(expr, symbolic.ipow):
+            return _power(a, b)
+    # Any other function is uninterpreted: equal arguments give equal values, which is all a proof for every
+    # interpretation may rely on
+    return required(z3).Function(f"fn_{name}", *[required(z3).IntSort()] * (len(args) + 1))(*args)
 
     return None
 
@@ -282,8 +298,12 @@ def _bool_to_z3(expr: sp.Basic, sym_cache: dict[str, Any], arr_cache: dict[str, 
     return None
 
 
-def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> list[Any]:
-    """z3 constraints that put ``i`` inside the strided iteration domain."""
+def _iter_bounds(i: Any, start: Any, end: Any, step: Any, widen: bool = False) -> list[Any]:
+    """z3 constraints that put ``i`` inside the strided iteration domain.
+
+    :param widen: Leave out a bound z3 cannot express (``32 * 2**b``) instead of giving up: for a caller proving a
+                  property of EVERY pair of iterations, a larger domain only makes the proof harder, never wrong.
+    """
     if isinstance(start, (int, sp.Integer)):
         start_z = required(z3).IntVal(int(start))
     else:
@@ -295,7 +315,8 @@ def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> list[Any]:
     # Both bounds must be INTEGER terms. A bound that translated to an array read (or anything
     # else non-arithmetic) builds an ill-sorted ``i >= start``, and z3 answers that by aborting the
     # process inside ``Z3_solver_assert`` rather than raising -- so it has to be caught here.
-    if start_z is None or end_z is None or not required(z3).is_int(start_z) or not required(z3).is_int(end_z):
+    start_z, end_z = (None if b is None or not required(z3).is_int(b) else b for b in (start_z, end_z))
+    if (start_z is None or end_z is None) and not (widen and (start_z is not None or end_z is not None)):
         return []
     try:
         step_v = int(symbolic.evaluate(step, {}))
@@ -310,8 +331,8 @@ def _iter_bounds(i: Any, start: Any, end: Any, step: Any) -> list[Any]:
     # DaCe loop bounds are inclusive and stated in ITERATION order, so a negative step counts DOWN
     # from ``start`` to ``end`` and the interval is the other way round.
     lo, hi = (start_z, end_z) if step_v > 0 else (end_z, start_z)
-    cons = [i >= lo, i <= hi]
-    if abs(step_v) != 1:
+    cons = [*([] if lo is None else [i >= lo]), *([] if hi is None else [i <= hi])]
+    if abs(step_v) != 1 and start_z is not None:
         # (i - start) % |step| == 0, so the solver knows two distinct iterations are a whole
         # stride apart rather than adjacent. ``z3.SRem`` is bitvector-only and raises on an
         # Int term, so it silently lost this constraint and every strided loop was reasoned about
@@ -402,7 +423,7 @@ def prove_injective_write(
     if w1 is None or w2 is None:
         return None
 
-    bounds = _iter_bounds(i1, start, end, step) + _iter_bounds(i2, start, end, step)
+    bounds = _iter_bounds(i1, start, end, step, widen=True) + _iter_bounds(i2, start, end, step, widen=True)
     if not bounds:
         return None
 
@@ -455,7 +476,7 @@ def prove_disjoint_write_ranges(
     if lo1 is None or hi1 is None or lo2 is None or hi2 is None:
         return None
 
-    bounds = _iter_bounds(i1, start, end, step) + _iter_bounds(i2, start, end, step)
+    bounds = _iter_bounds(i1, start, end, step, widen=True) + _iter_bounds(i2, start, end, step, widen=True)
     if not bounds:
         return None
 
@@ -533,7 +554,7 @@ def prove_disjoint_access_boxes(
             return None
         intersects += [a1 <= b2, a2 <= b1]
 
-    bounds = _iter_bounds(i1, start, end, step) + _iter_bounds(i2, start, end, step)
+    bounds = _iter_bounds(i1, start, end, step, widen=True) + _iter_bounds(i2, start, end, step, widen=True)
     if not bounds:
         return None
 
