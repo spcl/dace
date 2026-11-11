@@ -10,9 +10,10 @@ from dace import memlet as mm
 from dace import properties, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries import hip_dialect
-from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas import blas_helpers, block, environments, gpu_dialect
 from dace.libraries.blas.nodes.gemm import _cast_to_dtype_str, _is_complex
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
+from dace.libraries.standard.environments.cuda import CUDA
 from dace.ordered import OrderedSet
 from dace.sdfg import SDFG, SDFGState
 from dace.transformation.transformation import ExpandTransformation
@@ -144,6 +145,39 @@ class ExpandGemvPure(ExpandTransformation):
             )
 
         return sdfg
+
+
+@dace.library.expansion
+class ExpandGemvCUDABlock(ExpandTransformation):
+    """In-kernel GEMV by ONE thread block: each lane computes rows of ``_y``, strided over the block."""
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        operands = _get_matmul_operands(node, parent_state, parent_sdfg, name_lhs="_A", name_rhs="_x", name_out="_y")
+        sdfg = dace.SDFG(node.label + "_block")
+        for name, operand in zip(("_A", "_x", "_y"), operands):
+            desc, shape, strides = operand[1], operand[4], operand[5]
+            sdfg.add_array(name, shape, desc.dtype, strides=strides, storage=desc.storage)
+        if block.vector_types(sdfg):
+            return ExpandGemvPure.expansion(node, parent_state, parent_sdfg, **kwargs)
+        dtype = sdfg.arrays["_y"].dtype.base_type
+        a = block.at(sdfg, "_A", *(("__j", "__i") if node.transA else ("__i", "__j")))
+        result, values = block.scaled_sum(sdfg, "_y", node.alpha, node.beta, "__i")
+        code = block.coefficients(dtype, **values) + block.block_contraction_code(
+            [("__i", sdfg.arrays["_y"].shape[0])],
+            [("__j", sdfg.arrays["_x"].shape[0])],
+            f"{a} * {block.at(sdfg, '_x', '__j')}",
+            f"{block.at(sdfg, '_y', '__i')} = {result};",
+            dtype.ctype,
+        )
+        reads = {"__A": "_A", "__x": "_x"}
+        if "_y" in node.in_connectors:
+            reads["__y_in"] = "_y"
+        return block.block_sdfg(node, parent_state, sdfg, code, tuple(values.values()), reads, {"__y": "_y"})
 
 
 @dace.library.expansion
@@ -428,6 +462,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "hipBLAS": ExpandGemvHipBLAS,
         "rocBLAS": ExpandGemvHipBLAS,
         "PBLAS": ExpandGemvPBLAS,
+        "CUDA (block strided)": ExpandGemvCUDABlock,
     }
     default_implementation = None
 

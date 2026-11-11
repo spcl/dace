@@ -11,7 +11,8 @@ from dace import memlet as mm
 from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries import hip_dialect
-from dace.libraries.blas import blas_helpers, environments, gpu_dialect
+from dace.libraries.blas import blas_helpers, block, environments, gpu_dialect
+from dace.libraries.standard.environments.cuda import CUDA
 from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
@@ -190,6 +191,29 @@ class ExpandAxpyCuBLAS(ExpandAxpyGPUBLAS):
 ExpandAxpyHipBLAS = hip_dialect.hip_expansion(ExpandAxpyCuBLAS, environments.hipblas.hipBLAS, hip_dialect.BLAS)
 
 
+@dace.library.expansion
+class ExpandAxpyCUDABlock(ExpandTransformation):
+    """In-kernel AXPY by ONE thread block: each lane computes elements of ``_res``, strided over the block."""
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
+        if block.vector_types(sdfg):
+            return ExpandAxpyVectorized.expansion(node, parent_state, parent_sdfg, **kwargs)
+        dtype = sdfg.arrays["_res"].dtype
+        store = (
+            f"{block.at(sdfg, '_res', '__i')} = __a * {block.at(sdfg, '_x', '__i')} + {block.at(sdfg, '_y', '__i')};"
+        )
+        code = block.coefficients(dtype, a=node.a) + block.block_contraction_code(
+            [("__i", sdfg.arrays["_res"].shape[0])], [], "", store, dtype.ctype
+        )
+        return block.block_sdfg(node, parent_state, sdfg, code, (node.a,))
+
+
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
     """
@@ -205,6 +229,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandAxpyMKL,
         "cuBLAS": ExpandAxpyCuBLAS,
         "hipBLAS": ExpandAxpyHipBLAS,
+        "CUDA (block strided)": ExpandAxpyCUDABlock,
     }
     default_implementation = None
 
@@ -236,15 +261,16 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one output from axpy")
 
         out_memlet = out_edges[0].data
-        size = in_memlets[0].subset.size()
+        # A vector a kernel slices out of a batch keeps its unit batch dimension
+        size, size_y, size_res = (blas_helpers.operand(self, state, sdfg, c).shape for c in ("_x", "_y", "_res"))
 
         if len(size) != 1:
             raise ValueError("axpy only supported on 1-dimensional arrays")
 
-        if not symbolic.shapes_equal(size, in_memlets[1].subset.size()):
+        if not symbolic.shapes_equal(size, size_y):
             raise ValueError("Inputs to axpy must have equal size")
 
-        if not symbolic.shapes_equal(size, out_memlet.subset.size()):
+        if not symbolic.shapes_equal(size, size_res):
             raise ValueError("Output of axpy must have same size as input")
 
         if in_memlets[0].wcr is not None or in_memlets[1].wcr is not None or out_memlet.wcr is not None:

@@ -6,9 +6,10 @@ import dace
 from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
+from dace.libraries.blas import blas_helpers, block, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
 from dace.libraries.blas.nodes.symv import symmetric_element
+from dace.libraries.standard.environments.cuda import CUDA
 from dace.sdfg import nodes
 from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
@@ -100,6 +101,39 @@ def syr2k_call(node, state, sdfg, environment=None) -> SDFG:
     return blas_helpers.in_place_call(node, state, sdfg, "_Cin", "_Cout", scalars + call)
 
 
+@library.expansion
+class ExpandSyr2kCUDABlock(ExpandTransformation):
+    """In-kernel SYR2K by ONE thread block: each lane computes elements of ``_Cout``, strided over the block;
+    outside the updated triangle it copies ``_Cin``."""
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
+        if block.vector_types(sdfg):
+            return ExpandSyr2kPure.expansion(node, parent_state, parent_sdfg)
+        dtype = sdfg.arrays["_Cout"].dtype
+        n = sdfg.arrays["_Cin"].shape[0]
+        k = sdfg.arrays["_A"].shape[0 if node.transA else 1]
+        # A @ A^T multiplies rows i and j of A; A^T @ A its columns
+        rows = (("__k", "__i"), ("__k", "__j")) if node.transA else (("__i", "__k"), ("__j", "__k"))
+        ai, aj = (block.at(sdfg, "_A", *r) for r in rows)
+        bi, bj = (block.at(sdfg, "_B", *r) for r in rows)
+        result, values = block.scaled_sum(sdfg, "_Cin", node.alpha, node.beta, "__i", "__j")
+        cout, cin = block.at(sdfg, "_Cout", "__i", "__j"), block.at(sdfg, "_Cin", "__i", "__j")
+        code = block.coefficients(dtype, **values) + block.block_contraction_code(
+            [("__i", n), ("__j", n)],
+            [("__k", k)],
+            f"{ai} * {bj} + {bi} * {aj}",
+            f"{cout} = ({symmetric_element(node.uplo, '__i', '__j')}) ? {result} : {cin};",
+            dtype.ctype,
+        )
+        return block.block_sdfg(node, parent_state, sdfg, code, tuple(values.values()))
+
+
 @library.node
 class Syr2k(nodes.LibraryNode):
     """BLAS ``?syr2k``: ``_Cout = alpha * (_A @ _B^T + _B @ _A^T) + beta * _Cin``, or the ``_A^T @ _B + _B^T @ _A``
@@ -108,6 +142,7 @@ class Syr2k(nodes.LibraryNode):
     implementations = {
         "pure": ExpandSyr2kPure,
         **vendor.vendor_expansions("Syr2k", syr2k_call),
+        "CUDA (block strided)": ExpandSyr2kCUDABlock,
     }
     default_implementation = None
 

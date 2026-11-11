@@ -123,9 +123,10 @@ def add_block_lane_map(state, label: str, lanes: int = BLOCK_COLLECTIVE_THREADS)
 #: specific first. Having one is the whole heuristic for what belongs inside a GPU kernel: a
 #: reduce-shaped node (``Reduce``, ``Scan``, ``Dot``) reduces along one axis whose extent is bounded
 #: by the problem's feature width, so a thread block is the right amount of machine to point at it.
-#: A node with none -- ``Gemm``, ``BatchedMatMul``, ``TensorTranspose`` -- does device-scale work per
-#: invocation (measured: 39.8M elements for one in-kernel TensorTranspose, ~5e9 FLOP for one
-#: BatchedMatMul) and belongs in a device-wide vendor call issued from the host, not in one block.
+#: Every BLAS node has one too (:mod:`dace.libraries.blas.block`), so a map around one product per iteration
+#: (doitgen) is a kernel rather than a host loop; the price is a device-scale product left in a map, which one
+#: block runs slowly (measured ~5e9 FLOP for one in-kernel BatchedMatMul). A node with none belongs in a
+#: device-wide call issued from the host.
 #:
 #: Deliberately capability-based rather than a list of class names: giving a node a block expansion
 #: is what opts it in, in ONE place, and no size is read. Extents here are symbolic

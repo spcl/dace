@@ -4,8 +4,9 @@ from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
+from dace.libraries.blas import blas_helpers, block, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
+from dace.libraries.standard.environments.cuda import CUDA
 from dace.sdfg import nodes
 from dace.symbolic import equal_valued
 from dace.transformation.transformation import ExpandTransformation
@@ -84,6 +85,33 @@ def symv_call(node, state, sdfg, environment=None) -> SDFG:
     )
 
 
+@library.expansion
+class ExpandSymvCUDABlock(ExpandTransformation):
+    """In-kernel SYMV by ONE thread block: each lane computes rows of ``_yout``, strided over the block."""
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
+        if block.vector_types(sdfg):
+            return ExpandSymvPure.expansion(node, parent_state, parent_sdfg)
+        dtype = sdfg.arrays["_yout"].dtype
+        n = sdfg.arrays["_x"].shape[0]
+        a = block.symmetric_at(sdfg, "_A", node.uplo, "__i", "__j")
+        result, values = block.scaled_sum(sdfg, "_yin", node.alpha, node.beta, "__i")
+        code = block.coefficients(dtype, **values) + block.block_contraction_code(
+            [("__i", n)],
+            [("__j", n)],
+            f"{a} * {block.at(sdfg, '_x', '__j')}",
+            f"{block.at(sdfg, '_yout', '__i')} = {result};",
+            dtype.ctype,
+        )
+        return block.block_sdfg(node, parent_state, sdfg, code, tuple(values.values()))
+
+
 @library.node
 class Symv(nodes.LibraryNode):
     """BLAS ``?symv``: ``_yout = alpha * _A @ _x + beta * _yin`` for a symmetric ``_A`` of which only the upper
@@ -92,6 +120,7 @@ class Symv(nodes.LibraryNode):
     implementations = {
         "pure": ExpandSymvPure,
         **vendor.vendor_expansions("Symv", symv_call),
+        "CUDA (block strided)": ExpandSymvCUDABlock,
     }
     default_implementation = None
 

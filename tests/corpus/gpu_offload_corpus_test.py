@@ -78,6 +78,14 @@ def test_the_offloaded_kernel_validates_and_emits(kind: str, name: str):
     assert sdfg.generate_code(), f"{kind}/{name} offloaded to nothing"
 
 
+def test_doitgen_runs_its_products_inside_a_kernel():
+    """Every BLAS node has an in-kernel block lowering, so doitgen's map around one product per ``r`` is a kernel."""
+    sdfg = offloaded_sdfg(suite.make("poly", "doitgen"))
+    libraries = [n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.LibraryNode)]
+    assert offloaded(sdfg) and not host_calls_only(sdfg)
+    assert libraries and not {n.implementation for n in libraries} & {"cuBLAS", "hipBLAS", "rocBLAS", "OpenBLAS"}
+
+
 @pytest.mark.gpu
 @pytest.mark.parametrize("kind,name", suite.kernels())
 def test_the_offloaded_kernel_matches_the_reference(kind: str, name: str):
