@@ -356,15 +356,18 @@ def test_norm_none_is_backward():
 def test_a_scalar_length_is_read_into_a_symbol():
     @dace.program
     def resized(x: dace.complex128[8], n: dace.int64, out: dace.complex128[4]):
-        out[:] = np.fft.fft(x, n=n)
+        spectrum = np.fft.fft(x, n=n)
+        out[:] = spectrum[:4]
 
     @dace.program
     def half_spectrum(x: dace.float64[8], n: dace.int64, out: dace.complex128[3]):
-        out[:] = np.fft.rfft(x, n=n)
+        spectrum = np.fft.rfft(x, n=n)
+        out[:] = spectrum[:3]
 
     @dace.program
     def frequencies(n: dace.int64, out: dace.float64[4]):
-        out[:] = np.fft.fftfreq(n)
+        frequency = np.fft.fftfreq(n)
+        out[:] = frequency[:4]
 
     for program in (resized, half_spectrum, frequencies):
         sdfg = program.to_sdfg(simplify=False)
