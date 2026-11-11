@@ -12,7 +12,6 @@ order inside the nest was lost. The nest must include the access nodes the path 
 
 import networkx as nx
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg.graph import SubgraphView
@@ -49,7 +48,7 @@ def nests_of(state):
     return [n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
 
 
-def test_achain_through_a_global_array_nests_without_a_cycle():
+def test_a_chain_through_a_global_array_nests_without_a_cycle():
     sdfg, state, group, outside = chain_through_a_global_array()
 
     nest_state_subgraph(sdfg, state, SubgraphView(state, list(group)), name="statement")
@@ -94,4 +93,7 @@ def test_two_statements_nest_one_after_the_other():
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    test_a_chain_through_a_global_array_nests_without_a_cycle()
+    test_the_nest_keeps_the_write_then_read_order_and_the_values()
+    test_a_node_off_every_path_stays_outside_the_nest()
+    test_two_statements_nest_one_after_the_other()

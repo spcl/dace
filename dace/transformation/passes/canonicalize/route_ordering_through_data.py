@@ -15,7 +15,6 @@ nodes it reads: the nest still runs between them, and inlining keeps those acces
 is refused where it would close a cycle.
 """
 
-import warnings
 from typing import Any
 
 from dace import SDFG, Memlet, data
@@ -109,25 +108,6 @@ def conflict(left: tuple[set[str], set[str]] | None, right: tuple[set[str], set[
     if left is None or right is None:
         return True
     return bool(left[1] & right[0] or right[1] & left[0])
-
-
-def is_cyclic(state: SDFGState) -> bool:
-    """Whether ``state`` holds a directed cycle, warning with the cycle when it does.
-
-    A cyclic state has no topological order, so no ordering edge of it can be tested: the passes that sort the state
-    leave it as it is, for validation to report, instead of raising from deep inside the sort.
-    """
-    if nx.is_directed_acyclic_graph(state.nx):
-        return False
-    edges = nx.find_cycle(state.nx)
-    shown = " -> ".join(f"{type(edge[0]).__name__} {edge[0]}" for edge in edges[:6]) + (
-        " -> ..." if len(edges) > 6 else ""
-    )
-    warnings.warn(
-        f"State {state.sdfg.label}/{state.label} has a cycle ({shown}); its ordering edges are left as they are.",
-        stacklevel=2,
-    )
-    return True
 
 
 def guards_nothing(state: SDFGState, edge: MultiConnectorEdge[Memlet], facts: StateFacts) -> bool:
@@ -256,8 +236,6 @@ class RouteOrderingThroughData(ppl.Pass):
         rerouted = 0
         for owner in sdfg.all_sdfgs_recursive():
             for state in owner.states():
-                if is_cyclic(state):
-                    continue
                 blocked = [
                     n
                     for n in state.nodes()

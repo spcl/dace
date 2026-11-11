@@ -37,7 +37,6 @@ from dace.transformation.passes.canonicalize.route_ordering_through_data import 
     StateFacts,
     blocking_ordering_edges,
     guards_nothing,
-    is_cyclic,
 )
 
 #: One state edge, as the tuple needed to re-add it unchanged.
@@ -274,7 +273,5 @@ class RedundantOrderingEdgeElimination(ppl.Pass):
         count = 0
         for nested in sdfg.all_sdfgs_recursive():
             for state in nested.states():
-                if is_cyclic(state):
-                    continue
                 count += dissolve_hubs(state) + drop_unguarded_nest_edges(state) + reduce_state(state)
         return count or None
