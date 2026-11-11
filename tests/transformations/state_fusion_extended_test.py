@@ -2160,7 +2160,46 @@ def test_a_read_disjoint_from_the_writer_never_exempts_a_later_rewrite():
     assert nx.has_path(state._nx, reader, writer)
 
 
+def test_a_read_of_a_container_the_next_state_rewrites_fuses_with_the_read_first():
+    """``vel = acc * dt``, then ``acc = pos * dt`` and ``out = acc * vel``: one state, the old ``acc`` read first."""
+
+    def step(state, name, reads, write, input_nodes=None):
+        inputs = {f"a{i}": Memlet(read) for i, read in enumerate(reads)}
+        code = "b = " + " * ".join(inputs)
+        state.add_mapped_tasklet(
+            name, {"i": "0:8"}, inputs, code, {"b": Memlet(write)}, external_edges=True, input_nodes=input_nodes
+        )
+
+    sdfg = SDFG("read_then_rewrite")
+    for name in ("acc", "pos", "vel", "dt", "out"):
+        sdfg.add_array(name, (8,), dace.float64)
+    first = sdfg.add_state("first")
+    step(first, "kick", ["acc[i]", "dt[i]"], "vel[i]")
+    second = sdfg.add_state_after(first, "second")
+    step(second, "force", ["pos[i]", "dt[i]"], "acc[i]")
+    new_acc = next(n for n in second.data_nodes() if n.data == "acc")
+    step(second, "drift", ["acc[i]", "vel[i]"], "out[i]", {"acc": new_acc})
+    fuser = FuseStates(aggressive_merges=True)
+    fuser.progress = False
+    fuser.apply_pass(sdfg, {})
+    (state,) = sdfg.states()
+    reader = next(n for n in state.nodes() if isinstance(n, dnodes.MapExit) and n.map.label.startswith("kick"))
+    writer = next(n for n in state.nodes() if isinstance(n, dnodes.MapEntry) and n.map.label.startswith("force"))
+    assert nx.has_path(state._nx, reader, writer)
+    sdfg.validate()
+
+    rng = np.random.default_rng(0)
+    acc, pos, dt = (rng.random(8) for _ in range(3))
+    vel, out = np.zeros(8), np.zeros(8)
+    expected_vel, expected_acc = acc * dt, pos * dt
+    sdfg(acc=acc, pos=pos, vel=vel, dt=dt, out=out)
+    assert np.array_equal(vel, expected_vel)
+    assert np.array_equal(acc, expected_acc)
+    assert np.array_equal(out, expected_acc * expected_vel)
+
+
 if __name__ == "__main__":
+    test_a_read_of_a_container_the_next_state_rewrites_fuses_with_the_read_first()
     test_a_read_disjoint_from_the_writer_never_exempts_a_later_rewrite()
     test_a_read_the_merge_point_does_not_follow_still_precedes_the_overwrite()
     test_extended_fusion()
