@@ -813,6 +813,10 @@ def offload_to_gpu(sdfg: SDFG, validate: bool = False) -> None:
     recompute_fuse_for_gpu(sdfg)
     # Before the offload reads a map around a small GEMM as a host loop of vendor calls.
     SpecializeSmallGemms(dtypes.DeviceType.GPU).apply_pass(sdfg, {})
+    # Before the offload makes a map over a handful of species the kernel: the planes in its body are the kernels.
+    from dace.transformation.passes.unroll_small_maps import UnrollSmallMaps
+
+    UnrollSmallMaps().apply_pass(sdfg, {})
     # Before the offload makes a level map the kernel: its planes, along the contiguous axis, are the threads.
     if demote_uncoalesced_level_maps(sdfg):
         # The level loops are new to the launch rule: one that can run inside its planes makes the nest one launch.

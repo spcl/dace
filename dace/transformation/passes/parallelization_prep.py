@@ -9,9 +9,10 @@ plain :class:`~dace.transformation.pass_pipeline.Pass` objects so the
   ``unroll_limit`` iterations, turning small recurrence / reduction loops into
   inline straight-line code instead of atomically-parallelized maps.
 - :class:`BestEffortLoopPeeling` -- index-set-split a loop at a point DERIVED from its body
-  (an ``if i == x`` guard, a broadcast read's conflicting index), and peel a wrapping body
-  modulo to its floor-correct affine form, pruning the now-dead boundary guard from each
-  segment. ``peel_limit`` bounds the modulo peel (0 disables the pass).
+  (an ``if i == x`` guard, a broadcast read's conflicting index), pruning the now-dead
+  boundary guard from each segment (``peel_limit`` 0 disables the pass).
+- :class:`ModuloBandSplit` -- peel or band-split a wrapping body modulo into its floor-correct
+  affine bands, before the first lift; ``peel_limit`` bounds the peel (0 disables the pass).
 
 Transformation classes are imported lazily inside the methods: importing them at
 module load would cycle (this package is imported by the transformations those
@@ -452,11 +453,8 @@ class BestEffortLoopPeeling(ppl.Pass):
     maps is built. A loop the body nominates nothing for is left alone: sequential and correct.
 
     Peeling is what a split at a boundary point degenerates to (``_split_loop_at`` drops the
-    empty side), so there is no separate boundary-peel stage. The wrapping-modulo peel does
-    search a bounded ``(count, direction)`` grid, because it is a CORRECTNESS fix rather than
-    a parallelism one -- a wrap-around read maps fine but then emits C's truncated ``%`` and
-    computes the wrong boundary value -- and so deliberately runs even when ``LoopToMap``
-    already accepts the loop.
+    empty side), so there is no separate boundary-peel stage. A wrapping body modulo is
+    :class:`ModuloBandSplit`'s, which shares this class's split and peel machinery.
 
     This pass is a preparation pass: it only COUNTS what ``LoopToMap`` *could* parallelize via
     ``can_be_applied_to``, never applying it. The actual parallelization is the pipeline's job.
@@ -1890,35 +1888,21 @@ class BestEffortLoopPeeling(ppl.Pass):
                     r.replace(repl)
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
-        """Unblock stuck loops, splitting or peeling each at a point taken from its body.
-        Returns the number of loops rewritten or None.
+        """Index-set split each stuck loop at a point taken from its body. Returns the number of loops rewritten or
+        None.
 
-        An index-set split comes first. Its point ``x`` is solved for, not guessed: from an
-        interior equality guard (``if i == x``), or from a broadcast/self-conflict read
-        (``a[i] = a[c]``, solving ``f(x) == c``). The carve is [start, x-1] + {x} + [x+1, end],
-        and ``_split_loop_at`` drops whichever side is empty -- so a point ON a boundary yields
-        a peel of one, which is why there is no separate peel stage. The carve regroups the
-        loop's own iterations only while ``start <= x <= end``, and a loop-invariant ``x`` need
-        not satisfy it (a free ``K`` in ``if i == K``), so an unproven side is clamped to the loop's
-        own bound, or the split guarded when only bare bounds map, rather than assumed.
-
-        Next a wrapping-modulo peel fixes a boundary that reads/writes the wrong element under
-        C's truncated ``%`` -- a correctness fix, so it runs even when the loop already maps.
-        This is the only stage that searches (bounded by ``peel_limit``), and the only one that
-        produces peels in practice. A wrap whose boundary is symbolic -- unreachable by any
-        constant-count peel -- is instead *specialized* into ``if (K < N) { band-split into
-        affine maps } else { original modular loop }`` (``a[(i + K) % N]`` split at
-        ``x = N - K``): the parallel split is value-correct only below the modulus, so the
-        untouched modular loop is kept as the sequential fallback. A loop no derived point
-        reaches is left alone, sequential and correct."""
+        The point ``x`` is solved for, not guessed: from an interior equality guard (``if i == x``), or from a
+        broadcast/self-conflict read (``a[i] = a[c]``, solving ``f(x) == c``). The carve is [start, x-1] + {x} +
+        [x+1, end], and ``_split_loop_at`` drops whichever side is empty -- so a point ON a boundary yields a peel of
+        one, which is why there is no separate peel stage. The carve regroups the loop's own iterations only while
+        ``start <= x <= end``, and a loop-invariant ``x`` need not satisfy it (a free ``K`` in ``if i == K``), so an
+        unproven side is clamped to the loop's own bound, or the split guarded when only bare bounds map, rather than
+        assumed. A loop no derived point reaches is left alone, sequential and correct. A wrapping body modulo is
+        :class:`ModuloBandSplit`'s, which runs before the first lift."""
         if self.peel_limit <= 0 or not _loops(sdfg):
             return None
         before = {id(loop) for loop in _loops(sdfg)}
         rewritten: list[LoopRegion] = []
-        applied = 0
-        # 1. Index-set splitting for interior equality guards. The split only regroups the loop's
-        #    own iterations while the split point lies inside the range, which a loop-invariant
-        #    point does not have to (``if i == K`` with a free ``K``): see _specialize_index_set_split.
         for loop in list(_loops(sdfg)):
             found = self._best_split_for(loop, sdfg)
             if found is None:
@@ -1931,54 +1915,31 @@ class BestEffortLoopPeeling(ppl.Pass):
                 sdfg, loop, x, relations, middle_singleton=middle_singleton, guarded=guarded
             )
             rewritten.append(loop)
-            applied += 1
-        # 2. Peel a genuinely-wrapping body modulo to its floor-correct affine form,
-        #    even for loops LoopToMap already maps (the wrap-around access otherwise
-        #    emits C's truncated ``%`` and computes the wrong boundary value).
-        for loop in list(_loops(sdfg)):
-            best = self._best_modulo_peel_for(loop, sdfg)
-            if best is not None:
-                count, direction, relations, needs_fallback = best
-                conditional = self._specialize_modulo_rewrite(
-                    sdfg, loop, lambda target: self._peel_one_loop(sdfg, target, count, direction), relations
-                )
-                if conditional is not None and not needs_fallback:
-                    conditional.remove_branch(conditional.branches[-1][1])
-                rewritten.append(loop)
-                applied += 1
-        # 2b. Specialize a symbolic-boundary wrap the constant peel could not reach
-        #     into `if (offset < modulus) { band split } else { original loop }`. Only
-        #     fires when a wrap survived the peel (constant offsets are handled there).
-        for loop in list(_loops(sdfg)):
-            res = self._best_modulo_split_for(loop, sdfg)
-            if res is not None:
-                x, relations = res
-                self._specialize_modulo_rewrite(
-                    sdfg, loop, lambda target: self._split_loop_at(sdfg, target, x, middle_singleton=False), relations
-                )
-                rewritten.append(loop)
-                applied += 1
         # There is deliberately no separate boundary-peel stage. A boundary peel IS an index-set split
         # at a boundary point: ``_split_loop_at`` drops the side that would be empty, so ``x == end``
-        # emits [start, end-1] + {end} -- a back-peel of one -- and stage 1 already reaches it from the
-        # guard. The old stage searched a blind 3-directions x peel_limit grid per loop (24 speculative
-        # peels, each a deepcopy + peel + validate + a full mappability recount) and, measured across
-        # 151 TSVC kernels, all of tsvc_2_5 and 6 polybench kernels, produced ZERO peels while costing
-        # 86.5% of the whole canonicalization pipeline on CloudSC (5398s of 6242s). Every peel that
-        # does fire comes from the modulo stage above; every boundary case that resolves comes from the
-        # split. Nor is an iteration-variable INEQUALITY guard promoted to a split point to compensate:
-        # it bounds the run rather than marking a boundary between a special case and the rest, so
-        # there is nothing for a split to carve out. No corpus kernel asks for one, and an attempt to
-        # add them regressed nussinov (a point derived in the ENCLOSING loop's variable; three
-        # InvalidSDFGEdgeError failures, root cause never pinned down) -- so the evidence for the
-        # feature was zero and the evidence against it was three tests.
-        if applied and self._segments is not None:
+        # emits [start, end-1] + {end} -- a back-peel of one -- and the guard already reaches it. The old
+        # stage searched a blind 3-directions x peel_limit grid per loop (24 speculative peels, each a
+        # deepcopy + peel + validate + a full mappability recount) and, measured across 151 TSVC kernels,
+        # all of tsvc_2_5 and 6 polybench kernels, produced ZERO peels while costing 86.5% of the whole
+        # canonicalization pipeline on CloudSC (5398s of 6242s). Every peel that does fire comes from
+        # ModuloBandSplit; every boundary case that resolves comes from the split. Nor is an
+        # iteration-variable INEQUALITY guard promoted to a split point to compensate: it bounds the run
+        # rather than marking a boundary between a special case and the rest, so there is nothing for a
+        # split to carve out. No corpus kernel asks for one, and an attempt to add them regressed nussinov
+        # (a point derived in the ENCLOSING loop's variable; three InvalidSDFGEdgeError failures, root
+        # cause never pinned down) -- so the evidence for the feature was zero and the evidence against it
+        # was three tests.
+        return self._finish(sdfg, before, rewritten)
+
+    def _finish(self, sdfg: SDFG, before: set[int], rewritten: list[LoopRegion]) -> int | None:
+        """Report the loops a rewrite left behind to ``segments``, validate once, and return the count or None."""
+        if rewritten and self._segments is not None:
             # New loops, and a rewritten loop that survives as one of its own segments.
             kept = {id(loop) for loop in rewritten}
             self._segments.extend(loop for loop in _loops(sdfg) if id(loop) not in before or id(loop) in kept)
-        if applied and self.validate:
+        if rewritten and self.validate:
             sdfg.validate()
-        return applied or None
+        return len(rewritten) or None
 
     def _specialize_modulo_rewrite(self, sdfg: SDFG, loop: LoopRegion, rewrite, relations):
         """Replace ``loop`` with ``if (offset < modulus) { band split into affine
@@ -2004,3 +1965,46 @@ class BestEffortLoopPeeling(ppl.Pass):
                 self._clean_peeled_remainder(par_region)
 
         return specialize_loop_under_condition(loop, condition, _parallelize, sdfg)
+
+
+class ModuloBandSplit(BestEffortLoopPeeling):
+    """Fold every wrapping body modulo into affine bands, before the first lift parallelizes anything.
+
+    ``a[(i + K) % N]`` splits at ``i = N - K`` into ``[0, N - K)`` reading ``a[i + K]`` and ``[N - K, N)`` reading
+    ``a[i + K - N]``: two affine bands, the form a polyhedral dependence test (and ``LoopToMap``) reads directly.
+    A wrap a constant number of iterations from an end is peeled instead (the smallest ``(count, direction)`` within
+    ``peel_limit``). Run before the lift, so a loop the dependence proof would map as a modular scatter maps as its
+    bands instead; it is a correctness fix as much as a parallelism one -- a wrap left in place emits C's truncated
+    ``%`` and computes the wrong boundary value -- so it rewrites a loop ``LoopToMap`` already accepts too.
+    """
+
+    def apply_pass(self, sdfg: SDFG, _pipeline_results: dict[str, Any]) -> int | None:
+        """Peel or band-split each loop with a wrapping body modulo. Returns the number of loops rewritten or None.
+
+        A wrap whose boundary is symbolic -- unreachable by any constant-count peel -- is *specialized* into
+        ``if (K < N) { band split into affine loops } else { original modular loop }``: the far band's fold is
+        value-correct only below the modulus, so the untouched modular loop is kept as the sequential fallback."""
+        if self.peel_limit <= 0 or not _loops(sdfg):
+            return None
+        before = {id(loop) for loop in _loops(sdfg)}
+        rewritten: list[LoopRegion] = []
+        for loop in list(_loops(sdfg)):
+            best = self._best_modulo_peel_for(loop, sdfg)
+            if best is not None:
+                count, direction, relations, needs_fallback = best
+                conditional = self._specialize_modulo_rewrite(
+                    sdfg, loop, lambda target: self._peel_one_loop(sdfg, target, count, direction), relations
+                )
+                if conditional is not None and not needs_fallback:
+                    conditional.remove_branch(conditional.branches[-1][1])
+                rewritten.append(loop)
+        # Only fires when a wrap survived the peel (constant offsets are handled there).
+        for loop in list(_loops(sdfg)):
+            res = self._best_modulo_split_for(loop, sdfg)
+            if res is not None:
+                x, relations = res
+                self._specialize_modulo_rewrite(
+                    sdfg, loop, lambda target: self._split_loop_at(sdfg, target, x, middle_singleton=False), relations
+                )
+                rewritten.append(loop)
+        return self._finish(sdfg, before, rewritten)

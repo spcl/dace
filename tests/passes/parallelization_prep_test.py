@@ -11,7 +11,7 @@ import dace
 from dace import symbolic
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
-from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling
+from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling, ModuloBandSplit
 from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, loop_over_nested_sdfg, record_tree_resets
 
 
@@ -116,7 +116,7 @@ def test_the_modulo_peel_is_decided_on_the_loop_itself(program):
     probed on the loop itself, which serializes to the same bytes afterwards."""
     sdfg = program.to_sdfg(simplify=True)
     loop = _outer_loop(sdfg)
-    peel = BestEffortLoopPeeling(peel_limit=4)
+    peel = ModuloBandSplit(peel_limit=4)
     nested = program is wrap_at_the_end_nested
     # The remaining loop, and the peeled iteration only when its body holds a loop that could keep a wrap.
     assert len(peel._peel_segments(loop, 1, "back")) == (2 if nested else 1)
@@ -139,7 +139,7 @@ def test_the_modulo_split_is_decided_on_the_loop_itself():
     leaves the loop as it was."""
     sdfg = wrap_at_a_symbolic_point.to_sdfg(simplify=True)
     loop = _outer_loop(sdfg)
-    peel = BestEffortLoopPeeling(peel_limit=4)
+    peel = ModuloBandSplit(peel_limit=4)
     before = _json_digest(sdfg)
     assert peel._best_modulo_peel_for(loop, sdfg) is None
     found = peel._best_modulo_split_for(loop, sdfg)
@@ -148,6 +148,27 @@ def test_the_modulo_split_is_decided_on_the_loop_itself():
     x, relations = found
     assert symbolic.simplify(x - symbolic.pystr_to_symbolic("N - K")) == 0, x
     assert [str(r) for r in relations] == ["K < N"], relations
+
+
+def test_the_modulo_split_runs_before_the_lift_and_keeps_the_values():
+    """Canonicalized, ``a[(i + K) % N]`` maps as its two affine bands under ``K < N``, and the pinned modular loop
+    keeps any other ``K`` correct."""
+    from dace.transformation.passes.canonicalize import pipeline as canon
+
+    sdfg = wrap_at_a_symbolic_point.to_sdfg(simplify=True)
+    split = ModuloBandSplit(peel_limit=4)
+    assert split._best_modulo_split_for(_outer_loop(sdfg), sdfg) is not None
+    canon.canonicalize(sdfg, validate=True)
+    loops = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    assert all(l.pinned_sequential for l in loops), [l.label for l in loops]
+    for n, k in ((8, 0), (8, 3), (8, 7), (8, 11)):
+        b = np.arange(n, dtype=np.float64) + 0.5
+        expected = np.zeros(n)
+        for i in range(n):
+            expected[(i + k) % n] = b[i]
+        got = np.zeros(n)
+        sdfg(a=got, b=b.copy(), N=n, K=k)
+        assert np.array_equal(got, expected), (n, k)
 
 
 @dace.program
@@ -180,6 +201,7 @@ if __name__ == "__main__":
     for program in (wrap_at_the_end, wrap_at_the_end_nested):
         test_the_modulo_peel_is_decided_on_the_loop_itself(program)
     test_the_modulo_split_is_decided_on_the_loop_itself()
+    test_the_modulo_split_runs_before_the_lift_and_keeps_the_values()
     test_a_split_point_near_the_end_adds_no_iteration_to_a_short_loop()
 
 
@@ -195,7 +217,7 @@ def test_modulo_peel_keeps_a_loop_shorter_than_the_peel(offset):
             A[i] = B[(i + offset) % N]
 
     sdfg = wrap.to_sdfg(simplify=True)
-    assert BestEffortLoopPeeling().apply_pass(sdfg, {}) == 1
+    assert ModuloBandSplit().apply_pass(sdfg, {}) == 1
     for n in (1, 2, 3, 12):
         source = np.arange(n + 4) * 10.0
         expected = np.arange(n + 4, dtype=float)

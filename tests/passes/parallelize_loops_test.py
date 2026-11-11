@@ -1497,6 +1497,37 @@ def test_a_read_sharing_an_index_that_moves_inside_the_iteration_stays_a_loop():
     assert not outer_loop_lifts(column_read_through_a_moving_row)
 
 
+@dace.program
+def bitonic_merge_stages(key: dace.int64[WN, 16]):
+    for r in dace.map[0:WN]:
+        stride = 8
+        while stride > 0:
+            for idx in range(8):
+                pos = 2 * idx - (idx % stride)
+                left = key[r, pos]
+                right = key[r, pos + stride]
+                if left > right:
+                    key[r, pos] = right
+                    key[r, pos + stride] = left
+            stride = stride // 2
+
+
+def test_a_bitonic_stage_lifts_under_its_while_condition():
+    """Within one ``stride`` the comparators ``(2i - i % stride, 2i - i % stride + stride)`` are disjoint; z3 proves it
+    from ``0 < stride``, which only the enclosing ``while`` states."""
+    sdfg = bitonic_merge_stages.to_sdfg(simplify=True)
+    ParallelizeLoops().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert not any(isinstance(r, LoopRegion) and r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True))
+
+    key = np.random.randint(0, 100, size=(5, 16)).astype(np.int64)
+    key[:, :8].sort(axis=1)
+    key[:, 8:] = -np.sort(-key[:, 8:], axis=1)
+    expected = np.sort(key, axis=1)
+    sdfg(key=key, WN=5)
+    assert np.array_equal(key, expected)
+
+
 if __name__ == "__main__":
     test_lift_never_changes_a_surviving_blocks_free_symbols()
     test_reused_analysis_costs_no_maps_against_the_matcher()
@@ -1569,3 +1600,4 @@ if __name__ == "__main__":
     test_a_write_offset_by_an_inner_iterator_lifts_only_if_its_sweep_fits_the_stride()
     test_two_writes_kept_apart_only_by_an_inner_iterator_stay_a_loop()
     test_a_read_sharing_an_index_that_moves_inside_the_iteration_stays_a_loop()
+    test_a_bitonic_stage_lifts_under_its_while_condition()

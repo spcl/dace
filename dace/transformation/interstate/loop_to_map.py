@@ -681,6 +681,16 @@ def write_refusal(
                 ok = False
         if not ok and not permissive:
             verdicts = None if ctx is None else ctx.invariants.smt_injective
+            # A dimension fixed for the whole loop is the same on every iteration: the write is distinct per
+            # iteration exactly when the remaining dimensions are (``key[r, 2*i - i % s]`` inside a map over r)
+            fixed = varying | {itersym.name}
+            moving = [
+                rng
+                for rng in (dst_subset.ndrange() if dst_subset else ())
+                if fixed & {str(s) for b in rng for s in symbolic.pystr_to_symbolic(b).free_symbols}
+            ]
+            if dst_subset and 0 < len(moving) < dst_subset.dims():
+                dst_subset = subsets.Range(moving)
             with canon_stats.timed("z3", sdfg):
                 injective = smt_proves_injective_write(dst_subset, itersym, start, end, step, verdicts, facts)
             if not injective:
@@ -2528,8 +2538,17 @@ class LoopLift:
                     # itersym-dependent read: must match a*i+b like the writes, else this
                     # iteration reads a value another iteration writes.
                     ranges = None if ctx is None else ctx.invariants.check_range
-                    if not _check_range(src_subset, a, itersym, b, step, memo=ranges) and not self.waives(
-                        data, permissive
+                    boxes = None if ctx is None else ctx.invariants.smt_disjoint_boxes
+                    if (
+                        not _check_range(src_subset, a, itersym, b, step, memo=ranges)
+                        and not self.waives(data, permissive)
+                        # A non-affine read no write of another iteration reaches (a bitonic stage's comparator pairs)
+                        and not all(
+                            _smt_proves_disjoint_boxes(
+                                src_subset, m.subset, itersym, start, end, step, varying, boxes, self.solver_facts
+                            )
+                            for m in write_memlets[data]
+                        )
                     ):
                         return refuse(
                             Refusal.CARRIED_DEPENDENCE,

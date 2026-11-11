@@ -5,9 +5,9 @@ replaced by ``range`` so the frontend emits loops. Every test checks
 numerical equivalence against a deep-copied pre-pass run; loop counts are
 asserted where the independent-group partition is deterministic.
 
-LoopFission only distributes a single-body-state loop; data-dependent
-statements (and bodies with control flow / nested loops) stay in one
-loop -- those mirror as value-preserving no-ops.
+Data-dependent statements (and nested dependent loops) stay in one loop --
+those mirror as value-preserving no-ops. A body that is one if/else splits
+into one loop per independent group, each with its own copy of the guard.
 """
 
 import copy
@@ -190,6 +190,28 @@ def loop_conditional(a: dace.float64[N], A: dace.float64[N], B: dace.float64[N],
         if c[0] > 0:
             A[i] = a[i] + 1.0
             B[i] = a[i] * 2.0
+
+
+@dace.program
+def loop_conditional_recurrences(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    for i in range(1, N):
+        if a[i] > 0.5:
+            b[i] = b[i - 1] + a[i]
+            c[i] = c[i - 1] + a[i]
+        else:
+            b[i] = b[i - 1]
+            c[i] = c[i - 1]
+
+
+@dace.program
+def loop_conditional_guard_reads_b(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    for i in range(1, N):
+        if b[i - 1] > 0.5:
+            b[i] = b[i - 1] + a[i]
+            c[i] = c[i - 1] + a[i]
+        else:
+            b[i] = b[i - 1]
+            c[i] = c[i - 1]
 
 
 def _loop_count(sdfg: dace.SDFG) -> int:
@@ -498,19 +520,62 @@ def test_loop_fission_recurrence_plus_independent_splits():
         assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
 
 
-def test_loop_fission_conditional_body_kept():
-    """A conditional body is not a single state: conservative no-op, valid."""
+def test_loop_fission_conditional_body_splits_per_statement():
+    """``for i: if c: A[i] = ..; B[i] = ..`` becomes one guarded loop per statement."""
     n = 7
     a = np.random.rand(n)
     sdfg = loop_conditional.to_sdfg(simplify=True)
-    LoopFission().apply_pass(sdfg, {})
+    assert LoopFission().apply_pass(sdfg, {}) == 1
     sdfg.validate()
+    assert _loop_count(sdfg) == 2
     A, B = np.zeros(n), np.zeros(n)
     sdfg(a=a.copy(), A=A, B=B, c=np.array([1], np.int32), N=n)
     assert np.allclose(A, a + 1.0) and np.allclose(B, a * 2.0)
     A0, B0 = np.full(n, 9.0), np.full(n, 9.0)
     sdfg(a=a.copy(), A=A0, B=B0, c=np.array([0], np.int32), N=n)
     assert np.allclose(A0, 9.0) and np.allclose(B0, 9.0)
+
+
+def test_loop_fission_conditional_recurrences_split_with_guard_copies():
+    """Two recurrences under one if/else whose guard reads only ``a``: one loop per recurrence, each keeping both
+    branches of the guard, bit-exact; the split loops split no further."""
+    n = 48
+    args = {k: np.random.rand(n) for k in "abc"}
+    ref = {k: v.copy() for k, v in args.items()}
+    loop_conditional_recurrences.to_sdfg(simplify=True)(**ref, N=n)
+
+    sdfg = loop_conditional_recurrences.to_sdfg(simplify=True)
+    assert LoopFission().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    loops = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
+    written = sorted(
+        sorted(
+            {
+                n.data
+                for n, st in loop.all_nodes_recursive()
+                if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0 and not sdfg.arrays[n.data].transient
+            }
+        )
+        for loop in loops
+    )
+    assert written == [["b"], ["c"]]
+    for loop in loops:
+        guards = [b for b in loop.nodes() if isinstance(b, ConditionalBlock)]
+        assert len(guards) == 1 and len(guards[0].branches) == 2
+        assert not LoopFission.can_fission(loop)
+    out = {k: v.copy() for k, v in args.items()}
+    sdfg(**out, N=n)
+    for k in args:
+        np.testing.assert_array_equal(out[k], ref[k], err_msg=k)
+
+
+def test_loop_fission_conditional_guard_reading_written_array_not_split():
+    """The guard reads ``b``, which one branch group writes: every loop copy must see the same ``b``, so no split."""
+    sdfg = loop_conditional_guard_reads_b.to_sdfg(simplify=True)
+    loop = next(r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+    assert not LoopFission.can_fission(loop)
+    assert LoopFission().apply_pass(sdfg, {}) is None
+    assert _loop_count(sdfg) == 1
 
 
 def test_a_guard_reading_a_scalar_the_loop_body_writes_is_not_split_off():
@@ -892,7 +957,9 @@ if __name__ == "__main__":
     test_loop_fission_tsvc_s222_correct_split()
     test_loop_fission_tsvc_s221_splits_per_iter_a_chain()
     test_loop_fission_recurrence_plus_independent_splits()
-    test_loop_fission_conditional_body_kept()
+    test_loop_fission_conditional_body_splits_per_statement()
+    test_loop_fission_conditional_recurrences_split_with_guard_copies()
+    test_loop_fission_conditional_guard_reading_written_array_not_split()
     test_a_guard_reading_a_scalar_the_loop_body_writes_is_not_split_off()
     test_loop_fission_same_array_two_writes_kept_together()
     test_loop_fission_per_iter_rmw_kept_together()
@@ -1118,7 +1185,9 @@ if __name__ == "__main__":
     test_loop_fission_tsvc_s222_correct_split()
     test_loop_fission_tsvc_s221_splits_per_iter_a_chain()
     test_loop_fission_recurrence_plus_independent_splits()
-    test_loop_fission_conditional_body_kept()
+    test_loop_fission_conditional_body_splits_per_statement()
+    test_loop_fission_conditional_recurrences_split_with_guard_copies()
+    test_loop_fission_conditional_guard_reading_written_array_not_split()
     test_a_guard_reading_a_scalar_the_loop_body_writes_is_not_split_off()
     test_loop_fission_same_array_two_writes_kept_together()
     test_loop_fission_per_iter_rmw_kept_together()

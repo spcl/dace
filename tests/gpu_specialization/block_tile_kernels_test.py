@@ -399,6 +399,35 @@ def test_the_block_lowerings_compute_what_numpy_does(m, n, k, nb):
     np.testing.assert_allclose(y.get(), mat @ x, rtol=1e-12)
 
 
+@dace.program
+def bitonic_merge_rows(key: dace.int64[M, 1024]):
+    for r in dace.map[0:M]:
+        stride = 512
+        while stride > 0:
+            for idx in range(512):
+                pos = 2 * idx - (idx % stride)
+                left = key[r, pos]
+                right = key[r, pos + stride]
+                if left > right:
+                    key[r, pos] = right
+                    key[r, pos + stride] = left
+            stride = stride // 2
+
+
+@pytest.mark.gpu
+def test_a_lane_strided_map_in_a_loop_waits_for_every_lane_before_its_next_trip():
+    """Each bitonic stage reads elements other lanes swapped in the stage before: a barrier ends every trip."""
+    cupy = pytest.importorskip("cupy")
+    sdfg = canonical_gpu(bitonic_merge_rows)
+    assert maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
+    key = np.random.default_rng(0).integers(0, 1 << 20, size=(7, 1024))
+    key[:, :512].sort(axis=1)
+    key[:, 512:] = -np.sort(-key[:, 512:], axis=1)
+    device = cupy.asarray(key)
+    sdfg(key=device, M=7)
+    np.testing.assert_array_equal(cupy.asnumpy(device), np.sort(key, axis=1))
+
+
 if __name__ == "__main__":
     test_an_inner_reduction_runs_across_the_lanes_of_one_block(matvec)
     test_an_inner_reduction_runs_across_the_lanes_of_one_block(gemm_loops)
@@ -414,3 +443,4 @@ if __name__ == "__main__":
     test_a_per_thread_buffer_filled_outside_the_inner_map_keeps_one_thread_per_iteration()
     for sizes in SIZES:
         test_the_block_lowerings_compute_what_numpy_does(*sizes)
+    test_a_lane_strided_map_in_a_loop_waits_for_every_lane_before_its_next_trip()

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Canonicalize's parallelization of loops ``LoopToMap`` alone refuses, end-to-end through the
 pipeline: the always-on anti-dependence breaking (snapshot-rename a read-ahead WAR) and the
-``peel_limit`` knob (best-effort loop peeling). Each peeling test pins the OFF baseline
+``peel_limit`` knob (best-effort loop peeling, modulo band split). Each peeling test pins the OFF baseline
 (``peel_limit=0``); the ON case asserts the loop becomes a Map AND stays value-preserving."""
 
 import numpy as np
@@ -22,6 +22,18 @@ def _nmaps(sdfg):
 
 def _nloops(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+
+
+def _modular_map_accesses(sdfg):
+    """Memlets in a state holding a map whose subset still wraps through a modulo (``%`` / ``Mod`` / ``py_mod``)."""
+    return sum(
+        1
+        for g in sdfg.all_sdfgs_recursive()
+        for st in g.states()
+        if any(isinstance(n, nodes.MapEntry) for n in st.nodes())
+        for e in st.edges()
+        if e.data.subset is not None and any(m in str(e.data.subset) for m in ("%", "Mod", "py_mod"))
+    )
 
 
 @dace.program
@@ -262,7 +274,8 @@ def _mod_wrap_plus3(A: dace.float64[N], B: dace.float64[N]):
 @pytest.mark.parametrize("prog,offset", [(_mod_wrap_plus1, 1), (_mod_wrap_minus1, -1), (_mod_wrap_plus3, 3)])
 def test_loop_peeling_modulo_wraparound_knob_parallelizes(prog, offset):
     """A wrap-around write ``A[(i + k) % N] = ...`` is non-affine (the ``% N`` wraps
-    at the boundary), so LoopToMap refuses it. With ``peel_limit>0`` the wrapping
+    at the boundary): without the knob it maps only as a scatter through ``% N``, once
+    the dependence proof shows the index a permutation. With ``peel_limit>0`` the wrapping
     iterations are peeled off (the back for a positive offset, the front for a
     negative one) and the modulo over the remainder is folded to the plain affine
     index ``i + k`` -- so the body maps. The fold (band reduction) makes both the
@@ -270,7 +283,8 @@ def test_loop_peeling_modulo_wraparound_knob_parallelizes(prog, offset):
     truncated ``%`` (correct for any sign of ``k`` and symbolic ``N``)."""
     off = prog.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, "wrap-around modulo write must stay sequential without the knob"
+    # Without the knob the dependence proof still maps the wrap, as a scatter through ``% N``.
+    assert _modular_map_accesses(off) >= 1, "without the knob the wrap maps only as a modular scatter"
 
     on = prog.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
@@ -279,14 +293,16 @@ def test_loop_peeling_modulo_wraparound_knob_parallelizes(prog, offset):
         r for r in on.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and not r.pinned_sequential
     ]
     assert _nmaps(on) >= 1 and not unpinned, "peeling + modulo fold must parallelize the wrap-around write"
+    assert _modular_map_accesses(on) == 0, "with the knob every mapped access is affine"
 
     B = np.arange(8, dtype=np.float64) + 0.5
     ref = np.zeros(8)
     for i in range(8):
         ref[(i + offset) % 8] = B[i] * 2.0
-    got = np.zeros(8)
-    on(A=got, B=B.copy(), N=8)
-    assert np.allclose(got, ref)
+    for sdfg in (off, on):
+        got = np.zeros(8)
+        sdfg(A=got, B=B.copy(), N=8)
+        assert np.allclose(got, ref), sdfg.name
 
 
 @dace.program
@@ -351,7 +367,7 @@ def test_loop_peeling_modulo_symbolic_offset_specializes_if_par_else_seq():
     No trap: a violated condition degrades to the sequential path, not an abort."""
     off = _mod_wrap_symK.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, "symbolic-offset wrap must stay sequential without the knob"
+    assert _modular_map_accesses(off) >= 1, "without the knob the wrap maps only as a modular scatter"
     assert not _specialize_conditionals(off), "no specialization without the knob"
 
     on = _mod_wrap_symK.to_sdfg(simplify=True)
@@ -366,6 +382,7 @@ def test_loop_peeling_modulo_symbolic_offset_specializes_if_par_else_seq():
     assert any(isinstance(n, nodes.MapEntry) for n, _ in par_region.all_nodes_recursive()), (
         "the K < N branch must be the band split lifted to Maps"
     )
+    assert _modular_map_accesses(on) == 0, "the band split maps affine accesses only"
     seq_loops = [
         r for r in seq_region.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
     ]
@@ -380,9 +397,10 @@ def test_loop_peeling_modulo_symbolic_offset_specializes_if_par_else_seq():
         ref = np.zeros(8)
         for i in range(8):
             ref[(i + kval) % 8] = B[i] * 2.0
-        got = np.zeros(8)
-        on(A=got, B=B.copy(), N=8, K=kval)
-        assert np.allclose(got, ref), f"K={kval}"
+        for sdfg in (off, on):
+            got = np.zeros(8)
+            sdfg(A=got, B=B.copy(), N=8, K=kval)
+            assert np.allclose(got, ref), f"{sdfg.name} K={kval}"
 
 
 @dace.program

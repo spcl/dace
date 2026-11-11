@@ -8,6 +8,8 @@ a wrong verdict here is a miscompile (``RAW`` reported as ``none`` parallelizes 
 not a missed optimization.
 """
 
+import math
+
 import pytest
 import sympy as sp
 import z3
@@ -57,10 +59,10 @@ def test_a_guard_can_break_the_raw_chain():
     assert smt_dependence.classify_read_write_pair(I - 1, I, "i", 0, N, read_guard=guard) == "none"
 
 
-def test_an_untranslatable_expression_is_inconclusive():
-    """An opaque function is not modeled; the caller must fall back, not get a verdict."""
+def test_an_opaque_function_proves_no_independence():
+    """An opaque function is uninterpreted: no verdict that admits a lift (``none``, ``WAR``) can rest on it."""
     opaque = sp.Function("f")(I)
-    assert smt_dependence.classify_read_write_pair(opaque, I, "i", 0, N) is None
+    assert smt_dependence.classify_read_write_pair(opaque, I, "i", 0, N) not in ("none", "WAR")
     assert smt_dependence.prove_injective_write(opaque, "i", 0, N, 1) is not True
 
 
@@ -256,6 +258,49 @@ def test_the_solver_budget_is_resource_units_not_wall_clock(monkeypatch: pytest.
     assert "timeout" not in option_names
 
 
+SIGNS = [(7, 2), (-7, 2), (7, -2), (-7, -2), (6, 3), (-6, 3)]
+A, B = sp.Symbol("a", integer=True), sp.Symbol("b", integer=True)
+EXACT = {
+    "int_floor": (symbolic.int_floor(A, B), lambda a, b: a // b),
+    "int_ceil": (symbolic.int_ceil(A, B), lambda a, b: -(-a // b)),
+    "Mod": (sp.Mod(A, B), lambda a, b: a % b),
+    "py_mod": (sp.Function("py_mod")(A, B), lambda a, b: a % b),
+    "CMod": (symbolic.CMod(A, B), lambda a, b: int(math.fmod(a, b))),
+    "Abs": (sp.Abs(A - B), lambda a, b: abs(a - b)),
+    "floor": (sp.floor(A / 3), lambda a, b: a // 3),
+    "ceiling": (sp.ceiling((A + B) / 4), lambda a, b: -(-(a + b) // 4)),
+    "IfExpr": (symbolic.IfExpr(A < B, A, B), lambda a, b: min(a, b)),
+}
+
+
+@pytest.mark.parametrize("name", sorted(EXACT))
+@pytest.mark.parametrize("a, b", SIGNS)
+def test_integer_functions_reach_the_solver_exactly(name, a, b):
+    """Each integer function means in z3 what it means in the program, for every sign of its operands."""
+    expr, value = EXACT[name]
+    term = smt_dependence._sympy_to_z3(expr, {}, {})
+    solver = z3.Solver()
+    solver.add(z3.Int("a") == a, z3.Int("b") == b, term != value(a, b))
+    assert solver.check() == z3.unsat
+
+
+def test_a_symbolic_power_is_at_least_one_and_a_negative_one_untranslatable():
+    """``2 ** b`` for ``b >= 0`` is at least 1; ``a ** -1`` is a fraction, no integer term."""
+    for power in (2**B, symbolic.ipow(2, B)):
+        term = smt_dependence._sympy_to_z3(power, {}, {})
+        solver = z3.Solver()
+        solver.add(z3.Int("b") >= 0, term < 1)
+        assert solver.check() == z3.unsat
+    assert smt_dependence._sympy_to_z3(A**-1, {}, {}) is None
+
+
+def test_an_unknown_function_is_the_same_value_for_the_same_arguments():
+    """An uninterpreted function decides nothing about its value, only that equal arguments agree."""
+    f = sp.Function("opaque")
+    assert smt_dependence.prove_injective_write(f(I) + 2 * I, "i", 0, N, 1) is not True
+    assert smt_dependence.prove_injective_write(f(N) + I, "i", 0, N, 1) is True
+
+
 if __name__ == "__main__":
     test_injective_writes_are_proven()
     test_colliding_write_is_refused()
@@ -263,7 +308,7 @@ if __name__ == "__main__":
     test_read_ahead_of_the_write_is_a_war()
     test_disjoint_accesses_carry_nothing()
     test_a_guard_can_break_the_raw_chain()
-    test_an_untranslatable_expression_is_inconclusive()
+    test_an_opaque_function_proves_no_independence()
     test_chunked_ranges_are_proven_disjoint()
     test_the_same_chunk_shape_at_unit_step_is_refused()
     test_overlapping_chunks_are_refused()
@@ -282,3 +327,8 @@ if __name__ == "__main__":
     test_a_starved_solver_budget_abstains_on_every_call()
     with pytest.MonkeyPatch.context() as monkeypatch:
         test_the_solver_budget_is_resource_units_not_wall_clock(monkeypatch)
+    for name in sorted(EXACT):
+        for a, b in SIGNS:
+            test_integer_functions_reach_the_solver_exactly(name, a, b)
+    test_a_symbolic_power_is_at_least_one_and_a_negative_one_untranslatable()
+    test_an_unknown_function_is_the_same_value_for_the_same_arguments()

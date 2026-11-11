@@ -3281,8 +3281,30 @@ class SymbolResolver:
         small = outer_small | own.small
         parameters = own.parameters - unreadable
         scopes: list[tuple[Any, dict[str, dtypes.typeclass], list[tuple[str, Any, Any, Any]]]] = []
+        from dace.sdfg.sdfg import interstate_bound_names  # Avoid import loop
+
         region = block
+        # A loop's condition holds where its body starts, and below it while each block is its graph's start block and
+        # nothing on that chain reassigns a name the condition reads
+        held: dict[LoopRegion, list[symbolic.Relation]] = {}
+        chain: list[ControlFlowBlock] | None = []
         while region is not None and region is not sdfg:
+            if chain and isinstance(region, LoopRegion) and not region.inverted:
+                assigned = set().union(*(interstate_bound_names(b) for b in chain if isinstance(b, ControlFlowRegion)))
+                held[region] = [
+                    relation
+                    for relation in self.loop_condition_relations(region)
+                    if not symbolic.relation_names(relation) & (assigned | sdfg.arrays.keys())
+                ]
+                if held[region] and not region.loop_variable:
+                    scopes.append((region, {}, []))
+            if chain is not None:
+                # A branch runs from its condition, a start block that nothing enters again from its graph's start
+                parent = region.parent_graph
+                entered = isinstance(parent, ConditionalBlock) or (
+                    parent is not None and parent.in_degree(region) == 0 and parent.source_nodes() == [region]
+                )
+                chain = [*chain, region] if entered else None
             if isinstance(region, LoopRegion) and region.loop_variable:
                 if region not in self._loop_scopes:
                     bounds = (
@@ -3323,6 +3345,7 @@ class SymbolResolver:
             integers = (integers - bound.keys()) | {
                 name for name, stype in bound.items() if stype in dtypes.INTEGER_TYPES
             }
+            relations += held.get(owner, [])
             for name, low, high, step in ranges:
                 sign = sympy.sympify(step)
                 if sign.free_symbols:
@@ -3359,6 +3382,16 @@ class SymbolResolver:
             check=False,
             fallback=tuple(relation for relation in relations if relation not in from_ranges),
         )
+
+    @staticmethod
+    def loop_condition_relations(loop: "LoopRegion") -> list[symbolic.Relation]:
+        """The order comparisons ``loop``'s condition conjoins, each a relation that holds where its body starts."""
+        try:
+            condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)
+        except (TypeError, ValueError, SyntaxError, sympy.SympifyError):
+            return []
+        conjuncts = condition.args if isinstance(condition, sympy.And) else (condition,)
+        return [relation for relation in map(symbolic.comparison_relation, conjuncts) if relation is not None]
 
     def outer_facts(self, sdfg: "SDFG") -> tuple[list[symbolic.Relation], set[str], set[str], frozenset[str]]:
         """The facts at the node nesting ``sdfg``, over renamed outer symbols, with each mapped symbol equal to its

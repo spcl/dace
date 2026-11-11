@@ -19,10 +19,11 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.narrowing import as_expr
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import canon_stats, loop_analysis, smt_dependence
+from dace.transformation.passes.analysis.analysis import names_read_by_text
 
 
 def per_iter_axes(subset, loop_var: str | None, extra_index=None) -> frozenset[int]:
@@ -512,20 +513,100 @@ def _single_compute_state(loop: LoopRegion) -> SDFGState | None:
     nonempty = [s for s in blocks if s.nodes()]
     if len(nonempty) != 1:
         return None
-    # Refuse stateful (self-referencing) body iedge assignments. Clone-
-    # duplicating ``k := k + 1`` across siblings would multiply the
-    # increment per outer iter.
+    return None if has_stateful_assignment(loop) else nonempty[0]
+
+
+def has_stateful_assignment(loop: LoopRegion) -> bool:
+    """Whether a body edge assigns a symbol from itself (``k := k + 1``): every clone would repeat the increment."""
     for e in loop.edges():
         for lhs, rhs in (e.data.assignments or {}).items():
             try:
-                from dace import symbolic
-
                 rhs_free = {str(s) for s in symbolic.pystr_to_symbolic(rhs).free_symbols}
             except Exception:
                 rhs_free = {lhs}  # conservative: assume self-reference on parse failure
             if lhs in rhs_free:
+                return True
+    return False
+
+
+def conditional_body(loop: LoopRegion) -> ConditionalBlock | None:
+    """The body's only non-empty block, if it is a ``ConditionalBlock`` of one-state branches in a linear chain of
+    empty states whose edges assign no symbol from itself."""
+    if _linear_blocks(loop, allow_assignments=True) is None or has_stateful_assignment(loop):
+        return None
+    blocks = [b for b in loop.nodes() if not isinstance(b, SDFGState) or b.nodes()]
+    if len(blocks) != 1 or not isinstance(blocks[0], ConditionalBlock):
+        return None
+    if any(len(br.nodes()) != 1 or not isinstance(br.nodes()[0], SDFGState) for cond, br in blocks[0].branches):
+        return None
+    return blocks[0]
+
+
+def conditional_groups(loop: LoopRegion) -> list[list[OrderedSet[int]]] | None:
+    """Split ``for: if c: A1; B1 else: A2; B2`` into one loop per group, each holding its own copy of the if/else.
+
+    Each branch state is partitioned by :func:`_independent_groups`; groups of any branches that touch a common
+    written container join. Refused when the guard (branch conditions and body edge assignments) reads anything a
+    branch writes, or a group writes nothing.
+
+    :returns: Per group, per branch, the indices of the branch state's nodes the group keeps; ``None`` if < 2 groups.
+    """
+    cond = conditional_body(loop)
+    if cond is None or not loop_analysis.fixed_iteration_space(loop):
+        return None
+    parts: list[tuple[int, OrderedSet[int], set[str], set[str]]] = []
+    for bi, branch in enumerate(br for c, br in cond.branches):
+        state = branch.nodes()[0]
+        index = {n: i for i, n in enumerate(state.nodes())}
+        for group in _independent_groups(state, loop, loop.sdfg, sibling_check=False):
+            data = [n for n in group if isinstance(n, nodes.AccessNode)]
+            written = {n.data for n in data if state.in_degree(n) > 0}
+            if not written:
                 return None
-    return nonempty[0]
+            parts.append((bi, OrderedSet(index[n] for n in group), written, {n.data for n in data}))
+    all_written = set().union(*(p[2] for p in parts))
+    guard = set().union(*(e.data.read_symbols() for e in loop.edges()))
+    guard |= set().union(*(names_read_by_text(c.as_string) for c, br in cond.branches if c is not None))
+    if guard & all_written:
+        return None
+    root = {d: d for d in all_written}
+
+    def find(x):
+        while root[x] != x:
+            root[x] = root[root[x]]
+            x = root[x]
+        return x
+
+    for part in parts:
+        names = sorted(part[3] & all_written)
+        for d in names[1:]:
+            root[find(d)] = find(names[0])
+    classes: dict[str, list[OrderedSet[int]]] = {}
+    for bi, kept, written, touched in parts:
+        per_branch = classes.setdefault(find(next(iter(written))), [OrderedSet() for br in cond.branches])
+        per_branch[bi] |= kept
+    return list(classes.values()) if len(classes) >= 2 else None
+
+
+def splice_clones(loop: LoopRegion, clones: list[LoopRegion]):
+    """Put ``clones`` in ``loop``'s place: pred -> clone0 -> ... -> cloneN -> succ."""
+    parent = loop.parent_graph
+    in_edges = list(parent.in_edges(loop))
+    out_edges = list(parent.out_edges(loop))
+    is_start = parent.start_block is loop
+    for clone in clones:
+        parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
+    for e in in_edges:
+        parent.add_edge(e.src, clones[0], copy.deepcopy(e.data))
+    for a, b in zip(clones, clones[1:]):
+        parent.add_edge(a, b, InterstateEdge())
+    for e in out_edges:
+        parent.add_edge(clones[-1], e.dst, copy.deepcopy(e.data))
+    for e in in_edges + out_edges:
+        parent.remove_edge(e)
+    parent.remove_node(loop)
+    if is_start:
+        parent.start_block = parent.node_id(clones[0])
 
 
 def _block_rw(block: ControlFlowBlock) -> tuple[set[str], set[str]]:
@@ -631,8 +712,10 @@ def _independent_block_groups(loop: LoopRegion) -> list[list] | None:
 class LoopFission(ppl.Pass):
     """Distribute a loop into one loop per independent group.
 
-    Two shapes: a single-body-``SDFGState`` loop split by independent node
-    groups, and a multi-block linear body split by independent blocks
+    Three shapes: a single-body-``SDFGState`` loop split by independent node
+    groups, a body that is one if/else split by the independent groups of its
+    branch states (each loop keeps its own copy of the guard), and a
+    multi-block linear body split by independent blocks
     (perfect-loop-nesting for loops -- the LoopRegion analogue of how
     map-side ``PerfLoopNesting`` delegates to ``MapFission``).
     """
@@ -681,7 +764,7 @@ class LoopFission(ppl.Pass):
         """
         if _single_compute_state(loop) is not None:
             return loop_analysis.fixed_iteration_space(loop) and _fissions_after_bridge_rewrite(loop, loop.sdfg)
-        return _independent_block_groups(loop) is not None
+        return conditional_groups(loop) is not None or _independent_block_groups(loop) is not None
 
     @staticmethod
     def fission(loop: LoopRegion) -> bool:
@@ -701,6 +784,10 @@ class LoopFission(ppl.Pass):
             _rewrite_per_iter_bridges(compute, loop.loop_variable, sdfg)
             LoopFission._fission(loop, compute, sdfg)
             return True
+        branch_groups = conditional_groups(loop)
+        if branch_groups is not None:
+            LoopFission.fission_conditional(loop, branch_groups)
+            return True
         groups = _independent_block_groups(loop)
         if groups is None:
             return False
@@ -708,12 +795,23 @@ class LoopFission(ppl.Pass):
         return True
 
     @staticmethod
+    def fission_conditional(loop: LoopRegion, groups: list[list[OrderedSet[int]]]):
+        """One copy of ``loop`` per group, each branch state of its if/else pruned to the nodes the group keeps."""
+        cidx = list(loop.nodes()).index(conditional_body(loop))
+        clones: list[LoopRegion] = []
+        for gi, keep in enumerate(groups):
+            clone = copy.deepcopy(loop)
+            clone.label = f"{loop.label}_fis{gi}"
+            for (cond, branch), kept in zip(list(clone.nodes())[cidx].branches, keep):
+                state = branch.nodes()[0]
+                for n in [n for i, n in enumerate(state.nodes()) if i not in kept]:
+                    state.remove_node(n)
+            clones.append(clone)
+        splice_clones(loop, clones)
+
+    @staticmethod
     def _fission_blocks(loop: LoopRegion, groups: list[list]):
         """Distribute ``loop`` over independent body-block groups."""
-        parent = loop.parent_graph
-        in_edges = list(parent.in_edges(loop))
-        out_edges = list(parent.out_edges(loop))
-        is_start = parent.start_block is loop
         orig_order = _linear_blocks(loop, allow_assignments=True)
         keep_idx = [sorted(required(orig_order).index(b) for b in g) for g in groups]
         order = required(orig_order)
@@ -756,20 +854,7 @@ class LoopFission(ppl.Pass):
             clone.start_block = clone.node_id(claimed[originals[0]])
             clones.append(clone)
 
-        for clone in clones:
-            parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
-
-        for e in in_edges:
-            parent.add_edge(e.src, clones[0], copy.deepcopy(e.data))
-        for a, b in zip(clones, clones[1:]):
-            parent.add_edge(a, b, InterstateEdge())
-        for e in out_edges:
-            parent.add_edge(clones[-1], e.dst, copy.deepcopy(e.data))
-        for e in in_edges + out_edges:
-            parent.remove_edge(e)
-        parent.remove_node(loop)
-        if is_start:
-            parent.start_block = parent.node_id(clones[0])
+        splice_clones(loop, clones)
 
     @staticmethod
     def _fission(loop: LoopRegion, compute: SDFGState, sdfg: SDFG):
@@ -780,10 +865,6 @@ class LoopFission(ppl.Pass):
         :param compute: ``loop``'s sole non-empty body state (any empty no-op
             states ride along unchanged in every clone).
         """
-        parent = loop.parent_graph
-        in_edges = list(parent.in_edges(loop))
-        out_edges = list(parent.out_edges(loop))
-        is_start = parent.start_block is loop
         cidx = list(loop.nodes()).index(compute)
         ngroups = len(_independent_groups(compute, loop, sdfg, sibling_check=False))
 
@@ -791,22 +872,9 @@ class LoopFission(ppl.Pass):
         for gi in range(ngroups):
             clone = copy.deepcopy(loop)
             clone.label = f"{loop.label}_fis{gi}"
-            parent.add_node(clone, ensure_unique_name=True)  # derived label; wired by object ref
             cstate = list(clone.nodes())[cidx]
             keep = set(_independent_groups(cstate, clone, sdfg, sibling_check=False)[gi])
             for n in [n for n in cstate.nodes() if n not in keep]:
                 cstate.remove_node(n)
             clones.append(clone)
-
-        # Re-thread interstate edges: pred -> clone0 -> ... -> cloneN -> succ.
-        for e in in_edges:
-            parent.add_edge(e.src, clones[0], copy.deepcopy(e.data))
-        for a, b in zip(clones, clones[1:]):
-            parent.add_edge(a, b, InterstateEdge())
-        for e in out_edges:
-            parent.add_edge(clones[-1], e.dst, copy.deepcopy(e.data))
-        for e in in_edges + out_edges:
-            parent.remove_edge(e)
-        parent.remove_node(loop)
-        if is_start:
-            parent.start_block = parent.node_id(clones[0])
+        splice_clones(loop, clones)
