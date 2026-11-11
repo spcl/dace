@@ -353,7 +353,23 @@ def test_overwrite_elimination_loop_dep2():
     _test_for_unchanged_behavior(tester, 2, 2)
 
 
+def test_overwrite_elimination_possibly_zero_trip_loop():
+    """``for i in range(N)`` may run no iteration; keeping the last one would write ``A[0]`` anyway."""
+    sdfg = dace.SDFG("zero_trip")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [10], dace.float64)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    body.add_edge(tasklet, "o", body.add_write("A"), None, dace.Memlet("A[0]"))
+    xform = LoopOverwriteElimination()
+    xform.loop = loop
+    assert not xform.can_be_applied(sdfg, 0, sdfg, False)
+
+
 if __name__ == "__main__":
+    test_overwrite_elimination_possibly_zero_trip_loop()
     test_overwrite_elimination_basic()
     test_overwrite_elimination_basic2()
     test_overwrite_elimination_nonzero()
