@@ -433,6 +433,19 @@ def run_on_lane_zero(tasklet: nodes.Tasklet, state: SDFGState) -> None:
     state.add_edge(wrapper, None, after, None, Memlet())
 
 
+def fence_after(exit_node: nodes.MapExit, state: SDFGState, shared: set[str]) -> None:
+    """Hold every lane at a barrier once the lane-strided map of ``exit_node`` stored its share of ``shared``: what
+    runs next, the same map in the next trip of a loop around it included, reads the other lanes' elements."""
+    written = [edge.dst for edge in state.out_edges(exit_node) if not edge.data.is_empty() and edge.data.data in shared]
+    if not written:
+        return
+    fence = barrier(state)
+    for node in OrderedSet(written):
+        for succ in list(state.successors(node)):
+            state.add_edge(fence, None, succ, None, Memlet())
+        state.add_edge(node, None, fence, None, Memlet())
+
+
 def run_after_barrier(node: nodes.Tasklet, state: SDFGState) -> None:
     """Hold every lane at a barrier before ``node`` reads what the other lanes wrote."""
     fence = barrier(state)
@@ -477,6 +490,15 @@ class BlockTileKernels(ppl.Pass):
             if lanes is None:
                 continue
             single, waiting, blocks = lanes
+            private = lane_private_containers(state, kernel)
+            shared = {
+                entry: {
+                    edge.data.data
+                    for edge in owner.out_edges(owner.exit_node(entry))
+                    if not edge.data.is_empty() and (owner.sdfg, edge.data.data) not in private
+                }
+                for owner, entry in strided
+            }
             # WarpTiling strides the non-serial maps; the serial pinning re-applies to each lane's loop.
             for inner in [entry for owner, entry in strided]:
                 inner.map.schedule = dtypes.ScheduleType.Default
@@ -497,6 +519,13 @@ class BlockTileKernels(ppl.Pass):
                 run_block_on_lane_zero(block)
             for fill in fills:
                 fence_with_barriers(fill)
+            exits = [
+                (node, owner)
+                for node, owner in sdfg.all_nodes_recursive()
+                if isinstance(node, nodes.MapExit) and owner.entry_node(node) in shared
+            ]
+            for node, owner in exits:
+                fence_after(node, owner, shared[owner.entry_node(node)])
             for lane_map in state.scope_children()[kernel]:
                 if (
                     isinstance(lane_map, nodes.MapEntry)
