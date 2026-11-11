@@ -197,9 +197,14 @@ def _global_pointer(
 ) -> tuple[nodes.AccessNode, symbolic.SymExpr]:
     """Follow the global side of the copy outward to ``host_state``.
 
+    A NestedSDFG connector has a descriptor equivalent to the outer array and is passed the unoffset pointer, so
+    inner indices (and hence the copy coordinates) are already in outer-array coordinates, whatever subset the outer
+    memlet covers. The offset of the kernel-visible array from the base pointer is therefore always zero, and in
+    particular never depends on kernel map parameters, which the host cannot evaluate.
+
     :returns: the host-level access node of the global container (only the outermost one; it may sit in
               another scope than the producer), and the element offset of the kernel-visible array from
-              its base pointer, in host symbols.
+              its base pointer, in host symbols (zero).
     """
 
     def is_starting_edge(e):
@@ -227,9 +232,6 @@ def _global_pointer(
             outer = next(e for e in parent_state.in_edges(nsdfg_node) if e.dst_conn == an.data)
         else:
             outer = next(e for e in parent_state.out_edges(nsdfg_node) if e.src_conn == an.data)
-        outer_desc = sdfg.parent_sdfg.arrays[outer.data.data]
-        offset = _map_symbols_up(offset, nsdfg_node)
-        offset += sum(m * s for m, s in zip(outer.data.subset.min_element(), outer_desc.strides))
         edge, state, sdfg = outer, parent_state, sdfg.parent_sdfg
 
 

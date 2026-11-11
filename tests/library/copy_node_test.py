@@ -2171,9 +2171,13 @@ def _add_tma_copy(state, src, src_path, dst, dst_path, src_subset, dst_subset, n
     return libnode
 
 
-def _add_nested_tma_load(state, sdfg, a, shmem, path, tile=None):
+def _add_nested_tma_load(state, sdfg, a, shmem, path, tile=None, subtile=False):
     """Wire ``a -> *path -> NestedSDFG{A -> MemoryEngineBulk -> S} -> shmem``, the copy one SDFG level below
-    the kernel map (the tensor map and barrier must be routed through the NestedSDFG)."""
+    the kernel map (the tensor map and barrier must be routed through the NestedSDFG).
+
+    :param subtile: let the outer memlet cover only the tile, which depends on the kernel map parameters. The inner
+                    array keeps the shape of ``A`` and is indexed in its coordinates, as DaCe requires.
+    """
     T = tile or _TMA_TILE
     inner = dace.SDFG("tma_nested_load")
     for name, outer_name in (("A", a.data), ("S", shmem.data)):
@@ -2190,7 +2194,12 @@ def _add_nested_tma_load(state, sdfg, a, shmem, path, tile=None):
         f"0:{T}, 0:{T}",
     )
     nsdfg = state.add_nested_sdfg(inner, {"A"}, {"S"}, symbol_mapping={"block_i": "block_i", "block_j": "block_j"})
-    state.add_memlet_path(a, *path, nsdfg, dst_conn="A", memlet=dace.Memlet.from_array(a.data, sdfg.arrays[a.data]))
+    outer = (
+        dace.Memlet(f"{a.data}[block_i:block_i+{T}, block_j:block_j+{T}]")
+        if subtile
+        else dace.Memlet.from_array(a.data, sdfg.arrays[a.data])
+    )
+    state.add_memlet_path(a, *path, nsdfg, dst_conn="A", memlet=outer)
     state.add_edge(nsdfg, "S", shmem, None, dace.Memlet.from_array(shmem.data, sdfg.arrays[shmem.data]))
     return inner
 
@@ -2203,7 +2212,8 @@ def _make_memory_engine_copy_transpose_double(dtype, nested=False, extents=None)
     """
     M, N, T = extents or (_TMA_M, _TMA_N, _TMA_TILE)
     sdfg = dace.SDFG(
-        f"tma_transpose_{dtype.to_string()}{'_nested' if nested else ''}" + (f"_{M}x{N}x{T}" if extents else "")
+        f"tma_transpose_{dtype.to_string()}{'_nested' if nested else ''}{'_subtile' if nested == 'subtile' else ''}"
+        + (f"_{M}x{N}x{T}" if extents else "")
     )
     state = sdfg.add_state("main")
 
@@ -2237,7 +2247,7 @@ def _make_memory_engine_copy_transpose_double(dtype, nested=False, extents=None)
     )
 
     if nested:
-        _add_nested_tma_load(state, sdfg, a, shmem, [global_map_entry], T)
+        _add_nested_tma_load(state, sdfg, a, shmem, [global_map_entry], T, subtile=nested == "subtile")
     else:
         _add_tma_copy(
             state, a, [global_map_entry], shmem, [], f"block_i:block_i+{T}, block_j:block_j+{T}", f"0:{T}, 0:{T}"
@@ -2470,6 +2480,11 @@ _TMA_KERNELS = {
         lambda A: A.transpose() * 2,
         True,
     ),
+    "nested_subtile": (
+        lambda dtype, extents=None: _make_memory_engine_copy_transpose_double(dtype, nested="subtile", extents=extents),
+        lambda A: A.transpose() * 2,
+        True,
+    ),
     "store": (_make_memory_engine_store_double, lambda A: A * 2, False),
     "loop": (_make_memory_engine_loop_double, lambda A: A * 2, True),
 }
@@ -2489,6 +2504,18 @@ _TMA_BOUNDED_STORES = {
 _TMA_BOUNDED_EXTENTS = [(50, 48, 16), (96, 80, 32), (65, 112, 32), (33, 64, 16), (20, 16, 32), (40, 32, 16)]
 
 _DTYPE_SELECTION = [dace.int8, dace.int32, dace.int64, dace.float16, dace.float32, dace.float64]
+
+
+def test_memory_engine_nested_subtile_tensor_map_is_host_evaluable():
+    """An outer memlet covering a map-parameter dependent tile does not move the tensor map: it describes the whole
+    array with a zero base offset, and the tile is selected by the device-side coordinates."""
+    sdfg = _make_memory_engine_copy_transpose_double(dace.float64, nested="subtile")
+    sdfg.expand_library_nodes()
+    sdfg.validate()
+    code = {o.title: o.clean_code for o in sdfg.generate_code()}
+    assert f"_tma_dims[2] = {{(cuuint64_t)({_TMA_N}), (cuuint64_t)({_TMA_M})}}" in code["Frame"]
+    assert "(void *)(_tma_global + 0)" in code["Frame"]
+    assert "block_j" in code["CUDA"] and "_tma_coords" in code["CUDA"]
 
 
 @pytest.mark.parametrize("implementation", ["legacy", "experimental"])
@@ -2766,6 +2793,7 @@ if __name__ == "__main__":
     test_host_tasklet_writing_gpu_memory_gets_the_stream_in_scope()
     test_in_kernel_copy_does_not_emit_a_grid_barrier()
     test_a_multi_state_nested_sdfg_below_the_kernel_keeps_its_barriers()
+    test_memory_engine_nested_subtile_tensor_map_is_host_evaluable()
     test_shared_to_global_uses_the_block_collective_helper()
     test_symbolic_extent_expansions_keep_their_ranges_symbolic()
     test_in_kernel_cross_boundary_copy_is_refused_by_selection()
