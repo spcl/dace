@@ -32,8 +32,9 @@ from dace import dtypes, symbolic
 from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
-from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock, mat, order
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
 from dace.libraries.standard import pure_components
 from dace.memlet import Memlet
 from dace.transformation.transformation import ExpandTransformation
@@ -227,7 +228,7 @@ class ExpandGetrfNoPivotBlock(ExpandLapackBlock):
 
     @classmethod
     def body(cls, node, ops, uid):
-        return f"dace::block_lapack::getrf_nopivot({mat(ops, OPERAND)}, {order(ops, OPERAND)});\n"
+        return f"dace::block_lapack::getrf_nopivot({lapack_block.mat(ops, OPERAND)}, {lapack_block.order(ops, OPERAND)});\n"
 
 
 @dace.library.node

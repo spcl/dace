@@ -14,8 +14,9 @@ import dace.sdfg.nodes
 from dace import Memlet, dtypes
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
-from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock, copy_code, cpp, info_code, mat, order, pointer
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
 from dace.libraries.lapack.nodes.getrs import Getrs
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES, call_scratch_lifetime, scratch_storage
 from dace.libraries.standard.pure_components import operand_array
@@ -155,10 +156,10 @@ class ExpandGetriBlock(ExpandLapackBlock):
     @classmethod
     def body(cls, node, ops, uid):
         return (
-            copy_code(ops, "_xin", "_xout")
-            + f"const int __info = dace::block_lapack::getri({mat(ops, '_xout')}, {order(ops, '_xin')}, "
-            + f"{pointer('_ipiv', True)}, {cpp(ops['_ipiv'].strides[0])});\n"
-            + info_code(ops, "__info")
+            lapack_block.copy_code(ops, "_xin", "_xout")
+            + f"const int __info = dace::block_lapack::getri({lapack_block.mat(ops, '_xout')}, {lapack_block.order(ops, '_xin')}, "
+            + f"{lapack_block.pointer('_ipiv', True)}, {lapack_block.cpp(ops['_ipiv'].strides[0])});\n"
+            + lapack_block.info_code(ops, "__info")
         )
 
 

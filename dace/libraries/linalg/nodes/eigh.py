@@ -17,8 +17,9 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import SDFG, Memlet, SDFGState, dtypes, symbolic
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
-from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock, scratch_code, syevj_code
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
 from dace.libraries.lapack.nodes.syevd import Syevd
 from dace.libraries.linalg.nodes.cholesky import GPU_SOLVERS, SOLVER_BLAS, device_solver_implementation
 from dace.libraries.linalg.nodes.solve import restride
@@ -294,7 +295,9 @@ class ExpandEighBlock(ExpandLapackBlock):
     def body(cls, node, ops, uid):
         n = int(ops["_a"].shape[0])
         work = f"__eigh_work_{uid}"
-        return scratch_code(ops["_a"].ctype, work, n * n) + syevj_code(ops, "_a", "_w", "_v", node.lower, work)
+        return lapack_block.scratch_code(ops["_a"].ctype, work, n * n) + lapack_block.syevj_code(
+            ops, "_a", "_w", "_v", node.lower, work
+        )
 
 
 @dace.library.node

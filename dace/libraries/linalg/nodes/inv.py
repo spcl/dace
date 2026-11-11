@@ -9,8 +9,9 @@ import dace.properties
 import dace.sdfg.nodes
 from dace import Memlet
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
-from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock, copy_code, mat, order, scratch_code
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
 from dace.libraries.linalg.nodes.solve import gesv_core_program, restride
 from dace.libraries.standard.helper import (
@@ -308,13 +309,13 @@ class ExpandInvBlock(ExpandLapackBlock):
 
     @classmethod
     def body(cls, node, ops, uid):
-        n = order(ops, "_ain")
+        n = lapack_block.order(ops, "_ain")
         pivots = f"__inv_pivots_{uid}"
         return (
-            scratch_code("int", pivots, int(ops["_ain"].shape[0]))
-            + copy_code(ops, "_ain", "_aout")
-            + f"dace::block_lapack::getrf({mat(ops, '_aout')}, {n}, {n}, {pivots}, 1L);\n"
-            + f"dace::block_lapack::getri({mat(ops, '_aout')}, {n}, {pivots}, 1L);\n"
+            lapack_block.scratch_code("int", pivots, int(ops["_ain"].shape[0]))
+            + lapack_block.copy_code(ops, "_ain", "_aout")
+            + f"dace::block_lapack::getrf({lapack_block.mat(ops, '_aout')}, {n}, {n}, {pivots}, 1L);\n"
+            + f"dace::block_lapack::getri({lapack_block.mat(ops, '_aout')}, {n}, {pivots}, 1L);\n"
         )
 
 

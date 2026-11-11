@@ -11,17 +11,8 @@ from dace import SDFG, Memlet, SDFGState, symbolic
 from dace.libraries import hip_dialect
 from dace.libraries.blas import environments as blas_environments
 from dace.libraries.lapack import Getrf, Getrs, environments
-from dace.libraries.lapack.block import (
-    BLOCK_LAPACK,
-    ExpandLapackBlock,
-    columns,
-    copy_code,
-    cpp,
-    mat,
-    order,
-    pointer,
-    scratch_code,
-)
+from dace.libraries.lapack import block as lapack_block
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.libraries.standard.helper import call_scratch_lifetime, host_accessible_info_storage, scratch_storage
 from dace.ordered import OrderedSet
@@ -333,20 +324,20 @@ class ExpandSolveBlock(ExpandLapackBlock):
 
     @classmethod
     def body(cls, node, ops, uid):
-        n, size = order(ops, "_ain"), int(ops["_ain"].shape[0])
+        n, size = lapack_block.order(ops, "_ain"), int(ops["_ain"].shape[0])
         ctype = ops["_ain"].ctype
         work, pivots = f"__solve_work_{uid}", f"__solve_pivots_{uid}"
         lu = f"dace::block_lapack::Mat<{ctype}>{{{work}, {n}, 1L}}"
         strides = list(ops["_ain"].strides)
         return (
-            scratch_code(ctype, work, size * size)
-            + scratch_code("int", pivots, size)
-            + f"dace::block_lapack::copy({pointer('_ain', True)}, {cpp(strides[0])}, {cpp(strides[1])}, "
+            lapack_block.scratch_code(ctype, work, size * size)
+            + lapack_block.scratch_code("int", pivots, size)
+            + f"dace::block_lapack::copy({lapack_block.pointer('_ain', True)}, {lapack_block.cpp(strides[0])}, {lapack_block.cpp(strides[1])}, "
             + f"{lu}, {n}, {n});\n"
-            + copy_code(ops, "_bin", "_bout")
+            + lapack_block.copy_code(ops, "_bin", "_bout")
             + f"dace::block_lapack::getrf({lu}, {n}, {n}, {pivots}, 1L);\n"
             + f"dace::block_lapack::getrs(dace::block_lapack::Mat<const {ctype}>{{{work}, {n}, 1L}}, {n}, {pivots}, "
-            + f"1L, {mat(ops, '_bout')}, {columns(ops, '_bin')});\n"
+            + f"1L, {lapack_block.mat(ops, '_bout')}, {lapack_block.columns(ops, '_bin')});\n"
         )
 
 

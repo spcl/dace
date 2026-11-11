@@ -22,8 +22,9 @@ from dace import SDFG, SDFGState, dtypes, symbolic
 from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
-from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock, info_code, scratch_code, syevj_code
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg.narrowing import as_range
@@ -161,9 +162,9 @@ class ExpandSyevdBlock(ExpandLapackBlock):
         n = int(ops["_xin"].shape[0])
         work = f"__syevd_work_{uid}"
         return (
-            scratch_code(ops["_xin"].ctype, work, n * n)
-            + syevj_code(ops, "_xin", "_evals", "_xout", node.lower, work)
-            + info_code(ops, "0")
+            lapack_block.scratch_code(ops["_xin"].ctype, work, n * n)
+            + lapack_block.syevj_code(ops, "_xin", "_evals", "_xout", node.lower, work)
+            + lapack_block.info_code(ops, "0")
         )
 
 
