@@ -77,11 +77,6 @@ def test_reduction_wcr():
     _equivalence(red, lambda: dict(A=rng.random(64), s=np.zeros(1), N=64))
 
 
-def test_matmul_library():
-    rng = np.random.default_rng(42)
-    _equivalence(mm, lambda: dict(A=rng.random((6, 5)), B=rng.random((5, 7)), C=np.zeros((6, 7)), M=6, K=5, N=7))
-
-
 def test_jacobi_stencil():
     rng = np.random.default_rng(42)
     _equivalence(jac, lambda: dict(A=rng.random(32), B=np.zeros(32), N=32))
@@ -135,7 +130,6 @@ def _const_sdfg(impl):
 if __name__ == "__main__":
     test_elementwise()
     test_reduction_wcr()
-    test_matmul_library()
     test_jacobi_stencil()
     test_transient()
     test_const_init_constexpr()

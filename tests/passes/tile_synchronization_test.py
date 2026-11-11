@@ -99,9 +99,54 @@ def test_the_slots_of_a_circular_buffer_carry_their_own_tokens():
     assert Token("buf", slot(k), ROW).shifted("k", None).subset is None
 
 
+L = dace.symbol("L")
+
+
+@dace.program
+def two_row_sums(A: dace.float64[L, 64], B: dace.float64[L, 64], S: dace.float64[L], T: dace.float64[L]):
+    for r in dace.map[0:L]:
+        S[r : r + 1] = dace.tile.sum(dace.tile.exp(A[r, :]))
+    for r in dace.map[0:L]:
+        T[r : r + 1] = dace.tile.sum(dace.tile.exp(B[r, :]))
+
+
+def test_a_barrier_orders_only_the_nodes_of_its_own_kernel():
+    """Two kernels in one state: each barrier connects only to nodes inside the kernel it synchronizes."""
+    sdfg = two_row_sums.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    sync = InsertTileSync()
+    assert sync.apply_pass(sdfg, {}) == 4
+    for state, barrier in sync.inserted:
+        kernel = state.entry_node(barrier)
+        neighbours = [e.src for e in state.in_edges(barrier)] + [e.dst for e in state.out_edges(barrier)]
+        assert all(n is kernel or state.entry_node(n) is kernel for n in neighbours)
+    sdfg.validate()
+
+
+@dace.program
+def row_sums_per_slice(A: dace.float64[L, 4, 64], S: dace.float64[L, 4]):
+    for r in dace.map[0:L]:
+        for k in dace.map[0:4]:
+            S[r, k : k + 1] = dace.tile.sum(dace.tile.exp(A[r, k, :]))
+
+
+def test_a_barrier_stays_inside_a_sequential_map_of_the_kernel():
+    """Every thread runs each iteration of the inner sequential map, so the barrier before each reduction is inside it;
+    one barrier before the whole map left the iterations unsynchronized."""
+    sdfg = row_sums_per_slice.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    sync = InsertTileSync()
+    assert sync.apply_pass(sdfg, {}) == 2
+    for state, barrier in sync.inserted:
+        assert state.entry_node(barrier).map.schedule == dace.ScheduleType.Sequential
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_a_gemm_waits_for_its_loads_and_for_the_last_iteration_reads()
     test_an_elementwise_chain_keeps_every_element_on_its_thread()
     test_a_copy_waits_for_the_tile_it_reads()
     test_expanding_the_tiles_places_their_barriers_once()
     test_the_slots_of_a_circular_buffer_carry_their_own_tokens()
+    test_a_barrier_orders_only_the_nodes_of_its_own_kernel()
+    test_a_barrier_stays_inside_a_sequential_map_of_the_kernel()

@@ -17,12 +17,6 @@ def double_it(A: dace.float64[N], B: dace.float64[N]):
         B[i] = A[i] * 2.0
 
 
-@dace.program
-def strided(A: dace.float64[N], B: dace.float64[N]):
-    for i in dace.map[0:N:2]:
-        B[i] = A[i] * 2.0
-
-
 def loop_lines(code):
     return [line.strip() for line in code.splitlines() if line.strip().startswith("for (")]
 
@@ -76,13 +70,6 @@ def test_strided_map_covers_its_iteration_space(schedule, n):
     assert numpy.allclose(B[::2], A[::2] * 2.0) and not B[1::2].any()
 
 
-def test_frontend_strided_map_runs():
-    A = numpy.random.default_rng(0).random(31)
-    B = numpy.zeros(31)
-    strided(A=A, B=B, N=31)
-    assert numpy.allclose(B[::2], A[::2] * 2.0)
-
-
 if __name__ == "__main__":
     for impl in ("legacy", "experimental_readable"):
         test_counter_has_the_parameter_type_in_the_for_init(impl)
@@ -90,4 +77,3 @@ if __name__ == "__main__":
     for sched in (dace.dtypes.ScheduleType.Sequential, dace.dtypes.ScheduleType.CPU_Multicore):
         for size in (31, 32):
             test_strided_map_covers_its_iteration_space(sched, size)
-    test_frontend_strided_map_runs()

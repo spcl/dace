@@ -564,3 +564,45 @@ def test_a_map_sharing_only_what_both_sides_read_stays_a_kernel():
     )
 
     assert list(maps_pinned_by_host_loops(sdfg)) == []
+
+
+def test_a_table_only_a_host_maps_body_reads_on_the_host_stays_in_host_memory():
+    """ICON's ``i_endidx = end_index(rl_end)``: the body reads one element of ``end`` on an interstate edge, its kernel
+    reads ``A``. The host map put every container it passes on the host side beside the kernel's device side, so the
+    state was hybrid and ``end`` moved to the device, bound element-wise through the host map (velocity tendencies)."""
+    body = dace.SDFG("block_body")
+    body.add_array("end", [4], dace.int32)
+    body.add_array("A", [3, 8], dace.float64)
+    body.add_array("B", [3, 8], dace.float64)
+    body.add_symbol("jb", dace.int64)
+    body.add_symbol("iend", dace.int32)
+    head = body.add_state("head", is_start_block=True)
+    work = body.add_state_after(head, "work", assignments={"iend": "end[2]"})
+    work.add_mapped_tasklet(
+        "scale",
+        {"i": "0:iend"},
+        {"a": dace.Memlet("A[jb, i]")},
+        "b = 2 * a",
+        {"b": dace.Memlet("B[jb, i]")},
+        external_edges=True,
+    )
+    sdfg = dace.SDFG("table_read_on_the_host_in_a_block_body")
+    for name, desc in body.arrays.items():
+        sdfg.add_datadesc(name, desc.clone())
+    state = sdfg.add_state("main")
+    entry, exit_node = state.add_map("blocks", {"jb": "0:3"})
+    nested = state.add_nested_sdfg(body, {"end": None, "A": None}, {"B": None}, symbol_mapping={"jb": "jb"})
+    state.add_memlet_path(state.add_read("end"), entry, nested, dst_conn="end", memlet=dace.Memlet("end[2]"))
+    state.add_memlet_path(state.add_read("A"), entry, nested, dst_conn="A", memlet=dace.Memlet("A[0:3, 0:8]"))
+    state.add_memlet_path(nested, exit_node, state.add_write("B"), src_conn="B", memlet=dace.Memlet("B[0:3, 0:8]"))
+    sdfg.validate()
+
+    OffloadToAccelerator(host_maps=["blocks"]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    bindings = {edge.dst_conn: edge.data.data for edge in state.in_edges(nested)}
+    assert bindings == {"end": "end", "A": "A_gpu"}
+    assert "end_gpu" not in sdfg.arrays
+    assert body.arrays["end"].storage == dace.StorageType.Default
+    assert not any(isinstance(n, nodes.AccessNode) for n in head.nodes()), "no per-block copy of end"
+    assert map_schedules(sdfg) == {"blocks": dace.ScheduleType.Sequential, "scale_map": dace.ScheduleType.GPU_Device}

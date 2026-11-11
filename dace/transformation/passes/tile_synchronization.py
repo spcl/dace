@@ -157,7 +157,9 @@ class InsertTileSync(ppl.Pass):
         #: The barriers this run inserted, with their states
         self.inserted: list[tuple[SDFGState, Sync]] = []
         for (state, node), scope in walk.barriers.items():
-            order = list(walk.order[state])
+            # Only the nodes of the kernel the barrier is in; a state may hold several kernels
+            kernel = state.entry_node(node)
+            order = [inner for inner in walk.order[state] if state.entry_node(inner) is kernel]
             position = order.index(node)
             self.inserted.append((state, insert_barrier(state, order[:position], order[position:], scope)))
         return len(self.inserted) or None
@@ -353,9 +355,13 @@ def copies(state: SDFGState, node: nodes.AccessNode) -> tuple[list[Token], list[
 
 
 def kernel_level(state: SDFGState, node: nodes.Node) -> nodes.Node:
-    """``node``, or the outermost scope around it inside the kernel: a barrier inside a divergent scope deadlocks."""
+    """``node``, or the outermost scope around it inside the kernel: a barrier inside a divergent scope deadlocks.
+    Every thread runs every iteration of a sequential map, so a barrier stays inside one."""
     scope = state.entry_node(node)
-    while scope is not None and scope.map.schedule != dtypes.ScheduleType.GPU_Device:
+    while scope is not None and scope.map.schedule not in (
+        dtypes.ScheduleType.GPU_Device,
+        dtypes.ScheduleType.Sequential,
+    ):
         node, scope = scope, state.entry_node(scope)
     return node
 

@@ -19,8 +19,9 @@ from dace.transformation.transformation import ExpandTransformation
 
 
 def moves_whole_container(desc: dace.data.Data, shape: Sequence[Any]) -> bool:
-    """True iff a memlet carrying ``shape`` spans all of ``desc``."""
-    return symbolic.shapes_equal(shape, desc.shape)
+    """True iff a memlet carrying ``shape`` spans all of ``desc`` and ``desc`` is C-packed. A container of the
+    memlet's shape can still be a slice of a larger array (TTGT's ``_left_tensor``), laid out with its strides."""
+    return symbolic.shapes_equal(shape, desc.shape) and desc.is_packed_c_strides()
 
 
 @library.expansion

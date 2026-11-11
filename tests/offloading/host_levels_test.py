@@ -220,62 +220,6 @@ def test_a_device_element_bound_through_a_taskloop_is_staged_once_outside_it():
     assert not any(edge.data.data == "t" for edge in state.in_edges(entry)), "no device scalar enters the host map"
 
 
-def rows_scaled_by_a_host_table_beside_host_work() -> dace.SDFG:
-    """A host map over rows around a nested SDFG that reads ``factor[j]`` on the host (an interstate assignment) and
-    scales its row in a kernel. A free tasklet beside the map reads the device array ``A``, so the state is hybrid."""
-    body = dace.SDFG("scale_row_by_table")
-    body.add_array("factor", [4], dace.float64)
-    body.add_array("out", [4, 8], dace.float64)
-    body.add_symbol("j", dace.int64)
-    body.add_symbol("n", dace.float64)
-    first = body.add_state("first", is_start_block=True)
-    work = body.add_state("work")
-    body.add_edge(first, work, dace.InterstateEdge(assignments={"n": "factor[j]"}))
-    work.add_mapped_tasklet(
-        "scale",
-        {"i": "0:8"},
-        {"o_in": dace.Memlet("out[j, i]")},
-        "o = o_in * n",
-        {"o": dace.Memlet("out[j, i]")},
-        external_edges=True,
-    )
-
-    sdfg = dace.SDFG("rows_scaled_by_a_host_table")
-    sdfg.add_array("A", [4], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array("factor", [4], dace.float64)
-    sdfg.add_array("out", [4, 8], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array("first", [1], dace.float64)
-    state = sdfg.add_state("rows")
-    peek = state.add_tasklet("peek", {"a"}, {"r"}, "r = a")
-    state.add_edge(state.add_read("A"), None, peek, "a", dace.Memlet("A[0]"))
-    state.add_edge(peek, "r", state.add_write("first"), None, dace.Memlet("first[0]"))
-    entry, exit_node = state.add_map("rows", {"j": "0:4"})
-    call = state.add_nested_sdfg(body, {"factor": None, "out": None}, {"out": None}, symbol_mapping={"j": "j"})
-    state.add_memlet_path(state.add_read("factor"), entry, call, dst_conn="factor", memlet=dace.Memlet("factor[0:4]"))
-    state.add_memlet_path(state.add_read("out"), entry, call, dst_conn="out", memlet=dace.Memlet("out[0:4, 0:8]"))
-    state.add_memlet_path(call, exit_node, state.add_write("out"), src_conn="out", memlet=dace.Memlet("out[0:4, 0:8]"))
-    return sdfg
-
-
-def test_an_array_only_a_launching_body_reads_on_the_host_stays_on_the_host_in_a_hybrid_state():
-    """A hybrid state moved every array its host code reads to the device, for the size-1 kernels that wrap free
-    host work. No wrapper lifts the control flow of a body that launches kernels: ``factor`` went to the device
-    and the body fetched all of it back once per row (ICON's block loops read ``end_index`` this way)."""
-    sdfg = rows_scaled_by_a_host_table_beside_host_work()
-    ppl.Pipeline([OffloadToAccelerator(taskloop_overrides={"rows": True})]).apply_pass(sdfg, {})
-    sdfg.validate()
-    device = [name for name, desc in sdfg.arrays.items() if desc.storage == dtypes.StorageType.GPU_Global]
-    assert not [name for name in device if name.startswith("factor")], device
-    state = next(state for state in sdfg.states() if state.label == "rows")
-    call = next(node for node in state.nodes() if isinstance(node, dace.nodes.NestedSDFG))
-    assert [edge.data.data for edge in state.in_edges(call) if edge.dst_conn == "factor"] == ["factor"]
-    assert not any(
-        isinstance(n, dace.nodes.AccessNode) and n.data.startswith("factor")
-        for b in call.sdfg.states()
-        for n in b.nodes()
-    )
-
-
 @pytest.mark.gpu
 def test_a_device_element_bound_through_a_taskloop_computes_what_numpy_computes():
     import cupy  # GPU-only dependency; a CPU collection of this file must not need it
@@ -335,6 +279,5 @@ if __name__ == "__main__":
     test_a_nested_sdfg_at_the_top_level_is_a_host_level_of_its_own()
     test_a_device_element_a_body_reads_on_the_host_is_staged_on_the_host()
     test_a_device_element_bound_through_a_taskloop_is_staged_once_outside_it()
-    test_an_array_only_a_launching_body_reads_on_the_host_stays_on_the_host_in_a_hybrid_state()
     test_a_view_bound_to_a_nested_body_places_the_array_it_aliases()
     test_a_view_bound_to_a_nested_body_runs_on_the_device()

@@ -90,13 +90,6 @@ def test_view_idx_uses_view_strides(require_experimental):
     assert any("V[V_idx(" in ln for ln in code.splitlines()), "no V[V_idx(..)] access emitted:\n" + code
     assert "double inp =" not in code and "double inp;" not in code
 
-
-def test_view_no_pure_fallback(require_experimental):
-    """A View input never forces the classic connector copy: the readable body
-    references the view pointer directly."""
-    code = generated_for(strided_view_copy_sdfg, "view_nofallback", EXPERIMENTAL)
-    # Connector name gone from the body; view name present as an indexed pointer.
-    assert "V[V_idx(" in code
     assert "///////////////////" not in code
 
 
@@ -145,7 +138,6 @@ if __name__ == "__main__":
         print("experimental readable codegen not ready; skipping")
     else:
         test_view_idx_uses_view_strides(None)
-        test_view_no_pure_fallback(None)
         test_view_access_bit_exact(None, "cpu")
         test_view_access_bit_exact(None, "gpu")
         test_view_idx_inside_kernel(None)

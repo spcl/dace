@@ -19,6 +19,7 @@ call, cuBLAS device call, and the pure/naive nested-tasklet expansion).
 
 import copy
 import ctypes.util
+import functools
 import os
 import re
 import shutil
@@ -42,13 +43,17 @@ def mm(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, N]):
     C[:] = A @ B
 
 
-@pytest.fixture(autouse=True)
-def restore_implementation():
-    """``_set_impl`` writes the GLOBAL config, so without this every test in this module would leak its
-    selection into the rest of the suite (there is no other fixture restoring it)."""
-    old = Config.get("compiler", "cpu", "implementation")
-    yield
-    Config.set("compiler", "cpu", "implementation", value=old)
+def restores_implementation(test):
+    """``_set_impl`` writes the GLOBAL config; the test restores it, under pytest and under ``__main__`` alike."""
+
+    @functools.wraps(test)
+    def run(*args, **kwargs):
+        with dace.config.set_temporary(
+            "compiler", "cpu", "implementation", value=Config.get("compiler", "cpu", "implementation")
+        ):
+            return test(*args, **kwargs)
+
+    return run
 
 
 def _set_impl(impl):
@@ -226,6 +231,7 @@ def _gemm_equiv(blas_impl, gpu=False):
 # tests
 
 
+@restores_implementation
 def test_cpp_ternary_scalar_inline():
     # Bit-exact legacy vs experimental.
     base = dict(arr=np.arange(8, dtype=np.float64) + 1.0, arr2=np.zeros(8))
@@ -245,6 +251,7 @@ def test_cpp_ternary_scalar_inline():
     assert "double _inp =" not in code
 
 
+@restores_implementation
 def test_cpp_body_declaration_blocks_inlining():
     """A connector is inlined as raw text into a body this generator does not parse, so a body that
     DECLARES one of the names that text carries must keep the connector copy -- otherwise the
@@ -267,6 +274,7 @@ def test_cpp_body_declaration_blocks_inlining():
     assert "arr[arr_idx(" not in code and "arr2[arr2_idx(" not in code
 
 
+@restores_implementation
 def test_cpp_pointer_and_scalar_unit():
     # Inspect the generated experimental body: pointer connectors stay base
     # pointers, the scalar connector becomes an <array>_idx access, no copy-ins.
@@ -293,6 +301,7 @@ def test_cpp_pointer_and_scalar_unit():
     assert np.array_equal(leg_dst, exp_dst)
 
 
+@restores_implementation
 def test_offset_pointer_connector_is_parenthesized_before_subscript():
     """An offset base pointer must reach the body parenthesized, so a body that subscripts the
     connector still binds the base first."""
@@ -316,6 +325,7 @@ def test_offset_pointer_connector_is_parenthesized_before_subscript():
     assert np.array_equal(exp["dst"], np.array([0.0, 4.0, 6.0, 8.0, 10.0]))
 
 
+@restores_implementation
 def test_fill_pointer_connector():
     # The fill output pointer connector stays a base pointer. The CPU expansion spells the fill
     # as ``std::fill_n`` (both gcc and clang lower it to a memset when the value allows it).
@@ -361,6 +371,7 @@ def _called_index_functions(code):
     return names
 
 
+@restores_implementation
 def test_index_functions_defined_in_every_file():
     # A mixed CPU+GPU SDFG emits index functions into two separate output files
     # (the host .cpp Frame and the device .cu CUDA file), sharing one codegen
@@ -390,6 +401,7 @@ def test_index_functions_defined_in_every_file():
     # also DEFINES it exactly once.
 
 
+@restores_implementation
 def test_gemm_pure_naive():
     # Pure/naive lowering expands to nested Python tasklets (no external call).
     if "pure" not in blas.Gemm.implementations:
@@ -397,6 +409,7 @@ def test_gemm_pure_naive():
     _gemm_equiv("pure")
 
 
+@restores_implementation
 def test_gemm_openblas_pointers():
     # OpenBLAS lowering is an external cblas_dgemm(...) call whose array
     # connectors must stay base pointers (not <array>_idx single elements).
@@ -422,6 +435,7 @@ def test_gemm_openblas_pointers():
         pytest.skip("OpenBLAS build/link unavailable: %s" % e)
 
 
+@restores_implementation
 def test_gemm_cublas_gpu():
     # cuBLAS lowering is an external device gemm call inside the GPU path; its
     # array connectors must stay base pointers.
@@ -472,4 +486,5 @@ if __name__ == "__main__":
     test_gemm_pure_naive()
     test_gemm_openblas_pointers()
     test_gemm_cublas_gpu()
+    test_offset_pointer_connector_is_parenthesized_before_subscript()
     print("ok")
