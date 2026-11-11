@@ -970,6 +970,9 @@ def derive_parallelism(
                 ScatterToGuardedMaps(emit_unparallelized_else_branch=True, assume_no_conflicts=assume_parallel_guards),
             )
         ]
+    # The third guarded derivation: a loop over the segments of a pointer array is lifted behind the entry guard that
+    # checks the data facts its segment confinement rests on (nfa_frontier's components).
+    s += [(label, _ThenIfChanged([(SegmentConfinedLoops(), True)], symbol_phase()))]
     # Wavefront: map what now maps, then skew the nests left sequential on a carried dependence.
     # Accumulator steps above leave a WCR that conflicts with nothing (a masked count two map levels deep)
     s += [(label, RevertNonReductionWCR()), *_inline_single_state(label)]
@@ -1087,10 +1090,6 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
 def finish() -> Stages:
     """The terminal bookkeeping: symbols, derived annotations, assumption guard, hints; the views inlining minted."""
     s: Stages = [(FINISH, StructuralCleanup())]
-    # On the settled form: a loop over the segments of a pointer array is lifted behind the entry guard that checks
-    # the data facts its segment confinement rests on (nfa_frontier's components). The cleanup settled the symbols of
-    # everything else.
-    s += [(FINISH, _ThenIfChanged([(SegmentConfinedLoops(), True)], symbol_phase()))]
     s += [
         (FINISH, OptionalArrayInference()),
         (FINISH, ConvertLengthOneArraysToScalars()),
