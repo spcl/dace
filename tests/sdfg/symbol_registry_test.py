@@ -168,13 +168,14 @@ def test_validation_rejects_facts_on_undeclared_symbols():
         sdfg.validate()
 
 
-def test_loop_variable_cannot_be_added_as_symbol():
+def test_loop_variable_cannot_be_a_symbol():
     sdfg = dace.SDFG("loop_variable_symbol")
     loop = LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
     loop.add_state("body", is_start_block=True)
-    with pytest.raises(NameCollisionError, match="a loop or map scope binds it"):
-        sdfg.add_symbol("i", dace.int64)
+    sdfg.add_symbol("i", dace.int64)
+    with pytest.raises(InvalidSDFGError, match="bound by a loop or map scope"):
+        sdfg.validate()
 
 
 def test_scope_takes_over_a_symbol_a_shape_declared():
@@ -425,7 +426,7 @@ def test_a_rounding_of_a_float_or_a_fraction_stays():
 
 
 if __name__ == "__main__":
-    test_loop_variable_cannot_be_added_as_symbol()
+    test_loop_variable_cannot_be_a_symbol()
     test_scope_takes_over_a_symbol_a_shape_declared()
     test_scope_keeps_an_explicitly_declared_symbol()
     test_frontend_loop_iterators_are_not_symbols()

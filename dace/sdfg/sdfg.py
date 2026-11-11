@@ -1190,11 +1190,6 @@ class SDFG(ControlFlowRegion):
         elif name in self.arrays:
             # Data constants are not checked, as they are linked to the data descriptors.
             raise NameCollisionError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
-        # Not the cached names: a stale one would refuse a free name
-        elif name not in self.symbols and name in scope_bound_names(self):
-            raise NameCollisionError(
-                f'Cannot create symbol "{name}", a loop or map scope binds it; its facts come from the scope.'
-            )
         self._symbol_repo.add(name, dtype, predicates)
         if scale is symbolic.Scale.SMALL:
             self._symbol_repo.set_scale(name, scale)
