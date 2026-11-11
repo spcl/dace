@@ -26,8 +26,10 @@ import re
 import shutil
 from collections.abc import Callable, Sequence
 
-#: Name of the generated one-line header that pulls in the DaCe runtime umbrella.
-PREWARM_HEADER = "dace_prewarm.h"
+#: The runtime umbrella, force-included as ``-iquote <entry> -include dace/dace.h``. GCC takes
+#: ``<entry>/dace/dace.h.gch`` when present and valid, and the runtime's own header otherwise, so a
+#: vanished entry costs speed, never the build.
+PCH_HEADER = "dace/dace.h"
 
 
 def cache_root(kind: str) -> str:
@@ -190,13 +192,10 @@ def ensure_dace_pch(
         # ``runtime_version`` is :func:`runtime_digest` of ``runtime_inc``, so an entry that exists was
         # built from exactly these headers.
         pch_dir = os.path.join(cache_root("pch"), signature(cxx, runtime_inc, runtime_version, *pch_flags))
-        header = os.path.join(pch_dir, PREWARM_HEADER)
-        gch = header + ".gch"
+        gch = os.path.join(pch_dir, PCH_HEADER + ".gch")
+        header = os.path.join(runtime_inc, PCH_HEADER)
         if not os.path.isfile(gch):
-            os.makedirs(pch_dir, exist_ok=True)
-            if not os.path.isfile(header):
-                with open(header, "w") as f:
-                    f.write("#include <dace/dace.h>\n")
+            os.makedirs(os.path.dirname(gch), exist_ok=True)
             # Compile to a per-process temp then rename into place, so a concurrent build (pytest -n4
             # shares this global cache) can never observe a half-written .gch.
             tmp_gch = f"{gch}.tmp.{os.getpid()}"
@@ -204,7 +203,7 @@ def ensure_dace_pch(
             os.replace(tmp_gch, gch)
             prune(cache_root("pch"))  # a new ~110 MB entry just landed in RAM
         touch(pch_dir)
-        return ["-I", pch_dir, "-include", PREWARM_HEADER]
+        return ["-iquote", pch_dir, "-include", PCH_HEADER]
     except Exception:
         return None  # any trouble -> compile without the PCH
 
