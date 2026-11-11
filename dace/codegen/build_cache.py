@@ -24,7 +24,6 @@ import hashlib
 import os
 import re
 import shutil
-from collections.abc import Callable, Sequence
 
 #: The runtime umbrella, force-included as ``-iquote <entry> -include dace/dace.h``. GCC takes
 #: ``<entry>/dace/dace.h.gch`` when present and valid, and the runtime's own header otherwise, so a
@@ -173,39 +172,6 @@ def runtime_digest(directory: str) -> str:
                 pass
             digest.update(b"\0")
     return digest.hexdigest()
-
-
-def ensure_dace_pch(
-    cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtime_version: str, run: Callable[[list[str]], None]
-) -> list[str] | None:
-    """Precompile ``<dace/dace.h>`` once per (compiler, flags) and cache it.
-
-    Returns the extra ``-I``/``-include`` flags that make g++/clang++ pick up the cached PCH, or
-    ``None`` when one could not be produced (the caller then compiles normally -- only speed is
-    affected). ``pch_flags`` must be the flags the translation units are actually compiled with,
-    minus per-program ``-D``/``-I``, which the compiler tolerates as extras on the compile line.
-
-    An invalid or flag-mismatched PCH is silently ignored by the compiler, so this can never change
-    the produced object; the only failure mode is the one-off PCH build itself, which is swallowed.
-    """
-    try:
-        # ``runtime_version`` is :func:`runtime_digest` of ``runtime_inc``, so an entry that exists was
-        # built from exactly these headers.
-        pch_dir = os.path.join(cache_root("pch"), signature(cxx, runtime_inc, runtime_version, *pch_flags))
-        gch = os.path.join(pch_dir, PCH_HEADER + ".gch")
-        header = os.path.join(runtime_inc, PCH_HEADER)
-        if not os.path.isfile(gch):
-            os.makedirs(os.path.dirname(gch), exist_ok=True)
-            # Compile to a per-process temp then rename into place, so a concurrent build (pytest -n4
-            # shares this global cache) can never observe a half-written .gch.
-            tmp_gch = f"{gch}.tmp.{os.getpid()}"
-            run([cxx] + list(pch_flags) + ["-I", runtime_inc, "-x", "c++-header", header, "-o", tmp_gch])
-            os.replace(tmp_gch, gch)
-            prune(cache_root("pch"))  # a new ~110 MB entry just landed in RAM
-        touch(pch_dir)
-        return ["-iquote", pch_dir, "-include", PCH_HEADER]
-    except Exception:
-        return None  # any trouble -> compile without the PCH
 
 
 # CMake configure cache
