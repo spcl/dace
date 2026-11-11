@@ -40,13 +40,13 @@ def outer_maps(sdfg: dace.SDFG) -> list[nodes.MapEntry]:
     return [n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.MapEntry) and s.entry_node(n) is None]
 
 
-def test_a_map_around_an_inverse_is_threaded_on_the_host_with_the_cpu_library():
+def test_a_map_around_an_inverse_is_a_kernel():
     sdfg = gpu_final("host_library_calls_structure")
     libraries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
 
-    assert [m.map.schedule for m in outer_maps(sdfg)] == [dace.ScheduleType.CPU_Multicore]
-    assert libraries and not any(n.schedule in dace.dtypes.GPU_SCHEDULES for n in libraries)
-    assert not {n.implementation for n in libraries} & {"cuBLAS", "hipBLAS", "cuSolverDn", "hipSolverDn"}
+    # The inverse has an in-kernel thread-block lowering, so the map is a kernel and no host library call remains
+    assert [m.map.schedule for m in outer_maps(sdfg)] == [dace.ScheduleType.GPU_Device]
+    assert not {n.implementation for n in libraries} & {"OpenBLAS", "MKL", "cuSolverDn", "hipSolverDn"}
 
 
 @pytest.mark.gpu
@@ -82,7 +82,7 @@ def test_a_kernel_around_a_matrix_vector_product_computes_what_numpy_computes():
 
 
 if __name__ == "__main__":
-    test_a_map_around_an_inverse_is_threaded_on_the_host_with_the_cpu_library()
+    test_a_map_around_an_inverse_is_a_kernel()
     test_a_map_around_an_inverse_computes_what_numpy_computes()
     test_a_map_around_a_matrix_vector_product_is_a_kernel()
     test_a_kernel_around_a_matrix_vector_product_computes_what_numpy_computes()
