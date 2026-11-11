@@ -99,9 +99,11 @@ CLEANUP_TYPES = frozenset(type(p).__name__ for label, p in canon_pipeline._struc
 
 
 def _members(unit: ppl.Pass) -> list[ppl.Pass]:
-    """The units a stage runs: a ``_ThenIfChanged``'s leading units, or the stage itself."""
+    """The units a stage runs: a ``_ThenIfChanged``'s leading units, a maximal-fusion round's, or the stage itself."""
     if isinstance(unit, canon_pipeline._ThenIfChanged):
         return [member for member, watched in unit.first]
+    if isinstance(unit, canon_pipeline.PhaseFixpoint) and unit.name == "maximal_fusion":
+        return unit.factory()
     return [unit]
 
 
@@ -109,6 +111,10 @@ def _without_reclaim(unit: ppl.Pass) -> ppl.Pass | None:
     """``unit`` with its reclaiming members dropped, ``None`` when it is one."""
     if isinstance(unit, canon_pipeline._ThenIfChanged):
         unit.first = [(member, watched) for member, watched in unit.first if not _is_reclaim_stage(member)]
+        return unit
+    if isinstance(unit, canon_pipeline.PhaseFixpoint) and unit.name == "maximal_fusion":
+        factory = unit.factory
+        unit.factory = lambda: [member for member in factory() if not _is_reclaim_stage(member)]
         return unit
     return None if _is_reclaim_stage(unit) else unit
 

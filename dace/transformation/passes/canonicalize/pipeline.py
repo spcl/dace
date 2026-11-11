@@ -590,9 +590,9 @@ FIND_FIRST_CHUNK: dict[str, int] = {"cpu": 1 << 20, "gpu": 1 << 21}
 #   specialization.
 #
 # Units whose matcher needs a shape another phase destroys stay where that shape exists but carry the
-# ``lift_semantics`` label, so ``stage_labels`` shows every out-of-phase placement; past maximal fusion they carry
-# ``after_fusion`` instead. No label before ``fuse`` recurs after it, so ``stages`` sliced at ``fuse`` (or any
-# phase) runs exactly the recipe prefix and suffix.
+# ``lift_semantics`` label, so ``stage_labels`` shows every out-of-phase placement; the lifts of what fusion exposes
+# close every round of maximal fusion (``fuse``) instead. No label before ``fuse`` recurs after it, so ``stages``
+# sliced at ``fuse`` (or any phase) runs exactly the recipe prefix and suffix.
 
 Stages = list[tuple[str, ppl.Pass]]
 
@@ -602,8 +602,6 @@ DERIVE_PARALLELISM = "derive_parallelism"
 RECOMPOSE = "recompose"
 #: Maximal fusion alone, so a caller can own the fusion decisions (NestForge stage 2).
 FUSE = "fuse"
-#: Everything recompose does once fusion settled, out-of-phase lifts included.
-AFTER_FUSION = "after_fusion"
 #: The raised and simplified input, before any phase.
 INGEST = "ingest"
 #: The between-phase rail.
@@ -1002,10 +1000,14 @@ def derive_parallelism(
     return s
 
 
-def maximal_fusion(target: str) -> PhaseFixpoint:
+def maximal_fusion(target: str, after: Callable[[], list[ppl.Pass]] | None = None) -> PhaseFixpoint:
     """Maximal fusion: (FuseStates x FuseLoops x MapCollapse x FuseMaps, single-state bodies inlined first) to a fixpoint
     inside a fixpoint that re-permutes, interchanges and fuses conditions. The recompose phase runs it, and so does
-    specialization after hoisting guards (``hoist_invariant_guards``): one definition of "fuse everything"."""
+    specialization after hoisting guards (``hoist_invariant_guards``): one definition of "fuse everything".
+
+    :param after: Fresh units closing every outer round (recompose's lifts of what fusion exposed), so what they
+                  expose fuses in the next round.
+    """
 
     def inner_round() -> list[ppl.Pass]:
         return [
@@ -1046,6 +1048,7 @@ def maximal_fusion(target: str) -> PhaseFixpoint:
             SelectBranchMaps(),
             LiftTrivialIf(),
             NormalizeMapBody(),
+            *(after() if after is not None else []),
         ]
 
     return PhaseFixpoint("maximal_fusion", outer_round, FUSION_OUTER_ROUNDS)
@@ -1074,31 +1077,26 @@ def recompose(lift: bool, lift_copy: bool, target: str) -> Stages:
     # fusion, so its state does not stand between the maps; the finish runs it again for the fills lifted after.
     s += [(label, DeadFillElimination())]
 
-    s += [(FUSE, maximal_fusion(target))]
-    label = AFTER_FUSION
-    # A reduction fused over one element leaves its init map
-    s += [(label, PatternApplyOnceEverywhere([TrivialMapElimination()]))]
-    # Out of phase: these matchers need the fused map form (contractions split over maps, durbin's unary copy).
-    if lift_copy:
-        s += [(label, AssignmentAndCopyKernelToMemsetAndMemcpy())]
-    if lift:
-        s += [(label, PatternApplyOnceEverywhere([LiftEinsum(per_slice=target == "cpu")]))]
-    # Fusion joined a slice update's map with the copy of its result, across the states the frontend gave them.
-    s += [(label, EliminateCopyBack())]
-    s += [
-        (
-            label,
-            ppl.FixedPointPipeline(
-                [DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True, nested=True)]
-            ),
-        )
-    ]
-    s += [(label, PruneEmptyConditionalBranches())]
-    s += [
-        (label, PatternApplyOnceEverywhere([RedundantArray()])),
-        (label, RematerializeDerivedTemporaries()),
-    ]
-    s += [(label, PatternApplyOnceEverywhere([MapCollapse()]))]
+    def after_fusion() -> list[ppl.Pass]:
+        # A reduction fused over one element leaves its init map
+        units: list[ppl.Pass] = [PatternApplyOnceEverywhere([TrivialMapElimination()])]
+        # Out of phase: these matchers need the fused map form (contractions split over maps, durbin's unary copy).
+        if lift_copy:
+            units += [AssignmentAndCopyKernelToMemsetAndMemcpy()]
+        if lift:
+            units += [PatternApplyOnceEverywhere([LiftEinsum(per_slice=target == "cpu")])]
+        # Fusion joined a slice update's map with the copy of its result, across the states the frontend gave them.
+        units += [
+            EliminateCopyBack(),
+            ppl.FixedPointPipeline([DeadDataflowElimination(), ArrayElimination(fold_ordered_copies=True, nested=True)]),
+            PruneEmptyConditionalBranches(),
+            PatternApplyOnceEverywhere([RedundantArray()]),
+            RematerializeDerivedTemporaries(),
+            PatternApplyOnceEverywhere([MapCollapse()]),
+        ]
+        return units
+
+    s += [(FUSE, maximal_fusion(target, after_fusion))]
     return s
 
 
@@ -1165,8 +1163,6 @@ def build_stages(
         validate,
     )
     s += recompose(lift, lift_copy, target)
-    # Once more after the lifts recompose ends with: what they exposed fuses too
-    s += [(FUSE, maximal_fusion(target))]
     s += finish()
     prepared([unit for stage_label, unit in s])
     return s
