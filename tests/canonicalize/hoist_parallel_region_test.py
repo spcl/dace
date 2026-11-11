@@ -26,6 +26,7 @@ import re
 
 import numpy as np
 import pytest
+import sympy
 
 import dace
 from dace import dtypes
@@ -251,6 +252,42 @@ def test_minimal_loop_over_map_hoists():
     assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
     assert teams(sdfg) == 1
     sdfg.validate()
+
+
+def test_the_team_is_sized_to_the_work_one_trip_shares_out():
+    """Every thread of the team joins the barrier after each trip's map, so a team of the machine's size around a
+    short row costs more than the row: the region takes at most one thread per
+    ``compiler.cpu.parallel_min_work_per_thread`` iterations of the largest map a trip runs, decided at run time."""
+    sdfg = loop_over_map_sdfg("sized_team")
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    (team,) = [
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nd.MapEntry) and n.map.schedule == dtypes.ScheduleType.CPU_Persistent
+    ]
+    assert team.map.omp_team_work == sympy.Max(0, N)
+    with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_thread", value=1024):
+        code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "#pragma omp parallel num_threads(((Max(0, N)) / 1024) < 1 ? 1 : (" in code, code
+    with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_thread", value=0):
+        code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "num_threads" not in code
+
+
+def test_a_row_whose_length_moves_with_the_loop_leaves_the_team_at_its_default_size():
+    """``for it in 0:N { map i in it:N }``: no symbol ahead of the region bounds the row (a wavefront's rows are
+    longest in the middle of the range), and a team sized too small costs more than the barriers of a large one."""
+    sdfg = dace.SDFG("unsized_team_triangular")
+    sdfg.add_array("a", [N], dace.float64)
+    mapped_state(loop_region(sdfg, "outer", "N"), "body", "a", "1.0", ["it:N"])
+    assert HoistParallelRegion().apply_pass(sdfg, {}) == 1
+    (team,) = [
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nd.MapEntry) and n.map.schedule == dtypes.ScheduleType.CPU_Persistent
+    ]
+    assert team.map.omp_team_work == 0
+    assert "num_threads" not in "\n".join(obj.clean_code for obj in sdfg.generate_code())
 
 
 def test_second_run_adds_no_second_team():
@@ -1419,6 +1456,8 @@ if __name__ == "__main__":
     test_s115_keeps_every_store_inside_a_worksharing_map()
     test_wavefront_reaching_into_the_neighbouring_tile_is_still_correct()
     test_minimal_loop_over_map_hoists()
+    test_the_team_is_sized_to_the_work_one_trip_shares_out()
+    test_a_row_whose_length_moves_with_the_loop_leaves_the_team_at_its_default_size()
     test_second_run_adds_no_second_team()
     test_nested_sdfg_inside_the_map_keeps_its_parent_pointers(pytest.MonkeyPatch())
     test_top_level_sequential_map_in_the_loop_is_shared_out()

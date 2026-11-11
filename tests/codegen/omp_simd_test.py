@@ -210,10 +210,10 @@ def test_custom_reduction_withholds_the_clause():
 
 
 @pytest.mark.parametrize("target", ("hist[i]", "hist[0]"))
-def test_sequential_wcr_withholds_the_clause(target):
-    """A Sequential map lowers WCR to a non-atomic read-modify-write in the loop body: a scatter can
-    alias across lanes, and an accumulation into a fixed location carries across iterations. Neither
-    is what ``simd`` asserts."""
+def test_sequential_wcr_takes_the_clause_only_as_a_reduction(target):
+    """A Sequential map lowers WCR to a non-atomic read-modify-write in the loop body. A scatter can alias across
+    lanes and gets no clause; an accumulation into a fixed element is held in a register and is the loop's
+    ``reduction``."""
     sdfg = dace.SDFG(f"seq_wcr_{target.replace('[', '_').replace(']', '')}")
     sdfg.add_array("a", (64,), dace.float64)
     sdfg.add_array("hist", (64,), dace.float64)
@@ -230,8 +230,12 @@ def test_sequential_wcr_withholds_the_clause(target):
     sdfg.validate()
 
     mark(sdfg)
-    assert not any(n.map.omp_simd for state, n in entries(sdfg))
-    assert " simd" not in sdfg.generate_code()[0].clean_code
+    code = sdfg.generate_code()[0].clean_code
+    if target == "hist[i]":
+        assert not any(n.map.omp_simd for state, n in entries(sdfg))
+        assert " simd" not in code
+    else:
+        assert "#pragma omp simd reduction(+:__acc_0_0_hist)" in code
 
 
 def test_multicore_reduction_keeps_the_clause_and_the_value():

@@ -52,6 +52,26 @@ def test_enclosing_map_the_output_does_not_index_stays_a_reduction():
     assert sdfg.apply_transformations(LiftEinsum, options={"per_slice": True}) == 0
 
 
+def test_outer_product_under_an_enclosing_map_stays_a_map():
+    """A slice of an outer product has no contracted index: lifted, it is a K=1 GEMM per enclosing iteration."""
+    sdfg = dace.SDFG("lift_einsum_nested_outer")
+    sdfg.add_array("A", (8, 3), dace.float64)
+    sdfg.add_array("B", (8, 4), dace.float64)
+    sdfg.add_array("C", (8, 3, 4), dace.float64)
+    state = sdfg.add_state()
+    outer_entry, outer_exit = state.add_map("outer", {"p": "0:8"})
+    inner_entry, inner_exit = state.add_map("inner", {"i": "0:3", "j": "0:4"})
+    tasklet = state.add_tasklet("product", {"x", "y"}, {"z"}, "z = x * y")
+    a, b, c = state.add_read("A"), state.add_read("B"), state.add_write("C")
+    state.add_memlet_path(a, outer_entry, inner_entry, tasklet, dst_conn="x", memlet=dace.Memlet("A[p, i]"))
+    state.add_memlet_path(b, outer_entry, inner_entry, tasklet, dst_conn="y", memlet=dace.Memlet("B[p, j]"))
+    state.add_memlet_path(tasklet, inner_exit, outer_exit, c, src_conn="z", memlet=dace.Memlet("C[p, i, j]"))
+    sdfg.fill_scope_connectors()
+    propagation.propagate_memlets_sdfg(sdfg)
+    assert sdfg.apply_transformations(LiftEinsum, options={"per_slice": True}) == 0
+
+
 if __name__ == "__main__":
     test_contraction_under_an_enclosing_map_lifts_per_slice()
     test_enclosing_map_the_output_does_not_index_stays_a_reduction()
+    test_outer_product_under_an_enclosing_map_stays_a_map()

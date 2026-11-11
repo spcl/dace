@@ -417,12 +417,21 @@ def kernel_assigned_read(hierarchy: list[SDFG], name: str) -> tuple[SDFG, str, s
     return hierarchy[depth], expr.value.id, ast.unparse(expr.slice)
 
 
+def spans_whole(node: nodes.NestedSDFG, inner: dt.Data, outer: dt.Data) -> bool:
+    """Whether the nest ``node`` describes ``outer`` whole by its connector ``inner``: it then addresses the container
+    as the parent does, whatever window its edge names."""
+    mapping = symbolic.symbol_replacements(node.symbol_mapping)
+    shape = [symbolic.replace_symbols(extent, mapping) for extent in inner.shape]
+    return len(shape) == len(outer.shape) and all(map(dt.core.same_extent, shape, outer.shape))
+
+
 def read_in_kernel_sdfg(
     hierarchy: list[SDFG], sdfg: SDFG, container: str, index: str
 ) -> tuple[str, list[symbolic.SymbolicType]] | None:
     """``container[index]`` read in ``sdfg`` (a nest of ``hierarchy``) in the names of ``hierarchy[-1]``: through
     every nest's input binding and symbol mapping; ``None`` when a nest is handed something other than an array
-    window of the outer one."""
+    window of the outer one. A nest that describes the container whole is handed its first element whatever window
+    its edge names, so the index is the parent's; one that describes a slice indexes from the window's begin."""
     idx = [symbolic.pystr_to_symbolic(part) for part in index.split(",")] if index else []
     for inner in hierarchy[hierarchy.index(sdfg) : -1]:
         node, state = inner.parent_nsdfg_node, inner.parent
@@ -436,7 +445,8 @@ def read_in_kernel_sdfg(
         mapping = {
             symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(str(v)) for k, v in node.symbol_mapping.items()
         }
-        idx = [begin + symbolic.pystr_to_symbolic(i).subs(mapping) for (begin, end, step), i in zip(window, idx)]
+        offset = [0] * len(window) if spans_whole(node, inner.arrays[container], outer_desc) else window.min_element()
+        idx = [begin + symbolic.pystr_to_symbolic(i).subs(mapping) for begin, i in zip(offset, idx)]
         container = bound[0].data.data
     return container, idx
 
@@ -802,9 +812,7 @@ def restride_connected_nests(
             for conn in dict.fromkeys(c for c, e in edges if c is not None and e.data.data == name):
                 inner = node.sdfg.arrays[conn]
                 if list(inner.strides) == old:
-                    mapping = symbolic.symbol_replacements(node.symbol_mapping)
-                    shape = [symbolic.replace_symbols(extent, mapping) for extent in inner.shape]
-                    if len(shape) == len(outer.shape) and all(map(dt.core.same_extent, shape, outer.shape)):
+                    if spans_whole(node, inner, outer):
                         for c, edge in edges:
                             if c == conn and edge.data.data == name:
                                 edge.data.subset = subsets.Range.from_array(outer)

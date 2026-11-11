@@ -110,6 +110,44 @@ def map_has_wcr(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     return bool(body_wcr(state, map_entry))
 
 
+#: Combines with an OpenMP ``reduction`` clause of the same infix operator.
+SIMD_REDUCTIONS = (
+    dtypes.ReductionType.Sum,
+    dtypes.ReductionType.Product,
+    dtypes.ReductionType.Bitwise_And,
+    dtypes.ReductionType.Bitwise_Or,
+    dtypes.ReductionType.Bitwise_Xor,
+    dtypes.ReductionType.Logical_And,
+    dtypes.ReductionType.Logical_Or,
+)
+
+
+def reduces_into_fixed_elements(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
+    """Whether every WCR the body of a Sequential map executes is a tasklet's accumulation, at the map's exit, into
+    one element its innermost loop does not move: the code generator holds such an element in a register for the
+    loop, and the loop then takes ``simd reduction``. The register is its decision; an accumulation it leaves in
+    memory withholds the clause there."""
+    map_exit = state.exit_node(map_entry)
+    exit_wcrs = [e for e in state.in_edges(map_exit) if not e.data.is_empty() and e.data.wcr is not None]
+    if len(exit_wcrs) != len(body_wcr(state, map_entry)):  # an accumulation inside a nested SDFG
+        return False
+    innermost = map_entry.map.params[-1]
+    for edge in exit_wcrs:
+        redtype = operations.detect_reduction_type(edge.data.wcr)
+        dtype = state.sdfg.arrays[edge.data.data].dtype
+        # An integer minimum or maximum is exact in any order; a floating-point one orders NaN by its operands
+        exact_minmax = redtype in (dtypes.ReductionType.Min, dtypes.ReductionType.Max) and dtype in dtypes.INT_TYPES
+        if (
+            dtype not in dtypes.INT_TYPES | {dtypes.bool_, dtypes.float32, dtypes.float64}  # the clause's own types
+            or edge.data.subset.num_elements() != 1
+            or innermost in {str(s) for s in edge.data.subset.free_symbols}
+            or not (redtype in SIMD_REDUCTIONS or exact_minmax)
+            or not isinstance(state.memlet_path(edge)[0].src, nodes.Tasklet)
+        ):
+            return False
+    return True
+
+
 @dataclass(unsafe_hash=True)
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -186,5 +224,7 @@ class MarkSIMDMaps(ppl.Pass):
             # with ``simd``, so only the min/max combine withholds the clause here.
             return map_body_is_leaf(state, map_entry) and not map_has_minmax_wcr(state, map_entry)
         if map_entry.map.schedule == dtypes.ScheduleType.Sequential:
-            return map_body_is_leaf(state, map_entry) and not map_has_wcr(state, map_entry)
+            return map_body_is_leaf(state, map_entry) and (
+                not map_has_wcr(state, map_entry) or reduces_into_fixed_elements(state, map_entry)
+            )
         return False

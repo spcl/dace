@@ -111,7 +111,9 @@ point that do not exist yet (``dace/codegen/targets/cpu.py`` carries the matchin
 import copy
 from typing import Any
 
-from dace import SDFG, Memlet, data, dtypes, properties, subsets
+import sympy
+
+from dace import SDFG, Memlet, data, dtypes, properties, subsets, symbolic
 from dace.libraries.standard.nodes import FillLibraryNode, MergeLibraryNode, Reduce
 from dace.sdfg import memlet_utils, nodes
 from dace.sdfg import utils as sdutil
@@ -806,6 +808,23 @@ def outlinable(sdfg: SDFG, loop: LoopRegion) -> bool:
     )
 
 
+def shared_work(loop: LoopRegion) -> symbolic.SymbolicType | None:
+    """The most iterations a worksharing map at the top level of ``loop``'s states shares out in one execution, in
+    symbols defined ahead of ``loop``. ``None`` if an extent reads a loop variable or a symbol the nest assigns: a
+    wavefront's rows are longest in the middle of its range, so neither end bounds them."""
+    work = sympy.Integer(0)
+    for block in loop.all_control_flow_blocks():
+        if isinstance(block, SDFGState):
+            for node in top_level_nodes(block):
+                if isinstance(node, nodes.MapEntry) and node.map.schedule == WORKSHARED:
+                    work = sympy.Max(work, symbolic.pystr_to_symbolic(node.map.range.num_elements()))
+    inside = {name for edge in loop.all_interstate_edges() for name in edge.data.assignments}
+    inside |= {b.loop_variable for b in (loop, *loop.all_control_flow_blocks()) if isinstance(b, LoopRegion)}
+    if any(str(s) in inside for s in work.free_symbols):
+        return None
+    return work
+
+
 def outline(loop: LoopRegion, sdfg: SDFG, keep_outside: set[str]) -> None:
     """Nest ``loop`` into a nested SDFG wrapped in a one-iteration ``CPU_Persistent`` map.
 
@@ -813,6 +832,7 @@ def outline(loop: LoopRegion, sdfg: SDFG, keep_outside: set[str]) -> None:
     :param sdfg: the SDFG owning ``loop``.
     :param keep_outside: transients that stay in ``sdfg``, allocated before the region opens.
     """
+    work = shared_work(loop)
     # ``loop`` may not be a node of ``sdfg`` when nested -- use ``loop.parent_graph`` instead.
     state = xfh.nest_sdfg_subgraph(sdfg, SubgraphView(loop.parent_graph, [loop]), start=loop, keep_outside=keep_outside)
     nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
@@ -833,7 +853,9 @@ def outline(loop: LoopRegion, sdfg: SDFG, keep_outside: set[str]) -> None:
         del nsdfg.symbol_mapping[name]
         if name not in assigned_inside and name in nsdfg.sdfg.symbols:
             nsdfg.sdfg.remove_symbol(name)
-    xfh.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.CPU_Persistent, "_team")
+    team, _ = xfh.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.CPU_Persistent, "_team")
+    if work is not None:
+        team.map.omp_team_work = work
 
 
 def distribute_over_components(loop: LoopRegion) -> list[LoopRegion] | None:

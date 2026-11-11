@@ -125,6 +125,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         num_coeffs = 0  # scalar (map-parameter-free) inputs, e.g. a runtime alpha
         num_tensor_inputs = 0  # indexed (non-scalar) tensor operands, e.g. gemm's a, b
         tensor_input_chars = []  # per-tensor-input index set (for the elementwise guard)
+        sliced = False  # some operand is read at a point no map parameter runs over (a per-slice lift)
         for e in state.all_edges(self.tasklet):
             memlet = e.data
             if memlet.is_empty():
@@ -137,6 +138,7 @@ class LiftEinsum(xf.SingleStateTransformation):
             if indices is None:
                 return False
             ind = set(indices)
+            sliced |= any(str(b) not in ind and str(b) != "0" for b, _, _ in memlet.subset.ndrange())
             unique_chars |= ind
             outer = state.memlet_path(e)[-2 if e.dst is self.tasklet else 1]
             if not self.slices_at_points(e, outer):
@@ -178,8 +180,9 @@ class LiftEinsum(xf.SingleStateTransformation):
         # -- a pure outer product ``a[i]*b[j] -> i,j->ij``. It is elementwise (every output
         # element independent, no sum), so it tiles per-lane like any broadcast; lifting it to a
         # degenerate K=1 GEMM is no BLAS win and the tile widener mis-lowers it (unbound inner
-        # dims -> illegal DGEMM leading dimension, the gemver rank-2 update).
-        if self.contraction_only and not (input_chars - output_chars):
+        # dims -> illegal DGEMM leading dimension, the gemver rank-2 update). A per-slice outer
+        # product is the same K=1 GEMM once per enclosing iteration, so it is refused too.
+        if (self.contraction_only or sliced) and not (input_chars - output_chars):
             return False
 
         # At most one runtime scalar coefficient is supported (wired as the

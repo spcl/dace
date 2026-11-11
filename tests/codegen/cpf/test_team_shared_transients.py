@@ -10,6 +10,8 @@ each thread filled its own ``omp for`` share and read the rest uninitialized. bf
 :func:`dace.codegen.cpf.lift_persistent_transients` moves such buffers to the entry.
 """
 
+import re
+
 import numpy as np
 
 import dace
@@ -51,7 +53,7 @@ def inputs(n: int = 4099) -> dict[str, np.ndarray]:
 
 def test_a_team_shares_one_allocation_of_each_persistent_buffer():
     sdfg, code = rendered("cpf_team_shared")
-    team = code.index("#pragma omp parallel\n")
+    team = re.search(r"#pragma omp parallel(?! for)[^\n]*\n", code).end()  # the team's own clauses follow
     called = code[team:].split("(", 1)[0].split()[-1]
     start = code.index(f"void {called}(")
     body = code[start : code.index("\n}\n", start)]

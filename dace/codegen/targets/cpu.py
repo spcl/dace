@@ -428,6 +428,10 @@ def register_gpu_block_reduction(red: dict, covered: dict) -> str:
 _FLAT_TID = "(threadIdx.x + blockDim.x * (threadIdx.y + blockDim.y * threadIdx.z))"
 
 
+#: Element types an OpenMP ``reduction`` clause combines without a declared reduction.
+SIMD_REDUCTION_TYPES = dtypes.INT_TYPES | {dtypes.bool_, dtypes.float32, dtypes.float64}
+
+
 def _block_threads(red: dict) -> int:
     return red["block_x"] * red["block_y"] * red["block_z"]
 
@@ -2017,6 +2021,9 @@ class CPUCodeGen(TargetCodeGenerator):
         for frame in reversed(self._seq_accumulator_stack):
             acc = frame.get(memlet.data)
             if acc is not None and str(memlet.subset) == str(acc["subset"]):
+                if acc["op"] in ("min", "max"):
+                    than = "<" if acc["op"] == "min" else ">"
+                    return f"{acc['var']} = ({inname}) {than} {acc['var']} ? ({inname}) : {acc['var']}"
                 return f"{acc['var']} = {acc['var']} {acc['op']} ({inname})"
         _omp_covered = any(memlet.data in frame for frame in self._omp_reduction_scope_stack)
         # A range-privatized accumulator a thread may instead update in place: atomic under its flag.
@@ -3695,10 +3702,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # Into an access node, or into the exit of an enclosing map (a row reduction under a parallel map)
             if len(out_edges) != 1 or not isinstance(out_edges[0].dst, (nodes.AccessNode, nodes.MapExit)):
                 continue
-            # Under a sequential map the enclosing map holds the register: two would store over each other
-            if isinstance(out_edges[0].dst, nodes.MapExit) and out_edges[0].dst.map.schedule in (
-                dtypes.ScheduleType.Sequential,
-                dtypes.ScheduleType.Default,
+            # Under a sequential map that holds the register itself (the element does not move with its parameters)
+            # two would store over each other; an element that moves with them is this map's to hold
+            if (
+                isinstance(out_edges[0].dst, nodes.MapExit)
+                and out_edges[0].dst.map.schedule in (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default)
+                and not {str(s) for s in iedge.data.subset.free_symbols} & set(out_edges[0].dst.map.params)
             ):
                 continue
             desc = sdfg.arrays.get(iedge.data.data)
@@ -3709,7 +3718,10 @@ class CPUCodeGen(TargetCodeGenerator):
             if any(sname in map_param_set for sname in (str(x) for x in iedge.data.subset.free_symbols)):
                 continue
             op_str = _REDUCTION_TO_OMP_OP.get(operations.detect_reduction_type(iedge.data.wcr))
-            if op_str not in ("+", "*", "&", "|", "^", "&&", "||"):
+            # An integer minimum or maximum is exact in any order; a floating-point one orders NaN by its operands
+            if op_str not in ("+", "*", "&", "|", "^", "&&", "||") and not (
+                op_str in ("min", "max") and desc is not None and desc.dtype in dtypes.INT_TYPES
+            ):
                 continue
             # THIS map being sequential is not enough: an enclosing parallel scope makes the
             # target shared, and a register accumulator would drop every other thread's
@@ -3739,6 +3751,30 @@ class CPUCodeGen(TargetCodeGenerator):
             var = f"__acc_{len(self._seq_accumulator_stack)}_{len(out)}_{iedge.data.data}"
             out.append((iedge.data.data, iedge.data.subset, op_str, desc.dtype.ctype, target, var))
         return out
+
+    def _simd_reduction_clause(self, state: SDFGState, map_entry: nodes.MapEntry) -> str | None:
+        """The ``reduction`` clauses of a sequential map's ``simd`` loop: one variable per accumulation its exit takes,
+        each held in a register by this map or one around it (:meth:`_collect_sequential_accumulators`). ``""``
+        for a map that accumulates nothing, ``None`` if an accumulation still goes to memory."""
+        by_op: dict[str, list[str]] = {}
+        for edge in state.in_edges(state.exit_node(map_entry)):
+            if edge.data.is_empty() or edge.data.wcr is None:
+                continue
+            held = next(
+                (
+                    frame[edge.data.data]
+                    for frame in reversed(self._seq_accumulator_stack)
+                    if edge.data.data in frame and str(frame[edge.data.data]["subset"]) == str(edge.data.subset)
+                ),
+                None,
+            )
+            # OpenMP defines the clause for the arithmetic types only (no std::complex)
+            if held is None or state.sdfg.arrays[edge.data.data].dtype not in SIMD_REDUCTION_TYPES:
+                return None
+            names = by_op.setdefault(held["op"], [])
+            if held["var"] not in names:
+                names.append(held["var"])
+        return "".join(f" reduction({op}:{', '.join(names)})" for op, names in by_op.items())
 
     def _bind_reduction_aliases(self, sdfg: SDFG, names: list[str]) -> str:
         """Bind each persistent accumulator in ``names`` to its local alias for the map about to open; returns the
@@ -4038,6 +4074,7 @@ class CPUCodeGen(TargetCodeGenerator):
             " + ".join(f"{cpp.sym2cpp(sdfg.arrays[n].strides[0])} * {sdfg.arrays[n].dtype.bytes}" for n in names)
             for names in groups.values()
         ]
+        atomic_groups = [str(all(plan["flags"][n] is not None for n in names)).lower() for names in groups.values()]
         g = len(groups)
         # An order an enclosing loop leaves invariant lives in the state struct; its pre-pass reruns once a state
         # ahead of that loop sets the stale flag, or for a different team
@@ -4060,6 +4097,7 @@ class CPUCodeGen(TargetCodeGenerator):
             lines.append(f"dace::range_private::Order {order}({prefix}_nt, {trips}, {g});")
         lines += [
             f"const int64_t {prefix}_rb[{g}] = {{{', '.join(f'(int64_t)({b})' for b in row_bytes)}}};",
+            f"const bool {prefix}_at[{g}] = {{{', '.join(atomic_groups)}}};",
             f"#pragma omp parallel num_threads({prefix}_nt)",
             "{",
             f"const int {prefix}_t = omp_get_thread_num();",
@@ -4094,7 +4132,7 @@ class CPUCodeGen(TargetCodeGenerator):
         lines += [
             f"{order}.note({prefix}_t, {prefix}_k, {prefix}_lo, {prefix}_hi, {prefix}_n);",
             "}",
-            f"{order}.arrange({prefix}_t, {prefix}_T, {prefix}_rb);",
+            f"{order}.arrange({prefix}_t, {prefix}_T, {prefix}_rb, {prefix}_at);",
             *(["}"] if cached else []),
         ]
         for i, names in enumerate(groups.values()):
@@ -4263,6 +4301,15 @@ class CPUCodeGen(TargetCodeGenerator):
 
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
                 map_header += "#pragma omp parallel"
+                # A team no larger than the work one trip shares out pays for: every thread joins every barrier
+                work, share = node.map.omp_team_work, int(Config.get("compiler", "cpu", "parallel_min_work_per_thread"))
+                if share > 0 and node.map.omp_num_threads <= 0 and (symbolic.issymbolic(work) or int(work) > 0):
+                    team = f"(({sym2cpp(work)}) / {share})"
+                    function_stream.write("#include <omp.h>", cfg, state_id, node)
+                    map_header += (
+                        f" num_threads({team} < 1 ? 1 : ({team} < omp_get_max_threads() ? (int){team} : "
+                        "omp_get_max_threads()))"
+                    )
 
             # OpenMP schedule properties
             if not in_persistent and not range_private:
@@ -4432,8 +4479,11 @@ class CPUCodeGen(TargetCodeGenerator):
                     and node.map.schedule == dtypes.ScheduleType.Sequential
                     and self.renders_simd(sdfg, state_dfg, node)
                 ):
-                    pragma = "#pragma omp simd"
-                    will_have_openmp = True
+                    # A loop that accumulates carries the clause only with every accumulator in a register
+                    clause = self._simd_reduction_clause(state_dfg, node)
+                    if clause is not None:
+                        pragma = "#pragma omp simd" + clause
+                        will_have_openmp = True
 
                 init = "%s %s = %s" % (loop_ctypes[i], var, cpp.sym2cpp(begin))
                 if pragma is not None:

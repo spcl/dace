@@ -1088,6 +1088,29 @@ def test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_bo
     sdfg.validate()
 
 
+def test_an_extent_read_below_a_nest_whose_edge_names_one_element_is_folded_at_the_index_the_nest_reads():
+    """Propagation narrows the nest's edge to ``counts[b]``, the one element the body reads. The nest is still handed
+    the container's first element, so the fold reads ``counts[b]``, not ``counts[2*b]``."""
+    sdfg = kernel_with_a_per_thread_count()
+    state = next(s for s in sdfg.states() if s.label == "kernel")
+    nest = next(n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    next(e for e in state.in_edges(nest) if e.dst_conn == "counts").data.subset = dace.subsets.Range.from_string("b")
+    assert lift(sdfg) == 1
+    folds = [
+        node
+        for state in sdfg.states()
+        for node in state.nodes()
+        if isinstance(node, dace.nodes.Tasklet) and node.label == "fold_n_max"
+    ]
+    reads = [
+        str(edge.data.subset)
+        for state in sdfg.states()
+        for edge in state.edges()
+        if edge.dst in folds and edge.data.data == "counts"
+    ]
+    assert reads == ["b"], reads
+
+
 @pytest.mark.gpu
 def test_an_extent_a_thread_reads_through_an_index_runs_on_the_device():
     cp = pytest.importorskip("cupy")
@@ -1423,6 +1446,7 @@ if __name__ == "__main__":
     test_a_kernel_level_access_above_a_per_thread_scratch_is_refused()
     test_an_extent_a_thread_reads_is_sized_by_its_maximum_over_the_kernel()
     test_an_extent_a_thread_reads_through_an_index_it_reads_is_folded_through_both_reads()
+    test_an_extent_read_below_a_nest_whose_edge_names_one_element_is_folded_at_the_index_the_nest_reads()
     test_an_extent_shrinking_with_a_count_a_thread_reads_is_not_sized_by_its_maximum()
     test_an_extent_a_thread_reads_runs_on_the_device()
     test_an_extent_a_thread_reads_through_an_index_runs_on_the_device()

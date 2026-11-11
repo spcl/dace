@@ -327,6 +327,13 @@ endforeach()
 # Create DaCe library file
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
 target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
+if(DACE_ENABLE_HIP)
+  # The host compiler links, so the program gets its OpenMP runtime only. Linked by ROCm's clang, or with clang's
+  # implicit libraries, the forwarded -fopenmp brought in LLVM's libomp beside the host compiler's libgomp, and the
+  # host code's GOMP calls bound to it.
+  set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY LINKER_LANGUAGE CXX)
+  list(REMOVE_ITEM CMAKE_HIP_IMPLICIT_LINK_LIBRARIES omp)
+endif()
 
 # Standard C++, not the GNU dialect: CXX_STANDARD on its own emits -std=gnu++NN, which accepts
 # extensions that Clang then rejects.

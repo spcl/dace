@@ -135,7 +135,8 @@ def test_cpu_pipeline_matches_gfortran(lvn_only, istep, monkeypatch):
 
 @pytest.mark.parametrize("lvn_only, istep", sorted(OFFLOADED))
 def test_gpu_offload_launches_from_the_block_loops(lvn_only, istep, tmp_path):
-    """Every block loop stays a host loop and launches its column work: what the GPU runner runs, checked anywhere."""
+    """Every block loop stays a host loop and launches its column work: what the GPU runner runs, checked anywhere.
+    A block loop that launches nothing (the maximum over the blocks' CFL numbers) is threaded as in the CPU form."""
     sdfg = velocity_sdfg(tmp_path)
     pipeline(sdfg, config(lvn_only, istep), "gpu")
     sdfg.validate()

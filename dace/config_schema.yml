@@ -524,6 +524,17 @@ required:
                             the parallel and the sequential cost alike. 0 disables the size
                             rule, leaving only the nested-parallelism rule.
 
+                    parallel_min_work_per_thread:
+                        type: int
+                        default: 1024
+                        title: Iterations per thread of a hoisted team
+                        description: >
+                            A team opened once around a sequential loop (HoistParallelRegion)
+                            joins one barrier per worksharing map per trip. Its size is capped at
+                            the iterations one trip shares out divided by this, decided at run
+                            time, so a short row is not spread over a whole machine. 0 leaves
+                            the team at its default size.
+
                     implementation:
                         type: str
                         default: experimental_readable

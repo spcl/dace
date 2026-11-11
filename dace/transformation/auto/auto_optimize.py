@@ -695,6 +695,7 @@ def set_fast_implementations(
     device: dtypes.DeviceType,
     blocklist: list[str] = None,
     find_fast_library_fn: Callable[[dtypes.DeviceType], list[str]] = None,
+    selects: Callable[[nodes.LibraryNode, SDFGState], bool] | None = None,
 ) -> None:
     """
     Set fast library node implementations for the given device
@@ -705,8 +706,13 @@ def set_fast_implementations(
     :param find_fast_library_fn: function that returns the prioritized list of
                                   implementations for the given device, which will take priority over
                                   the built-in ``find_fast_library`` function.
+    :param selects: if given, only the library nodes it accepts (node, state) are touched.
     :note: Operates in-place on the given SDFG.
     """
+
+    def selected(node: nodes.Node, state: SDFGState) -> bool:
+        return isinstance(node, nodes.LibraryNode) and (selects is None or selects(node, state))
+
     implementation_prio = []
     if find_fast_library_fn is not None:
         implementation_prio.extend(find_fast_library_fn(device))
@@ -719,7 +725,7 @@ def set_fast_implementations(
     for current_sdfg in sdfg.all_sdfgs_recursive():
         for state in current_sdfg.states():
             for node in state.nodes():
-                if isinstance(node, nodes.LibraryNode):
+                if selected(node, state):
                     if (
                         node.default_implementation == "specialize"
                         and (len(set(node.implementations) & set(implementation_prio))) == 0
@@ -727,11 +733,11 @@ def set_fast_implementations(
                         node.expand(state)
 
     def pick_implementations() -> None:
-        for node, _ in sdfg.all_nodes_recursive():
+        for node, state in sdfg.all_nodes_recursive():
             # ``auto_select_implementation`` opts a node out entirely: its lowering was chosen by a
             # transformation (the tile ops, from the vectorizer's ``target_isa``), and every branch below
             # would silently reset it to the generic fallback -- no error, just the ISA path gone.
-            if isinstance(node, nodes.LibraryNode) and node.auto_select_implementation:
+            if selected(node, state) and node.auto_select_implementation:
                 # NOTE: LibraryNodes with sequential schedule on GPU must be expanded to CUDA kernel-compatible code.
                 # NOTE: Pure implementations are a safe choice for now but this should be revisited in the future.
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
@@ -757,7 +763,7 @@ def set_fast_implementations(
     composites = [
         (node, state)
         for node, state in sdfg.all_nodes_recursive()
-        if isinstance(node, nodes.LibraryNode)
+        if selected(node, state)
         and node.auto_select_implementation
         and type(node).implementations.get(node.implementation) is not None
         and type(node).implementations[node.implementation].composite
@@ -773,13 +779,13 @@ def set_fast_implementations(
     # the priority loop so it has the last word on exactly those types.
     if device == dtypes.DeviceType.CPU:
         for node, state in sdfg.all_nodes_recursive():
-            if isinstance(node, nodes.LibraryNode) and node.auto_select_implementation:
+            if selected(node, state) and node.auto_select_implementation:
                 apply_cpu_library_parallelism(node, state, sdfg)
 
     # reduce nodes
     if device == dtypes.DeviceType.GPU:
         for node, state in sdfg.all_nodes_recursive():
-            if isinstance(node, dace.nodes.LibraryNode) and node.auto_select_implementation:
+            if selected(node, state) and node.auto_select_implementation:
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
                     if "pure" in node.implementations:
                         node.implementation = "pure"

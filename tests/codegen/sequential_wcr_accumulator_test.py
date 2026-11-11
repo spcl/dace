@@ -51,8 +51,9 @@ def test_sequential_wcr_accumulates_in_a_register():
     """One load before the loop, one store after, and the body touching only the scalar."""
     code = generated_cpu_code(sequential_sum_sdfg())
     acc = [ln.strip() for ln in code.splitlines() if "__acc_" in ln]
-    assert len(acc) == 3, f"expected declare / accumulate / store-back, got {acc}"
-    declare, accumulate, store = acc
+    assert len(acc) == 4, f"expected declare / reduction clause / accumulate / store-back, got {acc}"
+    declare, clause, accumulate, store = acc
+    assert clause.startswith("#pragma omp simd reduction(+:__acc_"), clause
     assert declare.startswith("double __acc_") and declare.endswith("= *(out);"), declare
     # The accumulator VARIABLE is named after its target, so test for the dereference, not the
     # name: what must not appear in the body is a read or write of the location itself.
@@ -63,8 +64,8 @@ def test_sequential_wcr_accumulates_in_a_register():
     assert "reduce_atomic" not in code, "a sequential map needs no atomic"
 
 
-def test_sequential_wcr_is_bit_exact_against_the_sequential_oracle():
-    """Hoisting must not reassociate: same order, so the sum matches the oracle bit for bit."""
+def test_sequential_wcr_matches_the_sequential_oracle():
+    """The register is the loop's simd reduction: the lanes reassociate the sum, nothing else."""
     sdfg = sequential_sum_sdfg("seq_wcr_sum_numeric")
     n = 4096
     x = np.random.default_rng(0).random(n)
@@ -74,7 +75,7 @@ def test_sequential_wcr_is_bit_exact_against_the_sequential_oracle():
     expected = 0.0
     for value in x:
         expected += value
-    assert out[0] == expected, f"{out[0]!r} != {expected!r}"
+    assert np.isclose(out[0], expected, rtol=1e-13, atol=0), f"{out[0]!r} != {expected!r}"
 
 
 def test_a_shared_target_under_a_parallel_map_keeps_its_atomic():
@@ -253,7 +254,7 @@ def test_a_row_target_under_a_parallel_map_is_hoisted():
 
     code = generated_cpu_code(sdfg)
     acc = [ln.strip() for ln in code.splitlines() if "__acc_" in ln]
-    assert len(acc) == 3, f"expected declare / accumulate / store-back, got {acc}"
+    assert len(acc) == 4, f"expected declare / reduction clause / accumulate / store-back, got {acc}"
     assert "reduce_atomic" not in code
 
     m, n = 64, 200
