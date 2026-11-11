@@ -913,7 +913,14 @@ class StateFusionExtended(StateFusion):
                         # Checking for potential Read-Write data races
                         for d in sorted_first_inout:
                             if d in other_cc.second_outputs:
-                                nodes_second = second_output_by_data.get(d, [])
+                                # A node only an empty ordering edge enters writes nothing
+                                nodes_second = [
+                                    n
+                                    for n in second_output_by_data.get(d, [])
+                                    if any(not e.data.is_empty() for e in second_state.in_edges(n))
+                                ]
+                                if not nodes_second:
+                                    continue
                                 # Read-Write race
                                 if d in fused_cc.first_inputs:
                                     nodes_first = first_input_by_data.get(d, [])
