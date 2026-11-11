@@ -112,6 +112,21 @@ class ExpandPure(ExpandTransformation):
         return sdfg
 
 
+@library.expansion
+class ExpandCUDABlock(ExpandTransformation):
+    """Inside a GPU kernel: the ``pure`` maps spread over the block's lanes, the innermost axis strided across them.
+    Lanes splitting a contraction axis add into the output atomically."""
+
+    environments = []
+    runs_inside_kernel = True
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        from dace.libraries.standard.block_reduce import spread_over_lanes
+
+        return spread_over_lanes(ExpandPure.expansion(node, parent_state, parent_sdfg), node.label)
+
+
 def collapsible(arr: dace.data.Array, start: int, stop: int) -> bool:
     """Whether dimensions ``start:stop`` of ``arr`` lie in memory as one: each stride is the next dimension's extent
     times its stride, provably. A slice of a larger array (``a[:, 1:H + 1, 1:W + 1, :]``) does not."""
@@ -608,6 +623,7 @@ class TensorDot(nodes.LibraryNode):
         "cuTENSOR": ExpandCuTensor,
         "hipTENSOR": ExpandHipTensorDot,
         "TBLIS": ExpandTBLIS,
+        "CUDA (block)": ExpandCUDABlock,
     }
     # Deliberately None: the ``library.linalg.default_implementation`` config knob must stay able to
     # select this node's TTGT / cuTENSOR / pure lowering, and a node-class default would shadow it.

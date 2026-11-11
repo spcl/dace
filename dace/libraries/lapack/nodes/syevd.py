@@ -22,7 +22,9 @@ from dace import SDFG, SDFGState, dtypes, symbolic
 from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg.narrowing import as_range
@@ -146,6 +148,26 @@ ExpandSyevdHipSolverDn = hip_dialect.hip_expansion(
 )
 
 
+@dace.library.expansion
+class ExpandSyevdBlock(ExpandLapackBlock):
+    """In-kernel eigensolve by one thread block: cyclic Jacobi (``block_lapack::syevj``) on a shared copy of the
+    matrix, ascending eigenvalues. Real matrices of a literal order only."""
+
+    @classmethod
+    def scratch_bytes(cls, node, ops, n):
+        return n * n * ops["_xin"].desc.dtype.bytes
+
+    @classmethod
+    def body(cls, node, ops, uid):
+        n = int(ops["_xin"].shape[0])
+        work = f"__syevd_work_{uid}"
+        return (
+            lapack_block.scratch_code(ops["_xin"].ctype, work, n * n)
+            + lapack_block.syevj_code(ops, "_xin", "_evals", "_xout", node.lower, work)
+            + lapack_block.info_code(ops, "0")
+        )
+
+
 @dace.library.node
 class Syevd(dace.sdfg.nodes.LibraryNode):
     """LAPACK ``?SYEVD`` / ``?HEEVD``, eigenvalues and eigenvectors (``jobz = 'V'``).
@@ -159,6 +181,7 @@ class Syevd(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandSyevdMKL,
         "cuSolverDn": ExpandSyevdCuSolverDn,
         "hipSolverDn": ExpandSyevdHipSolverDn,
+        BLOCK_LAPACK: ExpandSyevdBlock,
     }
     default_implementation = None
 

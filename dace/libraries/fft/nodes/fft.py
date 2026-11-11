@@ -16,6 +16,7 @@ from dace.frontend.python.replacements.utils import normalize_axes
 from dace.libraries import hip_dialect
 from dace.libraries.blas.environments.intel_mkl import IntelMKL
 from dace.libraries.fft import environments as env
+from dace.libraries.standard.environments.cuda import CUDA
 from dace.libraries.standard.helper import call_scratch_lifetime, scratch_storage
 from dace.sdfg import utils as sdutil
 
@@ -88,8 +89,13 @@ def pure_sdfg(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG
 
     indesc, outdesc = input_and_output(parent_state, parent_sdfg, node)
     sdfg = dft.dft_nd_sdfg(indesc, outdesc, node.factor, isinstance(node, IFFT), node.axes, node.half_spectrum)
-    # The factor scales a C++ tasklet, whose code no symbol inference reads: declare what it names, typed as where
-    # the node sits -- a symbol in scope there, or the scalar container the factor reads
+    declare_factor_symbols(sdfg, node, parent_state, parent_sdfg)
+    return sdfg
+
+
+def declare_factor_symbols(sdfg: SDFG, node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> None:
+    """The factor scales a C++ tasklet, whose code no symbol inference reads: declare what it names in ``sdfg``,
+    typed as where the node sits -- a symbol in scope there, or the scalar container the factor reads."""
     names = sorted(str(s) for s in symbolic.pystr_to_symbolic(node.factor).free_symbols)
     if any(name not in sdfg.symbols for name in names):
         defined = parent_state.symbols_defined_at(node)
@@ -100,7 +106,6 @@ def pure_sdfg(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG
                 sdfg.add_symbol(name, defined[name])
             elif isinstance(parent_sdfg.arrays.get(name), data.Scalar):
                 sdfg.add_symbol(name, parent_sdfg.arrays[name].dtype)
-    return sdfg
 
 
 @library.register_expansion(FFT, "pure")
@@ -606,6 +611,130 @@ class MKLFFTExpansion(ExpandMKL):
 
 @library.register_expansion(IFFT, "MKL")
 class MKLIFFTExpansion(ExpandMKL):
+    pass
+
+
+##################################################################################################
+# In-kernel expansion: one thread block transforms the node's lines (dace/cuda/block_fft.cuh)
+##################################################################################################
+
+
+def block_operands(node: FourierTransform, state: SDFGState, sdfg: SDFG) -> tuple[data.Array, data.Array]:
+    """The input and output as the node's memlets see them: the subset's extents, the container's strides. Unit
+    extents stay, so ``axes`` index them as they index the container."""
+    from dace.libraries.blas.blas_helpers import stepped_strides  # avoid import loop
+
+    views = []
+    for edge in (sdutil.in_edge_with_name(node, state, "_inp"), sdutil.out_edge_with_name(node, state, "_out")):
+        desc = sdfg.arrays[edge.data.data]
+        views.append(
+            data.Array(
+                desc.dtype,
+                edge.data.subset.size(),
+                storage=desc.storage,
+                strides=stepped_strides(desc, edge.data.subset),
+            )
+        )
+    return views[0], views[1]
+
+
+def block_axis(node: FourierTransform, out: data.Data) -> int | None:
+    """The one axis a block transforms: the transformed axis of extent other than one, else the first."""
+    axes = normalize_fft_axes(len(out.shape), node.axes)
+    long_axes = [a for a in axes if symbolic.equal(out.shape[a], 1) is not True]
+    if len(long_axes) > 1 or not axes:
+        return None
+    return long_axes[0] if long_axes else axes[0]
+
+
+def block_refusal(node: FourierTransform, state: SDFGState, sdfg: SDFG) -> str | None:
+    """Why the in-kernel block FFT cannot take ``node``, or ``None`` if it can."""
+    from dace.libraries.blas.blas_helpers import same_memory  # avoid import loop
+
+    if node.half_spectrum:
+        return "a half-spectrum transform changes the extent of its last axis"
+    src, out = block_operands(node, state, sdfg)
+    if out.dtype not in COMPLEX_TYPES:
+        return f"the output is {out.dtype}, not complex64 or complex128"
+    if len(src.shape) != len(out.shape) or any(symbolic.equal(a, b) is not True for a, b in zip(src.shape, out.shape)):
+        return "the input and output extents differ"
+    if same_memory(node, state, "_inp", "_out"):
+        return "the transform is in place"
+    if block_axis(node, out) is None:
+        return "more than one axis is transformed"
+    return None
+
+
+def block_fft_sdfg(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+    """A ``GPU_ThreadBlock`` lane map around one ``dace::block_fft::transform`` call over every line of the node."""
+    from dace.codegen.common import sym2cpp  # avoid import loop
+    from dace.libraries.fft.algorithms.dft import floating_text
+    from dace.libraries.standard.block_reduce import BLOCK_COLLECTIVE_THREADS, add_block_lane_map
+
+    reason = block_refusal(node, parent_state, parent_sdfg)
+    if reason is not None:
+        raise ValueError(f"{node.label}: no in-kernel block FFT, {reason}")
+    src, out = block_operands(node, parent_state, parent_sdfg)
+    axis = block_axis(node, out)
+    batch = [d for d in range(len(out.shape)) if d != axis]
+
+    def line_start(desc: data.Array) -> str:
+        """``[&](l)``: the offset of line ``l``, its batch index unravelled in C order."""
+        terms, rest = [], "__l"
+        for d in reversed(batch):
+            extent = sym2cpp(out.shape[d])
+            terms.append(f"(({rest}) % ({extent})) * ({sym2cpp(desc.strides[d])})")
+            rest = f"({rest}) / ({extent})"
+        return f"[&](long long __l) -> long long {{ return {' + '.join(terms) or '0'}; }}"
+
+    lines = functools.reduce(operator.mul, (out.shape[d] for d in batch), 1)
+    real = "double" if out.dtype == dtypes.complex128 else "float"
+    code = (
+        f"dace::block_fft::transform<{out.dtype.ctype}>(__in, __out, {sym2cpp(out.shape[axis])}, {sym2cpp(lines)}, "
+        f"{sym2cpp(src.strides[axis])}, {sym2cpp(out.strides[axis])}, {line_start(src)}, {line_start(out)}, "
+        f"{'true' if isinstance(node, IFFT) else 'false'}, ({real})({floating_text(node.factor)}), "
+        f"{BLOCK_COLLECTIVE_THREADS});"
+    )
+    sdfg = SDFG(f"{node.label}_block")
+    sdfg.add_datadesc("_inp", src)
+    sdfg.add_datadesc("_out", out)
+    declare_factor_symbols(sdfg, node, parent_state, parent_sdfg)
+    state = sdfg.add_state(f"{node.label}_block_state")
+    tasklet = state.add_tasklet(
+        f"{node.label}_block_fft",
+        {"__in": dtypes.pointer(src.dtype)},
+        {"__out": dtypes.pointer(out.dtype)},
+        code,
+        language=dtypes.Language.CPP,
+    )
+    entry, exit_node = add_block_lane_map(state, f"{node.label}_block_lanes")
+    state.add_memlet_path(
+        state.add_read("_inp"), entry, tasklet, dst_conn="__in", memlet=Memlet.from_array("_inp", src)
+    )
+    state.add_memlet_path(
+        tasklet, exit_node, state.add_write("_out"), src_conn="__out", memlet=Memlet.from_array("_out", out)
+    )
+    return sdfg
+
+
+class ExpandBlockFFT(xf.ExpandTransformation):
+    """In-kernel FFT by ONE thread block: radix-2 for a power-of-two length, a direct DFT otherwise."""
+
+    runs_inside_kernel = True
+    environments = [CUDA, env.BlockFFT]
+
+    @staticmethod
+    def expansion(node: FourierTransform, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        return block_fft_sdfg(node, parent_state, parent_sdfg)
+
+
+@library.register_expansion(FFT, "CUDA (block strided)")
+class BlockFFTExpansion(ExpandBlockFFT):
+    pass
+
+
+@library.register_expansion(IFFT, "CUDA (block strided)")
+class BlockIFFTExpansion(ExpandBlockFFT):
     pass
 
 

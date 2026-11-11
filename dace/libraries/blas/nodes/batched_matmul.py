@@ -10,7 +10,7 @@ from dace import dtypes, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries import hip_dialect
-from dace.libraries.blas import environments, gpu_dialect
+from dace.libraries.blas import block, environments, gpu_dialect
 from dace.libraries.blas.blas_helpers import (
     check_access,
     check_one_device,
@@ -19,6 +19,7 @@ from dace.libraries.blas.blas_helpers import (
     to_cublas_computetype,
 )
 from dace.libraries.blas.nodes.matmul import _get_batchmm_opts, _get_codegen_gemm_opts, _get_matmul_operands
+from dace.libraries.standard.environments.cuda import CUDA
 from dace.ordered import OrderedSet
 from dace.symbolic import equal, equal_valued, is_small_extent, symstr
 from dace.transformation.transformation import ExpandTransformation
@@ -234,6 +235,48 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
         return ExpandBatchedMatMulPure.make_sdfg(node, state, sdfg)
+
+
+@dace.library.expansion
+class ExpandBatchedMatMulCUDABlock(ExpandTransformation):
+    """In-kernel batched GEMM by ONE thread block: each lane computes elements of ``_c``, strided over the block.
+    A batch dimension of extent 1 broadcasts, as in the ``pure`` expansion."""
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        node.validate(parent_sdfg, parent_state)
+        operands = _get_matmul_operands(node, parent_state, parent_sdfg)
+        sdfg = dace.SDFG(node.label + "_block")
+        for name, operand in zip(("_a", "_b", "_c"), operands):
+            desc, shape, strides = operand[1:4]
+            sdfg.add_array(name, shape, desc.dtype, strides=strides, storage=desc.storage)
+        if block.vector_types(sdfg):
+            return ExpandBatchedMatMulPure.expansion(node, parent_state, parent_sdfg)
+        shape_a, shape_b, shape_c = (sdfg.arrays[name].shape for name in ("_a", "_b", "_c"))
+        batch = [(f"__b{i}", extent) for i, extent in enumerate(shape_c[:-2])]
+
+        def indices(shape, matrix: list[str]) -> list[str]:
+            """Batch subscripts aligned to the RIGHT against the output's; an extent of 1 is read at 0."""
+            offset = len(batch) - (len(shape) - 2)
+            return ["0" if equal(d, 1) is True else batch[offset + j][0] for j, d in enumerate(shape[:-2])] + matrix
+
+        a = block.at(sdfg, "_a", *indices(shape_a, ["__k", "__m"] if node.transA else ["__m", "__k"]))
+        b = block.at(sdfg, "_b", *indices(shape_b, ["__n", "__k"] if node.transB else ["__k", "__n"]))
+        c = block.at(sdfg, "_c", *(var for var, extent in batch), "__m", "__n")
+        result = "__alpha * __acc" if equal_valued(0, node.beta) else f"__alpha * __acc + __beta * {c}"
+        values = {"alpha": node.alpha} if equal_valued(0, node.beta) else {"alpha": node.alpha, "beta": node.beta}
+        dtype = sdfg.arrays["_c"].dtype
+        code = block.coefficients(dtype, **values) + block.block_contraction_code(
+            batch + [("__m", shape_c[-2]), ("__n", shape_c[-1])],
+            [("__k", shape_a[-2] if node.transA else shape_a[-1])],
+            f"{a} * {b}",
+            f"{c} = {result};",
+            dtype.ctype,
+        )
+        return block.block_sdfg(node, parent_state, sdfg, code, tuple(values.values()))
 
 
 @dace.library.expansion
@@ -626,6 +669,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         "cuBLAS": ExpandBatchedMatMulCuBLAS,
         "hipBLAS": ExpandBatchedMatMulHipBLAS,
         "rocBLAS": ExpandBatchedMatMulHipBLAS,
+        "CUDA (block strided)": ExpandBatchedMatMulCUDABlock,
     }
     transA = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose A before multiplying")
     transB = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose B before multiplying")

@@ -13,7 +13,11 @@ loop, the shared-memory declaration and the broadcast is how two copies drift ap
 placement, which is the part that goes silently wrong rather than loudly broken.
 """
 
-from dace import SDFG, dtypes, nodes, subsets, symbolic
+import copy
+from collections.abc import Callable
+
+from dace import SDFG, data, dtypes, nodes, subsets, symbolic
+from dace.memlet import Memlet
 from dace.sdfg.state import SDFGState
 
 #: Threads per block for the in-kernel collectives. Four wavefronts on CDNA (64 wide), eight warps
@@ -123,9 +127,10 @@ def add_block_lane_map(state, label: str, lanes: int = BLOCK_COLLECTIVE_THREADS)
 #: specific first. Having one is the whole heuristic for what belongs inside a GPU kernel: a
 #: reduce-shaped node (``Reduce``, ``Scan``, ``Dot``) reduces along one axis whose extent is bounded
 #: by the problem's feature width, so a thread block is the right amount of machine to point at it.
-#: A node with none -- ``Gemm``, ``BatchedMatMul``, ``TensorTranspose`` -- does device-scale work per
-#: invocation (measured: 39.8M elements for one in-kernel TensorTranspose, ~5e9 FLOP for one
-#: BatchedMatMul) and belongs in a device-wide vendor call issued from the host, not in one block.
+#: Every BLAS node has one too (:mod:`dace.libraries.blas.block`), so a map around one product per iteration
+#: (doitgen) is a kernel rather than a host loop; the price is a device-scale product left in a map, which one
+#: block runs slowly (measured ~5e9 FLOP for one in-kernel BatchedMatMul). A node with none belongs in a
+#: device-wide call issued from the host.
 #:
 #: Deliberately capability-based rather than a list of class names: giving a node a block expansion
 #: is what opts it in, in ONE place, and no size is read. Extents here are symbolic
@@ -141,6 +146,9 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
     does not satisfy. Most specific first is what picks the general one. Given the node's ``state``
     and ``sdfg``, a lowering that would refuse the node's shape is not offered.
     """
+    from dace.libraries.fft.nodes.fft import FourierTransform
+    from dace.libraries.fft.nodes.fft import block_refusal as fft_block_refusal
+    from dace.libraries.lapack.block import ExpandLapackBlock
     from dace.libraries.standard.nodes.reduce import Reduce, block_strided_refusal
     from dace.libraries.standard.nodes.scan import Scan, block_refusal
     from dace.libraries.standard.nodes.state_scan import StateScan, block_chunks
@@ -157,7 +165,17 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
         return None
     if isinstance(node, Scan) and block_refusal(node, state, sdfg if sdfg is not None else state.sdfg) is not None:
         return None
+    if (
+        isinstance(node, FourierTransform)
+        and fft_block_refusal(node, state, sdfg if sdfg is not None else state.sdfg) is not None
+    ):
+        return None
     if isinstance(node, StateScan) and block_chunks(node) is None:
+        return None
+    if isinstance(node, whole_array_nodes()) and node.dim not in (None, -1):
+        return None
+    expansion = impls[block]
+    if issubclass(expansion, ExpandLapackBlock) and expansion.refusal(node, state, sdfg or state.sdfg) is not None:
         return None
     if isinstance(node, lane_nodes) and holds_thread_block_maps(node, state):
         return None
@@ -166,13 +184,47 @@ def gpu_block_implementation(node: nodes.Node, state: SDFGState | None = None, s
 
 def lane_map_nodes() -> tuple[type, ...]:
     """The library nodes whose block lowering adds its own ``BLOCK_COLLECTIVE_THREADS``-lane map."""
+    from dace.libraries.linalg.nodes.tensordot import TensorDot
     from dace.libraries.linalg.nodes.transpose import Transpose
     from dace.libraries.linalg.nodes.ttranspose import TensorTranspose
+    from dace.libraries.standard.nodes.broadcast import Broadcast
     from dace.libraries.standard.nodes.copy import CopyLibraryNode
+    from dace.libraries.standard.nodes.cshift import CShift
     from dace.libraries.standard.nodes.fill import FillLibraryNode
+    from dace.libraries.standard.nodes.merge_node import MergeLibraryNode
     from dace.libraries.standard.nodes.state_scan import StateScan
 
-    return (CopyLibraryNode, FillLibraryNode, StateScan, TensorTranspose, Transpose)
+    return (
+        Broadcast,
+        CopyLibraryNode,
+        CShift,
+        FillLibraryNode,
+        MergeLibraryNode,
+        StateScan,
+        TensorDot,
+        TensorTranspose,
+        Transpose,
+    )
+
+
+def whole_array_nodes() -> tuple[type, ...]:
+    """The reductions whose block lowering folds the whole array: one along ``dim`` stays per-thread."""
+    from dace.libraries.standard.nodes.argminmax import ExtremeIndex
+    from dace.libraries.standard.nodes.mask_reduction import MaskReduction
+    from dace.libraries.standard.nodes.norm2 import Norm2
+
+    return (ExtremeIndex, MaskReduction, Norm2)
+
+
+def writes_block_shared(node: nodes.Node, state: SDFGState) -> bool:
+    """Whether every container ``node`` writes is one the block shares: lanes splitting a thread's own copy would
+    each fill only their share of it."""
+    arrays = state.sdfg.arrays
+    return all(
+        not arrays[e.data.data].transient or arrays[e.data.data].storage == dtypes.StorageType.GPU_Shared
+        for e in state.out_edges(node)
+        if not e.data.is_empty()
+    )
 
 
 def holds_thread_block_maps(node: nodes.Node, state: SDFGState) -> bool:
@@ -225,6 +277,8 @@ def in_kernel_block_implementation(node: nodes.LibraryNode, state: SDFGState) ->
     if small_operands(node, state):
         return None
     if accumulates_beside(node, state):
+        return None
+    if isinstance(node, lane_map_nodes()) and not writes_block_shared(node, state):
         return None
     return gpu_block_implementation(node, state, state.sdfg)
 
@@ -291,3 +345,98 @@ def release_kernel_block_size(node: nodes.Node, state: SDFGState) -> None:
     for entry in enclosing_maps(node, state):
         if entry.map.schedule == dtypes.ScheduleType.GPU_Device:
             entry.map.gpu_block_size = None
+
+
+def spread_over_lanes(sdfg: SDFG, label: str) -> SDFG:
+    """Run each outermost map of ``sdfg`` on the block's lanes, the innermost axis strided across them so adjacent
+    lanes touch adjacent elements; a barrier after the lane map publishes the writes to every lane."""
+    from dace.sdfg.propagation import propagate_memlets_state
+
+    for state in sdfg.states():
+        for entry in [n for n in state.scope_children()[None] if isinstance(n, nodes.MapEntry)]:
+            lanes, lanes_exit = add_block_lane_map(state, f"{label}_lanes")
+            lanes.map.gpu_force_syncthreads = True
+            begin, end, step = entry.map.range[-1]
+            lane = symbolic.pystr_to_symbolic("__lane")
+            entry.map.range[-1] = (begin + lane * step, end, step * BLOCK_COLLECTIVE_THREADS)
+            entry.map.schedule = dtypes.ScheduleType.Sequential
+            reroute_through(state, entry, lanes, inward=True)
+            reroute_through(state, state.exit_node(entry), lanes_exit, inward=False)
+        propagate_memlets_state(sdfg, state)
+    return sdfg
+
+
+def reroute_through(state: SDFGState, scope_node: nodes.Node, outer: nodes.Node, inward: bool) -> None:
+    """Pass every edge entering (``inward``) or leaving ``scope_node`` through the scope node ``outer``."""
+    edges = list(state.in_edges(scope_node) if inward else state.out_edges(scope_node))
+    for edge in edges:
+        state.remove_edge(edge)
+        conn = edge.dst_conn if inward else edge.src_conn
+        name = None if conn is None else conn.removeprefix("IN_" if inward else "OUT_")
+        if name is not None:
+            outer.add_in_connector(f"IN_{name}")
+            outer.add_out_connector(f"OUT_{name}")
+        into, out_of = (None, None) if name is None else (f"IN_{name}", f"OUT_{name}")
+        if inward:
+            state.add_edge(edge.src, edge.src_conn, outer, into, edge.data)
+            state.add_edge(outer, out_of, scope_node, conn, copy.deepcopy(edge.data))
+        else:
+            state.add_edge(scope_node, conn, outer, into, copy.deepcopy(edge.data))
+            state.add_edge(outer, out_of, edge.dst, edge.dst_conn, edge.data)
+    if not edges:
+        if inward:
+            state.add_nedge(outer, scope_node, Memlet())
+        else:
+            state.add_nedge(scope_node, outer, Memlet())
+
+
+def linear_element(pointer: str, desc: data.Array, index: str) -> str:
+    """C++ reading element ``index`` of ``desc``, counted in row-major order, through ``pointer``."""
+    from dace.codegen.targets.cpp import sym2cpp
+
+    terms, inner = [], 1
+    for extent, stride in reversed(list(zip(desc.shape, desc.strides))):
+        terms.append(f"((({index}) / ({sym2cpp(inner)})) % ({sym2cpp(extent)})) * ({sym2cpp(stride)})")
+        inner = inner * extent
+    return f"{pointer}[{' + '.join(reversed(terms))}]"
+
+
+def add_lane_tasklet(sdfg: SDFG, label: str, code: str, reads: dict[str, str], writes: dict[str, str]) -> nodes.Tasklet:
+    """A state of ``sdfg`` holding one C++ tasklet under a lane map; each connector of ``reads`` / ``writes`` names
+    the array of ``sdfg`` it accesses whole through a pointer. The map supplies threads, it does not partition data."""
+    state = sdfg.add_state(f"{label}_block_state")
+
+    def pointers(conns: dict[str, str]) -> dict[str, dtypes.typeclass]:
+        return {conn: dtypes.pointer(sdfg.arrays[name].dtype.base_type) for conn, name in conns.items()}
+
+    tasklet = state.add_tasklet(f"{label}_block", pointers(reads), pointers(writes), code, language=dtypes.Language.CPP)
+    entry, exit_node = add_block_lane_map(state, f"{label}_block_lanes")
+    for conn, name in reads.items():
+        whole = Memlet.from_array(name, sdfg.arrays[name])
+        state.add_memlet_path(state.add_read(name), entry, tasklet, dst_conn=conn, memlet=whole)
+    for conn, name in writes.items():
+        whole = Memlet.from_array(name, sdfg.arrays[name])
+        state.add_memlet_path(tasklet, exit_node, state.add_write(name), src_conn=conn, memlet=whole)
+    if not reads:
+        state.add_nedge(entry, tasklet, Memlet())
+    return tasklet
+
+
+def block_tasklet_sdfg(
+    node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, code: Callable[[dict[str, data.Data]], str]
+) -> SDFG:
+    """:func:`add_lane_tasklet` over each connector ``c`` of ``node``, read or written whole through the pointer
+    ``__b<c>``; ``code`` spells its body given the connectors' containers. Every lane writes the same answer."""
+    from dace.libraries.standard.helper import connector_array
+
+    nsdfg = SDFG(f"{node.label}_block")
+    ins = [e.dst_conn for e in state.in_edges(node) if e.dst_conn is not None]
+    outs = [e.src_conn for e in state.out_edges(node) if e.src_conn is not None]
+    for edge in state.in_edges(node):
+        if edge.dst_conn is not None:
+            connector_array(nsdfg, edge.dst_conn, edge.data, sdfg)
+    for edge in state.out_edges(node):
+        if edge.src_conn is not None:
+            connector_array(nsdfg, edge.src_conn, edge.data, sdfg)
+    add_lane_tasklet(nsdfg, node.label, code(nsdfg.arrays), {f"__b{c}": c for c in ins}, {f"__b{c}": c for c in outs})
+    return nsdfg

@@ -4,8 +4,9 @@ from dace import SDFG, SDFGState, library, properties
 from dace import memlet as mm
 from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
+from dace.libraries.blas import blas_helpers, block, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
+from dace.libraries.standard.environments.cuda import CUDA
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -49,6 +50,27 @@ def scal_call(node, state, sdfg, environment=None) -> SDFG:
     return blas_helpers.in_place_call(node, state, sdfg, "_x", "_res", scalars + call)
 
 
+@library.expansion
+class ExpandScalCUDABlock(ExpandTransformation):
+    """In-kernel SCAL by ONE thread block: each lane scales elements, strided over the block."""
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
+        if block.vector_types(sdfg):
+            return ExpandScalPure.expansion(node, parent_state, parent_sdfg)
+        dtype = sdfg.arrays["_res"].dtype
+        store = f"{block.at(sdfg, '_res', '__i')} = __a * {block.at(sdfg, '_x', '__i')};"
+        code = block.coefficients(dtype, a=node.a) + block.block_contraction_code(
+            [("__i", sdfg.arrays["_res"].shape[0])], [], "", store, dtype.ctype
+        )
+        return block.block_sdfg(node, parent_state, sdfg, code, (node.a,))
+
+
 @library.node
 class Scal(nodes.LibraryNode):
     """BLAS ``?scal``: ``_res = a * _x`` for vectors."""
@@ -56,6 +78,7 @@ class Scal(nodes.LibraryNode):
     implementations = {
         "pure": ExpandScalPure,
         **vendor.vendor_expansions("Scal", scal_call),
+        "CUDA (block strided)": ExpandScalCUDABlock,
     }
     default_implementation = None
 

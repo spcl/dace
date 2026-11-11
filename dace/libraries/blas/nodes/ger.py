@@ -11,8 +11,9 @@ from dace import memlet as mm
 from dace import subsets as sbs
 from dace.codegen.common import sym2cpp
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers, gpu_dialect, vendor
+from dace.libraries.blas import blas_helpers, block, gpu_dialect, vendor
 from dace.libraries.blas.blas_helpers import operand
+from dace.libraries.standard.environments.cuda import CUDA
 from dace.properties import SymbolicProperty
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.nodes import LibraryNode
@@ -111,6 +112,29 @@ def ger_gpu_call(node, state, sdfg, environment, layout, res, x, y) -> SDFG:
     return blas_helpers.in_place_call(node, state, sdfg, "_A", "_res", code)
 
 
+@library.expansion
+class ExpandGerCUDABlock(ExpandTransformation):
+    """In-kernel GER by ONE thread block: each lane computes elements of ``_res``, strided over the block."""
+
+    runs_inside_kernel = True
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        node.validate(parent_sdfg, parent_state)
+        sdfg = blas_helpers.connector_sdfg(node, parent_state, parent_sdfg)
+        if block.vector_types(sdfg):
+            return ExpandGerPure.expansion(node, parent_state, parent_sdfg)
+        dtype = sdfg.arrays["_res"].dtype
+        m, n = sdfg.arrays["_res"].shape
+        product = f"__alpha * {block.at(sdfg, '_x', '__i')} * {block.at(sdfg, '_y', '__j')}"
+        store = f"{block.at(sdfg, '_res', '__i', '__j')} = {product} + {block.at(sdfg, '_A', '__i', '__j')};"
+        code = block.coefficients(dtype, alpha=node.alpha) + block.block_contraction_code(
+            [("__i", m), ("__j", n)], [], "", store, dtype.ctype
+        )
+        return block.block_sdfg(node, parent_state, sdfg, code, (node.alpha,))
+
+
 @library.node
 class Ger(LibraryNode):
     """
@@ -125,6 +149,7 @@ class Ger(LibraryNode):
     implementations = {
         "pure": ExpandGerPure,
         **vendor.vendor_expansions("Ger", ger_call),
+        "CUDA (block strided)": ExpandGerCUDABlock,
     }
     default_implementation = None
 

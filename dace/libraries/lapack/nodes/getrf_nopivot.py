@@ -32,7 +32,9 @@ from dace import dtypes, symbolic
 from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
 from dace.libraries.standard import pure_components
 from dace.memlet import Memlet
 from dace.transformation.transformation import ExpandTransformation
@@ -218,6 +220,17 @@ ExpandGetrfNoPivotHipSolverDn = hip_dialect.hip_expansion(
 ExpandGetrfNoPivotHipSolverDn.environments = [environments.hipsolverdn.hipSolverDn, blas_environments.hipblas.hipBLAS]
 
 
+@dace.library.expansion
+class ExpandGetrfNoPivotBlock(ExpandLapackBlock):
+    """In-kernel LU without pivoting by one thread block (``block_lapack::getrf_nopivot``), in place."""
+
+    matrix = OPERAND
+
+    @classmethod
+    def body(cls, node, ops, uid):
+        return f"dace::block_lapack::getrf_nopivot({lapack_block.mat(ops, OPERAND)}, {lapack_block.order(ops, OPERAND)});\n"
+
+
 @dace.library.node
 class GetrfNoPivot(dace.sdfg.nodes.LibraryNode):
     """In-place LU factorization without pivoting (see the module docstring)."""
@@ -227,6 +240,7 @@ class GetrfNoPivot(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandGetrfNoPivotMKL,
         "cuSolverDn": ExpandGetrfNoPivotCuSolverDn,
         "hipSolverDn": ExpandGetrfNoPivotHipSolverDn,
+        BLOCK_LAPACK: ExpandGetrfNoPivotBlock,
     }
     default_implementation = "pure"
 

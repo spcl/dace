@@ -8,7 +8,9 @@ from dace import dtypes
 from dace.libraries import hip_dialect
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import block as lapack_block
 from dace.libraries.lapack import environments
+from dace.libraries.lapack.block import BLOCK_LAPACK, ExpandLapackBlock
 from dace.ordered import OrderedSet
 from dace.transformation.transformation import ExpandTransformation
 
@@ -122,6 +124,20 @@ ExpandPotrfHipSolverDn = hip_dialect.hip_expansion(
 )
 
 
+@dace.library.expansion
+class ExpandPotrfBlock(ExpandLapackBlock):
+    """In-kernel Cholesky by one thread block (``block_lapack::potrf``); the other triangle is left as it is."""
+
+    @classmethod
+    def body(cls, node, ops, uid):
+        lower = "true" if node.lower else "false"
+        return (
+            lapack_block.copy_code(ops, "_xin", "_xout")
+            + f"const int __info = dace::block_lapack::potrf({lapack_block.mat(ops, '_xout')}, {lapack_block.order(ops, '_xin')}, {lower});\n"
+            + lapack_block.info_code(ops, "__info")
+        )
+
+
 @dace.library.node
 class Potrf(dace.sdfg.nodes.LibraryNode):
     # Global properties
@@ -130,6 +146,7 @@ class Potrf(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandPotrfMKL,
         "cuSolverDn": ExpandPotrfCuSolverDn,
         "hipSolverDn": ExpandPotrfHipSolverDn,
+        BLOCK_LAPACK: ExpandPotrfBlock,
     }
     default_implementation = None
 
