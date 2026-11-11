@@ -29,14 +29,9 @@ from typing import Any
 
 from dace.frontend.python import astutils
 from dace.optionals import required
+from dace.transformation.passes.analysis.smt_dependence import has_z3, z3
 
-try:
-    import z3
-
-    HAS_Z3 = True
-except Exception:
-    z3 = None  # type: ignore
-    HAS_Z3 = False
+HAS_Z3 = has_z3()
 
 #: Encoding width. Wide enough that a body masking to 8, 16 or 32 bits never overflows into it.
 DEFAULT_WIDTH = 64

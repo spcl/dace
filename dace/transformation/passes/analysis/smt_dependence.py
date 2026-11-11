@@ -19,6 +19,9 @@ try:
     import z3
 
     _HAS_Z3 = True
+    # A collector run on another thread (pytest-xdist's receiver) finalizes terms while this thread is inside z3 with
+    # the GIL released; z3's reference counts are not thread-safe, so that aborted the process. Deferred instead.
+    z3.Z3_enable_concurrent_dec_ref(z3.main_ctx().ref())
 except Exception:
     z3 = None  # type: ignore
     _HAS_Z3 = False
