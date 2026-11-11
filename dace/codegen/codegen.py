@@ -500,6 +500,9 @@ def lower_and_generate_code(sdfg: SDFG, validate: bool) -> list[CodeObject]:
 
         # Unvalidated sweeps: the ``validate`` closing this branch checks the inlined SDFG once.
         inline_host_nested_sdfgs(sdfg, validate=False)
+        # A map whose body was one nested SDFG is a leaf now: its accumulation sits at its own exit
+        if config.Config.get_bool("compiler", "cpu", "simd_maps"):
+            MarkSIMDMaps().apply_pass(sdfg, {})
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Normalize single-value transients to Scalar (default is transient-only, so the signature
