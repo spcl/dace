@@ -217,6 +217,25 @@ def test_a_write_conflict_from_a_tile_lands_once_per_block_on_a_gpu():
     np.testing.assert_allclose(h, np.exp(a).reshape(6, 64).sum(axis=0), rtol=1e-12)
 
 
+@dace.program
+def row_sums_per_slice(A: dace.float64[L, 4, 64], S: dace.float64[L, 4]):
+    for r in dace.map[0:L]:
+        for k in dace.map[0:4]:
+            S[r, k : k + 1] = dace.tile.sum(dace.tile.exp(A[r, k, :]))
+
+
+@pytest.mark.gpu
+def test_a_block_reduction_under_a_sequential_map_on_a_gpu():
+    """The inner map runs sequentially in every thread of the block; tiling the kernel again over rows hung it."""
+    sdfg = row_sums_per_slice.to_sdfg()
+    sdfg.name = "row_sums_per_slice_gpu"
+    sdfg.apply_gpu_transformations()
+    a, s = np.random.default_rng(3).random((3, 4, 64)), np.zeros((3, 4))
+    with new_code_generators():
+        sdfg(A=a, S=s, L=3)
+    np.testing.assert_allclose(s, np.exp(a).sum(axis=2), rtol=1e-12)
+
+
 if __name__ == "__main__":
     test_tile_calls_make_block_nodes()
     test_a_block_node_lowers_as_a_thread_node_on_a_cpu()
@@ -228,3 +247,4 @@ if __name__ == "__main__":
     test_a_warp_reduction_is_not_supported_yet()
     test_block_reductions_and_scans_use_cub_on_a_gpu()
     test_a_write_conflict_from_a_tile_lands_once_per_block_on_a_gpu()
+    test_a_block_reduction_under_a_sequential_map_on_a_gpu()
