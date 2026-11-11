@@ -6,31 +6,33 @@ A loop ``i = s; i <= e; i += k`` with ``pipeline_depth = D`` and ``N`` iteration
 ``n = (i - s) / k``::
 
     prologue  for p in [0, min(D-1, N)):          PRODUCE tile s + p*k        into slot p
-    main      for i with n in [0, N - (D-1)):     CONSUME tile i              from slot n % D
-                                                  PRODUCE tile i + (D-1)*k    into slot (n + D-1) % D
+    main      for i with n in [0, N - (D-1)):     PRODUCE tile i + (D-1)*k    into slot (n + D-1) % D
+                                                  CONSUME tile i              from slot n % D
     epilogue  for i with n in [max(N-(D-1), 0), N): CONSUME tile i            from slot n % D
 
 Every staged buffer gets a leading dimension of size ``D``, so tile ``n`` lives in slot ``n % D``. ``PRODUCE`` holds
 the staged copies and ``CONSUME`` the rest of the body. Each is its own control flow region, so later passes can make
-the copies asynchronous, place the waits between the two, or run them on different warps. The copies stay synchronous
-here, so the result computes exactly what the loop did.
+the copies asynchronous and place the waits at the start of ``CONSUME`` (see ``InsertAsyncWaits``).
 
-The main loop consumes before it produces: ``PRODUCE`` of iteration ``n`` overwrites the slot ``CONSUME`` of iteration
-``n-1`` read, and the copies of iteration ``n-1`` lie between the two. When threads share the buffer, the barrier that
-completes those copies (needed anyway before their tile is read) therefore also orders the reads before the overwrite.
-TODO: Switch order of main-loop once asynchronous waits are supported
-TODO: Re-write this docstring once asynchronous waits are supported through their own pass
+The main loop produces before it consumes, so the copies of a tile are in flight while the block computes on an older
+one. ``PRODUCE`` of iteration ``n`` overwrites the slot ``CONSUME`` of iteration ``n-1`` reads. When threads share the
+buffer (``GPU_Shared``), a block-wide :class:`~dace.libraries.standard.nodes.barrier.Barrier` at the start of the
+main loop's ``PRODUCE`` therefore orders those reads before the overwrite. The copies stay as they are here, so a
+synchronous copy keeps computing exactly what the loop did.
 """
 
 import copy
+import dataclasses
 import warnings
 
 import sympy
 
 import dace
-from dace import SDFG, InterstateEdge, properties, subsets, symbolic
+from dace import SDFG, InterstateEdge, dtypes, properties, subsets, symbolic
+from dace.libraries.standard.nodes.barrier import Barrier, SyncScope
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
+from dace.sdfg.scope import is_in_scope
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     BreakBlock,
@@ -44,6 +46,31 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis.loop_analysis import get_init_assignment, get_loop_end, get_loop_stride
 from dace.transformation.passes.multiple_buffering.staging_analysis import StagedBuffer, find_staged_buffers
+
+
+@dataclasses.dataclass
+class LoweredLoop:
+    """What :func:`lower_loop` made of one loop, for passes that refine the pipeline (e.g. ``InsertAsyncWaits``).
+
+    All index and slot expressions are symbolic expressions in the loop variable of the region they belong to.
+    """
+
+    label: str
+    """Label of the original (now main) loop."""
+    depth: int
+    """Number of slots of every staged buffer."""
+    main: LoopRegion
+    prologue: LoopRegion
+    epilogue: LoopRegion
+    produce_regions: list[tuple[ControlFlowRegion, symbolic.SymbolicType]]
+    """The prologue body and the main loop's produce region, each with the slot its copies write."""
+    consume_regions: list[tuple[ControlFlowRegion, symbolic.SymbolicType]]
+    """The main loop's consume region and the epilogue body, each with the normalized index ``n`` of the tile it
+    reads (from slot ``n % depth``)."""
+    staged: list[StagedBuffer]
+    """The staged buffers. Their copies (``StagedCopy``) refer to the original copies, now in the main loop."""
+    war_barrier: SDFGState | None = None
+    """The state at the start of the main loop's produce region holding the slot-reuse barrier, if any."""
 
 
 @properties.make_properties
@@ -77,9 +104,9 @@ class LowerMultipleBuffering(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> dict[str, int] | None:
+    def apply_pass(self, sdfg: SDFG, _) -> list[LoweredLoop] | None:
         """
-        :return: The depth of every lowered loop, by label, or None if no loop was lowered.
+        :return: Every lowered loop, innermost first, or None if no loop was lowered.
         """
         # Innermost loops first, so the copies of a loop body carry its inner loops already lowered
         loops = [
@@ -88,13 +115,13 @@ class LowerMultipleBuffering(ppl.Pass):
             if isinstance(region, LoopRegion) and region.pipeline_depth >= 2
         ]
         names = set(self.buffers) if self.buffers is not None else None
-        lowered = {}
+        lowered = []
         for loop in loops:
             depth = loop.pipeline_depth
             loop.pipeline_depth = 0
-            reason = lower_loop(loop, depth, names)
-            if reason is None:
-                lowered[loop.label] = depth
+            result, reason = lower_loop(loop, depth, names)
+            if result is not None:
+                lowered.append(result)
             else:
                 warnings.warn(f"Multiple buffering of loop {loop.label} skipped: {reason}")
         if lowered:
@@ -102,23 +129,23 @@ class LowerMultipleBuffering(ppl.Pass):
         return lowered or None
 
 
-def lower_loop(loop: LoopRegion, depth: int, names: set[str] | None = None) -> str | None:
+def lower_loop(loop: LoopRegion, depth: int, names: set[str] | None = None) -> tuple[LoweredLoop | None, str | None]:
     """Lower ``loop`` into multiple buffering with ``depth`` slots.
 
     :param loop: The loop to lower. Its ``pipeline_depth`` is ignored.
     :param depth: The number of slots of each staged buffer, at least 2.
     :param names: If given, only these arrays are staged.
-    :return: None if the loop was lowered, else the reason it was left unchanged.
+    :return: ``(result, None)`` if the loop was lowered, else ``(None, reason)`` with the reason it was left unchanged.
     """
     sdfg = loop.sdfg
     reason = _check_loop(loop)
     if reason is not None:
-        return reason
+        return None, reason
     staged, rejected = find_staged_buffers(loop, sdfg, names)
     for name in sorted((names or set()) & set(rejected)):
         warnings.warn(f"Buffer {name} of loop {loop.label} cannot be staged: {rejected[name]}")
     if not staged:
-        return "no staged buffer"
+        return None, "no staged buffer"
 
     var = loop.loop_variable
     start = get_init_assignment(loop)
@@ -164,14 +191,50 @@ def lower_loop(loop: LoopRegion, depth: int, names: set[str] | None = None) -> s
     epilogue_body.replace_dict({slot.name: _str(sympy.Mod(index, depth))})
     epilogue.add_node(epilogue_body, is_start_block=True)
 
-    # Main loop: compute on tile n, then load tile n + D-1
+    # Main loop: load tile n + D-1, then compute on tile n
     produce.replace_dict({var: _str(itersym + ahead * stride)})
     produce.replace_dict({slot.name: _str(sympy.Mod(index + ahead, depth))})
     consume.replace_dict({slot.name: _str(sympy.Mod(index, depth))})
     loop.loop_condition = CodeBlock(f"{var} <= {_str(end - ahead * stride)}")
+    war_barrier = None
+    if _needs_war_barrier(sdfg, staged):
+        war_barrier = _add_war_barrier(produce)
 
     _splice(loop, prologue, epilogue)
-    return None
+    return LoweredLoop(
+        label=loop.label,
+        depth=depth,
+        main=loop,
+        prologue=prologue,
+        epilogue=epilogue,
+        produce_regions=[(prologue_body, prologue_sym), (produce, sympy.Mod(index + ahead, depth))],
+        consume_regions=[(consume, index), (epilogue_body, index)],
+        staged=staged,
+        war_barrier=war_barrier,
+    ), None
+
+
+def _needs_war_barrier(sdfg: SDFG, staged: list[StagedBuffer]) -> bool:
+    """Whether the threads of a block share a staged buffer, so the main loop must wait for all of them to be done
+    reading a slot before refilling it. Not inside a thread-block (or finer) scope, where a block barrier could
+    deadlock."""
+    if not any(sdfg.arrays[buffer.name].storage == dtypes.StorageType.GPU_Shared for buffer in staged):
+        return False
+    sub_block = [
+        dtypes.ScheduleType.GPU_ThreadBlock,
+        dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+        dtypes.ScheduleType.GPU_Warp,
+    ]
+    return not is_in_scope(sdfg, None, None, sub_block)
+
+
+def _add_war_barrier(produce: ControlFlowRegion) -> SDFGState:
+    """Put a state with a block barrier at the start of ``produce``."""
+    old_start = produce.start_block
+    state = produce.add_state(f"{produce.label}_slot_barrier", is_start_block=True)
+    state.add_node(Barrier(f"{produce.label}_slot_barrier", SyncScope.BLOCK))
+    produce.add_edge(state, old_start, InterstateEdge())
+    return state
 
 
 def _check_loop(loop: LoopRegion) -> str | None:
@@ -218,7 +281,7 @@ def _str(expr) -> str:
 
 def _split_body(loop: LoopRegion, staged: list[StagedBuffer]) -> tuple[ControlFlowRegion, ControlFlowRegion]:
     """Move the staged copies of ``loop`` into a new produce region and the rest of the body into a consume region,
-    which become the body of the loop, in that order: consume, then produce."""
+    which become the body of the loop, in that order: produce, then consume."""
     sdfg = loop.sdfg
     blocks = list(loop.nodes())
     edges = list(loop.edges())
@@ -232,9 +295,9 @@ def _split_body(loop: LoopRegion, staged: list[StagedBuffer]) -> tuple[ControlFl
         consume.add_node(block, is_start_block=block is start, reset_cfg_list=False)
     for edge in edges:
         consume.add_edge(edge.src, edge.dst, edge.data)
-    loop.add_node(consume, is_start_block=True, reset_cfg_list=False)
-    loop.add_node(produce, reset_cfg_list=False)
-    loop.add_edge(consume, produce, InterstateEdge())
+    loop.add_node(produce, is_start_block=True, reset_cfg_list=False)
+    loop.add_node(consume, reset_cfg_list=False)
+    loop.add_edge(produce, consume, InterstateEdge())
 
     state = produce.add_state(f"{loop.label}_produce_state", is_start_block=True)
     emptied = set()
