@@ -81,7 +81,9 @@ def unroll(state: SDFGState, entry: nodes.MapEntry) -> bool:
     if len(entry.map.params) > 1:
         MapExpansion.apply_to(sdfg, map_entry=entry, verify=False, save=False)
     to_loop = MapToForLoop()
-    to_loop.setup_match(sdfg, state.parent_graph.cfg_id, state.block_id, {MapToForLoop.map_entry: entry}, 0, override=True)
+    to_loop.setup_match(
+        sdfg, state.parent_graph.cfg_id, state.block_id, {MapToForLoop.map_entry: entry}, 0, override=True
+    )
     if not to_loop.can_be_applied(state, 0, sdfg):
         return False
     to_loop.apply(state, sdfg)
@@ -97,7 +99,9 @@ class UnrollSmallMaps(ppl.Pass):
     CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.States | ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
+        return (
+            ppl.Modifies.States | ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
+        )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False

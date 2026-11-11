@@ -1518,9 +1518,7 @@ def test_a_bitonic_stage_lifts_under_its_while_condition():
     sdfg = bitonic_merge_stages.to_sdfg(simplify=True)
     ParallelizeLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    assert not any(
-        isinstance(r, LoopRegion) and r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True)
-    )
+    assert not any(isinstance(r, LoopRegion) and r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True))
 
     key = np.random.randint(0, 100, size=(5, 16)).astype(np.int64)
     key[:, :8].sort(axis=1)

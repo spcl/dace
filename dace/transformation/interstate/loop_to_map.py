@@ -684,8 +684,11 @@ def write_refusal(
             # A dimension fixed for the whole loop is the same on every iteration: the write is distinct per
             # iteration exactly when the remaining dimensions are (``key[r, 2*i - i % s]`` inside a map over r)
             fixed = varying | {itersym.name}
-            moving = [rng for rng in (dst_subset.ndrange() if dst_subset else ())
-                      if fixed & {str(s) for b in rng for s in symbolic.pystr_to_symbolic(b).free_symbols}]
+            moving = [
+                rng
+                for rng in (dst_subset.ndrange() if dst_subset else ())
+                if fixed & {str(s) for b in rng for s in symbolic.pystr_to_symbolic(b).free_symbols}
+            ]
             if dst_subset and 0 < len(moving) < dst_subset.dims():
                 dst_subset = subsets.Range(moving)
             with canon_stats.timed("z3", sdfg):
