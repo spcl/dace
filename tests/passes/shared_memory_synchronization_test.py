@@ -24,5 +24,78 @@ def test_writes_to_smem_inside_loopregion_detects_write():
     assert DefaultSharedMemorySync().writes_to_smem_inside_loopregion(sdfg) is True
 
 
+def test_writes_to_smem_inside_loopregion_absent():
+    sdfg = dace.SDFG("no_smem_loop")
+    sdfg.add_array("s", [1], dace.float64, dace.StorageType.GPU_Shared, transient=True)
+    state = sdfg.add_state()
+    t = state.add_tasklet("w", {}, {"_o": None}, "_o = 0")
+    s = state.add_access("s")
+    state.add_edge(t, "_o", s, None, dace.Memlet("s[0]"))
+    assert DefaultSharedMemorySync().writes_to_smem_inside_loopregion(sdfg) is False
+
+
+def test_is_shared_memory_write_predicate():
+    sdfg = dace.SDFG("pred")
+    sdfg.add_array("s", [1], dace.float64, dace.StorageType.GPU_Shared, transient=True)
+    sdfg.add_array("g", [1], dace.float64, dace.StorageType.GPU_Global, transient=True)
+    state = sdfg.add_state()
+    t = state.add_tasklet("w", {}, {"_o": None}, "_o = 0")
+    s = state.add_access("s")
+    state.add_edge(t, "_o", s, None, dace.Memlet("s[0]"))
+    g = state.add_access("g")  # GPU_Global, no write edge
+    s_read = state.add_access("s")  # GPU_Shared, but no incoming edge
+
+    assert is_shared_memory_write(s, state) is True
+    assert is_shared_memory_write(g, state) is False  # wrong storage
+    assert is_shared_memory_write(s_read, state) is False  # no write edge
+    assert is_shared_memory_write(t, state) is False  # not an AccessNode
+
+
+def _kernel_writing_shared(name: str, inputs: set, outputs: set, out_conn: str) -> tuple[dace.SDFG, dace.SDFGState]:
+    """A kernel whose tasklet (with the given connectors) writes shared memory ``s`` read by a later tasklet."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("s", [32], dace.uint64, dace.StorageType.GPU_Shared, transient=True)
+    state = sdfg.add_state()
+    entry, exit_ = state.add_map("kernel", {"i": "0:4"}, schedule=dace.ScheduleType.GPU_Device)
+    writer = state.add_tasklet("writer", inputs, outputs, "", language=dace.Language.CPP)
+    state.add_nedge(entry, writer, dace.Memlet())
+    s = state.add_access("s")
+    state.add_edge(writer, out_conn, s, None, dace.Memlet("s[0:32]"))
+    reader = state.add_tasklet("reader", {"_i"}, {}, "", language=dace.Language.CPP)
+    state.add_edge(s, None, reader, "_i", dace.Memlet("s[0]"))
+    state.add_nedge(reader, exit_, dace.Memlet())
+    # The pass only reads the writer's connector names, so its inputs stay unconnected
+    return sdfg, state
+
+
+def _sync_tasklets(sdfg: dace.SDFG) -> int:
+    return sum(isinstance(n, dace.nodes.Tasklet) and n.label == "sync_threads" for n, _ in sdfg.all_nodes_recursive())
+
+
+def test_plain_collaborative_write_is_synchronized():
+    sdfg, _ = _kernel_writing_shared("smem_plain_write", {}, {"_o"}, "_o")
+    DefaultSharedMemorySync().apply_pass(sdfg, None)
+    assert _sync_tasklets(sdfg) == 1
+
+
+def test_memory_engine_load_is_not_synchronized():
+    """A TMA load (with a ``_tma_bar`` input) completes on its mbarrier: no ``__syncthreads()`` after it."""
+    sdfg, _ = _kernel_writing_shared("smem_tma_write", {"_tma_bar"}, {"_cpy_out"}, "_cpy_out")
+    DefaultSharedMemorySync().apply_pass(sdfg, None)
+    assert _sync_tasklets(sdfg) == 0
+
+
+def test_mbarrier_initialization_is_not_synchronized():
+    """Initializing or invalidating mbarriers (a ``_tma_bar_out`` output) synchronizes itself."""
+    sdfg, _ = _kernel_writing_shared("smem_mbarrier_init", {}, {"_tma_bar_out"}, "_tma_bar_out")
+    DefaultSharedMemorySync().apply_pass(sdfg, None)
+    assert _sync_tasklets(sdfg) == 0
+
+
 if __name__ == "__main__":
     test_writes_to_smem_inside_loopregion_detects_write()
+    test_writes_to_smem_inside_loopregion_absent()
+    test_is_shared_memory_write_predicate()
+    test_plain_collaborative_write_is_synchronized()
+    test_memory_engine_load_is_not_synchronized()
+    test_mbarrier_initialization_is_not_synchronized()

@@ -2552,6 +2552,43 @@ def test_memory_engine_copy_codegen(kernel, implementation):
 
 
 @pytest.mark.parametrize("implementation", ["legacy", "experimental"])
+@pytest.mark.parametrize("kernel", ["transpose", "nested", "nested_subtile"])
+def test_memory_engine_load_is_asynchronous_by_default(kernel, implementation):
+    """Code generation runs ``InsertAsyncWaits`` before expanding: the load only issues the copy and returns its
+    arrival token, and a wait on that token follows before the tile is read (token mode)."""
+    builder, _, _ = _TMA_KERNELS[kernel]
+    sdfg = builder(dace.float64)
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value=implementation):
+        cuda = {obj.title: obj.clean_code for obj in sdfg.generate_code()}["CUDA"]
+    assert cuda.count("dace::cuda::tma_load_async<2>") == 1
+    assert cuda.count("dace::cuda::mbarrier_wait_token") == 1
+    assert cuda.index("tma_load_async<2>") < cuda.index("mbarrier_wait_token")
+    assert "dace::cuda::tma_load<2>" not in cuda
+    # The barrier the waits use is the one of the copy, initialized once (postprocessing adds no second one)
+    assert cuda.count("dace::cuda::tma_barrier_init") == 1
+
+
+@pytest.mark.parametrize("implementation", ["legacy", "experimental"])
+def test_memory_engine_load_can_stay_synchronous(implementation):
+    """``asynchronous=False`` keeps the load waiting for its own completion."""
+    sdfg = _make_memory_engine_copy_transpose_double(dace.float64)
+    (copy_node,) = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, CopyLibraryNode)]
+    copy_node.asynchronous = False
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value=implementation):
+        cuda = {obj.title: obj.clean_code for obj in sdfg.generate_code()}["CUDA"]
+    assert cuda.count("dace::cuda::tma_load<2>") == 1
+    assert "tma_load_async" not in cuda and "mbarrier_wait" not in cuda
+
+
+def test_memory_engine_store_ignores_asynchronous():
+    """Stores are always synchronous: ``InsertAsyncWaits`` leaves them alone."""
+    sdfg = _make_memory_engine_store_double(dace.float64)
+    cuda = {obj.title: obj.clean_code for obj in sdfg.generate_code()}["CUDA"]
+    assert cuda.count("dace::cuda::tma_store<2>") == 1
+    assert "mbarrier_wait" not in cuda
+
+
+@pytest.mark.parametrize("implementation", ["legacy", "experimental"])
 def test_memory_engine_copy_shared_stays_static(implementation):
     """The shared side of a memory engine copy is pinned to (aligned) static shared memory, even where the shared
     memory planner would otherwise move it to dynamic shared memory."""
@@ -2795,6 +2832,11 @@ if __name__ == "__main__":
     test_in_kernel_copy_does_not_emit_a_grid_barrier()
     test_a_multi_state_nested_sdfg_below_the_kernel_keeps_its_barriers()
     test_memory_engine_nested_subtile_tensor_map_is_host_evaluable()
+    for implementation in ("legacy", "experimental"):
+        for kernel in ("transpose", "nested", "nested_subtile"):
+            test_memory_engine_load_is_asynchronous_by_default(kernel, implementation)
+        test_memory_engine_load_can_stay_synchronous(implementation)
+    test_memory_engine_store_ignores_asynchronous()
     test_shared_to_global_uses_the_block_collective_helper()
     test_symbolic_extent_expansions_keep_their_ranges_symbolic()
     test_in_kernel_cross_boundary_copy_is_refused_by_selection()
