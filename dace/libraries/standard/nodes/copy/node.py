@@ -19,7 +19,8 @@ class CopyLibraryNode(nodes.LibraryNode):
     ``MemcpyCUDA1D``/``2D`` (``cudaMemcpyAsync``/``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided``
     (Sequential map of ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (block-collective
     ``dace::GlobalToShared1D`` / ``dace::SharedToGlobal1D`` or ``dace::CopyND`` fallback +
-    optional ``__syncthreads()`` barriers controlled by ``sync``).
+    optional ``__syncthreads()`` barriers controlled by ``sync``), ``CastOnDevice`` (host/device
+    copy that changes dtype: memcpy through a pooled device buffer, the GPU casts).
 
     Does NOT accept dynamic (Scalar) input connectors -- subset expressions must use symbols
     already in scope at construction time, so the auto selector reasons purely from static
@@ -75,7 +76,7 @@ class CopyLibraryNode(nodes.LibraryNode):
     def validate(self, sdfg, state, allow_cross_storage=True):
         """Resolve in/out edges, names, and subsets: ``(inp_name, inp, in_subset, out_name, out,
         out_subset)``. Raises ``ValueError`` if not wired with exactly one input and one output
-        data edge, dtypes mismatch, an extraneous non-reserved input connector wired, or (when
+        data edge, an extraneous non-reserved input connector wired, or (when
         ``allow_cross_storage`` is False) the two storages differ.
 
         :param sdfg: SDFG containing ``state``.
@@ -110,9 +111,6 @@ class CopyLibraryNode(nodes.LibraryNode):
         inp = sdfg.arrays[ie.data.data]
         in_subset = ie.data.subset
         inp_name = ie.dst_conn
-
-        if inp.dtype != out.dtype:
-            raise ValueError(f"Input and output data types must match (got {inp.dtype} vs {out.dtype}).")
 
         # Two host storages differ only in the allocator, so a plain memcpy between them is correct;
         # only a CPU/GPU (or other target-specific) pairing genuinely needs a different expansion.

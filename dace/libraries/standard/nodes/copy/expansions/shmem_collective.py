@@ -47,6 +47,11 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
             )
         if inp.storage != dtypes.StorageType.GPU_Shared and out.storage != dtypes.StorageType.GPU_Shared:
             raise ValueError("SharedMemoryCollective requires at least one side to be GPU_Shared.")
+        if inp.dtype != out.dtype:
+            raise ValueError(
+                f"SharedMemoryCollective moves bytes and cannot convert {inp.dtype} to {out.dtype}; "
+                "use MappedTasklet, which emits the cast."
+            )
 
         if is_in_scope(parent_sdfg, parent_state, node, [dtypes.ScheduleType.GPU_ThreadBlock]):
             raise ValueError(

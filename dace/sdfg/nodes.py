@@ -918,10 +918,15 @@ class NestedSDFG(CodeNode):
                 # to the external data descriptor connected to the connector.
                 edge = next(iter(state.edges_by_connector(self, conn)))
                 if not inner_desc.is_equivalent(sdfg.arrays[edge.data.data], symbol_mapping=replacements):
+                    from dace.transformation.passes.cast_nested_sdfg_arguments import dtype_only_mismatch
+
+                    hint = "If a reinterpretation or a subset is needed, use a view."
+                    if dtype_only_mismatch(inner_desc, sdfg.arrays[edge.data.data], self.symbol_mapping):
+                        hint = "To convert the values, apply the CastNestedSDFGArguments pass."
                     raise ValueError(
                         f'Connector "{conn}" was given but the internal data descriptor ({self.sdfg.arrays[conn]}) '
                         f'is not equivalent to the data descriptor connected to it ("{edge.data.data}", '
-                        f"{sdfg.arrays[edge.data.data]}). If a reinterpretation or a subset is needed, use a view."
+                        f"{sdfg.arrays[edge.data.data]}). {hint}"
                     )
 
             for dname, desc in self.sdfg.arrays.items():
