@@ -23,7 +23,7 @@ env:
   UV_NO_DEV: 1 # don't install dev dependency group by default
   # The dace-fortran commit the frontend comes from (head of its v1.2 branch, built on the symbol registry). A
   # commit, so a dace-fortran push cannot change what this job tests.
-  DACE_FORTRAN_REF: fff0f64f3feffdbba85de6bdd6264cf0e228e4d9
+  DACE_FORTRAN_REF: 1444b7e2b3a00b972ed4e4039a8a009091e3725a
   LLVM_VERSION: '22'
   OMPI_MCA_pml: ob1
   OMPI_MCA_btl: self,vader
