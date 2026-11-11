@@ -55,6 +55,7 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             ReinferConnectorTypes,
             SynchronizeStreamUnawareGPUCallbacks,
         )
+        from dace.transformation.passes.insert_async_waits import InsertAsyncWaits
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
         from dace.transformation.passes.insert_memory_engine_bulk_copies import InsertMemoryEngineBulkCopies
         from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
@@ -72,13 +73,14 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #   * ReinferConnectorTypes last -- earlier passes mutate NestedSDFG connector descriptors.
         #   * InsertMemoryEngineBulkCopies (optional) between InsertExplicitCopies, which creates the copy
         #     nodes, and ExpandLibraryNodes; before AddThreadBlockMaps, whose thread-block map would enclose
-        #     the copies, which the memory engine rejects.
+        #     the copies, which the memory engine rejects. InsertAsyncWaits right after it, before expansion.
         strategy = AutoGPUStreamScheduler(synchronize_on_exit=Config.get("compiler", "cuda", "synchronize_on_exit"))
         scalar_promotion = PromoteScalarOutputsToArrays()
         scalar_promotion.gpu = True
         if memory_engine_copies is None:
             memory_engine_copies = Config.get_bool("compiler", "cuda", "memory_engine_copies")
-        copy_selection = [InsertMemoryEngineBulkCopies()] if memory_engine_copies else []
+        # Memory engine loads are asynchronous by default: Their waits are placed before expansion
+        copy_selection = [InsertMemoryEngineBulkCopies(), InsertAsyncWaits()] if memory_engine_copies else []
         super().__init__(
             [
                 InferDefaultSchedulesAndStorages(),
