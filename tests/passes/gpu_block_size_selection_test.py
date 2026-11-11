@@ -16,8 +16,8 @@ from dace.transformation.passes.gpu_block_size_selection import (
 N = dace.symbol("N")
 M = dace.symbol("M")
 
-#: The expected shapes: a line of 512, 256 threads with a 64-lane wavefront on the coalesced axis.
-BLOCK_1D = [512, 1, 1]
+#: The expected shapes: a line of 256, 256 threads with a 64-lane wavefront on the coalesced axis.
+BLOCK_1D = [256, 1, 1]
 BLOCK_2D = [64, 4, 1]
 #: Without the lane floor (``compiler.cuda.block_min_lanes`` 1): a square of 256, rectangles following a skewed domain.
 BLOCK_2D_SQUARE = [16, 16, 1]
