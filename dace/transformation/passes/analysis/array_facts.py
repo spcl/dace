@@ -683,9 +683,29 @@ def resolved_range(loop: LoopRegion) -> tuple[Any, Any, Any] | None:
     return start.subs(mapping), end.subs(mapping), step
 
 
+def reads_own_slots(loop: LoopRegion, name: str, edges: list[tuple[SDFGState, Any]]) -> bool:
+    """Whether every read of ``name`` in ``loop`` is at the subset of one of its stores ``edges``: once no two
+    iterations store into one element, such a read sees only its own iteration's element (``out[p[i]] = f(out[p[i]])``).
+    A read in an interstate edge or a header has no access node to compare, and refuses."""
+    slots = {str(e.data.get_dst_subset(e, st)) for st, e in edges}
+    for st in states_of(loop):
+        for dn in st.data_nodes():
+            if dn.data != name:
+                continue
+            for e in st.out_edges(dn):
+                if e.data is not None and not e.data.is_empty() and str(e.data.get_src_subset(e, st)) not in slots:
+                    return False
+    arrays = loop.sdfg.arrays
+    if any(m.data == name for e in loop.all_interstate_edges() for m in e.data.get_read_memlets(arrays)):
+        return False
+    headers = [loop, *(b for b in loop.all_control_flow_blocks() if isinstance(b, (LoopRegion, ConditionalBlock)))]
+    return not any(m.data == name for b in headers for m in b.get_meta_read_memlets())
+
+
 def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[ArrayFact] | None:
     """The facts under which the solver proves that no two iterations of ``loop`` store into one element of
-    ``name``, which the loop does not read; ``None`` if there are none.
+    ``name``, which the loop reads only at the elements it stores (:func:`reads_own_slots`); ``None`` if there are
+    none.
 
     A store's subset may name symbols the loop binds once per iteration from arrays it does not write
     (``row = perm[r]``); they are replaced by their values, as are the names the loop's bounds read
@@ -698,10 +718,8 @@ def conflict_free_under_facts(sdfg: SDFG, loop: LoopRegion, name: str) -> list[A
     if bounds is None:
         return None
     reads, written = loop.read_and_write_sets()
-    if name in reads:
-        return None
     edges = write_edges(loop, name)
-    if not edges:
+    if not edges or (name in reads and not reads_own_slots(loop, name, edges)):
         return None
     bindings, assigned = loop_bindings(loop)
     stores = []
