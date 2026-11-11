@@ -1399,8 +1399,10 @@ def scope_tree_recursive(state: SDFGState, entry: nodes.EntryNode | None = None)
                     treenode.children.append(ntree)
 
         for child in treenode.children:
-            if hasattr(child, "state") and child.state != state:
-                traverse(child.state, child)
+            # A scope of this state holds nested SDFGs too
+            if not hasattr(child, "state"):
+                child.state = state
+            traverse(child.state, child)
 
     traverse(state, stree)
     return stree
