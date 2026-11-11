@@ -58,6 +58,26 @@ def _loops(sdfg: SDFG):
     return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
 
 
+class _Surviving:
+    """The loops of ``sdfg`` when created, each yielded only while still in ``sdfg``: a rewrite of an earlier one
+    replaces it, and the loops nested in it, with copies. Call :meth:`changed` after each rewrite."""
+
+    def __init__(self, sdfg: SDFG):
+        self.sdfg = sdfg
+        self.loops = _loops(sdfg)
+        self.live: set[int] | None = None
+
+    def changed(self) -> None:
+        self.live = None
+
+    def __iter__(self) -> Iterator[LoopRegion]:
+        for loop in self.loops:
+            if self.live is None:
+                self.live = {id(l) for l in _loops(self.sdfg)}
+            if id(loop) in self.live:
+                yield loop
+
+
 def _loops_in(loop: LoopRegion) -> list[LoopRegion]:
     """``loop`` and the loops nested in it, nested SDFGs excluded (what :func:`_loops` lists of a graph holding only
     ``loop``)."""
@@ -1903,7 +1923,8 @@ class BestEffortLoopPeeling(ppl.Pass):
             return None
         before = {id(loop) for loop in _loops(sdfg)}
         rewritten: list[LoopRegion] = []
-        for loop in list(_loops(sdfg)):
+        loops = _Surviving(sdfg)
+        for loop in loops:
             found = self._best_split_for(loop, sdfg)
             if found is None:
                 continue
@@ -1914,6 +1935,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             self._specialize_index_set_split(
                 sdfg, loop, x, relations, middle_singleton=middle_singleton, guarded=guarded
             )
+            loops.changed()
             rewritten.append(loop)
         # There is deliberately no separate boundary-peel stage. A boundary peel IS an index-set split
         # at a boundary point: ``_split_loop_at`` drops the side that would be empty, so ``x == end``
@@ -1988,7 +2010,8 @@ class ModuloBandSplit(BestEffortLoopPeeling):
             return None
         before = {id(loop) for loop in _loops(sdfg)}
         rewritten: list[LoopRegion] = []
-        for loop in list(_loops(sdfg)):
+        loops = _Surviving(sdfg)
+        for loop in loops:
             best = self._best_modulo_peel_for(loop, sdfg)
             if best is not None:
                 count, direction, relations, needs_fallback = best
@@ -1997,14 +2020,17 @@ class ModuloBandSplit(BestEffortLoopPeeling):
                 )
                 if conditional is not None and not needs_fallback:
                     conditional.remove_branch(conditional.branches[-1][1])
+                loops.changed()
                 rewritten.append(loop)
         # Only fires when a wrap survived the peel (constant offsets are handled there).
-        for loop in list(_loops(sdfg)):
+        loops = _Surviving(sdfg)
+        for loop in loops:
             res = self._best_modulo_split_for(loop, sdfg)
             if res is not None:
                 x, relations = res
                 self._specialize_modulo_rewrite(
                     sdfg, loop, lambda target: self._split_loop_at(sdfg, target, x, middle_singleton=False), relations
                 )
+                loops.changed()
                 rewritten.append(loop)
         return self._finish(sdfg, before, rewritten)
