@@ -8,10 +8,8 @@
 // Guarded on the device compiler, not the vendor: __CUDACC__ alone would make every tile op
 // vanish (fall back to scalar) under HIP.
 
-#if !defined(__CUDACC__) && !defined(__HIPCC__)
-// A host translation unit gets the host bodies of the same signatures, which a CPU tile op may include too
-#include "dace/tile_ops/scalar.h"
-#else
+// A host translation unit (the host frame lists this header) gets nothing: a CPU tile op calls a generated function
+#if defined(__CUDACC__) || defined(__HIPCC__)
 
 #include <cmath>
 #include <cstdint>
