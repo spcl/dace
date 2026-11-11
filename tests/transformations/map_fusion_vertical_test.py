@@ -4502,6 +4502,45 @@ def test_an_output_that_only_orders_the_second_map_is_a_pure_output():
     assert np.allclose(ref["b"], res["b"])
 
 
+def test_an_ordering_edge_into_a_node_another_reader_shares_keeps_that_reader_after_the_fused_map():
+    """The first Map is ordered before the readers of ``g``: the second Map and a tasklet. The Maps fuse, and the
+    tasklet, which ran after the first Map, is ordered after the fused one (nbody: ``G`` scales the potential
+    energy beside the product that reads it)."""
+    sdfg = dace.SDFG(unique_name("ordering_into_a_shared_read"))
+    for name in ("a", "out"):
+        sdfg.add_array(name, [10], dace.float64)
+    sdfg.add_array("g", [1], dace.float64)
+    sdfg.add_array("scaled", [1], dace.float64)
+    sdfg.add_transient("t", [10], dace.float64)
+    state = sdfg.add_state()
+    t, g = state.add_access("t"), state.add_access("g")
+    _, _, first_exit = state.add_mapped_tasklet(
+        "first", {"i": "0:10"}, {"_a": dace.Memlet("a[i]")}, "_t = _a + 1.0", {"_t": dace.Memlet("t[i]")},
+        external_edges=True, output_nodes={"t": t},
+    )  # fmt: skip
+    entry, exit_node = state.add_map("second", {"i": "0:10"})
+    tasklet = state.add_tasklet("second", {"_t", "_g"}, {"_o"}, "_o = _t * _g")
+    state.add_memlet_path(t, entry, tasklet, dst_conn="_t", memlet=dace.Memlet("t[i]"))
+    state.add_memlet_path(g, entry, tasklet, dst_conn="_g", memlet=dace.Memlet("g[0]"))
+    state.add_memlet_path(tasklet, exit_node, state.add_access("out"), src_conn="_o", memlet=dace.Memlet("out[i]"))
+    scale = state.add_tasklet("scale", {"_g"}, {"_s"}, "_s = 2.0 * _g")
+    state.add_edge(g, None, scale, "_g", dace.Memlet("g[0]"))
+    state.add_edge(scale, "_s", state.add_access("scaled"), None, dace.Memlet("scaled[0]"))
+    state.add_nedge(first_exit, g, dace.Memlet())
+    sdfg.validate()
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+    assert MapFusionVertical(relaxed_dataflow=False).can_be_applied_to(sdfg, first_map_exit=first_exit, array=t, second_map_entry=entry) is False
+    assert sdfg.apply_transformations_repeated(MapFusionVertical(relaxed_dataflow=True), validate_all=True) == 1
+    assert count_nodes(sdfg, nodes.MapEntry) == 1 and "t" not in sdfg.arrays
+    fused_exit = next(n for n in state.nodes() if isinstance(n, nodes.MapExit))
+    assert [e.data.is_empty() for e in state.edges_between(fused_exit, scale)] == [True]
+    assert not state.in_edges(g)
+    compile_and_run_sdfg(sdfg, **res)
+    assert np.allclose(ref["out"], res["out"]) and np.allclose(ref["scaled"], res["scaled"])
+
+
 if __name__ == "__main__":
     test_map_fusion_refuses_a_nested_producer_updating_the_whole_intermediate_in_place()
     test_fusion_intrinsic_memlet_direction()
@@ -4571,3 +4610,4 @@ if __name__ == "__main__":
     test_input_read_through_two_nodes_fuses(False)
     test_input_read_through_two_nodes_fuses(True)
     test_an_output_that_only_orders_the_second_map_is_a_pure_output()
+    test_an_ordering_edge_into_a_node_another_reader_shares_keeps_that_reader_after_the_fused_map()
