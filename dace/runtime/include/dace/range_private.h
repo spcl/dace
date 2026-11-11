@@ -54,6 +54,12 @@ constexpr int64_t kSortBuckets = 4096;
 // Most iterations a chunk's start moves forward to the first one writing no row of the chunk before it.
 constexpr int64_t kCutSearch = 4096;
 
+// Most iterations of a chunk the sample ahead of the pre-pass visits.
+constexpr int64_t kSampleIterations = 1024;
+
+// The stride at which a chunk of ``n`` iterations is sampled.
+inline int64_t sample_step(int64_t n) { return std::max<int64_t>(1, n / kSampleIterations); }
+
 // One accumulator of ``rows`` rows of ``row`` elements, shared by a team of at most ``nthreads`` threads.
 // ``kAtomic``: the body can update the shared rows atomically instead, which a thread does when its span is long.
 template <ReductionType R, typename T, bool kAtomic>
@@ -168,6 +174,26 @@ class Order {
 
   // The iteration at position ``k`` of the chosen order.
   int64_t operator[](int64_t k) const { return perm_ ? perm_[k] : k; }
+
+  // Every thread of the team, ahead of its pre-pass, with a sample of its chunk: every ``step``-th iteration wrote
+  // rows ``[lo[g], hi[g]]`` of group ``g``, ``updates[g]`` times. Whether the samples already show that every
+  // thread will update every group atomically (the rows its sample spans exceed ``kRowsPerUpdate`` per update of
+  // the whole chunk): then no pre-pass and no order are needed, the unarranged order opens every accumulator
+  // atomic. Every thread gets the same answer.
+  bool sampled_atomic(int t, int nthreads, const int64_t* lo, const int64_t* hi, const int64_t* updates, int64_t step,
+                      const bool* atomic) {
+    bool mine = true;
+    for (int g = 0; g < groups_; ++g) {
+      mine = mine && atomic[g] && lo[g] <= hi[g] && hi[g] - lo[g] + 1 > kRowsPerUpdate * updates[g] * step;
+    }
+    stats_[t].sampled = mine;
+#pragma omp barrier
+    bool all = true;
+    for (int s = 0; s < nthreads; ++s) {
+      all = all && stats_[s].sampled;
+    }
+    return all;
+  }
 
   // Thread ``t``'s iteration ``k`` writes rows ``[lo[g], hi[g]]`` of group ``g`` (none where ``lo[g] > hi[g]``),
   // ``updates[g]`` times.
@@ -416,6 +442,8 @@ class Order {
     // The last key of the even chunk, and the start ``own`` moves it to.
     int64_t dkmax = std::numeric_limits<int64_t>::min(), cut = 0;
     bool moved = false;
+    // Whether the thread's sample alone decides for atomic updates.
+    bool sampled = false;
     std::vector<int64_t> lo, hi, updates, dlo, dhi, count, sorted_lo, sorted_hi, sorted_updates;
     std::vector<char> owned;
   };

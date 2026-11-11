@@ -4111,15 +4111,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 f"{order}.restart();",
                 "}",
             ]
-        lines += [
-            f"for (int64_t {prefix}_k = {order}.first({prefix}_t, {prefix}_T); "
-            f"{prefix}_k < {order}.first({prefix}_t + 1, {prefix}_T); ++{prefix}_k) {{",
+        # The rows one iteration writes: its parameters at ``{prefix}_k``, then ``lo``, ``hi`` and the update count
+        visit = [
             *self._range_private_params(sdfg, state, node, f"{prefix}_k"),
             f"int64_t {prefix}_lo[{g}], {prefix}_hi[{g}], {prefix}_n[{g}];",
         ]
         for i, sites in enumerate(groups):
             lo, hi, count = f"{prefix}_lo[{i}]", f"{prefix}_hi[{i}]", f"{prefix}_n[{i}]"
-            lines.append(
+            visit.append(
                 f"{lo} = std::numeric_limits<int64_t>::max(); {hi} = std::numeric_limits<int64_t>::min(); {count} = 0;"
             )
             row = (
@@ -4128,11 +4127,31 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             for site in sites:
                 types = self._range_private_locals(site, {})
-                lines += ["{", *self._range_private_site(sdfg, site, types, row), "}"]
+                visit += ["{", *self._range_private_site(sdfg, site, types, row), "}"]
+        first, last = f"{order}.first({prefix}_t, {prefix}_T)", f"{order}.first({prefix}_t + 1, {prefix}_T)"
         lines += [
+            # A sample of the chunk first: where it already spans too many rows for private copies to pay, every
+            # thread updates the shared rows atomically, and neither the pre-pass nor an order is needed
+            f"int64_t {prefix}_slo[{g}], {prefix}_shi[{g}], {prefix}_sn[{g}];",
+            f"for (int {prefix}_g = 0; {prefix}_g < {g}; ++{prefix}_g) {{ {prefix}_slo[{prefix}_g] = "
+            f"std::numeric_limits<int64_t>::max(); {prefix}_shi[{prefix}_g] = std::numeric_limits<int64_t>::min(); "
+            f"{prefix}_sn[{prefix}_g] = 0; }}",
+            f"const int64_t {prefix}_step = dace::range_private::sample_step({last} - {first});",
+            f"for (int64_t {prefix}_k = {first}; {prefix}_k < {last}; {prefix}_k += {prefix}_step) {{",
+            *visit,
+            f"for (int {prefix}_g = 0; {prefix}_g < {g}; ++{prefix}_g) {{ {prefix}_slo[{prefix}_g] = "
+            f"std::min({prefix}_slo[{prefix}_g], {prefix}_lo[{prefix}_g]); {prefix}_shi[{prefix}_g] = "
+            f"std::max({prefix}_shi[{prefix}_g], {prefix}_hi[{prefix}_g]); {prefix}_sn[{prefix}_g] += "
+            f"{prefix}_n[{prefix}_g]; }}",
+            "}",
+            f"if (!{order}.sampled_atomic({prefix}_t, {prefix}_T, {prefix}_slo, {prefix}_shi, {prefix}_sn, "
+            f"{prefix}_step, {prefix}_at)) {{",
+            f"for (int64_t {prefix}_k = {first}; {prefix}_k < {last}; ++{prefix}_k) {{",
+            *visit,
             f"{order}.note({prefix}_t, {prefix}_k, {prefix}_lo, {prefix}_hi, {prefix}_n);",
             "}",
             f"{order}.arrange({prefix}_t, {prefix}_T, {prefix}_rb, {prefix}_at);",
+            "}",
             *(["}"] if cached else []),
         ]
         for i, names in enumerate(groups.values()):

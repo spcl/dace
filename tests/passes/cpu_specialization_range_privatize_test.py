@@ -326,11 +326,12 @@ def test_iterations_sorted_by_row_match_add_at_and_repeat_bitwise():
 def test_a_sparse_random_scatter_over_a_large_array_matches_add_at():
     """Every chunk spans all rows with few updates per row and the rows exceed the sort threshold: each thread
     updates the shared rows atomically, in iteration order, and the order is not sorted for private rows no thread
-    would open."""
+    would open. A sample of each chunk already shows it, so the pre-pass over all iterations is skipped."""
     sdfg, code = _specialize(scatter_sum, "sum_sparse_large", threads=8)
     _assert_range_privatized(sdfg, code)
     assert "__rp0_order.arrange(__rp0_t, __rp0_T, __rp0_rb, __rp0_at);" in code
     assert "const bool __rp0_at[1] = {true};" in code
+    assert "if (!__rp0_order.sampled_atomic(__rp0_t, __rp0_T, __rp0_slo, __rp0_shi, __rp0_sn, __rp0_step, __rp0_at)) {" in code
     n, m = 1 << 16, 1 << 21
     idx = _indices("random", n, m)
     val = np.random.default_rng(7).random(n)
