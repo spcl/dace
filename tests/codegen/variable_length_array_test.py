@@ -15,6 +15,7 @@ import dace
 from dace.codegen.targets.cpu import register_array_on_stack
 from dace.dtypes import AllocationLifetime, StorageType
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.canonicalize.finalize import force_loop_scoped_registers
 
 N = dace.symbol("N", dtype=dace.int64)
 
@@ -183,16 +184,13 @@ def test_a_global_lifetime_keeps_a_symbolic_stack_array_on_the_heap():
     assert "double tmp[" not in code, code
 
 
-@pytest.mark.parametrize("in_loop", [False, True])
-def test_a_split_declaration_takes_the_frame_unless_a_loop_repeats_it(in_loop):
-    """A size that only an interstate edge defines is declared in one block and allocated in another, and a VLA
-    cannot bridge that split: ``alloca`` does, once per function, and the heap in a loop that would grow the frame."""
-    K = dace.symbol("K", dtype=dace.int64)
-    sdfg = dace.SDFG(f"vla_split_declaration_{in_loop}")
+def split_declaration_sdfg(name: str, in_loop: bool, storage: StorageType) -> dace.SDFG:
+    """``b = a + 1`` through ``tmp[K]``, two states apart, ``K`` assigned by an interstate edge."""
+    sdfg = dace.SDFG(name)
     sdfg.add_symbol("K", dace.int64)
     sdfg.add_array("a", (N,), dace.float64)
     sdfg.add_array("b", (N,), dace.float64)
-    sdfg.add_transient("tmp", (K,), dace.float64, storage=FORCED)
+    sdfg.add_transient("tmp", (dace.symbol("K", dtype=dace.int64),), dace.float64, storage=storage)
     region = sdfg
     if in_loop:
         region = LoopRegion("repeat", "t < 2", "t", "t = 0", "t = t + 1")
@@ -219,15 +217,36 @@ def test_a_split_declaration_takes_the_frame_unless_a_loop_repeats_it(in_loop):
         external_edges=True,
     )
     sdfg.validate()
+    return sdfg
 
-    if in_loop:
-        with pytest.warns(UserWarning, match="Variable-length array tmp"):
-            code = sdfg.generate_code()[0].clean_code
-    else:
-        code = sdfg.generate_code()[0].clean_code
+
+def assert_no_heap(code: str):
+    assert not HEAP_ALLOC.search(code), code
+    assert "delete[] tmp" not in code and "aligned_delete_array(tmp" not in code, code
+
+
+@pytest.mark.parametrize("in_loop", [False, True])
+def test_a_split_declaration_stays_off_the_heap(in_loop):
+    """A size that only an interstate edge defines is declared in one block and allocated in another. Outside a loop
+    ``alloca`` bridges that split, once per function; in a loop body the VLA is declared in the body's code block ahead
+    of the state that allocates it, so it dies with the iteration instead of growing the frame: never ``new``/``delete``."""
+    sdfg = split_declaration_sdfg(f"vla_split_declaration_{in_loop}", in_loop, FORCED)
+    code = sdfg.generate_code()[0].clean_code
     run_scratch(sdfg, 8, N=8)
-    assert "double tmp[" not in code, code
-    assert bool(HEAP_ALLOC.search(code)) == in_loop, code
+    assert ("double tmp[Max(1, K)];" in code) == in_loop, code
+    assert_no_heap(code)
+
+
+def test_cpu_finalization_puts_a_loop_transient_on_the_stack():
+    """The CPU target decides the placement: a transient a loop allocates per iteration is forced onto the stack,
+    and the code generator makes it a VLA rather than a ``new``/``delete`` pair per iteration."""
+    sdfg = split_declaration_sdfg("vla_finalized_loop_transient", True, StorageType.Default)
+    assert force_loop_scoped_registers(sdfg) == 1
+    assert sdfg.arrays["tmp"].storage == FORCED and sdfg.arrays["tmp"].storage.force
+    code = sdfg.generate_code()[0].clean_code
+    run_scratch(sdfg, 8, N=8)
+    assert "double tmp[Max(1, K)];" in code, code
+    assert_no_heap(code)
 
 
 @pytest.mark.parametrize("placement", [FORCED, UNFORCED])
@@ -261,8 +280,9 @@ if __name__ == "__main__":
     test_a_small_constant_register_array_stays_aligned_on_the_stack()
     test_a_large_constant_register_array_moves_to_the_heap()
     test_a_global_lifetime_keeps_a_symbolic_stack_array_on_the_heap()
-    test_a_split_declaration_takes_the_frame_unless_a_loop_repeats_it(False)
-    test_a_split_declaration_takes_the_frame_unless_a_loop_repeats_it(True)
+    test_a_split_declaration_stays_off_the_heap(False)
+    test_a_split_declaration_stays_off_the_heap(True)
+    test_cpu_finalization_puts_a_loop_transient_on_the_stack()
     test_stack_placement_survives_clone_and_serialization(FORCED)
     test_stack_placement_survives_clone_and_serialization(UNFORCED)
     test_the_bare_register_template_is_unchanged()

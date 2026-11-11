@@ -25,6 +25,7 @@ from dace.sdfg.state import (
     ControlFlowRegion,
     LoopRegion,
     SymbolResolver,
+    UnstructuredControlFlow,
 )
 from dace.sdfg.symbol_repo import assumption_check, program_assumptions
 from dace.sdfg.type_inference import infer_expr_type
@@ -114,6 +115,8 @@ class DaCeCodeGenerator:
         self.where_allocated: dict[tuple[SDFG, str], SDFG] = {}
         #: Forced register arrays of a split declaration at an allocation site no loop repeats: on the function's frame.
         self.frame_allocated: set[tuple[SDFG, str]] = set()
+        #: Forced register arrays a loop iteration allocates, by the block they are declared ahead of as a VLA.
+        self.allocated_ahead: collections.defaultdict[ControlFlowBlock, list] = collections.defaultdict(list)
         #: ``(cfg_id, name)`` of a persistent array -> the local pointer a CPU reduction clause names it by, while bound.
         self.reduction_aliases: dict[tuple[int, str], str] = {}
         # (cfg_id, symbol) -> ctype, for each loop-local counter the readable generator declares in its
@@ -1216,6 +1219,20 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
                     access_states = {state for state, _ in instances}
                     first_block, last_block = paired_allocation_blocks([state for state, _ in instances])
+                    alloc_state = first_block if isinstance(first_block, SDFGState) else first_state_instance
+                    alloc_block = allocation_block(first_block, desc, access_states)
+                    if (
+                        getattr(desc.storage, "force", False)
+                        and scope_allocation_repeats_per_iteration(alloc_block)
+                        and straight_line(alloc_block.parent_graph)
+                    ):
+                        # A forced register a loop iteration allocates is a VLA declared in the code block that holds
+                        # every access, ahead of the block that allocates it: it dies with the iteration.
+                        self.allocated_ahead[alloc_block].append(
+                            (sdfg, alloc_state, first_node_instance, True, True, False)
+                        )
+                        self.where_allocated[(sdfg, name)] = cursdfg
+                        continue
                     if first_block is first_state_instance:
                         self.to_allocate[curscope].append(
                             (sdfg, first_state_instance, first_node_instance, True, False, False)
@@ -1226,8 +1243,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         # instances. This is especially needed for Views which require both the SDFGState and the
                         # AccessNode.
                         self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
-                    alloc_state = first_block if isinstance(first_block, SDFGState) else first_state_instance
-                    curscope = allocation_block(first_block, desc, access_states)
+                    curscope = alloc_block
                     if getattr(desc.storage, "force", False) and not scope_allocation_repeats_per_iteration(curscope):
                         self.frame_allocated.add((sdfg, name))
                     self.to_allocate[curscope].append((sdfg, alloc_state, first_node_instance, False, True, False))
@@ -1635,6 +1651,16 @@ def scope_allocation_repeats_per_iteration(state: SDFGState) -> bool:
             return True
         block, region = region, region.parent_graph
     return False
+
+
+def straight_line(region: ControlFlowRegion) -> bool:
+    """Whether ``region``'s blocks run as one sequence with no edge that jumps (a conditional edge or a branch is a
+    ``goto``), so a VLA declared ahead of one of them is in scope until the region ends and no jump crosses it."""
+    return (
+        not isinstance(region, UnstructuredControlFlow)
+        and all(region.out_degree(block) <= 1 for block in region.nodes())
+        and all(edge.data.is_unconditional() for edge in region.edges())
+    )
 
 
 def allocation_block(state: SDFGState, desc: data.Data, access_states: set[SDFGState]) -> ControlFlowBlock:
