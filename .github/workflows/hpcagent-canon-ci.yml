@@ -46,6 +46,16 @@ jobs:
           libblas-dev libopenblas-dev liblapacke-dev liblapack-dev
         groups: testing
 
+    - name: HPTT (TensorTranspose's fast lowering)
+      # Without it canonicalize refuses a serial pure transpose (SilentPureLowering), so stockham_fft never runs.
+      run: |
+        git clone -q https://github.com/springer13/hptt "$RUNNER_TEMP/hptt"
+        git -C "$RUNNER_TEMP/hptt" checkout -q 942538649b51ff14403a0c73a35d9825eab2d7de
+        make -C "$RUNNER_TEMP/hptt" avx CXX=g++ -j"$(nproc)" > /dev/null
+        test -f "$RUNNER_TEMP/hptt/lib/libhptt.so"
+        echo "HPTT_ROOT=$RUNNER_TEMP/hptt" >> "$GITHUB_ENV"
+        echo "LD_LIBRARY_PATH=$RUNNER_TEMP/hptt/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
     - name: Check out HPCAgent-Bench
       uses: actions/checkout@v7
       with:
